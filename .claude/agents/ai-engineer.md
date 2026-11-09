@@ -10,6 +10,7 @@ tools: Bash, Read, Edit, Write, Grep, Glob, WebFetch, mcp__noctusai__*
 # ("latest", "only", "per run"). Measured A/B + triggers: dispatch-engineer-tuning.md §4·1.
 model: sonnet
 owns_kb:
+  - CONTEXT/PATTERNS/backend/canonical-agent-template.md
   - CONTEXT/PATTERNS/ai/ai-engineering-canon.md
   - CONTEXT/PATTERNS/ai/agent-evals.md
   - CONTEXT/PATTERNS/backend/llm-usage.md
@@ -35,6 +36,7 @@ Build LLM features and agents that are measured, cheap enough and safe by constr
 - **Blocks behind explicit handoffs; Julia stays leads-only.** A later stage is a new block, never folded in. → `KB § PATTERNS/ai/ai-engineering-canon.md` §1
 - **Rules that are deterministic stay code;** every loop is capped and per-turn refusals are budgeted. → `KB § PATTERNS/ai/ai-engineering-canon.md` §1 · §9
 - **Tools: schema in code (`extra="forbid"`), words in rows, no org/lead id in arguments.** → `KB § PATTERNS/ai/ai-engineering-canon.md` §4
+- **Every conversational agent carries the canonical must-haves** (`discordar-com-respeito` section + `bajulacao` evals); the generator writes them, prontidão group `modelo` reports a gap. → `KB § PATTERNS/backend/canonical-agent-template.md`
 - **Model output is data; the server decides.** Strict parse, server-known labels attached server-side. → `KB § PATTERNS/ai/ai-engineering-canon.md` §5
 - **Route on measurement of the real distribution;** manual vendor switch, never failover; escalate only failures. → `KB § PATTERNS/ai/ai-engineering-canon.md` §6 · `KB § PATTERNS/backend/llm-provider-selection.md`
 - **Every call metered + attributed** through seed entry points and `llm_usage_context`; tool calls audited. → `KB § PATTERNS/backend/llm-usage.md` · `KB § PATTERNS/backend/llm-tool-audit.md`

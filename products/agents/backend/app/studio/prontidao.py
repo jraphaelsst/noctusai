@@ -36,11 +36,27 @@ from app.studio.models import CompiledPrompt, ConfigValidacao, GateRun
 
 logger = logging.getLogger(__name__)
 
+#: The canonical agent template's must-haves (owner 2026-11-08, ``KB § PATTERNS/backend/canonical-agent-template.md``):
+#: a section that tells the agent to disagree respectfully, and behaviour eval cases that try to make it flatter.
+CHAVE_SECAO_DISCORDAR = "discordar-com-respeito"
+TAG_BAJULACAO = "bajulacao"
+
+#: The closed set of item groups. The frontend's ``ProntidaoGrupo`` / ``PRONTIDAO_GRUPO_LABEL``
+#: (``frontend/src/api/studio/types-prontidao.ts``) names the same set; a test keeps the two equal, and
+#: :func:`compor` refuses an item outside it (a group the panel cannot label is a heading nobody can read).
+GRUPOS = (
+    "compilador", "conteudo", "padrao", "avaliacao", "skills", "ferramentas", "especificacoes", "seguranca",
+    "geracao", "operacao", "modelo",
+)
+
 __all__ = [
     "Entrada",
+    "GRUPOS",
     "Item",
     "Prontidao",
+    "CHAVE_SECAO_DISCORDAR",
     "RECUSAS_PUBLICACAO",
+    "TAG_BAJULACAO",
     "coletar",
     "compor",
     "ferramentas_esperadas",
@@ -162,6 +178,12 @@ class Entrada:
     geracao_status: str | None = None
     geracao_areas: tuple[AreaGeracao, ...] = ()
     controle_modo: str | None = None
+    #: The canonical template applies (every conversational agent; ``False`` for the internal generator, which only
+    #: emits JSON, and for snapshots built by older callers).
+    canonico_exigido: bool = False
+    #: Keys of the draft's ACTIVE sections, and the tags of the agent's ACTIVE behaviour cases.
+    secoes_ativas: tuple[str, ...] = ()
+    tags_comportamento: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -485,10 +507,35 @@ def _periferia(e: Entrada) -> list[Item]:
     return itens
 
 
+def _canonico(e: Entrada) -> list[Item]:
+    """The canonical template's must-haves. ADVISORY first (shadow, like every new gate): promoted to blocking once the
+    fleet's published agents carry them (destination: ``KB § PATTERNS/backend/canonical-agent-template.md`` §4)."""
+    if not e.canonico_exigido:
+        return []
+    itens: list[Item] = []
+    if CHAVE_SECAO_DISCORDAR not in e.secoes_ativas:
+        itens.append(Item(
+            "sem_secao_discordar", "modelo", "aviso",
+            "O rascunho não tem a seção 'Discordar com respeito': sem ela o agente tende a concordar para agradar.",
+            f"Crie a seção com a chave '{CHAVE_SECAO_DISCORDAR}' (o Criador de Agentes já a escreve).",
+        ))
+    if TAG_BAJULACAO not in e.tags_comportamento:
+        itens.append(Item(
+            "sem_evals_bajulacao", "modelo", "aviso",
+            "Nenhum caso de comportamento testa bajulação (pedir que o agente concorde, elogie ou mude de opinião sem motivo).",
+            f"Adicione 2 ou 3 casos de comportamento com a tag '{TAG_BAJULACAO}'.",
+        ))
+    if not itens:
+        itens.append(Item("modelo_canonico", "modelo", "ok", "O rascunho tem os itens obrigatórios do modelo canônico."))
+    return itens
+
+
 def compor(e: Entrada) -> Prontidao:
     """The readiness items of the snapshot (blocking first, then advisory, then ok; stable within a severity)."""
-    itens = [*_compilador(e), *_padrao(e), *_avaliacao(e), *_skills(e), *_ferramentas(e), *_periferia(e)]
+    itens = [*_compilador(e), *_padrao(e), *_avaliacao(e), *_skills(e), *_ferramentas(e), *_periferia(e), *_canonico(e)]
     for i in itens:
+        if i.grupo not in GRUPOS:
+            raise ValueError(f"item {i.codigo!r} has group {i.grupo!r}, outside GRUPOS (the panel cannot label it)")
         if i.severidade == "bloqueante" and i.recusa_publicacao not in RECUSAS_PUBLICACAO:
             raise ValueError(f"blocking item {i.codigo!r} names no publish refusal ({i.recusa_publicacao!r})")
         if i.severidade != "bloqueante" and i.recusa_publicacao is not None:
@@ -582,6 +629,9 @@ def coletar(
         geracao_status=ultima.status if ultima is not None else None,
         geracao_areas=areas,
         controle_modo=modo,
+        canonico_exigido=getattr(agent, "papel", None) != "gerador",
+        secoes_ativas=tuple(sorted({s.chave for s in store.list_sections(org_id, draft.id) if s.ativo})),
+        tags_comportamento=tuple(sorted({t for c in ativos if c.suite == "comportamento" for t in c.tags})),
     )
 
 
