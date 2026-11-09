@@ -16475,6 +16475,39 @@ def check_db_guard_registry_static(repo_root: Path | None = None) -> list[dict]:
     return issues
 
 
+_DROP_GUARD_RE = re.compile(
+    r"\bDROP\s+(INDEX|TRIGGER|CONSTRAINT)\s+(?:CONCURRENTLY\s+)?(?:IF\s+EXISTS\s+)?\"?([\w.]+)\"?",
+    re.IGNORECASE,
+)
+
+
+def _dropped_guards_still_probed(content: str, rel: str, product: str, registered: frozenset[str]) -> list[dict]:
+    """The inverse of the probe requirement: a migration that DROPS a guard whose behaviour probe is still in
+    `DEFAULT_REGISTRY` leaves a probe that now reports `permitted` on replay (2026-11-09: agents 071 dropped
+    `uq_eval_mecanismo_runs_um_em_execucao` + `eval_runs_one_active_per_version_idx`; CI's replay probe went red
+    after the branch was queued). A guard dropped and re-created in the SAME file (a redefinition) is not a drop."""
+    recreated = {g["guard_name"] for g in _detect_guard_objects(content)}
+    out: list[dict] = []
+    seen: set[str] = set()
+    for m in _DROP_GUARD_RE.finditer(content):
+        name = m.group(2).rsplit(".", 1)[-1].strip('"')
+        if name in seen or name in recreated or name not in registered:
+            continue
+        seen.add(name)
+        out.append({
+            "product": product,
+            "file": rel,
+            "issue": (
+                f"{rel} drops {m.group(1).upper()} `{name}`, but its behaviour probe is still registered in "
+                "noctus.dev.verify_db_guards's DEFAULT_REGISTRY -- after this migration the probe reports "
+                "`permitted` and the DB-guard replay goes red. Retire the probe (and any detection test naming "
+                "the guard) in the SAME change. See KB § PATTERNS/common/methodology-execution-discipline.md § 8."
+            ),
+            "severity": "high",
+        })
+    return out
+
+
 def check_migration_guard_has_probe(
     repo_root: Path | None = None, paths: list[str] | None = None
 ) -> list[dict]:
@@ -16502,6 +16535,10 @@ def check_migration_guard_has_probe(
     Severity `high`. See `_GUARD_PROBE_ALLOWLIST` for the one sanctioned
     opt-out shape (co-located rationale required, never a bare
     suppression).
+
+    The inverse holds too (diff-scoped only): a staged migration that DROPS a
+    guard whose probe is still registered is flagged — the probe must be
+    retired in the same change (`_dropped_guards_still_probed`).
 
     Deliberately NOT active-only (`_active_product_dirs`, 2026-09-22) — same
     reasoning as `check_storage_bucket_public`: already-applied migration
@@ -16536,6 +16573,8 @@ def check_migration_guard_has_probe(
         rel = str(sql_file.relative_to(root))
         organ = _organ_of_migration(content, organ_specs)
         organ_declared = _organ_declared_guard_names(organ_specs[organ]) if organ else None
+        if paths is not None:
+            findings.extend(_dropped_guards_still_probed(content, rel, sql_file.parents[2].name, REGISTERED_GUARD_NAMES))
         seen_names: set[str] = set()
         for guard in _detect_guard_objects(content):
             name = guard["guard_name"]

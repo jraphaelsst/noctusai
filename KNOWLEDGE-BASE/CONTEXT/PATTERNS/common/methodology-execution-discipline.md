@@ -421,6 +421,15 @@ NEW trigger/CHECK/UNIQUE guard with no registered probe is blocked at
 commit time, so this does not quietly regress the moment the next guard
 ships.
 
+**Dropping a guard retires its probe in the same change (2026-11-09).** The
+inverse case: agents 071 dropped two unique indexes (parallel eval runs) while
+their probes stayed in `DEFAULT_REGISTRY`, so the replay reported `permitted`
+and the branch went red only in the merge queue. The same keeper now flags a
+staged migration that `DROP`s an INDEX/TRIGGER/CONSTRAINT whose `guard_name`
+is still registered (a drop + re-create in one file is a redefinition, not a
+drop). Retire the probe, and any detection test naming the guard, in the same
+commit.
+
 **Seed organs declare their guards once (2026-10-14).** An organ migration is
 rendered into many products, so a hand-written probe (or an allowlist entry
 for "file-only, no live table yet") per render does not scale and invites
