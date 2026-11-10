@@ -875,6 +875,7 @@ def test_enqueue_attests_the_deliverable_verdict_the_pre_push_queue_path_require
     assert world.enqueue()["status"] == "queued"
     rec = json.loads(att.read_text())
     assert rec["sha"] == head and rec["ok"] is True and rec["verdict"] == "deliverable" and rec["failing"] == []
+    assert rec["ref"] == f"refs/heads/mq/x--{head[:7]}"  # scoped to the ONE ref enqueue pushes to
     assert abs(rec["ts"] - __import__("time").time()) < 120
     # a refused (needs_resync) delivery is neither attested nor pushed
     (wt / "src" / "a.txt").write_text("uncommitted\n")
@@ -1140,3 +1141,37 @@ def test_the_head_is_compared_in_full_not_by_a_seven_char_prefix(world):
     assert not one["ok"] and "request names head" in one["detail"], one
     assert item(world.deliverable(head_sha=head), "head_pushed_clean")["ok"]
     assert item(world.deliverable(head_sha=head[:12]), "head_pushed_clean")["ok"]  # an abbreviation of THIS head is fine
+
+
+def _attestation(world, sha):
+    import json
+    p = Path(sh(world.repo, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")) / "noc-enqueue" / f"{sha}.json"
+    return json.loads(p.read_text()) if p.exists() else None
+
+
+def test_a_needs_resync_enqueue_invalidates_an_earlier_ok_attestation(world):
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    head = world.commit(wt, "feat: b")
+    world.push(wt, "feat/x")
+    assert world.enqueue(confirm=False)["status"] == "planned"
+    # an ok attestation exists for this sha (e.g. a prior enqueue) ...
+    assert world.enqueue()["status"] == "queued" and _attestation(world, head)["ok"] is True
+    # ... then the contract stops holding (dirty tree): the guardian's re-run must revoke it
+    (wt / "src" / "a.txt").write_text("dirty\n")
+    assert world.enqueue(confirm=False)["status"] == "needs_resync"
+    assert _attestation(world, head)["ok"] is False
+
+
+def test_a_rejected_push_revokes_its_attestation(world):
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    head = world.commit(wt, "feat: b")
+    world.push(wt, "feat/x")
+    hook = world.origin / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho 'rejected' >&2\nexit 1\n")
+    hook.chmod(0o755)
+    assert world.enqueue()["status"] == "blocked"
+    assert _attestation(world, head)["ok"] is False  # the next raw push of this sha cannot ride a leftover ok

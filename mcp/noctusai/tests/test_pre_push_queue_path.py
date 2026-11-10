@@ -66,14 +66,14 @@ def repo(tmp_path):
     return repo
 
 
-def attest(repo, s, *, ok=True, age_s=0, sha=None):
+def attest(repo, s, *, ok=True, age_s=0, sha=None, ref=None):
     """What `task_branch enqueue` writes right before its push: <git-common-dir>/noc-enqueue/<full sha>.json."""
     import json
     import time
     d = repo / ".git" / "noc-enqueue"
     d.mkdir(exist_ok=True)
     (d / f"{s}.json").write_text(json.dumps({"sha": sha or s, "ok": ok, "verdict": "deliverable" if ok else "needs_resync",
-                                              "ts": time.time() - age_s}))
+                                              "ref": ref or f"refs/heads/mq/x--{s[:7]}", "ts": time.time() - age_s}))
 
 
 def sha(repo, ref="feat/x"):
@@ -130,13 +130,15 @@ def test_a_bare_sha_push_to_an_ordinary_branch_still_meets_the_mirror_keeper(rep
     assert r.returncode != 0 and "branch-tree mirror keeper BLOCKED" in r.stderr
 
 
-def test_the_legacy_head_form_still_runs_the_mirror_keeper_for_its_branch(repo):
+def test_the_head_form_is_refused_the_local_side_must_be_a_bare_sha(repo):
+    """N-5: `HEAD:refs/heads/mq/...` / `feat/x:refs/heads/mq/...` name a REF, not the attested sha."""
     git(repo, "checkout", "feat/x")
     s = sha(repo)
-    attest(repo, s)  # every mq push needs the enqueue attestation, whatever the refspec form
-    r = git(repo, "push", "origin", f"HEAD:refs/heads/mq/x--{s[:7]}", check=False)
-    assert r.returncode == 0, r.stderr
-    assert "branch-tree mirror check for 'feat/x'" in r.stdout + r.stderr
+    attest(repo, s)
+    for src in ("HEAD", "feat/x", "refs/heads/feat/x"):
+        r = git(repo, "push", "origin", f"{src}:refs/heads/mq/x--{s[:7]}", check=False)
+        assert r.returncode != 0 and "by sha" in r.stderr, (src, r.stderr)
+    assert not any("mq/" in ref for ref in remote_refs(repo))
 
 
 # -- P1-2 (adversarial review): the queue path is for `task_branch enqueue`, not for anyone who types the refspec --
@@ -174,3 +176,21 @@ def test_an_attestation_for_one_sha_does_not_cover_another(repo):
     attest(repo, a)
     r = git(repo, "push", "origin", f"{b}:refs/heads/mq/x--{b[:7]}", check=False)
     assert r.returncode != 0 and "no enqueue attestation" in r.stderr
+
+
+# -- N-5 (adversarial review, round 2): the attestation is scoped to the ref, one mq ref per push --------------
+
+def test_an_attestation_for_one_queue_ref_does_not_authorise_another(repo):
+    s = sha(repo)
+    attest(repo, s, ref=f"refs/heads/mq/other--{s[:7]}")
+    r = git(repo, "push", "origin", f"{s}:refs/heads/mq/x--{s[:7]}", check=False)
+    assert r.returncode != 0 and "no enqueue attestation" in r.stderr
+    assert not any("mq/" in ref for ref in remote_refs(repo))
+
+
+def test_two_mq_refs_in_one_push_are_refused(repo):
+    s = sha(repo)
+    attest(repo, s)
+    r = git(repo, "push", "origin", f"{s}:refs/heads/mq/x--{s[:7]}", f"{s}:refs/heads/mq/y--{s[:7]}", check=False)
+    assert r.returncode != 0 and "exactly ONE merge-queue ref" in r.stderr
+    assert not any("mq/" in ref for ref in remote_refs(repo))

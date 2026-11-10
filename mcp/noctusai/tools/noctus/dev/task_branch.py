@@ -2564,26 +2564,33 @@ def _slice_score_gate(git, *, slug: str, branch: str, branch_prefix: str, dev: s
     return None, {"reason": why, "slugs": [m["slug"] for m in unscored]}
 
 
-def _write_enqueue_attestation(runner, *, head: str, slug: str, branch: str, contract: dict[str, Any]) -> dict[str, Any]:
-    """Right before the push, record the deliverable() verdict at `<git-common-dir>/noc-enqueue/<full sha>.json`.
-    The pre-push queue path refuses an mq push without a fresh ok attestation for exactly that sha, so the
-    delivery contract cannot be skipped by typing the refspec. The git dir is shared plumbing, not a work tree."""
+def _write_enqueue_attestation(runner, *, head: str, slug: str, branch: str, contract: dict[str, Any],
+                               ref: str, ok: bool | None = None, only_if_exists: bool = False) -> dict[str, Any]:
+    """Record the deliverable() verdict at `<git-common-dir>/noc-enqueue/<full sha>.json`, scoped to the ONE queue ref
+    it authorises (`ref`, fully qualified). The pre-push queue path refuses an mq push without a fresh ok attestation
+    for exactly that sha AND ref, so the delivery contract cannot be skipped by typing the refspec.
+    `ok=False` + `only_if_exists=True` REVOKES: a needs_resync re-check or a rejected push must not leave an earlier ok
+    behind for a raw push to ride. The git dir is shared plumbing, not a work tree."""
     rc, out, err = runner(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"])
     gitdir = out.strip().splitlines()[0] if rc == 0 and out.strip() else ""
     if not gitdir or not os.path.isabs(gitdir):
         return {"error": f"git common dir unresolved ({(err or '').strip()[:100]})"}
     try:
         d = Path(gitdir) / "noc-enqueue"
+        target = d / f"{head}.json"
+        if only_if_exists and not target.exists():
+            return {"skipped": "no attestation to revoke"}
         d.mkdir(parents=True, exist_ok=True)
-        rec = {"sha": head, "ok": bool(contract.get("ok")), "verdict": contract.get("verdict"), "ts": time.time(),
-               "slug": slug, "branch": branch, "failing": contract.get("failing") or [],
+        rec = {"sha": head, "ref": ref, "ok": bool(contract.get("ok") if ok is None else ok),
+               "verdict": contract.get("verdict"), "ts": time.time(), "slug": slug, "branch": branch,
+               "failing": contract.get("failing") or [],
                "items": [{k: i[k] for k in ("n", "name", "ok")} for i in contract.get("items", [])]}
         tmp = d / f".{head}.{os.getpid()}.tmp"
         tmp.write_text(json.dumps(rec), encoding="utf-8")
-        os.replace(tmp, d / f"{head}.json")
+        os.replace(tmp, target)
     except OSError as exc:
         return {"error": f"{type(exc).__name__}: {exc}"}
-    return {"path": str(d / f"{head}.json")}
+    return {"path": str(target)}
 
 
 def _request_verdict_ref(slug: str, branch: str | None = None, store=None) -> str | None:
@@ -2640,22 +2647,27 @@ def _enqueue(git, runner, *, base: dict[str, Any], slug: str, branch: str, confi
                                     **(deliverable_kwargs or {}))
     plan["deliverable"] = contract
     plan["introduced_migrations"] = contract.get("introduced_migrations", [])
+    qref = f"{MQ_PREFIX}{slug}--{head[:7]}"
     if not contract["ok"]:
+        _write_enqueue_attestation(runner, head=head, slug=slug, branch=branch, contract=contract,
+                                   ref=f"refs/heads/{qref}", ok=False, only_if_exists=True)
         return {**plan, "status": "needs_resync", "exit_code": 1, "failing": contract["failing"],
                 "message": (f"{branch} does not meet the delivery contract - NOT pushed, nothing in its worktree touched. "
                             f"{_steward.deliverable_refusal(contract)}. The branch steward fixes the item(s) on the branch, "
                             "pushes, re-requests; the guardian never edits, rebases or renumbers a delivery.")}
-    qref = f"{MQ_PREFIX}{slug}--{head[:7]}"
     if not confirm:
         return {**plan, "status": "planned", "exit_code": 0, "queue_ref": qref,
                 "message": (f"{branch} meets the delivery contract; will push {head[:9]} -> {qref} "
                             f"(pure push: no checkout/merge/rebase/commit). Pass confirm=True.")}
-    attestation = _write_enqueue_attestation(runner, head=head, slug=slug, branch=branch, contract=contract)
+    attestation = _write_enqueue_attestation(runner, head=head, slug=slug, branch=branch, contract=contract,
+                                             ref=f"refs/heads/{qref}")
     if attestation.get("error"):
         return {**plan, "status": "error", "exit_code": 1, "queue_ref": qref,
                 "error": f"cannot write the enqueue attestation the pre-push queue path requires: {attestation['error']}"}
     rc, out, err = git("push", remote, f"{head}:refs/heads/{qref}")
     if rc != 0:
+        _write_enqueue_attestation(runner, head=head, slug=slug, branch=branch, contract=contract,
+                                   ref=f"refs/heads/{qref}", ok=False, only_if_exists=True)
         tail = "\n".join((err or out or "").strip().splitlines()[-25:])
         return {**plan, "status": "blocked", "exit_code": 1, "queue_ref": qref, "hook_output": tail,
                 "message": f"enqueue push of {branch} to {qref} was rejected; fix what it names, re-enqueue.\n{tail}"}
