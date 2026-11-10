@@ -239,6 +239,7 @@ meet at one read-only contract, so the guardian never has to touch a branch.
 | | Guardian | Branch steward |
 |---|---|---|
 | Does | queues (`enqueue` = pure push), `landed`, merges into `dev`, deploys, watches the queue, re-runs `deliverable` before every enqueue | dispatches its team; makes the branch meet the contract (merge `dev` in, renumber, regenerate derived files, run the scoped suites); `request`; fixes its own ejections; stays alive until landed |
+| Post-landing tail | runs `landed` only for deliveries it owns or when asked; gets the ownership skips (`skipped_owned`) on anyone else's worktree | **owns it**: once its work is on `origin/dev` and its worktree is clean, the branch steward (requester / pointer session / worktree-claim holder) runs `task_branch landed` itself - pointer, primary FF, worktree cleanup. The guard allows exactly that and nothing else of the steward class |
 | **NEVER** | edits, rebases, merges into or renumbers a delivery branch; runs a mutating git command in a worktree it does not own; writes feature code or steward tooling; arbitrates content; deploys to prod without consent the owner typed in its own session; removes a worktree/branch it does not own (`skipped_owned`) | enqueues, deploys, touches `mq/*`, `main` or the VPS, or uses the override |
 
 ### Delivery contract: `deliverable(branch)`
