@@ -10,14 +10,14 @@
 # $SSH_ORIGINAL_COMMAND is ignored. This is a DIFFERENT key from the host-probe (read-only) key: a
 # read-only key must never gain a write, and a write key must never gain a read.
 #
-# What it does — exactly one thing: SET `noctus:breaker:fleet` (NX) in the fleet Redis
+# What it does — exactly one thing: SETNX `noctus:breaker:fleet` in the fleet Redis
 # to a JSON read from stdin, after validating it. While that key exists every product's
 # background workers/schedulers stay stopped and the APIs keep serving (the seed side:
 # feat/supabase-breaker). RE-ARM IS HUMAN, via `noctus.dev.supabase_breaker`: this script
 # can never delete the key, never overwrites an existing one (NX keeps the FIRST trip's
 # reason), and refuses any payload that is not the exact breaker shape.
 #
-# stdin JSON (all five keys, nothing else):
+# stdin JSON (all five keys, nothing else; or exactly {"verify": true}, a read-only EXISTS):
 #   {"reason": str<=300, "rate": number|str<=200, "window": str<=64,
 #    "tripped_at": str<=40, "by": "offhost-watchdog"}
 # stdout: ONE JSON line {"tripped":true,"already":false} | {"tripped":false,"already":true}
@@ -25,21 +25,40 @@
 # KB § PATTERNS/devops/prod-watchdog.md
 # ──────────────────────────────────────────────────────────────────────────────
 set -u -o pipefail
+cd / || exit 3   # never inherit a caller-controlled working directory
 
 KEY="noctus:breaker:fleet"
-REDIS_CONTAINER="${NOCTUS_REDIS_CONTAINER:-noctus-redis}"
 MAX_BYTES=2048
+
+# Redis target. Today: the unauthenticated `noctus-redis`. Once the ACL Redis lands
+# (redis-acl-lockdown doc §5, branch feat/redis-acl-lockdown) the `trip` credential file exists and we talk to
+# `noctus-redis-acl` as user `trip`, the password coming from that root-owned file through the
+# ENVIRONMENT (docker exec -e REDISCLI_AUTH), never a command line.
+TRIP_PASS_FILE="${NOCTUS_REDIS_TRIP_PASS_FILE:-/opt/noctus/noctusai/deploy/fleet/redis-auth/trip.pass}"
+if [[ -r "$TRIP_PASS_FILE" ]]; then
+  REDIS_CONTAINER="${NOCTUS_REDIS_CONTAINER:-noctus-redis-acl}"
+  export REDISCLI_AUTH; REDISCLI_AUTH="$(cat "$TRIP_PASS_FILE")"
+  rcli() { timeout 15 docker exec -e REDISCLI_AUTH "$REDIS_CONTAINER" redis-cli --no-auth-warning --user trip "$@" 2>/dev/null; }
+else
+  REDIS_CONTAINER="${NOCTUS_REDIS_CONTAINER:-noctus-redis}"
+  rcli() { timeout 15 docker exec "$REDIS_CONTAINER" redis-cli "$@" 2>/dev/null; }
+fi
 
 payload="$(head -c "$MAX_BYTES" 2>/dev/null)"
 
-# Validate + canonicalise in python (stdlib): the value written is re-serialised from the
-# parsed object, never the raw stdin — nothing the sender controls reaches redis verbatim.
-canon="$(printf '%s' "$payload" | python3 -c '
+# Validate + canonicalise in python (stdlib, isolated -I): the value written is re-serialised from the
+# parsed object, never the raw stdin. The ONE other accepted payload is {"verify": true}: a READ-ONLY
+# EXISTS used by the owner's one-time setup check (it proves ssh + forced command + sudo + redis access
+# without tripping the fleet).
+canon="$(printf '%s' "$payload" | python3 -I -c '
 import json, sys
 try:
     d = json.loads(sys.stdin.read())
 except Exception:
     sys.exit(2)
+if d == {"verify": True}:
+    print("VERIFY")
+    sys.exit(0)
 KEYS = {"reason", "rate", "window", "tripped_at", "by"}
 def ok_str(v, n):
     return isinstance(v, str) and 0 < len(v) <= n and "\n" not in v and "\r" not in v
@@ -60,12 +79,18 @@ if [[ $rc -ne 0 || -z "$canon" ]]; then
   exit 2
 fi
 
-# argv, not a shell string: the JSON is a single docker-exec argument.
-out="$(timeout 15 docker exec "$REDIS_CONTAINER" redis-cli SET "$KEY" "$canon" NX 2>/dev/null)"
+if [[ "$canon" == "VERIFY" ]]; then
+  exists="$(rcli EXISTS "$KEY")"
+  if [[ "$exists" == "0" || "$exists" == "1" ]]; then echo "{\"verify\":true,\"exists\":$exists}"; exit 0; fi
+  echo '{"error":"redis unreachable"}' >&2
+  exit 3
+fi
+
+# SETNX, not `SET ... NX`: the ACL `trip` user holds +setnx only (it can neither overwrite nor expire the key),
+# and the legacy path behaves identically. Reply: 1 = we set it, 0 = it already existed (the first trip stands).
+out="$(rcli SETNX "$KEY" "$canon")"
 case "$out" in
-  OK)  echo '{"tripped":true,"already":false}' ;;
-  "")  # nil reply prints an empty line: the key already exists (an earlier trip stands)
-       exists="$(timeout 15 docker exec "$REDIS_CONTAINER" redis-cli EXISTS "$KEY" 2>/dev/null)"
-       if [[ "$exists" == "1" ]]; then echo '{"tripped":false,"already":true}'; else echo '{"error":"redis unreachable"}' >&2; exit 3; fi ;;
-  *)   echo '{"error":"redis refused"}' >&2; exit 3 ;;
+  1)  echo '{"tripped":true,"already":false}' ;;
+  0)  echo '{"tripped":false,"already":true}' ;;
+  *)  echo '{"error":"redis unreachable or refused"}' >&2; exit 3 ;;
 esac

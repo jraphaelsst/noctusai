@@ -27,7 +27,16 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIT_DIR="${NOCTUS_SYSTEMD_DIR:-/etc/systemd/system}"
 STATE_DIR="/var/lib/noctus"
 FORCED_CMD="/opt/noctus/noctusai/deploy/watchdog/host-probe.sh"
-AUTH_KEYS="${NOCTUS_AUTHORIZED_KEYS:-/root/.ssh/authorized_keys}"
+# NOCTUS_PROBE_USER=probe: install the key for the unprivileged `probe` user (forced command runs through
+# `sudo`, see deploy/watchdog/noctus-breaker.sudoers) instead of root. Unset = the legacy root install.
+PROBE_USER="${NOCTUS_PROBE_USER:-}"
+if [[ -n "$PROBE_USER" ]]; then
+  AUTH_KEYS="${NOCTUS_AUTHORIZED_KEYS:-/home/$PROBE_USER/.ssh/authorized_keys}"
+  CMD_FIELD="sudo $FORCED_CMD"
+else
+  AUTH_KEYS="${NOCTUS_AUTHORIZED_KEYS:-/root/.ssh/authorized_keys}"
+  CMD_FIELD="$FORCED_CMD"
+fi
 KEY_COMMENT="noctus-prod-watchdog"
 UNITS=(noctus-heartbeat.service noctus-heartbeat.timer)
 
@@ -100,7 +109,7 @@ if [[ "$MODE" == "check" ]]; then
   if [[ -n "$PUBKEY_FILE" ]]; then
     if key_present; then
       echo "watchdog key: present in $AUTH_KEYS"
-      grep -F -- "$KEY_BODY" "$AUTH_KEYS" | grep -qF "command=\"$FORCED_CMD\"" \
+      grep -F -- "$KEY_BODY" "$AUTH_KEYS" | grep -qF "command=\"$CMD_FIELD\"" \
         && echo "watchdog key: forced command OK" \
         || echo "watchdog key: present but WITHOUT the forced command — fix by hand"
     else
@@ -147,7 +156,8 @@ if [[ -n "$PUBKEY_FILE" ]]; then
     if [[ -s "$AUTH_KEYS" && -n "$(tail -c1 "$AUTH_KEYS")" ]]; then
       printf '\n' >> "$AUTH_KEYS"
     fi
-    printf 'restrict,command="%s" %s %s %s\n' "$FORCED_CMD" "$KEY_TYPE" "$KEY_BODY" "$KEY_COMMENT" >> "$AUTH_KEYS"
+    printf 'restrict,command="%s" %s %s %s\n' "$CMD_FIELD" "$KEY_TYPE" "$KEY_BODY" "$KEY_COMMENT" >> "$AUTH_KEYS"
+    [[ -z "$PROBE_USER" ]] || chown -R "$PROBE_USER": "$(dirname "$AUTH_KEYS")" 2>/dev/null || true
     echo "watchdog key: added to $AUTH_KEYS (restrict + forced command)"
   fi
 fi

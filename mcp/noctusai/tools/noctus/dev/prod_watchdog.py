@@ -74,6 +74,9 @@ DEFAULTS: dict[str, float] = {
     "WATCHDOG_SSH_BACKOFF_MAX_EVERY": 6,
     "WATCHDOG_REMINDER_HOURS": 6,
     "WATCHDOG_HTTP_TIMEOUT_S": 20,
+    #: consecutive runs with the Supabase budget leg blind (unknown / not_configured) before it is DEGRADED
+    #: (an expired or revoked token must not silently remove the breaker's protection)
+    "WATCHDOG_BUDGET_BLIND_RUNS": 6,
 }
 
 UP, DEGRADED, DOWN = "up", "degraded", "down"
@@ -203,6 +206,12 @@ def should_attempt_ssh(ssh_state: Mapping[str, Any], th: Mapping[str, float]) ->
     return int(ssh_state.get("skipped_since_attempt", 0)) + 1 >= every
 
 
+def _probe_user(env: Mapping[str, str]) -> str:
+    """Login user of the READ-ONLY probe key. `root` is the legacy default (an existing install keeps working);
+    set `WATCHDOG_PROBE_USER=probe` once the unprivileged user + sudoers entry exist (KB § PATTERNS/devops/prod-watchdog.md § 7b)."""
+    return (env.get("WATCHDOG_PROBE_USER") or "").strip() or "root"
+
+
 def make_ssh_runner(env: Mapping[str, str]) -> Optional[SshRunner]:
     """Real SSH runner from env, or None when the leg is not configured.
 
@@ -217,7 +226,7 @@ def make_ssh_runner(env: Mapping[str, str]) -> Optional[SshRunner]:
     if not host or not key or not Path(key).is_file():
         return None
 
-    user = (env.get("WATCHDOG_PROBE_USER") or "root").strip() or "root"
+    user = _probe_user(env)
 
     def _run() -> tuple[int, str, str]:
         return _ssh_once(host, key, "probe", env=env, user=user)
@@ -575,7 +584,7 @@ def _budget_summary(rep: dict) -> dict:
     """The compact slice of a request-budget report that may appear in a PUBLIC run log / the state
     cache: counts and verdict only. No endpoint shape, no reason that names one (those go to email)."""
     keys = ("verdict", "ok", "trip", "error", "projected_per_day", "total_calls", "eligible_calls",
-            "status_402", "window_hours")
+            "status_402", "trip_402_immediate", "window_hours")
     out = {k: rep.get(k) for k in keys if k in rep}
     out["reasons"] = list(rep.get("reasons_public") or [])
     out["status"] = rep.get("status") or rep.get("verdict")
@@ -635,6 +644,7 @@ def _budget_leg(state: dict, counters: dict, th: Mapping[str, float], env: Mappi
                   "detail": f"{_budget.TOKEN_ENV} unset: Supabase request-budget leg skipped (no breaker protection)"}
         warnings.append(budget["detail"])
         counters["budget_warn"] = counters["budget_crit"] = 0
+        _bump(counters, "budget_blind", True)
     else:
         try:
             raw = check()
@@ -644,14 +654,16 @@ def _budget_leg(state: dict, counters: dict, th: Mapping[str, float], env: Mappi
         verdict = raw.get("verdict")
         _bump(counters, "budget_warn", verdict in ("warn", "critical"))
         _bump(counters, "budget_crit", verdict == "critical")
+        _bump(counters, "budget_blind", verdict == "unknown")
         if verdict == "unknown":
             warnings.append(f"Supabase request budget unmeasured: {raw.get('error') or raw.get('status')}")
 
     crit_now = budget.get("verdict") == "critical"
-    n402 = int(budget.get("status_402") or 0)
     breaker: dict[str, Any] = {"status": "tripped" if existing and existing.get("confirmed") else "armed"}
 
-    if crit_now and (n402 > 0 or counters.get("budget_crit", 0) >= n):
+    # a restriction WAVE (>= SUPABASE_BUDGET_MIN_402_TO_TRIP service_role /rest 402s) trips at once; anything
+    # else needs WATCHDOG_CONSECUTIVE critical runs, so one forged 402 or one burst cannot stop the fleet
+    if crit_now and (budget.get("trip_402_immediate") or counters.get("budget_crit", 0) >= n):
         top = "; ".join((budget.get("reasons") or [])[:3])
         payload = {
             "reason": (top or "Supabase request budget critical")[:300],
@@ -698,6 +710,10 @@ def _budget_leg(state: dict, counters: dict, th: Mapping[str, float], env: Mappi
     elif budget.get("verdict") == "warn" and counters.get("budget_warn", 0) >= n:
         deg.append("Supabase request budget em ATENÇÃO (sem acionar o disjuntor): "
                    + "; ".join((budget.get("reasons") or [])[:3]))
+    blind = int(counters.get("budget_blind", 0))
+    if blind >= int(th["WATCHDOG_BUDGET_BLIND_RUNS"]):
+        deg.append(f"Supabase request budget SEM MEDIÇÃO há {blind} execuções seguidas (token ausente/expirado/revogado "
+                   "ou logs ilegíveis): o disjuntor está CEGO")
     return budget, breaker, deg, trip_due, _shape_detail(raw)
 
 

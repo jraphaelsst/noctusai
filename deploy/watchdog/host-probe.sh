@@ -90,7 +90,15 @@ fi
 # Fleet breaker: does `noctus:breaker:fleet` exist in Redis? (1 = tripped, 0 = armed, null = unknown).
 # The watchdog reconciles its sticky alert with THIS, not with its own cache file.
 breaker_tripped=null
-bt="$(timeout 10 docker exec "${NOCTUS_REDIS_CONTAINER:-noctus-redis}" redis-cli EXISTS noctus:breaker:fleet 2>/dev/null)"
+# Same target rule as breaker-trip.sh: the ACL Redis (user `trip`, password via the environment, never argv)
+# once its credential file exists, else today's unauthenticated noctus-redis.
+TRIP_PASS_FILE="${NOCTUS_REDIS_TRIP_PASS_FILE:-/opt/noctus/noctusai/deploy/fleet/redis-auth/trip.pass}"
+if [[ -r "$TRIP_PASS_FILE" ]]; then
+  export REDISCLI_AUTH; REDISCLI_AUTH="$(cat "$TRIP_PASS_FILE")"
+  bt="$(timeout 10 docker exec -e REDISCLI_AUTH "${NOCTUS_REDIS_CONTAINER:-noctus-redis-acl}" redis-cli --no-auth-warning --user trip EXISTS noctus:breaker:fleet 2>/dev/null)"
+else
+  bt="$(timeout 10 docker exec "${NOCTUS_REDIS_CONTAINER:-noctus-redis}" redis-cli EXISTS noctus:breaker:fleet 2>/dev/null)"
+fi
 [[ "$bt" == "0" || "$bt" == "1" ]] && breaker_tripped="$bt"
 
 # Forced-command keys: every authorized_keys line carrying one of OUR key comments must start with

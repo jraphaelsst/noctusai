@@ -56,20 +56,33 @@ DEFAULTS: dict[str, float] = {
     "SUPABASE_BUDGET_CRIT_TOTAL_PER_DAY": 250_000,
     "SUPABASE_BUDGET_WARN_SHAPE_PER_DAY": 15_000,
     "SUPABASE_BUDGET_CRIT_SHAPE_PER_DAY": 50_000,
+    #: service_role 402s needed in the window before they count as a restriction wave (one forged 402 must not trip)
+    "SUPABASE_BUDGET_MIN_402_TO_TRIP": 100,
 }
 
 ROLE_ATTR = "log_attributes['request.sb.jwt.apikey.payload.role']"
+METHOD_ATTR = "log_attributes['request.method']"
+PATH_ATTR = "log_attributes['request.path']"
 STATUS_ATTR = "toUInt32OrZero(log_attributes['response.status_code'])"
-#: our servers' calls that count toward a trip: 2xx/3xx, plus the 402 a restricted project answers them.
-_TRIP_WHERE = (f"source='edge_logs' and {ROLE_ATTR}='service_role' and "
-               f"(({STATUS_ATTR} >= 200 and {STATUS_ATTR} < 400) or {STATUS_ATTR} = 402)")
-_SHAPE_COLS = ("select log_attributes['request.method'] m, log_attributes['request.path'] p, "
+#: The role claim is the DECODED header, NOT a verified identity (a forged `service_role` is logged too), and
+#: some answers come BEFORE key-auth (CORS OPTIONS preflight, /auth/v1/verify|authorize|callback 3xx,
+#: functions with verify_jwt=false). PostgREST verifies the JWT signature, so a forged key gets 401 there:
+#: trip traffic = claim service_role AND /rest/v1/ AND not OPTIONS AND the status below.
+_TRIP_BASE = (f"source='edge_logs' and {ROLE_ATTR}='service_role' and "
+              f"startsWith({PATH_ATTR}, '/rest/v1/') and {METHOD_ATTR} != 'OPTIONS'")
+_OK_STATUS = f"({STATUS_ATTR} >= 200 and {STATUS_ATTR} < 400)"
+_TRIP_WHERE = f"{_TRIP_BASE} and ({_OK_STATUS} or {STATUS_ATTR} = 402)"
+_SHAPE_COLS = (f"select {METHOD_ATTR} m, {PATH_ATTR} p, "
                "log_attributes['request.search'] s, count() calls from logs where ")
 SQL_SHAPES = _SHAPE_COLS + "source='edge_logs' group by m, p, s order by calls desc limit 3000"
 SQL_SHAPES_TRIP = _SHAPE_COLS + _TRIP_WHERE + " group by m, p, s order by calls desc limit 3000"
+#: ONE ungrouped aggregate decides the trip: no user-agent/status cardinality a spray could crowd out of a LIMIT.
+SQL_TRIP_AGG = (f"select countIf({_OK_STATUS}) eligible, countIf({STATUS_ATTR} = 402) n402 "
+                f"from logs where {_TRIP_BASE}")
+#: reporting only (totals, UA families, 4xx): grouped and LIMITed, never decides a trip.
 SQL_STATUS_UA = (
-    f"select log_attributes['request.headers.user_agent'] ua, {STATUS_ATTR} status, {ROLE_ATTR} role, "
-    "count() calls from logs where source='edge_logs' group by ua, status, role order by calls desc limit 1000"
+    f"select log_attributes['request.headers.user_agent'] ua, {STATUS_ATTR} status, "
+    "count() calls from logs where source='edge_logs' group by ua, status order by calls desc limit 1000"
 )
 USAGE_NOTE_NO_EGRESS = (
     "the Supabase Management API v1 exposes request counts only - no org egress or quota figure; "
@@ -221,12 +234,18 @@ class FakeLogsSource:
     """Deterministic source for tests: rows keyed by which query is asked."""
 
     def __init__(self, *, shape_rows=None, status_rows=None, usage_rows=None, trip_shape_rows=None,
-                 error: Optional[LogsError] = None) -> None:
+                 trip_agg_rows=None, error: Optional[LogsError] = None) -> None:
         self.shape_rows = list(shape_rows or [])
         #: the service_role-only shapes; None = "the shapes are all our own traffic"
         self.trip_shape_rows = self.shape_rows if trip_shape_rows is None else list(trip_shape_rows)
         self.status_rows = list(status_rows or [])
         self.usage_rows = list(usage_rows or [])
+        if trip_agg_rows is None:  # derive: status rows tagged service_role are "our" traffic
+            ours = [r for r in self.status_rows if str(r.get("role") or "") == "service_role"]
+            trip_agg_rows = [{
+                "eligible": sum(_int(r.get("calls")) for r in ours if 200 <= _int(r.get("status")) < 400),
+                "n402": sum(_int(r.get("calls")) for r in ours if _int(r.get("status")) == 402)}]
+        self.trip_agg_rows = list(trip_agg_rows)
         self.error = error
         self.calls: list[tuple[str, str, str]] = []
 
@@ -236,6 +255,8 @@ class FakeLogsSource:
             raise self.error
         if "request.search" in sql:
             return list(self.trip_shape_rows if "service_role" in sql else self.shape_rows)
+        if "countIf" in sql:
+            return list(self.trip_agg_rows)
         return list(self.status_rows)
 
     def usage_counts(self, interval: str = "1day") -> list[dict]:
@@ -356,9 +377,12 @@ def _usage_block(source: LogsSource) -> dict:
             "realtime_requests_24h": tot["total_realtime_requests"], "note": USAGE_NOTE_NO_EGRESS}
 
 
-def _is_trip_traffic(role: str, status: int) -> bool:
-    """Only OUR servers' successful calls (and the 402 a restricted project answers them) can trip."""
-    return role == "service_role" and (200 <= status < 400 or status == 402)
+def is_trip_traffic(role: str, method: str, path: str, status: int, *, count_402: bool = True) -> bool:
+    """Python twin of `_TRIP_WHERE` (documented + tested together): only calls that PostgREST authenticated
+    can trip. See the SQL note above for why the role claim alone is not an identity."""
+    if role != "service_role" or (method or "").upper() == "OPTIONS" or not (path or "").startswith("/rest/v1/"):
+        return False
+    return 200 <= status < 400 or (count_402 and status == 402)
 
 
 def _shape_counter(rows: list[dict]) -> Counter:
@@ -381,33 +405,33 @@ def evaluate(source: LogsSource, *, window_hours: float = 1.0, now: Optional[str
         status_rows = source.query_logs(SQL_STATUS_UA, s_iso, e_iso)
         shape_rows = source.query_logs(SQL_SHAPES, s_iso, e_iso)
         trip_rows = source.query_logs(SQL_SHAPES_TRIP, s_iso, e_iso)
+        agg_rows = source.query_logs(SQL_TRIP_AGG, s_iso, e_iso)
     except LogsError as exc:
         return {**base, "ok": False, "verdict": "unknown", "trip": False, "error": str(exc),
                 "transient": exc.transient, "reasons": [f"could not read the Supabase logs: {exc}"],
                 "reasons_public": [f"could not read the Supabase logs: {exc}"]}
 
     ua_totals: Counter = Counter()
-    total = eligible = n402 = n402_all = n4xx = 0
+    total = n402_all = n4xx = 0
     for r in status_rows:
-        c, st, role = _int(r.get("calls")), _int(r.get("status")), str(r.get("role") or "")
+        c, st = _int(r.get("calls")), _int(r.get("status"))
         total += c
         ua_totals[ua_family(r.get("ua"))] += c
-        if _is_trip_traffic(role, st):
-            eligible += c
-            if st == 402:
-                n402 += c
         if st == 402:
             n402_all += c
         if 400 <= st < 500:
             n4xx += c
+    agg = agg_rows[0] if agg_rows else {}
+    eligible, n402 = _int(agg.get("eligible")), _int(agg.get("n402"))
     shapes = _shape_counter(shape_rows)
     trip_shapes = _shape_counter(trip_rows)
     if not status_rows:
         total = sum(shapes.values())
-        eligible = sum(trip_shapes.values())
+    min402 = int(th.get("SUPABASE_BUDGET_MIN_402_TO_TRIP", DEFAULTS["SUPABASE_BUDGET_MIN_402_TO_TRIP"]))
+    wave402 = n402 >= min402
 
     projected = int(round(total * per_day))
-    projected_eligible = int(round(eligible * per_day))
+    projected_eligible = int(round((eligible + n402) * per_day))
     shape_sum = sum(shapes.values())
     top = [{"shape": k, "calls": c, "projected_per_day": int(round(c * per_day)),
             "pct": round(100.0 * c / total, 1) if total else 0.0}
@@ -417,10 +441,13 @@ def evaluate(source: LogsSource, *, window_hours: float = 1.0, now: Optional[str
     w_shp, c_shp = th["SUPABASE_BUDGET_WARN_SHAPE_PER_DAY"], th["SUPABASE_BUDGET_CRIT_SHAPE_PER_DAY"]
     # (offender, public sentence): the public sentence never names an endpoint
     found: list[tuple[dict, str]] = []
-    if n402:
+    if wave402:
         found.append(({"reason": "http_402", "level": "critical", "calls": n402,
                        "detail": "Supabase answers our service_role calls 402 (Fair Use restriction)"},
-                      f"{n402} service_role calls answered 402 in the window (project restricted)"))
+                      f"{n402} service_role /rest calls answered 402 in the window (project restricted)"))
+    elif n402:  # a few 402s: could be forged or a blip. Reported, alert-only
+        found.append(({"reason": "http_402_few", "level": "warn", "calls": n402},
+                      f"{n402} service_role /rest calls answered 402 (below the {min402} wave threshold)"))
     if projected_eligible > c_tot:
         found.append(({"reason": "total_projected", "level": "critical", "projected_per_day": projected_eligible},
                       f"our servers project {projected_eligible:,} calls/day (critical)"))
@@ -457,8 +484,8 @@ def evaluate(source: LogsSource, *, window_hours: float = 1.0, now: Optional[str
 
     reasons = []
     for o in offenders:
-        if o["reason"] == "http_402":
-            reasons.append(f"{o['calls']} service_role calls answered 402 in the window (project restricted)")
+        if o["reason"].startswith("http_402"):
+            reasons.append(f"{o['calls']} service_role /rest calls answered 402 in the window")
         elif o["reason"].startswith("total_projected"):
             reasons.append(f"projected {o['projected_per_day']:,} calls/day ({o['level']})")
         else:
@@ -468,7 +495,8 @@ def evaluate(source: LogsSource, *, window_hours: float = 1.0, now: Optional[str
         "reasons": reasons, "reasons_public": [pub for _, pub in found],
         "total_calls": total, "projected_per_day": projected,
         "eligible_calls": eligible, "projected_eligible_per_day": projected_eligible,
-        "status_402": n402, "status_402_all": n402_all, "status_4xx": n4xx, "restricted": n402 > 0,
+        "status_402": n402, "status_402_all": n402_all, "status_4xx": n4xx, "restricted": wave402,
+        "trip_402_immediate": wave402,
         "top_shapes": top, "offenders": offenders,
         "by_user_agent": [{"family": f, "calls": c} for f, c in ua_totals.most_common(10)],
         "coverage_pct": round(100.0 * shape_sum / total, 1) if total else 100.0,

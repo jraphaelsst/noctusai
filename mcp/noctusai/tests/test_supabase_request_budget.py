@@ -151,13 +151,13 @@ def test_one_hot_shape_is_warn_then_critical_and_values_collapse_into_one_shape(
     assert rep["offenders"][0]["shape"] == "POST /rest/v1/rpc/claim_next_job"
 
 
-def test_any_402_is_critical_even_when_volume_is_tiny():
+def test_a_402_wave_is_critical_even_when_volume_is_tiny():
     rep = _eval(_source(
         [{"m": "GET", "p": "/rest/v1/clientes", "s": "", "calls": 3}],
-        [{"ua": "python-httpx/0.27", "status": 402, "calls": 3}],
+        [{"ua": "python-httpx/0.27", "status": 402, "calls": 100}],
     ))
     assert rep["verdict"] == "critical"
-    assert rep["status_402"] == 3 and rep["restricted"] is True
+    assert rep["status_402"] == 100 and rep["restricted"] is True
     assert any(o["reason"] == "http_402" for o in rep["offenders"])
 
 
@@ -309,9 +309,9 @@ def test_service_role_failures_and_errors_are_not_trip_traffic_but_service_role_
     rows = [{"ua": "python-httpx/0.27", "status": 500, "role": "service_role", "calls": 30_000}]
     rep = srb.evaluate(srb.FakeLogsSource(status_rows=rows, trip_shape_rows=[], shape_rows=[]), now=NOW)
     assert rep["trip"] is False and rep["eligible_calls"] == 0
-    rows = [{"ua": "python-httpx/0.27", "status": 402, "role": "service_role", "calls": 5}]
+    rows = [{"ua": "python-httpx/0.27", "status": 402, "role": "service_role", "calls": 100}]
     rep = srb.evaluate(srb.FakeLogsSource(status_rows=rows, trip_shape_rows=[], shape_rows=[]), now=NOW)
-    assert rep["trip"] is True and rep["verdict"] == "critical" and rep["status_402"] == 5
+    assert rep["trip"] is True and rep["verdict"] == "critical" and rep["status_402"] == 100
 
 
 def test_the_trip_queries_filter_on_the_service_role_claim_and_non_error_status():
@@ -329,3 +329,53 @@ def test_reports_carry_counts_only_reasons_for_public_logs():
                         [{"ua": "python-httpx/0.27", "status": 200, "calls": 2200}]))
     assert "claim_next_job" in " ".join(rep["reasons"])
     assert rep["reasons_public"] and "claim_next_job" not in " ".join(rep["reasons_public"])
+
+
+# ── N1/N2/N5: the role claim is NOT a verified identity; only PostgREST-answered traffic can trip ──
+@pytest.mark.parametrize("role, method, path, status, expected", [
+    ("service_role", "GET", "/rest/v1/jobs", 200, True),
+    ("service_role", "POST", "/rest/v1/rpc/claim_next_job", 201, True),
+    ("service_role", "GET", "/rest/v1/jobs", 402, True),
+    ("service_role", "OPTIONS", "/rest/v1/jobs", 204, False),      # CORS preflight answers before key-auth
+    ("service_role", "OPTIONS", "/rest/v1/jobs", 402, False),
+    ("service_role", "GET", "/auth/v1/verify", 302, False),         # forged-role 3xx before key-auth
+    ("service_role", "GET", "/auth/v1/authorize", 302, False),
+    ("service_role", "GET", "/functions/v1/x", 200, False),         # verify_jwt=false functions
+    ("service_role", "GET", "/storage/v1/object/public/a/b", 200, False),
+    ("service_role", "GET", "/rest/v1/jobs", 401, False),           # a forged JWT is rejected by PostgREST
+    ("service_role", "GET", "/rest/v1/jobs", 500, False),
+    ("anon", "GET", "/rest/v1/jobs", 200, False),
+    ("", "GET", "/rest/v1/jobs", 200, False),
+])
+def test_trip_traffic_predicate(role, method, path, status, expected):
+    assert srb.is_trip_traffic(role, method, path, status) is expected
+
+
+def test_trip_sql_encodes_the_same_rule_for_shapes_and_the_ungrouped_aggregate():
+    for sql in (srb.SQL_SHAPES_TRIP, srb.SQL_TRIP_AGG):
+        assert "request.sb.jwt.apikey.payload.role" in sql and "'service_role'" in sql
+        assert "startsWith(log_attributes['request.path'], '/rest/v1/')" in sql
+        assert "log_attributes['request.method'] != 'OPTIONS'" in sql
+    assert "countIf" in srb.SQL_TRIP_AGG
+    # N5: the aggregate that decides the trip has NO user-agent / role grouping a spray could crowd out
+    assert "group by" not in srb.SQL_TRIP_AGG.lower() and "user_agent" not in srb.SQL_TRIP_AGG
+
+
+def test_forged_role_traffic_that_the_aggregate_excludes_never_trips_even_if_status_rows_look_big():
+    # 5k/h of 'service_role' 2xx in the status rows (OPTIONS 204 / auth 302 / functions 200 in reality)
+    big = [{"ua": "curl/8", "status": 200, "role": "service_role", "calls": 50_000}]
+    rep = srb.evaluate(srb.FakeLogsSource(status_rows=big, trip_shape_rows=[], shape_rows=[],
+                                          trip_agg_rows=[{"eligible": 0, "n402": 0}]), now=NOW)
+    assert rep["trip"] is False and rep["verdict"] == "warn" and rep["eligible_calls"] == 0
+
+
+def test_a_single_or_few_402s_never_trip_but_a_real_wave_does():
+    def rep_for(n402):
+        return srb.evaluate(srb.FakeLogsSource(
+            status_rows=[{"ua": "x", "status": 402, "role": "service_role", "calls": n402}],
+            trip_shape_rows=[], shape_rows=[], trip_agg_rows=[{"eligible": n402, "n402": n402}]), now=NOW)
+    one = rep_for(1)
+    assert one["trip"] is False and one["trip_402_immediate"] is False and one["verdict"] != "critical"
+    assert rep_for(99)["trip"] is False
+    wave = rep_for(srb.DEFAULTS["SUPABASE_BUDGET_MIN_402_TO_TRIP"])
+    assert wave["trip"] is True and wave["trip_402_immediate"] is True
