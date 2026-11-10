@@ -6282,6 +6282,44 @@ END;
     )
 
 
+def _owner_recipient_probe(*, probe_id: str, guard_name: str, setup_sql: str, op_sql: str, fragment: str,
+                           what: str, rationale: str) -> GuardProbe:
+    """Probe on the recipients/events pair: `setup_sql` runs as the probe owner, `op_sql` is the refused operation."""
+    fragment_lit = _sql_lit(fragment)
+    what_lit = _sql_lit(what)
+    sql = _do_block(f"""
+DECLARE
+  v_id uuid;
+  v_ev bigint;
+BEGIN
+  IF to_regclass('public.notification_owner_recipient_events') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.notification_owner_recipient_events does not exist (core 118 not applied)';
+  END IF;
+  BEGIN
+{setup_sql}
+{op_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id, product="core", schema="public", guard_name=guard_name, kind="write_refusal",
+        migrations=("118_notification_owner_recipients.sql",), sql=sql, rationale=rationale,
+    )
+
+
+_OWNER_RECIPIENT_FIXTURE = """    INSERT INTO public.notification_owner_recipients (numero, alterado_por)
+    VALUES ('+5500000000001', gen_random_uuid())
+    RETURNING id INTO v_id;"""
+
 _OWNER_RECIPIENT_EVENTS_PROBES: tuple[GuardProbe, ...] = (
     _owner_recipient_events_probe(
         probe_id="notification_owner_recipient_events.update_refused",
@@ -6292,6 +6330,40 @@ _OWNER_RECIPIENT_EVENTS_PROBES: tuple[GuardProbe, ...] = (
         probe_id="notification_owner_recipient_events.delete_refused",
         op_sql="    DELETE FROM public.notification_owner_recipient_events WHERE id = v_id;",
         what="DELETE of an owner-recipient event",
+    ),
+    _owner_recipient_probe(
+        probe_id="notification_owner_recipients.numero_update_refused",
+        guard_name="notification_owner_recipients_touch",
+        setup_sql=_OWNER_RECIPIENT_FIXTURE,
+        op_sql="    UPDATE public.notification_owner_recipients SET numero = '+5500000000002' WHERE id = v_id;",
+        fragment="numero is immutable",
+        what="changing a recipient's number in place",
+        rationale=(
+            "The number is who receives the owner's notices; swapping it in place would redirect them with no "
+            "event (the trigger only sees ativo/nome). Remove and re-add leaves an adicionado/removido trail."
+        ),
+    ),
+    _owner_recipient_probe(
+        probe_id="notification_owner_recipient_events.truncate_refused",
+        guard_name=_OWNER_RECIPIENT_EVENTS_GUARD,
+        setup_sql="    NULL;",
+        op_sql="    TRUNCATE public.notification_owner_recipient_events;",
+        fragment="is append-only",
+        what="TRUNCATE of the owner-recipient events",
+        rationale="TRUNCATE skips row-level triggers, so the append-only history needs its own statement trigger.",
+    ),
+    _owner_recipient_probe(
+        probe_id="notification_owner_recipient_events.direct_insert_refused",
+        guard_name="notification_owner_recipient_events_definer_only",
+        setup_sql="    SET LOCAL ROLE service_role;",
+        op_sql=("    INSERT INTO public.notification_owner_recipient_events (recipient_id, evento, ator)\n"
+                "    VALUES (gen_random_uuid(), 'adicionado', gen_random_uuid());"),
+        fragment="permission denied",
+        what="service_role inserting a forged owner-recipient event",
+        rationale=(
+            "service_role holds SELECT only on the events; only the SECURITY DEFINER trigger function writes, "
+            "so every event comes from a real change and cannot be forged by any product container."
+        ),
     ),
 )
 

@@ -1,8 +1,9 @@
 """Quem recebe os avisos do dono — CRUD over core `public.notification_owner_recipients` (migration 118).
 
-The numbers are what the seed `notify_owner` sends to over the NoctusAI line. Every write stamps `alterado_por`
-(the admin's user id); a DB trigger appends the matching `notification_owner_recipient_events` row in the same
-transaction (adicionado / ativado / desativado / removido). Phone numbers are shown to the admin and stored, but
+The numbers are what the seed `notify_owner` sends to over the NoctusAI line. Every write is attributed to the admin
+(`alterado_por` on insert/update, the `remover_destinatario_dono` RPC for removal); a SECURITY DEFINER trigger appends
+the matching `notification_owner_recipient_events` row in the same transaction (adicionado / ativado / desativado /
+renomeado / removido). The number is immutable. Phone numbers are shown to the admin and stored, but
 never logged.
 """
 from __future__ import annotations
@@ -29,6 +30,10 @@ class DuplicateNumber(ValueError):
     """The number is already a recipient."""
 
 
+class ActorRequired(ValueError):
+    """Every write is attributed to an admin (the DB refuses an event with no actor)."""
+
+
 class RecipientNotFound(LookupError):
     """No recipient with that id."""
 
@@ -42,7 +47,14 @@ def list_recipients(db: Any) -> list[dict]:
     return [_public(r) for r in rows]
 
 
+def _need_actor(user_id: Optional[str]) -> str:
+    if not user_id:
+        raise ActorRequired("ator_desconhecido")
+    return user_id
+
+
 def add_recipient(db: Any, *, numero: str, nome: Optional[str], user_id: Optional[str]) -> dict:
+    user_id = _need_actor(user_id)
     canonical = normalize_phone(numero)
     if not canonical:
         raise InvalidNumber("numero_invalido")
@@ -61,7 +73,8 @@ def add_recipient(db: Any, *, numero: str, nome: Optional[str], user_id: Optiona
 
 
 def update_recipient(db: Any, *, recipient_id: str, patch: dict, user_id: Optional[str]) -> dict:
-    """`patch` carries only the fields the caller sent (`ativo`, `nome`)."""
+    """`patch` carries only the fields the caller sent (`ativo`, `nome`); the number is immutable."""
+    user_id = _need_actor(user_id)
     values: dict = {}
     if "ativo" in patch and patch["ativo"] is not None:
         values["ativo"] = bool(patch["ativo"])
@@ -78,11 +91,11 @@ def update_recipient(db: Any, *, recipient_id: str, patch: dict, user_id: Option
 
 
 def delete_recipient(db: Any, *, recipient_id: str, user_id: Optional[str]) -> None:
-    """Stamp the actor, then delete: the trigger names `alterado_por` on the `removido` event."""
-    found = db.table(TABLE).update({"alterado_por": user_id}).eq("id", recipient_id).execute().data or []
-    if not found:
+    """One RPC = one transaction: DELETE ... RETURNING with the actor passed to the event trigger."""
+    user_id = _need_actor(user_id)
+    deleted = db.rpc("remover_destinatario_dono", {"p_id": recipient_id, "p_ator": user_id}).execute().data
+    if not deleted:
         raise RecipientNotFound(recipient_id)
-    db.table(TABLE).delete().eq("id", recipient_id).execute()
 
 
 def owner_line_status() -> dict:
@@ -95,6 +108,6 @@ def owner_line_status() -> dict:
 
 
 __all__ = [
-    "DuplicateNumber", "InvalidNumber", "RecipientNotFound", "add_recipient", "delete_recipient",
+    "ActorRequired", "DuplicateNumber", "InvalidNumber", "RecipientNotFound", "add_recipient", "delete_recipient",
     "list_recipients", "owner_line_status", "update_recipient",
 ]
