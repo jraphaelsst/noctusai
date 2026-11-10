@@ -71,6 +71,7 @@ _FEEDBACK_FRONTMATTER_NAME = re.compile(
 _KB_ANCHOR_RE = re.compile(r'KB §|`KB §|KNOWLEDGE-BASE/CONTEXT/')
 _MEMORY_INDEX_LINK_RE = re.compile(r'\[([^\]]+)\]\((feedback_[^)]+\.md)\)')
 _MEMORY_FILE_RE = re.compile(r'^feedback_[a-z0-9_]+\.md$')
+_MEMORY_TOPIC_LINK_RE = re.compile(r'\]\((MEMORY-[A-Za-z0-9_-]+\.md)\)')
 
 
 def _read_memory_index_links(memory_md: Path) -> dict[str, str]:
@@ -82,6 +83,27 @@ def _read_memory_index_links(memory_md: Path) -> dict[str, str]:
         match.group(2): match.group(1)
         for match in _MEMORY_INDEX_LINK_RE.finditer(content)
     }
+
+
+def _read_topic_router(memory_md: Path) -> tuple[dict[str, str], list[str]]:
+    """Follow the topic router: `MEMORY.md` links `MEMORY-<topic>.md` files that hold
+    the per-memory pointers (KB § PATTERNS/common/memory-index-topic-split.md).
+
+    Returns ({filename: title} across MEMORY.md and every linked topic file,
+    [topic filenames the router links but that do not exist]).
+    """
+    links = _read_memory_index_links(memory_md)
+    missing: list[str] = []
+    if not memory_md.exists():
+        return links, missing
+    content = memory_md.read_text(encoding="utf-8")
+    for topic_name in dict.fromkeys(_MEMORY_TOPIC_LINK_RE.findall(content)):
+        topic_path = memory_md.parent / topic_name
+        if not topic_path.is_file():
+            missing.append(topic_name)
+            continue
+        links.update(_read_memory_index_links(topic_path))
+    return links, missing
 
 
 def _list_memory_files(memory_dir: Path) -> list[Path]:
@@ -220,8 +242,17 @@ def check_three_way_sync(
             "stats": {},
         }
     claude_content = claude_md_path.read_text(encoding="utf-8")
-    index_links = _read_memory_index_links(memory_md)
+    index_links, missing_topics = _read_topic_router(memory_md)
     memory_files = _list_memory_files(memory_dir)
+    for topic_name in missing_topics:
+        issues.append({
+            "severity": "high",
+            "file": f"~/.claude/.../{topic_name}",
+            "issue": (
+                f"`MEMORY.md` routes to topic file `{topic_name}`, which does not exist. "
+                f"Create it or drop the router row."
+            ),
+        })
 
     in_index = 0
     with_kb_anchor = 0
