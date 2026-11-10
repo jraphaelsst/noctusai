@@ -103,6 +103,11 @@ _RELEASE_GATED = {"bless", "promote", "backmerge"}
 OUTCOMES = ("enqueued", "landed", "ejected", "deployed", "withdrawn", "needs_resync")
 NEEDS_INFO_DEFAULT_MIN = 30
 _ADVANCED = {"enqueued", "landed", "deployed"}
+#: a request is CLOSED once landed, deployed or withdrawn; every other status (queued_for_steward, and the outcomes a
+#: delivery can be left at - enqueued, ejected, needs_resync) is OPEN and may already be in origin/dev. Derived from
+#: OUTCOMES, never hand-listed: only the closed set is named (2026-11-10, rows stuck at `enqueued`/`ejected`).
+_CLOSED = {"landed", "deployed", "withdrawn"}
+_OPEN_STATUSES = {"queued_for_steward", *OUTCOMES} - _CLOSED
 
 
 # -- time / ids -------------------------------------------------------------
@@ -816,8 +821,11 @@ class StewardStore:
 
     def inbox(self, include_done: bool = False) -> dict[str, Any]:
         rows = list(self.requests().values())
-        queued = sorted((r for r in rows if r["status"] == "queued_for_steward"), key=lambda r: r["requested_at"])
-        pending, already_landed, unresolvable, uncertain = self._partition(queued)
+        open_rows = sorted((r for r in rows if r["status"] in _OPEN_STATUSES), key=lambda r: r["requested_at"])
+        todo, already_landed, unresolvable, uncertain = self._partition(open_rows)
+        # only never-enqueued requests drain; an `enqueued`/`ejected` row not yet in dev is the queue's, not the inbox's
+        pending = [r for r in todo if r["status"] == "queued_for_steward"]
+        unresolvable = [r for r in unresolvable if r["status"] == "queued_for_steward"]
         shown = sorted(rows, key=lambda r: r["requested_at"]) if include_done else pending
         grouped: dict[str, list[str]] = {}
         for r in shown:
@@ -870,8 +878,8 @@ class StewardStore:
             _cur, err = self._require_holder(session_id, "reconcile")
         if err:
             return err
-        queued = [r for r in self.requests().values() if r["status"] == "queued_for_steward"]
-        _todo, landed, _unres, uncertain = self._partition(sorted(queued, key=lambda r: r["requested_at"]))
+        open_rows = [r for r in self.requests().values() if r["status"] in _OPEN_STATUSES]
+        _todo, landed, _unres, uncertain = self._partition(sorted(open_rows, key=lambda r: r["requested_at"]))
         slugs = [r["slug"] for r in landed]
         if not confirm:
             return {"ok": True, "status": "planned", "would_ack": slugs,
@@ -1167,14 +1175,16 @@ class StewardStore:
         lease, state = self.holder()
         reqs = list(self.requests().values())
         queued = [r for r in reqs if r["status"] == "queued_for_steward"]
-        _todo, landed, unres, unsure = self._partition(queued)
+        _todo, landed, unres, unsure = self._partition([r for r in reqs if r["status"] in _OPEN_STATUSES])
+        unres = [r for r in unres if r["status"] == "queued_for_steward"]
         roles = self.roles()
         return {
             "ok": True, "status": "status", "state": state, "steward": self.public_holder(),
             "i_am_steward": bool(lease and state == "live" and session_id and lease.get("session_id") == session_id),
             "session_id": session_id, "ttl_default_s": self.default_ttl_s,
             "roles": roles["roles"], "stale_roles": roles["stale_roles"],
-            "outbox": {"pending": len(queued) - len(landed), "already_landed": len(landed),
+            "outbox": {"pending": len(queued) - sum(1 for r in landed if r["status"] == "queued_for_steward"),
+                       "already_landed": len(landed),
                        "unresolvable": len(unres), "uncertain": len(unsure),
                        "enqueued": sum(1 for r in reqs if r["status"] == "enqueued")},
             "mine": self.mine(session_id)["requests"],
@@ -1493,7 +1503,21 @@ DERIVED_ARTIFACTS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+def _git_toplevel(cwd: str | Path | None) -> str | None:
+    """The repository toplevel for `cwd` (None = the process cwd), or None outside a repository. Path arguments to
+    git (`ls-tree <tree> <dir>/`, `archive`) are cwd-RELATIVE: from a subdirectory they silently match nothing or
+    only that subdirectory, so every deliverable git call runs here (2026-11-10, the MCP fresh-subprocess cwd)."""
+    try:
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=30,
+                           check=False, cwd=str(cwd) if cwd else None)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() or None if r.returncode == 0 else None
+
+
 def _subprocess_git(base_cwd: str | Path | None = None, timeout: int = 120) -> GitFn:
+    base_cwd = _git_toplevel(base_cwd) or base_cwd
+
     def git(*args: str, cwd: str | Path | None = None) -> tuple[int, str, str]:
         try:
             r = subprocess.run(["git", *args], capture_output=True, text=True, timeout=timeout, check=False,
@@ -1601,9 +1625,16 @@ def _export_tree(head: str, tree: str, cwd: str | Path | None, timeout: int) -> 
 
     The export must be EXACTLY the tree: `export-ignore` / `export-subst` attributes make `git archive` drop or
     rewrite files, and the checks would then judge a different tree. The extracted file list is compared with
-    `git ls-tree -r <head>` (submodule entries aside); any difference is an error (UNMEASURED upstream)."""
-    arch = subprocess.Popen(["git", "archive", head], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            cwd=str(cwd) if cwd else None)
+    `git ls-tree -r <head>` (submodule entries aside); any difference is an error (UNMEASURED upstream).
+
+    Every git call runs at the repository TOPLEVEL: from a subdirectory `git archive` and `git ls-tree` both see
+    only that subdirectory, and agree with each other, so the export silently became `mcp/noctusai/` alone when the
+    MCP fresh-subprocess fallback ran from there (2026-11-10, b5's false "regenerator missing at the head")."""
+    top = _git_toplevel(cwd)
+    if not top:
+        return f"cannot resolve the repository toplevel to export {head[:9]} (cwd={cwd or os.getcwd()})"
+    cwd = top
+    arch = subprocess.Popen(["git", "archive", head], stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
     untar = subprocess.run(["tar", "-x", "-C", tree], stdin=arch.stdout, capture_output=True, timeout=timeout, check=False)
     if arch.stdout:
         arch.stdout.close()
@@ -1611,12 +1642,12 @@ def _export_tree(head: str, tree: str, cwd: str | Path | None, timeout: int) -> 
     if arch.wait() != 0 or untar.returncode != 0:
         return f"could not export {head[:9]}: {(arch_err or untar.stderr.decode('utf-8', 'replace'))[:200]}"
     ls = subprocess.run(["git", "ls-tree", "-r", "-z", "--name-only", head], capture_output=True, text=True,
-                        timeout=timeout, check=False, cwd=str(cwd) if cwd else None)
+                        timeout=timeout, check=False, cwd=cwd)
     if ls.returncode != 0:
         return f"cannot list {head[:9]} to verify the export: {ls.stderr.strip()[:120]}"
     # submodule entries (mode 160000) are directories in the export, not files
     modes = subprocess.run(["git", "ls-tree", "-r", "-z", head], capture_output=True, text=True, timeout=timeout,
-                           check=False, cwd=str(cwd) if cwd else None).stdout
+                           check=False, cwd=cwd).stdout
     submodules = {e.split("\t", 1)[1] for e in modes.split("\0") if e.startswith("160000") and "\t" in e}
     expected = {n for n in ls.stdout.split("\0") if n and n not in submodules}
     got: set[str] = set()
