@@ -1475,3 +1475,49 @@ def test_sandbox_env_points_home_into_the_throwaway_dir_and_drops_state_dirs(tmp
     assert env["HOME"] == str(tmp_path) and env["GIT_CONFIG_NOSYSTEM"] == "1"
     assert not [k for k in env if k.startswith("NOCTUS_")]
     assert Path(env["GIT_CONFIG_GLOBAL"]).read_text() == ""
+
+
+# =================================================================================================
+# 2026-11-10: the export is the WHOLE tree whatever the caller's cwd (b5's false "regenerator missing")
+# =================================================================================================
+
+@pytest.mark.parametrize("how", ["process_cwd", "cwd_arg"])
+def test_the_export_is_the_whole_tree_when_called_from_a_subdirectory(tmp_path, monkeypatch, how):
+    """`git archive` / `git ls-tree` run in a subdirectory see ONLY that subdirectory, and agree with each other, so
+    the completeness check passed while item 4 reported cli.py "missing at the head". The MCP fresh-subprocess
+    fallback runs from mcp/noctusai; the export must still be the repository's root tree."""
+    repo = tmp_path / "repo"
+    (repo / "mcp" / "noctusai").mkdir(parents=True)
+    (repo / "mcp" / "noctusai" / "cli.py").write_text("print('cli')\n")
+    (repo / "top.txt").write_text("root file\n")
+    for args in (["init", "-q", "-b", "dev"], ["config", "user.email", "t@e.st"], ["config", "user.name", "T"],
+                 ["add", "-A"], ["commit", "-q", "-m", "init"]):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+    sub = repo / "mcp" / "noctusai"
+    out = tmp_path / "export"
+    out.mkdir()
+    if how == "process_cwd":
+        monkeypatch.chdir(sub)
+        err = RS._export_tree(head, str(out), None, 60)
+    else:
+        err = RS._export_tree(head, str(out), sub, 60)
+    assert err is None, err
+    assert (out / "top.txt").is_file() and (out / "mcp" / "noctusai" / "cli.py").is_file()
+    assert not (out / "cli.py").exists()
+
+
+def test_the_deliverable_git_seam_resolves_path_arguments_from_the_toplevel(tmp_path):
+    """Item 3 lists `products/<p>/backend/migrations/` with `git ls-tree <tree> <dir>/`; from a subdirectory that
+    pathspec matches NOTHING, so a migration-number collision would pass unseen. The seam runs at the toplevel."""
+    repo = tmp_path / "repo"
+    (repo / "products" / "p" / "backend" / "migrations").mkdir(parents=True)
+    (repo / "products" / "p" / "backend" / "migrations" / "001_a.sql").write_text("select 1;\n")
+    (repo / "mcp" / "noctusai").mkdir(parents=True)
+    (repo / "mcp" / "noctusai" / "cli.py").write_text("\n")
+    for args in (["init", "-q", "-b", "dev"], ["config", "user.email", "t@e.st"], ["config", "user.name", "T"],
+                 ["add", "-A"], ["commit", "-q", "-m", "init"]):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+    git = RS._subprocess_git(repo / "mcp" / "noctusai")
+    rc, out, _ = git("ls-tree", "--name-only", "HEAD", "products/p/backend/migrations/")
+    assert rc == 0 and out.strip() == "products/p/backend/migrations/001_a.sql"

@@ -652,6 +652,30 @@ class TestReconcile:
         r = store.requests()["a"]
         assert r["status"] == "landed" and r["dev_sha"] == "dev111"
 
+    @pytest.mark.parametrize("left_at", ["enqueued", "ejected", "needs_resync"])
+    def test_reconcile_acks_rows_left_at_any_open_status(self, store, left_at):
+        """2026-11-10: rows left at `enqueued` (queue-acked, never landed-acked) or `ejected` (later landed by another
+        path) were never reconciled, because only queued_for_steward was considered; 3 of 22's rows went stale."""
+        store.landed_check = _checker({"feat/a": {"state": "landed", "dev_sha": "dev222", "method": "range_diff"}})
+        self._req(store, "a")
+        store.claim(STEWARD, name="d")
+        store.ack(STEWARD, "a", left_at, note="queue said so")
+        assert store.inbox()["pending"] == 0  # an open-but-advanced row is never re-drained
+        assert [r["slug"] for r in store.inbox()["already_landed"]] == ["a"]
+        assert store.status(PEER)["outbox"]["already_landed"] == 1
+        assert store.reconcile(STEWARD, confirm=True)["acked"] == ["a"]
+        r = store.requests()["a"]
+        assert r["status"] == "landed" and r["dev_sha"] == "dev222"
+
+    @pytest.mark.parametrize("closed", ["landed", "deployed", "withdrawn"])
+    def test_reconcile_never_touches_a_closed_row(self, store, closed):
+        store.landed_check = _checker({"feat/a": {"state": "landed", "dev_sha": "dev333"}})
+        self._req(store, "a")
+        store.claim(STEWARD, name="d")
+        store.ack(STEWARD, "a", closed, dev_sha="dev000", note="closed")
+        assert store.reconcile(STEWARD, confirm=True)["acked"] == []
+        assert store.requests()["a"]["status"] == closed
+
     def test_reconcile_is_audited(self, store):
         store.landed_check = _checker({"feat/a": {"state": "landed", "dev_sha": "d"}})
         self._req(store, "a")
