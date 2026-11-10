@@ -444,7 +444,7 @@ def test_concurrent_seats_get_unique_labels_and_no_refusal(tmp_path):
     labels = [r["anon_label"] for r in cl.read_rows(cl.session_file(tmp_path, sid)) if r["record"] == "objection"]
     assert len(labels) == n and len(set(labels)) == n
     assert cl.run("record_objection", root=tmp_path, session_id=sid, seat="lens:b", severity="note", claim="after.",
-                  model="m")["ok"]
+                  model="m", recorded_by="t")["ok"]
 
 
 class TestProductField:
@@ -452,7 +452,7 @@ class TestProductField:
 
     def _open(self, root, product, **kw):
         return cl.run("open_session", root=root, stage="build", subject_kind="plan", subject_ref="x", trigger="stage_map",
-                      mode="subagents", seats=["lens:a"], brief_sha256=SHA, product=product, **kw)
+                      mode="subagents", seats=["lens:a"], brief_sha256=SHA, product=product, **{"recorded_by": "t", **kw})
 
     def test_product_stored(self, tmp_path):
         r = self._open(tmp_path, "social-wiring")

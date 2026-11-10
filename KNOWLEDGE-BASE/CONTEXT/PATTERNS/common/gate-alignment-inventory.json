@@ -418,6 +418,15 @@
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
   },
+  "keeper:check-agent-names-resolve": {
+   "mechanism": "none (names are free text on methodology surfaces; the keeper resolves them against .claude/agents, no scaffold applies)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "agent names on methodology surfaces resolve to .claude/agents/<name>.md",
+   "new": false,
+   "declared": "2026-11-10",
+   "shadow": null
+  },
   "keeper:check-agent-prompt-text-in-code": {
    "severity": "",
    "kind": "keeper",
