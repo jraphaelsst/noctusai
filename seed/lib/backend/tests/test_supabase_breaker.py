@@ -250,14 +250,16 @@ def test_source_attribution_follows_threads_and_the_transport_counts_rest_only()
 
 def test_count_overhead_is_negligible_and_never_touches_the_network():
     b, store, alerter, clock = make_breaker()
-    n = 200_000
-    t0 = time.perf_counter()
-    for _ in range(n):
-        b.record_call("http")
-    per_call_us = (time.perf_counter() - t0) / n * 1e6
+    n, best = 40_000, None
+    for _ in range(5):  # best of 5: a loaded CI machine must not turn a scheduler hiccup into a failure
+        t0 = time.perf_counter()
+        for _ in range(n):
+            b.record_call("http")
+        per_call_us = (time.perf_counter() - t0) / n * 1e6
+        best = per_call_us if best is None else min(best, per_call_us)
     assert store.calls == 0, "counting must be in-memory: no Redis, no network per call"
-    assert per_call_us < 20, f"{per_call_us:.2f} us per counted call"
-    print(f"\nper-call overhead: {per_call_us:.2f} us")
+    assert best < 20, f"{best:.2f} us per counted call"
+    print(f"\nper-call overhead: {best:.2f} us")
 
 
 def test_scheduler_job_held_does_not_run_and_writes_no_ledger():
@@ -727,6 +729,7 @@ def test_P1_A_claim_errors_with_the_error_backoff_for_10_minutes_never_hold():
 def test_P1_1_billing_rules_free_after_work_ramp_allowance_floor_reset_and_wake_cap():
     b, store, alerter, clock = make_breaker()
     worker = _cadence_worker(b, clock, FakeJobRepository())
+    worker._last_poll_calls = 1  # the poll made one Supabase call (a claim)
     worker._bill_empty_poll(b)  # boot: free
     for _ in range(Worker.RAMP_FREE):  # the backoff ramp's allowance: sub-floor gaps, free
         clock.advance(1.0)
@@ -986,6 +989,47 @@ class StepClock:
         return self.t
 
 
+class CountingRepo(FakeJobRepository):
+    """Every claim is one Supabase REST call, and the repo counts them (F7): a fake that makes none is never billed."""
+
+    def __init__(self, breaker: Breaker) -> None:
+        super().__init__()
+        self.breaker, self.claims = breaker, 0
+
+    async def claim_next(self, *a, **kw):
+        self.claims += 1
+        self.breaker.record_call()  # what the transport does, under the Worker's alert-only claim scope
+        return await super().claim_next(*a, **kw)
+
+
+class VirtualClock:
+    """ONE clock shared by the Worker and the breaker, advanced by (faithful) sleeps."""
+
+    def __init__(self) -> None:
+        self.t = 1000.0
+
+    def __call__(self) -> float:
+        return self.t
+
+    def advance(self, s: float) -> None:
+        self.t += s
+
+
+def _virtual_sleep(clock, until=None, on_sleep=None, step=None):
+    """A faithful sleeper: the loop's idle delay really passes on the shared clock (or `step` when a producer wakes it)."""
+
+    async def sleep(delay, stop):
+        clock.advance(delay if step is None else min(delay, step))
+        if on_sleep is not None:
+            await on_sleep()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        if until is not None and clock() >= until:
+            stop.set()
+
+    return sleep
+
+
 def _real_worker(b, repo, clock, **kw):
     # the DEFAULT idle sleep (no injected sleeper). The real sleep is shortened to 1 ms; the clock models 1 s per poll.
     return Worker(repo, worker_id="w", handlers={"t": _noop}, breaker=b, poll_interval_seconds=0.001,
@@ -994,7 +1038,7 @@ def _real_worker(b, repo, clock, **kw):
 
 def test_P1_1_a_real_worker_with_poll_equal_max_idle_of_1s_and_the_default_sleep_TRIPS():
     b, store, alerter, clock = make_breaker()
-    worker = _real_worker(b, FakeJobRepository(), StepClock())
+    worker = _real_worker(b, CountingRepo(b), StepClock())
 
     async def drive():
         stop = asyncio.Event()
@@ -1015,7 +1059,7 @@ def test_P1_1_a_producer_that_keeps_waking_an_empty_loop_cannot_launder_it():
     from noctusai_lib.domain.jobs import wake
 
     b, store, alerter, clock = make_breaker()
-    worker = _real_worker(b, FakeJobRepository(), StepClock())
+    worker = _real_worker(b, CountingRepo(b), StepClock())
 
     async def drive():
         stop = asyncio.Event()
@@ -1164,3 +1208,252 @@ def test_P3_5_the_audit_lookback_scans_the_whole_capped_list_filtered_by_key():
     del store.data["noctus:breaker:prod-x:worker:t"]
     b.check_sync("worker:t", force=True)  # the matching row is 500 rows deep: the old 30-row window would miss it
     assert b.hold_reason("worker:t") is None
+
+
+# --- round 8: REAL deploy configuration, one shared virtual clock, a repo that counts its calls --------------------------
+
+
+def _deploy_world(monkeypatch, **cfg_kw):
+    monkeypatch.setenv("APP_ENV", "production")
+    clock = VirtualClock()
+    store, alerter = InMemoryBreakerStore(), RecordingAlerter()
+    b = Breaker(slug="prod-x", store=store, alerter=alerter, clock=clock, wall=clock, sync_io=True, **cfg_kw)
+    return b, store, alerter, clock
+
+
+def test_F2_a_gate_closed_worker_with_enqueues_every_2s_for_an_hour_is_never_held(monkeypatch):
+    b, store, alerter, clock = _deploy_world(monkeypatch)
+    repo = CountingRepo(b)
+
+    async def gate():  # a paused Worker: the claim gate answers False, no claim is attempted
+        return False
+
+    async def producer():
+        await repo.enqueue(type="t", payload={})  # an enqueue every 2 s wakes the (paused) Worker
+
+    worker = Worker(repo, worker_id="w", handlers={"t": _noop}, breaker=b, claim_gate=gate, poll_interval_seconds=1.0,
+                    held_poll_seconds=0.01, clock=clock,
+                    idle_sleep=_virtual_sleep(clock, until=1000.0 + 3600, on_sleep=producer, step=2.0))
+
+    async def drive():
+        stop = asyncio.Event()
+        await asyncio.wait_for(worker.run_forever(stop_event=stop), 60)
+
+    asyncio.run(drive())
+    assert b.hold_reason("worker:t") is None, "a PAUSED worker must never trip the breaker under ordinary enqueue load"
+    assert repo.claims == 0 and b.count("worker:t", 3600) == 0, "no claim was attempted, so nothing was billed"
+
+
+def test_F2_a_real_deploy_worker_with_idle_backoff_multiplier_1_trips(monkeypatch):
+    b, store, alerter, clock = _deploy_world(monkeypatch)
+    repo = CountingRepo(b)
+    worker = Worker(repo, worker_id="w", handlers={"t": _noop}, breaker=b, poll_interval_seconds=1.0,
+                    idle_backoff_multiplier=1.0, held_poll_seconds=0.01, clock=clock,
+                    idle_sleep=_virtual_sleep(clock, until=1000.0 + 3600))
+
+    async def drive():
+        stop = asyncio.Event()
+        task = asyncio.create_task(worker.run_forever(stop_event=stop))
+        for _ in range(500):
+            if b.hold_reason("worker:t") is not None:
+                break
+            await asyncio.sleep(0.02)
+        stop.set()
+        await asyncio.wait_for(task, 5)
+
+    asyncio.run(drive())
+    assert b.hold_reason("worker:t") is not None, "no backoff (multiplier 1.0) polls every 1 s: MUST be held"
+    # on ONE shared clock, exactly 1 billed poll/s is 300 per 5 min (not > 300): the hourly rule (2,000) trips it at ~33 min
+    assert 2000 < repo.claims < 2100, f"{repo.claims} claims before the hold"
+
+
+def test_F2_deploy_clamp_makes_a_max_idle_of_1s_a_ramp_to_the_floor_and_run_forever_is_never_billed(monkeypatch):
+    b, store, alerter, clock = _deploy_world(monkeypatch)
+    repo = CountingRepo(b)
+    worker = Worker(repo, worker_id="w", handlers={"t": _noop}, breaker=b, poll_interval_seconds=1.0,
+                    max_idle_interval_seconds=1.0, held_poll_seconds=0.01, clock=clock,
+                    idle_sleep=_virtual_sleep(clock, until=1000.0 + 3600))
+    assert worker._max_idle_interval == 10.0, "a max_idle below the floor is clamped in a deploy context"
+
+    async def drive():
+        stop = asyncio.Event()
+        await asyncio.wait_for(worker.run_forever(stop_event=stop), 60)
+
+    asyncio.run(drive())
+    assert b.hold_reason("worker:t") is None and b.count("worker:t", 3600) == 0
+    assert 300 < repo.claims < 400, f"{repo.claims} polls in an hour at the clamped 10 s idle"
+
+
+def test_F2_a_wake_restarts_the_ramp_allowance():
+    b, store, alerter, clock = make_breaker()
+    worker = _cadence_worker(b, clock, FakeJobRepository())
+    worker._last_poll_calls = 1
+    worker._bill_empty_poll(b)
+    for _ in range(Worker.RAMP_FREE):
+        clock.advance(1.0)
+        worker._bill_empty_poll(b)
+    assert worker._ramp == Worker.RAMP_FREE
+    worker._ramp = 0  # what run_forever does when a wake resets `delay`
+    clock.advance(1.0)
+    worker._bill_empty_poll(b)
+    assert b.count("worker:t", 3600) == 0
+
+
+def test_F1_the_idle_poll_floor_is_finite_bounded_and_clamped_in_a_deploy_context(monkeypatch):
+    for bad in ("nan", "inf", "-inf"):
+        cfg = BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": bad})
+        assert cfg.min_idle_poll_s == 10.0 and any("finite" in w for w in cfg.warnings), bad
+    assert BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": "9999"}).min_idle_poll_s == 60.0
+    monkeypatch.setenv("APP_ENV", "production")
+    deploy = BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": "1"})
+    assert deploy.min_idle_poll_s == 10.0 and any("below the default" in w and "clamped" in w for w in deploy.warnings)
+    monkeypatch.delenv("APP_ENV")
+    dev = BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": "1"})
+    assert dev.min_idle_poll_s == 1.0 and any("below the default" in w for w in dev.warnings)
+
+
+def test_F1_floor_1_in_a_deploy_cannot_let_a_1s_loop_escape(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    cfg = BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": "1"})
+    clock = VirtualClock()
+    b = Breaker(slug="p", store=InMemoryBreakerStore(), alerter=RecordingAlerter(), clock=clock, wall=clock,
+                sync_io=True, config=cfg)
+    repo = CountingRepo(b)
+    worker = Worker(repo, worker_id="w", handlers={"t": _noop}, breaker=b, poll_interval_seconds=1.0,
+                    idle_backoff_multiplier=1.0, clock=clock, held_poll_seconds=0.01,
+                    idle_sleep=_virtual_sleep(clock, until=1000.0 + 3600))
+
+    async def drive():
+        stop = asyncio.Event()
+        task = asyncio.create_task(worker.run_forever(stop_event=stop))
+        for _ in range(500):
+            if b.hold_reason("worker:t") is not None:
+                break
+            await asyncio.sleep(0.02)
+        stop.set()
+        await asyncio.wait_for(task, 5)
+
+    asyncio.run(drive())
+    assert b.hold_reason("worker:t") is not None
+
+
+def test_F8_the_error_backoff_sleep_ignores_the_job_waker():
+    from noctusai_lib.domain.jobs import wake
+
+    b, store, alerter, clock = make_breaker()
+
+    class Down(FakeJobRepository):
+        claims = 0
+
+        async def claim_next(self, *a, **kw):
+            Down.claims += 1
+            raise ConnectionError("outage")
+
+    worker = Worker(Down(), worker_id="w", handlers={"t": _noop}, breaker=b, poll_interval_seconds=0.2,
+                    max_idle_interval_seconds=0.2, held_poll_seconds=0.01, clock=clock)
+
+    async def drive():
+        stop = asyncio.Event()
+        task = asyncio.create_task(worker.run_forever(stop_event=stop))
+
+        async def spam():  # a producer waking the job waker continuously during the outage
+            while not stop.is_set():
+                wake.notify_enqueued("t")
+                await asyncio.sleep(0.001)
+
+        sp = asyncio.create_task(spam())
+        await asyncio.sleep(0.6)
+        stop.set()
+        await asyncio.wait_for(task, 3)
+        await sp
+
+    asyncio.run(drive())
+    assert Down.claims <= 5, f"{Down.claims} claims in 0.6 s: the waker cut the error backoff short"
+
+
+def test_F9_reschedule_later_is_clamped_to_the_floor():
+    from datetime import datetime, timezone
+
+    from noctusai_lib.domain.jobs.repo import RescheduleLater
+
+    b, store, alerter, clock = make_breaker()
+    repo = FakeJobRepository()
+
+    async def hot(job):
+        raise RescheduleLater(0.0)
+
+    w = Worker(repo, worker_id="w", handlers={"t": hot}, breaker=b, idle_sleep=_no_sleep)
+
+    async def drive():
+        await repo.enqueue(type="t", payload={})
+        await w.run_once()
+
+    asyncio.run(drive())
+    (job,) = repo._jobs.values()
+    delta = (job.scheduled_for - datetime.now(timezone.utc)).total_seconds()
+    assert delta > 8.0, f"rescheduled only {delta:.1f}s ahead: a handler could spin the claim loop"
+
+
+def test_F3_the_persisted_key_read_in_rearm_is_load_bearing_an_error_raises_before_audit_and_del():
+    class NoGet(InMemoryBreakerStore):
+        broken = False
+
+        def get(self, key):
+            if NoGet.broken:
+                raise ConnectionError("redis read failed")
+            return super().get(key)
+
+    store, alerter, clock = NoGet(), RecordingAlerter(), Clock()
+    b = Breaker(slug="p", store=store, alerter=alerter, clock=clock, wall=clock, sync_io=True)
+    b.trip("worker:t", reason="runaway")
+    NoGet.broken = True
+    with pytest.raises(ConnectionError):
+        b.rearm("worker:t", by="ana", reason="fixed")
+    NoGet.broken = False
+    assert "noctus:breaker:p:worker:t" in store.data and not store.audits.get("noctus:breaker:p:audit")
+    assert b.hold_reason("worker:t") is not None
+
+
+def test_F4_a_failed_del_after_the_row_writes_a_compensating_rearm_aborted_and_the_newest_row_wins():
+    class NoDel(InMemoryBreakerStore):
+        def delete(self, key):
+            raise ConnectionError("DEL failed")
+
+    store, alerter, clock = NoDel(), RecordingAlerter(), Clock()
+    mk = lambda: Breaker(slug="p", store=store, alerter=alerter, clock=clock, wall=clock, sync_io=True, fleet_ttl_s=1.0)
+    a, peer = mk(), mk()
+    a.trip("worker:t", reason="runaway")
+    with pytest.raises(ConnectionError):
+        a.rearm("worker:t", by="ana", reason="fixed")
+    ops = [json.loads(r)["op"] for r in store.audits["noctus:breaker:p:audit"]]
+    assert ops == ["rearm", "rearm_aborted"]
+    # a peer holds the same trip; its key vanishes (eviction): the NEWEST row for key+nonce says aborted -> no release
+    peer._trips["worker:t"] = a._trips["worker:t"]
+    clock.advance(30)
+    del store.data["noctus:breaker:p:worker:t"]
+    peer.check_sync("worker:t", force=True)
+    assert peer.hold_reason("worker:t") is not None and any("VANISHED" in s for s, _ in alerter.sent)
+
+
+def test_F5_a_transient_degraded_state_clears_on_the_first_good_refresh_a_config_refusal_does_not():
+    store, alerter, clock = InMemoryBreakerStore(), RecordingAlerter(), Clock()
+    b = Breaker(slug="p", store=store, alerter=alerter, clock=clock, wall=clock, sync_io=True, fleet_ttl_s=0.0)
+    store.down = True
+    assert b.probe() is False and b.degraded
+    store.down = False
+    b.refresh()
+    assert b.degraded is None, "unreachable-at-boot is transient: the first successful refresh clears it"
+    b.set_degraded("the breaker Redis refused this service's credentials/ACL (config)")
+    b.refresh()
+    assert b.degraded is not None, "a configuration refusal stays sticky"
+
+
+def test_F10_a_budget_override_looser_than_the_default_is_alerted():
+    cfg = BreakerConfig.from_env({"NOCTUS_BREAKER_BUDGETS": json.dumps({"worker:a": [[3600, 5000]],
+                                                                         "worker:tight": [[3600, 100]]})})
+    assert set(cfg.overrides) == {"worker:a", "worker:tight"}
+    assert any("worker:a" in w and "LOOSER" in w for w in cfg.warnings)
+    assert not any("worker:tight" in w for w in cfg.warnings)
+    b, store, alerter, clock = make_breaker(config=cfg)
+    b.announce_config_warnings()
+    assert any("LOOSER" in body for _, body in alerter.sent)

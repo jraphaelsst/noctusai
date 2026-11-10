@@ -35,9 +35,13 @@ On for every product by construction (seed); no per-product code.
   Free: the first empty poll after a processed job; the first 6 sub-floor polls of a backoff ramp (1,2,4,8 s...); wake-followed
   empty polls, at most 30 per 5 min (a producer that keeps waking an empty loop cannot launder it); failed claims while the
   loop applies its error backoff (1 s doubling to the idle cap; the loop survives). Idle at >= the floor is never billed.
-  What is TRUE: the loop is held when its billed empty polls exceed 300 / 5 min or 2,000 / h — i.e. a loop that keeps polling
-  faster than the floor for long, which at a steady gap g trips when g is below ~1.8 s (a steady 5 s idle poll is NOT held; it
-  is within the alert-only rules). Job arrivals (1-2 jobs/s) are free: each poll after work claims a job or is the free first
+  What is TRUE: the loop is held when its billed empty polls exceed 300 / 5 min or 2,000 / h. On ONE clock, a loop polling
+  faster than once per second trips inside 5 minutes; exactly once per second is 300 / 5 min (not above it), so the hourly rule
+  trips it after ~33 min (2,001 polls); a steady gap above ~1.8 s is NOT held (it falls under the alert-only rules).
+  Billing uses the polls' REAL call count (claim + gate Supabase calls), never a floor of 1, and a poll that attempted NO claim
+  (claim gate closed: a paused Worker) is never billed, whatever wakes it. A wake restarts the ramp allowance. The floor itself
+  is bounded: finite, at most 60 s, and below the default (10 s) it is alerted and, in a deploy context, clamped to the default.
+  The error-backoff sleep ignores the job waker; `RescheduleLater` delays are clamped to at least the floor. Job arrivals (1-2 jobs/s) are free: each poll after work claims a job or is the free first
   empty. In a DEPLOY context a `max_idle_interval_seconds` below the floor is clamped to it with a loud warning (no product sets
   `max_idle_interval_seconds` today: all use the default 30 s). A poll that claims a job bills nothing; **there is no credit
   scheme**. (b) JOB: everything one job does counts toward its own cap (`job_call_cap`, per-type
@@ -52,7 +56,7 @@ On for every product by construction (seed); no per-product code.
   not a call count; ~620k/day exhausted it). ~620k/day spread over six loops each under its own threshold raises exactly
   this alert. It only ALERTS: the FLEET-WIDE aggregate trip is the off-host watchdog's job (feat/supabase-request-telemetry).
   Opt-in `NOCTUS_BREAKER_FLEET_HOLDS_BG=1` lets the fleet key also refuse `bg:*` (default off).
-- **Env cannot loosen the nets.** `NOCTUS_SUPABASE_DAILY_QUOTA` above the default raises a config alert and is clamped to 2x the default; overrides of `*`, `http`, `startup`, `unattributed` are ignored (alerted). A per-source rule is a RATE (`max_calls x 3600 / window`) and may not exceed the ceiling DERIVED from the quota (quota x share / 24 per hour, ~10,416 by default) — rejected otherwise; `NOCTUS_BREAKER_BUDGETS`
+- **Env cannot loosen the nets.** A budget override looser than the default rules is accepted but alerted. `NOCTUS_SUPABASE_DAILY_QUOTA` above the default raises a config alert and is clamped to 2x the default; overrides of `*`, `http`, `startup`, `unattributed` are ignored (alerted). A per-source rule is a RATE (`max_calls x 3600 / window`) and may not exceed the ceiling DERIVED from the quota (quota x share / 24 per hour, ~10,416 by default) — rejected otherwise; `NOCTUS_BREAKER_BUDGETS`
   (JSON per source) can tune but never disable or exceed it. The hourly 2,000 on a holdable source is the default floor.
 - **Fleet key** `noctus:breaker:fleet` holds every Worker loop and scheduler tick of every product. It does NOT stop request
   handling, boot, or jobs already running (their per-job cap still applies). Read from Redis at most every 10 s per process
@@ -68,6 +72,8 @@ retried. Redis down: the trip still stops the source in memory and alerts; readi
 alert and `/api/health` reports `breaker_degraded`.
 
 **Re-arm order.** The `rearm` audit row is appended FIRST and is mandatory: if it cannot be written the key is NOT deleted and the route answers 502. Its nonce is the PERSISTED key's `tripped_at` (read first), so a serving process that holds the trip only remotely can re-arm one a peer holds locally. Every release by this path is announced (event + alert with claimed_by/host/pid/at). The audit row and the RO `rearm:*` are SIGNALS, **not a security boundary** (the product's own Redis identity can write its audit list). Route re-arms are mutating requests, so they reach core's append-only `audit_logs` via the `AuditMiddleware`; a dedicated EOA row is `NOC-REMEDIATE[breaker-rearm-eoa]` (with `breaker-event-table`). The audit lookback scans the whole capped list (1,000), filtered by key.
+
+**Re-arm is not atomic.** The persisted-key GET is load-bearing (an error raises before the audit row or the DEL); if the DEL fails after the row, a compensating `rearm_aborted` row is appended and the lookback honours the NEWEST row for that key+nonce. `NOC-REMEDIATE[breaker-rearm-cas]`: a compare-and-delete needs WATCH/MULTI/EXEC in the product ACL (feat/redis-acl-lockdown) and then here (feat/supabase-breaker).
 
 **A persisted hold is never silently released.** If the key vanishes (flush, eviction) the product rewrites it and alerts
 CRITICAL; it releases only on a matching re-arm marker `noctus:breaker:<slug>:rearm:<source>` (TTL 1 day, never deleted by a
@@ -95,9 +101,10 @@ The breaker lives on its own Redis, `noctus-breaker-redis` (breaker keys ONLY, `
   cutover is per service and gradual; after the ACL cutover the app user has no breaker keys and every write is NOPERM);
   outside a deploy it keeps the in-memory Fake. A deployed process whose store is not Redis, OR is on the app-Redis fallback,
   sets `breaker_degraded` (also on a Redis refusal of this service's credentials/ACL: NoPermission/Authentication is
-  configuration, not an outage), and a boot probe (GET of the fleet key) degrades it at startup. The client resolves ONLY the
+  configuration, not an outage), and a boot probe (GET of the fleet key) degrades it at startup — an unreachable-at-boot state is TRANSIENT and clears on the first successful refresh, a configuration refusal stays sticky. The client resolves ONLY the
   breaker credentials (never `REDIS_USERNAME`/`REDIS_PASSWORD`) and refuses to connect unauthenticated. MCP `status` lists the
-  services whose container has no `NOCTUS_BREAKER_REDIS_URL` (`on_app_redis_fallback`).
+  services whose container has no `NOCTUS_BREAKER_REDIS_URL` (`on_app_redis_fallback`), those with the URL but no USERNAME/PASSWORD
+  (`breaker_credentials_incomplete`) and the ones it could not inspect (`unverified_services`: never assumed healthy).
 - **Product grant (pinned by a test).** RW `noctus:breaker:<slug>:{worker:*,scheduler:*,gate:*,audit,index}`; READ-ONLY
   `noctus:breaker:<slug>:rearm:*` and `noctus:breaker:fleet`. Commands: GET MGET SET DEL EXISTS TTL PTTL SADD SREM SMEMBERS
   SISMEMBER SCARD RPUSH LTRIM LRANGE LLEN PING — no MULTI/EXEC, SCAN, KEYS or scripting (the audit cap is a non-transactional

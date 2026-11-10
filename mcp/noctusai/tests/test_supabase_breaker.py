@@ -313,23 +313,31 @@ def test_P3_4_auth_errors_are_read_from_rc_and_stderr():
             raise AssertionError(marker)
 
 
-def test_P2_2_status_lists_the_services_running_the_breaker_on_the_app_redis_fallback():
+def test_P2_2_status_lists_services_on_fallback_with_incomplete_credentials_and_unverified():
     ops = FakeRedisOps()
-    ops.fallback = ["core", "social-wiring"]
+    ops.fallback, ops.partial, ops.unverified = ["core", "social-wiring"], ["agents"], ["monica"]
     out = mod._default_executor(action="status", source="", product="social-wiring", reason="", by="", confirm=False,
                                 ssh_host="h", ops=ops)
     assert out["on_app_redis_fallback"] == ["social-wiring"]
+    ops.fallback = []
+    out = mod._default_executor(action="status", source="", product="agents", reason="", by="", confirm=False,
+                                ssh_host="h", ops=ops)
+    assert out["breaker_credentials_incomplete"] == ["agents"] and out["unverified_services"] == []
+    out = mod._default_executor(action="status", source="", product="monica", reason="", by="", confirm=False,
+                                ssh_host="h", ops=ops)
+    assert out["unverified_services"] == ["monica"], "a missing container is UNVERIFIED, never assumed healthy"
 
 
-def test_P2_2_vps_fallback_services_is_one_ssh_and_reports_services_without_the_breaker_url():
+def test_F6_vps_classifies_fallback_partial_credentials_and_unverified_in_one_ssh():
     sent: list[str] = []
 
     def run(host, cmd):
         sent.append(cmd)
-        return (0, "social-wiring\n", "")
+        return (0, "FALLBACK:core\nPARTIAL:agents\nUNVERIFIED:monica\nbogus line\nFALLBACK:bad slug\n", "")
 
-    out = VpsRedisOps("h", runner=run).fallback_services(["core", "social-wiring", "bad slug;rm"])
-    assert out == ["social-wiring"] and len(sent) == 1
-    assert "NOCTUS_BREAKER_REDIS_URL" in sent[0] and "bad slug" not in sent[0], "slugs are validated, never interpolated raw"
+    out = VpsRedisOps("h", runner=run).fallback_services(["core", "agents", "monica", "bad slug;rm"])
+    assert out == {"fallback": ["core"], "partial_credentials": ["agents"], "unverified": ["monica"]}
+    assert len(sent) == 1 and "NOCTUS_BREAKER_REDIS_URL" in sent[0] and "NOCTUS_BREAKER_REDIS_USERNAME" in sent[0] \
+        and "NOCTUS_BREAKER_REDIS_PASSWORD" in sent[0] and "bad slug" not in sent[0]
     bad = VpsRedisOps("h", runner=lambda h, c: (255, "", "ssh down"))
     assert bad.fallback_services(["core"]) is None and bad.warnings

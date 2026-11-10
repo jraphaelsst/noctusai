@@ -74,9 +74,13 @@ class FakeRedisOps:
         self.ttls: dict[str, int | None] = {}
         self.warnings: list[str] = []
         self.fallback: list[str] = []  # services on the app-Redis fallback (tests)
+        self.partial: list[str] = []
+        self.unverified: list[str] = []
 
-    def fallback_services(self, slugs: list[str]) -> list[str] | None:
-        return [s for s in self.fallback if s in slugs]
+    def fallback_services(self, slugs: list[str]) -> dict[str, list[str]] | None:
+        return {"fallback": [s for s in self.fallback if s in slugs],
+                "partial_credentials": [s for s in self.partial if s in slugs],
+                "unverified": [s for s in self.unverified if s in slugs]}
 
     def smembers(self, key: str) -> list[str]:
         prefix = key.removesuffix("index")
@@ -197,45 +201,33 @@ class VpsRedisOps:
     def lrange(self, key: str, count: int) -> list[str]:
         return [str(m) for m in (self._json("lrange", key, str(-count), "-1") or [])]
 
-    def fallback_services(self, slugs: list[str]) -> list[str] | None:
-        """Live services whose container has NO `NOCTUS_BREAKER_REDIS_URL`: they run the breaker on the APP Redis
-        (loud `breaker_degraded` in their /api/health). One ssh; None when it cannot be read (a warning is kept)."""
+    def fallback_services(self, slugs: list[str]) -> dict[str, list[str]] | None:
+        """One ssh: for each live service container (`noctus-<slug>`) classify its breaker Redis configuration:
+        ``fallback`` (no `NOCTUS_BREAKER_REDIS_URL`: breaker on the APP Redis), ``partial_credentials`` (URL set but the
+        USERNAME or PASSWORD missing: the client refuses to connect unauthenticated and runs degraded), ``unverified``
+        (container missing / not inspectable: NOT assumed healthy). None when the ssh itself fails (a warning is kept)."""
         names = " ".join(shlex.quote(s) for s in slugs if _PRODUCT_RE.match(s))
         if not names:
-            return []
-        script = (f"for s in {names}; do c=noctus-$s; docker inspect \"$c\" >/dev/null 2>&1 || continue; "
-                  "docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \"$c\" "
-                  "| grep -q '^NOCTUS_BREAKER_REDIS_URL=.' || echo \"$s\"; done")
+            return {"fallback": [], "partial_credentials": [], "unverified": []}
+        script = (
+            f"for s in {names}; do c=noctus-$s; "
+            "if ! env=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \"$c\" 2>/dev/null); then "
+            "echo \"UNVERIFIED:$s\"; continue; fi; "
+            "if ! printf '%s\\n' \"$env\" | grep -q '^NOCTUS_BREAKER_REDIS_URL=.'; then echo \"FALLBACK:$s\"; "
+            "elif ! printf '%s\\n' \"$env\" | grep -q '^NOCTUS_BREAKER_REDIS_USERNAME=.' "
+            "|| ! printf '%s\\n' \"$env\" | grep -q '^NOCTUS_BREAKER_REDIS_PASSWORD=.'; then echo \"PARTIAL:$s\"; fi; done"
+        )
         rc, out, err = self._run(script)
         if rc != 0:
-            self.warnings.append(f"could not list the services on the app-Redis fallback (rc={rc}): {(err or '').strip()[:120]}")
+            self.warnings.append(f"could not classify the services' breaker Redis config (rc={rc}): {(err or '').strip()[:120]}")
             return None
-        return sorted(ln.strip() for ln in out.splitlines() if _PRODUCT_RE.match(ln.strip()))
-
-    def mget(self, keys: list[str]) -> list[str | None]:
-        """ONE ssh, ONE MGET (JSON array: nil stays distinguishable from an empty / multi-line value)."""
-        if not keys:
-            return []
-        values = self._json("mget", *keys)
-        if not isinstance(values, list) or len(values) != len(keys):
-            raise RedisOpsError("redis-cli mget returned an unexpected shape")
-        return [None if v is None else str(v) for v in values]
-
-    def set(self, key: str, value: str, ttl: int | None = None) -> None:
-        self._cli("set", key, value, *(("EX", str(ttl)) if ttl else ()))
-
-    def delete(self, key: str) -> None:
-        self._cli("del", key)
-
-    def srem(self, key: str, member: str) -> None:
-        self._cli("srem", key, member)
-
-    def append_audit(self, key: str, value: str, cap: int) -> None:
-        self._cli("rpush", key, value)
-        try:
-            self._cli("ltrim", key, str(-cap), "-1")  # capped audit list
-        except RedisOpsError as exc:  # the row IS written; a denied/failed cap must be loud, never undo a re-arm
-            self.warnings.append(f"audit cap (ltrim) not applied: {exc}")
+        result: dict[str, list[str]] = {"fallback": [], "partial_credentials": [], "unverified": []}
+        names_map = {"FALLBACK": "fallback", "PARTIAL": "partial_credentials", "UNVERIFIED": "unverified"}
+        for line in out.splitlines():
+            kind, _, slug = line.strip().partition(":")
+            if kind in names_map and _PRODUCT_RE.match(slug):
+                result[names_map[kind]].append(slug)
+        return {k: sorted(v) for k, v in result.items()}
 
 
 def _live_slugs() -> list[str]:
@@ -332,9 +324,11 @@ def _default_executor(*, action: str, source: str, product: str, reason: str, by
             values = ops.mget(keys)
             held = {k: _parse(v) for k, v in zip(keys, values) if v}
             slugs = [product] if product else _live_slugs()
-            fallback = ops.fallback_services(slugs) if hasattr(ops, "fallback_services") else None
+            cfg = ops.fallback_services(slugs) if hasattr(ops, "fallback_services") else None
             return {"action": "status", "held": held, "fleet_held": FLEET_KEY in held, "count": len(held),
-                    "on_app_redis_fallback": fallback,
+                    "on_app_redis_fallback": None if cfg is None else cfg["fallback"],
+                    "breaker_credentials_incomplete": None if cfg is None else cfg["partial_credentials"],
+                    "unverified_services": None if cfg is None else cfg["unverified"],
                     **({"warnings": list(ops.warnings)} if getattr(ops, "warnings", None) else {}),
                     "note": "per-source keys are listed from the per-product index sets (a key set by hand with "
                             "action=trip is indexed by the product when it observes it)"}

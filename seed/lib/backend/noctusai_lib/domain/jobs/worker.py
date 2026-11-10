@@ -136,6 +136,8 @@ class Worker:
         self._ramp = 0  # consecutive sub-floor empty polls since the last reset (the backoff ramp's free allowance)
         self._free_wakes: list[float] = []  # timestamps of wake-followed empty polls that were let through free
         self._last_poll_calls = 0
+        self._last_claim_attempted = True  # False when the claim gate was closed: no claim, nothing to bill
+        self._custom_idle_sleep = idle_sleep is not None
         self._held_poll = held_poll_seconds
         self._breaker_wake: asyncio.Event | None = None
         # Pause switch, consulted before EVERY claim: `False` ⇒ claim
@@ -190,9 +192,11 @@ class Worker:
         processed (regardless of success/failure), False if the queue
         was empty (or the claim gate is closed)."""
         job = None
+        self._last_claim_attempted = False
         with call_tally() as tally, source_scope("claim:" + ",".join(self._job_types)):
             try:
                 if await self.claim_allowed():
+                    self._last_claim_attempted = True
                     job = await self._repo.claim_next(
                         worker_id=self._worker_id,
                         job_types=self._job_types,
@@ -299,7 +303,7 @@ class Worker:
                         logger.exception("worker.claim_failed worker_id=%s backing off %.1fs", self._worker_id, err_delay)
                         self._poll_free = True  # the backoff IS the cadence: the next empty poll is free
                         self._last_empty_at = None
-                        await self._idle_sleep(err_delay, stop_event)
+                        await self._error_sleep(err_delay, stop_event)
                         continue
                     hold = await self._hold(breaker)
                     if hold:
@@ -312,6 +316,7 @@ class Worker:
                     await self._idle_sleep(delay, stop_event)
                     if self._waker is not None and self._waker.event.is_set():
                         delay = self._poll_interval
+                        self._ramp = 0  # the wake restarted the backoff ramp: so does its allowance
                         self._woke_before_poll = True  # woken by an enqueue: the next empty poll may be free (capped)
                     else:
                         delay = min(delay * self._idle_multiplier, self._max_idle_interval)
@@ -329,6 +334,8 @@ class Worker:
 
     def _bill_empty_poll(self, breaker: Breaker) -> None:
         """Bill this empty poll to the loop when it is below the PLATFORM floor (see `__init__`)."""
+        if not self._last_claim_attempted:
+            return  # a paused Worker (claim gate closed) attempted no claim: there is nothing to bill, whatever the wakes
         now = self._clock()
         floor = breaker._config.min_idle_poll_s
         free_after_work, self._poll_free = self._poll_free, False
@@ -348,7 +355,8 @@ class Worker:
                 return
         elif self._ramp <= self.RAMP_FREE:
             return
-        breaker.record_call(self.breaker_source, n=max(1, self._last_poll_calls))
+        if self._last_poll_calls > 0:  # bill what the poll REALLY cost (claim + gate Supabase calls), never a floor of 1
+            breaker.record_call(self.breaker_source, n=self._last_poll_calls)
 
     async def _hold(self, breaker: Breaker, *, force: bool = False) -> dict | None:
         """The first hold among the loop's source and every job-type source it serves (a held TYPE parks the loop:
@@ -405,6 +413,24 @@ class Worker:
             for e in (stop_event, self._waker.event if self._waker else None, self._breaker_wake)
             if e
         ]
+        if not events:
+            await asyncio.sleep(delay)
+            return
+        tasks = [asyncio.ensure_future(e.wait()) for e in events]
+        try:
+            await asyncio.wait(tasks, timeout=delay, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _error_sleep(self, delay: float, stop_event: asyncio.Event | None) -> None:
+        """The error-backoff sleep: it ignores the in-process JOB waker (an enqueue must not cut an outage backoff short and
+        turn it into a tight retry loop); it ends only on stop or a breaker event. An injected `idle_sleep` (tests) is used."""
+        if self._custom_idle_sleep:
+            await self._idle_sleep(delay, stop_event)
+            return
+        events = [e for e in (stop_event, self._breaker_wake) if e]
         if not events:
             await asyncio.sleep(delay)
             return
@@ -528,7 +554,11 @@ class Worker:
                     job.type,
                     exc.delay_s,
                 )
-                await self._repo.reschedule(job.id, delay_s=exc.delay_s)
+                floor = (self._breaker or get_breaker())._config.min_idle_poll_s
+                delay_s = max(exc.delay_s, floor)  # a handler cannot turn RescheduleLater(0) into a hot claim loop
+                if delay_s != exc.delay_s:
+                    logger.info("worker.reschedule_clamped job_id=%s %.1fs -> floor %.1fs", job.id, exc.delay_s, floor)
+                await self._repo.reschedule(job.id, delay_s=delay_s)
                 return True
             except Exception as exc:
                 if budget is not None and budget.over:  # a handler's own `except` can swallow JobBudgetExceeded: not here

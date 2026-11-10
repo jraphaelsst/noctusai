@@ -28,6 +28,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import json
+import math
 import logging
 import os
 import re
@@ -122,6 +123,7 @@ DEFAULT_DAILY_QUOTA = 500_000
 DEFAULT_AGGREGATE_SHARE = 0.5
 AGGREGATE_SOURCE = "*"
 DEFAULT_MIN_IDLE_POLL_S = 10.0
+MAX_MIN_IDLE_POLL_S = 60.0
 DEFAULT_MAX_FREE_WAKE_POLLS = 30
 #: sources whose budgets are the safety nets themselves: an env override of any of these is IGNORED (loudly)
 NON_OVERRIDABLE_SOURCES = frozenset({"*", "http", "startup", "unattributed"})
@@ -230,9 +232,20 @@ class BreakerConfig:
                 extra["aggregate_share"] = share
             if env.get("NOCTUS_MIN_IDLE_POLL_S", "").strip():
                 floor = float(env["NOCTUS_MIN_IDLE_POLL_S"])
-                if floor < 1.0:
-                    warnings.append(f"NOCTUS_MIN_IDLE_POLL_S={floor} is below 1 s; clamped to 1 s")
-                extra["min_idle_poll_s"] = max(1.0, floor)
+                if not math.isfinite(floor):
+                    warnings.append(f"NOCTUS_MIN_IDLE_POLL_S={env['NOCTUS_MIN_IDLE_POLL_S']!r} is not a finite number; "
+                                    f"using the default {DEFAULT_MIN_IDLE_POLL_S:g} s")
+                else:
+                    if floor > MAX_MIN_IDLE_POLL_S:
+                        warnings.append(f"NOCTUS_MIN_IDLE_POLL_S={floor:g} is above {MAX_MIN_IDLE_POLL_S:g} s; clamped")
+                    if floor < DEFAULT_MIN_IDLE_POLL_S:
+                        from noctusai_lib.config.deploy_config import is_deploy_context
+
+                        deploy = is_deploy_context()
+                        warnings.append(f"NOCTUS_MIN_IDLE_POLL_S={floor:g} is below the default {DEFAULT_MIN_IDLE_POLL_S:g} s"
+                                        + ("; clamped to the default in a deploy context" if deploy else ""))
+                        floor = DEFAULT_MIN_IDLE_POLL_S if deploy else max(1.0, floor)
+                    extra["min_idle_poll_s"] = min(floor, MAX_MIN_IDLE_POLL_S)
         except ValueError as exc:
             warnings.append(f"invalid breaker config ({exc}); using the defaults")
             extra = {}
@@ -257,6 +270,10 @@ class BreakerConfig:
                     for r in rule_t:  # a RATE ceiling derived from the quota (quota x share / 24 per hour)
                         if r.max_calls * 3600 / r.window_s > ceiling:
                             raise ValueError(f"{src}: {r} exceeds the ceiling of {ceiling} calls/hour")
+                    default_hourly = min(d.max_calls * 3600 / d.window_s for d in probe.rules_for(src))
+                    if min(r.max_calls * 3600 / r.window_s for r in rule_t) > default_hourly:
+                        warnings.append(f"NOCTUS_BREAKER_BUDGETS: {src!r} is LOOSER than the default rules "
+                                        f"(<= {default_hourly:.0f} calls/h); accepted, alerted")
                     overrides[src] = rule_t
             except Exception as exc:  # noqa: BLE001 -- loud, then the canonical defaults (never a silent partial config)
                 warnings.append(f"NOCTUS_BREAKER_BUDGETS is invalid ({type(exc).__name__}: {exc}); using the default budgets")
@@ -544,6 +561,7 @@ class Breaker:
         self._alerted: set[str] = set()
         self._indexed: set[str] = set()
         self.degraded: Optional[str] = None
+        self._degraded_transient = False
         self._alert_only_at: dict[str, float] = {}
         self.sent_alerts = 0
 
@@ -911,6 +929,9 @@ class Breaker:
             if self._store_down:
                 logger.warning("breaker: Redis reachable again for %s", self.slug)
             self._store_down = False
+            if self.degraded and self._degraded_transient:
+                logger.warning("breaker: a transient degraded state (%s) cleared: the first refresh succeeded", self.degraded)
+                self.degraded, self._degraded_transient = None, False
             fleet_raw = values[0]
             per_source = dict(zip(sources, values[1:1 + len(sources)]))
             markers = dict(zip(marker_sources, values[1 + len(sources):]))
@@ -995,8 +1016,11 @@ class Breaker:
                 row = json.loads(raw)
             except (TypeError, ValueError):
                 continue
-            if (isinstance(row, dict) and row.get("op") == "rearm" and row.get("key") == key
-                    and row.get("tripped_at") == want):
+            if not (isinstance(row, dict) and row.get("key") == key and row.get("tripped_at") == want):
+                continue
+            if row.get("op") == "rearm_aborted":
+                return False  # the NEWEST row for this key+nonce says the re-arm did not complete
+            if row.get("op") == "rearm":
                 # An audit row is writable by the product's own Redis identity: it is a SIGNAL, not a security boundary
                 # (RO on `rearm:*` is not one either). Every release by this path is announced loudly.
                 info = {k: row.get(k) for k in ("claimed_by", "host", "pid", "at", "reason")}
@@ -1021,7 +1045,8 @@ class Breaker:
             return True
         except Exception as exc:  # noqa: BLE001 -- classified, never swallowed
             kind = ("refused this service's credentials/ACL" if _is_config_error(exc) else "is unreachable")
-            self.set_degraded(f"the breaker Redis {kind} at boot ({type(exc).__name__}: {str(exc)[:120]})")
+            self.set_degraded(f"the breaker Redis {kind} at boot ({type(exc).__name__}: {str(exc)[:120]})",
+                              transient=not _is_config_error(exc))
             return False
 
     def announce_config_warnings(self) -> None:
@@ -1030,13 +1055,15 @@ class Breaker:
             self._io(self._alert, f"config:{self.slug}:{w}", f"[NoctusAI] Supabase breaker CONFIG warning: {self.slug}",
                      f"{self.slug}: {w}")
 
-    def set_degraded(self, reason: str) -> None:
+    def set_degraded(self, reason: str, *, transient: bool = False) -> None:
         """The breaker is running without something it needs (e.g. no Redis: trips are not persisted and the fleet key
-        cannot be read). ONE alert, and `/api/health` reports `breaker_degraded`."""
+        cannot be read). ONE alert, and `/api/health` reports `breaker_degraded`. A ``transient`` degraded state (the
+        Redis was unreachable at boot) clears on the first successful refresh; a configuration refusal stays sticky."""
         with self._lock:
             if self.degraded == reason:
                 return
             self.degraded = reason
+            self._degraded_transient = transient
         logger.critical("SUPABASE BREAKER DEGRADED for %s: %s", self.slug, reason)
         self._io(self._alert, f"degraded:{self.slug}:{reason}",
                  f"[NoctusAI] Supabase breaker DEGRADED: {self.slug}",
@@ -1108,17 +1135,25 @@ class Breaker:
         if self._store is not None:
             try:
                 # `rearm:*` is READ-ONLY for a product's Redis identity (only ops writes markers): other processes learn of
-                # a re-arm from the `rearm` AUDIT row, which carries the `tripped_at` of the PERSISTED key (read first:
-                # another process may have written it — this process may hold the trip only remotely, or not at all).
-                with contextlib.suppress(Exception):
-                    raw = self._store.get(key)
-                    if raw:
-                        persisted_ts = str(_parse_trip(source, raw).get("tripped_at") or "")
+                # a re-arm from the `rearm` AUDIT row, which carries the `tripped_at` of the PERSISTED key. That GET is
+                # LOAD-BEARING: on error we raise BEFORE the audit row or the DEL (the route answers 502).
+                raw = self._store.get(key)
+                if raw:
+                    persisted_ts = str(_parse_trip(source, raw).get("tripped_at") or "")
                 nonce = persisted_ts or ((local.key_tripped_at or local.tripped_at) if local is not None else "")
                 # the row goes in BEFORE the DEL and is MANDATORY: if it cannot be written the key stays and this raises
                 self.audit("rearm", key, by=by, reason=reason, tripped_at=nonce or None, required=True)
                 audited = True
-                self._store.delete(key)
+                try:
+                    # NOC-REMEDIATE[breaker-rearm-cas]: row-append + DEL is not atomic; a compare-and-delete needs WATCH/MULTI/EXEC, which the product ACL (feat/redis-acl-lockdown) does not grant — add it there, then adopt it here (feat/supabase-breaker) — 2026-11-10
+                    self._store.delete(key)
+                except Exception:
+                    # the row says "re-armed" but the key survived: a compensating row makes the newest row for this
+                    # key+nonce say so, and `_audit_shows_rearm` honours the newest
+                    with contextlib.suppress(Exception):
+                        self.audit("rearm_aborted", key, by=by, reason=f"DEL failed after the audit row: {reason}"[:300],
+                                   tripped_at=nonce or None)
+                    raise
             except Exception:
                 if local is None or local.persisted or audited:
                     raise  # the key may still exist: never pretend it was released
