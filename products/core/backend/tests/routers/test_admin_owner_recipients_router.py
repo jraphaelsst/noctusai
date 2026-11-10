@@ -95,6 +95,12 @@ def test_duplicate_number_is_409_even_in_another_spelling(env):
     assert r.json()["code"] == "numero_duplicado"
 
 
+def test_patch_passes_the_admin_through(env):
+    rid = env.client.post(f"{BASE}/recipients", json={"numero": "+5511999999999"}).json()["data"]["id"]
+    env.client.patch(f"{BASE}/recipients/{rid}", json={"ativo": False})
+    assert env.db.table("notification_owner_recipients").select("*").execute().data[0]["alterado_por"] == ADMIN_USER
+
+
 def test_patch_toggles_and_renames(env):
     rid = env.client.post(f"{BASE}/recipients", json={"numero": "+5511999999999"}).json()["data"]["id"]
     r = env.client.patch(f"{BASE}/recipients/{rid}", json={"ativo": False})
@@ -114,10 +120,13 @@ def test_patch_rejects_unknown_fields(env):
     assert env.client.patch(f"{BASE}/recipients/{rid}", json={"numero": "+5511888888888"}).status_code == 422
 
 
-def test_delete_is_204_then_404(env):
+def test_delete_is_204_then_404_and_passes_the_admin_through(env):
     rid = env.client.post(f"{BASE}/recipients", json={"numero": "+5511999999999"}).json()["data"]["id"]
-    assert env.client.delete(f"{BASE}/recipients/{rid}").status_code == 204
-    assert env.client.get(f"{BASE}/recipients").json() == {"data": {"items": []}}
+    env.db.set_rpc_data("remover_destinatario_dono", rid)
+    resp = env.client.delete(f"{BASE}/recipients/{rid}")
+    assert resp.status_code == 204 and resp.content == b""
+    assert env.db.rpc_calls[-1] == ("remover_destinatario_dono", {"p_id": rid, "p_ator": ADMIN_USER})
+    env.db.set_rpc_data("remover_destinatario_dono", None)
     again = env.client.delete(f"{BASE}/recipients/{rid}")
     assert again.status_code == 404
     assert again.json()["code"] == "destinatario_nao_encontrado"

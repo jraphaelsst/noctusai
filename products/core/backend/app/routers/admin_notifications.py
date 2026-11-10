@@ -89,6 +89,8 @@ async def add_recipient(
             lambda: rec_svc.add_recipient(db, numero=body.numero, nome=body.nome, user_id=_user_id(auth))
         )
         return {"data": item}
+    except rec_svc.ActorRequired:
+        raise _err(403, "ator_desconhecido", "Não foi possível identificar o administrador.")
     except rec_svc.InvalidNumber:
         raise _err(422, "numero_invalido", "Número de telefone inválido.")
     except rec_svc.DuplicateNumber:
@@ -110,6 +112,8 @@ async def patch_recipient(
             )
         )
         return {"data": item}
+    except rec_svc.ActorRequired:
+        raise _err(403, "ator_desconhecido", "Não foi possível identificar o administrador.")
     except rec_svc.RecipientNotFound:
         raise _err(404, "destinatario_nao_encontrado", "Destinatário não encontrado.")
 
@@ -122,6 +126,8 @@ async def delete_recipient(
 ):
     try:
         await run_blocking(lambda: rec_svc.delete_recipient(db, recipient_id=recipient_id, user_id=_user_id(auth)))
+    except rec_svc.ActorRequired:
+        raise _err(403, "ator_desconhecido", "Não foi possível identificar o administrador.")
     except rec_svc.RecipientNotFound:
         raise _err(404, "destinatario_nao_encontrado", "Destinatário não encontrado.")
     return Response(status_code=204)
