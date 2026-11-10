@@ -139,3 +139,38 @@ def test_a_steward_may_clean_its_own_branch_directly_but_not_via_the_auto_path(l
     own = T.task_branch(action="cleanup", slug="x", confirm=True, run=w.runner(), primary_root=str(w.repo),
                         pointer_ops=ptr, caller_session="sess-steward")
     assert own["status"] == "cleaned", own
+
+
+# =================================================================================================
+# P2-3 (adversarial review): the steward check must not fail OPEN on an unreadable pointer store
+# =================================================================================================
+
+class UnreadablePointers(FakePointers):
+    """A pointer store whose read FELL BACK (origin/ledgers unreadable -> dev copy only): the answer may be stale."""
+
+    def latest_checked(self, branch):
+        return None, {"store_ok": False, "error": "origin/ledgers unreadable (network)"}
+
+
+class RaisingPointers(FakePointers):
+    def latest(self, branch):
+        raise RuntimeError("pointer store exploded")
+
+
+@pytest.mark.parametrize("ops", [UnreadablePointers(), RaisingPointers()], ids=["fallback-copy-read", "exception"])
+def test_an_auto_cleanup_that_cannot_read_the_pointer_store_skips_the_deletion(landed_world, ops):
+    w = landed_world
+    res = landed(w, pointer_ops=ops)
+    assert res["status"] == "integrated" and res["exit_code"] == 0  # the landed verdict never fails over it
+    assert res["auto_cleanup"]["status"] == "skipped_owned"
+    assert res["auto_cleanup"]["owner"]["session_id"] is None and res["auto_cleanup"]["owner"]["source"] == "pointer_store_unreadable"
+    assert "cannot prove" in res["auto_cleanup"]["reason"]
+    untouched(w)
+
+
+def test_a_readable_store_with_no_pointer_still_cleans_the_unowned_slice(landed_world):
+    class Readable(FakePointers):
+        def latest_checked(self, branch):
+            return self.latest(branch), {"store_ok": True}
+    res = landed(landed_world, pointer_ops=Readable())
+    assert res["auto_cleanup"]["status"] == "cleaned", res["auto_cleanup"]
