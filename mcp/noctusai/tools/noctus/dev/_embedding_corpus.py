@@ -169,6 +169,58 @@ def embed_sync(text: str) -> list[float]:
     return run_coro_blocking(generate_embedding(text))
 
 
+class EmbeddingUnavailable(RuntimeError):
+    """The QUERY could not be embedded (quota, auth, network, unconfigured).
+
+    Search tools must surface this, never return `[]`: an empty list is a
+    valid answer only for a query that embedded fine (CLAUDE.md §1 "No silent
+    errors"). `to_error()` is the one typed MCP shape.
+    """
+
+    def __init__(self, provider_error: str):
+        super().__init__(provider_error)
+        self.provider_error = provider_error
+
+    def to_error(self) -> dict:
+        return {
+            "ok": False,
+            "error": "embedding_unavailable",
+            "provider_error": self.provider_error,
+            "fallback": "grep memory/KB/project-history",
+        }
+
+
+def _short_provider_reason(exc: BaseException) -> str:
+    text = f"{type(exc).__name__}: {exc}"
+    low = text.lower()
+    for needle in ("insufficient_quota", "credit_balance_exhausted",
+                   "rate_limit", "invalid_api_key", "not configured"):
+        if needle in low:
+            return needle
+    return text[:160]
+
+
+def embed_query_or_raise(query: str, embed=None) -> list[float]:
+    """`embed_sync` for QUERY-time search: failure or empty vector raises
+    `EmbeddingUnavailable` instead of degrading to an empty result."""
+    try:
+        vec = (embed or embed_sync)(query)
+    except Exception as exc:  # noqa: BLE001 - re-raised typed, never swallowed
+        raise EmbeddingUnavailable(_short_provider_reason(exc)) from exc
+    if not vec:
+        raise EmbeddingUnavailable("empty_embedding")
+    return vec
+
+
+def guarded_search(fn, *args, **kwargs):
+    """MCP-boundary wrapper: a search list on success, the typed error dict
+    when the query embedding is unavailable."""
+    try:
+        return fn(*args, **kwargs)
+    except EmbeddingUnavailable as exc:
+        return exc.to_error()
+
+
 # ── Batch size knob ─────────────────────────────────────────────────────────
 # OpenAI's /embeddings endpoint accepts an array `input` of up to 2048 items
 # per request, with a combined-token budget well above what this default
@@ -1017,15 +1069,12 @@ def search_markdown_corpus(
     the search — used by corpus-embeddings for `source_type=?` filtering.
 
     Returns: `[{<extra columns…>, path, chunk_idx, chunk_text, score, engine}]`
-    ordered by score desc. Lazy-degrade: empty list if cache missing or
-    embedding API unreachable.
+    ordered by score desc. Empty list if cache missing; raises
+    `EmbeddingUnavailable` if the query cannot be embedded.
     """
     if not corpus.cache_path.exists():
         return []
-    try:
-        q_vec = embed_sync(query)
-    except Exception:
-        return []
+    q_vec = embed_query_or_raise(query)
 
     conn = connect_cache(corpus.cache_path)
     init_schema(

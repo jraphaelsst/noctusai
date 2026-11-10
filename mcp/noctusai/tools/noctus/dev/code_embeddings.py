@@ -432,15 +432,12 @@ def search(
 
     `kind` optionally filters by `'function' | 'async_function' | 'class' | 'file'`.
     Returns `[{path, symbol_name, kind, chunk_idx, chunk_text, score, engine}]`
-    ordered by score desc. Lazy-degrades to empty on missing cache or
-    provider failure.
+    ordered by score desc. Empty on missing cache; raises `EmbeddingUnavailable` on
+    query-embedding failure.
     """
     if not CACHE_PATH.exists():
         return []
-    try:
-        q_vec = _embed_sync(query)
-    except Exception:
-        return []
+    q_vec = _ec.embed_query_or_raise(query, _embed_sync)
     conn = _connect()
     _init_schema(conn)
     results: list[dict] = []
@@ -712,13 +709,13 @@ def register(server) -> None:
             "Optional `kind` filter: 'function' | 'async_function' | 'class' "
             "| 'file'. Use for fuzzy-intent queries ('find helpers that "
             "extract a phone number') where exact identifiers are unknown. "
-            "Graceful-degrades to empty result on provider failure. "
+            "Returns a typed embedding_unavailable error on provider failure. "
             "KB § CONTEXT/PATTERNS/common/code-embeddings.md."
         ),
     )
     def _search(query: str, top_k: int = 5, min_score: float = 0.0,
-                kind: str | None = None) -> list[dict]:
-        return search(query, top_k=top_k, min_score=min_score, kind=kind)
+                kind: str | None = None) -> list | dict:
+        return _ec.guarded_search(search, query, top_k=top_k, min_score=min_score, kind=kind)
 
     @server.tool(
         name="noctus.dev.code_embeddings_refresh",
@@ -766,8 +763,8 @@ def register(server) -> None:
             "`kind` filter restricts to one symbol kind."
         ),
     )
-    def _similar(text: str, top_k: int = 5, kind: str | None = None) -> list[dict]:
-        return code_similar_to_text(text, top_k=top_k, kind=kind)
+    def _similar(text: str, top_k: int = 5, kind: str | None = None) -> list | dict:
+        return _ec.guarded_search(code_similar_to_text, text, top_k=top_k, kind=kind)
 
 
 # Auto-register with the vector platform so vector_status() reports rows.
