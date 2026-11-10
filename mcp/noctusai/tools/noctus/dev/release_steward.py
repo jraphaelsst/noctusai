@@ -1393,7 +1393,7 @@ class _ReadOnlyGit:
         self._git = git
 
     def __call__(self, *args: str, cwd: str | Path | None = None) -> tuple[int, str, str]:
-        rest = [a for a in args if a != "--no-optional-locks"]
+        rest = [a for a in args if a != "--no-optional-locks" and not a.startswith("--attr-source=")]
         sub = rest[0] if rest else ""
         if sub not in _READONLY_GIT:
             raise ValueError(f"deliverable is read-only: git {sub!r} is not allowed ({sorted(_READONLY_GIT)})")
@@ -1402,19 +1402,25 @@ class _ReadOnlyGit:
         return self._git(*args, cwd=cwd)
 
 
-def trial_merge_tree(git: GitFn, *args: str) -> tuple[int, str, str]:
-    """`git merge-tree --write-tree <args>` run with cwd INSIDE the git dir.
+def trial_merge_tree(git: GitFn, *args: str, attr_tree: str | None = None) -> tuple[int, str, str]:
+    """`git merge-tree --write-tree <args>` run with cwd INSIDE the git dir, attributes taken from `attr_tree`.
 
-    git runs the registered custom merge drivers (kb-counts, lgpd-warnings, gate-inventory) for a trial
-    merge and creates their `.merge_file_*` scratch files in the PROCESS cwd. A cwd that is a work tree
-    litters it (2026-11-09: the primary, blamed on whichever session ran next). A cwd inside the git dir
-    is a bare context. When the git dir cannot be resolved the probe is SKIPPED (rc 2) - never run with a
-    work tree as cwd."""
+    Why the cwd: when a merge driver runs it creates `.merge_file_*` scratch files in the PROCESS cwd; a work
+    tree as cwd gets littered (2026-11-09: the primary, blamed on whichever session ran next). A cwd inside
+    the git dir is a bare context. When the git dir cannot be resolved the probe is SKIPPED (rc 2).
+
+    Why `attr_tree`: a bare context has no work tree and no index, so NOTHING reads `.gitattributes` - not
+    `merge=union`, not the registered drivers (kb-counts, lgpd-warnings, gate-inventory) - and every append-only
+    ledger or counts block becomes a text conflict. That forced "0 commits behind dev" (the livelock). Pass the
+    tip of DEV and the attributes (and so the drivers) are read from dev's tree via `--attr-source`. Never pass the
+    head: a branch must not be able to declare its own conflict away (`*.x merge=union`). The merge drivers then
+    run with cwd = the git dir; `scripts/hooks/merge-kb-counts.sh` resolves the toolkit from the common dir."""
     rc, gd, _e = git("rev-parse", "--path-format=absolute", "--git-common-dir")
     gitdir = gd.strip().splitlines()[0] if rc == 0 and gd.strip() else ""
     if not gitdir or not os.path.isabs(gitdir):
         return 2, "", "git dir unresolved; trial merge skipped"
-    return git("merge-tree", "--write-tree", *args, cwd=gitdir)
+    pre = (f"--attr-source={attr_tree}",) if attr_tree else ()
+    return git(*pre, "merge-tree", "--write-tree", *args, cwd=gitdir)
 
 
 def resolve_branch_name(slug: str, git: GitFn | None = None, explicit: str | None = None,
@@ -1856,7 +1862,7 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
         else:
             rc, behind, _e = git("rev-list", "--count", f"{head}..{dev}")
             n_behind = behind.strip() if rc == 0 else "?"
-            rc, o, e = trial_merge_tree(git, "--name-only", dev, head)
+            rc, o, e = trial_merge_tree(git, "--name-only", dev, head, attr_tree=dev)
             lines = (o or "").splitlines()
             if rc == 0 and lines:
                 composed_tree = lines[0].strip()

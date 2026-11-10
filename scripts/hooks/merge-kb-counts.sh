@@ -67,7 +67,16 @@ CURRENT="${2:?merge driver: missing %A}"
 OTHER="${3:?merge driver: missing %B}"
 PATHNAME="${4:-}"
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "$REPO_ROOT" ]]; then
+    # cwd is a GIT DIR, not a work tree: `git merge-tree` trial merges (release_steward.deliverable item 2)
+    # run their drivers from there so scratch files never land in a work tree. There is no toplevel; the
+    # primary checkout owns the toolkit, so resolve it from the common dir (<primary>/.git -> <primary>)
+    # instead of falling back to pwd (= the git dir, where mcp/noctusai/cli.py does not exist).
+    _GITCOMMON="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    [[ -n "$_GITCOMMON" && "$(basename "$_GITCOMMON")" == ".git" ]] && REPO_ROOT="$(dirname "$_GITCOMMON")"
+fi
+REPO_ROOT="${REPO_ROOT:-$(pwd)}"
 
 
 # venv-aware Python resolution — identical contract to scripts/hooks/pre-commit

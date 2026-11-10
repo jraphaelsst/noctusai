@@ -230,22 +230,14 @@ def _is_ancestor(git, a: str, b: str) -> bool:
 
 
 def _trial_merge_tree(git, *args: str) -> tuple[int, str, str]:
-    """`git merge-tree --write-tree <args>` run with cwd INSIDE the git dir.
+    """`git merge-tree --write-tree <args>` with cwd INSIDE the git dir (see `release_steward.trial_merge_tree`).
 
-    🔴 git runs the registered custom merge drivers (kb-counts, lgpd-warnings,
-    gate-inventory) for a trial merge and creates their `.merge_file_*` scratch
-    files in the PROCESS cwd. The MCP server's cwd is the PRIMARY checkout, so
-    every `landed`/cleanup probe flashed untracked `.merge_file_*` into the
-    primary and the primary-write guard blamed whichever session happened to
-    be running a Bash call (2026-11-09, feat/assistant-chatbot). A cwd inside
-    the git dir is a bare context: no work tree, nothing to litter. When the
-    git dir cannot be resolved the probe is SKIPPED (rc 2) — proof 2/3 then
-    refuse, the conservative answer — never run with the primary as cwd."""
-    rc, gd, _e = git("rev-parse", "--path-format=absolute", "--git-common-dir")
-    gitdir = gd.strip().splitlines()[0] if rc == 0 and gd.strip() else ""
-    if not gitdir or not os.path.isabs(gitdir):
-        return 2, "", "git dir unresolved; trial merge skipped"
-    return git("merge-tree", "--write-tree", *args, cwd=gitdir)
+    NOTE what that means for attributes: in that bare context nothing reads `.gitattributes`, so `merge=union`
+    files and the custom merge drivers do NOT apply - a branch and dev that both touched such a file report a
+    conflict here. The landed/equivalence PROOFS below are conservative by design (a conflict only means 'not
+    proven', the caller then refuses), so they keep that behaviour; the delivery contract's item 2 passes
+    `attr_tree=<dev tip>` to `release_steward.trial_merge_tree` instead, because there a false conflict is a livelock."""
+    return _steward.trial_merge_tree(git, *args)
 
 
 def _content_on_dev(git, branch: str, dev_ref: str) -> tuple[bool, list[str]]:
