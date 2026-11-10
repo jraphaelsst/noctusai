@@ -56,6 +56,11 @@ else
 fi
 CLI="$REPO_ROOT/mcp/noctusai/cli.py"
 have_py() { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; }
+# Every keeper below is gated on `have_py`; with no usable python they would ALL skip and the hook
+# would still print "OK". Say so once, loudly (never a silent green).
+if ! have_py; then
+    echo "[pre-commit] ⚠ no usable python ($PY): EVERY keeper below that needs it is SKIPPED — this commit is unchecked." >&2
+fi
 
 # ─── 0-pre. Self-branching gate (BLOCKING, runs FIRST) ───────────
 # Keeper `check_primary_checkout_commit`. `CLAUDE.md` §1 has said "🔴 ABSOLUTE:
@@ -254,6 +259,7 @@ fi
 # ─── 3. Seed version stamp (matches _version_static.py to current HEAD) ──
 # Keeps the keeper drift-detector honest. Idempotent; gitignored output.
 if have_py; then
+    # NOC-REMEDIATE[hook-silent-fallback]: seed-version stamp — the pipe's exit is tail/sed's and `|| true` swallows it, so a failing refresh prints at most 2 lines and the hook still reports success; make it a bounded_run with the real rc surfaced as a loud warning (cache freshness is separately gated by check_all_cache_freshness, hence advisory) — 2026-11-10
     "$PY" "$CLI" --stamp-seed-version --worktree-path "$REPO_ROOT" 2>&1 | sed 's/^/[pre-commit] /' || true
 fi
 
@@ -407,6 +413,13 @@ if have_py && echo ",$STAGED_ALL," | grep -qE ',(\.gitattributes|scripts/hooks/r
         echo "[pre-commit] merge-drivers-registered-in-ci FAILED. Commit aborted." >&2
         exit 1
     fi
+fi
+
+# ─── 6b-ter-bis. merge drivers have contract coverage (WARN-first SHADOW) ──
+# Keeper `check_merge_drivers_have_contract_coverage`: every custom `merge=<name>` needs a SPECS
+# fixture in tests/test_merge_driver_contract.py. Warn-only until the shadow record supports blocking.
+if have_py && echo ",$STAGED_ALL," | grep -qE ',(\.gitattributes|scripts/hooks/register-merge-drivers\.sh|scripts/hooks/merge-[a-z-]+\.sh|mcp/noctusai/tests/test_merge_driver_contract\.py),'; then
+    "$PY" "$CLI" --check-merge-drivers-have-contract-coverage || echo "[pre-commit] WARNING (shadow): merge-drivers-have-contract-coverage — add the driver's SPECS fixture." >&2
 fi
 
 # ─── 6b-quater. conftest env ownership (blocking, only when a conftest is ──
@@ -1791,6 +1804,31 @@ if [[ -n "$STAGED_EIGHT_WAY" ]] && have_py; then
         echo "[pre-commit] 8-way sync FAILED. Commit aborted." >&2
         echo "[pre-commit] See KB § PATTERNS/common/eight-way-sync.md for what must move together." >&2
         exit 1
+    fi
+fi
+
+# ─── 12b. Merge-loss detector (SHADOW — warns + logs, NEVER blocks) ──
+# While a merge is in progress (MERGE_HEAD), the staged result is the index. For every file
+# changed on BOTH sides, report any line one side ADDED that the result lacks (unless the other
+# side removed that base region). Born from the 2026-11-10 incident: a merge driver left "ours"
+# alone and dev's `agent-creator` row vanished from 06-AGENTS.md with NO conflict markers.
+# Judges the RESULT, so it also catches a driver nobody has written yet. Each run appends a row
+# to merge-loss-detector.ndjson; a drop also files an auto-improvement `finding`. Promotion to
+# blocking is gated on measured false-alarm data:
+# KB § PATTERNS/common/auto-generated-merge-drivers.md § Merge-loss detector.
+_mlg="$(git rev-parse --git-dir 2>/dev/null || true)"
+if [[ -n "$_mlg" && -f "$_mlg/MERGE_HEAD" ]]; then
+    if have_py; then
+        echo "[pre-commit] merge in progress — merge-loss detector (shadow)..."
+        set +e
+        bounded_run 90 "$PY" "$CLI" --check-merge-loss --worktree-path "$REPO_ROOT"
+        _ml_rc=$?
+        set -e
+        if [[ "$_ml_rc" -ne 0 ]]; then
+            echo "[pre-commit] ⚠ merge-loss detector exited $_ml_rc (shadow: NOT blocking, NOT a pass — result unmeasured)." >&2
+        fi
+    else
+        echo "[pre-commit] ⚠ merge in progress but no usable python: merge-loss detector SKIPPED (unmeasured, not a pass)." >&2
     fi
 fi
 

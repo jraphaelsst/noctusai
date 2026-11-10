@@ -329,6 +329,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--paths", default="", help=f"Comma-separated repo-relative paths to narrow a keeper's sweep (accepted by: {_paths_keepers}). Omitted, the keeper scans its full default scope.")
     parser.add_argument("--check-primary-checkout-commit", action="store_true", help="Keeper: refuse a WORK commit on a shared branch (dev/main/prod) in the PRIMARY checkout — the self-branching rule that CLAUDE.md has mandated since inception and that was violated in essentially every session, because nothing fails at commit time and the cost lands later as a non-fast-forward at integrate/deploy. Ledger-only commits (project-history/) pass; escape hatch NOCTUS_ALLOW_PRIMARY_COMMIT=1. Severity high. MCP keeper check_primary_checkout_commit.")
     parser.add_argument("--check-git-hooks-bypass", action="store_true", help="Keeper: a tracked script/Makefile/CI-workflow/subprocess-call that hardcodes a git hooks bypass (`-c core.hooksPath=…`, `--config`/`--config-env` targeting core.hooksPath, a persistent `git config core.hooksPath <value>` SET, a `GIT_CONFIG_KEY_*=core.hooksPath` env-injection, or `--no-verify`/`-n` on commit/push). Static backstop for the PreToolUse `decide_git_bypass` gate (`primary_write_guard.py`) — born from a `-c core.hooksPath=<relative>` override that silently skipped every hook, exit 0, no warning, because git resolves a relative hooksPath against the cwd and a linked worktree's `.git` is a FILE. `.md` prose is out of scope (cannot execute); co-located allowlist for the one genuine non-bypass SET (bootstrap-seed-workspace.sh provisioning a separate sibling repo). Severity high. MCP keeper check_git_hooks_bypass.")
+    parser.add_argument("--check-merge-drivers-have-contract-coverage", action="store_true", help="Keeper: every custom `merge=<name>` in .gitattributes has a SPECS fixture in mcp/noctusai/tests/test_merge_driver_contract.py (the one contract: markers + both sides on a real conflict, exit 0 on a clean merge, writes only %%A). Exits 1 on any uncovered driver. KB § PATTERNS/common/auto-generated-merge-drivers.md.")
     parser.add_argument("--check-merge-drivers-registered-in-ci", action="store_true", help="Keeper: every custom `merge=<name>` in .gitattributes must be registered by scripts/hooks/register-merge-drivers.sh, and .github/workflows/merge-queue.yml must invoke that script (an unregistered driver = plain text merge = queue ejections on derived kb-counts blocks, 2026-11-05). Severity high. MCP keeper check_merge_drivers_registered_in_ci.")
     parser.add_argument("--check-git-hook-file-tampering", action="store_true", help="Keeper: a tracked script/Makefile/CI-workflow/subprocess-call that removes, truncates, `chmod -x`'s, or overwrites a file under `.git/hooks/`, or writes `.git/config` directly (`rm`/`> `/`chmod`/`cp`/`mv`/`tee`/`echo … >>`). Sibling of check_git_hooks_bypass: that one is git-ARGV-shaped and cannot see a plain filesystem op that disables a hook exactly as effectively, with the same silent exit-0-no-error result. `chmod` is mode-aware (`+x` is a repair, not a violation). Static backstop for the PreToolUse `decide_hook_integrity` gate (`primary_write_guard.py`). Co-located allowlist for `scripts/hooks/install-hooks.sh`'s sanctioned remove-then-recreate-symlink reinstall flow. Severity high. MCP keeper check_git_hook_file_tampering.")
     parser.add_argument("--check-conftest-env-setdefault", action="store_true", help="Keeper: a product conftest that defers a CREDENTIAL/ENDPOINT env key to the ambient environment via `os.environ.setdefault`. Reads as 'provide a default', means 'whatever the developer exported wins'. p-studio 2026-08-19: the platform .env carries ASAAS_WEBHOOK_TOKEN= (present, EMPTY), so setdefault no-opped and 15 of 20 webhook tests went red under a loaded .env while all 20 passed in a plain shell. The same file deferred SUPABASE_SERVICE_ROLE_KEY and PROVEDOR_COBRANCA, so the real values would have built a real service-role client and a real payment adapter. A locally-generated Fernet session key is exempt. Remedy: noctusai_lib.testing.conftest_helpers.own_test_env. Severity high. MCP keeper check_conftest_env_setdefault.")
@@ -505,6 +506,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tmp-cleanup-max-age-days", type=int, default=14, help="With --tmp-cleanup: age threshold beyond which unmatched patches are retired (default 14).")
     parser.add_argument("--cache-pull", action="store_true", help="Pull remote prod pgvector cache → local SQLite (inverse of cache_deploy_mirror). Bootstrap a fresh-clone / new-machine without paying ~30 min OpenAI re-embed. Pair --cache-pull-only to scope. MCP: noctus.dev.cache_pull. KB § PATTERNS/common/cache-portable-architecture.md.")
     parser.add_argument("--cache-pull-only", metavar="NAMES", help="With --cache-pull: comma-separated subset (e.g. 'kb-embeddings,code-embeddings'). Default = all.")
+    parser.add_argument("--check-merge-loss", action="store_true", help="Merge-loss detector (SHADOW: always exit 0). For the merge in progress (MERGE_HEAD; result = the index) or --merge-sha SHA, lists every non-trivial line one side ADDED vs the merge-base that is MISSING from the result (unless the other side removed that base region). Appends a row to merge-loss-detector.ndjson and files an auto-improvement finding on a drop; --no-log makes it a pure read. Wired into scripts/hooks/pre-commit (MERGE_HEAD) and the merge-queue workflow. MCP: noctus.dev.merge_loss_check. KB § PATTERNS/common/auto-generated-merge-drivers.md.")
+    parser.add_argument("--merge-sha", metavar="SHA", default=None, help="With --check-merge-loss: a merge commit to judge instead of the merge in progress.")
+    parser.add_argument("--no-log", action="store_true", help="With --check-merge-loss: do not write the telemetry row / finding (pure read).")
     parser.add_argument("--check-merge-debt", action="store_true", help="Unmerged-to-origin/main backlog monitor (absorbed scripts/merge-debt-monitor.sh, read-only). MCP: noctus.dev.check_merge_debt.")
     parser.add_argument("--propagate", metavar="TARGET", choices=["composes", "dockerfiles", "both"], nargs="?", const="both", help="Containerization codegen from products/seed/ (absorbed scripts/propagate-{composes,dockerfiles}.sh). Pair --check (drift gate) or --dry. MCP: noctus.dev.propagate.")
     parser.add_argument("--smoke-fleet", action="store_true", help="Post-fleet-up /api/health smoke (absorbed scripts/smoke-fleet.sh). Exit 0 healthy / 1 degraded. MCP: noctus.dev.smoke_fleet.")
@@ -2049,6 +2053,16 @@ def main():
         print(f"  {RED}✗ {len(issues)} tracked file(s) hardcode a git hooks bypass:{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_merge_drivers_have_contract_coverage:
+        from tools.noctus.dev.compliance import check_merge_drivers_have_contract_coverage
+        issues = check_merge_drivers_have_contract_coverage()
+        if not issues:
+            print(f"  {GREEN}✓ merge-drivers-have-contract-coverage: clean.{RESET}"); sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} merge-drivers-have-contract-coverage issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} \u2014 {i['issue']}")
         sys.exit(1)
 
     elif args.check_merge_drivers_registered_in_ci:
@@ -4051,6 +4065,17 @@ def main():
         r = pull_all(only=only)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
+
+    elif args.check_merge_loss:
+        from tools.noctus.dev.merge_loss import merge_loss_check
+        r = merge_loss_check(merge_sha=args.merge_sha, worktree_path=args.worktree_path, log=not args.no_log)
+        print(json.dumps(r, indent=2, default=str))
+        if r["verdict"] == "dropped":
+            print(f"[merge-loss] SHADOW: {r['dropped_count']} added line(s) missing from the merge result "
+                  f"(not blocking) — see KB § PATTERNS/common/auto-generated-merge-drivers.md", file=sys.stderr)
+        elif r["verdict"] == "unmeasurable":
+            print(f"[merge-loss] UNMEASURABLE (not a pass): {r.get('error')}", file=sys.stderr)
+        sys.exit(0)  # shadow: promotion to blocking is gated on measured false-alarm data
 
     elif args.check_merge_debt:
         from tools.noctus.dev.merge_debt import check_merge_debt

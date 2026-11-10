@@ -210,8 +210,10 @@ class Queue:
                  workdir: str | None = None, log: Callable[[str], None] = print,
                  workflow_token: bool | None = None, push_token: str | None = None,
                  regen: Callable[[str], tuple[bool, str]] | None = None,
-                 derived_regen: Callable[[str, dict[str, Any]], tuple[bool, str]] | None = None):
+                 derived_regen: Callable[[str, dict[str, Any]], tuple[bool, str]] | None = None,
+                 merge_loss: Callable[[str, str], str] | None = None):
         self.repo, self.remote, self.dev = repo, remote, dev
+        self.merge_loss = merge_loss or self._merge_loss_shadow
         self.regen = regen or self._regen_kb_counts
         self.derived_regen = derived_regen or self._regen_derived
         self.run, self.run_url, self.run_id = run, run_url, run_id
@@ -253,6 +255,26 @@ class Queue:
         script, *rest = ds["regen"]
         rc, out, err = self.run([sys.executable, os.path.join(wt, script), *rest], cwd=wt)
         return rc == 0, (err or out).strip()[-400:]
+
+    def _merge_loss_shadow(self, wt: str, merge_sha: str) -> str:
+        """SHADOW merge-loss detector on one composed merge commit (noctus.dev.merge_loss_check):
+        returns a one-line verdict for the drain log. NEVER ejects an entry and never raises -
+        promotion to blocking is gated on measured false-alarm data (KB § PATTERNS/common/
+        auto-generated-merge-drivers.md § Merge-loss detector). `--no-log`: the runner is ephemeral,
+        so the finding lives in this drain log (grep `[merge-loss]`)."""
+        cli = os.path.join(wt, "mcp", "noctusai", "cli.py")
+        if not os.path.exists(cli):
+            return "merge-loss: skipped (no cli.py in the composed tree)"
+        try:
+            rc, out, err = self.run([sys.executable, cli, "--check-merge-loss", "--no-log",
+                                     "--merge-sha", merge_sha, "--worktree-path", wt], cwd=wt)
+            j = json.loads(out[out.index("{\n"):])
+        except (ValueError, OSError) as exc:
+            return f"merge-loss: UNMEASURABLE (not a pass): {exc}"
+        if j.get("verdict") == "dropped":
+            lines = "; ".join(f"{d['side']}:{d['path']}: {d['line'][:60]!r}" for d in j.get("dropped", [])[:5])
+            return f"merge-loss: SHADOW DROPPED {j.get('dropped_count')} line(s) in {merge_sha[:9]} - {lines}"
+        return f"merge-loss: {j.get('verdict')} ({j.get('checked_files')} file(s))"
 
     def _unmerged(self, wt: str) -> list[str]:
         return self.git("diff", "--name-only", "--diff-filter=U", cwd=wt, check=False).split()
@@ -439,6 +461,11 @@ class Queue:
                     self.git("checkout", "--quiet", "--detach", head, cwd=wt)
                     ejected.append(self._eject_info(e, "derived_regen", why))
                     continue
+            if how == "merge":
+                try:
+                    self.log("  [merge-loss] " + self.merge_loss(wt, self.git("rev-parse", "HEAD", cwd=wt)))
+                except RuntimeError as exc:  # shadow: a broken detector must never eject an entry
+                    self.log(f"  [merge-loss] UNMEASURABLE (not a pass): {exc}")
             ok, why = self.regen_and_commit_counts(wt)
             if not ok:
                 self.run(["git", "reset", "--hard", "--quiet", head], cwd=wt)

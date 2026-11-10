@@ -234,7 +234,7 @@ class TestLgpdMergeDriverRealGit:
         assert list(scratch.iterdir()) == []
         assert {c for c, _ in _idents(cur.read_text())} == {"alpha", "beta", "gamma"}
 
-    def test_missing_cli_degrades_to_conflict_with_a_untouched(self, tmp_path):
+    def test_missing_cli_degrades_to_conflict_with_the_plain_3way_merge_in_a(self, tmp_path):
         root = _make_repo(tmp_path)
         (root / "mcp" / "noctusai" / "cli.py").unlink()
         cur = tmp_path / "a.md"
@@ -244,4 +244,6 @@ class TestLgpdMergeDriverRealGit:
             ["bash", str(root / "scripts/hooks/merge-lgpd-warnings.sh"),
              str(tmp_path / "o.md"), str(cur), str(tmp_path / "b.md"), "LGPD-WARNINGS.md"],
             cwd=root, env={**os.environ, "PYTHON": sys.executable}, capture_output=True, text=True)
-        assert proc.returncode == 1 and cur.read_text() == "keep me\n"
+        # git takes %A as the RESULT: "ours" alone would silently drop the other side (2026-11-10).
+        out = cur.read_text()
+        assert proc.returncode == 1 and "<<<<<<<" in out and "keep me" in out and "b\n" in out

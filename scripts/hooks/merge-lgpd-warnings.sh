@@ -15,9 +15,8 @@
 # Deletes are NOT re-policed here: keeper `check_lgpd_entry_removal`
 # (commit-msg + CI) governs them.
 #
-# Exit: 0 = clean, %A rewritten;  1 = conflicted, %A holds the merge with
-# markers around the conflicting block;  1 with %A UNTOUCHED = the render itself
-# failed (no python / CLI error) → git surfaces its own conflict, never silence.
+# Exit: 0 = clean, %A rewritten;  1 = conflicted, %A holds the 3-way merge WITH
+# conflict markers (never "ours" alone — see below).
 #
 # 🔴 THE DRIVER WRITES %A AND NOTHING ELSE (same contract as merge-kb-counts.sh:
 # touching the working tree breaks `git rebase`). The render goes to a scratch
@@ -31,6 +30,18 @@ set -euo pipefail
 BASE="${1:?merge driver: missing %O}"
 CURRENT="${2:?merge driver: missing %A}"
 OTHER="${3:?merge driver: missing %B}"
+
+
+# 🔴 ON EVERY CONFLICT/FAILURE EXIT, %A MUST HOLD A 3-WAY MERGE (markers where the
+# sides disagree) — git takes %A as the RESULT; a non-zero exit only flags the path.
+# Leaving %A as "ours" shows a conflicted file with NO markers and the other side's
+# lines silently gone (2026-11-10, merge-kb-counts.sh). `git merge-file -p` keeps both.
+plain_merge_into_current() {
+    local plain; plain="$(mktemp "${TMPDIR:-/tmp}/lgpd-merge-plain.XXXXXX")"
+    git merge-file -p -L ours -L base -L theirs "$CURRENT" "$BASE" "$OTHER" >"$plain" 2>/dev/null || true
+    [[ -s "$plain" ]] && cp "$plain" "$CURRENT"
+    rm -f "$plain"
+}
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
@@ -59,4 +70,5 @@ if { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; } && [[ -f "$CLI" ]]; t
         10) cp "$RENDERED" "$CURRENT"; exit 1 ;;
     esac
 fi
-exit 1   # render unavailable/failed: %A untouched, git reports the conflict
+plain_merge_into_current   # render unavailable/failed: hand back the plain 3-way merge, never ours-only
+exit 1

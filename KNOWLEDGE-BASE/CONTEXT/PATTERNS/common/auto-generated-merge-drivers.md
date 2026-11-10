@@ -67,3 +67,43 @@ Related: `KB § PATTERNS/common/branching.md` (integrate cleanly) · `KB § PATT
 ## `.merge_file_*` scratch never lands in the primary (2026-11-09)
 
 git creates `.merge_file_XXXXXX` scratch for a custom driver in the **cwd of the process running the merge** — including `git merge-tree --write-tree` trial merges, which run the drivers too. The drivers themselves are fine (they write only `%A` and use the invoking tree's toplevel); the leak was toolkit trial merges (`task_branch landed`/cleanup `_content_on_dev`, `release` cut/manifest) running with the PRIMARY as cwd, so the post-hoc primary guard blamed whichever session ran a Bash call meanwhile. Rules: trial merges run from inside the git dir (`_trial_merge_tree`, `release._default_run_local`), never the primary; the guard (`is_git_merge_scratch`) never attributes the scratch to a session and logs one `git_merge_scratch_ignored` row to `~/.noctus/primary-guard-events.ndjson`; `noctus.dev.mole sweep` removes stale ones (>10 min).
+
+## The merge-driver contract (2026-11-10) — one test, every driver
+
+**Incident.** `git merge origin/dev` into `feat/assistant-chatbot` silently dropped dev's `` - **`agent-creator`** … `` line from `06-AGENTS.md`: the file showed `UU` with **no markers**. `merge-kb-counts.sh` had exited 1 on a real prose conflict but left `%A` as "ours" — git takes `%A` as the merge RESULT, and a non-zero exit only flags the path. Two sibling drivers (`lgpd-warnings`, `gate-inventory`) carried the same flaw on their failure/conflict exits, because each test pinned only its own driver's behaviour.
+
+**The contract** every custom driver honours, on EVERY conflict or failure exit:
+
+| # | Rule |
+|---|---|
+| i | real conflict → exit ≠ 0 **and** `%A` holds conflict markers with **both** sides' lines |
+| ii | clean merge → exit 0, the other side's lines present, no markers |
+| iii | the driver writes `%A` and nothing else (no tracked file, no scratch leftover) |
+| iv | render/toolkit failure → still hand git the plain 3-way merge (`git merge-file -p`), never "ours" alone |
+
+`mcp/noctusai/tests/test_merge_driver_contract.py` pins it through REAL `git merge`. Drivers are **discovered** from `.gitattributes` (`merge=<name>`, builtin `union` excluded) and `register-merge-drivers.sh` (`reg <name> … <script>`), so a new driver is covered the moment it is registered; one with no `SPECS` fixture **fails** the suite — adding a driver means adding its minimal valid base/ours/theirs there (the construction leg). Keeper `check_merge_drivers_have_contract_coverage` (`--check-merge-drivers-have-contract-coverage`, pre-commit, warn-first) is the commit-time backstop.
+
+`merge=union` audit (2026-11-10): applied only to `project-history/*.ndjson` (append-only logs; `ledger.ndjson` is deduped-by-slug-keep-latest on read). A row edited in place on both sides would duplicate, which readers tolerate; no file with structure (JSON/markdown) uses union.
+
+## Merge-loss detector (shadow) — judge the RESULT, not the driver
+
+The contract pins the drivers we know. `noctus.dev.merge_loss_check` (`cli.py --check-merge-loss [--merge-sha SHA] [--no-log]`) judges what actually landed, so it also catches a driver nobody has written yet or a hand resolution.
+
+**Design.** Given a merge (MERGE_HEAD at pre-commit time — the result is the **index** — or a merge commit SHA): base = `merge-base`; for every file changed on BOTH sides, take the zero-context hunks base→ours and base→theirs; every non-trivial **added** line (blank / table-rule / punctuation-only lines are ignored) absent from the result is reported `{path, side, line, base_region}`, **unless** the other side removed the base region that hunk replaced (a legitimate either/or) or removed the lines on both sides of an insertion point. Exempt, and reported under `skipped` (never silent): `project-history/**` (ledgers rewritten in place + tables regenerated from them — the only false-alarm class in the first 25-merge sample), lines inside `kb-counts` generated blocks (re-derived by design), a still-conflicted index entry, binary/deleted files. Verdicts: `clean` | `dropped` | `unmeasurable` (not a merge / base unreadable — never green, never red). Blind spots: presence not position (a line kept elsewhere counts as kept), a duplicate-count drop is invisible, renames are compared by path.
+
+**Wired in SHADOW (warn + log, never blocks):** (1) `scripts/hooks/pre-commit` step 12b when MERGE_HEAD exists; (2) `merge_queue.py` `Queue.compose` after every `--no-ff` merge entry — the verdict line `[merge-loss] …` lands in the drain log (the runner is ephemeral, so `--no-log`; grep the drain log).
+
+**Telemetry.** Every local run appends `{ts, merge_sha, files, dropped_count, mode:"shadow", verdict}` to `project-history/merge-loss-detector.ndjson` (ledger store; `merge=union`); a run with `dropped_count>0` also files an `auto_improvement_log` `kind=finding`. Each finding is triaged into **Learnings** below.
+
+**Promotion to blocking** — all of: ≥ 20 shadow runs **on real merges** recorded in the ledger; **0 unexplained false alarms** (every flagged merge triaged and written under Learnings as true-positive or a named benign class with its exemption/fix); the benign classes found are either exempted in code with a regression test or documented as unfixable-by-design with a human-ack escape (`Merge-Loss-Reviewed: <file> — <reason>` trailer, to be built then). Until then the owner/steward reads the findings; nothing blocks.
+
+### Learnings (append one entry per finding — date · merge · class · verdict · what changed)
+
+- **2026-11-10 · replay of `fb296dff8^1` + `01b588153` with the pre-fix kb-counts driver** · true positive: the detector reported exactly the dropped `agent-creator` line (theirs, 06-AGENTS.md); 8 files checked, 0 other findings. With the fixed driver the file carries markers and nothing is lost.
+- **2026-11-10 · first false-alarm sweep, 25 historical merges** · benign class: `project-history/access-tiers/*` (FINDINGS.md regenerated, findings/metrics ndjson rewritten in place) flagged 133+123+3+2 lines → exempted by the `project-history/` prefix; `02-LANDSCAPE.md` count rows inside `kb-counts` blocks → exempted. Re-run over 80 merges: 75 clean, 5 flagged.
+- **2026-11-10 · the 5 flagged of 80** · `03daf4b5a` (CLAUDE.md line 80): **true positive** — the branch's rewrite of the `Specialist subagents` line is absent from the merge result (a hand resolution kept dev's version only). `b4c05525c` (CLAUDE.md, same shape): looks like a true positive, untriaged. `5d32b405c` (access_tiers.py): **benign** — both sides implemented the same fix at the same spot, the resolution kept one (adjacent hunks, not exempted: a duplicate-fix class, expected to recur; the ack-trailer escape is for this). `190e0d2b7`, `2d96b712c`: **untriaged** — triage before counting toward the promotion criterion.
+- **2026-11-10 · steward triage of the 4 left open (orchestrator, against `origin/dev` 6f5baae20)** · **0 content lost today.**
+  - `03daf4b5a`, `b4c05525c` (CLAUDE.md): true positives at merge time (the hand resolution kept one side's wording), but both rules are present on dev today, reworded (`CLAUDE.md` §1 "Gate↔methodology sync" and §2 "Specialist subagents"). Class: **resolver-reworded**.
+  - `190e0d2b7` (agents `test_julia_v2_gates.py` + `tool_registry.py`): dev added tests for `skill_nao_aberta` refusals (6689ca4609) while the branch removed that feature on purpose (2b00b3131, "replace skill_nao_aberta refusals with a turn-scoped server auto-load"). Dropping them was the correct resolution. Class: **feature-removed-on-the-other-side**.
+  - `2d96b712c` (agents `julia-v3-secoes-correcoes.json`): content superseded by later rounds 5–8 (d37b3a397, 2e8cf94eb, 900397fbe). Class: **superseded content**.
+  - **What changed:** the detector cannot tell an intended drop from a loss, so a shadow finding needs a durable acknowledgement before it counts toward promotion. Next step (named destination: the promotion slice of this gate): a `Merge-Loss-Ack: <path> — <class>: <reason>` trailer on the merge commit, which the detector reads and reports as `acked`, not `dropped`. The four classes above are the first entries of the allowed-class list. Until then, triage rows here are the ack.

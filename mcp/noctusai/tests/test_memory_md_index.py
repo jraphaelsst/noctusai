@@ -42,6 +42,17 @@ class TestMemoryMdIndex:
         )
         assert check_memory_md_index(repo_root=repo_root, home=home) == []
 
+    def test_router_with_missing_topic_file_flagged(self, tmp_path):
+        # Router rows are table rows, so the entry checks never see them; a dangling topic link
+        # must still be loud (unreachable memories were the silent-wrong-answer class).
+        repo_root, home = self._setup(
+            tmp_path, "# R\n| [Testing](MEMORY-testing.md) | 3 |\n| [Gone](MEMORY-gone.md) | 1 |\n")
+        memdir = next((home / ".claude" / "projects").iterdir()) / "memory"
+        (memdir / "MEMORY-testing.md").write_text("# T\n")
+        issues = check_memory_md_index(repo_root=repo_root, home=home)
+        assert [i for i in issues if "MEMORY-gone.md" in i["issue"]]
+        assert not [i for i in issues if "MEMORY-testing.md" in i["issue"]]
+
     def test_bloated_entry_flagged(self, tmp_path):
         bloated = "- [Title](file.md) — " + ("word " * 130) + "\n"
         assert len(bloated.rstrip("\n")) > 500

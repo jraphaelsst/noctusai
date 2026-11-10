@@ -20230,6 +20230,21 @@ def check_memory_md_index(repo_root: Path | None = None, home: Path | None = Non
                 ),
                 "severity": "high",
             })
+    # Router layout (2026-07-30 topic split): the rows are table rows, not `- [` entries, so the
+    # entry loop above is vacuous on a router. A topic link whose file is gone is a memory you
+    # cannot read — the exact silent-wrong-answer class. Check every MEMORY-<topic>.md link exists.
+    for m in re.finditer(r"\]\((MEMORY-[A-Za-z0-9._-]+\.md)\)", text):
+        if not (memory_md.parent / m.group(1)).is_file():
+            issues.append({
+                "product": "<memory>",
+                "file": "MEMORY.md",
+                "issue": (
+                    f"MEMORY.md routes to {m.group(1)} but that topic file does not exist — "
+                    f"its memories are unreachable. Restore the file or drop the row. "
+                    f"KB § PATTERNS/common/memory-index-topic-split.md"
+                ),
+                "severity": "high",
+            })
     return issues
 
 
@@ -28078,3 +28093,37 @@ def check_merge_drivers_registered_in_ci(repo_root: Path | None = None) -> list[
     if not wf.is_file() or "register-merge-drivers.sh" not in wf.read_text(encoding="utf-8"):
         issues.append(issue(_MERGE_QUEUE_WORKFLOW, "does not invoke scripts/hooks/register-merge-drivers.sh; the queue drain would text-merge derived docs and eject entries"))
     return issues
+
+
+_MERGE_DRIVER_CONTRACT_TEST = "mcp/noctusai/tests/test_merge_driver_contract.py"
+
+
+def check_merge_drivers_have_contract_coverage(paths: list[Path] | None = None, repo_root: Path | None = None) -> list[dict]:
+    """Every custom `merge=<name>` in `.gitattributes` must have a fixture in the merge-driver
+    CONTRACT test (`SPECS["<name>"]`): markers + both sides on a real conflict, exit 0 on a clean
+    merge, writes only %A. Backstop for the construction leg (the test discovers drivers itself and
+    fails a fixture-less one); this catches it at commit time, before a driver ships unpinned.
+
+    Born 2026-11-10: a driver left %A as "ours" on a conflict (the other side's line vanished with no
+    markers) and two sibling drivers had the same flaw because each test pinned only its own driver.
+    KB § PATTERNS/common/auto-generated-merge-drivers.md
+    """
+    import re
+
+    root = repo_root or REPO_ROOT
+    attrs = root / ".gitattributes"
+    if not attrs.is_file():
+        return []
+    used = set(re.findall(r"\bmerge=([A-Za-z0-9_.-]+)", attrs.read_text(encoding="utf-8")))
+    custom = sorted(used - _MERGE_DRIVER_BUILTINS)
+    if not custom:
+        return []
+    test = root / _MERGE_DRIVER_CONTRACT_TEST
+    if not test.is_file():
+        return [{"file": _MERGE_DRIVER_CONTRACT_TEST, "severity": "high",
+                 "issue": f"missing; .gitattributes maps custom merge driver(s) {custom} with no contract test"}]
+    covered = set(re.findall(r'^    "([A-Za-z0-9_.-]+)": Spec\(', test.read_text(encoding="utf-8"), re.M))
+    return [{"file": _MERGE_DRIVER_CONTRACT_TEST, "severity": "high",
+             "issue": (f"merge driver '{name}' (.gitattributes) has no SPECS fixture - add its minimal valid "
+                       f"base/ours/theirs so the contract (markers on conflict / clean merge / writes only %A) covers it")}
+            for name in custom if name not in covered]

@@ -29,6 +29,29 @@ class TestScaffoldMemory:
         assert "name: feedback_demo" in entry and "type: feedback" in entry
         assert "feedback_demo.md)" in (tmp_path / "MEMORY.md").read_text()
 
+    def test_router_layout_pointer_goes_to_topic_file(self, tmp_path):
+        # MEMORY.md is a topic router (no `### section` headers): the pointer must land in
+        # MEMORY-<topic>.md and the router stays untouched.
+        router = "# Router\n\n| [Testing](MEMORY-testing.md) | 1 |\n"
+        (tmp_path / "MEMORY.md").write_text(router)
+        (tmp_path / "MEMORY-testing.md").write_text("# T\n\nintro\n\n- [old](old.md) — x\n")
+        out = sm.scaffold_memory("feedback_demo", "demo desc", "b", index_section="Testing / detectors",
+                                 mem_dir=str(tmp_path))
+        assert out["ok"] and out["index_updated"] and out["index_file"] == "MEMORY-testing.md"
+        topic = (tmp_path / "MEMORY-testing.md").read_text()
+        assert topic.index("feedback_demo.md") < topic.index("old.md")
+        assert (tmp_path / "MEMORY.md").read_text() == router
+
+    def test_unplaceable_pointer_is_loud_not_a_quiet_ok(self, tmp_path):
+        (tmp_path / "MEMORY.md").write_text("# Router only\n")
+        out = sm.scaffold_memory("feedback_demo", "d", "b", mem_dir=str(tmp_path))
+        assert out["ok"] is True and out["index_updated"] is False
+        assert "INDEX NOT UPDATED" in out["note"]
+
+    def test_bad_topic_slug_rejected(self, tmp_path):
+        out = sm.scaffold_memory("z", "d", "b", topic="../x", mem_dir=str(tmp_path))
+        assert out["ok"] is False
+
     def test_refuses_clobber(self, tmp_path):
         (tmp_path / "x.md").write_text("exists")
         out = sm.scaffold_memory("x", "d", "b", mem_dir=str(tmp_path))
