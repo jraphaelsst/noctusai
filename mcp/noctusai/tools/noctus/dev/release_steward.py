@@ -1593,6 +1593,53 @@ def seed_isolation_error(py: str, tree: str | Path, env: dict[str, str]) -> str 
     return None
 
 
+CLI_REL = "mcp/noctusai/cli.py"
+
+
+def _emit_gate_event(gate: str, outcome: str, target: str = "", reason: str = "") -> None:
+    """One row in the SAME sink as every other gate event (gate_alignment.record_event). Never raises."""
+    try:
+        from tools.noctus.dev.gate_alignment import record_event
+        record_event(gate, outcome, kind="deliverable", target=target[:200], reason=reason[:300], source="deliverable")
+    except Exception:  # noqa: BLE001 - telemetry never changes a verdict
+        pass
+
+
+def export_cli_help_check(cwd: str | Path | None = None, *, python: str | None = None, timeout: int = 120,
+                          base_env: dict[str, str] | None = None) -> Callable[[str], dict[str, Any]]:
+    """`cli.py --help` of the HEAD, run in an export of the head (never the worktree) in the hermetic env with the head's
+    seed packages. argparse %-formats every help string, so a literal `%A` (a merge-driver placeholder in a new --help text)
+    crashes the whole CLI, and with it every `cli.py --<flag>` gate (merge-loss-gate was ejected on exactly that, 2026-11-10).
+    A non-zero exit fails, naming the stderr tail."""
+    py = python or sys.executable
+
+    def check(head: str) -> dict[str, Any]:
+        tree = tempfile.mkdtemp(prefix="noc-cli-help-")
+        try:
+            err = _export_tree(head, tree, cwd, timeout)
+            if err:
+                return {"ok": False, "measured": False, "detail": f"UNMEASURED: {err}"}
+            cli = Path(tree) / CLI_REL
+            if not cli.is_file():
+                return {"ok": False, "measured": False, "detail": f"UNMEASURED: {CLI_REL} missing at the head"}
+            wf = Path(tree) / CI_WORKFLOW_REL
+            env = export_env(tree, base_env, wf.read_text(encoding="utf-8") if wf.is_file() else "")
+            iso = seed_isolation_error(py, tree, env)
+            if iso:
+                return {"ok": False, "measured": False, "detail": f"UNMEASURED: {iso}"}
+            r = subprocess.run([py, str(cli), "--help"], capture_output=True, text=True, timeout=timeout, check=False,
+                               cwd=tree, env=env)
+            if r.returncode != 0:
+                tail = " ".join((r.stderr or r.stdout).strip().splitlines()[-2:])[:240]
+                return {"ok": False, "measured": True, "detail": f"`cli.py --help` exits {r.returncode}: {tail}"}
+            return {"ok": True, "measured": True, "detail": "`cli.py --help` exits 0"}
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"ok": False, "measured": False, "detail": f"UNMEASURED: {type(exc).__name__}: {exc}"[:240]}
+        finally:
+            shutil.rmtree(tree, ignore_errors=True)
+    return check
+
+
 # NOC-REMEDIATE[guardian-derived-check-sandbox]: the derived-artifact and CI-parity checks EXECUTE the delivery's own
 # cli.py / tests with the guardian's HOME and filesystem (hermetic env only scrubs variables); sandbox them (a throwaway
 # HOME, GIT_CONFIG_NOSYSTEM=1, no write access to ~/.noctus) - destination: the tooling branch steward's next batch — 2026-11-10
@@ -1896,7 +1943,8 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
                 verdict_ref: str | None = None, fetch: bool = True,
                 derived_check: Callable[[str], dict[str, Any]] | None = None,
                 scoped_check: Callable[[str, str], dict[str, Any]] | None = None,
-                verdict_store: str | Path | None = None) -> dict[str, Any]:
+                verdict_store: str | Path | None = None,
+                cli_help_check: Callable[[str], dict[str, Any]] | None = None) -> dict[str, Any]:
     """The delivery contract: five read-only checks, `verdict` deliverable | needs_resync.
 
     1 head_pushed_clean - local head == origin/<branch> AND the branch's worktree has no real dirt.
@@ -2044,8 +2092,23 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
             items.append(_item(4, DELIVERABLE_ITEMS[3], False, "not measurable: the branch head does not resolve"))
         else:
             res = (derived_check or export_derived_check(cwd))(head)
-            items.append(_item(4, DELIVERABLE_ITEMS[3], res.get("ok") and res.get("measured", True),
-                               str(res.get("detail") or ""), artifacts=res.get("results") or []))
+            ok4 = bool(res.get("ok") and res.get("measured", True))
+            detail4, arts4 = str(res.get("detail") or ""), list(res.get("results") or [])
+            # 4b (folded in): when the delivery changes mcp/noctusai/cli.py, `cli.py --help` of the HEAD must exit 0
+            rc_d, changed, _e = git("diff", "--name-only", f"{dev}...{head}") if dev else (1, "", "")
+            if rc_d != 0 or CLI_REL in changed.splitlines():
+                hres = (cli_help_check or export_cli_help_check(cwd))(head)
+                hok = bool(hres.get("ok") and hres.get("measured", True))
+                arts4.append({"name": "cli-help", "ok": hok, "measured": hres.get("measured", True), "skipped": False,
+                              "detail": hres.get("detail", "")})
+                _emit_gate_event("deliverable:cli-help", "pass" if hok else "deny", branch, hres.get("detail", ""))
+                ok4 = ok4 and hok
+                detail4 += f"; cli.py --help: {hres.get('detail', '')}" if not hok else "; cli.py --help: ok"
+            else:
+                arts4.append({"name": "cli-help", "ok": True, "measured": True, "skipped": True,
+                              "detail": f"skipped: {CLI_REL} is not in the diff vs {remote}/{dev_branch}"})
+                detail4 += f"; cli.py --help: skipped ({CLI_REL} not in the diff vs {remote}/{dev_branch})"
+            items.append(_item(4, DELIVERABLE_ITEMS[3], ok4, detail4, artifacts=arts4))
     except Exception as exc:  # noqa: BLE001
         items.append(_unmeasured(4, DELIVERABLE_ITEMS[3], exc))
 
@@ -2183,5 +2246,5 @@ def register(server) -> None:
 
 
 __all__ = ["deliverable", "export_derived_check", "export_ci_parity_check", "ci_blocking_flags", "ci_keeper_test_ids",
-           "hermetic_env", "export_env", "seed_pythonpath", "validate_verdict_ref", "record_verdict", "read_verdict", "default_verdict_store", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
+           "hermetic_env", "export_env", "export_cli_help_check", "seed_pythonpath", "validate_verdict_ref", "record_verdict", "read_verdict", "default_verdict_store", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
            "tool_refusal", "run_action", "register", "REQUEST_CMD", "OVERRIDE_ENV"]

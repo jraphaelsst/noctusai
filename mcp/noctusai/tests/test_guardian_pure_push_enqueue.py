@@ -1197,3 +1197,68 @@ def test_every_package_under_a_seed_path_the_requirements_name_must_resolve_insi
     check = (("seedpkgs", ("{python}", "-c", "import noctusai_lib, noctusai_seed, another_seed_pkg")),)
     res = RS.export_derived_check(world.repo, artifacts=check)(head)
     assert res["ok"] and res["measured"], res
+
+
+# =================================================================================================
+# the cli.py --help check (merge-loss-gate ejection): a bare "%A" in a help string crashes argparse
+# =================================================================================================
+
+_GOOD_CLI = "import argparse\np = argparse.ArgumentParser()\np.add_argument('--x', help='fine')\np.parse_args()\n"
+_BAD_CLI = ("import argparse\np = argparse.ArgumentParser()\n"
+            "p.add_argument('--merge-x', help='merge driver args %O %A %B %P')\n"  # argparse %-formats help: 'A' is not a format
+            "p.parse_args()\n")
+
+
+def _help_events(tmp_path):
+    import json
+    p = tmp_path / "gate-events.ndjson"
+    return [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []
+
+
+def test_a_head_whose_cli_help_crashes_is_needs_resync_naming_the_check(world, tmp_path, monkeypatch):
+    monkeypatch.setenv("NOCTUS_GUARD_EVENT_LOG", str(tmp_path / "gate-events.ndjson"))
+    wt = world.worktree()
+    (wt / "mcp" / "noctusai").mkdir(parents=True)
+    (wt / "mcp" / "noctusai" / "cli.py").write_text(_BAD_CLI)
+    world.set_counts(wt)
+    world.commit(wt, "feat: a help string with a bare %A")
+    world.push(wt, "feat/x")
+    d = world.deliverable()
+    four = item(d, "derived_current")
+    assert d["verdict"] == "needs_resync" and not four["ok"], four
+    assert "cli.py --help" in four["detail"] and "unsupported format character" in four["detail"], four["detail"]
+    row = next(a for a in four["artifacts"] if a["name"] == "cli-help")
+    assert row["ok"] is False and row["skipped"] is False
+    ev = [e for e in _help_events(tmp_path) if e.get("guard") == "deliverable:cli-help"]
+    assert ev and ev[-1]["outcome"] == "deny"
+
+
+def test_a_clean_cli_help_passes_and_emits_a_pass_row(world, tmp_path, monkeypatch):
+    monkeypatch.setenv("NOCTUS_GUARD_EVENT_LOG", str(tmp_path / "gate-events.ndjson"))
+    wt = world.worktree()
+    (wt / "mcp" / "noctusai").mkdir(parents=True)
+    (wt / "mcp" / "noctusai" / "cli.py").write_text(_GOOD_CLI)
+    world.set_counts(wt)
+    world.commit(wt, "feat: a fine cli")
+    world.push(wt, "feat/x")
+    four = item(world.deliverable(), "derived_current")
+    assert four["ok"], four
+    assert next(a for a in four["artifacts"] if a["name"] == "cli-help")["ok"] is True
+    assert [e["outcome"] for e in _help_events(tmp_path) if e.get("guard") == "deliverable:cli-help"] == ["pass"]
+
+
+def test_a_head_that_does_not_touch_cli_py_skips_the_check_and_says_so(world, tmp_path, monkeypatch):
+    monkeypatch.setenv("NOCTUS_GUARD_EVENT_LOG", str(tmp_path / "gate-events.ndjson"))
+    world.dev_commit("mcp/noctusai/cli.py", _BAD_CLI)  # a broken cli.py ALREADY on dev: not this delivery's doing
+    sh(world.repo, "git", "fetch", "-q", "origin")
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    world.commit(wt, "feat: unrelated")
+    world.push(wt, "feat/x")
+    four = item(world.deliverable(), "derived_current")
+    assert four["ok"], four
+    row = next(a for a in four["artifacts"] if a["name"] == "cli-help")
+    assert row["skipped"] is True and row["ok"] is True
+    assert "skipped" in four["detail"] and "cli.py --help" in four["detail"]
+    assert not [e for e in _help_events(tmp_path) if e.get("guard") == "deliverable:cli-help"]
