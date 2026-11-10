@@ -256,7 +256,8 @@ objects from `merge-tree`, and the shared verdict store / enqueue attestation be
 | 1 | `head_pushed_clean` | local head == `origin/<branch>` (`ls-remote`) AND the branch's worktree has no real dirt (known-benign refresh artifacts and untracked files are not part of the head) |
 | 2 | `merge_buildable` | `origin/dev` is an ancestor of the head, OR `git --attr-source=<dev tip> merge-tree --write-tree origin/dev <head>` is clean. NOT strictly 0-behind: demanding that livelocks while `dev` moves. **Attributes (`merge=union`, the kb-counts/lgpd/gate-inventory drivers) come from DEV only** - a bare-context trial merge reads none, which made every ledger/counts touch a conflict; and never from the head, so a branch cannot declare its own conflict away. A conflict names its files |
 | 3 | `migrations_free` | no migration number the branch adds is claimed by a different file in the composed tree (the head, or the merge-tree result). Reuses `task_branch._MIGRATION_NUM_RE` and the keeper's accepted-duplicates set via `migration_number_collisions` |
-| 4 | `derived_current` | every derived artifact is already current AT the head: `--update-kb-counts --check`, `--render-project-history --check`, `--gen-promotions-index --check` against an export of the head (table `DERIVED_ARTIFACTS`; a missing regenerator is UNMEASURED, never green). The export must equal `git ls-tree -r <head>` (an `export-ignore` difference is UNMEASURED) and runs in the hermetic env with `PYTHONPATH` = the HEAD's seed packages (derived from its `requirements.txt` `-e` lines; `noctusai_lib` must import from inside the export, else UNMEASURED), so it never judges the primary's seed lib |
+| 4 | `derived_current` | every derived artifact is already current AT the head: `--update-kb-counts --check`, `--render-project-history --check`, `--gen-promotions-index --check` against an export of the head (table `DERIVED_ARTIFACTS`; a missing regenerator is UNMEASURED, never green). The export must equal `git ls-tree -r <head>` (an `export-ignore` difference is UNMEASURED) and runs in the hermetic env with `PYTHONPATH` = the HEAD's seed packages (derived from its `requirements.txt` `-e` lines; EVERY top-level seed package under those paths, plus `noctusai_lib` and `noctusai_seed` when the
+head ships them, must import from inside the export, else UNMEASURED), so it never judges the primary's seed lib |
 | 5 | `scoped_green` | the scoped suites are green **the way CI judges them** (below) |
 
 Not measurable is never green: an item that cannot run fails as `UNMEASURED`.
@@ -291,17 +292,38 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
   (exit 1) naming the items. `branch=` accepts the real branch (a docs- or fix-prefixed one, not only feat-prefixed); otherwise the slug resolves among the
   conventional prefixes and an ambiguous slug refuses. `scripts/hooks/pre-push` recognises exactly this push as the queue path
   (see `merge-queue.md` § 2a). The slug is validated with the request rule (`[A-Za-z0-9._/-]+`, no `..`). Right before its push
-  enqueue writes an **attestation** `<git-common-dir>/noc-enqueue/<full sha>.json` (the `deliverable()` verdict + timestamp); the
-  hook's queue path requires a fresh (< 10 min) ok attestation for exactly that sha, so typing the refspec by hand cannot skip the contract.
+  enqueue writes an **attestation** `<git-common-dir>/noc-enqueue/<full sha>.json` (the `deliverable()` verdict, timestamp and the ONE
+  fully-qualified queue `ref` it authorises); the hook's queue path requires a fresh (< 10 min) ok attestation for exactly that sha AND
+  that ref, exactly ONE mq ref per push, and a bare full sha as the local side (`HEAD:`/branch forms are refused), so typing the
+  refspec by hand cannot skip the contract. A `needs_resync` re-check or a rejected push REVOKES an earlier ok attestation.
+  All refs are fully qualified (`refs/remotes/<remote>/<dev>`, `refs/heads/<branch>`): a branch or tag NAMED `origin/dev` or
+  `feat/<slug>` cannot make the head read as dev, redirect what is pushed, or let cleanup delete unmerged work; the request's
+  head is compared in full, never by a 7-char prefix.
 - **`landed` / `integrate` auto-cleanup / `cleanup` never remove what is not the caller's**: a worktree claimed by another
   session that is not dead (`harness_claim_worktree`; `unknown` counts as live), a branch whose pointer has `role=steward`, or - on
   the AUTO path - a branch whose pointer session is another live/unknown session, is reported
   `cleanup: {status: skipped_owned, owner, reason}` and the landed verdict is unaffected. A steward (or the pointer's own session)
   may clean its branch with an explicit `cleanup`; the auto path never does. The auto path **fails closed**: if the pointer store
-  was not fully readable (exception, or `origin/ledgers` unreadable and answered from the dev copy) it skips the deletion with
-  owner unknown. The nested cleanup receives the exact branch and the checked worktree and refuses
+  was not fully readable (exception, or `origin/ledgers` unreadable and answered from the dev copy), or nothing says whose the
+  worktree is (no pointer carrying a session and no claim by the caller: `source: no_pointer`), it skips the deletion with owner
+  unknown. A corrupt or unreadable worktree-claims file counts as OWNED (`claims_unreadable`), never as "no claims", and claim
+  writes take an flock. A DIRECT `cleanup` by a session that is not the branch pointer's also leaves a live/unknown pointer
+  session's worktree alone; with the pointer's own session it keeps the old behaviour, and an unreadable pointer store on a direct
+  cleanup still proceeds (an explicit act - the verdict is never failed over a pointer failure). The nested cleanup receives the exact branch and the checked worktree and refuses
   (`refused_branch_mismatch`) if the worktree holds a different branch. `dead` needs the recorded pid gone AND the heartbeat older than
   the TTL; every action re-records the caller's pid (`role_touch`), a stale pid alone is not dead.
+- **What is and is not protected (honest G3).** `scripts/hooks/pre-push` refuses client-side pushes to `main`/`prod` (the sanctioned
+  `release` tool sets the override). `dev` is NOT protected client-side or server-side today: there is no GitHub ruleset for it, and the
+  legacy `integrate` pushes `dev` by design (the queue-down fallback). The queue path is guarded by the attestation above, not by the
+  server. A server-side `dev` ruleset (only the queue's workflow identity may push `dev`) is **awaiting_owner**: it needs an owner
+  decision and the repo-admin setting; until then the attestation is a guard against accidents and a typed-refspec bypass, not against
+  a session that deliberately writes the attestation or pushes `dev` itself.
+- **Deferred residuals (named destinations, as in-code `NOC-REMEDIATE` markers).** `guardian-derived-check-sandbox`: items 4/5 execute
+  the delivery's own `cli.py` and tests with the guardian's HOME and filesystem (the hermetic env scrubs variables, not the
+  sandbox) - destination: a throwaway HOME, `GIT_CONFIG_NOSYSTEM=1` and no write access to `~/.noctus`, in the tooling branch steward's next
+  batch. `session-heartbeat-hook`: a session's heartbeat only refreshes when it calls `release_steward`, so a long-quiet alive session ages
+  toward `dead` (which `cleanup` treats as removable only with the pid dead too) - destination: refresh it from a
+  SessionStart/UserPromptSubmit hook.
 - Failures, takeover and prod consent (ejection -> `ejected{reason, conflict, url}` and requeue, 2 ejections -> `blocked_on_steward`;
   stale-guardian takeover that may only resume or roll back; one plan hash per deploy window) are the ratified spec and are
   tracked as follow-ups; this section records what is built.
