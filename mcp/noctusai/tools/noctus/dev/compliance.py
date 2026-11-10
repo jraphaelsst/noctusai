@@ -17612,18 +17612,35 @@ def check_guardian_tool_authorship(
     blocked. Only a live lease held by THIS session refuses.
     """
     import subprocess
+    import sys
+
+    def _telemetry(outcome: str, reason: str, target: str = "") -> None:
+        if not record:
+            return
+        try:
+            from tools.noctus.dev.gate_alignment import record_event
+            record_event("keeper:check-guardian-tool-authorship", outcome, kind="keeper",
+                         target=target[:200], reason=reason, source="keeper")
+        except Exception:  # noqa: BLE001 - telemetry never changes a verdict
+            pass
 
     if staged is None:
         root = repo_root or REPO_ROOT
         try:
-            out = subprocess.run(
+            proc = subprocess.run(
                 # --no-renames: rename detection reports only the NEW name, so `git mv release_steward.py x.py`
                 # would hide the protected path; without it the move shows as D old + A new.
                 ["git", "diff", "--cached", "--no-renames", "--name-only", "--diff-filter=ACMRD"],
                 cwd=root, capture_output=True, text=True, timeout=30, check=False,
-            ).stdout
-        except (OSError, subprocess.SubprocessError):
-            out = ""
+            )
+            out, failure = proc.stdout, (None if proc.returncode == 0 else
+                                         f"git diff --cached exited {proc.returncode}: {(proc.stderr or '').strip()[:120]}")
+        except (OSError, subprocess.SubprocessError) as exc:
+            out, failure = "", f"git diff --cached could not run: {type(exc).__name__}: {exc}"[:200]
+        if failure:
+            # still does not block (a probe failure must not stop a commit) - but never a SILENT allow
+            _telemetry("unmeasured", failure)
+            print(f"[guardian-tool-authorship] UNMEASURED: {failure}; the lease-holder check did not run.", file=sys.stderr)
         staged = [p for p in out.splitlines() if p.strip()]
     hits = sorted(p for p in staged if p in GUARDIAN_PROTECTED_TOOL_FILES)
     if not hits:
@@ -17632,14 +17649,7 @@ def check_guardian_tool_authorship(
     holds, lease, why = guardian_holds_lease(session_id, lease_root, now)
 
     def _event(outcome: str, reason: str) -> None:
-        if not record:
-            return
-        try:
-            from tools.noctus.dev.gate_alignment import record_event
-            record_event("keeper:check-guardian-tool-authorship", outcome, kind="keeper",
-                         target=",".join(hits)[:200], reason=reason, source="keeper")
-        except Exception:  # noqa: BLE001 - telemetry never changes a verdict
-            pass
+        _telemetry(outcome, reason, ",".join(hits))
 
     if not holds:
         _event("allow", f"not-refused: {why}")

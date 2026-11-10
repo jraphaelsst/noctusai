@@ -126,3 +126,32 @@ class TestRenamesAndWorktreePath:
                            capture_output=True, text=True, env=env, cwd=tmp_path)
         assert r.returncode == 1, (r.stdout, r.stderr)
         assert TB in r.stdout
+
+
+class TestUnmeasured:
+    """N-10: a failed `git diff --cached` must not read as a silent allow (it still does not block)."""
+
+    def test_a_failing_diff_emits_an_unmeasured_row_and_a_warning_and_does_not_block(self, tmp_path, capsys):
+        _claim(tmp_path)
+        not_a_repo = tmp_path / "plain-dir"
+        not_a_repo.mkdir()
+        os.environ["NOCTUS_GUARD_EVENT_LOG"] = str(tmp_path / "events.ndjson")
+        try:
+            issues = check_guardian_tool_authorship(repo_root=not_a_repo, session_id="sess-guardian-1", lease_root=tmp_path)
+        finally:
+            os.environ.pop("NOCTUS_GUARD_EVENT_LOG", None)
+        assert issues == []  # still does not block
+        assert "UNMEASURED" in capsys.readouterr().err
+        rows = [e for e in _events(tmp_path) if e.get("outcome") == "unmeasured"]
+        assert rows and "git diff --cached" in rows[0].get("reason", "")
+
+    def test_a_working_diff_emits_no_unmeasured_row(self, tmp_path, capsys):
+        repo = _repo_with_tooling(tmp_path / "w")
+        _claim(tmp_path)
+        os.environ["NOCTUS_GUARD_EVENT_LOG"] = str(tmp_path / "events.ndjson")
+        try:
+            assert check_guardian_tool_authorship(repo_root=repo, session_id="sess-guardian-1", lease_root=tmp_path) == []
+        finally:
+            os.environ.pop("NOCTUS_GUARD_EVENT_LOG", None)
+        assert "UNMEASURED" not in capsys.readouterr().err
+        assert not [e for e in _events(tmp_path) if e.get("outcome") == "unmeasured"]
