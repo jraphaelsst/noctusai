@@ -4,7 +4,7 @@
 > invokes it as a weekly L3 step (skill `noc-daily-ops`) with `dry_run=False`, or the tech-lead
 > does. (Until 2026-11-05 the retired `orchestrator-operator` ran it at the end of each drain tick.)
 > Specialist agents (backend / frontend / devops / compliance / security / architect /
-> engineer-seed) MUST NOT call it. Same shape as `release` / `deploy_pull` / `archive` — call
+> product-engineer) MUST NOT call it. Same shape as `release` / `deploy_pull` / `archive` — call
 > restriction is doc-discipline + the tool's own description banner, not a runtime guard.
 > devops-engineer OWNS this KB doc (the *what + why + how*) but does NOT invoke the *tool*.
 

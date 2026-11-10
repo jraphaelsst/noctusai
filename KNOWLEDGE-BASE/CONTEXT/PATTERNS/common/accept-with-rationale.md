@@ -804,6 +804,15 @@ state change, not a removal.
 - **Scope:** the two files, each carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
 - **Revisit trigger:** identical to 9a's (a), or a second caller for either detection.
 
+### 9j Advisor-write + council-read guards retain shell (`[carve:hook]`, 2026-11-09)
+
+- **Subject:** `scripts/hooks/claude-guard-advisor-write.py` and `scripts/hooks/claude-guard-council-read.py`, two PreToolUse guard adapters (warn-first shadow).
+- **Decision `[A]`:** both stay scripts, in the same `[carve:hook]` bucket and for the same structural reason as 9a–9i: they run before every matched tool call, where the MCP server is not reachable. Their logic already lives in `tools/noctus/dev/advisor_write_guard.py` and `council_read_guard.py`. The adapters only load it by path and fail CLOSED through `_guard_failclosed.run_guard`.
+- **Why:** owner decision D34 (spec-writing advisors write only notes and specs), plus council must-fix J (a neutral recorder: the tool, not discipline, keeps the council blind). → `KB § PATTERNS/common/council.md`
+- **Scope:** the two files, each with its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
+- **Revisit trigger:** the same as 9a's (a).
+- **Born:** the D1 merge-queue ejection on 2026-11-10 (CI shard 0). The hooks shipped without their manifest rows because the hygiene keeper is a warning in pre-commit and only blocks in CI.
+
 ### 9e Agent-package push hooks retain shell (`[carve:hook]`, 2026-10-03)
 
 - **Subject:** `scripts/agent-hooks/{noc-pre-push-publish.sh, consumer-pre-push.sh, agent_sync_runner.py}` — the push-time legs of the Agent Packages contract (`products/agents/projects/agent-packages/CONTRACT.md` §A5, §F, §G, §H).

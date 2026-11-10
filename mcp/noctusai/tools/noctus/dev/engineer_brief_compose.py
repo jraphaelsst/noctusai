@@ -47,7 +47,7 @@ Render shape (dispatch-engineer-tuning §4d):
   ---
   Two-leg footer:
     Leg 1: commit early on the worker branch — a commit survives a harness kill.
-    Leg 2: commit own branch, never push — return short-form per engineer-seed §4.
+    Leg 2: commit own branch, never push — return short-form per product-engineer §4.
 
 KB § PATTERNS/architect/dispatch-engineer-tuning.md.
 """
@@ -408,7 +408,7 @@ def _pick_agent(query_vec: list[float], *, degraded: list[str] | None = None) ->
 
 # ── Brief renderer ────────────────────────────────────────────────────────────
 #: SINGLE SOURCE of the pre-return checklist. Appended to every composed brief;
-#: `.claude/agents/engineer-seed.md` §3 points here rather than restating it.
+#: `.claude/agents/product-engineer.md` §3 points here rather than restating it.
 #: Born of two 2026-10-24 defects: a branch added hooks a page harness did not
 #: stub (only the tests next to the change were run -> merged tip red in CI),
 #: and 5 branches bounced at the pre-push doc-staleness gate after returning.
@@ -522,8 +522,8 @@ def _render_brief(
         "survives a harness kill; tidy un-reported commits with `git commit --amend` / "
         "`git reset --soft` before you return.",
         "",
-        "**Leg 2 (return shape):** Commit your own worker branch (engineer-seed §3), "
-        "never push. Return short-form per engineer-seed §4: commit SHAs, the scoped "
+        "**Leg 2 (return shape):** Commit your own worker branch (product-engineer §3), "
+        "never push. Return short-form per product-engineer §4: commit SHAs, the scoped "
         "check + pass/fail, the three footer legs. The architect integrates.",
         "",
         BEFORE_RETURNING_BLOCK,

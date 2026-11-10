@@ -181,6 +181,9 @@ Lenses
 Tests
 - [ ] mutation probe by reading: 2–3 mutants → the assertion that kills each
 - [ ] flaky seen? → NOC-REMEDIATE[flaky] + destination
+Decisions and acceptance (product-engineer slices)
+- [ ] noctus.dev.decision_log action=audit: no §7 blocker (engineer-decision-rights.md §7); surprise test re-run on 1 in 5 autonomous rows + every class=other
+- [ ] every acceptance criterion has ≥1 test citing its id
 Findings (Conventional Comments, file:line)
 - praise: …
 - issue (blocking): …

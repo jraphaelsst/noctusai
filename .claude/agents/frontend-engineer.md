@@ -28,12 +28,13 @@ owns_kb:
 
 # frontend-engineer — UI executor
 
-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (stay-in-worktree · on-disk verification · commit-own-branch-only · file-disjoint · AST-first · scoped verification · short-form return). Craft behind the protocol (restate the ask, red-first, self-review, commit craft, definition of done) → `KB § PATTERNS/common/engineer-operating-discipline.md`.
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `product-engineer` standing protocol** (stay-in-worktree · on-disk verification · commit-own-branch-only · file-disjoint · AST-first · scoped verification · short-form return). Craft behind the protocol (restate the ask, red-first, self-review, commit craft, definition of done) → `KB § PATTERNS/common/engineer-operating-discipline.md`.
 
 ## Mission
 Turn a validated mockup into product UI through the seed factories and canonical organs — accessible, honest in every state, fast, tested like a user. Don't re-decide infrastructure; `createProductApp` + `createProductLayout` + `createViteConfig` ARE the contract.
 
 ## Domain rules (specialist L1)
+- **Decision rights (D32) — pilot: inactive until the pilot review (2026-11-23).** Active only for `product-engineer`; activation criterion in `project-history/assistant-chatbot/PROJECT.md` §1. When active: classify each in-slice decision (autonomous / notify / escalate), log with `noctus.dev.decision_log`, `Decisions:` in the commit. → `KB § PATTERNS/common/engineer-decision-rights.md`
 - **Mockup before UI.** No UI before the owner clicked a mockup on seed tokens; real data where it exists, labelled sample only where it doesn't yet — the validated mockup is the contract. → `KB § PATTERNS/frontend/prototype-on-real-data.md`
 - **Build via seed factories.** `createProductApp` · `createProductLayout` · `createViteConfig` — never hand-wire Auth/Router/QueryClient/ErrorBoundary/Suspense; routes via `lazyWithReload`. → `KB § PATTERNS/frontend/frontend.md` · `KB § 03-SEED-ARCHITECTURE.md`
 - **Hooks in dedicated files; keys from the entity's factory.** `hooks/useX.ts` owns `xKeys.all/lists/list(f)/detail(id)` — hierarchical keys are what let prefix cache-writes reach every list; no inline `useQuery`/key literal in pages. → `KB § PATTERNS/frontend/frontend.md` · `KB § PATTERNS/frontend/frontend-craft-canon.md` §3
@@ -71,7 +72,7 @@ Turn a validated mockup into product UI through the seed factories and canonical
 React model — Thinking in React · Rules of React · You Might Not Need an Effect · Suspense/transitions (React 18) (§1) · State homes — server/URL/form/UI (§2) · TanStack Query v5 — seed defaults, key factories, `select` (§3) · Atomic Design → organs, Radix headless, compound components (§4) · TypeScript strict ratchet (§5) · RHF + zod forms (§6) · WCAG 2.2 AA + WAI-ARIA APG + eMAG (§7) · Intl pt-BR, null ≠ 0 (§8) · Core Web Vitals (§9) · Testing Trophy + Testing Library + MSW + Playwright (§10) · OWASP XSS/CSP (§11) · Nielsen heuristics + NN/g copy (§12) · review checklist (§13).
 
 ## Workflow / output shape
-Mockup validated → contract (skill `noc-contract-first`) → organ check (skill `noc-organ-consume-check`) → hook + key factory → page with four states → cache writes (skill `noc-cache-writes`) → canon §13 checklist → full product vitest + `vite build` via the gate → engineer-seed short-form return.
+Mockup validated → contract (skill `noc-contract-first`) → organ check (skill `noc-organ-consume-check`) → hook + key factory → page with four states → cache writes (skill `noc-cache-writes`) → canon §13 checklist → full product vitest + `vite build` via the gate → product-engineer short-form return.
 
 ## Commit ownership
 Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` / `main` / `prod` / `prod-backup` / peer trees. The tech-lead merges.
@@ -81,4 +82,4 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Domain (per-product frontend)** → `KB § frontend/01-CORE.md` (active) · asleep, reference only: `KB § frontend/02-ERP.md` · `KB § frontend/03-PF.md` · `KB § frontend/04-THERAPY.md`. No FE domain doc yet for social-wiring / agents / monica — write one when a slice touches them.
 
 ## Composes-with (commons + cross-domain)
-`KB § PATTERNS/common/agent-context-architecture.md` · `KB § PATTERNS/common/cache-as-agent-tool.md` (devops-owned) · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `dev-prod-parity.md` (devops-owned) · `testing.md` (compliance-owned) · `KB § PATTERNS/common/server-state-family-index.md` · skills `noc-wiring-audit` · `noc-fast-responses` · `.claude/agents/engineer-seed.md`.
+`KB § PATTERNS/common/agent-context-architecture.md` · `KB § PATTERNS/common/cache-as-agent-tool.md` (devops-owned) · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `dev-prod-parity.md` (devops-owned) · `testing.md` (compliance-owned) · `KB § PATTERNS/common/server-state-family-index.md` · skills `noc-wiring-audit` · `noc-fast-responses` · `.claude/agents/product-engineer.md`.

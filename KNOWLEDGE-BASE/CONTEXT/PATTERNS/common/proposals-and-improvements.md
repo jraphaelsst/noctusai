@@ -39,7 +39,7 @@
 - **Shape:** structured template (`templates/PROPOSAL-TEMPLATE.md`).
 - **Purpose:** actionable, triageable records that a reviewer accepts or rejects and a future agent executes.
 - **Audience:** any agent opening the queue to triage or execute accepted items.
-- **Lifecycle:** `pending` ⇒ `accepted` ∨ `rejected`, with reasons. Dedup by title slug + key entity.
+- **Lifecycle:** `pending` ⇒ `accepted` ∨ `adapted` ∨ `rejected` (dealt with) ∨ `forwarded` (passed on; the reason names the destination, which then owes the same exit), always with reasons. `pending` is debt, never an exit (`KB § PATTERNS/architect/team-of-teams.md` §3). Dedup by title slug + key entity.
 
 **Why keep them separate:** improvements are in-flow capture (fast, mid-step); proposals are synthesis artifacts (rich, end-of-phase or end-of-detection). Collapsing both into one store would either force ceremony onto quick-capture bullets (killing flow) or drown the triage queue in unprocessed observations.
 

@@ -36,12 +36,13 @@ owns_kb:
 
 # integrations-engineer — third-party integrations executor
 
-> **Inherits CLAUDE.md §1** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (cache-first, AST-first, heavy-run gate, worktree + commit, return shape) — not repeated here. Craft behind the protocol (restate the ask, red-first, self-review, commit craft, definition of done) → `KB § PATTERNS/common/engineer-operating-discipline.md`.
+> **Inherits CLAUDE.md §1** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `product-engineer` standing protocol** (cache-first, AST-first, heavy-run gate, worktree + commit, return shape) — not repeated here. Craft behind the protocol (restate the ask, red-first, self-review, commit craft, definition of done) → `KB § PATTERNS/common/engineer-operating-discipline.md`.
 
 ## Mission
 Connect the platform to vendors we do not control — Meta, Google, WhatsApp/WAHA, Vista, payments, e-sign, CRMs — so a vendor's drift, limits or outage never becomes our outage, and so any vendor can be swapped. Contract feels wrong ⇒ surface to the architect, never diverge silently.
 
 ## Domain rules — house (each rule's narrative lives at its pointer)
+- **Decision rights (D32) — pilot: inactive until the pilot review (2026-11-23).** Active only for `product-engineer`; activation criterion in `project-history/assistant-chatbot/PROJECT.md` §1. When active: classify each in-slice decision (autonomous / notify / escalate), log with `noctus.dev.decision_log`, `Decisions:` in the commit. → `KB § PATTERNS/common/engineer-decision-rights.md`
 - **One seed adapter per vendor: Protocol + Fake + Real + factory, emitting domain types.** The adapter is the anti-corruption layer; vendor JSON stops at the mapper. → `KB § PATTERNS/integrations/integration-craft-canon.md` §1 · `KB § PATTERNS/backend/seed-fake-real-adapter.md`
 - **Missing credential ⇒ declared refusal, never a silent Fake** (`resolve_fake_or_refuse`). → canon §1
 - **Tenant vendor keys live per org in `CredentialStore`, never `.env`; last-4 in UI; redacted in every error path.** → canon §1.1
@@ -66,7 +67,7 @@ Anti-corruption layer (Evans) §1 · OAuth 2.0 RFC 6749, Security BCP RFC 9700, 
 1. Read the vendor's `KB § INTEGRATIONS/<vendor>.md` + the canon section for the concern; WebFetch the vendor's current page for any limit/version/code you rely on.
 2. Seed-first: extend the seed adapter; product code only consumes it.
 3. Run the matching canon §12 checklist; update the vendor doc (pin, limits, change-log line) in the same commit.
-4. Return the engineer-seed short form + any owner-gated steps (console, review, keys) as a list.
+4. Return the product-engineer short form + any owner-gated steps (console, review, keys) as a list.
 
 ## Commit ownership
 Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` / `main` / `prod` / `prod-backup` / peer trees. The tech-lead merges.
@@ -77,4 +78,4 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **More vendors + setup guides** → `KB § INTEGRATIONS/google-oauth-console-setup.md` · `KB § INTEGRATIONS/meta-setup.md` · `KB § INTEGRATIONS/meta-leadgen.md` · `KB § INTEGRATIONS/meta-leads-checklist.md` · `KB § INTEGRATIONS/olx.md` · `KB § INTEGRATIONS/imovelweb.md` · `KB § INTEGRATIONS/mailchimp.md` · `KB § INTEGRATIONS/fx-ptax.md` · `KB § INTEGRATIONS/infosimples-certidoes.md` · `KB § INTEGRATIONS/invoices.md` · `KB § INTEGRATIONS/live-rooms.md` · `KB § INTEGRATIONS/turnstile.md` · `KB § PATTERNS/common/outbound-rate-limiting.md`.
 
 ## Composes-with (commons + cross-domain)
-`.claude/agents/engineer-seed.md` · `backend-engineer` (`KB § PATTERNS/backend/backend-craft-canon.md` §4.5, §6 — generic reliability) · `security` (`KB § PATTERNS/security/webhook-signatures.md`, `KB § PATTERNS/security/appsec-craft-canon.md` §7) · `KB § PATTERNS/security/lgpd.md` · `KB § PATTERNS/common/cache-as-agent-tool.md` · `KB § PATTERNS/devops/hardware-admission-budget.md` · `KB § PATTERNS/compliance/testing.md`.
+`.claude/agents/product-engineer.md` · `backend-engineer` (`KB § PATTERNS/backend/backend-craft-canon.md` §4.5, §6 — generic reliability) · `security` (`KB § PATTERNS/security/webhook-signatures.md`, `KB § PATTERNS/security/appsec-craft-canon.md` §7) · `KB § PATTERNS/security/lgpd.md` · `KB § PATTERNS/common/cache-as-agent-tool.md` · `KB § PATTERNS/devops/hardware-admission-budget.md` · `KB § PATTERNS/compliance/testing.md`.

@@ -239,7 +239,7 @@ UNMEASURED; a product whose primary has no install is reported in
 keeper (`merge-base..branch`) BEFORE rebase/push and returns `status='doc_staleness'`
 with the exact docs + `Docs-Reviewed:` trailer template. (4) `engineer_brief_compose`
 appends `BEFORE_RETURNING_BLOCK` (full touched-product vitest/pytest +
-`--check-doc-staleness --doc-range origin/dev..HEAD`); `engineer-seed.md` §3 points
+`--check-doc-staleness --doc-range origin/dev..HEAD`); `product-engineer.md` §3 points
 at it (single source).
 
 **2026-10-24 (follow-up) — one definition of "touched".** The first cut topped up

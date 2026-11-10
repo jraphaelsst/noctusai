@@ -108,14 +108,43 @@
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
    "note": "landed by feat/access-tiers-gate; no firing history yet"
   },
+  "guard:advisor-write": {
+   "mechanism": ".claude/agents/product-manager.md",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-09",
+   "source": "owner decision D34 2026-11-09 (spec-writing advisors keep Write for spec/notes only); Claude Code hooks reference (PreToolUse payload carries agent_type inside a subagent)",
+   "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson (warn events in shadow, deny at enforce); read by gate_alignment walls",
+   "kind": "guard",
+   "wired_in": [
+    "PreToolUse"
+   ]
+  },
   "guard:background-agent-idle": {
-   "mechanism": "KB § PATTERNS/common/background-agent-lifecycle.md (engineer-seed hand-back clause + noc-branch-dispatch step 5b); advisory backstop, never blocks",
+   "mechanism": "KB § PATTERNS/common/background-agent-lifecycle.md (product-engineer hand-back clause + noc-branch-dispatch step 5b); advisory backstop, never blocks",
    "owner": "tooling-engineer",
    "placement": "warn",
    "standard": "",
    "new": true,
    "declared": "2026-11-07",
    "source": "Claude Code hooks reference (code.claude.com/docs/en/hooks: PostToolUse/UserPromptSubmit additionalContext, SubagentStop); owner rule 2026-11-07; verified against 33 real subagent transcripts+meta.json"
+  },
+  "guard:council-read": {
+   "mechanism": "mcp/noctusai/tools/noctus/dev/council_ledger.py (neutral recorder: tool-assigned labels, seats withheld until verdict)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-09",
+   "shadow": null,
+   "source": "council verdict a9a6be54 objection J (blind recorder was prompt-only); Claude Code hooks reference (PreToolUse Read/Grep/Glob/Bash)",
+   "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson (warn in shadow, deny at enforce); read by gate_alignment walls",
+   "kind": "guard",
+   "wired_in": [
+    "PreToolUse"
+   ]
   },
   "guard:dev-advance": {
    "mechanism": "KB § PATTERNS/architect/orchestration-craft-canon.md §6.13 (push leg + noc-branch-dispatch guardrail); advisory pull backstop, never blocks",
@@ -388,6 +417,15 @@
    },
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-agent-names-resolve": {
+   "mechanism": "none (names are free text on methodology surfaces; the keeper resolves them against .claude/agents, no scaffold applies)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "agent names on methodology surfaces resolve to .claude/agents/<name>.md",
+   "new": false,
+   "declared": "2026-11-10",
+   "shadow": null
   },
   "keeper:check-agent-prompt-text-in-code": {
    "severity": "",
@@ -776,6 +814,16 @@
    "class": "never-fires",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-council-ledger-schema": {
+   "mechanism": "tool: noctus.dev.council_ledger (the only write path; validates every row against the contract before append)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-09",
+   "shadow": null,
+   "source": "Council ledger contract v1 section 4 (project-history/assistant-chatbot/contracts/council-ledger.md); append-only ledger rule (EOA / KB § PATTERNS/architect/event-oriented-architecture.md); verdict-channel integrity (KB § PATTERNS/common/methodology-execution-discipline.md)"
+  },
   "keeper:check-db-agent-mirror-integrity": {
    "mechanism": "tool: noctus.dev.agent_export (writes the mirror the Studio publish rendered, verified by its compiled_hash; a mirror is never hand-edited)",
    "owner": "architect",
@@ -806,6 +854,15 @@
    },
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-decision-log-schema": {
+   "mechanism": "tool: noctus.dev.decision_log (the only write path; refuses a tier below the floor its criteria imply, enforces caps and 3-in-a-row before append)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-09",
+   "source": "Decision-log contract v1 sections 2-6 (project-history/assistant-chatbot/contracts/decision-log.md); decision-rights research (project-history/assistant-chatbot/research/decision-rights-research.md); append-only ledger rule (EOA / KB § PATTERNS/architect/event-oriented-architecture.md)"
   },
   "keeper:check-dependabot-product-coverage": {
    "severity": "",
@@ -3119,8 +3176,8 @@
   {
    "id": "D13",
    "decision": "Research-first is the default for EVERY request: specialists' reliable sources are read (not link-checked), cited in the deliverable, unverified items marked; tool choice follows the measured-switch rule",
-   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Sources & how they map; How to apply step 0) · engineer-seed.md + advisor agents L1 line",
-   "construction": "standing line in .claude/agents/engineer-seed.md and the 7 advisor agents; pattern-authoring checklist step 0; scaffold_keeper requires `source`",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Sources & how they map; How to apply step 0) · product-engineer.md + advisor agents L1 line",
+   "construction": "standing line in .claude/agents/product-engineer.md and the 7 advisor agents; pattern-authoring checklist step 0; scaffold_keeper requires `source`",
    "gate": "keeper:check-gate-triad (new gates carry `source`) + report-only `--gate-alignment sources` (KB deliverables without a sources section; never blocks code commits)",
    "telemetry": "sources report output; gate-triad events",
    "branch": "feat/gate-alignment",
@@ -3211,7 +3268,7 @@
    "id": "D20",
    "decision": "Background agents end when done (hand-back is the last act), the dispatcher salvages then TaskStops on every hand-back, peer sessions are never stopped; methodology/code changes reach live sessions as information (pull hook + HEADS-UP), each decides how to proceed",
    "home": "KB § PATTERNS/common/background-agent-lifecycle.md + KB § PATTERNS/architect/orchestration-craft-canon.md §6.13",
-   "construction": "injection:.claude/agents/engineer-seed.md §4 hand-back clause; .claude/skills/noc-branch-dispatch/SKILL.md step 5b + change-propagation guardrail",
+   "construction": "injection:.claude/agents/product-engineer.md §4 hand-back clause; .claude/skills/noc-branch-dispatch/SKILL.md step 5b + change-propagation guardrail",
    "gate": "guard:background-agent-idle + guard:dev-advance (advisory, fail-open)",
    "telemetry": "guard-events.ndjson rows (guard=background-agent-idle|dev-advance)",
    "branch": "feat/background-agent-lifecycle",
@@ -3314,6 +3371,54 @@
    "branch": "feat/measurement-mindset-rule-gate",
    "gates": [
     "keeper:check-measurable-by-design"
+   ]
+  },
+  {
+   "id": "D29",
+   "decision": "Council deliberation is measurable: every council session/objection/verdict/event is a validated, append-only ledger row (one file per session, the ndjson in git is the source of truth; a DB mirror is deferred), so per-seat hit/false-alarm/cost metrics have exactly one derivation. The schema gate is warn-first shadow then blocking",
+   "home": "project-history/assistant-chatbot/contracts/council-ledger.md",
+   "construction": "noctus.dev.council_ledger (the only write path; validates before append)",
+   "gate": "keeper:check-council-ledger-schema",
+   "telemetry": "gate events (cli wrapper) via --check-council-ledger-schema; per-seat metrics via council_ledger action=report",
+   "branch": "feat/assistant-council-ledger-tool",
+   "gates": [
+    "keeper:check-council-ledger-schema"
+   ]
+  },
+  {
+   "id": "D30",
+   "decision": "Product-engineer decisions are measurable and bounded: every in-scope decision is a validated, append-only ledger row (one file per slice); a row below the tier floor its own criteria imply is refused at write, caps (5 autonomous / 3 notify) and 3-in-a-row are enforced at record, and audit judges the whole slice diff pre-merge. Schema gate is warn-first shadow then blocking",
+   "home": "project-history/assistant-chatbot/contracts/decision-log.md",
+   "construction": "noctus.dev.decision_log (the only write path; refuses below-floor tiers, enforces caps)",
+   "gate": "keeper:check-decision-log-schema",
+   "telemetry": "gate events (cli wrapper) via --check-decision-log-schema; per-class use/veto/reclassify + promotion proposals via decision_log action=report; pre-merge findings via action=audit",
+   "branch": "feat/assistant-decision-log",
+   "gates": [
+    "keeper:check-decision-log-schema"
+   ]
+  },
+  {
+   "id": "D31",
+   "decision": "A spec-writing advisor (product-manager, product-architect, product-designer) may Write only spec/notes files (scratchpad dir or projects/<slug>/spec|mockups); the agent files state it and a PreToolUse guard keeps it, warn-first shadow",
+   "home": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/gate-methodology-sync.md",
+   "construction": ".claude/agents/product-manager.md (the Write-scope rule; the guard derives the writer set from the agent frontmatter)",
+   "gate": "guard:advisor-write",
+   "telemetry": "guard-events.ndjson warn/deny rows via _guard_failclosed.log_event; gate_alignment walls",
+   "branch": "feat/assistant-owner-d31-d34",
+   "gates": [
+    "guard:advisor-write"
+   ]
+  },
+  {
+   "id": "J",
+   "decision": "While a council session has no verdict row, direct reads of its project-history/council file are flagged (denied once promoted from shadow); the ledger tool is unaffected",
+   "home": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/council.md",
+   "construction": "mcp/noctusai/tools/noctus/dev/council_ledger.py (tool-assigned labels, seats withheld until verdict)",
+   "gate": "guard:council-read",
+   "telemetry": "guard-events.ndjson warn/deny rows via _guard_failclosed.log_event; gate_alignment walls",
+   "branch": "feat/ac-council-guard",
+   "gates": [
+    "guard:council-read"
    ]
   }
  ]

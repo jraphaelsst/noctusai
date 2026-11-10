@@ -736,7 +736,7 @@ rules and dialogs), the Datas popover (seed), the members popover (seed `Membros
 
 ### Wave 0 (integrate before wave 1)
 
-- **S0 (engineer-seed, backend + frontend):**
+- **S0 (product-engineer, backend + frontend):**
   - `seed/lib/backend/noctusai_lib/domain/pipeline/defaults.py` (`StageDefault`, `ensure_default_stages(db, cfg, defaults, *, org_id)`, lifted from igig `garantir_etapas_padrao`) plus its export and tests;
   - igig `backend/app/pipelines.py` moved onto it (no behaviour change; igig tests green);
   - `seed/lib/frontend/src/components/pipeline/PipelineBoard.tsx` `showValue?: boolean` plus a test; igig `EsteiraBoard.tsx` passes `showValue={false}` instead of `formatValue={() => ""}`.

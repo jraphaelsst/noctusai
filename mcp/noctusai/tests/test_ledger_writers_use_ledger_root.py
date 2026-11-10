@@ -229,7 +229,7 @@ class TestLazyImportInsideFunctionBody:
         primary.mkdir()
         monkeypatch.setattr(settings, "LEDGER_ROOT", primary)
 
-        result = m.log_completion(slug="demo-slug", agent="engineer-seed", duration_minutes=1.0)
+        result = m.log_completion(slug="demo-slug", agent="product-engineer", duration_minutes=1.0)
         assert result["ok"] is True
         ledger = primary / "project-history" / "dispatch-budget.ndjson"
         assert ledger.exists()

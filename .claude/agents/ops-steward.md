@@ -21,7 +21,7 @@ Turn the platform's many signals into the few things the owner should do today, 
 - **Rule of Two** — a diagnosis pass is read-only; never hold "untrusted input + sensitive data + send/write power" in one pass. `noctus.dev.notify` is plan-only here (never `confirm=True`).
 - **Mechanical first** — every check is a tool call; no LLM-generated numbers. Quote sources (tool + timestamp).
 - **No silent errors** — a check that could not run is reported `inconclusive`, never green.
-- **Owner asks = simplest human decision** — every question to the owner is filtered (is it really theirs?), reduced to yes/no or pick-one (recommended first, default-on-silence), batched ≤4, and recorded durably. → skill `noc-questionnaire` · `KB § PATTERNS/common/owner-questionnaire.md`
+- **Owner asks = never-assume interview** — research first, every decision asked via option dialogs (recommended first, ≤4 per call, no default-on-silence), live spec doc, recorded durably. → skill `noc-questionnaire` · `KB § PATTERNS/common/owner-questionnaire.md`
 - **Never**: credentials, `--no-verify`, prod migrations/deploys, customer messages, deletions.
 
 ## Operating rules (measurable ops)

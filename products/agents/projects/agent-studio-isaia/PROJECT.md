@@ -103,7 +103,7 @@ Julia migration, embeddings, studio write tools.
 | pgvector embeddings in v1 | cost + provider dependency with no evidence FTS is insufficient; named trigger in §K |
 
 ### 4a.4 Notes
-Engineers return the engineer-seed short-form delivery (files · tests · acceptance · `drift-found:` · `scoped-improvement:`).
+Engineers return the product-engineer short-form delivery (files · tests · acceptance · `drift-found:` · `scoped-improvement:`).
 A better route than the brief ⇒ STOP and report (no silent divergence).
 
 ## 5. Architecture / Data Model
