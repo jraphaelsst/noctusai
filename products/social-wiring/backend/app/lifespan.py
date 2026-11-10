@@ -46,6 +46,7 @@ from app.modules.email_marketing.scheduler import (
 )
 from app.services.conversation_module import (
     configure_conversation_module,
+    release_conversation_module,
     start_worker,
     stop_worker,
 )
@@ -168,6 +169,10 @@ async def on_shutdown() -> None:
     Safe to call when startup short-circuited."""
     await run_shutdown_hooks(_hooks("SHUTDOWN_HOOKS"))
     await stop_worker()
+    # Release what startup configured: a module left behind keeps its Redis buffer reachable via
+    # get_conversation_module() -- a later in-process app (tests drive lifespan more than once) hit
+    # a dead localhost:6379 through the deletion route (merge-queue ejection 2026-11-09).
+    release_conversation_module()
     stop_scheduler()
     logger.info("Social Wiring lifespan shutdown complete.")
 

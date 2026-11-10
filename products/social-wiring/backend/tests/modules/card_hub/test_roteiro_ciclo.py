@@ -361,8 +361,8 @@ class TestR8Gerar:
         from app.main import app
         from fastapi.testclient import TestClient
 
-        with TestClient(app, raise_server_exceptions=False) as tc:
-            resp = tc.post(f"{URL.format(cid=cid)}/{r['id']}/gerar", headers=_auth())
+        # No `with`: this needs a 500 instead of a raised exception, not the app's lifespan (workers, schedulers).
+        resp = TestClient(app, raise_server_exceptions=False).post(f"{URL.format(cid=cid)}/{r['id']}/gerar", headers=_auth())
         assert resp.status_code == 500
         roteiro = _linha(scoped, "roteiros", id=r["id"])[0]
         assert roteiro["status"] == "rascunho" and roteiro.get("gerado_em") is None
