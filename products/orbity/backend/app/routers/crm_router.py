@@ -58,6 +58,7 @@ from app.schemas.crm import (
     ScoringRuleUpdate,
     StageMoveRequest,
 )
+from noctusai_lib.api.access_tiers import access_tier
 from app.rate_limit import limiter
 from app.services.automation_service import AutomationService
 from app.services.automation_triggers import adisparar
@@ -525,6 +526,7 @@ def _capture_org_key(request: Request) -> str:
     "/api/capture/{org_id}",
     status_code=status.HTTP_201_CREATED,
 )
+@access_tier("public", reason="lead capture form (per-IP and per-org rate limited, custom_fields capped, org-checked stage)", category="lead-capture")
 @limiter.limit("20/minute;200/hour", key_func=client_ip_key)
 @limiter.limit("120/minute;1500/hour", key_func=_capture_org_key)  # per ORG, on top of per IP: a botnet of IPs still cannot flood one tenant
 async def capture_lead(

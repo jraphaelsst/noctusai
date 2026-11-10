@@ -2,7 +2,7 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile access-tier`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**1057 open / in-progress**, 279 fixed, 2 accepted (1338 total).
+**1042 open / in-progress**, 294 fixed, 2 accepted (1338 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
@@ -17,7 +17,7 @@
 | erp-imobiliario | 186 | 0 | 1 | 185 | 0 | 15 |
 | igig | 58 | 0 | 0 | 58 | 0 | 13 |
 | monica | 9 | 0 | 0 | 9 | 0 | 13 |
-| orbity | 45 | 0 | 0 | 45 | 0 | 17 |
+| orbity | 30 | 0 | 0 | 30 | 0 | 32 |
 | p-studio | 20 | 0 | 0 | 20 | 0 | 0 |
 | personal-finance | 41 | 0 | 0 | 41 | 0 | 0 |
 | pilates | 1 | 0 | 0 | 1 | 0 | 0 |
@@ -99,16 +99,10 @@
 | AT-8a30e145 | igig | `GET /api/webhooks/meta/leadgen` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-e966f014 | igig | `POST /api/comercial/leads/publico` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-91dd4cc4 | igig | `POST /api/esteira/aprovar/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-b809bb56 | orbity | `DELETE /api/clients/{client_id}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-c9f75791 | orbity | `GET /api/clients/{client_id}/offboarding-preview` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-750c4cd6 | orbity | `GET /api/content/approve/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-445ac983 | orbity | `GET /api/reports/public/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-78ccdedd | orbity | `POST /api/billing/webhook/asaas/{org_id}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-cec6b842 | orbity | `POST /api/capture/{org_id}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-eef49b94 | orbity | `POST /api/clients/{client_id}/archive` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-021a038a | orbity | `POST /api/content/approve/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-dd29ab42 | orbity | `POST /api/financial/charges` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-196bf740 | orbity | `POST /api/financial/charges/{entry_id}/generate` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-9b37a4ca | p-studio | `GET /api/financeiro/status` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-45da28e3 | p-studio | `GET /api/negocios/etapas` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-0e0dc110 | p-studio | `GET /api/producoes/etapas` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
@@ -191,8 +185,8 @@
 - igig: 53
 - commerce: 48
 - personal-finance: 40
-- orbity: 35
 - community: 27
+- orbity: 26
 - academia-de-reciclagem: 16
 - adconnect: 16
 - daily-life: 16

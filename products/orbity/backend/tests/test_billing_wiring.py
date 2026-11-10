@@ -14,6 +14,7 @@ from noctusai_lib.domain.commerce.gateway import FakeCheckoutGateway
 from noctusai_lib.domain.contracts import contracts_generate_billing, contracts_migration
 from noctusai_lib.testing import MockSupabaseClient
 from noctusai_lib.testing.migrations import migrations_dir
+from noctusai_lib.testing.migrations import migration_sql
 from noctusai_lib.testing.organs import assert_organ_migration_current, find_organ_migration
 
 from app.billing import CONTRACTS_CFG, FINANCE_CFG, SCHEMA
@@ -249,3 +250,46 @@ def test_whatsapp_connections_is_service_only():
     assert 'DROP POLICY IF EXISTS "whatsapp_connections_select_own_org" ON orbity.whatsapp_connections;' in last
     assert "REVOKE ALL ON orbity.whatsapp_connections FROM PUBLIC, anon, authenticated;" in last
     assert "TO service_role" in last and "TO authenticated" not in last
+
+
+SERVICE_ONLY_TABLES = [
+    "billing_charges", "payment_gateway_events", "examples", "invitations", "ctr_contracts",
+    "ctr_contract_attachments", "ctr_contract_billings", "ctr_contract_lines", "ctr_contract_usage", "ctr_contract_versions",
+]
+
+
+def test_service_only_batch_leaves_the_browser_roles_no_privilege_and_no_policy():
+    """Access-tier lockdown (owner, 2026-11-10): the browser roles can neither SELECT nor write these tables; every one
+    is reached through the backend with the service role. Asserted on the migration chain (no live PostgREST here)."""
+    sql = migration_sql(PRODUCT_DIR, "orbity_service_only_batch1")
+    for t in SERVICE_ONLY_TABLES:
+        assert f"REVOKE ALL ON orbity.{t} FROM PUBLIC, anon, authenticated;" in sql, t
+        assert f"CREATE POLICY \"service_role_bypass\" ON orbity.{t} FOR ALL TO service_role" in sql, t
+        assert f"COMMENT ON TABLE orbity.{t} IS 'tier:org';" in sql, t
+    assert "TO authenticated" not in sql and "TO anon" not in sql
+    # no member policy survives on them: every earlier CREATE POLICY ... TO authenticated on these tables is dropped here
+    import re
+
+    created = set()
+    for p in sorted(migrations_dir(PRODUCT_DIR).glob("0[0-2]*.sql")):
+        for m in re.finditer(r'CREATE POLICY\s+"?([\w-]+)"?\s+ON\s+(?:orbity\.)?(\w+)\s+(?:AS \w+\s+)?FOR\s+\w+\s+TO\s+authenticated', p.read_text(encoding="utf-8")):
+            if m.group(2) in SERVICE_ONLY_TABLES:
+                created.add((m.group(2), m.group(1)))
+    for table, policy in created:
+        assert f'DROP POLICY IF EXISTS "{policy}" ON orbity.{table};' in sql, (table, policy)
+
+
+def test_the_frontend_never_reads_tables_through_postgrest():
+    """The only supabase-js use in the orbity frontend is auth (login / password reset); a `.from(` / `.rpc(` on the client would
+    be a direct table read that the service-only lockdown would silently cut off."""
+    import re
+
+    src = PRODUCT_DIR.parent / "frontend" / "src"
+    hits = []
+    for p in src.rglob("*.ts*"):
+        if ".test." in p.name or "__tests__" in p.parts:
+            continue
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
+            if re.search(r"\bsupabase\s*\.\s*(from|rpc|schema)\s*\(", line):
+                hits.append(f"{p.name}:{n}")
+    assert hits == []

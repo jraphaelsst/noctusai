@@ -1,6 +1,8 @@
 """Lead soft delete + captured-lead first-stage (O80). No monkeypatching of our own code."""
 from uuid import UUID
 
+import pytest
+
 from noctusai_lib.testing import MockSupabaseClient
 
 from app.services.automation_service import AutomationService
