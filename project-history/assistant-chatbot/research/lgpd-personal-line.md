@@ -67,10 +67,12 @@ Não dá para contar com a exceção de "uso pessoal". Os dados vão servir de b
 
 ## 4. Termos de uso do WhatsApp
 **Confirmado, com ressalva.**
-- **Contrato:** os Termos (versão não-UE, de 04/01/2021) proíbem:
-  - acessar o serviço "por meios automatizados ou não autorizados";
-  - "coletar informações de usuários" sem autorização;
-  - fazer engenharia reversa.
+- **Contrato:** os Termos (versão não-UE, de 04/01/2021) proíbem, no texto literal (citação corrigida em 10/11/2026, ver `lgpd-s5-artefacts.md` §0.3):
+  - "(c) gain or attempt to gain unauthorized access to our Services or systems";
+  - "(e) create accounts for our Services through unauthorized or automated means";
+  - "(f) collect information of or about our users in any impermissible or unauthorized manner";
+  - "(i) create software or APIs that function substantially the same as our Services";
+  - engenharia reversa ("reverse engineer … or extract code from our Services").
   O WhatsApp pode suspender ou encerrar a conta "a qualquer momento". O risco real é **perder o número pessoal**, e o modo só-leitura não elimina esse risco.
 - **Crime:** não vejo crime.
   - O dono usa a própria conta. Não há violação de dispositivo alheio (CP, art. 154-A).
