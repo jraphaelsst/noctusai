@@ -1,6 +1,6 @@
-# Contract — executor decision log (v1.1, 2026-11-09)
+# Contract — executor decision log (v1.2, 2026-11-09)
 
-> **Changelog.** v1.1 (2026-11-09): generalised from product-engineer to EVERY executor (owner decision D32: backend, frontend, devops, integrations, ai, test, tooling; product-engineer is the reference); compliance-reviewer's pre-merge audit applies to every executor slice; §9 records the as-built resolutions of v1 ambiguities, taken from `mcp/noctusai/tools/noctus/dev/decision_log.py` and its tests. v1 (2026-11-09): first contract.
+> **Changelog.** v1.2 (2026-11-09, council verdict a9a6be54, labels BN/ZY/N/QP/Q): audit check 1 separates spec-ASSIGNED work from executor-DECIDED changes (`Assigned:` trailer, §6a); `AC:` trailers are validated against the spec's numbered acceptance criteria (§6a); a presence check flags decisions made without a log row (§6b); the audit runs on the merge path (`task_branch`), warn-only, with a stated promote-to-block criterion (§10); decision rows gain an optional `product` slug (§4). v1.1 (2026-11-09): generalised from product-engineer to EVERY executor (owner decision D32: backend, frontend, devops, integrations, ai, test, tooling; product-engineer is the reference); compliance-reviewer's pre-merge audit applies to every executor slice; §9 records the as-built resolutions of v1 ambiguities, taken from `mcp/noctusai/tools/noctus/dev/decision_log.py` and its tests. v1 (2026-11-09): first contract.
 
 > Owner decisions (2026-11-09, in the live spec doc):
 > - Every executor (product-engineer as the reference) "decides small things in scope", designed safely.
@@ -50,7 +50,7 @@
 - `reviewer_kind`: `compliance_reviewer` · `tech_lead` · `owner` · `product_analyst`
 
 ## 4 · Row (`record`) — one decision
-`id` (`D-<slice>-<NNN>`, sequential, never reused), `ts`, `agent`, `slice_id`, `branch`, `commit_sha`†, `ac_ref`†,
+`id` (`D-<slice>-<NNN>`, sequential, never reused), `ts`, `agent`, `slice_id`, `branch`, `commit_sha`†, `ac_ref`†, `product`† (slug of the product the decision concerns; `[a-z0-9-]+`; enables per-product and per-vertical aggregation),
 `tier`, `class`, `criteria_hit[]`, `reversibility`, `blast_radius`, `surprise_test`, `paths[]`,
 `decision` (free text, ≤200 characters, "We will …"), `options_considered`†, `revert_hint`†, `supersedes`†.
 A `review` row is a separate append: `{id_ref, outcome, reviewer_kind, reviewer, note†}`.
@@ -69,9 +69,17 @@ The merge is blocked when any of these holds:
 - billing, secrets or auth are loosened;
 - paths outside the declared slice paths change while a row says `slice_paths`;
 - a runtime dependency is added without a `notify`-or-higher row;
-- a changed file has no row and no `ac_ref`;
+- a changed file has no row and no VALID `AC:`/`Assigned:`/`Decisions:` trailer (§6a);
 - a row says `one_commit` but the diff has a migration;
 - a cap is exceeded.
+
+### 6a · Assigned vs decided; validated trailers (v1.2)
+- Commit trailers: `Spec: <repo-relative spec path>` (once per slice; or pass `spec=` to the audit), `AC: <n>[, <n>…]` (justifies a file as acceptance-criterion work), `Assigned: <n>[, <n>…]` (declares the commit's work was assigned by those criteria), `Decided: <free text>` (declares an executor decision; must be paired with `Decisions: D-…`).
+- A token is valid only if it is a numbered acceptance criterion of the spec: a numbered item under a heading containing "acceptance criteria", or an `AC-<id>`/`AC<n>` labelled line (`AC-3`, `AC3`, `3` are the same token). An unknown token is an `ac_unknown` **block** and justifies nothing. A named spec that is missing, outside the tree, or has no criteria is a `spec` **block**. No spec referenced at all: trailers count unverified with a `spec` **warn**.
+- **Check 1 (gated surface).** A migration / RLS / access-tier / contract file passes WITHOUT an owner escalate row only when a commit that touches it carries `Assigned: <n>` and criterion `<n>`'s text names the surface (its path, a parent directory, or its basename; or the surface keyword for migrations, contracts, access tiers, RLS). That the spec named it is what makes it assigned, so an executor cannot self-assign by tagging. Everything else on those surfaces still needs the owner-accepted `escalate` row. An assigned surface yields an `info` finding.
+
+### 6b · Presence (v1.2)
+`unlogged_decision` **block**: (a) a commit carries `Decided:` but no `Decisions:` trailer; (b) the diff adds a route, a page or a runtime dependency with no decision row covering the file and no spec assignment (`Assigned:` naming it). This is the check that stops an executor dodging the caps by not logging.
 
 compliance-reviewer also re-runs the surprise test on 1 in 5 `autonomous` rows and on every `class=other` row.
 Each acceptance criterion needs ≥ 1 test.
@@ -98,3 +106,8 @@ Each acceptance criterion needs ≥ 1 test.
 - **Recheck sample**: deterministic given a seed (default the slice id): `ceil(n/5)` autonomous rows ranked by sha256, plus every `class=other` row.
 - **`report`** action: per-class uses, vetoes, reclassifications, clean uses since the last bad outcome; proposals only (demote, or eligible for re-promotion at 10 clean uses); the owner ratifies.
 - **Storage**: the ledger is an in-tree ndjson in the branch's own git (the `council_ledger` pattern), not `ledger_store` (which holds fixed flat ledger names). The keeper `check_decision_log_schema` validates rows and, when staged, that the diff only appends at EOF.
+
+## 10 · Merge-path wiring (v1.2)
+- `task_branch` `enqueue` and `integrate` run `noctus.dev.decision_log.merge_path_audit` (the §6 audit against `merge-base(origin/dev, branch)`, slice id = the task slug) right after the doc-staleness pre-flight, whether or not compliance-reviewer is ever dispatched. The summary rides on the result as `decision_audit` (`mode`, `status`, `blocks`, `warns`, `block_checks`, `blocking`); an audit error is reported `inconclusive`, never clear.
+- **Mode: `warn`** (`MERGE_PATH_AUDIT_MODE`): nothing is blocked yet. Each run appends a telemetry row to `~/.noctus/decision-audit.ndjson`.
+- **Promote to `block` when** the telemetry shows, over at least 20 audited merges and 14 days, a false-positive rate (blocks the tech-lead judged wrong) below 5% and every `block_check` has a documented fix path; then flip `MERGE_PATH_AUDIT_MODE` to `block` (the compliance-reviewer pre-merge duty in §6 stays). A wall the normal flow keeps hitting is researched and fixed, not demoted (gate-methodology-sync).
