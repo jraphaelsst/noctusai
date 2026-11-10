@@ -118,7 +118,9 @@ noc VPS
 **Improvements:** NOC-FILL-IMPROVEMENTS
 
 ### Phase 1 — V1: Julia and the Assistant on separate lines, one server
-- [ ] Retire the One Chat leftovers (bot routes, catalog row, docs), with Julia as the line (`feat/one-chat-retire`). SW hunks are reviewed by `noctusai-e1`.
+- [ ] Retire the One Chat leftovers (bot routes, catalog row, docs), with Julia as the line, in three slices: `feat/one-chat-retire-{agents,sw,docs}`. SW hunks are reviewed by `noctusai-e1`.
+  - **Delivery order is expand/contract, with all slices in ONE `feat/agents` delivery.** The agents image stops calling the bridge before the SW image deletes the route; otherwise `/api/agents` 404s on the old client. The agents migration that deletes the `one-chat` rows is applied AFTER the new agents image is live, because the old image's `ensure_defaults` would re-seed the row. Tell the dev steward this order when delivering.
+- [ ] `auto_reply_enabled` (SW `whatsapp_connections`) stays for now (`NOC-REMEDIATE[drop-auto-reply-enabled]`). Trigger: one-chat-retire is deployed and nothing reads the column. Before dropping it, check prod for any row still `true`. Then ship its own small SW migration with the owner's typed go. It is never bundled with 336/337/338.
 - [ ] Add a `julia` (L1) entry in `waha-instances.yml`, pinned with a healthcheck. Re-point One's `whatsapp_connections.base_url` to it. The owner re-scans …4172 there, then the legacy `noctus-services-waha-1` retires.
 - [ ] The Assistant session lands its WAHA-per-container mechanism (their branch).
 - [ ] Julia moves to the business number on her own container (owner scans the QR).
