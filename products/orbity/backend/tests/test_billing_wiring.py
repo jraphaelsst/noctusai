@@ -48,11 +48,12 @@ def test_migrations_are_numbered_in_dependency_order():
     from noctusai_seed.organs import ORGAN_REGISTRY
 
     num = lambda p: int(p.name.split("_", 1)[0])  # noqa: E731
-    (fin,) = find_organ_migration(PRODUCT_DIR, ORGAN_REGISTRY["finance"].migration_header)
+    # the FIRST file of an organ fixes its dependency position; later files are revisions (render_organ_migration)
+    fin = find_organ_migration(PRODUCT_DIR, ORGAN_REGISTRY["finance"].migration_header)[0]
     (ctr,) = find_organ_migration(PRODUCT_DIR, ORGAN_REGISTRY["contracts"].migration_header)
     (delta,) = [p for p in migrations_dir(PRODUCT_DIR).glob("*.sql") if "billing_on_seed_organs" in p.name]
     assert num(fin) < num(ctr) < num(delta)  # contracts widens fin_entries.source; the data move needs both organs
-    (rem,) = find_organ_migration(PRODUCT_DIR, ORGAN_REGISTRY["finance_reminders"].migration_header)
+    rem = find_organ_migration(PRODUCT_DIR, ORGAN_REGISTRY["finance_reminders"].migration_header)[0]
     assert num(fin) < num(rem)  # reminders alter fin_entries and reference fin_reminder_* -> fin_entries
 
 
