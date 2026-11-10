@@ -575,7 +575,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="Keepers that collapse advisory output (e.g. --check-eight-way-sync's cache-staleness warnings) print every line instead of a one-line summary. Env NOCTUS_HOOK_VERBOSE=1 does the same from a git hook.")
     parser.add_argument("--task-branch-verbose", action="store_true", help="With --task-branch action=start: full inline wire_env would_wire/wired/skipped lists instead of the compact {count, sample} shape.")
     parser.add_argument("--cleanup-respect-min-age", action="store_true", help="With --cleanup-stale-worktrees --force: keep the min-age guard (never take a brand-new worktree). Used by the SessionStart sweep.")
-    parser.add_argument("--release-steward", metavar="ACTION", choices=["status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack"], help="The release steward: ONE elected leader session per machine handles CI queueing AND deploy; everyone else files deliveries (request) and keeps building. Session identity = --steward-session-id or $CLAUDE_CODE_SESSION_ID. This is also the first-claim bootstrap path. MCP: noctus.dev.release_steward. KB § PATTERNS/devops/release-steward.md.")
+    parser.add_argument("--release-steward", metavar="ACTION", choices=["status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack", "role", "roles", "reconcile"], help="The release steward: ONE elected leader session per machine handles CI queueing AND deploy; everyone else files deliveries (request) and keeps building. Session identity = --steward-session-id or $CLAUDE_CODE_SESSION_ID. This is also the first-claim bootstrap path. MCP: noctus.dev.release_steward. KB § PATTERNS/devops/release-steward.md.")
     parser.add_argument("--steward-session-id", default=None, help="With --release-steward: the caller's session id (default $CLAUDE_CODE_SESSION_ID).")
     parser.add_argument("--steward-name", default=None, help="With --release-steward claim/request: a human-readable session name (e.g. noctusai-51).")
     parser.add_argument("--steward-reason", default=None, help="With --release-steward claim: why this session holds the lane.")
@@ -597,6 +597,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--steward-dev-sha", default=None, help="With --release-steward ack: the dev sha it landed as.")
     parser.add_argument("--steward-to-session-id", default=None, help="With --release-steward handoff: transfer the lane to this session id.")
     parser.add_argument("--steward-to-name", default=None, help="With --release-steward handoff: offer the lane to this named session (it accepts with claim).")
+    parser.add_argument("--steward-role", default=None, help="With --release-steward role: the role (dev-steward is derived; branch-steward:<branch>, agents, products/sw, assistant, ...).")
+    parser.add_argument("--steward-role-op", default=None, choices=["set", "clear"], help="With --release-steward role: set (default) or clear.")
+    parser.add_argument("--steward-branches", default=None, help="With --release-steward request: comma-separated ORDERED branches of a split delivery (drained as ONE train + ONE enqueue).")
+    parser.add_argument("--steward-confirm", action="store_true", help="With --release-steward reconcile: actually ack the already-landed requests.")
     parser.add_argument("--steward-include-done", action="store_true", help="With --release-steward inbox/mine: include finished requests.")
     parser.add_argument("--task-branch-post-integrate", action="store_true", help="Run task_branch integrate's slow best-effort tail (structural cache settle, then the primary ledger drain). Spawned DETACHED by integrate on the real runner; prints the JSON result.")
     parser.add_argument("--task-branch-post-dev-branch", default="dev", help="With --task-branch-post-integrate: the dev branch name.")
@@ -4207,7 +4211,9 @@ def main():
             products=[x.strip() for x in (args.steward_products or "").split(",") if x.strip()] or None,
             migrations=args.steward_migrations, notes=args.steward_notes, outcome=args.steward_outcome,
             dev_sha=args.steward_dev_sha, include_done=args.steward_include_done,
-            inline_reason=args.steward_inline_reason, inline_note=args.steward_inline_note)
+            inline_reason=args.steward_inline_reason, inline_note=args.steward_inline_note,
+            branches=[x.strip() for x in (args.steward_branches or "").split(",") if x.strip()] or None,
+            role=args.steward_role, op=args.steward_role_op, confirm=args.steward_confirm)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 

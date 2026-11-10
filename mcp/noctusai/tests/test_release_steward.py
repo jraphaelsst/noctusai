@@ -554,6 +554,172 @@ class TestToolRefusal:
 
 # -- run_action dispatch (MCP / CLI shared) ------------------------------------
 
+class TestRoles:
+    def test_any_session_sets_its_own_role_and_roles_lists_it(self, store, alive):
+        r = store.role_set(PEER, "agents", name="noctusai-e4", claude_pid=77)
+        assert r["ok"] and r["role"]["session_id"] == PEER
+        listed = store.roles()
+        assert listed["roles"]["agents"]["name"] == "noctusai-e4"
+        assert listed["roles"]["agents"]["state"] == "live"
+
+    def test_dead_session_role_is_flagged_stale(self, store, alive):
+        store.role_set(PEER, "products/sw", name="e1", claude_pid=88)
+        alive[88] = False
+        assert store.roles()["roles"]["products/sw"]["state"] == "stale"
+        assert "products/sw" in store.roles()["stale_roles"]
+
+    def test_stale_by_ttl_without_pid(self, store, clock):
+        store.role_set(PEER, "assistant", name="a")
+        clock.t += 7201
+        assert store.roles()["roles"]["assistant"]["state"] == "stale"
+
+    def test_setting_another_sessions_role_is_steward_only(self, store):
+        refused = store.role_set(PEER, "agents", name="x", to_session_id="33333333-cccc")
+        assert refused["status"] == "refused_not_steward"
+        store.claim(STEWARD, name="dev")
+        ok = store.role_set(STEWARD, "agents", name="x", to_session_id="33333333-cccc")
+        assert ok["ok"] and store.roles()["roles"]["agents"]["session_id"] == "33333333-cccc"
+
+    def test_dev_steward_is_derived_from_the_lease_and_not_settable(self, store):
+        assert store.role_set(PEER, "dev-steward", name="n")["ok"] is False
+        store.claim(STEWARD, name="noctusai-b5")
+        ds = store.roles()["roles"]["dev-steward"]
+        assert ds["session_id"] == STEWARD and ds["derived"] is True
+
+    def test_branch_steward_role_kind(self, store):
+        assert store.role_set(PEER, "branch-steward:feat/assistant-chatbot", name="22")["ok"]
+        assert "branch-steward:feat/assistant-chatbot" in store.roles()["roles"]
+        assert store.role_set(PEER, "branch-steward:", name="22")["ok"] is False
+
+    def test_status_carries_roles_and_claim_next_says_remap(self, store):
+        store.role_set(PEER, "agents", name="e4")
+        assert "agents" in store.status(PEER)["roles"]
+        assert "role" in store.claim(STEWARD, name="d")["next"].lower()
+
+    def test_role_changes_are_audited(self, store):
+        store.role_set(PEER, "agents", name="e4")
+        rows = [json.loads(x) for x in store.audit_path.read_text().splitlines()]
+        assert any(r["event"] == "role_set" and r.get("role") == "agents" for r in rows)
+
+    def test_role_actions_via_run_action(self, store):
+        r = rs.run_action("role", PEER, store=store, claude_pid=5, role="agents", name="e4")
+        assert r["ok"]
+        assert rs.run_action("roles", PEER, store=store)["roles"]["agents"]["name"] == "e4"
+
+
+def _checker(table):
+    def check(branch, head_sha):
+        return table.get(branch, {"state": "pending"})
+    return check
+
+
+class TestReconcile:
+    def _req(self, store, slug, **kw):
+        store.request(PEER, slug, head_sha="abc1234", **kw)
+
+    def test_landed_request_goes_to_already_landed_not_drain(self, store):
+        store.landed_check = _checker({"feat/a": {"state": "landed", "dev_sha": "dev111"}})
+        self._req(store, "a")
+        self._req(store, "b")
+        box = store.inbox()
+        assert [r["slug"] for r in box["already_landed"]] == ["a"]
+        assert box["already_landed"][0]["landed_detected"] == "dev111"
+        assert box["drain"] == ["task_branch action=enqueue slug=b confirm=True"]
+        assert box["pending"] == 1
+
+    def test_unresolvable_is_flagged_never_dropped(self, store):
+        store.landed_check = _checker({"feat/a": {"state": "unresolvable"}})
+        self._req(store, "a")
+        box = store.inbox()
+        assert [r["slug"] for r in box["unresolvable"]] == ["a"]
+        assert box["drain"] == ["task_branch action=enqueue slug=a confirm=True"]
+
+    def test_status_counts_already_landed(self, store):
+        store.landed_check = _checker({"feat/a": {"state": "landed", "dev_sha": "d"}})
+        self._req(store, "a")
+        assert store.status(PEER)["outbox"]["already_landed"] == 1
+
+    def test_reconcile_requires_confirm_and_steward(self, store):
+        store.landed_check = _checker({"feat/a": {"state": "landed", "dev_sha": "dev111"}})
+        self._req(store, "a")
+        assert store.reconcile(PEER, confirm=True)["status"] == "refused_not_steward"
+        store.claim(STEWARD, name="d")
+        plan = store.reconcile(STEWARD, confirm=False)
+        assert plan["status"] == "planned" and plan["would_ack"] == ["a"]
+        assert store.requests()["a"]["status"] == "queued_for_steward"
+        done = store.reconcile(STEWARD, confirm=True)
+        assert done["acked"] == ["a"]
+        r = store.requests()["a"]
+        assert r["status"] == "landed" and r["dev_sha"] == "dev111"
+
+    def test_reconcile_is_audited(self, store):
+        store.landed_check = _checker({"feat/a": {"state": "landed", "dev_sha": "d"}})
+        self._req(store, "a")
+        store.claim(STEWARD, name="d")
+        store.reconcile(STEWARD, confirm=True)
+        rows = [json.loads(x) for x in store.audit_path.read_text().splitlines()]
+        assert any(r["event"] == "reconcile" and r["slugs"] == ["a"] for r in rows)
+
+    def test_multi_branch_landed_only_when_all_landed(self, store):
+        store.landed_check = _checker({"feat/a-be": {"state": "landed", "dev_sha": "d"}})
+        store.request(PEER, "a", head_sha="x", branches=["feat/a-be", "feat/a-fe"])
+        assert store.inbox()["already_landed"] == []
+
+    def test_git_checker_on_real_repo(self, tmp_path):
+        def g(*a):
+            subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True,
+                           env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                                "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        g("init", "-q", "-b", "dev")
+        (tmp_path / "f").write_text("1"); g("add", "f"); g("commit", "-qm", "base")
+        g("update-ref", "refs/remotes/origin/dev", "HEAD")
+        g("checkout", "-qb", "feat/x")
+        (tmp_path / "g").write_text("2"); g("add", "g"); g("commit", "-qm", "x")
+        sha = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        chk = rs.git_landed_check(cwd=tmp_path)
+        assert chk("feat/x", sha)["state"] == "pending"
+        g("update-ref", "refs/remotes/origin/dev", "HEAD")  # now dev contains it
+        res = chk("feat/x", sha)
+        assert res["state"] == "landed" and res["dev_sha"] == sha
+        assert chk("feat/ghost", None)["state"] == "unresolvable"
+        assert chk("feat/ghost", sha)["state"] == "landed"  # falls back to head_sha
+
+
+class TestMultiBranch:
+    def test_request_stores_ordered_branches(self, store):
+        r = store.request(PEER, "roteiro", head_sha="x", branches=["feat/r-be", "feat/r-fe"])
+        assert r["request"]["branches"] == ["feat/r-be", "feat/r-fe"]
+
+    def test_drain_is_one_train_then_one_enqueue(self, store):
+        store.request(PEER, "roteiro", head_sha="x", branches=["feat/r-be", "feat/r-fe"])
+        store.request(PEER, "solo", head_sha="y")
+        drain = store.inbox()["drain"]
+        assert drain[0] == "task_branch action=train slug=train-roteiro slugs=[r-be,r-fe] confirm=True"
+        assert drain[1] == "task_branch action=enqueue slug=train-roteiro confirm=True"
+        assert "task_branch action=enqueue slug=solo confirm=True" in drain
+        assert not any("slug=r-be" in d and "enqueue" in d for d in drain)
+
+    def test_warns_when_notes_say_together_without_branches(self, store):
+        r = store.request(PEER, "r-be", head_sha="x", notes="deploy TOGETHER with the fe")
+        assert any("branches=" in w for w in r["warnings"])
+
+    def test_warns_on_second_feat_name_in_notes(self, store):
+        r = store.request(PEER, "r-be", head_sha="x", notes="needs feat/r-fe too")
+        assert any("branches=" in w for w in r["warnings"])
+
+    def test_no_warning_when_branches_given_or_plain_notes(self, store):
+        ok = store.request(PEER, "r", head_sha="x", branches=["feat/a", "feat/b"], notes="deploy together")
+        assert not any("branches=" in w for w in ok.get("warnings", []))
+        plain = store.request(PEER, "p", head_sha="x", notes="feat/p adds a button")
+        assert not any("branches=" in w for w in plain.get("warnings", []))
+
+    def test_train_drain_is_audited(self, store):
+        store.request(PEER, "roteiro", head_sha="x", branches=["feat/r-be", "feat/r-fe"])
+        store.inbox()
+        rows = [json.loads(x) for x in store.audit_path.read_text().splitlines()]
+        assert any(r["event"] == "train_drain" and r["slug"] == "roteiro" for r in rows)
+
+
 def test_run_action_roundtrip(store):
     assert rs.run_action("claim", STEWARD, store=store, claude_pid=100, name="n51")["ok"]
     assert rs.run_action("request", PEER, store=store, slug="alpha", head_sha="a1", products=["agents"])["ok"]
