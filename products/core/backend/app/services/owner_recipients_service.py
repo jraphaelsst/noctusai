@@ -14,6 +14,7 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 from noctusai_lib.primitives.phone import normalize_phone
+from noctusai_lib.primitives.timeutil import now_utc
 
 TABLE = "notification_owner_recipients"
 _COLUMNS = "id, numero, nome, ativo, created_at"
@@ -63,7 +64,7 @@ def add_recipient(db: Any, *, numero: str, nome: Optional[str], user_id: Optiona
         raise DuplicateNumber("numero_duplicado")
     try:
         rows = db.table(TABLE).insert(
-            {"id": str(uuid.uuid4()), "numero": canonical, "ativo": True, "nome": (nome or "").strip() or None, "alterado_por": user_id}
+            {"id": str(uuid.uuid4()), "numero": canonical, "ativo": True, "alterado_em": now_utc().isoformat(), "nome": (nome or "").strip() or None, "alterado_por": user_id}
         ).execute().data or []
     except Exception as exc:  # a concurrent insert of the same number hits the UNIQUE constraint
         if any(h in str(exc).lower() for h in _UNIQUE_HINTS):
@@ -84,6 +85,7 @@ def update_recipient(db: Any, *, recipient_id: str, patch: dict, user_id: Option
         rows = db.table(TABLE).select(_COLUMNS).eq("id", recipient_id).execute().data or []
     else:
         values["alterado_por"] = user_id
+        values["alterado_em"] = now_utc().isoformat()
         rows = db.table(TABLE).update(values).eq("id", recipient_id).execute().data or []
     if not rows:
         raise RecipientNotFound(recipient_id)

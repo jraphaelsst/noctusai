@@ -59,6 +59,16 @@ def test_update_stamps_actor():
         svc.update_recipient(db, recipient_id="nope", patch={"ativo": True}, user_id="u3")
 
 
+def test_every_update_restamps_the_write():
+    db = _db()
+    rid = svc.add_recipient(db, numero="+5511999999999", nome=None, user_id="u1")["id"]
+    svc.update_recipient(db, recipient_id=rid, patch={"ativo": False}, user_id="u1")
+    first = db.table(svc.TABLE).select("*").execute().data[0]["alterado_em"]
+    svc.update_recipient(db, recipient_id=rid, patch={"ativo": True}, user_id="u1")  # same admin again
+    second = db.table(svc.TABLE).select("*").execute().data[0]["alterado_em"]
+    assert first and second and first != second
+
+
 def test_numero_is_never_in_an_update():
     db = _db()
     rid = svc.add_recipient(db, numero="+5511999999999", nome=None, user_id="u1")["id"]

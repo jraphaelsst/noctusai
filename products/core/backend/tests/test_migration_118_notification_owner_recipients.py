@@ -57,7 +57,7 @@ def test_events_cannot_be_truncated_or_written_by_service_role():
 
 def test_only_the_definer_trigger_function_writes_events():
     m = re.search(r"FUNCTION public\.notification_owner_recipients_record_event\(\).*?LANGUAGE plpgsql SECURITY DEFINER "
-                  r"SET search_path = public", FLAT)
+                  r"SET search_path = pg_catalog, public", FLAT)
     assert m
     assert ("REVOKE EXECUTE ON FUNCTION public.notification_owner_recipients_record_event() "
             "FROM PUBLIC, anon, authenticated, service_role") in FLAT
@@ -69,3 +69,24 @@ def test_remover_rpc_is_one_statement_with_the_actor():
     assert "DELETE FROM public.notification_owner_recipients WHERE id = p_id RETURNING id INTO v_id" in FLAT
     assert "REVOKE EXECUTE ON FUNCTION public.remover_destinatario_dono(UUID, UUID) FROM PUBLIC, anon, authenticated" in FLAT
     assert "GRANT EXECUTE ON FUNCTION public.remover_destinatario_dono(UUID, UUID) TO service_role" in FLAT
+
+
+def test_actor_is_read_from_the_setting_only_on_delete():
+    body = re.search(r"record_event\(\)(.*?)\$\$;", FLAT).group(1)
+    assert "TG_OP = 'DELETE'" in body
+    # the old shape (setting preferred on every op) must be gone
+    assert "COALESCE( NULLIF(current_setting('noc.ator', true), '')::uuid" not in body
+
+
+def test_plain_delete_and_unstamped_update_are_refused():
+    assert "delete is only allowed through remover_destinatario_dono" in FLAT
+    assert "NEW.alterado_em IS NOT DISTINCT FROM OLD.alterado_em" in FLAT
+    assert "alterado_em TIMESTAMPTZ" in FLAT
+
+
+def test_definer_function_pins_a_safe_search_path():
+    assert "SECURITY DEFINER SET search_path = pg_catalog, public" in FLAT
+
+
+def test_residual_is_documented():
+    assert "accepted residual" in SQL
