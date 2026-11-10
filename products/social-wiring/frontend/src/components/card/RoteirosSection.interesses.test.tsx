@@ -11,6 +11,7 @@ vi.mock("@/components/interesses/ImovelInteressesList", () => ({
 import { cleanup, render } from "@testing-library/react";
 
 import { RoteirosSection, type RoteirosSectionProps } from "./RoteirosSection";
+import { roteiroFx } from "./roteiroFixtures";
 
 afterEach(cleanup);
 
@@ -19,11 +20,13 @@ function props(over: Partial<RoteirosSectionProps> = {}): RoteirosSectionProps {
   return {
     roteiros: [],
     onCriar: noop,
+    onEditarRascunho: noop,
     onRemover: noop,
-    onGerarPdf: noop,
+    onBaixarPdf: noop,
+    onReabrir: noop,
+    onPatchRoteiro: noop,
     onPatchVisita: noop,
-    onAddVisita: noop,
-    onRemoveVisita: noop,
+    onReagendar: noop,
     ...over,
   };
 }
@@ -47,15 +50,12 @@ describe("RoteirosSection — interesses + data_visita", () => {
       <RoteirosSection
         {...props({
           roteiros: [
-            {
-              id: "r1",
-              atendimento_id: "at1",
+            roteiroFx({
               titulo: "Terça",
               created_at: "2026-09-30T12:00:00Z",
               data_visita: "2026-10-01",
               visitas: [],
-              contagem: { total: 0, realizadas: 0, nao_realizadas: 0, pendentes: 0 },
-            },
+            }),
           ],
         })}
       />,
