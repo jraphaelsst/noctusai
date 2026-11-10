@@ -2,7 +2,7 @@
 
 > Generated from `gate-alignment-inventory.json` by `python mcp/noctusai/cli.py --gate-alignment render`. Method and rules: `KB § PATTERNS/common/gate-methodology-sync.md`. Firing counts are measured from 943 Claude Code session transcripts (~/.claude/projects, 2026-08..2026-11-05), tool results only, one count per tool call; guard-events.ndjson for live events (upper-bound-free: tool results only, one count per tool call).
 
-Totals by class: **?** 21, **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 177 gates). Mechanism burn-down: {'gates': 177, 'declared': 60, 'declared_none_justified': 10, 'undeclared_baseline': 117}.
+Totals by class: **?** 23, **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 179 gates). Mechanism burn-down: {'gates': 179, 'declared': 62, 'declared_none_justified': 11, 'undeclared_baseline': 117}.
 
 | Gate | Standard | Construction mechanism | Owner | Firings (sessions) | Class |
 |---|---|---|---|---:|---|
@@ -73,6 +73,7 @@ Totals by class: **?** 21, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | `keeper:check-agent-context-cache-freshness` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-agent-format` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-agent-kb-alignment` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
+| `keeper:check-agent-names-resolve` | agent names on methodology surfaces resolve to .claude/agents/<name>.md | none (names are free text on methodology surfaces; the keeper resolves them against .claud | tooling-engineer | 0 (0) | ? |
 | `keeper:check-ai-feature-completeness` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-auth-boundary-false-green` | auth-boundary tests must not pair 401 with a maskable code (404/422) | api:assert_tier_contract (generated strict 401/403 for every documented route) - this gate | backend-engineer | 0 (0) | unmeasured |
 | `keeper:check-auth-dep-anti-pattern` | route auth dependency anti-patterns | api:make_get_current_user_org factory (KB § PATTERNS/backend/backend.md Auth canonical pat | backend-engineer | 0 (0) | unmeasured |
@@ -158,6 +159,7 @@ Totals by class: **?** 21, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | `keeper:check-product-service-worker` |  | **NONE** | devops-engineer | 0 (0) | unmeasured |
 | `keeper:check-product-source-build-dep-pip-seam` |  | **NONE** | devops-engineer | 0 (0) | unmeasured |
 | `keeper:check-project-history-staged` | Pre-commit gate: a commit staging project-history/ledger.ndjson must stage the PROJECT-HISTORY.md rendered fro | **NONE** | tooling-engineer | 0 (0) | never-fires |
+| `keeper:check-raw-waha-client-construction` | KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a (line policy v1): a WAHA client is built only by the seed factory s | api: noctusai_lib.integrations.whatsapp.get_whatsapp_client | integrations-engineer | 0 (0) | ? |
 | `keeper:check-root-requirements-superset` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-section-7-placeholder-consistency` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-seed-compliance` |  | **NONE** | devops-engineer | 0 (0) | unmeasured |
@@ -240,3 +242,4 @@ Totals by class: **?** 21, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | D30 | Product-engineer decisions are measurable and bounded: every in-scope decision is a validated, append-only ledger row (one file per slice); a row below the tier floor its own criteria imply is refused at write, caps (5 autonomous / 3 notify) and 3-in-a-row are enforced at record, and audit judges the whole slice diff pre-merge. Schema gate is warn-first shadow then blocking | project-history/assistant-chatbot/contracts/decision-log.md | noctus.dev.decision_log (the only write path; refuses below-floor tiers, enforces caps) | keeper:check-decision-log-schema | gate events (cli wrapper) via --check-decision-log-schema; per-class use/veto/reclassify + promotion proposals via decision_log action=report; pre-merge findings via action=audit | feat/assistant-decision-log |
 | D31 | A spec-writing advisor (product-manager, product-architect, product-designer) may Write only spec/notes files (scratchpad dir or projects/<slug>/spec/mockups); the agent files state it and a PreToolUse guard keeps it, warn-first shadow | KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/gate-methodology-sync.md | .claude/agents/product-manager.md (the Write-scope rule; the guard derives the writer set from the agent frontmatter) | guard:advisor-write | guard-events.ndjson warn/deny rows via _guard_failclosed.log_event; gate_alignment walls | feat/assistant-owner-d31-d34 |
 | J | While a council session has no verdict row, direct reads of its project-history/council file are flagged (denied once promoted from shadow); the ledger tool is unaffected | KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/council.md | mcp/noctusai/tools/noctus/dev/council_ledger.py (tool-assigned labels, seats withheld until verdict) | guard:council-read | guard-events.ndjson warn/deny rows via _guard_failclosed.log_event; gate_alignment walls | feat/ac-council-guard |
+| D32 | A WhatsApp line declares its policy (send/mark_online/full_sync/auto_repair); the seed refuses writes on a send:disabled or undeclared line, an edge proxy 403s them, and a WAHA client is built only by the seed factory | KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a | api:noctusai_lib.integrations.whatsapp.get_whatsapp_client (policy rides on the client) + waha_instance render (edge deny proxy, dashboard off) | keeper:check-raw-waha-client-construction + check_waha_instances_render_sync (policy declared, prod env == declared) | immutable events whatsapp.line.write_refused / whatsapp.line.repair_refused via LineEventSink | feat/ac-line-policy |

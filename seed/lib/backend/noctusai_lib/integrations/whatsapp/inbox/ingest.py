@@ -30,6 +30,7 @@ from uuid import UUID
 
 from starlette.concurrency import run_in_threadpool
 
+from noctusai_lib.integrations.whatsapp.log_safety import install_phone_scrub, mask_chat_id
 from noctusai_lib.integrations.whatsapp.connection_store import WhatsAppConnectionRecord
 from noctusai_lib.integrations.whatsapp.identity import resolve_identity
 from noctusai_lib.integrations.whatsapp.inbox.realtime import (
@@ -55,7 +56,7 @@ from noctusai_lib.integrations.whatsapp.mappers import (
     normalize_waha_id,
 )
 
-logger = logging.getLogger(__name__)
+logger = install_phone_scrub(logging.getLogger(__name__))
 
 OnNewChat = Callable[[UUID, UUID, InboxChat], Awaitable[None]]
 #: ``on_message(org_id, connection_id, chat, message)`` - fired for every message that was NEWLY stored (inbound
@@ -64,6 +65,13 @@ OnNewChat = Callable[[UUID, UUID, InboxChat], Awaitable[None]]
 OnMessage = Callable[[UUID, UUID, InboxChat, InboxMessage], Awaitable[None]]
 #: ``record -> WAHA client`` (only used to resolve an unknown @lid to a phone).
 WahaClientFactory = Callable[[WhatsAppConnectionRecord], Any]
+
+#: PRE-STORE PREDICATE SEAM. ``should_store(message, chat) -> True | False | "<reason>"``: runs after identity
+#: resolution and BEFORE anything is persisted, published or notified. ``True`` stores (the default when no predicate
+#: is given: store all). ``False`` or a reason string skips -- nothing is stored, no ``on_message`` / ``on_new_chat``.
+#: A raising predicate PROPAGATES (webhook 5xx, WAHA retries): fail-closed, never "store it anyway". The reason
+#: rides back on :class:`IngestResult` so the caller can record why.
+ShouldStore = Callable[[InboxMessage, "ChatIdentity"], "bool | str"]
 
 _IGNORED_SUFFIXES = ("@broadcast", "@newsletter")
 
@@ -79,10 +87,11 @@ _PHONE_SUFFIXES = ("@c.us", "@s.whatsapp.net")
 
 @dataclass(frozen=True)
 class IngestResult:
-    status: str  # message | duplicate | ack | session | ignored
+    status: str  # message | duplicate | ack | session | ignored | skipped
     chat_id: Optional[str] = None
     message_id: Optional[str] = None
     new_chat_fired: bool = False
+    reason: Optional[str] = None  # why a ``skipped`` message was not stored
 
 
 @dataclass(frozen=True)
@@ -173,6 +182,7 @@ def parse_waha_message(
         sender_name=None if from_me else extract_from_name(payload),
         media_mimetype=media.mimetype if media else None,
         sender_phone=sender_phone,
+        source=first_text(payload, "source") or None,
     )
     return ParsedMessage(message=message, chat_jid=jid)
 
@@ -262,6 +272,7 @@ async def ingest_waha_event(
     on_message: Optional[OnMessage] = None,
     lid_cache: Optional[LidPhoneCache] = None,
     waha_client_factory: Optional[WahaClientFactory] = None,
+    should_store: Optional[ShouldStore] = None,
 ) -> IngestResult:
     event = str(body.get("event") or "")
     payload = body.get("payload")
@@ -306,6 +317,13 @@ async def ingest_waha_event(
         parsed.chat_jid, push_name=parsed.message.sender_name if not parsed.message.from_me else None,
         lid_cache=lid_cache, waha_client=waha_client,
     )
+    if should_store is not None:
+        verdict = should_store(replace(parsed.message, chat_id=identity.chat_id), identity)
+        if verdict is not True:
+            reason = verdict if isinstance(verdict, str) and verdict else "predicate_false"
+            return IngestResult(
+                "skipped", chat_id=identity.chat_id, message_id=parsed.message.id, reason=reason
+            )
     origin = ORIGIN_OUTBOUND if parsed.message.from_me else ORIGIN_INBOUND
     inserted, chat, state = await persist_message(
         parsed=parsed, org_id=org_id, connection_id=connection_id, chat_store=chat_store,
@@ -342,7 +360,7 @@ async def notify_message(
         await on_message(org_id, connection_id, chat, message)
     except Exception:  # noqa: BLE001 - a consumer bug must not fail the webhook / the send
         logger.exception(
-            "on_message failed (connection=%s chat=%s message=%s)", connection_id, chat.chat_id, message.id
+            "on_message failed (connection=%s chat=%s message=%s)", connection_id, mask_chat_id(chat.chat_id), message.id
         )
 
 
@@ -361,7 +379,7 @@ async def _fire_new_chat(
     except Exception:  # noqa: BLE001 - a consumer bug must not fail the webhook
         logger.exception(
             "on_new_chat failed (connection=%s chat=%s) - claim released, the next inbound "
-            "message of this chat retries", connection_id, chat.chat_id,
+            "message of this chat retries", connection_id, mask_chat_id(chat.chat_id),
         )
         await _io(
             chat_store.release_new_chat_notification, org_id=org_id, connection_id=connection_id,

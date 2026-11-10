@@ -19,6 +19,8 @@ pre-existing contract witness to diff against.
 from __future__ import annotations
 
 import uuid
+
+import pytest
 from unittest.mock import MagicMock
 
 from fastapi import FastAPI, HTTPException, status
@@ -255,6 +257,18 @@ class _FakeSupabase:
                 return outer._Query(rows)
 
         return _Handle()
+
+
+@pytest.fixture(autouse=True)
+def _legacy_enabled_line_policy():
+    """The parity suite drives Fake clients through the seed factory: declare the legacy process default (`send:
+    enabled`) via the PUBLIC registry; fail-closed behaviour is covered in the lib suite."""
+    from noctusai_lib.integrations.whatsapp import LinePolicy, clear_line_policies, register_line_policy
+
+    clear_line_policies()
+    register_line_policy("*", LinePolicy("enabled", True, True, True))
+    yield
+    clear_line_policies()
 
 
 class TestWhatsAppConnectionsRouterParity:

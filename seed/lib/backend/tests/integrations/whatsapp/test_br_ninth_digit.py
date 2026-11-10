@@ -84,7 +84,8 @@ def test_not_on_whatsapp_raises_with_tried():
     w = _Waha(set())
     with pytest.raises(WahaNumberNotOnWhatsApp) as ei:
         asyncio.run(w.client().send_text_to_phone("5511994573387", "oi"))
-    assert ei.value.tried == ["5511994573387", "551194573387"]
+    assert ei.value._tried == ["5511994573387", "551194573387"]
+    assert ei.value.tried == ["…3387", "…3387"]  # the public/printed form is masked
     assert w.sends == []
 
 
