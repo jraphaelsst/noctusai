@@ -103,9 +103,10 @@ Pass the lens in the dispatch prompt: "Lens: <name>". Each lens attacks the subj
 
 ## In-app (future, not built here)
 Lens and chair prompts become rows in the core prompt registry
-(`noctusai_lib.integrations.prompt_registry`, edited on Studio "Agentes da plataforma"); the chair
-is an Opus API call; the tech-lead that called the council tool ratifies or overrules. Until then
-every seat is a Claude Code background subagent.
+(`noctusai_lib.integrations.prompt_registry`, edited on Studio "Agentes da plataforma"), but the
+seats and the chair stay **Claude Code agents/subagents**. **Owner rule, 2026-11-10: councils are run
+by agents and subagents, never by API/token/credit calls.** A dev-side council never uses `mode=api`.
+An in-app council for a product's end users is a separate decision the owner has not taken.
 
 ## Depth
 `KB § PATTERNS/common/council.md` · `project-history/assistant-chatbot/contracts/council-ledger.md`
