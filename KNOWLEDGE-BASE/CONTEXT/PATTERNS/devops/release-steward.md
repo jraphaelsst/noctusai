@@ -167,13 +167,25 @@ After a machine reboot sessions return under NEW names, so a name is not an iden
 - **Consent is typed in the session that runs the action** (`KB § PATTERNS/devops/ship-consent-riders.md`): tell the
   owner the ROLE ("the dev steward"), never a session name that a reboot invalidates.
 - **Parked branches must not hold a migration number**: renumber (`next_migration_number`) before reviving one.
-- **Inbox auto-reconcile.** `inbox`/`status` run `git cherry origin/dev <branch|origin/<branch>|head_sha>`; zero `+`
-  lines puts the request in `already_landed` (not `drain`); unresolvable ones are listed in `unresolvable`, never
-  dropped. `action=reconcile confirm=True` (steward) acks all already-landed in one call.
+- **Inbox auto-reconcile.** `inbox`/`status` judge each request against `origin/dev` (ref order: `<branch>`,
+  `origin/<branch>`, `head_sha`) with three methods, recorded per outcome as `method`:
+  1. `cherry` - `git cherry`: zero `+` lines (patch-ids all present) => `already_landed`.
+  2. `post_image` - when cherry leaves commits unmatched (rebase with conflict resolution, squash, `--no-ff` train
+     all change patch-ids): for every file the branch changes vs its merge-base, dev's blob equals the branch head's
+     blob (deleted == deleted) => `already_landed`.
+  3. `range_diff` - otherwise `git range-diff <mb>..<branch> <mb>..<dev>`; every branch commit marked `=` =>
+     `already_landed`.
+  A PARTIAL match (some files equal, some not, or range-diff `!`) lands in the NEW `uncertain` group with
+  `evidence` (matched/unmatched files, range-diff marks). `uncertain` is NEVER auto-acked: `inbox.next` leads with
+  `UNCERTAIN`, `reconcile` returns it, and a `reconcile_uncertain` audit row is written; the steward decides by hand.
+  No match at all => pending; unresolvable ones are listed in `unresolvable`, never dropped. The fallback runs git
+  with cwd = the git common dir (never the primary work tree). `action=reconcile confirm=True` (steward) acks all
+  already-landed in one call.
+- Current practice; topology under review (council f93e1991): shape C - one serialized queue, prod exclusive via a short action lock held by the consent session; decision record on feat/assistant-chatbot project-history/assistant-chatbot/multi-steward-decision.md.
 - **Split delivery.** `request branches=[feat/a, feat/b]` (ordered): `drain` emits ONE `task_branch action=train` then
   ONE enqueue of the train. A request whose notes say "together"/"two branches"/a second `feat/` name without
   `branches=` returns a warning.
-- Telemetry: `role_set|role_clear|reconcile|train_drain` rows in `release-steward.ndjson`.
+- Telemetry: `role_set|role_clear|reconcile|reconcile_uncertain|train_drain` rows in `release-steward.ndjson`.
 
 ## 9 · Related
 
