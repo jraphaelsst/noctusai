@@ -188,14 +188,17 @@ Tests: `tests/test_pre_push_queue_path.py` (the real hook in a temp repo; red ag
   registry (4), queue-aware migration numbers (6), derived-artifact regeneration (9).
   Fitness function: ejections are tracked by cause; if collision-class ejections pass
   the threshold, open enqueue closes again. Until then the steward enqueues (protocol v1).
-- **Ejections (steward-resolves; not live until build 4, the inbox `needs_info`/transfer
-  fields).** The dev-queue steward (lease holder) diagnoses from the failed log; if it needs
-  information it sends ONE batched question (skill `noc-questionnaire` peer mode, to the
-  requester's ROLE, TTL ~25 min). A live, not-done requester who answers "already fixing"
-  keeps the fix; otherwise the steward withdraws the `mq/*` ref and dispatches a rescue
-  engineer on a NEW `rescue-<slug>` branch. It never patches `feat/*` and never hands work
-  back to a done agent. Flow, lineage and notices: `release-steward.md` § Ejection flow.
-  Until build 4, the steward fixes by hand and notes the transfer in the inbox notes field.
+- **Ejections (the branch steward fixes; council 09340534 dispositions A, B, K).** The
+  guardian (lease holder) is a service leaf: on a red it withdraws the `mq/*` ref, writes
+  `ejected{reason, conflict, url}` to the outbox, requeues the other riders and notifies the
+  branch steward's ROLE (one batched `needs_info` question if it needs information,
+  `noc-questionnaire` peer mode, TTL ~25 min). The branch steward fixes the ejection on its
+  own branch and files `request` again. After 2 ejections the delivery parks as
+  `blocked_on_steward`. The guardian never patches the branch and never opens a rescue
+  branch. **Orphan** (the steward's session is gone or silent past the TTL): the delivery
+  stays `blocked_on_steward`, the guardian alerts the owner, and the OWNER names a new
+  branch steward, who adopts the branch; the guardian never adopts it. Flow:
+  `release-steward.md` §7a.
 
 ## 5 · Fallback: `task_branch action=integrate`
 

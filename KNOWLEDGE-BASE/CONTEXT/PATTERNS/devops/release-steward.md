@@ -151,16 +151,17 @@ python mcp/noctusai/cli.py --release-steward claim --steward-name <name> --stewa
 `ListAgents` and `SendMessage` the announcement. `--steward-session-id` overrides
 `$CLAUDE_CODE_SESSION_ID` for an operator acting for another session.
 
-## 7a · Ejection flow (steward-resolves; not live until build 4 inbox fields; end predicate not live until builds 3+5)
+## 7a · Ejection flow (the branch steward fixes; not live until build 4 inbox fields; end predicate not live until builds 3+5)
 
-Decision 2026-11-10, council a341e383: `project-history/assistant-chatbot/queue-lifecycle-decision.md`. Supersedes `merge-queue.md` §4 "the owning session fixes".
+Guardian spec, council 09340534 (dispositions A: the guardian is a service leaf whose authority is the lane only; B: a rejected delivery returns to its steward, not to a rescue branch; K: ejection fixes belong to the branch steward). It supersedes the rescue-branch flow of the 2026-11-10 queue-lifecycle decision (council a341e383, `project-history/assistant-chatbot/queue-lifecycle-decision.md`) and the older `merge-queue.md` §4 "the owning session fixes".
 
 1. **Diagnose** from the failed log (`noc-steward` §3).
-2. **Ask once, if needed.** An inbox `needs_info` record addressed to the requester's **ROLE** (resolved through the role registry at send time; owner fallback), one batched question, TTL about one CI cycle (~25 min). Method: `noc-questionnaire` peer mode.
-3. **Live requester keeps it.** A live, not-done requester answering "already fixing" within the TTL keeps the fix.
-4. **Otherwise the steward fixes it:** withdraws the `mq/*` ref and **dispatches a rescue engineer** on a NEW `rescue-<slug>` branch (`task_branch start`; never inline coding, so lease/consent/deploy stay responsive). The steward stays accountable for the result. Never patches `feat/*`; never hands work back to a done agent.
-5. **Record and tell.** The inbox records the ownership transfer and the rescue lineage (slug to rescue-slug). `LANDED` plus a diff summary goes to the requester's role (its next session) or the owner, so a wrong domain fix stays visible.
-6. **End predicate** (`release_steward mine`, builds 3+5): a requester may end only when its requests are LANDED (plus DEPLOYED if asked) or ejected-with-transfer, it has no open `mq/*` ref, no rescue of its slug is unlanded and no CI run it depends on is in flight. Teardown rules: `background-agent-lifecycle.md`.
+2. **Withdraw and tell.** The guardian withdraws the `mq/*` ref, writes `ejected{reason, conflict, url}` to the outbox, requeues the other riders, and notifies the branch steward's **ROLE** (resolved through the role registry at send time; owner fallback).
+3. **Ask once, if needed.** An inbox `needs_info` record to that ROLE, one batched question, TTL about one CI cycle (~25 min). Method: `noc-questionnaire` peer mode.
+4. **The branch steward fixes it** on its own branch and files `request` again (the `deliverable` preflight runs again at filing). The guardian never patches the branch, never opens a rescue branch and never dispatches an engineer for it.
+5. **Two strikes.** After 2 ejections the delivery parks as `blocked_on_steward` until its steward re-files a fix the preflight accepts.
+6. **Orphan.** If the steward's session is gone, or silent past the TTL, the delivery stays `blocked_on_steward`. The guardian alerts the owner, and the OWNER names a new branch steward, who adopts the branch (role registry `to_session_id=`). The guardian never adopts it itself.
+7. **End predicate** (`release_steward mine`, builds 3+5): a requester may end only when its requests are LANDED (plus DEPLOYED if asked) or handed to a successor steward the owner named, it has no open `mq/*` ref, and no CI run it depends on is in flight. Teardown rules: `background-agent-lifecycle.md`.
 
 ## 8 · Reboot / multi-steward (2026-11-09/10)
 
