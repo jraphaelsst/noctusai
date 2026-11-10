@@ -1,7 +1,7 @@
 ---
 name: noc-learn-refine
 description: Use EVERY time the owner asks to learn something, or to learn along a task, project or run — triggers "learn", "learn this", "learn X", "let's learn", "we're learning", "learn while we implement", "learn while building", "learn during this", "learn as we go", "learn along the way", "remember that we're learning", "refine as we go", "auto-improve while you do it", "let's learn from this run", "evaluate this method", "we're testing this approach", "treat this as an experiment", "measure if this works", "improve the skill/tool while using it", "aprender", "aprenda", "vamos aprender", or any task the owner frames as a learning round (the first run of a new process, seed, skill, tool or team shape). To LEARN = execute the task AND evaluate process vs results, correct errors and drift on contact, create gates for what bit you, refine the method mid-flight, until the delivery is refined, solid and satisfying. Every trial goes through noctus.dev.method_trial.
-version: 2.2.0
+version: 2.3.0
 ---
 
 # noc-learn-refine — learn while you implement
@@ -9,6 +9,7 @@ version: 2.2.0
 > **Owner charter (typed 2026-11-10, verbatim):** "Remember that we're learning all this process we're working on tonight, that we must learn while we implement, so we get to a refined and well-solid point as a satisfying delivery." To "learn" something along a task, project or anything else "means to execute the task and evaluate the process vs results, and correct errors and drift and create gates and all along the way."
 >
 > **Changelog.**
+> - 2.3.0 (2026-11-10): step 6 convergence exit: a round with 0 P0/P1 closes with a targeted fix-diff check, not another open-ended round (agents owner-line stage 2 trial verdict).
 > - 2.2.0 (2026-11-10): from the D2b ship + guardian slice + go_live council: a pre-file checklist (CI-exact targets, caller census, re-check vs newly landed dev); attack the fix's COST and the tree a gate READS; grep for the existing mechanism before routing a state report; verify a precondition against the mechanism before forwarding it to the owner as a blocker.
 > - 2.1.0 (2026-11-10): step 6 learned from the 7-round S1 line-policy loop: attack what the fix added, attack reused trust mechanisms, prefer removing a weak control, a stopping rule for same-layer P1s, and the fresh-narrow-executor cost shape. Verdict from the gate's rc line, not a pipe.
 > - 2.0.0 (2026-11-10): this skill is now the owner's callable "learn" skill. Wider triggers. Added the correct, gate and deliver legs (steps 4-6 and 9) and the adversarial loop for controls, all born in the assistant-chatbot night run.
@@ -57,6 +58,7 @@ Every trial lands in the shared auto-improvement ledger through ONE tool, `noctu
    - **Attack reused trust mechanisms.** A fix that leans on an existing check inherits that check's weaknesses. Authority derived from a source the actor can write (a transcript, a local config, a declared header) is the recurring P1 shape.
    - **Prefer removing a weak control over hardening it in place.** Deleting the forgeable path converges faster than patching it.
    - **Stopping rule:** when the same P1 class recurs at the same layer 3 times, stop patching that layer. Name the control one layer down (host, network, platform) as a hard precondition, gated by construction (refused until it exists), and ship what is already safe. Then the last round gets a TARGETED diff-only check, not another open-ended attack.
+   - **Convergence exit:** when a round returns 0 P0/P1 (only P2/P3), fix those and close with a TARGETED check of just the fix diff, not another open-ended round. Agents stage 2's open-ended round 3 cost ~200k tokens and found nothing new (N=1, 2026-11-10).
    - **Cost shape:** resume the original engineer only while findings need its design context. Once findings are file:line-local, dispatch a FRESH executor with a narrow brief (findings + file:line + test command + rc rule): measured at ~3x cheaper and ~6x faster than a resumed long-lived engineer (N=2, 2026-11-10).
    - A Fake of a vendor must match the vendor's documented behaviour, or it gives a false-green.
 7. **Refine the method mid-flight.**
