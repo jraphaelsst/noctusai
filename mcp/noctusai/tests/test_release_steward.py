@@ -402,6 +402,20 @@ class TestClassifyTool:
         assert rs.classify_tool(f"mcp__noctusai__{tool}", {"confirm": False}) is None
         assert rs.classify_tool(f"mcp__noctusai__{tool}", {}) is None
 
+    @pytest.mark.parametrize("action", ["rearm", "trip"])
+    def test_supabase_breaker_writes_are_guardian_only(self, action):
+        """F11b: re-arming or tripping the prod Supabase breaker (incl. the fleet key that stops every product's
+        background workers) is a prod mutation - guardian-only when applied; plans and status stay open."""
+        tool = "mcp__noctusai__noctus_dev_supabase_breaker"
+        gated = rs.classify_tool(tool, {"action": action, "source": "fleet", "reason": "r", "confirm": True})
+        assert gated and action in gated.kind
+        assert rs.classify_tool(tool, {"action": action, "source": "fleet", "reason": "r", "confirm": False}) is None
+        assert rs.classify_tool(tool, {"action": action, "source": "fleet", "reason": "r"}) is None
+
+    def test_supabase_breaker_status_is_never_gated(self):
+        assert rs.classify_tool("mcp__noctusai__noctus_dev_supabase_breaker", {"action": "status", "confirm": True}) is None
+        assert rs.classify_tool("mcp__noctusai__noctus_dev_supabase_breaker", {}) is None
+
     def test_record_applied_migrations_always_gated(self):
         assert rs.classify_tool("mcp__noctusai__noctus_dev_record_applied_migrations", {"product": "x"})
 
@@ -810,10 +824,9 @@ def test_settings_registers_the_hook_for_bash_and_the_steward_class_tools():
     assert len(entries) == 1
     import re
     matcher = re.compile(f"^(?:{entries[0]['matcher']})$")
-    for name in ("Bash", "mcp__noctusai__noctus_dev_task_branch", "mcp__noctusai__noctus_dev_release",
-                 "mcp__noctusai__noctus_dev_release_steward", "mcp__noctusai__noctus_dev_deploy_pull",
-                 "mcp__noctusai__noctus_dev_deploy_image", "mcp__noctusai__noctus_dev_migrate_product",
-                 "mcp__noctusai__noctus_dev_record_applied_migrations", "mcp__noctusai__noctus_vps_recreate"):
+    # DERIVED from the classifier's own name table: a tool added to _MCP_NAMES without its matcher entry would be
+    # classified but never reach the guard (the hook never fires), a silent hole.
+    for name in ("Bash", *rs._MCP_NAMES):
         assert matcher.match(name), name
     assert not matcher.match("mcp__noctusai__noctus_dev_pytest")
 

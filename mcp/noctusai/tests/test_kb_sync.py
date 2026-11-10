@@ -254,7 +254,19 @@ def test_verify_topical_claude_router_pointers_checked(tmp_path, monkeypatch):
 # update_kb_counts — region regeneration parity
 # ──────────────────────────────────────────────────────────────────
 
+def _write_start_sh(root: Path, slugs: tuple[str, ...] = ("core",)) -> None:
+    rows = "\n".join(
+        f'  "{slug}:{slug}:{8000 + i}:{5173 + i}"' for i, slug in enumerate(slugs)
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "start.sh").write_text(
+        f"# BEGIN_PRODUCTS_REGISTRY\nPRODUCTS=(\n{rows}\n)\n# END_PRODUCTS_REGISTRY\n",
+        encoding="utf-8",
+    )
+
+
 def _mk_counts_tree(root: Path) -> Path:
+    _write_start_sh(root)
     landscape = root / "KNOWLEDGE-BASE" / "CONTEXT" / "02-LANDSCAPE.md"
     agents = root / "KNOWLEDGE-BASE" / "CONTEXT" / "06-AGENTS.md"
     agent_ctx = root / "KNOWLEDGE-BASE" / "AGENT-CONTEXT.md"
@@ -372,6 +384,24 @@ def test_update_kb_counts_repo_root_param_overrides_module_level_REPO_ROOT(tmp_p
     # The primary (module-level REPO_ROOT) tree was never touched — the
     # exact incident this closes.
     assert primary_landscape.read_text(encoding="utf-8") == primary_before
+
+
+def test_inventory_roster_reads_the_given_trees_start_sh(tmp_path, monkeypatch):
+    """The roster comes from `<repo>/start.sh` of the tree being rendered,
+    never from the imported noctusai_lib's checkout (worktree wrong-tree read)."""
+    wt = tmp_path / "wt"
+    landscape = _mk_counts_tree(wt)
+    _write_start_sh(wt, ("core", "zz-only-in-this-tree"))
+    monkeypatch.setattr(kb_sync, "REPO_ROOT", tmp_path / "elsewhere")
+
+    kb_sync.update_kb_counts(check=False, repo_root=wt)
+
+    assert "| Zz Only In This Tree |" in landscape.read_text(encoding="utf-8")
+
+
+def test_inventory_roster_missing_start_sh_raises(tmp_path):
+    with pytest.raises(RuntimeError, match="start.sh"):
+        kb_sync._products(tmp_path)
 
 
 # ─── Stage-4 keeper: roster-vs-tree parity (2026-05-18) ──────────────
