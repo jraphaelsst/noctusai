@@ -60,16 +60,16 @@ Rules:
 - Core migration (next free core number): `public.notification_owner_recipients`:
   - `id uuid pk`, `numero text NOT NULL CHECK (numero ~ '^\+[1-9][0-9]{7,14}$')`, `nome text`, `ativo boolean NOT NULL default true`, `created_at`, `updated_at`;
   - unique(numero), service-role only (no anon/authenticated grants, RLS on, platform tier).
-  - Event-oriented: every change appends to `public.notification_owner_recipient_events` (`recipient_id`, `evento` in `('adicionado','ativado','desativado','removido')`, `ator`, `em`), in the same transaction (a trigger or the service).
+  - Event-oriented: every change appends to `public.notification_owner_recipient_events` (`recipient_id`, `evento` in `('adicionado','ativado','desativado','removido')`, `ator`, `created_at`), in the same transaction (a trigger or the service).
   - The access-tier declaration and DB guard probe follow the core 117 precedent.
 - Admin API under the existing `/api/admin/notifications` router (platform tier):
-  - `GET /recipients` → `{items:[{id,numero,nome,ativo,created_at}]}`
-  - `POST /recipients {numero,nome?}` → 201 item. The number is normalized with `normalize_phone`; 422 `numero_invalido`; 409 `numero_duplicado`.
-  - `PATCH /recipients/{id} {ativo?,nome?}` → item; 404 `destinatario_nao_encontrado`.
+  - `GET /recipients` → `{data:{items:[{id,numero,nome,ativo,created_at}]}}` (every JSON response uses the router's `{data: …}` envelope)
+  - `POST /recipients {numero,nome?}` → 201 `{data: item}`. The number is normalized with `normalize_phone`; 422 `numero_invalido`; 409 `numero_duplicado`.
+  - `PATCH /recipients/{id} {ativo?,nome?}` → `{data: item}`; 404 `destinatario_nao_encontrado`.
   - `DELETE /recipients/{id}` → 204 (records the `removido` event).
   - Strict 401 for no auth, 403 for a non-platform-admin.
 - Page `AdminNotificacoes.tsx` (core `/admin/notificacoes`): a "Quem recebe os avisos" section with the recipients list, add, toggle and remove, and a status line for the line itself:
-  - "Linha NoctusAI: não configurada" when the transport is absent, read from `GET /api/admin/notifications/owner-line` → `{configurada: bool, instancia: str|null}`;
+  - "Linha NoctusAI: não configurada" when the transport is absent, read from `GET /api/admin/notifications/owner-line` → `{data:{configurada: bool, instancia: str|null}}`;
   - complete loading/empty/error states, pt-BR copy, cache writes (never invalidate-only).
 
 ### 3. Agents: the eval-loop gate's two notices
@@ -82,3 +82,6 @@ Rules:
 ## Metrics this enables
 Owner-notification sends per kind/product/status over 30 days (core page, already shown), recipient changes over
 time (events), and time from loop stop to the owner being notified (`notification_sends.created_at` minus the loop's `encerrado_em`).
+
+## 11 · Change log
+- 2026-11-10 (tech-lead, merge review): the admin API uses the router's existing `{data: …}` envelope, not bare bodies, because the sibling routes in `admin_notifications.py` wrap and the page unwraps `.data`. The events timestamp is `created_at`, not `em`, as the measurable-by-design keeper requires. Errors stay flat `{detail, code}`, read by the FE as `ApiError.code`.
