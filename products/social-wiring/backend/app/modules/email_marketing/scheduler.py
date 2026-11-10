@@ -87,6 +87,9 @@ def _parse_ts(value: str) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+# NOC-REMEDIATE[poller-head-of-line]: one failing campaign aborts the rest of this tick (and `process_queued_sends` has the
+# same shape: one bad send group stops the batch behind it). Destination: per-item try/except with a named failure
+# status so a single poison item cannot starve the others — 2026-11-10.
 def _scheduled_campaigns_sync(db=None, gate: IdleGate | None = None) -> None:
     gate = gate or CAMPAIGNS_GATE
     db = db if db is not None else get_admin_client()

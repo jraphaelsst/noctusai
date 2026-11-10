@@ -113,6 +113,7 @@ class _Q:
         rows = self._matching()
         if self.mode == "update":
             n = 0
+            self.store.setdefault("_updates", []).append(self.patch)
             for r in rows:
                 if self.or_cols is None or r.get(self.or_cols) in (None, ""):  # the database's re-check
                     r.update(self.patch)
@@ -189,3 +190,13 @@ def test_paging_a_large_org_visits_every_cliente_exactly_once_in_id_order():
     seen = svc._select_all_by_id(_Spy(store), "clientes", ORG, columns="id,nome")
     assert [r["id"] for r in seen] == [f"c{i:05d}" for i in range(n)]  # all of them, once each, ordered by id
     assert [x for x in ranges if x[0] == "clientes"] == [("clientes", 0, 999), ("clientes", 1000, 1999), ("clientes", 2000, 2999)]
+
+
+def test_a_whitespace_only_value_is_not_patched_every_pass():
+    """The write guard accepts only NULL / '' as blank, so the read side must agree: a whitespace-only celular used to
+    be 'blank' on read, a guarded no-op PATCH on write, every 6 h."""
+    store = _one_blank_cliente_store()
+    store["clientes"][0]["celular"] = "   "
+    svc._refresh_contato_from_sources(_Pg(store), ORG, [_source(email=None)])
+    assert store.get("_updates", []) == []
+    assert store["clientes"][0]["celular"] == "   "

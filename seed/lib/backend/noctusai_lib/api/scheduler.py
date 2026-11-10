@@ -232,9 +232,15 @@ FREQUENT_INTERVAL_S = 600
 #: the dead-man's `interval + 10 min` window, so a healthy job never reads as missing.
 HEARTBEAT_S = 300
 
+#: After a FAILED ledger write the job waits this long before the next attempt, doubling per consecutive failure up to
+#: `HEARTBEAT_S`: a Supabase outage (the 2026-11-09 402) must not turn a 30 s job into a write attempt per tick.
+RETRY_BASE_S = 60.0
+
 _sampling_clock: Callable[[], float] = time.monotonic
 #: job -> (monotonic time of the last row written, status of that row)
 _last_written: dict[str, tuple[float, str]] = {}
+#: job -> (monotonic time of the last FAILED write, consecutive failures)
+_write_failed: dict[str, tuple[float, int]] = {}
 
 
 def set_sampling_clock(clock: Optional[Callable[[], float]]) -> None:
@@ -247,7 +253,10 @@ def _should_record(run: JobRun) -> bool:
     """Write-per-tick is a quota bug (2026-11-09: `POST scheduler_runs` ~10k/22h, almost all `ok` runs that did
     nothing). Errors ALWAYS land, the first clean run after an error lands (recovery is news), the first run after
     boot lands; after that a frequent job writes one clean row per `HEARTBEAT_S`. Pure: the sample clock only
-    advances in `_mark_written`, AFTER the observer accepted the row -- a failed write is retried at the next tick."""
+    advances in `_mark_written`, AFTER the observer accepted the row -- a failed write is retried after a bounded backoff (`RETRY_BASE_S`, doubling to `HEARTBEAT_S`)."""
+    failed = _write_failed.get(run.job)
+    if failed is not None and _sampling_clock() - failed[0] < min(HEARTBEAT_S, RETRY_BASE_S * 2 ** (failed[1] - 1)):
+        return False  # inside the retry window of a failed write (errors included: they are logged ERROR either way)
     spec = _job_specs.get(run.job)
     interval = spec.interval_seconds if spec else None
     if run.status == "error" or interval is None or interval >= FREQUENT_INTERVAL_S:
@@ -258,6 +267,12 @@ def _should_record(run: JobRun) -> bool:
 
 def _mark_written(run: JobRun) -> None:
     _last_written[run.job] = (_sampling_clock(), run.status)
+    _write_failed.pop(run.job, None)
+
+
+def _mark_write_failed(run: JobRun) -> None:
+    _, n = _write_failed.get(run.job, (0.0, 0))
+    _write_failed[run.job] = (_sampling_clock(), n + 1)
 
 
 async def _report(run: JobRun) -> None:
@@ -271,6 +286,7 @@ async def _report(run: JobRun) -> None:
         await asyncio.to_thread(observer.record, run)
         _mark_written(run)
     except Exception:  # noqa: BLE001 — the ledger must never break the job; loud, not silent
+        _mark_write_failed(run)
         logger.error(
             "scheduler run ledger write FAILED for job %r (status=%s): the run happened "
             "but public.scheduler_runs has no row for it",
@@ -572,5 +588,6 @@ def reset_for_testing() -> None:
     scheduler = AsyncIOScheduler(timezone=platform_timezone_name())
     _job_specs.clear()
     _last_written.clear()
+    _write_failed.clear()
     set_sampling_clock(None)
     _run_observer = None

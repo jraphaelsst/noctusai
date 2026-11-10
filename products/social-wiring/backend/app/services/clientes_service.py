@@ -299,6 +299,10 @@ def _select_all_where(
         start += _PAGE
 
 
+# NOC-REMEDIATE[unordered-paging]: `_select_all` pages WITHOUT an order (offset paging over an unordered set can repeat and
+# skip rows across pages). Call sites (this file): ~354 (leads), ~355 (meta_ads_leads), ~600, ~606 (cliente_membros: no `id`),
+# ~654, ~660, ~1230, ~1237, ~1298, ~2677, ~2794. Destination: move each to `_select_all_by_id` (add `id` to its columns)
+# or order inside `_select_all` where the table has one — 2026-11-10.
 def _select_all(
     client: Any, table: str, org_id: UUID, columns: str = "*"
 ) -> list[dict]:
@@ -895,7 +899,7 @@ def _enrich_cliente(
     patch = {
         campo: valor
         for campo, valor in candidatos.items()
-        if not (linha.get(campo) or "").strip()
+        if linha.get(campo) in (None, "")  # the SAME blank the write-time guard (`is.null,eq.`) accepts: no no-op PATCH
     }
     # Guarded AT WRITE TIME, one column per update: the row above may be seconds (a whole pass) old, and an operator can
     # type a value in between. `col IS NULL OR col = ''` makes the database re-check the blank, so a value typed
