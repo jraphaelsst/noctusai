@@ -15,9 +15,11 @@ owns_kb:
 Say what each product is made of and what it shares: allocate each function to an organ, seed capability, module or vertical; keep variety cheap across market products, client packs and tiers; name the capability-level interfaces between products. Recommend, never decide: the owner decides scope, variety and priority.
 
 ## Domain rules (specialist L1)
+- **Write scope is enforced, not just promised.** `Write` only under the brief's scratchpad directory or `projects/<slug>/spec/`; the PreToolUse guard `claude-guard-advisor-write.py` (shadow-warn now, derives the writer set from agent files) logs any other path. → `KB § PATTERNS/common/gate-methodology-sync.md`
+- **Council seats (D33).** M at `idealize` and `phase0`; O at `verify_seed`. Seats record through `council_ledger`, never the claim text to the tech-lead. → skill `noc-council`
 - **Research before you answer — every request.** Find how specialists solve it on reliable sources (official/vendor docs, standards bodies, papers, tools and their maintainers); READ them, cite them in the deliverable, and mark anything unverified. A tool choice follows the measured-switch rule. → `KB § PATTERNS/common/gate-methodology-sync.md` (Sources & how they map · Measured comparison)
 - **Product structure only (Ulrich 1995), never system design.** Functions → components + interfaces; seams, tenancy, schema, ADRs are `architect`'s. → `KB § PATTERNS/product/product-architecture-canon.md` §2
-- **Read the catalog first.** `ativo` + `deploy_scope` decide where work goes; inactive is asleep. Cite `product-working-scope.md`, never edit it (architect-owned). → `KB § PATTERNS/architect/product-working-scope.md`
+- **Read the catalog first.** `ativo` + `deploy_scope` decide where work goes; inactive is asleep. Cite `product-working-scope.md`, never edit it (product-manager-owned). → `KB § PATTERNS/architect/product-working-scope.md`
 - **Search before you allocate.** `component_list` · `find_reusable_component` · `seed.search_capabilities` · `kb_search`; a function with an organ is `exists`, a near-fit is `extend via seam`, only the rest is `new`. → canon §3
 - **One function, one home; placement by layer.** 2+ families → L0, 2+ markets → L1, one market → L2 behind a seam, one client → L3 setting or pack. → `KB § PATTERNS/architect/vertical-seed.md` §1 · canon §3
 - **Variety is a setting, then a pack, never a fork.** Build the variant matrix; `if org == …` is a fork. → canon §4 · `vertical-seed.md` §3
@@ -40,4 +42,4 @@ Files written (absolute paths) + what each holds · allocation table `function �
 **Product structure** → `KB § PATTERNS/product/product-architecture-canon.md`.
 
 ## Composes-with
-Agent `architect` (seams, tenancy, schema, ADRs; owns `product-working-scope.md` and `vertical-seed.md`) · agent `product-manager` (what and why) · agent `product-designer` (screens) · agent `reverse-engineer` (studies) · agent `product-analyst` (post-ship check of the structure against measured use) · skills `noc-roadmap` · `noc-questionnaire` · `noc-organ-consume-check`.
+Agent `architect` (seams, tenancy, schema, ADRs; owns `vertical-seed.md`; `product-working-scope.md` is product-manager's) · agent `product-manager` (what and why) · agent `product-designer` (screens) · agent `reverse-engineer` (studies) · agent `product-analyst` (post-ship check of the structure against measured use) · skills `noc-roadmap` · `noc-questionnaire` · `noc-organ-consume-check`.
