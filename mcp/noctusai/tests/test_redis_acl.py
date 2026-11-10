@@ -290,6 +290,27 @@ class TestLiveRedis:
             with pytest.raises(redis.exceptions.NoPermissionError):
                 call()
 
+    def test_ops_ltrims_the_audit_list_and_sadds_a_hand_tripped_key_into_the_index(self, server):
+        ops = self._c(server, "ops")
+        for i in range(5):
+            ops.rpush(ra.AUDIT_KEY, f"row{i}")
+        assert ops.ltrim(ra.AUDIT_KEY, -3, -1) and ops.lrange(ra.AUDIT_KEY, 0, -1) == ["row2", "row3", "row4"]
+        ops.set("noctus:breaker:core:worker:hand", "{}")
+        assert ops.sadd("noctus:breaker:core:index", "noctus:breaker:core:worker:hand") == 1
+        assert "noctus:breaker:core:worker:hand" in ops.smembers("noctus:breaker:core:index")
+
+    def test_product_audit_list_and_index_inside_its_own_breaker_namespace(self, server):
+        _, redis = server
+        c = self._c(server, "core")
+        for i in range(5):
+            c.rpush("noctus:breaker:core:audit", f"r{i}")
+        assert c.ltrim("noctus:breaker:core:audit", -2, -1) and c.lrange("noctus:breaker:core:audit", 0, -1) == ["r3", "r4"]
+        assert c.sadd("noctus:breaker:core:index", "k1", "k2") == 2 and c.srem("noctus:breaker:core:index", "k1") == 1
+        for call in (lambda: c.sadd("noctus:breaker:agents:index", "x"), lambda: c.rpush("noctus:breaker:agents:audit", "x"),
+                     lambda: c.ltrim(ra.AUDIT_KEY, 0, 0), lambda: c.sadd("noctus:breaker:index", "x")):
+            with pytest.raises(redis.exceptions.NoPermissionError):
+                call()
+
     def test_probe_exists_only_refused_on_set_setnx_del(self, server):
         _, redis = server
         self._c(server, "ops").set(ra.FLEET_KEY, "{}")
@@ -313,7 +334,7 @@ class TestRound2Acl:
     def test_ops_has_no_scan_but_a_set_index_and_script_kill(self):  # P2-1 / P2-4
         ln = self._line("ops")
         assert "+scan" not in ln and "+keys" not in ln
-        assert "+smembers" in ln and "+srem" in ln
+        assert "+smembers" in ln and "+srem" in ln and "+sadd" in ln and "+ltrim" in ln
         assert "+script|kill" in ln and "+function|kill" in ln
 
     def test_product_may_maintain_its_own_breaker_index(self):

@@ -90,11 +90,12 @@ EXTRA_COMMANDS: dict[str, tuple[str, ...]] = {"social-wiring": ("+keys",)}
 #: EVAL/EVALSHA/SCRIPT LOAD/EXISTS, which run under the CALLER's key permissions.
 PRODUCT_COMMANDS = "+@all -@dangerous -@admin -@scripting +eval +evalsha +script|load +script|exists"
 
-# No SCAN/KEYS: key names are bearer secrets elsewhere and SCAN ignores key patterns. `status` enumerates via
+# `ltrim` enforces the 1000-row audit cap after RPUSH; `sadd` lists a key ops trips by hand in the product's
+# index. No SCAN/KEYS: key names are bearer secrets elsewhere and SCAN ignores key patterns. `status` enumerates via
 # each product's own index SET `noctus:breaker:<slug>:index` (SMEMBERS) + the fleet key. `script|kill` /
 # `function|kill` let ops stop a runaway Lua script (the EVAL freeze) without CONFIG/SHUTDOWN.
 OPS_COMMANDS = (
-    "-@all +get +mget +set +del +rpush +lrange +llen +exists +ttl +pttl +smembers +srem +sismember +scard +ping +hello +auth "
+    "-@all +get +mget +set +del +rpush +ltrim +lrange +llen +exists +ttl +pttl +smembers +sadd +srem +sismember +scard +ping +hello +auth "
     "+client|setname +acl|log +acl|whoami +script|kill +function|kill"
 )
 #: Slugs that would turn `~<slug>:*` / the user name into something other than "this product".
