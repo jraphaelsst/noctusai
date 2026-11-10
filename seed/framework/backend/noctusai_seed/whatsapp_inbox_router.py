@@ -67,6 +67,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.config.deploy_config import is_deploy_context
 from noctusai_lib.integrations.whatsapp import (
     WahaSessionNotReady,
     WhatsAppConnectionRecord,
@@ -178,12 +179,25 @@ def create_whatsapp_inbox_router(
     backfill_kwargs: Optional[dict[str, Any]] = None,
     should_store: Optional[ShouldStore] = None,
     read_only: bool = False,
+    webhook_only: bool = False,
+    require_webhook_hmac: bool = False,
+    on_session_status: Optional[Callable[[WhatsAppConnectionRecord, str], Any]] = None,
 ) -> APIRouter:
     """Build the inbox router (authenticated routes + the public webhook).
 
     ``read_only=True`` (a shadow line): the send and backfill routes are NOT MOUNTED (construction layer of the
     zero-write defence, KB § whatsapp.md § 6a) and the read mirror to WhatsApp is forced off; mark-read stays local.
+
+    ``webhook_only=True`` mounts NOTHING but the public inbound webhook (no chats/messages reads, no mark-read, no
+    send, no backfill, no SSE): a line whose stored traffic is consumed only through the ``on_message`` seam (the
+    Assistant). ``require_webhook_hmac=True`` makes the HMAC mandatory: no secret => the webhook answers 401 to
+    everything, and building the router in a deploy without a secret raises ``WebhookHmacRequired`` (refuse to boot).
+    ``on_session_status(record, status)`` (sync or async, best-effort) fires on each WAHA ``session.status`` event.
     """
+    if require_webhook_hmac and not webhook_hmac_secret and is_deploy_context():
+        raise WebhookHmacRequired(
+            "the WhatsApp webhook HMAC secret is required here (require_webhook_hmac=True) and none is set"
+        )
     if read_only:
         mirror_read_to_whatsapp = False
     router = APIRouter(tags=["WhatsApp Inbox"])
@@ -424,7 +438,7 @@ def create_whatsapp_inbox_router(
         verified: Any = webhook_endpoint(
             secret_resolver=static_secret_resolver(webhook_hmac_secret),
             scheme="waha",
-            bypass_when_unset=True,
+            bypass_when_unset=not require_webhook_hmac,
             log_prefix="whatsapp-inbox-webhook",
         ),
     ) -> dict[str, str]:
@@ -458,6 +472,8 @@ def create_whatsapp_inbox_router(
             waha_client_factory=lambda rec: _client_for_identity(rec, store),
             should_store=should_store,  # PRE-STORE seam (default None = store all); see ingest.ShouldStore
         )
+        if on_session_status is not None and result.status == "session":
+            await _fire_session_status(on_session_status, record, body)
         return {"status": result.status}
 
     def _client_for_identity(rec: WhatsAppConnectionRecord, store: WhatsAppConnectionStore) -> Any:
@@ -468,13 +484,31 @@ def create_whatsapp_inbox_router(
             return None
         return waha_client_factory(base_url=full.base_url, api_key=full.api_key, session=full.session_name)
 
-    if read_only:
+    if webhook_only:
+        keep = f"{webhook_path_prefix}/"
+        router.routes[:] = [r for r in router.routes if str(getattr(r, "path", "")).startswith(keep)]
+    elif read_only:
         dead = {(m, f"{prefix}{tail}") for m, tail in READ_ONLY_UNMOUNTED_ROUTES}
         router.routes[:] = [
             r for r in router.routes
             if not any((m, getattr(r, "path", None)) in dead for m in getattr(r, "methods", ()) or ())
         ]
     return router
+
+
+class WebhookHmacRequired(RuntimeError):
+    """``require_webhook_hmac=True`` in a deploy without a webhook HMAC secret: refuse to boot (fail-closed)."""
+
+
+async def _fire_session_status(callback: Callable[[WhatsAppConnectionRecord, str], Any], record: Any, body: dict) -> None:
+    payload = body.get("payload") if isinstance(body.get("payload"), dict) else {}
+    status_value = str(payload.get("status") or body.get("status") or "")
+    try:
+        out = callback(record, status_value)
+        if hasattr(out, "__await__"):
+            await out
+    except Exception as exc:  # noqa: BLE001 - best-effort hook; the webhook must still ack 200
+        logger.warning("on_session_status failed connection=%s: %s", record.id, type(exc).__name__)
 
 
 def _ack_of(response: dict[str, Any]) -> int:

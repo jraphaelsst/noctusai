@@ -11982,8 +11982,58 @@ END;
 )
 
 
+_ASSISTANT_EVENTOS_APPEND_ONLY_PROBE = GuardProbe(
+    id="assistant.intake_messages_eventos.append_only",
+    product="assistant",
+    schema="assistant",
+    guard_name="guard_intake_messages_eventos_append_only",
+    kind="write_refusal",
+    migrations=("015_intake.sql",),
+    rationale=(
+        "The intake event log is the measurable record of every outcome change (EOA): an UPDATE would rewrite history. "
+        "Only the retention job's DELETE under the `assistant.retention_purge` flag is sanctioned. Self-provisioning: the "
+        "probe creates its own connection + intake row + event through `assistant.append_intake` inside the rolled-back "
+        "transaction, borrowing only an existing org id."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_org_id uuid;
+  v_conn uuid;
+  v_ev uuid;
+BEGIN
+  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to borrow an org_id from (a genuinely org-less database)';
+  END IF;
+  INSERT INTO assistant.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token, paired_at)
+  VALUES (v_org_id, gen_random_uuid(), 'noc-probe', 'http://probe.invalid', 'x', 'noc-probe-' || gen_random_uuid()::text, now() - interval '1 day')
+  RETURNING id INTO v_conn;
+  PERFORM assistant.append_intake(v_org_id, v_conn, 'noc-probe-msg', 'noc-probe-ref', 'chat', 'oi', now());
+  SELECT e.id INTO v_ev FROM assistant.intake_messages_eventos e
+    JOIN assistant.intake_messages m ON m.id = e.entidade_id WHERE m.connection_id = v_conn LIMIT 1;
+  IF v_ev IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: append_intake produced no event row';
+  END IF;
+  BEGIN
+    UPDATE assistant.intake_messages_eventos SET para = 'classified' WHERE id = v_ev;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: UPDATE on the append-only event log succeeded - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%append_only%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
+    _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
     _AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE,
     _RUIDO_SHAPE_PROBE,
     _TITULO_PAREADO_PROBE,

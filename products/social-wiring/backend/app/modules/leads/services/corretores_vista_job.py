@@ -58,6 +58,7 @@ async def corretores_vista_job(
 
 
 def configure() -> None:
+    # poll-budget: every 24 h; ~1-3 corretores/listar pages/tick/org (50 per page); worst 3/day per org; idle=fixed
     seed_scheduler.register(JOB_NAME, corretores_vista_job, seconds=INTERVALO_S, misfire_grace_time=_MISFIRE_GRACE)
     logger.info("%s configured: every %ds", JOB_NAME, INTERVALO_S)
 

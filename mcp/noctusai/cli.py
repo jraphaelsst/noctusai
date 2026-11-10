@@ -216,7 +216,9 @@ def build_parser() -> argparse.ArgumentParser:
     the REAL parser in a test, without triggering `main()`'s dispatch (which
     would actually RUN the tool). `main()` itself calls this too — one
     parser, never two definitions to keep in sync."""
-    parser = argparse.ArgumentParser(description="NoctusAI — platform dev toolkit")
+    # allow_abbrev=False: an unambiguous prefix (`--deploy-image-conf`) used to run as the full flag and slip past the
+    # release-steward CLI gates, which match exact flags (2026-11-10).
+    parser = argparse.ArgumentParser(description="NoctusAI — platform dev toolkit", allow_abbrev=False)
     parser.add_argument("--validate", action="store_true", help="Check seed compliance")
     parser.add_argument("--check-phase-state", action="store_true", help="Check §6 ↔ §11 phase-state consistency across PROJECT.md files. Exits 1 on any high-severity issue. Used by the pre-commit hook to block commits that ship mismatch.")
     parser.add_argument("--refs", metavar="PATTERN", help="Find every reference to PATTERN (literal string) across CLAUDE.md / KB / projects / mcp / seed / products. Replaces the manual `grep -rln` ritual.")
@@ -763,6 +765,10 @@ def build_parser() -> argparse.ArgumentParser:
         parser.add_argument(f"--source-register-{_sr}", default="read" if _sr == "action" else "", dest=f"source_register_{_sr.replace('-', '_')}", help=f"With --source-register: the {_sr} argument.")
     parser.add_argument("--source-register-limit", type=int, default=50, dest="source_register_limit", help="With --source-register: max rows on read.")
     parser.add_argument("--source-register-allow-stale-toolkit", action="store_true", help="With --source-register: bypass the toolkit-staleness fresh-subprocess hop (escape hatch).")
+    parser.add_argument("--supabase-request-budget", action="store_true", help="Measure Supabase request volume from the project's edge logs (ok|warn|critical|unknown; needs SUPABASE_ACCESS_TOKEN). MCP: noctus.dev.supabase_request_budget.")
+    parser.add_argument("--srb-window-hours", type=float, default=1.0, help="With --supabase-request-budget: window in hours (max 24).")
+    parser.add_argument("--srb-start", default=None, help="With --supabase-request-budget: ISO start (use with --srb-end).")
+    parser.add_argument("--srb-end", default=None, help="With --supabase-request-budget: ISO end (use with --srb-start).")
     return parser
 
 
@@ -4892,6 +4898,12 @@ def main():
         from tools.noctus.dev.source_register import source_register as _source_register
         _sr_kw = {k: getattr(args, f"source_register_{k}") for k in ("query", "tier_filter", "limit", "source", "outcome", "tier", "label", "claim", "evidence", "question", "note", "by", "events")}
         r = _source_register(args.source_register_action, **_sr_kw, confirm=bool(getattr(args, "source_register_confirm", False)), allow_stale_toolkit=bool(getattr(args, "source_register_allow_stale_toolkit", False)))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
+
+    elif args.supabase_request_budget:
+        from tools.noctus.dev.supabase_request_budget import supabase_request_budget as _supabase_request_budget
+        r = _supabase_request_budget(window_hours=args.srb_window_hours, start=args.srb_start, end=args.srb_end)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 

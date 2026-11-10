@@ -139,17 +139,22 @@ def _create_notificacoes_router(deps) -> APIRouter:
         core = deps.get_core_client()
 
         def _query(user):
+            # ONE query: the unread count AND the newest unread id. The bell polls only this and
+            # re-reads the list when (nao_lidas, ultima_id) moves — count alone misses "one new +
+            # one read in the same poll window" (request budget, 2026-11-10).
             return (
                 core.table("notifications")
                 .select("id", count="exact")
                 .eq("user_id", str(user.id))
                 .eq("read", False)
+                .order("created_at", desc=True)
                 .limit(1)
                 .execute()
             )
 
         _user, _token, result = await deps.get_current_user_and_fetch(authorization, _query)
-        return {"nao_lidas": result.count or 0}
+        rows = result.data or []
+        return {"nao_lidas": result.count or 0, "ultima_id": rows[0]["id"] if rows else None}
 
     @router.patch("/{notificacao_id}/ler")
     async def marcar_lida(notificacao_id: str, authorization: Optional[str] = Header(None)):
