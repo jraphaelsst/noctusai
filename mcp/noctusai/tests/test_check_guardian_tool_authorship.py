@@ -77,3 +77,52 @@ class TestCheckGuardianToolAuthorship:
         _claim(tmp_path)
         later = time.time() + 10 * 24 * 3600
         assert _check(tmp_path, [RS], now=later) == []
+
+
+# ── P3 (adversarial review): renames must not hide a protected file; the CLI honours --worktree-path ──────────
+
+import subprocess  # noqa: E402
+
+_GENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+
+
+def _git(repo: Path, *a: str) -> None:
+    subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, env=_GENV)
+
+
+def _repo_with_tooling(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    (repo / Path(RS).parent).mkdir(parents=True)
+    repo.joinpath(RS).write_text("# steward tooling\n" * 20)
+    repo.joinpath(TB).write_text("# task branch\n" * 20)
+    _git(repo, "init", "-q", "-b", "dev")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "init")
+    return repo
+
+
+class TestRenamesAndWorktreePath:
+    def test_staging_a_rename_of_protected_tooling_is_still_a_hit(self, tmp_path):
+        """git's rename detection reports only the NEW name, so moving release_steward.py away evaded the keeper."""
+        repo = _repo_with_tooling(tmp_path / "w")
+        _claim(tmp_path)
+        _git(repo, "mv", RS, str(Path(RS).parent / "renamed_elsewhere.py"))
+        os.environ["NOCTUS_GUARD_EVENT_LOG"] = str(tmp_path / "ev.ndjson")
+        try:
+            issues = check_guardian_tool_authorship(repo_root=repo, session_id="sess-guardian-1", lease_root=tmp_path)
+        finally:
+            os.environ.pop("NOCTUS_GUARD_EVENT_LOG", None)
+        assert len(issues) == 1 and RS in issues[0]["file"]
+
+    def test_the_cli_judges_the_worktree_path_it_is_given(self, tmp_path):
+        repo = _repo_with_tooling(tmp_path / "w")
+        _claim(tmp_path)
+        repo.joinpath(TB).write_text("# edited by the guardian\n")
+        _git(repo, "add", "-A")
+        cli = Path(__file__).resolve().parents[1] / "cli.py"
+        env = {**os.environ, "NOCTUS_STEWARD_DIR": str(tmp_path), "CLAUDE_CODE_SESSION_ID": "sess-guardian-1",
+               "NOCTUS_GUARD_EVENT_LOG": str(tmp_path / "ev2.ndjson"), "NOCTUS_HOOK_QUIET": "1"}
+        r = subprocess.run([sys.executable, str(cli), "--check-guardian-tool-authorship", "--worktree-path", str(repo)],
+                           capture_output=True, text=True, env=env, cwd=tmp_path)
+        assert r.returncode == 1, (r.stdout, r.stderr)
+        assert TB in r.stdout

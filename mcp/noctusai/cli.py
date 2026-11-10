@@ -2052,7 +2052,8 @@ def main():
 
     elif args.check_guardian_tool_authorship:
         from tools.noctus.dev.compliance import check_guardian_tool_authorship
-        issues = check_guardian_tool_authorship()
+        issues = check_guardian_tool_authorship(
+            repo_root=Path(args.worktree_path).expanduser().resolve() if args.worktree_path else None)
         if not issues:
             print(f"  {GREEN}✓ guardian-tool-authorship: clean (no steward tooling staged by the lease holder).{RESET}")
             sys.exit(0)
