@@ -66,8 +66,10 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -97,7 +99,7 @@ _MCP_NAMES = {
 }
 _TASK_BRANCH_GATED = {"enqueue", "integrate", "landed"}
 _RELEASE_GATED = {"bless", "promote", "backmerge"}
-OUTCOMES = ("enqueued", "landed", "ejected", "deployed", "withdrawn")
+OUTCOMES = ("enqueued", "landed", "ejected", "deployed", "withdrawn", "needs_resync")
 NEEDS_INFO_DEFAULT_MIN = 30
 _ADVANCED = {"enqueued", "landed", "deployed"}
 
@@ -268,8 +270,16 @@ class StewardStore:
                  resolve_head: Callable[[str], str | None] | None = None,
                  default_ttl_s: int | None = None,
                  landed_check: Callable[[str, str | None], dict[str, Any]] | None = None,
-                 inline_gate: Callable[[str, str | None, str | None], dict[str, Any]] | None = None) -> None:
+                 inline_gate: Callable[[str, str | None, str | None], dict[str, Any]] | None = None,
+                 deliverable_check: Callable[[str, str | None, str | None], dict[str, Any]] | None = None,
+                 resolve_branch: Callable[[str], dict[str, Any]] | None = None) -> None:
         self.root = Path(root) if root is not None else default_root()
+        # Same posture as inline_gate/landed_check: production runs the real delivery-contract preflight
+        # (`deliverable`) at filing; a store built on an explicit root (tests) skips it unless it injects one.
+        self._deliverable_check = deliverable_check if deliverable_check is not None else (
+            (lambda b, h, v: deliverable(b, head_sha=h, verdict_ref=v)) if root is None else None)
+        self._resolve_branch = resolve_branch if resolve_branch is not None else (
+            resolve_branch_name if root is None else None)
         # Production (root=None -> ~/.noctus) runs the real gate; a store built on an explicit root
         # (tests, tooling) opts out unless it injects one - the gate reads the shared pointer ledger.
         self._inline_gate = inline_gate if inline_gate is not None else (
@@ -515,10 +525,23 @@ class StewardStore:
                     "slug": slug, "branch": ev.get("branch"), "head_sha": ev.get("head_sha"),
                     "branches": ev.get("branches") or [],
                     "products": ev.get("products") or [], "migrations": bool(ev.get("migrations")),
-                    "notes": ev.get("notes"), "requester": ev.get("requester") or {},
+                    "notes": ev.get("notes"), "verdict_ref": ev.get("verdict_ref"), "requester": ev.get("requester") or {},
                     "requested_at": ev["ts"], "status": "queued_for_steward", "kind": "request",
                     "revision": (cur or {}).get("revision", 0) + 1, "dev_sha": None, "ack_note": None,
                     "requeued": bool(cur and cur["status"] != "queued_for_steward"),
+                }
+            elif ev.get("event") == "request_refused":
+                cur = state.get(slug)
+                if cur and cur["status"] in _ADVANCED and bool(ev.get("head_sha")) and cur.get("head_sha") == ev.get("head_sha"):
+                    continue  # the same already-advanced head was re-filed: nothing new to refuse
+                state[slug] = {
+                    "slug": slug, "branch": ev.get("branch"), "head_sha": ev.get("head_sha"),
+                    "branches": ev.get("branches") or [], "products": ev.get("products") or [],
+                    "migrations": bool(ev.get("migrations")), "notes": ev.get("notes"),
+                    "verdict_ref": ev.get("verdict_ref"), "requester": ev.get("requester") or {},
+                    "requested_at": ev["ts"], "status": "needs_resync", "kind": "request",
+                    "revision": (cur or {}).get("revision", 0) + 1, "dev_sha": None, "ack_note": None,
+                    "requeued": False, "needs_resync": {"failing": ev.get("failing") or [], "items": ev.get("items") or []},
                 }
             elif ev.get("event") == "ack" and slug in state:
                 s = state[slug]
@@ -532,8 +555,13 @@ class StewardStore:
                 branch: str | None = None, head_sha: str | None = None,
                 products: list[str] | None = None, migrations: bool = False,
                 notes: str | None = None, inline_reason: str | None = None,
-                inline_note: str | None = None, branches: list[str] | None = None) -> dict[str, Any]:
+                inline_note: str | None = None, branches: list[str] | None = None,
+                verdict_ref: str | None = None) -> dict[str, Any]:
         """NON-BLOCKING: file a delivery for the steward and return at once.
+
+        DELIVERY CONTRACT: the filing first runs the read-only `deliverable(branch)` preflight; a branch that
+        fails is NOT filed as pending - it is recorded as `needs_resync` (visible in `mine`) and the refusal
+        names the failing item(s). `verdict_ref` = where the scoped keepers/tests verdict lives (item 5).
 
         Inline-cutoff gate (shadow): an over-cutoff delivery by an inline agent wants an
         ``inline_reason``; its absence is a WARNING naming who to dispatch, never a refusal."""
@@ -543,6 +571,11 @@ class StewardStore:
         branches = [b.strip() for b in (branches or []) if b and b.strip()]
         if branches and any(not re.fullmatch(r"[A-Za-z0-9._/-]+", b) for b in branches):
             return _err("branches=[...] entries must be branch names (letters, digits, . _ / -)")
+        if not branch and not branches and self._resolve_branch is not None:
+            res = self._resolve_branch(slug)
+            if res.get("error"):
+                return _err(res["error"])
+            branch = res.get("branch")
         branch = branch or (branches[0] if branches else f"feat/{slug}")
         warnings: list[str] = []
         if not branches and notes and (_TOGETHER_RE.search(notes)
@@ -556,18 +589,46 @@ class StewardStore:
             if not head_sha:
                 warnings.append(f"could not resolve {branch}'s head; pass head_sha=<sha> so the steward "
                                 "enqueues the right commit")
+        contract: dict[str, Any] | None = None
+        if self._deliverable_check is not None:
+            for b in (branches or [branch]):
+                contract = self._deliverable_check(b, head_sha if b == branch else None, verdict_ref)
+                if not contract.get("ok"):
+                    break
+            if contract is not None and not contract.get("ok"):
+                requester = {"session_id": session_id, "name": name or _short(session_id)}
+                with self._locked("ship-requests"):
+                    self._append_event({
+                        "ts": _iso(self.clock()), "event": "request_refused", "slug": slug, "branch": branch,
+                        "head_sha": contract.get("head_sha") or head_sha, "products": products or [],
+                        "migrations": bool(migrations), "notes": notes, "verdict_ref": verdict_ref,
+                        "requester": requester, "branches": branches,
+                        "failing": contract.get("failing") or [],
+                        "items": [{k: i[k] for k in ("n", "name", "ok", "detail")} for i in contract.get("items", [])],
+                    })
+                    refused = self.requests()[slug]
+                self.audit("request_refused", slug=slug, by=session_id, failing=contract.get("failing"))
+                return {"ok": False, "status": "needs_resync", "request": refused, "deliverable": contract,
+                        "failing": contract.get("failing") or [],
+                        "error": f"{slug}: {deliverable_refusal(contract)}",
+                        "next": ("fix the failing item(s) on the branch (you are its steward: the guardian never edits it), "
+                                 "push, and re-run release_steward action=request. release_steward action=deliverable "
+                                 f"slug={slug} re-checks read-only without filing.")}
         with self._locked("ship-requests"):
             before = self.requests().get(slug)
             self._append_event({
                 "ts": _iso(self.clock()), "event": "request", "slug": slug, "branch": branch,
                 "head_sha": head_sha, "products": products or [], "migrations": bool(migrations),
-                "notes": notes, "requester": {"session_id": session_id, "name": name or _short(session_id)},
+                "notes": notes, "verdict_ref": verdict_ref,
+                "requester": {"session_id": session_id, "name": name or _short(session_id)},
                 "branches": branches,
             })
             after = self.requests()[slug]
         holder = self.public_holder()
         out: dict[str, Any] = {
             "ok": True, "status": "queued_for_steward", "request": after,
+            "deliverable": ({"verdict": contract["verdict"], "items": [{k: i[k] for k in ("n", "name", "ok")} for i in contract["items"]]}
+                            if contract else None),
             "updated_head": bool(before) and before.get("head_sha") != after.get("head_sha"),
             "steward": holder if holder and holder["state"] == "live" else None,
             "next": "KEEP BUILDING the remaining work; do not wait. release_steward action=mine shows the outcome.",
@@ -585,6 +646,34 @@ class StewardStore:
         if warnings:
             out["warnings"] = warnings
         return out
+
+    def check_deliverable(self, slug: str | None = None, branch: str | None = None, head_sha: str | None = None,
+                          verdict_ref: str | None = None, run_scoped: bool = False) -> dict[str, Any]:
+        """READ-ONLY, open to every session: run the delivery contract on a branch without filing anything.
+        The branch steward uses it to pre-check; the guardian re-runs it before it enqueues. A filed
+        request for `slug` supplies the branch, the pinned head and the verdict_ref unless overridden."""
+        slug = (slug or "").strip() or None
+        req = self.requests().get(slug) if slug else None
+        if not branch and req:
+            branch = req.get("branch")
+        if not branch and slug:
+            res = (self._resolve_branch or (lambda s: {"branch": f"feat/{s}"}))(slug)
+            if res.get("error"):
+                return _err(res["error"])
+            branch = res.get("branch")
+        if not branch:
+            return _err("deliverable needs slug=<slug> or branch=<branch>")
+        head_sha = head_sha or (req or {}).get("head_sha")
+        verdict_ref = verdict_ref or (req or {}).get("verdict_ref")
+        if run_scoped:  # minutes: judge the head the way CI does (CI-blocking keepers + real-tree tests, env-scrubbed)
+            res = deliverable(branch, head_sha=head_sha, verdict_ref=verdict_ref, scoped_check=export_ci_parity_check())
+        else:
+            check = self._deliverable_check or (lambda b, h, v: deliverable(b, head_sha=h, verdict_ref=v))
+            res = check(branch, head_sha, verdict_ref)
+        return {"ok": True, "status": res.get("verdict", "needs_resync"), "deliverable": res,
+                "failing": res.get("failing") or [],
+                "next": ("deliverable: the guardian can enqueue (pure push)" if res.get("ok")
+                         else "needs_resync: the branch steward fixes the failing item(s) on the branch, pushes, re-requests")}
 
     def inline_gate(self, branch: str, inline_reason: str | None, inline_note: str | None) -> dict[str, Any]:
         """Injectable seam (tests assign ``store.inline_gate``): the real gate looks up the branch's
@@ -819,8 +908,8 @@ class StewardStore:
             note: str | None = None) -> dict[str, Any]:
         if outcome not in OUTCOMES:
             return _err(f"outcome must be one of {'|'.join(OUTCOMES)}")
-        if outcome == "withdrawn" and not (note or "").strip():
-            return _err("outcome=withdrawn needs notes=<the reason>")
+        if outcome in ("withdrawn", "needs_resync") and not (note or "").strip():
+            return _err(f"outcome={outcome} needs notes=<the reason>")
         with self._locked("release-steward"):
             _cur, err = self._require_holder(session_id, "ack")
         if err:
@@ -834,7 +923,8 @@ class StewardStore:
         self.touch(session_id)
         words = {"enqueued": "ENQUEUED", "landed": f"LANDED {dev_sha or ''}".strip(),
                  "ejected": f"EJECTED {note or ''}".strip(), "deployed": "DEPLOYED",
-                 "withdrawn": f"WITHDRAWN {note or ''}".strip()}
+                 "withdrawn": f"WITHDRAWN {note or ''}".strip(),
+                 "needs_resync": f"NEEDS_RESYNC {note or ''}".strip()}
         return {"ok": True, "status": f"acked_{outcome}", "request": after,
                 "next": f"SendMessage {after['requester'].get('name')}: {words[outcome]} (slug {slug})"}
 
@@ -1234,10 +1324,562 @@ def tool_refusal(tool_name: str, args: dict[str, Any], *, store: StewardStore | 
             "error": verdict["reason"], "steward": verdict["steward"]}
 
 
+# -- the delivery contract: deliverable(branch) -----------------------------
+#
+# ONE read-only preflight (ratified guardian spec, 2026-11-10; KB § PATTERNS/devops/
+# release-steward.md § Delivery contract). `request` runs it at filing, the guardian
+# runs it again before it enqueues, and `task_branch enqueue` is then a PURE PUSH.
+# It is the reason the guardian never has to edit, rebase, merge or renumber a
+# delivery branch: a branch that fails goes BACK to its branch steward as
+# `needs_resync`, naming the item.
+#
+# Read-only by construction: every git call goes through `_ReadOnlyGit` (a
+# subcommand allowlist: no checkout/merge/rebase/commit/add/push, `worktree`
+# only as `list`), `status` is run with --no-optional-locks (a plain `git
+# status` refreshes the index of the worktree it reads), and the trial merge
+# runs with its cwd INSIDE the git dir (merge drivers drop `.merge_file_*`
+# scratch files in the process cwd). The only state it touches: `fetch` updates
+# the remote-tracking refs of `origin/<dev>`, and `merge-tree` writes loose
+# objects to the object database - never a work tree, an index, HEAD or a branch.
+
+DELIVERABLE_ITEMS = ("head_pushed_clean", "merge_buildable", "migrations_free", "derived_current", "scoped_green")
+BRANCH_PREFIXES = ("feat/", "fix/", "docs/", "chore/", "refactor/", "test/", "perf/", "ci/", "build/", "style/")
+_READONLY_GIT = frozenset({"rev-parse", "ls-remote", "merge-base", "merge-tree", "rev-list", "diff",
+                           "ls-tree", "status", "worktree", "fetch", "cat-file", "show", "for-each-ref"})
+GitFn = Callable[..., "tuple[int, str, str]"]
+
+#: Derived artifacts a delivery must carry up to date AT its head. Each is regenerated in `--check`
+#: mode against an EXPORT of the head tree (never the branch's worktree). `{python}`/`{tree}` are
+#: filled in; a non-zero exit = stale. Mirrors what the pre-commit hook / integrate regenerate
+#: (propagate is deliberately absent: the hook runs it only when the seed is staged).
+DERIVED_ARTIFACTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("kb-counts", ("{python}", "{tree}/mcp/noctusai/cli.py", "--update-kb-counts", "--check", "--worktree-path", "{tree}")),
+    ("project-history", ("{python}", "{tree}/mcp/noctusai/cli.py", "--render-project-history", "--check", "--worktree-path", "{tree}")),
+    ("promotions-index", ("{python}", "{tree}/mcp/noctusai/cli.py", "--gen-promotions-index", "--check", "--worktree-path", "{tree}")),
+)
+
+
+def _subprocess_git(base_cwd: str | Path | None = None, timeout: int = 120) -> GitFn:
+    def git(*args: str, cwd: str | Path | None = None) -> tuple[int, str, str]:
+        try:
+            r = subprocess.run(["git", *args], capture_output=True, text=True, timeout=timeout, check=False,
+                               cwd=str(cwd or base_cwd) if (cwd or base_cwd) else None)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return 127, "", f"git {args[:1]} failed to run: {exc}"
+        return r.returncode, r.stdout or "", r.stderr or ""
+    return git
+
+
+class _ReadOnlyGit:
+    """Wraps a git seam so `deliverable` is structurally unable to mutate a work tree."""
+
+    def __init__(self, git: GitFn) -> None:
+        self._git = git
+
+    def __call__(self, *args: str, cwd: str | Path | None = None) -> tuple[int, str, str]:
+        rest = [a for a in args if a != "--no-optional-locks"]
+        sub = rest[0] if rest else ""
+        if sub not in _READONLY_GIT:
+            raise ValueError(f"deliverable is read-only: git {sub!r} is not allowed ({sorted(_READONLY_GIT)})")
+        if sub == "worktree" and rest[1:2] != ["list"]:
+            raise ValueError("deliverable is read-only: only `git worktree list` is allowed")
+        return self._git(*args, cwd=cwd)
+
+
+def trial_merge_tree(git: GitFn, *args: str) -> tuple[int, str, str]:
+    """`git merge-tree --write-tree <args>` run with cwd INSIDE the git dir.
+
+    git runs the registered custom merge drivers (kb-counts, lgpd-warnings, gate-inventory) for a trial
+    merge and creates their `.merge_file_*` scratch files in the PROCESS cwd. A cwd that is a work tree
+    litters it (2026-11-09: the primary, blamed on whichever session ran next). A cwd inside the git dir
+    is a bare context. When the git dir cannot be resolved the probe is SKIPPED (rc 2) - never run with a
+    work tree as cwd."""
+    rc, gd, _e = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    gitdir = gd.strip().splitlines()[0] if rc == 0 and gd.strip() else ""
+    if not gitdir or not os.path.isabs(gitdir):
+        return 2, "", "git dir unresolved; trial merge skipped"
+    return git("merge-tree", "--write-tree", *args, cwd=gitdir)
+
+
+def resolve_branch_name(slug: str, git: GitFn | None = None, explicit: str | None = None,
+                        default_prefix: str = "feat/") -> dict[str, Any]:
+    """Slug -> the real branch name. `explicit` wins. Otherwise the slug itself when it is already a
+    branch name, else `<prefix><slug>` for the conventional prefixes (feat/ fix/ docs/ ...) that exist
+    locally or on origin. Zero matches -> `<default_prefix><slug>` (a not-yet-created branch keeps the old
+    behaviour); several -> `ambiguous` (the caller must pass branch=). Never raises."""
+    if explicit:
+        return {"branch": explicit, "source": "explicit", "candidates": [explicit]}
+    git = git or _subprocess_git()
+    found: list[str] = []
+    with contextlib.suppress(OSError, subprocess.SubprocessError, ValueError):
+        # ONE call: every local/remote ref ending in /<slug>, filtered to the conventional prefixes.
+        rc, out, _e = git("for-each-ref", "--format=%(refname)", f"refs/heads/*/{slug}", f"refs/remotes/origin/*/{slug}")
+        if rc == 0:
+            for ref in out.split():
+                name = ref.removeprefix("refs/heads/").removeprefix("refs/remotes/origin/")
+                if name.endswith(f"/{slug}") and f"{name[:-len(slug)]}" in BRANCH_PREFIXES and name not in found:
+                    found.append(name)
+        if "/" in slug and slug not in found:  # the slug IS already a branch name (docs/x)
+            for ref in (f"refs/heads/{slug}", f"refs/remotes/origin/{slug}"):
+                if git("rev-parse", "--verify", "--quiet", ref)[0] == 0:
+                    found.insert(0, slug)
+                    break
+    order = [default_prefix, *[p for p in BRANCH_PREFIXES if p != default_prefix]]
+    found.sort(key=lambda n: (0 if n == slug else 1, next((i for i, p in enumerate(order) if n == f"{p}{slug}"), 99)))
+    if len(found) == 1:
+        return {"branch": found[0], "source": "resolved", "candidates": found}
+    if not found:
+        return {"branch": f"{default_prefix}{slug}", "source": "default", "candidates": []}
+    # feat/<slug> existing next to a same-slug sibling is the common clash; never guess.
+    return {"branch": None, "source": "ambiguous", "candidates": found,
+            "error": f"slug {slug!r} matches several branches {found}; pass branch=<the one to deliver>"}
+
+
+def _worktree_of(git: GitFn, branch: str) -> str | None:
+    rc, out, _e = git("worktree", "list", "--porcelain")
+    if rc != 0:
+        return None
+    path = None
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree "):].strip()
+        elif line.strip() == f"branch refs/heads/{branch}":
+            return path
+    return None
+
+
+def _item(n: int, name: str, ok: bool, detail: str, **extra: Any) -> dict[str, Any]:
+    return {"n": n, "name": name, "ok": bool(ok), "detail": detail, **extra}
+
+
+def _unmeasured(n: int, name: str, exc: BaseException) -> dict[str, Any]:
+    return _item(n, name, False, f"UNMEASURED ({type(exc).__name__}: {str(exc)[:200]}) - not measured is never green")
+
+
+def _export_tree(head: str, tree: str, cwd: str | Path | None, timeout: int) -> str | None:
+    """`git archive <head>` into `tree` (no work tree, index or ref touched). Returns an error or None."""
+    arch = subprocess.Popen(["git", "archive", head], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            cwd=str(cwd) if cwd else None)
+    untar = subprocess.run(["tar", "-x", "-C", tree], stdin=arch.stdout, capture_output=True, timeout=timeout, check=False)
+    if arch.stdout:
+        arch.stdout.close()
+    arch_err = (arch.stderr.read() if arch.stderr else b"").decode("utf-8", "replace")
+    if arch.wait() != 0 or untar.returncode != 0:
+        return f"could not export {head[:9]}: {(arch_err or untar.stderr.decode('utf-8', 'replace'))[:200]}"
+    return None
+
+
+def export_derived_check(cwd: str | Path | None = None, *, artifacts: tuple[tuple[str, tuple[str, ...]], ...] | None = None,
+                         python: str | None = None, timeout: int = 300) -> Callable[[str], dict[str, Any]]:
+    """Real default for `deliverable(derived_check=)`: export the head tree (`git archive`, no work tree
+    touched) into a temp dir and run each artifact's `--check` regenerator against the export. A missing
+    regenerator or a timeout is UNMEASURED (fails), never skipped."""
+    arts = artifacts if artifacts is not None else DERIVED_ARTIFACTS
+    py = python or sys.executable
+
+    def check(head: str) -> dict[str, Any]:
+        tree = tempfile.mkdtemp(prefix="noc-deliverable-")
+        results: list[dict[str, Any]] = []
+        try:
+            err = _export_tree(head, tree, cwd, timeout)
+            if err:
+                return {"ok": False, "measured": False, "results": [], "detail": err}
+            for name, template in arts:
+                argv = [t.format(python=py, tree=tree) for t in template]
+                regenerator = next((a for a in argv[1:] if a.startswith(tree) and a.endswith(".py")), None)
+                if regenerator and not os.path.isfile(regenerator):
+                    results.append({"name": name, "ok": False, "measured": False,
+                                    "detail": f"regenerator missing at the head ({regenerator[len(tree) + 1:]})"})
+                    continue
+                try:
+                    r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, cwd=tree)
+                except (OSError, subprocess.SubprocessError) as exc:
+                    results.append({"name": name, "ok": False, "measured": False, "detail": f"{type(exc).__name__}: {exc}"[:200]})
+                    continue
+                tail = " ".join((r.stdout or r.stderr or "").strip().splitlines()[-2:])[:200]
+                results.append({"name": name, "ok": r.returncode == 0, "measured": True,
+                                "detail": tail or ("up to date" if r.returncode == 0 else f"exit {r.returncode}")})
+        finally:
+            shutil.rmtree(tree, ignore_errors=True)
+        stale = [x["name"] for x in results if not x["ok"]]
+        return {"ok": bool(results) and not stale, "measured": all(x["measured"] for x in results), "results": results,
+                "detail": ("all derived artifacts current at the head" if results and not stale
+                           else f"stale or unmeasured at the head: {', '.join(stale) or 'none ran'}")}
+    return check
+
+
+# -- item 5: scoped keepers/tests THE WAY CI JUDGES THEM ------------------------------------------
+#
+# 2026-11-10, merge-queue run 42753204233 (D1): a delivery that was green locally was ejected by CI.
+# Two causes, both about WHAT item 5 ran, not whether it ran:
+#   (a) keepers that only WARN in pre-commit but BLOCK in CI - the mcp-first-scripts manifest rows
+#       (`check_new_script_lacks_mcp_analog`, asserted `== []` on the live tree by a CI-run test) and
+#       `check_gate_triad`'s inventory row. CI blocks them because the sharded pytest job runs a
+#       "real tree is clean" test for each, and because test.yml runs `cli.py --check-*` steps.
+#   (b) a test that passed locally only because CLAUDE_CODE_SESSION_ID was set; CI runners have no
+#       such variable.
+# So the CI-blocking set is DERIVED from the head's own CI definition (never hand-listed), and the
+# whole leg runs in a hermetic env built the way CI builds it.
+
+CI_WORKFLOW_REL = ".github/workflows/test.yml"
+CI_TOOLKIT_JOB = "mcp-toolkit-tests"
+#: OS basics that survive the scrub. Everything else (CLAUDE_*, ANTHROPIC_*, OPENAI_*, SUPABASE_*, NOC*, ...)
+#: is absent on a CI runner and is therefore absent here; the toolkit job's own `env:` is then layered on.
+HERMETIC_BASE_ENV = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TERM", "SHELL",
+                     "VIRTUAL_ENV", "SYSTEMROOT")
+#: A `verdict_ref` must carry these markers (+ the head sha it judged) to count as item 5's verdict.
+VERDICT_MARKERS = ("env-scrubbed", "ci-keepers")
+
+
+def _workflow_steps(text: str) -> list[str]:
+    return [c for c in re.split(r"(?m)^\s*- (?=(?:name|uses|run|id|if|env):)", text)[1:]]
+
+
+def ci_blocking_flags(workflow_text: str) -> list[str]:
+    """Every `cli.py --check-*` keeper CI runs as a step of the workflow, in order: a step with
+    `continue-on-error: true` does not block and is skipped; so is an invocation that needs a CI-resolved
+    argument (`--doc-range ${{ ... }}`, `--actionlint-require`): it cannot be replayed locally."""
+    out: list[str] = []
+    for step in _workflow_steps(workflow_text):
+        if re.search(r"continue-on-error:\s*true", step):
+            continue
+        for m in re.finditer(r"cli\.py\s+(--check-[a-z0-9-]+)([^\n]*)", step):
+            if re.search(r"\s--[a-z]", m.group(2)) or "${{" in m.group(2):
+                continue
+            if m.group(1) not in out:
+                out.append(m.group(1))
+    return out
+
+
+def ci_prime_flags(workflow_text: str) -> list[str]:
+    """The `cli.py --<flag>` lines of CI's "Prime hermetic state" step (version stamp + structural caches):
+    the generated state the suite's real-tree tests assert, which a fresh checkout lacks."""
+    out: list[str] = []
+    for step in _workflow_steps(workflow_text):
+        if "Prime hermetic state" in step:
+            out += [f for f in re.findall(r"python\s+cli\.py\s+(--[a-z0-9-]+)", step) if f not in out]
+    return out
+
+
+def ci_job_env(workflow_text: str, job: str = CI_TOOLKIT_JOB) -> dict[str, str]:
+    """The `env:` mapping the toolkit job sets at JOB level (what every step of CI's run inherits)."""
+    m = re.search(rf"(?ms)^  {re.escape(job)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)", workflow_text)
+    env: dict[str, str] = {}
+    if m:
+        block = re.search(r"(?m)^    env:\n((?:      [A-Za-z0-9_]+:.*\n)+)", m.group(1))
+        for line in (block.group(1).splitlines() if block else []):
+            k, _, v = line.strip().partition(":")
+            env[k.strip()] = v.strip().strip("\"'")
+    return env
+
+
+def hermetic_env(base: dict[str, str] | None = None, workflow_text: str = "") -> dict[str, str]:
+    """The environment CI gives the toolkit suite: OS basics only + the job's own `env:` + CI=true."""
+    base = os.environ if base is None else base
+    env = {k: base[k] for k in HERMETIC_BASE_ENV if k in base}
+    env.update(ci_job_env(workflow_text))
+    env["CI"] = "true"
+    return env
+
+
+def ci_keeper_test_ids(tests_dir: str | Path) -> list[str]:
+    """Pytest node ids (relative to the toolkit dir) of every test that asserts a `check_*` keeper returns
+    `[]` on the live tree - the CI-blocking form of a keeper that is only `warning` in pre-commit.
+    Derived by AST (`assert check_x(...) == []`, plain or `module.check_x`), never hand-listed."""
+    import ast
+    root = Path(tests_dir)
+    ids: list[str] = []
+
+    def callee(node: ast.AST) -> str:
+        f = node.func if isinstance(node, ast.Call) else None
+        return (f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else "") if f else ""
+
+    def asserts_clean_keeper(fn: ast.AST) -> bool:
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Assert) and isinstance(n.test, ast.Compare) and len(n.test.ops) == 1 \
+                    and isinstance(n.test.ops[0], ast.Eq):
+                sides = (n.test.left, n.test.comparators[0])
+                for call, empty in (sides, sides[::-1]):
+                    if callee(call).startswith("check_") and isinstance(empty, ast.List) and not empty.elts:
+                        return True
+        return False
+
+    for path in sorted(root.glob("test_*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        rel = f"{root.name}/{path.name}"
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test") \
+                    and asserts_clean_keeper(node):
+                ids.append(f"{rel}::{node.name}")
+            elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+                ids += [f"{rel}::{node.name}::{m.name}" for m in node.body
+                        if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name.startswith("test")
+                        and asserts_clean_keeper(m)]
+    return ids
+
+
+def validate_verdict_ref(ref: str | None, head: str | None) -> tuple[bool, str]:
+    """A verdict pointer counts for item 5 only if it records that the run was env-scrubbed AND covered the
+    CI-blocking keeper set (`VERDICT_MARKERS`) AND names the head it judged (a green for an older head
+    proves nothing). e.g. `gate_sweep://run/7@a1b2c3d#env-scrubbed,ci-keepers`."""
+    ref = (ref or "").strip()
+    if not ref:
+        return False, ("no verdict_ref and no scoped check ran: run the scoped suites env-scrubbed with the CI-blocking "
+                       "keeper set (or `release_steward action=deliverable run_scoped=true`) and file "
+                       f"verdict_ref=<where>@<head sha>#{','.join(VERDICT_MARKERS)}")
+    low = ref.lower()
+    missing = [m for m in VERDICT_MARKERS if m not in low]
+    if missing:
+        return False, (f"verdict_ref {ref[:120]!r} does not record that the run was {', '.join(missing)} "
+                       f"(markers required: {', '.join(VERDICT_MARKERS)}) - a verdict from a non-hermetic run or without the "
+                       "CI-blocking keepers is what let a green-locally delivery be ejected by CI (D1, 2026-11-10)")
+    if head and not any(head.startswith(tok) for tok in re.findall(r"(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])", low)):
+        return False, f"verdict_ref {ref[:120]!r} does not name the head it judged ({head[:9]}): re-run on this head"
+    return True, f"verdict pointer (env-scrubbed, ci-keepers, head-bound): {ref[:160]}"
+
+
+def format_verdict_ref(source: str, head: str) -> str:
+    return f"{source}@{head[:9]}#{','.join(VERDICT_MARKERS)}"
+
+
+def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None = None, timeout: int = 1500,
+                           base_env: dict[str, str] | None = None) -> Callable[[str, str], dict[str, Any]]:
+    """Real default for `deliverable(scoped_check=)`: judge the head the way CI does. Export it, prime the
+    hermetic state CI primes, then - in a SCRUBBED environment - run (1) every `cli.py --check-*` keeper CI
+    runs as a blocking step and (2) every test that asserts a keeper clean on the live tree. Both sets are
+    derived from the head's own workflow + tests. Slow (minutes): the branch steward runs it once and files
+    `verdict_ref`; the guardian only validates the ref (`validate_verdict_ref`)."""
+    py = python or sys.executable
+
+    def check(branch: str, head: str) -> dict[str, Any]:
+        tree = tempfile.mkdtemp(prefix="noc-ci-parity-")
+        try:
+            err = _export_tree(head, tree, cwd, timeout)
+            if err:
+                return {"ok": False, "detail": f"UNMEASURED: {err}"}
+            wf = Path(tree) / CI_WORKFLOW_REL
+            if not wf.is_file():
+                return {"ok": False, "detail": f"UNMEASURED: {CI_WORKFLOW_REL} missing at the head - the CI-blocking set cannot be derived"}
+            text = wf.read_text(encoding="utf-8")
+            env = hermetic_env(base_env, text)
+            flags, prime = ci_blocking_flags(text), ci_prime_flags(text)
+            tool_dir = Path(tree) / "mcp" / "noctusai"
+            ids = ci_keeper_test_ids(tool_dir / "tests")
+            failed: list[str] = []
+
+            def run(argv: list[str], where: Path) -> subprocess.CompletedProcess:
+                return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, cwd=str(where), env=env)
+
+            for f in prime:
+                r = run([py, "cli.py", f], tool_dir)
+                if r.returncode != 0:
+                    return {"ok": False, "detail": f"UNMEASURED: CI's prime step `cli.py {f}` failed in the hermetic export "
+                                                   f"({(r.stderr or r.stdout).strip()[-160:]})"}
+            for f in flags:
+                if run([py, "mcp/noctusai/cli.py", f], Path(tree)).returncode != 0:
+                    failed.append(f"keeper {f}")
+            if ids:
+                r = run([py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *ids], tool_dir)
+                if r.returncode != 0:
+                    names = re.findall(r"^FAILED (\S+)", r.stdout or "", flags=re.M)
+                    failed += [f"test {n}" for n in names] or [f"pytest exit {r.returncode}: {(r.stdout or r.stderr).strip()[-160:]}"]
+            ran = f"{len(flags)} CI-blocking keeper flag(s) + {len(ids)} real-tree keeper test(s), env-scrubbed"
+            if failed:
+                return {"ok": False, "detail": f"{ran}; RED: {', '.join(failed[:8])}", "failed": failed,
+                        "ran": {"flags": flags, "tests": ids}}
+            return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": ids},
+                    "verdict_ref": format_verdict_ref("ci-parity", head)}
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"ok": False, "detail": f"UNMEASURED: {type(exc).__name__}: {exc}"[:240]}
+        finally:
+            shutil.rmtree(tree, ignore_errors=True)
+    return check
+
+
+def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None = None,
+                remote: str = "origin", dev_branch: str = "dev", head_sha: str | None = None,
+                verdict_ref: str | None = None, fetch: bool = True,
+                derived_check: Callable[[str], dict[str, Any]] | None = None,
+                scoped_check: Callable[[str, str], dict[str, Any]] | None = None) -> dict[str, Any]:
+    """The delivery contract: five read-only checks, `verdict` deliverable | needs_resync.
+
+    1 head_pushed_clean - local head == origin/<branch> AND the branch's worktree has no real dirt.
+    2 merge_buildable   - origin/<dev> is an ancestor of the head OR `git merge-tree` against it is clean
+                          (NOT strictly 0-behind: demanding that livelocks while dev moves).
+    3 migrations_free   - no migration number the branch adds is claimed by a different file in the
+                          composed tree (the head, or the merge-tree result when it is behind).
+    4 derived_current   - kb-counts & the other regenerated artifacts are already current AT the head.
+    5 scoped_green      - a `scoped_check(branch, head)` passes (`export_ci_parity_check`: the CI-blocking
+                          keeper set + the real-tree keeper tests, env-scrubbed, both DERIVED from the head's
+                          CI definition) OR the request's `verdict_ref` records exactly that run
+                          (`validate_verdict_ref`: env-scrubbed + ci-keepers markers + the head sha); neither -> fails.
+
+    Never raises (a probe that cannot run fails its item as UNMEASURED) and never writes a work tree."""
+    git = _ReadOnlyGit(git or _subprocess_git(cwd))
+    items: list[dict[str, Any]] = []
+    out: dict[str, Any] = {"branch": branch, "head_sha": None, "dev_sha": None, "introduced_migrations": []}
+
+    def local_ref(ref: str) -> str | None:
+        rc, o, _e = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+        return o.strip() if rc == 0 and o.strip() else None
+
+    # -- 1. head pushed + tree clean ------------------------------------------------------------
+    head = None
+    try:
+        head = local_ref(f"refs/heads/{branch}")
+        out["head_sha"] = head
+        problems: list[str] = []
+        notes: list[str] = []
+        if not head:
+            problems.append(f"branch {branch} does not exist locally")
+        else:
+            if head_sha and not head.startswith(head_sha[:7]) and not head_sha.startswith(head[:7]):
+                problems.append(f"the request names head {head_sha[:9]} but {branch} is at {head[:9]} (re-request)")
+            rc, o, e = git("ls-remote", "--heads", remote, f"refs/heads/{branch}")
+            remote_sha = o.split()[0] if rc == 0 and o.strip() else None
+            if rc != 0:
+                problems.append(f"cannot read {remote}/{branch} ({(e or o).strip()[:120]})")
+            elif not remote_sha:
+                problems.append(f"{branch} is not pushed to {remote}")
+            elif remote_sha != head:
+                problems.append(f"unpushed: local {branch} is {head[:9]}, {remote}/{branch} is {remote_sha[:9]}")
+            wt = _worktree_of(git, branch)
+            if wt:
+                rc, o, e = git("--no-optional-locks", "status", "--porcelain", cwd=wt)
+                if rc != 0:
+                    problems.append(f"cannot read the worktree status of {wt} ({e.strip()[:120]})")
+                else:
+                    benign, real = _sibling("_benign_stash").classify_porcelain(o or "")
+                    untracked = sum(1 for ln in (o or "").splitlines() if ln.startswith("??"))
+                    if real:
+                        problems.append(f"dirty tree in {wt}: {', '.join(real[:6])}{' ...' if len(real) > 6 else ''}")
+                    else:
+                        notes.append(f"worktree clean ({len(benign)} benign artifact(s), {untracked} untracked, none part of the head)")
+            else:
+                notes.append("no worktree holds the branch (nothing to dirty)")
+        items.append(_item(1, DELIVERABLE_ITEMS[0], not problems,
+                           "; ".join(problems) if problems else f"{head[:9]} is pushed to {remote}; " + "; ".join(notes)))
+    except Exception as exc:  # noqa: BLE001 - an unmeasurable item fails, loudly
+        items.append(_unmeasured(1, DELIVERABLE_ITEMS[0], exc))
+
+    # -- 2. merge-buildable -------------------------------------------------------------------
+    composed_tree: str | None = None
+    dev = None
+    try:
+        if fetch:
+            git("fetch", "--quiet", "--no-write-fetch-head", remote, dev_branch)
+        dev = local_ref(f"{remote}/{dev_branch}")
+        out["dev_sha"] = dev
+        if not head or not dev:
+            items.append(_item(2, DELIVERABLE_ITEMS[1], False,
+                               f"cannot resolve {'the branch head' if not head else f'{remote}/{dev_branch}'}"))
+        elif git("merge-base", "--is-ancestor", dev, head)[0] == 0:
+            rc, o, _e = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
+            composed_tree = o.strip() if rc == 0 and o.strip() else None
+            items.append(_item(2, DELIVERABLE_ITEMS[1], True, f"contains {remote}/{dev_branch} ({dev[:9]})"))
+        else:
+            rc, behind, _e = git("rev-list", "--count", f"{head}..{dev}")
+            n_behind = behind.strip() if rc == 0 else "?"
+            rc, o, e = trial_merge_tree(git, "--name-only", dev, head)
+            lines = (o or "").splitlines()
+            if rc == 0 and lines:
+                composed_tree = lines[0].strip()
+                items.append(_item(2, DELIVERABLE_ITEMS[1], True,
+                                   f"{n_behind} behind {remote}/{dev_branch}, `git merge-tree` is clean (the queue composes it; no rebase needed)"))
+            elif rc == 1:
+                files = []
+                for ln in lines[1:]:
+                    if not ln.strip():
+                        break
+                    files.append(ln.strip())
+                items.append(_item(2, DELIVERABLE_ITEMS[1], False,
+                                   f"{n_behind} behind {remote}/{dev_branch} and the merge CONFLICTS in "
+                                   f"{', '.join(files[:8]) or '(see git merge-tree)'}: the branch steward must merge "
+                                   f"{remote}/{dev_branch} into the branch, resolve, push, and re-request", conflicts=files))
+            else:
+                items.append(_item(2, DELIVERABLE_ITEMS[1], False,
+                                   f"UNMEASURED: merge-tree exit {rc}: {(e or o).strip()[:160]}"))
+    except Exception as exc:  # noqa: BLE001
+        items.append(_unmeasured(2, DELIVERABLE_ITEMS[1], exc))
+
+    # -- 3. migration numbers free -----------------------------------------------------------
+    try:
+        if not (head and dev and composed_tree):
+            items.append(_item(3, DELIVERABLE_ITEMS[2], False, "not measurable: no composed tree (see merge_buildable)"))
+        else:
+            rc, mb, _e = git("merge-base", dev, head)
+            base = mb.strip() if rc == 0 and mb.strip() else dev
+            rc, o, e = git("diff", "--no-renames", "--name-only", "--diff-filter=A", base, head)
+            if rc != 0:
+                raise RuntimeError(f"git diff failed: {e.strip()[:120]}")
+            introduced = sorted(p.strip() for p in o.splitlines()
+                                if p.strip().endswith(".sql") and "/backend/migrations/" in p.strip())
+            out["introduced_migrations"] = introduced
+            if not introduced:
+                items.append(_item(3, DELIVERABLE_ITEMS[2], True, "the branch adds no migration"))
+            else:
+                dirs = sorted({p.rsplit("/", 1)[0] for p in introduced})
+                listing: dict[str, list[str]] = {d: [] for d in dirs}
+                for d in dirs:
+                    rc, o, e = git("ls-tree", "--name-only", composed_tree, f"{d}/")
+                    if rc != 0:
+                        raise RuntimeError(f"git ls-tree {d} failed: {e.strip()[:120]}")
+                    listing[d] = [x.rsplit("/", 1)[-1] for x in o.splitlines() if x.strip()]
+                from tools.noctus.dev.task_branch import migration_number_collisions
+                clashes = migration_number_collisions(listing, introduced)
+                if clashes:
+                    items.append(_item(3, DELIVERABLE_ITEMS[2], False,
+                                       "; ".join(f"{c['directory']}: number {c['number']} claimed by {', '.join(c['names'])}"
+                                                 for c in clashes[:4])
+                                       + f" - renumber the branch's own file(s) on top of {remote}/{dev_branch}, push, re-request",
+                                       collisions=clashes))
+                else:
+                    items.append(_item(3, DELIVERABLE_ITEMS[2], True,
+                                       f"{len(introduced)} added migration number(s) are free in the composed tree"))
+    except Exception as exc:  # noqa: BLE001
+        items.append(_unmeasured(3, DELIVERABLE_ITEMS[2], exc))
+
+    # -- 4. derived files current at the head ------------------------------------------------
+    try:
+        if not head:
+            items.append(_item(4, DELIVERABLE_ITEMS[3], False, "not measurable: the branch head does not resolve"))
+        else:
+            res = (derived_check or export_derived_check(cwd))(head)
+            items.append(_item(4, DELIVERABLE_ITEMS[3], res.get("ok") and res.get("measured", True),
+                               str(res.get("detail") or ""), artifacts=res.get("results") or []))
+    except Exception as exc:  # noqa: BLE001
+        items.append(_unmeasured(4, DELIVERABLE_ITEMS[3], exc))
+
+    # -- 5. scoped keepers/tests, judged the way CI judges them -------------------------------
+    try:
+        if scoped_check is not None and head:
+            res = scoped_check(branch, head)
+            items.append(_item(5, DELIVERABLE_ITEMS[4], bool(res.get("ok")), str(res.get("detail") or "scoped check ran"),
+                               **({"verdict_ref": res["verdict_ref"]} if res.get("verdict_ref") else {})))
+        else:
+            ok5, why5 = validate_verdict_ref(verdict_ref, head)
+            items.append(_item(5, DELIVERABLE_ITEMS[4], ok5, why5))
+    except Exception as exc:  # noqa: BLE001
+        items.append(_unmeasured(5, DELIVERABLE_ITEMS[4], exc))
+
+    failing = [i["name"] for i in items if not i["ok"]]
+    return {**out, "ok": not failing, "verdict": "deliverable" if not failing else "needs_resync",
+            "items": items, "failing": failing, "kb": KB_POINTER}
+
+
+def deliverable_refusal(result: dict[str, Any]) -> str:
+    """One line naming every failing item and its detail (what a refusal message carries)."""
+    bad = [i for i in result.get("items", []) if not i["ok"]]
+    return "needs_resync - " + " | ".join(f"item {i['n']} {i['name']}: {i['detail']}" for i in bad)
+
+
 # -- the MCP tool + CLI entry -----------------------------------------------
 
 ACTIONS = ("status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack",
-           "role", "roles", "reconcile", "withdraw", "ask", "position", "decision")
+           "role", "roles", "reconcile", "withdraw", "ask", "position", "decision", "deliverable")
 
 
 def run_action(action: str, session_id: str | None, *, store: StewardStore | None = None,
@@ -1262,7 +1904,11 @@ def run_action(action: str, session_id: str | None, *, store: StewardStore | Non
         return store.request(session_id, kw.get("slug") or "", name=kw.get("name"), branch=kw.get("branch"),
                              head_sha=kw.get("head_sha"), products=kw.get("products"),
                              migrations=bool(kw.get("migrations")), notes=kw.get("notes"),
-                             inline_reason=kw.get("inline_reason"), inline_note=kw.get("inline_note"), branches=kw.get("branches"))
+                             inline_reason=kw.get("inline_reason"), inline_note=kw.get("inline_note"), branches=kw.get("branches"),
+                             verdict_ref=kw.get("verdict_ref"))
+    if action == "deliverable":
+        return store.check_deliverable(kw.get("slug"), kw.get("branch"), kw.get("head_sha"), kw.get("verdict_ref"),
+                                    run_scoped=bool(kw.get("run_scoped")))
     if action == "inbox":
         return store.inbox(include_done=bool(kw.get("include_done")))
     if action == "roles":
@@ -1297,12 +1943,12 @@ def register(server) -> None:
             "action=status (who is steward, am I, my requests) | claim name= reason= [ttl_s=] (refused while a live "
             "other holder exists; stale after ttl or dead process; then ANNOUNCE via ListAgents+SendMessage) | "
             "heartbeat | handoff to_session_id=|to_name= | release | request slug= [branch= head_sha= products=[] "
-            "migrations= notes= inline_reason= inline_note=] (OPEN to every session, NON-BLOCKING, returns at once; "
+            "migrations= notes= verdict_ref= inline_reason= inline_note=] (OPEN to every session, NON-BLOCKING, returns at once; "
             "re-requesting a slug keeps the latest head_sha; an inline-agent delivery >=100 LoC or >=3 files wants "
             "inline_reason=orchestrator_owned|single_coherent_voice|shared_state|owner_directed + inline_note, else a "
             "warning names the specialists to dispatch) | mine (my requests' outcomes) | inbox [include_done] (pending, grouped by "
-            "requester, with the batched drain list) | ack slug= outcome=enqueued|landed|ejected|deployed|withdrawn [dev_sha= "
-            "notes= (required for withdrawn)] (steward) | withdraw slug= [notes=] (the requester or steward takes a request back) | ask slug= question= [addressed_to=<role> deadline_min=30] (steward: kind=needs_info, one bounded question; unanswered past the deadline = escalate_to_owner in inbox) | position slug= notes= [ref=<ni-id>] (answer / stance) | decision slug= notes= (steward's final call) | role role=<role> [name= op=set|clear to_session_id=] (durable ROLE->session map: dev-steward "
+            "requester, with the batched drain list) | ack slug= outcome=enqueued|landed|ejected|deployed|withdrawn|needs_resync [dev_sha= "
+            "notes= (required for withdrawn|needs_resync)] (steward) | deliverable slug=|branch= [head_sha= verdict_ref= run_scoped=true] (READ-ONLY, open to all: the DELIVERY CONTRACT - head pushed + tree clean, merge-buildable (contains origin/dev OR merge-tree clean), migration numbers free, derived files current at the head, scoped keepers/tests green the way CI judges them - the CI-blocking keeper set + real-tree keeper tests, env-scrubbed, derived from test.yml (run_scoped=true runs it, minutes) OR a verdict_ref carrying `env-scrubbed`,`ci-keepers` and the head sha; verdict deliverable|needs_resync, failing items named; `request` runs it at filing and the guardian re-runs it before enqueue, which is then a pure push) | withdraw slug= [notes=] (the requester or steward takes a request back) | ask slug= question= [addressed_to=<role> deadline_min=30] (steward: kind=needs_info, one bounded question; unanswered past the deadline = escalate_to_owner in inbox) | position slug= notes= [ref=<ni-id>] (answer / stance) | decision slug= notes= (steward's final call) | role role=<role> [name= op=set|clear to_session_id=] (durable ROLE->session map: dev-steward "
             "is derived from the lease, also branch-steward:<branch>, agents, products/sw, ...; any session sets its own, "
             "steward sets others') | roles (the map, stale/dead sessions flagged) | reconcile [confirm=True] (steward: ack "
             "every inbox request already in origin/dev - `git cherry` - as landed; inbox/status list them as already_landed, "
@@ -1323,7 +1969,8 @@ def register(server) -> None:
                          inline_reason: str | None = None, inline_note: str | None = None, branches: list[str] | None = None,
                          role: str | None = None, op: str | None = None, confirm: bool = False,
                          question: str | None = None, addressed_to: str | None = None,
-                         deadline_min: float | None = None, ref: str | None = None) -> dict:
+                         deadline_min: float | None = None, ref: str | None = None,
+                         verdict_ref: str | None = None, run_scoped: bool = False) -> dict:
         return run_action(
             action, os.environ.get(SESSION_ENV), claude_pid=os.getppid(),
             child_session=os.environ.get("CLAUDE_CODE_CHILD_SESSION") == "1",
@@ -1332,8 +1979,9 @@ def register(server) -> None:
             outcome=outcome, dev_sha=dev_sha, include_done=include_done,
             inline_reason=inline_reason, inline_note=inline_note, branches=branches,
             role=role, op=op, confirm=confirm, question=question, addressed_to=addressed_to,
-            deadline_min=deadline_min, ref=ref)
+            deadline_min=deadline_min, ref=ref, verdict_ref=verdict_ref, run_scoped=run_scoped)
 
 
-__all__ = ["StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
+__all__ = ["deliverable", "export_derived_check", "export_ci_parity_check", "ci_blocking_flags", "ci_keeper_test_ids",
+           "hermetic_env", "validate_verdict_ref", "format_verdict_ref", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
            "tool_refusal", "run_action", "register", "REQUEST_CMD", "OVERRIDE_ENV"]

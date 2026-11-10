@@ -470,6 +470,10 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append(f"--task-branch-accept-unmeasured-reason={kwargs['accept_unmeasured_reason']}")
         if kwargs.get("accept_unscored"):
             argv.append(f"--task-branch-accept-unscored={kwargs['accept_unscored']}")
+        if kwargs.get("branch"):
+            argv.append(f"--task-branch-branch={kwargs['branch']}")
+        if kwargs.get("verdict_ref"):
+            argv.append(f"--task-branch-verdict-ref={kwargs['verdict_ref']}")
         if kwargs.get("slugs"):
             argv.append(f"--task-branch-slugs={','.join(str(g) for g in kwargs['slugs'])}")
         if kwargs.get("order") and kwargs["order"] != "given":
@@ -516,7 +520,7 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
         "action", "slug", "confirm", "project", "brief", "paths", "agent",
         "role", "parent", "wire_env", "verbose", "keep_worktree",
         "wire_products", "accept_unmeasured", "accept_unmeasured_reason", "accept_unscored",
-        "slugs", "order",
+        "slugs", "order", "branch", "verdict_ref",
     }),
     "source_register": frozenset({
         "action", "query", "tier_filter", "limit", "source", "outcome", "tier", "label",
