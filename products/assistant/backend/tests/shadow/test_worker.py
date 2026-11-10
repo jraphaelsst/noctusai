@@ -78,6 +78,7 @@ def test_budget_refusal_is_skipped_budget_and_nothing_is_recorded(seam, registro
     i = db.add("Pode ser quinta?")
     _run(_sut(db, registro).classificar_intake(_job(i)))
     assert db.rows[i]["outcome"] == "skipped_budget"
+    assert db.rows[i]["body"] == "Pode ser quinta?"  # a budget outage never destroys the text
     assert db.desfechos[-1][2].startswith("spend_ceiling_")
     assert db.registros == [] and fake.calls == []
 
@@ -134,6 +135,14 @@ def test_replay_under_a_new_prompt_writes_a_new_output_and_never_touches_the_row
     # the replay again: already classified under this (version, model) -> no call, no write
     _run(sut.reclassificar_intake(_job(i, w.JOB_RECLASSIFICAR, prompt_version=versao, modelo=modelo)))
     assert len(fake.calls) == 2 and len(db.registros) == 2
+
+
+def test_replay_classifies_a_skipped_budget_row_whose_text_was_kept(seam, registro, db):
+    seam([resposta(True)])
+    i = db.add("Pode ser quinta às 15h?", outcome="skipped_budget")
+    versao, modelo = clf.versao_atual(registry=registro)
+    _run(_sut(db, registro).reclassificar_intake(_job(i, w.JOB_RECLASSIFICAR, prompt_version=versao, modelo=modelo)))
+    assert db.rows[i]["outcome"] == "classified" and len(db.outputs) == 1
 
 
 def test_replay_for_a_version_the_registry_no_longer_serves_is_dead_lettered(seam, registro, db):
@@ -210,3 +219,29 @@ def test_idle_worker_makes_one_claim_per_tick_and_backs_off():
     _run(worker.run_forever(stop_event=stop))
     assert calls["claim"] == 10  # one call per idle tick, nothing else on the wire
     assert sleeps[:6] == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0] and max(sleeps) == 30.0
+
+
+def test_replay_enqueue_accepts_skipped_budget_rows(registro):
+    filtros: list[tuple] = []
+
+    class _Client:
+        def table(self, _):
+            return self
+
+        def __getattr__(self, name):
+            def _f(*a, **k):
+                filtros.append((name, a))
+                return self
+            return _f
+
+        @property
+        def not_(self):
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=[])
+
+    _run(w.enfileirar_replay(FakeJobRepository(), _Client, org_id=ORG,
+                             intake_ids=["00000000-0000-0000-0000-00000000000a"], registry=registro))
+    (_, (coluna, valores)), = [f for f in filtros if f[0] == "in_" and f[1][0] == "outcome"]
+    assert set(valores) == {"classified", "failed", "skipped_budget"}

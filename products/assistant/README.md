@@ -40,7 +40,8 @@ An insert of a `pending` intake row enqueues `assistant.classificar_intake` (tri
 in-process seed jobs `Worker` (idle backoff 1 s to 30 s). The worker sends the message TEXT only to the registry row
 `assistant.classificador_agendamento` (`chamar_ia`, Haiku 5.5), parses `{is_scheduling, confidence, reason_code}`
 strictly and writes it with `assistant.record_classification` into `ai_outputs` - one row per (message,
-prompt_version, model). Budget refused or unverifiable => `skipped_budget`; invalid output => `failed`. The worker does
+prompt_version, model). Budget refused or unverifiable => `skipped_budget` (text KEPT until `retain_until`; the replay
+route can classify it later); invalid output => `failed`. The worker does
 not start without an enforced `LLM_SPEND_LIMITS` entry (rows stay `pending`). Definition:
 `project-history/assistant-chatbot/s3-definicao-agendamento.md`.
 

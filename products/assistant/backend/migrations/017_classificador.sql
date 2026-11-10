@@ -12,12 +12,19 @@
 --   3. The enqueue: an AFTER INSERT trigger on intake_messages inserts the classification job for a `pending` row in the
 --      SAME transaction as the intake row (no lost job, no poller that scans intake). The Python write path then wakes
 --      the in-process worker (`notify_enqueued`).
+--   3b. assistant.set_intake_outcome(...) REDEFINED (015's file is left untouched): `skipped_budget` no longer clears
+--      the body and is no longer terminal. A budget outage must never destroy data: the text stays until
+--      `retain_until` (the retention job clears it there) and the replay route can classify the row later.
+--      `skipped` / `skipped_excluded` keep 015's behaviour (no body, terminal).
 --   4. assistant.record_classification(...) -- the ONE writer of a classification: the ai_outputs row + (first pass
 --      only) the intake outcome change + its event, one transaction. A replay passes p_set_outcome = false and never
---      touches the intake row.
+--      touches the intake row -- except a `skipped_budget` row, which has no verdict: the first verdict that lands
+--      (a replay) moves it to `classified`.
 --   5. assistant.amostra_classificacoes(...) -- the stratified sample S4 labels (stratum = verdict x confidence band).
---   6. The prompt registry row `assistant.classificador_agendamento` (public.plataforma_agentes, core 113) -- a FIRST
---      DRAFT, inserted ON CONFLICT DO NOTHING: the live prompt is edited in the registry UI and never re-applied from here.
+--   6. The prompt registry row `assistant.classificador_agendamento` (public.plataforma_agentes, core 113) -- a ONE-TIME
+--      SEED of starting content, inserted ON CONFLICT DO NOTHING. After it lands the DB row is the only truth, edited in
+--      the registry UI; nothing here is ever re-applied over it (owner rule: agent content lives in the DB; tech-lead
+--      decision D-ac-s3-classifier-002, accepted by the tech-lead).
 --
 -- LGPD: no table here holds a phone, a chat id or a name. ai_outputs keeps the verdict, a reason CODE and the call's
 -- measurements (latency, tokens, cost) -- never message text. The job payload is the intake row id only.
@@ -313,6 +320,43 @@ CREATE TRIGGER enfileirar_classificacao_intake
     FOR EACH ROW WHEN (NEW.outcome = 'pending')
     EXECUTE FUNCTION assistant.enfileirar_classificacao_intake();
 
+-- ----- 3b. set_intake_outcome, redefined: skipped_budget keeps the text and is not terminal -----
+-- Same signature and contract as 015 (unknown outcome refused by the CHECK, a no-op change returns false, the change +
+-- its event in one transaction). Differences: only `skipped` / `skipped_excluded` clear the body and are terminal;
+-- `skipped_budget` keeps the body (until retain_until) and can still move on (a replay classifies it).
+CREATE OR REPLACE FUNCTION assistant.set_intake_outcome(
+    p_intake_id uuid, p_outcome text, p_reason text, p_actor_kind text DEFAULT 'agent'
+) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = assistant, public
+AS $$
+DECLARE
+    v_old text;
+BEGIN
+    SELECT m.outcome INTO v_old FROM assistant.intake_messages m WHERE m.id = p_intake_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'unknown intake row' USING ERRCODE = 'P0002';
+    END IF;
+    IF v_old = p_outcome THEN
+        RETURN false;
+    END IF;
+    IF v_old IN ('skipped', 'skipped_excluded') THEN
+        RAISE EXCEPTION 'a skipped intake row is terminal' USING ERRCODE = 'P0001';
+    END IF;
+
+    UPDATE assistant.intake_messages
+       SET outcome = p_outcome, outcome_reason = p_reason, outcome_at = now(),
+           body = CASE WHEN p_outcome IN ('skipped', 'skipped_excluded') THEN NULL ELSE body END
+     WHERE id = p_intake_id;
+
+    INSERT INTO assistant.intake_messages_eventos (entidade_id, event_type, de, para, dados, actor_kind)
+    VALUES (p_intake_id, 'desfecho_alterado', v_old, p_outcome,
+            CASE WHEN p_reason IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('reason', p_reason) END, p_actor_kind);
+    RETURN true;
+END;
+$$;
+REVOKE ALL ON FUNCTION assistant.set_intake_outcome(uuid, text, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION assistant.set_intake_outcome(uuid, text, text, text) TO service_role;
+
 -- ----- 4. The one writer of a classification -----
 -- First pass (p_set_outcome = true): the ai_outputs row AND the intake outcome pending|failed -> classified (+ its
 -- event, through set_intake_outcome) in ONE transaction. Replay (p_set_outcome = false): the ai_outputs row only.
@@ -354,7 +398,8 @@ BEGIN
            AND o.prompt_version = p_prompt_version AND o.model_version = p_model;
     END IF;
 
-    IF p_set_outcome AND v_outcome IN ('pending', 'failed') THEN
+    -- A skipped_budget row has no verdict yet: the first verdict that lands (a replay) classifies it.
+    IF (p_set_outcome AND v_outcome IN ('pending', 'failed')) OR v_outcome = 'skipped_budget' THEN
         v_changed := assistant.set_intake_outcome(p_intake_id, 'classified', NULL, 'agent');
     END IF;
 
@@ -400,7 +445,7 @@ $$;
 REVOKE ALL ON FUNCTION assistant.amostra_classificacoes(uuid, text, text, int) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION assistant.amostra_classificacoes(uuid, text, text, int) TO service_role;
 
--- ----- 6. The prompt registry row (FIRST DRAFT; the live prompt is edited in the registry UI) -----
+-- ----- 6. The prompt registry row (ONE-TIME SEED; afterwards the DB row is the only truth, edited in the registry UI) -----
 -- The definition it encodes is project-history/assistant-chatbot/s3-definicao-agendamento.md (plan item 8). ON CONFLICT
 -- DO NOTHING: re-applying this file never overwrites an edited prompt. prompt_version = chave@sha256(prompt)[:12],
 -- computed by the backend from the row it actually sent, so ANY edit moves the version.

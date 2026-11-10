@@ -5,7 +5,7 @@ Two job types, both carrying the intake row id ONLY (no text, no identifier):
 * ``assistant.classificar_intake`` -- enqueued by the database itself (trigger on `intake_messages`, migration 017)
   in the intake row's own transaction; the webhook write path then wakes this worker in-process
   (`app.services.intake` -> `notify_enqueued`). First pass: records `ai_outputs` + moves the intake outcome
-  `pending -> classified | failed | skipped_budget`.
+  `pending -> classified | failed | skipped_budget` (skipped_budget keeps the text; a replay can classify it later).
 * ``assistant.reclassificar_intake`` -- the replay (`enfileirar_replay`, admin route): classifies the retained text
   again under the registry's CURRENT prompt_version/model and writes a NEW ai_outputs row only. It never touches the
   intake row or an older classification.
@@ -174,15 +174,16 @@ async def enfileirar_replay(
     repo: JobRepository, client_factory: Callable[[], Any], *, org_id: UUID, intake_ids: list[UUID],
     registry: Optional[PromptRegistry] = None,
 ) -> dict:
-    """Enqueue a re-classification of `intake_ids` (this org's, already through the first pass -- classified|failed --
-    text still retained) under the registry's CURRENT
+    """Enqueue a re-classification of `intake_ids` (this org's, already through the first pass -- classified|failed,
+    or skipped_budget (a budget outage keeps the text; the replay classifies it) -- text still retained) under the
+    registry's CURRENT
     prompt_version/model. Dedupe key = (row, version, model): asking twice enqueues once."""
     ids = list(dict.fromkeys(str(i) for i in intake_ids))[:REPLAY_MAX]
     versao, modelo = await anyio.to_thread.run_sync(lambda: clf.versao_atual(registry=registry))
     elegiveis = await anyio.to_thread.run_sync(lambda: [
         r["id"] for r in (
             client_factory().table("intake_messages").select("id").eq("org_id", str(org_id)).in_("id", ids)
-            .in_("outcome", ["classified", "failed"]).not_.is_("body", "null").limit(len(ids)).execute().data or []
+            .in_("outcome", ["classified", "failed", "skipped_budget"]).not_.is_("body", "null").limit(len(ids)).execute().data or []
         )
     ]) if ids else []
     for intake_id in elegiveis:

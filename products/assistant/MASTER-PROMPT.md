@@ -20,6 +20,8 @@ S3 classifies it as about scheduling or not (classification only, D48: no reply,
   Never log a phone, chat id or body.
 - **Intake + event = one transaction.** The only writers are `assistant.append_intake` / `assistant.set_intake_outcome`
   (SECURITY DEFINER, service role); the outcome enum is `pending|classified|failed|skipped_budget|skipped_excluded|skipped`.
+  Only `skipped` / `skipped_excluded` clear the body and are terminal (017 redefines `set_intake_outcome`): a budget
+  outage never destroys data -- `skipped_budget` keeps the text until `retain_until` and a replay can classify it.
   `intake_messages_eventos` is append-only (GUC carve-out `assistant.retention_purge` for the retention job only).
 - **Classifier (S3):** prompt + model only from the registry row `assistant.classificador_agendamento`; the model sees
   the message TEXT and nothing else; strict parse, never a guess; budget refused/unverifiable => `skipped_budget`;

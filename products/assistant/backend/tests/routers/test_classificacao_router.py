@@ -2,6 +2,8 @@
 carrying the model's verdict."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from noctusai_lib.integrations.prompt_registry import configure_prompt_registry
@@ -61,7 +63,8 @@ def test_blind_sample_returns_text_and_opaque_ids_only(admin):
     assert body["modo"] == "cego" and len(body["itens"]) == 2
     for item in body["itens"]:
         assert set(item) == {"intake_id", "output_id", "texto", "recebida_em"}
-    texto = resp.text
+    # the items (what a labeller sees) carry no trace of the verdict; prompt_version legitimately names the registry key
+    texto = json.dumps(body["itens"], ensure_ascii=False)
     for vazamento in ("agendamento", "outro", "0.93", "0.55", "propoe_horario", "sem_agendamento", "alta", "baixa"):
         assert vazamento not in texto
     (nome, params), = [c for c in admin.mock_supabase.rpc_calls if c[0] == "amostra_classificacoes"]

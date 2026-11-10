@@ -82,7 +82,7 @@ class FakeIntakeDb:
     def desfecho(self, intake_id, outcome, motivo):
         self.desfechos.append((intake_id, outcome, motivo))
         self.rows[intake_id]["outcome"] = outcome
-        if outcome.startswith("skipped"):
+        if outcome in ("skipped", "skipped_excluded"):  # 017: skipped_budget keeps the text
             self.rows[intake_id]["body"] = None
 
     def registrar(self, intake_id, r, *, primeira):
@@ -92,7 +92,8 @@ class FakeIntakeDb:
             self.outputs[chave] = {"label": "agendamento" if r.classificacao.is_scheduling else "outro",
                                    "metadata": r.metadata("primeira" if primeira else "replay")}
         self.registros.append({"intake_id": intake_id, "inserted": novo, "primeira": primeira})
-        if primeira and self.rows[intake_id]["outcome"] in ("pending", "failed"):
+        if (primeira and self.rows[intake_id]["outcome"] in ("pending", "failed")) \
+                or self.rows[intake_id]["outcome"] == "skipped_budget":
             self.rows[intake_id]["outcome"] = "classified"
         return {"inserted": novo}
 
