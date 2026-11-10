@@ -66,6 +66,16 @@ def repo(tmp_path):
     return repo
 
 
+def attest(repo, s, *, ok=True, age_s=0, sha=None):
+    """What `task_branch enqueue` writes right before its push: <git-common-dir>/noc-enqueue/<full sha>.json."""
+    import json
+    import time
+    d = repo / ".git" / "noc-enqueue"
+    d.mkdir(exist_ok=True)
+    (d / f"{s}.json").write_text(json.dumps({"sha": sha or s, "ok": ok, "verdict": "deliverable" if ok else "needs_resync",
+                                              "ts": time.time() - age_s}))
+
+
 def sha(repo, ref="feat/x"):
     return git(repo, "rev-parse", ref).stdout.strip()
 
@@ -76,6 +86,7 @@ def remote_refs(repo):
 
 def test_the_exact_sha_mq_push_from_head_dev_is_allowed(repo):
     s = sha(repo)
+    attest(repo, s)
     r = git(repo, "push", "origin", f"{s}:refs/heads/mq/x--{s[:7]}", check=False)
     assert r.returncode == 0, r.stderr
     assert f"refs/heads/mq/x--{s[:7]}" in remote_refs(repo)
@@ -122,6 +133,44 @@ def test_a_bare_sha_push_to_an_ordinary_branch_still_meets_the_mirror_keeper(rep
 def test_the_legacy_head_form_still_runs_the_mirror_keeper_for_its_branch(repo):
     git(repo, "checkout", "feat/x")
     s = sha(repo)
+    attest(repo, s)  # every mq push needs the enqueue attestation, whatever the refspec form
     r = git(repo, "push", "origin", f"HEAD:refs/heads/mq/x--{s[:7]}", check=False)
     assert r.returncode == 0, r.stderr
     assert "branch-tree mirror check for 'feat/x'" in r.stdout + r.stderr
+
+
+# -- P1-2 (adversarial review): the queue path is for `task_branch enqueue`, not for anyone who types the refspec --
+
+def test_a_raw_exact_sha_mq_push_without_an_enqueue_attestation_is_refused(repo):
+    s = sha(repo)
+    r = git(repo, "push", "origin", f"{s}:refs/heads/mq/x--{s[:7]}", check=False)
+    assert r.returncode != 0
+    assert "no enqueue attestation" in r.stderr and "task_branch action=enqueue" in r.stderr
+    assert not any("mq/" in ref for ref in remote_refs(repo))
+
+
+@pytest.mark.parametrize("kw,why", [
+    ({"ok": False}, "not ok"),
+    ({"age_s": 11 * 60}, "older than"),
+    ({"sha": "f" * 40}, "another sha"),
+])
+def test_a_stale_not_ok_or_mismatched_attestation_is_refused(repo, kw, why):
+    s = sha(repo)
+    attest(repo, s, **kw)
+    r = git(repo, "push", "origin", f"{s}:refs/heads/mq/x--{s[:7]}", check=False)
+    assert r.returncode != 0, why
+    assert "task_branch action=enqueue" in r.stderr
+    assert not any("mq/" in ref for ref in remote_refs(repo))
+
+
+def test_an_attestation_for_one_sha_does_not_cover_another(repo):
+    a = sha(repo)
+    git(repo, "checkout", "-q", "feat/x")
+    (repo / "c.txt").write_text("c\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "feat: c")
+    git(repo, "checkout", "-q", "dev")
+    b = sha(repo)
+    attest(repo, a)
+    r = git(repo, "push", "origin", f"{b}:refs/heads/mq/x--{b[:7]}", check=False)
+    assert r.returncode != 0 and "no enqueue attestation" in r.stderr

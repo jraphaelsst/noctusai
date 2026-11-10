@@ -860,3 +860,23 @@ def test_a_forged_verdict_ref_string_is_refused(world):
         five = item(world.deliverable(verdict_ref=forged), "scoped_green")
         assert not five["ok"], forged
         assert "verdict record" in five["detail"] or "free-form" in five["detail"], five["detail"]
+
+
+def test_enqueue_attests_the_deliverable_verdict_the_pre_push_queue_path_requires(world):
+    import json
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    world.commit(wt, "feat: b")
+    head = world.push(wt, "feat/x")
+    world.enqueue(confirm=False)
+    att = Path(sh(world.repo, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")) / "noc-enqueue" / f"{head}.json"
+    assert not att.exists()  # a dry run attests nothing
+    assert world.enqueue()["status"] == "queued"
+    rec = json.loads(att.read_text())
+    assert rec["sha"] == head and rec["ok"] is True and rec["verdict"] == "deliverable" and rec["failing"] == []
+    assert abs(rec["ts"] - __import__("time").time()) < 120
+    # a refused (needs_resync) delivery is neither attested nor pushed
+    (wt / "src" / "a.txt").write_text("uncommitted\n")
+    other = world.enqueue(slug="x")
+    assert other["status"] == "needs_resync"

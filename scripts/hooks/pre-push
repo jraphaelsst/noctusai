@@ -13,7 +13,8 @@
 #   3. NON-FAST-FORWARD (force) push to a protected branch is ALWAYS refused.
 #   4. The merge-queue path - `<sha>:refs/heads/mq/<slug>--<sha7>` (<sha7> a prefix of the
 #      pushed sha), nothing else in the push - is allowed from any checkout; an mq ref that
-#      does not name its sha, or rides with another ref, is refused (see _mq_push_guard).
+#      does not name its sha, rides with another ref, or lacks the fresh `task_branch enqueue`
+#      attestation (<git-common-dir>/noc-enqueue/<sha>.json, ok, < 10 min) is refused (see _mq_push_guard).
 #
 # It ALSO change-gates the embedding-cache refresh (below). Those refreshes log
 # cost rows to an UNTRACKED spool, so this hook dirties nothing tracked and makes
@@ -55,6 +56,26 @@ MQ_REF_RE='^refs/heads/mq/[A-Za-z0-9._/-]+--([0-9a-f]{7})$'
 _mq_exact() {  # $1 remote_ref  $2 local_oid  → 0 iff mq/<slug>--<sha7> and sha7 prefixes the pushed sha
     [[ "$1" =~ $MQ_REF_RE ]] && [[ "$2" == "${BASH_REMATCH[1]}"* ]]
 }
+# The queue path is for `task_branch action=enqueue`, not for whoever types the refspec: right before
+# its push it writes <git-common-dir>/noc-enqueue/<full sha>.json {sha, ok, ts, ...} holding the
+# deliverable() verdict. The hook requires that attestation: ok, matching sha, younger than 10 minutes
+# (adversarial review P1-2: an exact-sha mq push by hand skipped the whole delivery contract).
+MQ_ATTEST_MAX_AGE_S=600
+_mq_attested() {  # $1 = full pushed sha -> 0 iff a fresh ok attestation for exactly that sha exists
+    local gd f
+    gd="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+    f="$gd/noc-enqueue/$1.json"
+    [[ -f "$f" ]] || return 1
+    python3 - "$f" "$1" "$MQ_ATTEST_MAX_AGE_S" <<'PY'
+import json, sys, time
+try:
+    d = json.load(open(sys.argv[1]))
+    age = time.time() - float(d.get("ts", 0))
+    sys.exit(0 if d.get("ok") is True and d.get("sha") == sys.argv[2] and 0 <= age < float(sys.argv[3]) else 1)
+except Exception:
+    sys.exit(1)
+PY
+}
 _mq_push_guard() {  # reads PUSH_LINES; prints why + returns non-zero when an mq ref is misused
     local lref loid rref roid n_mq=0 n_other=0 bad=0
     while read -r lref loid rref roid; do
@@ -63,6 +84,11 @@ _mq_push_guard() {  # reads PUSH_LINES; prints why + returns non-zero when an mq
             n_mq=$((n_mq + 1))
             if ! _mq_exact "$rref" "$loid"; then
                 echo "🔴 pre-push: '$rref' must be mq/<slug>--<sha7> where <sha7> is a prefix of the pushed sha (${loid:0:12})." >&2
+                bad=1
+            elif ! _mq_attested "$loid"; then
+                echo "🔴 pre-push: no enqueue attestation for ${loid:0:12} (missing, not ok, for another sha, or older than $((MQ_ATTEST_MAX_AGE_S / 60)) min)." >&2
+                echo "   The merge queue takes only deliveries that passed the delivery contract: use" >&2
+                echo "   'noctus.dev.task_branch action=enqueue slug=<slug> confirm=True' (it verifies deliverable() and attests, then pushes)." >&2
                 bad=1
             fi
         else
