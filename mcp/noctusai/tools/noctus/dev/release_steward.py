@@ -274,7 +274,8 @@ class StewardStore:
                  inline_gate: Callable[[str, str | None, str | None], dict[str, Any]] | None = None,
                  deliverable_check: Callable[[str, str | None, str | None], dict[str, Any]] | None = None,
                  resolve_branch: Callable[[str], dict[str, Any]] | None = None,
-                 scoped_check: Callable[[str, str], dict[str, Any]] | None = None) -> None:
+                 scoped_check: Callable[[str, str], dict[str, Any]] | None = None,
+                 repo_cwd: str | Path | None = None) -> None:
         self.root = Path(root) if root is not None else default_root()
         # Same posture as inline_gate/landed_check: production runs the real delivery-contract preflight
         # (`deliverable`) at filing; a store built on an explicit root (tests) skips it unless it injects one.
@@ -282,6 +283,7 @@ class StewardStore:
             (lambda b, h, v: deliverable(b, head_sha=h, verdict_ref=v)) if root is None else None)
         self._resolve_branch = resolve_branch if resolve_branch is not None else (
             resolve_branch_name if root is None else None)
+        self.repo_cwd = repo_cwd  # where the landed-by-branch-steward rule reads git (None = the process cwd)
         # `request(run_scoped=True)` runs the CI-parity check (minutes) and files with the ref it mints. Production runs
         # the real one; an explicit-root store (tests) has none unless it injects one - and then REFUSES the flag.
         self._scoped_check = scoped_check if scoped_check is not None else (
@@ -672,6 +674,59 @@ class StewardStore:
         if warnings:
             out["warnings"] = warnings
         return out
+
+    def landed_by_branch_steward(self, slug: str, branch_hint: str | None, session_id: str | None) -> tuple[bool, str]:
+        """May a NON-lease session run `task_branch landed` for `slug`? Under the guardian spec the requester owns its worktree,
+        so landed's post-landing tail (pointer, primary FF, worktree cleanup) is the BRANCH STEWARD's. Allowed only when ALL hold:
+        the caller is the branch's requester / pointer session / worktree-claim holder, the branch's work is already on
+        refs/remotes/origin/dev, and its worktree is clean. Fails closed (any probe error -> not allowed, with the reason)."""
+        if not session_id or not slug:
+            return False, "no session identity"
+        try:
+            git = _subprocess_git(self.repo_cwd)
+            req = self.requests().get(slug) or {}
+            branch = branch_hint or req.get("branch")
+            if not branch:
+                res = resolve_branch_name(slug, git=git)
+                branch = res.get("branch")
+            if not branch:
+                return False, f"cannot resolve {slug!r} to a branch"
+            wt = _worktree_of(git, branch)
+            who = None
+            if (req.get("requester") or {}).get("session_id") == session_id and (not req.get("branch") or req.get("branch") == branch):
+                who = "requester"
+            if who is None and wt:
+                with contextlib.suppress(Exception):
+                    pwg = _sibling("primary_write_guard")
+                    rc, gd, _e = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+                    primary = os.path.dirname(gd.strip().splitlines()[0]) if rc == 0 and gd.strip() else ""
+                    claim = pwg.read_claims(primary).get(session_id) if primary else None
+                    if claim and os.path.realpath(str(claim.get("worktree", ""))) == os.path.realpath(wt):
+                        who = "worktree claim holder"
+            if who is None:
+                with contextlib.suppress(Exception):
+                    from tools.noctus.dev import branch_pointer as bp
+                    ptr = bp._latest_per_branch(bp._read_dev_ledger()).get(branch) or {}
+                    if ptr.get("session") == session_id:
+                        who = "pointer session"
+            if who is None:
+                return False, f"{session_id[:12]} is not the branch's requester, pointer session or worktree claim holder for {branch}"
+            rc, head, _e = git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}")
+            if rc != 0:
+                return False, f"{branch} does not exist locally"
+            state = git_landed_check(self.repo_cwd, base="refs/remotes/origin/dev")(branch, head.strip()).get("state")
+            if state != "landed":
+                return False, f"{branch}'s work is not on origin/dev yet (landed-check: {state}); the guardian runs landed after the queue lands it"
+            if wt:
+                rc, out, _e = git("--no-optional-locks", "status", "--porcelain", cwd=wt)
+                if rc != 0:
+                    return False, f"cannot read the worktree status of {wt}"
+                _benign, real = _sibling("_benign_stash").classify_porcelain(out or "")
+                if real:
+                    return False, f"the worktree {wt} is dirty ({', '.join(real[:4])})"
+            return True, f"{who} of {branch}, already on origin/dev, clean"
+        except Exception as exc:  # noqa: BLE001 - fail closed, say why
+            return False, f"could not verify ({type(exc).__name__}: {str(exc)[:120]})"
 
     def check_deliverable(self, slug: str | None = None, branch: str | None = None, head_sha: str | None = None,
                           verdict_ref: str | None = None, run_scoped: bool = False) -> dict[str, Any]:
@@ -1136,6 +1191,7 @@ class StewardStore:
 class Gated:
     kind: str
     slug: str | None = None
+    branch: str | None = None
 
 
 def tool_key(tool_name: str) -> str | None:
@@ -1154,7 +1210,8 @@ def classify_tool(tool_name: str, tool_input: dict[str, Any] | None) -> Gated | 
     confirm = bool(args.get("confirm", False))
     if key == "noctus.dev.task_branch":
         action = args.get("action") or "status"
-        return Gated(f"task_branch {action}", args.get("slug")) if action in _TASK_BRANCH_GATED and confirm else None
+        return (Gated(f"task_branch {action}", args.get("slug"), args.get("branch"))
+                if action in _TASK_BRANCH_GATED and confirm else None)
     if key == "noctus.dev.release":
         stage = args.get("stage") or "status"
         return Gated(f"release {stage}") if stage in _RELEASE_GATED and confirm else None
@@ -1246,6 +1303,16 @@ def _cli_gate(words: list[str]) -> Gated | None:
             vals[flag] = val if eq else (nxt if nxt and not nxt.startswith("--") else None)
     for flag, (allowed, confirm_flag, label) in _CLI_GATES.items():
         if flag in vals and confirm_flag in flags and (allowed is None or vals[flag] in allowed):
+            if flag == "--task-branch":  # carry the slug/branch so `landed` can be judged per branch (branch-steward rule)
+                extra = {}
+                for w in words:
+                    k, eq, v = w.partition("=")
+                    if k in ("--task-branch-slug", "--task-branch-branch") and eq:
+                        extra[k] = v
+                for idx, w in enumerate(words[:-1]):
+                    if w in ("--task-branch-slug", "--task-branch-branch") and not words[idx + 1].startswith("--"):
+                        extra[w] = words[idx + 1]
+                return Gated(f"{label} {vals[flag]}", extra.get("--task-branch-slug"), extra.get("--task-branch-branch"))
             return Gated(f"{label} {vals[flag]}" if allowed else label)
     return None
 
@@ -1316,6 +1383,14 @@ def decide_call(gated: Gated, session_id: str | None, *, store: StewardStore,
     if state == "live" and lease and session_id and lease.get("session_id") == session_id:
         store.touch(session_id)
         return None
+    branch_steward_note = ""
+    if gated.kind == "task_branch landed" and gated.slug and session_id:
+        ok, why = store.landed_by_branch_steward(gated.slug, gated.branch, session_id)
+        if ok:
+            store.audit("landed_by_branch_steward", session_id=session_id, slug=gated.slug, via=why)
+            return None
+        branch_steward_note = (" `landed` is the BRANCH STEWARD's post-landing tail once its work is on origin/dev, its worktree is "
+                               f"clean and it is the branch's requester / pointer session / claim holder - not allowed here: {why}.")
     override = _override_reason(command, env)
     short_note = ""
     if override:
@@ -1330,13 +1405,13 @@ def decide_call(gated: Gated, session_id: str | None, *, store: StewardStore,
     if state == "live" and lease:
         reason = (f"{gated.kind} is steward-only: ONE elected session handles CI queueing AND deploy, and that is "
                   f"{_label(lease)} - not you. Gated is not blocked: {ask}. "
-                  f"Reads and dry-runs stay open. {escape} {KB_POINTER}")
+                  f"Reads and dry-runs stay open.{branch_steward_note} {escape} {KB_POINTER}")
     else:
         why = "the previous steward's lease is stale" if state == "stale" else "no release steward is elected"
         reason = (f"{gated.kind} is steward-only and {why}. Run ListAgents and `release_steward action=status`; if you "
                   "are a LEADER session (interactive, top-level, not a dispatched subagent) with shipping work and no "
                   "other leader holds the lane, run `release_steward action=claim` and announce it to every peer with "
-                  f"SendMessage. Otherwise {ask}. {escape} {KB_POINTER}")
+                  f"SendMessage. Otherwise {ask}.{branch_steward_note} {escape} {KB_POINTER}")
     return {"reason": reason, "status": "refused_not_steward", "steward": store.public_holder()}
 
 
