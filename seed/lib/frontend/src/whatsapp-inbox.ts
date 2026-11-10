@@ -219,6 +219,7 @@ export function createWhatsAppInboxHooks(api: ApiClient, options: CreateWhatsApp
       },
       getNextPageParam: (last) => last.next_cursor ?? undefined,
       enabled: !!connectionId && (opts.enabled ?? true),
+      // poll-budget: opt-in (default off), caller-set; ~4 calls/tick; worst 4/tick; hidden=paused
       refetchInterval: opts.pollMs || false,
     });
     const chats = useMemo(() => flattenChats(query.data), [query.data]);
@@ -249,6 +250,7 @@ export function createWhatsAppInboxHooks(api: ApiClient, options: CreateWhatsApp
       },
       getNextPageParam: olderCursor,
       enabled: !!connectionId && !!chatId,
+      // poll-budget: opt-in (default off), caller-set; ~4 calls/tick; worst 4/tick; hidden=paused
       refetchInterval: opts.pollMs || false,
     });
     const messages = useMemo(() => flattenMessages(query.data), [query.data]);

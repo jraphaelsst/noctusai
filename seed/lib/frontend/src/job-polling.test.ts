@@ -9,7 +9,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryObserver, focusManager } from '@tanstack/react-query';
 
-import { handOffToPolling, jobPolling, resetJobHandOffs, type JobPollingQuery } from './job-polling';
+import {
+  handOffToPolling,
+  JOB_POLL_CEILING_MS,
+  JOB_POLL_FAST_WINDOW_MS,
+  JOB_POLL_SLOW_MS,
+  jobPolling,
+  resetJobHandOffs,
+  type JobPollingQuery,
+} from './job-polling';
 
 type Job = { status: 'processando' | 'concluido' };
 const running = (d: Job | undefined) => d?.status === 'processando';
@@ -239,5 +247,31 @@ describe('handOffToPolling — a job-starting write hands off to the polled read
     await vi.advanceTimersByTimeAsync(5000);
     expect(other.queryFn).toHaveBeenCalledTimes(1);
     other.unsubscribe();
+  });
+});
+
+describe('jobPolling — a stuck "active" job does not poll forever (2026-11-10 request budget)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('backs off after the fast window, then stops at the ceiling', () => {
+    const o = jobPolling(running, 3000);
+    const query = q({ status: 'processando' });
+    expect(o.refetchInterval(query)).toBe(3000);
+    vi.advanceTimersByTime(JOB_POLL_FAST_WINDOW_MS + 1);
+    expect(o.refetchInterval(query)).toBe(JOB_POLL_SLOW_MS);
+    vi.advanceTimersByTime(JOB_POLL_CEILING_MS);
+    expect(o.refetchInterval(query)).toBe(false);
+  });
+
+  it('a job that settles and restarts gets a fresh fast window', () => {
+    const o = jobPolling(running, 3000);
+    const query = q({ status: 'processando' });
+    o.refetchInterval(query);
+    vi.advanceTimersByTime(JOB_POLL_FAST_WINDOW_MS + 1);
+    query.state.data = { status: 'concluido' };
+    expect(o.refetchInterval(query)).toBe(false);
+    query.state.data = { status: 'processando' };
+    expect(o.refetchInterval(query)).toBe(3000);
   });
 });

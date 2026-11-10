@@ -176,7 +176,7 @@ export async function retryUpload(jobId: string): Promise<void> {
 // controls the cadence). Each entry has the upload's queue position +
 // job metadata so the operator can see who's running and who's
 // waiting.
-export function useQueueState(intervalMs = 5000) {
+export function useQueueState(intervalMs = 30_000) {
   const [data, setData] = useState<QueueState | null>(null);
 
   const refresh = useCallback(async () => {
@@ -192,6 +192,7 @@ export function useQueueState(intervalMs = 5000) {
 
   useEffect(() => {
     void refresh();
+    // poll-budget: 30s default (no caller overrides it); ~5 calls/tick (queue read + auth lookups); worst 14400/day per open tab; hidden=runs
     const id = window.setInterval(() => void refresh(), intervalMs);
     return () => window.clearInterval(id);
   }, [refresh, intervalMs]);

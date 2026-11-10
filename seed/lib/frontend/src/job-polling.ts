@@ -92,14 +92,35 @@ export function jobPolling<TData>(
     const active = isActive(query.state.data);
     return handOffPending(query, active) || active;
   };
+  // Request budget (2026-11-10): "active" is the SERVER's claim; a job stuck active, polled in the
+  // background, is an endless per-tick Supabase spend. Back off after the fast window, stop at the ceiling.
+  const activeSince = new WeakMap<object, number>();
+  const cadence = (query: JobPollingQuery<TData>): number | false => {
+    if (!polling(query)) {
+      activeSince.delete(query);
+      return false;
+    }
+    const now = Date.now();
+    const since = activeSince.get(query) ?? now;
+    activeSince.set(query, since);
+    const elapsed = now - since;
+    if (elapsed >= JOB_POLL_CEILING_MS) return false;
+    return elapsed >= JOB_POLL_FAST_WINDOW_MS ? Math.max(intervalMs, JOB_POLL_SLOW_MS) : intervalMs;
+  };
   return {
-    refetchInterval: (query) => (polling(query) ? intervalMs : false),
+    // poll-budget: caller-set 2-5s while a job is active, 15s after 2 min, stops at 30 min; ~5 calls/tick (handler + auth lookups); worst 760/day per open tab per stuck job (2 min at 3s + 28 min at 15s, then stops); hidden=runs
+    refetchInterval: (query) => cadence(query),
     refetchIntervalInBackground: true,
     refetchOnWindowFocus: (query) => (polling(query) ? 'always' : false),
   };
 }
 
 // ─── hand-off: a job-starting write → the polled read ──────────────────────
+
+/** Fast cadence lasts this long, then `JOB_POLL_SLOW_MS`; polling stops at `JOB_POLL_CEILING_MS` of continuous "active". */
+export const JOB_POLL_FAST_WINDOW_MS = 2 * 60_000;
+export const JOB_POLL_SLOW_MS = 15_000;
+export const JOB_POLL_CEILING_MS = 30 * 60_000;
 
 /** How long a hand-off keeps a read polling when it never sees the job (the safety net). */
 export const JOB_HANDOFF_GRACE_MS = 90_000;

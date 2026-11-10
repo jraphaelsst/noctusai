@@ -55,6 +55,7 @@ export function useCerebroPerguntas(brainId: string | null) {
     queryKey: perguntasKey(brainId),
     enabled: !!brainId,
     queryFn: async () => unwrap(await api.get<Envelope<BrainDetail>>(`${BASE}/brains/${enc(brainId as string)}`)),
+    // poll-budget: 3s for 30s then 10s while perguntas run, stops when done; ~5 calls/tick; worst 43200/day per open tab (stuck run); hidden=paused
     refetchInterval: (q) => {
       const d = q.state.data;
       if (!perguntasEmAndamento(d)) {
