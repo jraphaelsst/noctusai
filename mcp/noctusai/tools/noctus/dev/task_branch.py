@@ -2332,69 +2332,90 @@ def _ownership_skip(*, abs_wt: str, branch: str, primary_root: str, pointer_fn, 
                     auto: bool, session_state: "Callable[[str], str] | None") -> dict[str, Any] | None:
     """Why this teardown must NOT happen, or None when it is the caller's to do.
 
-    A worktree is not the caller's to remove when (1) another session that is not dead claims it
-    (`primary_write_guard` claims, written by `harness_claim_worktree`; liveness from the steward
-    registry, `unknown` counts as live), or (2) its branch is a declared long-lived steward branch
-    (branch-tree pointer role 'steward'). 2026-11-10: the guardian's `landed slug=agents` removed
-    another session's integration worktree and local ref while that session still worked there."""
+    A worktree is not the caller's to remove when
+      (1) another session that is not dead claims it (`primary_write_guard` claims, written by
+          `harness_claim_worktree`; liveness from the steward registry, `unknown` counts as live) - and an
+          unreadable/corrupt claims file counts as OWNED, never as "no claims";
+      (2) its branch is a declared long-lived steward branch (branch-tree pointer role 'steward');
+      (3) its branch pointer belongs to ANOTHER session that is not dead - on the AUTO path always, and on a DIRECT
+          cleanup whenever the caller is not that pointer's session (the pointer's own session keeps the old,
+          explicit behaviour);
+      (4) AUTO only, fail closed: the pointer store was not fully readable, or there is neither a pointer (with a
+          session) nor a claim by the caller to say whose it is.
+    2026-11-10: the guardian's `landed slug=agents` removed another session's integration worktree and local ref
+    while that session still worked there. A DIRECT cleanup with an unreadable pointer store still proceeds (an
+    explicit act; the lifecycle verdict is never failed over a pointer failure)."""
     from tools.noctus.dev import primary_write_guard as _pwg
     here = os.path.realpath(abs_wt)
-    for sid, claim in sorted(_pwg.read_claims(primary_root).items()):
+    state_of = session_state or (lambda _s: "unknown")
+    claims, claims_status = _pwg.read_claims_status(primary_root)
+    if claims_status == "unreadable":
+        return {"status": "skipped_owned", "cwd_removed": False,
+                "owner": {"session_id": None, "source": "claims_unreadable"},
+                "reason": (f"the worktree claims file is unreadable or corrupt, so ownership of {abs_wt} cannot be ruled out: "
+                           "left alone (fix .claude/cache/session-worktrees.json or release the claim)")}
+    caller_claims_it = False
+    for sid, claim in sorted(claims.items()):
+        if os.path.realpath(str(claim.get("worktree", ""))) != here:
+            continue
         if sid == caller:
+            caller_claims_it = True
             continue
-        same_path = os.path.realpath(str(claim.get("worktree", ""))) == here
-        if not same_path:
-            continue
-        state = (session_state or (lambda _s: "unknown"))(sid)
+        state = state_of(sid)
         if state != "dead":
             return {"status": "skipped_owned", "cwd_removed": False,
                     "owner": {"session_id": sid, "source": "worktree_claim", "state": state,
                               "claimed_at": claim.get("claimed_at")},
                     "reason": (f"worktree {abs_wt} is claimed by session {sid[:12]} ({state}) - not the caller's to "
                                "remove; the owner tears it down, or releases the claim (harness_claim_worktree release)")}
-    if pointer_fn is not None:
-        unreadable: str | None = None
-        try:
-            checked = getattr(pointer_fn, "latest_checked", None)
-            if checked is not None:
-                ptr, status = checked(branch)
-                if not status.get("store_ok", True):
-                    unreadable = str(status.get("error") or "origin/ledgers unreadable; answered from the dev copy")
-            else:
-                ptr = pointer_fn.latest(branch)
-        except Exception as e:  # noqa: BLE001
-            ptr, unreadable = None, f"{type(e).__name__}: {e}"
-        if unreadable and auto:
-            # Fail CLOSED on the auto path: a steward branch is exactly what a stale/failed read hides. Only the
-            # DELETION is skipped; the git lifecycle verdict (landed/integrated) is unaffected. A direct, explicit
-            # `cleanup` keeps the old contract (a pointer failure is reported, never blocks the lifecycle).
+    if pointer_fn is None:
+        return None
+    unreadable: str | None = None
+    ptr = None
+    try:
+        checked = getattr(pointer_fn, "latest_checked", None)
+        if checked is not None:
+            ptr, status = checked(branch)
+            if not status.get("store_ok", True):
+                unreadable = str(status.get("error") or "origin/ledgers unreadable; answered from the dev copy")
+        else:
+            ptr = pointer_fn.latest(branch)
+    except Exception as e:  # noqa: BLE001
+        ptr, unreadable = None, f"{type(e).__name__}: {e}"
+    if unreadable and auto:
+        # Fail CLOSED on the auto path: a steward branch is exactly what a stale/failed read hides. Only the DELETION is
+        # skipped; the git lifecycle verdict (landed/integrated) is unaffected.
+        return {"status": "skipped_owned", "cwd_removed": False,
+                "owner": {"session_id": None, "source": "pointer_store_unreadable", "branch": branch},
+                "reason": (f"cannot prove {branch} is not a long-lived steward branch: the branch-tree pointer store was "
+                           f"not fully readable ({unreadable[:120]}); worktree and ref left alone - re-run cleanup once it is")}
+    if unreadable:
+        logger.warning("task_branch: pointer store unreadable for a direct cleanup of %s (proceeding): %s", branch, unreadable)
+        ptr = None
+    if ptr and ptr.get("role") == "steward":
+        owner = ptr.get("session")
+        if auto or owner != caller:
             return {"status": "skipped_owned", "cwd_removed": False,
-                    "owner": {"session_id": None, "source": "pointer_store_unreadable", "branch": branch},
-                    "reason": (f"cannot prove {branch} is not a long-lived steward branch: the branch-tree pointer store was "
-                               f"not fully readable ({unreadable[:120]}); worktree and ref left alone - re-run cleanup once it is")}
-        if unreadable:
-            logger.warning("task_branch: steward-branch check for %s skipped, pointer store unreadable: %s", branch, unreadable)
-            ptr = None
-        if ptr and ptr.get("role") == "steward":
-            owner = ptr.get("session")
-            if auto or owner != caller:
-                return {"status": "skipped_owned", "cwd_removed": False,
-                        "owner": {"session_id": owner, "source": "steward_branch", "branch": branch},
-                        "reason": (f"{branch} is a long-lived STEWARD branch (branch-tree pointer role 'steward'): its "
-                                   "worktree and ref outlive any single landing" +
-                                   ("" if auto else " - only the owning session may clean it up"))}
-        # An AUTO teardown also leaves alone a worktree whose branch pointer belongs to ANOTHER session that is not
-        # dead: whoever opened the branch still has it (the guardian landing a delivery is not its owner).
-        pointer_session = (ptr or {}).get("session")
-        if (auto and ptr and pointer_session and pointer_session != caller
-                and ptr.get("status") not in _TERMINAL_POINTER_STATUSES):
-            pstate = (session_state or (lambda _s: "unknown"))(pointer_session)
-            if pstate != "dead":
-                return {"status": "skipped_owned", "cwd_removed": False,
-                        "owner": {"session_id": pointer_session, "source": "pointer_session", "state": pstate, "branch": branch},
-                        "reason": (f"{branch}'s branch-tree pointer belongs to session {str(pointer_session)[:12]} ({pstate}), "
-                                   "not the caller: the owner cleans its own worktree (explicit cleanup), or the "
-                                   "SessionStart sweep reclaims it once idle")}
+                    "owner": {"session_id": owner, "source": "steward_branch", "branch": branch},
+                    "reason": (f"{branch} is a long-lived STEWARD branch (branch-tree pointer role 'steward'): its "
+                               "worktree and ref outlive any single landing" +
+                               ("" if auto else " - only the owning session may clean it up"))}
+    pointer_session = (ptr or {}).get("session")
+    if (ptr and pointer_session and pointer_session != caller
+            and ptr.get("status") not in _TERMINAL_POINTER_STATUSES):
+        pstate = state_of(pointer_session)
+        if pstate != "dead":
+            return {"status": "skipped_owned", "cwd_removed": False,
+                    "owner": {"session_id": pointer_session, "source": "pointer_session", "state": pstate, "branch": branch},
+                    "reason": (f"{branch}'s branch-tree pointer belongs to session {str(pointer_session)[:12]} ({pstate}), "
+                               "not the caller: the owner cleans its own worktree (explicit cleanup), or the "
+                               "SessionStart sweep reclaims it once idle")}
+    if auto and not unreadable and not caller_claims_it and not pointer_session:
+        # nothing says whose this is (no pointer carrying a session, no claim by the caller): undeterminable -> not ours
+        return {"status": "skipped_owned", "cwd_removed": False,
+                "owner": {"session_id": None, "source": "no_pointer", "branch": branch},
+                "reason": (f"cannot determine who owns {branch}: no branch-tree pointer with a session and no claim by the "
+                           "caller; left alone (an explicit cleanup by the owner, or the SessionStart sweep, reclaims it)")}
     return None
 
 
