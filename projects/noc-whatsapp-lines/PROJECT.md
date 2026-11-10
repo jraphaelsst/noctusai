@@ -96,7 +96,15 @@ noc VPS
 
 ### Phase 0 — Audit
 - [ ] Map live WAHA sessions and containers on the noc VPS (`noctus.vps.ps`, `noctus.dev.waha_instance`).
-- [ ] Find which line Julia answers on today and how the agents channel resolves it.
+- [x] Find which line Julia answers on today and how it is resolved (answered by `noctusai-e1`, 2026-11-10):
+  - One (org `fd169d29…`) has exactly ONE `social_wiring.whatsapp_connections` row:
+    - id `8fd583bb…`, `base_url http://waha:3000`, `session_name "default"`;
+    - `agente_leads_ativo = false`, so the Julia routing switch is OFF.
+  - Resolution is `julia_linha.linha_da_org(org)`: the org's active row, else its only row. Several rows with none active raise `LinhaAmbigua`; no row raises `SemLinha`. There is no env fallback.
+  - Every SW sender uses it, including the owner-notification dispatch.
+  - `(base_url, session_name)` is unique across orgs (SW 321), and create hardcodes `session_name="default"`. That gives one session per WAHA server, which fits one WAHA per container.
+  - **Phase 1 approach:** re-point the existing row's `base_url` at L1's container. This carries less risk than adding a second row, which would need `agente_leads_ativo` set on exactly one row. `noctusai-e1` reviews any slice touching `julia_linha` / `whatsapp_connections`.
+  - Still open: which phone number the `default` session is paired to (WAHA `session/me`).
 - [ ] Read the Assistant branch's WAHA-per-container design and its state; agree the seam with the Assistant session.
 - [ ] Check where an owner number could live (core settings vs the notification page) and who reads it.
 **Improvements:** NOC-FILL-IMPROVEMENTS
