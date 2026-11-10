@@ -16220,6 +16220,15 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
 #: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
 #: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
 _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
+    # assistant 015: the seed connection table's UNIQUE index on the random per-line webhook routing token (a lookup key,
+    # not a business invariant; same shape as the erp portal token below). The table is empty until the owner pairs the
+    # line (S6), so a rollback-only probe has no row to borrow and the product is dev-scope.
+    (
+        "products/assistant/backend/migrations/015_intake.sql",
+        "idx_assistant_whatsapp_connections_webhook_token",
+        "Lookup-key uniqueness on a high-entropy webhook routing token (verbatim seed whatsapp_connections DDL); not a "
+        "business invariant, and the table is empty until the personal line is paired.",
+    ),
     # erp 050: plain UNIQUE index on the SHA-256 of a 384-bit random token (lookup key, not a business invariant).
     # erp.portal_tokens has 0 rows in prod (verified 2026-11-08) so a probe has no fixture row, and the product is asleep.
     (
@@ -21846,7 +21855,8 @@ def check_absorptions_cache_freshness(repo_root: Path | None = None) -> list[dic
     via ``settle_structural_caches``). Silent skip when the ndjson is absent
     (no absorptions logged yet — fresh repo or pre-absorption tree).
 
-    Remediation: ``python mcp/noctusai/cli.py --refresh-absorptions-cache``.
+    Remediation: the MCP tool ``noctus.dev.absorption_refresh`` (there is no CLI flag; the old
+    ``--refresh-absorptions-cache`` hint named one that never existed).
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -21863,7 +21873,7 @@ def check_absorptions_cache_freshness(repo_root: Path | None = None) -> list[dic
             "product": "<harness>", "file": cache_file_label,
             "issue": (
                 "absorptions cache missing — run "
-                "`python mcp/noctusai/cli.py --refresh-absorptions-cache` "
+                "the MCP tool `noctus.dev.absorption_refresh` "
                 "(absorption-tracking keeper-mirror #9)"
             ),
             "severity": "warning",
@@ -21881,7 +21891,7 @@ def check_absorptions_cache_freshness(repo_root: Path | None = None) -> list[dic
             "product": "<harness>", "file": cache_file_label,
             "issue": (
                 f"absorptions cache unreadable ({e}) — re-create via "
-                "`--refresh-absorptions-cache`"
+                "the MCP tool `noctus.dev.absorption_refresh`"
             ),
             "severity": "warning",
             "symbol": "absorptions-cache-unreadable",

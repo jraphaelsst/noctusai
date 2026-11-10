@@ -66,5 +66,6 @@ def get_vista_adapter_for_org(
     process env `NOC_RL_VISTA_RPS|BURST`)."""
     base_url, api_key = resolver.get(org_id)
     return VistaRESTAdapter(
-        base_url=base_url, api_key=api_key, rate_bucket=f"vista:{org_id}", rate_per_sec=rate_per_sec, rate_burst=rate_burst
+        base_url=base_url, api_key=api_key, rate_bucket=f"vista:{org_id}", rate_per_sec=rate_per_sec, rate_burst=rate_burst,
+        pooled=True,
     )

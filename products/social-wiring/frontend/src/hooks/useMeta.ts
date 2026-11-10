@@ -391,7 +391,8 @@ export function useIgConversations(accountId: string | null) {
         `/api/meta/instagram/conversations${qs({ account_id: accountId })}`,
       ),
     enabled: !!accountId,
-    refetchInterval: 15_000,
+    // poll-budget: 60s (Meta Graph inbox, page-scoped); ~5 calls/tick; worst 7200/day per open tab; hidden=paused
+    refetchInterval: 60_000,
   });
 }
 
@@ -403,7 +404,8 @@ export function useIgMessages(accountId: string | null, conversationId: string |
         `/api/meta/instagram/messages${qs({ account_id: accountId, conversation_id: conversationId })}`,
       ),
     enabled: !!accountId && !!conversationId,
-    refetchInterval: 8_000,
+    // poll-budget: 30s (the open conversation the user is reading); ~5 calls/tick; worst 14400/day per open tab; hidden=paused
+    refetchInterval: 30_000,
   });
 }
 

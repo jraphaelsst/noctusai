@@ -112,7 +112,7 @@ describe("polling em segundo plano (jobPolling)", () => {
     vi.useRealTimers();
   });
 
-  it("useLote continua consultando com a aba oculta enquanto o lote processa, e para ao concluir", async () => {
+  it("useLote pausa com a aba oculta, atualiza ao voltar, e para ao concluir", async () => {
     vi.useFakeTimers();
     api.get
       .mockResolvedValueOnce({ data: { id: "l1", status: "processando", headlines: [] } })
@@ -123,10 +123,14 @@ describe("polling em segundo plano (jobPolling)", () => {
     expect(api.get).toHaveBeenCalledTimes(1);
 
     focusManager.setFocused(false); // aba em segundo plano — o caso "estrutura 3 de 5"
-    await vi.advanceTimersByTimeAsync(HEADLINES_POLL_MS * 2);
-    expect(api.get).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(HEADLINES_POLL_MS * 2); // oculta ⇒ ninguém olhando ⇒ sem consulta
+    expect(api.get).toHaveBeenCalledTimes(1);
 
-    await vi.advanceTimersByTimeAsync(HEADLINES_POLL_MS * 3); // concluído ⇒ sem polling
+    focusManager.setFocused(true); // voltou: atualiza na hora
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.get).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(HEADLINES_POLL_MS * 4); // 3ª leitura = concluído ⇒ sem polling
     expect(api.get).toHaveBeenCalledTimes(3);
   });
 });

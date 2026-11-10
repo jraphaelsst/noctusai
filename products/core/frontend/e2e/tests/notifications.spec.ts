@@ -46,16 +46,31 @@ test.describe('Notification bell', () => {
 test.describe('Operational pop-up', () => {
   test('a notice created after load pops up neutral with an X; the backlog never does', async ({ authenticatedPage: page }) => {
     let servidor = [...lista];
-    await page.route(/\/api\/notificacoes\/contagem/, jsonResponse({ nao_lidas: servidor.length }));
-    await page.route(/\/api\/notificacoes(\?.*)?$/, (route) =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: servidor, pagination: { total: servidor.length } }) }),
-    );
+    let contagens = 0;
+    let listas = 0;
+    // The bell polls ONLY the count (60 s, request budget 2026-11-10) and re-reads the list when
+    // (nao_lidas, ultima_id) moves — so the count mock must follow the server, like the real one does.
+    await page.route(/\/api\/notificacoes\/contagem/, (route) => {
+      contagens += 1;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ nao_lidas: servidor.length, ultima_id: servidor[0]?.id ?? null }),
+      });
+    });
+    await page.route(/\/api\/notificacoes(\?.*)?$/, (route) => {
+      listas += 1;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: servidor, pagination: { total: servidor.length } }) });
+    });
     await page.clock.install();
     await page.goto('/settings');
+    // The first load happens in REAL time (auth bootstrap); the fake clock cannot hurry it. Wait until
+    // the backlog was actually served, or the "new" notice lands in the first load and never toasts.
+    await expect.poll(() => contagens > 0 && listas > 0).toBe(true);
     await page.clock.runFor(1000);
     await expect(page.getByTestId('toast-operacional')).toHaveCount(0); // backlog: bell only
     servidor = [{ ...lista[0], id: 'n2', titulo: 'Novo lead: Joao', created_at: new Date(Date.now() + 60_000).toISOString() }, ...servidor];
-    await page.clock.runFor(16_000); // one poll
+    await page.clock.runFor(61_000); // one count poll (NOTIFICATION_POLL_MS = 60 s) → list re-read
     const toast = page.getByTestId('toast-operacional');
     await expect(toast).toHaveCount(1);
     await expect(toast).toContainText('Novo lead: Joao');
