@@ -50,10 +50,17 @@ def _runner(repo: Path):
     return run
 
 
+_CONTRACT = {"deliverable_kwargs": {
+    "derived_check": lambda head: {"ok": True, "measured": True, "detail": "n/a", "results": []},
+    "scoped_check": lambda branch, head: {"ok": True, "detail": "n/a"}}}
+
+
 def test_enqueue_plan_resolves_an_agent_isolation_worktree(tmp_path):
     repo = _repo(tmp_path, "agent-abc123")
+    # enqueue is a pure push: it needs the branch PUSHED + clean (delivery contract), not a rebase
+    _sh("git", "push", "origin", "feat/x", cwd=repo / ".claude/worktrees/agent-abc123")
     res = T.task_branch(action="enqueue", slug="x", confirm=False,
-                        run=_runner(repo), primary_root=str(repo))
+                        run=_runner(repo), primary_root=str(repo), **_CONTRACT)
     assert res["status"] == "planned", res
     assert res["worktree"].endswith(".claude/worktrees/agent-abc123"), res
     assert os.path.isabs(res["worktree"])
@@ -62,8 +69,9 @@ def test_enqueue_plan_resolves_an_agent_isolation_worktree(tmp_path):
 
 def test_canonical_path_is_preferred_when_present(tmp_path):
     repo = _repo(tmp_path, "x")
+    _sh("git", "push", "origin", "feat/x", cwd=repo / ".claude/worktrees/x")
     res = T.task_branch(action="enqueue", slug="x", confirm=False,
-                        run=_runner(repo), primary_root=str(repo))
+                        run=_runner(repo), primary_root=str(repo), **_CONTRACT)
     assert res["status"] == "planned", res
     assert res["worktree"] == ".claude/worktrees/x"
     assert res["worktree_resolved_from"] == "canonical"
@@ -72,7 +80,9 @@ def test_canonical_path_is_preferred_when_present(tmp_path):
 def test_branch_checked_out_nowhere_names_expected_path_and_branch(tmp_path):
     repo = _repo(tmp_path, None)
     _sh("git", "branch", "feat/x", "origin/dev", cwd=repo)
-    res = T.task_branch(action="enqueue", slug="x", confirm=False,
+    # `integrate` (the legacy local-gates path) still needs a worktree holding the branch;
+    # `enqueue` is a pure push and does not (its tree-clean item notes "no worktree holds the branch").
+    res = T.task_branch(action="integrate", slug="x", confirm=False,
                         run=_runner(repo), primary_root=str(repo))
     assert res["status"] == "error" and res["exit_code"] == 1, res
     assert "feat/x" in res["error"] and ".claude/worktrees/x" in res["error"]

@@ -110,7 +110,7 @@ logger = logging.getLogger(__name__)
 # history-rewriting or branch-switching action is structurally impossible.
 _ALLOWED_GIT = frozenset(
     {"fetch", "rev-parse", "merge-base", "rev-list", "log", "diff", "status",
-     "worktree", "rebase", "push", "branch",
+     "worktree", "rebase", "push", "branch", "for-each-ref",
      # read-only content-equivalence proof for a queue-rebased landing
      "cherry", "merge-tree",
      # integrate-time mechanisms (migration renumber, KB-count regen) commit
@@ -466,6 +466,32 @@ def _rebase_in_progress(runner, wt_path: str) -> bool:
         os.path.isdir(os.path.join(git_dir, "rebase-merge"))
         or os.path.isdir(os.path.join(git_dir, "rebase-apply"))
     )
+
+
+def _rebase_state_left(runner, wt_path: str) -> bool | None:
+    """True when `.git/rebase-merge|rebase-apply` still exists in the worktree's git dir, False when
+    gone, None when the git dir cannot be resolved (unverifiable - never read as 'gone')."""
+    rc, out, _e = runner(["git", "rev-parse", "--git-dir"], cwd=wt_path)
+    if rc != 0 or not out.strip():
+        return None
+    git_dir = out.strip()
+    if not os.path.isabs(git_dir):
+        git_dir = os.path.join(wt_path, git_dir)
+    return (os.path.isdir(os.path.join(git_dir, "rebase-merge"))
+            or os.path.isdir(os.path.join(git_dir, "rebase-apply")))
+
+
+def _abort_rebase_verified(runner, wt_path: str) -> dict[str, Any]:
+    """`git rebase --abort`, then PROVE the state is gone (one retry). A reported "aborted" that left
+    `rebase-merge/` behind is how a conflicted enqueue stranded a branch steward's worktree
+    (2026-11-10, D1). Returns {aborted: bool|None, state_left: bool|None}; `aborted` is None when the
+    git dir could not be resolved to verify."""
+    for _ in range(2):
+        runner(["git", "rebase", "--abort"], cwd=wt_path)
+        left = _rebase_state_left(runner, wt_path)
+        if left is not True:
+            return {"aborted": None if left is None else True, "state_left": left}
+    return {"aborted": False, "state_left": True}
 
 
 def _absolute_wt_path(wt_path: str, root: str) -> str:
@@ -1313,6 +1339,33 @@ def _migration_collision_candidates(
                 "all_entries": entries,
             })
     return candidates
+
+
+def migration_number_collisions(listing: dict[str, list[str]], introduced: list[str]) -> list[dict]:
+    """PURE tree-based sibling of `check_migration_number_collision` Leg A (the on-disk duplicate scan),
+    for a tree that is NOT checked out (`release_steward.deliverable` item 3 reads the composed tree via
+    `git ls-tree`). `listing` = {migrations dir: [file names in that tree]}; `introduced` = the repo-relative
+    `.sql` paths the branch adds. A collision = one number claimed by 2+ DIFFERENT names in a directory
+    where at least one claimant is introduced (a pair of OTHER branches' files is theirs to resolve - the
+    2026-09-28 scoping). Honors the keeper's `_ACCEPTED_MIGRATION_DUPLICATES`. Uses `_MIGRATION_NUM_RE`."""
+    from .compliance import _ACCEPTED_MIGRATION_DUPLICATES
+    by_dir: dict[str, set[str]] = {}
+    for rel in introduced:
+        directory, _, name = rel.rpartition("/")
+        by_dir.setdefault(directory, set()).add(name)
+    clashes: list[dict] = []
+    for directory, mine in sorted(by_dir.items()):
+        by_number: dict[str, list[str]] = {}
+        for name in sorted(set(listing.get(directory, [])) | mine):
+            m = _MIGRATION_NUM_RE.match(name)
+            if m and name.endswith(".sql"):
+                by_number.setdefault(m.group(1), []).append(name)
+        parts = directory.split("/")
+        product = parts[1] if len(parts) > 1 and parts[0] == "products" else ""
+        for number, names in sorted(by_number.items()):
+            if len(names) > 1 and set(names) & mine and (product, number) not in _ACCEPTED_MIGRATION_DUPLICATES:
+                clashes.append({"directory": directory, "number": number, "names": names})
+    return clashes
 
 
 def _next_free_migration_number(entries: list[str], width: int) -> str:
@@ -2396,34 +2449,98 @@ def _train_riders_after_integrate(
     return res
 
 
-def _enqueue_push(git, runner, *, plan: dict[str, Any], branch: str, slug: str, remote: str,
-                  wt_path: str, benign_stashed, introduced_migrations: list[str],
-                  renumbered: list[dict], kb_counts_result: dict[str, Any] | None,
-                  verbose: bool) -> dict[str, Any]:
-    """Push the rebased branch to `mq/<slug>--<sha7>` (a fresh ref per enqueue,
-    so a re-enqueue never needs a force-push). The pre-push hook runs the same
-    dev-delivery keepers on a queue push as on a dev push."""
-    head = _resolve(git, branch) or ""
+def _slice_score_gate(git, *, slug: str, branch: str, branch_prefix: str, dev: str, head: str,
+                      pointer_fn, accept_unscored: str | None,
+                      slice_scores_reader) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Engineer slices must be measured before they land (train: each rider). Returns
+    (refusal | None, accepted-override | None). READ-ONLY - shared by `integrate` and `enqueue`."""
+    _rc_m, _m_out, _e = git("log", "--merges", "--format=%s", f"{dev}..{head}")
+    _riders = _train.parse_train_riders(_m_out.splitlines() if _rc_m == 0 else []) if slug.startswith("train-") else []
+    # The pointer is keyed by the REAL branch name (docs/x, fix/x ...), not feat/<slug>.
+    prefix = branch[:-len(slug)] if branch.endswith(slug) else branch_prefix
+    try:
+        unscored = slice_unscored_riders(_riders or [slug], ops=pointer_fn, branch_prefix=prefix,
+                                         reader=slice_scores_reader)
+    except Exception as e:  # noqa: BLE001 - unreadable ledger must not pass
+        return ({"status": "blocked", "exit_code": 1, "refused": "slice_scores_unreadable",
+                 "error": f"cannot verify slice scores: {type(e).__name__}: {e}"}, None)
+    if not unscored:
+        return None, None
+    why = (accept_unscored or "").strip()
+    if len(why) < 10:
+        return {**_slice_unscored_refusal(unscored), "dev_sha": dev}, None
+    return None, {"reason": why, "slugs": [m["slug"] for m in unscored]}
+
+
+def _request_verdict_ref(slug: str) -> str | None:
+    """The `verdict_ref` the branch steward filed with its request (delivery-contract item 5)."""
+    try:
+        return (_steward.StewardStore().requests().get(slug) or {}).get("verdict_ref")
+    except Exception:  # noqa: BLE001 - an unreadable outbox is "no pointer", which the contract then fails loudly
+        return None
+
+
+def _enqueue(git, runner, *, base: dict[str, Any], slug: str, branch: str, confirm: bool, remote: str,
+             dev_branch: str, branch_prefix: str, pointer_fn, accept_unscored: str | None,
+             slice_scores_reader, verdict_ref: str | None,
+             deliverable_kwargs: dict[str, Any] | None) -> dict[str, Any]:
+    """`action='enqueue'` - a PURE PUSH (guardian spec, 2026-11-10).
+
+    Verifies the delivery contract READ-ONLY (`release_steward.deliverable`), then pushes the exact
+    sha: `git push origin <sha>:refs/heads/mq/<slug>--<sha7>`. No checkout, no merge, no rebase, no
+    commit, no stash and no file write in ANY worktree - the guardian never mutates a branch it does
+    not own. A branch that fails the contract comes back `needs_resync` (exit 1) naming the failing
+    items; the BRANCH STEWARD fixes it (merge dev in, renumber, regenerate derived files), pushes and
+    re-requests. (Before this, enqueue ran `merge` + `rebase --rebase-merges` + a kb-counts COMMIT inside
+    the requester's worktree and left rebase state behind on a conflict - the D1 stuck rebase.)
+    Pushes from the caller's repo cwd (never the branch's worktree); the pre-push hook still applies."""
+    git("fetch", remote, "--quiet")
+    dev = _resolve(git, f"{remote}/{dev_branch}")
+    head = _resolve(git, branch)
+    if not dev or not head:
+        return {**base, "status": "error", "exit_code": 1,
+                "error": f"cannot resolve {remote}/{dev_branch} or {branch}."}
+    ahead = _commits(git, dev, head)
+    if not ahead and _is_ancestor(git, head, dev):
+        return {**base, "status": "up_to_date", "exit_code": 0, "dev_sha": dev,
+                "message": f"{branch} has nothing {remote}/{dev_branch} lacks - nothing to enqueue."}
+    refusal, accepted = _slice_score_gate(
+        git, slug=slug, branch=branch, branch_prefix=branch_prefix, dev=dev, head=head,
+        pointer_fn=pointer_fn, accept_unscored=accept_unscored, slice_scores_reader=slice_scores_reader)
+    if refusal:
+        return {**base, **refusal}
+    behind = _commits(git, head, dev)
+    plan = {**base, "dev_sha": dev, "branch_sha": head, "ahead": len(ahead), "behind": len(behind),
+            "incoming_commits": ahead[:20], **({"accepted_unscored": accepted} if accepted else {})}
+
+    def ro_git(*args: str, cwd: str | None = None):  # deliverable carries its own read-only allowlist
+        return runner(["git", *args], cwd=cwd)
+
+    contract = _steward.deliverable(branch, git=ro_git, remote=remote, dev_branch=dev_branch,
+                                    head_sha=head, verdict_ref=verdict_ref, fetch=False,
+                                    **(deliverable_kwargs or {}))
+    plan["deliverable"] = contract
+    plan["introduced_migrations"] = contract.get("introduced_migrations", [])
+    if not contract["ok"]:
+        return {**plan, "status": "needs_resync", "exit_code": 1, "failing": contract["failing"],
+                "message": (f"{branch} does not meet the delivery contract - NOT pushed, nothing in its worktree touched. "
+                            f"{_steward.deliverable_refusal(contract)}. The branch steward fixes the item(s) on the branch, "
+                            "pushes, re-requests; the guardian never edits, rebases or renumbers a delivery.")}
     qref = f"{MQ_PREFIX}{slug}--{head[:7]}"
-    rc, out, err = git("push", remote, f"HEAD:refs/heads/{qref}", cwd=wt_path)
-    if benign_stashed:
-        _pop_stash(runner, wt_path, benign_stashed, verbose)
+    if not confirm:
+        return {**plan, "status": "planned", "exit_code": 0, "queue_ref": qref,
+                "message": (f"{branch} meets the delivery contract; will push {head[:9]} -> {qref} "
+                            f"(pure push: no checkout/merge/rebase/commit). Pass confirm=True.")}
+    rc, out, err = git("push", remote, f"{head}:refs/heads/{qref}")
     if rc != 0:
         tail = "\n".join((err or out or "").strip().splitlines()[-25:])
-        return {**plan, "status": "blocked", "exit_code": 1, "queue_ref": qref,
-                "hook_output": tail,
+        return {**plan, "status": "blocked", "exit_code": 1, "queue_ref": qref, "hook_output": tail,
                 "message": f"enqueue push of {branch} to {qref} was rejected; fix what it names, re-enqueue.\n{tail}"}
-    res = {**plan, "status": "queued", "exit_code": 0, "queue_ref": qref, "enqueued_sha": head,
-           "introduced_migrations": introduced_migrations,
-           "message": (f"queued {branch} as {qref} ({head[:9]}). The CI merge queue tests it on top of "
-                       f"dev (+ anything queued ahead) and lands it. Check: "
-                       f"task_branch action='landed' slug='{slug}' confirm=True — it finishes "
-                       "the post-landing tail (pointer, primary FF, worktree cleanup) once landed.")}
-    if renumbered:
-        res["migration_renumber"] = {"renumbered": renumbered}
-    if kb_counts_result is not None:
-        res["kb_counts_regenerate"] = kb_counts_result
-    return res
+    return {**plan, "status": "queued", "exit_code": 0, "queue_ref": qref, "enqueued_sha": head,
+            "message": (f"queued {branch} as {qref} ({head[:9]}) by a pure push. The CI merge queue tests it on top of "
+                        f"dev (+ anything queued ahead) and lands it. Check: task_branch action='landed' slug='{slug}' "
+                        "confirm=True - it finishes the post-landing tail (pointer, primary FF, worktree cleanup) "
+                        "once landed.")}
 
 
 def _repo_slug(runner) -> str:
@@ -2557,8 +2674,21 @@ def task_branch(
     slugs: list[str] | None = None,
     order: str = "given",
     queue_status_reader: "Callable[[str], dict[str, Any]] | None" = None,
+    branch: str | None = None,
+    verdict_ref: str | None = None,
+    deliverable_kwargs: "dict[str, Any] | None" = None,
 ) -> dict[str, Any]:
-    """`action` ∈ {status, start, integrate, cleanup, train, sync_primary}.
+    """`action` ∈ {status, start, enqueue, landed, integrate, cleanup, train, sync_primary}.
+
+    `enqueue` is a PURE PUSH (guardian spec, 2026-11-10): `git push origin
+    <sha>:refs/heads/mq/<slug>--<sha7>` after the read-only delivery-contract
+    preflight (`release_steward.deliverable`) passes. NO checkout, merge, rebase,
+    commit, stash or file write in ANY worktree - a branch that needs any of that
+    comes back `needs_resync` (status, exit 1, failing items named) for its branch
+    steward to fix. `branch=` names the real branch when it is not feat/<slug>
+    (docs/ fix/ ...; otherwise resolved among the conventional prefixes);
+    `verdict_ref` is delivery-contract item 5 (default: the filed request's).
+    `deliverable_kwargs` is the test seam for `deliverable`'s own seams.
 
     `train` (merge-all-before-integrating, owner rule 2026-10-24): `slugs=[...]`
     merges each ready `feat/<slug>` --no-ff into ONE `train-<slug|date>` task
@@ -2703,15 +2833,11 @@ def task_branch(
         return {"ok": False, "status": "error", "exit_code": 1,
                 "error": (f"unknown action '{action}' (expected status|start|enqueue|landed|"
                           "integrate|cleanup|train|sync_primary)")}
-    # ── ENQUEUE ── the default landing path (2026-11-05): everything `integrate`
-    # does locally (dirty-file triage, doc-staleness, rebase, migration renumber,
-    # KB-count regen, pre-push keepers) EXCEPT the merged-tip gates, then push to
-    # a merge-queue ref instead of dev. The CI drain runs the full suite on the
-    # composed candidate — on GitHub runners, not this machine — and lands it.
-    queue_mode = action == "enqueue"
-    if queue_mode:
-        action = "integrate"
-        verify_merged_tip = False
+    # ── ENQUEUE ── the default landing path (2026-11-05), a PURE PUSH since
+    # 2026-11-10 (guardian spec): the branch steward makes the branch meet the
+    # delivery contract; enqueue verifies it read-only and pushes the exact sha
+    # to a merge-queue ref. The CI drain composes it on dev and lands it. See
+    # `_enqueue` below - it never touches a worktree.
 
     # ── TRAIN ── merge every ready feat/<slug> into one train branch (see module doc).
     if action == "train":
@@ -2753,16 +2879,36 @@ def task_branch(
                 "message": _primary_ff_summary(res) or "primary already up to date."}
 
     wt_path = f"{worktrees_dir}/{slug}" if slug else None
+    explicit_branch = branch
     branch = f"{branch_prefix}{slug}" if slug else None
+    branch_note: dict[str, Any] = {}
+    if slug and action in {"integrate", "enqueue", "landed", "cleanup"}:
+        # The branch a slug names is NOT always feat/<slug> (docs/ fix/ ... branches
+        # could not be delivered, 2026-11-10): explicit branch= wins, else resolve among
+        # the conventional prefixes; an ambiguous slug refuses rather than guesses.
+        _res = _steward.resolve_branch_name(slug, git=git, explicit=explicit_branch, default_prefix=branch_prefix)
+        if _res.get("error"):
+            return {"ok": False, "action": action, "slug": slug, "status": "error", "exit_code": 1,
+                    "error": _res["error"], "candidates": _res.get("candidates")}
+        branch = _res["branch"]
+        if _res["source"] != "default":
+            branch_note = {"branch_resolved_from": _res["source"]}
     wt_resolved_from = "canonical"
-    if slug and action in {"integrate", "landed", "cleanup"}:
-        # integrate covers enqueue (queue_mode rewrote the action above).
+    if slug and action in {"integrate", "enqueue", "landed", "cleanup"}:
         _rc_wl0, _wl0, _e0 = git("worktree", "list", "--porcelain")
         wt_path, wt_resolved_from, _elsewhere = _resolve_worktree_for_branch(
             _wl0 if _rc_wl0 == 0 else "", branch, wt_path)
     base: dict[str, Any] = {"ok": True, "action": action, "remote": remote,
                             "slug": slug, "branch": branch, "worktree": wt_path,
-                            "worktree_resolved_from": wt_resolved_from}
+                            "worktree_resolved_from": wt_resolved_from, **branch_note}
+    if slug and action == "enqueue":
+        return _enqueue(
+            git, runner, base=base, slug=slug, branch=branch, confirm=confirm, remote=remote,
+            dev_branch=dev_branch, branch_prefix=branch_prefix, pointer_fn=pointer_fn,
+            accept_unscored=accept_unscored, slice_scores_reader=slice_scores_reader,
+            verdict_ref=verdict_ref if verdict_ref is not None else (
+                _request_verdict_ref(slug) if run is None else None),
+            deliverable_kwargs=deliverable_kwargs)
     if slug and action == "integrate" and wt_resolved_from == "canonical":
         _listed = [w.get("path", "") for w in _parse_worktrees(_wl0 if _rc_wl0 == 0 else "")]
         if _listed and not any(q == wt_path or q.rstrip("/").endswith("/" + wt_path.strip("/"))
@@ -2958,21 +3104,12 @@ def task_branch(
                     "message": f"{branch} has nothing {remote}/{dev_branch} lacks — nothing to integrate."}
         # Slice-score gate (engineer slices must be measured before they land).
         # Train: each rider is checked, not just the train branch.
-        _rc_m, _m_out, _e = git("log", "--merges", "--format=%s", f"{dev}..{head}")
-        _riders = _train.parse_train_riders(_m_out.splitlines() if _rc_m == 0 else []) if slug and slug.startswith("train-") else []
-        try:
-            _unscored = slice_unscored_riders(
-                _riders or [slug], ops=pointer_fn, branch_prefix=branch_prefix,
-                reader=slice_scores_reader)
-        except Exception as e:  # noqa: BLE001 - unreadable ledger must not pass
-            return {**base, "status": "blocked", "exit_code": 1, "refused": "slice_scores_unreadable",
-                    "error": f"cannot verify slice scores: {type(e).__name__}: {e}"}
-        _unscored_accept: dict[str, Any] | None = None
-        if _unscored:
-            _why = (accept_unscored or "").strip()
-            if len(_why) < 10:
-                return {**base, **_slice_unscored_refusal(_unscored), "dev_sha": dev}
-            _unscored_accept = {"reason": _why, "slugs": [m["slug"] for m in _unscored]}
+        _gate_refusal, _unscored_accept = _slice_score_gate(
+            git, slug=slug, branch=branch, branch_prefix=branch_prefix, dev=dev, head=head,
+            pointer_fn=pointer_fn, accept_unscored=accept_unscored,
+            slice_scores_reader=slice_scores_reader)
+        if _gate_refusal:
+            return {**base, **_gate_refusal}
         behind = _commits(git, head, dev)
         plan = {**base, "dev_sha": dev, "branch_sha": head,
                 "ahead": len(ahead), "behind": len(behind), "incoming_commits": ahead[:20],
@@ -3118,8 +3255,9 @@ def task_branch(
                 rebase_in_progress = _rebase_in_progress(runner, wt_path)
                 _rc2, cout, _ce = git("diff", "--name-only", "--diff-filter=U", cwd=wt_path)
                 conflicted = [ln.strip() for ln in cout.splitlines() if ln.strip()]
+                abort_state: dict[str, Any] | None = None
                 if rebase_in_progress:
-                    git("rebase", "--abort", cwd=wt_path)
+                    abort_state = _abort_rebase_verified(runner, wt_path)
                 # Restore the stash even on failure so the worktree is clean.
                 if benign_stashed:
                     _pop_stash(runner, wt_path, benign_stashed, verbose)
@@ -3161,9 +3299,13 @@ def task_branch(
                 return {**plan, "status": "conflict", "exit_code": 1,
                         "conflicted_files": conflicted,
                         "blocked_by_dirty": real_after,
+                        **({"rebase_abort": abort_state} if abort_state else {}),
                         "message": (f"rebase of {branch} onto {remote}/{dev_branch} hit conflicts "
-                                    f"in {conflicted or 'unknown files'}; aborted to keep the "
-                                    "worktree clean. Resolve manually in the worktree, then re-run "
+                                    f"in {conflicted or 'unknown files'}; "
+                                    + ("STUCK: `git rebase --abort` did NOT clear the rebase state in "
+                                       f"{wt_path} - run it by hand there. " if abort_state and abort_state["state_left"]
+                                       else "aborted to keep the worktree clean. ")
+                                    + "Resolve manually in the worktree, then re-run "
                                     f"integrate. {detail}").strip()}
             if verbose:
                 logger.debug("task_branch.integrate: rebase succeeded; pushing to %s", dev_branch)
@@ -3399,12 +3541,6 @@ def task_branch(
                     logger.debug("task_branch.integrate: KB-counts regen committed: %s",
                                  kb_counts_result.get("paths"))
             remote_before_push = _resolve(git, f"{remote}/{dev_branch}")
-            if queue_mode:
-                return _enqueue_push(git, runner, plan=plan, branch=branch, slug=slug,
-                                     remote=remote, wt_path=wt_path, benign_stashed=benign_stashed,
-                                     introduced_migrations=introduced_migrations,
-                                     renumbered=all_renumbered, kb_counts_result=kb_counts_result,
-                                     verbose=verbose)
             rc, out, err = git("push", remote, f"HEAD:refs/heads/{dev_branch}", cwd=wt_path)
             if rc != 0:
                 push_failures.append(_classify_push_failure(
@@ -3746,11 +3882,15 @@ def register(server) -> None:
             "sibling (§9a). action='status' (default) lists active self-branch "
             "worktrees + ahead/behind vs origin/dev (read-only); action='start' "
             "slug= forks a worktree on feat/<slug> off origin/dev; action="
-            "'enqueue' slug= (THE DEFAULT LANDING PATH, 2026-11-05) does every "
-            "local integrate step (rebase, migration renumber, doc-staleness, "
-            "KB-count regen, pre-push keepers) but NOT the merged-tip gates, and "
-            "pushes to the CI merge queue ref mq/<slug>--<sha7>; GitHub runners "
-            "test it composed on dev and land it (KB § PATTERNS/devops/"
+            "'enqueue' slug= [branch=] [verdict_ref=] (THE DEFAULT LANDING PATH, "
+            "2026-11-05; a PURE PUSH since 2026-11-10) verifies the delivery "
+            "contract READ-ONLY (release_steward deliverable: head pushed + tree "
+            "clean, merge-buildable, migration numbers free, derived files "
+            "current, scoped green or verdict_ref) and pushes the exact sha to "
+            "the CI merge queue ref mq/<slug>--<sha7> - NO checkout, merge, "
+            "rebase, commit or file write in any worktree; a branch that fails "
+            "comes back status 'needs_resync' naming the items for its branch "
+            "steward to fix; GitHub runners test it composed on dev and land it (KB § PATTERNS/devops/"
             "merge-queue.md). action='landed' slug= reads the queue verdict "
             "(queued/pending/ejected/landed) and, once landed with confirm=True, "
             "runs the post-landing tail (pointer, primary FF, cleanup). action="
@@ -3828,7 +3968,7 @@ def register(server) -> None:
             "HARDWARE ADMISSION (2026-11-04): every real merged-tip gate runs through the "
             "machine-wide heavy slot (noctus.dev.hw_admission); a gate not admitted is NOT run "
             "and the integrate returns status 'waiting_for_slot' (not pushed, no accept-anyway). "
-            "status: status|planned|started|integrated|conflict|up_to_date|"
+            "status: status|planned|started|queued|needs_resync|integrated|conflict|up_to_date|"
             "cleaned|partial|blocked|gate_timeout|waiting_for_slot|refused_stale_toolkit|error. SLICE-SCORE GATE: integrate (and each train rider) of an engineer slice with no slice-scores.ndjson row is refused (blocked, refused='slice_unscored', with the exact log_completion call); accept_unscored='<reason>' (>=10 chars) overrides, recorded as accepted_unscored."
         ),
     )
@@ -3852,6 +3992,8 @@ def register(server) -> None:
         accept_unscored: str | None = None,
         slugs: list[str] | None = None,
         order: str = "given",
+        branch: str | None = None,
+        verdict_ref: str | None = None,
     ) -> dict:
         refused = _steward.tool_refusal("noctus.dev.task_branch", {"action": action, "slug": slug, "confirm": confirm})
         if refused is not None:
@@ -3863,7 +4005,7 @@ def register(server) -> None:
                            wire_products=wire_products,
                            allow_stale_toolkit=allow_stale_toolkit,
                            project=project, brief=brief, paths=paths,
-                           agent=agent, role=role, parent=parent)
+                           agent=agent, role=role, parent=parent, branch=branch, verdict_ref=verdict_ref)
 
 
 __all__ = ["task_branch", "_ALLOWED_GIT", "_BANNED_TOKENS", "_BENIGN_REFRESH_PATTERNS",

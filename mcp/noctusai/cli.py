@@ -575,6 +575,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-branch-slugs", default=None, help="With --task-branch=train: comma-separated ready feat/<slug> branches to merge --no-ff into ONE train-<name> branch (omit => dry-run candidate listing; --task-branch-slug names the train). Merge-all-before-integrating: one integrate of the train lands them all.")
     parser.add_argument("--task-branch-train-order", default="given", choices=["given", "auto"], help="With --task-branch=train: merge order - 'given' (as listed) or 'auto' (least path-overlap first).")
     parser.add_argument("--task-branch-slug", default=None, help="With --task-branch: the feat/<slug> worktree/branch name.")
+    parser.add_argument("--task-branch-branch", default=None, help="With --task-branch enqueue|integrate|landed|cleanup: the real branch name when it is not feat/<slug> (docs/x, fix/x ...); omitted => resolved among the conventional prefixes.")
+    parser.add_argument("--task-branch-verdict-ref", default=None, help="With --task-branch enqueue: where the scoped keepers/tests verdict lives (delivery-contract item 5); default = the filed request's.")
     parser.add_argument("--task-branch-confirm", action="store_true", help="With --task-branch: actually perform the git lifecycle step (a write). Without it, plan/dry-run only.")
     parser.add_argument("--task-branch-project", default=None, help="With --task-branch action=start: the branch-tree pointer's project (default: inherited from parent's pointer).")
     parser.add_argument("--task-branch-brief", default=None, help="With --task-branch action=start: the branch-tree pointer's brief text.")
@@ -587,7 +589,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="Keepers that collapse advisory output (e.g. --check-eight-way-sync's cache-staleness warnings) print every line instead of a one-line summary. Env NOCTUS_HOOK_VERBOSE=1 does the same from a git hook.")
     parser.add_argument("--task-branch-verbose", action="store_true", help="With --task-branch action=start: full inline wire_env would_wire/wired/skipped lists instead of the compact {count, sample} shape.")
     parser.add_argument("--cleanup-respect-min-age", action="store_true", help="With --cleanup-stale-worktrees --force: keep the min-age guard (never take a brand-new worktree). Used by the SessionStart sweep.")
-    parser.add_argument("--release-steward", metavar="ACTION", choices=["status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack", "role", "roles", "reconcile", "withdraw", "ask", "position", "decision"], help="The release steward: ONE elected leader session per machine handles CI queueing AND deploy; everyone else files deliveries (request) and keeps building. Session identity = --steward-session-id or $CLAUDE_CODE_SESSION_ID. This is also the first-claim bootstrap path. MCP: noctus.dev.release_steward. KB § PATTERNS/devops/release-steward.md.")
+    parser.add_argument("--release-steward", metavar="ACTION", choices=["status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack", "role", "roles", "reconcile", "withdraw", "ask", "position", "decision", "deliverable"], help="The release steward: ONE elected leader session per machine handles CI queueing AND deploy; everyone else files deliveries (request) and keeps building. Session identity = --steward-session-id or $CLAUDE_CODE_SESSION_ID. This is also the first-claim bootstrap path. MCP: noctus.dev.release_steward. KB § PATTERNS/devops/release-steward.md.")
     parser.add_argument("--steward-session-id", default=None, help="With --release-steward: the caller's session id (default $CLAUDE_CODE_SESSION_ID).")
     parser.add_argument("--steward-name", default=None, help="With --release-steward claim/request: a human-readable session name (e.g. noctusai-51).")
     parser.add_argument("--steward-reason", default=None, help="With --release-steward claim: why this session holds the lane.")
@@ -605,12 +607,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-orchestrator-inline-over-cutoff", action="store_true", help="Keeper (WARN-first shadow, never blocks): branch-tree pointers of inline agents (self-branch|tech-lead|orchestrator) landed on/after 2026-11-07 whose delivery is >=100 LoC or >=3 files with no recorded inline_reason. Names the specialists to dispatch. --inline-cutoff-log files one auto-improvement drift row per branch; --inline-cutoff-replay-days N is the false-alarm research mode. KB § PATTERNS/architect/parallelization-first-orchestration.md (Enforcement).")
     parser.add_argument("--inline-cutoff-log", action="store_true", help="With --check-orchestrator-inline-over-cutoff: file one auto-improvement drift row per finding (target orchestrator_inline_over_cutoff:<branch>).")
     parser.add_argument("--inline-cutoff-replay-days", type=int, default=None, help="With --check-orchestrator-inline-over-cutoff: research mode, evaluate pointers since N days ago instead of the shadow start date (report only).")
-    parser.add_argument("--steward-outcome", default=None, choices=["enqueued", "landed", "ejected", "deployed", "withdrawn"], help="With --release-steward ack: the request's new outcome.")
+    parser.add_argument("--steward-outcome", default=None, choices=["enqueued", "landed", "ejected", "deployed", "withdrawn", "needs_resync"], help="With --release-steward ack: the request's new outcome.")
     parser.add_argument("--steward-dev-sha", default=None, help="With --release-steward ack: the dev sha it landed as.")
     parser.add_argument("--steward-to-session-id", default=None, help="With --release-steward handoff: transfer the lane to this session id.")
     parser.add_argument("--steward-to-name", default=None, help="With --release-steward handoff: offer the lane to this named session (it accepts with claim).")
     parser.add_argument("--steward-role", default=None, help="With --release-steward role: the role (dev-steward is derived; branch-steward:<branch>, agents, products/sw, assistant, ...).")
     parser.add_argument("--steward-role-op", default=None, choices=["set", "clear"], help="With --release-steward role: set (default) or clear.")
+    parser.add_argument("--steward-verdict-ref", default=None, help="With --release-steward request|deliverable: where the scoped keepers/tests verdict lives (delivery-contract item 5).")
+    parser.add_argument("--steward-run-scoped", action="store_true", help="With --release-steward deliverable: RUN delivery-contract item 5 (the CI-blocking keeper set + real-tree keeper tests, env-scrubbed, derived from the head's test.yml). Takes minutes.")
     parser.add_argument("--steward-branches", default=None, help="With --release-steward request: comma-separated ORDERED branches of a split delivery (drained as ONE train + ONE enqueue).")
     parser.add_argument("--steward-question", default=None, help="With --release-steward ask: the one bounded question (kind=needs_info).")
     parser.add_argument("--steward-addressed-to", default=None, help="With --release-steward ask: a registered role (default: the requester session).")
@@ -4305,9 +4309,10 @@ def main():
             branches=[x.strip() for x in (args.steward_branches or "").split(",") if x.strip()] or None,
             role=args.steward_role, op=args.steward_role_op, confirm=args.steward_confirm,
             question=args.steward_question, addressed_to=args.steward_addressed_to,
-            deadline_min=args.steward_deadline_min, ref=args.steward_ref)
+            deadline_min=args.steward_deadline_min, ref=args.steward_ref,
+            verdict_ref=args.steward_verdict_ref, run_scoped=args.steward_run_scoped)
         print(json.dumps(r, indent=2, default=str))
-        sys.exit(0 if r.get("ok") else 1)
+        sys.exit(0 if r.get("ok") and r.get("status") != "needs_resync" else 1)
 
     elif args.task_branch_post_integrate:
         from tools.noctus.dev.task_branch import run_post_integrate
@@ -4330,6 +4335,8 @@ def main():
             accept_unmeasured_reason=getattr(args, "task_branch_accept_unmeasured_reason", None),
             accept_unscored=getattr(args, "task_branch_accept_unscored", None),
             slug=getattr(args, "task_branch_slug", None),
+            branch=getattr(args, "task_branch_branch", None),
+            verdict_ref=getattr(args, "task_branch_verdict_ref", None),
             slugs=([x.strip() for x in args.task_branch_slugs.split(",") if x.strip()]
                    if getattr(args, "task_branch_slugs", None) else None),
             order=getattr(args, "task_branch_train_order", "given"),
