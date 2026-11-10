@@ -353,6 +353,12 @@ class EvalRunCreateRequest(StrictHttpModel):
     #: ``consolidado``-and-unaffected (the skipped ones + why are stored with the run). ``True`` ⇒ run every active case.
     #: An explicit ``case_ids`` / ``repetir_falhas_de`` is never filtered.
     rodar_tudo: bool = False
+    #: Eval-loop gate (migration 076, G1-G7): book this run as the next ROUND of a loop. The gate refuses (409) a closed loop,
+    #: a round already in flight, a spent loop budget and an unchanged content hash with nothing to consolidate; the run's
+    #: ``limite_usd`` is clamped to what the loop budget has left. A looped run is a whole-suite run: ``case_ids`` /
+    #: ``repetir_falhas_de`` / ``modelo_geracao`` are refused with it (422), since a partial or other-model score is not
+    #: comparable with the loop's series.
+    loop_id: UUID | None = None
 
     @field_validator("modelo_geracao")
     @classmethod

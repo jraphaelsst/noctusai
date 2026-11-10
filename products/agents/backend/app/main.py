@@ -43,6 +43,9 @@ from noctusai_seed.organs import mount_finance
 
 from app.clients.social_wiring import SocialWiringNotConfigured
 from app.config import settings
+
+# Declares the Agentes owner notifications (core Notificações catalog) before the app's lifespan registers them.
+import app.notification_kinds  # noqa: E402,F401
 from app.dependencies import (
     _LazyApiTokenResolver,
     _legacy_jwt_resolver,
@@ -90,6 +93,7 @@ from app.routers.studio_conteudo_router import router as studio_conteudo_router
 from app.routers.studio_geracoes_router import router as studio_geracoes_router
 from app.routers.studio_prontidao_router import router as studio_prontidao_router
 from app.routers.studio_evals_router import router as studio_evals_router
+from app.routers.studio_eval_loops_router import router as studio_eval_loops_router
 from app.routers.studio_metricas_router import router as studio_metricas_router
 from app.routers.studio_import_router import IMPORT_BODY_LIMIT_PATTERN
 from app.routers.studio_import_router import router as studio_import_router
@@ -281,6 +285,7 @@ app = create_product_app(
         # Seed editorial workflow (project seed-editorial-workflow, E5): governed knowledge review.
         editorial_router,
         studio_evals_router,
+        studio_eval_loops_router,  # eval-loop gate G1-G7 (migration 076)
         studio_metricas_router,  # platform-admin per-turn cost / speed / size (migration 066)
         studio_import_router,
         # Agent Packages (CONTRACT §I): package serving + consumer sync routes.

@@ -412,7 +412,11 @@ class EvalRunner:
         guardar_vazamento: bool = False,
         turn_driver_factory: Callable[[], Any] | None = None,
         consolidacao: Any = None,
+        loops: Any = None,
     ) -> None:
+        #: Eval-loop gate service (``app.studio.eval_loop_service.EvalLoopService``): when a run ends it closes the run's round
+        #: of its loop (G3/G4/G5/G7: stop + notify). ``None`` = off (tests / a run of a deploy without the migration).
+        self._loops = loops
         #: Eval consolidation store (``app.stores.studio_eval_consolidacao``): after a run its per-case results move the case
         #: states. ``None`` = off (tests / a deploy without the migration).
         self._consolidacao = consolidacao
@@ -451,6 +455,17 @@ class EvalRunner:
         except Exception:
             logger.exception("agents.eval.run_failed org_id=%s run_id=%s", org_id, run_id)
             self._runs.finish_run(org_id, run_id, status="falhou", aprovados=0, score=None, erro=_INTERNAL_ERRO)
+        self._fechar_loop(org_id, run)
+
+    def _fechar_loop(self, org_id: UUID, run: Any) -> None:
+        """The run ended (any way: concluded, budget-cut, failed, cancelled): close its round of a loop. A no-op for a run of
+        no loop. Never raises into the run (its verdict is stored); a failure is logged and the next admission reconciles."""
+        if self._loops is None:
+            return
+        from app.studio.eval_loop_service import resumo_comportamento
+
+        self._loops.fechar_sem_falhar(
+            org_id, lambda: resumo_comportamento(self._evals, org_id, run.agent_id, run.id), run_id=run.id, run_tipo="comportamento")
 
     async def _execute_claimed(self, org_id: UUID, run: Any) -> None:
         agent = self._agent_by_id(org_id, run.agent_id)

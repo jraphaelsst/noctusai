@@ -71,6 +71,9 @@ class VersionImmutable(StudioConflict):
 #: :data:`MENSAGEM_CONFLITO_GENERICA` — still pt-BR, still free of internals.
 MENSAGENS_CONFLITO: dict[str, str] = {
     "version_immutable": "A versão publicada é imutável.",
+    "loop_ativo_existente": "Este agente já tem um loop de avaliação ativo nesta suíte. Encerre-o antes de abrir outro.",
+    "rodada_em_andamento": "Já há uma rodada deste loop em andamento.",
+    "loop_encerrado": "O loop de avaliação foi encerrado. Inicie um novo loop.",
     "compiled_prompt_immutable": "O prompt compilado já gravado não pode ser alterado.",
     "audit_log_append_only": "O histórico de auditoria não pode ser alterado.",
     "draft_exists": "Este agente já tem um rascunho em edição.",
