@@ -34,6 +34,13 @@ class SeedSettings(ProductSettings):
     # Comma-separated phones / chat ids that are never taken in (compared by digits).
     assistant_excluded_numbers: str = ""
 
+    # -- Classifier (S3, classification only) -----------------------------------------------------------
+    # Kill switch of the classification worker. It also needs NOCTUS_SCHEDULERS_ENABLED (deployed container only) and
+    # an ENFORCED LLM_SPEND_LIMITS entry covering it; missing either => not started, intake rows stay pending.
+    assistant_classifier_enabled: bool = True
+    # Message text sent to the model is cut at this many characters (per-call cost cap; the cut is recorded).
+    assistant_classifier_max_chars: int = 4000
+
     # Rate-limit for the public webhook (per-IP). Public surface -- DDOS guard.
     webhook_rate_limit: str = "60/minute"
 
