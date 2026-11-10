@@ -1504,6 +1504,12 @@ jobs:
         working-directory: mcp/noctusai/node
         run: npm ci --no-audit --no-fund
 
+      - name: Keeper check_polling_request_budget — every loop / poll declares its per-day cost (full tree)
+        if: ${{ !cancelled() }}
+        # 2026-11-10 Supabase egress incident (~620k REST calls/day from our own pollers). Needs ts-morph (the step above).
+        # KB § PATTERNS/backend/polling-request-budget.md
+        run: python mcp/noctusai/cli.py --check-polling-request-budget
+
       - name: Migration chain replay (range)
         if: ${{ !cancelled() }}
         env:

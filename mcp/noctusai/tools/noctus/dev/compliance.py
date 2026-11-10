@@ -13969,6 +13969,17 @@ def check_no_authenticated_grant_on_content_tables(
     return issues
 
 
+def check_polling_request_budget(repo_root: Path | None = None, paths: list[str] | None = None) -> list[dict]:
+    """Every forever-loop / periodic registration / browser poll declares its per-day cost
+    (`# poll-budget: <cadence>; <k> calls/tick; worst <N>/day; ...`), and a per-tick read never `select("*")`s or
+    `limit(>1000)`s (the 2026-11-09 Supabase egress incident). R1-R4 in `tools.noctus.dev.polling_request_budget`.
+    ``paths`` (staged delta) scopes the scan. Severity high; blocking, no baseline.
+    `KB § PATTERNS/backend/polling-request-budget.md`."""
+    from tools.noctus.dev import polling_request_budget
+
+    return polling_request_budget.check_polling_request_budget(repo_root or REPO_ROOT, paths)
+
+
 def check_card_hub_service_only(repo_root: Path | None = None, paths: list[str] | None = None) -> list[dict]:
     """A seed ``card_hub`` table (notes/tags/members/reminders/checklists/documents/access log) holds no
     ``authenticated``/``anon`` privilege at the end of its product's migration chain -- the card hub is reached only

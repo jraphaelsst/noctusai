@@ -344,6 +344,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-private-accent-fold", action="store_true", help="Keeper: no private unicodedata NFKD/NFD accent fold outside noctusai_lib.primitives.accents. Severity high; blocking.")
     parser.add_argument("--check-org-role-without-org-id", action="store_true", help="Keeper (B3): resolve_org_role/is_org_admin/require_org_admin_role called without org_id= decide admin in the HOME org, not the request's selected org. Severity high; blocking.")
     parser.add_argument("--check-no-metadata-authz", action="store_true", help="Keeper: user_metadata org_id/role/org_role is USER-WRITABLE — forbid backend reads of it for authorization/scoping (trusted source: public.noctus_users). Severity high; blocking.")
+    parser.add_argument("--check-polling-request-budget", action="store_true", help="Keeper (2026-11-10, Supabase egress incident: ~620k REST calls/day polling an EMPTY queue): every forever-loop declares what it costs per day. R1 a `while` that sleeps/timed-waits, R2 a periodic registration (seed scheduler register(hours|minutes|seconds), add_job interval, Worker/poll_interval_seconds), R4 TS refetchInterval/setInterval need `# poll-budget: <cadence>; <k> calls/tick; worst <N>/day; idle=<backoff|event|fixed>` (`//` in TS, with `hidden=<paused|runs>`) within 3 lines; the declaration is valid only with a `<N>/day` figure. R3 a `.select(\"*\")` / `.limit(>1000)` in a tick/gate/stats/loop function is a finding even when declared (count or name columns; escape `# poll-budget-ok: <why>`). AST only (ast + ts-morph). Severity high; blocking; no baseline. --paths scopes to staged files. KB § PATTERNS/backend/polling-request-budget.md.")
     parser.add_argument("--check-card-hub-service-only", action="store_true", help="Keeper: a seed card_hub table holds no authenticated/anon privilege at the end of its product's migration chain (service-only by construction; security triage 2026-11-07). Severity critical; blocking. --paths limits it to the tables the staged migrations touch.")
     parser.add_argument("--check-no-authenticated-grant-on-content-tables", action="store_true", help="Keeper: an agents migration (>= 036) must not GRANT SELECT or CREATE POLICY TO authenticated/anon on a table outside the browser-readable allowlist (the agents schema is PostgREST-exposed; security finding C2). Severity critical; blocking.")
     parser.add_argument("--check-secdef-migration-revokes-execute", action="store_true", help="Keeper: a migration creating a SECURITY DEFINER function must REVOKE EXECUTE FROM PUBLIC/anon/authenticated in the same file (static twin of the verify_db_guards secdef probe). Legacy files baselined. Severity high; blocking.")
@@ -2401,6 +2402,16 @@ def main():
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
         sys.exit(1)
 
+    elif args.check_polling_request_budget:
+        from tools.noctus.dev.compliance import check_polling_request_budget
+        issues = check_polling_request_budget(paths=[p for p in (args.paths or "").split(",") if p] or None)
+        if not issues:
+            print(f"  {GREEN}✓ polling-request-budget: clean (every loop / periodic registration / poll declares its per-day cost).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} polling-request-budget issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')}:{i.get('line','?')} — {i['issue']}")
+        sys.exit(1)
     elif args.check_card_hub_service_only:
         from tools.noctus.dev.compliance import check_card_hub_service_only
         issues = check_card_hub_service_only(paths=[p for p in (args.paths or "").split(",") if p] or None)

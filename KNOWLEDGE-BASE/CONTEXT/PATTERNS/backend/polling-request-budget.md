@@ -56,13 +56,40 @@ audit its hot paths (loops, schedulers, per-request reads) against this rule.
   fleet-wide and passed two reviews (see `noc-learn-refine` 2.2.0, "attack the fix's COST").
 
 ## What fixes it (and where)
-- **Construction:** seed Worker idle backoff (1 s → 30 s cap, reset on claim); `queue_stats` via
-  count queries; cached flags; per-tick gates cached. Branch `feat/supabase-egress-polling`.
-- **Backstop (to build):** a keeper refusing `select("*")` / unbounded reads reachable from a
-  `claim_gate`, `run_forever` or scheduler tick; a seed test asserting the call count over N idle
-  ticks. Proposed to the owner 2026-11-10 as the follow-up slice to the polling fix.
-- **Telemetry (to build):** Supabase calls per product per minute + org egress in the daily ops
-  check (`noc-daily-ops`), with an alert well before quota.
+- **Construction:** seed Worker idle backoff (1 s → 30 s cap, reset on claim) plus wake-on-enqueue;
+  `queue_stats` via count queries; cached flags; per-tick gates cached. Branch `feat/supabase-egress-polling`.
+  And the declaration below: the author multiplies the cost out before the loop ships.
+- **Backstop (built, blocking): keeper `check_polling_request_budget`** (`cli.py --check-polling-request-budget`,
+  `tools/noctus/dev/polling_request_budget.py`; AST only: `ast` for Python, ts-morph for TypeScript). Blocking in
+  pre-commit (scoped to staged files) and in CI (full tree, `commit-range-keepers`); severity high; **no baseline**,
+  so the tree is either declared or red. Rules:
+  - **R1** a `while` loop whose body calls `sleep` / `time.sleep` / `wait_for(..., timeout)` /
+    `asyncio.wait(..., timeout=)` / `Event.wait(<timeout>)` needs a declaration.
+  - **R2** a periodic registration needs a declaration: the seed scheduler's
+    `register(name, fn, hours|minutes|seconds=...)`, APScheduler `add_job` with an interval trigger, any call
+    passing `poll_interval_seconds` / `max_idle_interval_seconds` (the seed `Worker` and its wrappers).
+  - **R3** inside a function that holds an R1 loop, or whose name says tick / poll / gate / stats / run_once, a
+    `.select("*")` (or `.select()`) or a `.limit(<int or module constant> > 1000)` is a finding **even when
+    declared**: count (`count="exact"`, `limit(0)`) or name columns. `.single()` / `.maybe_single()` /
+    `.limit(<=1)` are bounded and pass. Escape for a genuinely tiny table:
+    `# poll-budget-ok: <reason of 10+ chars>` on the call's line or up to 3 lines above.
+  - **R4** (TypeScript) a `refetchInterval` whose value is not literal `false` / `undefined` / `0`, any
+    `setInterval(`, and `refetchIntervalInBackground: true` (needs `hidden=runs` in its declaration).
+  - **The declaration** sits on the construct's line or up to 3 lines above, and is valid only if it carries a
+    number followed by `/day` (so it was multiplied out); an empty or numberless declaration is itself a finding:
+    - Python: `# poll-budget: <cadence>; <k> calls/tick; worst <N>/day; idle=<backoff|event|fixed>`
+    - TypeScript: `// poll-budget: <cadence>; <k> calls/tick; worst <N>/day per open tab; hidden=<paused|runs>`
+    - Worked example: `# poll-budget: every 30 s idle; 1 calls/tick; worst 2880/day; idle=backoff` (30 s cap =
+      2 ticks/min x 1440 min = 2,880/day for one worker; multiply by the number of workers/replicas).
+  - **What it cannot see** (so review still owns it): a read reached from a loop through a helper it does not
+    name (the call graph is not followed); a poll driven by `for _ in range(n)` + sleep, a recursive
+    `call_later` / timer re-arm, or a cadence set through a config value the registration does not show; per-request
+    reads that repeat (uncached flag/settings/credentials reads per LLM call, a config reloaded every request,
+    one `scheduler_runs` insert per tick, `select=*` reads in a worker that is not named tick/poll/gate/stats);
+    `.range(0, N)` large pages. Those are caught only by the measurement below.
+- **Telemetry (being built): `noctus.dev.supabase_request_budget`**: Supabase calls per product per route per
+  minute from the edge logs, versus the plan quota, surfaced in the daily ops check (`noc-daily-ops`) with an alert
+  well before the quota. It is the measurement that finds what the static keeper cannot.
 
 ## Depth
 `KB § PATTERNS/backend/postgrest-row-cap.md` (the sibling: what a fake hides) ·

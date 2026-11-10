@@ -1232,6 +1232,20 @@ if [[ -n "$STAGED_SR" ]] && have_py; then
         exit 1
     fi
 fi
+# ─── 6e-quinquies-quater-ter-ante. Polling-request-budget gate (blocking) ──
+# Keeper `check_polling_request_budget` (2026-11-10, Supabase egress incident: ~620k REST calls/day from our own
+# pollers). Every forever-loop / periodic registration / browser poll carries `# poll-budget: ...; worst <N>/day`
+# (`//` in TS); a per-tick `select("*")` is refused outright. Scoped to the STAGED files (--paths): the full-tree
+# sweep runs in CI. Escape (R3 only, with a reason): `# poll-budget-ok: <why>`.
+STAGED_PB=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(products/[^/]+/backend/app/.*\.py|seed/lib/backend/noctusai_lib/.*\.py|products/[^/]+/frontend/src/.*\.tsx?|seed/lib/frontend/src/.*\.tsx?)$' | grep -vE '(^|/)(tests?|__tests__|testing|fixtures|_archive)/|/test_[^/]*\.py$|\.(test|spec)\.tsx?$' || true)
+if [[ -n "$STAGED_PB" ]] && have_py; then
+    echo "[pre-commit] source staged — checking polling request budget (declared cost per loop / poll)..."
+    if ! "$PY" "$CLI" --check-polling-request-budget --paths "$(echo "$STAGED_PB" | paste -sd, -)" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] POLLING-REQUEST-BUDGET check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Declare the cost next to the loop: '# poll-budget: <cadence>; <k> calls/tick; worst <N>/day; idle=<backoff|event|fixed>' ('//' + 'hidden=<paused|runs>' in TS). See KB § PATTERNS/backend/polling-request-budget.md." >&2
+        exit 1
+    fi
+fi
 # ─── 6e-quinquies-quater-ter-bis. Motion-import-boundary gate (warn-first shadow) ──────
 # Keeper `check_motion_import_boundary` (2026-11-07): `motion` / `framer-motion` is imported ONLY via
 # `@noctusai/lib/marketing` (MotionProvider hard-codes reduced-motion + LazyMotion strict; keeps motion
