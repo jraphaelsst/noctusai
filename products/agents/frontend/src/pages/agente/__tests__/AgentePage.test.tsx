@@ -49,7 +49,7 @@ const MODELO: AgenteModelo = {
 function agente(over: Partial<AgentePainel>): AgentePainel {
   return {
     key: "x", nome: "X", descricao: null, papel: null, capacidades: [], origem: "org", tipo: "studio",
-    runtime: "claude_sdk", owner_product: null, usa_canais: false, ativo: true, estado_externo: null, aviso: null,
+    runtime: "claude_sdk", owner_product: null, usa_canais: false, ativo: true,
     secoes: ["visao-geral"], pode_alternar: false, ...over,
   };
 }

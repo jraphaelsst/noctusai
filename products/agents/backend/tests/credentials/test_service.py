@@ -10,7 +10,7 @@ import pytest
 from noctusai_lib.security.key_ring import KeyRing
 
 from app.credentials.prober import ProbeResult
-from app.credentials.registry import ACADEMIA_API_TOKEN, APPROVAL_RING, SOCIAL_WIRING_API_TOKEN
+from app.credentials.registry import ACADEMIA_API_TOKEN, APPROVAL_RING
 from app.credentials.service import CredentialError
 from tests.credentials.conftest import (
     ANTHROPIC,
@@ -185,15 +185,6 @@ class TestRenew:
         assert kit.store.get("academia_api_token") is None
 
     @pytest.mark.asyncio
-    async def test_first_provision_uses_the_caller_org_and_no_principal(self):
-        kit = build_kit()
-        await kit.service.renew("social_wiring_api_token", actor_user_id=None, fallback_org_id=ORG_ID)
-        row = kit.admin.rows["social_wiring"][0]
-        assert row["org_id"] == str(ORG_ID)
-        assert row["principal_agent_id"] is None
-        assert row["scopes"] == list(SOCIAL_WIRING_API_TOKEN.scopes)
-
-    @pytest.mark.asyncio
     async def test_academia_renew_needs_academia_agent_id(self):
         kit = build_kit()
         with pytest.raises(CredentialError) as exc:
@@ -244,15 +235,14 @@ class TestRing:
 
 class TestExpiryAlerts:
     def test_alerts_for_expiring_expired_and_revoked(self):
-        kit = build_kit(academia_api_token=OLD_ACADEMIA, social_wiring_api_token="pk_" + "c" * 64,
-                        academia_agent_id=str(BIA_ID))
+        kit = build_kit(academia_api_token=OLD_ACADEMIA, academia_agent_id=str(BIA_ID))
         seed_academia_token(kit, days_left=3)
-        kit.admin.seed(
-            "social_wiring", "pk_" + "c" * 64, org_id=ORG_ID,
-            expires_at=NOW + timedelta(days=200), revoked_at=NOW,
-        )
         alerts = {a.name: a.reason for a in kit.service.expiry_alerts()}
-        assert alerts == {"academia_api_token": "expiring", "social_wiring_api_token": "revoked"}
+        assert alerts == {"academia_api_token": "expiring"}
+
+        revoked = build_kit(academia_api_token=OLD_ACADEMIA, academia_agent_id=str(BIA_ID))
+        seed_academia_token(revoked, days_left=200, revoked_at=NOW)
+        assert {a.name: a.reason for a in revoked.service.expiry_alerts()} == {"academia_api_token": "revoked"}
 
     def test_healthy_tokens_raise_nothing(self, kit):
         seed_academia_token(kit, days_left=80)

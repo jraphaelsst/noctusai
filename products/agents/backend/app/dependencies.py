@@ -736,12 +736,6 @@ def get_approval_store_dep():
     return get_approval_store(settings)
 
 
-def get_social_wiring_client_dep():
-    from app.clients.social_wiring import get_social_wiring_client
-
-    return get_social_wiring_client(settings)
-
-
 def get_realtime_bus_dep():
     """FastAPI dependency seam over ``app.realtime.get_bus()`` — the
     process-wide singleton is a Redis-or-Fake factory keyed on
@@ -836,7 +830,6 @@ __all__ = [
     "get_realtime_bus_dep",
     "get_runtime_settings_service_dep",
     "get_settings",
-    "get_social_wiring_client_dep",
     "get_user_client",
     "get_user_role",
     "require_admin",

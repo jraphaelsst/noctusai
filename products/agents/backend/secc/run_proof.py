@@ -94,9 +94,9 @@ _BUNDLED_CLI_PATH_IN_IMAGE = "/usr/local/bin/claude-bundled"
 # proof's "degraded start with placeholder Supabase credentials, as
 # designed" (roadmap, 2026-09-14). Deliberately NOT setting APP_ENV or any
 # PRODUCT_URL_* — `is_deploy_context()` (seed/lib/backend/noctusai_lib/
-# config/deploy_config.py) stays False, so the two `required_prod_config`
-# keys (APPROVAL_ASSERTION_SECRETS, SOCIAL_WIRING_API_TOKEN) stay
-# optional and boot never hard-aborts on them.
+# config/deploy_config.py) stays False, so the `required_prod_config`
+# key (APPROVAL_ASSERTION_SECRETS) stays
+# optional and boot never hard-aborts on it.
 PLACEHOLDER_ENV = {
     "SUPABASE_URL": "https://secc-proof.invalid.supabase.co",
     "SUPABASE_ANON_KEY": "secc-proof-placeholder-anon-key",
@@ -106,7 +106,6 @@ PLACEHOLDER_ENV = {
     "ANTHROPIC_API_KEY": "",
     "ACADEMIA_API_TOKEN": "secc-proof-placeholder-token",
     "ACADEMIA_AGENT_ID": "00000000-0000-0000-0000-000000000000",
-    "SOCIAL_WIRING_API_TOKEN": "secc-proof-placeholder-token",
     "APPROVAL_ASSERTION_SECRETS": "secc-proof-placeholder-secret",
 }
 

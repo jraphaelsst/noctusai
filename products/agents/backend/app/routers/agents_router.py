@@ -1,30 +1,23 @@
 """``/api/agents`` — list + toggle (contract §E.2,
 ``projects/julia-agents-academia-CONTRACT.md``).
 
-Every route is user-only. Toggling ``bia`` flips the local
-``agents.agents.ativo`` column. Toggling ``one-chat`` calls the
-social-wiring E.6 bridge instead — its ``ativo``/``estado_externo`` are
-whatever social-wiring returns, never a locally-stored truth (the row's
-``ativo`` column stays a placeholder for that agent; see
-``app/clients/social_wiring.py``'s module docstring and this slice's
-delivery note for the interpretation call).
+Every route is user-only. A toggle flips the local ``agents.agents.ativo``
+column. (The "One Chat" operator bot and its social-wiring bridge were
+retired 2026-11: Julia is the WhatsApp line.)
 """
 from __future__ import annotations
 import anyio
 
 import logging
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.clients.social_wiring import SocialWiringUnreachable
 from app.dependencies import (
     get_agent_store_dep,
-    get_social_wiring_client_dep,
     require_member,
     require_platform_content_admin,
 )
-from app.schemas.agents import AgentListOut, AgentOut, AgentToggleRequest, EstadoExternoOut
+from app.schemas.agents import AgentListOut, AgentOut, AgentToggleRequest
 from app.stores.errors import NotFound
 from noctusai_lib.api.auth.session import AuthContext
 
@@ -33,49 +26,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 
-def _agent_out(
-    record, *, estado_externo: EstadoExternoOut | None = None, aviso: str | None = None,
-    ativo_override: bool | None = None,
-) -> AgentOut:
+def _agent_out(record) -> AgentOut:
     return AgentOut(
         key=record.key,
         nome=record.nome,
         runtime=record.runtime,
         owner_product=record.owner_product,
-        ativo=record.ativo if ativo_override is None else ativo_override,
-        estado_externo=estado_externo,
-        aviso=aviso,
+        ativo=record.ativo,
     )
-
-
-async def _one_chat_state(record, client) -> tuple[EstadoExternoOut | None, str | None]:
-    connection_id = (record.external_ref or {}).get("connection_id") if record.external_ref else None
-    if not connection_id:
-        return None, "One Chat ainda não configurado (nenhuma conexão vinculada)."
-    try:
-        state = await client.get_one_chat_state(UUID(str(connection_id)))
-    except SocialWiringUnreachable:
-        logger.warning("agents.one_chat.bridge_unreachable connection_id=%s", connection_id)
-        return None, "Não foi possível consultar o social-wiring."
-    return EstadoExternoOut(auto_reply_enabled=bool(state.get("auto_reply_enabled"))), None
 
 
 @router.get("", response_model=AgentListOut)
 async def list_agents(
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_agent_store_dep),
-    social_wiring_client=Depends(get_social_wiring_client_dep),
 ) -> AgentListOut:
     (await anyio.to_thread.run_sync(lambda: store.ensure_default_agents(ctx.org_id)))
     records = store.list(ctx.org_id)
 
-    items: list[AgentOut] = []
-    for record in records:
-        if record.key == "one-chat":
-            estado_externo, aviso = await _one_chat_state(record, social_wiring_client)
-            items.append(_agent_out(record, estado_externo=estado_externo, aviso=aviso))
-        else:
-            items.append(_agent_out(record))
+    items = [_agent_out(record) for record in records]
     return AgentListOut(items=items, total=len(items))
 
 
@@ -85,7 +54,6 @@ async def toggle_agent(
     payload: AgentToggleRequest,
     ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_agent_store_dep),
-    social_wiring_client=Depends(get_social_wiring_client_dep),
 ) -> AgentOut:
     (await anyio.to_thread.run_sync(lambda: store.ensure_default_agents(ctx.org_id)))
     try:
@@ -96,43 +64,11 @@ async def toggle_agent(
             detail={"detail": "Agente não encontrado.", "code": "not_found"},
         ) from exc
 
-    # NOC-REMEDIATE[agents-toggle-bridge-generalize]: this bridge is one-chat -> social-wiring only. Phase 2 of the
-    # per-app WhatsApp switch: generalise it so `external_ref={product, connection_id}` calls THAT product's seed
-    # route `PUT /api/whatsapp/connections/{id}/enabled` (seed `create_whatsapp_connections_router`, already
-    # shipped) -- then the "Agentes" toggle IS the app's on/off button for every app (monica first); the
-    # social-wiring `auto_reply_enabled` flag maps onto `app_enabled` when SW is restructured — 2026-10-26
-    if key == "one-chat":
-        # Contract §E.2: "one-chat: calls E.6, and the response reflects
-        # social-wiring's returned state." The local `agents.ativo` column
-        # is NEVER written for this key — one-chat's on/off truth lives
-        # entirely in social-wiring's `auto_reply_enabled`; this response's
-        # `ativo` mirrors THAT value (see `ativo_override` below), not a
-        # local write. Tech-lead-accepted interpretation, 2026-09-14.
-        connection_id = (record.external_ref or {}).get("connection_id") if record.external_ref else None
-        if not connection_id:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "detail": "One Chat ainda não configurado (nenhuma conexão vinculada).",
-                    "code": "not_configured",
-                },
-            )
-        try:
-            result = await social_wiring_client.set_one_chat_auto_reply(
-                UUID(str(connection_id)), payload.ativo
-            )
-        except SocialWiringUnreachable as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={"detail": "Falha ao comunicar com o social-wiring.", "code": "upstream_failed"},
-            ) from exc
-        auto_reply_enabled = bool(result.get("auto_reply_enabled"))
-        return _agent_out(
-            record,
-            estado_externo=EstadoExternoOut(auto_reply_enabled=auto_reply_enabled),
-            ativo_override=auto_reply_enabled,
-        )
-
+    # NOC-REMEDIATE[agents-toggle-bridge-generalize]: this toggle only flips the local `agents.ativo`. The One Chat ->
+    # social-wiring bridge it used to special-case is retired (Julia is the WhatsApp line). Phase 2 of the per-app
+    # WhatsApp switch: let `external_ref={product, connection_id}` call THAT product's seed route
+    # `PUT /api/whatsapp/connections/{id}/enabled` (seed `create_whatsapp_connections_router`, already shipped), so
+    # the "Agentes" toggle IS the app's on/off button for every app (monica first) — 2026-10-26
     record = (await anyio.to_thread.run_sync(lambda: store.set_active(ctx.org_id, key, payload.ativo)))
     return _agent_out(record)
 

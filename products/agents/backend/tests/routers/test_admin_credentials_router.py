@@ -116,7 +116,7 @@ class TestCredentials:
         assert resp.status_code == 200, resp.text
         assert_no_secret(resp.text)
         body = resp.json()
-        assert body["total"] == 5
+        assert body["total"] == 4
         academia = next(i for i in body["items"] if i["name"] == "academia_api_token")
         assert academia["prefix"] == OLD_ACADEMIA[:11]
         assert academia["days_left"] == 12

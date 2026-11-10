@@ -22,16 +22,14 @@ BIA_ID = UUID("22222222-2222-2222-2222-222222222222")
 
 #: Secrets every test plants and then asserts never leak.
 OLD_ACADEMIA = "pk_" + "a" * 64
-ENV_SOCIAL = "pk_" + "b" * 64
 ANTHROPIC = "sk-ant-api03-" + "Z" * 80
 RING_ENV = "ring-secret-one,ring-secret-two"
-PLANTED = (OLD_ACADEMIA, ENV_SOCIAL, ANTHROPIC, "ring-secret-one", "ring-secret-two")
+PLANTED = (OLD_ACADEMIA, ANTHROPIC, "ring-secret-one", "ring-secret-two")
 
 
 def make_settings(**overrides):
     base = dict(
         academia_api_token="",
-        social_wiring_api_token="",
         anthropic_api_key="",
         approval_assertion_secrets="",
         academia_agent_id="",
@@ -90,7 +88,6 @@ def seed_academia_token(kit: Kit, *, days_left: int = 60, principal: UUID | None
 def kit() -> Kit:
     return build_kit(
         academia_api_token=OLD_ACADEMIA,
-        social_wiring_api_token=ENV_SOCIAL,
         anthropic_api_key=ANTHROPIC,
         approval_assertion_secrets=RING_ENV,
         academia_agent_id=str(BIA_ID),

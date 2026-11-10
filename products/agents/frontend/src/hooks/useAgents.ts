@@ -2,12 +2,7 @@
  * Agents list + toggle hooks — contract §E.2
  * (`GET /api/agents`, `POST /api/agents/{key}/toggle`).
  *
- * `GET /api/agents` returns `estado_externo: {auto_reply_enabled} | null`
- * for `one-chat` (live from social-wiring), plus `aviso` when it could not
- * be reached / is not configured yet. `bia`'s own `ativo` is the local
- * source of truth; `one-chat`'s `ativo` mirrors whatever social-wiring last
- * reported (contract: "the response reflects social-wiring's returned
- * state").
+ * Each agent's own `ativo` is the local source of truth.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -16,18 +11,12 @@ import { AGENTES_PAINEL_KEY, agentePainelKey } from "@/hooks/useAgentesPainel";
 
 const AGENTS_KEY = ["agents", "list"] as const;
 
-export interface EstadoExterno {
-  auto_reply_enabled: boolean;
-}
-
 export interface Agent {
   key: string;
   nome: string;
   runtime: string;
   owner_product: string | null;
   ativo: boolean;
-  estado_externo: EstadoExterno | null;
-  aviso: string | null;
 }
 
 interface AgentListResponse {
@@ -59,11 +48,7 @@ export function useAgents() {
 }
 
 /**
- * Toggle an agent on/off — optimistic with rollback on error (contract
- * §E.2: "502 upstream_failed" / "409 not_configured"). The optimistic patch
- * only flips `ativo`; `estado_externo` is left alone until the server
- * responds (it is social-wiring's own truth for `one-chat`, not something
- * this client can predict).
+ * Toggle an agent on/off — optimistic with rollback on error (contract §E.2).
  */
 export function useToggleAgent() {
   const qc = useQueryClient();
@@ -94,7 +79,7 @@ export function useToggleAgent() {
       );
       // The unified listing + the agent page show the same switch (agents-unified CONTRACT §4): fill both.
       const patch = (p: AgentePainel): AgentePainel =>
-        p.key === updated.key ? { ...p, ativo: updated.ativo, estado_externo: updated.estado_externo, aviso: updated.aviso } : p;
+        p.key === updated.key ? { ...p, ativo: updated.ativo } : p;
       qc.setQueryData<AgentesPainelResponse>(AGENTES_PAINEL_KEY, (prev) =>
         prev ? { ...prev, items: prev.items.map(patch) } : prev,
       );

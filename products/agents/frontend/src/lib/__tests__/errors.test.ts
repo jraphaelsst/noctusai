@@ -29,20 +29,6 @@ describe("errorMessage — code-specific overrides (contract §E.2)", () => {
     );
   });
 
-  it("502 upstream_failed → 'Não foi possível falar com o social-wiring.'", () => {
-    const err = flatError(502, "Falha ao comunicar com o social-wiring.", "upstream_failed");
-    expect(errorMessage(err)).toBe("Não foi possível falar com o social-wiring.");
-  });
-
-  it("409 not_configured → 'Configure a conexão do One Chat.'", () => {
-    const err = flatError(
-      409,
-      "One Chat ainda não configurado (nenhuma conexão vinculada).",
-      "not_configured",
-    );
-    expect(errorMessage(err)).toBe("Configure a conexão do One Chat.");
-  });
-
   it("403 role_missing (seed's English `detail`) is overridden with PT-BR copy", () => {
     const err = flatError(403, "Insufficient role", "role_missing");
     expect(errorMessage(err)).toBe("Sem permissão para esta ação.");

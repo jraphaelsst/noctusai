@@ -15,8 +15,7 @@
  * `products/agents/backend/app/routers/*.py`, plus the seed's
  * `require_scopes` dependency) for the handful of codes that need UI copy
  * DIFFERENT from — or absent from — the backend's own `detail` text:
- *   - the task-specified overrides (`turn_in_progress`, `agent_off`,
- *     `upstream_failed`, `not_configured`)
+ *   - the task-specified overrides (`turn_in_progress`, `agent_off`)
  *   - `role_missing` / `user_required`, which `require_scopes`
  *     (`noctusai_lib.api.auth.session.scopes`) raises with an ENGLISH
  *     `detail` ("Insufficient role" / "Restricted to human users") — never
@@ -53,8 +52,6 @@ import { ApiError } from "@noctusai/lib";
 const CODE_MESSAGES: Record<string, string> = {
   turn_in_progress: "Bia ainda está respondendo a mensagem anterior.",
   agent_off: "Bia está desligada — um administrador pode ligá-la em Agentes.",
-  upstream_failed: "Não foi possível falar com o social-wiring.",
-  not_configured: "Configure a conexão do One Chat.",
   // `require_scopes` (seed) raises these with an English `detail` —
   // `restrict="user_only"` means `user_required` is effectively dead from
   // this browser UI (every caller here is an SSO user), but is mapped
