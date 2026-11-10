@@ -95,3 +95,7 @@ The chair's amended spec, plus 22's (A) and (B), plus b5's four requirements, al
 6. **Builds:**
    - b285e8: 1 + 2 (docs + questionnaire peer mode + noc-steward peer-ask), shipped in D1.
    - b5: 3 → reconcile follow-up → 4 → 5 → 1 → 8 → 6 → 9.
+
+## Superseded in part by the guardian spec (council 09340534, 2026-11-10)
+
+The rescue-branch mechanism above (chair's point 2, "(2) Ask, then fix by rescue branch", the rescue lineage in build 4 and the "no rescue of its slug is unlanded" end condition) is **dropped**. Dispositions A, B and K of council 09340534, ratified on the owner's typed guardian rule: the guardian is a service leaf whose authority is the lane only; a rejected delivery returns to its branch steward, not to a rescue branch; ejection fixes belong to the branch steward. After 2 ejections the delivery parks as `blocked_on_steward`. The orphan case the rescue branch covered (the steward's session is gone or silent) is now: the delivery stays `blocked_on_steward`, the guardian alerts the owner, and the owner names a new branch steward, who adopts the branch. The guardian never adopts it. Live flow: `KB § PATTERNS/devops/release-steward.md` §7a. The rest of this decision (questionnaire peer mode, no timer polling, gated ending) stands.
