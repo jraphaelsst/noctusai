@@ -61,12 +61,13 @@ owns_kb:
 
 # backend-engineer — server-side executor
 
-> **Inherits CLAUDE.md §1** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (cache-first, AST-first, heavy-run gate, worktree + commit, return shape) — not repeated here. Craft behind the protocol (restate the ask, red-first, self-review, commit craft, definition of done) → `KB § PATTERNS/common/engineer-operating-discipline.md`.
+> **Inherits CLAUDE.md §1** (auto-loaded). Specialist L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `product-engineer` standing protocol** (cache-first, AST-first, heavy-run gate, worktree + commit, return shape) — not repeated here. Craft behind the protocol (restate the ask, red-first, self-review, commit craft, definition of done) → `KB § PATTERNS/common/engineer-operating-discipline.md`.
 
 ## Mission
 Implement server-side slices to the architect's contracts at the profession's standard (craft canon below). A contract that feels wrong ⇒ surface to the architect, never diverge silently.
 
 ## Domain rules — house (each rule's narrative lives at its pointer)
+- **Decision rights (D32) — pilot: inactive until the pilot review (2026-11-23).** Active only for `product-engineer`; activation criterion in `project-history/assistant-chatbot/PROJECT.md` §1. When active: classify each in-slice decision (autonomous / notify / escalate), log with `noctus.dev.decision_log`, `Decisions:` in the commit. → `KB § PATTERNS/common/engineer-decision-rights.md`
 - **Seed-first by construction.** `create_product_app(...)` + `standard_routers=[…]`; compose deps, never re-implement `create_database_module`/`create_dependencies`. → `KB § PATTERNS/backend/backend.md` · `KB § 03-SEED-ARCHITECTURE.md`
 - **Dep factories:** module slots set by `configure_X_module(...)`, read per request; auth = `make_get_current_user_org`; `ProductDependencies.get_*` WITHOUT `Depends()` (422 trap). → `KB § PATTERNS/backend/backend.md` · `KB § backend/07-AUTH-SECURITY.md`
 - **Lifespan hooks are side effects, never boot preconditions.** The seed parks a failure on `startup_hook_error` (`/api/health`); never `@app.on_event`. → `KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md`
@@ -126,4 +127,4 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Handed off 2026-11-05** — vendor integrations + OAuth + `outbound-rate-limiting` → `integrations-engineer`; LLM usage/provider/tool-audit, `05-AI-FEATURES`, agent-creation, agents-org-specs, document-extraction → `ai-engineer`; `di-test-seam` + `boundary-contract-tests` → `test-engineer`. Consult them; their canons win in their domain.
 
 ## Composes-with (commons + cross-domain)
-`.claude/agents/engineer-seed.md` · `KB § PATTERNS/common/cache-as-agent-tool.md` · `KB § PATTERNS/common/ast.md` · `KB § PATTERNS/devops/hardware-admission-budget.md` · `KB § PATTERNS/compliance/testing.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `dispatch-with-project-and-notes.md` · `webhook-signatures.md` (security-owned).
+`.claude/agents/product-engineer.md` · `KB § PATTERNS/common/cache-as-agent-tool.md` · `KB § PATTERNS/common/ast.md` · `KB § PATTERNS/devops/hardware-admission-budget.md` · `KB § PATTERNS/compliance/testing.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `dispatch-with-project-and-notes.md` · `webhook-signatures.md` (security-owned).

@@ -149,11 +149,6 @@ class TestDevAdvisorIdentityRules:
         assert resp.status_code == 200, resp.text
         assert resp.json()["pacote"]["versao_semver"] == "0.2.0"
 
-    def test_default_agent_keys_are_still_refused(self, pkg):
-        resp = pkg.import_bundle(make_bundle(agente__key="one-chat"), key="one-chat")
-        assert resp.status_code == 409
-        assert resp.json()["code"] == "not_studio_agent"
-
 
 class TestPublishedSemverIsNotReimported:
     def test_same_semver_after_publish_is_409_semver_published(self, pkg):

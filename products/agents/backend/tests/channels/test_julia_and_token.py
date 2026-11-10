@@ -102,10 +102,6 @@ class TestPlatformDefinitionsAreData:
         resp = rt.post("/api/studio/agents", json={"key": "julia", "nome": "Falso"})
         assert resp.status_code == 409 and resp.json()["code"] == "key_taken"
 
-    def test_the_legacy_default_keys_stay_reserved(self, rt):
-        resp = rt.post("/api/studio/agents", json={"key": "one-chat", "nome": "Falso"})
-        assert resp.status_code == 409 and resp.json()["code"] == "key_taken"
-
 
 def _platform_definition_other(rt):
     return ensure_definicao(PLATFORM_ORG, "outro-agente", studio_store=rt.studio, nome="Outro", instanciavel=True)

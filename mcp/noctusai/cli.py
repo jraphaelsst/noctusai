@@ -241,8 +241,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-memory-md-index", action="store_true", help="Keeper: MEMORY.md auto-loaded-index discipline (sibling of --check-claude-md-router) — every `- [Title](file.md)` entry stays under the per-line cap and the whole file under the KB budget. MEMORY.md is OUT-OF-REPO (Claude-Code per-project store), so this gates at `validate` + this CLI flag, NOT at git commit. Silent skip if the per-project memory dir isn't configured. MCP keeper check_memory_md_index; sibling KB § PATTERNS/claude-md-router-discipline.md.")
     parser.add_argument("--check-skill-format", action="store_true", help="Keeper: every .claude/skills/<name>/SKILL.md has valid required frontmatter (name: matching dir + non-empty description: with trigger phrases). Harness-layer authoring discipline.")
     parser.add_argument("--check-agent-format", action="store_true", help="Keeper: every .claude/agents/<name>.md has valid required frontmatter (name: matching filename + description: + EXPLICIT tools:). Omitting `tools:` inherits ~400 deferred tool names (KB § PATTERNS/dispatch-engineer-tuning.md).")
-    parser.add_argument("--check-agent-archetype-contract", action="store_true", help="Keeper: advisor agents (architect/security/compliance-reviewer) declare NO Edit/Write in tools: (read-only contract enforced at the tool layer). Executor agents (backend-engineer/frontend-engineer/devops-engineer/engineer-seed) body references `engineer-seed` protocol.")
+    parser.add_argument("--check-agent-archetype-contract", action="store_true", help="Keeper: advisor agents (architect/security/compliance-reviewer) declare NO Edit/Write in tools: (read-only contract enforced at the tool layer). Executor agents (backend-engineer/frontend-engineer/devops-engineer/product-engineer) body references `product-engineer` protocol.")
     parser.add_argument("--refresh-keeper-cache", action="store_true", help="Refresh the local keeper-pattern cache (.claude/cache/keeper-patterns.sqlite) from compliance.py + tests. Mirrors the keepers so doc-authoring agents can lookup patterns BEFORE authoring (avoid gated rework). Pair --force to bypass the in-sync short-circuit. Auto-run by pre-commit on compliance.py change; lazy-rebuilt on query-time source_sha mismatch. KB § PATTERNS/keeper-pattern-cache.md.")
+    parser.add_argument("--check-agent-names-resolve", action="store_true", help="Keeper: agent names on methodology surfaces (.claude/**, KB, CLAUDE.md, CONTRACT*.md; subagent_type values, .claude/agents/<name>.md paths, backticked role-shaped names) must resolve to .claude/agents/<name>.md; deprecated aliases (`deprecated:` frontmatter) warn with the retirement note. MCP keeper check_agent_names_resolve.")
     parser.add_argument("--keeper-pattern-lookup", metavar="KEEPER_OR_FILE", help="Query the keeper-pattern cache by keeper-name substring OR file path (e.g. .claude/agents/devops-engineer.md → agent-format + agent-archetype). Print matching pattern rows. The keeper-check-before-doc'ing discipline starts here.")
     parser.add_argument("--check-keeper-cache-freshness", action="store_true", help="Keeper: the local cache must mirror compliance.py — cache_meta.source_sha must equal sha256(compliance.py). Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-keeper-cache to fix. (Pair --force with --refresh-keeper-cache to rebuild even when in-sync; the existing --force flag is shared.)")
     parser.add_argument("--refresh-agent-context-cache", action="store_true", help="Refresh the local agent-context cache (.claude/cache/agent-context.sqlite) from .claude/agents/*.md + each agent's owns_kb-declared KB paths. At dispatch, an agent's compact bundle (frontmatter + body + per-owned-KB extract) replaces N Reads. Per-agent bundle_sha guards in-sync agents; --force rebuilds anyway. Pair with --agent <name> to limit scope. Auto-run by pre-commit on agent.md OR owned-KB change. KB § PATTERNS/agent-context-architecture.md.")
@@ -282,6 +283,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--access-tier-reconcile", action="store_true", help="Scanners write the findings ledger: add new findings, close fixed ones, reopen regressions (never hand-edit the ledger). With --access-tier-exposure FILE it reconciles the EFFECTIVE prod findings instead.")
     parser.add_argument("--found-by", default="keeper", help="With --access-tier-reconcile: who found it (keeper | audit | exposure-tool | <agent>).")
     parser.add_argument("--check-new-org-table-rls", action="store_true", help="BLOCKING DELTA gate (owner directive 2026-10-26, org-config isolation): a NEW migration's table with an org_id column must ENABLE ROW LEVEL SECURITY and be org-scoped-readable (CREATE POLICY ... org_id) or explicitly service-role-only (REVOKE ... FROM authenticated). Existing tables are baselined. `--paths` = staged ADDED migrations; omitted = migrations added vs origin/dev. Escape: `-- noc-allow: org-table-rls — <reason>`. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
+    parser.add_argument("--check-council-ledger-schema", action="store_true", help="Offline pre-commit gate: every project-history/council/**/*.ndjson row validates against the council-ledger contract and a staged diff only appends at EOF (append-only). --paths scopes to staged files; --staged enforces append-only against the index. KB-free contract: project-history/assistant-chatbot/contracts/council-ledger.md.")
+    parser.add_argument("--staged", action="store_true", help="With --check-council-ledger-schema: also enforce append-only against the git index.")
+    parser.add_argument("--council-ledger", dest="council_ledger", metavar="ACTION", help="Council ledger (open_session|record_objection|record_verdict|record_event|blind_view|full_view|report|status); args as JSON via --cl-args. MCP: noctus.dev.council_ledger.")
+    parser.add_argument("--check-decision-log-schema", action="store_true", help="Offline pre-commit gate: every project-history/decisions/**/*.ndjson row validates against the decision-log contract (tier >= its criteria floor, sequential ids) and a staged diff only appends at EOF. --paths scopes to staged files; --staged enforces append-only against the index. Contract: project-history/assistant-chatbot/contracts/decision-log.md.")
+    parser.add_argument("--decision-log", dest="decision_log", metavar="ACTION", help="Decision log (record|review|list|audit|report); args as JSON via --dl-args. MCP: noctus.dev.decision_log.")
+    parser.add_argument("--dl-args", dest="dl_args", metavar="JSON", default=None, help="With --decision-log: JSON object of the action's arguments.")
+    parser.add_argument("--cl-args", dest="cl_args", metavar="JSON", default=None, help="With --council-ledger: JSON object of the action's arguments.")
     parser.add_argument("--check-measurable-by-design", action="store_true", help="BLOCKING DELTA gate (owner rule 2026-11-09, measurement-by-design): a NEW migration's domain table needs a creation timestamp, and a lifecycle/status column needs an append-only transition capture (*_eventos table / audit trigger / transition-log organ). Warns on free-text outcomes, missing updated_at, event tables with no actor. Escape: `-- measurable: <reason>` (recorded to gate telemetry). --paths scopes to staged ADDED migrations; omitted = migrations added vs origin/dev. KB § PATTERNS/architect/measurement-by-design.md.")
     parser.add_argument("--check-org-owned-definition-not-instanciavel", action="store_true", help="An agent definition declared (products/*/ops/agents/**, agent package.yaml) with owner_product AND instanciavel=true would be instantiated in EVERY org. Severity high. KB § PATTERNS/compliance/org-config-isolation.md.")
     parser.add_argument("--check-tunnel-ingress-snapshot-sync", action="store_true", help="deploy/tunnel/ingress.yml is the declared SINGLE SOURCE OF TRUTH for public hostname->service routing; this asserts the committed config.yml.template ingress snapshot is derived from it (2026-08-10: it was 2 routes stale, and the LIVE config was a gitignored deploy-local copy nothing derived from). Severity high. KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md.")
@@ -736,6 +744,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--transcription-rotulo", metavar="TEXT", dest="transcription_rotulo", help="With --transcription-submit/-transcribe: optional label (<=120 chars).")
     parser.add_argument("--transcription-segmentos", action="store_true", dest="transcription_segmentos", help="With --transcription-submit: also return timed segments.")
     parser.add_argument("--transcription-timeout", metavar="SECONDS", type=float, default=3600, dest="transcription_timeout", help="With --transcription-transcribe: client-side wait budget (default 3600).")
+    parser.add_argument("--source-register", action="store_true", help="Source-reliability register (skill noc-research): read the folded per-source view or log one event. MCP: noctus.dev.source_register.")
+    parser.add_argument("--source-register-confirm", action="store_true", help="With --source-register --source-register-action log: append (a write). Without it, dry-run only.")
+    for _sr in ("action", "query", "tier-filter", "source", "outcome", "tier", "label", "claim", "evidence", "question", "note", "by", "events"):
+        parser.add_argument(f"--source-register-{_sr}", default="read" if _sr == "action" else "", dest=f"source_register_{_sr.replace('-', '_')}", help=f"With --source-register: the {_sr} argument.")
+    parser.add_argument("--source-register-limit", type=int, default=50, dest="source_register_limit", help="With --source-register: max rows on read.")
+    parser.add_argument("--source-register-allow-stale-toolkit", action="store_true", help="With --source-register: bypass the toolkit-staleness fresh-subprocess hop (escape hatch).")
     return parser
 
 
@@ -1225,6 +1239,30 @@ def main():
             print(f"  {GREEN}✓ compose.waha.yml is the render of waha-instances.yml.{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} waha-instances drift issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_council_ledger_schema:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import check_council_ledger_schema
+        _cl_paths = [p for p in (args.paths or "").split(",") if p] or None
+        issues = check_council_ledger_schema(repo_root=REPO_ROOT, paths=_cl_paths, staged=bool(getattr(args, "staged", False)))
+        if not issues:
+            print(f"  {GREEN}✓ council-ledger-schema: every ledger row validates and the ledger is append-only.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} council-ledger-schema finding(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_decision_log_schema:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.compliance import check_decision_log_schema
+        _dl_paths = [p for p in (args.paths or "").split(",") if p] or None
+        issues = check_decision_log_schema(repo_root=REPO_ROOT, paths=_dl_paths, staged=bool(getattr(args, "staged", False)))
+        if not issues:
+            print(f"  {GREEN}✓ decision-log-schema: every decision row validates and the log is append-only.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} decision-log-schema finding(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)
@@ -3167,9 +3205,10 @@ def main():
         # severity=warning only — advisory, never blocks commits.
         sys.exit(0)
 
-    elif args.check_skill_format or args.check_agent_format or args.check_agent_archetype_contract:
+    elif args.check_skill_format or args.check_agent_format or args.check_agent_archetype_contract or args.check_agent_names_resolve:
         from tools.noctus.dev.compliance import (
             check_skill_format, check_agent_format, check_agent_archetype_contract,
+            check_agent_names_resolve,
         )
         issues: list = []
         which = []
@@ -3179,6 +3218,8 @@ def main():
             issues += check_agent_format(); which.append("agent-format")
         if args.check_agent_archetype_contract:
             issues += check_agent_archetype_contract(); which.append("agent-archetype-contract")
+        if args.check_agent_names_resolve:
+            issues += check_agent_names_resolve(); which.append("agent-names-resolve")
         label = " + ".join(which)
         if not issues:
             print(f"  {GREEN}✓ harness-layer {label}: clean.{RESET}")
@@ -4745,6 +4786,34 @@ def main():
             print(json.dumps(rows, indent=2, default=str))
         sys.exit(0)
 
+    elif getattr(args, "council_ledger", None):
+        from tools.noctus.dev.council_ledger import run as _cl_run
+        try:
+            _cl_kw = json.loads(args.cl_args) if args.cl_args else {}
+            if not isinstance(_cl_kw, dict):
+                raise ValueError("--cl-args must be a JSON object")
+        except ValueError as e:
+            print(f"  {RED}Error:{RESET} bad --cl-args: {e}")
+            sys.exit(2)
+        _cl_kw.setdefault("worktree_path", getattr(args, "worktree_path", None))
+        result = _cl_run(args.council_ledger, **_cl_kw)
+        print(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+        sys.exit(0 if result.get("ok") else 1)
+
+    elif getattr(args, "decision_log", None):
+        from tools.noctus.dev.decision_log import run as _dl_run
+        try:
+            _dl_kw = json.loads(args.dl_args) if args.dl_args else {}
+            if not isinstance(_dl_kw, dict):
+                raise ValueError("--dl-args must be a JSON object")
+        except ValueError as e:
+            print(f"  {RED}Error:{RESET} bad --dl-args: {e}")
+            sys.exit(2)
+        _dl_kw.setdefault("worktree_path", getattr(args, "worktree_path", None))
+        result = _dl_run(args.decision_log, **_dl_kw)
+        print(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+        sys.exit(0 if result.get("ok") else 1)
+
     elif getattr(args, "method_trial", None):
         from tools.noctus.dev.method_trial import run as _mt_run
         try:
@@ -4768,6 +4837,13 @@ def main():
         else:
             print("[branch-pointer] non-exempt paths present — cache refresh applies")
             sys.exit(1)
+
+    elif args.source_register:
+        from tools.noctus.dev.source_register import source_register as _source_register
+        _sr_kw = {k: getattr(args, f"source_register_{k}") for k in ("query", "tier_filter", "limit", "source", "outcome", "tier", "label", "claim", "evidence", "question", "note", "by", "events")}
+        r = _source_register(args.source_register_action, **_sr_kw, confirm=bool(getattr(args, "source_register_confirm", False)), allow_stale_toolkit=bool(getattr(args, "source_register_allow_stale_toolkit", False)))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
 
     else:
         # Default: validate + analyze

@@ -38,6 +38,14 @@ cd mcp/noctusai && .venv/bin/python cli.py --merge-queue watch --merge-queue-int
 4. Fix it or hand it back: a one-line steward rescue on its own branch (re-run the failing test through `hw_admission.py run`), or send the owner session the run URL, file:line and cause. Re-enqueue the fix as a new entry.
 5. Cannot reproduce locally (e.g. real-Postgres proofs with no `pg_ctl`)? Park it with a named destination in the memory file; never re-queue blind.
 
+### Ejection procedure (steward-resolves; not live until build 4 inbox fields, interim in brackets)
+
+Rule: `KB § PATTERNS/devops/release-steward.md` § 7a (decision 2026-11-10).
+1. Diagnose (steps 1-2 above). Needs information? Ask ONE batched question via `noc-questionnaire` PEER MODE: `needs_info` to the requester's ROLE, TTL ~25 min. [Interim: `SendMessage` to the role's current session + the inbox notes field, labelled interim.]
+2. Live requester answers "already fixing" within the TTL: they keep it; re-check at the TTL.
+3. Otherwise withdraw the `mq/*` ref and DISPATCH a rescue engineer on `rescue-<slug>` (`task_branch start`); never patch `feat/*`, never code inline, never hand it back to a done agent. You stay accountable.
+4. Record the ownership transfer + lineage (slug to rescue-slug) in the inbox; on landing send `LANDED <sha>` + a diff summary to the requester's role (or the owner).
+
 ## 4 · On every landing
 
 `task_branch action=landed slug=… confirm=True`, then reply `LANDED <dev sha>` / `EJECTED <reason>` to the requester. `no_pointer` on a subagent worktree is benign. `missing_commits` on derived `chore(kb-counts) … [auto]` commits is the tool, not lost work: confirm with `git log --oneline` that the content is on dev.

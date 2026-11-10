@@ -63,8 +63,6 @@ export function painelDoCriado(created: PlatformAgentCreated, vars: PlatformAgen
     owner_product: created.owner_product ?? vars.owner_product ?? null,
     usa_canais: created.usa_canais ?? false,
     ativo: false,
-    estado_externo: null,
-    aviso: null,
     secoes: ["visao-geral"],
     pode_alternar: false,
   };

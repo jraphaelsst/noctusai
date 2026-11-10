@@ -1,7 +1,7 @@
 """L2 harness extractor — `.claude/agents/`, `.claude/skills/`, `.claude/commands/`.
 
 These are the methodology-fabric surfaces every fresh agent needs to orient on:
-- agents = specialist subagents (architect / security / engineer-seed / …)
+- agents = specialist subagents (architect / security / product-engineer / …)
 - skills = procedure docs auto-triggered on phrases (noc-self-branch, /codify, …)
 - commands = user-invoked `/<name>` slash commands
 

@@ -344,14 +344,14 @@ class CredentialService:
         logger.info("agents.credential_imported_from_env credential=%s", spec.name)
         return self.status(spec.name)
 
-    async def probe(self, name: str, *, connection_id: UUID | None = None) -> ProbeResult:
+    async def probe(self, name: str) -> ProbeResult:
         spec = self.spec(name)
         if not spec.probeable:
             raise CredentialError(409, "not_supported", "Esta credencial não tem teste ao vivo.")
         value = self._resolver.value(spec)
         if not value:
             raise CredentialError(409, "not_configured", "Credencial não configurada.")
-        return await self._prober.probe(spec, value, connection_id=connection_id)
+        return await self._prober.probe(spec, value)
 
     async def renew(
         self,
@@ -359,7 +359,6 @@ class CredentialService:
         *,
         actor_user_id: UUID | None,
         fallback_org_id: UUID,
-        connection_id: UUID | None = None,
     ) -> RenewOutcome:
         spec = self.spec(name)
         if not spec.renewable:
@@ -401,7 +400,7 @@ class CredentialService:
             logger.error("agents.credential_renew_mint_failed credential=%s error=%s", spec.name, type(exc).__name__)
             raise CredentialError(502, "mint_failed", f"Falha ao emitir o novo token em {spec.target_product}.") from exc
 
-        probe = await self._prober.probe(spec, minted.secret, connection_id=connection_id)
+        probe = await self._prober.probe(spec, minted.secret)
         if not probe.ok:
             self._revoke_quietly(spec, minted.info, reason="new_token_failed_probe")
             raise CredentialError(

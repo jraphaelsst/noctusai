@@ -1,0 +1,93 @@
+# Council: independent, blind, measured challenge before a decision locks
+
+> Procedure: skill `noc-council` (v1.2.0). This doc holds the WHY, the protocol, the stage map and the
+> measurement loop. Ledger contract: `project-history/assistant-chatbot/contracts/council-ledger.md`.
+> Born 2026-11-09 (assistant-chatbot run; owner decisions D6-D17). **Opt-in pilot:** the pilot rules (caps, budget, kill/keep criterion, recorder, review 2026-11-23) and the decision lookup D13/D31-D34 live in `project-history/assistant-chatbot/PROJECT.md`; revert order there too.
+
+## 1 · Why (evidence)
+
+| Source | Finding that matters here |
+|---|---|
+| Sharma et al. 2023 (Anthropic), https://arxiv.org/abs/2310.13548 | Sycophancy is general across assistants, driven partly by preference data favouring agreement: the author of a plan leans toward agreeing with itself. |
+| Zheng et al. 2023, https://arxiv.org/abs/2306.05685 | LLM judges show self-enhancement bias: a model judging its own plan is biased. |
+| Liang et al. 2024, https://arxiv.org/abs/2305.19118 | Degeneration-of-thought: a single model self-reflecting stops producing new ideas once confident. |
+| Kim et al. 2025, https://arxiv.org/abs/2506.07962 | Errors are correlated across models, more so within one family: N copies of one model are not N independent reviewers. |
+| Verga et al. 2024, https://arxiv.org/abs/2404.18796 | A panel of disjoint-family models beats one big judge; model-family diversity is the lever (we are Claude-only for now). |
+| Wang et al. 2024, https://arxiv.org/abs/2402.18272 and Smit et al. 2023, https://arxiv.org/abs/2311.17371 | Counter-evidence: for reasoning tasks a strong single prompt roughly matches multi-agent debate. Hence independence is reserved for high-stakes calls. |
+| Anthropic Engineering, multi-agent research system, https://www.anthropic.com/engineering/multi-agent-research-system | Multi-agent costs about 4-15x chat tokens. |
+| Karpathy `llm-council`, https://github.com/karpathy/llm-council | Protocol shape only (independent answers, anonymised review, chairman); not evidence. |
+
+Caveat: the studies are QA/reasoning benchmarks; none measures council value for design review.
+The measurement loop (section 6) exists to measure it locally. Source table:
+`project-history/assistant-chatbot/research/council-and-product-done.md` section 2a.
+
+## 2 · Protocol (blind, parallel, anonymised)
+
+Open session, compose a brief WITHOUT the author's recommendation, dispatch every seat in
+parallel as a background subagent (`councillor` per lens, advisors by name), anonymise objections
+as A/B/C, dispatch `council-chair` (Opus), record the verdict, surface to the tech-lead, record
+outcomes later. Every row goes through `noctus.dev.council_ledger` (`open_session`,
+`record_objection`, `blind_view`, `record_verdict`, `record_event`, `full_view`, `report`, `status`). The ndjson ledger in git is the source of truth; a DB mirror and any UI are deferred (owner decision pending, parked design on branch `feat/council-db-parked`). Steps in the skill.
+
+Hybrid by owner decision (2026-11-09): NOW every seat is a Claude Code background subagent
+(no direct API calls). Seat models: lenses Sonnet, advisors their configured model, chair Opus.
+
+### 2a · Neutral recorder (owner decision 2026-11-09)
+
+Blindness is enforced by the tool, not by discipline ("so we don't give space for the tech lead to
+make mistakes"). Flow: the tech-lead opens the session and dispatches seats; each councillor calls
+`record_objection` itself (the tool assigns a random `anon_label`, unique per session, callers cannot
+pass one) and returns only `submitted <objection_id>`; the tech-lead dispatches `council-chair` with
+the `session_id`; the chair reads `blind_view` ({anon_label, severity, claim}, no seat/model) and
+returns its verdict; the tech-lead records it (`chair_kind=chair_agent`, dispositions keyed by label,
+translated by the tool) and only then may read `full_view`. Until a verdict row exists, `report`
+aggregates only sessions that have verdicts and `status` omits seats. Limit: the ndjson files are
+plain text; the tool cannot stop a direct file read, so the skill forbids reading
+`project-history/council/**` before the verdict.
+
+## 3 · Stage map
+
+The owner-approved stage x seat matrix (M must, O optional) lives in the skill, the single
+canonical place (with its column legend: lens columns C F E Ou X, `Ou` = outsider); the research file section 3b is its origin. Seats per stage = the lens cells plus every advisor marked M or O on that row. Since 2026-11-09 (D33) the product-* advisors sit on it: product-manager M at `idealize`, O at `contract` and `evaluate`; product-architect M at `idealize` and `phase0`, O at `verify_seed`; product-analyst M at `evaluate`, O at `iterate`.
+
+## 4 · Triggers: when the council meets
+
+- Opt-in: a project may adopt the full council at every stage (D13, trigger `stage_map`); only `assistant-chatbot` has, with a 7-seat cap, a token budget and a kill/keep criterion set in its PROJECT.md.
+- Default: the trigger set `new_product`, `irreversible`, `trust_boundary`, `prod_exposure`
+  (the council informs, the owner decides), `money_legal_lgpd`, `seed_fanout` (3+ products),
+  `large_estimate`, `unrebutted_objection`, at the stage map's M seats only.
+
+## 5 · Single-chat vs independent
+
+Single-chat (one model, one context) surfaces counter-arguments but is not independent; it is
+allowed only where no trigger fires, and must be labelled "not independent" (`mode=single_chat`).
+Independent subagents give separate context plus each advisor's own domain evidence, which is what
+single-chat cannot. Known limit: one model family means correlated errors; diversity comes from
+evidence and role.
+
+## 6 · Measurement loop
+
+Outcomes (`vindicated`, `refuted`, `untested` + evidence) are recorded later against each
+objection. Metrics per seat (hit rate, unique hit rate, false-alarm rate, acceptance rate, cost
+per hit) have one derivation each in the contract section 3, computed by
+`council_ledger action=report`. Retune signal: a seat with 10+ resolved objections on a stage and
+hit rate under 0.2 is proposed M to O; over 0.6 while O is proposed O to M. The owner ratifies;
+nothing auto-edits the map. `report` covers merged work plus this tree only (`coverage` field; see the keyed-ledger exception in `KB § PATTERNS/common/ledger-store.md`). `report` splits metrics per mode; only `subagents`/`api` count as independent and drive retune, `single_chat` is reported apart (`independent: false`).
+
+## 7 · In-app (future)
+
+Lens and chair prompts become rows in the core prompt registry
+(`noctusai_lib.integrations.prompt_registry`, edited on Studio "Agentes da plataforma"). **Owner rule,
+2026-11-10: councils are run by Claude Code agents and subagents, never by API/token/credit calls.**
+The chair stays a subagent (`chair_kind=chair_agent`) and the tech-lead ratifies or overrules.
+`mode=api` / `chair_kind=api_chair` stay in the schema only for a future in-app council for a
+product's end users, which the owner has not decided. Not built.
+
+## 8 · Waiting consumers
+
+- `noc-iterate` step 4 (council before a refine): same five lenses, stage `iterate`.
+- `agent-creator` section 3: links each refine to the `eval_run` id (`subject_kind=eval_run`,
+  `subject_ref=<eval_run id>`), so outcomes can be tied to evaluation evidence.
+- `noc-questionnaire`: high-stakes questions run this council first (stage `owner_question`).
+
+Composes with `KB § PATTERNS/common/owner-questionnaire.md` · `KB § PATTERNS/architect/measurement-by-design.md` · `KB § PATTERNS/common/agent-context-architecture.md`.

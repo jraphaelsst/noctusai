@@ -673,7 +673,8 @@ def _definicao_out(agent, geracao=None) -> PlataformaAgentOut:
         owner_product=agent.owner_product, usa_canais=agent.usa_canais,
         escopo_qualificacao=agent.escopo_qualificacao, padrao_qualificacao=agent.padrao_qualificacao,
         rascunho_padrao=agent.rascunho_padrao, instanciavel=agent.instanciavel, papel=agent.papel, exemplar=agent.exemplar,
-        kind=agent.kind, fonte=agent.fonte, superficie_claude=agent.superficie_claude, geracao=geracao,
+        kind=agent.kind, fonte=agent.fonte, superficie_claude=agent.superficie_claude, modelo=agent.modelo,
+        pai_agent_id=agent.pai_agent_id, geracao=geracao,
     )
 
 
@@ -720,6 +721,7 @@ async def create_platform_definition(
                 escopo_qualificacao=payload.escopo_qualificacao, padrao_qualificacao=payload.padrao_qualificacao,
                 rascunho_padrao=payload.rascunho_padrao, instanciavel=payload.instanciavel, papel=payload.papel,
                 kind=payload.kind, fonte=payload.fonte, superficie_claude=payload.superficie_claude,
+                modelo=payload.modelo, pai_agent_id=payload.pai_agent_id,
             )
         except StudioConflict as exc:
             raise _conflict_flat(exc) from exc
@@ -758,7 +760,9 @@ def update_platform_definition_config(
     org instances keep the runtime / owner product they were created with; a new instance copies the current ones."""
     agent = _definicao_ou_404(store, key)
     fields = payload.model_dump(mode="json", exclude_unset=True)
-    for obrig in ("nome", "runtime", "instanciavel"):
+    if fields.get("pai_agent_id") is not None:
+        fields["pai_agent_id"] = payload.pai_agent_id  # the store takes the UUID, not its JSON string
+    for obrig in ("nome", "runtime", "instanciavel", "modelo"):
         if obrig in fields and fields[obrig] is None:
             raise _flat(422, "invalid_field", f"{obrig} não pode ser nulo")
     try:

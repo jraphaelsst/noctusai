@@ -99,6 +99,29 @@ Peer sessions whose MCP server still has the old code keep appending to the
 `'read' name=<file> tail=N` (dual-read) · `'flush'` · `'bootstrap'` (S0; dry-run
 unless `confirm=True`; refuses when the branch exists).
 
+## Exception — keyed, branch-local ledgers (council + decision log)
+
+Owner-visible exception, 2026-11-09 (council must-fix W/ZN). `project-history/council/<YYYY-MM>/<session_id>.ndjson`
+(`noctus.dev.council_ledger`) and `project-history/decisions/<YYYY-MM>/<slice_id>.ndjson` (`noctus.dev.decision_log`)
+are written IN the working tree and travel in the feature branch's own commits. They do NOT go through `_ledger_store`.
+Why, and why it does not re-create the chore-commit problem this rule exists for:
+
+| Reason | Detail |
+|---|---|
+| No chore commits | A row is committed inside the feature commit that produced it, so it never moves the `dev` tip on its own, never races a ledger push and never commits on the primary. The 41% ledger-chore volume came from tool-written rows committed alone. |
+| The branch is the judged unit | `decision_log action=audit` diffs the slice against its base and the pre-commit schema keepers validate the STAGED file offline; both need the rows next to the code they justify. A row on `origin/ledgers` is invisible to them. |
+| Blindness needs a local file | The council blind recorder is enforced by `council_read_guard` on a tree path while a session has no verdict; a store blob would move the boundary, not remove it. |
+| The store is fixed-name | `_ledger_store` addresses flat names in `MOVED_LEDGERS` (one spool, one dual-read, one `update`). A keyed/partitioned shape needs a new list-by-prefix read, a spool per key and a per-key dual-read: not a modest change, and it would fork the spool format of the 9 live ledgers. Revisit only if a third keyed ledger appears (recurrence rule). |
+
+**Survivorship bias (accepted, bounded).** A session or decision on a branch that is never merged does not reach `dev`,
+so `council_ledger action=report`/`retune` and the decision-log reports cover merged work plus the caller's own tree.
+Mitigations: (1) `report` states this in its `coverage` field, so a metric is never read as "all sessions"; (2) the
+retune signal is advisory and the owner ratifies it (the skill never edits the stage map); (3) `salvage_before_delete`
+archives an abandoned branch's unique files (incl. these ndjson) before a delete, so a verdict on an abandoned branch can
+be re-read by hand. A session without a verdict is by design not aggregated either way.
+
+Anti-pattern unchanged for every OTHER auto-appended `project-history/*.ndjson`: those still go through the store.
+
 ## Anti-patterns
 
 - Checking out `ledgers`, or writing to it with porcelain (`git commit`). Use

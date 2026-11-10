@@ -172,10 +172,12 @@ def git_landed_check(cwd: Path | str | None = None, base: str = "origin/dev") ->
 
     Resolves refs/heads/<branch>, then refs/remotes/origin/<branch>, then `head_sha`; the first that
     resolves is judged with `git cherry <base> <ref>` - zero '+' lines means every commit is already
-    in base (merged OR rebased/squashed). state: landed | pending | unresolvable (never silent).
+    in base (method=cherry). When cherry leaves commits unmatched, falls back to post-image blob equality
+    (method=post_image) then `git range-diff` (method=range_diff); a partial match is state=uncertain with
+    evidence, never landed. state: landed | pending | uncertain | unresolvable (never silent).
     `dev_sha` = the ref's own sha when it is an ancestor of base, else base's tip."""
     def _git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", *args], capture_output=True, text=True, timeout=30, check=False,
+        return subprocess.run(["git", *args], capture_output=True, text=True, timeout=60, check=False,
                               cwd=str(cwd) if cwd else None)
 
     def _rev(ref: str) -> str | None:
@@ -185,6 +187,40 @@ def git_landed_check(cwd: Path | str | None = None, base: str = "origin/dev") ->
             if out.returncode == 0 and re.fullmatch(r"[0-9a-f]{7,40}", sha):
                 return sha
         return None
+
+    def _blob(ref: str, path: str) -> str | None:
+        out = _git("rev-parse", "--verify", "--quiet", f"{ref}:{path}")
+        return out.stdout.strip() if out.returncode == 0 else None
+
+    def _fallback(sha: str, base_tip: str) -> dict[str, Any]:
+        """`git cherry` (patch-ids) missed it: a rebase with conflict resolution, a squash or a --no-ff train
+        changes patch-ids while the CONTENT landed. Judge content: post-image blobs, then range-diff.
+        Read-only plumbing; cwd is the git common dir, never the primary checkout's work tree."""
+        mb = _git("merge-base", base_tip, sha).stdout.strip()
+        if not mb:
+            return {"state": "pending"}
+        diff = _git("diff", "--no-renames", "--name-only", "-z", mb, sha)
+        if diff.returncode != 0:
+            return {"state": "unresolvable", "reason": (diff.stderr or "git diff failed").strip()[:200]}
+        files = [f for f in diff.stdout.split("\0") if f]
+        matched = [f for f in files if _blob(sha, f) == _blob(base_tip, f)]
+        unmatched = [f for f in files if f not in set(matched)]
+        if files and not unmatched:
+            return {"state": "landed", "dev_sha": base_tip, "method": "post_image"}
+        rd = _git("range-diff", "--no-color", f"{mb}..{sha}", f"{mb}..{base_tip}")
+        marks = []
+        if rd.returncode == 0:
+            for ln in rd.stdout.splitlines():
+                m = re.match(r"^\s*(\d+|-):\s+\S+\s+([=!<>])\s+(\d+|-):", ln)
+                if m and m.group(1) != "-":
+                    marks.append(m.group(2))
+        if marks and all(x == "=" for x in marks):
+            return {"state": "landed", "dev_sha": base_tip, "method": "range_diff"}
+        if matched or any(x in ("=", "!") for x in marks):
+            return {"state": "uncertain", "method": "post_image",
+                    "evidence": {"matched_files": matched[:50], "unmatched_files": unmatched[:50],
+                                 "range_diff": "".join(marks)[:200] or "none"}}
+        return {"state": "pending"}
 
     def check(branch: str, head_sha: str | None) -> dict[str, Any]:
         try:
@@ -201,10 +237,11 @@ def git_landed_check(cwd: Path | str | None = None, base: str = "origin/dev") ->
             cherry = _git("cherry", base, sha)
             if cherry.returncode != 0:
                 return {"state": "unresolvable", "reason": (cherry.stderr or "git cherry failed").strip()[:200]}
-            if any(ln.startswith("+") for ln in cherry.stdout.splitlines()):
-                return {"state": "pending"}
             anc = _git("merge-base", "--is-ancestor", sha, base_tip)
-            return {"state": "landed", "dev_sha": sha if anc.returncode == 0 else base_tip}
+            dev_sha = sha if anc.returncode == 0 else base_tip
+            if any(ln.startswith("+") for ln in cherry.stdout.splitlines()):
+                return _fallback(sha, base_tip)
+            return {"state": "landed", "dev_sha": dev_sha, "method": "cherry"}
         except (OSError, subprocess.SubprocessError) as exc:
             return {"state": "unresolvable", "reason": str(exc)[:200]}
     return check
@@ -581,26 +618,32 @@ class StewardStore:
         if "unresolvable" in states:
             return {"state": "unresolvable", "reason": next(x.get("reason") for x in results
                                                             if x.get("state") == "unresolvable")}
+        if "uncertain" in states:
+            return {"state": "uncertain", "evidence": [x.get("evidence") for x in results if x.get("state") == "uncertain"]}
         if all(st == "landed" for st in states):
-            return {"state": "landed", "dev_sha": results[-1].get("dev_sha")}
+            return {"state": "landed", "dev_sha": results[-1].get("dev_sha"),
+                    "method": "+".join(sorted({str(x.get("method") or "cherry") for x in results}))}
         return {"state": "pending"}
 
-    def _partition(self, pending: list[dict[str, Any]]) -> tuple[list, list, list]:
-        todo, landed, unres = [], [], []
+    def _partition(self, pending: list[dict[str, Any]]) -> tuple[list, list, list, list]:
+        todo, landed, unres, unsure = [], [], [], []
         for r in pending:
             c = self._classify(r)
             if c["state"] == "landed":
-                landed.append({**r, "landed_detected": c.get("dev_sha") or "origin/dev"})
+                landed.append({**r, "landed_detected": c.get("dev_sha") or "origin/dev",
+                               "method": c.get("method") or "cherry"})
             else:
                 todo.append(r)
                 if c["state"] == "unresolvable":
                     unres.append({**r, "unresolvable_reason": c.get("reason")})
-        return todo, landed, unres
+                elif c["state"] == "uncertain":
+                    unsure.append({**r, "evidence": c.get("evidence")})
+        return todo, landed, unres, unsure
 
     def inbox(self, include_done: bool = False) -> dict[str, Any]:
         rows = list(self.requests().values())
         queued = sorted((r for r in rows if r["status"] == "queued_for_steward"), key=lambda r: r["requested_at"])
-        pending, already_landed, unresolvable = self._partition(queued)
+        pending, already_landed, unresolvable, uncertain = self._partition(queued)
         shown = sorted(rows, key=lambda r: r["requested_at"]) if include_done else pending
         grouped: dict[str, list[str]] = {}
         for r in shown:
@@ -617,6 +660,7 @@ class StewardStore:
         out: dict[str, Any] = {
             "ok": True, "status": "inbox", "pending": len(pending), "by_requester": grouped,
             "requests": shown, "already_landed": already_landed, "unresolvable": unresolvable,
+            "uncertain": uncertain,
             "drain": drain,
             "next": ("drain ALL pending in one pass (enqueue each so riders batch in the merge queue; a multi-branch "
                      "delivery is ONE train then ONE enqueue), ack each "
@@ -624,8 +668,13 @@ class StewardStore:
                      "LANDED <dev sha> / EJECTED <reason> / DEPLOYED") if pending else "inbox empty",
         }
         if already_landed:
-            out["next"] += (f" | {len(already_landed)} request(s) are ALREADY in origin/dev (git cherry): ack them "
+            out["next"] += (f" | {len(already_landed)} request(s) are ALREADY in origin/dev (method per row: cherry|post_image|range_diff): ack them "
                             "landed in one call with release_steward action=reconcile confirm=True")
+        if uncertain:
+            out["next"] = (f"UNCERTAIN: {len(uncertain)} request(s) are PARTIALLY in origin/dev (see `uncertain[].evidence`: "
+                           "matched/unmatched files) - NEVER auto-acked; decide by hand (ask the requester / diff the "
+                           "unmatched files) | ") + out["next"]
+            self.audit("reconcile_uncertain", slugs=[r["slug"] for r in uncertain])
         if unresolvable:
             out["next"] += (f" | {len(unresolvable)} request(s) could not be resolved to a branch/sha: "
                             "ask the requester to re-request with head_sha=")
@@ -638,16 +687,20 @@ class StewardStore:
         if err:
             return err
         queued = [r for r in self.requests().values() if r["status"] == "queued_for_steward"]
-        _todo, landed, _unres = self._partition(sorted(queued, key=lambda r: r["requested_at"]))
+        _todo, landed, _unres, uncertain = self._partition(sorted(queued, key=lambda r: r["requested_at"]))
         slugs = [r["slug"] for r in landed]
         if not confirm:
             return {"ok": True, "status": "planned", "would_ack": slugs,
+                    "methods": {r["slug"]: r["method"] for r in landed},
+                    "uncertain": [{"slug": r["slug"], "evidence": r["evidence"]} for r in uncertain],
                     "next": "re-run with confirm=True to ack them landed" if slugs else "nothing already landed"}
         for r in landed:
-            self.ack(session_id, r["slug"], "landed", dev_sha=r["landed_detected"], note="reconciled: already in origin/dev")
+            self.ack(session_id, r["slug"], "landed", dev_sha=r["landed_detected"], note=f"reconciled: already in origin/dev ({r['method']})")
         if slugs:
-            self.audit("reconcile", session_id=session_id, slugs=slugs)
+            self.audit("reconcile", session_id=session_id, slugs=slugs,
+                       methods={r["slug"]: r["method"] for r in landed})
         return {"ok": True, "status": "reconciled", "acked": slugs,
+                "uncertain": [{"slug": r["slug"], "evidence": r["evidence"]} for r in uncertain],
                 "next": "SendMessage each requester LANDED" if slugs else "nothing already landed"}
 
     # roles (durable ROLE -> session map: names change on reboot, roles do not)
@@ -772,7 +825,7 @@ class StewardStore:
         lease, state = self.holder()
         reqs = list(self.requests().values())
         queued = [r for r in reqs if r["status"] == "queued_for_steward"]
-        _todo, landed, unres = self._partition(queued)
+        _todo, landed, unres, unsure = self._partition(queued)
         roles = self.roles()
         return {
             "ok": True, "status": "status", "state": state, "steward": self.public_holder(),
@@ -780,7 +833,7 @@ class StewardStore:
             "session_id": session_id, "ttl_default_s": self.default_ttl_s,
             "roles": roles["roles"], "stale_roles": roles["stale_roles"],
             "outbox": {"pending": len(queued) - len(landed), "already_landed": len(landed),
-                       "unresolvable": len(unres),
+                       "unresolvable": len(unres), "uncertain": len(unsure),
                        "enqueued": sum(1 for r in reqs if r["status"] == "enqueued")},
             "mine": self.mine(session_id)["requests"],
             "next": ("no live steward: ListAgents; the leader with shipping work claims + announces; everyone "

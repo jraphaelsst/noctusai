@@ -1,5 +1,7 @@
 # lais — decisions and open questions
 
+> **Note (2026-11-10):** One Chat (the WhatsApp operator bot) was retired 2026-11-04; Julia is the line. References below to One Chat, its toggle or its bridge are historical.
+
 ## Owner answers
 | Date | Question | Answer |
 | --- | --- | --- |

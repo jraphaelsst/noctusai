@@ -62,8 +62,8 @@ class TestCreateAndList:
 
     def test_unknown_and_legacy_agent_keys(self, rt):
         assert rt.post("/api/conversations", json={"agent_key": "ninguem"}).json()["code"] == "agent_not_found"
-        rt.studio.add_legacy_agent(rt.org_id, "one-chat", "One Chat")
-        resp = rt.post("/api/conversations", json={"agent_key": "one-chat"})
+        rt.studio.add_legacy_agent(rt.org_id, "legado", "Legado")
+        resp = rt.post("/api/conversations", json={"agent_key": "legado"})
         assert resp.status_code == 409
         assert resp.json()["code"] == "not_studio_agent"
         assert rt.get("/api/conversations", params={"agent_key": "ninguem"}).status_code == 404

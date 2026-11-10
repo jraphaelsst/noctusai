@@ -1,5 +1,7 @@
 # Agents unified model: CONTRACT
 
+> **Note (2026-11-10):** One Chat (the WhatsApp operator bot) was retired 2026-11-04; Julia is the line. References below to One Chat, its toggle or its bridge are historical.
+
 **Status:** W0 contract, implemented by S1/S2/S5 on `feat/agents-unified-model` · **Date:** 2026-10-29 · **Base:** `origin/dev@90aabe170` · **Branch-pointer project:** `agents-unified`.
 **Builds on:** `products/agents/projects/julia-v2/CONTRACT.md` (the canonical agent model: `definition_scope` plataforma/instancia, `conteudo_modo='linhas'`, the 7 content areas) and roadmap `project-history/roadmaps/product-agents-platform-2026-10.md` (D31: agent internals are superadmin-only, everyone else gets 404).
 
@@ -82,7 +84,7 @@ Auth: any org member (`require_member`); 401 unauthenticated, 403 for a non-memb
 
 ### 4.1 `GET /api/agents/painel` — the unified listing
 
-Any org member. Ensures the legacy rows and the org's platform instances exist first (`ensure_default_agents`, `ensure_instancias`), then returns one card per agent: `{items: AgentePainel[], total}`.
+Any org member. Ensures the org's platform instances exist first (`ensure_instancias`), then returns one card per agent: `{items: AgentePainel[], total}`.
 
 ### 4.2 `GET /api/agents/{key}/painel` — one card (the page header)
 

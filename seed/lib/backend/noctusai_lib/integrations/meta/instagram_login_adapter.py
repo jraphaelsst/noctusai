@@ -17,8 +17,8 @@ Model contrast (do NOT cross the two):
 | Conversations node | ``/{PAGE-ID}/conversations`` | ``/me/conversations`` |
 | Permissions | ``instagram_manage_messages`` + ``pages_manage_metadata`` | ``instagram_business_basic`` + ``instagram_business_manage_messages`` |
 
-S1 (this file) covers the **read** surface — list conversations + list
-messages. Send (``POST /me/messages``) is roadmap S4.
+Messaging surface: list conversations + list messages (read) and
+``send_instagram_message`` (``POST /me/messages``, user-initiated 24h window).
 
 **Insights surface** (``InstagramLoginInsightsAdapter``, 2026-10-06):
 ``get_profile`` / ``get_user_insights`` / ``list_media`` (paged) /
@@ -31,6 +31,12 @@ JSON shapes match the Facebook-Login model, so the same ``conversation_from_body
 dataclasses are reused (no second copy).
 """
 from __future__ import annotations
+
+# NOC-REMEDIATE[instagram-login-gaps]: the Instagram-Login surface lacks token refresh
+# (refresh_access_token / ig_refresh_token), comments (read/reply/hide/delete), content
+# publishing, mentions/tags and private replies; the Facebook-Login MetaOAuthAdapter has
+# some of them. Scopes, limits and policy per capability:
+# project-history/assistant-chatbot/research/instagram-shell.md — 2026-11-10
 
 import logging
 from typing import Any, Protocol

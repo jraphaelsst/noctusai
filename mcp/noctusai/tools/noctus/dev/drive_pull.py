@@ -32,22 +32,22 @@ import asyncio
 import hashlib
 import json
 import os
-import re
-import secrets
 import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
 
-from workspace import get_workspace_root
-
-REPO_ROOT = get_workspace_root()
+from . import _google_oauth as _oauth
+from ._google_oauth import (
+    DEFAULT_REDIRECT_URI,
+    REPO_ROOT,
+    private_root,
+    secure_dir,
+    write_private_json,
+)
 
 DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
-DEFAULT_REDIRECT_URI = "http://localhost:8011/api/integrations/accounts/google_drive/oauth/callback"
-GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 FOLDER_MIME = "application/vnd.google-apps.folder"
 _NATIVE_PREFIX = "application/vnd.google-apps."
 _NATIVE_EXPORT_SUFFIX = {
@@ -55,49 +55,29 @@ _NATIVE_EXPORT_SUFFIX = {
     "application/vnd.google-apps.spreadsheet": ".csv",
     "application/vnd.google-apps.presentation": ".txt",
 }
-_PENDING_TTL_S = 600
+_PENDING_TTL_S = _oauth.PENDING_TTL_S
 _LIST_PAGE_SIZE = 1000
 _NATIVE_MAX_BYTES = 20_000_000
 _DOWNLOAD_ATTEMPTS = 3  # 1 try + 2 retries (roadmap D3); only transient errors retry
 _RETRY_BACKOFF_S = (2.0, 5.0)
-_STATE_RE = re.compile(r"[A-Za-z0-9_-]{16,64}")
 
 
 # ─── paths ────────────────────────────────────────────────────────────────
 
 
-def private_root() -> Path:
-    """Root for private (PII-bearing) local data — outside every git tree."""
-    raw = os.environ.get("NOCTUS_PRIVATE_DIR") or str(Path.home() / ".noctusai" / "private")
-    root = Path(raw).expanduser().resolve()
-    repo = Path(REPO_ROOT).resolve()
-    if root == repo or repo in root.parents:
-        raise ValueError(
-            f"private root {root} is inside the repo {repo}; set NOCTUS_PRIVATE_DIR outside any git tree"
-        )
-    return root
-
-
 def _secure_dir(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
-    os.chmod(path, 0o700)
-    return path
+    return secure_dir(path)
 
 
 def _token_dir() -> Path:
-    return _secure_dir(private_root() / "google-drive")
+    return secure_dir(private_root() / "google-drive")
 
 
 def _token_path(account_email: str) -> Path:
     return _token_dir() / f"{account_email.strip().lower()}.json"
 
 
-def _write_private_json(path: Path, payload: dict[str, Any]) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+_write_private_json = write_private_json
 
 
 def safe_segment(name: str) -> str:
@@ -110,45 +90,19 @@ def safe_segment(name: str) -> str:
 
 # ─── oauth ────────────────────────────────────────────────────────────────
 
-
-def _client() -> tuple[str, str]:
-    from dotenv import load_dotenv
-
-    load_dotenv(Path(REPO_ROOT) / ".env")
-    cid = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
-    secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
-    if not cid or not secret:
-        raise RuntimeError(
-            "GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET are not set (repo .env) — "
-            "the social-wiring Google OAuth client is required"
-        )
-    return cid, secret
-
-
-def _provider():
-    from noctusai_lib.security.oauth.google_provider import GoogleProvider
-
-    cid, secret = _client()
-    return GoogleProvider(client_id=cid, client_secret=secret, use_pkce=True)
+_client = _oauth.client
+_provider = _oauth.provider
+_credentials = _oauth.credentials
+_about_email = _oauth.about_email
 
 
 def auth_start(account_email: str, redirect_uri: str = DEFAULT_REDIRECT_URI) -> dict[str, Any]:
-    state = secrets.token_urlsafe(24)
-    auth = asyncio.run(_provider().authorization_url(state, [DRIVE_READONLY_SCOPE], redirect_uri))
-    _write_private_json(
-        _token_dir() / f".pending-{state}.json",
-        {
-            "account_email": account_email.strip().lower(),
-            "redirect_uri": redirect_uri,
-            "code_verifier": auth.code_verifier,
-            "created_at": time.time(),
-        },
-    )
+    state, url = _oauth.start_consent(_token_dir(), account_email, [DRIVE_READONLY_SCOPE], redirect_uri)
     return {
         "ok": True,
         "action": "auth_start",
         "account_email": account_email,
-        "consent_url": auth.url + f"&login_hint={account_email}",
+        "consent_url": url,
         "state": state,
         "next": (
             "Open consent_url, sign in as account_email and allow. The browser then lands on a page "
@@ -157,50 +111,11 @@ def auth_start(account_email: str, redirect_uri: str = DEFAULT_REDIRECT_URI) -> 
     }
 
 
-def _credentials(refresh_token: str, scopes: list[str]):
-    from google.oauth2.credentials import Credentials
-
-    cid, secret = _client()
-    return Credentials(
-        token=None,
-        refresh_token=refresh_token,
-        token_uri=GOOGLE_TOKEN_URI,
-        client_id=cid,
-        client_secret=secret,
-        scopes=scopes,
-    )
-
-
-def _about_email(creds) -> str:
-    from googleapiclient.discovery import build
-
-    svc = build("drive", "v3", credentials=creds, cache_discovery=False)
-    about = svc.about().get(fields="user(emailAddress)").execute()
-    return str(about.get("user", {}).get("emailAddress", "")).lower()
-
-
 def auth_finish(redirected_url: str) -> dict[str, Any]:
-    q = parse_qs(urlparse(redirected_url).query)
-    if "error" in q:
-        return {"ok": False, "action": "auth_finish", "error": f"google refused consent: {q['error'][0]}"}
-    code = (q.get("code") or [""])[0]
-    state = (q.get("state") or [""])[0]
-    if not code or not state:
-        return {"ok": False, "action": "auth_finish", "error": "redirected_url has no code/state"}
-    if not _STATE_RE.fullmatch(state):
-        return {"ok": False, "action": "auth_finish", "error": "malformed state"}
-    pending_path = _token_dir() / f".pending-{state}.json"
-    if not pending_path.exists():
-        return {"ok": False, "action": "auth_finish", "error": "unknown state — run auth_start again"}
-    pending = json.loads(pending_path.read_text(encoding="utf-8"))
-    pending_path.unlink()
-    if time.time() - float(pending["created_at"]) > _PENDING_TTL_S:
-        return {"ok": False, "action": "auth_finish", "error": "consent expired (>10 min) — run auth_start again"}
-    tokens = asyncio.run(
-        _provider().exchange_code(code, state, pending["redirect_uri"], pending["code_verifier"])
-    )
-    if not tokens.refresh_token:
-        return {"ok": False, "action": "auth_finish", "error": "google returned no refresh_token"}
+    consent = _oauth.consume_consent(_token_dir(), redirected_url)
+    if consent.error:
+        return {"ok": False, "action": "auth_finish", "error": consent.error}
+    tokens, pending = consent.tokens, consent.pending
     granted = list(tokens.scope or [])
     if DRIVE_READONLY_SCOPE not in granted:
         return {"ok": False, "action": "auth_finish", "error": f"drive.readonly not granted (got {granted})"}

@@ -40,7 +40,6 @@ from uuid import UUID
 from pydantic import Field, StrictBool, field_validator, model_validator
 
 from app.schemas.studio import CAMINHO_PATTERN, SLUG_PATTERN, EntryTipo
-from app.stores.agents import DEFAULT_AGENT_KEYS
 from app.stores.studio_definitions import ANTHROPIC_MODELS, EFFORTS, SectionInput
 from app.studio.bundles import compile_version
 from app.stores.studio_knowledge import DOCUMENT_TYPES, CollectionInput, source_sha_of
@@ -343,8 +342,6 @@ def import_bundle(
     ``ValueError`` / ``StudioConflict`` propagate to the route's mapping."""
     if bundle.agente.key != key:
         raise ImportRefused(422, "key_mismatch", "A chave do pacote não corresponde à rota.")
-    if key in DEFAULT_AGENT_KEYS:
-        raise ImportRefused(409, "not_studio_agent", "Este agente não é gerenciado pelo Studio.")
 
     out = _Summary(dry_run=dry_run)
     out.secoes = len(bundle.secoes)

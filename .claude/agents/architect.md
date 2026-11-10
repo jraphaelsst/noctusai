@@ -29,7 +29,6 @@ owns_kb:
   - CONTEXT/PATTERNS/architect/two-session-architect-operator.md
   - CONTEXT/PATTERNS/architect/autonomous-operator-via-subagent.md
   - CONTEXT/PATTERNS/architect/project-execution.md
-  - CONTEXT/PATTERNS/architect/product-working-scope.md
   - CONTEXT/PATTERNS/architect/component-list-and-validation.md
   - CONTEXT/GUIDES/new-product.md
   - CONTEXT/GUIDES/seed-first-design.md
@@ -37,6 +36,7 @@ owns_kb:
   - CONTEXT/GUIDES/product-body-caching.md
   - CONTEXT/PATTERNS/architect/architecture-craft-canon.md
   - CONTEXT/PATTERNS/architect/orchestration-craft-canon.md
+  - CONTEXT/PATTERNS/architect/team-of-teams.md
   - CONTEXT/PATTERNS/common/dispatch-with-project-and-notes.md
   - CONTEXT/PATTERNS/common/lenses-applied-trailer.md
   - CONTEXT/PATTERNS/common/persistent-files-absorption.md
@@ -108,11 +108,11 @@ Own the **how** at system level. Make the technical decisions downstream enginee
 - Never a code edit; never a commit; never a push.
 
 ## Owned KB depth (the canonical territory)
-**Craft canon** → `KB § PATTERNS/architect/architecture-craft-canon.md` · `KB § PATTERNS/architect/orchestration-craft-canon.md` (the tech-lead's canon: Q1 who builds, agent↔agent protocol, session↔session peer protocol, specialist routing table).
+**Craft canon** → `KB § PATTERNS/architect/architecture-craft-canon.md` · `KB § PATTERNS/architect/orchestration-craft-canon.md` (the tech-lead's canon: Q1 who builds, agent↔agent protocol, session↔session peer protocol, specialist routing table). · `KB § PATTERNS/architect/team-of-teams.md` (one tree deployer, self-managing teams; peer decisions = position reports up, common ground down; proposals dealt with or forwarded).
 **Seed** → `KB § PATTERNS/architect/seed-canonical-defaults.md` · `KB § PATTERNS/architect/seed-lib-layout.md` · `KB § PATTERNS/architect/seed-workspace.md` · `KB § PATTERNS/architect/seed-absorption.md` · `KB § PATTERNS/architect/absorbed-product-seed-shape-seam.md` · `KB § PATTERNS/architect/shared-library-conventions.md`.
 **Orchestration & dispatch** → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md` · `KB § PATTERNS/architect/git-branch-model.md` · `KB § PATTERNS/architect/branching-and-merging.md` · `KB § PATTERNS/architect/branching-dispatch.md` · `KB § PATTERNS/architect/branch-tree-tracking.md` (global live map of git×claude trees — pre-dispatch, contextualize on dev's `branch-tree.ndjson`; collision-zones before they happen) · `KB § PATTERNS/common/ledger-store.md` (the append-only ledgers live on the orphan `origin/ledgers` branch, plumbing-written; read them via `read_dual`, never commit them to dev) · `KB § PATTERNS/architect/dispatch-engineer-tuning.md` · `KB § PATTERNS/architect/master-tree-parallel-batches.md` · `KB § PATTERNS/architect/two-session-architect-operator.md` · `KB § PATTERNS/architect/autonomous-operator-via-subagent.md`.
 **Project execution** → `KB § PATTERNS/architect/project-execution.md`.
-**Product working scope** → `KB § PATTERNS/architect/product-working-scope.md`.
+**Product working scope** → owned by `product-manager` since 2026-11-09 (D31; the owner decides each product's state); architect reads it before allocating work: `KB § PATTERNS/architect/product-working-scope.md`.
 **MCP toolkit** → owned by `tooling-engineer` since 2026-11-05 (consult it for tool/keeper/cache design); architect keeps `KB § PATTERNS/architect/component-list-and-validation.md`.
 **Guides** → `KB § GUIDES/new-product.md` · `KB § GUIDES/seed-first-design.md` · `KB § GUIDES/absorb-seed-workspace.md` · `KB § GUIDES/product-body-caching.md`.
 **Knowledge lifecycle + codification** → `KB § PATTERNS/common/methodology-codification-pipeline.md` · `KB § PATTERNS/common/scoped-auto-improvement.md` · `KB § PATTERNS/common/persistent-files-absorption.md` · `KB § PATTERNS/common/learn-before-archive.md` · `KB § PATTERNS/common/roadmap-tracking.md`.

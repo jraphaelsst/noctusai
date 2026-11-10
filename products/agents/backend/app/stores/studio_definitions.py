@@ -47,6 +47,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Protocol
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from app.stores._db_errors import StudioConflict, VersionImmutable, exec_query, exec_rpc
@@ -500,6 +501,15 @@ def _check_camada(get_by_id, before: "StudioAgentRecord", fields: dict[str, Any]
         if cursor == before.id or nivel >= PROFUNDIDADE_CAMADAS:
             raise StudioConflict("pai_invalido", "the layer chain loops or is too deep")
         cursor = get_by_id(cursor).pai_agent_id
+
+
+def validar_camada_nova(get_by_id, org_id: UUID, fields: dict[str, Any], *, instanciavel: bool = False,
+                        owner_product: str | None = None) -> None:
+    """:func:`_check_camada` for a definition that does not exist yet: run BEFORE the row is created, so a refused
+    layer never leaves an un-layered definition behind (the create + update_definicao pair is not one transaction)."""
+    # _check_camada reads only these five attributes of `before`; a not-yet-created row has no id (no self-parent).
+    novo = SimpleNamespace(id=None, org_id=org_id, modelo=False, instanciavel=instanciavel, owner_product=owner_product)
+    _check_camada(get_by_id, novo, fields)  # type: ignore[arg-type]
 
 
 def validar_superficie_claude(sup: Any, kind: str | None = None) -> None:

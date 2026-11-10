@@ -137,12 +137,6 @@ class TestAgents:
         assert resp.status_code == 409
         assert resp.json()["code"] == "key_taken"
 
-    @pytest.mark.parametrize("key", ["one-chat"])
-    def test_legacy_default_keys_are_reserved(self, studio, key):
-        resp = studio.post(BASE, json={"key": key, "nome": "X"})
-        assert resp.status_code == 409
-        assert resp.json()["code"] == "key_taken"
-
     def test_the_retired_chat_key_is_free_for_a_new_agent(self, studio):
         """Renata cutover: `bia` is no longer a seeded code-defined key -- a new (marketing) Bia can take it."""
         assert studio.post(BASE, json={"key": "bia", "nome": "Bia"}).status_code == 201

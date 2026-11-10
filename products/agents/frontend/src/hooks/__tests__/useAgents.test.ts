@@ -32,32 +32,28 @@ const BIA = {
   runtime: "claude_sdk",
   owner_product: null,
   ativo: true,
-  estado_externo: null,
-  aviso: null,
 };
 
-const ONE_CHAT = {
-  key: "one-chat",
-  nome: "One Chat",
-  runtime: "external",
-  owner_product: "social-wiring",
+const OUTRO = {
+  key: "outro",
+  nome: "Outro",
+  runtime: "llm",
+  owner_product: null,
   ativo: false,
-  estado_externo: { auto_reply_enabled: false },
-  aviso: null,
 };
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("useAgents", () => {
   it("GETs /api/agents and returns the item list", async () => {
-    mockGet.mockResolvedValue({ items: [BIA, ONE_CHAT], total: 2 });
+    mockGet.mockResolvedValue({ items: [BIA, OUTRO], total: 2 });
     const { useAgents } = await import("@/hooks/useAgents");
     const qc = newClient();
     const { result } = renderHook(() => useAgents(), { wrapper: wrapper(qc) });
 
     await waitFor(() => expect(result.current.showSkeleton).toBe(false));
     expect(mockGet).toHaveBeenCalledWith("/api/agents");
-    expect(result.current.data?.map((a) => a.key)).toEqual(["bia", "one-chat"]);
+    expect(result.current.data?.map((a) => a.key)).toEqual(["bia", "outro"]);
   });
 });
 
@@ -79,7 +75,7 @@ describe("useToggleAgent", () => {
   });
 
   it("optimistically flips ativo, then rolls back on a 502 upstream_failed", async () => {
-    mockGet.mockResolvedValue({ items: [ONE_CHAT], total: 1 });
+    mockGet.mockResolvedValue({ items: [OUTRO], total: 1 });
     const { ApiError } = await import("@/lib/errors");
     // A controllable, not-yet-settled promise — lets the test observe the
     // OPTIMISTIC state (onMutate has run, the request is still in flight)
@@ -98,7 +94,7 @@ describe("useToggleAgent", () => {
     expect(agents.result.current.data?.[0].ativo).toBe(false);
 
     const toggle = renderHook(() => useToggleAgent(), { wrapper: wrapper(qc) });
-    const attempt = toggle.result.current.mutateAsync({ key: "one-chat", ativo: true });
+    const attempt = toggle.result.current.mutateAsync({ key: "outro", ativo: true });
     // Swallow the eventual rejection here too, so a slow assertion below
     // never leaves an unhandled-rejection warning from this same promise.
     attempt.catch(() => {});

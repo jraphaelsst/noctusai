@@ -1,15 +1,15 @@
 # Engineer operating discipline — the senior engineer's craft, for every executor
 
-**What it is.** How a dispatched engineer turns a brief into a change a reviewer can trust: understand the ask, plan the slice, prove behaviour test-first, change the code, review your own diff, commit in reviewable units, check the consumers of shared code, and know when you are done. It is the shared craft reference for every executor lens — `engineer-seed`, `backend-engineer`, `frontend-engineer`, `devops-engineer` — and for the tech-lead when it works inline.
+**What it is.** How a dispatched engineer turns a brief into a change a reviewer can trust: understand the ask, plan the slice, prove behaviour test-first, change the code, review your own diff, commit in reviewable units, check the consumers of shared code, and know when you are done. It is the shared craft reference for every executor lens — `product-engineer`, `backend-engineer`, `frontend-engineer`, `devops-engineer` — and for the tech-lead when it works inline.
 
 **Why it exists.** The 2026-11-05 read-only audit of the `architect` and `engineer-seed` agents (agent-refinement project; the audit file lives in that project folder and goes when the project is archived — this doc carries its conclusions) found `engineer-seed.md` excellent as a *safety and integration* protocol (worktree, base, commit, no bypass, the return contract) and thin as a *craft* discipline. It did not say how to understand the ask, write the test first, keep a commit reviewable, review your own diff, or know you are done. The measured misses of the 2026-11-04 Sonnet trial are all craft misses, not safety misses (`KB § PATTERNS/architect/dispatch-engineer-tuning.md` §4·1, :89-93).
 
-**How to use it.** `.claude/agents/engineer-seed.md` carries one line per rule with a pointer here; open the section when its situation arises. The house mechanism wins over the general canon. Git and integration **mechanics** — worktree, base check, branch pointer, `git add <paths>`, never push, `task_branch integrate` — are **not** restated here: they live in `engineer-seed.md` §1/§3/§4 and `KB § PATTERNS/architect/branching-and-merging.md`. This doc is the craft; those are the plumbing.
+**How to use it.** `.claude/agents/product-engineer.md` carries one line per rule with a pointer here; open the section when its situation arises. The house mechanism wins over the general canon. Git and integration **mechanics** — worktree, base check, branch pointer, `git add <paths>`, never push, `task_branch integrate` — are **not** restated here: they live in `product-engineer.md` §1/§3/§4 and `KB § PATTERNS/architect/branching-and-merging.md`. This doc is the craft; those are the plumbing.
 
 | Standard term | House term | Where the house version lives |
 |---|---|---|
 | requirements clarification | restate the ask + `interpretation:` return line | §2 here |
-| vertical slice / small CL | file-disjoint slice | `engineer-seed.md` §2; §3 here |
+| vertical slice / small CL | file-disjoint slice | `product-engineer.md` §2; §3 here |
 | TDD, red-green-refactor | red-first | §4 here; `KB § PATTERNS/common/methodology-execution-discipline.md` §4, §8 |
 | test double via dependency injection | test through the seam (never self-monkeypatch) | `KB § PATTERNS/compliance/testing.md` § No self-monkeypatching (:486); `KB § PATTERNS/backend/di-test-seam.md` |
 | opportunistic refactoring | fix-on-contact (inside the slice) / `drift-found:` (outside) | §5 here; `KB § PATTERNS/common/drift-fix-on-contact.md` |
@@ -18,13 +18,13 @@
 | Conventional Commits → SemVer | commit subject + `!` / `BREAKING CHANGE:` | §7 here; `KB § PATTERNS/common/versioning.md` § Conventional Commits integration |
 | Hyrum's law consumer check | consumer check before touching a seed/lib export | §5 here; `KB § PATTERNS/architect/architecture-craft-canon.md` §10 |
 | Definition of Done | DoD checklist (mirrors `BEFORE_RETURNING_BLOCK`) | §8 here |
-| definition of the integration | "done means committed" + the tech-lead's merged-tip gates | `engineer-seed.md` §3 |
+| definition of the integration | "done means committed" + the tech-lead's merged-tip gates | `product-engineer.md` §3 |
 
 ---
 
 ## 1 · Scope — executor craft, not integration mechanics
 
-In scope: everything between reading the brief and writing the return. Out of scope, by pointer only: worktree and base verification, the branch pointer, commit staging rules, the pre-commit hook, "prove it landed", never push, integration (`engineer-seed.md` §1, §3); dispatch knobs and brief shape (`dispatch-engineer-tuning.md` §4d); merge mechanics (`KB § PATTERNS/architect/branching-and-merging.md`).
+In scope: everything between reading the brief and writing the return. Out of scope, by pointer only: worktree and base verification, the branch pointer, commit staging rules, the pre-commit hook, "prove it landed", never push, integration (`product-engineer.md` §1, §3); dispatch knobs and brief shape (`dispatch-engineer-tuning.md` §4d); merge mechanics (`KB § PATTERNS/architect/branching-and-merging.md`).
 
 ---
 
@@ -40,7 +40,7 @@ In scope: everything between reading the brief and writing the return. Out of sc
 3. List every **load-bearing qualifier** and the interpretation you chose: *latest / newest* (by which timestamp? one row or a window?), *only* (exclusive of what?), *per X* (grouped by which key?), *ordering* (ascending by what, ties broken how?), *window* (inclusive bounds? timezone?), *all* (including asleep products? archived rows?), *each* (each product, each org, each call?).
 4. State assumptions you are making that the brief does not settle.
 5. If two interpretations lead to materially different code and the brief, PROJECT.md and the codebase do not decide between them, **stop and surface** (`noctus.dev.surface_to_tech_lead`; `KB § PATTERNS/common/surface-and-resume-tooling.md`). If one interpretation is clearly intended, proceed and record it.
-6. Echo the result in the return as one `interpretation:` line (format in `engineer-seed.md` §4).
+6. Echo the result in the return as one `interpretation:` line (format in `product-engineer.md` §4).
 
 **Checklist.** Acceptance restated · qualifiers listed with chosen meaning · assumptions stated · ambiguity surfaced or resolved with a reason · `interpretation:` line written.
 
@@ -52,7 +52,7 @@ In scope: everything between reading the brief and writing the return. Out of sc
 
 **Principle.** Google's *Small CLs* guide: the ideal change is "one self-contained change" that addresses just one thing — often a slice of a feature rather than the whole feature. Fowler's *Yagni*: do not build capability for a presumed future need.
 
-**House rules (by pointer).** Touch only the brief's `Files-to-modify`; a needed extra file ⇒ STOP and surface (`engineer-seed.md` §2 "File-disjoint"). Time-box 2-3 h unless the brief says otherwise; over ⇒ ship a focused subset and **name what was deferred and why** — never shrink silently (`engineer-seed.md` §2 "Time-box").
+**House rules (by pointer).** Touch only the brief's `Files-to-modify`; a needed extra file ⇒ STOP and surface (`product-engineer.md` §2 "File-disjoint"). Time-box 2-3 h unless the brief says otherwise; over ⇒ ship a focused subset and **name what was deferred and why** — never shrink silently (`product-engineer.md` §2 "Time-box").
 
 **Procedure.**
 1. Find prior art first — cache-first (`noctus_dev_{kb,code,memory}_search`, `noctus_graph_*`, `keeper_pattern_lookup`), then confirm with grep/Read. A correct fix for a solved problem ships as a fork (`methodology-execution-discipline.md` §5).
@@ -141,7 +141,7 @@ In scope: everything between reading the brief and writing the return. Out of sc
 **Principle.** Google *Small CLs*: "It's usually best to do refactorings in a separate CL from feature changes or bug fixes." Beck (*Tidy First?*): separate **tidyings** (structure changes that do not alter behaviour) from **behaviour changes**, so each is easy to review and to revert. Beams, *How to Write a Git Commit Message*: separate subject from body with a blank line, keep the subject short, imperative mood, no trailing period, wrap the body at 72, and use the body to explain **what and why** rather than how. Conventional Commits 1.0.0: `type(scope): description`; a breaking change is marked by `!` immediately before the `:` and/or a `BREAKING CHANGE: <description>` footer, and correlates with a SemVer MAJOR.
 
 **House rules.**
-- Subject: Conventional Commits, lower-case type, house style `feat(scope): …` (`engineer-seed.md` §3). The Conventional Commits prefix wins over Beams' "capitalize the subject"; the other Beams rules apply as written.
+- Subject: Conventional Commits, lower-case type, house style `feat(scope): …` (`product-engineer.md` §3). The Conventional Commits prefix wins over Beams' "capitalize the subject"; the other Beams rules apply as written.
 - One logical change per commit. Several commits per slice is normal.
 - **Tidy and behaviour in separate commits.** A rename, a move or an extract goes first, with no behaviour change, then the behaviour commit. A fix-on-contact inside the slice gets its own commit (§5).
 - **The body says why.** Two or three lines: the problem, the cause, why this fix. The diff already says how.
@@ -169,7 +169,7 @@ it; booking it inside the principal hid it from both.
 
 **Principle.** The Scrum Guide calls the Definition of Done "a formal description of the state of the Increment when it meets the quality measures required for the product" — work that does not meet it is not part of the increment. One shared list, applied every time, beats per-task judgment.
 
-**The house DoD.** The mandatory core is the `### Before returning` block, whose single source of truth is `BEFORE_RETURNING_BLOCK` in `mcp/noctusai/tools/noctus/dev/engineer_brief_compose.py` (:415). Read it there; this list **references** it and adds the craft items around it. It does not copy it, because a copy drifts: on 2026-11-05 `engineer-seed.md` §3 listed three items while the composer had four.
+**The house DoD.** The mandatory core is the `### Before returning` block, whose single source of truth is `BEFORE_RETURNING_BLOCK` in `mcp/noctusai/tools/noctus/dev/engineer_brief_compose.py` (:415). Read it there; this list **references** it and adds the craft items around it. It does not copy it, because a copy drifts: on 2026-11-05 `product-engineer.md` §3 listed three items while the composer had four.
 
 A slice is done when:
 1. **Acceptance met**, as restated (§2), with every qualifier honoured.
@@ -179,8 +179,8 @@ A slice is done when:
 5. **Self-review done**, including the re-run after any late rename (§6).
 6. **Docs updated** in the same commit as the code they describe.
 7. **Wired** — everything added is reachable (§5 table).
-8. **Committed and landed** — `git -C <wt> show --stat HEAD` lists your files (`engineer-seed.md` §3 "Prove it landed"; "Done means committed").
-9. **Return legs written** — `codification-events`, `drift-found`, `scoped-improvement` present even when clean, because absence is a positive claim (`engineer-seed.md` §4; `KB § PATTERNS/common/scoped-auto-improvement.md`).
+8. **Committed and landed** — `git -C <wt> show --stat HEAD` lists your files (`product-engineer.md` §3 "Prove it landed"; "Done means committed").
+9. **Return legs written** — `codification-events`, `drift-found`, `scoped-improvement` present even when clean, because absence is a positive claim (`product-engineer.md` §4; `KB § PATTERNS/common/scoped-auto-improvement.md`).
 
 ---
 
@@ -189,7 +189,7 @@ A slice is done when:
 - `Status: ready` only when the DoD holds. `partial` when a subset shipped — name the deferred part and why. `blocked` when you stopped to surface.
 - Report the commands you ran and their result counts, not "tests pass". A verdict you read from a pipe's tail or a watcher is not the verdict of the command you were judging (`methodology-execution-discipline.md` §6).
 - A red from an invalid harness (missing deps, dead dev-server, stale tree) is evidence about the setup, not your code — say so (`methodology-execution-discipline.md` §10).
-- Not clean ⇒ the 5-category block (Errors · Mistakes-slips · Lessons · Interesting · Knowledge) + an architect-followup line (`engineer-seed.md` §4).
+- Not clean ⇒ the 5-category block (Errors · Mistakes-slips · Lessons · Interesting · Knowledge) + an architect-followup line (`product-engineer.md` §4).
 
 ---
 
@@ -312,4 +312,4 @@ Accessed 2026-11-05. Each URL was fetched and confirmed for the agent-refinement
 
 ## Composes with
 
-`.claude/agents/engineer-seed.md` (the protocol that points here) · `KB § PATTERNS/architect/dispatch-engineer-tuning.md` (the measured misses and the brief composer) · `KB § PATTERNS/common/methodology-execution-discipline.md` · `KB § PATTERNS/compliance/testing.md` · `KB § PATTERNS/common/gate-methodology-sync.md` · `KB § PATTERNS/common/versioning.md` · `KB § PATTERNS/architect/architecture-craft-canon.md` (the architect's half: reversibility, expand/contract, fitness functions).
+`.claude/agents/product-engineer.md` (the protocol that points here) · `KB § PATTERNS/architect/dispatch-engineer-tuning.md` (the measured misses and the brief composer) · `KB § PATTERNS/common/methodology-execution-discipline.md` · `KB § PATTERNS/compliance/testing.md` · `KB § PATTERNS/common/gate-methodology-sync.md` · `KB § PATTERNS/common/versioning.md` · `KB § PATTERNS/architect/architecture-craft-canon.md` (the architect's half: reversibility, expand/contract, fitness functions).

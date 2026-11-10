@@ -56,6 +56,9 @@ catalogue · 13 · Test smells with our examples · 14 · Author's test checklis
 
 Answer these before the first test is written; each points to its section.
 
+- [ ] **Does every acceptance criterion have at least one test?** Each criterion in the spec
+  (`KB § PATTERNS/product/product-management-canon.md` §4) is cited by id in a test name or comment,
+  the traceability link (dev_team `qa_engineer.md`:11); the engineer still writes the red-first test.
 - [ ] **What could break, and what would it cost?** Money, auth, consent, tenant isolation and data
   written to a third party rank first (Google's "Beyoncé Rule": if you liked it, you should have put a
   test on it — SWE at Google ch. 11).

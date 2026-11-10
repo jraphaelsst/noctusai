@@ -1507,7 +1507,7 @@ The dispatched dependency team is itself a normal engineer dispatch (briefed, sc
 | Task shape | Where it lands |
 |---|---|
 | <100 LoC ∧ <3 files ∧ single-phase reasoning | **Inline** — architect does it directly with `Edit`/`Read`/`Bash`, no `Agent` dispatch. |
-| ≥100 LoC ∨ ≥3 files ∨ multi-phase (design + apply + test) | **Dispatch** — engineer-seed subagent, §18.2 bet holds. |
+| ≥100 LoC ∨ ≥3 files ∨ multi-phase (design + apply + test) | **Dispatch** — product-engineer subagent, §18.2 bet holds. |
 | 2+ small file-disjoint tasks (each under the cutoff) | **Compound brief** — ONE engineer, multiple deliverables in the same brief ("Engineer X — three small fixes: A in file_1, B in file_2, C in file_3"). One contextualization, N deliverables. |
 
 **How to estimate at dispatch time.** *Open the files the change would touch before deciding* (per [[KB § 01-PHILOSOPHY § Estimate off evidence]] — same rule that governs A/B/C session-size estimation; the only new piece is applying it at *dispatch sizing*).

@@ -7,10 +7,6 @@ Seed IO shape: ``CredentialProber`` Protocol + ``FakeCredentialProber`` +
 Each probe is the cheapest authenticated READ the credential is for:
 
 - academia token → ``GET /api/decisions`` (``academia:read``, contract §B.2).
-- social-wiring token → ``GET /api/agents-bridge/one-chat/{connection_id}``
-  (§E.6). With no connection configured yet the nil UUID is probed: a 404
-  can only come AFTER auth + scope + issuer checks passed, so it proves the
-  token works.
 - Anthropic key → ``GET https://api.anthropic.com/v1/models`` (lists models;
   spends no tokens).
 
@@ -22,14 +18,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Callable, Literal, Protocol
-from uuid import UUID
 
 import httpx
 
 from app.credentials.registry import (
     ACADEMIA_API_TOKEN,
     ANTHROPIC_API_KEY,
-    SOCIAL_WIRING_API_TOKEN,
     CredentialSpec,
 )
 
@@ -46,7 +40,6 @@ __all__ = [
 
 ProbeStatus = Literal["ok", "unauthorized", "forbidden", "unreachable", "error"]
 
-_NIL_UUID = UUID("00000000-0000-0000-0000-000000000000")
 _ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
 _ANTHROPIC_VERSION = "2023-06-01"
 _TIMEOUT_SECONDS = 10.0
@@ -76,9 +69,7 @@ class ProbeResult:
 
 
 class CredentialProber(Protocol):
-    async def probe(
-        self, spec: CredentialSpec, secret: str, *, connection_id: UUID | None = None
-    ) -> ProbeResult: ...
+    async def probe(self, spec: CredentialSpec, secret: str) -> ProbeResult: ...
 
 
 class FakeCredentialProber:
@@ -91,9 +82,7 @@ class FakeCredentialProber:
         self.by_secret: dict[str, ProbeResult] = {}
         self.calls: list[tuple[str, str]] = []
 
-    async def probe(
-        self, spec: CredentialSpec, secret: str, *, connection_id: UUID | None = None
-    ) -> ProbeResult:
+    async def probe(self, spec: CredentialSpec, secret: str) -> ProbeResult:
         self.calls.append((spec.name, secret))
         if secret in self.by_secret:
             return self.by_secret[secret]
@@ -128,19 +117,12 @@ class HttpCredentialProber:
         self._transport = transport
         self._anthropic_url = anthropic_models_url
 
-    async def probe(
-        self, spec: CredentialSpec, secret: str, *, connection_id: UUID | None = None
-    ) -> ProbeResult:
+    async def probe(self, spec: CredentialSpec, secret: str) -> ProbeResult:
         not_found_is_ok = False
         params: dict[str, int] | None = None
         if spec.name == ACADEMIA_API_TOKEN.name:
             url = f"{self._base_url_for('academia-de-reciclagem').rstrip('/')}/api/decisions"
             headers = {"Authorization": f"Bearer {secret}"}
-        elif spec.name == SOCIAL_WIRING_API_TOKEN.name:
-            target = connection_id or _NIL_UUID
-            url = f"{self._base_url_for('social-wiring').rstrip('/')}/api/agents-bridge/one-chat/{target}"
-            headers = {"Authorization": f"Bearer {secret}"}
-            not_found_is_ok = True
         elif spec.name == ANTHROPIC_API_KEY.name:
             url = self._anthropic_url
             headers = {"x-api-key": secret, "anthropic-version": _ANTHROPIC_VERSION}

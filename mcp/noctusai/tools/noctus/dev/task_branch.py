@@ -1875,6 +1875,12 @@ def _default_doc_staleness_check(abs_wt_path: str, rev_range: str) -> list[dict]
     return check_range(Path(abs_wt_path), rev_range)
 
 
+def _default_decision_audit(abs_wt_path: str, base: str, slice_id: str) -> dict:
+    """Executor decision-rights audit on the merge path (contract decision-log §10): WARN-only, with telemetry."""
+    from tools.noctus.dev.decision_log import merge_path_audit  # lazy import
+    return merge_path_audit(Path(abs_wt_path), slice_id=slice_id, base=base)
+
+
 def format_doc_staleness_block(issues: list[dict], rev_range: str) -> str:
     """Fast-fail text: the exact docs + the trailer template, like the hook prints."""
     docs = sorted({str(i.get("doc", "?")) for i in issues})
@@ -2536,6 +2542,7 @@ def task_branch(
     slice_scores_reader: "Callable[[], list[dict]] | None" = None,
     merged_tip_baseline: Callable[[list[str], str], dict[str, Any]] | None = None,
     doc_staleness_check: Callable[[str, str], list[dict]] | None = None,
+    decision_audit_check: Callable[[str, str, str], dict] | None = None,
     regenerate_kb_counts_at_integrate: bool = True,
     kb_counts_regenerate: "Callable[[str], dict[str, Any]] | None" = None,
     pointer_ops: "PointerOps | None" = None,
@@ -2654,6 +2661,9 @@ def task_branch(
     # Doc-staleness pre-flight (same keeper as the pre-push hook) - production only.
     doc_staleness_fn = doc_staleness_check if doc_staleness_check is not None else (
         _default_doc_staleness_check if run is None else None)
+    # Decision-rights audit (warn-only, contract decision-log §10) - production only, like doc-staleness.
+    decision_audit_fn = decision_audit_check if decision_audit_check is not None else (
+        _default_decision_audit if run is None else None)
     # Dev baseline for red merged-tip gates — same production-only rule: it
     # creates a real worktree and runs real gates, never under an injected `run`.
     merged_tip_baseline_fn = merged_tip_baseline if merged_tip_baseline is not None else (
@@ -3052,6 +3062,12 @@ def task_branch(
                         return {**plan, "status": "doc_staleness", "exit_code": 1,
                                 "doc_staleness": ds_issues,
                                 "reason": block, "message": block + " Not rebased, not pushed."}
+                    if decision_audit_fn is not None:
+                        try:  # warn-only: never blocks the merge path; the summary rides on every result
+                            plan = {**plan, "decision_audit": decision_audit_fn(wt_path, _mb.strip(), slug)}
+                        except Exception as exc:  # unmeasurable is surfaced, never a silent pass
+                            plan = {**plan, "decision_audit": {"mode": "warn", "status": "inconclusive",
+                                                                "error": f"decision audit errored: {exc}"}}
             if attempt > 1:
                 # Safety net: a previous attempt's KB-count regen may have left
                 # its DERIVED docs dirty/staged; they are regenerated after this

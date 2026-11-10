@@ -300,7 +300,7 @@ class TestContexto:
         seed(revoked_at=now.isoformat())
         seed(expires_at=(now - timedelta(days=1)).isoformat())
         seed(issuer="outro")
-        seed(scopes=["social-wiring:one-chat:read"])
+        seed(scopes=["social-wiring:unrelated:read"])
         assert ctxsvc.org_tem_token_ferramentas(world.sw, ORG, agora=now) is False
         seed()
         assert ctxsvc.org_tem_token_ferramentas(world.sw, ORG, agora=now) is True

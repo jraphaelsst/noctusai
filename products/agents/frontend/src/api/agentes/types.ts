@@ -2,7 +2,6 @@
  * Wire types of the unified agent surface — `products/agents/projects/agents-unified/CONTRACT.md` §2/§4.
  * Mirrors `backend/app/schemas/agente_painel.py` (BE-owned; this file follows it).
  */
-import type { EstadoExterno } from "@/hooks/useAgents";
 
 export type AgenteOrigem = "legado" | "plataforma" | "instancia" | "org";
 export type AgenteTier = "membro" | "org_admin" | "plataforma";
@@ -81,8 +80,6 @@ export interface AgentePainel {
   owner_product: string | null;
   usa_canais: boolean;
   ativo: boolean;
-  estado_externo: EstadoExterno | null;
-  aviso: string | null;
   secoes: string[];
   pode_alternar: boolean;
 }

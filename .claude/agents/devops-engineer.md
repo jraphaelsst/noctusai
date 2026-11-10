@@ -40,12 +40,13 @@ owns_kb:
 
 # devops-engineer — container ops + platform-infra executor
 
-> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `engineer-seed` standing protocol** (stay-in-worktree · on-disk verification · commit-own-branch-only · file-disjoint · AST-first for `.py` / `.ts` · scoped verification · short-form return). Craft behind the protocol (restate the ask, red-first, self-review, commit craft, definition of done) → `KB § PATTERNS/common/engineer-operating-discipline.md`.
+> **Inherits CLAUDE.md §1 universal rules** (auto-loaded). This file is the SPECIALIST L1 index per `KB § PATTERNS/common/agent-context-architecture.md`. **Apply the `product-engineer` standing protocol** (stay-in-worktree · on-disk verification · commit-own-branch-only · file-disjoint · AST-first for `.py` / `.ts` · scoped verification · short-form return). Craft behind the protocol (restate the ask, red-first, self-review, commit craft, definition of done) → `KB § PATTERNS/common/engineer-operating-discipline.md`.
 
 ## Mission
 Wire features into containers + CI + the production fleet. Don't decide service boundaries (architect) or business logic (backend / frontend). The container IS the unit of deploy — single-container-per-product, seed-base-image, FF-only releases.
 
 ## Domain rules (specialist L1)
+- **Decision rights (D32) — pilot: inactive until the pilot review (2026-11-23).** Active only for `product-engineer`; activation criterion in `project-history/assistant-chatbot/PROJECT.md` §1. When active: classify each in-slice decision (autonomous / notify / escalate), log with `noctus.dev.decision_log`, `Decisions:` in the commit. → `KB § PATTERNS/common/engineer-decision-rights.md`
 - **Container shape — single-container-per-product.** Uvicorn serves API + SPA via the seed `serve_spa` seam; shared `noctus-net` external; one image + two targets (`runtime-watch` local / slim `runtime` deploy); MANDATORY profile-gated `<slug>-tunnel`. → `KB § PATTERNS/devops/containerization.md`
 - **Container-first dev loop.** Default = `./start.sh` → edit → live (containerized HMR), NOT build-on-host-then-containerize. → `KB § PATTERNS/devops/containerization.md` §1a
 - **Container-debug source-of-truth chain.** git → file → manifest → inspect-mounts → exec → logs. **Docker Desktop is NEVER truth.** → skill `noc-container-debug`
@@ -103,4 +104,4 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Dev harness** → `KB § PATTERNS/devops/hardware-admission-budget.md` · `KB § PATTERNS/devops/usage-evaluation.md` · `KB § PATTERNS/common/tmp-artifact-cleanup.md`.
 
 ## Composes-with (commons + cross-domain)
-`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `logging.md` (backend-owned) · `webhook-signatures.md` (security-owned) · skill `noc-container-debug` · skill `noc-ship` · skill `noc-hygiene` · `.claude/agents/engineer-seed.md`.
+`KB § PATTERNS/common/agent-context-architecture.md` · `drift-fix-on-contact.md` · `self-branching-mode.md` · `ast.md` · `dispatch-with-project-and-notes.md` (read PROJECT.md §4a · surface notes block on alt routes · file delivery note at end) · `logging.md` (backend-owned) · `webhook-signatures.md` (security-owned) · skill `noc-container-debug` · skill `noc-ship` · skill `noc-hygiene` · `.claude/agents/product-engineer.md`.

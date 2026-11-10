@@ -5,7 +5,7 @@ request input: the store key, the env fallback, and — for product tokens —
 the target schema, scopes, principal binding and issuer a renewal mints
 with. A "Renovar" click can therefore never widen a token's scopes.
 
-Scopes are contract-fixed: §B.0 (academia) and §E.6 (social-wiring).
+Scopes are contract-fixed: §B.0 (academia).
 """
 from __future__ import annotations
 
@@ -21,15 +21,13 @@ __all__ = [
     "CredentialSpec",
     "ISSUER",
     "ACADEMIA_AGENT_ID",
-    "SOCIAL_WIRING_API_TOKEN",
     "TOKEN_TTL_DAYS",
     "get_spec",
 ]
 
 CredentialKind = Literal["product_token", "api_key", "key_ring", "config"]
 
-#: `api_tokens.issuer` for every token agents mints (contract §E.6: the
-#: social-wiring bridge refuses any other issuer).
+#: `api_tokens.issuer` for every token agents mints.
 ISSUER = "agents"
 
 #: Seed maximum for a product token's lifetime (`auth_router`
@@ -87,18 +85,6 @@ ACADEMIA_API_TOKEN = CredentialSpec(
     token_label="agents → academia (Bia)",
 )
 
-SOCIAL_WIRING_API_TOKEN = CredentialSpec(
-    name="social_wiring_api_token",
-    label="Token da ponte social-wiring (One Chat)",
-    kind="product_token",
-    env_var="SOCIAL_WIRING_API_TOKEN",
-    settings_attr="social_wiring_api_token",
-    target_product="social-wiring",
-    target_schema="social_wiring",
-    scopes=("social-wiring:one-chat:read", "social-wiring:one-chat:toggle"),
-    token_label="agents → social-wiring (One Chat)",
-)
-
 ANTHROPIC_API_KEY = CredentialSpec(
     name="anthropic_api_key",
     label="Chave Anthropic do executor claude_sdk",
@@ -129,7 +115,6 @@ ACADEMIA_AGENT_ID = CredentialSpec(
 
 CREDENTIALS: tuple[CredentialSpec, ...] = (
     ACADEMIA_API_TOKEN,
-    SOCIAL_WIRING_API_TOKEN,
     ANTHROPIC_API_KEY,
     APPROVAL_RING,
     ACADEMIA_AGENT_ID,

@@ -217,8 +217,9 @@ class TestRoutingTable:
         assert rt.lead_memory() == [] and rt.operator_memory() == [] and rt.w.agents.turns == []
         assert rt.module.buffer.memory_for(LEAD_CHAT) == []
 
-    def test_the_lead_path_bypasses_the_One_Chat_gate_B3(self, rt):
-        # auto_reply_enabled stays One Chat's toggle: OFF here, and the chatbot is disabled.
+    def test_the_lead_path_ignores_the_retired_auto_reply_enabled_column_B3(self, rt):
+        # auto_reply_enabled was the retired One Chat bot's toggle; it gates nothing now (NOC-REMEDIATE[drop-auto-reply-enabled]).
+        # OFF here, and the lead still reaches Julia.
         _julia_scene(rt, auto_reply_enabled=False)
         rt.post(_msg(), signed=True)
         assert len(rt.lead_memory()) == 1

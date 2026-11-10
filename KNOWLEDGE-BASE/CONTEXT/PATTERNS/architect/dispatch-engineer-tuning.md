@@ -23,7 +23,7 @@ Live engineer (`ae6ef9672df957715`, 2026-05-25) booted at **~65k tokens** before
 
 *`engineer-seed.md` since grew to 236 lines / ~30 KB (≈7.5k tok) by accretion; the 2026-09-22 slim cut it to 76 lines / ~9 KB (≈2.3k tok, chars÷4) — depth moved behind `→` pointers, the architect-only half to §4d.*
 
-The **deferred-tool list** looked like the cheapest waste to kill — every engineer is handed the names of `mcp__docker__*`, `mcp__cloudflare__*`, `mcp__n8n__*`, `mcp__waha__*`, `mcp__supabase__*`, all `claude_ai_*` connectors (**104 names!**), Chrome, Stripe, Figma, Gmail… ~300 tools it never invokes. **⚠️ MEASURED CORRECTION (2026-05-25, §3): a per-agent `tools:` allowlist does NOT remove these.** The deferred-name list is **session/connector-global** — a function of the *connected* MCP servers (`.mcp.json`) + the user's claude.ai account connectors — independent of any agent's `tools:`. A scoped engineer's first delta still carried 295 names (docker 19 · cloudflare 26 · claude_ai_* 104 · waha/n8n/supabase 38 · noctusai 126). So cutting this bloat is a **session/account lever** (disable unused connectors — see L7), NOT a per-agent one. `engineer-seed.md` having shipped without a `tools:` allowlist was still worth fixing — for **least-privilege/safety**, not tokens.
+The **deferred-tool list** looked like the cheapest waste to kill — every engineer is handed the names of `mcp__docker__*`, `mcp__cloudflare__*`, `mcp__n8n__*`, `mcp__waha__*`, `mcp__supabase__*`, all `claude_ai_*` connectors (**104 names!**), Chrome, Stripe, Figma, Gmail… ~300 tools it never invokes. **⚠️ MEASURED CORRECTION (2026-05-25, §3): a per-agent `tools:` allowlist does NOT remove these.** The deferred-name list is **session/connector-global** — a function of the *connected* MCP servers (`.mcp.json`) + the user's claude.ai account connectors — independent of any agent's `tools:`. A scoped engineer's first delta still carried 295 names (docker 19 · cloudflare 26 · claude_ai_* 104 · waha/n8n/supabase 38 · noctusai 126). So cutting this bloat is a **session/account lever** (disable unused connectors — see L7), NOT a per-agent one. `product-engineer.md` having shipped without a `tools:` allowlist was still worth fixing — for **least-privilege/safety**, not tokens.
 
 ---
 
@@ -31,11 +31,11 @@ The **deferred-tool list** looked like the cheapest waste to kill — every engi
 
 | # | Lever | Mechanism | Win | Status |
 |---|---|---|---|---|
-| **L1** | **Scope `tools:`** on `engineer-seed.md` | allowlist `Bash, Read, Edit, Write, Grep, Glob, mcp__noctusai__*` **gates INVOCATION** to file/search/shell + the noctusai toolkit (`mcp__<server>__*` wildcard works). **⚠️ Measured (§3): does NOT remove the deferred-tool *names* from injected context** — 295 names persist regardless | **least-privilege/safety, ~0 token saving** (NOT ~12k as first asserted): engineer can't invoke WhatsApp / delete CF DNS / run docker / **dispatch** (no `Agent` tool ⇒ "engineers execute, never dispatch") | ✅ shipped (for safety) |
+| **L1** | **Scope `tools:`** on `product-engineer.md` | allowlist `Bash, Read, Edit, Write, Grep, Glob, mcp__noctusai__*` **gates INVOCATION** to file/search/shell + the noctusai toolkit (`mcp__<server>__*` wildcard works). **⚠️ Measured (§3): does NOT remove the deferred-tool *names* from injected context** — 295 names persist regardless | **least-privilege/safety, ~0 token saving** (NOT ~12k as first asserted): engineer can't invoke WhatsApp / delete CF DNS / run docker / **dispatch** (no `Agent` tool ⇒ "engineers execute, never dispatch") | ✅ shipped (for safety) |
 | **L2** | **`model: sonnet`** default + Opus-on-demand | frontmatter sets the subagent default; the Agent/Task `model: opus` param overrides per-dispatch | biggest **wall-clock** lever — mechanical, fully-specified briefs don't need Opus latency; architect (Opus) plans, engineer (Sonnet) executes | ✅ shipped (reversible — see §4) |
 | **L3** | **Worktree env pre-wire** | `noctus.dev.task_branch action=start wire_env=True` symlinks PRIMARY `node_modules` + re-points `@noctusai/{lib,seed}` at the worktree (§5a recipe) | engineer can `vite build`/`vitest` in its own worktree instead of the slow hand-wire dance (was *the* biggest time-sink building ResourceManager) | ✅ shipped |
-| **L4** | **Scoped verification** | brief Acceptance names the narrowest check (one test file / one product build / one grep); the full compliance gate is the **architect's** single integration-time run on a clean tree | saves 5-6 min × every engineer in a wave | ✅ codified in `engineer-seed.md §6a` |
-| **L5** | **Tight, concrete briefs** | exact `Files-to-modify` + a grep/test Acceptance line removes the engineer's exploration phase | the real speed win — exploration, not model speed, dominates a loose dispatch | ✅ standing (`engineer-seed.md §11`) |
+| **L4** | **Scoped verification** | brief Acceptance names the narrowest check (one test file / one product build / one grep); the full compliance gate is the **architect's** single integration-time run on a clean tree | saves 5-6 min × every engineer in a wave | ✅ codified in `product-engineer.md §6a` |
+| **L5** | **Tight, concrete briefs** | exact `Files-to-modify` + a grep/test Acceptance line removes the engineer's exploration phase | the real speed win — exploration, not model speed, dominates a loose dispatch | ✅ standing (`product-engineer.md §11`) |
 | **L6** | **Stale-worktree hygiene** | `noctus.dev.mole` / `noctus.dev.cleanup_stale_worktrees` (dry-run default; never touches locked/active/uncommitted) | 28 stale worktrees = 2.6 GB clutter slowing creation + disk; sweep between waves | 🔁 run between waves |
 | **L7** | **Disable unused claude.ai connectors** (the REAL deferred-bloat cut) | the ~10k deferred-name bloat is dominated by **104 `claude_ai_*` connector names** (Ahrefs/Canva/Daloopa/DevRev/Docusign/Figma/Gamma/Harvey/Moody's/Postman/S&P/Udemy/Windsor/Cloudinary/Atlassian/Clarify…) — none used in noc dev. These come from the **user's claude.ai account connector settings**, not the repo → turning off the unused ones at the account/workspace level drops them from *every* session's deferred list (main + all subagents) | ~the only lever that actually shrinks the deferred bloat (L1 can't — it's session/connector-global) | ⏳ **user action** (account-level, surfaced) |
 
@@ -59,9 +59,9 @@ Greppable one-liners (extract only the number, never dump the JSONL): `grep -m1 
 ## 4 · The one reversible decision: engineer model
 
 `model: sonnet` is a **reversible default**, surfaced loudly because the platform values quality (*"quality is the constraint"*). The safety design:
-- **Default Sonnet** for the mechanical, fully-specified majority (the engineer-seed contract: execute, never plan).
+- **Default Sonnet** for the mechanical, fully-specified majority (the product-engineer contract: execute, never plan).
 - **Architect escalates** a genuinely ambiguous / architectural / judgment-heavy slice to Opus at dispatch (`model: opus` on the Agent call). This is a brief-scoping decision the architect owns — hard work must not ride Sonnet *silently*.
-- **Flip the floor** by changing one frontmatter line (`model:` in `engineer-seed.md`) — e.g. back to `opus`, or `inherit` to track the parent.
+- **Flip the floor** by changing one frontmatter line (`model:` in `product-engineer.md`) — e.g. back to `opus`, or `inherit` to track the parent.
 
 If engineer output quality drops on mechanical work, that's a **brief-tightness** signal (L5) before it's a model signal — under-specified briefs fail on any model.
 
@@ -102,7 +102,7 @@ A dispatched engineer that opens `grep` / `Read` / `Glob` before a single MCP ca
 
 The cache-first discipline is therefore **in the standing protocol**, not in each brief:
 
-- `engineer-seed.md §2` (first bullet) is the top-of-protocol reflex (cache before grep/Read; depth at `KB § PATTERNS/common/cache-as-agent-tool.md`).
+- `product-engineer.md §2` (first bullet) is the top-of-protocol reflex (cache before grep/Read; depth at `KB § PATTERNS/common/cache-as-agent-tool.md`).
 - Every executor specialist's L1 (`backend-engineer` / `frontend-engineer` / `devops-engineer`) and every advisor's L1 (`architect` / `compliance-reviewer` / `security`) carries the same rule as a domain-bullet, and `cache-as-agent-tool.md` is in each `owns_kb:` so the agent-context cache pulls the depth into the engineer's compact bundle at spawn.
 
 **Brief-author rule (the corollary).** If you find yourself writing *"use `noctus.graph.report` for orientation"* or *"start with `kb_search`…"* in a brief, **the agent definition is the surface to fix, not the brief**. The whole point of the agent layer is to make these reflexes default by construction — re-spelling them per dispatch is the brief defeating itself. Symptom: the same cache-first reminder copied across 3+ briefs ⇒ the rule belongs in `.claude/agents/<lens>.md` (or the standing protocol if cross-lens), not in brief boilerplate.
@@ -128,7 +128,7 @@ surface round-trip is one tool call away (not a manual process):
 
 The tool names (`surface_to_tech_lead` / `respond_and_resume` / `dispatch_resume_brief`)
 are what make the round-trip ergonomic. Without them in the brief, engineers may not know
-the tools exist. Brief author rule: include this block OR reference `engineer-seed §2`
+the tools exist. Brief author rule: include this block OR reference `product-engineer §2`
 (its "Blocked, or you see a better route" bullet carries the same pointer). Don't spell out the tool names PER dispatch — point
 to the standing protocol instead to stay DRY.
 
@@ -136,7 +136,7 @@ to the standing protocol instead to stay DRY.
 
 ## 4c · Mandatory brief language for safety (closing the `--no-verify` commit loophole)
 
-§4b above describes the **mechanics** (which tools the engineer uses to surface). This section pins the **verbatim language** the brief MUST carry so the engineer can't claim "the brief didn't say." The standing protocol (`engineer-seed.md §5` Safety + the 5-rationalization catalog at `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`) IS the contract; the brief language is the audit trail that the tech-lead surfaced it at dispatch time.
+§4b above describes the **mechanics** (which tools the engineer uses to surface). This section pins the **verbatim language** the brief MUST carry so the engineer can't claim "the brief didn't say." The standing protocol (`product-engineer.md §5` Safety + the 5-rationalization catalog at `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md`) IS the contract; the brief language is the audit trail that the tech-lead surfaced it at dispatch time.
 
 **Verbatim phrase the brief MUST contain** (copy as-is into every engineer brief):
 
@@ -146,18 +146,18 @@ That single block routes to the 5 rationalization anti-patterns + the surface pr
 
 **Why the dual coverage (commit AND push) is load-bearing.** Pre-commit hooks fire on `git commit`, NOT on `git push`. Bypassing commit = bypassing every keeper (`kb_sync` · `check_claude_md_router` · `check_eight_way_sync` · keeper-pattern-cache refresh). The "commit-only is the smaller bypass" intuition has the direction backwards: a `commit --no-verify` skips strictly more guarantees than a `push --no-verify` does. The `ea7514e7` build-learn-cache codification slip (2026-05-29, see `bypass-rationalization-anti-patterns.md § 3`) is the canonical evidence — agent rationalized "commit-only, not push, so it's fine" and silently shipped a `--no-verify` commit to its worktree branch, which was then pushed unverified.
 
-**Why mandatory in the brief AND in the agent.** The standing protocol (`engineer-seed.md §5`) IS the contract. The brief carries it for two reasons: (a) **audit trail** — `git log --grep "NEVER use --no-verify"` shows the tech-lead surfaced the discipline at every dispatch, closing the "I didn't know" silent-error shape; (b) **future keeper detection** — a `check_dispatch_brief_carries_safety_language` keeper (s4 candidate, deferred to N≥2 measured brief drift) scans the briefs for the verbatim string. Born 2026-05-29 after the `ea7514e7` post-hoc-detected slip forced the rule's codification.
+**Why mandatory in the brief AND in the agent.** The standing protocol (`product-engineer.md §5`) IS the contract. The brief carries it for two reasons: (a) **audit trail** — `git log --grep "NEVER use --no-verify"` shows the tech-lead surfaced the discipline at every dispatch, closing the "I didn't know" silent-error shape; (b) **future keeper detection** — a `check_dispatch_brief_carries_safety_language` keeper (s4 candidate, deferred to N≥2 measured brief drift) scans the briefs for the verbatim string. Born 2026-05-29 after the `ea7514e7` post-hoc-detected slip forced the rule's codification.
 
-**Composes with:** §4b above (mechanics — `surface_to_tech_lead` round-trip) · `engineer-seed.md §5 Safety` (standing protocol — the contract IS) · `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` (the 5 rationalization shapes + surface protocol + ea7514e7 worked example) · `KB § PATTERNS/common/drift-fix-on-contact.md` (Roles split sibling) · `KB § PATTERNS/common/dispatch-with-project-and-notes.md` (surface-note infra the engineer uses).
+**Composes with:** §4b above (mechanics — `surface_to_tech_lead` round-trip) · `product-engineer.md §5 Safety` (standing protocol — the contract IS) · `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` (the 5 rationalization shapes + surface protocol + ea7514e7 worked example) · `KB § PATTERNS/common/drift-fix-on-contact.md` (Roles split sibling) · `KB § PATTERNS/common/dispatch-with-project-and-notes.md` (surface-note infra the engineer uses).
 
 ## 4d · The architect's half — brief shape, dispatch knobs, integration
 
-*(Moved here from `engineer-seed.md` §11 on 2026-09-22: the engineer never needs it at cold start, so it no longer rides every dispatch.)*
+*(Moved here from `product-engineer.md` §11 on 2026-09-22: the engineer never needs it at cold start, so it no longer rides every dispatch.)*
 
 **Minimum-viable brief** (~15 lines; everything else is a slice-specific override of the standing protocol):
 
 ```
-You are Engineer <X>. Apply engineer-seed protocol.
+You are Engineer <X>. Apply product-engineer protocol.
 
 Goal: <one sentence>
 Reference: <commit SHA / file path of the canonical pattern>
@@ -174,7 +174,7 @@ Acceptance: <what "done" looks like — tests pass + a specific grep returns zer
 - **Isolation** — `noctus.dev.task_branch action=start slug=<slug>` per engineer, then pass the worktree path in the brief. **Never** the Agent tool's `isolation: "worktree"` — it forks from an arbitrary base, not `origin/dev` (`KB § PATTERNS/architect/parallelization-first-orchestration.md`). `run_in_background: true` for parallel waves.
 - **`wire_env`** — defaults to `True` on `task_branch action=start`; pass `False` only for a doc-only/no-FE slice where the symlink pass is pure overhead. The product overlay is scoped to the products the brief's `paths` name (2026-10-09) — always pass `paths` for an FE slice; `wire_products=['*']` for a seed-frontend slice that builds every consumer.
 
-**Integration — engineers commit, the tech-lead verifies from its own shell.** Since 2026-09-22 each engineer commits its own `feat/<slug>` (`engineer-seed.md` §3). The tech-lead's check is one command from its OWN Bash context (true disk, outside the engineer's overlay): `git -C <wt> log --oneline origin/dev..HEAD` must list the SHAs the return claims, and `git -C <wt> show --stat <sha>` must show only the brief's files. An empty log against a `Status: ready` return ⇒ the harness-overlay divergence ate the work (`KB § PATTERNS/common/harness-overlay-worktree-divergence.md`); re-apply the well-specified change inline, don't loop-redispatch. Then merge/rebase, re-run the gates on the MERGED tip, push.
+**Integration — engineers commit, the tech-lead verifies from its own shell.** Since 2026-09-22 each engineer commits its own `feat/<slug>` (`product-engineer.md` §3). The tech-lead's check is one command from its OWN Bash context (true disk, outside the engineer's overlay): `git -C <wt> log --oneline origin/dev..HEAD` must list the SHAs the return claims, and `git -C <wt> show --stat <sha>` must show only the brief's files. An empty log against a `Status: ready` return ⇒ the harness-overlay divergence ate the work (`KB § PATTERNS/common/harness-overlay-worktree-divergence.md`); re-apply the well-specified change inline, don't loop-redispatch. Then merge/rebase, re-run the gates on the MERGED tip, push.
 
 **Why stage-only was retired.** Stage-only existed because `scripts/hooks/pre-commit` once `git add`-ed *every* modified KB/CLAUDE doc on *every* commit, so any commit in a shared dirty tree swept in a peer's edits (cc9e69b, 2026-05-17). The hook was fixed on 2026-06-01 (it now restages only files already in the commit, or count blocks it regenerated from a clean file, and loudly SKIPs a pre-dirty doc), and every engineer works in its own worktree anyway — so the hazard cannot occur, and stage-only only moved the keeper run from the author (who can fix the red) to the tech-lead (who can't, cheaply). The same change retired the one `--no-verify` carve-out, which existed solely for that hazard.
 

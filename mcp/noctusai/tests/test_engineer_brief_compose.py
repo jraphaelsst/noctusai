@@ -373,7 +373,7 @@ class TestRecentMisses:
         assert "recent misses" not in result["brief"]
 
 
-# ── 2026-09-22: brief footer follows engineer-seed §3/§4 (commit own branch) ──
+# ── 2026-09-22: brief footer follows product-engineer §3/§4 (commit own branch) ──
 # `_render_brief` is pure, so these call it directly — no patching needed.
 
 def _rendered(**over) -> str:
@@ -414,6 +414,6 @@ def test_brief_carries_mandatory_before_returning_block():
     assert "FULL suite" in brief
 
 
-def test_engineer_seed_points_at_the_single_source_block():
-    text = (Path(__file__).resolve().parents[3] / ".claude/agents/engineer-seed.md").read_text()
+def test_product_engineer_points_at_the_single_source_block():
+    text = (Path(__file__).resolve().parents[3] / ".claude/agents/product-engineer.md").read_text()
     assert "BEFORE_RETURNING_BLOCK" in text

@@ -126,6 +126,7 @@ class GoogleProvider:
         *,
         http_client: httpx.AsyncClient | None = None,
         use_pkce: bool = False,
+        include_granted_scopes: bool = True,
     ) -> None:
         if not client_id:
             raise ValueError("GoogleProvider requires a non-empty client_id")
@@ -135,6 +136,11 @@ class GoogleProvider:
         self._client_secret = client_secret
         self._http_client = http_client
         self._use_pkce = use_pkce
+        # Incremental auth (Google's default recommendation). Turn it OFF for a scope-exact token:
+        # Google merges every scope the user ever granted this client into the request, and some
+        # combinations are refused outright (e.g. drive.file + youtube.* -> 400 invalid_request,
+        # "scopes that cannot be requested together"; seen 2026-11-10 on the Assistant consent).
+        self._include_granted_scopes = include_granted_scopes
 
     # ─── authorization_url ────────────────────────────────────────────────
 
@@ -166,9 +172,10 @@ class GoogleProvider:
             "scope": " ".join(scopes),
             "access_type": "offline",
             "prompt": "consent",
-            "include_granted_scopes": "true",
             "state": state,
         }
+        if self._include_granted_scopes:
+            params["include_granted_scopes"] = "true"
         code_verifier: str | None = None
         if self._use_pkce:
             code_verifier, code_challenge = _generate_pkce_pair()

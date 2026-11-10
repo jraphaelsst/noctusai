@@ -29,7 +29,7 @@ Funil: **Lead → Atendimento → Negociação → Fechado**. Cada etapa tem uma
 | Chave | Para quê |
 |---|---|
 | `ENCRYPTION_KEY` | Fernet: a chave da API do WAHA fica cifrada em `whatsapp_connections` (sem ela o boot em produção falha) |
-| `MONICA_WAHA_BASE_URL` | URL do WAHA **próprio da Mônica**. Sem default; vazio ⇒ criar conexão responde 503 claro. **Nunca** o WAHA compartilhado (single-session, número do One Chat) |
+| `MONICA_WAHA_BASE_URL` | URL do WAHA **próprio da Mônica**. Sem default; vazio ⇒ criar conexão responde 503 claro. **Nunca** o WAHA compartilhado (single-session, número da linha da Julia, nome legado "One Chat") |
 | `MONICA_WAHA_SESSION` | sessão do WAHA (default `default`) |
 | `MONICA_WAHA_WEBHOOK_HMAC_SECRET` | igual ao `WHATSAPP_HOOK_HMAC_KEY` do WAHA, se ele assinar |
 | `REDIS_URL` | tempo real da caixa de entrada (SSE entre workers). Sem Redis e sem a opção abaixo, o boot em produção recusa |

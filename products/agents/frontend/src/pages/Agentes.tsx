@@ -3,7 +3,7 @@
  *
  * ONE card per agent of the org (`GET /api/agents/painel`): role agents, platform instances, org Studio agents and
  * the legacy ones, side by side. Every card opens the same dynamic page, `/agentes/:key`. What a card shows is the
- * painel DATA (`origem`, `papel`, `estado_externo`, `pode_alternar`) — never an agent key. The on/off switch is
+ * painel DATA (`origem`, `papel`, `pode_alternar`) — never an agent key. The on/off switch is
  * offered only when the server says so (`pode_alternar`: a legacy agent + an org admin); a platform instance is
  * switched in its Controles section.
  *
@@ -94,20 +94,8 @@ export function AgenteSwitch({ agente }: { agente: AgentePainel }) {
   );
 }
 
-/** One line under the name: the external product's state for an external agent, else the public description. */
+/** One line under the name: the public description. */
 export function AgenteResumo({ agente }: { agente: AgentePainel }) {
-  if (agente.runtime === "external") {
-    return agente.estado_externo ? (
-      <p className="text-xs text-muted-foreground">
-        Auto-resposta:{" "}
-        <span className="font-medium text-foreground">{agente.estado_externo.auto_reply_enabled ? "ativada" : "desativada"}</span>
-      </p>
-    ) : (
-      <p className="text-xs text-amber-600" data-testid={`agente-aviso-${agente.key}`}>
-        {agente.aviso ?? "Estado externo indisponível."}
-      </p>
-    );
-  }
   return <p className="line-clamp-2 text-sm text-muted-foreground">{agente.descricao ?? "Sem descrição."}</p>;
 }
 

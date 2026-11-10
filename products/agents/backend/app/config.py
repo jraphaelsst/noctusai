@@ -39,12 +39,6 @@ class SeedSettings(ProductSettings):
 
     cors_origins: str = "@registry:own:agents"
 
-    # ── social-wiring bridge client (contract §E.6) ────────────────────
-    # Token held by the agents product to call social-wiring's
-    # `agents-bridge` routes (`social-wiring:one-chat:read` +
-    # `:toggle` scopes only). Never logged.
-    social_wiring_api_token: str = ""
-
     # ── Approvals (contract §E.2 / §D) ──────────────────────────────────
     # An unanswered approval request becomes `expirada` after this many
     # seconds; the waiting tool call is then denied (app/runtime/broker.py).
@@ -198,7 +192,7 @@ class SeedSettings(ProductSettings):
     # `capacidade`.
     llm_turn_capacity: int = 8
     # Memory per turn: the last N stored messages of the conversation. 40 (was 20): measured on the Julia mechanism suite at
-    # k=3 (61/65 cases vs 57/65, DECISAO-SKILL-AUTOLOAD.md); the SW "One Chat" reference also reads 40.
+    # k=3 (61/65 cases vs 57/65, DECISAO-SKILL-AUTOLOAD.md); the SW reference also reads 40.
     llm_history_messages: int = 40
     # Token budget of that history (estimated): over it, the SERVER drops the oldest turns
     # (`noctusai_lib.integrations.llm.context_window`, pure trimming, tool pairs never split); a history that fits

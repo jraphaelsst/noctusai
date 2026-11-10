@@ -7,8 +7,8 @@
   KEYS (not their descriptions) are definition metadata; reading them is audited like every definition read.
 
 Which agents are listed is decided by data: an agent of the caller's org with a visible catalogue row.
-Julia is the leads agent (SDR); One Chat is the separate operator agent (``runtime='external'``) -- both
-are listed (owner, 2026-10-20). The response models are explicit allowlists.
+Julia is the leads agent (SDR) and is the WhatsApp line (the One Chat operator bot was retired, 2026-11).
+The response models are explicit allowlists.
 """
 from __future__ import annotations
 
@@ -103,7 +103,6 @@ def listar_catalogo(
     catalogo: CatalogoStore = Depends(get_catalogo_store_dep),
     studio_store=Depends(get_studio_definition_store_dep),
 ) -> list[dict[str, Any]]:
-    agentes.ensure_default_agents(ctx.org_id)
     entradas = {e.agent_key: e for e in catalogo.listar()}
     admin = chamador_e_admin_da_plataforma(ctx)
     out: list[dict[str, Any]] = []

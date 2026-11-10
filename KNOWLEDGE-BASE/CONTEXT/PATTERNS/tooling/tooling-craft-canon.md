@@ -399,7 +399,7 @@ Every embedding round-trip is cost-logged (`vector-cost-tracking.md`). Calibrati
 - **Safety nets inside the suite.** An autouse fixture makes any test that reaches a real `git push` fail loudly (`conftest.py:216-248`). Another isolates every ledger path per test (`conftest.py:185-213`). Never widen these to make a test pass.
 - **No self-monkeypatch.** Patch external services only, never the guard under test. This is gated at write time (`test_seam_guard`) and at commit (`check_no_self_monkeypatch`, `compliance.py:1807`).
 - **Scaffolders are tested by parsing what they emit.** A codegen tool that emits non-parsing code is worse than none (`dev-toolkit-scaffolders.md` § Quality gate).
-- Heavy suites run through `hw_admission` (engineer-seed §2). The toolkit suite is `mcp/noctusai/tests/` (395 files).
+- Heavy suites run through `hw_admission` (product-engineer §2). The toolkit suite is `mcp/noctusai/tests/` (395 files).
 
 **Rules.**
 - Every bug fix ships a test that failed before the fix.
