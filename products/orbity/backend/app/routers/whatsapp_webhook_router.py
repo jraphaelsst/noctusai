@@ -37,7 +37,7 @@ from app.dependencies import get_admin_client
 from app.rate_limit import limiter
 from app.services.whatsapp_inbound import process_inbound
 
-from noctusai_lib.config.deploy_config import is_deploy_context
+from noctusai_lib.config.deploy_config import is_explicit_local_env
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +68,11 @@ async def whatsapp_webhook_by_token(
 ) -> Response:
     body = await request.body()
 
-    if not settings.waha_webhook_hmac_secret and is_deploy_context():
-        # Fail CLOSED: a deployed orbity with no HMAC secret would accept any unsigned POST that knows a token (F4).
-        logger.error("orbity whatsapp webhook: WAHA_WEBHOOK_HMAC_SECRET is not set in a deploy context -- refusing (401)")
+    if not settings.waha_webhook_hmac_secret and not is_explicit_local_env():
+        # Fail CLOSED: with no HMAC secret an unsigned POST is accepted ONLY when APP_ENV explicitly says local/dev/test. An
+        # unset, unknown or production environment (the fleet does not pin APP_ENV) is a 401 -- any caller who learns a
+        # connection's token could otherwise inject inbound messages (F4).
+        logger.error("orbity whatsapp webhook: WAHA_WEBHOOK_HMAC_SECRET is not set outside an explicit local env -- refusing (401)")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook signature")
 
     if settings.waha_webhook_hmac_secret:

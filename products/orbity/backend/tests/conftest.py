@@ -30,6 +30,8 @@ _mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 _mod.purge_shadowing_editable_finders(_LIB)
 
+import os
+
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
@@ -47,6 +49,10 @@ from noctusai_lib.testing import (  # noqa: F401 — re-exported for test import
     bind_consent_module_to_mock,
 )
 from noctusai_lib.testing.fixtures import reset_rate_limiter  # noqa: F401
+
+
+# The suite is a local/test process: say so explicitly (the webhook accepts an unsigned call ONLY in an explicit local env).
+os.environ.setdefault("APP_ENV", "test")
 
 
 def pytest_configure(config):

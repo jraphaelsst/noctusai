@@ -1,14 +1,17 @@
 """
 Real WhatsApp send for the Orbity automation engine.
 
-Resolution (community-style, `resolve_community_waha_client`):
+Resolution -- the org's OWN line or nothing:
   1. the org's NEWEST saved connection in `orbity.whatsapp_connections`
      (base_url + decrypted api_key + session_name — saved via
      `Configurações → Conexões WhatsApp`);
-  2. else the static fleet `WAHA_*` settings;
-  3. else REFUSE — `WhatsAppNotConnected`. The seed `FakeWahaClient` is used
-     ONLY under `settings.whatsapp_allow_fake` (test harness / local dev):
-     a Fake in a real deploy reports "sent" with nothing sent.
+  2. else REFUSE — `WhatsAppNotConnected`. There is NO fallback to the static
+     fleet `WAHA_*` line (a host shared across tenants: a message must leave
+     from the number the org itself connected). The seed `FakeWahaClient` is
+     used ONLY under `settings.whatsapp_allow_fake` (test harness / local
+     dev): a Fake in a real deploy reports "sent" with nothing sent.
+  In prod WhatsApp is also OFF at the seed's line policy (no declared policy
+  => every write refused; NOC-REMEDIATE[orbity-waha-own-instance]).
 
 `send` is SYNC (`WahaClient.send_text_to_phone_sync`): the engine drain is sync code
 that the scheduler runs via `anyio.to_thread.run_sync` (igig pattern), so it
@@ -121,7 +124,8 @@ class RealWhatsAppSender:
     Args:
         get_admin_client: zero-arg callable returning the service-role client
             (late-bound so tests/DI hand in a mock — no module singleton).
-        settings: the product settings (encryption key, static WAHA fallback).
+        settings: the product settings (encryption key; the optional fake-allow
+            switch). The static fleet ``WAHA_*`` line is never used.
         resolve_client: DI seam for the org -> WAHA client resolution (tests
             inject a `FakeWahaClient` to assert `sent_messages`).
     """

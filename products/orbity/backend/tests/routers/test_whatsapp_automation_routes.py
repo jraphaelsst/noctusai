@@ -29,11 +29,21 @@ class TestWebhook:
         assert r.status_code == 404
 
 
-    def test_unsigned_inbound_is_refused_in_a_deploy_context_without_a_secret(self, client, monkeypatch):
-        """Fail closed: production with no WAHA_WEBHOOK_HMAC_SECRET never accepts an unsigned call (env, not a code patch)."""
-        monkeypatch.setenv("APP_ENV", "production")
+    @pytest.mark.parametrize("env", [None, "", "production", "prod", "staging", "locall"])
+    def test_unsigned_inbound_is_refused_unless_the_env_explicitly_says_local(self, client, monkeypatch, env):
+        """Fail closed: no HMAC secret + an unset/unknown/prod APP_ENV (the fleet does not pin it) never accepts unsigned."""
+        if env is None:
+            monkeypatch.delenv("APP_ENV", raising=False)
+        else:
+            monkeypatch.setenv("APP_ENV", env)
         r = client.raw().post("/api/whatsapp/webhook/any-token", json={"event": "message"})
         assert r.status_code == 401
+
+    @pytest.mark.parametrize("env", ["local", "dev", "development", "test", "TESTING"])
+    def test_unsigned_inbound_passes_only_in_an_explicit_local_env(self, client, monkeypatch, env):
+        monkeypatch.setenv("APP_ENV", env)
+        r = client.raw().post("/api/whatsapp/webhook/any-token", json={"event": "message"})
+        assert r.status_code == 404  # past the signature gate; the token is unknown
 
     def test_badly_signed_inbound_is_refused_when_a_secret_is_set(self, client):
         from app.config import settings

@@ -199,7 +199,7 @@ export default function RelatorioPublico() {
   if (!data) return null;
 
   // No snapshot yet
-  if (!data.snapshot_id) return <EmptyState report={data} />;
+  if (!data.generated_at) return <EmptyState report={data} />;
 
   return (
     <PageShell>

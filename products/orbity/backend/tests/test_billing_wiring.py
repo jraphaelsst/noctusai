@@ -256,6 +256,7 @@ SERVICE_ONLY_TABLES = [
     "billing_charges", "payment_gateway_events", "examples", "invitations", "ctr_contracts",
     "ctr_contract_attachments", "ctr_contract_billings", "ctr_contract_lines", "ctr_contract_usage", "ctr_contract_versions",
 ]
+SERVICE_ONLY_BATCH2 = ["contracts_legacy", "revenues_legacy", "expenses_legacy"]
 
 
 def test_service_only_batch_leaves_the_browser_roles_no_privilege_and_no_policy():
@@ -293,3 +294,18 @@ def test_the_frontend_never_reads_tables_through_postgrest():
             if re.search(r"\bsupabase\s*\.\s*(from|rpc|schema)\s*\(", line):
                 hits.append(f"{p.name}:{n}")
     assert hits == []
+
+
+def test_batch2_locks_the_renamed_legacy_tables_and_the_compat_views():
+    """023 retired contracts / revenues / expenses by RENAME to *_legacy (the scanner must follow the rename): they are
+    service-only, and so are the `revenues` / `expenses` compat views the reports service now reads with the admin client."""
+    import re
+
+    sql = migration_sql(PRODUCT_DIR, "orbity_service_only_batch2")
+    for t in SERVICE_ONLY_BATCH2:
+        assert f"REVOKE ALL ON orbity.{t} FROM PUBLIC, anon, authenticated;" in sql, t
+        assert f"COMMENT ON TABLE orbity.{t} IS 'tier:org';" in sql, t
+        for m in re.finditer(r'CREATE POLICY\s+"?([\w-]+)"?\s+ON\s+orbity\.' + t.replace("_legacy", "") + r"\s+FOR\s+\w+\s+TO\s+authenticated", migration_sql(PRODUCT_DIR, "financial_core")):
+            assert f'DROP POLICY IF EXISTS "{m.group(1)}" ON orbity.{t};' in sql, (t, m.group(1))
+    assert "REVOKE ALL ON orbity.revenues, orbity.expenses FROM PUBLIC, anon, authenticated;" in sql
+    assert "UPDATE orbity.reports SET expires_at" in sql
