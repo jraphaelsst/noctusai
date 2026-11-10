@@ -70,11 +70,13 @@ def client() -> tuple[str, str]:
     return cid, secret
 
 
-def provider():
+def provider(*, include_granted_scopes: bool = True):
     from noctusai_lib.security.oauth.google_provider import GoogleProvider
 
     cid, secret = client()
-    return GoogleProvider(client_id=cid, client_secret=secret, use_pkce=True)
+    return GoogleProvider(
+        client_id=cid, client_secret=secret, use_pkce=True, include_granted_scopes=include_granted_scopes
+    )
 
 
 def credentials(refresh_token: str, scopes: list[str]):

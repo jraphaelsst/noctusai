@@ -130,3 +130,15 @@ def test_load_credentials_without_token_names_the_steps(private) -> None:
 def test_unknown_action_is_refused() -> None:
     with pytest.raises(ValueError, match="auth_start \\| auth_finish \\| status"):
         G.google_account_auth(action="x", profile="assistant")
+
+
+def test_default_provider_is_scope_exact(monkeypatch):
+    """The real default provider for profile tokens never asks Google to merge earlier grants."""
+    import asyncio
+    from tools.noctus.dev import _google_oauth
+
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "cid")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "sec")
+    prov = _google_oauth.provider(include_granted_scopes=False)
+    url = asyncio.run(prov.authorization_url("s", ["https://www.googleapis.com/auth/drive.file"], "http://x/cb")).url
+    assert "include_granted_scopes" not in url

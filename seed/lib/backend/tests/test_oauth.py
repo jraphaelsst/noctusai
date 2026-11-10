@@ -1190,3 +1190,16 @@ def test_oauth_router_default_callback_refuses_unverified_state():
         "/api/oauth/vendor-a/callback", params={"code": "c", "state": "forged", "redirect_uri": "r"}
     )
     assert resp.status_code == 400
+
+
+def test_google_provider_include_granted_scopes_can_be_turned_off():
+    """Scope-exact consent: Google refuses some merged mixes (drive.file + youtube.*), 2026-11-10."""
+    import asyncio
+    from noctusai_lib.security.oauth.google_provider import GoogleProvider
+
+    on = asyncio.run(GoogleProvider("cid", "sec").authorization_url("s", ["a"], "http://x/cb"))
+    off = asyncio.run(
+        GoogleProvider("cid", "sec", include_granted_scopes=False).authorization_url("s", ["a"], "http://x/cb")
+    )
+    assert "include_granted_scopes=true" in on.url
+    assert "include_granted_scopes" not in off.url

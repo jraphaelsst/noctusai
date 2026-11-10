@@ -95,6 +95,9 @@ def auth_start(
 ) -> dict[str, Any]:
     full = normalize_scopes(scopes)
     email = _email(account_email)
+    # Scope-exact: a profile token holds exactly the scopes asked for. Incremental auth would merge the
+    # client's earlier grants (e.g. YouTube) and Google refuses some mixes outright (drive.file + youtube.*).
+    prov = prov or _oauth.provider(include_granted_scopes=False)
     state, url = _oauth.start_consent(
         _profile_dir(profile), email, full, redirect_uri, prov, extra={"profile": profile, "scopes": full}
     )
