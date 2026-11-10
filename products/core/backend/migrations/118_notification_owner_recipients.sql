@@ -10,8 +10,12 @@
 --     renomeado / removido): who (`ator`, NOT NULL) and when. Written ONLY by a SECURITY DEFINER trigger function
 --     in the same transaction as the change; service_role can read it, never write it, never TRUNCATE it. A change
 --     with no known actor is refused (the event insert fails NOT NULL), so no change goes unrecorded.
---   * The actor reaches the trigger through `alterado_por` (INSERT/UPDATE) or the transaction-local setting
---     `noc.ator` (set by the remover RPC), which wins when present.
+--   * The actor reaches the trigger through `alterado_por` (INSERT/UPDATE; every UPDATE must restamp
+--     `alterado_em`, so an unchanged row never blames the previous admin) or, for DELETE only, the
+--     transaction-local setting `noc.ator` set by `remover_destinatario_dono` (a plain DELETE is refused).
+--   * A service-role writer can still name ANY actor (and the key holder can drive the RPC): an accepted residual
+--     — the holder of the core service-role key is trusted at the DB layer; what the guards close is silent change
+--     (number swap, wipe, forged or missing event), not a key holder lying about who acted.
 -- Additive only; previous images never read these tables.
 -- Re-runnable: IF NOT EXISTS / CREATE OR REPLACE / DROP-then-CREATE.
 SET search_path = public, public;
@@ -23,6 +27,7 @@ CREATE TABLE IF NOT EXISTS public.notification_owner_recipients (
     nome         TEXT CHECK (nome IS NULL OR length(nome) BETWEEN 1 AND 120),
     ativo        BOOLEAN NOT NULL DEFAULT true,
     alterado_por UUID,
+    alterado_em  TIMESTAMPTZ,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT notification_owner_recipients_numero_key UNIQUE (numero)
@@ -53,6 +58,9 @@ BEGIN
     IF NEW.numero IS DISTINCT FROM OLD.numero THEN
         RAISE EXCEPTION 'notification_owner_recipients.numero is immutable (remove and re-add the recipient)';
     END IF;
+    IF NEW.alterado_em IS NOT DISTINCT FROM OLD.alterado_em THEN
+        RAISE EXCEPTION 'notification_owner_recipients: every update must restamp alterado_em and alterado_por';
+    END IF;
     NEW.updated_at = now();
     RETURN NEW;
 END; $$;
@@ -64,15 +72,20 @@ CREATE TRIGGER set_updated_at_notification_owner_recipients
 -- The ONLY writer of the events table. SECURITY DEFINER so that service_role needs no INSERT grant on it.
 CREATE OR REPLACE FUNCTION public.notification_owner_recipients_record_event()
 RETURNS TRIGGER
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
 AS $$
 DECLARE
     v_ator UUID;
 BEGIN
-    v_ator := COALESCE(
-        NULLIF(current_setting('noc.ator', true), '')::uuid,
-        CASE WHEN TG_OP = 'DELETE' THEN OLD.alterado_por ELSE NEW.alterado_por END
-    );
+    IF TG_OP = 'DELETE' THEN
+        -- only the RPC deletes: it sets the actor transaction-locally; a session-level SET is never read elsewhere
+        v_ator := NULLIF(pg_catalog.current_setting('noc.ator', true), '')::uuid;
+        IF v_ator IS NULL THEN
+            RAISE EXCEPTION 'notification_owner_recipients: delete is only allowed through remover_destinatario_dono';
+        END IF;
+    ELSE
+        v_ator := NEW.alterado_por;
+    END IF;
     IF TG_OP = 'INSERT' THEN
         INSERT INTO public.notification_owner_recipient_events (recipient_id, evento, ator)
         VALUES (NEW.id, 'adicionado', v_ator);

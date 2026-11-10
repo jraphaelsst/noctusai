@@ -6280,8 +6280,8 @@ BEGIN
     RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.notification_owner_recipient_events does not exist (core 118 not applied)';
   END IF;
   BEGIN
-    INSERT INTO public.notification_owner_recipient_events (recipient_id, evento)
-    VALUES (gen_random_uuid(), 'adicionado')
+    INSERT INTO public.notification_owner_recipient_events (recipient_id, evento, ator)
+    VALUES (gen_random_uuid(), 'adicionado', gen_random_uuid())
     RETURNING id INTO v_id;
 {op_sql}
     RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the append-only guard did not fire';
@@ -6345,8 +6345,8 @@ END;
     )
 
 
-_OWNER_RECIPIENT_FIXTURE = """    INSERT INTO public.notification_owner_recipients (numero, alterado_por)
-    VALUES ('+5500000000001', gen_random_uuid())
+_OWNER_RECIPIENT_FIXTURE = """    INSERT INTO public.notification_owner_recipients (numero, alterado_por, alterado_em)
+    VALUES ('+5500000000001', gen_random_uuid(), now())
     RETURNING id INTO v_id;"""
 
 _OWNER_RECIPIENT_EVENTS_PROBES: tuple[GuardProbe, ...] = (
@@ -6371,6 +6371,33 @@ _OWNER_RECIPIENT_EVENTS_PROBES: tuple[GuardProbe, ...] = (
             "The number is who receives the owner's notices; swapping it in place would redirect them with no "
             "event (the trigger only sees ativo/nome). Remove and re-add leaves an adicionado/removido trail."
         ),
+    ),
+    _owner_recipient_probe(
+        probe_id="notification_owner_recipients.plain_delete_refused",
+        guard_name="notification_owner_recipients_record_event",
+        setup_sql=_OWNER_RECIPIENT_FIXTURE,
+        op_sql="    DELETE FROM public.notification_owner_recipients WHERE id = v_id;",
+        fragment="only allowed through remover_destinatario_dono",
+        what="a plain DELETE of a recipient (outside the removal RPC)",
+        rationale="A delete without the RPC has no attributable actor and would blame the last editor.",
+    ),
+    _owner_recipient_probe(
+        probe_id="notification_owner_recipients.unstamped_update_refused",
+        guard_name="notification_owner_recipients_touch",
+        setup_sql=_OWNER_RECIPIENT_FIXTURE,
+        op_sql="    UPDATE public.notification_owner_recipients SET ativo = false WHERE id = v_id;",
+        fragment="must restamp alterado_em",
+        what="an UPDATE that does not restamp the actor",
+        rationale="An update that keeps the old alterado_por/alterado_em would record the previous admin as its author.",
+    ),
+    _owner_recipient_probe(
+        probe_id="notification_owner_recipients.truncate_refused",
+        guard_name="notification_owner_recipients_touch",
+        setup_sql="    NULL;",
+        op_sql="    TRUNCATE public.notification_owner_recipients;",
+        fragment="is append-only",
+        what="TRUNCATE of the owner-notice recipients",
+        rationale="TRUNCATE skips row triggers: wiping the recipients would leave no removido events at all.",
     ),
     _owner_recipient_probe(
         probe_id="notification_owner_recipient_events.truncate_refused",
