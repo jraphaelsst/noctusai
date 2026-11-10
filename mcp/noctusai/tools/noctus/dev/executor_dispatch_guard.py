@@ -21,7 +21,9 @@ from typing import Any
 
 _DISPATCH_TOOLS = {"Agent", "Task"}
 _EXECUTOR_RE = re.compile(r"\bEXECUTOR\b")
-_WT_RE = re.compile(r"(?P<abs>/[^\s'\"`()<>]*?)?\.claude/worktrees/(?P<slug>[A-Za-z0-9._-]+)")
+# The slug never ENDS in "." — a path closing a sentence ("…/worktrees/foo. Work only…")
+# must resolve to `foo`, not the non-existent `foo.` (false refusal seen 2026-11-10).
+_WT_RE = re.compile(r"(?P<abs>/[^\s'\"`()<>]*?)?\.claude/worktrees/(?P<slug>[A-Za-z0-9._-]*[A-Za-z0-9_-])")
 
 
 def _frontmatter(text: str) -> dict[str, str]:
