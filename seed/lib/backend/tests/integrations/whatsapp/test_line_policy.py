@@ -839,3 +839,16 @@ def test_the_async_hook_resolves_in_a_worker_thread_not_on_the_event_loop():
 
     asyncio.run(go())
     assert where and all(w != main for w in where), where
+
+
+def test_stricter_host_policy_is_not_shadowed_by_a_looser_session_entry():
+    """Security re-check 2026-11-10: resolution used `session entry or host entry`, so a looser session entry hid a
+    stricter (still send-enabled) host policy. Both are consulted now and the strictest wins."""
+    quiet = LinePolicy("enabled", False, False, False)
+    # Order matters: registering the host first already refuses the looser session entry at write time; the exposure
+    # was a session entry declared FIRST and a stricter host policy declared later.
+    register_line_policy("http://waha-x:3000#default", LEGACY)
+    register_line_policy("http://waha-x:3000", quiet)
+    got = resolve_line_policy("http://waha-x:3000", "default")
+    assert got.send_enabled
+    assert got.mark_online is False and got.full_sync is False and got.auto_repair is False

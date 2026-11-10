@@ -141,13 +141,19 @@ def _has_shell_meta(command: str) -> bool:
     """True when the command line carries an ACTIVE shell metacharacter. Quote-aware: `;` `&` `|` `<` `>` are literal
     inside single or double quotes (a docker `--format '{{.A}}|{{.B}}'` template), while backtick, newline, `$(` and `${`
     stay active inside double quotes and every metacharacter stays active outside quotes. An unterminated quote or a
-    trailing backslash is unparseable ⇒ meta (fail closed)."""
+    trailing backslash is unparseable ⇒ meta (fail closed). ANSI-C `$'…'` and locale `$"…"` quoting are meta too: bash
+    ends those spans by different rules (`\\'` does NOT close `$'…'`), so this parser and the remote shell would
+    disagree on where the span ends — a disagreement is refused, never guessed (security re-check, 2026-11-10)."""
     i, n = 0, len(command)
     while i < n:
         ch = command[i]
         if ch == "\\":
+            if i + 1 >= n:
+                return True
             i += 2
             continue
+        if ch == "$" and i + 1 < n and command[i + 1] in "'\"":
+            return True
         if ch == "'":
             end = command.find("'", i + 1)
             if end < 0:

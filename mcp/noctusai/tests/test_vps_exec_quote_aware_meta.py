@@ -26,3 +26,15 @@ def test_quoted_metacharacters_are_literal(cmd):
 ])
 def test_active_metacharacters_still_refused(cmd):
     assert not _is_read_only(cmd)
+
+
+@pytest.mark.parametrize("cmd", [
+    # ANSI-C / locale quoting end their spans by bash's own rules (`\'` does not close `$'…'`): refused, never parsed.
+    "docker inspect $'a\\' ; rm -rf x ; \\'' noctus-igig",
+    "docker inspect $'{{.A}}|{{.B}}' noctus-igig",
+    'docker inspect $"{{.A}}|{{.B}}" noctus-igig',
+    # a trailing backslash is unparseable
+    "docker inspect noctus-igig \\",
+])
+def test_ansi_c_and_locale_quoting_and_trailing_backslash_are_refused(cmd):
+    assert not _is_read_only(cmd)

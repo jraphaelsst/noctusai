@@ -553,7 +553,11 @@ def resolve_line_policy(
     hk = _host_key(base_url)
     with _lock:
         ro = _read_only_for(hk)
-        explicit_reg = _registry.get(_key(base_url, session)) or _registry.get(hk)
+        # BOTH the session entry and the host entry, never "session else host": a stricter host-level policy must not
+        # be shadowed by a looser session entry (security re-check, 2026-11-10).
+        _sess_reg, _host_reg = _registry.get(_key(base_url, session)), _registry.get(hk)
+        explicit_reg = (strictest(_sess_reg, _host_reg) if _sess_reg is not None and _host_reg is not None
+                        else _sess_reg or _host_reg)
         reg = explicit_reg
         all_ro = _all_read_only()
     if ro is None and all_ro and not base_url.startswith("fake://"):
