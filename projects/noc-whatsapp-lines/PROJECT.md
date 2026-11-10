@@ -95,7 +95,10 @@ noc VPS
 ## 6. Implementation phases
 
 ### Phase 0 — Audit
-- [ ] Map live WAHA sessions and containers on the noc VPS (`noctus.vps.ps`, `noctus.dev.waha_instance`).
+- [x] Map live WAHA sessions and containers on the noc VPS (2026-11-10, read-only via `noctus.vps.ps` and WAHA `session/list`):
+  - `noctus-services-waha-1` (`devlikeapro/waha:latest`, no healthcheck): one session `default`, WORKING, paired to **"One Chat" …4172**. Its webhook goes to `social.noctusai.com/api/whatsapp/webhook/…`. This is One's current line, the one Julia answers on.
+  - `noctus-waha-monica` (`devlikeapro/waha:noweb-2026.9.2`, healthy): **a second WAHA container already runs in prod** for Mônica. One-WAHA-per-container therefore has a live precedent. Phase 1 and the Assistant mechanism must read how it was provisioned (compose, tunnel ingress, base_url) before designing anything new.
+  - Drift: the services WAHA floats on `:latest` without a healthcheck, while Mônica's is pinned and healthy. The new L1/L3 containers follow the pinned + healthcheck shape. Re-pinning the services container is deferred to Phase 1, which re-provisions L1 anyway.
 - [x] Find which line Julia answers on today and how it is resolved (answered by `noctusai-e1`, 2026-11-10):
   - One (org `fd169d29…`) has exactly ONE `social_wiring.whatsapp_connections` row:
     - id `8fd583bb…`, `base_url http://waha:3000`, `session_name "default"`;
