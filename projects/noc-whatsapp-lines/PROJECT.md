@@ -134,12 +134,23 @@ noc VPS
 **Improvements:** NOC-FILL-IMPROVEMENTS
 
 ### Phase 2 — Seed owner line + gate WhatsApp leg
-- [ ] Seed owner-line sender (Protocol + Fake + Real + factory), configured on core Notificações (line + owner number(s)).
-- [ ] agents `notification_kinds.py`: `eval_loop_parada`, `eval_loop_checkpoint`.
-- [ ] Eval-loop gate sends through the gate and the owner line; the bell stays. Tests for suppressed and no_recipient.
-- [ ] Rebuild the eval-loop gate on current `feat/agents` (dev, with agent-layers-api landed, so fc1262b0b is not replayed). **Renumber its migration `075_eval_loops.sql` to the next free number**: 075 is now `075_retire_one_chat.sql`.
-- [ ] Deliver `feat/agents` (eval-loop migration included) to the dev steward.
-**Improvements:** NOC-FILL-IMPROVEMENTS
+- [x] Seed owner-line sender (Protocol + Fake + Real + factory), `noctusai_lib.domain.notification_catalog.owner_line` (feat/owner-line-seed → feat/agents a995494c4). Contract: `owner-line-CONTRACT.md`.
+- [x] Core recipients: migration `118_notification_owner_recipients.sql`, admin API `/api/admin/notifications/recipients` + `/owner-line`, page section "Quem recebe os avisos".
+- [x] agents `notification_kinds.py`: `eval_loop_parada`, `eval_loop_checkpoint`.
+- [x] The eval-loop gate sends through the gate and the owner line; the bell stays (7a73bd647). Tests: sent, failed linha_noc_nao_configurada, once per transition, a failure never undoes the stop.
+- [x] Gate rebuilt on `feat/agents`; migration renumbered to `076_eval_loops.sql`.
+- [ ] Security adversarial loop on the recipients control until 0 P0/P1. Round 1: 0 P0/P1, 3 P2 + 4 P3, fixes in flight. Round 2 pending.
+- [ ] Deliver stage 2 to the guardian. Migrations: core 118 + agents 076, each needing an owner-typed go.
+
+**Deploy config (owner, when L3 exists).** Every product container reads these. All unset means notices record `failed` loudly, never silently:
+- `NOC_OWNER_LINE_WAHA_URL` (the L3 WAHA container) + `NOC_OWNER_LINE_WAHA_SESSION` (required in practice) + `NOC_OWNER_LINE_WAHA_API_KEY`;
+- `NOC_OWNER_LINE_EXPECTED_NUMBER` (E.164 of L3). The sender refuses to send unless the paired account matches it, with BR 9th-digit variants accepted. A client's line can never send owner notices.
+- L3 also needs an explicit line-policy key once S1 replaces `"*"` (host-keyed; format from the Assistant session). `NOC-REMEDIATE[owner-line-waha-factory]` tracks this.
+
+**Improvements:**
+- A new route in an existing router inherits its envelope (noc-contract-first, refined).
+- Hand-built WAHA chat ids skip BR variant resolution; there are about 8 sites → keeper `check_hand_built_waha_chat_id` (drift 0900bd49f).
+- Append-only event tables lack TRUNCATE guards (5 of about 81) → keeper `check_append_only_truncate_guard` (drift 9b57b6fa9).
 
 ### Phase 3 — V2: noc's own agent on L3
 - [ ] Owner buys and connects the third number.
