@@ -29,6 +29,7 @@ import {
   ShoppingBag,
   Camera,
   Dumbbell,
+  MessageCircle,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -49,6 +50,7 @@ const ICONS: Record<string, LucideIcon> = {
   ShoppingBag, // store — public sales pages for digital products
   Camera, // p-studio — stored as lowercase 'camera' (resolved case-insensitively)
   Dumbbell, // pilates — stored as lowercase 'dumbbell'
+  MessageCircle, // assistant — personal-line WhatsApp shadow assistant
 };
 
 const ICONS_BY_LOWERCASE: Record<string, LucideIcon> = Object.fromEntries(
