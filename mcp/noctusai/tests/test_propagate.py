@@ -292,3 +292,15 @@ def test_render_dockerfile_media_base_opt_in_is_one_line():
     assert "backend-media-base" not in plain
     assert "FROM noctus-seed-backend-media-base:dev AS runtime" in media
     assert "FROM noctus-seed-backend-base:dev AS runtime" not in media
+
+
+@pytest.mark.parametrize("slug,port", [("social-wiring", "8011"), ("agents", "8016")])
+def test_lead_form_build_args_survive_regeneration(slug, port):
+    """scripts/infra/build-and-push.sh passes VITE_TURNSTILE_SITE_KEY (and, for agents, the Social Wiring cross-link)
+    as --build-arg; the generated Dockerfile must DECLARE them or the lead form ships without a site key. They were
+    hand-added once and a plain `--propagate` would have stripped them (2026-11-10)."""
+    canon = (REPO / "products/seed/backend/Dockerfile").read_text()
+    out = P._render_dockerfile(canon, slug, port)
+    assert "ARG VITE_TURNSTILE_SITE_KEY=\nENV VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY}\n" in out
+    assert "ARG VITE_CORE_URL=" in out  # still the seed set, extended - never replaced
+    assert ("ARG VITE_PRODUCT_URL_SOCIAL_WIRING=" in out) == (slug == "agents")

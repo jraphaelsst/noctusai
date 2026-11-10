@@ -356,6 +356,18 @@ _D_VITE: dict[str, str] = {
         + "ARG VITE_CORE_API_URL=\nENV VITE_CORE_API_URL=${VITE_CORE_API_URL}\n"
         "ARG VITE_CORE_URL=\nENV VITE_CORE_URL=${VITE_CORE_URL}\n"
     ),
+    # Lead forms post a Turnstile token core verifies (scripts/infra/build-and-push.sh bakes the site key); agents'
+    # landing also cross-links Social Wiring. Hand-added to the generated Dockerfiles on 2026-11-08 (41218fb997,
+    # 715f3e32d3) - declared HERE so `--propagate` keeps them instead of stripping them from the next image.
+    "social-wiring": (
+        _D_VITE_SEED + "ARG VITE_TURNSTILE_SITE_KEY=\nENV VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY}\n"
+    ),
+    "agents": (
+        _D_VITE_SEED
+        + "# Landing: Social Wiring cross-link host + the public Turnstile site key for the lead form (core verifies the token).\n"
+        "ARG VITE_PRODUCT_URL_SOCIAL_WIRING=\nENV VITE_PRODUCT_URL_SOCIAL_WIRING=${VITE_PRODUCT_URL_SOCIAL_WIRING}\n"
+        "ARG VITE_TURNSTILE_SITE_KEY=\nENV VITE_TURNSTILE_SITE_KEY=${VITE_TURNSTILE_SITE_KEY}\n"
+    ),
 }
 _D_EXTRA_MARKER = (
     "# {{BACKEND_EXTRA}} — product extras (e.g. dev-team: COPY dev_team +\n"
