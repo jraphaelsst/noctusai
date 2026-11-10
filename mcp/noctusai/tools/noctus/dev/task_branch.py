@@ -2316,8 +2316,51 @@ def _spawn_post_integrate(primary_root: str, dev_branch: str, remote: str) -> di
     return {"status": "scheduled", "pid": proc.pid, "log": str(log_path)}
 
 
+def _ownership_skip(*, abs_wt: str, branch: str, primary_root: str, pointer_fn, caller: str | None,
+                    auto: bool, session_state: "Callable[[str], str] | None") -> dict[str, Any] | None:
+    """Why this teardown must NOT happen, or None when it is the caller's to do.
+
+    A worktree is not the caller's to remove when (1) another session that is not dead claims it
+    (`primary_write_guard` claims, written by `harness_claim_worktree`; liveness from the steward
+    registry, `unknown` counts as live), or (2) its branch is a declared long-lived steward branch
+    (branch-tree pointer role 'steward'). 2026-11-10: the guardian's `landed slug=agents` removed
+    another session's integration worktree and local ref while that session still worked there."""
+    from tools.noctus.dev import primary_write_guard as _pwg
+    here = os.path.realpath(abs_wt)
+    for sid, claim in sorted(_pwg.read_claims(primary_root).items()):
+        if sid == caller:
+            continue
+        same_path = os.path.realpath(str(claim.get("worktree", ""))) == here
+        if not same_path:
+            continue
+        state = (session_state or (lambda _s: "unknown"))(sid)
+        if state != "dead":
+            return {"status": "skipped_owned", "cwd_removed": False,
+                    "owner": {"session_id": sid, "source": "worktree_claim", "state": state,
+                              "claimed_at": claim.get("claimed_at")},
+                    "reason": (f"worktree {abs_wt} is claimed by session {sid[:12]} ({state}) - not the caller's to "
+                               "remove; the owner tears it down, or releases the claim (harness_claim_worktree release)")}
+    if pointer_fn is not None:
+        try:
+            ptr = pointer_fn.latest(branch)
+        except Exception as e:  # noqa: BLE001 - a pointer failure is reported, never blocks the git lifecycle
+            logger.warning("task_branch: steward-branch check for %s skipped, pointer store unreadable: %s", branch, e)
+            ptr = None  # (same contract as `_pointer_transition`; the claim check above is the hard signal)
+        if ptr and ptr.get("role") == "steward":
+            owner = ptr.get("session")
+            if auto or owner != caller:
+                return {"status": "skipped_owned", "cwd_removed": False,
+                        "owner": {"session_id": owner, "source": "steward_branch", "branch": branch},
+                        "reason": (f"{branch} is a long-lived STEWARD branch (branch-tree pointer role 'steward'): its "
+                                   "worktree and ref outlive any single landing" +
+                                   ("" if auto else " - only the owning session may clean it up"))}
+    return None
+
+
 def _auto_cleanup_after_integrate(
-    runner, wt_path: str, slug: str, task_branch_fn, kwargs: dict[str, Any],
+    runner, wt_path: str, slug: str, task_branch_fn, kwargs: dict[str, Any], *,
+    branch: str | None = None, pointer_fn=None, caller: str | None = None,
+    session_state: "Callable[[str], str] | None" = None,
 ) -> dict[str, Any]:
     """Run `cleanup` for a just-integrated worktree iff it is clean.
 
@@ -2327,6 +2370,12 @@ def _auto_cleanup_after_integrate(
     """
     try:
         abs_wt = _absolute_wt_path(wt_path, _resolve_primary_root(kwargs.get("primary_root")))
+        owned = _ownership_skip(
+            abs_wt=abs_wt, branch=branch or f"{kwargs.get('branch_prefix', 'feat/')}{slug}",
+            primary_root=_resolve_primary_root(kwargs.get("primary_root")), pointer_fn=pointer_fn,
+            caller=caller or os.environ.get(_steward.SESSION_ENV), auto=True, session_state=session_state)
+        if owned:
+            return owned
         if _is_dirty_excluding_gitignored(runner, abs_wt):
             return {"status": "skipped", "cwd_removed": False,
                     "reason": "worktree has uncommitted changes - left in place; the "
@@ -2607,8 +2656,9 @@ def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_pat
     result["primary_ff"] = _ff_primary_after_integrate(
         runner, _resolve_primary_root(primary_root), dev_branch, remote)
     if auto_cleanup:
-        result["auto_cleanup"] = _auto_cleanup_after_integrate(
-            runner, wt_path, slug, task_branch_fn, cleanup_kwargs)
+        result["auto_cleanup"] = result["cleanup"] = _auto_cleanup_after_integrate(
+            runner, wt_path, slug, task_branch_fn, cleanup_kwargs, branch=branch, pointer_fn=pointer_fn,
+            caller=cleanup_kwargs.get("caller_session"), session_state=cleanup_kwargs.get("session_state"))
         result["message"] += f" Auto-cleanup: {result['auto_cleanup']['status']}."
     if post_integrate_fn is not None:
         try:
@@ -2677,6 +2727,8 @@ def task_branch(
     branch: str | None = None,
     verdict_ref: str | None = None,
     deliverable_kwargs: "dict[str, Any] | None" = None,
+    caller_session: str | None = None,
+    session_state: "Callable[[str], str] | None" = None,
 ) -> dict[str, Any]:
     """`action` ∈ {status, start, enqueue, landed, integrate, cleanup, train, sync_primary}.
 
@@ -2689,6 +2741,15 @@ def task_branch(
     (docs/ fix/ ...; otherwise resolved among the conventional prefixes);
     `verdict_ref` is delivery-contract item 5 (default: the filed request's).
     `deliverable_kwargs` is the test seam for `deliverable`'s own seams.
+
+    OWNERSHIP (2026-11-10): `cleanup` - and every post-landing auto-cleanup, `landed` and
+    `integrate` alike - never removes a worktree or deletes a branch that is not the caller's to
+    remove: it reports `skipped_owned` (owner, reason) when (1) another session that is not
+    dead holds a worktree claim (`harness_claim_worktree`), or (2) the branch is a long-lived
+    STEWARD branch (its branch-tree pointer has role 'steward'; the auto path always skips
+    those, a direct `cleanup` by the pointer's own session is allowed). `caller_session`
+    (default $CLAUDE_CODE_SESSION_ID) and `session_state` (default: the steward registry's
+    process ids; unknown is treated as live) are the test seams. Never fails a landed verdict.
 
     `train` (merge-all-before-integrating, owner rule 2026-10-24): `slugs=[...]`
     merges each ready `feat/<slug>` --no-ff into ONE `train-<slug|date>` task
@@ -2825,6 +2886,10 @@ def task_branch(
     # branch-tree ledger as a side effect of a unit test.
     pointer_fn = pointer_ops if pointer_ops is not None else (
         PointerOps() if run is None else None)
+    # Ownership (see `_ownership_skip`): who is calling, and whether a claiming session is still alive.
+    # Production reads the steward registry's process ids; an injected runner gets `unknown` (= live).
+    session_state_fn = session_state if session_state is not None else (
+        _steward.StewardStore().session_state if run is None else None)
 
     def git(*args, cwd: str | None = None):
         return _git(runner, *args, cwd=cwd, dev_branch=dev_branch)
@@ -3074,6 +3139,7 @@ def task_branch(
                                            worktrees_dir=worktrees_dir, branch_prefix=branch_prefix,
                                            primary_root=primary_root, run=run, fs=fs, settle=settle,
                                            pointer_ops=pointer_ops, verbose=verbose,
+                                           caller_session=caller_session, session_state=session_state_fn,
                                            settle_and_drain=post_integrate_fn is None,
                                            allow_stale_toolkit=True),
                        status_reader=queue_status_reader)
@@ -3662,11 +3728,13 @@ def task_branch(
                         f" Train riders: {[r['slug'] for r in result['train_riders']]}.")
                 if auto_cleanup:
                     result["auto_cleanup"] = _auto_cleanup_after_integrate(
-                        runner, wt_path, slug, task_branch, dict(
+                        runner, wt_path, slug, task_branch, branch=branch, pointer_fn=pointer_fn,
+                        caller=caller_session, session_state=session_state_fn, kwargs=dict(
                             remote=remote, dev_branch=dev_branch,
                             worktrees_dir=worktrees_dir, branch_prefix=branch_prefix,
                             primary_root=primary_root, run=run, fs=fs, settle=settle,
                             pointer_ops=pointer_ops, verbose=verbose,
+                            caller_session=caller_session, session_state=session_state_fn,
                             # the detached post-integrate job settles + drains ONCE
                             settle_and_drain=post_integrate_fn is None,
                             allow_stale_toolkit=True))
@@ -3736,6 +3804,14 @@ def task_branch(
     if actual and actual != branch:
         branch = actual
         base["branch"] = branch
+    # Never tear down a worktree/branch that is not the caller's (a live foreign claim, a steward
+    # branch): reported, not failed. The auto-cleanup after landed/integrate checks the same thing.
+    _owned = _ownership_skip(
+        abs_wt=_absolute_wt_path(wt_path, _resolve_primary_root(primary_root)), branch=branch,
+        primary_root=_resolve_primary_root(primary_root), pointer_fn=pointer_fn,
+        caller=caller_session or os.environ.get(_steward.SESSION_ENV), auto=False, session_state=session_state_fn)
+    if _owned:
+        return {**base, **_owned, "exit_code": 0}
     dev = _resolve(git, f"{remote}/{dev_branch}")
     head = _resolve(git, branch)
     merged = bool(dev and head and _is_ancestor(git, head, dev))
