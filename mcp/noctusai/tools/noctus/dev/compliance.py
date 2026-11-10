@@ -17617,7 +17617,9 @@ def check_guardian_tool_authorship(
         root = repo_root or REPO_ROOT
         try:
             out = subprocess.run(
-                ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMRD"],
+                # --no-renames: rename detection reports only the NEW name, so `git mv release_steward.py x.py`
+                # would hide the protected path; without it the move shows as D old + A new.
+                ["git", "diff", "--cached", "--no-renames", "--name-only", "--diff-filter=ACMRD"],
                 cwd=root, capture_output=True, text=True, timeout=30, check=False,
             ).stdout
         except (OSError, subprocess.SubprocessError):
