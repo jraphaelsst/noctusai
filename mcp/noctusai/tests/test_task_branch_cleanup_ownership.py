@@ -169,12 +169,8 @@ def test_an_auto_cleanup_that_cannot_read_the_pointer_store_skips_the_deletion(l
     untouched(w)
 
 
-def test_a_readable_store_with_no_pointer_still_cleans_the_unowned_slice(landed_world):
-    class Readable(FakePointers):
-        def latest_checked(self, branch):
-            return self.latest(branch), {"store_ok": True}
-    res = landed(landed_world, pointer_ops=Readable())
-    assert res["auto_cleanup"]["status"] == "cleaned", res["auto_cleanup"]
+# (the old 'readable store, no pointer -> cleaned' test asserted the pre-N-9 behaviour; see
+#  test_an_auto_cleanup_with_no_pointer_and_no_claim_skips_the_deletion below)
 
 
 # =================================================================================================
@@ -214,3 +210,99 @@ def test_an_auto_cleanup_never_removes_a_worktree_whose_pointer_session_is_alive
         untouched(w)
     # the pointer's own session finishing its own work is not foreign
     assert landed(w, pointer_ops=ptr, caller_session="sess-eng")["auto_cleanup"]["status"] == "cleaned"
+
+
+# =================================================================================================
+# fix round 2, N-2 / N-9: direct cleanup is not fail-open; an undeterminable owner is not ours
+# =================================================================================================
+
+def _engineer_ptr(session="sess-eng", status="on_going"):
+    return FakePointers(**{"feat/x": {"branch": "feat/x", "role": "engineer", "session": session, "status": status}})
+
+
+def test_an_unreadable_claims_file_counts_as_owned_for_auto_and_direct_cleanup(landed_world):
+    w = landed_world
+    claims = w.repo / PWG.CLAIMS_REL
+    claims.parent.mkdir(parents=True, exist_ok=True)
+    claims.write_text("{ this is not json")
+    assert PWG.read_claims_status(str(w.repo))[1] == "unreadable"
+    res = landed(w, pointer_ops=_engineer_ptr(), session_state=lambda s: "dead")
+    assert res["status"] == "integrated" and res["auto_cleanup"]["status"] == "skipped_owned"
+    assert res["auto_cleanup"]["owner"]["source"] == "claims_unreadable"
+    untouched(w)
+    direct = T.task_branch(action="cleanup", slug="x", confirm=True, run=w.runner(), primary_root=str(w.repo),
+                           caller_session="sess-eng")
+    assert direct["status"] == "skipped_owned" and direct["exit_code"] == 0
+    untouched(w)
+    claims.write_text('["a", "list"]')  # valid JSON of the wrong shape is corrupt too
+    assert PWG.read_claims_status(str(w.repo))[1] == "unreadable"
+    claims.unlink()
+    assert PWG.read_claims_status(str(w.repo)) == ({}, "absent")
+
+
+def test_a_direct_cleanup_by_another_session_leaves_a_live_pointer_sessions_worktree(landed_world):
+    w = landed_world
+    for state in ("live", "unknown"):
+        res = T.task_branch(action="cleanup", slug="x", confirm=True, run=w.runner(), primary_root=str(w.repo),
+                            pointer_ops=_engineer_ptr(), caller_session="sess-guardian", session_state=lambda s, st=state: st)
+        assert res["status"] == "skipped_owned" and res["exit_code"] == 0, (state, res)
+        assert res["owner"]["source"] == "pointer_session"
+        untouched(w)
+
+
+def test_a_direct_cleanup_by_the_pointers_own_session_keeps_the_old_behaviour(landed_world):
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=landed_world.runner(), primary_root=str(landed_world.repo),
+                        pointer_ops=_engineer_ptr(), caller_session="sess-eng", session_state=lambda s: "live")
+    assert res["status"] == "cleaned", res
+
+
+def test_a_direct_cleanup_still_proceeds_when_only_the_pointer_store_is_unreadable(landed_world):
+    """Documented asymmetry: an explicit cleanup is never failed over a pointer failure (the auto path fails closed)."""
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=landed_world.runner(), primary_root=str(landed_world.repo),
+                        pointer_ops=RaisingPointers(), caller_session="sess-me")
+    assert res["status"] == "cleaned", res
+
+
+def test_an_auto_cleanup_with_no_pointer_and_no_claim_skips_the_deletion(landed_world):
+    w = landed_world
+    res = landed(w, pointer_ops=FakePointers())  # a readable store that knows nothing about feat/x
+    assert res["status"] == "integrated"
+    assert res["auto_cleanup"]["status"] == "skipped_owned"
+    assert res["auto_cleanup"]["owner"] == {"session_id": None, "source": "no_pointer", "branch": "feat/x"}
+    untouched(w)
+
+
+def test_a_pointer_without_a_session_is_undeterminable_too(landed_world):
+    ptr = FakePointers(**{"feat/x": {"branch": "feat/x", "role": "engineer", "status": "on_going"}})
+    assert landed(landed_world, pointer_ops=ptr)["auto_cleanup"]["owner"]["source"] == "no_pointer"
+    untouched(landed_world)
+
+
+def test_an_unpointered_slice_is_cleaned_when_the_caller_holds_the_claim_or_the_pointer_session_is_dead(landed_world):
+    w = landed_world
+    PWG.write_claim(str(w.repo), "sess-me", str(w.wt))
+    assert landed(w, pointer_ops=FakePointers(), caller_session="sess-me")["auto_cleanup"]["status"] == "cleaned"
+
+
+def test_a_dead_pointer_session_with_no_claim_is_cleaned(landed_world):
+    res = landed(landed_world, pointer_ops=_engineer_ptr(), session_state=lambda s: "dead")
+    assert res["auto_cleanup"]["status"] == "cleaned", res["auto_cleanup"]
+
+
+def test_concurrent_claims_do_not_lose_updates(landed_world):
+    import threading
+    w = landed_world
+    errors = []
+
+    def claim(i):
+        try:
+            PWG.write_claim(str(w.repo), f"sess-{i}", str(w.wt))
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=claim, args=(i,)) for i in range(12)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert not errors
+    assert sorted(PWG.read_claims(str(w.repo))) == sorted(f"sess-{i}" for i in range(12))
+    assert (w.repo / (PWG.CLAIMS_REL + ".lock")).exists()

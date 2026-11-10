@@ -1510,16 +1510,28 @@ def decide(
 CLAIMS_REL = os.path.join(".claude", "cache", "session-worktrees.json")
 
 
-def read_claims(primary_root: str) -> dict[str, dict[str, Any]]:
-    """Every session's claim; an absent or unreadable file is NO claims, never a crash."""
+def read_claims_status(primary_root: str) -> tuple[dict[str, dict[str, Any]], str]:
+    """(claims, status): `absent` (no file: nobody claims anything), `ok`, or `unreadable` (I/O error, corrupt JSON, not
+    an object). Callers that must not act on someone else's worktree treat `unreadable` as OWNED - the old reader
+    returned {} for it, so a corrupt claims file silently read as 'nobody owns anything'."""
     import json
 
     try:
         with open(os.path.join(primary_root, CLAIMS_REL), encoding="utf-8") as fh:
             data = json.load(fh)
+    except FileNotFoundError:
+        return {}, "absent"
     except (OSError, ValueError):
-        return {}
-    return {k: v for k, v in data.items() if isinstance(v, dict)} if isinstance(data, dict) else {}
+        return {}, "unreadable"
+    if not isinstance(data, dict):
+        return {}, "unreadable"
+    return {k: v for k, v in data.items() if isinstance(v, dict)}, "ok"
+
+
+def read_claims(primary_root: str) -> dict[str, dict[str, Any]]:
+    """Every session's claim; an absent or unreadable file is NO claims, never a crash (the PreToolUse redirect must
+    not break on it). Ownership decisions use `read_claims_status` instead."""
+    return read_claims_status(primary_root)[0]
 
 
 def claim_problem(worktree: str, ctx: GuardContext) -> str | None:
@@ -1543,15 +1555,28 @@ def claim_problem(worktree: str, ctx: GuardContext) -> str | None:
 
 
 def write_claim(primary_root: str, session_id: str, worktree: str | None) -> dict[str, Any]:
-    """Claim `worktree` for `session_id` (None releases). Atomic (tmp + rename)."""
-    import json
-    from datetime import datetime, timezone
-
+    """Claim `worktree` for `session_id` (None releases). Atomic (tmp + rename) under an exclusive flock."""
     if not session_id:
         return {"status": "error", "error": "session_id is required"}
     ctx = discover_context(primary_root)
     if ctx is None:
         return {"status": "error", "error": f"cannot read the git layout at {primary_root}"}
+    path = os.path.join(ctx.primary_root, CLAIMS_REL)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    # read-modify-write under an exclusive flock: two sessions claiming at once used to lose one update
+    import fcntl
+    lock_fh = open(path + ".lock", "a")
+    try:
+        fcntl.flock(lock_fh, fcntl.LOCK_EX)
+        return _write_claim_locked(ctx, path, session_id, worktree)
+    finally:
+        lock_fh.close()
+
+
+def _write_claim_locked(ctx: "GuardContext", path: str, session_id: str, worktree: str | None) -> dict[str, Any]:
+    import json
+    from datetime import datetime, timezone
+
     claims = read_claims(ctx.primary_root)
     if worktree is None:
         released = claims.pop(session_id, None)
@@ -1567,8 +1592,6 @@ def write_claim(primary_root: str, session_id: str, worktree: str | None) -> dic
             "claimed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         result = {"status": "claimed", "session_id": session_id, **claims[session_id]}
-    path = os.path.join(ctx.primary_root, CLAIMS_REL)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(claims, fh, indent=2, sort_keys=True)
