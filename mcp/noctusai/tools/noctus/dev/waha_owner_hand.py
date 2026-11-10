@@ -1,10 +1,11 @@
 """The OWNER-BY-HAND path for a `personal: true` WAHA line (owner decision D49, 2026-11-10). CLI ONLY.
 
 `noctus.dev.waha_instance` refuses to provision/apply a personal line for every caller (PERSONAL_REFUSAL). This module
-is the one way the OWNER does that step himself, from his own terminal:
+is the one way the OWNER does that step himself, from a macOS Terminal.app window (Aplicativos › Utilitários), from
+the primary checkout:
 
-    python mcp/noctusai/cli.py --waha-instance-owner-hand apply <line>      # core -> provision -> edge
-    python mcp/noctusai/cli.py --waha-instance-owner-hand provision <line>  # session config only (core already up)
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH mcp/noctusai/.venv/bin/python mcp/noctusai/cli.py \
+        --waha-instance-owner-hand apply <line>       # core -> provision -> edge  (`provision`: session config only)
 
 It is deliberately NOT an MCP tool: it has no `register()`, `tools/noctus/dev/__init__.py` never imports it, and a test
 asserts its name is absent from the registered tool set. It runs exactly what `provision` / `apply` run for that ONE
@@ -20,25 +21,34 @@ a session that reads "the owner does it by hand" as an obstacle -- not a hostile
 root on the VPS can pair a number without this tool). What such a session cannot produce by accident is a human at a
 real terminal window, so:
 
-* the parent process chain is judged on each ancestor's REAL executable image (libproc `proc_pidpath`, never argv,
-  which a process sets itself -- `exec -a`), and STRUCTURALLY: walking up from this process, only the system shells and
-  `/usr/bin/login` (SHELL_IMAGES, by path) may sit between it and the nearest other ancestor, which must be a pinned
-  terminal emulator (EMULATORS -- data): its image at the pinned path under /Applications or /System/Applications, the
-  RUNNING pid satisfying the pinned code-signing requirement (`codesign --verify -R`, Apple anchor + team id), and the
-  app itself started by launchd as a LaunchServices-registered application (`lsappinfo`). Anything unreadable refuses.
-  This is what stops `exec -a <Terminal path> script ...`, an emulator path passed as an argument, a renamed `script`,
-  `python` + `pty.spawn`, `expect`, `tmux`, `env -i ... &` reparented to launchd, and an Electron binary run as node;
-* stdin AND stdout are TTYs, /dev/tty opens, no CLAUDECODE / CLAUDE_CODE_* in the env;
+* the parent process chain is read from the KERNEL, in-process (sysctl KERN_PROC + libproc: parent pid, start time,
+  real executable image) -- never argv (a process sets its own: `exec -a`), never `ps` or any tool resolved through
+  PATH; every process must have started at or after its parent (a reused pid refuses). STRUCTURALLY: only the system
+  shells and `/usr/bin/login` (SHELL_IMAGES, by path) may sit between this process and the nearest other ancestor,
+  which must be the pinned Terminal.app (EMULATORS -- data; Terminal ONLY: an IDE-hosted agent runs in the same signed
+  pty host as the owner's IDE terminal): its image at the pinned path, the RUNNING pid satisfying `anchor apple and
+  identifier "com.apple.Terminal"` (`/usr/bin/codesign --verify -R`), started by launchd as a LaunchServices-registered
+  app (`/usr/bin/lsappinfo`). Anything unreadable refuses;
+* no CLAUDECODE / CLAUDE_CODE_*, no PYTHONPATH / PYTHONSTARTUP / PYTHONHOME / PYTHONUSERBASE / PYTHONINSPECT / DYLD_*,
+  and PATH starts with /usr/bin:/bin (git and ssh, which libraries resolve through PATH, are then the system ones);
+  stdin AND stdout are TTYs and /dev/tty opens;
+* no process other than this one and its own shell/login chain has our tty as its controlling terminal (a TIOCSTI typist
+  or second reader), checked before every prompt, and the input queue is flushed (tcflush) before every prompt;
 * the human TYPES the line name and CONFIRMO on /dev/tty (never stdin; no flag can pre-answer it);
 * the `confirmed` audit row is written (or spooled AND read back, its id shown on the terminal) BEFORE anything touches
   the VPS; the grant `waha_instance` accepts is bound to line + policy hash + host + a secret nonce whose DIGEST is in
   that row, is honoured only while that row is < 5 minutes old, and is single-use (the outcome row consumes it).
 
+A test IO runs the whole call in the TEST owner-hand scope: the real ssh runner (`_vps_ssh.run_remote`) then refuses every
+command, so a test-marked runner that forwards to it, or an ssh alias for the test host, reaches nothing; only a
+PRODUCTION grant minted on the real ledger store opens it.
+
 No second factor, ever (owner decision). What this control does NOT stop (documented residuals, KB § 6a): in-process
-Python that deliberately reaches into this module's private state; a process that types into a real terminal window
-(osascript / accessibility APIs, NOC-REMEDIATE[owner-hand-accessibility-injection]); an agent hosted in an allowlisted
-IDE's own terminal; VPS root/automation reading the
-session files until NOC-REMEDIATE[personal-core-host-exec-authz] is built.
+Python that deliberately reaches into this module's private state (it must then write its `confirmed` row through the
+real store: it lands on origin/ledgers, or in the local spool when offline); a process that DRIVES a real Terminal window
+(`open -a Terminal x.command`, AppleScript `do script`, accessibility keystrokes --
+NOC-REMEDIATE[owner-hand-accessibility-injection]); VPS root/automation reading the session files until
+NOC-REMEDIATE[personal-core-host-exec-authz] is built.
 """
 from __future__ import annotations
 
@@ -61,7 +71,8 @@ LEDGER_NAME = "waha-owner-hand.ndjson"
 LEDGER_REL = Path("project-history") / LEDGER_NAME
 ACTIONS = ("provision", "apply")
 CONFIRM_WORD = "CONFIRMO"
-COMMAND = "python mcp/noctusai/cli.py --waha-instance-owner-hand {action} {name}"
+COMMAND = ("PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH mcp/noctusai/.venv/bin/python mcp/noctusai/cli.py "
+           "--waha-instance-owner-hand {action} {name}")
 GRANT_TTL_S = 300
 _HARNESS_ENV_EXACT = ("CLAUDECODE",)
 _HARNESS_ENV_PREFIX = "CLAUDE_CODE_"
@@ -69,40 +80,34 @@ _MAX_HOPS = 64
 
 #: The only images allowed between this process and its terminal emulator, by exact path (never a name, never argv).
 SHELL_IMAGES: tuple[str, ...] = ("/bin/zsh", "/bin/bash", "/bin/sh", "/usr/bin/login")
-_AG = "/Applications/Antigravity IDE.app/Contents"
-_VSC = "/Applications/Visual Studio Code.app/Contents"
-#: Pinned terminal emulators. `entry_images` = the process that is the shell's parent (the pty host); its running pid must
-#: satisfy `entry_requirement`. `app` = for an IDE, the main app process that must be the pty host's parent (None: the
-#: entry IS the app). The app process must be launchd's child and LaunchServices-registered as `bundle_id`. Team ids read
-#: with `codesign -dv` on the owner's machine, 2026-11-10 (Antigravity EQHXZ8M8AV, VS Code UBF8T346G9). iTerm2 is not
-#: installed there, so nothing is pinned for it (add it here, with its team id read the same way, when it is).
-#: The IDE extension host ("Helper (Plugin)") and language servers are NOT terminals: not listed, so refused.
+#: The pinned terminal: macOS Terminal.app ONLY (tech-lead decision 2026-11-10, surfaced to the owner). IDE terminals were
+#: removed: an agent hosted in the IDE (its `sendText`, a `tasks.json` task) runs in the SAME signed pty-host helper as the
+#: owner's integrated terminal, so no image or signature check can tell them apart. The owner may ask to re-add his IDE
+#: as an ACCEPTED risk (a row here with its pinned helper + app requirement; the gate already supports `app`).
+#: `entry_images` = the process that is the shell's parent chain head (Terminal runs `/usr/bin/login`, then the shell);
+#: its RUNNING pid must satisfy `entry_requirement`; `app: None` = the entry IS the app, which must be launchd's child and
+#: LaunchServices-registered as `bundle_id`.
 EMULATORS: tuple[dict, ...] = (
     {"label": "macOS Terminal", "bundle_id": "com.apple.Terminal",
      "entry_images": ("/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",),
      "entry_requirement": 'anchor apple and identifier "com.apple.Terminal"', "app": None},
-    {"label": "Antigravity IDE", "bundle_id": "com.google.antigravity-ide",
-     "entry_images": (f"{_AG}/Frameworks/Antigravity IDE Helper.app/Contents/MacOS/Antigravity IDE Helper",),
-     "entry_requirement": ('anchor apple generic and identifier "com.google.antigravity-ide.helper" and '
-                           'certificate leaf[subject.OU] = "EQHXZ8M8AV"'),
-     "app": {"images": (f"{_AG}/MacOS/Electron",),
-             "requirement": ('anchor apple generic and identifier "com.google.antigravity-ide" and '
-                             'certificate leaf[subject.OU] = "EQHXZ8M8AV"')}},
-    {"label": "VS Code", "bundle_id": "com.microsoft.VSCode",
-     "entry_images": (f"{_VSC}/Frameworks/Code Helper.app/Contents/MacOS/Code Helper",),
-     "entry_requirement": ('anchor apple generic and identifier "com.microsoft.VSCode.helper" and '
-                           'certificate leaf[subject.OU] = "UBF8T346G9"'),
-     "app": {"images": (f"{_VSC}/MacOS/Code", f"{_VSC}/MacOS/Electron"),
-             "requirement": ('anchor apple generic and identifier "com.microsoft.VSCode" and '
-                             'certificate leaf[subject.OU] = "UBF8T346G9"')}},
 )
+OPEN_TERMINAL = "Abra o Terminal.app (Aplicativos › Utilitários) e rode o comando lá."
+#: Variables that make the interpreter (or the loader) run code the owner did not type.
+_INJECTION_ENV = ("PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME", "PYTHONUSERBASE", "PYTHONINSPECT")
+#: PATH must START with this: a tool any library resolves through PATH (git for the ledger, ssh) is then the system one.
+_SAFE_PATH_PREFIX = "/usr/bin:/bin"
 #: A test IO may target only this host (RFC 2606 `.invalid`: it can never resolve), so the seam cannot reach the VPS.
 TEST_HOST = "noc-test.invalid"
 
-# NOC-REMEDIATE[owner-hand-accessibility-injection]: a process that TYPES into a real, pinned terminal window (osascript
-# `keystroke`, CGEventPost, accessibility APIs) passes every check here, by design of what this gate can see. Cheap next
-# check: refuse while any application other than the pinned emulators holds Accessibility or Automation (Apple Events)
-# rights in TCC (read-only: `tccutil` has no list; read the user TCC.db where permitted, else report "unverifiable").
+# NOC-REMEDIATE[owner-hand-accessibility-injection]: a process that DRIVES a real, pinned Terminal window passes the
+# chain check by design of what it can see: (1) a LaunchServices launch (`open -a Terminal x.command`, no TCC prompt) of
+# a script that runs this command; (2) AppleScript `do script` / System Events `keystroke`, CGEventPost, accessibility
+# APIs typing the answers; (3) TIOCSTI from a process holding our tty. Built here: input is flushed (tcflush TCIFLUSH)
+# before every prompt, and any process other than this one and its own shell/login chain that has our tty as its
+# controlling terminal refuses (sysctl KERN_PROC_TTY). Still open: (1) and (2). Cheap next check: refuse while any app
+# other than Terminal holds Accessibility or Automation (Apple Events) rights in TCC (read the user TCC.db where
+# permitted, else "unverifiable"), and refuse when Terminal's launch came from a `.command` document.
 # Not a blocker for D49 (the owner accepted the host residual) — 2026-11-10
 
 _MINT = object()  # module-private: only `owner_hand` holds it when it builds a grant
@@ -225,15 +230,85 @@ def shadow_shape_problems(inst: dict) -> list[str]:
 
 
 _BUNDLE_RX = re.compile(r'bundleID="([^"]+)"')
+_LIBPROC = "/usr/lib/libproc.dylib"
+_LIBC = "/usr/lib/libc.dylib"
+_CODESIGN = "/usr/bin/codesign"
+_LSAPPINFO = "/usr/bin/lsappinfo"
+_GIT = "/usr/bin/git"
+_NODEV = 0xFFFFFFFF
+# struct kinfo_proc (sysctl KERN_PROC), arm64/x86_64 darwin: p_starttime {tv_sec int64 @0, tv_usec int32 @8}, p_pid @40,
+# kp_eproc.e_ppid @560, e_tdev @572; size 648. Self-checked against proc_pidinfo(PROC_PIDT_SHORTBSDINFO) on every read: a
+# layout mismatch reads as "unreadable" (refuse), never as a wrong answer.
+_KP_SIZE, _KP_START, _KP_USEC, _KP_PID, _KP_PPID, _KP_TDEV = 648, 0, 8, 40, 560, 572
+_CTL_KERN, _KERN_PROC, _KERN_PROC_PID, _KERN_PROC_TTY = 1, 14, 1, 4
+_PROC_PIDT_SHORTBSDINFO, _SHORTBSD_SIZE = 13, 64
+
+
+def _sysctl_procs(mib: tuple) -> "bytes | None":
+    import ctypes
+
+    try:
+        libc = ctypes.CDLL(_LIBC, use_errno=True)
+    except OSError:
+        return None
+    arr = (ctypes.c_int * len(mib))(*mib)
+    size = ctypes.c_size_t(0)
+    if libc.sysctl(arr, len(mib), None, ctypes.byref(size), None, ctypes.c_size_t(0)) != 0:
+        return None
+    buf = ctypes.create_string_buffer(size.value + 16 * _KP_SIZE)
+    size = ctypes.c_size_t(len(buf))
+    if libc.sysctl(arr, len(mib), buf, ctypes.byref(size), None, ctypes.c_size_t(0)) != 0:
+        return None
+    return buf.raw[:size.value]
+
+
+def _short_ppid(pid: int) -> "int | None":
+    """The kernel's parent pid (libproc PROC_PIDT_SHORTBSDINFO: readable for every pid, root-owned ones included)."""
+    import ctypes
+    import struct
+
+    try:
+        lib = ctypes.CDLL(_LIBPROC, use_errno=True)
+    except OSError:
+        return None
+    buf = ctypes.create_string_buffer(_SHORTBSD_SIZE)
+    n = lib.proc_pidinfo(ctypes.c_int(pid), ctypes.c_int(_PROC_PIDT_SHORTBSDINFO), ctypes.c_uint64(0), buf,
+                         ctypes.c_int(_SHORTBSD_SIZE))
+    if n != _SHORTBSD_SIZE or struct.unpack_from("<I", buf.raw, 0)[0] != pid:
+        return None
+    return struct.unpack_from("<I", buf.raw, 4)[0]
+
+
+def _proc(pid: int) -> "tuple[int, float, int] | None":
+    """(ppid, start time, controlling tty dev) from the kernel, in-process (no `ps`, nothing resolved through PATH)."""
+    import struct
+
+    raw = _sysctl_procs((_CTL_KERN, _KERN_PROC, _KERN_PROC_PID, pid))
+    if not raw or len(raw) < _KP_SIZE or struct.unpack_from("<i", raw, _KP_PID)[0] != pid:
+        return None
+    ppid = struct.unpack_from("<i", raw, _KP_PPID)[0]
+    if _short_ppid(pid) != ppid:  # layout self-check (and a second, independent kernel read)
+        return None
+    start = struct.unpack_from("<q", raw, _KP_START)[0] + struct.unpack_from("<i", raw, _KP_USEC)[0] / 1e6
+    return ppid, start, struct.unpack_from("<I", raw, _KP_TDEV)[0]
+
+
+def _tty_pids(tdev: int) -> "list[int] | None":
+    """Every pid whose CONTROLLING terminal is `tdev` (sysctl KERN_PROC_TTY), whoever owns it."""
+    import struct
+
+    raw = _sysctl_procs((_CTL_KERN, _KERN_PROC, _KERN_PROC_TTY, tdev))
+    if raw is None or len(raw) % _KP_SIZE:
+        return None
+    return [struct.unpack_from("<i", raw, i + _KP_PID)[0] for i in range(0, len(raw), _KP_SIZE)]
 
 
 def _proc_image(pid: int) -> "str | None":
     """The kernel's record of a process's executable path (libproc proc_pidpath); None when unreadable."""
     import ctypes
-    import ctypes.util
 
     try:
-        lib = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib", use_errno=True)
+        lib = ctypes.CDLL(_LIBPROC, use_errno=True)
     except OSError:
         return None
     buf = ctypes.create_string_buffer(4096)  # PROC_PIDPATHINFO_MAXSIZE
@@ -256,32 +331,42 @@ class _RealIO:
         return os.isatty(fd)
 
     def open_tty(self):
-        return open("/dev/tty", "r+", encoding="utf-8")  # noqa: SIM115 - closed by the caller
+        """/dev/tty as an unbuffered read+write text stream (a text `r+` open is refused on a pty: not seekable)."""
+        import io as _io
 
-    def ancestors(self) -> "list[tuple[int, str | None]] | None":
-        """(pid, REAL executable image) of every ancestor up to (not incl.) launchd, nearest first. The image comes from
-        the kernel (libproc proc_pidpath), the parent pid from the kernel's process table -- never from argv. None when
-        the chain cannot be read or does not reach pid 1 within _MAX_HOPS."""
+        raw = open("/dev/tty", "r+b", buffering=0)  # noqa: SIM115 - closed by the caller through the wrapper
+        return _io.TextIOWrapper(raw, encoding="utf-8", write_through=True, line_buffering=True)
+
+    def self_proc(self) -> "tuple[int, float, int] | None":
+        """(this pid, its start time, its controlling tty dev)."""
+        me = _proc(os.getpid())
+        return None if me is None else (os.getpid(), me[1], me[2])
+
+    def ancestors(self) -> "list[tuple[int, str | None, float]] | None":
+        """(pid, REAL executable image, start time) of every ancestor up to (not incl.) launchd, nearest first. Parent pid,
+        start time and image all come from the kernel, in-process; each hop is read twice around the image read, so a
+        pid that exits and is reused mid-walk reads as unreadable. None when the chain cannot be read or does not reach
+        pid 1 within _MAX_HOPS."""
         out, pid = [], os.getppid()
         for _ in range(_MAX_HOPS):
             if pid <= 1:
                 return out
-            try:
-                r = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)],
-                                   capture_output=True, text=True, timeout=5, check=False)
-                ppid = int(r.stdout.strip()) if r.returncode == 0 else None
-            except (OSError, subprocess.SubprocessError, ValueError):
+            before = _proc(pid)
+            image = _proc_image(pid)
+            after = _proc(pid)
+            if before is None or after is None or before[:2] != after[:2]:
                 return None
-            if ppid is None:
-                return None
-            out.append((pid, _proc_image(pid)))
-            pid = ppid
+            out.append((pid, image, before[1]))
+            pid = before[0]
         return None
+
+    def tty_pids(self, tdev: int) -> "list[int] | None":
+        return _tty_pids(tdev)
 
     def signature_ok(self, pid: int, requirement: str) -> bool:
         """The RUNNING process satisfies the code-signing requirement (dynamic validity, not the file on disk)."""
         try:
-            r = subprocess.run(["codesign", "--verify", f"-R={requirement}", str(pid)],
+            r = subprocess.run([_CODESIGN, "--verify", f"-R={requirement}", str(pid)],
                                capture_output=True, text=True, timeout=15, check=False)
         except (OSError, subprocess.SubprocessError):
             return False
@@ -290,11 +375,11 @@ class _RealIO:
     def app_bundle(self, pid: int) -> "str | None":
         """The LaunchServices bundle id of the application with this pid; None when it is not a registered app."""
         try:
-            asn = subprocess.run(["lsappinfo", "find", f"pid={pid}"], capture_output=True, text=True, timeout=5,
+            asn = subprocess.run([_LSAPPINFO, "find", f"pid={pid}"], capture_output=True, text=True, timeout=5,
                                  check=False).stdout.strip()
             if not asn:
                 return None
-            info = subprocess.run(["lsappinfo", "info", "-only", "bundleid", asn], capture_output=True, text=True,
+            info = subprocess.run([_LSAPPINFO, "info", "-only", "bundleid", asn], capture_output=True, text=True,
                                   timeout=5, check=False).stdout
         except (OSError, subprocess.SubprocessError):
             return None
@@ -303,7 +388,7 @@ class _RealIO:
 
     def git_email(self) -> str:
         try:
-            r = subprocess.run(["git", "config", "user.email"], capture_output=True, text=True, timeout=5, check=False)
+            r = subprocess.run([_GIT, "config", "user.email"], capture_output=True, text=True, timeout=5, check=False)
             return r.stdout.strip() or "unknown"
         except (OSError, subprocess.SubprocessError):
             return "unknown"
@@ -324,56 +409,89 @@ def _emulator_for(image: str) -> "dict | None":
     return None
 
 
+def _refused(why: str) -> str:
+    return f"{why}. {OPEN_TERMINAL}"
+
+
 def chain_problem(io) -> "str | None":
-    """None when the nearest non-shell ancestor is a pinned, correctly signed terminal emulator started by launchd as a
-    registered app, with only system shells / login in between; else why not. Judged on real images, never argv."""
-    chain = io.ancestors()
-    if chain is None:
-        return "the parent process chain cannot be read up to launchd: refused (fail closed)"
-    allowed = ", ".join(e["label"] for e in EMULATORS)
+    """None when the nearest non-shell ancestor is the pinned, correctly signed Terminal.app started by launchd as a
+    registered app, with only system shells / login in between, every process started after its parent; else why not.
+    Judged on real images from the kernel, never argv, never a PATH-resolved tool."""
+    me, chain = io.self_proc(), io.ancestors()
+    if chain is None or me is None:
+        return _refused("the parent process chain cannot be read up to launchd: refused (fail closed)")
+    starts = [me[1]] + [c[2] for c in chain]
+    if any(starts[k] < starts[k + 1] for k in range(len(starts) - 1)):
+        return _refused("a process in the parent chain started before its parent (a reused pid): refused")
     i = 0
     while i < len(chain) and chain[i][1] in SHELL_IMAGES:
         i += 1
     if i == len(chain):
-        return f"no terminal emulator above the shell (reached launchd; allowed: {allowed}): refused"
-    pid, image = chain[i]
+        return _refused("no terminal emulator above the shell (reached launchd)")
+    pid, image, _ = chain[i]
     if not image:
-        return f"the executable image of ancestor pid {pid} cannot be read: refused (fail closed)"
+        return _refused(f"the executable image of ancestor pid {pid} cannot be read: refused (fail closed)")
     emu = _emulator_for(image)
     if emu is None:
-        return (f"the shell's parent is `{image}`, not a pinned terminal emulator (allowed: {allowed}): the owner runs "
-                "this directly in a terminal window (no pty wrapper, multiplexer, interpreter or agent)")
+        return _refused(f"the shell's parent is `{image}`, not the pinned Terminal.app (no IDE terminal, pty wrapper, "
+                        "multiplexer, interpreter or agent)")
     if not io.signature_ok(pid, emu["entry_requirement"]):
-        return f"{emu['label']} (pid {pid}) does not satisfy its pinned code-signing requirement: refused"
+        return _refused(f"{emu['label']} (pid {pid}) does not satisfy its pinned code-signing requirement")
     if emu["app"] is not None:
         if i + 1 >= len(chain):
-            return f"{emu['label']}'s terminal host has no app above it: refused"
+            return _refused(f"{emu['label']}'s terminal host has no app above it")
         i += 1
-        pid, image = chain[i]
+        pid, image, _ = chain[i]
         if image not in emu["app"]["images"]:
-            return f"{emu['label']}'s terminal host was not started by the {emu['label']} app (`{image}`): refused"
+            return _refused(f"{emu['label']}'s terminal host was not started by the {emu['label']} app (`{image}`)")
         if not io.signature_ok(pid, emu["app"]["requirement"]):
-            return f"the {emu['label']} app (pid {pid}) does not satisfy its pinned code-signing requirement: refused"
+            return _refused(f"the {emu['label']} app (pid {pid}) does not satisfy its pinned code-signing requirement")
     if i != len(chain) - 1:
-        return f"{emu['label']} (pid {pid}) was not started by launchd (something launched it): refused"
+        return _refused(f"{emu['label']} (pid {pid}) was not started by launchd (something launched it)")
     if io.app_bundle(pid) != emu["bundle_id"]:
-        return f"{emu['label']} (pid {pid}) is not a registered {emu['bundle_id']} application: refused"
+        return _refused(f"{emu['label']} (pid {pid}) is not a registered {emu['bundle_id']} application")
+    return None
+
+
+def tty_problem(io) -> "str | None":
+    """None when nothing but this process and its own shell/login chain has our terminal as ITS controlling terminal
+    (what a TIOCSTI typist or a second reader of the line would need); else why not. Fail closed."""
+    me, chain = io.self_proc(), io.ancestors()
+    if me is None or chain is None:
+        return _refused("this process's terminal or parent chain cannot be read")
+    if me[2] in (_NODEV, 0):
+        return _refused("this process has no controlling terminal")
+    holders = io.tty_pids(me[2])
+    if holders is None or me[0] not in holders:
+        return _refused("the processes on this terminal cannot be listed: refused (fail closed)")
+    allowed = {me[0]} | {pid for pid, image, _ in chain if image in SHELL_IMAGES}
+    extra = sorted(set(holders) - allowed)
+    if extra:
+        return _refused(f"other processes share this terminal (pids {', '.join(map(str, extra[:8]))}): close them, or "
+                        "use a fresh Terminal window")
     return None
 
 
 def human_gate(io) -> "str | None":
-    """None when an interactive human (not an agent harness) is at a real terminal window; else why not. Fail closed."""
+    """None when an interactive human (not an agent harness) is at a real Terminal.app window; else why not. Fail closed."""
     env = io.env()
     hits = sorted(k for k in env if k in _HARNESS_ENV_EXACT or k.startswith(_HARNESS_ENV_PREFIX))
     if hits:
-        return f"running inside an agent harness (env {', '.join(hits)} present): the owner runs this in his own terminal"
+        return _refused(f"running inside an agent harness (env {', '.join(hits)} present)")
+    inject = sorted(k for k in env if k in _INJECTION_ENV or k.startswith("DYLD_"))
+    if inject:
+        return _refused(f"code-injection variables are set ({', '.join(inject)}): unset them")
+    path = env.get("PATH", "")
+    if not (path == _SAFE_PATH_PREFIX or path.startswith(_SAFE_PATH_PREFIX + ":")):
+        return _refused(f"PATH must start with {_SAFE_PATH_PREFIX} (nothing ahead of the system tools); run: "
+                        + COMMAND.format(action="<apply|provision>", name="<line>"))
     if not (io.isatty(0) and io.isatty(1)):
-        return "stdin and stdout must both be a terminal (no pipes, no redirection): the owner runs this by hand"
+        return _refused("stdin and stdout must both be a terminal (no pipes, no redirection)")
     try:
         io.open_tty().close()
     except OSError as exc:
-        return f"/dev/tty cannot be opened ({exc.__class__.__name__}): no controlling terminal"
-    return chain_problem(io)
+        return _refused(f"/dev/tty cannot be opened ({exc.__class__.__name__}): no controlling terminal")
+    return chain_problem(io) or tty_problem(io)
 
 
 def _under_temp(root: "str | Path | None") -> bool:
@@ -459,6 +577,13 @@ def _audit_notice(row_id: str, res: dict) -> str:
 
 
 def _ask(tty, prompt: str) -> str:
+    """Prompt on the tty and read one typed line. Anything already in the input queue (pre-typed, injected) is discarded
+    first: only what is typed AFTER the prompt is shown counts."""
+    import termios
+
+    fileno = getattr(tty, "fileno", None)
+    if fileno is not None:
+        termios.tcflush(fileno(), termios.TCIFLUSH)
     tty.write(prompt)
     tty.flush()
     return (tty.readline() or "").strip()
@@ -515,6 +640,18 @@ def _live_label_problems(name: str, host: str, sh) -> list[str]:
 
 def owner_hand(action: str, name: str, ssh_host: str = "noctus-vps", repo_root: "str | None" = None, *,
                _test_io=None) -> dict:
+    """Run provision/apply for ONE personal line, only for an interactive human who typed the confirmation. Under a test
+    IO the whole call runs in waha_instance's TEST owner-hand scope: its real remote runner refuses every command, so no
+    wrapper a test IO carries can ever reach a real host."""
+    token = wi._OWNER_HAND_SCOPE.set(wi.OWNER_HAND_TEST_SCOPE) if _test_io is not None else None
+    try:
+        return _owner_hand(action, name, ssh_host, repo_root, _test_io=_test_io)
+    finally:
+        if token is not None:
+            wi._OWNER_HAND_SCOPE.reset(token)
+
+
+def _owner_hand(action: str, name: str, ssh_host: str, repo_root: "str | None", *, _test_io=None) -> dict:
     """Run provision/apply for ONE personal line, only for an interactive human who typed the confirmation.
 
     `_test_io` is a TEST-ONLY injection point (terminal, env, parent chain, identity, remote runner). It is refused
@@ -579,9 +716,15 @@ def owner_hand(action: str, name: str, ssh_host: str = "noctus-vps", repo_root: 
     row_id = _new_id()
     try:
         tty.write(_summary(inst, phash, ssh_host, action))
+        why = tty_problem(io)
+        if why:
+            return refuse(why)
         typed = _ask(tty, "  Type the line name to continue: ")
         if typed != name:
             return refuse("the typed line name does not match: nothing was done")
+        why = tty_problem(io)
+        if why:
+            return refuse(why)
         word = _ask(tty, f"  Type {CONFIRM_WORD} to {action} this personal line now: ")
         if word != CONFIRM_WORD:
             return refuse(f"{CONFIRM_WORD} was not typed: nothing was done")

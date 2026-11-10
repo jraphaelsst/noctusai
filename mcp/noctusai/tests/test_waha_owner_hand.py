@@ -121,10 +121,15 @@ class FakeVps:
         return any("POLICY_NOWEB" in c or " up -d " in c for c in self.cmds)
 
 
+SELF, TDEV, SELF_START = 7, 0x1000000F, 10_000.0
+SAFE_PATH = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+
+
 class FakeIO:
-    def __init__(self, *, env=None, tty=(True, True), devtty=True, chain=ANTIGRAVITY, sigs=None, bundles=None,
-                 answers=("shadow", "CONFIRMO"), sh="default", on_read=None):
-        self._env = env or {"HOME": "/Users/owner", "TERM": "xterm"}
+    def __init__(self, *, env=None, tty=(True, True), devtty=True, chain=TERMINAL, sigs=None, bundles=None,
+                 answers=("shadow", "CONFIRMO"), sh="default", on_read=None, starts=None, tty_extra=(), tdev=TDEV):
+        self._env = env if env is not None else {"HOME": "/Users/owner", "TERM": "xterm", "PATH": SAFE_PATH}
+        self._starts, self._tty_extra, self._tdev = dict(starts or {}), list(tty_extra), tdev
         self._tty, self._devtty = tty, devtty
         self._chain = None if chain is None else list(chain)
         self._sigs = {**SIGS, **(sigs or {})}
@@ -147,9 +152,22 @@ class FakeIO:
             raise OSError("no tty")
         return self.tty
 
+    def self_proc(self):
+        return SELF, SELF_START, self._tdev
+
     def ancestors(self):
-        """(pid, real image path) from the parent up to the process launchd (pid 1) started; None = unreadable."""
-        return None if self._chain is None else [(pid, img) for pid, img, _argv in self._chain]
+        """(pid, real image, start time) from the parent up to the process launchd (pid 1) started; None = unreadable.
+        Start times default to strictly older going up; `starts` overrides one pid's."""
+        if self._chain is None:
+            return None
+        return [(pid, img, self._starts.get(pid, SELF_START - 10 * (k + 1)))
+                for k, (pid, img, _argv) in enumerate(self._chain)]
+
+    def tty_pids(self, tdev):
+        if tdev != self._tdev:
+            return []
+        shells = [pid for pid, img, _ in (self._chain or []) if img in oh.SHELL_IMAGES]
+        return [SELF] + shells + self._tty_extra
 
     def parent_commands(self):  # what argv-reading code sees (attacker-controlled)
         return None if self._chain is None else [argv for _pid, _img, argv in self._chain]
@@ -220,9 +238,8 @@ def test_the_real_io_refuses_under_the_test_runner(tmp_path):
 # --- the parent chain: real image paths, signatures, structure ---------------------------------------------------------
 
 
-@pytest.mark.parametrize("chain", [ANTIGRAVITY, TERMINAL, VSCODE], ids=["antigravity", "terminal", "vscode"])
-def test_the_owner_terminals_pass_the_gate(chain):
-    assert oh.human_gate(FakeIO(chain=chain)) is None
+def test_the_owner_terminal_passes_the_gate():
+    assert oh.human_gate(FakeIO()) is None
 
 
 REFUSED_CHAINS = {
@@ -232,37 +249,50 @@ REFUSED_CHAINS = {
     "argv-substring": dict(chain=[(202, "/bin/sh", "sh -c true " + TERM)]),
     # attack 3: a renamed copy of script / a python pty.spawn
     "renamed-script": dict(chain=[(203, "/tmp/Terminal", TERM)]),
-    "python-pty-spawn": dict(chain=[ZSH, (204, PY, "python3 /tmp/x.py " + AG_HELPER)]),
+    "python-pty-spawn": dict(chain=[ZSH, (204, PY, "python3 /tmp/x.py " + TERM)]),
     # an emulator image at a path that is not the pinned one (a copy into a user-writable /Applications)
     "terminal-copy-in-applications": dict(chain=[ZSH, LOGIN, (205, "/Applications/Terminal.app/Contents/MacOS/Terminal",
                                                                TERM)]),
     # the pinned path, but the running pid does not satisfy the signing requirement
     "terminal-bad-signature": dict(chain=TERMINAL, sigs={500: None}),
-    "antigravity-helper-bad-signature": dict(chain=ANTIGRAVITY, sigs={1097: REQ_VSC_HELPER}),
-    "antigravity-main-bad-signature": dict(chain=ANTIGRAVITY, sigs={699: None}),
     # the emulator was not started by launchd (an agent ran it): something sits above it
     "terminal-under-claude": dict(chain=TERMINAL + [(206, CLAUDE, "claude")]),
-    "helper-launched-by-an-agent": dict(chain=[ZSH, (1097, AG_HELPER, AG_HELPER), (207, "/bin/zsh", "zsh"),
-                                               (206, CLAUDE, "claude")]),
-    # the main app is not a LaunchServices-registered application (ELECTRON_RUN_AS_NODE, reparented)
-    "antigravity-main-not-a-registered-app": dict(chain=ANTIGRAVITY, bundles={699: None}),
     "terminal-not-a-registered-app": dict(chain=TERMINAL, bundles={500: "com.example.other"}),
-    # an IDE extension host is not a terminal
+    # review round 4, N3: Terminal.app ONLY -- an IDE terminal shares its signed pty host with IDE-hosted agents
+    "antigravity-ide-terminal": dict(chain=ANTIGRAVITY),
+    "vscode-terminal": dict(chain=VSCODE),
     "ide-extension-host": dict(chain=[ZSH, (209, AG_PLUGIN, AG_PLUGIN), (699, AG_MAIN, AG_MAIN)]),
     # anything but a real shell / login between the process and the emulator
-    "claude-between": dict(chain=[ZSH, (206, CLAUDE, "claude"), (110, "/bin/zsh", "-zsh -il")] + ANTIGRAVITY[1:]),
+    "claude-between": dict(chain=[ZSH, (206, CLAUDE, "claude"), (110, "/bin/zsh", "-zsh -il")] + TERMINAL[1:]),
     "tmux-server": dict(chain=[ZSH, (210, "/opt/homebrew/bin/tmux", "tmux: server " + TERM)]),
     "script-under-terminal": dict(chain=[ZSH, (211, "/usr/bin/script", "script -q /dev/null"), (112, "/bin/zsh", "-zsh"),
                                          LOGIN, (500, TERM, TERM)]),
-    "homebrew-zsh-is-not-a-system-shell": dict(chain=[(212, "/opt/homebrew/bin/zsh", "-zsh")] + ANTIGRAVITY[1:]),
-    # iTerm2 is not installed on the owner's machine: no team id was read, so nothing is pinned for it
+    "homebrew-zsh-is-not-a-system-shell": dict(chain=[(212, "/opt/homebrew/bin/zsh", "-zsh")] + TERMINAL[1:]),
     "iterm2-not-pinned": dict(chain=[ZSH, LOGIN, (213, "/Applications/iTerm.app/Contents/MacOS/iTermServer-3.5.4",
                                                   "iTermServer")]),
+    # N5: a reused pid -- an "ancestor" that started AFTER its child is not that child's parent
+    "terminal-pid-reused": dict(starts={500: SELF_START + 5}),
+    "login-pid-reused": dict(starts={102: SELF_START - 5}),
     # unreadable means refuse
-    "image-unreadable": dict(chain=[(101, None, "-zsh")] + ANTIGRAVITY[1:]),
+    "image-unreadable": dict(chain=[(101, None, "-zsh")] + TERMINAL[1:]),
     "chain-unreadable": dict(chain=None),
     "reparented-to-launchd": dict(chain=[]),
     "shells-only-to-launchd": dict(chain=[ZSH, LOGIN]),
+    # N4: another process has our tty as its controlling terminal (TIOCSTI typist / second reader)
+    "another-process-on-the-tty": dict(tty_extra=[4242]),
+    "no-controlling-tty": dict(tdev=0xFFFFFFFF),
+    # N1: code-injection env and a PATH with anything ahead of the system tools
+    "pythonpath": dict(env={"PATH": SAFE_PATH, "PYTHONPATH": "/tmp/x"}),
+    "pythonstartup": dict(env={"PATH": SAFE_PATH, "PYTHONSTARTUP": "/tmp/x.py"}),
+    "pythonhome": dict(env={"PATH": SAFE_PATH, "PYTHONHOME": "/tmp"}),
+    "pythonuserbase": dict(env={"PATH": SAFE_PATH, "PYTHONUSERBASE": "/tmp"}),
+    "pythoninspect": dict(env={"PATH": SAFE_PATH, "PYTHONINSPECT": "1"}),
+    "dyld-insert": dict(env={"PATH": SAFE_PATH, "DYLD_INSERT_LIBRARIES": "/tmp/x.dylib"}),
+    "dyld-anything": dict(env={"PATH": SAFE_PATH, "DYLD_LIBRARY_PATH": "/tmp"}),
+    "path-fakebin-first": dict(env={"PATH": "/tmp/fakebin:/usr/bin:/bin"}),
+    "path-homebrew-first": dict(env={"PATH": "/opt/homebrew/bin:/usr/bin:/bin"}),
+    "path-usr-bin-only": dict(env={"PATH": "/usr/bin"}),
+    "path-missing": dict(env={"HOME": "/h"}),
 }
 
 
@@ -274,21 +304,139 @@ def test_every_non_terminal_chain_shape_is_refused(tmp_path, case):
     assert _rows(root)[0]["outcome"] == "refused"
 
 
+def test_a_chain_refusal_tells_the_owner_to_open_terminal_app():
+    why = oh.human_gate(FakeIO(chain=ANTIGRAVITY))
+    assert "Abra o Terminal.app (Aplicativos › Utilitários) e rode o comando lá" in why
+
+
+def test_a_process_joining_the_tty_between_the_prompts_refuses_before_the_next_prompt(tmp_path):
+    io = FakeIO()
+    io.tty.on_read = lambda: io._tty_extra.append(4242)
+    out, _ = _run(tmp_path, io)
+    assert out["status"] == "refused" and "4242" in out["error"] and not io.sh.touched and io.grants == []
+    assert sum("Type " in w for w in io.tty.out) == 1
+
+
 def test_the_terminal_allowlist_is_data_pinned_and_documented_in_the_kb():
     kb = (MCP.parents[1] / "KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/whatsapp.md").read_text()
-    by_label = {e["label"]: e for e in oh.EMULATORS}
-    assert set(by_label) == {"macOS Terminal", "Antigravity IDE", "VS Code"}
-    assert by_label["macOS Terminal"]["entry_requirement"] == REQ_TERM and by_label["macOS Terminal"]["app"] is None
-    assert by_label["Antigravity IDE"]["entry_requirement"] == REQ_AG_HELPER
-    assert by_label["Antigravity IDE"]["app"]["requirement"] == REQ_AG_MAIN
-    assert by_label["VS Code"]["entry_requirement"] == REQ_VSC_HELPER
-    assert by_label["VS Code"]["app"]["requirement"] == REQ_VSC_MAIN
-    for e in oh.EMULATORS:
-        assert all(p.startswith(("/Applications/", "/System/Applications/")) for p in e["entry_images"])
-        assert e["label"] in kb and e["bundle_id"] in kb
+    (term,) = oh.EMULATORS  # Terminal.app ONLY (N3)
+    assert term["label"] == "macOS Terminal" and term["bundle_id"] == "com.apple.Terminal" and term["app"] is None
+    assert term["entry_images"] == (TERM,) and term["entry_requirement"] == REQ_TERM
     assert oh.SHELL_IMAGES == ("/bin/zsh", "/bin/bash", "/bin/sh", "/usr/bin/login")
-    for team in ("EQHXZ8M8AV", "UBF8T346G9"):
-        assert team in kb
+    assert "com.apple.Terminal" in kb and REQ_TERM in kb and "accepted risk" in kb
+    for gone in ("EQHXZ8M8AV", "UBF8T346G9"):  # the IDE rows are gone from the code and the pinned table
+        assert gone not in (MCP / "tools/noctus/dev/waha_owner_hand.py").read_text()
+
+
+# --- N1: the chain is read from the kernel, never through PATH ----------------------------------------------------------
+
+FAKE_PS = """#!/bin/sh
+# fake ps (review probe): skips every non-shell hop below the first pinned-emulator ancestor
+p=$(/bin/ps -o ppid= -p "$4" | tr -d ' ')
+while :; do c=$(/bin/ps -o comm= -p "$p"); case "$c" in /bin/zsh|/bin/bash|/bin/sh|*Helper|*Electron|*Terminal|"") break;; esac; p=$(/bin/ps -o ppid= -p "$p" | tr -d ' '); done
+echo "$p"
+"""
+
+
+def _truth_chain():
+    """Every ancestor pid of this process up to launchd, read with the absolute /bin/ps (the test's own oracle)."""
+    import subprocess as sp
+    out, pid = [], os.getppid()
+    while pid > 1:
+        out.append(pid)
+        pid = int(sp.run(["/bin/ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True).stdout.strip())
+    return out
+
+
+def test_a_fake_ps_first_on_path_cannot_rewrite_the_parent_chain(tmp_path, monkeypatch):
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    (fakebin / "ps").write_text(FAKE_PS)
+    (fakebin / "ps").chmod(0o755)
+    for tool in ("codesign", "lsappinfo", "git"):  # any PATH-resolved helper would lie too
+        (fakebin / tool).write_text("#!/bin/sh\nexit 0\n")
+        (fakebin / tool).chmod(0o755)
+    truth = _truth_chain()
+    monkeypatch.setenv("PATH", f"{fakebin}:{os.environ.get('PATH', '')}")
+    seen = oh._RealIO().ancestors()
+    assert seen is not None and [c[0] for c in seen] == truth
+    assert all(c[1] for c in seen) and all(isinstance(c[2], float) for c in seen)
+
+
+def test_the_real_io_reads_start_times_that_never_precede_the_parent():
+    io = oh._RealIO()
+    me, chain = io.self_proc(), io.ancestors()
+    starts = [me[1]] + [c[2] for c in chain]
+    assert all(starts[k] >= starts[k + 1] for k in range(len(starts) - 1))
+
+
+def test_the_live_chain_of_an_agent_session_is_refused():
+    why = oh.human_gate(oh._RealIO())
+    assert why and "Terminal.app" in why
+
+
+# --- N2: the real /dev/tty open and read work on a real pty -------------------------------------------------------------
+
+_PTY_CHILD = r"""
+import fcntl, os, sys, termios, time
+sys.path.insert(0, sys.argv[1])
+fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+from tools.noctus.dev import waha_owner_hand as oh
+t = oh._RealIO().open_tty()
+t.write("ready\n")
+time.sleep(0.6)  # the parent types junk now: it must be flushed before the prompt
+a = oh._ask(t, "line? ")
+b = oh._ask(t, "word? ")
+t.close()
+open(sys.argv[2], "w").write(repr((a, b)))
+"""
+
+
+def test_the_real_tty_open_and_read_work_on_a_real_pty_and_drop_pre_typed_input(tmp_path):
+    import select
+    import subprocess as sp
+    master, slave = os.openpty()
+    res = tmp_path / "res"
+    child = sp.Popen([sys.executable, "-c", _PTY_CHILD, str(MCP), str(res)], stdin=slave, stdout=slave, stderr=slave,
+                     start_new_session=True, close_fds=True)
+    os.close(slave)
+    seen = b""
+
+    def until(token, timeout=20):
+        nonlocal seen
+        import time as _t
+        end = _t.time() + timeout
+        while token not in seen and _t.time() < end:
+            r, _, _ = select.select([master], [], [], 0.2)
+            if r:
+                try:
+                    seen += os.read(master, 4096)
+                except OSError:
+                    break
+        assert token in seen, seen
+
+    try:
+        until(b"ready")
+        os.write(master, b"junk\n")
+        until(b"line? ")
+        os.write(master, b"shadow\n")
+        until(b"word? ")
+        os.write(master, b"CONFIRMO\n")
+        import time as _t
+        end = _t.time() + 20
+        while child.poll() is None and _t.time() < end:  # keep draining: a tty close waits for its output to drain
+            r, _, _ = select.select([master], [], [], 0.2)
+            if r:
+                try:
+                    seen += os.read(master, 4096)
+                except OSError:
+                    break
+        assert child.wait(timeout=5) == 0, seen
+    finally:
+        if child.poll() is None:
+            child.kill()
+        os.close(master)
+    assert res.read_text() == repr(("shadow", "CONFIRMO"))
 
 
 # --- the typed confirmation ---------------------------------------------------------------------------------------------
@@ -414,6 +562,35 @@ def test_a_marked_wrapper_around_the_real_runner_cannot_reach_a_real_host(tmp_pa
     io = FakeIO(sh=wrapper)
     out, _ = _run(tmp_path, io, host="noctus-vps")
     assert out["status"] == "refused" and H in out["error"] and calls == [] and io.grants == []
+
+
+@pytest.mark.parametrize("target", ["waha_instance._sh", "_vps_ssh.run_remote"])
+def test_a_marked_runner_forwarding_to_the_real_ssh_is_refused_at_the_chokepoint(tmp_path, target):
+    # P1-b round 4: `noc-test.invalid` can be aliased in ~/.ssh/config, so the host check alone is not the control --
+    # under a test IO the real runner itself refuses, before any subprocess
+    from tools.noctus.dev import _vps_ssh
+    real = wi._sh if target == "waha_instance._sh" else (lambda h, c, timeout=90: _vps_ssh.run_remote(h, c, timeout=timeout))
+    results = []
+
+    def wrapper(host, cmd, timeout=90):
+        results.append(real(host, cmd, timeout))
+        return results[-1]
+
+    wrapper.__noc_test_fake__ = True
+    io = FakeIO(sh=wrapper)
+    out, _ = _run(tmp_path, io)
+    assert out["status"] == "refused" and results and io.grants == []
+    assert all(r == (1, "", wi.OWNER_HAND_RUNNER_REFUSAL) for r in results), results
+
+
+def test_a_test_grant_never_opens_the_real_runner_and_neither_does_a_grant_off_the_git_store(tmp_path):
+    from tools.noctus.dev import _vps_ssh
+    inst = _confirmed_row(tmp_path, nonce="n-fresh", age_s=10)
+    for g in (_mk(tmp_path, inst), _mk(tmp_path, inst, test=False)):  # the suite runs on the fake store
+        with wi._GrantScope(g):
+            assert wi._sh(H, "true") == (1, "", wi.OWNER_HAND_RUNNER_REFUSAL)
+            assert _vps_ssh.run_remote(H, "true") == (1, "", wi.OWNER_HAND_RUNNER_REFUSAL)
+    assert wi._OWNER_HAND_SCOPE.get() is None
 
 
 def test_a_test_io_needs_its_ledger_root_under_the_temp_dir(tmp_path, monkeypatch):

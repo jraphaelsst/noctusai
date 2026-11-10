@@ -27,7 +27,13 @@ from pathlib import Path
 from settings import REPO_ROOT
 from workspace import resolve_caller_root
 
-from ._vps_ssh import run_remote
+from ._vps_ssh import (  # noqa: F401 - re-exported for the owner-hand path
+    _OWNER_HAND_SCOPE,
+    OWNER_HAND_RUNNER_REFUSAL,
+    OWNER_HAND_TEST_SCOPE,
+    _owner_scope_problem,
+    run_remote,
+)
 
 DATA_REL = "deploy/fleet/waha-instances.yml"
 COMPOSE_REL = "deploy/fleet/compose.waha.yml"
@@ -361,8 +367,31 @@ def _inst(spec: dict, name: str | None) -> dict:
     raise ValueError(f"instance {name!r} is not declared in {DATA_REL}")
 
 
+# The owner-hand scope + its runner refusal live in _vps_ssh (the ssh chokepoint itself); re-exported here.
+
+
 def _sh(host: str, cmd: str, timeout: float = 90):
+    why = _owner_scope_problem()
+    if why:
+        return 1, "", why  # refused before any subprocess
     return run_remote(host, cmd, timeout=timeout)
+
+
+class _GrantScope:
+    """Enter the owner-hand scope of a grant for one `_apply`/`_provision` call (a TEST scope already set is kept)."""
+
+    def __init__(self, grant):
+        self.grant, self.token = grant, None
+
+    def __enter__(self):
+        if self.grant is not None and _OWNER_HAND_SCOPE.get() is not OWNER_HAND_TEST_SCOPE:
+            self.token = _OWNER_HAND_SCOPE.set(self.grant)
+        return self
+
+    def __exit__(self, *exc):
+        if self.token is not None:
+            _OWNER_HAND_SCOPE.reset(self.token)
+        return False
 
 
 def _list(spec: dict, host: str) -> dict:
@@ -469,12 +498,13 @@ def _noweb_matches(got, want: dict) -> bool:
             and got["store"].get("fullSync") is want["store"]["fullSync"])
 
 
-PERSONAL_REFUSAL = ("personal line: refused for every agent and tool caller; the owner performs this step by hand, in his own "
-                    "terminal: python mcp/noctusai/cli.py --waha-instance-owner-hand <provision|apply> <line>")
+PERSONAL_REFUSAL = ("personal line: refused for every agent and tool caller; the owner performs this step by hand, in a "
+                    "Terminal.app window: PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH mcp/noctusai/.venv/bin/python "
+                    "mcp/noctusai/cli.py --waha-instance-owner-hand <provision|apply> <line>")
 # Consent for a PERSONAL line is RESOLVED by the owner-hand path (owner decision D49, 2026-11-10; no second factor, no
 # OTP, ever): `waha_owner_hand.owner_hand`, CLI-only (never an MCP tool), refuses without an interactive TTY, inside an
-# agent harness, unless the shell's parent is a pinned terminal emulator judged on its real image + code signature (only
-# system shells / login in between, the app started by launchd), and until the human TYPES the line name and CONFIRMO on /dev/tty; every attempt is audited in the
+# agent harness, unless the shell's parent is the pinned Terminal.app judged on its real image + code signature read from
+# the kernel in-process (only system shells / login in between, the app started by launchd), and until the human TYPES the line name and CONFIRMO on /dev/tty; every attempt is audited in the
 # `waha-owner-hand.ndjson` ledger. Only the grant it mints after that gate lifts this refusal: bound to line + policy
 # hash + host + a secret nonce whose digest is in a fresh `confirmed` audit row, single use. Transcript-sentence consent stays removed (forgeable).
 # The host precondition stays OPEN: NOC-REMEDIATE[personal-core-host-exec-authz] (see vps_exec).
@@ -509,6 +539,12 @@ def _provision(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None
 
     `_test_sh` is a TEST-ONLY injection point for the remote runner: it is absent from the public function and the MCP
     schema, and must never be passed by production code. `_owner_grant` is absent from both as well."""
+    with _GrantScope(_owner_grant):
+        return _provision_in_scope(spec, name, host, confirm, _test_sh=_test_sh, _owner_grant=_owner_grant)
+
+
+def _provision_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None) -> dict:
+    """The body of `_provision`, inside the owner-hand scope of its grant."""
     sh = _test_sh or _sh
     inst = _inst(spec, name)
     want = policy_noweb(inst)
@@ -596,6 +632,11 @@ def _personal_refusal(inst: dict, name: str, host: str, sh, action: str, owner_g
 
 
 def _apply(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None) -> dict:
+    with _GrantScope(_owner_grant):
+        return _apply_in_scope(spec, name, host, confirm, _test_sh=_test_sh, _owner_grant=_owner_grant)
+
+
+def _apply_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None) -> dict:
     sh = _test_sh or _sh
     p = _plan(spec, name)
     if not confirm:
