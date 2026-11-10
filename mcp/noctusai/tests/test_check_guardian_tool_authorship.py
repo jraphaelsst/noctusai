@@ -199,9 +199,9 @@ class TestDerivedProtectedSet:
         (repo / RS).write_text("def broken(:\n")
         _git(repo, "add", "-A")  # the keeper judges HEAD + the INDEX, never the working tree
         _claim(tmp_path)
-        issues = _check_repo(repo, tmp_path, "sess-guardian-1", ["README.md"])
+        issues = _check_repo(repo, tmp_path, "sess-guardian-1", [f"{_DEV}/unrelated_tool.py"])
         assert len(issues) == 1 and "cannot derive" in issues[0]["issue"]
-        assert _check_repo(repo, tmp_path, "someone-else", ["README.md"]) == []
+        assert _check_repo(repo, tmp_path, "someone-else", [f"{_DEV}/unrelated_tool.py"]) == []
 
 
 class TestDerivationReadsHeadAndIndexNotTheWorkingTree:
@@ -256,3 +256,37 @@ def _check_repo(repo, root, sid, staged):
         return check_guardian_tool_authorship(repo_root=repo, staged=staged, session_id=sid, lease_root=root)
     finally:
         os.environ.pop("NOCTUS_GUARD_EVENT_LOG", None)
+
+
+class TestDerivationIsLazyAndFast:
+    """Only the live lease holder, staging something inside the package/anchors, pays for the derivation."""
+
+    @staticmethod
+    def _boom(*_a, **_k):
+        raise AssertionError("derivation must not run")
+
+    def test_staged_change_outside_the_package_never_derives(self, tmp_path, monkeypatch):
+        import tools.noctus.dev.compliance as c
+        monkeypatch.setattr(c, "derive_guardian_protected_files", self._boom)
+        _claim(tmp_path)  # even the lease holder: nothing staged can be fenced
+        assert _check(tmp_path, ["README.md", "products/x/a.py"]) == []
+
+    def test_staged_package_file_without_a_lease_never_derives(self, tmp_path, monkeypatch):
+        import tools.noctus.dev.compliance as c
+        monkeypatch.setattr(c, "derive_guardian_protected_files", self._boom)
+        assert _check(tmp_path, [RS]) == []
+        assert _check(tmp_path, [RS], sid="someone-else") == []
+
+    def test_the_holder_does_derive(self, tmp_path, monkeypatch):
+        import tools.noctus.dev.compliance as c
+        calls = []
+        real = c.derive_guardian_protected_files
+        monkeypatch.setattr(c, "derive_guardian_protected_files", lambda *a, **k: calls.append(1) or real(*a, **k))
+        _claim(tmp_path)
+        assert len(_check(tmp_path, [RS])) == 1 and calls
+
+    def test_git_derivation_is_fast_and_equals_the_tree_read(self):
+        t = time.time()
+        from_git = derive_guardian_protected_files(REPO, from_git=True)
+        assert time.time() - t < 3.0
+        assert from_git == derive_guardian_protected_files(REPO)

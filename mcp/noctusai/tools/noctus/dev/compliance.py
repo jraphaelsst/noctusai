@@ -17726,13 +17726,40 @@ class _GitSource(_TreeSource):
             raise RuntimeError(f"git {' '.join(args[:2])} exited {r.returncode}: {r.stderr.decode('utf-8', 'replace').strip()[:100]}")
         return r.stdout
 
+    def _load(self) -> dict[str, list[str]]:
+        """ONE ls-tree + ONE ls-files for existence, ONE `cat-file --batch` for every blob (HEAD:<p> and :<p>):
+        a handful of git processes instead of 2-4 per module per call. Any git failure RAISES (fail closed)."""
+        import subprocess
+        if getattr(self, "_cache", None) is not None:
+            return self._cache
+        pkg = _GUARDIAN_DEV_PKG
+        head = {n for n in self._git("ls-tree", "-r", "--name-only", "HEAD", "--", pkg).decode("utf-8").splitlines() if n.endswith(".py")}
+        idx = {n for n in self._git("ls-files", "--", pkg).decode("utf-8").splitlines() if n.endswith(".py")}
+        specs = [f"HEAD:{n}" for n in sorted(head)] + [f":{n}" for n in sorted(idx)]
+        owners = [n for n in sorted(head)] + [n for n in sorted(idx)]
+        cache: dict[str, list[str]] = {}
+        if specs:
+            r = subprocess.run(["git", "cat-file", "--batch"], cwd=self.root, capture_output=True, timeout=60, check=False,
+                               input=("\n".join(specs) + "\n").encode("utf-8"))
+            if r.returncode != 0:
+                raise RuntimeError(f"git cat-file --batch exited {r.returncode}: {r.stderr.decode('utf-8', 'replace').strip()[:100]}")
+            buf, pos = r.stdout, 0
+            for spec, name in zip(specs, owners):
+                nl = buf.index(b"\n", pos)
+                header = buf[pos:nl].decode("utf-8", "replace").split()
+                pos = nl + 1
+                if len(header) == 3 and header[1] == "blob":
+                    size = int(header[2])
+                    cache.setdefault(name, []).append(buf[pos:pos + size].decode("utf-8"))
+                    pos += size + 1
+                elif header[-1:] != ["missing"]:
+                    raise RuntimeError(f"git cat-file: unexpected answer for {spec}: {' '.join(header)[:100]}")
+                # "missing": absent in that rev (it was listed a moment ago, so a race) - not an error
+        self._cache = cache
+        return cache
+
     def texts(self, rel: str) -> list[str]:
-        out: list[str] = []
-        if self._git("ls-tree", "--name-only", "HEAD", "--", rel).strip():
-            out.append(self._git("show", f"HEAD:{rel}").decode("utf-8"))
-        if self._git("ls-files", "--", rel).strip():
-            out.append(self._git("show", f":{rel}").decode("utf-8"))
-        return out
+        return list(self._load().get(rel, []))
 
 
 def _dev_module_imports(src: _TreeSource, module: str, *, module_level: bool) -> set[str]:
@@ -17863,35 +17890,32 @@ def check_guardian_tool_authorship(
             _telemetry("unmeasured", failure)
             print(f"[guardian-tool-authorship] UNMEASURED: {failure}; the lease-holder check did not run.", file=sys.stderr)
         staged = [p for p in out.splitlines() if p.strip()]
-    derive_error = None
+    # (a) cheap path filter first: a commit touching nothing the guardian could be fenced from never derives.
+    relevant = sorted(p for p in staged if (p.startswith(f"{_GUARDIAN_DEV_PKG}/") and p.endswith(".py"))
+                      or p in GUARDIAN_PROTECTED_ANCHORS)
+    if not relevant:
+        return []
+    # (b) then the lease: only the live holder is ever fenced, so only the holder pays for the derivation.
+    holds, lease, why = guardian_holds_lease(session_id, lease_root, now)
+    if not holds:
+        _telemetry("allow", f"not-refused: {why}", ",".join(relevant))
+        return []
+    # (c) derive ONLY for the holder; a derivation failure fails CLOSED here.
     try:
         protected = set(derive_guardian_protected_files(repo_root, from_git=True))
     except Exception as exc:  # noqa: BLE001 - fail CLOSED for the guardian below, never a silent allow
-        protected, derive_error = set(), f"{type(exc).__name__}: {exc}"[:160]
-    hits = sorted(p for p in staged if p in protected)
-    if derive_error and failure:
-        return []  # the staged diff itself was UNMEASURED above; do not stack a second refusal on it
-    if derive_error:
-        holds_d, _l, _w = guardian_holds_lease(session_id, lease_root, now)
+        derive_error = f"{type(exc).__name__}: {exc}"[:160]
+        if failure:
+            return []  # the staged diff itself was UNMEASURED above; do not stack a second refusal on it
         _telemetry("unmeasured", f"protected-set derivation failed: {derive_error}")
-        if holds_d:
-            return [{"product": "<repo>", "file": "<protected set>", "severity": "high",
-                     "issue": f"cannot derive the guardian-protected tool set ({derive_error}); refusing while this session "
-                              "holds the release-steward lease (fail closed). KB § PATTERNS/common/gate-methodology-sync.md"}]
-        return []
+        return [{"product": "<repo>", "file": "<protected set>", "severity": "high",
+                 "issue": f"cannot derive the guardian-protected tool set ({derive_error}); refusing while this session "
+                          "holds the release-steward lease (fail closed). KB § PATTERNS/common/gate-methodology-sync.md"}]
+    hits = sorted(p for p in staged if p in protected)
     if not hits:
         return []
-
-    holds, lease, why = guardian_holds_lease(session_id, lease_root, now)
-
-    def _event(outcome: str, reason: str) -> None:
-        _telemetry(outcome, reason, ",".join(hits))
-
-    if not holds:
-        _event("allow", f"not-refused: {why}")
-        return []
     holder = (lease or {}).get("session_name") or str((lease or {}).get("session_id"))[:8]
-    _event("deny", "guardian-staged-steward-tooling")
+    _telemetry("deny", "guardian-staged-steward-tooling", ",".join(hits))
     return [{
         "product": "<repo>",
         "file": ", ".join(hits),
