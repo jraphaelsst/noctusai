@@ -501,7 +501,7 @@ class TestSecretWrites:  # P3
         (tmp_path / ra.SCOPE_REL).write_text(SCOPE)
         assert ra.redis_acl("render", write=True, repo_root=str(tmp_path), env={ra.MASTER_ENV: MASTER})["ok"]
         out = tmp_path / ra.OUT_DIR_REL
-        assert out.stat().st_mode & 0o777 == 0o700 and (out / "env").stat().st_mode & 0o777 == 0o700
+        assert out.stat().st_mode & 0o777 == 0o711 and (out / "env").stat().st_mode & 0o777 == 0o700  # 0711: consumers traverse to their pass file
 
     def test_symlink_target_is_replaced_not_followed(self, tmp_path):
         victim = tmp_path / "victim"
@@ -535,3 +535,107 @@ class TestSlugsAndGenerations:
         assert ra.parse_generation_overrides("core=2, ops=3") == {"core": "2", "ops": "3"}
         with pytest.raises(ValueError):
             ra.parse_generation_overrides("core=#2")
+
+
+class TestCutoverMarker:  # round 4 P2-1
+    def _tree(self, tmp_path):
+        (tmp_path / "deploy/fleet").mkdir(parents=True)
+        (tmp_path / ra.COMPOSE_REL).write_text(COMPOSE)
+        (tmp_path / ra.SCOPE_REL).write_text(SCOPE)
+        return tmp_path
+
+    def test_render_services_writes_marker_none_keeps_it_empty_clears_it(self, tmp_path):
+        t = self._tree(tmp_path)
+        env = {ra.MASTER_ENV: MASTER}
+        m = t / ra.OUT_DIR_REL / ra.MARKER_NAME
+        ra.redis_acl("render", write=True, repo_root=str(t), env=env, services="core,agents")
+        assert m.read_text().split() == ["agents", "core"]
+        ra.redis_acl("render", write=True, repo_root=str(t), env=env)  # no --services: marker + override untouched
+        assert m.read_text().split() == ["agents", "core"] and (t / ra.OVERRIDE_REL).is_file()
+        ra.redis_acl("render", write=True, repo_root=str(t), env=env, services="agents")  # rollback of core
+        assert m.read_text().split() == ["agents"]
+        ra.redis_acl("render", write=True, repo_root=str(t), env=env, services="")  # only an explicit empty clears
+        assert not m.exists() and not (t / ra.OVERRIDE_REL).exists()
+
+    def test_check_flags_marker_without_override_and_override_missing_a_marked_service(self, tmp_path):
+        t = self._tree(tmp_path)
+        env = {ra.MASTER_ENV: MASTER}
+        ra.redis_acl("render", write=True, repo_root=str(t), env=env, services="core,agents")
+        assert ra.redis_acl("check", repo_root=str(t))["ok"]
+        (t / ra.OVERRIDE_REL).unlink()
+        r = ra.redis_acl("check", repo_root=str(t))
+        assert not r["ok"] and r["marker_without_override"] == ["agents", "core"] and "fix" in r
+        (t / ra.OVERRIDE_REL).write_text(ra.render_override(["core"]))
+        r = ra.redis_acl("check", repo_root=str(t))
+        assert not r["ok"] and r["marker_services_missing_from_override"] == ["agents"]
+
+
+class TestPassFileOwnership:  # round 4 P3-1
+    def test_existing_pass_file_keeps_uid_gid_across_a_rerender(self, tmp_path):
+        import os
+        from unittest import mock
+
+        d = tmp_path / "d"
+        d.mkdir()
+        f = d / "trip.pass"
+        f.write_text("old\n")
+        st = f.stat()
+        real_chown = os.chown
+        seen = []
+
+        def spy(path, uid, gid, *a, **k):
+            seen.append((str(path), uid, gid))
+            return real_chown(path, uid, gid, *a, **k)
+
+        with mock.patch("os.chown", spy):
+            ra._write_secret(f, "new\n", 0o600)
+        assert f.read_text() == "new\n" and (f.stat().st_uid, f.stat().st_gid) == (st.st_uid, st.st_gid)
+        assert seen and seen[0][1:] == (st.st_uid, st.st_gid)  # chown targets the EXISTING owner before the replace
+
+    def test_when_chown_is_not_permitted_the_file_is_rewritten_in_place_keeping_the_inode(self, tmp_path):
+        import os
+        from unittest import mock
+
+        f = tmp_path / "probe.pass"
+        f.write_text("old\n")
+        inode = f.stat().st_ino
+        with mock.patch("os.chown", side_effect=PermissionError):
+            ra._write_secret(f, "new\n", 0o600)
+        assert f.read_text() == "new\n" and f.stat().st_ino == inode and f.stat().st_mode & 0o777 == 0o600
+        assert not list(tmp_path.glob(".*tmp"))
+
+    def test_rerender_does_not_chmod_an_existing_consumer_directory_or_clobber_pass_files(self, tmp_path):
+        (tmp_path / "deploy/fleet").mkdir(parents=True)
+        (tmp_path / ra.COMPOSE_REL).write_text(COMPOSE)
+        (tmp_path / ra.SCOPE_REL).write_text(SCOPE)
+        env = {ra.MASTER_ENV: MASTER}
+        ra.redis_acl("render", write=True, repo_root=str(tmp_path), env=env)
+        out = tmp_path / ra.OUT_DIR_REL
+        inode = (out / "trip.pass").stat().st_ino
+        ra.redis_acl("render", write=True, repo_root=str(tmp_path), env=env)
+        assert out.stat().st_mode & 0o777 == 0o711
+        assert (out / "trip.pass").read_text().strip() == ra.derive_password(MASTER, "trip")
+
+    def test_check_reports_pass_file_owner_and_flags_a_loose_mode(self, tmp_path):
+        import os
+
+        (tmp_path / "deploy/fleet").mkdir(parents=True)
+        (tmp_path / ra.COMPOSE_REL).write_text(COMPOSE)
+        (tmp_path / ra.SCOPE_REL).write_text(SCOPE)
+        ra.redis_acl("render", write=True, repo_root=str(tmp_path), env={ra.MASTER_ENV: MASTER})
+        r = ra.redis_acl("check", repo_root=str(tmp_path))
+        assert r["ok"] and r["pass_files"]["trip"]["uid"] == os.getuid() and r["pass_files"]["trip"]["owner_can_read"]
+        os.chmod(tmp_path / ra.OUT_DIR_REL / "probe.pass", 0o644)
+        r = ra.redis_acl("check", repo_root=str(tmp_path))
+        assert not r["ok"] and r["bad_pass_file_modes"] == ["probe"]
+
+
+class TestStaleCommittedOverrideText:  # round 4 P3-2
+    def test_gitignore_and_cli_describe_the_override_as_host_local(self):
+        gi = (REPO / ".gitignore").read_text()
+        assert "committed artefact is compose.redis-auth" not in gi
+        assert "host-local, gitignored, written by render --services" in gi
+        cli = (REPO / "mcp/noctusai/cli.py").read_text()
+        i = cli.index('"--redis-acl"')
+        seg = cli[i:i + 900]
+        assert "committed" not in seg and "host-local, gitignored, written by render --services" in seg

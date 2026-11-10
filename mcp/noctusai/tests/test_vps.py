@@ -22,7 +22,7 @@ class FakeRemote:
 
     def __call__(self, cmd):
         self.calls.append(cmd)
-        if cmd[0] in ("test", "grep"):  # Redis-auth override probe: no lockdown on this fake host
+        if cmd[0] in ("test", "grep", "cat"):  # Redis-auth override/marker probe: no lockdown on this fake host
             return (1, "", "")
         if cmd[:2] == ["docker", "ps"]:
             return (self.rc, self.outs.get("ps", ""), "")

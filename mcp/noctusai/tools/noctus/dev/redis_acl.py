@@ -38,6 +38,7 @@ import hashlib
 import hmac
 import os
 import re
+import stat
 from pathlib import Path
 
 from settings import REPO_ROOT
@@ -47,6 +48,9 @@ COMPOSE_REL = "deploy/fleet/docker-compose.prod.yml"
 SCOPE_REL = "deploy/fleet/build-scope.txt"
 OUT_DIR_REL = "deploy/fleet/redis-auth"
 OVERRIDE_REL = "deploy/fleet/compose.redis-auth.prod.yml"
+#: Durable record of WHICH services are cut over, written by `render --services` (cleared only by an explicit
+#: empty `--services`). The deploy guard refuses when it lists services the override no longer lists / is missing.
+MARKER_NAME = "cutover.services"
 MASTER_ENV = "REDIS_ACL_MASTER_SECRET"
 GENERATION_ENV = "REDIS_ACL_GENERATION"
 OVERRIDES_ENV = "REDIS_ACL_GENERATION_OVERRIDES"
@@ -120,8 +124,13 @@ PROBE_COMMANDS = "-@all +exists +ping +hello +auth"
 BREAKER_RW_SUFFIXES = ("worker:*", "scheduler:*", "gate:*", "audit", "index")
 BREAKER_RO_SUFFIXES = ("rearm:*",)
 
-# NOC-REMEDIATE[breaker-audit-offhost]: `noctus:breaker:audit` lives only on the VPS breaker Redis; mirror it
-# off-host (watchdog or Supabase-independent sink) so an attacker or a disk loss cannot erase the trail. — 2026-11-10
+# NOC-REMEDIATE[breaker-audit-offhost]: `noctus:breaker:audit` and the per-product audit lists live only on the VPS
+# breaker Redis; mirror them off-host (watchdog or a Supabase-independent sink) so an attacker or a disk loss
+# cannot erase the trail. ALSO: a product user can DEL / LTRIM / SREM its OWN `audit` and `index` keys (they sit
+# inside its RW namespace), so a compromised product can erase its own trail. Fix idea (Redis 7 selectors): split
+# the grant so products hold only `+rpush +lrange +llen` on `audit` (a selector `(%RW~...audit +rpush +lrange +llen)`
+# beside the generic command list is NOT enough: the generic list would still allow DEL/LTRIM on every pattern, so the
+# product command set must move to per-selector command lists) and ops alone trims the cap. Not built now. — 2026-11-10
 
 
 def _resolve_root(repo_root: str | None, worktree_path: str | None) -> Path:
@@ -338,23 +347,45 @@ def _load(root: Path) -> list[str]:
                          (root / SCOPE_REL).read_text(encoding="utf-8"))
 
 
-def _ensure_private_dir(d: Path) -> None:
+def _ensure_private_dir(d: Path, mode: int = 0o700) -> None:
     if d.is_symlink():
         raise ValueError(f"{d} is a symlink - refusing to write secrets through it")
-    d.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(d, 0o700)
+    d.mkdir(mode=mode, parents=True, exist_ok=True)
+    os.chmod(d, mode)
 
 
 def _write_secret(path: Path, text: str, mode: int) -> None:
-    """Temp file (O_EXCL|O_NOFOLLOW, born `mode`) in a 0700 dir, then atomic rename: never follows a
-    planted symlink, never leaves a half-written or wider-than-`mode` secret."""
-    _ensure_private_dir(path.parent)
+    """Temp file (O_EXCL|O_NOFOLLOW, born `mode`), then atomic rename: never follows a planted symlink, never
+    leaves a half-written or wider-than-`mode` secret. **Ownership survives a re-render**: the operator `chown`s
+    `trip.pass`/`probe.pass` to their consumers once; a plain `os.replace` would hand every re-render's file back
+    to the renderer and the forced-command user would silently lose access. So the temp file is chowned to the
+    existing target's uid/gid before the replace; when the renderer cannot do that (not root), the existing file is
+    rewritten IN PLACE (same inode, same owner). The parent dir is created 0700 if absent and otherwise left alone
+    (callers own its mode)."""
+    parent = path.parent
+    if parent.is_symlink():
+        raise ValueError(f"{parent} is a symlink - refusing to write secrets through it")
+    parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        st = None
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
         os.chmod(tmp, mode)
+        if st is not None and stat.S_ISREG(st.st_mode):
+            try:
+                os.chown(tmp, st.st_uid, st.st_gid)
+            except PermissionError:
+                tmp.unlink(missing_ok=True)
+                ifd = os.open(path, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW)
+                with os.fdopen(ifd, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+                os.chmod(path, mode)
+                return
         os.replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
@@ -375,18 +406,50 @@ def parse_override_services(text: str) -> list[str]:
     return re.findall(r"^  ([a-z][a-z0-9\-]*):\s*$", body, flags=re.M)
 
 
+def _read_marker(root: Path) -> list[str]:
+    p = root / OUT_DIR_REL / MARKER_NAME
+    return [x.strip() for x in p.read_text(encoding="utf-8").splitlines() if x.strip()] if p.is_file() else []
+
+
+def _pass_file_report(root: Path) -> dict:
+    """Mode/owner of the pass files. The renderer cannot `test -r` AS another user, so it reports what it can see:
+    the owner uid and whether that owner has read permission; run `sudo -u <user> test -r <file>` for the real check."""
+    out: dict = {}
+    for name in ("ops", "ops-app", "trip", "probe"):
+        p = root / OUT_DIR_REL / f"{name}.pass"
+        if not p.is_file():
+            out[name] = {"present": False}
+            continue
+        st = p.stat()
+        out[name] = {"present": True, "mode": oct(st.st_mode & 0o777), "uid": st.st_uid, "gid": st.st_gid,
+                     "owner_can_read": bool(st.st_mode & 0o400), "group_other_access": bool(st.st_mode & 0o077)}
+    return out
+
+
 def _check(root: Path) -> dict:
     roster = _load(root)
+    marker = _read_marker(root)
     p = root / OVERRIDE_REL
+    pass_files = _pass_file_report(root)
+    bad_pass = [n for n, r in pass_files.items() if r.get("present") and (not r["owner_can_read"] or r["group_other_access"])]
+    base = {"action": "check", "roster": roster, "marker": marker, "pass_files": pass_files}
     if not p.is_file():
-        return {"ok": True, "action": "check", "status": "no_override", "roster": roster, "cut_over": []}
+        if marker:
+            return {**base, "ok": False, "status": "drift", "cut_over": [], "marker_without_override": marker,
+                    "fix": "re-render the override: python mcp/noctusai/cli.py --redis-acl render --redis-acl-write "
+                           f"--redis-acl-services {','.join(marker)}  (or clear the marker with --redis-acl-services '')"}
+        return {**base, "ok": not bad_pass, "status": "no_override", "cut_over": [],
+                **({"bad_pass_file_modes": bad_pass} if bad_pass else {})}
     listed = parse_override_services(p.read_text(encoding="utf-8"))
     env_dir = root / OUT_DIR_REL / "env"
     missing = [x for x in listed if x not in roster or not (env_dir / f"{x}.env").is_file()]
-    ok = not missing
-    return {"ok": ok, "action": "check", "status": "in_sync" if ok else "drift", "roster": roster, "cut_over": listed,
-            **({} if ok else {"missing_or_not_in_roster": missing,
-                              "fix": "python mcp/noctusai/cli.py --redis-acl render --redis-acl-write --redis-acl-services <list>"})}
+    unlisted = [x for x in marker if x not in listed]
+    ok = not missing and not unlisted and not bad_pass
+    return {**base, "ok": ok, "status": "in_sync" if ok else "drift", "cut_over": listed,
+            **({} if not missing else {"missing_or_not_in_roster": missing}),
+            **({} if not unlisted else {"marker_services_missing_from_override": unlisted}),
+            **({} if not bad_pass else {"bad_pass_file_modes": bad_pass}),
+            **({} if ok else {"fix": "python mcp/noctusai/cli.py --redis-acl render --redis-acl-write --redis-acl-services <list>"})}
 
 
 def _render(root: Path, write: bool, env: dict[str, str] | None, env_file: str | None, services) -> dict:
@@ -401,7 +464,9 @@ def _render(root: Path, write: bool, env: dict[str, str] | None, env_file: str |
         master, gen = _read_master(root, env, env_file)
         try:
             out = root / OUT_DIR_REL
-            _ensure_private_dir(out)
+            # 0711: the forced-command / probe users must TRAVERSE to their own pass file (not list the dir).
+            _ensure_private_dir(out, 0o711)
+            _ensure_private_dir(out / "env")
             _write_secret(out / "users.acl", render_aclfile(roster, master, gen), 0o644)
             _write_secret(out / "breaker-users.acl", render_breaker_aclfile(roster, master, gen), 0o644)
             for slug in roster:
@@ -412,13 +477,16 @@ def _render(root: Path, write: bool, env: dict[str, str] | None, env_file: str |
                                   f"{OUT_DIR_REL}/env/<service>.env x{len(roster)}",
                                   *(f"{OUT_DIR_REL}/{n}.pass" for n in ("ops", "ops-app", "trip", "probe"))]
             ov = root / OVERRIDE_REL
+            marker = out / MARKER_NAME
             if svc is not None:
                 if svc:
                     ov.write_text(render_override(svc), encoding="utf-8")
-                    result["written"].append(OVERRIDE_REL)
+                    _write_secret(marker, "\n".join(svc) + "\n", 0o644)
+                    result["written"] += [OVERRIDE_REL, f"{OUT_DIR_REL}/{MARKER_NAME}"]
                 else:
                     ov.unlink(missing_ok=True)
-                    result["written"].append(f"{OVERRIDE_REL} (removed: no service is cut over)")
+                    marker.unlink(missing_ok=True)
+                    result["written"].append(f"{OVERRIDE_REL} + {MARKER_NAME} (removed: no service is cut over)")
         except ValueError as e:
             return {"ok": False, "action": "render", "status": "error", "error": str(e), "written": result["written"]}
     result["status"] = "written" if write else "planned"

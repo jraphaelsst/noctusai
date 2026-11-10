@@ -21,6 +21,7 @@ from typing import Callable
 
 OVERRIDE_NAME = "compose.redis-auth.prod.yml"
 ENV_DIR = "redis-auth/env"
+MARKER_REL = "redis-auth/cutover.services"
 REDIS_ACL_CONTAINER = "noctus-redis-acl"
 BREAKER_REDIS_CONTAINER = "noctus-breaker-redis"
 
@@ -49,8 +50,24 @@ def plan(probe: Probe, base_compose: str, product: str, mode: str = "auto") -> d
         return {**base, "error": f"redis-auth mode must be 'auto' or 'off', got {mode!r}"}
     fleet_dir = posixpath.dirname(base_compose)
     override = posixpath.join(fleet_dir, OVERRIDE_NAME)
+    # DURABLE CUTOVER MARKER (`redis-auth/cutover.services`, written by `render --services`, cleared only by an
+    # explicit empty `--services`): the override is a plain file and can be deleted/clobbered; without a second
+    # record a lost override would make every recreate silently return a cut-over service to the old Redis.
+    marker_path = posixpath.join(fleet_dir, MARKER_REL)
+    rc_m, marker_text, err_m = probe(["cat", marker_path])
+    if rc_m not in (0, 1):
+        return {**base, "error": f"cutover marker probe failed (rc={rc_m}: {(err_m or '').strip()[:120]}) - refusing: "
+                                 "an unverifiable marker must not be treated as absent"}
+    marker = [x.strip() for x in (marker_text if rc_m == 0 else "").splitlines() if x.strip()]
+    base = {**base, "marker": marker}
     rc, _o, err = probe(["test", "-f", override])
     if rc == 1:
+        if marker:
+            return {**base, "error": f"{marker_path} says {marker} are cut over to the authenticated Redis but "
+                                     f"{override} is missing: refusing, a recreate would silently return them to the "
+                                     "old Redis. Re-render: python mcp/noctusai/cli.py --redis-acl render "
+                                     f"--redis-acl-write --redis-acl-services {','.join(marker)} (or clear the "
+                                     "marker deliberately with --redis-acl-services '')."}
         return base
     if rc != 0:
         return {**base, "error": f"redis-auth override probe failed (rc={rc}: {(err or '').strip()[:120]}) - refusing: "
@@ -59,6 +76,12 @@ def plan(probe: Probe, base_compose: str, product: str, mode: str = "auto") -> d
     if rc != 0:
         return {**base, "error": f"redis-auth override read failed (rc={rc}: {(err or '').strip()[:120]}) - refusing"}
     cut_over = _listed(text)
+    unlisted = [x for x in marker if x not in cut_over]
+    if unlisted:
+        return {**base, "files": [override], "cut_over": cut_over, "listed": product in cut_over,
+                "error": f"{marker_path} says {marker} are cut over but {override} lists only {cut_over} "
+                         f"(missing {unlisted}): refusing, those services would silently return to the old Redis. "
+                         "Re-render with the full list, or clear the marker deliberately with --redis-acl-services ''."}
     base = {**base, "files": [override], "cut_over": cut_over, "listed": product in cut_over}
     # EVERY listed service's generated env file must exist: compose resolves the whole project, so one missing file
     # breaks (or silently skips) a recreate of ANY service.

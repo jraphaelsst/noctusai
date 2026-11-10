@@ -51,7 +51,7 @@ from uuid import UUID
 
 import secrets
 
-from noctusai_lib.api.auth.session.store import is_valid_session_id
+from noctusai_lib.api.auth.session.store import is_valid_session_id, session_id_digest
 from noctusai_lib.api.auth.session.types import AuthContext, SessionTokens
 from noctusai_lib.security.encrypted_tokens import (
     MultiKeyDecryptor,
@@ -136,7 +136,7 @@ class RedisSessionStore:
         """Redis key = ``nai_session:`` + sha256(session_id). The session id IS the cookie value (a bearer
         secret): keying by it would make every key name (SCAN, ACL LOG, MONITOR, a Redis dump) a usable
         credential. The hash makes names inert; `_legacy_key` keeps pre-hash records readable."""
-        return f"{_KEY_PREFIX}{hashlib.sha256(session_id.encode()).hexdigest()}"
+        return f"{_KEY_PREFIX}{session_id_digest(session_id)}"
 
     @staticmethod
     def _legacy_key(session_id: str) -> str:

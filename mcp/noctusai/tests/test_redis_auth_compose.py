@@ -23,14 +23,19 @@ OVERRIDE = f"{FLEET}/compose.redis-auth.prod.yml"
 class Host:
     """Minimal deploy host: files present, listed services, redis container state."""
 
-    def __init__(self, override=True, listed=("core",), env_files=("core",), redis_running=True, test_rc=None, breaker_running=True):
+    def __init__(self, override=True, listed=("core",), env_files=("core",), redis_running=True, test_rc=None, breaker_running=True, marker=(), marker_rc=0):
         self.override, self.listed, self.env_files = override, set(listed), set(env_files)
         self.redis_running, self.test_rc = redis_running, test_rc
         self.breaker_running = breaker_running
+        self.marker, self.marker_rc = list(marker), marker_rc
         self.calls: list[list[str]] = []
 
     def __call__(self, cmd):
         self.calls.append(cmd)
+        if cmd[0] == "cat" and cmd[1].endswith("cutover.services"):
+            if self.marker_rc not in (0, 1):
+                return (self.marker_rc, "", "ssh: connection reset")
+            return ((0, "\n".join(self.marker) + "\n", "") if self.marker else (1, "", "No such file"))
         if cmd[0] == "cat":
             body = "".join(f"  {svc}:\n    env_file:\n      - ./redis-auth/env/{svc}.env\n" for svc in sorted(self.listed))
             return (0, f"services:\n{body}\nnetworks:\n  noctus-data:\n", "")
@@ -150,3 +155,36 @@ class TestOffModeIsRecorded:  # P3
         assert r["redis_auth"]["mode"] == "off" and r["redis_auth"]["files"] == [] and r["redis_auth"]["recorded"] is True
         assert r["redis_auth"]["skipped_files"] == [OVERRIDE] and rows and "redis_auth='off'" in rows[0]["description"]
         assert all(OVERRIDE not in c for c in h.compose_calls())
+
+
+class TestDurableCutoverMarker:  # round 4 P2-1
+    def test_marker_with_missing_override_refuses(self):
+        p = RC.plan(Host(override=False, marker=["core", "agents"]), BASE, "core")
+        assert p["error"] and "missing" in p["error"] and "core" in p["error"] and "--redis-acl-services" in p["error"]
+        assert p["files"] == []
+
+    def test_marker_with_override_missing_a_service_refuses(self):
+        p = RC.plan(Host(listed=("core",), env_files=("core",), marker=["core", "agents"]), BASE, "core")
+        assert p["error"] and "agents" in p["error"] and "silently return" in p["error"]
+
+    def test_marker_matching_override_is_fine(self):
+        p = RC.plan(Host(listed=("core", "agents"), env_files=("core", "agents"), marker=["core", "agents"]), BASE, "core")
+        assert p["error"] is None and p["files"] == [OVERRIDE] and p["marker"] == ["agents", "core"] or p["error"] is None
+
+    def test_no_marker_no_override_is_todays_pre_cutover_behaviour(self):
+        p = RC.plan(Host(override=False), BASE, "core")
+        assert p["error"] is None and p["files"] == [] and p["marker"] == []
+
+    def test_unverifiable_marker_is_not_treated_as_absent(self):
+        p = RC.plan(Host(override=False, marker_rc=255), BASE, "core")
+        assert p["error"] and "unverifiable" in p["error"]
+
+    def test_off_mode_ignores_the_marker(self):
+        p = RC.plan(Host(override=False, marker=["core"]), BASE, "core", mode="off")
+        assert p["error"] is None and p["files"] == []
+
+    def test_deploy_image_refuses_on_marker_without_override(self):
+        h = Host(override=False, marker=["core"])
+        r = DI.deploy_image("core", run_remote=h, confirm=True, sleep=lambda s: None, live_products_fn=lambda: [],
+                            local_diff=lambda o, n: (True, [], ""))
+        assert r["status"] == "error" and "marker" in r["error"] and not h.compose_calls()
