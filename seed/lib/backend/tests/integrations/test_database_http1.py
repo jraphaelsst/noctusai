@@ -130,4 +130,6 @@ class TestTheResultReallyIsHttp1:
         transport = c.postgrest.session._transport_for_url(
             httpx.URL("https://example.supabase.co/rest/v1/x")
         )
-        assert transport._pool._http2 is False
+        # the session rides the breaker's counting TimingTransport; assert on the real transport it wraps
+        inner = getattr(transport, "_inner", transport)
+        assert inner._pool._http2 is False

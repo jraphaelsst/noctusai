@@ -35,6 +35,8 @@ from typing import Any, Mapping, Optional
 
 import httpx
 
+from noctusai_lib.primitives.supabase_breaker import record_call as _breaker_record_call
+
 logger = logging.getLogger(__name__)
 
 #: Seconds an idle pooled connection is kept. Below the idle timeout of the
@@ -73,6 +75,14 @@ class TimingTransport(httpx.BaseTransport):
         self._record = record
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
+        service = service_of(request.url)
+        if service == "rest":
+            # Supabase request breaker (2026-11-10): the ONE place every seed-built client's PostgREST traffic passes.
+            # In-memory count attributed to the current source (worker/scheduler/http); never network, never raises.
+            try:
+                _breaker_record_call()
+            except Exception:  # noqa: BLE001 -- the safety net must never break a call
+                logger.error("supabase breaker: count failed", exc_info=True)
         if self._record is None:
             from ..api.request_timing import record_db_call as record
         else:
@@ -98,7 +108,7 @@ class TimingTransport(httpx.BaseTransport):
             return self._inner.handle_request(request)
         finally:
             try:
-                record(service_of(request.url), time.perf_counter() - start, state["new"], state["connect_s"])
+                record(service, time.perf_counter() - start, state["new"], state["connect_s"])
             except Exception:  # noqa: BLE001 -- observability must never break a call
                 logger.debug("db call timing record failed", exc_info=True)
 

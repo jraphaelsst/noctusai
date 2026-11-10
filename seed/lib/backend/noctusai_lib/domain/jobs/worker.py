@@ -50,6 +50,7 @@ from noctusai_lib.domain.jobs.repo import (
     RescheduleLater,
 )
 from noctusai_lib.domain.jobs import wake as _wake
+from noctusai_lib.primitives.supabase_breaker import Breaker, get_breaker, source_scope
 from noctusai_lib.domain.jobs.retry_policy import (
     DEFAULT_POLICY,
     RetryPolicy,
@@ -91,8 +92,16 @@ class Worker:
         max_idle_interval_seconds: float = 30.0,
         idle_backoff_multiplier: float = 2.0,
         idle_sleep: Callable[[float, asyncio.Event | None], Awaitable[None]] | None = None,
+        breaker: Breaker | None = None,
+        held_poll_seconds: float = 15.0,
     ) -> None:
         self._repo = repo
+        # Supabase request breaker (2026-11-10): every Supabase call this worker's loop and handlers make is counted
+        # under `worker:<job types>`; a runaway rate trips it and the loop PARKS (zero Supabase calls) until a human
+        # re-arms. `breaker=None` -> the process breaker. KB § PATTERNS/backend/supabase-request-breaker.md
+        self._breaker = breaker
+        self._held_poll = held_poll_seconds
+        self._breaker_wake: asyncio.Event | None = None
         # Pause switch, consulted before EVERY claim: `False` ⇒ claim
         # nothing this cycle (jobs stay queued, the loop idles). Lets an
         # operator pause/resume a live worker from data (a settings row)
@@ -162,6 +171,11 @@ class Worker:
         await self._dispatch(job, handler)
         return True
 
+    @property
+    def breaker_source(self) -> str:
+        """The breaker source name: ``worker:<sorted job types>``."""
+        return "worker:" + ",".join(self._job_types)
+
     async def claim_allowed(self) -> bool:
         """The claim gate's current answer (`True` when there is no gate)."""
         if self._claim_gate is None:
@@ -195,35 +209,90 @@ class Worker:
         delay = self._poll_interval
         # In-process enqueues of a type this worker serves cut the idle
         # sleep (see `jobs/wake.py`); cross-process producers wait <= cap.
-        self._waker = _wake.register(asyncio.get_running_loop(), self._job_types)
+        loop = asyncio.get_running_loop()
+        self._waker = _wake.register(loop, self._job_types)
+        breaker = self._breaker or get_breaker()
+        source = self.breaker_source
+        self._breaker_wake = bk_wake = asyncio.Event()
+        unsubscribe = breaker.subscribe(source, lambda: loop.call_soon_threadsafe(bk_wake.set))
         try:
-            while True:
-                if stop_event is not None and stop_event.is_set():
-                    break
-                # A wake that lands before this claim is covered by the claim
-                # itself; one that lands after it ends the next idle sleep.
-                if self._waker is not None:
-                    self._waker.event.clear()
-                processed = await self.run_once()
-                if processed:
-                    delay = self._poll_interval
-                    continue
-                await self._idle_sleep(delay, stop_event)
-                if self._waker is not None and self._waker.event.is_set():
-                    delay = self._poll_interval
-                else:
-                    delay = min(delay * self._idle_multiplier, self._max_idle_interval)
+            with source_scope(source):
+                # A held source does NOT start on boot: the check below reads Redis (force) before the first claim.
+                hold = await breaker.check(source, force=True)
+                while True:
+                    if stop_event is not None and stop_event.is_set():
+                        break
+                    bk_wake.clear()
+                    if hold:
+                        if not await self._park(breaker, source, hold, stop_event):
+                            break
+                        delay = self._poll_interval
+                    # A wake that lands before this claim is covered by the claim
+                    # itself; one that lands after it ends the next idle sleep.
+                    if self._waker is not None:
+                        self._waker.event.clear()
+                    processed = await self.run_once()
+                    hold = await breaker.check(source)
+                    if hold:
+                        continue  # tripped (or fleet-held) while that job ran: it finished; now stop claiming
+                    if processed:
+                        delay = self._poll_interval
+                        continue
+                    await self._idle_sleep(delay, stop_event)
+                    if self._waker is not None and self._waker.event.is_set():
+                        delay = self._poll_interval
+                    else:
+                        delay = min(delay * self._idle_multiplier, self._max_idle_interval)
         finally:
+            unsubscribe()
+            self._breaker_wake = None
             if self._waker is not None:
                 _wake.unregister(self._waker)
                 self._waker = None
             logger.info("worker.stop worker_id=%s", self._worker_id)
 
+    async def _park(
+        self, breaker: Breaker, source: str, hold: dict, stop_event: asyncio.Event | None
+    ) -> bool:
+        """The breaker holds this source: claim NOTHING (zero Supabase calls) until it is re-armed. Re-checks Redis
+        every `held_poll_seconds` (one cached MGET, never Supabase). Returns False if asked to stop meanwhile."""
+        logger.critical(
+            "worker.held_by_breaker worker_id=%s source=%s scope=%s reason=%s — NOT claiming jobs until a human "
+            "re-arms (noctus.dev.supabase_breaker / the platform-admin route)",
+            self._worker_id, source, hold.get("scope"), hold.get("reason"),
+        )
+        while True:
+            if stop_event is not None and stop_event.is_set():
+                return False
+            assert self._breaker_wake is not None
+            self._breaker_wake.clear()
+            await self._idle_sleep_held(stop_event)
+            if stop_event is not None and stop_event.is_set():
+                return False
+            hold = await breaker.check(source, force=True)
+            if hold is None:
+                logger.warning("worker.released_by_breaker worker_id=%s source=%s — resuming", self._worker_id, source)
+                return True
+
+    async def _idle_sleep_held(self, stop_event: asyncio.Event | None) -> None:
+        events = [e for e in (stop_event, self._breaker_wake) if e]
+        tasks = [asyncio.ensure_future(e.wait()) for e in events]
+        try:
+            await asyncio.wait(tasks, timeout=self._held_poll, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     # --- internals ---------------------------------------------------
 
     async def _default_idle_sleep(self, delay: float, stop_event: asyncio.Event | None) -> None:
         """Sleep up to `delay`; return early on stop_event or an in-process wake."""
-        events = [e for e in (stop_event, self._waker.event if self._waker else None) if e]
+        events = [
+            e
+            for e in (stop_event, self._waker.event if self._waker else None, self._breaker_wake)
+            if e
+        ]
         if not events:
             await asyncio.sleep(delay)
             return

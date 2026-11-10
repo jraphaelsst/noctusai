@@ -25,7 +25,7 @@ from storage3 import SyncStorageClient
 from supabase import create_client, Client, SupabaseAuthClient
 from supabase.lib.client_options import ClientOptions
 
-from noctusai_lib.integrations.http_pool import pooled_client
+from noctusai_lib.integrations.http_pool import TimingTransport, pooled_client
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +88,13 @@ def force_postgrest_http1(client: Client) -> Client:
         return client
 
     try:
+        # TimingTransport: counted by the Supabase breaker + timed, like every pooled client.
         replacement = httpx.Client(
             base_url=session.base_url,
             headers=session.headers,
             timeout=session.timeout,
             follow_redirects=True,
-            http2=False,
+            transport=TimingTransport(httpx.HTTPTransport(http2=False)),
         )
         setattr(replacement, _HTTP1_FLAG, True)
         postgrest.session = replacement
@@ -182,7 +183,8 @@ def _build_pooled(url: str, key: str, options: ClientOptions) -> Client:
             type(exc).__name__,
             exc,
         )
-        return create_client(url, key, options=options)
+        # force_postgrest_http1 installs the counted (breaker) transport on the stock client's PostgREST session.
+        return force_postgrest_http1(create_client(url, key, options=options))
 
 
 def make_supabase_client(

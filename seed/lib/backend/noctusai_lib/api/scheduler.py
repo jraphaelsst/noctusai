@@ -101,6 +101,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from noctusai_lib.primitives.supabase_breaker import get_breaker, source_scope
 from noctusai_lib.primitives.timeutil import platform_timezone_name
 
 # Silence APScheduler verbose DEBUG logging once at import time. Adopters
@@ -237,8 +238,27 @@ async def _report(run: JobRun) -> None:
 def _instrument(name: str, fn: Callable[..., Any]) -> Callable[..., Awaitable[Any]]:
     """Wrap `fn` so every run is timed, classified and reported."""
 
+    source = f"scheduler:{name}"
+    _held_logged: set[str] = set()
+
     @functools.wraps(fn)
     async def _run(*args: Any, **kwargs: Any) -> Any:
+        # Supabase request breaker (2026-11-10): a held job is DISABLED — it does not run, and (deliberately) writes
+        # NO run-ledger row either (that row is itself a Supabase call, i.e. the runaway). Every Supabase call the job
+        # makes — including its own ledger write below — is counted under `scheduler:<job>`.
+        breaker = get_breaker()
+        hold = await breaker.check(source)
+        if hold is not None:
+            if source not in _held_logged:
+                _held_logged.add(source)
+                logger.critical("scheduler job %r is HELD by the Supabase breaker (%s: %s) — not running until a "
+                                "human re-arms", name, hold.get("scope"), hold.get("reason"))
+            return None
+        _held_logged.discard(source)
+        with source_scope(source):
+            return await _run_instrumented(*args, **kwargs)
+
+    async def _run_instrumented(*args: Any, **kwargs: Any) -> Any:
         _ensure_capture_handler()
         capture = _RunCapture()
         token = _current_run.set(capture)

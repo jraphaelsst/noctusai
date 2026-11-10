@@ -383,6 +383,19 @@ def create_product_app(
         else make_run_ledger(_product_slug, lambda: db.get_core_client())
     )
 
+    # 3d. Supabase request breaker (2026-11-10) — every Supabase REST call is counted per source (worker / scheduler /
+    #     http) at the shared transport; a runaway BACKGROUND source is stopped, the owner alerted by email (Resend,
+    #     no Supabase), trips persisted in Redis until a human re-arms. Fake store/alerter under pytest.
+    #     → KB § PATTERNS/backend/supabase-request-breaker.md
+    from noctusai_lib.integrations.supabase_breaker_io import make_breaker_alerter, make_breaker_store
+    from noctusai_lib.primitives.supabase_breaker import configure_breaker
+
+    configure_breaker(
+        slug=_product_slug,
+        store=make_breaker_store(getattr(settings, "redis_url", None), use_fake=_under_pytest()),
+        alerter=make_breaker_alerter(use_fake=_under_pytest()),
+    )
+
     # 3c. Owner-notification catalog (2026-11-09) — the gate every owner-facing WhatsApp notification passes:
     #     the owner's per-kind on/off switch (core admin "Notificações") + one ledger row per send in core
     #     `public.notification_sends`. Declared kinds register lazily on the first send (and the product may call
@@ -707,6 +720,8 @@ def create_product_app(
             # "me" (round 2) rides on EVERY product: the seed SPA's access check
             # reads it, so opting out would strand it.
             *(() if "me" in standard_routers else ("me",)),
+            # "supabase_breaker" rides on EVERY product: the platform-admin re-arm surface of the request breaker.
+            *(() if "supabase_breaker" in standard_routers else ("supabase_breaker",)),
         ],
         team_policy=team,
     ):
