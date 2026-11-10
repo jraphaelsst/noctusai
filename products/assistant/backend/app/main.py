@@ -14,6 +14,7 @@ from noctusai_seed import create_product_app
 from app.config import settings
 from app.rate_limit import limiter
 from app.routers.classificacao_router import router as classificacao_router
+from app.routers.google_router import callback_router as google_callback_router, router as google_router
 from app.routers.whatsapp_router import router as whatsapp_router
 from app.shadow.worker import start_worker, stop_worker
 
@@ -36,7 +37,7 @@ app = create_product_app(
     # A deploy without these refuses to boot: the Fernet key (WAHA api key at rest), the webhook HMAC secret (plan
     # item 10) and the identity key (no raw third-party phone is stored).
     required_prod_config=["ENCRYPTION_KEY", "ASSISTANT_WAHA_WEBHOOK_HMAC_SECRET", "ASSISTANT_IDENTITY_HMAC_KEY"],
-    routers=[whatsapp_router, classificacao_router],
+    routers=[whatsapp_router, classificacao_router, google_router, google_callback_router],
     lifespan_startup=start_worker,
     lifespan_shutdown=stop_worker,
 )
