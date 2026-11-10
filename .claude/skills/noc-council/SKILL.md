@@ -1,12 +1,14 @@
 ---
 name: noc-council
 description: Use to challenge a plan, decision, contract, agent definition, refine or product before it is locked — triggers "council", "convene the council", "run the council", "conselho", "llm council", "five lenses", "challenge this plan", "anti-sycophancy review", "chairman". Independent, blind council as background subagents (five lenses plus the stage's advisors), an Opus chair that dispositions every objection, every row written through noctus.dev.council_ledger, outcomes recorded later so the stage map is retuned from evidence.
-version: 1.2.0
+version: 1.3.0
 ---
 
 # noc-council — independent, blind, measured review
 
-> **Changelog.** 1.2.0 (2026-11-09, owner D33): the product-* advisors get seats: product-manager (PMg) M idealize, O contract + evaluate; product-architect (PAr) M idealize + phase0, O verify_seed; product-analyst (PAn) M evaluate, O iterate. 1.1.0: report splits metrics per mode. 1.0.0: first map.
+> **Opt-in pilot.** The council is an opt-in pilot (D13). A project may opt in to the full council at every stage; its rules (caps, budget, kill criterion, recorder, review date) live in that project's PROJECT.md (first: `project-history/assistant-chatbot/PROJECT.md`). Decisions D13/D31-D34: that file section 2.
+>
+> **Changelog.** 1.3.0 (2026-11-09): stage-map legend, outsider column renamed `Ou`, pilot clause moved to PROJECT.md. 1.2.0 (2026-11-09, owner D33): the product-* advisors get seats: product-manager (PMg) M idealize, O contract + evaluate; product-architect (PAr) M idealize + phase0, O verify_seed; product-analyst (PAn) M evaluate, O iterate. 1.1.0: report splits metrics per mode. 1.0.0: first map.
 
 The author of a plan leans toward agreeing with itself (sycophancy, self-enhancement bias). A
 council gives separate contexts, different priors and domain evidence, then a chair that must
@@ -47,35 +49,28 @@ answer every objection. Depth: `KB § PATTERNS/common/council.md`. Ledger contra
 
 ## Stage map (owner-approved matrix)
 
-Seats = all five lenses (C F E O X) plus every advisor marked M or O on the stage's row. M = must,
-O = optional on its stated condition, `-` = no.
+Seats = the lens columns plus every advisor marked M or O on the stage's row. **M** = must, **O** = optional on its stated condition, `-` = no. Lens columns: **C** contrarian, **F** first principles, **E** expansionist, **Ou** outsider, **X** executor. Advisor columns: Arch architect, Sec security, AgS agents-security, Cmp compliance-reviewer, Leg legal-advisor, Acc accountant, PD product-designer, PMg product-manager, PAr product-architect, PAn product-analyst. Each advisor runs as its own subagent with its own model. A row's cells never leave a column empty: `-` means no seat.
 
-| Stage | C | F | E | O | X | Arch | Sec | AgS | Cmp | Leg | Acc | PD | PMg | PAr | PAn |
+| Stage | C | F | E | Ou | X | Arch | Sec | AgS | Cmp | Leg | Acc | PD | PMg | PAr | PAn |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| idealize (classify, market spec, interview) | M | M | M | M | O | O | - | O | - | O | O | M | M | M | - |
-| phase0 / seed-first | M | M | O | - | M | M | O | - | - | - | - | - | - | M | - |
+| idealize | M | M | M | M | O | O | - | O | - | O | O | M | M | M | - |
+| phase0 | M | M | O | - | M | M | O | - | - | - | - | - | - | M | - |
 | verify_seed | - | O | - | - | M | O | - | - | - | - | - | - | - | O | - |
 | mockup | O | - | O | M | - | - | - | - | - | O | - | M | - | - | - |
-| contract | M | O | - | - | M | M if stateful/cross-product else O | M if auth/public route/new table tier | O | - | O | O | - | O | - | - |
-| build (scaffold + build) | - | - | - | - | M | O | O | O | - | - | - | - | - | - | - |
+| contract | M | O | - | - | M | M if stateful or cross-product, else O | M if auth, public route or new table tier, else O | O | - | O | O | - | O | - | - |
+| build | - | - | - | - | M | O | O | O | - | - | - | - | - | - | - |
 | wire | - | - | - | O | M | - | - | - | - | - | - | O | - | - | - |
-| test_review (pre-merge) | M | - | - | - | - | - | O | O | M | - | - | - | - | - | - |
+| test_review | M | - | - | - | - | - | O | O | M | - | - | - | - | - | - |
 | security_pass | - | - | - | - | - | - | M | M if LLM exposed | - | O | - | - | - | - | - |
-| evaluate (UX + a11y) | O | - | M | M | - | - | - | - | - | - | - | M | O | - | M |
-| ship (routine) | - | - | - | - | M | - | - | - | - | - | - | - | - | - | - |
-| go_live (first) | all lenses + every relevant advisor (full council, product-* advisors included when relevant) |
-| iterate (step 4) | M | M | M | M | M | O by target (agent: AgS; UI: PD) | | | | | | | - | - | O |
+| evaluate | O | - | M | M | - | - | - | - | - | - | - | M | O | - | M |
+| ship | - | - | - | - | M | - | - | - | - | - | - | - | - | - | - |
+| go_live | M | M | M | M | M | O | M | O | O | O | O | O | O | O | - |
+| iterate | M | M | M | M | M | O (agent target: AgS; UI target: PD) | - | O | - | - | - | O | - | - | O |
 | owner_question | M | M | M | M | M | - | - | - | - | - | - | - | - | - | - |
 
-Columns: Arch architect, Sec security, AgS agents-security, Cmp compliance-reviewer, Leg
-legal-advisor, Acc accountant, PD product-designer, PMg product-manager, PAr product-architect,
-PAn product-analyst. Each advisor runs as its own subagent with its
-own configured model.
+Stage rows in one line each: **idealize** classify the idea, market spec, interview · **phase0** seed-first check before design · **verify_seed** confirm the seed ships what the plan consumes · **mockup** clickable UI before code · **contract** FE/BE contract and tiers · **build** scaffold and build · **wire** connect UI to real data · **test_review** pre-merge test review · **security_pass** security review · **evaluate** UX and accessibility check · **ship** routine release · **go_live** first prod exposure (every lens, security M, other advisors O when relevant) · **iterate** step 4 refine of a live thing · **owner_question** high-stakes owner question.
 
-**When the council meets.** Project `assistant-chatbot` (D13): the full council at EVERY stage.
-Other runs: only on a trigger (`new_product`, `irreversible`, `trust_boundary`, `prod_exposure`,
-`money_legal_lgpd`, `seed_fanout`, `large_estimate`, `unrebutted_objection`); elsewhere a
-single-chat pass is allowed and MUST be labelled "not independent" (`mode=single_chat`).
+**When the council meets.** On a trigger (`new_product`, `irreversible`, `trust_boundary`, `prod_exposure`, `money_legal_lgpd`, `seed_fanout`, `large_estimate`, `unrebutted_objection`), at the **M seats only** by default. A project may opt in to the full council at every stage; its caps, budget and review date live in its PROJECT.md. Elsewhere a single-chat pass is allowed and MUST be labelled "not independent" (`mode=single_chat`).
 
 ## Lenses (canonical definitions, until they move to the prompt registry)
 

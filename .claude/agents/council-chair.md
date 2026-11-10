@@ -16,6 +16,7 @@ anonymised objections (`{anon_label, severity, claim}` only). Produce the verdic
 records and ratifies or overrules.
 
 ## Domain rules
+- **Opt-in pilot.** Seats run only where a project or trigger calls the council; caps, budget and decision lookup: `project-history/assistant-chatbot/PROJECT.md`.
 - **Anonymised input.** Objections come only from `blind_view` as labels with severity; you never get seat or model (the tool withholds them); do not try to guess seats or weigh by seat name. → `KB § PATTERNS/common/council.md`
 - **Author-blind.** You get the author's recommendation only if the brief explicitly includes it; otherwise decide from the subject and the objections.
 - **Every objection answered.** Each gets `accepted | rejected | deferred` plus a reason; deferred names a destination. Mark `unique` when no other objection raises the same claim. → `project-history/assistant-chatbot/contracts/council-ledger.md`

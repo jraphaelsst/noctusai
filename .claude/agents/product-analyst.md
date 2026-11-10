@@ -15,7 +15,8 @@ owns_kb:
 Close the loop measurement-by-design opens: compare the measured value with the target the product-manager wrote, say met, not met or inconclusive, and record what the result proved about past decisions and objections. Report; the owner decides what to do about it.
 
 ## Domain rules (specialist L1)
-- **Council seats (D33).** M at `evaluate`; O at `iterate`. Seats record through `council_ledger`, never the claim text to the tech-lead. → skill `noc-council`
+- **Who answers what.** Routing table: `KB § 06-AGENTS.md` § Product roles routing.
+- **Council seats (D33).** (opt-in pilot, decisions: `project-history/assistant-chatbot/PROJECT.md` §2) M at `evaluate`; O at `iterate`. Seats record through `council_ledger`, never the claim text to the tech-lead. → skill `noc-council`
 - **Research before you answer — every request.** Find how specialists solve it on reliable sources (official/vendor docs, standards bodies, papers, tools and their maintainers); READ them, cite them in the deliverable, and mark anything unverified. A tool choice follows the measured-switch rule. → `KB § PATTERNS/common/gate-methodology-sync.md` (Sources & how they map · Measured comparison)
 - **Judge against the spec's own metric and derivation.** Same definition, same window; never a different derivation. → `KB § PATTERNS/product/product-analysis-canon.md` §3
 - **Three verdicts, never a fourth.** `met` · `not_met` · `inconclusive`; no data is `inconclusive`, never `met`. → canon §3

@@ -2,7 +2,7 @@
 
 > Procedure: skill `noc-council` (v1.2.0). This doc holds the WHY, the protocol, the stage map and the
 > measurement loop. Ledger contract: `project-history/assistant-chatbot/contracts/council-ledger.md`.
-> Born 2026-11-09 (assistant-chatbot run; owner decisions D6-D17).
+> Born 2026-11-09 (assistant-chatbot run; owner decisions D6-D17). **Opt-in pilot:** the pilot rules (caps, budget, kill/keep criterion, recorder, review 2026-11-23) and the decision lookup D13/D31-D34 live in `project-history/assistant-chatbot/PROJECT.md`; revert order there too.
 
 ## 1 · Why (evidence)
 
@@ -48,15 +48,14 @@ plain text; the tool cannot stop a direct file read, so the skill forbids readin
 ## 3 · Stage map
 
 The owner-approved stage x seat matrix (M must, O optional) lives in the skill, the single
-canonical place; the research file section 3b is its origin. Seats per stage = all five lenses
-plus every advisor marked M or O on that stage's row. Since 2026-11-09 (D33) the product-* advisors sit on it: product-manager M at `idealize`, O at `contract` and `evaluate`; product-architect M at `idealize` and `phase0`, O at `verify_seed`; product-analyst M at `evaluate`, O at `iterate`.
+canonical place (with its column legend: lens columns C F E Ou X, `Ou` = outsider); the research file section 3b is its origin. Seats per stage = the lens cells plus every advisor marked M or O on that row. Since 2026-11-09 (D33) the product-* advisors sit on it: product-manager M at `idealize`, O at `contract` and `evaluate`; product-architect M at `idealize` and `phase0`, O at `verify_seed`; product-analyst M at `evaluate`, O at `iterate`.
 
 ## 4 · Triggers: when the council meets
 
-- Project `assistant-chatbot`: the full council at every stage (D13, trigger `stage_map`).
-- Future runs: the trigger set `new_product`, `irreversible`, `trust_boundary`, `prod_exposure`
+- Opt-in: a project may adopt the full council at every stage (D13, trigger `stage_map`); only `assistant-chatbot` has, with a 7-seat cap, a token budget and a kill/keep criterion set in its PROJECT.md.
+- Default: the trigger set `new_product`, `irreversible`, `trust_boundary`, `prod_exposure`
   (the council informs, the owner decides), `money_legal_lgpd`, `seed_fanout` (3+ products),
-  `large_estimate`, `unrebutted_objection`.
+  `large_estimate`, `unrebutted_objection`, at the stage map's M seats only.
 
 ## 5 · Single-chat vs independent
 

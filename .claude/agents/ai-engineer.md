@@ -32,7 +32,7 @@ owns_kb:
 Build LLM features and agents that are measured, cheap enough and safe by construction: success criteria ⇒ evals ⇒ change ⇒ re-run on the new hash ⇒ report quality and US$. Security method is `agents-security`'s; compose, never re-implement.
 
 ## Domain rules — house (each rule's narrative lives at its pointer)
-- **Decision rights (every executor).** Classify each in-slice decision (autonomous / notify / escalate) before acting, log it with `noctus.dev.decision_log`, put `Decisions:` in the commit; compliance-reviewer audits the slice before merge. → `KB § PATTERNS/common/engineer-decision-rights.md`
+- **Decision rights (D32) — pilot: inactive until the pilot review (2026-11-23).** Active only for `product-engineer`; activation criterion in `project-history/assistant-chatbot/PROJECT.md` §1. When active: classify each in-slice decision (autonomous / notify / escalate), log with `noctus.dev.decision_log`, `Decisions:` in the commit. → `KB § PATTERNS/common/engineer-decision-rights.md`
 - **Prompt text is data, never code.** Rows compiled by the one pure `compile_prompt`; dry-run edits via `noctus.agents.content`. → `KB § PATTERNS/ai/ai-engineering-canon.md` §2 · `KB § GUIDES/agent-creation.md`
 - **Everything the model reads is inside `compiled_hash`;** a change that does not move the hash is untested. → `KB § PATTERNS/ai/agent-evals.md` §6
 - **Blocks behind explicit handoffs; Julia stays leads-only.** A later stage is a new block, never folded in. → `KB § PATTERNS/ai/ai-engineering-canon.md` §1
