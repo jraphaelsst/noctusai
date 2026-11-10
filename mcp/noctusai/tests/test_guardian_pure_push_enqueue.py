@@ -951,3 +951,71 @@ def test_the_kb_counts_driver_finds_the_toolkit_when_the_trial_merge_runs_in_the
     m = item(world.deliverable(), "merge_buildable")
     assert m["ok"], m
     assert (world.repo / "driver-root-seen.txt").read_text() == "ran"  # the primary checkout's toolkit rendered it
+
+
+# =================================================================================================
+# P2-2: the export checks judge the HEAD's seed lib, in the hermetic env
+# =================================================================================================
+
+_SEED_ISOLATED_CHECK = (
+    "import pathlib, sys\n"
+    "import noctusai_lib\n"
+    "tree = pathlib.Path(sys.argv[1]).resolve()\n"
+    "here = pathlib.Path(noctusai_lib.__file__).resolve()\n"
+    "print('noctusai_lib from', here)\n"
+    "sys.exit(0 if str(here).startswith(str(tree)) else 1)\n"
+)
+_NO_SESSION_CHECK = ("import os, sys\n"
+                     "sys.exit(1 if os.environ.get('CLAUDE_CODE_SESSION_ID') or os.environ.get('CLAUDE_PROJECT_DIR') else 0)\n")
+
+
+def _seed_branch(world, *, extra_files=None):
+    """A pushed branch that carries its OWN tiny noctusai_lib + the requirements line that locates it."""
+    wt = world.worktree()
+    for rel, text in ((("seed/lib/backend/noctusai_lib/__init__.py"), "WHO = 'head'\n"),
+                      ("mcp/noctusai/requirements.txt", "-e ../../seed/lib/backend\n"), *(extra_files or {}).items()):
+        (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wt / rel).write_text(text)
+    world.set_counts(wt)
+    world.commit(wt, "carry my own seed lib")
+    return wt, world.push(wt, "feat/x")
+
+
+def test_the_derived_check_imports_the_heads_seed_lib_not_the_primarys(world):
+    _wt, head = _seed_branch(world)
+    arts = (("seed-isolated", ("{python}", "-c", _SEED_ISOLATED_CHECK, "{tree}")),)
+    res = RS.export_derived_check(world.repo, artifacts=arts)(head)
+    assert res["ok"] and res["measured"], res
+
+
+def test_the_derived_check_runs_in_the_hermetic_scrubbed_env(world, monkeypatch):
+    _wt, head = _seed_branch(world)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-1")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/somewhere")
+    arts = (("scrubbed", ("{python}", "-c", _NO_SESSION_CHECK)),)
+    assert RS.export_derived_check(world.repo, artifacts=arts)(head)["ok"]
+
+
+def test_the_ci_parity_check_imports_the_heads_seed_lib(world):
+    wf = _WORKFLOW.replace("--check-in-a-later-job", "--check-seed-isolated")
+    cli = _CLI.replace('if flag == "--check-scripts-manifest":', 'if flag == "--check-seed-isolated":\n'
+                       '    import noctusai_lib\n    sys.exit(0 if str(pathlib.Path(noctusai_lib.__file__).resolve()).startswith(str(root.resolve())) else 1)\n'
+                       'if flag == "--check-scripts-manifest":').replace('("--stamp", "--check-in-a-later-job")', '("--stamp",)')
+    wt, head = _seed_branch(world, extra_files={".github/workflows/test.yml": wf, "mcp/noctusai/cli.py": cli,
+                                                "mcp/noctusai/tests/test_keepers.py": _KEEPER_TESTS,
+                                                "scripts/MANIFEST": "tool.sh\n", "scripts/tool.sh": "#!/bin/sh\n"})
+    res = RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store)("feat/x", head)
+    assert res["ok"], res
+
+
+def test_an_export_that_differs_from_the_trees_file_list_is_unmeasured(world):
+    """export-ignore silently drops files from `git archive`: the checks would judge a different tree."""
+    wt = world.worktree()
+    (wt / ".gitattributes").write_text("src/hidden.txt export-ignore\n")
+    (wt / "src" / "hidden.txt").write_text("not exported\n")
+    world.set_counts(wt)
+    world.commit(wt, "feat: an export-ignored file")
+    head = world.push(wt, "feat/x")
+    res = world.derived(head)
+    assert not res["ok"] and res["measured"] is False
+    assert "src/hidden.txt" in res["detail"] and "export" in res["detail"]
