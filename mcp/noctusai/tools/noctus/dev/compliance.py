@@ -21855,7 +21855,8 @@ def check_absorptions_cache_freshness(repo_root: Path | None = None) -> list[dic
     via ``settle_structural_caches``). Silent skip when the ndjson is absent
     (no absorptions logged yet — fresh repo or pre-absorption tree).
 
-    Remediation: ``python mcp/noctusai/cli.py --refresh-absorptions-cache``.
+    Remediation: the MCP tool ``noctus.dev.absorption_refresh`` (there is no CLI flag; the old
+    ``--refresh-absorptions-cache`` hint named one that never existed).
     """
     issues: list[dict] = []
     root = repo_root or REPO_ROOT
@@ -21872,7 +21873,7 @@ def check_absorptions_cache_freshness(repo_root: Path | None = None) -> list[dic
             "product": "<harness>", "file": cache_file_label,
             "issue": (
                 "absorptions cache missing — run "
-                "`python mcp/noctusai/cli.py --refresh-absorptions-cache` "
+                "the MCP tool `noctus.dev.absorption_refresh` "
                 "(absorption-tracking keeper-mirror #9)"
             ),
             "severity": "warning",
@@ -21890,7 +21891,7 @@ def check_absorptions_cache_freshness(repo_root: Path | None = None) -> list[dic
             "product": "<harness>", "file": cache_file_label,
             "issue": (
                 f"absorptions cache unreadable ({e}) — re-create via "
-                "`--refresh-absorptions-cache`"
+                "the MCP tool `noctus.dev.absorption_refresh`"
             ),
             "severity": "warning",
             "symbol": "absorptions-cache-unreadable",

@@ -1,6 +1,8 @@
 """`POST /api/imoveis/sync?modo=auto|listar|detalhes` (org admin, 202 + poll) and `GET /api/imoveis/sync/ultimo`."""
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from noctusai_lib.domain.real_estate import Imovel
 from noctusai_lib.integrations.credential_resolvers import VISTA_PROVIDER
@@ -17,7 +19,30 @@ URL = "/api/imoveis/sync"
 ULTIMO = "/api/imoveis/sync/ultimo"
 
 
-def _montar(scene, *, com_credencial=True):
+class _ServicoSegurado(ImovelSyncService):
+    """Holds the background run open until the test releases it, so "a run is going" is a fact the test
+    controls, never a race against how fast the Fake answers (a no-change run is ~instant since the
+    change-signal refresh)."""
+
+    portao: "asyncio.Event | None" = None
+    loop: "asyncio.AbstractEventLoop | None" = None
+
+    async def _segurar(self) -> None:
+        cls = type(self)
+        cls.loop = asyncio.get_running_loop()
+        cls.portao = cls.portao or asyncio.Event()
+        await cls.portao.wait()
+
+    async def sync(self, *a, **k):
+        await self._segurar()
+        return await super().sync(*a, **k)
+
+    async def sync_detalhes(self, *a, **k):
+        await self._segurar()
+        return await super().sync_detalhes(*a, **k)
+
+
+def _montar(scene, *, com_credencial=True, segurar=False):
     from app.dependencies import get_admin_client
     from app.main import app
     from app.routers.imoveis_router import get_core_for_sync, get_sync_service_factory
@@ -32,12 +57,18 @@ def _montar(scene, *, com_credencial=True):
     vista_credenciais.configure_store(lambda: store)
 
     def fabrica(client, adapter, **kw):  # the real adapter is never used: no network
-        return ImovelSyncService(client, FakeVistaAdapter(), duplicate_detector=lambda *a, **k: None, **kw)
+        cls = _ServicoSegurado if segurar else ImovelSyncService
+        return cls(client, FakeVistaAdapter(), duplicate_detector=lambda *a, **k: None, **kw)
 
     ov = {get_admin_client: lambda: db, get_core_for_sync: lambda: scene.w.root, get_sync_service_factory: lambda: fabrica}
     app.dependency_overrides.update(ov)
     scene.db = db
     yield scene
+    loop = _ServicoSegurado.loop
+    # The TestClient portal may already have closed its loop (the held run dies with it); release it only if open.
+    if segurar and loop is not None and not loop.is_closed() and _ServicoSegurado.portao is not None:
+        loop.call_soon_threadsafe(_ServicoSegurado.portao.set)
+    _ServicoSegurado.portao = _ServicoSegurado.loop = None
     vista_credenciais.configure_store(None)
     for k in ov:
         app.dependency_overrides.pop(k, None)
@@ -46,6 +77,11 @@ def _montar(scene, *, com_credencial=True):
 @pytest.fixture
 def cena(admin):  # noqa: F811
     yield from _montar(admin)
+
+
+@pytest.fixture
+def cena_em_andamento(admin):  # noqa: F811
+    yield from _montar(admin, segurar=True)
 
 
 @pytest.fixture
@@ -80,7 +116,8 @@ class TestSync:
         [ex] = cena.db.table("imoveis_sync_execucoes").select("*").execute().data
         assert ex["origem"] == "manual" and ex["modo"] == "detalhes" and ex["escopo"] == "vitrine" and ex["iniciado_por"]
 
-    def test_a_second_click_returns_the_running_one(self, cena):
+    def test_a_second_click_returns_the_running_one(self, cena_em_andamento):
+        cena = cena_em_andamento
         a = cena.req("post", URL).json()
         b = cena.req("post", URL).json()
         assert b["execucao_id"] == a["execucao_id"] and b["ja_em_andamento"] is True
@@ -115,6 +152,7 @@ class TestUltimo:
         assert (d["novos"], d["atualizados"], d["inalterados"], d["removidos"], d["falhas"]) == (2, 30, 900, 1, 0)
         assert d["chamadas"] == {"detalhes": 933, "sonda": 40}
 
-    def test_a_running_run_is_flagged(self, cena):
+    def test_a_running_run_is_flagged(self, cena_em_andamento):
+        cena = cena_em_andamento
         cena.req("post", URL)
         assert cena.req("get", ULTIMO).json()["em_andamento"] is True
