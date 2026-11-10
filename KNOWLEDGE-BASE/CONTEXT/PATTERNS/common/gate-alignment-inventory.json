@@ -1215,6 +1215,23 @@
    "class": "never-fires",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-guardian-tool-authorship": {
+   "mechanism": "tool:release_steward (guardian_holds_lease reads the StewardStore lease; remedy names the tooling branch steward)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-10",
+   "shadow": {
+    "since": "2026-11-10",
+    "fires": 0,
+    "true_positives": 0,
+    "effective_fp": 0.0,
+    "promote_when": "waived to blocking at birth: deterministic predicate (exact two files AND live lease held by this very session), ratified by council 09340534; demote if any effective FP"
+   },
+   "source": "release-steward guardian spec, council 09340534 (TOOLING section): the lease holder never authors steward tooling",
+   "telemetry": "gate events: cli exit wrapper (pass/deny) + keeper allow rows naming why it passed (no-lease/stale-lease/no-session/other-holder)"
+  },
   "keeper:check-guc-carveout-guard-hand-written": {
    "severity": "",
    "kind": "keeper",
@@ -3450,6 +3467,18 @@
    "branch": "feat/ac-council-guard",
    "gates": [
     "guard:council-read"
+   ]
+  },
+  {
+   "id": "D33",
+   "decision": "The release-steward lease holder (guardian) never authors steward tooling (release_steward.py, task_branch.py); only a tooling branch steward does",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md",
+   "construction": "guardian_holds_lease (StewardStore.holder) shared reader + the refusal message names the remedy",
+   "gate": "keeper:check-guardian-tool-authorship",
+   "telemetry": "gate events (deny) and allow rows with the pass-through reason",
+   "branch": "feat/guardian-tool-authorship-keeper",
+   "gates": [
+    "keeper:check-guardian-tool-authorship"
    ]
   }
  ]
