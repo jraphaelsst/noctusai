@@ -2370,6 +2370,18 @@ def _ownership_skip(*, abs_wt: str, branch: str, primary_root: str, pointer_fn, 
                         "reason": (f"{branch} is a long-lived STEWARD branch (branch-tree pointer role 'steward'): its "
                                    "worktree and ref outlive any single landing" +
                                    ("" if auto else " - only the owning session may clean it up"))}
+        # An AUTO teardown also leaves alone a worktree whose branch pointer belongs to ANOTHER session that is not
+        # dead: whoever opened the branch still has it (the guardian landing a delivery is not its owner).
+        pointer_session = (ptr or {}).get("session")
+        if (auto and ptr and pointer_session and pointer_session != caller
+                and ptr.get("status") not in _TERMINAL_POINTER_STATUSES):
+            pstate = (session_state or (lambda _s: "unknown"))(pointer_session)
+            if pstate != "dead":
+                return {"status": "skipped_owned", "cwd_removed": False,
+                        "owner": {"session_id": pointer_session, "source": "pointer_session", "state": pstate, "branch": branch},
+                        "reason": (f"{branch}'s branch-tree pointer belongs to session {str(pointer_session)[:12]} ({pstate}), "
+                                   "not the caller: the owner cleans its own worktree (explicit cleanup), or the "
+                                   "SessionStart sweep reclaims it once idle")}
     return None
 
 
@@ -2396,7 +2408,9 @@ def _auto_cleanup_after_integrate(
             return {"status": "skipped", "cwd_removed": False,
                     "reason": "worktree has uncommitted changes - left in place; the "
                               "SessionStart sweep reclaims it once clean and idle"}
-        res = task_branch_fn(action="cleanup", slug=slug, confirm=True, **kwargs)
+        # the nested cleanup gets the EXACT branch and the worktree that was just checked: it never re-resolves
+        # the slug (a collision could point it at a different worktree) and refuses on any mismatch
+        res = task_branch_fn(action="cleanup", slug=slug, confirm=True, branch=branch, checked_worktree=abs_wt, **kwargs)
     except Exception as e:  # best-effort: a landed integrate must still report success
         return {"status": "error", "cwd_removed": False, "reason": f"{type(e).__name__}: {e}"}
     ok = res.get("status") == "cleaned"
@@ -2771,6 +2785,7 @@ def task_branch(
     deliverable_kwargs: "dict[str, Any] | None" = None,
     caller_session: str | None = None,
     session_state: "Callable[[str], str] | None" = None,
+    checked_worktree: str | None = None,
 ) -> dict[str, Any]:
     """`action` ∈ {status, start, enqueue, landed, integrate, cleanup, train, sync_primary}.
 
@@ -2792,6 +2807,9 @@ def task_branch(
     those, a direct `cleanup` by the pointer's own session is allowed). `caller_session`
     (default $CLAUDE_CODE_SESSION_ID) and `session_state` (default: the steward registry's
     process ids; unknown is treated as live) are the test seams. Never fails a landed verdict.
+    `cleanup` named with `branch=` (and the nested cleanup of `landed`/`integrate`, which also passes
+    `checked_worktree`) REFUSES (`refused_branch_mismatch`) when the worktree it resolves holds a different
+    branch than the one named / checked, instead of adopting whatever the worktree holds.
 
     `train` (merge-all-before-integrating, owner rule 2026-10-24): `slugs=[...]`
     merges each ready `feat/<slug>` --no-ff into ONE `train-<slug|date>` task
@@ -3844,8 +3862,16 @@ def task_branch(
     rc_wl, wl_out, _wl = git("worktree", "list", "--porcelain")
     actual = _branch_for_path(wl_out if rc_wl == 0 else "", wt_path)
     if actual and actual != branch:
+        if explicit_branch or checked_worktree:
+            # the caller NAMED a branch (or the auto path already checked one): never adopt a different one
+            return {**base, "status": "refused_branch_mismatch", "exit_code": 1,
+                    "reason": (f"the worktree for slug {slug!r} ({wt_path}) holds {actual}, not the named {branch}: refusing to "
+                               "clean a branch nobody asked for (slug collision) - name the right slug/branch")}
         branch = actual
         base["branch"] = branch
+    if checked_worktree and os.path.realpath(_absolute_wt_path(wt_path, _resolve_primary_root(primary_root))) != os.path.realpath(checked_worktree):
+        return {**base, "status": "refused_branch_mismatch", "exit_code": 1,
+                "reason": f"cleanup resolved worktree {wt_path}, not the checked {checked_worktree}: refusing"}
     # Never tear down a worktree/branch that is not the caller's (a live foreign claim, a steward
     # branch): reported, not failed. The auto-cleanup after landed/integrate checks the same thing.
     _owned = _ownership_skip(

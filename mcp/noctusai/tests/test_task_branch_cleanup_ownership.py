@@ -106,8 +106,9 @@ def test_landed_for_a_steward_branch_leaves_it_untouched_even_for_its_own_sessio
 
 def test_landed_for_an_unclaimed_engineer_slice_is_cleaned_as_before(landed_world):
     w = landed_world
+    # unclaimed + its pointer's session is gone (a finished/abandoned slice): nobody to protect
     ptr = FakePointers(**{"feat/x": {"branch": "feat/x", "role": "engineer", "session": "sess-eng", "status": "on_going"}})
-    res = landed(w, pointer_ops=ptr)
+    res = landed(w, pointer_ops=ptr, session_state=lambda sid: "dead")
     assert res["auto_cleanup"]["status"] == "cleaned", res["auto_cleanup"]
     assert res["auto_cleanup"]["worktree_removed"] and res["auto_cleanup"]["branch_deleted"]
     assert not w.wt.exists()
@@ -174,3 +175,42 @@ def test_a_readable_store_with_no_pointer_still_cleans_the_unowned_slice(landed_
             return self.latest(branch), {"store_ok": True}
     res = landed(landed_world, pointer_ops=Readable())
     assert res["auto_cleanup"]["status"] == "cleaned", res["auto_cleanup"]
+
+
+# =================================================================================================
+# P2-4 (adversarial review): the nested cleanup must clean EXACTLY what was checked
+# =================================================================================================
+
+def test_a_cleanup_naming_one_branch_refuses_to_clean_the_branch_a_worktree_really_holds(landed_world):
+    """The slug-collision repro: the canonical worktree for slug x holds feat/x; the caller named another branch.
+    The old cleanup silently ADOPTED the worktree's branch and removed it."""
+    w = landed_world
+    sh(w.repo, "git", "branch", "docs/other", "origin/dev")
+    res = T.task_branch(action="cleanup", slug="x", branch="docs/other", confirm=True, run=w.runner(),
+                        primary_root=str(w.repo), caller_session="sess-me")
+    assert res["status"] == "refused_branch_mismatch" and res["exit_code"] == 1, res
+    assert "feat/x" in res["reason"] and "docs/other" in res["reason"]
+    untouched(w)
+
+
+def test_the_nested_cleanup_gets_the_exact_branch_and_the_checked_worktree(landed_world):
+    w = landed_world
+    log = []
+    res = T.task_branch(action="landed", slug="x", confirm=True, run=w.runner(log), primary_root=str(w.repo),
+                        queue_status_reader=LANDED, keep_worktree=False, caller_session="sess-guardian",
+                        branch="feat/x", session_state=lambda s: "dead")
+    assert res["auto_cleanup"]["status"] == "cleaned", res["auto_cleanup"]
+    assert not w.wt.exists()
+
+
+def test_an_auto_cleanup_never_removes_a_worktree_whose_pointer_session_is_alive(landed_world):
+    w = landed_world
+    ptr = FakePointers(**{"feat/x": {"branch": "feat/x", "role": "engineer", "session": "sess-eng", "status": "on_going"}})
+    for state in ("live", "unknown"):
+        res = landed(w, pointer_ops=ptr, session_state=lambda sid, st=state: st)
+        assert res["status"] == "integrated"
+        assert res["auto_cleanup"]["status"] == "skipped_owned", (state, res["auto_cleanup"])
+        assert res["auto_cleanup"]["owner"] == {"session_id": "sess-eng", "source": "pointer_session", "state": state, "branch": "feat/x"}
+        untouched(w)
+    # the pointer's own session finishing its own work is not foreign
+    assert landed(w, pointer_ops=ptr, caller_session="sess-eng")["auto_cleanup"]["status"] == "cleaned"
