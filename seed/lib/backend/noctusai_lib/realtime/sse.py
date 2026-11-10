@@ -115,6 +115,7 @@ async def sse_event_stream(
     last_heartbeat = time.monotonic()
     next_task: asyncio.Task[RealtimeEvent] | None = None
     try:
+        # poll-budget: per open SSE stream, wait(timeout=tick=min(heartbeat 20s, disconnect_poll 1s)=1s) + is_disconnected() check; 0 DB calls/tick (in-process request state); worst 86400/day per open stream (in-process only); idle=event
         while True:
             if await check_disconnected():
                 logger.debug("SSE stream disconnected scope=%s", scope)

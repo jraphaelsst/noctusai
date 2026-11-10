@@ -830,6 +830,7 @@ class WahaClient(LinePolicyGuard):
         last-read state either way (caller decides ready vs. still-stuck)."""
         deadline = time.monotonic() + seconds
         state = await self.get_session()
+        # poll-budget: 0.5s get_session read until status is SCAN_QR_CODE/WORKING or settle_seconds=8 elapse; 1 calls/tick; worst 16/day per recovery rung (3 rungs, 48 per recover_session), run only on a stuck session; idle=fixed
         while (
             state.get("status") not in RECOVER_READY_STATUSES
             and time.monotonic() < deadline

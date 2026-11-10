@@ -106,6 +106,7 @@ class ConversationWorker:
         tick; sleeps `poll_seconds` only when both batches were empty so
         steady-state load doesn't accumulate poll latency."""
         logger.info("Conversation worker started")
+        # poll-budget: poll_seconds=2.0 sleep only when both batches are empty; 2 calls/tick (process_due_once + sweep_idle_once); worst 86400/day per worker (43200 idle ticks x 2); idle=fixed
         while not self.should_stop:
             processed = self.process_due_once()
             idle_processed = self.sweep_idle_once()

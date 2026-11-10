@@ -597,6 +597,7 @@ def poll_media_status(
 
     deadline = time.monotonic() + timeout_seconds
     transient_left = transient_retries
+    # poll-budget: poll_interval_seconds=2.0 container-status read until terminal or timeout_seconds=90; 1 calls/tick; worst 45/day per container published (90s / 2s), 43200/day ceiling if one poll never ended; idle=fixed
     while True:
         try:
             body = graph_get(

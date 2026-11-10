@@ -1016,6 +1016,7 @@ class RealYoutubeClient:
         - Non-transient errors propagate immediately."""
         response: dict[str, Any] | None = None
         attempts_this_chunk = 0
+        # poll-budget: chunked-upload loop, no idle sleep (one next_chunk per iteration, backoff 1s/2s/4s only on a transient error, CHUNK_RETRY_MAX_ATTEMPTS=3); 1 calls/tick; worst 0/day while no upload is in flight; idle=event
         while response is None:
             try:
                 _status, response = request.next_chunk()

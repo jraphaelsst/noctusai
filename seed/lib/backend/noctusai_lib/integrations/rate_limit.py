@@ -255,6 +255,7 @@ class TokenBucket:
         Returns the seconds waited (0.0 if immediate) — useful for
         telemetry/tests."""
         waited = 0.0
+        # poll-budget: in-process token-bucket wait (clock sleep, no I/O); 0 calls/tick; worst 0/day remote calls; idle=event
         while True:
             with self._lock:
                 self._refill_locked()
@@ -342,6 +343,7 @@ class _AsyncBucketState:
         import asyncio
 
         waited = 0.0
+        # poll-budget: in-process token-bucket wait (async clock sleep, no I/O); 0 calls/tick; worst 0/day remote calls; idle=event
         while True:
             async with self._lock:
                 self._refill_locked()
@@ -403,6 +405,7 @@ async def retry_with_backoff_async(
     cfg = _config_for(bucket)
     clk = _resolve_clock(clock)
     attempt = 0
+    # poll-budget: retry loop around the caller's provider call, bounded by max_retries (5-6) with backoff + Retry-After; 1 calls/tick (the retried call); worst 0/day extra calls when nothing fails, max_retries extra per failing call; idle=backoff
     while True:
         try:
             return await fn()
@@ -520,6 +523,7 @@ def retry_with_backoff(
     cfg = _config_for(bucket)
     clk = _resolve_clock(clock)
     attempt = 0
+    # poll-budget: sync retry loop around the caller's provider call, bounded by max_retries (5-6) with backoff + Retry-After; 1 calls/tick (the retried call); worst 0/day extra calls when nothing fails, max_retries extra per failing call; idle=backoff
     while True:
         try:
             return fn()
