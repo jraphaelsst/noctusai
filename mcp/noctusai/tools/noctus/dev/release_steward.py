@@ -1493,7 +1493,21 @@ DERIVED_ARTIFACTS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+def _git_toplevel(cwd: str | Path | None) -> str | None:
+    """The repository toplevel for `cwd` (None = the process cwd), or None outside a repository. Path arguments to
+    git (`ls-tree <tree> <dir>/`, `archive`) are cwd-RELATIVE: from a subdirectory they silently match nothing or
+    only that subdirectory, so every deliverable git call runs here (2026-11-10, the MCP fresh-subprocess cwd)."""
+    try:
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=30,
+                           check=False, cwd=str(cwd) if cwd else None)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() or None if r.returncode == 0 else None
+
+
 def _subprocess_git(base_cwd: str | Path | None = None, timeout: int = 120) -> GitFn:
+    base_cwd = _git_toplevel(base_cwd) or base_cwd
+
     def git(*args: str, cwd: str | Path | None = None) -> tuple[int, str, str]:
         try:
             r = subprocess.run(["git", *args], capture_output=True, text=True, timeout=timeout, check=False,
@@ -1601,9 +1615,16 @@ def _export_tree(head: str, tree: str, cwd: str | Path | None, timeout: int) -> 
 
     The export must be EXACTLY the tree: `export-ignore` / `export-subst` attributes make `git archive` drop or
     rewrite files, and the checks would then judge a different tree. The extracted file list is compared with
-    `git ls-tree -r <head>` (submodule entries aside); any difference is an error (UNMEASURED upstream)."""
-    arch = subprocess.Popen(["git", "archive", head], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            cwd=str(cwd) if cwd else None)
+    `git ls-tree -r <head>` (submodule entries aside); any difference is an error (UNMEASURED upstream).
+
+    Every git call runs at the repository TOPLEVEL: from a subdirectory `git archive` and `git ls-tree` both see
+    only that subdirectory, and agree with each other, so the export silently became `mcp/noctusai/` alone when the
+    MCP fresh-subprocess fallback ran from there (2026-11-10, b5's false "regenerator missing at the head")."""
+    top = _git_toplevel(cwd)
+    if not top:
+        return f"cannot resolve the repository toplevel to export {head[:9]} (cwd={cwd or os.getcwd()})"
+    cwd = top
+    arch = subprocess.Popen(["git", "archive", head], stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
     untar = subprocess.run(["tar", "-x", "-C", tree], stdin=arch.stdout, capture_output=True, timeout=timeout, check=False)
     if arch.stdout:
         arch.stdout.close()
@@ -1611,12 +1632,12 @@ def _export_tree(head: str, tree: str, cwd: str | Path | None, timeout: int) -> 
     if arch.wait() != 0 or untar.returncode != 0:
         return f"could not export {head[:9]}: {(arch_err or untar.stderr.decode('utf-8', 'replace'))[:200]}"
     ls = subprocess.run(["git", "ls-tree", "-r", "-z", "--name-only", head], capture_output=True, text=True,
-                        timeout=timeout, check=False, cwd=str(cwd) if cwd else None)
+                        timeout=timeout, check=False, cwd=cwd)
     if ls.returncode != 0:
         return f"cannot list {head[:9]} to verify the export: {ls.stderr.strip()[:120]}"
     # submodule entries (mode 160000) are directories in the export, not files
     modes = subprocess.run(["git", "ls-tree", "-r", "-z", head], capture_output=True, text=True, timeout=timeout,
-                           check=False, cwd=str(cwd) if cwd else None).stdout
+                           check=False, cwd=cwd).stdout
     submodules = {e.split("\t", 1)[1] for e in modes.split("\0") if e.startswith("160000") and "\t" in e}
     expected = {n for n in ls.stdout.split("\0") if n and n not in submodules}
     got: set[str] = set()
