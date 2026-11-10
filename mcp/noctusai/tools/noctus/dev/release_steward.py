@@ -1479,7 +1479,11 @@ def _unmeasured(n: int, name: str, exc: BaseException) -> dict[str, Any]:
 
 
 def _export_tree(head: str, tree: str, cwd: str | Path | None, timeout: int) -> str | None:
-    """`git archive <head>` into `tree` (no work tree, index or ref touched). Returns an error or None."""
+    """`git archive <head>` into `tree` (no work tree, index or ref touched). Returns an error or None.
+
+    The export must be EXACTLY the tree: `export-ignore` / `export-subst` attributes make `git archive` drop or
+    rewrite files, and the checks would then judge a different tree. The extracted file list is compared with
+    `git ls-tree -r <head>` (submodule entries aside); any difference is an error (UNMEASURED upstream)."""
     arch = subprocess.Popen(["git", "archive", head], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             cwd=str(cwd) if cwd else None)
     untar = subprocess.run(["tar", "-x", "-C", tree], stdin=arch.stdout, capture_output=True, timeout=timeout, check=False)
@@ -1488,11 +1492,71 @@ def _export_tree(head: str, tree: str, cwd: str | Path | None, timeout: int) -> 
     arch_err = (arch.stderr.read() if arch.stderr else b"").decode("utf-8", "replace")
     if arch.wait() != 0 or untar.returncode != 0:
         return f"could not export {head[:9]}: {(arch_err or untar.stderr.decode('utf-8', 'replace'))[:200]}"
+    ls = subprocess.run(["git", "ls-tree", "-r", "-z", "--name-only", head], capture_output=True, text=True,
+                        timeout=timeout, check=False, cwd=str(cwd) if cwd else None)
+    if ls.returncode != 0:
+        return f"cannot list {head[:9]} to verify the export: {ls.stderr.strip()[:120]}"
+    # submodule entries (mode 160000) are directories in the export, not files
+    modes = subprocess.run(["git", "ls-tree", "-r", "-z", head], capture_output=True, text=True, timeout=timeout,
+                           check=False, cwd=str(cwd) if cwd else None).stdout
+    submodules = {e.split("\t", 1)[1] for e in modes.split("\0") if e.startswith("160000") and "\t" in e}
+    expected = {n for n in ls.stdout.split("\0") if n and n not in submodules}
+    got: set[str] = set()
+    for root, dirs, files in os.walk(tree):
+        for name in [*files, *[d for d in dirs if os.path.islink(os.path.join(root, d))]]:
+            got.add(os.path.relpath(os.path.join(root, name), tree).replace(os.sep, "/"))
+    got.discard("pax_global_header")
+    if got != expected:
+        missing, extra = sorted(expected - got), sorted(got - expected)
+        return (f"the export of {head[:9]} differs from the tree (export-ignore / export-subst?): "
+                f"missing {missing[:5]}{' ...' if len(missing) > 5 else ''}, extra {extra[:5]}")
+    return None
+
+
+def seed_pythonpath(tree: str | Path) -> list[str]:
+    """The seed packages the toolkit imports (noctusai_lib, noctusai_seed ...), as paths INSIDE the export:
+    derived from the `-e <relpath>` lines of the head's own `mcp/noctusai/requirements.txt`, never hand-listed.
+    Without them the venv's editable installs resolve to the PRIMARY checkout and the checks judge ITS seed lib."""
+    req = Path(tree) / "mcp" / "noctusai" / "requirements.txt"
+    out: list[str] = []
+    try:
+        lines = req.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        m = re.match(r"^\s*(?:-e|--editable)\s+(\S+)", line)
+        if m:
+            path = (req.parent / m.group(1)).resolve()
+            if path.is_dir() and str(path).startswith(str(Path(tree).resolve())):
+                out.append(str(path))
+    return out
+
+
+def export_env(tree: str | Path, base_env: dict[str, str] | None, workflow_text: str = "") -> dict[str, str]:
+    """The hermetic env (OS basics + the CI job's own env) PLUS `PYTHONPATH` = the head's seed packages."""
+    env = hermetic_env(base_env, workflow_text)
+    seeds = seed_pythonpath(tree)
+    if seeds:
+        env["PYTHONPATH"] = os.pathsep.join(seeds)
+    return env
+
+
+def seed_isolation_error(py: str, tree: str | Path, env: dict[str, str]) -> str | None:
+    """When the head carries `noctusai_lib`, importing it under `env` MUST resolve inside the export; otherwise the
+    checks would judge the primary's seed lib. Returns an UNMEASURED reason or None (also None when the head has none)."""
+    if not (Path(tree) / "seed" / "lib" / "backend" / "noctusai_lib").is_dir():
+        return None
+    r = subprocess.run([py, "-c", "import noctusai_lib,sys; print(noctusai_lib.__file__)"], capture_output=True, text=True,
+                       timeout=120, check=False, cwd=str(tree), env=env)
+    got = r.stdout.strip().splitlines()[-1] if r.returncode == 0 and r.stdout.strip() else ""
+    if not got or not os.path.realpath(got).startswith(os.path.realpath(str(tree))):
+        return f"noctusai_lib resolves to {got or '(import failed: ' + r.stderr.strip()[-100:] + ')'}, not the export: the checks would judge the wrong seed lib"
     return None
 
 
 def export_derived_check(cwd: str | Path | None = None, *, artifacts: tuple[tuple[str, tuple[str, ...]], ...] | None = None,
-                         python: str | None = None, timeout: int = 300) -> Callable[[str], dict[str, Any]]:
+                         python: str | None = None, timeout: int = 300,
+                         base_env: dict[str, str] | None = None) -> Callable[[str], dict[str, Any]]:
     """Real default for `deliverable(derived_check=)`: export the head tree (`git archive`, no work tree
     touched) into a temp dir and run each artifact's `--check` regenerator against the export. A missing
     regenerator or a timeout is UNMEASURED (fails), never skipped."""
@@ -1505,7 +1569,12 @@ def export_derived_check(cwd: str | Path | None = None, *, artifacts: tuple[tupl
         try:
             err = _export_tree(head, tree, cwd, timeout)
             if err:
-                return {"ok": False, "measured": False, "results": [], "detail": err}
+                return {"ok": False, "measured": False, "results": [], "detail": f"UNMEASURED: {err}"}
+            wf = Path(tree) / CI_WORKFLOW_REL
+            env = export_env(tree, base_env, wf.read_text(encoding="utf-8") if wf.is_file() else "")
+            err = seed_isolation_error(py, tree, env)
+            if err:
+                return {"ok": False, "measured": False, "results": [], "detail": f"UNMEASURED: {err}"}
             for name, template in arts:
                 argv = [t.format(python=py, tree=tree) for t in template]
                 regenerator = next((a for a in argv[1:] if a.startswith(tree) and a.endswith(".py")), None)
@@ -1514,7 +1583,7 @@ def export_derived_check(cwd: str | Path | None = None, *, artifacts: tuple[tupl
                                     "detail": f"regenerator missing at the head ({regenerator[len(tree) + 1:]})"})
                     continue
                 try:
-                    r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, cwd=tree)
+                    r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, cwd=tree, env=env)
                 except (OSError, subprocess.SubprocessError) as exc:
                     results.append({"name": name, "ok": False, "measured": False, "detail": f"{type(exc).__name__}: {exc}"[:200]})
                     continue
@@ -1736,7 +1805,10 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             if not wf.is_file():
                 return {"ok": False, "detail": f"UNMEASURED: {CI_WORKFLOW_REL} missing at the head - the CI-blocking set cannot be derived"}
             text = wf.read_text(encoding="utf-8")
-            env = hermetic_env(base_env, text)
+            env = export_env(tree, base_env, text)
+            iso = seed_isolation_error(py, tree, env)
+            if iso:
+                return {"ok": False, "detail": f"UNMEASURED: {iso}"}
             flags, prime = ci_blocking_flags(text), ci_prime_flags(text)
             tool_dir = Path(tree) / "mcp" / "noctusai"
             ids = ci_keeper_test_ids(tool_dir / "tests")
@@ -2066,5 +2138,5 @@ def register(server) -> None:
 
 
 __all__ = ["deliverable", "export_derived_check", "export_ci_parity_check", "ci_blocking_flags", "ci_keeper_test_ids",
-           "hermetic_env", "validate_verdict_ref", "record_verdict", "read_verdict", "default_verdict_store", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
+           "hermetic_env", "export_env", "seed_pythonpath", "validate_verdict_ref", "record_verdict", "read_verdict", "default_verdict_store", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
            "tool_refusal", "run_action", "register", "REQUEST_CMD", "OVERRIDE_ENV"]
