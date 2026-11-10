@@ -886,6 +886,21 @@ class StewardStore:
             if hit:
                 self._write_roles(roles)
 
+    def session_state(self, session_id: str | None) -> str:
+        """`live` | `dead` | `unknown` for a session, from the process ids the steward registry holds (role rows
+        and the lease carry `claude_pid`). No record at all is `unknown` - callers that must not act on
+        someone else's work (worktree cleanup) treat `unknown` as live, never as gone."""
+        if not session_id:
+            return "unknown"
+        pids: list[int | None] = [r.get("claude_pid") for r in self._read_roles().values() if r.get("session_id") == session_id]
+        lease = self._read_lease()
+        if lease and lease.get("session_id") == session_id:
+            pids.append(lease.get("claude_pid"))
+        known = [p for p in pids if p]
+        if not known:
+            return "unknown"
+        return "live" if any(self.pid_alive(p) for p in known) else "dead"
+
     def roles(self) -> dict[str, Any]:
         out: dict[str, dict[str, Any]] = {}
         stale: list[str] = []
