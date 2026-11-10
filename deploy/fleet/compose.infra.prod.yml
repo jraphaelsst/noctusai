@@ -63,6 +63,44 @@ services:
       retries: 3
       start_period: 5s
 
+  # ── redis-acl — the LOCKED-DOWN Redis (ACL, `default` user OFF) on the private data net ────────────────
+  # Redis lockdown (security review F3, 2026-11-10): the `redis` service above has no auth and sits on the
+  # network every container (n8n, WAHA, cloudflared ...) shares. It is about to hold the fleet breaker key
+  # `noctus:breaker:fleet`. This sibling is deployed ALONGSIDE it, profile-gated (a missing aclfile would
+  # make docker create a DIRECTORY at the mount path), and joined ONLY to the internal `noctus-data` net
+  # (products + this); WAHA/n8n/cloudflared never see it. Users/patterns are DERIVED by
+  # `noctus.dev.redis_acl` into redis-auth/users.acl (hashes only, gitignored). Products reach it as
+  # redis://noctus-redis-acl:6379 with REDIS_USERNAME/REDIS_PASSWORD (the seam, redis-auth-seam.md).
+  # Runbook + per-step rollback: KB § PATTERNS/devops/redis-acl-lockdown.md.
+  redis-acl:
+    image: redis:7-alpine
+    container_name: noctus-redis-acl
+    expose:
+      - "6379"
+    command: ["redis-server", "--appendonly", "yes", "--aclfile", "/etc/redis/users.acl"]
+    volumes:
+      - redis_acl_data:/data
+      - ./redis-auth/users.acl:/etc/redis/users.acl:ro
+    networks:
+      noctus-data:
+        aliases: [noctus-redis-acl]
+    user: redis
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    restart: unless-stopped
+    healthcheck:
+      # `healthcheck` ACL user: nopass, +ping only (the default user is off). Reveals liveness, nothing else.
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning --user healthcheck --pass x ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    profiles:
+      - redis-acl
+
   cache-pg:
     # NoctusAI keeper-mirror cache backend — Postgres + pgvector.
     # Used in PROD only; dev uses local SQLite (see KB § PATTERNS/common/
@@ -143,9 +181,15 @@ networks:
   noctus-net:
     name: noctus-net
     external: true
+  # Private data net: `docker network create --internal noctus-data` (once, before the redis-acl profile).
+  # Internal = no egress, no host publish; Redis needs neither. Joined by redis-acl + the live products.
+  noctus-data:
+    name: noctus-data
+    external: true
 
 volumes:
   redis_data:
+  redis_acl_data:
   waha_sessions:
   cache_pg_data:
     name: noctus-cache-pg-data

@@ -313,5 +313,6 @@ specific to add here.
 | service | when | notes |
 |---|---|---|
 | redis | always | chatbot buffer/worker + rate-limiter |
+| redis-acl | profile `redis-acl` | the authenticated, private-net (`noctus-data`) Redis that replaces `redis`: ACL users derived by `noctus.dev.redis_acl`; runbook + rollback in `KB § PATTERNS/devops/redis-acl-lockdown.md` |
 | waha | profile `waha` | WhatsApp HTTP API; absent ⇒ FakeWahaClient fallback |
 | postgres | n/a in prod | remote Supabase is used |
