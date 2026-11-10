@@ -388,7 +388,6 @@ def create_conversation(
     store=Depends(get_conversation_store_dep),
     studio_store=Depends(get_studio_definition_store_dep),
 ) -> ConversationOut:
-    agent_store.ensure_default_agents(ctx.org_id)
     legado = _legacy_chat_agent(agent_store, ctx.org_id, payload.agent_key)
     if legado is not None:
         if payload.client_id is not None:

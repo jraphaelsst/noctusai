@@ -78,7 +78,6 @@ class _Linha:
 
 
 def _linhas(ctx: AuthContext, agentes: Any, studio_store: Any) -> list[_Linha]:
-    agentes.ensure_default_agents(ctx.org_id)
     ensure_instancias(ctx.org_id, studio_store=studio_store)
     legados = {a.key: a for a in agentes.list(ctx.org_id)}
     studios = {a.key: a for a in studio_store.list_agents(ctx.org_id)}

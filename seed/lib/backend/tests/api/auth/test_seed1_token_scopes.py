@@ -168,7 +168,7 @@ class TestRequireScopesMatrix:
             api_token_id=None,
         )
         dep = require_scopes(
-            "social-wiring:one-chat:read",
+            "social-wiring:unrelated:read",
             get_auth_context=lambda: _ctx_dep(ctx),
             restrict="product_only",
         )

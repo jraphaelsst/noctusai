@@ -103,7 +103,6 @@ def listar_catalogo(
     catalogo: CatalogoStore = Depends(get_catalogo_store_dep),
     studio_store=Depends(get_studio_definition_store_dep),
 ) -> list[dict[str, Any]]:
-    agentes.ensure_default_agents(ctx.org_id)
     entradas = {e.agent_key: e for e in catalogo.listar()}
     admin = chamador_e_admin_da_plataforma(ctx)
     out: list[dict[str, Any]] = []

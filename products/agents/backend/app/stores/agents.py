@@ -21,7 +21,6 @@ from app.stores.errors import NotFound
 
 __all__ = [
     "RUNTIMES",
-    "DEFAULT_AGENT_KEYS",
     "ARQUIVADO",
     "legacy_chat_agent",
     "AgentRecord",
@@ -36,16 +35,6 @@ _TABLE = "agents"
 
 #: Contract §E.1 `runtime` CHECK.
 RUNTIMES = ("claude_sdk", "external")
-
-#: The rows `ensure_default_agents` seeds, per org. The code-defined chat agent (`bia`, claude_sdk) is NO LONGER
-#: seeded (Renata cutover, 2026-10-30): the academia agent is a Studio agent now, the legacy rows are retired by
-#: `agents.arquivar_agente_legado` (053) and their key is free for a new agent -- re-seeding it on every request
-#: would resurrect the retired runtime and squat the key. Existing legacy rows are untouched (data, not code). Never inserted by
-#: the migration itself (org_id is per-org) — the migration header notes
-#: this; this module is the idempotent seeding path. Platform-defined agents are NOT here: they are data
-#: (``definition_scope='plataforma'`` rows); a key that is a platform definition is refused for an org agent by the
-#: create route (``store.get_platform_definition``).
-DEFAULT_AGENT_KEYS: tuple[str, ...] = ()
 
 #: 053: the ``definition_mode`` of a retired code-defined agent (row kept for its history, key renamed, never listed).
 ARQUIVADO = "arquivado"
@@ -103,11 +92,6 @@ class AgentStore(Protocol):
         :class:`NotFound` on an unknown key."""
         ...
 
-    def ensure_default_agents(self, org_id: UUID) -> None:
-        """Idempotently seed ``DEFAULT_AGENT_KEYS`` for ``org_id`` (currently none: the code-defined chat agent and
-        the retired One Chat operator bot are not seeded any more). Safe to call every request."""
-        ...
-
 
 class FakeAgentStore:
     """In-memory :class:`AgentStore`. Deterministic; no IO."""
@@ -145,9 +129,6 @@ class FakeAgentStore:
         row["external_ref"] = ref
         row["updated_at"] = utcnow()
         return self._to_record(row)
-
-    def ensure_default_agents(self, org_id: UUID) -> None:
-        """No defaults to seed (see ``DEFAULT_AGENT_KEYS``)."""
 
     def seed_legacy_chat_agent(self, org_id: UUID, key: str = "bia", nome: str = "Bia") -> AgentRecord:
         """Fake-only fixture helper: a pre-cutover code-defined chat row (the rows prod still carries until the
@@ -245,9 +226,6 @@ class SupabaseAgentStore:
         if not rows:
             raise NotFound(f"agent {key!r} not found for org {org_id}")
         return self._record(rows[0])
-
-    def ensure_default_agents(self, org_id: UUID) -> None:
-        """No defaults to seed (see ``DEFAULT_AGENT_KEYS``)."""
 
     @staticmethod
     def _record(row: dict[str, Any]) -> AgentRecord:

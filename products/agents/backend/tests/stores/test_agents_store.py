@@ -14,14 +14,6 @@ def store() -> FakeAgentStore:
     return FakeAgentStore()
 
 
-def test_ensure_default_agents_seeds_nothing(store):
-    """Renata cutover + One Chat retirement: no code-defined agent is seeded -- every key is free."""
-    org_id = uuid4()
-    store.ensure_default_agents(org_id)
-    store.ensure_default_agents(org_id)
-    assert store.list(org_id) == []
-
-
 def test_get_by_key_raises_not_found_for_unknown_key(store):
     org_id = uuid4()
     store.seed_legacy_chat_agent(org_id)
