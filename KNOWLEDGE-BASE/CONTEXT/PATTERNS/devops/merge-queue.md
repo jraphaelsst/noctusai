@@ -78,8 +78,11 @@ No checkout, merge, rebase, commit, stash or file write happens in any worktree 
 before and after). Derived-file regeneration for composition is the queue's job (compose re-derives kb-counts, see § 4), never
 enqueue's. Legacy `integrate` is unchanged.
 
-**The pre-push hook knows this push.** `scripts/hooks/pre-push` recognises the queue path: a push whose ONLY remote refs are
-`refs/heads/mq/<slug>--<sha7>`, with `<sha7>` a prefix of the pushed local sha. Its local ref is a bare sha, which used to make the
+**The pre-push hook knows this push, and only for `enqueue`.** `scripts/hooks/pre-push` recognises the queue path: a push whose ONLY
+remote refs are `refs/heads/mq/<slug>--<sha7>`, with `<sha7>` a prefix of the pushed local sha, AND a fresh attestation: right before its
+push enqueue writes `<git-common-dir>/noc-enqueue/<full sha>.json` (the `deliverable()` verdict, ok, matching sha, written < 10 min ago).
+Without it the hook REFUSES and names `task_branch action=enqueue` as the remedy (a hand-typed exact-sha push would otherwise skip the
+whole delivery contract). Its local ref is a bare sha, which used to make the
 branch-tree mirror keeper look for a branch named after the sha and block the push (reported only as the generic "main is
 sacred" banner). Now: a bare-sha push to an exact mq ref skips that per-branch check; an mq ref that does not name its sha is
 refused; an mq ref combined with ANY other ref (`dev`, `main`, `prod`...) is refused; and a push to `main`/`prod` is still gated.
