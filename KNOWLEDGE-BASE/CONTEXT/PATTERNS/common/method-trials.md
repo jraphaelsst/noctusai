@@ -4,6 +4,18 @@
 
 Born 2026-10-12 (commerce seed run, decision D23). Owner: *"I'll use some methodology that I can't yet fully trust. I gotta evaluate its behaviour and mechanism and effectiveness and precision and all metrics involved, and optimize/refine with new learnings and findings I come across along the way … auto-improvement consciousness."*
 
+**Widened 2026-11-10 (owner, assistant-chatbot night run): "learn" is a callable mode, and it includes correcting and gating.** Owner: *"we must learn while we implement, so we get to a refined and well-solid point as a satisfying delivery … To 'learn' something along a task or project or whatever means to execute the task and evaluate the process vs results, and correct errors and drift and create gates and all along the way."* So `noc-learn-refine` (v2.0.0) triggers on any "learn …" ask, and the trial loop gains four legs:
+- **correct on contact:** fix-on-contact, with the cause verified before it is stated;
+- **gate what bit you:** the build triad, in warn-first shadow;
+- **re-check controls adversarially in a loop:** until no P0/P1 remains;
+- **a satisfying-delivery check:** results vs process, before "done".
+
+The evidence that shaped them, from the same night (trial rows in `auto-improvement.ndjson`):
+- **Build then review:** a slice that passed 93 of its own tests still had 8 defects of medium-or-worse severity that a review found.
+- **One re-check wasn't enough:** after those fixes, an adversarial re-check found 1 P0 and 3 P1. It read the vendor's real docs, and it looked outside the diff.
+- **CI-only failures:** a delivery was ejected by CI for checks that only warn locally, and for tests that leaned on the ambient session env.
+- **A cause stated before it was checked:** it needed a correcting row.
+
 ---
 
 ## 1 · Why a trial, not just "lessons learned"
