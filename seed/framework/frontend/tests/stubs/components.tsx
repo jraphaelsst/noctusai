@@ -19,3 +19,6 @@ export const HelpChatBubble: React.FC<any> = ({ title, endpoint, starters }) => 
     <span data-testid="help-chat-starters-count">{starters?.length ?? 0}</span>
   </div>
 );
+
+/** Real one needs a QueryClientProvider; its own suite is seed/lib/frontend/src/components/JobPollingPausedNotice.test.tsx. */
+export const JobPollingPausedNotice: React.FC = () => null;
