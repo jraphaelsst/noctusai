@@ -96,6 +96,7 @@ _MCP_NAMES = {
     "mcp__noctusai__noctus_dev_migrate_product": "noctus.dev.migrate_product",
     "mcp__noctusai__noctus_dev_record_applied_migrations": "noctus.dev.record_applied_migrations",
     "mcp__noctusai__noctus_vps_recreate": "noctus.vps.recreate",
+    "mcp__noctusai__noctus_dev_supabase_breaker": "noctus.dev.supabase_breaker",
     "mcp__noctusai__noctus_dev_release_steward": "noctus.dev.release_steward",
 }
 _TASK_BRANCH_GATED = {"enqueue", "integrate", "landed"}
@@ -1226,6 +1227,12 @@ def classify_tool(tool_name: str, tool_input: dict[str, Any] | None) -> Gated | 
         return Gated(f"release {stage}") if stage in _RELEASE_GATED and confirm else None
     if key == "noctus.dev.record_applied_migrations":
         return Gated("record_applied_migrations")  # always a write (it integrates to dev)
+    if key == "noctus.dev.supabase_breaker":
+        # F11b (2026-11-10): re-arming/tripping the prod Supabase breaker - incl. the fleet key that stops every
+        # product's background workers - is a prod mutation. Applied = guardian-only; status and plans stay open. The
+        # urgent single-product case keeps the platform-admin route (AAL2), which already refuses source=fleet.
+        action = args.get("action") or "status"
+        return Gated(f"supabase_breaker {action}") if action in {"rearm", "trip"} and confirm else None
     if key in {"noctus.dev.deploy_pull", "noctus.dev.deploy_image", "noctus.dev.migrate_product", "noctus.vps.recreate"}:
         return Gated(key.removeprefix("noctus.").replace(".", " ")) if confirm else None
     return None
