@@ -36,11 +36,11 @@ writers, and claiming a task before writing. Sources are in §9.
 session (laptop)                     GitHub Actions (merge-queue.yml, serialized)
 ────────────────                     ─────────────────────────────────────────────
 task_branch action=enqueue           drain: oldest mq/* entries (≤ batch_limit)
-  rebase on origin/dev                 compose onto dev in a scratch worktree
-  migration renumber (vs dev)            ff | rebase | --no-ff merge (for trains)
-  doc-staleness, KB counts               eject: conflict · duplicate migration nr
-  pre-push keepers                     push mq-candidate/<run>-<n>
-  push → refs/heads/mq/<slug>--<sha7>  dispatch Tests & Build (full suite) on it
+  deliverable(branch) read-only        compose onto dev in a scratch worktree
+  PURE PUSH <sha> →                      ff | rebase | --no-ff merge (for trains)
+   refs/heads/mq/<slug>--<sha7>          eject: conflict · duplicate migration nr
+  (no checkout/merge/rebase/commit)    push mq-candidate/<run>-<n>
+                                       dispatch Tests & Build (full suite) on it
                                        green → FF dev to the candidate
 task_branch action=landed            red   → re-run failed jobs once (flake)
   reads the `merge-queue` status         still red → halve the batch (bisect);
@@ -58,9 +58,32 @@ Code lives in:
   manual dispatch, and a sweeper every 20 minutes. `concurrency:
   merge-queue`, never cancelled.
 - `task_branch action=enqueue|landed`, in `task_branch.py`, tested by
-  `tests/test_task_branch_queue.py`.
+  `tests/test_guardian_pure_push_enqueue.py` (enqueue, real git),
+  `tests/test_task_branch_queue.py` (landed) and
+  `tests/test_task_branch_cleanup_ownership.py` (landed never cleans what is not the caller's).
 - `noctus.dev.merge_queue` / `cli.py --merge-queue list|status`: the read-only
   queue view.
+
+## 2a · Enqueue is a pure push (2026-11-10)
+
+`task_branch action=enqueue` does exactly this, from the guardian's own checkout (HEAD may be `dev`):
+
+1. `deliverable(branch)`: the read-only delivery contract (`release-steward.md` § 8b): head pushed + tree clean, merge-buildable
+   (contains `origin/dev` OR `git merge-tree` is clean), migration numbers free, derived files current at the head, scoped
+   keepers/tests green the way CI judges them. Any failing item: `status=needs_resync`, exit 1, nothing pushed, nothing touched.
+2. `git push origin <sha>:refs/heads/mq/<slug>--<sha7>`.
+
+No checkout, merge, rebase, commit, stash or file write happens in any worktree (proved on real git in
+`tests/test_guardian_pure_push_enqueue.py`: file hashes, refs, HEAD, index and `.git/rebase-*` state are byte-identical
+before and after). Derived-file regeneration for composition is the queue's job (compose re-derives kb-counts, see § 4), never
+enqueue's. Legacy `integrate` is unchanged.
+
+**The pre-push hook knows this push.** `scripts/hooks/pre-push` recognises the queue path: a push whose ONLY remote refs are
+`refs/heads/mq/<slug>--<sha7>`, with `<sha7>` a prefix of the pushed local sha. Its local ref is a bare sha, which used to make the
+branch-tree mirror keeper look for a branch named after the sha and block the push (reported only as the generic "main is
+sacred" banner). Now: a bare-sha push to an exact mq ref skips that per-branch check; an mq ref that does not name its sha is
+refused; an mq ref combined with ANY other ref (`dev`, `main`, `prod`...) is refused; and a push to `main`/`prod` is still gated.
+Tests: `tests/test_pre_push_queue_path.py` (the real hook in a temp repo; red against the previous hook).
 
 ## 3 · Invariants
 
@@ -86,10 +109,13 @@ Code lives in:
    (`methodology-execution-discipline.md`). The queue tests exactly the tree
    that `dev` will become.
 4. **The queue never edits an entry.** A conflict or a duplicate migration
-   number ejects the entry; it is never auto-resolved on CI. The steward resolves
-   the ejection (§4 "Ejections"; supersedes "the owning session fixes the branch",
-   decision 2026-11-10, `project-history/assistant-chatbot/queue-lifecycle-decision.md`). Local renumbering against `dev`
-   still happens at enqueue time (`_attempt_migration_renumber`).
+   number ejects the entry; it is never auto-resolved on CI. The ejection is
+   resolved per §4 "Ejections" (decision 2026-11-10,
+   `project-history/assistant-chatbot/queue-lifecycle-decision.md`); the fix lands
+   on the branch steward's branch and is filed again. Nothing edits the branch
+   before the queue either: enqueue is a pure push (§ 2a), so a stale number is
+   caught by the `deliverable` preflight (`migrations_free`, as `needs_resync`)
+   and renumbered by the branch steward, not at enqueue time.
    **One carve-out — registered derived ledgers (2026-11-07).** A conflict that
    lies wholly inside ONE set in `merge_queue.DERIVED_SETS` (today: the
    access-tiers `FINDINGS.md` / `findings.ndjson` / `metrics.ndjson`) is not a
@@ -146,11 +172,12 @@ Code lives in:
   the later entry is ejected with the number to change.
 - **Trains still work.** A branch carrying `--no-ff` merge commits is merged,
   not rebased, so its conflict resolutions survive. The queue already batches,
-  so prefer enqueueing slices individually. The local half matches since
-  2026-11-05: `enqueue` merges `origin/dev` into any branch carrying a merge
-  commit and rebases it with `--rebase-merges` (it used to do that only for
-  `train-*` slugs, so feat/julia-golive was flattened and re-hit the conflicts
-  its merge had already resolved).
+  so prefer enqueueing slices individually. Since 2026-11-10 the local half
+  does nothing to the branch at all: `enqueue` no longer merges `origin/dev`
+  into a merge-carrying branch or runs `rebase --rebase-merges` (that ran in the
+  requester's worktree and left rebase state behind on a conflict, the D1 stuck
+  rebase). A merge-built branch that is behind `dev` is accepted when
+  `git merge-tree` against `dev` is clean; otherwise it comes back `needs_resync`.
 - **The drain registers the repo's custom merge drivers first** (`scripts/hooks/register-merge-drivers.sh`, after installing toolkit deps). `.gitattributes` only names a driver; unregistered on the runner, derived kb-counts blocks text-merge and eject parallel entries (2026-11-05). Keeper `check_merge_drivers_registered_in_ci`. Merge drivers run before git writes the merged tree (ort), so they re-derive counts against the pre-merge tree: after every composed entry the drain therefore re-runs `cli.py --update-kb-counts` in its worktree and commits changed derived paths as `chore(kb-counts): regenerate derived counts at compose [auto]`; a failing regen ejects the entry (`kb_counts_regen`), never continues silently. → `KB § PATTERNS/common/auto-generated-merge-drivers.md`
 - **Open enqueue (not live until items 1, 4, 6, 9 land, the CLAUDE.md word-budget check
   against the queue exists, and the owner flips decision item 10).** Any session may
