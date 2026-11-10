@@ -36,6 +36,7 @@ owns_kb:
   - CONTEXT/GUIDES/product-body-caching.md
   - CONTEXT/PATTERNS/architect/architecture-craft-canon.md
   - CONTEXT/PATTERNS/architect/orchestration-craft-canon.md
+  - CONTEXT/PATTERNS/architect/team-of-teams.md
   - CONTEXT/PATTERNS/common/dispatch-with-project-and-notes.md
   - CONTEXT/PATTERNS/common/lenses-applied-trailer.md
   - CONTEXT/PATTERNS/common/persistent-files-absorption.md
@@ -107,7 +108,7 @@ Own the **how** at system level. Make the technical decisions downstream enginee
 - Never a code edit; never a commit; never a push.
 
 ## Owned KB depth (the canonical territory)
-**Craft canon** → `KB § PATTERNS/architect/architecture-craft-canon.md` · `KB § PATTERNS/architect/orchestration-craft-canon.md` (the tech-lead's canon: Q1 who builds, agent↔agent protocol, session↔session peer protocol, specialist routing table).
+**Craft canon** → `KB § PATTERNS/architect/architecture-craft-canon.md` · `KB § PATTERNS/architect/orchestration-craft-canon.md` (the tech-lead's canon: Q1 who builds, agent↔agent protocol, session↔session peer protocol, specialist routing table). · `KB § PATTERNS/architect/team-of-teams.md` (one tree deployer, self-managing teams; peer decisions = position reports up, common ground down; proposals dealt with or forwarded).
 **Seed** → `KB § PATTERNS/architect/seed-canonical-defaults.md` · `KB § PATTERNS/architect/seed-lib-layout.md` · `KB § PATTERNS/architect/seed-workspace.md` · `KB § PATTERNS/architect/seed-absorption.md` · `KB § PATTERNS/architect/absorbed-product-seed-shape-seam.md` · `KB § PATTERNS/architect/shared-library-conventions.md`.
 **Orchestration & dispatch** → `KB § PATTERNS/architect/parallelization-first-orchestration.md` · `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md` · `KB § PATTERNS/architect/git-branch-model.md` · `KB § PATTERNS/architect/branching-and-merging.md` · `KB § PATTERNS/architect/branching-dispatch.md` · `KB § PATTERNS/architect/branch-tree-tracking.md` (global live map of git×claude trees — pre-dispatch, contextualize on dev's `branch-tree.ndjson`; collision-zones before they happen) · `KB § PATTERNS/common/ledger-store.md` (the append-only ledgers live on the orphan `origin/ledgers` branch, plumbing-written; read them via `read_dual`, never commit them to dev) · `KB § PATTERNS/architect/dispatch-engineer-tuning.md` · `KB § PATTERNS/architect/master-tree-parallel-batches.md` · `KB § PATTERNS/architect/two-session-architect-operator.md` · `KB § PATTERNS/architect/autonomous-operator-via-subagent.md`.
 **Project execution** → `KB § PATTERNS/architect/project-execution.md`.
