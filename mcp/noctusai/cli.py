@@ -767,6 +767,10 @@ def build_parser() -> argparse.ArgumentParser:
         parser.add_argument(f"--supabase-breaker-{_sb}", default="status" if _sb == "action" else ("noctus-vps" if _sb == "ssh-host" else ""), dest=f"supabase_breaker_{_sb.replace('-', '_')}", help=f"With --supabase-breaker: the {_sb} argument.")
     parser.add_argument("--supabase-breaker-confirm", action="store_true", help="With --supabase-breaker: apply (a write). Without it, dry-run only.")
     parser.add_argument("--supabase-breaker-allow-stale-toolkit", action="store_true", help="With --supabase-breaker: bypass the toolkit-staleness fresh-subprocess hop (escape hatch).")
+    parser.add_argument("--supabase-request-budget", action="store_true", help="Measure Supabase request volume from the project's edge logs (ok|warn|critical|unknown; needs SUPABASE_ACCESS_TOKEN). MCP: noctus.dev.supabase_request_budget.")
+    parser.add_argument("--srb-window-hours", type=float, default=1.0, help="With --supabase-request-budget: window in hours (max 24).")
+    parser.add_argument("--srb-start", default=None, help="With --supabase-request-budget: ISO start (use with --srb-end).")
+    parser.add_argument("--srb-end", default=None, help="With --supabase-request-budget: ISO end (use with --srb-start).")
     return parser
 
 
@@ -4895,6 +4899,12 @@ def main():
     elif args.supabase_breaker:
         from tools.noctus.dev.supabase_breaker import supabase_breaker as _supabase_breaker
         r = _supabase_breaker(args.supabase_breaker_action, source=args.supabase_breaker_source, product=args.supabase_breaker_product, reason=args.supabase_breaker_reason, by=args.supabase_breaker_by, ssh_host=args.supabase_breaker_ssh_host, confirm=bool(getattr(args, "supabase_breaker_confirm", False)), allow_stale_toolkit=bool(getattr(args, "supabase_breaker_allow_stale_toolkit", False)))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
+
+    elif args.supabase_request_budget:
+        from tools.noctus.dev.supabase_request_budget import supabase_request_budget as _supabase_request_budget
+        r = _supabase_request_budget(window_hours=args.srb_window_hours, start=args.srb_start, end=args.srb_end)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 
