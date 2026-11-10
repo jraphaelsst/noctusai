@@ -408,7 +408,7 @@ def process_charges(db: Any, gateway: Any, *, limit: int = 5, worker_id: Optiona
 def has_billing_work(db: Any) -> bool:
     """O(1) idle gate for the job: ONE ``limit 1`` query for "anything queued / retrying / stuck mid-generation / awaiting a
     gateway cancel?" (was three sequential queries per tick) -- KB § PATTERNS/backend/polling-request-budget.md."""
-    wanted = ",".join((QUEUED, RETRYING, GENERATING))
+    wanted = ",".join(f'"{v}"' for v in (QUEUED, RETRYING, GENERATING))
     rows = (
         db.table(CHARGES).select("id")
         .or_(f"generation_status.in.({wanted}),gateway_cancel_status.eq.pending")

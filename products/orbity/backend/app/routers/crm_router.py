@@ -61,7 +61,7 @@ from app.schemas.crm import (
 from app.rate_limit import limiter
 from app.services.automation_service import AutomationService
 from app.services.automation_triggers import adisparar
-from app.services.crm_service import CRMService
+from app.services.crm_service import CaptureStageInvalid, CRMService
 
 logger = logging.getLogger(__name__)
 
@@ -517,11 +517,16 @@ def delete_scoring_rule(
 # Public lead capture (unauthenticated)
 # ---------------------------------------------------------------------------
 
+def _capture_org_key(request: Request) -> str:
+    return f"capture-org:{request.path_params.get('org_id', '')}"
+
+
 @capture_router.post(
     "/api/capture/{org_id}",
     status_code=status.HTTP_201_CREATED,
 )
 @limiter.limit("20/minute;200/hour", key_func=client_ip_key)
+@limiter.limit("120/minute;1500/hour", key_func=_capture_org_key)  # per ORG, on top of per IP: a botnet of IPs still cannot flood one tenant
 async def capture_lead(
     request: Request,  # required positionally by @limiter.limit (slowapi)
     org_id: UUID,
@@ -541,6 +546,8 @@ async def capture_lead(
         raw = payload.model_dump(mode="json")
         svc = _admin_crm(org_id)
         row = svc.capture_lead(raw)
+    except CaptureStageInvalid as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception:
         logger.exception("capture_lead failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao registrar lead")

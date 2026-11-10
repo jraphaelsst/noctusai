@@ -55,8 +55,9 @@ def pytest_configure(config):
 
 @pytest.fixture(autouse=True)
 def _legacy_enabled_line_policy():
-    """Prod sets `WAHA_LINE_POLICIES={"*": send enabled}` for this product (deploy/fleet/docker-compose.prod.yml): the
-    tests declare the same process default through the PUBLIC registry. Fail-closed is covered in the seed lib suite."""
+    """Tests drive the sender through the Fake WAHA, so they declare a send-enabled process default through the PUBLIC
+    registry. Prod declares NONE for orbity (WhatsApp OFF, `NOC-REMEDIATE[orbity-waha-own-instance]`), so the seed fails
+    closed there; the fail-closed behaviour itself is covered in the seed lib suite."""
     from noctusai_lib.integrations.whatsapp import LinePolicy, clear_line_policies, register_line_policy
 
     clear_line_policies()

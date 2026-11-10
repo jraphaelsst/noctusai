@@ -307,13 +307,11 @@ services:
     <<: *prod-defaults
     image: ghcr.io/jraphaelsst/noctus-orbity:${NOCTUS_IMAGE_TAG:-latest}
     container_name: noctus-orbity
-    environment:
-      <<: *prod-env
-      # Line policy v1 (KB § INTEGRATIONS/whatsapp.md § 6a): orbity's lines are DB-sourced (one connection row per org) on
-      # the shared `waha`, like social-wiring's, so they cannot be named one by one; "*" = the pre-policy behaviour (send
-      # enabled, session config untouched) made explicit. Without a policy the seed REFUSES every write (fail-closed).
-      # NOC-REMEDIATE[sw-waha-host-declaration]: same residual as social-wiring (shared `waha` covered only by the legacy "*"). — 2026-11-10
-      WAHA_LINE_POLICIES: '{"*":{"send":"enabled","mark_online":true,"full_sync":true,"auto_repair":true}}'
+    # WhatsApp is OFF for orbity: NO `WAHA_LINE_POLICIES` is declared, so the seed's line policy fails CLOSED and every
+    # write to WhatsApp is refused (KB § INTEGRATIONS/whatsapp.md § 6a). Orbity's lines are DB-sourced on the shared `waha`
+    # host, which no tenant may send through unreviewed.
+    # NOC-REMEDIATE[orbity-waha-own-instance]: owner decision pending -- either orbity gets its own `waha-orbity` instance
+    # (deploy/fleet/waha-instances.yml, a declared send-enabled line policy) or WhatsApp stays off. — 2026-11-10
     expose:
       - "8010"
     healthcheck:

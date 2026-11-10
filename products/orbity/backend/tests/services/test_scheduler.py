@@ -135,3 +135,40 @@ def test_idle_jobs_do_nothing_beyond_the_gate(client):
     asyncio.run(scheduler.job_automacao_run_due())
     asyncio.run(scheduler.job_billing_process())
     assert mock.table("automation_pending_actions").select("*").execute().data == []
+
+
+class _RecordingDb:
+    """Records the PostgREST ``or=`` expression an idle gate sends (the seed mock treats ``or_`` as match-all)."""
+
+    def __init__(self):
+        self.expr = None
+
+    def table(self, _name):
+        return self
+
+    def select(self, *_a, **_k):
+        return self
+
+    def or_(self, expr, *_a, **_k):
+        self.expr = expr
+        return self
+
+    def limit(self, *_a, **_k):
+        return self
+
+    def execute(self):
+        return type("R", (), {"data": []})()
+
+
+def test_idle_gates_quote_every_or_value():
+    """An unquoted ISO timestamp (`:`, `+`) or value inside `or=(...)` is the classic PostgREST parse trap: quote them."""
+    import re
+
+    from app.services import billing_charges
+    from app.services.automation_engine import has_due_work
+
+    a, b = _RecordingDb(), _RecordingDb()
+    has_due_work(a)
+    billing_charges.has_billing_work(b)
+    assert re.search(r'scheduled_for\.lte\."[^"]+\+00:00"', a.expr) and re.search(r'claimed_at\.lt\."[^"]+\+00:00"', a.expr)
+    assert 'generation_status.in.("queued","retrying","generating")' in b.expr

@@ -66,7 +66,12 @@ def resolve_org_waha_client(
     settings: Any,
     allow_fake: bool | None = None,
 ):
-    """The org's WAHA client, or ``None`` when WhatsApp is not configured."""
+    """The org's OWN WAHA client. No saved connection => :class:`WhatsAppNotConnected` (loud, pt-BR), never a fallback.
+
+    Deliberately there is NO static fleet ``WAHA_*`` line: that host is shared across tenants, so a message must go out
+    through the number the org itself connected (security review F1, 2026-11-10). The only other source is the fake,
+    and only under an explicit ``whatsapp_allow_fake`` (tests / local dev).
+    """
     fake_ok = settings.whatsapp_allow_fake if allow_fake is None else allow_fake
 
     record = None
@@ -85,12 +90,9 @@ def resolve_org_waha_client(
             org_id,
         )
 
+    base_url = api_key = session = None
     if record is not None:
         base_url, api_key, session = record.base_url, record.api_key, record.session_name
-    else:
-        base_url = settings.waha_base_url
-        api_key = settings.waha_api_key or None
-        session = settings.waha_session
 
     def _client(url: str | None):
         return get_whatsapp_client(
@@ -105,8 +107,12 @@ def resolve_org_waha_client(
         build_real=lambda: _client(base_url),
         build_fake=lambda: _client(None),
         allow_fake=bool(fake_ok),
-        unconfigured=lambda: None,
+        unconfigured=_not_connected,
     )
+
+
+def _not_connected():
+    raise WhatsAppNotConnected()
 
 
 class RealWhatsAppSender:

@@ -57,10 +57,11 @@ class TestChatId:
 
 
 class TestResolveOrgClient:
-    def test_unconfigured_org_refuses_with_none(self):
+    def test_unconfigured_org_raises_not_connected(self):
         db = MockSupabaseClient(schema="orbity")
         db.set_table_data("whatsapp_connections", [])
-        assert resolve_org_waha_client(org_id=ORG, admin_client=db, settings=_settings()) is None
+        with pytest.raises(WhatsAppNotConnected):
+            resolve_org_waha_client(org_id=ORG, admin_client=db, settings=_settings())
 
     def test_fake_only_under_explicit_allow_fake(self):
         db = MockSupabaseClient(schema="orbity")
@@ -70,16 +71,17 @@ class TestResolveOrgClient:
         )
         assert isinstance(client, FakeWahaClient)
 
-    def test_static_settings_fallback_builds_real_client(self):
+    def test_org_without_connection_never_uses_the_static_fleet_line(self):
+        """The org's number or nothing: a static WAHA_* line (the shared fleet host) must never carry an org's message."""
         db = MockSupabaseClient(schema="orbity")
         db.set_table_data("whatsapp_connections", [])
-        client = resolve_org_waha_client(
-            org_id=ORG, admin_client=db,
-            settings=_settings(waha_base_url="http://waha:3000", waha_api_key="k", waha_session="s1"),
-        )
-        assert isinstance(client, WahaClient) and client.session == "s1"
+        with pytest.raises(WhatsAppNotConnected):
+            resolve_org_waha_client(
+                org_id=ORG, admin_client=db,
+                settings=_settings(waha_base_url="http://waha:3000", waha_api_key="k", waha_session="s1"),
+            )
 
-    def test_saved_connection_wins_over_static_and_decrypts_key(self):
+    def test_saved_connection_decrypts_key(self):
         key = Fernet.generate_key().decode()
         db = MockSupabaseClient(schema="orbity")
         db.set_table_data("whatsapp_connections", [{
@@ -91,7 +93,7 @@ class TestResolveOrgClient:
         }])
         client = resolve_org_waha_client(
             org_id=uuid.UUID(ORG), admin_client=PinnedClient(db),
-            settings=_settings(encryption_key=key, waha_base_url="http://static:3000"),
+            settings=_settings(encryption_key=key),
         )
         assert isinstance(client, WahaClient) and client.session == "org-session"
         assert "org-waha" in str(client.base_url)
@@ -99,8 +101,9 @@ class TestResolveOrgClient:
     def test_missing_encryption_key_ignores_saved_connections_without_crashing(self):
         db = MockSupabaseClient(schema="orbity")
         db.set_table_data("whatsapp_connections", [])
-        # encryption_key "" => EncryptionNotConfigured handled, falls to static (empty) => None
-        assert resolve_org_waha_client(org_id=ORG, admin_client=db, settings=_settings()) is None
+        # encryption_key "" => EncryptionNotConfigured handled => no connection => not connected
+        with pytest.raises(WhatsAppNotConnected):
+            resolve_org_waha_client(org_id=ORG, admin_client=db, settings=_settings())
 
 
 class TestRealWhatsAppSender:

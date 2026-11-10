@@ -239,3 +239,13 @@ class TestTheBillingRunBooksOncePerContractAndCycle:
         self._run(db)
         (first, *_) = db.table("billing_charges")._data
         assert first["generation_status"] == "skipped" and "desligada" in first["last_error"]
+
+
+def test_whatsapp_connections_is_service_only():
+    """The org's WAHA url + encrypted key + webhook token are API-only: the LAST migration touching the table must drop the
+    member SELECT policy and revoke the browser roles (security review F4)."""
+    touching = [p for p in sorted(migrations_dir(PRODUCT_DIR).glob("*.sql")) if "orbity.whatsapp_connections" in p.read_text(encoding="utf-8")]
+    last = touching[-1].read_text(encoding="utf-8")
+    assert 'DROP POLICY IF EXISTS "whatsapp_connections_select_own_org" ON orbity.whatsapp_connections;' in last
+    assert "REVOKE ALL ON orbity.whatsapp_connections FROM PUBLIC, anon, authenticated;" in last
+    assert "TO service_role" in last and "TO authenticated" not in last

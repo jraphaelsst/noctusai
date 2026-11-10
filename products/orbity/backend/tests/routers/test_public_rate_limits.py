@@ -23,6 +23,40 @@ class TestPublicRateLimits:
         assert 429 in codes
         assert codes[0] != 429
 
+    def test_capture_is_rate_limited_per_org_across_many_ips(self, client):
+        """A botnet of distinct IPs stays under the per-IP limit; the per-ORG limit still stops the flood."""
+        org = "00000000-0000-0000-0000-0000000000f1"
+        codes = [
+            client.raw().post(f"/api/capture/{org}", json={"name": "x"}, headers={"CF-Connecting-IP": f"10.9.{i // 250}.{i % 250 + 1}"}).status_code
+            for i in range(125)
+        ]
+        assert 429 in codes
+        assert codes[0] != 429
+
+    def test_capture_custom_fields_are_capped_by_count(self, client):
+        body = {"name": "x", **{f"k{i}": "v" for i in range(21)}}
+        assert client.raw().post(f"/api/capture/{ORG}", json=body).status_code == 422
+
+    def test_capture_custom_fields_are_capped_by_bytes(self, client):
+        assert client.raw().post(f"/api/capture/{ORG}", json={"name": "x", "blob": "a" * 9000}).status_code == 422
+
+    def test_capture_within_the_caps_is_accepted(self, client):
+        client.mock_supabase.set_table_data("lead_stages", [])
+        assert client.raw().post(f"/api/capture/{ORG}", json={"name": "x", "utm": "a", "campanha": "b"}).status_code == 201
+
+    def test_capture_stage_of_another_org_is_refused(self, client):
+        other_stage = str(uuid4())
+        client.mock_supabase.set_table_data("lead_stages", [
+            {"id": other_stage, "org_id": "00000000-0000-0000-0000-0000000000aa", "name": "N", "position": 0}])
+        r = client.raw().post(f"/api/capture/{ORG}", json={"name": "x", "stage_id": other_stage})
+        assert r.status_code == 422
+
+    def test_capture_stage_of_this_org_is_accepted(self, client):
+        mine = str(uuid4())
+        client.mock_supabase.set_table_data("lead_stages", [{"id": mine, "org_id": ORG, "name": "N", "position": 0}])
+        r = client.raw().post(f"/api/capture/{ORG}", json={"name": "x", "stage_id": mine})
+        assert r.status_code == 201
+
     def test_capture_body_still_validated_as_body(self, client):
         resp = client.raw().post(f"/api/capture/{ORG}", json={"email": "not-an-email"})
         assert resp.status_code == 422

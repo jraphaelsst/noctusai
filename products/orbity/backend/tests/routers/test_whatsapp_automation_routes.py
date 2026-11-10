@@ -29,6 +29,24 @@ class TestWebhook:
         assert r.status_code == 404
 
 
+    def test_unsigned_inbound_is_refused_in_a_deploy_context_without_a_secret(self, client, monkeypatch):
+        """Fail closed: production with no WAHA_WEBHOOK_HMAC_SECRET never accepts an unsigned call (env, not a code patch)."""
+        monkeypatch.setenv("APP_ENV", "production")
+        r = client.raw().post("/api/whatsapp/webhook/any-token", json={"event": "message"})
+        assert r.status_code == 401
+
+    def test_badly_signed_inbound_is_refused_when_a_secret_is_set(self, client):
+        from app.config import settings
+
+        settings.waha_webhook_hmac_secret = "s3cret"  # settings is plain config data, restored below
+        try:
+            r = client.raw().post("/api/whatsapp/webhook/any-token", json={"event": "message"},
+                                  headers={"X-Webhook-Hmac": "00"})
+        finally:
+            settings.waha_webhook_hmac_secret = ""
+        assert r.status_code == 401
+
+
 class TestEmittersAtTheRouterEdge:
     """A successful write starts the org's matching ACTIVE flow (observed in the
     automation_executions table — no patching of our own code)."""

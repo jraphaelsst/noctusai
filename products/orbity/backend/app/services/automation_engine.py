@@ -796,7 +796,7 @@ def has_due_work(db: Any) -> bool:
     stale_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=STALE_CLAIM_MINUTES)).isoformat()
     rows = (
         db.table("automation_pending_actions").select("id")
-        .or_(f"and(status.eq.pending,scheduled_for.lte.{now}),and(status.eq.processing,claimed_at.lt.{stale_cutoff})")
+        .or_(f'and(status.eq.pending,scheduled_for.lte."{now}"),and(status.eq.processing,claimed_at.lt."{stale_cutoff}")')
         .limit(1).execute().data
     )
     return bool(rows)
