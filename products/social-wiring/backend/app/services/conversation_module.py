@@ -537,17 +537,27 @@ async def stop_worker(timeout: float = 5.0) -> None:
         module.worker_task = None
 
 
-def _reset_for_tests() -> None:
-    """Test helper — clears the module-level singleton."""
+def release_conversation_module() -> None:
+    """Drop the configured ``ConversationModule`` — the lifespan's shutdown counterpart of
+    ``configure_conversation_module``. Whoever configures the process-global releases it: a
+    module left behind after shutdown keeps its (possibly real-Redis) buffer reachable through
+    ``get_conversation_module()`` by every later caller in the same process. Call it AFTER
+    ``stop_worker()``."""
     global _module
     with _module_lock:
         _module = None
+
+
+def _reset_for_tests() -> None:
+    """Test helper — clears the module-level singleton."""
+    release_conversation_module()
 
 
 __all__ = [
     "ConversationModule",
     "configure_conversation_module",
     "get_conversation_module",
+    "release_conversation_module",
     "start_worker",
     "stop_worker",
 ]
