@@ -27,7 +27,30 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIT_DIR="${NOCTUS_SYSTEMD_DIR:-/etc/systemd/system}"
 STATE_DIR="/var/lib/noctus"
 FORCED_CMD="/opt/noctus/noctusai/deploy/watchdog/host-probe.sh"
-AUTH_KEYS="${NOCTUS_AUTHORIZED_KEYS:-/root/.ssh/authorized_keys}"
+# NOCTUS_PROBE_USER=probe: install the key for the unprivileged `probe` user (forced command runs through
+# `sudo`, see deploy/watchdog/noctus-breaker.sudoers) instead of root. Unset = the legacy root install.
+PROBE_USER="${NOCTUS_PROBE_USER:-}"
+if [[ -n "$PROBE_USER" ]]; then
+  # Fail loudly UP FRONT (before any file is touched), never half-install.
+  id "$PROBE_USER" >/dev/null 2>&1 \
+    || { echo "ERROR: NOCTUS_PROBE_USER='$PROBE_USER' does not exist (create it: useradd -m -s /bin/sh $PROBE_USER)" >&2; exit 1; }
+  pw_entry="$(getent passwd "$PROBE_USER")" && [[ -n "$pw_entry" ]] \
+    || { echo "ERROR: getent has no passwd entry for '$PROBE_USER'" >&2; exit 1; }
+  PROBE_HOME="$(cut -d: -f6 <<<"$pw_entry")"
+  PROBE_SHELL="$(cut -d: -f7 <<<"$pw_entry")"
+  [[ -n "$PROBE_HOME" && -n "$PROBE_SHELL" ]] \
+    || { echo "ERROR: '$PROBE_USER' has no home or shell in passwd" >&2; exit 1; }
+  case "$PROBE_SHELL" in
+    */nologin|*/false)
+      echo "ERROR: '$PROBE_USER' has shell $PROBE_SHELL: sshd runs the forced command through the login shell, so a nologin shell refuses it and every probe would fail. Use /bin/sh (restrict + command= + sudoers confine the key)." >&2
+      exit 1 ;;
+  esac
+  AUTH_KEYS="${NOCTUS_AUTHORIZED_KEYS:-$PROBE_HOME/.ssh/authorized_keys}"
+  CMD_FIELD="sudo $FORCED_CMD"
+else
+  AUTH_KEYS="${NOCTUS_AUTHORIZED_KEYS:-/root/.ssh/authorized_keys}"
+  CMD_FIELD="$FORCED_CMD"
+fi
 KEY_COMMENT="noctus-prod-watchdog"
 UNITS=(noctus-heartbeat.service noctus-heartbeat.timer)
 
@@ -100,7 +123,7 @@ if [[ "$MODE" == "check" ]]; then
   if [[ -n "$PUBKEY_FILE" ]]; then
     if key_present; then
       echo "watchdog key: present in $AUTH_KEYS"
-      grep -F -- "$KEY_BODY" "$AUTH_KEYS" | grep -qF "command=\"$FORCED_CMD\"" \
+      grep -F -- "$KEY_BODY" "$AUTH_KEYS" | grep -qF "command=\"$CMD_FIELD\"" \
         && echo "watchdog key: forced command OK" \
         || echo "watchdog key: present but WITHOUT the forced command — fix by hand"
     else
@@ -147,8 +170,16 @@ if [[ -n "$PUBKEY_FILE" ]]; then
     if [[ -s "$AUTH_KEYS" && -n "$(tail -c1 "$AUTH_KEYS")" ]]; then
       printf '\n' >> "$AUTH_KEYS"
     fi
-    printf 'restrict,command="%s" %s %s %s\n' "$FORCED_CMD" "$KEY_TYPE" "$KEY_BODY" "$KEY_COMMENT" >> "$AUTH_KEYS"
+    printf 'restrict,command="%s" %s %s %s\n' "$CMD_FIELD" "$KEY_TYPE" "$KEY_BODY" "$KEY_COMMENT" >> "$AUTH_KEYS"
     echo "watchdog key: added to $AUTH_KEYS (restrict + forced command)"
+  fi
+  if [[ -n "$PROBE_USER" ]]; then
+    # The unprivileged user must not be able to edit its own forced command: dir + file are root:root
+    # (sshd StrictModes accepts a root-owned, not group/world-writable authorized_keys under the user's home).
+    chown root:root "$(dirname "$AUTH_KEYS")" "$AUTH_KEYS"
+    chmod 0755 "$(dirname "$AUTH_KEYS")"
+    chmod 0644 "$AUTH_KEYS"
+    echo "watchdog key: $AUTH_KEYS is root:root 0644 (the $PROBE_USER user cannot change its forced command)"
   fi
 fi
 echo "done."

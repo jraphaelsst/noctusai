@@ -74,7 +74,7 @@ describe("Processamento", () => {
     mockUseProcessamento.mockReturnValue(query({ painel: undefined, showSkeleton: true }));
     const first = await renderPage();
     expect(first.getByTestId("processamento-loading")).toBeTruthy();
-    expect(mockUseProcessamento).toHaveBeenCalledWith({ refetchInterval: 15000 });
+    expect(mockUseProcessamento).toHaveBeenCalledWith({ refetchInterval: 60000 });
     first.unmount();
 
     const refetch = vi.fn();

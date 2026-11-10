@@ -6,17 +6,26 @@ the labels ``resumo.rotulo_*`` / ``decisao.rotulo_*``, the tool descriptions the
 """
 from __future__ import annotations
 
+import logging
 import re
+from collections import Counter
 from collections.abc import Mapping
 from typing import Any
 
 from noctusai_lib.integrations.llm import ToolSpec
 
 from app.channels.tool_registry import enriquecer_schema
+from app.schemas.channels import DESFECHOS, DESFECHOS_BASE, DESFECHOS_VENDAS
 from app.studio.models import ConteudoBundle
 
 __all__ = [
     "DESFECHOS",
+    "DESFECHOS_BASE",
+    "DESFECHOS_LEGADO",
+    "DESFECHOS_VENDAS",
+    "DESFECHO_INVALIDOS",
+    "desfechos_oferecidos",
+    "rotulos_desfecho",
     "ESCOLHA_MOTIVO_MAX",
     "RESUMO_MAX_CHARS",
     "ConteudoIncompleto",
@@ -30,7 +39,12 @@ __all__ = [
 
 RESUMO_MAX_CHARS = 1200
 ESCOLHA_MOTIVO_MAX = 200
-DESFECHOS = ("qualificado", "frio", "captacao", "invalido", "em_andamento")
+#: What a published version with NO ``desfecho_sugerido.<v>`` label offered before the outcomes became data.
+DESFECHOS_LEGADO = ("qualificado", "frio", "captacao", "invalido", "em_andamento")
+_PREFIXO_ROTULO = "desfecho_sugerido."
+logger = logging.getLogger(__name__)
+#: Out-of-set model outcomes seen (value -> count) since boot; each one is also logged.
+DESFECHO_INVALIDOS: Counter[str] = Counter()
 _EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+")
 _PHONE = re.compile(r"(?<![\w])\+?\d[\d\s().-]{6,}\d(?![\w])")
 #: The one structural placeholder an extraction text may carry for a removed contact. Not prose.
@@ -59,13 +73,31 @@ def redigir_contatos(text: str) -> str:
     return _PHONE.sub(_REMOVIDO, _EMAIL.sub(_REMOVIDO, text))
 
 
+def rotulos_desfecho(parametros: Mapping[str, Any]) -> dict[str, str]:
+    """The non-blank ``desfecho_sugerido.<valor>`` labels of a ``registrar_resumo`` row (value -> label)."""
+    return {k[len(_PREFIXO_ROTULO):]: v for k, v in parametros.items()
+            if k.startswith(_PREFIXO_ROTULO) and isinstance(v, str) and v.strip()}
+
+
+def desfechos_oferecidos(c: ConteudoBundle) -> tuple[str, ...]:
+    """The outcomes this agent offers = exactly the values labelled in its effective ``registrar_resumo`` row.
+    A row with no label at all is a legacy published version: it keeps the 5 legacy values (explicit, logged)."""
+    f = _linha(c, "registrar_resumo")
+    rotulados = rotulos_desfecho(f.parametros)
+    if not rotulados:
+        logger.info("agents.extracao.desfecho.legado reason=sem_rotulos offered=%s", ",".join(DESFECHOS_LEGADO))
+        return DESFECHOS_LEGADO
+    return tuple(v for v in DESFECHOS if v in rotulados)
+
+
 def resumo_tool(c: ConteudoBundle) -> ToolSpec:
     f = _linha(c, "registrar_resumo")
+    oferecidos = desfechos_oferecidos(c)
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             "resumo": {"type": "string", "maxLength": RESUMO_MAX_CHARS},
-            "desfecho_sugerido": {"type": "string", "enum": list(DESFECHOS)},
+            "desfecho_sugerido": {"type": "string", "enum": list(oferecidos)},
         },
         "required": ["resumo", "desfecho_sugerido"],
         "additionalProperties": False,
@@ -104,7 +136,7 @@ def montar_resumo_pedido(c: ConteudoBundle, registros: list[Any], desde: Any) ->
     return _texto(c, "resumo.sistema"), f"{_texto(c, 'resumo.rotulo_conversa')}\n{corpo}"
 
 
-def shape_resumo(raw: Mapping[str, Any]) -> dict[str, Any]:
+def shape_resumo(raw: Mapping[str, Any], oferecidos: tuple[str, ...] = DESFECHOS) -> dict[str, Any]:
     """The model's structured output, normalised. Unusable shape => ``ValueError`` (the route answers 502)."""
     resumo = raw.get("resumo")
     if not isinstance(resumo, str) or not resumo.strip():
@@ -113,7 +145,13 @@ def shape_resumo(raw: Mapping[str, Any]) -> dict[str, Any]:
     if len(resumo) > RESUMO_MAX_CHARS:
         resumo = resumo[: RESUMO_MAX_CHARS - 1].rstrip() + "…"
     desfecho = raw.get("desfecho_sugerido")
-    return {"resumo": resumo, "desfecho_sugerido": desfecho if desfecho in DESFECHOS else "em_andamento"}
+    if desfecho not in oferecidos:
+        # Display-only value: the summary is still good, so it degrades to "em_andamento" -- loudly, never silently.
+        DESFECHO_INVALIDOS[str(desfecho)] += 1
+        logger.warning("agents.extracao.desfecho.invalido value=%r offered=%s", desfecho, ",".join(oferecidos))
+        desfecho = "em_andamento"
+    # NOC-REMEDIATE[desfecho-persistido]: record the outcome on the summary/handoff event; today it only rides the 200 body — 2026-11-10
+    return {"resumo": resumo, "desfecho_sugerido": desfecho}
 
 
 def montar_escolha_pedido(c: ConteudoBundle, regra: str, opcoes: list[str], dados: Mapping[str, Any]) -> tuple[str, str]:

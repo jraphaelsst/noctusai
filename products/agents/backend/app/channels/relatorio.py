@@ -71,7 +71,7 @@ def gerador_resumo_llm(
             raw, usage = await runtime.structured_extract(
                 provider=versao.provider, model=versao.model, org_id=org_id, system=system, user=user, tool=tool,
                 purpose="summarize")
-        shaped = extracao.shape_resumo(raw)
+        shaped = extracao.shape_resumo(raw, extracao.desfechos_oferecidos(conteudo))
         if getattr(usage, "cost_usd", None):
             def _book() -> None:
                 row = messages.add(org_id, thread_id, "assistant", "", blocks=[])
