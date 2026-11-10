@@ -517,8 +517,10 @@ def _publish_job_registry() -> None:
         return
 
     def _publish() -> None:
+        # A bare thread starts with an EMPTY context (-> `unattributed`): name the work (Supabase breaker).
         try:
-            observer.register_jobs(specs)
+            with source_scope("scheduler:_registry"):
+                observer.register_jobs(specs)
         except Exception:  # noqa: BLE001 — boot must not depend on it; loud, not silent
             logger.error(
                 "scheduler job registry publish FAILED (%d job(s)): the Operação page "

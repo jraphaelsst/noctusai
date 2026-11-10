@@ -210,3 +210,18 @@ def test_create_product_app_configures_the_real_prompt_registry(fake_settings):
         assert isinstance(get_prompt_registry(), SupabasePromptRegistry)
     finally:
         configure_prompt_registry(None)
+
+
+def test_lifespan_startup_hook_runs_under_the_startup_breaker_source(minimal_settings):
+    """A heavy boot has its own Supabase-breaker source, never the `unattributed` bucket a stray loop would trip."""
+    from noctusai_lib.primitives.supabase_breaker import current_source
+
+    seen: list[str] = []
+
+    def hook():
+        seen.append(current_source())
+
+    with TestClient(_app(minimal_settings, lifespan_startup=hook)):
+        pass
+    assert seen == ["startup"]
+    assert current_source() == "unattributed"

@@ -388,7 +388,7 @@ def create_product_app(
     #     no Supabase), trips persisted in Redis until a human re-arms. Fake store/alerter under pytest.
     #     → KB § PATTERNS/backend/supabase-request-breaker.md
     from noctusai_lib.integrations.supabase_breaker_io import make_breaker_alerter, make_breaker_store
-    from noctusai_lib.primitives.supabase_breaker import configure_breaker
+    from noctusai_lib.primitives.supabase_breaker import STARTUP_SOURCE, configure_breaker, source_scope
 
     configure_breaker(
         slug=_product_slug,
@@ -581,28 +581,30 @@ def create_product_app(
         # instead of a container that merely refuses to exist.
         # → KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md
         app.state.startup_hook_error = None
-        # Owner-notification catalog: publish this product's declared kinds to core at boot, so core's
-        # Notificações page lists every notification before its first send. Off the event loop; the gate's
-        # `register()` never raises (logs ERROR) — a catalog hiccup never blocks serving.
-        try:
-            from noctusai_lib.domain.notification_catalog import get_notification_gate as _gng
-
-            await asyncio.to_thread(_gng(_product_slug).register)
-        except Exception:  # noqa: BLE001 — loud, never fatal (startup-hook-must-not-be-fatal)
-            logger.error("notification catalog registration failed at startup for %s", _product_slug, exc_info=True)
-        if lifespan_startup:
+        # Supabase request breaker: boot work is its own source (a heavy boot must not trip `unattributed`).
+        with source_scope(STARTUP_SOURCE):
+            # Owner-notification catalog: publish this product's declared kinds to core at boot, so core's
+            # Notificações page lists every notification before its first send. Off the event loop; the gate's
+            # `register()` never raises (logs ERROR) — a catalog hiccup never blocks serving.
             try:
-                await lifespan_startup() if _is_coroutine(lifespan_startup) else lifespan_startup()
-            except Exception as exc:  # noqa: BLE001 — see the block comment above
-                app.state.startup_hook_error = f"{type(exc).__name__}: {exc}"
-                logger.exception(
-                    "%s: lifespan_startup hook %r FAILED — the API is starting "
-                    "anyway and serving DEGRADED; /api/health reports "
-                    "startup_hook_error. Whatever this hook was supposed to do "
-                    "(recovery / scheduling) did NOT happen.",
-                    name,
-                    getattr(lifespan_startup, "__name__", lifespan_startup),
-                )
+                from noctusai_lib.domain.notification_catalog import get_notification_gate as _gng
+
+                await asyncio.to_thread(_gng(_product_slug).register)
+            except Exception:  # noqa: BLE001 — loud, never fatal (startup-hook-must-not-be-fatal)
+                logger.error("notification catalog registration failed at startup for %s", _product_slug, exc_info=True)
+            if lifespan_startup:
+                try:
+                    await lifespan_startup() if _is_coroutine(lifespan_startup) else lifespan_startup()
+                except Exception as exc:  # noqa: BLE001 — see the block comment above
+                    app.state.startup_hook_error = f"{type(exc).__name__}: {exc}"
+                    logger.exception(
+                        "%s: lifespan_startup hook %r FAILED — the API is starting "
+                        "anyway and serving DEGRADED; /api/health reports "
+                        "startup_hook_error. Whatever this hook was supposed to do "
+                        "(recovery / scheduling) did NOT happen.",
+                        name,
+                        getattr(lifespan_startup, "__name__", lifespan_startup),
+                    )
         try:
             yield
         finally:

@@ -365,3 +365,55 @@ def test_F10_rearm_and_manual_trip_write_a_capped_audit_row():
     for i in range(1200):
         store.append_audit(BREAKER_AUDIT_KEY, str(i), 1000)
     assert len(store.audit) == 1000
+
+
+# --- startup is its own source; unattributed still catches stray loops (coordinator review 2026-11-10) -------------
+
+
+def test_startup_burst_above_300_does_not_trip_and_an_unscoped_loop_afterwards_still_does():
+    b, store, alerter, clock = make_breaker()
+    for _ in range(1400):  # a heavy boot: recovery sweeps, registrations (seed's own boot is ~2 calls)
+        b.record_call("startup")
+    assert b.hold_reason("startup") is None and b.hold_reason("unattributed") is None
+    clock.advance(5)
+    for _ in range(301):  # a stray loop / bare Thread after boot
+        b.record_call()
+    assert b.hold_reason("unattributed") is not None, "unattributed must still catch what is not startup"
+    assert b.hold_reason("startup") is None
+
+
+def test_startup_is_bounded_so_a_loop_inheriting_its_scope_is_still_stopped():
+    b, store, alerter, clock = make_breaker()
+    for _ in range(1501):
+        b.record_call("startup")
+    assert b.hold_reason("startup") is not None
+
+
+def test_scheduler_registry_thread_is_attributed_not_unattributed():
+    from noctusai_lib.api import scheduler as sch
+    from noctusai_lib.primitives.supabase_breaker import current_source
+
+    sch.reset_for_testing()
+    seen: list[str] = []
+
+    class Obs:
+        def record(self, run):
+            pass
+
+        def register_jobs(self, specs):
+            seen.append(current_source())
+
+    async def job():
+        return None
+
+    sch.set_run_observer(Obs())
+    sch.register("j", job, hours=1)
+    sch._publish_job_registry()
+    import time as _t
+
+    for _ in range(50):
+        if seen:
+            break
+        _t.sleep(0.05)
+    assert seen == ["scheduler:_registry"]
+    sch.reset_for_testing()

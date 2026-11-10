@@ -31,7 +31,7 @@ PREFIX = "noctus:breaker:"
 FLEET_KEY = f"{PREFIX}fleet"
 AUDIT_KEY = f"{PREFIX}audit"
 # parity with noctusai_lib.primitives.supabase_breaker.BREAKER_SOURCE_RE (a test pins it); `fleet` is handled apart
-_SOURCE_RE = re.compile(r"^(?:(?:worker|scheduler|gate):[A-Za-z0-9_.,:\-]{1,100}|unattributed)$")
+_SOURCE_RE = re.compile(r"^(?:(?:worker|scheduler|gate):[A-Za-z0-9_.,:\-]{1,100}|unattributed|startup)$")
 AUDIT_CAP = 1000
 _PRODUCT_RE = re.compile(r"^[a-z][a-z0-9\-]{0,40}$")
 ACTIONS = ("status", "rearm", "trip")

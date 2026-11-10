@@ -48,6 +48,8 @@ __all__ = [
     "BREAKER_KEY_PREFIX",
     "BREAKER_SOURCE_RE",
     "BreakerOpen",
+    "STARTUP_SOURCE",
+    "DEFAULT_STARTUP_RULES",
     "UNATTRIBUTED_SOURCE",
     "guard",
     "BREAKER_FLEET_KEY",
@@ -78,13 +80,18 @@ HTTP_SOURCE = "http"
 #: "no scope" can never mean "user traffic, never stopped" (security review F5, 2026-11-10).
 # NOC-REMEDIATE[breaker-unscoped-loop]: a keeper flagging a lifespan/startup `create_task(` or `Thread(` that makes Supabase calls without `source_scope(...)` — destination: the polling-budget keeper (feat/polling-budget-keeper) — 2026-11-10
 UNATTRIBUTED_SOURCE = "unattributed"
+#: The seed lifespan STARTUP (organ registration, notification-catalog publish, the product's `lifespan_startup` hook):
+#: its own source so a heavy boot can never trip `unattributed` and then have EVERY unscoped call refused (a boot that
+#: breaks the app). Budget = a generous short burst, but the hour cap stays the background one, so a loop that inherits
+#: this scope from a task created during startup (contextvars copy into tasks) is still bounded.
+STARTUP_SOURCE = "startup"
 BREAKER_KEY_PREFIX = "noctus:breaker:"
 BREAKER_FLEET_KEY = f"{BREAKER_KEY_PREFIX}fleet"
 BREAKER_AUDIT_KEY = f"{BREAKER_KEY_PREFIX}audit"
 BREAKER_AUDIT_CAP = 1000
 #: THE shape of a holdable source name (routes, MCP tool and the Redis key all validate against this one regex;
 #: `fleet` and `http` are deliberately NOT in it — the fleet key is ops-only, http is never held).
-BREAKER_SOURCE_RE = re.compile(r"^(?:(?:worker|scheduler|gate):[A-Za-z0-9_.,:\-]{1,100}|unattributed)$")
+BREAKER_SOURCE_RE = re.compile(r"^(?:(?:worker|scheduler|gate):[A-Za-z0-9_.,:\-]{1,100}|unattributed|startup)$")
 _MAX_WINDOW_S = 3600
 
 
@@ -104,6 +111,10 @@ class BudgetRule:
 DEFAULT_BACKGROUND_RULES: tuple[BudgetRule, ...] = (BudgetRule(300, 300), BudgetRule(3600, 2000))
 #: user traffic: ALERT only, never stop.
 DEFAULT_HTTP_RULE = BudgetRule(300, 6000)
+#: Sized from what boot does: the seed's own boot is ~2 Supabase calls (one batched `scheduler_jobs` upsert, one
+#: batched notification-kinds upsert); product recovery hooks are the unknown, so 1,500 calls / 60 s (~750x the seed's
+#: own need). Hour cap = the background one.
+DEFAULT_STARTUP_RULES: tuple[BudgetRule, ...] = (BudgetRule(60, 1500), BudgetRule(3600, 2000))
 
 
 def is_background(source: str) -> bool:
@@ -120,10 +131,13 @@ class BreakerConfig:
     background_rules: tuple[BudgetRule, ...] = DEFAULT_BACKGROUND_RULES
     http_rule: BudgetRule = DEFAULT_HTTP_RULE
     overrides: dict[str, tuple[BudgetRule, ...]] = field(default_factory=dict)
+    startup_rules: tuple[BudgetRule, ...] = DEFAULT_STARTUP_RULES
 
     def rules_for(self, source: str) -> tuple[BudgetRule, ...]:
         if source in self.overrides:
             return self.overrides[source]
+        if source == STARTUP_SOURCE:
+            return self.startup_rules
         return (self.http_rule,) if source == HTTP_SOURCE else self.background_rules
 
     @classmethod
