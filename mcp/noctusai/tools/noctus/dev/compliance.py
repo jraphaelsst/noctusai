@@ -16220,6 +16220,15 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
 #: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
 #: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
 _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
+    # assistant 015: the seed connection table's UNIQUE index on the random per-line webhook routing token (a lookup key,
+    # not a business invariant; same shape as the erp portal token below). The table is empty until the owner pairs the
+    # line (S6), so a rollback-only probe has no row to borrow and the product is dev-scope.
+    (
+        "products/assistant/backend/migrations/015_intake.sql",
+        "idx_assistant_whatsapp_connections_webhook_token",
+        "Lookup-key uniqueness on a high-entropy webhook routing token (verbatim seed whatsapp_connections DDL); not a "
+        "business invariant, and the table is empty until the personal line is paired.",
+    ),
     # erp 050: plain UNIQUE index on the SHA-256 of a 384-bit random token (lookup key, not a business invariant).
     # erp.portal_tokens has 0 rows in prod (verified 2026-11-08) so a probe has no fixture row, and the product is asleep.
     (
