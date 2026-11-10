@@ -1,7 +1,7 @@
 """`POST /api/julia/ferramentas/{nome}` (lais-build-contract A3 / 2.2): the four read tools agents
 calls back with its org's tools token.
 
-Auth is the agents-bridge pattern; every 401 is strict `== 401`. The auth context is the honest DI
+Auth is the product-token pattern; every 401 is strict `== 401`. The auth context is the honest DI
 seam (`dependency_overrides[get_auth_context]`) for the 403/200 matrix; the two 401 cases run the
 REAL, un-overridden chain. No personal data in fixtures; the catalogue rows carry planted
 owner/internal columns the tools must never return."""
@@ -107,7 +107,7 @@ class TestAuthMatrix:
         assert r.status_code == 403 and r.json()["code"] == "product_required"
 
     def test_a_product_token_without_the_scope_is_403_scope_missing(self, tools):
-        tools.as_ctx(_product(scopes=["social-wiring:one-chat:read"]))
+        tools.as_ctx(_product(scopes=["social-wiring:unrelated:read"]))
         r = tools.post("buscar_imoveis", {"operacao": "compra"})
         assert r.status_code == 403 and r.json()["code"] == "scope_missing"
 

@@ -67,7 +67,7 @@ class TestAuth:
         assert tool.post(_body(tool)).status_code == 403
 
     def test_missing_scope_and_foreign_issuer_are_403(self, tool):
-        tool.as_ctx(_product(scopes=["social-wiring:one-chat:read"]))
+        tool.as_ctx(_product(scopes=["social-wiring:unrelated:read"]))
         assert tool.post(_body(tool)).status_code == 403
         tool.as_ctx(_product(issuer="outro"))
         assert tool.post(_body(tool)).status_code == 403

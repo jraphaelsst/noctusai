@@ -102,7 +102,7 @@ class TestAuth:
         assert r.status_code == 401
 
     def test_a_key_with_another_scope_is_403_scope_missing(self, cena):
-        cena.as_ctx(_ctx(scopes=["social-wiring:one-chat:read"]))
+        cena.as_ctx(_ctx(scopes=["social-wiring:unrelated:read"]))
         r = cena.get()
         assert r.status_code == 403 and r.json()["code"] == "scope_missing"
 

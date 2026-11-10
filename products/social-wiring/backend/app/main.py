@@ -161,9 +161,6 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.whatsapp_connections_router import (
         router as whatsapp_connections_router,
     )
-    from app.routers.agents_bridge_router import (
-        router as agents_bridge_router,
-    )
 
     from app.routers.integration_accounts_router import (
         router as integration_accounts_router,
@@ -306,7 +303,6 @@ def _register_media_wiring() -> ModuleRegistration:
             whatsapp_router,
             assinatura_webhook_router,
             whatsapp_connections_router,
-            agents_bridge_router,
             intake_monitor_router,
             chat_router,
             calendar_router,
@@ -806,8 +802,8 @@ app = create_product_app(
 # Contract §B.0 / §E.6: audit every call resolved from a product token
 # (`social_wiring.api_token_audit`, created by migration 105), best-effort and
 # logged loudly on failure, never altering the response. Added after
-# `create_product_app` so the middleware wraps the fully built app. The first
-# product-token surface here is the agents bridge (`agents_bridge_router`).
+# `create_product_app` so the middleware wraps the fully built app. The
+# product-token surface here is Julia's read tools (`julia_ferramentas_router`).
 app.add_middleware(ApiTokenAuditMiddleware, audit_writer=LazyApiTokenAuditWriter())
 
 # Pre-rename Lais URLs keep working for one release (see the class docstring). Added LAST so it is the OUTERMOST
