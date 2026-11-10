@@ -399,6 +399,37 @@ def create_product_app(
         else make_notification_gate(_product_slug, lambda: db.get_core_client())
     )
 
+    # 3c-bis. Owner line (2026-11-10): NoctusAI's OWN WhatsApp number (L3) sends every owner notification; recipients
+    #     come from core `public.notification_owner_recipients`. Unset NOC_OWNER_LINE_WAHA_URL ⇒ transport-less line
+    #     (a send records `failed`/`linha_noc_nao_configurada`, logged ERROR). Never fatal; Fakes under pytest.
+    #     → noctusai_lib.domain.notification_catalog.owner_line · projects/noc-whatsapp-lines/owner-line-CONTRACT.md
+    try:
+        from noctusai_lib.domain.notification_catalog import (
+            FakeOwnerLineTransport,
+            FakeOwnerRecipientSource,
+            configure_owner_line,
+            make_owner_line,
+        )
+
+        if _under_pytest():
+            configure_owner_line(recipients=FakeOwnerRecipientSource(), transport=FakeOwnerLineTransport())
+        else:
+            _ol_url = os.environ.get("NOC_OWNER_LINE_WAHA_URL", "").strip()
+            _ol_session = os.environ.get("NOC_OWNER_LINE_WAHA_SESSION", "").strip() or "default"
+            _ol_key = os.environ.get("NOC_OWNER_LINE_WAHA_API_KEY", "").strip() or None
+
+            def _owner_line_waha():
+                # NOC-REMEDIATE[owner-line-waha-factory]: switch to the line-policy WahaClient factory once S1 (feat/ac-line-policy) lands — 2026-11-10
+                from noctusai_lib.integrations.whatsapp import get_whatsapp_client
+
+                return get_whatsapp_client(base_url=_ol_url, api_key=_ol_key, session=_ol_session)
+
+            _line = make_owner_line(lambda: db.get_core_client(), _owner_line_waha if _ol_url else None)
+            configure_owner_line(recipients=_line.recipients, transport=_line.transport)
+    except Exception:  # noqa: BLE001 — loud, never fatal (startup-hook-must-not-be-fatal)
+        logger.error("owner line install failed for %s — owner notifications will record failed", _product_slug,
+                     exc_info=True)
+
     # 4. Auto-wire LLM access. Products inherit platform defaults unless they
     #    override via the llm_config parameter. `REDIS_URL` flips the
     #    response cache on. Usage: EVERY product writes the central D25 ledger
