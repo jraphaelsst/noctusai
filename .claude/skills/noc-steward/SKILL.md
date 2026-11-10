@@ -35,16 +35,16 @@ cd mcp/noctusai && .venv/bin/python cli.py --merge-queue watch --merge-queue-int
 1. Read the failure: `gh run view <id> --log-failed` (or `gh api …/actions/jobs/<job>/logs`; a re-run hides attempt 1, so read `runs/<id>/attempts/1/jobs`). Name the test, the file:line, the error.
 2. List the batch: `git fetch origin <candidate>` + `git log --oneline origin/dev..FETCH_HEAD`. Match the failure to the entry whose diff touches it.
 3. **Withdraw the culprit** to save the ~50-min bisect: `git push origin --delete mq/<slug>--<sha7>` (owner standing permission: `mq/*` refs only; never `feat/*`, `dev`, `main`). The drain keeps bisecting the suspects it already holds; a withdrawal only takes effect in the NEXT drain run.
-4. Fix it or hand it back: a one-line steward rescue on its own branch (re-run the failing test through `hw_admission.py run`), or send the owner session the run URL, file:line and cause. Re-enqueue the fix as a new entry.
+4. Hand it back: send the branch steward's role the run URL, file:line and cause (outbox `ejected{reason, conflict, url}`). The branch steward fixes it on its own branch and re-files; you never patch it (council 09340534 B, K).
 5. Cannot reproduce locally (e.g. real-Postgres proofs with no `pg_ctl`)? Park it with a named destination in the memory file; never re-queue blind.
 
-### Ejection procedure (steward-resolves; not live until build 4 inbox fields, interim in brackets)
+### Ejection procedure (the branch steward fixes; not live until build 4 inbox fields, interim in brackets)
 
-Rule: `KB § PATTERNS/devops/release-steward.md` § 7a (decision 2026-11-10).
-1. Diagnose (steps 1-2 above). Needs information? Ask ONE batched question via `noc-questionnaire` PEER MODE: `needs_info` to the requester's ROLE, TTL ~25 min. [Interim: `SendMessage` to the role's current session + the inbox notes field, labelled interim.]
-2. Live requester answers "already fixing" within the TTL: they keep it; re-check at the TTL.
-3. Otherwise withdraw the `mq/*` ref and DISPATCH a rescue engineer on `rescue-<slug>` (`task_branch start`); never patch `feat/*`, never code inline, never hand it back to a done agent. You stay accountable.
-4. Record the ownership transfer + lineage (slug to rescue-slug) in the inbox; on landing send `LANDED <sha>` + a diff summary to the requester's role (or the owner).
+Rule: `KB § PATTERNS/devops/release-steward.md` § 7a (guardian spec, council 09340534 dispositions A, B, K).
+1. Diagnose (steps 1-2 above). Withdraw the `mq/*` ref, write `ejected{reason, conflict, url}` to the outbox, requeue the other riders.
+2. Notify the branch steward's ROLE. Needs information? Ask ONE batched question via `noc-questionnaire` PEER MODE: `needs_info`, TTL ~25 min. [Interim: `SendMessage` to the role's current session + the inbox notes field, labelled interim.]
+3. The branch steward fixes it on its own branch and re-files `request`. You never patch the branch, never open a rescue branch, never dispatch an engineer for it.
+4. After 2 ejections, park the delivery as `blocked_on_steward`. Orphan (steward gone or silent past the TTL): keep it parked, alert the owner; the OWNER names a new branch steward, who adopts the branch. You never adopt it.
 
 ## 4 · On every landing
 

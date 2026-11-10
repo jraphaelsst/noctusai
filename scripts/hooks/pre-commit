@@ -97,6 +97,19 @@ if have_py; then
     fi
 fi
 
+# ─── 0-pre-b. Guardian tool-authorship gate (BLOCKING) ───────────
+# Keeper `check_guardian_tool_authorship`: the session holding the release-steward
+# lease must not commit release_steward.py / task_branch.py (ratified guardian
+# spec, council 09340534). No lease / expired / unknown session passes.
+if have_py; then
+    if ! "$PY" "$CLI" --check-guardian-tool-authorship --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] guardian tool-authorship gate FAILED. Commit aborted." >&2
+        echo "[pre-commit] The release-steward lease holder does not author steward tooling:" >&2
+        echo "[pre-commit] hand it to the tooling branch steward. KB § PATTERNS/common/gate-methodology-sync.md" >&2
+        exit 1
+    fi
+fi
+
 # ─── 0a. Ledger-only fast path (append-only ledgers, cache-exempt) ───
 # A commit whose ENTIRE staged set is top-level `project-history/*.ndjson`
 # append-only ledger rows (branch-tree pointers, mirror, auto-improvement,

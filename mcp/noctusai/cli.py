@@ -328,6 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
                       if any(a in ("-h", "--help") for a in sys.argv[1:]) else "see --help")
     parser.add_argument("--paths", default="", help=f"Comma-separated repo-relative paths to narrow a keeper's sweep (accepted by: {_paths_keepers}). Omitted, the keeper scans its full default scope.")
     parser.add_argument("--check-primary-checkout-commit", action="store_true", help="Keeper: refuse a WORK commit on a shared branch (dev/main/prod) in the PRIMARY checkout — the self-branching rule that CLAUDE.md has mandated since inception and that was violated in essentially every session, because nothing fails at commit time and the cost lands later as a non-fast-forward at integrate/deploy. Ledger-only commits (project-history/) pass; escape hatch NOCTUS_ALLOW_PRIMARY_COMMIT=1. Severity high. MCP keeper check_primary_checkout_commit.")
+    parser.add_argument("--check-guardian-tool-authorship", action="store_true", help="Keeper: refuse a commit staging release_steward.py or task_branch.py when the committing session holds the live release-steward lease (the guardian never authors steward tooling; hand it to the tooling branch steward). No lease / expired lease / unknown session passes. Severity high. MCP keeper check_guardian_tool_authorship.")
     parser.add_argument("--check-git-hooks-bypass", action="store_true", help="Keeper: a tracked script/Makefile/CI-workflow/subprocess-call that hardcodes a git hooks bypass (`-c core.hooksPath=…`, `--config`/`--config-env` targeting core.hooksPath, a persistent `git config core.hooksPath <value>` SET, a `GIT_CONFIG_KEY_*=core.hooksPath` env-injection, or `--no-verify`/`-n` on commit/push). Static backstop for the PreToolUse `decide_git_bypass` gate (`primary_write_guard.py`) — born from a `-c core.hooksPath=<relative>` override that silently skipped every hook, exit 0, no warning, because git resolves a relative hooksPath against the cwd and a linked worktree's `.git` is a FILE. `.md` prose is out of scope (cannot execute); co-located allowlist for the one genuine non-bypass SET (bootstrap-seed-workspace.sh provisioning a separate sibling repo). Severity high. MCP keeper check_git_hooks_bypass.")
     parser.add_argument("--check-merge-drivers-have-contract-coverage", action="store_true", help="Keeper: every custom `merge=<name>` in .gitattributes has a SPECS fixture in mcp/noctusai/tests/test_merge_driver_contract.py (the one contract: markers + both sides on a real conflict, exit 0 on a clean merge, writes only %%A). Exits 1 on any uncovered driver. KB § PATTERNS/common/auto-generated-merge-drivers.md.")
     parser.add_argument("--check-merge-drivers-registered-in-ci", action="store_true", help="Keeper: every custom `merge=<name>` in .gitattributes must be registered by scripts/hooks/register-merge-drivers.sh, and .github/workflows/merge-queue.yml must invoke that script (an unregistered driver = plain text merge = queue ejections on derived kb-counts blocks, 2026-11-05). Severity high. MCP keeper check_merge_drivers_registered_in_ci.")
@@ -576,6 +577,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-branch-slugs", default=None, help="With --task-branch=train: comma-separated ready feat/<slug> branches to merge --no-ff into ONE train-<name> branch (omit => dry-run candidate listing; --task-branch-slug names the train). Merge-all-before-integrating: one integrate of the train lands them all.")
     parser.add_argument("--task-branch-train-order", default="given", choices=["given", "auto"], help="With --task-branch=train: merge order - 'given' (as listed) or 'auto' (least path-overlap first).")
     parser.add_argument("--task-branch-slug", default=None, help="With --task-branch: the feat/<slug> worktree/branch name.")
+    parser.add_argument("--task-branch-branch", default=None, help="With --task-branch enqueue|integrate|landed|cleanup: the real branch name when it is not feat/<slug> (docs/x, fix/x ...); omitted => resolved among the conventional prefixes.")
+    parser.add_argument("--task-branch-verdict-ref", default=None, help="With --task-branch enqueue: where the scoped keepers/tests verdict lives (delivery-contract item 5); default = the filed request's.")
     parser.add_argument("--task-branch-confirm", action="store_true", help="With --task-branch: actually perform the git lifecycle step (a write). Without it, plan/dry-run only.")
     parser.add_argument("--task-branch-project", default=None, help="With --task-branch action=start: the branch-tree pointer's project (default: inherited from parent's pointer).")
     parser.add_argument("--task-branch-brief", default=None, help="With --task-branch action=start: the branch-tree pointer's brief text.")
@@ -588,7 +591,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="Keepers that collapse advisory output (e.g. --check-eight-way-sync's cache-staleness warnings) print every line instead of a one-line summary. Env NOCTUS_HOOK_VERBOSE=1 does the same from a git hook.")
     parser.add_argument("--task-branch-verbose", action="store_true", help="With --task-branch action=start: full inline wire_env would_wire/wired/skipped lists instead of the compact {count, sample} shape.")
     parser.add_argument("--cleanup-respect-min-age", action="store_true", help="With --cleanup-stale-worktrees --force: keep the min-age guard (never take a brand-new worktree). Used by the SessionStart sweep.")
-    parser.add_argument("--release-steward", metavar="ACTION", choices=["status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack", "role", "roles", "reconcile"], help="The release steward: ONE elected leader session per machine handles CI queueing AND deploy; everyone else files deliveries (request) and keeps building. Session identity = --steward-session-id or $CLAUDE_CODE_SESSION_ID. This is also the first-claim bootstrap path. MCP: noctus.dev.release_steward. KB § PATTERNS/devops/release-steward.md.")
+    parser.add_argument("--release-steward", metavar="ACTION", choices=["status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack", "role", "roles", "reconcile", "withdraw", "ask", "position", "decision", "deliverable"], help="The release steward: ONE elected leader session per machine handles CI queueing AND deploy; everyone else files deliveries (request) and keeps building. Session identity = --steward-session-id or $CLAUDE_CODE_SESSION_ID. This is also the first-claim bootstrap path. MCP: noctus.dev.release_steward. KB § PATTERNS/devops/release-steward.md.")
     parser.add_argument("--steward-session-id", default=None, help="With --release-steward: the caller's session id (default $CLAUDE_CODE_SESSION_ID).")
     parser.add_argument("--steward-name", default=None, help="With --release-steward claim/request: a human-readable session name (e.g. noctusai-51).")
     parser.add_argument("--steward-reason", default=None, help="With --release-steward claim: why this session holds the lane.")
@@ -606,13 +609,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-orchestrator-inline-over-cutoff", action="store_true", help="Keeper (WARN-first shadow, never blocks): branch-tree pointers of inline agents (self-branch|tech-lead|orchestrator) landed on/after 2026-11-07 whose delivery is >=100 LoC or >=3 files with no recorded inline_reason. Names the specialists to dispatch. --inline-cutoff-log files one auto-improvement drift row per branch; --inline-cutoff-replay-days N is the false-alarm research mode. KB § PATTERNS/architect/parallelization-first-orchestration.md (Enforcement).")
     parser.add_argument("--inline-cutoff-log", action="store_true", help="With --check-orchestrator-inline-over-cutoff: file one auto-improvement drift row per finding (target orchestrator_inline_over_cutoff:<branch>).")
     parser.add_argument("--inline-cutoff-replay-days", type=int, default=None, help="With --check-orchestrator-inline-over-cutoff: research mode, evaluate pointers since N days ago instead of the shadow start date (report only).")
-    parser.add_argument("--steward-outcome", default=None, choices=["enqueued", "landed", "ejected", "deployed"], help="With --release-steward ack: the request's new outcome.")
+    parser.add_argument("--steward-outcome", default=None, choices=["enqueued", "landed", "ejected", "deployed", "withdrawn", "needs_resync"], help="With --release-steward ack: the request's new outcome.")
     parser.add_argument("--steward-dev-sha", default=None, help="With --release-steward ack: the dev sha it landed as.")
     parser.add_argument("--steward-to-session-id", default=None, help="With --release-steward handoff: transfer the lane to this session id.")
     parser.add_argument("--steward-to-name", default=None, help="With --release-steward handoff: offer the lane to this named session (it accepts with claim).")
     parser.add_argument("--steward-role", default=None, help="With --release-steward role: the role (dev-steward is derived; branch-steward:<branch>, agents, products/sw, assistant, ...).")
     parser.add_argument("--steward-role-op", default=None, choices=["set", "clear"], help="With --release-steward role: set (default) or clear.")
+    parser.add_argument("--steward-verdict-ref", default=None, help="With --release-steward request|deliverable: where the scoped keepers/tests verdict lives (delivery-contract item 5).")
+    parser.add_argument("--steward-run-scoped", action="store_true", help="With --release-steward deliverable: RUN delivery-contract item 5 (the CI-blocking keeper set + real-tree keeper tests, env-scrubbed, derived from the head's test.yml). Takes minutes.")
     parser.add_argument("--steward-branches", default=None, help="With --release-steward request: comma-separated ORDERED branches of a split delivery (drained as ONE train + ONE enqueue).")
+    parser.add_argument("--steward-question", default=None, help="With --release-steward ask: the one bounded question (kind=needs_info).")
+    parser.add_argument("--steward-addressed-to", default=None, help="With --release-steward ask: a registered role (default: the requester session).")
+    parser.add_argument("--steward-deadline-min", type=float, default=None, help="With --release-steward ask: minutes until the question expires (default 30).")
+    parser.add_argument("--steward-ref", default=None, help="With --release-steward position: the needs_info id (ni-N) being answered.")
     parser.add_argument("--steward-confirm", action="store_true", help="With --release-steward reconcile: actually ack the already-landed requests.")
     parser.add_argument("--steward-include-done", action="store_true", help="With --release-steward inbox/mine: include finished requests.")
     parser.add_argument("--task-branch-post-integrate", action="store_true", help="Run task_branch integrate's slow best-effort tail (structural cache settle, then the primary ledger drain). Spawned DETACHED by integrate on the real runner; prints the JSON result.")
@@ -723,7 +732,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bp-branch", metavar="BRANCH", dest="bp_branch", help="With --branch-pointer-*: branch name (JOIN KEY).")
     parser.add_argument("--bp-base", metavar="BASE", dest="bp_base", help="With --branch-pointer-append: fork-base branch.")
     parser.add_argument("--bp-commit", metavar="SHA", dest="bp_commit", help="With --branch-pointer-append/update: current tip commit.")
-    parser.add_argument("--bp-role", metavar="ROLE", choices=["orchestrator", "engineer"], dest="bp_role", help="With --branch-pointer-append: orchestrator | engineer.")
+    parser.add_argument("--bp-role", metavar="ROLE", choices=["orchestrator", "engineer", "steward"], dest="bp_role", help="With --branch-pointer-append: orchestrator | engineer | steward (a branch steward).")
     parser.add_argument("--bp-agent", metavar="AGENT", dest="bp_agent", help="With --branch-pointer-append/query: claude-tree node label.")
     parser.add_argument("--bp-parent", metavar="PARENT", dest="bp_parent", help="With --branch-pointer-append: who dispatched this (claude parent edge).")
     parser.add_argument("--bp-paths", metavar="PATH", nargs="+", dest="bp_paths", help="With --branch-pointer-append/update/query: collision-zone paths (or changed-file list for --branch-pointer-cache-exempt).")
@@ -2037,6 +2046,19 @@ def main():
             print(f"  {GREEN}✓ primary-checkout-commit: clean (not a work commit on a shared branch in the primary checkout).{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ work commit on a shared branch in the PRIMARY checkout:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')}")
+            print(f"      {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_guardian_tool_authorship:
+        from tools.noctus.dev.compliance import check_guardian_tool_authorship
+        issues = check_guardian_tool_authorship(
+            repo_root=Path(args.worktree_path).expanduser().resolve() if args.worktree_path else None)
+        if not issues:
+            print(f"  {GREEN}✓ guardian-tool-authorship: clean (no steward tooling staged by the lease holder).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ guardian staged steward tooling:{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')}")
             print(f"      {i['issue']}")
@@ -4312,9 +4334,12 @@ def main():
             dev_sha=args.steward_dev_sha, include_done=args.steward_include_done,
             inline_reason=args.steward_inline_reason, inline_note=args.steward_inline_note,
             branches=[x.strip() for x in (args.steward_branches or "").split(",") if x.strip()] or None,
-            role=args.steward_role, op=args.steward_role_op, confirm=args.steward_confirm)
+            role=args.steward_role, op=args.steward_role_op, confirm=args.steward_confirm,
+            question=args.steward_question, addressed_to=args.steward_addressed_to,
+            deadline_min=args.steward_deadline_min, ref=args.steward_ref,
+            verdict_ref=args.steward_verdict_ref, run_scoped=args.steward_run_scoped)
         print(json.dumps(r, indent=2, default=str))
-        sys.exit(0 if r.get("ok") else 1)
+        sys.exit(0 if r.get("ok") and r.get("status") != "needs_resync" else 1)
 
     elif args.task_branch_post_integrate:
         from tools.noctus.dev.task_branch import run_post_integrate
@@ -4337,6 +4362,8 @@ def main():
             accept_unmeasured_reason=getattr(args, "task_branch_accept_unmeasured_reason", None),
             accept_unscored=getattr(args, "task_branch_accept_unscored", None),
             slug=getattr(args, "task_branch_slug", None),
+            branch=getattr(args, "task_branch_branch", None),
+            verdict_ref=getattr(args, "task_branch_verdict_ref", None),
             slugs=([x.strip() for x in args.task_branch_slugs.split(",") if x.strip()]
                    if getattr(args, "task_branch_slugs", None) else None),
             order=getattr(args, "task_branch_train_order", "given"),

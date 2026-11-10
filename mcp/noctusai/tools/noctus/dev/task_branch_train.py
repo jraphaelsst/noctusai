@@ -116,7 +116,14 @@ def sync_with_dev(runner, wt: str, dev_ref: str) -> list[str]:
         return []
     _rc, out, _e2 = runner(["git", "diff", "--name-only", "--diff-filter=U"], cwd=wt)
     conflicted = [ln.strip() for ln in (out or "").splitlines() if ln.strip()]
-    runner(["git", "merge", "--abort"], cwd=wt)
+    for _ in range(2):
+        runner(["git", "merge", "--abort"], cwd=wt)
+        if runner(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=wt)[0] != 0:
+            break  # MERGE_HEAD gone: the abort held
+    else:
+        # "aborted" without proof is how a stuck merge/rebase state was stranded in a requester's
+        # worktree (2026-11-10): surface it as a conflict entry so the caller's message names it.
+        conflicted = [*conflicted, f"<STUCK: `git merge --abort` did not clear MERGE_HEAD in {wt}>"]
     return conflicted or ["<merge failed without conflicted files>"]
 
 

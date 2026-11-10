@@ -308,6 +308,21 @@ class TestAppend:
         assert result["ok"] is False
         assert "role must be one of" in result["error"]
 
+    def test_append_accepts_the_branch_steward_role(self, tmp_path, monkeypatch):
+        # task_branch `start role=steward` (ratified guardian spec) used to be
+        # refused with "role must be one of ['engineer', 'orchestrator']".
+        ledger = tmp_path / "project-history" / "branch-tree.ndjson"
+        ledger.parent.mkdir(parents=True)
+        monkeypatch.setattr(BP, "LEDGER_PATH", ledger)
+        result = BP.append(
+            branch="docs/x", base="origin/dev", commit="abc", role="steward",
+            agent="branch-steward", parent="origin/dev", paths=[], status="on_going",
+            brief="x", push_dev=False, session="s1",
+        )
+        assert result["ok"] is True, result
+        assert result["row"]["role"] == "steward"
+        assert "steward" in BP.ROLES
+
     @pytest.mark.parametrize("alias", ["tech-lead", "Tech-Lead", "tech_lead"])
     def test_append_tech_lead_alias_stored_as_orchestrator(self, tmp_path, monkeypatch, alias):
         ledger = tmp_path / "project-history" / "branch-tree.ndjson"
