@@ -396,7 +396,7 @@ class TestSupabaseStore:
         assert client.executed[0][1] == ("publish_agent_version", {
             "p_org_id": str(ORG), "p_version_id": str(vid), "p_published_by": str(USER),
             "p_eval_run_id": str(run), "p_override_reason": None, "p_expected_hash": h,
-            "p_texto": "T", "p_manifest": [{"chave": "a"}],
+            "p_texto": "T", "p_manifest": [{"chave": "a"}], "p_pai_versao_id": None,
         })
         assert client.executed[2][1] == (
             "discard_agent_draft", {"p_org_id": str(ORG), "p_version_id": str(vid), "p_actor": str(USER)},

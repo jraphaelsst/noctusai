@@ -14,6 +14,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from app.config import settings
+from app.services import runtime_settings
+from app.stores.runtime_settings import FakeRuntimeSettingsStore
 from app.stores.studio_evals import EvalCaseInput, FakeEvalStore
 from app.studio.eval_mecanismo import MecanismoGateRun, MecanismoRequisito
 from app.studio.models import CompiledPrompt, CompileWarning, GateRun
@@ -194,7 +197,8 @@ class TestCompor:
         sev = [i.severidade for i in p.itens]
         assert sev == sorted(sev, key=["bloqueante", "aviso", "ok"].index)
         assert pr.RECUSAS_PUBLICACAO == {
-            "conteudo_incompleto", "compile_blocked", "mecanismo_reprovado", "eval_required", "qualificacao_indisponivel"}
+            "conteudo_incompleto", "compile_blocked", "mecanismo_reprovado", "eval_required", "qualificacao_indisponivel",
+            "numero_fallback_ausente"}
 
 
 # ── the route ───────────────────────────────────────────────────────────────
@@ -338,6 +342,13 @@ def _cenario_verde_so_com_mecanismo(studio):
         orcamento_excedido=False, total_casos=4, casos_aprovados=4))
 
 
+def _cenario_sem_numero_fallback(studio):
+    """Green in every other way, but nobody set the hand-off fallback number (074): an empty settings store."""
+    _cenario_verde(studio)
+    runtime_settings.install_runtime_settings_service(
+        runtime_settings.RuntimeSettingsService(FakeRuntimeSettingsStore(), settings, ttl_seconds=0))
+
+
 def _cenario_padrao_ausente(studio):
     _cenario_verde(studio)
     studio.store.update_definicao(DEFAULT_ORG_ID, "novo", {"padrao_qualificacao": "padrao-sem-versao"})
@@ -367,6 +378,7 @@ CENARIOS = [
     ("juiz_abaixo_do_limiar", _cenario_juiz_abaixo, "eval_required"),
     ("mecanismo_sem_execucao", _cenario_mecanismo_sem_execucao, "mecanismo_reprovado"),
     ("padrao_sem_versao_publicada", _cenario_padrao_ausente, "qualificacao_indisponivel"),
+    ("sem_numero_fallback", _cenario_sem_numero_fallback, "numero_fallback_ausente"),
     ("verde", _cenario_verde, None),
     ("verde_so_com_mecanismo", _cenario_verde_so_com_mecanismo, None),
     ("somente_avisos", _cenario_aviso_apenas, None),
@@ -474,3 +486,16 @@ class TestGrupos:
         labels = ts.split("PRONTIDAO_GRUPO_LABEL", 1)[1].split("};", 1)[0]
         assert set(re.findall(r'"([a-z_]+)"', union)) == set(pr.GRUPOS)
         assert set(re.findall(r"^\s*([a-z_]+):", labels, re.M)) == set(pr.GRUPOS)
+
+
+class TestNumeroFallback:
+    def test_a_conversational_agent_without_the_number_is_blocked_and_with_it_is_ok(self):
+        sem = pr.compor(_entrada(numero_fallback_definido=False, canonico_exigido=True))
+        item = next(i for i in sem.itens if i.codigo == "numero_fallback_ausente")
+        assert item.severidade == "bloqueante" and item.recusa_publicacao == "numero_fallback_ausente"
+        com = pr.compor(_entrada(numero_fallback_definido=True, canonico_exigido=True))
+        assert "numero_fallback_ausente" not in _codigos(com) and "numero_fallback_definido" in _codigos(com)
+
+    def test_the_internal_generator_needs_no_number(self):
+        assert "numero_fallback_ausente" not in _codigos(pr.compor(_entrada(numero_fallback_definido=False, canonico_exigido=False)))
+

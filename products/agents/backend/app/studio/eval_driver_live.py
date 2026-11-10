@@ -59,6 +59,7 @@ from app.studio.eval_driver import (
     Violation,
 )
 from app.studio.eval_sinteticos import Sinteticos
+from app.studio.camadas import efetivo
 from noctusai_lib.integrations.llm import ToolResult
 from noctusai_lib.realtime import FakeRealtimeBus
 
@@ -292,7 +293,7 @@ class LiveEvalTurnDriver:
         draft = self._studio.get_draft(org_id, definicao.id)
         if draft is None:
             raise turno_mod.TurnoRecusado(409, "no_draft", "O agente não tem rascunho para avaliar.")
-        declaradas = self._studio.list_spec_defs(org_id, draft.id)
+        declaradas = efetivo(self._studio).list_spec_defs(org_id, draft.id)
         specs = specs_de_avaliacao(declaradas, thread.fixture.get("specs"))
         for ausente in thread.fixture.get("specs_ausentes") or ():  # a case that tests the org NOT having filled a spec
             specs.pop(str(ausente), None)

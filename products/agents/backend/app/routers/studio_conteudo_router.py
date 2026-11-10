@@ -104,6 +104,7 @@ from app.routers.studio_geracoes_router import get_geracao_agendador_dep, get_ge
 from app.studio import geracao as engine
 from app.studio.plataforma import ensure_definicao
 from app.studio.resolucao import compile_for_org, conteudo_status, resolve_agent_for_org
+from app.studio.camadas import efetivo
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
 from noctusai_lib.api.auth.session import AuthContext, ProductTokenAdmin, require_scopes
@@ -330,10 +331,10 @@ def get_payload(
     return ConteudoPayloadOut(
         version_id=v.id, hash=compiled.hash, texto=compiled.texto, tokens_estimados=compiled.tokens_estimados,
         manifest=compiled.manifest_json(), avisos=[w.to_dict() for w in compiled.avisos],
-        textos=[_texto_out(r) for r in store.list_textos(ctx.org_id, v.id)],
-        ferramentas=[_ferramenta_out(r) for r in store.list_ferramentas(ctx.org_id, v.id)],
-        decisoes=[_decisao_out(r) for r in store.list_decisoes(ctx.org_id, v.id)],
-        specs=[_spec_out(r) for r in store.list_spec_defs(ctx.org_id, v.id)], ponto_cache=compiled.ponto_cache,
+        textos=[_texto_out(r) for r in efetivo(store).list_textos(ctx.org_id, v.id)],
+        ferramentas=[_ferramenta_out(r) for r in efetivo(store).list_ferramentas(ctx.org_id, v.id)],
+        decisoes=[_decisao_out(r) for r in efetivo(store).list_decisoes(ctx.org_id, v.id)],
+        specs=[_spec_out(r) for r in efetivo(store).list_spec_defs(ctx.org_id, v.id)], ponto_cache=compiled.ponto_cache,
     )
 
 
@@ -426,7 +427,7 @@ def aplicar_org_specs(
         store.get_draft(definition.org_id, definition.id), store.get_active_version(definition.org_id, definition.id),
     ):
         if version is not None:
-            for d in store.list_spec_defs(definition.org_id, version.id):
+            for d in efetivo(store).list_spec_defs(definition.org_id, version.id):
                 declaradas.setdefault(d.chave, d)
     if not declaradas:
         raise http_error(409, "definicao_sem_especificacoes", "A definição ainda não declara especificações da organização.")

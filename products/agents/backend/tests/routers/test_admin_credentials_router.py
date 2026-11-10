@@ -217,11 +217,27 @@ class TestAgentSettings:
             {"max_turns": 0},
             {"messages_rate_limit": "lots"},
             {"claude_cli_slots": 5},  # read-only → unknown field
+            {"numero_fallback_atendimento": "não sei"},  # 074: not a phone
+            {"numero_fallback_atendimento": "1199457"},  # too short
         ],
     )
     def test_invalid_updates_422(self, admin_client, body):
         _seed_user(admin_client, role="admin")
         assert admin_client.put("/api/admin/agent-settings", json=body).status_code == 422
+
+
+    def test_fallback_number_is_stored_as_e164_and_resets_to_unset(self, admin_client):
+        """074: one hand-off fallback number for every org; any spelling with DDD is stored canonical."""
+        _seed_user(admin_client, role="admin")
+        resp = admin_client.put("/api/admin/agent-settings", json={"numero_fallback_atendimento": "(11) 99457-3387"})
+        assert resp.status_code == 200, resp.text
+        items = {i["key"]: i for i in resp.json()["items"]}
+        assert (items["numero_fallback_atendimento"]["value"], items["numero_fallback_atendimento"]["source"]) == (
+            "+5511994573387", "db")
+        assert admin_client.runtime_settings.numero_fallback_atendimento() == "+5511994573387"
+        reset = admin_client.put("/api/admin/agent-settings", json={"numero_fallback_atendimento": None})
+        items = {i["key"]: i for i in reset.json()["items"]}
+        assert (items["numero_fallback_atendimento"]["value"], items["numero_fallback_atendimento"]["source"]) == (None, "env")
 
 
 class TestAgentSettingsJsonModeWrite:

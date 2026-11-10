@@ -63,6 +63,7 @@ from app.studio.resolucao import (
     AgenteResolvido, Carimbo, carimbo, compile_for_org, conteudo_status, org_specs_hash, resolve_agent_for_org,
 )
 from app.studio.spec import MAX_COMPILED_PROMPT_CHARS
+from app.studio.camadas import efetivo
 
 logger = logging.getLogger(__name__)
 
@@ -581,8 +582,9 @@ async def _executar(
     leak = regras.get("vazamento_prompt")
     historico_previo = await asyncio.to_thread(lambda: svc.messages.list(org_id, thread.id, limite=500))
     dados_da_org = tuple(valores.values())
-    ativas = [x for x in svc.studio_store.list_skills(r.definicao.org_id, r.versao.id) if x.ativo]
-    arquivos = svc.studio_store.list_version_skill_files(r.definicao.org_id, r.versao.id)
+    ef = efetivo(svc.studio_store)  # 073: the version's effective skills (parent chain merged in)
+    ativas = [x for x in ef.list_skills(r.definicao.org_id, r.versao.id) if x.ativo]
+    arquivos = ef.list_version_skill_files(r.definicao.org_id, r.versao.id)
     #: every ACTIVE skill body and file of the version (the library's pinned skills join as they are loaded), 24-token window
     texto_skills = conf.texto_fonte_do_prompt(
         None, [x.corpo for x in ativas if getattr(x, "corpo", None)],

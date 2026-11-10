@@ -26,7 +26,7 @@ def _step(name: str, sql: str) -> dict:
 
 
 def _publish(version: str, override: str = "NULL") -> str:
-    return (f"PERFORM agents.publish_agent_version('{_A}', '{version}', '{_U}', NULL, {override}, 'sha256:1111111111111111111111111111111111111111111111111111111111111111', 'texto', '{{}}'::jsonb);")
+    return (f"PERFORM agents.publish_agent_version('{_A}', '{version}', '{_U}', NULL, {override}, 'sha256:1111111111111111111111111111111111111111111111111111111111111111', 'texto', '{{}}'::jsonb, NULL);")
 
 
 def _refused_with(code: str, body: str) -> str:
