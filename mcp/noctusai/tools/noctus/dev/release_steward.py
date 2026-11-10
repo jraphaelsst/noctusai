@@ -71,6 +71,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1542,7 +1543,7 @@ CI_TOOLKIT_JOB = "mcp-toolkit-tests"
 #: is absent on a CI runner and is therefore absent here; the toolkit job's own `env:` is then layered on.
 HERMETIC_BASE_ENV = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR", "TERM", "SHELL",
                      "VIRTUAL_ENV", "SYSTEMROOT")
-#: A `verdict_ref` must carry these markers (+ the head sha it judged) to count as item 5's verdict.
+#: What a verdict RECORD asserts (set only by `export_ci_parity_check`): the run was env-scrubbed and covered the CI-blocking keepers.
 VERDICT_MARKERS = ("env-scrubbed", "ci-keepers")
 
 
@@ -1636,37 +1637,87 @@ def ci_keeper_test_ids(tests_dir: str | Path) -> list[str]:
     return ids
 
 
-def validate_verdict_ref(ref: str | None, head: str | None) -> tuple[bool, str]:
-    """A verdict pointer counts for item 5 only if it records that the run was env-scrubbed AND covered the
-    CI-blocking keeper set (`VERDICT_MARKERS`) AND names the head it judged (a green for an older head
-    proves nothing). e.g. `gate_sweep://run/7@a1b2c3d#env-scrubbed,ci-keepers`."""
+VERDICT_STORE_NAME = "deliverable-verdicts.ndjson"
+_VERDICT_REF_RE = re.compile(r"^ci-parity:([0-9a-f]{32})$")
+_FULL_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+def default_verdict_store(env: dict[str, str] | None = None) -> Path:
+    return default_root(env) / VERDICT_STORE_NAME
+
+
+def record_verdict(store: str | Path | None, *, head: str, tree: str, workflow_blob: str, interpreter: str,
+                   flags: list[str], tests: list[str], ok: bool, clock: Callable[[], float] = time.time) -> str:
+    """Append ONE verdict record to the append-only store and return its ref (`ci-parity:<id>`).
+
+    Only `export_ci_parity_check` (a run that actually executed the CI-blocking keepers + real-tree keeper
+    tests, env-scrubbed) writes these; the ref is the only thing a request may carry for item 5, because
+    `validate_verdict_ref` resolves it to this record. A string a caller typed resolves to nothing."""
+    path = Path(store) if store is not None else default_verdict_store()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"id": uuid.uuid4().hex, "ts": _iso(clock()), "head": head, "tree": tree, "workflow_blob": workflow_blob,
+           "interpreter": interpreter, "flags": flags, "tests": tests, "ok": bool(ok),
+           "env_scrubbed": True, "ci_keepers": True}
+    with open(path, "a", encoding="utf-8") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return f"ci-parity:{rec['id']}"
+
+
+def read_verdict(store: str | Path | None, vid: str) -> dict[str, Any] | None:
+    path = Path(store) if store is not None else default_verdict_store()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        with contextlib.suppress(ValueError):
+            rec = json.loads(line)
+            if isinstance(rec, dict) and rec.get("id") == vid:
+                return rec
+    return None
+
+
+def validate_verdict_ref(ref: str | None, head: str | None, store: str | Path | None = None,
+                         tree: str | None = None) -> tuple[bool, str]:
+    """A verdict pointer counts for item 5 only if it RESOLVES to a record in the verdict store written by a
+    CI-parity run (`export_ci_parity_check`) for EXACTLY this head (full sha; the head tree too when known),
+    with `ok` true and the env-scrubbed + CI-keeper markers set by that run. Free-form strings, short shas and
+    substring markers are refused: they were forgeable (adversarial review, fix round 1)."""
     ref = (ref or "").strip()
     if not ref:
-        return False, ("no verdict_ref and no scoped check ran: run the scoped suites env-scrubbed with the CI-blocking "
-                       "keeper set (or `release_steward action=deliverable run_scoped=true`) and file "
-                       f"verdict_ref=<where>@<head sha>#{','.join(VERDICT_MARKERS)}")
-    low = ref.lower()
-    missing = [m for m in VERDICT_MARKERS if m not in low]
-    if missing:
-        return False, (f"verdict_ref {ref[:120]!r} does not record that the run was {', '.join(missing)} "
-                       f"(markers required: {', '.join(VERDICT_MARKERS)}) - a verdict from a non-hermetic run or without the "
-                       "CI-blocking keepers is what let a green-locally delivery be ejected by CI (D1, 2026-11-10)")
-    if head and not any(head.startswith(tok) for tok in re.findall(r"(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])", low)):
-        return False, f"verdict_ref {ref[:120]!r} does not name the head it judged ({head[:9]}): re-run on this head"
-    return True, f"verdict pointer (env-scrubbed, ci-keepers, head-bound): {ref[:160]}"
-
-
-def format_verdict_ref(source: str, head: str) -> str:
-    return f"{source}@{head[:9]}#{','.join(VERDICT_MARKERS)}"
+        return False, ("no verdict_ref and no scoped check ran: run `release_steward action=deliverable run_scoped=true` "
+                       "(CI-blocking keepers + real-tree keeper tests, env-scrubbed) and file the `ci-parity:<id>` it returns")
+    m = _VERDICT_REF_RE.match(ref)
+    if not m:
+        return False, (f"free-form verdict_ref {ref[:80]!r} refused: a verdict_ref is `ci-parity:<id>` minted by a "
+                       "run_scoped=true run and resolved against the verdict record store")
+    rec = read_verdict(store, m.group(1))
+    if rec is None:
+        return False, f"verdict record {ref} not found in the verdict store (never minted by a CI-parity run, or the store is unreadable)"
+    if not head or not _FULL_SHA_RE.match(head) or rec.get("head") != head:
+        return False, (f"verdict record {ref} judged head {str(rec.get('head'))[:9]}, not {str(head)[:9]}: "
+                       "re-run run_scoped=true on this exact head (full-sha match required)")
+    if tree and rec.get("tree") != tree:
+        return False, f"verdict record {ref} judged tree {str(rec.get('tree'))[:9]}, not this head's tree {tree[:9]}"
+    if not (rec.get("env_scrubbed") and rec.get("ci_keepers")):
+        return False, f"verdict record {ref} does not record an env-scrubbed run with the CI-blocking keeper set"
+    if not rec.get("ok"):
+        return False, f"verdict record {ref} is RED ({len(rec.get('flags') or [])} keeper flag(s) + {len(rec.get('tests') or [])} test(s) ran, the result was not ok)"
+    return True, (f"verdict record {ref}: head {head[:9]}, env-scrubbed, {len(rec.get('flags') or [])} CI-blocking keeper flag(s) "
+                  f"+ {len(rec.get('tests') or [])} real-tree keeper test(s), green")
 
 
 def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None = None, timeout: int = 1500,
-                           base_env: dict[str, str] | None = None) -> Callable[[str, str], dict[str, Any]]:
+                           base_env: dict[str, str] | None = None,
+                           verdict_store: str | Path | None = None) -> Callable[[str, str], dict[str, Any]]:
     """Real default for `deliverable(scoped_check=)`: judge the head the way CI does. Export it, prime the
     hermetic state CI primes, then - in a SCRUBBED environment - run (1) every `cli.py --check-*` keeper CI
     runs as a blocking step and (2) every test that asserts a keeper clean on the live tree. Both sets are
     derived from the head's own workflow + tests. Slow (minutes): the branch steward runs it once and files
-    `verdict_ref`; the guardian only validates the ref (`validate_verdict_ref`)."""
+    the `ci-parity:<id>` ref it returns; the run APPENDS a verdict record to the store (full head sha, head tree,
+    test.yml blob, interpreter, flags, test ids, result) and the guardian only resolves the ref
+    (`validate_verdict_ref`)."""
     py = python or sys.executable
 
     def check(branch: str, head: str) -> dict[str, Any]:
@@ -1702,11 +1753,17 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                     names = re.findall(r"^FAILED (\S+)", r.stdout or "", flags=re.M)
                     failed += [f"test {n}" for n in names] or [f"pytest exit {r.returncode}: {(r.stdout or r.stderr).strip()[-160:]}"]
             ran = f"{len(flags)} CI-blocking keeper flag(s) + {len(ids)} real-tree keeper test(s), env-scrubbed"
+            git = _subprocess_git(cwd)
+            rc_t, head_tree, _e = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
+            rc_b, wf_blob, _e = git("rev-parse", "--verify", "--quiet", f"{head}:{CI_WORKFLOW_REL}")
+            if rc_t != 0 or rc_b != 0:
+                return {"ok": False, "detail": "UNMEASURED: cannot resolve the head tree / test.yml blob to record the verdict"}
+            ref = record_verdict(verdict_store, head=head, tree=head_tree.strip(), workflow_blob=wf_blob.strip(),
+                                 interpreter=f"{py} {sys.version.split()[0]}", flags=flags, tests=ids, ok=not failed)
             if failed:
                 return {"ok": False, "detail": f"{ran}; RED: {', '.join(failed[:8])}", "failed": failed,
-                        "ran": {"flags": flags, "tests": ids}}
-            return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": ids},
-                    "verdict_ref": format_verdict_ref("ci-parity", head)}
+                        "ran": {"flags": flags, "tests": ids}, "verdict_ref": ref}
+            return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": ids}, "verdict_ref": ref}
         except (OSError, subprocess.SubprocessError) as exc:
             return {"ok": False, "detail": f"UNMEASURED: {type(exc).__name__}: {exc}"[:240]}
         finally:
@@ -1718,7 +1775,8 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
                 remote: str = "origin", dev_branch: str = "dev", head_sha: str | None = None,
                 verdict_ref: str | None = None, fetch: bool = True,
                 derived_check: Callable[[str], dict[str, Any]] | None = None,
-                scoped_check: Callable[[str, str], dict[str, Any]] | None = None) -> dict[str, Any]:
+                scoped_check: Callable[[str, str], dict[str, Any]] | None = None,
+                verdict_store: str | Path | None = None) -> dict[str, Any]:
     """The delivery contract: five read-only checks, `verdict` deliverable | needs_resync.
 
     1 head_pushed_clean - local head == origin/<branch> AND the branch's worktree has no real dirt.
@@ -1730,7 +1788,7 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
     5 scoped_green      - a `scoped_check(branch, head)` passes (`export_ci_parity_check`: the CI-blocking
                           keeper set + the real-tree keeper tests, env-scrubbed, both DERIVED from the head's
                           CI definition) OR the request's `verdict_ref` records exactly that run
-                          (`validate_verdict_ref`: env-scrubbed + ci-keepers markers + the head sha); neither -> fails.
+                          (`validate_verdict_ref`: a `ci-parity:<id>` that resolves to a verdict record for this exact head); neither -> fails.
 
     Never raises (a probe that cannot run fails its item as UNMEASURED) and never writes a work tree."""
     git = _ReadOnlyGit(git or _subprocess_git(cwd))
@@ -1875,7 +1933,11 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
             items.append(_item(5, DELIVERABLE_ITEMS[4], bool(res.get("ok")), str(res.get("detail") or "scoped check ran"),
                                **({"verdict_ref": res["verdict_ref"]} if res.get("verdict_ref") else {})))
         else:
-            ok5, why5 = validate_verdict_ref(verdict_ref, head)
+            tree5 = None
+            if head:
+                rc5, o5, _e5 = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
+                tree5 = o5.strip() if rc5 == 0 and o5.strip() else None
+            ok5, why5 = validate_verdict_ref(verdict_ref, head, verdict_store, tree5)
             items.append(_item(5, DELIVERABLE_ITEMS[4], ok5, why5))
     except Exception as exc:  # noqa: BLE001
         items.append(_unmeasured(5, DELIVERABLE_ITEMS[4], exc))
@@ -1998,5 +2060,5 @@ def register(server) -> None:
 
 
 __all__ = ["deliverable", "export_derived_check", "export_ci_parity_check", "ci_blocking_flags", "ci_keeper_test_ids",
-           "hermetic_env", "validate_verdict_ref", "format_verdict_ref", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
+           "hermetic_env", "validate_verdict_ref", "record_verdict", "read_verdict", "default_verdict_store", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
            "tool_refusal", "run_action", "register", "REQUEST_CMD", "OVERRIDE_ENV"]
