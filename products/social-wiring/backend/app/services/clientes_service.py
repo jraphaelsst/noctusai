@@ -774,7 +774,10 @@ def _reconcile_against_existing(
             # An already-resolved person picks up contact data that only
             # arrived on this later touch — fill-if-empty, so nothing an
             # operator typed is overwritten.
-            _enrich_cliente(client, target["id"], members, dry_run=dry_run)
+            _enrich_cliente(
+                client, target["id"], members, dry_run=dry_run,
+                linha=target if {"nome", "celular", "email"} <= target.keys() else None,  # `*` rows already carry them
+            )
             continue
 
         report.stragglers_parked_for_review += 1
@@ -815,8 +818,17 @@ def _refresh_contato_from_sources(
         if origem is not None:
             membros_por_cliente.setdefault(t["cliente_id"], []).append(origem)
 
+    # ONE paged read of the org's contact columns, not one read per cliente (the N+1 that issued ~10k reads per
+    # pass, every 6 h and on every startup catch-up: KB § PATTERNS/backend/polling-request-budget.md).
+    linhas = {
+        str(r["id"]): r
+        for r in _select_all(client, "clientes", org_id, columns="id,nome,celular,email")
+    }
     for cliente_id, members in membros_por_cliente.items():
-        _enrich_cliente(client, cliente_id, members, dry_run=False)
+        linha = linhas.get(str(cliente_id))
+        if linha is None:
+            continue  # the cliente is gone: nothing to fill (what the per-row read concluded too)
+        _enrich_cliente(client, cliente_id, members, dry_run=False, linha=linha)
 
 
 def _contato_dos_membros(members: list[SourceRow]) -> dict[str, str]:
@@ -838,7 +850,7 @@ def _contato_dos_membros(members: list[SourceRow]) -> dict[str, str]:
 
 
 def _enrich_cliente(
-    client: Any, cliente_id: str, members: list[SourceRow], *, dry_run: bool
+    client: Any, cliente_id: str, members: list[SourceRow], *, dry_run: bool, linha: Optional[dict] = None
 ) -> None:
     """Fill a cliente's blank `nome` / `celular` / `email` from new touches.
 
@@ -860,8 +872,9 @@ def _enrich_cliente(
     if not candidatos:
         return
 
-    atual = _t(client, "clientes").select("nome, celular, email").eq("id", cliente_id).execute()
-    linha = (atual.data or [None])[0]
+    if linha is None:  # a caller that already holds the row (batch read) passes it: no read per cliente
+        atual = _t(client, "clientes").select("nome, celular, email").eq("id", cliente_id).execute()
+        linha = (atual.data or [None])[0]
     if not linha:
         return
 
