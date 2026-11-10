@@ -188,6 +188,12 @@ class TestExecutorDispatch:
         code, out = _run(EXEC, self._agent("frontend-engineer", "work in .claude/worktrees/no-such-slug-xyz"))
         assert "executor-dispatch" in _reason(out)
 
+    def test_existing_worktree_followed_by_sentence_punctuation_passes(self):
+        d = self._existing_slug()
+        for ref in (f"{d}. Work only there.", f".claude/worktrees/{d.name}.", f"({d}),"):
+            code, out = _run(EXEC, self._agent("integrations-engineer", f"Worktree {ref}"))
+            assert code == 0 and out is None, ref
+
     def test_existing_worktree_abs_and_relative_pass(self):
         d = self._existing_slug()
         for ref in (str(d), f".claude/worktrees/{d.name}"):
