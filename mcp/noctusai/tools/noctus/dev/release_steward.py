@@ -167,6 +167,54 @@ def _git_resolve_head(branch: str) -> str | None:
     return sha if out.returncode == 0 and re.fullmatch(r"[0-9a-f]{7,40}", sha) else None
 
 
+def git_landed_check(cwd: Path | str | None = None, base: str = "origin/dev") -> Callable[[str, str | None], dict[str, Any]]:
+    """Real seam for `StewardStore.landed_check`: is a delivery already in `base`?
+
+    Resolves refs/heads/<branch>, then refs/remotes/origin/<branch>, then `head_sha`; the first that
+    resolves is judged with `git cherry <base> <ref>` - zero '+' lines means every commit is already
+    in base (merged OR rebased/squashed). state: landed | pending | unresolvable (never silent).
+    `dev_sha` = the ref's own sha when it is an ancestor of base, else base's tip."""
+    def _git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], capture_output=True, text=True, timeout=30, check=False,
+                              cwd=str(cwd) if cwd else None)
+
+    def _rev(ref: str) -> str | None:
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            out = _git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+            sha = out.stdout.strip()
+            if out.returncode == 0 and re.fullmatch(r"[0-9a-f]{7,40}", sha):
+                return sha
+        return None
+
+    def check(branch: str, head_sha: str | None) -> dict[str, Any]:
+        try:
+            base_tip = _rev(base)
+            if not base_tip:
+                return {"state": "unresolvable", "reason": f"{base} not resolvable"}
+            sha = None
+            for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}", head_sha or ""):
+                sha = _rev(ref) if ref else None
+                if sha:
+                    break
+            if not sha:
+                return {"state": "unresolvable", "reason": f"neither {branch} nor head_sha resolve"}
+            cherry = _git("cherry", base, sha)
+            if cherry.returncode != 0:
+                return {"state": "unresolvable", "reason": (cherry.stderr or "git cherry failed").strip()[:200]}
+            if any(ln.startswith("+") for ln in cherry.stdout.splitlines()):
+                return {"state": "pending"}
+            anc = _git("merge-base", "--is-ancestor", sha, base_tip)
+            return {"state": "landed", "dev_sha": sha if anc.returncode == 0 else base_tip}
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"state": "unresolvable", "reason": str(exc)[:200]}
+    return check
+
+
+_ROLE_RE = re.compile(r"[A-Za-z0-9._:/-]+")
+_TOGETHER_RE = re.compile(r"\btogether\b|\btwo branches\b|\b2 branches\b", re.IGNORECASE)
+_FEAT_RE = re.compile(r"feat/[A-Za-z0-9._/-]*[A-Za-z0-9_]")
+
+
 # -- the store: lease + audit + outbox --------------------------------------
 
 class StewardStore:
@@ -181,12 +229,17 @@ class StewardStore:
                  pid_alive: Callable[[int | None], bool] = _pid_alive,
                  resolve_head: Callable[[str], str | None] | None = None,
                  default_ttl_s: int | None = None,
+                 landed_check: Callable[[str, str | None], dict[str, Any]] | None = None,
                  inline_gate: Callable[[str, str | None, str | None], dict[str, Any]] | None = None) -> None:
         self.root = Path(root) if root is not None else default_root()
         # Production (root=None -> ~/.noctus) runs the real gate; a store built on an explicit root
         # (tests, tooling) opts out unless it injects one - the gate reads the shared pointer ledger.
         self._inline_gate = inline_gate if inline_gate is not None else (
             None if root is None else (lambda _b, _r, _n: {"applicable": False}))
+        # Same posture as inline_gate: production runs the real `git cherry` check; an explicit-root
+        # store (tests) reports "pending" (unmeasured) unless it injects one.
+        self.landed_check = landed_check if landed_check is not None else (
+            git_landed_check() if root is None else (lambda _b, _h: {"state": "pending"}))
         self.clock = clock
         self.pid_alive = pid_alive
         self.resolve_head = resolve_head if resolve_head is not None else _git_resolve_head
@@ -203,6 +256,10 @@ class StewardStore:
     @property
     def outbox_path(self) -> Path:
         return self.root / "ship-requests.ndjson"
+
+    @property
+    def roles_path(self) -> Path:
+        return self.root / "release-steward-roles.json"
 
     @contextlib.contextmanager
     def _locked(self, name: str) -> Iterator[None]:
@@ -314,7 +371,9 @@ class StewardStore:
             "next": ("ANNOUNCE yourself to every peer now: ListAgents, then SendMessage each session "
                      "'I am the release steward; queue deliveries with release_steward action=request slug=<slug> "
                      "and keep building; I reply LANDED <dev sha> / EJECTED <reason> / DEPLOYED'. "
-                     "Then drain release_steward action=inbox."),
+                     "Then RE-MAP ROLES: ask each peer for its role and record it (release_steward action=role "
+                     "role=<role> name=<session>; action=roles lists them and flags dead sessions) - session "
+                     "names change on reboot, roles do not. Then drain release_steward action=inbox."),
         }
         if child_session:
             out["warning"] = ("this process looks like a dispatched subagent (CLAUDE_CODE_CHILD_SESSION=1); "
@@ -416,6 +475,7 @@ class StewardStore:
                     continue
                 state[slug] = {
                     "slug": slug, "branch": ev.get("branch"), "head_sha": ev.get("head_sha"),
+                    "branches": ev.get("branches") or [],
                     "products": ev.get("products") or [], "migrations": bool(ev.get("migrations")),
                     "notes": ev.get("notes"), "requester": ev.get("requester") or {},
                     "requested_at": ev["ts"], "status": "queued_for_steward",
@@ -434,7 +494,7 @@ class StewardStore:
                 branch: str | None = None, head_sha: str | None = None,
                 products: list[str] | None = None, migrations: bool = False,
                 notes: str | None = None, inline_reason: str | None = None,
-                inline_note: str | None = None) -> dict[str, Any]:
+                inline_note: str | None = None, branches: list[str] | None = None) -> dict[str, Any]:
         """NON-BLOCKING: file a delivery for the steward and return at once.
 
         Inline-cutoff gate (shadow): an over-cutoff delivery by an inline agent wants an
@@ -442,8 +502,17 @@ class StewardStore:
         slug = (slug or "").strip()
         if not slug or not re.fullmatch(r"[A-Za-z0-9._/-]+", slug):
             return _err("request needs slug=<slug> (the feat/<slug> name; letters, digits, . _ / -)")
-        branch = branch or f"feat/{slug}"
+        branches = [b.strip() for b in (branches or []) if b and b.strip()]
+        if branches and any(not re.fullmatch(r"[A-Za-z0-9._/-]+", b) for b in branches):
+            return _err("branches=[...] entries must be branch names (letters, digits, . _ / -)")
+        branch = branch or (branches[0] if branches else f"feat/{slug}")
         warnings: list[str] = []
+        if not branches and notes and (_TOGETHER_RE.search(notes)
+                                       or any(f != branch for f in _FEAT_RE.findall(notes))):
+            warnings.append("notes suggest a split delivery (together / two branches / a second feat/ name) but "
+                            "no branches=[...] was given: a split delivery filed as one branch lands half. "
+                            "Re-request with branches=[feat/a, feat/b] (ordered) so the steward merges them "
+                            "as ONE train and enqueues once")
         if not head_sha:
             head_sha = self.resolve_head(branch)
             if not head_sha:
@@ -455,6 +524,7 @@ class StewardStore:
                 "ts": _iso(self.clock()), "event": "request", "slug": slug, "branch": branch,
                 "head_sha": head_sha, "products": products or [], "migrations": bool(migrations),
                 "notes": notes, "requester": {"session_id": session_id, "name": name or _short(session_id)},
+                "branches": branches,
             })
             after = self.requests()[slug]
         holder = self.public_holder()
@@ -498,21 +568,185 @@ class StewardStore:
             rows = [r for r in rows if r["status"] != "deployed"]
         return {"ok": True, "status": "mine", "requests": sorted(rows, key=lambda r: r["requested_at"])}
 
+    def _classify(self, r: dict[str, Any]) -> dict[str, Any]:
+        """landed | pending | unresolvable for one request (a train is landed only when ALL its branches are)."""
+        names = r.get("branches") or [r.get("branch") or f"feat/{r['slug']}"]
+        results = []
+        for b in names:
+            try:
+                results.append(self.landed_check(b, r.get("head_sha") if len(names) == 1 else None))
+            except Exception as exc:  # noqa: BLE001 - a failed probe is surfaced, never read as "landed"
+                results.append({"state": "unresolvable", "reason": str(exc)[:200]})
+        states = [x.get("state") for x in results]
+        if "unresolvable" in states:
+            return {"state": "unresolvable", "reason": next(x.get("reason") for x in results
+                                                            if x.get("state") == "unresolvable")}
+        if all(st == "landed" for st in states):
+            return {"state": "landed", "dev_sha": results[-1].get("dev_sha")}
+        return {"state": "pending"}
+
+    def _partition(self, pending: list[dict[str, Any]]) -> tuple[list, list, list]:
+        todo, landed, unres = [], [], []
+        for r in pending:
+            c = self._classify(r)
+            if c["state"] == "landed":
+                landed.append({**r, "landed_detected": c.get("dev_sha") or "origin/dev"})
+            else:
+                todo.append(r)
+                if c["state"] == "unresolvable":
+                    unres.append({**r, "unresolvable_reason": c.get("reason")})
+        return todo, landed, unres
+
     def inbox(self, include_done: bool = False) -> dict[str, Any]:
         rows = list(self.requests().values())
-        pending = sorted((r for r in rows if r["status"] == "queued_for_steward"), key=lambda r: r["requested_at"])
+        queued = sorted((r for r in rows if r["status"] == "queued_for_steward"), key=lambda r: r["requested_at"])
+        pending, already_landed, unresolvable = self._partition(queued)
         shown = sorted(rows, key=lambda r: r["requested_at"]) if include_done else pending
         grouped: dict[str, list[str]] = {}
         for r in shown:
             grouped.setdefault(r["requester"].get("name") or _short(r["requester"].get("session_id")), []).append(r["slug"])
-        return {
+        drain: list[str] = []
+        for r in pending:
+            if len(r.get("branches") or []) > 1:
+                names = ",".join(b.removeprefix("feat/") for b in r["branches"])
+                drain.append(f"task_branch action=train slug=train-{r['slug']} slugs=[{names}] confirm=True")
+                drain.append(f"task_branch action=enqueue slug=train-{r['slug']} confirm=True")
+                self.audit("train_drain", slug=r["slug"], branches=r["branches"])
+            else:
+                drain.append(f"task_branch action=enqueue slug={r['slug']} confirm=True")
+        out: dict[str, Any] = {
             "ok": True, "status": "inbox", "pending": len(pending), "by_requester": grouped,
-            "requests": shown,
-            "drain": [f"task_branch action=enqueue slug={r['slug']} confirm=True" for r in pending],
-            "next": ("drain ALL pending in one pass (enqueue each so riders batch in the merge queue), ack each "
+            "requests": shown, "already_landed": already_landed, "unresolvable": unresolvable,
+            "drain": drain,
+            "next": ("drain ALL pending in one pass (enqueue each so riders batch in the merge queue; a multi-branch "
+                     "delivery is ONE train then ONE enqueue), ack each "
                      "as enqueued, ack landed/ejected/deployed as they resolve, and SendMessage each requester "
                      "LANDED <dev sha> / EJECTED <reason> / DEPLOYED") if pending else "inbox empty",
         }
+        if already_landed:
+            out["next"] += (f" | {len(already_landed)} request(s) are ALREADY in origin/dev (git cherry): ack them "
+                            "landed in one call with release_steward action=reconcile confirm=True")
+        if unresolvable:
+            out["next"] += (f" | {len(unresolvable)} request(s) could not be resolved to a branch/sha: "
+                            "ask the requester to re-request with head_sha=")
+        return out
+
+    def reconcile(self, session_id: str | None, confirm: bool = False) -> dict[str, Any]:
+        """Ack every request whose commits are already in origin/dev as `landed` (steward-only)."""
+        with self._locked("release-steward"):
+            _cur, err = self._require_holder(session_id, "reconcile")
+        if err:
+            return err
+        queued = [r for r in self.requests().values() if r["status"] == "queued_for_steward"]
+        _todo, landed, _unres = self._partition(sorted(queued, key=lambda r: r["requested_at"]))
+        slugs = [r["slug"] for r in landed]
+        if not confirm:
+            return {"ok": True, "status": "planned", "would_ack": slugs,
+                    "next": "re-run with confirm=True to ack them landed" if slugs else "nothing already landed"}
+        for r in landed:
+            self.ack(session_id, r["slug"], "landed", dev_sha=r["landed_detected"], note="reconciled: already in origin/dev")
+        if slugs:
+            self.audit("reconcile", session_id=session_id, slugs=slugs)
+        return {"ok": True, "status": "reconciled", "acked": slugs,
+                "next": "SendMessage each requester LANDED" if slugs else "nothing already landed"}
+
+    # roles (durable ROLE -> session map: names change on reboot, roles do not)
+    def _read_roles(self) -> dict[str, dict[str, Any]]:
+        try:
+            doc = json.loads(self.roles_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError):
+            return {}
+        return doc if isinstance(doc, dict) else {}
+
+    def _write_roles(self, roles: dict[str, dict[str, Any]]) -> None:
+        tmp = self.roles_path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(roles, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, self.roles_path)
+
+    def _role_state(self, row: dict[str, Any]) -> str:
+        if self.clock() - float(row.get("heartbeat_ts") or 0) > self.default_ttl_s:
+            return "stale"
+        if not self.pid_alive(row.get("claude_pid")):
+            return "stale"
+        return "live"
+
+    def role_set(self, session_id: str | None, role: str, name: str | None = None,
+                 claude_pid: int | None = None, to_session_id: str | None = None) -> dict[str, Any]:
+        role = (role or "").strip()
+        if not role or not _ROLE_RE.fullmatch(role):
+            return _err("role needs role=<role> (letters, digits, . _ : / -), e.g. agents | products/sw | "
+                        "assistant | branch-steward:<branch>")
+        if role == "dev-steward":
+            return _err("dev-steward is derived from the steward lease (release_steward action=claim), not settable")
+        if role.startswith("branch-steward:") and not role.split(":", 1)[1]:
+            return _err("branch-steward needs a branch: role=branch-steward:<branch>")
+        target = to_session_id or session_id
+        if not target:
+            return _err(f"no session identity ({SESSION_ENV} unset)")
+        other = bool(to_session_id) and to_session_id != session_id
+        if other:
+            with self._locked("release-steward"):
+                _cur, err = self._require_holder(session_id, "role (for another session)")
+            if err:
+                return err
+        now = self.clock()
+        row = {"session_id": target, "name": name or _short(target), "set_at": _iso(now), "heartbeat_ts": now,
+               "set_by": session_id, "claude_pid": None if other else claude_pid}
+        with self._locked("release-steward-roles"):
+            roles = self._read_roles()
+            previous = roles.get(role)
+            roles[role] = row
+            self._write_roles(roles)
+        self.audit("role_set", role=role, session_id=target, name=row["name"], set_by=session_id,
+                   previous=(previous or {}).get("name"))
+        return {"ok": True, "status": "role_set", "role": {**row, "state": "live"}}
+
+    def role_clear(self, session_id: str | None, role: str) -> dict[str, Any]:
+        with self._locked("release-steward-roles"):
+            roles = self._read_roles()
+            row = roles.get(role)
+            if row is None:
+                return _err(f"no role {role!r} is registered")
+            if row.get("session_id") != session_id:
+                with self._locked("release-steward"):
+                    _cur, err = self._require_holder(session_id, "role clear (someone else's)")
+                if err:
+                    return err
+            roles.pop(role)
+            self._write_roles(roles)
+        self.audit("role_clear", role=role, session_id=session_id, was=row.get("name"))
+        return {"ok": True, "status": "role_cleared", "role": role}
+
+    def role_touch(self, session_id: str | None) -> None:
+        """Best-effort liveness refresh of the roles this session holds (every action calls it)."""
+        if not session_id:
+            return
+        with contextlib.suppress(Exception), self._locked("release-steward-roles"):
+            roles = self._read_roles()
+            hit = False
+            for row in roles.values():
+                if row.get("session_id") == session_id:
+                    row["heartbeat_ts"], hit = self.clock(), True
+            if hit:
+                self._write_roles(roles)
+
+    def roles(self) -> dict[str, Any]:
+        out: dict[str, dict[str, Any]] = {}
+        stale: list[str] = []
+        lease, state = self.holder()
+        if lease and not lease.get("corrupt"):
+            out["dev-steward"] = {"session_id": lease.get("session_id"), "name": lease.get("session_name"),
+                                  "derived": True, "state": state}
+            if state != "live":
+                stale.append("dev-steward")
+        for role, row in sorted(self._read_roles().items()):
+            st = self._role_state(row)
+            out[role] = {**{k: v for k, v in row.items() if k != "heartbeat_ts"}, "state": st}
+            if st != "live":
+                stale.append(role)
+        return {"ok": True, "status": "roles", "roles": out, "stale_roles": stale,
+                "next": ("stale roles: the session is gone - ask who took it over (ListAgents) and re-map with "
+                         "release_steward action=role") if stale else "all mapped roles live"}
 
     def ack(self, session_id: str | None, slug: str, outcome: str, dev_sha: str | None = None,
             note: str | None = None) -> dict[str, Any]:
@@ -537,11 +771,16 @@ class StewardStore:
     def status(self, session_id: str | None) -> dict[str, Any]:
         lease, state = self.holder()
         reqs = list(self.requests().values())
+        queued = [r for r in reqs if r["status"] == "queued_for_steward"]
+        _todo, landed, unres = self._partition(queued)
+        roles = self.roles()
         return {
             "ok": True, "status": "status", "state": state, "steward": self.public_holder(),
             "i_am_steward": bool(lease and state == "live" and session_id and lease.get("session_id") == session_id),
             "session_id": session_id, "ttl_default_s": self.default_ttl_s,
-            "outbox": {"pending": sum(1 for r in reqs if r["status"] == "queued_for_steward"),
+            "roles": roles["roles"], "stale_roles": roles["stale_roles"],
+            "outbox": {"pending": len(queued) - len(landed), "already_landed": len(landed),
+                       "unresolvable": len(unres),
                        "enqueued": sum(1 for r in reqs if r["status"] == "enqueued")},
             "mine": self.mine(session_id)["requests"],
             "next": ("no live steward: ListAgents; the leader with shipping work claims + announces; everyone "
@@ -806,12 +1045,15 @@ def tool_refusal(tool_name: str, args: dict[str, Any], *, store: StewardStore | 
 
 # -- the MCP tool + CLI entry -----------------------------------------------
 
-ACTIONS = ("status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack")
+ACTIONS = ("status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack",
+           "role", "roles", "reconcile")
 
 
 def run_action(action: str, session_id: str | None, *, store: StewardStore | None = None,
                claude_pid: int | None = None, child_session: bool = False, **kw: Any) -> dict[str, Any]:
     store = store or StewardStore()
+    if action != "status":
+        store.role_touch(session_id)
     if action == "status":
         return store.status(session_id)
     if action == "mine":
@@ -829,9 +1071,18 @@ def run_action(action: str, session_id: str | None, *, store: StewardStore | Non
         return store.request(session_id, kw.get("slug") or "", name=kw.get("name"), branch=kw.get("branch"),
                              head_sha=kw.get("head_sha"), products=kw.get("products"),
                              migrations=bool(kw.get("migrations")), notes=kw.get("notes"),
-                             inline_reason=kw.get("inline_reason"), inline_note=kw.get("inline_note"))
+                             inline_reason=kw.get("inline_reason"), inline_note=kw.get("inline_note"), branches=kw.get("branches"))
     if action == "inbox":
         return store.inbox(include_done=bool(kw.get("include_done")))
+    if action == "roles":
+        return store.roles()
+    if action == "role":
+        if (kw.get("op") or "set") == "clear":
+            return store.role_clear(session_id, kw.get("role") or "")
+        return store.role_set(session_id, kw.get("role") or "", name=kw.get("name"), claude_pid=claude_pid,
+                              to_session_id=kw.get("to_session_id"))
+    if action == "reconcile":
+        return store.reconcile(session_id, confirm=bool(kw.get("confirm")))
     if action == "ack":
         return store.ack(session_id, kw.get("slug") or "", kw.get("outcome") or "", kw.get("dev_sha"), kw.get("notes"))
     return _err(f"unknown action {action!r} ({'|'.join(ACTIONS)})")
@@ -851,7 +1102,12 @@ def register(server) -> None:
             "inline_reason=orchestrator_owned|single_coherent_voice|shared_state|owner_directed + inline_note, else a "
             "warning names the specialists to dispatch) | mine (my requests' outcomes) | inbox [include_done] (pending, grouped by "
             "requester, with the batched drain list) | ack slug= outcome=enqueued|landed|ejected|deployed [dev_sha= "
-            "notes=] (steward). Identity = the server's CLAUDE_CODE_SESSION_ID (one MCP server per session). "
+            "notes=] (steward) | role role=<role> [name= op=set|clear to_session_id=] (durable ROLE->session map: dev-steward "
+            "is derived from the lease, also branch-steward:<branch>, agents, products/sw, ...; any session sets its own, "
+            "steward sets others') | roles (the map, stale/dead sessions flagged) | reconcile [confirm=True] (steward: ack "
+            "every inbox request already in origin/dev - `git cherry` - as landed; inbox/status list them as already_landed, "
+            "not drain) ; request also takes branches=[feat/a, feat/b] (ordered; the drain emits ONE task_branch train + ONE "
+            "enqueue, never separate enqueues for a split delivery). Identity = the server's CLAUDE_CODE_SESSION_ID (one MCP server per session). "
             "Files: ~/.noctus/release-steward.json|.ndjson, ship-requests.ndjson. The PreToolUse hook "
             "claude-guard-release-steward.py denies steward-class calls from non-holders and names the holder; the "
             "tools re-check (status refused_not_steward). Override: NOC_STEWARD_OVERRIDE=<reason of 10+ chars>, "
@@ -864,14 +1120,16 @@ def register(server) -> None:
                          head_sha: str | None = None, products: list[str] | None = None,
                          migrations: bool = False, notes: str | None = None, outcome: str | None = None,
                          dev_sha: str | None = None, include_done: bool = False,
-                         inline_reason: str | None = None, inline_note: str | None = None) -> dict:
+                         inline_reason: str | None = None, inline_note: str | None = None, branches: list[str] | None = None,
+                         role: str | None = None, op: str | None = None, confirm: bool = False) -> dict:
         return run_action(
             action, os.environ.get(SESSION_ENV), claude_pid=os.getppid(),
             child_session=os.environ.get("CLAUDE_CODE_CHILD_SESSION") == "1",
             name=name, reason=reason, ttl_s=ttl_s, to_session_id=to_session_id, to_name=to_name, slug=slug,
             branch=branch, head_sha=head_sha, products=products, migrations=migrations, notes=notes,
             outcome=outcome, dev_sha=dev_sha, include_done=include_done,
-            inline_reason=inline_reason, inline_note=inline_note)
+            inline_reason=inline_reason, inline_note=inline_note, branches=branches,
+            role=role, op=op, confirm=confirm)
 
 
 __all__ = ["StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",

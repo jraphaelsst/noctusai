@@ -151,7 +151,31 @@ python mcp/noctusai/cli.py --release-steward claim --steward-name <name> --stewa
 `ListAgents` and `SendMessage` the announcement. `--steward-session-id` overrides
 `$CLAUDE_CODE_SESSION_ID` for an operator acting for another session.
 
-## 8 · Related
+## 8 · Reboot / multi-steward (2026-11-09/10)
+
+After a machine reboot sessions return under NEW names, so a name is not an identity — a ROLE is.
+
+- **Role registry** (`release_steward action=role role=<role> [name=] [op=clear] [to_session_id=]` · `action=roles`;
+  `~/.noctus/release-steward-roles.json`). Any session sets its own role; setting another session's is
+  steward-only. `dev-steward` is DERIVED from the lease (not settable); `branch-steward:<branch>` is the second kind
+  (below); others are free (`agents`, `sw-product`, `assistant`). `status`/`roles` flag a role whose session is
+  dead/stale (pid gone or no heartbeat past the lease TTL; every action refreshes the caller's roles). `claim`'s
+  `next` says: announce AND re-map roles.
+- **Dev steward vs branch steward.** The dev steward holds the lease and is the only one touching mq/main/VPS. A
+  branch steward (e.g. `branch-steward:feat/assistant-chatbot`) merges its sub-slices into its integration branch and
+  DELIVERS that branch to the dev steward with `action=request`; it never enqueues or deploys.
+- **Consent is typed in the session that runs the action** (`KB § PATTERNS/devops/ship-consent-riders.md`): tell the
+  owner the ROLE ("the dev steward"), never a session name that a reboot invalidates.
+- **Parked branches must not hold a migration number**: renumber (`next_migration_number`) before reviving one.
+- **Inbox auto-reconcile.** `inbox`/`status` run `git cherry origin/dev <branch|origin/<branch>|head_sha>`; zero `+`
+  lines puts the request in `already_landed` (not `drain`); unresolvable ones are listed in `unresolvable`, never
+  dropped. `action=reconcile confirm=True` (steward) acks all already-landed in one call.
+- **Split delivery.** `request branches=[feat/a, feat/b]` (ordered): `drain` emits ONE `task_branch action=train` then
+  ONE enqueue of the train. A request whose notes say "together"/"two branches"/a second `feat/` name without
+  `branches=` returns a warning.
+- Telemetry: `role_set|role_clear|reconcile|train_drain` rows in `release-steward.ndjson`.
+
+## 9 · Related
 
 `KB § PATTERNS/devops/merge-queue.md` (the queue this role feeds; §4 session
 rules) · `KB § PATTERNS/devops/hardware-admission-budget.md` (the machine-wide
