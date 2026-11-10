@@ -63,3 +63,7 @@ A clone that hasn't registered the drivers degrades to the default text merge (t
 4. Codify here + memory; keep `.gitattributes` ↔ `register-merge-drivers.sh` ↔ this doc in sync.
 
 Related: `KB § PATTERNS/common/branching.md` (integrate cleanly) · `KB § PATTERNS/common/methodology-execution-discipline.md` (recurring gate → root fix) · `KB § PATTERNS/architect/noc-graph.md` (committed `graph.json` + merge driver, same family).
+
+## `.merge_file_*` scratch never lands in the primary (2026-11-09)
+
+git creates `.merge_file_XXXXXX` scratch for a custom driver in the **cwd of the process running the merge** — including `git merge-tree --write-tree` trial merges, which run the drivers too. The drivers themselves are fine (they write only `%A` and use the invoking tree's toplevel); the leak was toolkit trial merges (`task_branch landed`/cleanup `_content_on_dev`, `release` cut/manifest) running with the PRIMARY as cwd, so the post-hoc primary guard blamed whichever session ran a Bash call meanwhile. Rules: trial merges run from inside the git dir (`_trial_merge_tree`, `release._default_run_local`), never the primary; the guard (`is_git_merge_scratch`) never attributes the scratch to a session and logs one `git_merge_scratch_ignored` row to `~/.noctus/primary-guard-events.ndjson`; `noctus.dev.mole sweep` removes stale ones (>10 min).
