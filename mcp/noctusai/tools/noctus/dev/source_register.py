@@ -35,9 +35,17 @@ SEED_RELPATH = Path("KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/source-register-seed
 TIERS = ("T1", "T2", "T3", "T4")
 OUTCOMES = ("graded", "confirmed", "refuted", "contested", "unverified", "unreachable")
 STALE_DAYS = 180
+# Sub-authorities: a path on a shared host that is its own authority keeps ``host/path``
+# as the key (a regulator on gov.br, the legal pages of a product site). Everything else
+# reduces to the host. Extend this list in the same change as the first event that needs it.
+SUB_AUTHORITIES = (
+    "gov.br/anpd", "gov.br/receitafederal",
+    "whatsapp.com/legal", "facebook.com/legal",
+)
+EVENT_FIELDS = ("source", "outcome", "tier", "label", "claim", "evidence", "question", "note", "by")
 
 Reader = Callable[[], tuple[str, str | None]]
-Writer = Callable[[dict[str, Any]], dict[str, Any]]
+Writer = Callable[[list[dict[str, Any]]], dict[str, Any]]
 
 
 # ── pure core ────────────────────────────────────────────────────────────────
@@ -46,10 +54,17 @@ def normalize_source(source: str) -> str:
     lower-cased, without a trailing slash."""
     s = (source or "").strip()
     if "://" in s:
-        host = (urlparse(s).hostname or "").lower()
+        u = urlparse(s)
+        key = (u.hostname or "").lower() + (u.path or "").lower().rstrip("/")
     else:
-        host = s.lower().rstrip("/")
-    return host[4:] if host.startswith("www.") else host
+        key = s.lower().rstrip("/")
+    key = key[4:] if key.startswith("www.") else key
+    if key.startswith("web.facebook.com/"):
+        key = key[4:]
+    for sub in SUB_AUTHORITIES:
+        if key == sub or key.startswith(sub + "/"):
+            return sub
+    return key.split("/", 1)[0]
 
 
 def build_event(*, source: str, outcome: str, tier: str = "", label: str = "",
@@ -162,13 +177,13 @@ def _default_reader() -> tuple[str, str | None]:
     return seed + "\n" + live, errs
 
 
-def _default_writer(row: dict[str, Any]) -> dict[str, Any]:
+def _default_writer(rows: list[dict[str, Any]]) -> dict[str, Any]:
     from settings import LEDGER_ROOT
 
     from ._ledger_store import append_rows
 
-    return append_rows(LEDGER_NAME, Path(LEDGER_ROOT) / "project-history" / LEDGER_NAME, [row],
-                       message=f"source-register: {row['outcome']} {row['source']}")
+    return append_rows(LEDGER_NAME, Path(LEDGER_ROOT) / "project-history" / LEDGER_NAME, rows,
+                       message=f"source-register: {len(rows)} event(s)")
 
 
 def _is_write(bound: dict[str, Any]) -> bool:
@@ -191,6 +206,7 @@ def source_register(
     question: str = "",
     note: str = "",
     by: str = "",
+    events: list[dict[str, Any]] | str | None = None,
     confirm: bool = False,
     reader: Reader | None = None,
     writer: Writer | None = None,
@@ -198,16 +214,31 @@ def source_register(
     """``read``: folded rows matching ``query`` (substring of source/label/notes) and
     ``tier_filter``. ``log``: append one event; ``confirm=False`` plans only."""
     if action == "log":
-        try:
-            row = build_event(source=source, outcome=outcome, tier=tier, label=label, claim=claim,
-                              evidence=evidence, question=question, note=note, by=by)
-        except ValueError as exc:
-            return {"ok": False, "status": "invalid", "error": str(exc)}
+        if isinstance(events, str):
+            try:
+                events = json.loads(events) if events.strip() else None
+            except json.JSONDecodeError as exc:
+                return {"ok": False, "status": "invalid", "error": f"events is not JSON: {exc}"}
+        specs = list(events) if events else [dict(source=source, outcome=outcome, tier=tier, label=label,
+                                                  claim=claim, evidence=evidence, question=question,
+                                                  note=note, by=by)]
+        rows, errors = [], []
+        for i, spec in enumerate(specs):
+            try:
+                kw = {k: str(spec.get(k, "") or "") for k in EVENT_FIELDS}
+                kw["by"] = kw["by"] or by
+                rows.append(build_event(**kw))
+            except (ValueError, AttributeError) as exc:
+                errors.append(f"event {i}: {exc}")
+        if errors:  # all-or-nothing: a batch with one bad row writes nothing
+            return {"ok": False, "status": "invalid", "error": "; ".join(errors)}
+        brief = [f"{r['outcome']} {r['source']}" + (f" {r['tier']}" if r.get("tier") else "") for r in rows]
         if not confirm:
-            return {"ok": True, "status": "planned", "row": row}
-        result = (writer or _default_writer)(row)
+            return {"ok": True, "status": "planned", "count": len(rows), "events": brief, "rows": rows}
+        result = (writer or _default_writer)(rows)
         pending = result.get("status") == "pending"
-        return {"ok": True, "status": "spooled" if pending else "applied", "row": row, "store": result}
+        return {"ok": True, "status": "spooled" if pending else "applied", "count": len(rows),
+                "events": brief, "store_status": result.get("status", "")}
     if action != "read":
         return {"ok": False, "status": "invalid", "error": f"action must be 'read' or 'log', got {action!r}"}
     text, err = (reader or _default_reader)()
@@ -235,8 +266,9 @@ def register(server) -> None:
             "Source-reliability register for research (skill noc-research): action='read' returns one folded "
             "row per source (tier T1-T4, counts of confirmed/refuted/contested/unverified/unreachable, standing "
             "new|proven|watch|demote|hard-to-reach, last_seen, stale) filtered by query/tier_filter; "
-            "action='log' appends one event (source, outcome, tier, claim, evidence, question, note) to the "
-            "ledgers store - WRITE, confirm=False returns the planned row. Read it before researching, log after. "
+            "action='log' appends one event (source, outcome, tier, claim, evidence, question, note) or a batch "
+            "via events=[{...}, ...] (all-or-nothing) to the ledgers store - WRITE, confirm=False returns the "
+            "planned rows. Read it before researching, log after. CLI: --source-register-<arg>. "
             "KB § PATTERNS/common/research-method.md"
         ),
     )
@@ -254,13 +286,14 @@ def register(server) -> None:
         question: str = "",
         note: str = "",
         by: str = "",
+        events: list[dict] | None = None,
         confirm: bool = False,
         allow_stale_toolkit: bool = False,
     ) -> dict:
         return source_register(
             action, query=query, tier_filter=tier_filter, limit=limit, source=source, outcome=outcome,
             tier=tier, label=label, claim=claim, evidence=evidence, question=question, note=note, by=by,
-            confirm=confirm, allow_stale_toolkit=allow_stale_toolkit,
+            events=events, confirm=confirm, allow_stale_toolkit=allow_stale_toolkit,
         )
 
 

@@ -26,8 +26,15 @@ class TestNormalize:
     def test_url_becomes_host_without_www(self):
         assert mod.normalize_source("https://www.Planalto.gov.br/ccivil_03/leis/l13709.htm") == "planalto.gov.br"
 
-    def test_bare_key_with_path_is_kept(self):
+    def test_sub_authority_keeps_host_path(self):
         assert mod.normalize_source("gov.br/anpd/") == "gov.br/anpd"
+        assert mod.normalize_source("https://www.gov.br/anpd/pt-br/assuntos") == "gov.br/anpd"
+        assert mod.normalize_source("https://www.whatsapp.com/legal/terms-of-service") == "whatsapp.com/legal"
+        assert mod.normalize_source("https://web.facebook.com/legal/Meta-Terms") == "facebook.com/legal"
+
+    def test_other_paths_reduce_to_host(self):
+        assert mod.normalize_source("arxiv.org/abs/2506.07962") == "arxiv.org"
+        assert mod.normalize_source("https://www.gov.br/economia/x") == "gov.br"
 
 
 class TestBuildEvent:
@@ -96,13 +103,27 @@ class TestTool:
         written = []
         out = mod.source_register("log", source="https://arxiv.org/abs/1", outcome="graded", tier="T1",
                                   writer=lambda r: written.append(r) or {"status": "published"})
-        assert out["status"] == "planned" and written == [] and out["row"]["source"] == "arxiv.org"
+        assert out["status"] == "planned" and written == [] and out["rows"][0]["source"] == "arxiv.org"
+        assert out["events"] == ["graded arxiv.org T1"]
 
     def test_log_confirm_writes_through_the_seam(self):
         written = []
         out = mod.source_register("log", source="arxiv.org", outcome="refuted", claim="c", evidence="e",
                                   confirm=True, writer=lambda r: written.append(r) or {"status": "pending"})
-        assert out["status"] == "spooled" and written[0]["outcome"] == "refuted"
+        assert out["status"] == "spooled" and written[0][0]["outcome"] == "refuted"
+        assert "rows" not in out and out["store_status"] == "pending"  # quiet on apply
+
+    def test_batch_is_all_or_nothing(self):
+        written = []
+        good = [{"source": "a.org", "outcome": "graded", "tier": "T2"},
+                {"source": "b.org", "outcome": "unreachable", "note": "404"}]
+        out = mod.source_register("log", events=good, by="t", confirm=True,
+                                  writer=lambda rs: written.append(rs) or {"status": "published"})
+        assert out["count"] == 2 and len(written[0]) == 2 and written[0][1]["by"] == "t"
+        bad = good + [{"source": "c.org", "outcome": "confirmed"}]
+        out = mod.source_register("log", events=json.dumps(bad), confirm=True,
+                                  writer=lambda rs: written.append(rs) or {})
+        assert out["ok"] is False and "event 2" in out["error"] and len(written) == 1
 
     def test_invalid_log_is_not_ok(self):
         assert mod.source_register("log", source="x.org", outcome="nope")["ok"] is False
