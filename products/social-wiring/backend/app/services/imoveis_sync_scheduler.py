@@ -302,6 +302,7 @@ def configure() -> None:
     time, before any ``start_scheduler()`` fires.
     """
     segundos = int(_intervalo().total_seconds())
+    # poll-budget: every 2 h; 1 listar signal call/tick/org (+ detalhes only for changed codes); worst 12 listar + 1 daily vitrine re-read (~vitrine size) per org/day; idle=fixed
     seed_scheduler.register(
         _JOB_NAME,
         imoveis_vista_refresh_job,

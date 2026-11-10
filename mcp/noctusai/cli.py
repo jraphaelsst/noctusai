@@ -216,7 +216,9 @@ def build_parser() -> argparse.ArgumentParser:
     the REAL parser in a test, without triggering `main()`'s dispatch (which
     would actually RUN the tool). `main()` itself calls this too — one
     parser, never two definitions to keep in sync."""
-    parser = argparse.ArgumentParser(description="NoctusAI — platform dev toolkit")
+    # allow_abbrev=False: an unambiguous prefix (`--deploy-image-conf`) used to run as the full flag and slip past the
+    # release-steward CLI gates, which match exact flags (2026-11-10).
+    parser = argparse.ArgumentParser(description="NoctusAI — platform dev toolkit", allow_abbrev=False)
     parser.add_argument("--validate", action="store_true", help="Check seed compliance")
     parser.add_argument("--check-phase-state", action="store_true", help="Check §6 ↔ §11 phase-state consistency across PROJECT.md files. Exits 1 on any high-severity issue. Used by the pre-commit hook to block commits that ship mismatch.")
     parser.add_argument("--refs", metavar="PATTERN", help="Find every reference to PATTERN (literal string) across CLAUDE.md / KB / projects / mcp / seed / products. Replaces the manual `grep -rln` ritual.")
