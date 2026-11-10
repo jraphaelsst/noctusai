@@ -90,6 +90,28 @@ class TestAccessTierRoutes:
         unlimited = good.replace("@limiter.limit('5/minute')\n", "")
         assert "rate limit" in check_access_tier_routes(_tree(tmp_path / "u", unlimited))[0]["issue"]
 
+    def test_token_link_helper_named_only_in_a_docstring_or_string_is_unclear(self, tmp_path):
+        """P2-1: text matching let `resolve_token_link` in a docstring / string pass; the keeper walks the AST."""
+        deco = "@router.get('/approve/{t}')\n@limiter.limit('5/minute')\n@access_tier('public', reason='x', category='token-link')\n"
+        for i, body in enumerate((
+            'def approve(t):\n    """Uses resolve_token_link."""\n    return t\n',
+            'def approve(t):\n    note = "resolve_token_link(t, fetch)"\n    return note\n',
+            "def approve(t):\n    resolve_token_link('literal', fetch)\n",       # not the path parameter
+            "def approve(t):\n    resolve_token_link(other, fetch)\n",           # not the path parameter
+        )):
+            issues = check_access_tier_routes(_tree(tmp_path / str(i), _HEAD + deco + body))
+            assert issues and "path parameter" in issues[0]["issue"], body
+        ok = _HEAD + deco + "def approve(t):\n    return resolve_token_link(t, fetch)\n"
+        assert check_access_tier_routes(_tree(tmp_path / "ok", ok)) == []
+        kw = _HEAD + deco + "def approve(t):\n    return resolve_token_link(token=t, fetch=fetch)\n"
+        assert check_access_tier_routes(_tree(tmp_path / "kw", kw)) == []
+
+    def test_token_link_rate_limit_must_be_a_decorator_call(self, tmp_path):
+        src = _HEAD + "@router.get('/approve/{t}')\n@access_tier('public', reason='x', category='token-link')\ndef approve(t):\n    limiter = 1  # rate limit\n    return resolve_token_link(t, fetch)\n"
+        assert "rate limit" in check_access_tier_routes(_tree(tmp_path, src))[0]["issue"]
+        shared = _HEAD + "@router.get('/approve/{t}')\n@limiter.shared_limit('5/minute', scope='x')\n@access_tier('public', reason='x', category='token-link')\ndef approve(t):\n    return resolve_token_link(t, fetch)\n"
+        assert check_access_tier_routes(_tree(tmp_path / "s", shared)) == []
+
     def test_token_link_write_needs_no_captcha(self, tmp_path):
         src = _HEAD + "@router.post('/approve/{t}')\n@limiter.limit('5/minute')\n@access_tier('public', reason='x', category='token-link')\ndef approve(t):\n    resolve_token_link(t, fetch)\n"
         assert check_access_tier_routes(_tree(tmp_path, src)) == []

@@ -72,6 +72,41 @@ class TestPublicRateLimits:
         finally:
             restore_license_gate(before)
 
+    def test_capture_is_503_when_no_license_gate_is_configured(self, client):
+        """enforce_license is a silent no-op without a gate; a public write must fail CLOSED instead (P3-2)."""
+        from noctusai_lib.domain.licensing import configure_license_gate, get_license_gate, restore_license_gate
+
+        before = get_license_gate()
+        configure_license_gate(None)  # removes the gate
+        try:
+            client.mock_supabase.set_table_data("leads", [])
+            assert client.raw().post(f"/api/capture/{ORG}", json={"name": "x"}).status_code == 503
+            assert client.mock_supabase.table("leads").inserted_payloads == []
+        finally:
+            restore_license_gate(before)
+
+    # --- hidden honeypot (owner decision 2026-11-10) -------------------------------------------------------------------
+
+    def test_an_empty_honeypot_captures_as_before_and_is_not_stored_as_a_field(self, client):
+        mock = client.mock_supabase
+        mock.set_table_data("leads", [])
+        mock.set_table_data("lead_stages", [])
+        r = client.raw().post(f"/api/capture/{ORG}", json={"name": "Ana", "hp_website": ""})
+        assert r.status_code == 201
+        inserted = mock.table("leads").inserted_payloads
+        assert len(inserted) == 1 and inserted[0]["name"] == "Ana"
+        assert "hp_website" not in inserted[0]["custom_fields"]
+
+    def test_a_filled_honeypot_for_an_org_without_orbity_is_still_404(self, client):
+        from noctusai_lib.domain.licensing import FakeLicenseChecker, configure_license_gate, get_license_gate, restore_license_gate
+
+        before = get_license_gate()
+        configure_license_gate("orbity", FakeLicenseChecker(allow_all=False, licensed=set()))
+        try:
+            assert client.raw().post(f"/api/capture/{ORG}", json={"name": "x", "hp_website": "spam"}).status_code == 404
+        finally:
+            restore_license_gate(before)
+
     def test_capture_is_503_when_the_license_check_is_down(self, client):
         from noctusai_lib.domain.licensing import FakeLicenseChecker, configure_license_gate, get_license_gate, restore_license_gate
 

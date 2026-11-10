@@ -410,11 +410,37 @@ class TestPublishedLinkExpiry:
         svc.create_report({"name": "R", "period_start": "2026-01-01", "period_end": "2026-01-31", "status": "published"})
         assert db.table("reports").inserted_payloads[-1]["expires_at"]
 
-    def test_an_explicit_expiry_is_kept(self):
+    def test_an_expiry_ten_years_out_is_clamped_to_90_days_on_create(self):
+        from datetime import timedelta
+
         db, svc = _svc([])
         svc.create_report({"name": "R", "period_start": "2026-01-01", "period_end": "2026-01-31", "status": "published",
-                           "expires_at": "2099-01-01T00:00:00+00:00"})
-        assert db.table("reports").inserted_payloads[-1]["expires_at"] == "2099-01-01T00:00:00+00:00"
+                           "expires_at": (datetime.now(timezone.utc) + timedelta(days=3650)).isoformat()})
+        got = datetime.fromisoformat(db.table("reports").inserted_payloads[-1]["expires_at"])
+        assert abs((got - (datetime.now(timezone.utc) + timedelta(days=90))).total_seconds()) < 60
+
+    def test_an_expiry_ten_years_out_is_clamped_to_90_days_on_update(self):
+        from datetime import timedelta
+
+        row = _report(status="published", expires_at="2026-12-01T00:00:00+00:00")
+        db, svc = _svc([row])
+        svc.update_report(row["id"], {"expires_at": (datetime.now(timezone.utc) + timedelta(days=3650)).isoformat()})
+        got = datetime.fromisoformat(db.table("reports").updated_payloads[-1]["expires_at"])
+        assert abs((got - (datetime.now(timezone.utc) + timedelta(days=90))).total_seconds()) < 60
+
+    def test_an_expiry_inside_the_ceiling_is_kept_on_update(self):
+        row = _report(status="published", expires_at="2026-12-01T00:00:00+00:00")
+        db, svc = _svc([row])
+        soon = (datetime.now(timezone.utc) + __import__("datetime").timedelta(days=10)).isoformat()
+        svc.update_report(row["id"], {"expires_at": soon})
+        assert db.table("reports").updated_payloads[-1]["expires_at"] == soon
+
+    def test_an_explicit_expiry_is_kept(self):
+        db, svc = _svc([])
+        soon = (datetime.now(timezone.utc) + __import__("datetime").timedelta(days=20)).isoformat()
+        svc.create_report({"name": "R", "period_start": "2026-01-01", "period_end": "2026-01-31", "status": "published",
+                           "expires_at": soon})
+        assert db.table("reports").inserted_payloads[-1]["expires_at"] == soon
 
 
 # ---------------------------------------------------------------------------
