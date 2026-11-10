@@ -365,6 +365,7 @@ class WahaClient(LinePolicyGuard):
             label=f"{self.base_url}#{session}",
             policy=resolve_line_policy(self.base_url, session, explicit=line_policy),
             sink=line_event_sink,
+            resolve_args=(self.base_url, session, line_policy),
         )
 
     async def _require_clean_readback_before_pairing(self) -> None:

@@ -191,7 +191,7 @@ class Inventory:
 
     def __call__(self, cmd):
         self.cmds.append(cmd)
-        if cmd.startswith("docker ps -aq --filter name=waha"):
+        if "--filter name=waha" in cmd:
             return self.rc, "abc123def4567890 /noctus-waha-assistant-core 172.18.0.7 \n", ""
         return 0, "OUT", ""
 
@@ -205,7 +205,7 @@ class Inventory:
 def test_an_id_or_ip_that_resolves_to_a_waha_core_needs_confirm(cmd, container):
     inv = Inventory()
     out = exec_cmd(cmd, container=container, run_remote=inv)
-    assert out["status"] == "needs_confirm" and all(c.startswith("docker ps -aq") for c in inv.cmds)
+    assert out["status"] == "needs_confirm" and all("--filter name=waha" in c for c in inv.cmds)
     assert exec_cmd(cmd, container=container, confirm=True, run_remote=inv)["ok"] is True
 
 
@@ -221,4 +221,91 @@ def test_plain_reads_without_any_container_like_token_do_no_inventory_lookup():
     inv = Inventory()
     exec_cmd("docker ps -a", run_remote=inv)
     exec_cmd("cat /etc/hostname", run_remote=inv)
-    assert all(not c.startswith("docker ps -aq") for c in inv.cmds)
+    assert all("--filter name=waha" not in c for c in inv.cmds)
+
+
+# ── round 4: a PERSONAL line's core is never reachable through this tool, confirm or not ──────────────────────────────
+
+YML = """image: devlikeapro/waha:noweb-2026.9.2
+platform: linux/amd64
+engine: NOWEB
+mem_limit: 512m
+node_heap_mb: 384
+instances:
+  - name: monica
+    product: monica
+    line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}
+  - name: owner
+    product: assistant
+    line_policy: {send: disabled, mark_online: false, full_sync: false, auto_repair: false}
+    edge_deny_writes: true
+    webhook_upstream: http://assistant:8030
+    dashboard: false
+    personal: true
+"""
+
+
+@pytest.fixture
+def personal_root(tmp_path):
+    d = tmp_path / "deploy" / "fleet"
+    d.mkdir(parents=True)
+    (d / "waha-instances.yml").write_text(YML)
+    return str(tmp_path)
+
+
+class PersonalInventory:
+    """Two waha containers: monica's (enabled) and the owner's personal core; id, label, IPv4, IPv6, network alias."""
+
+    def __init__(self, rc=0):
+        self.rc, self.cmds = rc, []
+
+    def __call__(self, cmd):
+        self.cmds.append(cmd)
+        if "docker images" in cmd and "ancestor" in cmd and "label=com.docker.compose.project" in cmd:
+            return self.rc, (
+                "1111aaaa2222bbbb /noctus-waha-monica waha-monica 172.18.0.4 fd00::4 monica-line\n"
+                "9999ffff8888eeee /renamed-container waha-owner-core 172.19.0.7 fd00::7 secret-alias.internal\n"), ""
+        return 0, "OUT", ""
+
+
+@pytest.mark.parametrize("cmd,container", [
+    ("docker exec noctus-waha-owner-core sh", None),                   # by name
+    ("cat /x", "noctus-waha-owner-core"),
+    ("docker logs waha-owner", None),                                  # the edge alias
+    ("docker exec 9999ffff8888 sh", None),                             # by id
+    ("curl -sS http://172.19.0.7:3000/api/sessions", None),            # by IPv4
+    ("curl -sS 'http://[fd00::7]:3000/ping'", None),                   # by IPv6
+    ("curl -sS http://[::ffff:172.19.0.7]:3000/ping", None),           # IPv4-mapped
+    ("curl -sS http://secret-alias.internal:3000/ping", None),         # by network alias / host name
+    ("cat /x", "9999ffff"),                                            # container= by id
+])
+@pytest.mark.parametrize("confirm", [False, True])
+def test_a_personal_core_is_refused_by_every_name_with_or_without_confirm(personal_root, cmd, container, confirm):
+    inv = PersonalInventory()
+    out = exec_cmd(cmd, container=container, confirm=confirm, run_remote=inv, repo_root=personal_root)
+    assert out["status"] == "refused" and "personal" in out["error"], (cmd, out)
+    assert not any("docker exec" in c or "curl" in c for c in inv.cmds)  # the command itself never ran
+
+
+def test_monicas_core_is_needs_confirm_not_refused_and_other_containers_are_free(personal_root):
+    inv = PersonalInventory()
+    out = exec_cmd("docker logs 1111aaaa2222", run_remote=inv, repo_root=personal_root)
+    assert out["status"] == "needs_confirm"
+    assert exec_cmd("docker logs 1111aaaa2222", confirm=True, run_remote=inv, repo_root=personal_root)["ok"] is True
+    assert exec_cmd("docker logs deadbeef0000", run_remote=inv, repo_root=personal_root)["status"] == "ok"
+
+
+def test_an_unreadable_inventory_or_declaration_fails_closed(personal_root, tmp_path):
+    out = exec_cmd("docker logs deadbeef0000", confirm=True, run_remote=PersonalInventory(rc=1), repo_root=personal_root)
+    assert out["status"] == "refused"
+    out = exec_cmd("docker logs 9999ffff", run_remote=PersonalInventory(), repo_root=str(tmp_path / "nowhere"))
+    assert out["status"] == "refused"  # cannot tell which lines are personal: any waha target is refused, even confirmed
+    assert exec_cmd("docker logs deadbeef0000", run_remote=PersonalInventory(), repo_root=str(tmp_path / "nowhere"))["ok"]
+
+
+def test_the_inventory_covers_name_image_ancestor_and_compose_label():
+    from tools.noctus.dev.vps_exec import _WAHA_INVENTORY
+
+    for part in ("name=waha", "reference=devlikeapro/waha*", "ancestor=", "label=com.docker.compose.project=noctus-waha",
+                 "GlobalIPv6Address", "Aliases"):
+        assert part in _WAHA_INVENTORY

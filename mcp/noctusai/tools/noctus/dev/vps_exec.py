@@ -145,37 +145,106 @@ _WAHA_CORE = re.compile(r"waha-[a-z0-9-]*-core", re.IGNORECASE)
 _DOCKER_EXEC_WAHA = re.compile(r"docker\s+(?:container\s+)?exec\b[^\n;|&]*\bwaha", re.IGNORECASE)
 _IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 _HEXID = re.compile(r"^[0-9a-f]{4,64}$")
-#: waha containers: id, name, every network IP. `xargs -r` so "none" is rc 0 + empty (a failure is rc != 0 -> fail closed).
+_HOSTISH = re.compile(r"(?:://|@)([A-Za-z0-9][A-Za-z0-9._-]*)|\b([A-Za-z0-9][A-Za-z0-9._-]*):\d{2,5}\b")
+#: Every container that is a WAHA: by NAME, by IMAGE ANCESTOR (devlikeapro/waha*, any tag) and by compose PROJECT label.
+#: Rows: id, name, compose service, then per network IPv4, IPv6 and every network alias. `xargs -r` so "none" is rc 0 +
+#: empty (a failure is rc != 0 -> fail closed).
 _WAHA_INVENTORY = (
-    "docker ps -aq --filter name=waha | xargs -r docker inspect "
-    "--format '{{.Id}} {{.Name}} {{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}'"
+    "{ docker ps -aq --filter name=waha; "
+    "for i in $(docker images -q --filter 'reference=devlikeapro/waha*' | sort -u); do docker ps -aq --filter ancestor=$i; done; "
+    "docker ps -aq --filter label=com.docker.compose.project=noctus-waha; } | sort -u | xargs -r docker inspect "
+    "--format '{{.Id}} {{.Name}} {{index .Config.Labels \"com.docker.compose.service\"}} "
+    "{{range $k,$v := .NetworkSettings.Networks}}{{$v.IPAddress}} {{$v.GlobalIPv6Address}} {{range $v.Aliases}}{{.}} {{end}}{{end}}'"
 )
 
 
+def _norm_tok(tok: str) -> str:
+    """Lower-case; IP addresses canonicalised (IPv4-mapped IPv6 == the IPv4)."""
+    import ipaddress
+
+    t = tok.strip().lstrip("/").lower().rstrip(".")
+    try:
+        ip = ipaddress.ip_address(t.strip("[]").split("%", 1)[0])
+    except ValueError:
+        return t
+    return str(getattr(ip, "ipv4_mapped", None) or ip)
+
+
 def _waha_inventory(run) -> "list[set[str]] | None":
-    """Per waha container: {full id, name, ips}. None = the lookup failed (callers fail CLOSED)."""
+    """Per waha container: every identifying token (id, name, compose service, IPs, aliases). None = lookup failed."""
     try:
         rc, out, _err = run(_WAHA_INVENTORY)
     except Exception:  # noqa: BLE001 - an unreachable VPS is "unknown", which is closed
         return None
     if rc != 0:
         return None
-    return [set(line.split()) for line in (out or "").splitlines() if line.strip()]
+    return [{_norm_tok(x) for x in line.split()} for line in (out or "").splitlines() if line.strip()]
 
 
 def _candidate_targets(command: str, container: str | None) -> set[str]:
-    """Tokens that could NAME a container without containing `waha`: a (short) id or an IP address."""
+    """Tokens that could NAME a container without containing `waha`: a (short) id, an IP, or a host name."""
     toks = {t for t in re.split(r"[\s/:=,\"']+", command) if t}
     out = {t.lower() for t in toks if _HEXID.match(t.lower())}
-    out |= set(_IPV4.findall(command))
+    out |= {_norm_tok(ip) for ip in _IPV4.findall(command)}
+    for m6 in re.finditer(r"\[([0-9A-Fa-f:.]+)\]", command):
+        out.add(_norm_tok(m6.group(1)))
+    for m in _HOSTISH.finditer(command):
+        host = _norm_tok(m.group(1) or m.group(2) or "")
+        if host and host not in ("localhost",):
+            out.add(host)
     if container:
-        out.add(container.strip().lower())
+        out.add(_norm_tok(container))
     return out
 
 
+def _row_matches(row: set[str], cands: set[str]) -> bool:
+    ids = {x for x in row if _HEXID.match(x)}
+    return any(c in row or (len(c) >= 4 and any(i.startswith(c) for i in ids)) for c in cands)
+
+
+def personal_aliases(repo_root=None) -> set[str]:
+    """Every name a `personal: true` line's containers answer to, from THIS checkout's waha-instances.yml. An
+    unreadable/unparseable file is an error (callers fail closed), never "no personal lines"."""
+    from pathlib import Path
+
+    from settings import REPO_ROOT
+
+    from .waha_instance import DATA_REL, parse_instances
+
+    text = (Path(repo_root) if repo_root else Path(REPO_ROOT)).joinpath(DATA_REL).read_text(encoding="utf-8")
+    out: set[str] = set()
+    for inst in parse_instances(text)["instances"]:
+        if inst.get("personal"):
+            n = inst["name"]
+            out |= {f"waha-{n}", f"noctus-waha-{n}", f"waha-{n}-core", f"noctus-waha-{n}-core"}
+    return out
+
+
+def targets_personal_core(command: str, container: str | None = None, run=None, repo_root=None) -> bool:
+    """True when the command/container targets a container of a `personal: true` line -- by name, or (via the inventory)
+    by id / IP / compose label / network alias / host name. Refused with OR without confirm. Fail CLOSED when the
+    declaration cannot be read, or when a candidate target cannot be resolved while personal lines exist."""
+    try:
+        aliases = personal_aliases(repo_root)
+    except Exception:  # noqa: BLE001 - cannot tell which lines are personal: refuse anything that smells like a waha
+        return touches_waha_core(command, container, run=run)
+    if not aliases:
+        return False
+    low = f"{command} {container or ''}".lower()
+    if any(re.search(rf"(?<![a-z0-9-]){re.escape(a)}(?![a-z0-9-])", low) for a in aliases):
+        return True
+    cands = _candidate_targets(command, container)
+    if not cands or run is None:
+        return False
+    inv = _waha_inventory(run)
+    if inv is None:
+        return True
+    return any(_row_matches(row, cands) and row & aliases for row in inv)
+
+
 def touches_waha_core(command: str, container: str | None = None, run=None) -> bool:
-    """True when the command (or `container`) targets a WAHA container -- by name, or by id / IP when `run` is given and
-    the target RESOLVES to a waha container. An unresolvable lookup fails CLOSED (True)."""
+    """True when the command (or `container`) targets a WAHA container -- by name, or by id / IP / host name / alias when
+    `run` is given and the target RESOLVES to a waha container. An unresolvable lookup fails CLOSED (True)."""
     if (_WAHA_CORE.search(command) or (container and "waha" in container.lower())
             or _DOCKER_EXEC_WAHA.search(command)):
         return True
@@ -185,13 +254,7 @@ def touches_waha_core(command: str, container: str | None = None, run=None) -> b
     inv = _waha_inventory(run)
     if inv is None:
         return True
-    for row in inv:
-        names = {x.lstrip("/").lower() for x in row}
-        ids = {x.lower() for x in row if _HEXID.match(x.lower())}
-        for c in cands:
-            if c in names or any(i.startswith(c) for i in ids if len(c) >= 4) or c in row:
-                return True
-    return False
+    return any(_row_matches(row, cands) for row in inv)
 
 
 def _err(msg: str, **extra) -> dict[str, Any]:
@@ -256,6 +319,7 @@ def exec_cmd(
     confirm: bool = False,
     ssh_host: str = DEFAULT_HOST,
     run_remote: Callable | None = None,
+    repo_root: str | None = None,
 ) -> dict[str, Any]:
     """Run ``command`` on the VPS host, or inside ``container`` (docker exec).
 
@@ -277,6 +341,13 @@ def exec_cmd(
         }
 
     run = _runner(run_remote, ssh_host)
+    if targets_personal_core(command, container, run=run, repo_root=repo_root):
+        return {
+            "ok": False, "status": "refused", "exit_code": 1,
+            "error": ("this targets a container of a `personal: true` WhatsApp line: refused with or without confirm -- "
+                      "a personal number's core is touched by the owner by hand, never through this tool "
+                      "(KB § INTEGRATIONS/whatsapp.md § 6a)."),
+        }
     waha = touches_waha_core(command, container, run=run)
     read_only = _is_read_only(command) and not waha
     if waha and not confirm:
@@ -333,5 +404,5 @@ def register(server) -> None:
         return exec_cmd(command, container=container, confirm=confirm, ssh_host=ssh_host)
 
 
-__all__ = ["exec_cmd", "touches_waha_core", "register", "_HARD_DENY", "_READ_BINARIES", "_is_read_only",
+__all__ = ["exec_cmd", "touches_waha_core", "targets_personal_core", "personal_aliases", "register", "_HARD_DENY", "_READ_BINARIES", "_is_read_only",
            "_hard_denied"]

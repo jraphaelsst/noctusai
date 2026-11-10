@@ -287,15 +287,38 @@ def _host_key(base_url: str) -> str:
 #: getaddrinfo. Raising / returning None means "cannot resolve".
 HostResolver = Any
 _resolve_host: "Any" = None
-_addr_cache: dict[str, frozenset[str]] = {}
+_clock: "Any" = None
+#: host -> (resolved-at, addresses). SHORT TTL: a container can be recreated with another IP; a forever-cache would keep
+#: matching the old one and let the new address fall through to "*".
+_ADDR_TTL = 60.0
+_addr_cache: dict[str, "tuple[float, frozenset[str]]"] = {}
 
 
-def set_host_resolver(fn: "Any | None") -> None:
-    """Inject ``fn(host) -> iterable[str] | None`` (tests, or a product with its own DNS view). None restores getaddrinfo."""
-    global _resolve_host
+def set_host_resolver(fn: "Any | None", clock: "Any | None" = None) -> None:
+    """Inject ``fn(host) -> iterable[str] | None`` (tests, or a product with its own DNS view) and optionally a monotonic
+    ``clock``. None restores getaddrinfo / time.monotonic. These are DI seams, not patch points."""
+    global _resolve_host, _clock
     with _lock:
-        _resolve_host = fn
+        _resolve_host, _clock = fn, clock
         _addr_cache.clear()
+
+
+def _now() -> float:
+    import time
+
+    return (_clock or time.monotonic)()
+
+
+def _norm_ip(value: str) -> str:
+    """Canonical address text; an IPv4-mapped IPv6 (``::ffff:10.0.0.5``) is the IPv4 address."""
+    import ipaddress
+
+    try:
+        ip = ipaddress.ip_address(value.split("%", 1)[0])
+    except ValueError:
+        return value
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return str(mapped if mapped is not None else ip)
 
 
 def _default_resolver(host: str) -> "set[str] | None":
@@ -308,25 +331,37 @@ def _default_resolver(host: str) -> "set[str] | None":
 
 
 def _addrs(host: str) -> "frozenset[str] | None":
-    """Resolved addresses of ``host`` (an IP literal is itself), cached per process on success; None = unresolvable."""
+    """Resolved addresses of ``host`` (an IP literal is itself), cached for ``_ADDR_TTL`` on success; None = unresolvable."""
     import ipaddress
 
     try:
-        return frozenset({str(ipaddress.ip_address(host))})
+        ipaddress.ip_address(host.split("%", 1)[0])
+        return frozenset({_norm_ip(host)})
     except ValueError:
         pass
-    if host in _addr_cache:
-        return _addr_cache[host]
+    hit = _addr_cache.get(host)
+    if hit is not None and _now() - hit[0] < _ADDR_TTL:
+        return hit[1]
     try:
         found = (_resolve_host or _default_resolver)(host)
     except Exception:  # noqa: BLE001 - a resolver failure is "unknown", which fails closed below
         found = None
     if not found:
         return None
-    out = frozenset(str(a) for a in found)
+    out = frozenset(_norm_ip(str(a)) for a in found)
     with _lock:
-        _addr_cache[host] = out
+        _addr_cache[host] = (_now(), out)
     return out
+
+
+def _is_ip_literal(host: str) -> bool:
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(host.split("%", 1)[0])
+        return True
+    except ValueError:
+        return False
 
 
 def _key(base_url: str, session: Optional[str]) -> str:
@@ -496,16 +531,25 @@ def resolve_line_policy(
         # not a known alias BY NAME: it may still be the same machine (container IP, container id, an env-overridden
         # base URL). Compare resolved addresses; if the host cannot be resolved, fail CLOSED unless it is positively
         # known to be a send-enabled line (an explicit, non-"*" registry entry).
-        mine = _addrs(_host_only(base_url))
+        host = _host_only(base_url)
+        mine = _addrs(host)
+        positively_enabled = explicit_reg is not None and explicit_reg.send_enabled
         if mine is None:
-            if explicit_reg is None or not explicit_reg.send_enabled:
+            if not positively_enabled:
                 return replace(UNDECLARED, webhook_relay=None)
         else:
+            unresolved_alias = False
             for alias, pol in all_ro.items():
                 theirs = _addrs(alias.rsplit(":", 1)[0])
-                if theirs and theirs & mine:
+                if theirs is None:
+                    unresolved_alias = True
+                elif theirs & mine:
                     ro = pol
                     break
+            # a read-only alias we cannot resolve might be exactly this host (an IP literal, or anything not positively
+            # known to be send-enabled): fail CLOSED rather than let it fall through to "*"
+            if ro is None and unresolved_alias and not positively_enabled and (_is_ip_literal(host) or explicit_reg is None):
+                return replace(UNDECLARED, webhook_relay=None)
     if reg is None and ro is None:
         with _lock:
             reg = _registry.get("*")
@@ -533,9 +577,11 @@ class LinePolicyGuard:
     _line_label: str
 
     def _init_line_policy(
-        self, *, label: str, policy: LinePolicy, sink: Optional[LineEventSink]
+        self, *, label: str, policy: LinePolicy, sink: Optional[LineEventSink],
+        resolve_args: "Optional[tuple[str, Optional[str], Optional[LinePolicy]]]" = None,
     ) -> None:
         self._line_label = label
+        self._policy_resolve_args = resolve_args
         self.line_policy = policy
         self.line_event_sink = sink or get_default_line_event_sink()
 
@@ -563,10 +609,20 @@ class LinePolicyGuard:
             EVENT_WRITE_REFUSED, self._line_label, f"{method.upper()} {endpoint}", reason, self.line_policy.as_dict()))
         raise LineWriteRefused(line=self._line_label, method=method.upper(), path=endpoint, reason=reason)
 
+    def _refresh_policy(self) -> None:
+        """Re-resolve right before a request leaves (DNS can move: a container recreated with a new IP). The policy can
+        only get STRICTER: the fresh answer is merged with the current one, never replaces it with a looser one."""
+        args = getattr(self, "_policy_resolve_args", None)
+        if not args:
+            return
+        fresh = resolve_line_policy(args[0], args[1], explicit=args[2])
+        self.line_policy = strictest(self.line_policy, fresh)
+
     def _final_url_hook(self, policy_config: bool = False):
         """httpx request event hook (sync + async twins): re-judges the FINAL request URL after httpx has built and
         normalised it, so no spelling of the path can slip past the pre-check."""
         def check(request) -> None:
+            self._refresh_policy()
             self._guard_write(request.method, request.url.raw_path.decode('ascii', 'replace'), policy_config=policy_config)
 
         async def acheck(request) -> None:

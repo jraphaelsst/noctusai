@@ -31,6 +31,7 @@ EDGE = DATA + """  - name: probe
     edge_deny_writes: true
     webhook_upstream: http://assistant-x:8030
     dashboard: false
+    personal: false
 """
 
 
@@ -387,7 +388,7 @@ class TestRound2Edge:
 
 # --- round 3: provision is tighten-only, owner-consented for personal lines ---------------------------------------------
 
-PERSONAL = EDGE.replace("    dashboard: false\n", "    dashboard: false\n    personal: true\n", 1)
+PERSONAL = EDGE.replace("    personal: false\n", "    personal: true\n", 1)
 
 
 class FakeVps:
@@ -419,14 +420,14 @@ EXISTING = {"exists": True, "noweb": {"markOnline": True, "store": {"enabled": F
 
 
 def _prov(caller_yml, vps, **kw):
-    return wi._provision(wi.parse_instances(caller_yml), "probe", "h", kw.pop("confirm", True), sh=vps, **kw)
+    return wi._provision(wi.parse_instances(caller_yml), "probe", "h", kw.pop("confirm", True), _test_sh=vps, **kw)
 
 
 def test_a_branch_that_loosens_markonline_cannot_be_written_onto_the_core():
     loose = EDGE.replace("{send: disabled, mark_online: false,", "{send: disabled, mark_online: true,")
     vps = FakeVps(EDGE, EXISTING)
     out = _prov_loose = wi._provision(wi.parse_instances(loose.replace("send: disabled, mark_online: true", "send: disabled, mark_online: true")),
-                                      "probe", "h", True, sh=vps)
+                                      "probe", "h", True, _test_sh=vps)
     assert out["status"] == "refused" and "markOnline" in out["error"] and "VPS" in out["error"]
     assert not vps.wrote
 
@@ -436,7 +437,7 @@ def test_loosening_vs_the_running_session_is_refused_naming_the_field():
                          "webhooks": []})
     loose = EDGE.replace("full_sync: false,", "full_sync: true,")
     vps.vps_yml = loose  # the VPS agrees with the caller: only the RUNNING session is tighter
-    out = wi._provision(wi.parse_instances(loose), "probe", "h", True, sh=vps)
+    out = wi._provision(wi.parse_instances(loose), "probe", "h", True, _test_sh=vps)
     assert out["status"] == "refused" and "store.fullSync" in out["error"] and "running" in out["error"]
     assert not vps.wrote
 
@@ -467,32 +468,38 @@ def test_a_foreign_webhook_surviving_the_write_is_drift():
     assert out["status"] == "drift" and out["foreign_webhooks"] == ["https://evil.example/h"]
 
 
-def test_a_personal_line_needs_the_owners_typed_consent_not_a_flag():
+def test_a_personal_line_is_refused_outright_whatever_the_flags_or_any_transcript_say():
     vps = FakeVps(PERSONAL, EXISTING)
-    out = _prov(PERSONAL, vps)  # confirm=True is just a flag any agent sets
-    assert out["status"] == "refused" and out["needs_owner_consent"] is True and not vps.wrote
-    assert "personal-line-probe" in out["error"]
-    bogus = _prov(PERSONAL, FakeVps(PERSONAL, EXISTING), consent_session_id="no-such-session")
-    assert bogus["status"] == "refused" and bogus["needs_owner_consent"] is True
+    for confirm in (True, False):
+        out = _prov(PERSONAL, FakeVps(PERSONAL, EXISTING), confirm=confirm)
+        assert out["status"] == "refused" and out["error"] == wi.PERSONAL_REFUSAL and out["needs_owner_by_hand"] is True
+    assert not vps.wrote and vps.cmds == []  # refused BEFORE any ssh: not even a read
+    assert wi.PERSONAL_REFUSAL == ("personal line: provisioning requires an out-of-band owner confirmation that does not "
+                                   "exist yet; the owner performs this step by hand")
+    # no transcript path remains at all: the helper and the parameter are gone
+    assert not hasattr(wi, "_owner_consent") and "consent_session_id" not in wi.waha_instance.__code__.co_varnames
 
 
-def test_personal_flag_on_either_checkout_triggers_the_consent_gate():
+def test_personal_on_the_vps_checkout_alone_also_refuses():
     # caller's checkout says non-personal, the VPS says personal
     out = _prov(EDGE, FakeVps(PERSONAL, EXISTING))
-    assert out["status"] == "refused" and out["needs_owner_consent"] is True
+    assert out["status"] == "refused" and out["needs_owner_by_hand"] is True
 
 
-def test_the_owners_typed_sentence_in_a_real_transcript_unlocks_it_and_an_agent_authored_one_does_not(tmp_path):
-    def transcript(sid, records):
-        d = tmp_path / ".claude" / "projects" / "-p"
-        d.mkdir(parents=True, exist_ok=True)
-        (d / f"{sid}.jsonl").write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+def test_apply_on_a_personal_line_starts_nothing_and_is_refused():
+    out = wi._apply(wi.parse_instances(PERSONAL), "probe", "h", True)
+    assert out["status"] == "refused" and out["error"] == wi.PERSONAL_REFUSAL
 
-    phrase = "I authorize personal-line-probe to be published to production."
-    transcript("good", [{"type": "user", "promptSource": "typed", "message": {"content": phrase}}])
-    transcript("agent", [{"type": "assistant", "message": {"content": [{"type": "text", "text": phrase}]}}])
-    assert wi._owner_consent("probe", "good", home=tmp_path)[0] is True
-    ok, why = wi._owner_consent("probe", "agent", home=tmp_path)
-    assert ok is False and "no human-typed message" in why
-    assert wi._owner_consent("probe", "", home=tmp_path)[0] is False
-    assert wi._owner_consent("other-line", "good", home=tmp_path)[0] is False  # bound to THIS line's name
+
+def test_a_send_disabled_line_must_declare_personal_explicitly():
+    with pytest.raises(ValueError, match="personal"):
+        wi.parse_instances(EDGE.replace("    personal: false\n", ""))
+    wi.parse_instances(EDGE)  # declared false: fine
+    wi.parse_instances(PERSONAL)  # declared true: parses (provisioning is what is refused)
+    wi.parse_instances(DATA)      # enabled lines need not declare it
+
+
+def test_the_test_only_runner_is_absent_from_the_public_function_and_the_tool_schema():
+    import inspect
+    assert "_test_sh" not in inspect.signature(wi.waha_instance).parameters
+    assert "_test_sh" in inspect.signature(wi._provision).parameters and "TEST-ONLY" in wi._provision.__doc__

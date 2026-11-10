@@ -29,8 +29,10 @@ _IGNORED_KEYS = {
     "message", "taskName",
 }
 
+from noctusai_lib.log_scrub import ScrubbingFormatterMixin  # noqa: E402
 
-class _JSONFormatter(logging.Formatter):
+
+class _JSONFormatter(ScrubbingFormatterMixin, logging.Formatter):
     """
     JSON log formatter for structured logging.
 
@@ -77,7 +79,7 @@ class _JSONFormatter(logging.Formatter):
         return json.dumps(log_data, default=str)
 
 
-class _HumanReadableFormatter(logging.Formatter):
+class _HumanReadableFormatter(ScrubbingFormatterMixin, logging.Formatter):
     """
     Human-readable log formatter for development.
 
@@ -172,8 +174,9 @@ def configure_logging(
     console_handler.setFormatter(formatter)
     # LGPD: no phone number reaches a log line. The ROOT handler covers every product logger that propagates; uvicorn
     # and httpx keep their own handlers/propagation, so they get the filter on the logger itself (`?phone=<digits>`).
-    from noctusai_lib.log_scrub import install_phone_scrub
+    from noctusai_lib.log_scrub import install_phone_scrub, install_record_factory
 
+    install_record_factory()  # scrub at record CREATION (message, args, traceback, extra= fields): before any handler/hook
     install_phone_scrub(console_handler)
     for noisy in ("uvicorn", "uvicorn.access", "uvicorn.error", "httpx", "httpcore"):
         install_phone_scrub(logging.getLogger(noisy))

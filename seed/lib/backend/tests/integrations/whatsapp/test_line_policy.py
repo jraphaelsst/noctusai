@@ -705,3 +705,65 @@ def test_me_is_a_public_read_allowed_on_a_read_only_line():
     assert run(f.me()) == {}
     f.simulate_pair(phone="5511999990001")
     assert run(f.me())["id"] == "5511999990001@c.us"
+
+
+# --- round 4: address cache TTL, re-resolve at request time, unresolvable alias, mapped IPv6 ------------------------------
+
+
+class Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def test_the_address_cache_expires_so_a_recreated_container_cannot_hide_behind_an_old_ip():
+    clock, dns = Clock(), {"waha-x": ["10.0.0.5"], "social": ["10.0.0.20"]}
+    set_host_resolver(lambda h: dns.get(h), clock=clock)
+    register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
+    register_line_policy("*", LEGACY)
+    assert resolve_line_policy("http://social:3000").send_enabled            # cached: social -> 10.0.0.20
+    dns["social"] = ["10.0.0.5"]                                              # the container is recreated onto waha-x's IP
+    assert resolve_line_policy("http://social:3000").send_enabled            # still inside the TTL
+    clock.t += 61
+    assert not resolve_line_policy("http://social:3000").send_enabled        # re-resolved: it IS the read-only machine now
+
+
+def test_a_live_client_re_resolves_in_the_final_url_hook_before_the_request_leaves():
+    clock, dns = Clock(), {"waha-x": ["10.0.0.5"], "social": ["10.0.0.20"]}
+    set_host_resolver(lambda h: dns.get(h), clock=clock)
+    register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
+    register_line_policy("*", LEGACY)
+    seen: list[str] = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        return httpx.Response(200, json={})
+
+    c = WahaClient("http://social:3000", "k", "default", transport=httpx.MockTransport(handler))
+    assert c.line_policy.send_enabled
+    run(c.send_text("a@c.us", "ok"))
+    dns["social"] = ["10.0.0.5"]
+    clock.t += 61
+    with pytest.raises(LineWriteRefused):
+        run(c.send_text("a@c.us", "now refused"))
+    assert seen == ["/api/sendText"]  # only the first one left
+
+
+def test_an_unresolvable_read_only_alias_fails_closed_for_ip_literals_and_unknown_hosts():
+    set_host_resolver(lambda h: {"social": ["10.0.0.20"]}.get(h))      # waha-x does NOT resolve here
+    register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
+    register_line_policy("*", LEGACY)
+    assert not resolve_line_policy("http://10.0.0.5:3000").send_enabled   # could be waha-x: closed
+    assert not resolve_line_policy("http://who-knows:3000").send_enabled  # unresolvable host: closed (N2)
+    register_line_policy("http://social:3000", LEGACY)                    # positively known send-enabled
+    assert resolve_line_policy("http://social:3000").send_enabled
+
+
+def test_ipv4_mapped_ipv6_is_the_ipv4_address():
+    set_host_resolver(lambda h: {"waha-x": ["10.0.0.5"]}.get(h))
+    register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
+    register_line_policy("*", LEGACY)
+    assert not resolve_line_policy("http://[::ffff:10.0.0.5]:3000").send_enabled
+    assert not resolve_line_policy("http://[::ffff:a00:5]:3000").send_enabled

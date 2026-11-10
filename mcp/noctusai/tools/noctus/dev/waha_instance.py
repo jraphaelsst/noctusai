@@ -117,6 +117,9 @@ def _validate_policy(i: int, name: str, inst: dict) -> None:
     for opt in ("edge_deny_writes", "dashboard", "personal"):
         if opt in inst and not isinstance(inst[opt], bool):
             raise ValueError(f"instances[{i}] ({name}): `{opt}` must be a boolean")
+    if pol["send"] == "disabled" and "personal" not in inst:
+        raise ValueError(f"instances[{i}] ({name}): a `send: disabled` line must declare `personal: true|false` explicitly "
+                         "(a personal number is provisioned by the owner by hand; it is never a default)")
     inst.setdefault("personal", False)
     inst.setdefault("edge_deny_writes", False)
     inst.setdefault("dashboard", True)
@@ -454,38 +457,33 @@ def _noweb_matches(got, want: dict) -> bool:
             and got["store"].get("fullSync") is want["store"]["fullSync"])
 
 
-def _consent_phrase_slug(name: str) -> str:
-    return f"personal-line-{name}"
+PERSONAL_REFUSAL = ("personal line: provisioning requires an out-of-band owner confirmation that does not exist yet; "
+                    "the owner performs this step by hand")
+# NOC-REMEDIATE[personal-line-consent-oob]: provisioning a PERSONAL line is refused outright. Transcript-sentence consent
+# (prod_consent style) is forgeable -- transcripts are user-writable files, any session id on the machine is accepted, and
+# there is no time window, nonce or caller binding -- so there is deliberately NO weaker fallback here. The owner's design
+# decision (not an agent's): a one-time code delivered through the owner's own channel (WhatsApp/e-mail to the number on
+# file in core), bound to line name + policy hash + expiry + nonce, single use, checked server-side. — 2026-11-10
 
 
-def _owner_consent(name: str, session_id: str, home=None) -> tuple[bool, str]:
-    """The owner's typed consent for a PERSONAL line, verified against the harness-written session transcript by the
-    existing prod_consent machinery (an agent supplies the session id, never the evidence)."""
-    from .compliance import _canonical_authorization_phrase, _find_authorization_evidence
-
-    slug = _consent_phrase_slug(name)
-    if not session_id:
-        return False, (f"personal line: the OWNER must type, verbatim: {_canonical_authorization_phrase(slug)!r} -- then "
-                       "pass that session's id as consent_session_id")
-    if _find_authorization_evidence(slug, session_id, home=home) is None:
-        return False, (f"personal line: no human-typed message in session {session_id} carries "
-                       f"{_canonical_authorization_phrase(slug)!r}")
-    return True, ""
-
-
-def _provision(spec: dict, name: str, host: str, confirm: bool, *, sh=None, consent_session_id: str = "") -> dict:
+def _provision(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None) -> dict:
     """Create/align the session config from the policy against the CORE, then READ IT BACK (explicit, idempotent).
 
     The caller's checkout is NOT trusted: provisioning may only TIGHTEN, compared with BOTH the running config and the
     VPS's own checkout of waha-instances.yml (a branch with `mark_online: true` cannot write itself onto the live core).
-    A `personal: true` line additionally needs the owner's typed consent, verified against the transcript."""
-    sh = sh or _sh
+    A `personal: true` line is REFUSED outright (see PERSONAL_REFUSAL).
+
+    `_test_sh` is a TEST-ONLY injection point for the remote runner: it is absent from the public function and the MCP
+    schema, and must never be passed by production code."""
+    sh = _test_sh or _sh
     inst = _inst(spec, name)
     want = policy_noweb(inst)
     core = f"noctus-{core_service(inst)}"
     refuse = lambda why, **kw: {"ok": False, "action": "provision", "status": "refused", "name": name,  # noqa: E731
                                 "error": why, **kw}
 
+    if inst.get("personal"):
+        return refuse(PERSONAL_REFUSAL, needs_owner_by_hand=True)
     rc, text, err = sh(host, f"cat {VPS_FLEET}/waha-instances.yml")
     if rc != 0:
         return refuse(f"cannot read the VPS's own waha-instances.yml ({err.strip()[-120:]}): the ceiling is unknown")
@@ -498,10 +496,8 @@ def _provision(spec: dict, name: str, host: str, confirm: bool, *, sh=None, cons
     if bad:
         return refuse("REFUSED, loosening vs the VPS's own waha-instances.yml: " + "; ".join(bad))
 
-    if inst.get("personal") or vps_inst.get("personal"):
-        ok, why = _owner_consent(name, consent_session_id)
-        if not ok:
-            return refuse(why, needs_owner_consent=True)
+    if vps_inst.get("personal"):
+        return refuse(PERSONAL_REFUSAL, needs_owner_by_hand=True)
 
     probe = f"docker exec -e POLICY_SESSION={shlex.quote(inst['session'])} {core} node -e '{_READ_JS}'"
     rc, out, err = sh(host, probe, timeout=60)
@@ -517,7 +513,7 @@ def _provision(spec: dict, name: str, host: str, confirm: bool, *, sh=None, cons
 
     relay = relay_base(inst) if inst.get("edge_deny_writes") else ""
     plan = {"ok": True, "action": "provision", "name": name, "status": "planned", "core": core, "expect_noweb": want,
-            "running": running, "personal": bool(inst.get("personal") or vps_inst.get("personal")),
+            "running": running,
             "steps": ["create (start:false) or PUT merged config on the core (foreign webhooks dropped)",
                       "read the config back from the core: noweb == policy and every webhook under the relay"]}
     if not confirm:
@@ -542,13 +538,16 @@ def _provision(spec: dict, name: str, host: str, confirm: bool, *, sh=None, cons
             "expect_noweb": want, "read_back": got.get("noweb"), "webhooks": hooks, "foreign_webhooks": foreign}
 
 
-def _apply(spec: dict, name: str, host: str, confirm: bool, consent_session_id: str = "") -> dict:
+def _apply(spec: dict, name: str, host: str, confirm: bool) -> dict:
     p = _plan(spec, name)
     if not confirm:
         p.update(action="apply", note="DRY RUN -- pass confirm=True to `compose up -d --no-deps` this ONE instance "
                                       "(an edge line: core -> provision -> edge, in that order)")
         return p
     inst = _inst(spec, name)
+    if inst.get("personal"):  # nothing at all is started for a personal line: not even the core
+        return {"ok": False, "action": "apply", "status": "refused", "name": name, "error": PERSONAL_REFUSAL,
+                "needs_owner_by_hand": True}
     rc, _o, err = _sh(host, f"cd {VPS_FLEET} && for k in {' '.join(inst_keys(inst).values())}; do "
                             "grep -q \"^$k=.\" .env.fleet || { echo MISSING:$k; exit 3; }; done")
     if rc != 0:
@@ -560,7 +559,7 @@ def _apply(spec: dict, name: str, host: str, confirm: bool, consent_session_id: 
         rc, out, err = _sh(host, up + core_service(inst), timeout=300)
         if rc != 0:
             return {"ok": False, "action": "apply", "status": "error", "name": name, "error": err.strip()[-600:]}
-        prov = _provision(spec, name, host, True, consent_session_id=consent_session_id)
+        prov = _provision(spec, name, host, True)
         if not prov["ok"]:
             return {"ok": False, "action": "apply", "status": "provision_failed", "name": name, "provision": prov}
         rc, out, err = _sh(host, up + f"waha-{name}", timeout=300)
@@ -592,7 +591,7 @@ def _remove(spec: dict, name: str, host: str, confirm: bool, force: bool) -> dic
 
 def waha_instance(action: str = "list", name: str | None = None, ssh_host: str = "noctus-vps", confirm: bool = False,
                   force: bool = False, write: bool = False, repo_root: str | None = None,
-                  worktree_path: str | None = None, consent_session_id: str = "") -> dict:
+                  worktree_path: str | None = None) -> dict:
     """See module docstring. DRY-RUN by default; production writes need confirm=True."""
     try:
         root = _root(repo_root, worktree_path)
@@ -609,9 +608,9 @@ def waha_instance(action: str = "list", name: str | None = None, ssh_host: str =
         if action in ("plan", "add"):
             return _plan(spec, name or "")
         if action == "provision":
-            return _provision(spec, name or "", ssh_host, confirm, consent_session_id=consent_session_id)
+            return _provision(spec, name or "", ssh_host, confirm)
         if action == "apply":
-            return _apply(spec, name or "", ssh_host, confirm, consent_session_id)
+            return _apply(spec, name or "", ssh_host, confirm)
         if action == "remove":
             return _remove(spec, name or "", ssh_host, confirm, force)
     except ValueError as e:
@@ -628,16 +627,15 @@ def register(server) -> None:
             "vs RSS vs session status) | plan/add (the service + the .env.fleet key NAMES to generate on the VPS -- values never "
             "cross the wire) | apply (confirm=True: compose up -d --no-deps for ONE instance; refuses when keys are missing) | "
             "provision (creates/aligns the session config FROM the policy on the core; TIGHTEN-ONLY vs the VPS's own yml and the running "
-            "config; a personal line needs the owner's typed consent via consent_session_id) | "
+            "config; a PERSONAL line is refused: the owner does it by hand) | "
             "remove (confirm=True; refuses a WORKING session unless force; snapshots the volume first, never deletes it). "
             "DRY-RUN default. KB § CONTEXT/INTEGRATIONS/whatsapp.md § One WAHA per number."
         ),
     )
     def _waha_instance(action: str = "list", name: str = "", ssh_host: str = "noctus-vps", confirm: bool = False,
-                       force: bool = False, write: bool = False, worktree_path: str = "",
-                       consent_session_id: str = "") -> dict:
+                       force: bool = False, write: bool = False, worktree_path: str = "") -> dict:
         return waha_instance(action=action, name=name or None, ssh_host=ssh_host, confirm=confirm, force=force,
-                             write=write, worktree_path=worktree_path or None, consent_session_id=consent_session_id)
+                             write=write, worktree_path=worktree_path or None)
 
 
 __all__ = ["waha_instance", "register", "render_compose", "parse_instances", "env_keys", "inst_keys", "load_spec",
