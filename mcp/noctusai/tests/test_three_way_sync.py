@@ -114,3 +114,49 @@ class TestCheckThreeWaySync:
         # CLAUDE.md has none of "quokka"/"brouhaha"/"thingamajig" → warning.
         warnings = [i for i in result["issues"] if i["severity"] == "warning"]
         assert any("CLAUDE.md" in i["issue"] for i in warnings)
+
+
+class TestTopicSplitIndex:
+    """MEMORY.md became a topic ROUTER (KB § PATTERNS/common/memory-index-topic-split.md):
+    it links `MEMORY-<topic>.md` files, and the per-memory pointers live there."""
+
+    def _mk(self, memory_files: dict[str, str], router: str) -> tuple[Path, Path]:
+        memory_dir = Path(tempfile.mkdtemp(prefix="memory_"))
+        for name, content in memory_files.items():
+            (memory_dir / name).write_text(content)
+        (memory_dir / "MEMORY.md").write_text(router)
+        repo_dir = Path(tempfile.mkdtemp(prefix="repo_"))
+        (repo_dir / "CLAUDE.md").write_text("rule about testing\n")
+        return memory_dir, repo_dir
+
+    def _run(self, memory_dir: Path, repo_dir: Path) -> dict:
+        with patch.dict(os.environ, {"NOCTUSAI_MEMORY_DIR": str(memory_dir)}, clear=False):
+            return check_three_way_sync(repo_root=repo_dir)
+
+    def test_memory_listed_in_a_topic_file_counts_as_indexed(self):
+        memory_dir, repo_dir = self._mk(
+            {
+                "feedback_test_rule.md": "---\nname: Test rule\ntype: feedback\n---\nKB § PATTERNS/t.md\n",
+                "MEMORY-workflow.md": "- [Test rule](feedback_test_rule.md) — testing\n",
+            },
+            router="| [Workflow](MEMORY-workflow.md) | 1 | orchestration |\n",
+        )
+        result = self._run(memory_dir, repo_dir)
+        assert [i for i in result["issues"] if i["severity"] == "high"] == []
+        assert result["stats"]["memory_files_in_index"] == 1
+
+    def test_memory_absent_from_every_topic_file_still_flagged(self):
+        memory_dir, repo_dir = self._mk(
+            {
+                "feedback_orphan.md": "---\nname: Orphan\ntype: feedback\n---\nKB § PATTERNS/o.md\n",
+                "MEMORY-workflow.md": "(no entries)\n",
+            },
+            router="| [Workflow](MEMORY-workflow.md) | 0 | orchestration |\n",
+        )
+        high = [i for i in self._run(memory_dir, repo_dir)["issues"] if i["severity"] == "high"]
+        assert any("feedback_orphan.md" in i["issue"] for i in high)
+
+    def test_router_link_to_missing_topic_file_flagged_high(self):
+        memory_dir, repo_dir = self._mk({}, router="| [Ghost](MEMORY-ghost.md) | 0 | x |\n")
+        high = [i for i in self._run(memory_dir, repo_dir)["issues"] if i["severity"] == "high"]
+        assert any("MEMORY-ghost.md" in i["issue"] for i in high)
