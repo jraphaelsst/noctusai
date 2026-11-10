@@ -32,6 +32,7 @@ _PLATAFORMA = "this path always creates a platform definition (definition_scope=
 _INSTANCIA = "only an org INSTANCE carries it (_instanciar)"
 _EXEMPLAR = "platform-ADMIN toggle only (PUT /plataforma/agentes/{key}/exemplar), never at create"
 _ORG = "the caller's org (the platform org), from the session/token"
+_CAMADA = "073 layer: validated against the chain, so ensure_definicao applies it right after create via update_definicao"
 
 STRUCTURE_PARITY = {
     "agent": {
@@ -47,7 +48,7 @@ STRUCTURE_PARITY = {
                 "name": "Fake store create builds the record",
                 "target": f"{_S}::FakeStudioDefinitionStore.create_studio_agent",
                 "kind": "call_kwargs:StudioAgentRecord",
-                "exempt": {"superficie_claude": _SUPERFICIE},
+                "exempt": {"superficie_claude": _SUPERFICIE, "modelo": _CAMADA, "pai_agent_id": _CAMADA},
             },
             {
                 "name": "Supabase create_studio_agent signature",
@@ -56,6 +57,7 @@ STRUCTURE_PARITY = {
                 "exempt": {
                     "id": _DB, "created_at": _DB, "updated_at": _DB, "definition_mode": _NUNCA, "ativo": _INATIVO,
                     "publicacao_limiar": _LIMIAR, "conteudo_modo": _MODO, "superficie_claude": _SUPERFICIE,
+                    "modelo": _CAMADA, "pai_agent_id": _CAMADA,
                 },
             },
             {
@@ -64,7 +66,7 @@ STRUCTURE_PARITY = {
                 "kind": "dict_keys:payload",
                 "exempt": {
                     "id": _DB, "created_at": _DB, "updated_at": _DB, "publicacao_limiar": _LIMIAR,
-                    "superficie_claude": _SUPERFICIE,
+                    "superficie_claude": _SUPERFICIE, "modelo": _CAMADA, "pai_agent_id": _CAMADA,
                 },
             },
             {
