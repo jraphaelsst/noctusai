@@ -89,6 +89,15 @@ class VistaCRMAdapter(Protocol):
         `fields` the key honours) -- the roster has no canonical model yet. A transport / auth / field failure raises."""
         ...
 
+    async def list_clientes(
+        self, *, page: int = 1, page_size: int = 50, fields: Optional[list[str]] = None
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """One page of Vista's clients (`/clientes/listar`, 50 per page max): `(raw items, pagination)`, same shape as
+        `list_corretores`. READ-ONLY (there is no client write on this Protocol). Items are Vista's own dicts; `fields` is the
+        projection asked (a field the key rejects is dropped and the page re-asked -- the item then lacks it). LGPD: this is
+        third-party personal data -- ask only for the fields the caller will use. A transport / auth failure raises."""
+        ...
+
     async def list_destaques(self) -> list[str]:
         """Codes in `/imoveis/destaques` (the featured listings -- a handful), a cheap discovery source."""
         ...

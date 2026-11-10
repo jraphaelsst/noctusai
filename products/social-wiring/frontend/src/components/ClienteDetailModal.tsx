@@ -92,7 +92,8 @@ import { QualificacaoContratoContainer } from "@/components/QualificacaoContrato
 import { ArquivarAtendimentoConfirmDialog } from "@/components/card/ArquivarAtendimentoConfirmDialog";
 import { PerderAtendimentoDialog } from "@/components/card/PerderAtendimentoDialog";
 import { ExcluirClienteConfirmDialog } from "@/components/card/ExcluirClienteConfirmDialog";
-import { CriarRoteiroDialog } from "@/components/card/CriarRoteiroDialog";
+import { RoteiroEditorDialog } from "@/components/card/RoteiroEditorDialog";
+import { ReabrirRoteiroDialog } from "@/components/card/ReabrirRoteiroDialog";
 import { NovoContratoDialog } from "@/components/card/NovoContratoDialog";
 import { PessoaDocumentosPanel } from "@/components/PessoaDocumentosPanel";
 import { NegociacoesDoClienteSection } from "@/components/card/NegociacoesDoClienteSection";
@@ -158,7 +159,11 @@ export function ClienteDetailModal({
   // boolean rather than reusing `compradorDialogOpen` so the two "add a
   // buyer-side party" flows never fight over which dialog is showing.
   const [conjugeDialogOpen, setConjugeDialogOpen] = useState(false);
-  const [roteiroDialogOpen, setRoteiroDialogOpen] = useState(false);
+  // The roteiro editor: `roteiroId: null` = a NEW draft, a string = "Continuar editando".
+  // Absent = closed. Sibling dialog for the same focus-trap reason as the others.
+  const [roteiroEditor, setRoteiroEditor] = useState<{ roteiroId: string | null } | null>(null);
+  // "Reabrir como rascunho" waits for its confirmation (a PDF already downloaded goes stale).
+  const [reabrirAlvoId, setReabrirAlvoId] = useState<string | null>(null);
   // Sibling of `roteiroDialogOpen` for the same reason: a Dialog nested inside
   // `ClienteCardDialog`'s own Dialog content fights the outer focus trap.
   const [contratoAlvoId, setContratoAlvoId] = useState<string | null>(null);
@@ -586,23 +591,37 @@ export function ClienteDetailModal({
       roteirosLoading={roteiros.isPending && !roteiros.data}
       roteirosRefreshing={roteiros.isFetching && !!roteiros.data}
       roteirosError={roteiros.isError ? "Não foi possível carregar os roteiros." : null}
-      onCriarRoteiro={() => setRoteiroDialogOpen(true)}
+      onCriarRoteiro={() => setRoteiroEditor({ roteiroId: null })}
+      onEditarRascunhoRoteiro={(roteiroId) => setRoteiroEditor({ roteiroId })}
       onRemoverRoteiro={(roteiroId) =>
         roteiroMutations.remove.mutate(roteiroId, {
           onError: (err) => toastServerError(err, "Não foi possível remover o roteiro."),
         })
       }
-      onGerarRoteiroPdf={async (roteiroId) => {
+      onBaixarRoteiroPdf={async (roteiroId) => {
         if (!id) return;
         setRoteiroPdfPendingId(roteiroId);
         try {
           await baixarRoteiroPdf(id, roteiroId);
         } catch (err) {
-          toastServerError(err, "Não foi possível gerar o roteiro.");
+          // R10 answers 409 for a draft with its own sentence — shown as-is.
+          toastServerError(err, "Não foi possível baixar o PDF.");
         } finally {
           setRoteiroPdfPendingId(null);
         }
       }}
+      onReabrirRoteiro={(roteiroId) => setReabrirAlvoId(roteiroId)}
+      roteiroReabrindoId={
+        roteiroMutations.reabrir.isPending
+          ? (roteiroMutations.reabrir.variables?.id ?? null)
+          : null
+      }
+      onPatchRoteiro={(roteiroId, body) =>
+        roteiroMutations.update.mutate(
+          { id: roteiroId, body },
+          { onError: (err) => toastServerError(err, "Não foi possível salvar o roteiro.") },
+        )
+      }
       onPatchVisita={(roteiroId, visitaId, body) =>
         roteiroMutations.patchVisita.mutate(
           { roteiroId, visitaId, body },
@@ -611,23 +630,20 @@ export function ClienteDetailModal({
           },
         )
       }
-      onAddVisita={(roteiroId, codigo) =>
-        roteiroMutations.addVisita.mutate(
-          { roteiroId, codigo },
+      onReagendarVisita={(roteiroId, visitaId) =>
+        roteiroMutations.reagendar.mutate(
+          { roteiroId, visitaId },
           {
-            onError: (err) =>
-              toastServerError(err, "Não foi possível adicionar o imóvel ao roteiro."),
+            // R12 hands back the NEW draft: open it in the editor.
+            onSuccess: (resultado) => setRoteiroEditor({ roteiroId: resultado.novo_roteiro.id }),
+            onError: (err) => toastServerError(err, "Não foi possível reagendar a visita."),
           },
         )
       }
-      onRemoveVisita={(roteiroId, visitaId) =>
-        roteiroMutations.removeVisita.mutate(
-          { roteiroId, visitaId },
-          {
-            onError: (err) =>
-              toastServerError(err, "Não foi possível remover o imóvel do roteiro."),
-          },
-        )
+      roteiroReagendandoId={
+        roteiroMutations.reagendar.isPending
+          ? (roteiroMutations.reagendar.variables?.visitaId ?? null)
+          : null
       }
       onResponderFeedbackRoteiro={(roteiroId, body) =>
         responderFeedback.mutate(
@@ -1126,23 +1142,36 @@ export function ClienteDetailModal({
     {/* Sibling of the card for the same reason `AdicionarCompradorDialog` is:
         a Dialog nested inside another Dialog's content fights the outer focus
         trap and scroll lock. */}
-    <CriarRoteiroDialog
-      open={roteiroDialogOpen}
-      onOpenChange={setRoteiroDialogOpen}
-      onCriar={(body) =>
-        roteiroMutations.create.mutate(body, {
-          onSuccess: () => setRoteiroDialogOpen(false),
-          // The 409 when a person has several open atendimentos arrives with
-          // the candidate ids, and a 404 names the codigo we do not know —
-          // both surfaced with the server own message, because only it can say
-          // which imovel or which deal was the problem.
-          onError: (err) => toastServerError(err, "Não foi possível criar o roteiro."),
-        })
-      }
-      saving={roteiroMutations.create.isPending}
+    <RoteiroEditorDialog
+      open={roteiroEditor !== null}
+      onOpenChange={(aberto) => !aberto && setRoteiroEditor(null)}
+      // Re-mounted per draft: one editor state per roteiro.
+      key={roteiroEditor?.roteiroId ?? "novo"}
+      clienteId={id ?? "__none__"}
+      atendimentoId={atendimentoId}
+      roteiroId={roteiroEditor?.roteiroId ?? null}
     />
 
-    {/* Sibling of the card for the same reason `CriarRoteiroDialog` is. */}
+    {/* "Reabrir como rascunho" — the confirmation warns that a downloaded PDF goes stale. */}
+    <ReabrirRoteiroDialog
+      open={reabrirAlvoId !== null}
+      geradoPorNome={roteiros.data?.find((r) => r.id === reabrirAlvoId)?.gerado_por_nome}
+      onCancel={() => setReabrirAlvoId(null)}
+      onConfirm={() => {
+        const alvo = reabrirAlvoId;
+        setReabrirAlvoId(null);
+        if (!alvo) return;
+        roteiroMutations.reabrir.mutate(
+          { id: alvo },
+          {
+            // 403 / 409 carry their own pt-BR sentence — never a silent no-op.
+            onError: (err) => toastServerError(err, "Não foi possível reabrir o roteiro."),
+          },
+        );
+      }}
+    />
+
+    {/* Sibling of the card for the same reason `RoteiroEditorDialog` is. */}
     <NovoContratoDialog
       open={contratoDialogOpen}
       onOpenChange={setContratoDialogOpen}

@@ -19,6 +19,7 @@ import time
 from typing import Any, Mapping, Optional
 
 import httpx
+from noctusai_lib.integrations import rate_limit
 from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_SECONDS = 15.0
 DEFAULT_PAGE_SIZE = 50
 PAGINATION_KEYS = {"total", "paginas", "pagina", "quantidade"}
+
+RATE_BUCKET = "vista"
 
 KEY_REDACTION_PLACEHOLDER = "<VISTA_API_KEY:redacted>"
 
@@ -234,6 +237,14 @@ class VistaRecordUnpublished(VistaUpstreamError):
         self.payload: dict = dict(payload or {})
 
 
+class VistaRateLimited(VistaUpstreamError):
+    """HTTP 429 -- Vista asked us to slow down. `retry_after` is its `Retry-After` in seconds (None when absent)."""
+
+    def __init__(self, body: str, endpoint: str, retry_after: Optional[float] = None):
+        super().__init__(429, body, endpoint)
+        self.retry_after = retry_after
+
+
 class VistaTimeout(VistaError):
     """`httpx.TimeoutException` wrapper."""
 
@@ -290,7 +301,16 @@ class VistaClient:
         *,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         http_client: Optional[httpx.AsyncClient] = None,
+        rate_bucket: str = RATE_BUCKET,
+        rate_per_sec: Optional[float] = None,
+        rate_burst: Optional[float] = None,
     ):
+        # Pacing: every call crosses `rate_limit.acquire_async(rate_bucket)`. The default bucket is the shared "vista" one
+        # (5 rps / burst 10, env `NOC_RL_VISTA_RPS|BURST`). A multi-tenant product gives each org its OWN bucket
+        # (`vista:<org_id>`) and, optionally, its own `rate_per_sec` -- one org's batch never starves another's.
+        self._rate_bucket = rate_bucket
+        if rate_per_sec is not None:
+            rate_limit.configure_bucket(rate_bucket, rate_per_sec=rate_per_sec, burst=rate_burst, like=RATE_BUCKET)
         self._base_url = (base_url or "").rstrip("/")
         self._api_key = api_key or ""
         self._timeout = timeout_seconds
@@ -320,11 +340,48 @@ class VistaClient:
         cadastro: Optional[dict] = None,
         showtotal: bool = False,
     ) -> VistaCallResult:
-        # NOC-REMEDIATE[rate-limit]: pace this async chokepoint via
-        # `await rate_limit.acquire_async("vista")` (mirror the Mailchimp
-        # wiring). Deferred: Vista call volume is low today, but a
-        # property-list sync loop should be paced before it grows. See
-        # KB § PATTERNS/common/outbound-rate-limiting.md. — 2026-07-24
+        """One paced, bounded-retry Vista call (KB § PATTERNS/common/outbound-rate-limiting.md).
+
+        Pacing: a token is taken from the bucket before EVERY attempt. Backoff: HTTP 429 (honouring `Retry-After`) and,
+        for READS only, 5xx are retried a bounded number of times (the bucket's `max_retries`), then re-raised; a
+        `Retry-After` past the bucket's `max_retry_after` raises `rate_limit.RetryLater` for the job layer. A write
+        (`cadastro`) is never retried on a 5xx -- its outcome is unknown (canon §5); a 429 means it was not processed.
+        Every message that leaves here is redacted (a Vista 401 body echoes the key).
+        """
+        if not self.configured:
+            raise VistaConfigError(
+                "Vista is not configured (VISTA_BASE_URL / VISTA_API_KEY missing)"
+            )
+        is_write = cadastro is not None
+
+        def _retryable(exc: BaseException) -> bool:
+            if isinstance(exc, VistaRateLimited):
+                return True
+            return isinstance(exc, VistaUpstreamError) and exc.status >= 500 and not is_write
+
+        async def _attempt() -> VistaCallResult:
+            await rate_limit.acquire_async(self._rate_bucket)
+            return await self._request_once(
+                endpoint, method=method, pesquisa=pesquisa, extra_params=extra_params, cadastro=cadastro, showtotal=showtotal
+            )
+
+        return await rate_limit.retry_with_backoff_async(
+            _attempt,
+            bucket=self._rate_bucket,
+            is_retryable=_retryable,
+            retry_after=lambda e: getattr(e, "retry_after", None),
+        )
+
+    async def _request_once(
+        self,
+        endpoint: str,
+        *,
+        method: str = "GET",
+        pesquisa: Optional[dict] = None,
+        extra_params: Optional[dict] = None,
+        cadastro: Optional[dict] = None,
+        showtotal: bool = False,
+    ) -> VistaCallResult:
         if not self.configured:
             raise VistaConfigError(
                 "Vista is not configured (VISTA_BASE_URL / VISTA_API_KEY missing)"
@@ -409,6 +466,11 @@ class VistaClient:
         if resp.status_code == 404:
             logger.info("Vista %s not found (404) — not exposed on this tenant", endpoint)
             raise VistaNotFound(404, body_text, endpoint)
+
+        if resp.status_code == 429:
+            retry_after = rate_limit.parse_retry_after(resp.headers.get("Retry-After"))
+            logger.warning("Vista %s throttled (429); retry-after=%s", endpoint, retry_after)
+            raise VistaRateLimited(body_text, endpoint, retry_after)
 
         if resp.status_code == 400:
             matched, fields = _detect_unavailable_fields(body_text)

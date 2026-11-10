@@ -3,7 +3,8 @@
 One call = one BATCH (`limite` leads, ordered by `meta_ads_leads.id`), resumable by `cursor`; the caller (the
 `noctus.sw.ad_lead_intake` MCP tool, or a human) loops until `proximo_cursor` is null. DRY-RUN by default: it classifies and
 counts, writes nothing, calls Vista never. A real batch fetches each distinct code ONCE (shared cache) and the per-call Vista
-pacing is the shared `vista` rate-limit bucket (`ImovelSyncService.buscar_detalhe`); `pausa_s` adds a pause between leads.
+pacing is the Vista client's own chokepoint (`VistaClient._request`: every call takes a token from the ORG's `vista:<org_id>` rate-limit bucket, default 5 requests/s, and a 429 / 5xx is retried with bounded backoff honouring Retry-After); `pausa_s` adds a pause between leads.
+A full run over every lead is ALWAYS manual and owner-triggered: no scheduler runs this backfill (the retry job only re-drives `pendente_retry` rows).
 
 `modo`: `novos` (no intake row yet, or a retryable one -- the default) | `pendentes` (only the retryable rows) | `refazer`
 (everything: re-compare against Vista). A Meta row with no mapped `leads` row is reported (`sem_lead`), not created here --

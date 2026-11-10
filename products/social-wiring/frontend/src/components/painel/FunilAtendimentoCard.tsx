@@ -6,7 +6,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useMetricasFunil } from "@/hooks/useMetricasFunil";
-import { MOTIVOS_NAO_REALIZADA } from "@/types/cardHub";
 
 function dias(v: number | null): string {
   return v === null ? "—" : `${v.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} d`;
@@ -51,18 +50,24 @@ export function FunilAtendimentoCard() {
               ))}
             </dl>
 
-            {Object.keys(data.visitas_nao_realizadas).length > 0 && (
-              <div data-testid="painel-funil-nao-realizadas">
-                <p className="mb-1 text-xs font-medium text-muted-foreground">Visitas não realizadas</p>
-                <ul className="flex flex-wrap gap-1.5">
-                  {Object.entries(data.visitas_nao_realizadas).map(([motivo, n]) => (
-                    <li key={motivo} className="rounded-full bg-danger-light px-2 py-0.5 text-xs text-destructive">
-                      {MOTIVOS_NAO_REALIZADA.find((m) => m.value === motivo)?.label ?? motivo}: {n}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <div data-testid="painel-funil-resultados">
+              <p className="mb-1 text-xs font-medium text-muted-foreground">Resultado das visitas</p>
+              <ul className="flex flex-wrap gap-1.5">
+                {[
+                  ["Consolidadas", data.visitas_consolidadas, "bg-success-light text-foreground"],
+                  ["Perdidas", data.visitas_perdidas, "bg-danger-light text-destructive"],
+                  ["Neutras (reagendadas e pendentes)", data.visitas_neutras, "bg-muted text-muted-foreground"],
+                ].map(([rotulo, n, cls]) => (
+                  <li key={String(rotulo)} className={`rounded-full px-2 py-0.5 text-xs ${cls}`}>
+                    {rotulo}: {n}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1 text-xs text-muted-foreground" data-testid="painel-funil-perdidas-detalhe">
+                Perdidas: {data.visitas_canceladas} canceladas, {data.visitas_nao_compareceu} não compareceu ·{" "}
+                {data.visitas_reagendadas} reagendadas não contam.
+              </p>
+            </div>
 
             <div>
               <p className="mb-1 text-xs font-medium text-muted-foreground">Tempo médio entre etapas</p>

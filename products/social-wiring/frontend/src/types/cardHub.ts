@@ -318,11 +318,38 @@ export type AgendamentoPatchBody = Partial<Omit<AgendamentoCreateBody, "atendime
 // ─── Roteiros e visitas (migration 082) ────────────────────────────────────
 
 /**
- * The contabilização. THREE states, never a boolean — "hasn't happened yet"
- * and "didn't happen" are different facts, and merging them files every future
- * visit under "did not" in the count this feature exists to produce.
+ * The outcome of one visita (roteiro-ciclo CONTRACT §1). Five states, never a
+ * boolean — "hasn't happened yet", "happened", "was lost" and "was moved" are
+ * different facts. `reagendada` is NEUTRAL: it is neither consolidated nor lost,
+ * and the new date lives in a NEW roteiro.
+ *
+ * `nao_realizada` is gone from the response (legacy rows were backfilled).
  */
-export type StatusVisita = "pendente" | "realizada" | "nao_realizada";
+export type StatusVisita =
+  | "pendente"
+  | "realizada"
+  | "cancelada"
+  | "nao_compareceu"
+  | "reagendada";
+
+/** Who cancelled — required with `status: "cancelada"` (CONTRACT §1). */
+export const CANCELADA_POR = [
+  { value: "cliente", label: "Cliente" },
+  { value: "proprietario", label: "Proprietário" },
+  { value: "corretor", label: "Corretor" },
+] as const;
+export type CanceladaPor = (typeof CANCELADA_POR)[number]["value"];
+
+/** Why it was cancelled — required with `status: "cancelada"` (CONTRACT §1). */
+export const CANCELADA_MOTIVO = [
+  { value: "cliente_desistiu", label: "Cliente desistiu" },
+  { value: "imovel_indisponivel", label: "Imóvel indisponível" },
+  { value: "outro", label: "Outro" },
+] as const;
+export type CanceladaMotivo = (typeof CANCELADA_MOTIVO)[number]["value"];
+
+/** A roteiro is a draft until generated; reopening makes it a draft again. */
+export type StatusRoteiro = "rascunho" | "gerado";
 
 /** Which side answered the enrichment. `registry` means the imóvel has left
  *  the Vista catalog and is rendering from its delist-time snapshot. */
@@ -386,10 +413,18 @@ export interface Visita {
   feedback_em: string | null;
   created_at: string | null;
   imovel: ImovelVisita | null;
-  /** Why the visit did not happen (migration 219); `null` unless `nao_realizada`. */
-  nao_realizada_motivo?: MotivoNaoRealizada | null;
   /** When the status became `realizada` (migration 219). */
   realizada_em?: string | null;
+  /** Both set when `status === "cancelada"` (legacy rows may carry a null `cancelada_por`). */
+  cancelada_por: CanceladaPor | null;
+  cancelada_motivo: CanceladaMotivo | null;
+  /** The visita on the NEW roteiro that replaced this one (`status === "reagendada"`). */
+  reagendada_para_visita_id: string | null;
+  /** When the outcome was recorded, and by whom. */
+  resultado_em: string | null;
+  resultado_por: string | null;
+  /** This visita's own time, `HH:MM` (CONTRACT v1.1); editable via R11 in both statuses. */
+  horario: string | null;
 
   /* ── The proposta axis (migration 104) ───────────────────────────────
    * 🔴 ORTHOGONAL to `status`, never a fourth value of it. A visita that
@@ -405,13 +440,36 @@ export interface Visita {
   proposta_aceita_por: string | null;
 }
 
+/** The server's counts (CONTRACT §2). One derivation for lead / imóvel / corretor;
+ *  drafts are excluded server-side. `nao_realizadas` no longer exists. */
 export interface ContagemVisitas {
   total: number;
-  realizadas: number;
-  nao_realizadas: number;
   pendentes: number;
+  realizadas: number;
+  canceladas: number;
+  nao_compareceu: number;
+  reagendadas: number;
+  /** = realizadas */
+  consolidadas: number;
+  /** = canceladas + nao_compareceu */
+  perdidas: number;
+  /** = reagendadas + pendentes */
+  neutras: number;
 }
 
+/**
+ * What the calling user may do with this roteiro — computed by the SERVER.
+ * The FE renders from it and never re-derives the rules (CONTRACT §2).
+ * `motivo_*` is ready-to-show pt-BR copy, null when the action is allowed.
+ */
+export interface RoteiroPermissoes {
+  editar_imoveis: boolean;
+  gerar: boolean;
+  motivo_gerar: string | null;
+  baixar_pdf: boolean;
+  reabrir: boolean;
+  motivo_reabrir: string | null;
+}
 /**
  * A planned visiting route. Belongs to an ATENDIMENTO for the same reason an
  * `Agendamento` does — 2024's route must not pile onto a live negotiation.
@@ -420,34 +478,40 @@ export interface Roteiro {
   id: string;
   atendimento_id: string;
   titulo: string | null;
-  /** `YYYY-MM-DD`; `null` only on rows that predate migration 184. */
+  /** `YYYY-MM-DD`; `null` while a draft has no date yet (required only to gerar). */
   data_visita: string | null;
+  /** `HH:MM`, optional; `data_visita` stays the date. */
+  hora_visita: string | null;
   created_at: string | null;
+  updated_at: string | null;
+  /** `rascunho` is autosaved and editable; `gerado` locks the imóvel list. */
+  status: StatusRoteiro;
+  gerado_em: string | null;
+  gerado_por: string | null;
+  gerado_por_nome: string | null;
+  reaberto_em: string | null;
+  reaberto_por: string | null;
+  reaberto_por_nome: string | null;
+  criado_por: string | null;
   /** "visita aconteceu?" — `pendente` until the corretor answers (migration 219). */
   feedback_status?: "pendente" | "respondido";
   feedback_em?: string | null;
-  /** `HH:MM:SS`, optional; `data_visita` stays the date. */
-  hora_visita?: string | null;
   visitas: Visita[];
   contagem: ContagemVisitas;
-  /** Only on the create response: what the funnel did with `roteiro_criado`. */
+  permissoes: RoteiroPermissoes;
+  /** Only on the GERAR response: what the funnel did with `roteiro_criado`. */
   funil?: { moveu: boolean; de: string | null; para: string | null; motivo: string | null };
 }
 
-/** Closed vocabulary of `visitas.nao_realizada_motivo` (CONTRACT §3.1). */
-export const MOTIVOS_NAO_REALIZADA = [
-  { value: "cliente_desistiu", label: "Cliente desistiu" },
-  { value: "cliente_nao_compareceu", label: "Cliente não compareceu" },
-  { value: "imovel_indisponivel", label: "Imóvel indisponível" },
-  { value: "reagendada", label: "Reagendada" },
-  { value: "outro", label: "Outro" },
-] as const;
-export type MotivoNaoRealizada = (typeof MOTIVOS_NAO_REALIZADA)[number]["value"];
+/** What the "visita aconteceu?" answer can record for one visita (CONTRACT R14). */
+export type ResultadoVisita = "realizada" | "cancelada" | "nao_compareceu" | "reagendada";
 
 export interface VisitaFeedbackItem {
   visita_id: string;
   realizada: boolean;
-  motivo?: MotivoNaoRealizada | null;
+  resultado?: ResultadoVisita;
+  cancelada_por?: CanceladaPor | null;
+  cancelada_motivo?: CanceladaMotivo | null;
   observacao?: string | null;
 }
 
@@ -482,7 +546,13 @@ export interface MetricasFunil {
   com_roteiro: number;
   visitas_agendadas: number;
   visitas_realizadas: number;
-  visitas_nao_realizadas: Record<string, number>;
+  /** One derivation for lead / imóvel / corretor (CONTRACT §4). `reagendadas` is NEUTRAL. */
+  visitas_consolidadas: number;
+  visitas_perdidas: number;
+  visitas_neutras: number;
+  visitas_canceladas: number;
+  visitas_nao_compareceu: number;
+  visitas_reagendadas: number;
   propostas_criadas: number;
   propostas_aceitas: number;
   propostas_recusadas: number;
@@ -494,27 +564,44 @@ export interface MetricasFunil {
   };
 }
 
+/** `POST …/roteiros` (R2) — every field optional; creates a DRAFT. */
 export interface RoteiroCreateBody {
-  /** Códigos IN VISITING ORDER — the array index becomes `ordem`. */
-  imoveis: string[];
-  /** `YYYY-MM-DD`, no time — REQUIRED (CONTRACT §5.1). */
-  data_visita: string;
-  /** Optional `HH:MM`; the due prompt waits for it on the day. */
-  hora_visita?: string;
   titulo?: string | null;
+  data_visita?: string | null;
+  hora_visita?: string | null;
   /** Only needed when the person has more than one open atendimento. */
   atendimento_id?: string;
+  /** Códigos IN VISITING ORDER (0–50) — the array index becomes `ordem`. */
+  imoveis?: string[];
 }
 
+/** `PATCH …/roteiros/{rid}` (R3) — allowed in both statuses. */
 export interface RoteiroPatchBody {
   titulo?: string | null;
-  /** May be changed, never cleared. */
-  data_visita?: string;
+  data_visita?: string | null;
+  hora_visita?: string | null;
 }
 
+/** `PATCH …/visitas/{vid}` (R11). `reagendada` is NOT accepted here (422) — use `reagendar`. */
 export interface VisitaPatchBody {
-  status?: StatusVisita;
+  status?: Exclude<StatusVisita, "reagendada">;
   observacao?: string | null;
+  cancelada_por?: CanceladaPor | null;
+  cancelada_motivo?: CanceladaMotivo | null;
+  /** `HH:MM` or null to clear. */
+  horario?: string | null;
+}
+
+/** `POST …/visitas/{vid}/reagendar` (R12) — the date/time of the NEW roteiro. */
+export interface ReagendarBody {
+  data_visita?: string | null;
+  hora_visita?: string | null;
+}
+
+/** R12's answer: the visita now `reagendada`, and the new DRAFT it moved to. */
+export interface ReagendarResultado {
+  visita: Visita;
+  novo_roteiro: Roteiro;
 }
 
 /** `PATCH .../visitas/{id}/proposta` — its OWN route, matching migration

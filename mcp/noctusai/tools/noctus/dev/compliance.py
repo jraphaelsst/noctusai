@@ -16194,6 +16194,21 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Written only from fixed literals / one-open-notice index in the SW services; migration unapplied (file-only), nothing to probe yet. "
         "Replace with a real GuardProbe in the SAME change that applies it.",
     ),
+    # SW 337 (Vista clientes -> lead people, fill-empty-only) is NOT APPLIED (file-only until the tech-lead runs migrate_product): the UNIQUE
+    # (org, Vista cliente Codigo) link and the partial UNIQUE keeping one OPEN notice per (tipo, Codigo, campo, pessoa). Written only by
+    # `vista_clientes_sync` (read-then-write); neither index exists in prod to probe yet.
+    (
+        "products/social-wiring/backend/migrations/337_vista_clientes_sync.sql",
+        "uq_sw_vista_cliente_links_codigo",
+        "UNIQUE (org_id, vista_codigo); migration unapplied (file-only), so no live index to probe; the only writer reads the link first. "
+        "Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/337_vista_clientes_sync.sql",
+        "uq_sw_vista_cliente_avisos_aberto",
+        "Partial UNIQUE over the open notice key WHERE status='pendente'; migration unapplied (file-only), no live index to probe; the only "
+        "writer reads the open keys first. Replace with a real GuardProbe in the SAME change that applies it.",
+    ),
     # SW 318 DROPPED this guard (One Chat retired): its probe was deleted -- a probe for a guard that no longer exists would
     # report `permitted` forever. The 258 file still defines it (history is immutable), so the detector still sees it.
     (
