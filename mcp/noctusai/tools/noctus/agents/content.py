@@ -124,7 +124,7 @@ LIFECYCLE_ACTIONS = (
 )
 _DEFINICAO_CAMPOS = (
     "nome", "descricao", "runtime", "owner_product", "escopo_qualificacao", "padrao_qualificacao", "rascunho_padrao",
-    "instanciavel", "papel", "superficie_claude",
+    "instanciavel", "papel", "superficie_claude", "modelo", "pai_agent_id",
 )
 #: ``kind`` / ``fonte`` are fixed at creation (immutable afterwards): create-only keys.
 _CRIAR_CAMPOS = (*_DEFINICAO_CAMPOS, "kind", "fonte", "briefing", "limite_usd")

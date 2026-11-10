@@ -40,6 +40,9 @@ class PlataformaAgentCreateRequest(StrictHttpModel):
     fonte: Literal["git", "db"] = Field(default="git", title="Fonte do conteúdo")
     #: 070 (§M1): ``{tools, model, owns_kb}`` of the Claude Code mirror (dev agents only).
     superficie_claude: dict[str, Any] | None = Field(default=None, title="Superfície Claude Code")
+    #: 073 (agent layers): a TEMPLATE others inherit from, and/or the template this definition inherits from.
+    modelo: bool = Field(default=False, title="Modelo (template)")
+    pai_agent_id: UUID | None = Field(default=None, title="Modelo de origem")
     #: When sent, an AI generation of the new draft starts right away (all areas, ``forcar=false``).
     briefing: Briefing | None = Field(default=None, title="Briefing")
     limite_usd: float = Field(default=5.0, gt=0, le=5.0, title="Limite de custo da geração (US$)")
@@ -60,6 +63,9 @@ class PlataformaAgentUpdateRequest(StrictHttpModel):
     instanciavel: bool | None = None
     papel: Literal["gerador"] | None = None
     superficie_claude: dict[str, Any] | None = None
+    modelo: bool | None = None
+    #: An explicit ``null`` detaches the definition from its template.
+    pai_agent_id: UUID | None = None
 
 
 class PlataformaAgentOut(BaseModel):
@@ -84,6 +90,8 @@ class PlataformaAgentOut(BaseModel):
     kind: str = "runtime"
     fonte: str = "git"
     superficie_claude: dict[str, Any] | None = None
+    modelo: bool = False
+    pai_agent_id: UUID | None = None
     #: The generation started by ``briefing`` (``null`` when none was sent).
     geracao: GeracaoOut | None = None
 
