@@ -21,11 +21,12 @@ import logging
 from typing import Any, Final, Optional
 from uuid import UUID
 
+from noctusai_lib.integrations.whatsapp.log_safety import install_phone_scrub
 from noctusai_lib.integrations.fake_or_refuse import resolve_fake_or_refuse
 from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 from noctusai_lib.realtime import FakeRealtimeBus, RealtimeBus, get_realtime_bus
 
-logger = logging.getLogger(__name__)
+logger = install_phone_scrub(logging.getLogger(__name__))
 
 EVENT_MESSAGE_NEW: Final = "message.new"
 EVENT_MESSAGE_ACK: Final = "message.ack"

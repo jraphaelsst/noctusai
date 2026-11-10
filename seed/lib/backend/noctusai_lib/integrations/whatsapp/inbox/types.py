@@ -63,6 +63,9 @@ class InboxMessage:
     sender_name: Optional[str]
     media_mimetype: Optional[str] = None
     sender_phone: Optional[str] = None
+    #: WAHA's ``source`` (``"app"`` typed on the phone, ``"api"`` sent through the API). Not persisted, not on the
+    #: wire: it exists so a pre-store predicate can tell an API-sourced message from a real inbound one.
+    source: Optional[str] = None
 
     def as_dict(self) -> dict[str, Any]:
         return {

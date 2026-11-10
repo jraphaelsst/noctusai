@@ -121,3 +121,13 @@ def test_realtime_factory_refuses_silent_in_process_bus():
     with pytest.raises(InboxRealtimeNotConfigured):
         build_inbox_realtime()
     assert build_inbox_realtime(allow_in_process=True).in_process is True
+
+
+def test_backfill_honours_the_pre_store_predicate_like_live_ingest(store, record, waha):
+    from noctusai_lib.integrations.whatsapp.inbox import inbound_one_to_one_only
+
+    waha.fake_chat_messages[CHAT] = _history(6)  # odd indexes are fromMe
+    report = _backfill(record, store, waha, should_store=inbound_one_to_one_only())
+    assert (report.messages_inserted, report.messages_skipped) == (3, 3)
+    items, _ = store.list_messages(org_id=ORG, connection_id=CONN, chat_id=CHAT)
+    assert all(not m.from_me for m in items)

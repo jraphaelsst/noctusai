@@ -449,6 +449,7 @@ async def get_waha_status(
         "/api/sessions",
     ]
     last_error: str | None = None
+    # noc-allow: raw-waha-http -- GET-only session status probe over the three fixed candidate paths above; it cannot write
     async with httpx.AsyncClient(base_url=base_url, timeout=10) as client:
         for path in candidates:
             try:

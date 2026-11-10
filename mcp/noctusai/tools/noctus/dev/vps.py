@@ -89,12 +89,33 @@ def health(ssh_host: str = DEFAULT_HOST, run_remote: Callable | None = None) -> 
             "summary": f"{len(healthy)} healthy / {len(starting)} starting / {len(unhealthy)} unhealthy"}
 
 
+def _personal_refusal(container: str, run) -> dict[str, Any] | None:
+    """Refuse (fail closed) a read of a `personal: true` WhatsApp line's core: its logs/inspect leak LGPD-grade message data
+    and identifiers. Same union-of-three-sources check as noctus.vps.exec (local yml, VPS yml, live label); `run` takes a
+    command STRING (the SSH chokepoint accepts str or argv)."""
+    from .vps_exec import targets_personal_core
+
+    try:
+        personal = targets_personal_core(f"docker {container}", container, run=run)
+    except Exception:  # noqa: BLE001 - an unreadable source is a refusal, never a pass
+        personal = True
+    if not personal:
+        return None
+    return {"ok": False, "status": "refused", "exit_code": 1,
+            "error": ("this targets a container of a `personal: true` WhatsApp line (or a personal-line source is "
+                      "unreadable): refused -- its logs/inspect are never read through this tool "
+                      "(KB § INTEGRATIONS/whatsapp.md § 6a).")}
+
+
 def logs(container: str, lines: int = 80, ssh_host: str = DEFAULT_HOST,
          grep: str | None = None, run_remote: Callable | None = None) -> dict[str, Any]:
     """Tail a container's logs (read-only)."""
     if not container:
         return _err("container required")
     run = _runner(run_remote, ssh_host)
+    refused = _personal_refusal(container, run)
+    if refused:
+        return refused
     rc, out, err = run(["docker", "logs", "--tail", str(int(lines)), container])
     combined = (out or "") + (err or "")  # docker logs writes app stderr too
     if rc != 0 and not combined.strip():
@@ -112,6 +133,9 @@ def inspect(container: str, ssh_host: str = DEFAULT_HOST,
     if not container:
         return _err("container required")
     run = _runner(run_remote, ssh_host)
+    refused = _personal_refusal(container, run)
+    if refused:
+        return refused
     tmpl = ("{{.Image}}|{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}|"
             "{{.State.StartedAt}}|{{range $p,$_ := .Config.ExposedPorts}}{{$p}} {{end}}")
     rc, out, err = run(["docker", "inspect", "-f", tmpl, container])

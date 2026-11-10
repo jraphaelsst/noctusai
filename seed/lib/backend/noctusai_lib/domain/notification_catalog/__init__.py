@@ -35,6 +35,7 @@ from .owner_line import (  # noqa: F401
     configure_owner_line,
     get_owner_line,
     make_owner_line,
+    register_owner_line_policy,
     notify_owner,
 )
 
@@ -72,5 +73,6 @@ __all__ = [
     "configure_owner_line",
     "get_owner_line",
     "make_owner_line",
+    "register_owner_line_policy",
     "notify_owner",
 ]

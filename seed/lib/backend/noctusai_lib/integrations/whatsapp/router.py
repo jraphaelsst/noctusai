@@ -27,6 +27,7 @@ from typing import Awaitable, Callable
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
+from noctusai_lib.integrations.whatsapp.log_safety import install_phone_scrub
 from noctusai_lib.integrations.whatsapp.dedup import (
     InMemoryWebhookDedup,
     WebhookDedup,
@@ -43,7 +44,7 @@ from noctusai_lib.security.webhook_signatures import (
     verify_waha_hmac,
 )
 
-logger = logging.getLogger(__name__)
+logger = install_phone_scrub(logging.getLogger(__name__))
 
 InboundHandler = Callable[[WhatsAppInboundMessage], Awaitable[None]]
 

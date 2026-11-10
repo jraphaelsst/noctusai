@@ -37,6 +37,7 @@ REASON_NOT_INSTALLED = "linha_noc_nao_instalada"
 REASON_NUMBER_MISMATCH = "linha_noc_numero_divergente"
 REASON_NUMBER_UNDECLARED = "linha_noc_numero_nao_declarado"
 REASON_NUMBER_UNKNOWN = "linha_noc_numero_desconhecido"
+REASON_LINE_POLICY_REFUSED = "linha_noc_politica_recusada"
 VERIFY_TTL_SECONDS = 900.0
 
 
@@ -232,6 +233,38 @@ def make_owner_line(
         else:
             transport = WahaOwnerLineTransport(waha_factory, expected_numero=expected_numero, me_fetch=me_fetch)
     return OwnerLine(recipients=recipients, transport=transport, transport_reason=reason)
+
+
+def register_owner_line_policy(
+    base_url: str, session: str, expected_numero: Optional[str]
+) -> Optional[str]:
+    """Declare the owner line's OWN WAHA line as send-enabled, TIGHTEN-ONLY. Returns None when nothing refuses it (it registers only with URL ∧ number), else the
+    refusal reason (logged ERROR, never raised): the caller installs no transport.
+
+    Only when BOTH the URL and the expected number are set (no number ⇒ no transport anyway; the paired-number check in
+    ``WahaOwnerLineTransport`` is what stops a misset URL from sending as a client's line). Registration goes through
+    ``register_line_policy``, which refuses to loosen a read-only/personal/disabled line, and the RESOLVED policy is
+    re-read afterwards: a stricter policy anywhere (generated read-only set, address alias, registry) wins."""
+    if not (base_url or "").strip() or not (expected_numero or "").strip():
+        return None  # nothing registered: the host stays no_line_policy (make_owner_line records the missing number)
+    from noctusai_lib.integrations.whatsapp.line_policy import (
+        LinePolicy,
+        LinePolicyError,
+        SEND_ENABLED,
+        register_line_policy,
+        resolve_line_policy,
+    )
+
+    try:
+        register_line_policy(base_url, LinePolicy(SEND_ENABLED, False, False, False), session=session or None)
+        resolved = resolve_line_policy(base_url, session or None)
+    except LinePolicyError as exc:
+        logger.error("owner line: its WAHA line is covered by a stricter policy (%s) — transport refused", exc)
+        return REASON_LINE_POLICY_REFUSED
+    if not resolved.send_enabled:
+        logger.error("owner line: its WAHA line resolves to a send-disabled policy — transport refused")
+        return REASON_LINE_POLICY_REFUSED
+    return None
 
 
 # ── process-wide line (installed by the seed framework, like the gate) ───────────────────────────────────────────

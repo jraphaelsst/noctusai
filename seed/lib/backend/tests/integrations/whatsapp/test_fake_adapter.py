@@ -375,7 +375,7 @@ def test_recover_session_fake_stuck_session_start_and_restart_are_no_ops() -> No
 
     asyncio.run(client.logout_session())
     assert client.session_status == "SCAN_QR_CODE"
-    assert client.me is None
+    assert client.paired_me is None
     assert client.credentials_dead is False
 
 

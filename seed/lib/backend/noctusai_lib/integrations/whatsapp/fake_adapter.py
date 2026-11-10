@@ -12,6 +12,7 @@ per `KB § PATTERNS/seed-fake-real-adapter.md`.
 from __future__ import annotations
 
 import asyncio
+import copy
 from typing import Any
 
 from noctusai_lib.integrations.whatsapp.client import (
@@ -22,8 +23,20 @@ from noctusai_lib.integrations.whatsapp.client import (
     WahaSessionNotReady,
     WahaWebhookError,
     _default_owned_prefix,
+    _session_config,
     _webhook_owned,
     recovery_outcome,
+)
+from noctusai_lib.integrations.whatsapp.line_policy import (
+    FAKE_LINE_URL,
+    LineEventSink,
+    LinePolicy,
+    LinePolicyDrift,
+    LinePolicyGuard,
+    LineRepairRefused,
+    PolicyReadback,
+    check_session_against_policy,
+    resolve_line_policy,
 )
 from noctusai_lib.integrations.whatsapp.types import (
     GroupInfo,
@@ -43,7 +56,7 @@ _FAKE_QR_PNG = (
 )
 
 
-class FakeWahaClient:
+class FakeWahaClient(LinePolicyGuard):
     """In-memory WAHA stand-in. Records sent messages, serves
     pre-populated media, accepts injected inbound messages.
 
@@ -54,15 +67,31 @@ class FakeWahaClient:
         assert client.sent_messages[0]["text"] == "expected reply"
     """
 
-    def __init__(self, *, session: str = "default"):
+    def __init__(
+        self,
+        *,
+        session: str = "default",
+        line_policy: LinePolicy | None = None,
+        line_event_sink: LineEventSink | None = None,
+    ):
         self.session = session
+        # Same policy contract as WahaClient (KB § whatsapp.md § 6a): explicit > the SAME registry (key `fake://waha`,
+        # then "*") > fail-closed UNDECLARED. A suite that drives sends declares `"*"` through the public registry.
+        self._init_line_policy(
+            label=f"fake#{session}",
+            policy=resolve_line_policy(FAKE_LINE_URL, session, explicit=line_policy),
+            sink=line_event_sink,
+        )
+        #: the `noweb` block the last `start_session` actually wrote (None before any start) -- what get_session echoes.
+        self.session_noweb: dict[str, Any] | None = None
         self.sent_messages: list[dict[str, Any]] = []
         self.inbound_queue: list[WhatsAppInboundMessage] = []
         self.media_bytes: dict[str, bytes] = {}
         # Session-admin state machine. Unpaired by default — mirrors a
         # fresh WAHA container before any QR scan.
         self.session_status: str = "SCAN_QR_CODE"
-        self.me: dict[str, Any] | None = None
+        #: the paired account (`WahaClient.me()` is the public READ of it; renamed from `me`, which now names that method)
+        self.paired_me: dict[str, Any] | None = None
         self.webhook_config: dict[str, Any] | None = None
         # Models WAHA's config.webhooks list (shared-session semantics).
         self.session_webhooks: list[dict[str, Any]] = []
@@ -171,6 +200,7 @@ class FakeWahaClient:
         return asyncio.run(self.send_text_to_phone(phone, text))
 
     def _record_send(self, chat_id: str, text: str) -> dict[str, Any]:
+        self._guard_write("post", "/api/sendText")
         message_id = f"fake-msg-{len(self.sent_messages) + 1}"
         record = {
             "id": message_id,
@@ -191,6 +221,7 @@ class FakeWahaClient:
 
         Assert against ``client.seen_calls`` for the exact call shape.
         """
+        self._guard_write("post", "/api/sendSeen")
         record: dict[str, Any] = {
             "session": self.session,
             "chatId": chat_id,
@@ -226,13 +257,37 @@ class FakeWahaClient:
         return {
             "name": self.session,
             "status": self.session_status,
-            "me": self.me,
+            "me": self.paired_me,
             "engine": {"engine": "FAKE"},
-            "config": {"webhooks": [dict(h) for h in self.session_webhooks]},
+            "config": {
+                "webhooks": [dict(h) for h in self.session_webhooks],
+                **({"noweb": copy.deepcopy(self.session_noweb)} if self.session_noweb else {}),
+            },
         }
+
+    async def provision_session(self) -> PolicyReadback:
+        """Mirror of ``WahaClient.provision_session``: the ONLY thing that sets the Fake's session config."""
+        policy = self._config_policy()
+        if policy is None or not self.line_policy.declared:
+            raise LineRepairRefused(line=self._line_label, op="provision_session", reason="not_config_authoritative")
+        self.session_noweb = copy.deepcopy(_session_config(policy=policy)["config"]["noweb"])
+        return await self.verify_line_policy()
+
+    async def verify_line_policy(self) -> PolicyReadback:
+        return check_session_against_policy(await self.get_session(), self.line_policy)
+
+    async def me(self) -> dict[str, Any]:
+        return dict(self.paired_me) if isinstance(self.paired_me, dict) else {}
+
+    def me_sync(self) -> dict[str, Any]:
+        return dict(self.paired_me) if isinstance(self.paired_me, dict) else {}
 
     async def start_session(self) -> dict[str, Any]:
         self.start_count += 1
+        # what a real start writes: the line policy's flags (UNDECLARED's when undeclared), or the legacy default
+        # WAHA's POST /start takes NO body: the payload is recorded for assertions but it never becomes the session's
+        # config (only `provision_session` -- WAHA's create/PUT -- does). So an unprovisioned Fake reads back as drift.
+        self.last_start_payload = _session_config(policy=self._config_policy())
         if self.credentials_dead:
             # Mirrors WAHA answering 409 "already started" on a session
             # that's genuinely stuck — nothing changes; the caller must
@@ -240,11 +295,12 @@ class FakeWahaClient:
             return {"name": self.session, "status": self.session_status}
         # Starting a fresh (unpaired) session puts it into SCAN_QR_CODE so
         # a QR is available; an already-paired session stays WORKING.
-        if self.me is None:
+        if self.paired_me is None:
             self.session_status = "SCAN_QR_CODE"
         return {"name": self.session, "status": self.session_status}
 
     async def restart_session(self) -> dict[str, Any]:
+        self._guard_repair("restart_session")
         self.restart_count += 1
         if self.credentials_dead:
             # Mirrors the live-fleet bug: restart retries the dead stored
@@ -253,19 +309,24 @@ class FakeWahaClient:
             return {"name": self.session, "status": self.session_status}
         # A restart drops an unpaired session back to QR; a paired one
         # (credentials would persist on a real WAHA volume) comes back up.
-        if self.me is None:
+        if self.paired_me is None:
             self.session_status = "SCAN_QR_CODE"
         else:
             self.session_status = "WORKING"
         return {"name": self.session, "status": self.session_status}
 
     async def logout_session(self) -> dict[str, Any]:
-        self.me = None
+        self._guard_repair("logout_session")
+        self.paired_me = None
         self.credentials_dead = False
         self.session_status = "SCAN_QR_CODE"
         return {"name": self.session, "status": self.session_status}
 
     async def get_qr(self) -> bytes:
+        if not self.line_policy.send_enabled and self.line_policy.declared:
+            rb = await self.verify_line_policy()
+            if not rb.ok:
+                raise LinePolicyDrift(line=self._line_label, mismatches=rb.mismatches)
         if self.session_status != "SCAN_QR_CODE":
             raise WahaSessionNotReady(status=self.session_status)
         return _FAKE_QR_PNG
@@ -276,6 +337,7 @@ class FakeWahaClient:
         """Mirror ``WahaClient.set_webhook``: MERGE into ``session_webhooks``
         (drop own url / ``owned_prefix`` entries, append the new one).
         ``webhook_config`` stays the last-registered entry (back-compat)."""
+        self._guard_webhook(url)
         if self.fail_webhook_read:
             raise WahaWebhookError("set_webhook", "cannot read current webhooks")
         prefix = owned_prefix if owned_prefix is not None else _default_owned_prefix(url)
@@ -295,6 +357,7 @@ class FakeWahaClient:
 
     async def remove_webhook(self, url_or_prefix: str) -> dict[str, Any]:
         """Mirror ``WahaClient.remove_webhook`` (no-op when nothing matches)."""
+        self._guard_webhook(url_or_prefix)
         if self.fail_webhook_read:
             raise WahaWebhookError("remove_webhook", "cannot read current webhooks")
         kept = [
@@ -320,6 +383,7 @@ class FakeWahaClient:
         ``simulate_stuck_session()`` to exercise the full ladder down to
         the ``"logout_start"`` rung.
         """
+        self._guard_repair("recover_session")
         state = await self.get_session()
         if state.get("status") == "WORKING":
             return recovery_outcome(state, "already_working")
@@ -394,7 +458,7 @@ class FakeWahaClient:
         self, *, phone: str = "5511999999999", push_name: str = "Fake"
     ) -> None:
         """Test helper: flip the fake to a paired/WORKING session."""
-        self.me = {"id": f"{phone}@c.us", "pushName": push_name}
+        self.paired_me = {"id": f"{phone}@c.us", "pushName": push_name}
         self.session_status = "WORKING"
 
     def simulate_stuck_session(
@@ -411,7 +475,7 @@ class FakeWahaClient:
         and ``restart_session`` become no-ops (status stays ``status``)
         until ``logout_session`` runs.
         """
-        self.me = {"id": f"{phone}@c.us", "pushName": push_name}
+        self.paired_me = {"id": f"{phone}@c.us", "pushName": push_name}
         self.session_status = status
         self.credentials_dead = True
 
@@ -470,6 +534,7 @@ class FakeWahaClient:
     # ------------------------------------------------------------------
 
     async def create_group(self, name: str, participant_ids: list[str]) -> GroupInfo:
+        self._guard_write("post", f"/api/{self.session}/groups")
         self._group_counter += 1
         group_id = f"fake-group-{self._group_counter}@g.us"
         info = GroupInfo(
@@ -512,6 +577,7 @@ class FakeWahaClient:
         """Adds each id unless seeded into `privacy_restricted_ids`
         (mirrors WAHA's real per-participant privacy-refusal outcome —
         ``ParticipantChangeResult(outcome="invite_required")``)."""
+        self._guard_write("post", f"/api/{self.session}/groups/{group_id}/participants/add")
         group = await self.get_group(group_id)
         existing_ids = {p.id for p in group.participants}
         participants = list(group.participants)
@@ -533,6 +599,7 @@ class FakeWahaClient:
     async def remove_participants(
         self, group_id: str, participant_ids: list[str]
     ) -> list[ParticipantChangeResult]:
+        self._guard_write("post", f"/api/{self.session}/groups/{group_id}/participants/remove")
         group = await self.get_group(group_id)
         existing_ids = {p.id for p in group.participants}
         remaining = [p for p in group.participants if p.id not in participant_ids]
@@ -549,6 +616,7 @@ class FakeWahaClient:
     async def _set_role(
         self, group_id: str, participant_ids: list[str], *, role: str
     ) -> None:
+        self._guard_write("post", f"/api/{self.session}/groups/{group_id}/admin/{role}")
         group = await self.get_group(group_id)
         target_ids = set(participant_ids)
         updated = [
@@ -570,18 +638,22 @@ class FakeWahaClient:
         )
 
     async def revoke_invite_link(self, group_id: str) -> str:
+        self._guard_write("post", f"/api/{self.session}/groups/{group_id}/invite-code/revoke")
         await self.get_group(group_id)
         new_link = f"https://chat.whatsapp.com/fake-{group_id.split('@')[0]}-r{len(self.invite_links) + 1}"
         self.invite_links[group_id] = new_link
         return new_link
 
     async def set_messages_admin_only(self, group_id: str, on: bool) -> None:
+        self._guard_write("put", f"/api/{self.session}/groups/{group_id}/settings/security/messages-admin-only")
         await self.get_group(group_id)
         self.messages_admin_only[group_id] = on
 
     async def delete_message(self, chat_id: str, message_id: str) -> None:
+        self._guard_write("delete", f"/api/{self.session}/chats/{chat_id}/messages/{message_id}")
         self.deleted_messages.append({"chatId": chat_id, "messageId": message_id})
 
     async def leave_group(self, group_id: str) -> None:
+        self._guard_write("post", f"/api/{self.session}/groups/{group_id}/leave")
         self.fake_groups.pop(group_id, None)
         self.left_groups.append(group_id)

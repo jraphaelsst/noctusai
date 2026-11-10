@@ -374,6 +374,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-ci-test-matrix-coverage", action="store_true", help="Keeper: .github/workflows/test.yml's product-backend-tests / product-frontend-tests `matrix: product:` lists must include every product that QUALIFIES (has real test files for that suite) — a missing entry means that product's tests silently never run in CI. 2026-08-13: igig/orbity/seed backend suites + orbity's frontend suite were never collected. Fix: --refresh-ci-matrix-coverage. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-seed-test-root-ci-coverage", action="store_true", help="Keeper: every seed/*/backend with pytest files and every seed/*/frontend with vitest specs must have a workflow step that RUNS that suite. Sibling of --check-ci-test-matrix-coverage, whose domain is products/* and so could never see these. 2026-09-09: seed/lib/backend (3637 tests), seed/framework/backend (203) and seed/lib/frontend (375) had NO job at all — the packages every product imports were the only ones ungated. Matches on the RUN command, not on working-directory: seed-typecheck.yml visited seed/lib/frontend for months running only tsc. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-model-dump-json-mode", action="store_true", help="Keeper (2026-10-15, orbity live 502): in ACTIVE products' backend/app, a pydantic `.model_dump()` without mode=\"json\" must not flow into a supabase .insert/.update/.upsert or a create_/update_/upsert_/insert_ (and pt-BR criar/atualizar/inserir) write call — UUID/datetime/Decimal fields raise 'Object of type UUID is not JSON serializable'. AST, intra-function data-flow. `--paths` (staged-files idiom) scopes to files touched in this commit and blocks; omitted = full audit with per-product counts. Escape: `# noc-allow: model-dump-json — <reason>`. Severity high. KB § PATTERNS/backend/backend.md § Pydantic → supabase writes.")
+    parser.add_argument("--check-raw-waha-client-construction", action="store_true", help="Keeper (line policy v1, D46): a WAHA client is built ONLY by the seed factory noctusai_lib.integrations.whatsapp.get_whatsapp_client — a raw `WahaClient(...)` in seed/** backend or ACTIVE products' backend skips the line policy (fail-closed write refusal). AST, tests + the factory module exempt. `--paths` (staged-files idiom) scopes to files touched in this commit; omitted = full audit. Escape: `# noc-allow: raw-waha-client -- <reason>`. Severity high. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a.")
     parser.add_argument("--check-redis-client-via-seam", action="store_true", help="Keeper: every Redis client (redis.Redis/StrictRedis/from_url/ConnectionPool.from_url, aioredis) in seed/** backend and ACTIVE products' backend must be built by noctusai_lib.integrations.redis (the auth seam) — AST, tests/fakeredis exempt. `--paths` (staged-files idiom) scopes to files touched in this commit; omitted = full audit. Severity high. KB § PATTERNS/backend/redis-auth-seam.md.")
     parser.add_argument("--check-not-configured-carries-marker", action="store_true", help="Keeper: every *NotConfigured / *NaoConfigurado exception class in the seed or an active product's backend/app/ must subclass noctusai_lib.primitives.not_configured.IntegrationNotConfigured (directly or via a marked in-scope base) — unmarked, check_stand_in_conformance leg A misreads the fail-closed integration as a stand-in violation (2026-10-10). --paths narrows to the staged products (a staged seed file keeps the fleet). Severity high.")
     parser.add_argument("--check-product-declared-imports", action="store_true", help="Keeper: every RUNTIME third-party import in an active product's backend/app/ — plus IMPLIED deps (fastapi Form/File/UploadFile → python-multipart, pydantic EmailStr → email-validator) — must be declared by that product's requirements.txt or the seed lib/framework pyproject (what the image actually installs). The 2026-10-10 core prod crash-loop: Form/File without python-multipart, invisible to every shared-venv gate. --paths narrows to the staged products. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
@@ -2745,6 +2746,18 @@ def main():
             sys.exit(0)
         print(f"  {RED}\u2717 {rep['total']} model-dump-json-mode finding(s) — per product: {rep['by_product']}{RESET}")
         for i in rep["findings"]:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i['line']} \u2014 {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_raw_waha_client_construction:
+        from tools.noctus.dev.compliance import check_raw_waha_client_construction
+        _rw_paths = [p for p in (args.paths or "").split(",") if p] or None
+        issues = check_raw_waha_client_construction(paths=_rw_paths)
+        if not issues:
+            print(f"  {GREEN}\u2713 raw-waha-client-construction: clean (every WAHA client is built by get_whatsapp_client).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}\u2717 {len(issues)} raw-waha-client-construction finding(s):{RESET}")
+        for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i['line']} \u2014 {i['issue']}")
         sys.exit(1)
 
