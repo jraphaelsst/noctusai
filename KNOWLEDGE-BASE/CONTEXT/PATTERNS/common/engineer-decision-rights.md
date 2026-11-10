@@ -116,8 +116,10 @@ The caps (5 / 3), the sample rate (1 in 5) and the 3-in-a-row trigger are our ju
 
 ## 7 · The pre-merge audit (compliance-reviewer; blocks the merge)
 
-Run `noctus.dev.decision_log action=audit slice=<id> base=<ref>`. The merge is blocked when any of these holds:
-1. the diff touches migrations, RLS, access tiers or contract files and no owner-accepted `escalate` row covers them;
+The merge path (`task_branch` enqueue/integrate) runs this audit automatically in warn mode (telemetry `~/.noctus/decision-audit.ndjson`; promote-to-block criterion in contract `decision-log.md` §10); compliance-reviewer's run is additional, not the only gate. Commit trailers: `Spec: <path>`; `AC: <n>` must be a real numbered acceptance criterion of that spec; `Assigned: <n>` declares spec-assigned work on a gated surface (the criterion must name it); `Decided: <what>` + `Decisions: D-…` for anything the executor decided. Rows may carry `product: <slug>`.
+
+Run `noctus.dev.decision_log action=audit slice=<id> base=<ref> spec=<spec path>`. The merge is blocked when any of these holds:
+1. the diff touches migrations, RLS, access tiers or contract files and neither an owner-accepted `escalate` row nor a spec `Assigned:` criterion covers them;
 2. a route or page is added, or customer-facing text changes, under an `autonomous` row;
 3. billing, secrets or auth are loosened;
 4. paths outside the declared slice paths change while a row says `slice_paths`;
