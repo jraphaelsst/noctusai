@@ -77,9 +77,11 @@ nothing auto-edits the map. `report` covers merged work plus this tree only (`co
 ## 7 · In-app (future)
 
 Lens and chair prompts become rows in the core prompt registry
-(`noctusai_lib.integrations.prompt_registry`, edited on Studio "Agentes da plataforma"), the chair
-an Opus API call, and the tech-lead that called the council tool ratifies or overrules (events
-`ratified`/`overruled`, `mode=api`, `chair_kind=api_chair`). Not built yet.
+(`noctusai_lib.integrations.prompt_registry`, edited on Studio "Agentes da plataforma"). **Owner rule,
+2026-11-10: councils are run by Claude Code agents and subagents, never by API/token/credit calls.**
+The chair stays a subagent (`chair_kind=chair_agent`) and the tech-lead ratifies or overrules.
+`mode=api` / `chair_kind=api_chair` stay in the schema only for a future in-app council for a
+product's end users, which the owner has not decided. Not built.
 
 ## 8 · Waiting consumers
 
