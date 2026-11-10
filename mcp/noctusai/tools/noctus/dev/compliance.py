@@ -17550,6 +17550,113 @@ def check_primary_checkout_commit(
     return findings
 
 
+# ── `check_guardian_tool_authorship` — the guardian never writes steward tooling ──
+# The guardian is the session holding the release-steward lease
+# (`~/.noctus/release-steward.json`). Its job is to move other sessions' work;
+# editing the tools that define that job from the seat that depends on them is
+# the conflict of interest the ratified guardian spec (council 09340534)
+# forbids: only a tooling branch steward authors them. Construction leg:
+# `guardian_holds_lease` below (the single "does this session hold it" reader,
+# reusing StewardStore); telemetry: `gate_alignment.record_event`.
+# KB § PATTERNS/common/gate-methodology-sync.md (Guardian tool authorship).
+GUARDIAN_PROTECTED_TOOL_FILES = (
+    "mcp/noctusai/tools/noctus/dev/release_steward.py",
+    "mcp/noctusai/tools/noctus/dev/task_branch.py",
+)
+
+
+def guardian_holds_lease(
+    session_id: str | None = None,
+    lease_root: Path | None = None,
+    now: float | None = None,
+) -> tuple[bool, dict | None, str]:
+    """(holds, lease, why): does `session_id` hold a LIVE steward lease?
+
+    `why` is one of holder | no-session | no-lease | stale-lease | other-holder.
+    Reuses `StewardStore.holder()` (liveness = TTL heartbeat + holder pid), so
+    "expired" means exactly what the steward tools mean by it. Never raises:
+    an unreadable store reads as no-lease (a probe failure must not block).
+    """
+    import os
+
+    sid = session_id if session_id is not None else os.environ.get("CLAUDE_CODE_SESSION_ID")
+    try:
+        from tools.noctus.dev.release_steward import StewardStore
+        store = StewardStore(lease_root) if now is None else StewardStore(lease_root, clock=lambda: now)
+        lease, state = store.holder()
+    except Exception:  # noqa: BLE001 - fail open by contract, reported as no-lease
+        return False, None, "no-lease"
+    if not lease:
+        return False, None, "no-lease"
+    if state != "live":
+        return False, lease, "stale-lease"
+    if not sid:
+        return False, lease, "no-session"
+    if lease.get("session_id") != sid:
+        return False, lease, "other-holder"
+    return True, lease, "holder"
+
+
+def check_guardian_tool_authorship(
+    repo_root: Path | None = None,
+    staged: list[str] | None = None,
+    session_id: str | None = None,
+    lease_root: Path | None = None,
+    now: float | None = None,
+    record: bool = True,
+) -> list[dict]:
+    """Refuse a commit staging steward tooling when the committer is the guardian.
+
+    Passes (with a telemetry `allow` row saying why) when there is no lease,
+    the lease is expired, or the session is unknown - humans and CI are never
+    blocked. Only a live lease held by THIS session refuses.
+    """
+    import subprocess
+
+    if staged is None:
+        root = repo_root or REPO_ROOT
+        try:
+            out = subprocess.run(
+                ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMRD"],
+                cwd=root, capture_output=True, text=True, timeout=30, check=False,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            out = ""
+        staged = [p for p in out.splitlines() if p.strip()]
+    hits = sorted(p for p in staged if p in GUARDIAN_PROTECTED_TOOL_FILES)
+    if not hits:
+        return []
+
+    holds, lease, why = guardian_holds_lease(session_id, lease_root, now)
+
+    def _event(outcome: str, reason: str) -> None:
+        if not record:
+            return
+        try:
+            from tools.noctus.dev.gate_alignment import record_event
+            record_event("keeper:check-guardian-tool-authorship", outcome, kind="keeper",
+                         target=",".join(hits)[:200], reason=reason, source="keeper")
+        except Exception:  # noqa: BLE001 - telemetry never changes a verdict
+            pass
+
+    if not holds:
+        _event("allow", f"not-refused: {why}")
+        return []
+    holder = (lease or {}).get("session_name") or str((lease or {}).get("session_id"))[:8]
+    _event("deny", "guardian-staged-steward-tooling")
+    return [{
+        "product": "<repo>",
+        "file": ", ".join(hits),
+        "issue": (
+            f"staged {', '.join(hits)} while this session holds the release-steward lease "
+            f"(guardian: {holder}). The guardian does not author steward tooling - "
+            f"hand it to the tooling branch steward (a session that is not the lease holder), "
+            f"or release the lease first. KB § PATTERNS/common/gate-methodology-sync.md"
+        ),
+        "severity": "high",
+    }]
+
+
 # ── `check_git_hooks_bypass` — the STATIC backstop for a HARDCODED hooks ──
 # bypass (script/CI/Python), sibling of the PreToolUse `decide_git_bypass`
 # gate (`primary_write_guard.py`). See that function's docstring for the

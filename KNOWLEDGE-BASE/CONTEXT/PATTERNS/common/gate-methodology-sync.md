@@ -141,6 +141,10 @@ Measured over 943 session transcripts (tool results only, one count per tool cal
 | `guard:test-seams` (18 / 9) | kept: write-time judge of added lines; no construction possible (`none (reason)`) |
 | `verify_kb_sync` (15 / 14), `check_not_configured_carries_marker` (13), `check_mutation_invalidate_only` (12), `check_silent_refusal` (12), `check_upload_route_body_override` (10) | deferred, each with a destination in the inventory `remediation` field |
 
+## Guardian tool authorship (2026-11-10)
+
+The release-steward lease holder (the guardian) must not author the tools that define its role. Keeper `check_guardian_tool_authorship` (`--check-guardian-tool-authorship`, pre-commit step 0-pre-b) refuses a commit staging `release_steward.py` or `task_branch.py` when the committing session (`CLAUDE_CODE_SESSION_ID`) holds a LIVE lease; remedy: hand the change to the tooling branch steward. Construction leg: `guardian_holds_lease` (reuses `StewardStore.holder()`, so liveness means what the steward tools mean). No lease, expired lease, or unknown session passes, and each pass-through is logged as an `allow` row (reason names why) in the gate event log via `gate_alignment.record_event`; refusals log `deny`. Ratified in council 09340534.
+
 ## How to apply (the authoring checklist)
 
 When a rule/standard is worth enforcing:
