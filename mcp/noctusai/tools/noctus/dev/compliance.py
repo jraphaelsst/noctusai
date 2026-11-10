@@ -7762,6 +7762,94 @@ def check_redis_client_via_seam(
 
 
 # ---------------------------------------------------------------------------
+# `check_raw_waha_client_construction` -- a WAHA client is built ONLY by the seed factory.
+#
+# WHY (line policy v1, D46, 2026-11-10). `WahaClient._request` is the choke point that refuses a write on a
+# `send: disabled` line, and the line's policy rides on the client the factory `get_whatsapp_client(...)` returns
+# (explicit > registry > fail-closed). A raw `WahaClient(base_url, key, session)` built anywhere else is not wrong
+# by itself, but it is the shape that skips every future policy input (the finance reminders resolver did exactly
+# that, `channel.py:142`). One construction site => one place a line's policy is resolved.
+# Detection: AST `Call` of `WahaClient` (Name or `...WahaClient` attribute). Exempt: the factory module
+# (`integrations/whatsapp/__init__.py`), the class's own module, tests, and `# noc-allow: raw-waha-client -- <reason>`
+# on the call line. Severity high. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a.
+# ---------------------------------------------------------------------------
+
+_WAHA_FACTORY_RELS = {
+    "seed/lib/backend/noctusai_lib/integrations/whatsapp/__init__.py",
+    "seed/lib/backend/noctusai_lib/integrations/whatsapp/client.py",
+}
+_RAW_WAHA_ALLOW = re.compile(r"#\s*noc-allow:\s*raw-waha-client\s*[-\u2014\u2013]+\s*\S")
+
+
+def _raw_waha_client_findings(source: str) -> list[int]:
+    import ast
+
+    tree = ast.parse(source)
+    lines = source.splitlines()
+    out: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
+        if name != "WahaClient":
+            continue
+        if 0 < node.lineno <= len(lines) and _RAW_WAHA_ALLOW.search(lines[node.lineno - 1]):
+            continue
+        out.append(node.lineno)
+    return out
+
+
+def check_raw_waha_client_construction(
+    repo_root: Path | None = None, paths: list[str] | None = None
+) -> list[dict]:
+    """Flag a raw `WahaClient(...)` outside the seed factory `get_whatsapp_client`."""
+    root = repo_root or REPO_ROOT
+    scan_roots: list[Path] = [root / "seed"]
+    scan_roots += [d / "backend" for d in _active_product_dirs(root / "products")]
+    if paths is not None:
+        files = [(root / p) for p in paths if p.endswith(".py")]
+    else:
+        files = [f for r in scan_roots if r.exists() for f in r.rglob("*.py")]
+    active = {d.name for d in _active_product_dirs(root / "products")}
+    issues: list[dict] = []
+    for f in sorted(set(files)):
+        try:
+            rel = f.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        parts = rel.split("/")
+        in_scope = parts[0] == "seed" or (
+            parts[0] == "products" and len(parts) > 2 and parts[2] == "backend" and parts[1] in active
+        )
+        if not in_scope or rel in _WAHA_FACTORY_RELS or not f.is_file():
+            continue
+        if (
+            {"tests", "test", "node_modules", ".venv", "venv", "__pycache__"} & set(parts)
+            or f.name == "conftest.py" or f.name.startswith("test_")
+        ):
+            continue
+        try:
+            linenos = _raw_waha_client_findings(f.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue  # un-parseable files are check_outlined's finding
+        for lineno in linenos:
+            issues.append({
+                "product": parts[1] if parts[0] == "products" else "seed",
+                "file": rel,
+                "line": lineno,
+                "issue": (
+                    f"`{rel}:{lineno}` builds a WAHA client directly (`WahaClient(...)`). Every WAHA client is built by "
+                    "the seed factory `noctusai_lib.integrations.whatsapp.get_whatsapp_client(...)` so the line's "
+                    "policy (send: enabled|disabled, fail-closed when undeclared) rides on it. Escape a vetted "
+                    "line with `# noc-allow: raw-waha-client -- <reason>`. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."
+                ),
+                "severity": "high",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_model_dump_json_mode` — a pydantic `.model_dump()` that flows into a
 # supabase write must be `.model_dump(mode="json")`.
 #
@@ -25649,6 +25737,38 @@ def check_tunnel_ingress_snapshot_sync(
     }]
 
 
+def _waha_product_policy_env_issues(root: Path, data_p: Path) -> list[dict]:
+    """A product service in docker-compose.prod.yml that points `<PRODUCT>_WAHA_BASE_URL` at a declared instance MUST
+    carry `<PRODUCT>_WAHA_LINE_POLICY` equal to that instance's declared `line_policy` (the platform ceiling) --
+    otherwise the seed refuses every write on that line (fail-closed) or, worse, runs a different policy than declared."""
+    prod = root / "deploy" / "fleet" / "docker-compose.prod.yml"
+    if not prod.is_file():
+        return []
+    try:
+        from .waha_instance import line_policy_json, parse_instances
+        spec = parse_instances(data_p.read_text(encoding="utf-8"))
+    except Exception:
+        return []  # the caller already reports an unparseable declaration
+    text = prod.read_text(encoding="utf-8")
+    out: list[dict] = []
+    for inst in spec["instances"]:
+        up = inst["product"].upper().replace("-", "_")
+        if not re.search(rf"^\s*{up}_WAHA_BASE_URL:\s*http://waha-{re.escape(inst['name'])}:3000\s*$", text, re.M):
+            continue
+        want = line_policy_json(inst)
+        m = re.search(rf"^\s*{up}_WAHA_LINE_POLICY:\s*'?(\{{[^\n]*\}})'?\s*$", text, re.M)
+        if not m or m.group(1) != want:
+            out.append({
+                "file": "deploy/fleet/docker-compose.prod.yml",
+                "issue": (f"{up}_WAHA_LINE_POLICY is " + ("MISSING" if not m else f"{m.group(1)!r}")
+                          + f" but waha-instances.yml declares {want!r} for line `{inst['name']}` -- set it to the "
+                            "declared value (noctus.dev.waha_instance action='plan' prints it). "
+                            "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."),
+                "severity": "high", "symbol": "waha-line-policy-env-drift",
+            })
+    return out
+
+
 def check_waha_instances_render_sync(repo_root: Path | None = None) -> list[dict]:
     """`deploy/fleet/compose.waha.yml` must equal the render of `deploy/fleet/waha-instances.yml` (the declared
     one-WAHA-per-number source of truth) -- derive, never hand-copy. KB § CONTEXT/INTEGRATIONS/whatsapp.md."""
@@ -25664,9 +25784,10 @@ def check_waha_instances_render_sync(repo_root: Path | None = None) -> list[dict
         return [{"file": "deploy/fleet/waha-instances.yml", "issue": f"waha instances could not be parsed/rendered: {e}",
                  "severity": "high", "symbol": "waha-instances-unparseable"}]
     have = out_p.read_text(encoding="utf-8") if out_p.is_file() else None
+    policy_issues = _waha_product_policy_env_issues(root, data_p)
     if have == want:
-        return []
-    return [{"file": "deploy/fleet/compose.waha.yml",
+        return policy_issues
+    return policy_issues + [{"file": "deploy/fleet/compose.waha.yml",
              "issue": ("compose.waha.yml is "
                        + ("MISSING" if have is None else "DIFFERENT from the render of waha-instances.yml")
                        + " -- regenerate: noctus.dev.waha_instance action='render' write=True. "

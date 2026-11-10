@@ -47,6 +47,10 @@ Security notes:
 ``on_message(org_id, connection_id, chat, message)`` (optional) fires for every newly stored message - inbound
 webhook AND outbound send from this router; best-effort (a raising consumer is logged, never fails the call).
 
+``should_store(message, chat) -> True | False | "<reason>"`` (optional) is the PRE-STORE predicate seam: it runs
+before anything is persisted/published/notified (default: store all). A shadow line passes
+``inbound_one_to_one_only(...)``; a skipped message answers ``200 {"status": "skipped"}``.
+
 Decoupling: imports nothing from ``app.*``; every product concern is a kwarg
 (Class-B DI seam).
 """
@@ -81,6 +85,7 @@ from noctusai_lib.integrations.whatsapp.inbox import (
     OnNewChat,
     WhatsAppChatStore,
     backfill_connection,
+    ShouldStore,
     ingest_waha_event,
     inbox_scope,
     is_backfill_running,
@@ -163,6 +168,7 @@ def create_whatsapp_inbox_router(
     resolve_org_id: Callable[[Any], UUID] = _default_resolve_org_id,
     mirror_read_to_whatsapp: bool = False,
     backfill_kwargs: Optional[dict[str, Any]] = None,
+    should_store: Optional[ShouldStore] = None,
 ) -> APIRouter:
     """Build the inbox router (authenticated routes + the public webhook)."""
     router = APIRouter(tags=["WhatsApp Inbox"])
@@ -434,6 +440,7 @@ def create_whatsapp_inbox_router(
             on_message=on_message,
             lid_cache=lid_cache,
             waha_client_factory=lambda rec: _client_for_identity(rec, store),
+            should_store=should_store,  # PRE-STORE seam (default None = store all); see ingest.ShouldStore
         )
         return {"status": result.status}
 

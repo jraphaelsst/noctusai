@@ -65,6 +65,13 @@ OnMessage = Callable[[UUID, UUID, InboxChat, InboxMessage], Awaitable[None]]
 #: ``record -> WAHA client`` (only used to resolve an unknown @lid to a phone).
 WahaClientFactory = Callable[[WhatsAppConnectionRecord], Any]
 
+#: PRE-STORE PREDICATE SEAM. ``should_store(message, chat) -> True | False | "<reason>"``: runs after identity
+#: resolution and BEFORE anything is persisted, published or notified. ``True`` stores (the default when no predicate
+#: is given: store all). ``False`` or a reason string skips -- nothing is stored, no ``on_message`` / ``on_new_chat``.
+#: A raising predicate PROPAGATES (webhook 5xx, WAHA retries): fail-closed, never "store it anyway". The reason
+#: rides back on :class:`IngestResult` so the caller can record why.
+ShouldStore = Callable[[InboxMessage, "ChatIdentity"], "bool | str"]
+
 _IGNORED_SUFFIXES = ("@broadcast", "@newsletter")
 
 
@@ -79,10 +86,11 @@ _PHONE_SUFFIXES = ("@c.us", "@s.whatsapp.net")
 
 @dataclass(frozen=True)
 class IngestResult:
-    status: str  # message | duplicate | ack | session | ignored
+    status: str  # message | duplicate | ack | session | ignored | skipped
     chat_id: Optional[str] = None
     message_id: Optional[str] = None
     new_chat_fired: bool = False
+    reason: Optional[str] = None  # why a ``skipped`` message was not stored
 
 
 @dataclass(frozen=True)
@@ -173,6 +181,7 @@ def parse_waha_message(
         sender_name=None if from_me else extract_from_name(payload),
         media_mimetype=media.mimetype if media else None,
         sender_phone=sender_phone,
+        source=first_text(payload, "source") or None,
     )
     return ParsedMessage(message=message, chat_jid=jid)
 
@@ -262,6 +271,7 @@ async def ingest_waha_event(
     on_message: Optional[OnMessage] = None,
     lid_cache: Optional[LidPhoneCache] = None,
     waha_client_factory: Optional[WahaClientFactory] = None,
+    should_store: Optional[ShouldStore] = None,
 ) -> IngestResult:
     event = str(body.get("event") or "")
     payload = body.get("payload")
@@ -306,6 +316,13 @@ async def ingest_waha_event(
         parsed.chat_jid, push_name=parsed.message.sender_name if not parsed.message.from_me else None,
         lid_cache=lid_cache, waha_client=waha_client,
     )
+    if should_store is not None:
+        verdict = should_store(replace(parsed.message, chat_id=identity.chat_id), identity)
+        if verdict is not True:
+            reason = verdict if isinstance(verdict, str) and verdict else "predicate_false"
+            return IngestResult(
+                "skipped", chat_id=identity.chat_id, message_id=parsed.message.id, reason=reason
+            )
     origin = ORIGIN_OUTBOUND if parsed.message.from_me else ORIGIN_INBOUND
     inserted, chat, state = await persist_message(
         parsed=parsed, org_id=org_id, connection_id=connection_id, chat_store=chat_store,

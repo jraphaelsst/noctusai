@@ -1111,6 +1111,18 @@ if [[ -n "$STAGED_REDIS_PY" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-sexies-bis. Raw WahaClient construction (warn-first shadow, only when staged seed/product backend python) ─
+# Keeper `check_raw_waha_client_construction` + `KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a`. A WAHA client is built
+# ONLY by the seed factory `get_whatsapp_client`, so the line policy (fail-closed write refusal) always rides on it.
+STAGED_RAWWAHA_PY=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(seed/.*|products/[^/]+/backend/.*)\.py$' || true)
+if [[ -n "$STAGED_RAWWAHA_PY" ]] && have_py; then
+    echo "[pre-commit] python staged — checking raw WahaClient construction..."
+    # WARN-first SHADOW (new gates start at warning; promote to blocking after >=7 shadow days with 0 effective FP).
+    if ! "$PY" "$CLI" --check-raw-waha-client-construction --paths "$(echo "$STAGED_RAWWAHA_PY" | paste -sd, -)" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] WARNING (shadow, not blocking): RAW-WAHA-CLIENT — build the client with noctusai_lib.integrations.whatsapp.get_whatsapp_client(...) so the line policy rides on it. See KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a." >&2
+    fi
+fi
+
 # ─── 6e-sexies-ter. model_dump(mode="json") before supabase writes (blocking, ─
 # only when staged product backend/app python) ──────────────────────────────
 # Keeper `check_model_dump_json_mode` + `KB § PATTERNS/backend/backend.md §

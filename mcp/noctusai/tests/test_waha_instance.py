@@ -20,8 +20,16 @@ node_heap_mb: 384
 instances:
   - name: monica
     product: monica
+    line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}
   - name: two-b
     product: other
+    line_policy: {send: enabled, mark_online: false, full_sync: false, auto_repair: false}
+"""
+EDGE = DATA + """  - name: probe
+    product: assistant-x
+    line_policy: {send: disabled, mark_online: false, full_sync: false, auto_repair: false}
+    edge_deny_writes: true
+    dashboard: false
 """
 
 
@@ -98,3 +106,121 @@ class TestActions:
 
     def test_unknown_instance_errors(self, tmp_path):
         assert wi.waha_instance("plan", name="nope", repo_root=str(_tree(tmp_path)))["status"] == "error"
+
+
+class TestLinePolicy:
+    def test_policy_is_required_no_default(self):
+        with pytest.raises(ValueError, match="line_policy"):
+            wi.parse_instances(DATA.replace(
+                "    line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}\n", "", 1))
+
+    @pytest.mark.parametrize("bad", [
+        "{send: enabled, mark_online: true, full_sync: true}",
+        "{send: maybe, mark_online: true, full_sync: true, auto_repair: true}",
+        "{send: enabled, mark_online: yes-please, full_sync: true, auto_repair: true}",
+        "{send: enabled, mark_online: true, full_sync: true, auto_repair: true, extra: 1}",
+    ])
+    def test_malformed_policy_raises(self, bad):
+        import re
+        with pytest.raises(ValueError):
+            wi.parse_instances(re.sub(r"line_policy: \{send: enabled, mark_online: true.*\}", f"line_policy: {bad}", DATA, 1))
+
+    def test_send_disabled_requires_edge_and_no_dashboard(self):
+        for broken in (EDGE.replace("    edge_deny_writes: true\n", ""), EDGE.replace("    dashboard: false\n", "")):
+            with pytest.raises(ValueError, match="send: disabled"):
+                wi.parse_instances(broken)
+        with pytest.raises(ValueError, match="contradicts"):
+            wi.parse_instances(DATA.replace("product: monica\n", "product: monica\n    edge_deny_writes: true\n", 1))
+
+    def test_env_value_matches_the_seed_as_json_byte_for_byte(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "lp", REPO / "seed/lib/backend/noctusai_lib/integrations/whatsapp/line_policy.py")
+        lp = importlib.util.module_from_spec(spec)
+        sys.modules["lp"] = lp  # dataclasses resolve the module by name
+        spec.loader.exec_module(lp)
+        for inst in wi.parse_instances(EDGE)["instances"]:
+            assert wi.line_policy_json(inst) == lp.parse_line_policy(wi.line_policy_json(inst)).as_json()
+
+    def test_plan_prints_the_product_env_contract(self):
+        plan = wi._plan(wi.parse_instances(EDGE), "probe")
+        c = plan["product_env_contract"]
+        assert c["ASSISTANT_X_WAHA_LINE_POLICY"] == (
+            '{"send":"disabled","mark_online":false,"full_sync":false,"auto_repair":false}')
+        assert c["ASSISTANT_X_WAHA_BASE_URL"] == "http://waha-probe:3000"
+        assert plan["services"] == ["waha-probe-core", "waha-probe"]
+        assert "WAHA_PROBE_DASHBOARD_PASSWORD" not in plan["env_fleet_keys_to_generate_on_vps"]
+
+
+class TestEdgeAndDashboard:
+    def test_plain_instances_render_unchanged_dashboard_on(self):
+        out = wi.render_compose(wi.parse_instances(DATA))
+        assert "WAHA_DASHBOARD_PASSWORD" in out and "nginx" not in out and "waha-monica-core" not in out
+
+    def test_edge_instance_renders_proxy_in_front_and_dashboard_off(self):
+        import yaml
+        d = yaml.safe_load(wi.render_compose(wi.parse_instances(EDGE)))
+        sv = d["services"]
+        assert set(sv) == {"waha-monica", "waha-two-b", "waha-probe-core", "waha-probe"}
+        core, edge = sv["waha-probe-core"], sv["waha-probe"]
+        assert core["environment"]["WAHA_DASHBOARD_ENABLED"] == "false"
+        assert core["environment"]["WHATSAPP_SWAGGER_ENABLED"] == "false"
+        assert not any("PASSWORD" in k for k in core["environment"])
+        assert edge["image"].startswith("nginx:") and edge["container_name"] == "noctus-waha-probe"
+        assert "waha-probe-core:3000" in edge["environment"]["EDGE_CONF"]
+        assert "ports" not in core and "ports" not in edge
+
+    def test_rendered_edge_decision_table_equals_the_seed_classifier(self):
+        """Evaluate the rendered nginx `map` (first regex match wins, `~*` = case-insensitive) over a path matrix and
+        compare it with the seed's `is_whatsapp_write` -- the two enforcement layers must not drift."""
+        import importlib.util
+        import re
+        import yaml
+        spec = importlib.util.spec_from_file_location(
+            "lp2", REPO / "seed/lib/backend/noctusai_lib/integrations/whatsapp/line_policy.py")
+        lp = importlib.util.module_from_spec(spec)
+        sys.modules["lp2"] = lp
+        spec.loader.exec_module(lp)
+        conf = yaml.safe_load(wi.render_compose(wi.parse_instances(EDGE)))["services"]["waha-probe"]["environment"][
+            "EDGE_CONF"].replace("$$", "$")
+        block = re.search(r"map \"[^\"]+\" \$wa_write \{(.*?)\n\}", conf, re.S).group(1)
+        rules = re.findall(r'^\s*(default|"~\* (.*?)")\s+(\d);', block, re.M)
+
+        def edge_denies(method: str, uri: str) -> bool:
+            subject = f"{method} {uri}"
+            for key, rx, val in rules:  # nginx `map`: regex keys in order of appearance; `default` is the fallback
+                if key != "default" and re.search(rx, subject, re.I):
+                    return val == "1"
+            return next(val for key, _rx, val in rules if key == "default") == "1"
+
+        matrix = [(m, p) for m in ("GET", "HEAD", "OPTIONS", "POST", "PUT", "DELETE", "PATCH") for p in (
+            "/api/sendText", "/api/sendseen", "/API/SENDTEXT", "/api/sendText/", "/api/reaction", "/api/startTyping",
+            "/api/default/presence", "/api/default/groups", "/api/default/chats", "/api/default/chats/1/messages/2",
+            "/api/contacts/check-exists", "/api/files/x.jpg", "/api/sessions", "/api/sessions/default",
+            "/api/sessions/default/start", "/api/sessionsX", "/api/default/auth/qr", "/ping", "/api/unknown",
+            "/api/default/status/text", "/api/default/profile/name",
+        )]
+        for method, path in matrix:
+            assert edge_denies(method, path) is lp.is_whatsapp_write(method, path), (method, path)
+
+    def test_repo_declares_monica_explicitly(self):
+        monica = [i for i in wi.load_spec(REPO)["instances"] if i["name"] == "monica"][0]
+        assert monica["line_policy"] == {"send": "enabled", "mark_online": True, "full_sync": True, "auto_repair": True}
+
+
+class TestProdComposeCarriesThePolicy:
+    def _root(self, tmp_path, prod_env):
+        root = _tree(tmp_path)
+        (root / "deploy/fleet/docker-compose.prod.yml").write_text(
+            "services:\n  monica:\n    environment:\n      MONICA_WAHA_BASE_URL: http://waha-monica:3000\n" + prod_env)
+        return root
+
+    def test_missing_policy_env_is_flagged(self, tmp_path):
+        out = check_waha_instances_render_sync(repo_root=self._root(tmp_path, ""))
+        assert [i["symbol"] for i in out] == ["waha-line-policy-env-drift"]
+
+    def test_wrong_policy_env_is_flagged_and_exact_value_passes(self, tmp_path):
+        bad = "      MONICA_WAHA_LINE_POLICY: '{\"send\":\"disabled\",\"mark_online\":true,\"full_sync\":true,\"auto_repair\":true}'\n"
+        assert check_waha_instances_render_sync(repo_root=self._root(tmp_path / "a", bad))
+        good = "      MONICA_WAHA_LINE_POLICY: '{\"send\":\"enabled\",\"mark_online\":true,\"full_sync\":true,\"auto_repair\":true}'\n"
+        assert check_waha_instances_render_sync(repo_root=self._root(tmp_path / "b", good)) == []

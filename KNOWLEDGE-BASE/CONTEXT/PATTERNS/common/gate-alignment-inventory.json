@@ -418,6 +418,15 @@
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
   },
+  "keeper:check-agent-names-resolve": {
+   "mechanism": "none (names are free text on methodology surfaces; the keeper resolves them against .claude/agents, no scaffold applies)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "agent names on methodology surfaces resolve to .claude/agents/<name>.md",
+   "new": false,
+   "declared": "2026-11-10",
+   "shadow": null
+  },
   "keeper:check-agent-prompt-text-in-code": {
    "severity": "",
    "kind": "keeper",
@@ -2427,6 +2436,22 @@
    "class": "never-fires",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-raw-waha-client-construction": {
+   "mechanism": "api: noctusai_lib.integrations.whatsapp.get_whatsapp_client",
+   "owner": "integrations-engineer",
+   "placement": "warn",
+   "standard": "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a (line policy v1): a WAHA client is built only by the seed factory so the line's fail-closed policy rides on it",
+   "source": "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a",
+   "new": true,
+   "declared": "2026-11-10",
+   "shadow": {
+    "since": "2026-11-10",
+    "fires": 0,
+    "true_positives": 0,
+    "effective_fp": 0.0,
+    "promote_when": ">=7 days and the staged-file delta is clean with 0 effective FP"
+   }
+  },
   "keeper:check-redis-client-via-seam": {
    "severity": "",
    "kind": "keeper",
@@ -3410,6 +3435,18 @@
    "branch": "feat/ac-council-guard",
    "gates": [
     "guard:council-read"
+   ]
+  },
+  {
+   "id": "D32",
+   "decision": "A WhatsApp line declares its policy (send/mark_online/full_sync/auto_repair); the seed refuses writes on a send:disabled or undeclared line, an edge proxy 403s them, and a WAHA client is built only by the seed factory",
+   "home": "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a",
+   "construction": "api:noctusai_lib.integrations.whatsapp.get_whatsapp_client (policy rides on the client) + waha_instance render (edge deny proxy, dashboard off)",
+   "gate": "keeper:check-raw-waha-client-construction + check_waha_instances_render_sync (policy declared, prod env == declared)",
+   "telemetry": "immutable events whatsapp.line.write_refused / whatsapp.line.repair_refused via LineEventSink",
+   "branch": "feat/ac-line-policy",
+   "gates": [
+    "keeper:check-raw-waha-client-construction"
    ]
   }
  ]

@@ -19,6 +19,14 @@ from typing import Any, Awaitable, Callable, Literal
 import httpx
 
 from noctusai_lib.integrations import rate_limit
+from noctusai_lib.integrations.whatsapp.line_policy import (
+    LineEventSink,
+    LinePolicy,
+    LinePolicyGuard,
+    PolicyReadback,
+    check_session_against_policy,
+    resolve_line_policy,
+)
 from noctusai_lib.integrations.whatsapp.mappers import (
     build_send_text_body,
     group_info_from_waha,
@@ -210,7 +218,9 @@ def _webhook_owned(hook: dict[str, Any], url: str, prefix: str | None) -> bool:
 
 
 def _merged_session_config(
-    existing: dict[str, Any], webhooks: list[dict[str, Any]]
+    existing: dict[str, Any],
+    webhooks: list[dict[str, Any]],
+    policy: LinePolicy | None = None,
 ) -> dict[str, Any]:
     """The PUT body for a webhook write on a POSSIBLY SHARED session.
 
@@ -221,7 +231,8 @@ def _merged_session_config(
     ``markOnline: true, fullSync: false``, which a rebuild from
     ``_session_config`` defaults would have silently flipped). The NOWEB store
     invariant of ``_session_config`` still holds: ``store.enabled`` is forced
-    on, and ``fullSync`` defaults to ``True`` only when absent.
+    on, and ``fullSync`` defaults to ``True`` only when absent. With a line ``policy`` the policy is the authority:
+    ``markOnline`` and ``fullSync`` are WRITTEN from it, overriding whatever the session had.
     """
     config = copy.deepcopy(existing) if existing else {}
     config["webhooks"] = webhooks
@@ -232,11 +243,17 @@ def _merged_session_config(
     if not isinstance(store, dict):
         store = noweb["store"] = {}
     store["enabled"] = True
-    store.setdefault("fullSync", True)
+    if policy is None:
+        store.setdefault("fullSync", True)
+    else:
+        noweb["markOnline"] = policy.mark_online
+        store["fullSync"] = policy.full_sync
     return {"config": config}
 
 
-def _session_config(webhooks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def _session_config(
+    webhooks: list[dict[str, Any]] | None = None, policy: LinePolicy | None = None
+) -> dict[str, Any]:
     """Build a FULL WAHA session-config payload — ALWAYS carries the NOWEB store.
 
     🔴 WAHA's ``PUT /api/sessions/{name}`` (and the config on ``/start``) is a
@@ -262,15 +279,17 @@ def _session_config(webhooks: list[dict[str, Any]] | None = None) -> dict[str, A
     ``test_session_config_wire_key_is_camel_case_full_sync`` — it pins
     the exact wire-format key so this cannot regress silently again.
     """
-    config: dict[str, Any] = {
-        "noweb": {"store": {"enabled": True, "fullSync": True}}
-    }
+    store: dict[str, Any] = {"enabled": True, "fullSync": True if policy is None else policy.full_sync}
+    config: dict[str, Any] = {"noweb": {"store": store}}
+    if policy is not None:
+        # The line policy is the authority on presence + history sync (camelCase wire keys, see below).
+        config["noweb"]["markOnline"] = policy.mark_online
     if webhooks is not None:
         config["webhooks"] = webhooks
     return {"config": config}
 
 
-class WahaClient:
+class WahaClient(LinePolicyGuard):
     """WAHA HTTP client with both sync and async send paths.
 
     Every request routes through `_request` (async) / `_request_sync`
@@ -307,6 +326,8 @@ class WahaClient:
         *,
         external_base_url: str | None = None,
         transport: httpx.AsyncBaseTransport | httpx.BaseTransport | None = None,
+        line_policy: LinePolicy | None = None,
+        line_event_sink: LineEventSink | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -325,6 +346,24 @@ class WahaClient:
         self._transport = transport
         # phone -> (expiry monotonic, ResolvedChat); see resolve_chat_id.
         self._resolve_cache: dict[str, tuple[float, ResolvedChat]] = {}
+        # The line's policy: explicit > registry (url, session) > fail-closed UNDECLARED. Every WRITE to WhatsApp
+        # is refused by `_request` / `_request_sync` when it says `send: disabled` (KB § whatsapp.md § 6a).
+        self._init_line_policy(
+            label=f"{self.base_url}#{session}",
+            policy=line_policy or resolve_line_policy(self.base_url, session),
+            sink=line_event_sink,
+        )
+
+    def _config_policy(self) -> LinePolicy | None:
+        """The policy that drives session-config writes: only a DECLARED, config-authoritative one (an undeclared line
+        or the legacy ``"*"`` default keeps the session's existing config)."""
+        p = self.line_policy
+        return p if (p.declared and p.config_authority) else None
+
+    async def verify_line_policy(self) -> PolicyReadback:
+        """Read the session back (``GET /api/sessions/{session}``) and compare it with the line policy -- run it
+        BEFORE the QR scan. A config you PUT and never read back is unverified."""
+        return check_session_against_policy(await self.get_session(), self.line_policy)
 
     def _resolve_media_url(self, url: str) -> str:
         return rewrite_vendor_media_url(
@@ -365,6 +404,7 @@ class WahaClient:
         vendor-emitted URL — is used as-is, matching the pre-refactor
         call shape exactly.
         """
+        self._guard_write(method, path)
         await rate_limit.acquire_async("whatsapp")
         client_kwargs: dict[str, Any] = {"timeout": timeout, "transport": self._transport}
         if use_base_url:
@@ -394,6 +434,7 @@ class WahaClient:
         """Sync twin of `_request` — same chokepoint contract, for the
         worker code paths (`send_text_sync`, `download_media_sync`) that
         call off an event loop."""
+        self._guard_write(method, path)
         rate_limit.acquire("whatsapp")
         client_kwargs: dict[str, Any] = {"timeout": timeout, "transport": self._transport}
         if use_base_url:
@@ -660,7 +701,7 @@ class WahaClient:
         This is the canonical fleet default: any chat-capable product needs the
         store on.
         """
-        payload = _session_config()
+        payload = _session_config(policy=self._config_policy())
         response = await self._request(
             "post",
             f"/api/sessions/{self.session}/start",
@@ -685,7 +726,8 @@ class WahaClient:
         with the stored config — so the durable guarantee is that EVERY config
         write, incl. ``set_webhook``, carries the store; see ``_session_config``.)
         """
-        payload = _session_config()
+        self._guard_repair("restart_session")
+        payload = _session_config(policy=self._config_policy())
         response = await self._request(
             "post",
             f"/api/sessions/{self.session}/restart",
@@ -756,6 +798,7 @@ class WahaClient:
         <"already_working"|"start"|"restart"|"logout_start">, "paired":
         <bool>, "me": <session "me" dict or None>}``.
         """
+        self._guard_repair("recover_session")
         state = await self.get_session()
         if state.get("status") == "WORKING":
             return recovery_outcome(state, "already_working")
@@ -847,7 +890,7 @@ class WahaClient:
             "put",
             f"/api/sessions/{self.session}",
             timeout=30,
-            json=_merged_session_config(config, webhooks),
+            json=_merged_session_config(config, webhooks, self._config_policy()),
             headers=self._headers(json=True),
         )
         response.raise_for_status()

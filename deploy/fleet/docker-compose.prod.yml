@@ -288,6 +288,10 @@ services:
       # env-fleet-empty-ok — REVIEWED 2026-10-09: the token IS set in .env.fleet on the
       # VPS; empty = the factory raises (503 transcricao_indisponivel), never falls back.
       TRANSCRIBER_TOKEN: ${TRANSCRIBER_TOKEN:-}
+      # Line policy v1 (KB § INTEGRATIONS/whatsapp.md § 6a): social-wiring's lines are DB-sourced (one connection row per
+      # org) so they cannot be named one by one; "*" = today's behaviour (send enabled, session config untouched) made
+      # explicit. Without a policy the seed REFUSES every write (fail-closed). A strict line is never given a "*".
+      WAHA_LINE_POLICIES: '{"*":{"send":"enabled","mark_online":true,"full_sync":true,"auto_repair":true}}'
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8011/api/health"]
       interval: 30s
@@ -652,6 +656,8 @@ services:
       # Monica's OWN WAHA (waha-instances.yml -> compose.waha.yml); the HMAC secret stays in the root .env.
       MONICA_WAHA_BASE_URL: http://waha-monica:3000
       MONICA_WAHA_SESSION: default
+      # Line policy v1 (waha-instances.yml `line_policy`; KB § INTEGRATIONS/whatsapp.md § 6a). Keeper-checked == declared.
+      MONICA_WAHA_LINE_POLICY: '{"send":"enabled","mark_online":true,"full_sync":true,"auto_repair":true}'
     expose:
       - "8020"
     healthcheck:

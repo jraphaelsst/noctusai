@@ -27,3 +27,20 @@ def _virtual_rate_limit_clock():
     yield
     rate_limit.reset_default_clock()
     rate_limit._reset_all_buckets()
+
+
+@pytest.fixture(autouse=True)
+def _legacy_enabled_line_policy():
+    """These suites predate line policy v1 and exercise the send path of raw `WahaClient`s: declare the process-wide
+    legacy policy (`send: enabled`, today's behaviour) through the PUBLIC registry. Fail-closed behaviour has its own
+    suite (`test_line_policy.py`), which clears the registry first."""
+    from noctusai_lib.integrations.whatsapp import (
+        LinePolicy,
+        clear_line_policies,
+        register_line_policy,
+    )
+
+    clear_line_policies()
+    register_line_policy("*", LinePolicy("enabled", True, True, True))
+    yield
+    clear_line_policies()

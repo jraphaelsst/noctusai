@@ -25,6 +25,14 @@ from noctusai_lib.integrations.whatsapp.client import (
     _webhook_owned,
     recovery_outcome,
 )
+from noctusai_lib.integrations.whatsapp.line_policy import (
+    SEND_ENABLED,
+    LineEventSink,
+    LinePolicy,
+    LinePolicyGuard,
+    PolicyReadback,
+    check_session_against_policy,
+)
 from noctusai_lib.integrations.whatsapp.types import (
     GroupInfo,
     GroupParticipant,
@@ -43,7 +51,7 @@ _FAKE_QR_PNG = (
 )
 
 
-class FakeWahaClient:
+class FakeWahaClient(LinePolicyGuard):
     """In-memory WAHA stand-in. Records sent messages, serves
     pre-populated media, accepts injected inbound messages.
 
@@ -54,8 +62,21 @@ class FakeWahaClient:
         assert client.sent_messages[0]["text"] == "expected reply"
     """
 
-    def __init__(self, *, session: str = "default"):
+    def __init__(
+        self,
+        *,
+        session: str = "default",
+        line_policy: LinePolicy | None = None,
+        line_event_sink: LineEventSink | None = None,
+    ):
         self.session = session
+        # Same policy contract as WahaClient (KB § whatsapp.md § 6a). No policy passed = an unconfigured dev/test
+        # stand-in (everything enabled, so existing suites keep driving it); pass `UNDECLARED` to exercise fail-closed.
+        self._init_line_policy(
+            label=f"fake#{session}",
+            policy=line_policy or LinePolicy(SEND_ENABLED, True, True, True),
+            sink=line_event_sink,
+        )
         self.sent_messages: list[dict[str, Any]] = []
         self.inbound_queue: list[WhatsAppInboundMessage] = []
         self.media_bytes: dict[str, bytes] = {}
@@ -171,6 +192,7 @@ class FakeWahaClient:
         return asyncio.run(self.send_text_to_phone(phone, text))
 
     def _record_send(self, chat_id: str, text: str) -> dict[str, Any]:
+        self._guard_write("post", "/api/sendText")
         message_id = f"fake-msg-{len(self.sent_messages) + 1}"
         record = {
             "id": message_id,
@@ -191,6 +213,7 @@ class FakeWahaClient:
 
         Assert against ``client.seen_calls`` for the exact call shape.
         """
+        self._guard_write("post", "/api/sendSeen")
         record: dict[str, Any] = {
             "session": self.session,
             "chatId": chat_id,
@@ -228,8 +251,17 @@ class FakeWahaClient:
             "status": self.session_status,
             "me": self.me,
             "engine": {"engine": "FAKE"},
-            "config": {"webhooks": [dict(h) for h in self.session_webhooks]},
+            "config": {
+                "webhooks": [dict(h) for h in self.session_webhooks],
+                "noweb": {
+                    "markOnline": self.line_policy.mark_online,
+                    "store": {"enabled": True, "fullSync": self.line_policy.full_sync},
+                },
+            },
         }
+
+    async def verify_line_policy(self) -> PolicyReadback:
+        return check_session_against_policy(await self.get_session(), self.line_policy)
 
     async def start_session(self) -> dict[str, Any]:
         self.start_count += 1
@@ -245,6 +277,7 @@ class FakeWahaClient:
         return {"name": self.session, "status": self.session_status}
 
     async def restart_session(self) -> dict[str, Any]:
+        self._guard_repair("restart_session")
         self.restart_count += 1
         if self.credentials_dead:
             # Mirrors the live-fleet bug: restart retries the dead stored
@@ -320,6 +353,7 @@ class FakeWahaClient:
         ``simulate_stuck_session()`` to exercise the full ladder down to
         the ``"logout_start"`` rung.
         """
+        self._guard_repair("recover_session")
         state = await self.get_session()
         if state.get("status") == "WORKING":
             return recovery_outcome(state, "already_working")
@@ -470,6 +504,7 @@ class FakeWahaClient:
     # ------------------------------------------------------------------
 
     async def create_group(self, name: str, participant_ids: list[str]) -> GroupInfo:
+        self._guard_write("post", f"/api/{self.session}/groups")
         self._group_counter += 1
         group_id = f"fake-group-{self._group_counter}@g.us"
         info = GroupInfo(
@@ -512,6 +547,7 @@ class FakeWahaClient:
         """Adds each id unless seeded into `privacy_restricted_ids`
         (mirrors WAHA's real per-participant privacy-refusal outcome —
         ``ParticipantChangeResult(outcome="invite_required")``)."""
+        self._guard_write("post", f"/api/{self.session}/groups/{group_id}/participants/add")
         group = await self.get_group(group_id)
         existing_ids = {p.id for p in group.participants}
         participants = list(group.participants)
@@ -533,6 +569,7 @@ class FakeWahaClient:
     async def remove_participants(
         self, group_id: str, participant_ids: list[str]
     ) -> list[ParticipantChangeResult]:
+        self._guard_write("post", f"/api/{self.session}/groups/{group_id}/participants/remove")
         group = await self.get_group(group_id)
         existing_ids = {p.id for p in group.participants}
         remaining = [p for p in group.participants if p.id not in participant_ids]
@@ -549,6 +586,7 @@ class FakeWahaClient:
     async def _set_role(
         self, group_id: str, participant_ids: list[str], *, role: str
     ) -> None:
+        self._guard_write("post", f"/api/{self.session}/groups/{group_id}/admin/{role}")
         group = await self.get_group(group_id)
         target_ids = set(participant_ids)
         updated = [
@@ -570,18 +608,22 @@ class FakeWahaClient:
         )
 
     async def revoke_invite_link(self, group_id: str) -> str:
+        self._guard_write("post", f"/api/{self.session}/groups/{group_id}/invite-code/revoke")
         await self.get_group(group_id)
         new_link = f"https://chat.whatsapp.com/fake-{group_id.split('@')[0]}-r{len(self.invite_links) + 1}"
         self.invite_links[group_id] = new_link
         return new_link
 
     async def set_messages_admin_only(self, group_id: str, on: bool) -> None:
+        self._guard_write("put", f"/api/{self.session}/groups/{group_id}/settings/security/messages-admin-only")
         await self.get_group(group_id)
         self.messages_admin_only[group_id] = on
 
     async def delete_message(self, chat_id: str, message_id: str) -> None:
+        self._guard_write("delete", f"/api/{self.session}/chats/{chat_id}/messages/{message_id}")
         self.deleted_messages.append({"chatId": chat_id, "messageId": message_id})
 
     async def leave_group(self, group_id: str) -> None:
+        self._guard_write("post", f"/api/{self.session}/groups/{group_id}/leave")
         self.fake_groups.pop(group_id, None)
         self.left_groups.append(group_id)

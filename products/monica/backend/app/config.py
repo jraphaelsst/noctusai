@@ -23,6 +23,9 @@ class SeedSettings(ProductSettings):
     # `POST /api/whatsapp/connections` answers 503 "WAHA server not configured" (never a Fake in prod).
     monica_waha_base_url: str = ""
     monica_waha_session: str = "default"
+    # Line policy v1 (JSON; declared in deploy/fleet/waha-instances.yml, keeper-checked against the prod compose). Without
+    # it the seed REFUSES every write on Monica's line (fail-closed). KB § INTEGRATIONS/whatsapp.md § 6a.
+    monica_waha_line_policy: str = ""
     # Must equal the global WHATSAPP_HOOK_HMAC_KEY of that WAHA instance (the seed registers `hmac: None` per hook).
     monica_waha_webhook_hmac_secret: str = ""
     # Inbox realtime (SSE) bus: Redis when REDIS_URL is set. The in-process bus is a single-worker decision that

@@ -37,6 +37,7 @@ from noctusai_lib.domain.finance.reminders import (
 from noctusai_lib.domain.finance.reminders import service as svc
 from noctusai_lib.integrations.rate_limit import VirtualClock
 from noctusai_lib.integrations.whatsapp.client import WahaClient
+from noctusai_lib.integrations.whatsapp.line_policy import LinePolicy
 
 from .conftest import CFG, ORG_A, ORG_B, mk_entry
 
@@ -389,7 +390,10 @@ def test_normalize_phone():
 
 
 def waha(handler):
-    return WahaClient("http://waha", "k", "default", transport=httpx.MockTransport(handler))
+    return WahaClient(
+        "http://waha", "k", "default", transport=httpx.MockTransport(handler),
+        line_policy=LinePolicy("enabled", True, True, True),
+    )
 
 
 def test_real_whatsapp_channel_sends_through_waha():
