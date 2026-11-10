@@ -7,8 +7,8 @@
   KEYS (not their descriptions) are definition metadata; reading them is audited like every definition read.
 
 Which agents are listed is decided by data: an agent of the caller's org with a visible catalogue row.
-Julia is the leads agent (SDR); One Chat is the separate operator agent (``runtime='external'``) -- both
-are listed (owner, 2026-10-20). The response models are explicit allowlists.
+Julia is the leads agent (SDR) and is the WhatsApp line (the One Chat operator bot was retired, 2026-11).
+The response models are explicit allowlists.
 """
 from __future__ import annotations
 

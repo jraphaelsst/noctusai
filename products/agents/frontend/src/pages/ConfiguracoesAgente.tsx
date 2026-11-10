@@ -5,12 +5,11 @@
  * Bia's runtime specs: approval timeout, max turns and the message rate
  * limit are editable (DB override, env default, "Restaurar padrão" resets);
  * the slot count is structural and read-only. Model and persona live on the
- * existing persona page (linked), and the One Chat toggle reuses the
- * Agentes hooks (`POST /api/agents/{key}/toggle`).
+ * existing persona page (linked).
  */
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { Cpu, Settings, ShieldAlert, SlidersHorizontal } from "lucide-react";
+import { Settings, ShieldAlert, SlidersHorizontal } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button } from "@noctusai/lib/design-system";
 import {
@@ -19,7 +18,6 @@ import {
   type AgentSetting,
   type AgentSettingsPatch,
 } from "@/hooks/useAgentSettings";
-import { useAgents, useToggleAgent } from "@/hooks/useAgents";
 import { ApiError, errorMessage } from "@/lib/errors";
 
 const INPUT_CLASS =
@@ -49,37 +47,6 @@ type FormState = Record<string, string>;
 
 function toForm(items: AgentSetting[]): FormState {
   return Object.fromEntries(items.map((i) => [i.key, i.value === null ? "" : String(i.value)]));
-}
-
-function OneChatToggle() {
-  const { data: agents } = useAgents();
-  const toggle = useToggleAgent();
-  const oneChat = agents?.find((a) => a.key === "one-chat");
-  if (!oneChat) return null;
-  const enabled = oneChat.estado_externo?.auto_reply_enabled ?? oneChat.ativo;
-
-  async function handleToggle() {
-    try {
-      await toggle.mutateAsync({ key: "one-chat", ativo: !enabled });
-    } catch (err) {
-      toast.error(errorMessage(err));
-    }
-  }
-
-  return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-4" data-testid="one-chat-row">
-      <Cpu className="h-4 w-4 text-primary" />
-      <div className="flex-1">
-        <p className="text-sm font-semibold text-foreground">One Chat (auto-resposta no social-wiring)</p>
-        {!oneChat.estado_externo && (
-          <p className="text-xs text-amber-600">{oneChat.aviso ?? "Estado externo indisponível."}</p>
-        )}
-      </div>
-      <Button size="sm" variant="outline" disabled={toggle.isPending} onClick={handleToggle}>
-        {enabled ? "Desligar" : "Ligar"}
-      </Button>
-    </div>
-  );
 }
 
 export default function ConfiguracoesAgente() {
@@ -196,7 +163,6 @@ export default function ConfiguracoesAgente() {
               </Button>
             </div>
           </form>
-          <OneChatToggle />
         </>
       ) : null}
     </div>

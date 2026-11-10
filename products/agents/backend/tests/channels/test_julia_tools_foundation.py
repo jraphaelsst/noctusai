@@ -202,7 +202,7 @@ class TestHttpClient:
 
         org_a, org_b = uuid4(), uuid4()
         client = HttpSocialWiringClient(
-            "http://sw.test", "", transport=httpx.MockTransport(handler),
+            "http://sw.test", transport=httpx.MockTransport(handler),
             julia_token_resolver=lambda org: {org_a: "tok-a"}.get(org),
         )
         assert client.julia_tools_available(org_a) and not client.julia_tools_available(org_b)

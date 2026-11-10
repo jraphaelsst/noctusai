@@ -5,7 +5,7 @@ Runs an agent whose ``agents.runtime`` is ``'llm'`` on the seed's single tool
 loop (``noctusai_lib.integrations.llm.run_tool_loop`` over ``chat_with_tools``):
 OpenAI today, Anthropic later, chosen per agent VERSION (``spec.provider``).
 ``'llm'`` is NOT ``'external'``: ``external`` means another product runs the
-agent (One Chat); ``llm`` means agents runs it on this loop.
+agent; ``llm`` means agents runs it on this loop.
 
 Event vocabulary == :class:`~app.runtime.claude_runtime.ClaudeAgentSdkRuntime`'s
 (the route's turn loop and the eval runner consume both identically):

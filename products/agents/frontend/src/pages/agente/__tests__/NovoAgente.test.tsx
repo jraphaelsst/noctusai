@@ -33,7 +33,7 @@ const PAINEL: AgentesPainelResponse = {
   items: [
     {
       key: "julia", nome: "Julia", descricao: null, papel: "sdr", capacidades: [], origem: "instancia", tipo: "runtime",
-      runtime: "llm", owner_product: null, usa_canais: true, ativo: true, estado_externo: null, aviso: null,
+      runtime: "llm", owner_product: null, usa_canais: true, ativo: true,
       secoes: ["visao-geral"], pode_alternar: false,
     },
   ],

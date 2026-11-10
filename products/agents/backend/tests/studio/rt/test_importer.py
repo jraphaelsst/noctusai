@@ -178,14 +178,6 @@ class TestRefusals:
         assert resp.status_code == 422
         assert resp.json()["code"] == "key_mismatch"
 
-    @pytest.mark.parametrize("key", ["one-chat"])
-    def test_reserved_keys_are_refused(self, rt, key):
-        body = copy.deepcopy(BUNDLE)
-        body["agente"]["key"] = key
-        resp = _import(rt, body, key=key)
-        assert resp.status_code == 409
-        assert resp.json()["code"] == "not_studio_agent"
-
     def test_legacy_agent_is_never_converted(self, rt):
         rt.studio.add_legacy_agent(rt.org_id, "isa", "Isa")
         resp = _import(rt)

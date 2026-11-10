@@ -302,15 +302,13 @@ app = create_product_app(
     lifespan_startup=on_startup,
     lifespan_shutdown=on_shutdown,
     health_config=HealthEndpointConfig(liveness_hooks=[_slot_pool_health]),
-    # Contract §D / §E.5: the approval-assertion signing key + the
-    # social-wiring bridge token must both be set in a deploy context.
-    # Since 2026-09-16 both resolve DB-first (Credenciais page) and these
-    # env values are the BOOTSTRAP fallback — keep them in `.env`; a stored
-    # value overrides them without a redeploy (deploy/fleet/README.md) —
-    # an unset key would silently disable the whole escrita-approval
-    # flow's ability to ever call academia (§D), and would let the
-    # product boot with no way to reach social-wiring's One Chat bridge.
-    required_prod_config=["APPROVAL_ASSERTION_SECRETS", "SOCIAL_WIRING_API_TOKEN"],
+    # Contract §D / §E.5: the approval-assertion signing key must be set in a
+    # deploy context. Since 2026-09-16 it resolves DB-first (Credenciais page)
+    # and this env value is the BOOTSTRAP fallback — keep it in `.env`; a stored
+    # value overrides it without a redeploy (deploy/fleet/README.md) — an unset
+    # key would silently disable the whole escrita-approval flow's ability to
+    # ever call academia (§D).
+    required_prod_config=["APPROVAL_ASSERTION_SECRETS"],
     # Agent Studio §D5: the bundle import is above the 1 MB default — an
     # exact whole-segment wildcard, never a prefix. UI-KB-BACKEND adds the
     # two bulk-ingest batch routes the Studio UI uses in place of a bundle

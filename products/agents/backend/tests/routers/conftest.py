@@ -14,7 +14,6 @@ from uuid import UUID, uuid5, NAMESPACE_OID
 
 import pytest
 
-from app.clients.social_wiring import FakeSocialWiringClient
 from app.dependencies import (
     get_agent_runtime_dep,
     get_agent_store_dep,
@@ -24,7 +23,6 @@ from app.dependencies import (
     get_message_store_dep,
     get_persona_store_dep,
     get_realtime_bus_dep,
-    get_social_wiring_client_dep,
 )
 from app.runtime.broker import StoreApprovalBroker
 from app.runtime.fake_runtime import FakeAgentRuntime
@@ -58,7 +56,6 @@ class _Stores:
         self.messages = FakeMessageStore()
         self.personas = FakePersonaStore()
         self.approvals = FakeApprovalStore()
-        self.social_wiring = FakeSocialWiringClient()
         self.bus = FakeRealtimeBus()
 
 
@@ -99,7 +96,6 @@ def agents_client(client):
     app.dependency_overrides[get_message_store_dep] = lambda: stores.messages
     app.dependency_overrides[get_persona_store_dep] = lambda: stores.personas
     app.dependency_overrides[get_approval_store_dep] = lambda: stores.approvals
-    app.dependency_overrides[get_social_wiring_client_dep] = lambda: stores.social_wiring
     # A real `RedisRealtimeBus` is constructed whenever `settings.redis_url`
     # is truthy (the fleet-wide default), regardless of whether Redis is
     # actually reachable — a publish then attempts (and, in some
@@ -140,8 +136,7 @@ def agents_client(client):
             get_message_store_dep,
             get_persona_store_dep,
             get_approval_store_dep,
-            get_social_wiring_client_dep,
-            get_realtime_bus_dep,
+                    get_realtime_bus_dep,
             # Defensively cleared too — individual test files that install
             # their own script/broker via these same dependency-override
             # keys must never leak into a later test that didn't ask for one.
@@ -155,7 +150,7 @@ def agents_client(client):
 def seed_pre_cutover_agents(store, org_id: UUID = DEFAULT_ORG_ID) -> None:
     """The rows a pre-cutover org carries: the code-defined chat agent ``bia`` (no longer seeded by
     ``ensure_default_agents`` since the Renata cutover, but still present in prod until the runbook retires it)
-    plus the seeded defaults."""
+    plus the seeded defaults (none)."""
     store.seed_legacy_chat_agent(org_id)
     store.ensure_default_agents(org_id)
 

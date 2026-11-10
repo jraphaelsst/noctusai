@@ -21,20 +21,12 @@ from app.schemas.channel_threads import OptOutEventoOut
 # ── Agents (§E.2 "GET /api/agents", "POST /api/agents/{key}/toggle") ───────
 
 
-class EstadoExternoOut(BaseModel):
-    auto_reply_enabled: bool
-
-
 class AgentOut(BaseModel):
     key: str
     nome: str
     runtime: str
     owner_product: str | None
     ativo: bool
-    estado_externo: EstadoExternoOut | None = None
-    #: Set only when `estado_externo` is `None` because the bridge call to
-    #: social-wiring failed (contract: "null plus aviso if unreachable").
-    aviso: str | None = None
 
 
 class AgentListOut(BaseModel):
@@ -226,7 +218,6 @@ __all__ = [
     "ConversationCreateRequest",
     "ConversationListOut",
     "ConversationOut",
-    "EstadoExternoOut",
     "MessageCreateRequest",
     "MessageListOut",
     "MessageOut",

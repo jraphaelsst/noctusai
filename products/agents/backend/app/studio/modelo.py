@@ -48,7 +48,7 @@ __all__ = [
 
 MODELO_VERSAO = 1
 
-#: Where an agent's definition lives: ``legado`` (code-defined, pre-Studio: Bia, One Chat) · ``plataforma`` (THE
+#: Where an agent's definition lives: ``legado`` (code-defined, pre-Studio: Bia) · ``plataforma`` (THE
 #: definition, platform org) · ``instancia`` (an org's instance of a platform definition) · ``org`` (an org-owned
 #: Studio agent, e.g. IsaIA -- stays as is).
 Origem = Literal["legado", "plataforma", "instancia", "org"]

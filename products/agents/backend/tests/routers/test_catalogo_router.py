@@ -1,7 +1,7 @@
 """``GET /api/agents/catalogo`` -- the tiered agent catalogue (Julia v2 A-RT2; CONTRACT 0.4 visibility tiers).
 
 Strict 401/403 on the boundary, an org-tier response limited to display fields, a platform-admin tier that adds
-tool KEYS + versions (audited), One Chat (``runtime='external'``, role operador) listed, and an OpenAPI-shape
+tool KEYS + versions (audited), the listed rows, and an OpenAPI-shape
 test that the org-tier schema carries no instruction-bearing field."""
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def cat(agents_client):
 
     store = FakeCatalogoStore([
         CatalogoEntrada("julia", "sdr", "Atende os leads.", ("Atendimento", "Sugestão de imóveis"), 10),
-        CatalogoEntrada("one-chat", "operador", "Responde no WhatsApp.", ("Resposta automática",), 20),
+        CatalogoEntrada("bia", "academia", "Agente da academia.", ("Conversa",), 20),
         CatalogoEntrada("escondido", "x", "Não listar.", (), 99, visivel=False),
     ])
     studio = FakeStudioDefinitionStore()
@@ -36,6 +36,7 @@ def cat(agents_client):
     app.dependency_overrides[get_studio_definition_store_dep] = lambda: studio
     agents_client.catalogo, agents_client.studio = store, studio
     # in production the instance row of Julia lives in the same table the legacy store lists
+    agents_client.stores.agents.seed_legacy_chat_agent(DEFAULT_ORG_ID)
     agents_client.stores.agents._ensure_one(
         DEFAULT_ORG_ID, key="julia", nome="Julia", runtime="llm", owner_product="social-wiring")
     try:
@@ -99,21 +100,19 @@ class TestOrgTier:
         r = cat.get(URL)
         assert r.status_code == 200, r.text
         body = r.json()
-        assert [a["key"] for a in body] == ["one-chat", "julia"] or [a["key"] for a in body] == ["julia", "one-chat"]
         for item in body:
             assert set(item) == {"key", "nome", "papel", "descricao_publica", "runtime", "capacidades"}
         por = {a["key"]: a for a in body}
-        assert por["one-chat"]["runtime"] == "external" and por["one-chat"]["papel"] == "operador"
         assert por["julia"]["capacidades"] == ["Atendimento", "Sugestão de imóveis"]
-        assert "escondido" not in por and "bia" not in por  # a row decides who is listed
-        # the order is the catalogue's (julia 10, one-chat 20)
-        assert [a["key"] for a in body] == ["julia", "one-chat"]
+        assert "escondido" not in por  # a row decides who is listed
+        # the order is the catalogue's (julia 10, bia 20)
+        assert [a["key"] for a in body] == ["julia", "bia"]
 
-    def test_julia_is_the_leads_agent_and_one_chat_stays_separate(self, cat):
+    def test_julia_is_the_leads_agent(self, cat):
         cat.mock_supabase.set_table_data("noctus_users", [{
             "id": str(DEFAULT_USER_ID), "org_id": str(DEFAULT_ORG_ID), "org_role": "member", "role": "user"}])
         por = {a["key"]: a for a in cat.get(URL).json()}
-        assert por["julia"]["papel"] == "sdr" and por["one-chat"]["papel"] == "operador"
+        assert por["julia"]["papel"] == "sdr" and por["bia"]["papel"] == "academia"
 
     def test_the_org_tier_never_sees_tool_keys_or_versions_even_if_the_store_has_them(self, cat):
         _julia(cat)
@@ -133,7 +132,7 @@ class TestPlatformAdminTier:
         assert por["julia"]["versoes"] == [{"versao": 1, "status": "rascunho"}] and por["julia"]["versao_ativa"] is None
         # no active version yet -> no tool keys; publish-less draft is not "what runs"
         assert por["julia"]["ferramentas"] == []
-        assert por["one-chat"]["ferramentas"] == [] and por["one-chat"]["versoes"] == []
+        assert por["bia"]["ferramentas"] == [] and por["bia"]["versoes"] == []
         assert "SEGREDO" not in r.text
         assert d is not None
 

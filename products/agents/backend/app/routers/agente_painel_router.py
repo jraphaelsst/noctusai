@@ -23,10 +23,8 @@ from app.dependencies import (
     get_agent_store_dep,
     get_core_client,
     get_skills_store_dep,
-    get_social_wiring_client_dep,
     require_member,
 )
-from app.routers.agents_router import _one_chat_state
 from app.routers.catalogo_router import get_catalogo_store_dep
 from app.routers.studio_agents_router import audit_definition_read, get_studio_definition_store_dep
 from app.schemas.agente_painel import AgenteInternoOut, AgenteModeloOut, AgentePainelOut, AgentesPainelOut
@@ -94,21 +92,15 @@ def _linha(ctx: AuthContext, agentes: Any, studio_store: Any, key: str) -> _Linh
     return linha
 
 
-async def _cartao(linha: _Linha, tier: str, catalogo: dict[str, Any], social_wiring_client: Any) -> AgentePainelOut:
+def _cartao(linha: _Linha, tier: str, catalogo: dict[str, Any]) -> AgentePainelOut:
     fatos = linha.fatos
     entrada = catalogo.get(linha.key)
-    estado_externo, aviso, ativo = None, None, linha.ativo
-    if fatos.origem == "legado" and linha.runtime == "external" and linha.legado is not None:
-        # An external agent's on/off truth is its owning product's (One Chat -> social-wiring auto-reply).
-        estado_externo, aviso = await _one_chat_state(linha.legado, social_wiring_client)
-        if estado_externo is not None:
-            ativo = estado_externo.auto_reply_enabled
     descricao = entrada.descricao_publica if entrada else getattr(linha.studio, "descricao", None)
     return AgentePainelOut(
         key=linha.key, nome=linha.nome, descricao=descricao, papel=entrada.papel if entrada else None,
         capacidades=list(entrada.capacidades) if entrada else [], origem=fatos.origem, tipo=fatos.kind,
-        runtime=linha.runtime, owner_product=linha.owner_product, usa_canais=fatos.usa_canais, ativo=ativo,
-        estado_externo=estado_externo, aviso=aviso, secoes=secoes_para(fatos, tier),
+        runtime=linha.runtime, owner_product=linha.owner_product, usa_canais=fatos.usa_canais, ativo=linha.ativo,
+        secoes=secoes_para(fatos, tier),
         pode_alternar=fatos.origem == "legado" and tier in ("org_admin", "plataforma"),
     )
 
@@ -126,7 +118,6 @@ async def listar_painel(
     agentes=Depends(get_agent_store_dep),
     studio_store=Depends(get_studio_definition_store_dep),
     catalogo_store=Depends(get_catalogo_store_dep),
-    social_wiring_client=Depends(get_social_wiring_client_dep),
 ) -> AgentesPainelOut:
     def _ler():
         return (
@@ -135,7 +126,7 @@ async def listar_painel(
         )
 
     linhas, tier, catalogo = await anyio.to_thread.run_sync(_ler)
-    items = [await _cartao(li, tier, catalogo, social_wiring_client) for li in linhas]
+    items = [_cartao(li, tier, catalogo) for li in linhas]
     return AgentesPainelOut(items=items, total=len(items))
 
 
@@ -147,7 +138,6 @@ async def obter_painel(
     agentes=Depends(get_agent_store_dep),
     studio_store=Depends(get_studio_definition_store_dep),
     catalogo_store=Depends(get_catalogo_store_dep),
-    social_wiring_client=Depends(get_social_wiring_client_dep),
 ) -> AgentePainelOut:
     def _ler():
         return (
@@ -156,7 +146,7 @@ async def obter_painel(
         )
 
     linha, tier, catalogo = await anyio.to_thread.run_sync(_ler)
-    return await _cartao(linha, tier, catalogo, social_wiring_client)
+    return _cartao(linha, tier, catalogo)
 
 
 @router.get("/api/agents/{key}/painel/interno", response_model=AgenteInternoOut)

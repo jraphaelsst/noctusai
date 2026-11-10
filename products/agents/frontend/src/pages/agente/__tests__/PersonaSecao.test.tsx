@@ -53,7 +53,7 @@ const PERSONA = {
 const AGENTE = {
   key: "bia", nome: "Bia", descricao: null, papel: "academia", capacidades: [], origem: "legado" as const,
   tipo: "legacy", runtime: "claude_sdk", owner_product: null, usa_canais: false, ativo: true,
-  estado_externo: null, aviso: null, secoes: ["visao-geral", "conversar", "persona"], pode_alternar: true,
+  secoes: ["visao-geral", "conversar", "persona"], pode_alternar: true,
 };
 
 let mutateAsync: ReturnType<typeof vi.fn>;

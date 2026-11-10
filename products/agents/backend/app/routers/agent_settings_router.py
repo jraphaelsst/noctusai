@@ -1,8 +1,7 @@
 """``/api/admin/agent-settings`` — the platform-admin "Configurações do
 agente" page: Bia's runtime specs (DB override, env default).
 
-Model / persona stay on ``/api/agents/bia/persona``; the One Chat toggle
-stays on ``POST /api/agents/{key}/toggle`` — the page composes both.
+Model / persona stay on ``/api/agents/bia/persona``.
 """
 from __future__ import annotations
 
