@@ -87,6 +87,9 @@ class Worker:
         lease_seconds: float = 600.0,
         heartbeat_interval_seconds: float | None = None,
         claim_gate: Callable[[], Awaitable[bool]] | None = None,
+        max_idle_interval_seconds: float = 30.0,
+        idle_backoff_multiplier: float = 2.0,
+        idle_sleep: Callable[[float, asyncio.Event | None], Awaitable[None]] | None = None,
     ) -> None:
         self._repo = repo
         # Pause switch, consulted before EVERY claim: `False` ⇒ claim
@@ -100,6 +103,15 @@ class Worker:
         self._handlers = dict(handlers)
         self._retry_policy = retry_policy
         self._poll_interval = poll_interval_seconds
+        # Idle backoff (egress incident, 2026-11-09): a fixed 1s idle poll
+        # against an EMPTY queue made ~10 product workers fire ~15k
+        # `claim_next_job` RPCs per hour and exhausted the Supabase egress
+        # quota (every REST call then returned 402). Each consecutive idle
+        # poll now doubles the sleep up to `max_idle_interval_seconds`, and
+        # the first claimed job resets it to `poll_interval_seconds`.
+        self._max_idle_interval = max(max_idle_interval_seconds, poll_interval_seconds)
+        self._idle_multiplier = max(idle_backoff_multiplier, 1.0)
+        self._idle_sleep = idle_sleep or self._default_idle_sleep
         self._job_types: list[str] = sorted(self._handlers.keys())
         # Lease + heartbeat: a claimed job is reclaimable by another
         # worker once `lease_seconds` elapses without a heartbeat — the
@@ -165,35 +177,42 @@ class Worker:
         *,
         stop_event: asyncio.Event | None = None,
     ) -> None:
-        """Loop run_once + sleep poll_interval. Honors stop_event.
+        """Loop run_once; when idle, sleep with exponential backoff.
 
-        Pattern mirrors the chatbot worker: only sleep when the queue
-        is empty, so steady-state load doesn't accumulate poll latency.
+        Only sleeps when the queue is empty (steady-state load does not
+        accumulate poll latency). The idle sleep starts at
+        `poll_interval_seconds`, multiplies by `idle_backoff_multiplier`
+        per consecutive empty poll up to `max_idle_interval_seconds`, and
+        resets the moment a job is processed. `stop_event` still wakes
+        the sleep immediately. Why: see `__init__` (2026-11-09 egress
+        incident: fixed 1s polling of an empty queue).
         """
         logger.info("worker.start worker_id=%s", self._worker_id)
+        delay = self._poll_interval
         try:
             while True:
                 if stop_event is not None and stop_event.is_set():
                     break
                 processed = await self.run_once()
-                if not processed:
-                    # Queue empty — sleep up to poll_interval but wake
-                    # immediately if stop_event fires.
-                    if stop_event is None:
-                        await asyncio.sleep(self._poll_interval)
-                    else:
-                        try:
-                            await asyncio.wait_for(
-                                stop_event.wait(),
-                                timeout=self._poll_interval,
-                            )
-                        except asyncio.TimeoutError:
-                            # Normal idle wakeup; loop back.
-                            pass
+                if processed:
+                    delay = self._poll_interval
+                    continue
+                await self._idle_sleep(delay, stop_event)
+                delay = min(delay * self._idle_multiplier, self._max_idle_interval)
         finally:
             logger.info("worker.stop worker_id=%s", self._worker_id)
 
     # --- internals ---------------------------------------------------
+
+    @staticmethod
+    async def _default_idle_sleep(delay: float, stop_event: asyncio.Event | None) -> None:
+        if stop_event is None:
+            await asyncio.sleep(delay)
+            return
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=delay)
+        except asyncio.TimeoutError:
+            pass  # normal idle wakeup; loop back
 
     async def _heartbeat_loop(self, job_id: str) -> None:
         """Extend the claimed job's lease at `_heartbeat_interval` while

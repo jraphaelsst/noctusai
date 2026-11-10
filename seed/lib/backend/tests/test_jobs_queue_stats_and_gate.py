@@ -121,3 +121,68 @@ def test_reschedule_later_keeps_retry_budget_and_delays_claim() -> None:
     assert after.worker_id is None and after.lease_expires_at is None
     assert after.scheduled_for is not None and after.scheduled_for > datetime.now(timezone.utc)
     assert again is None
+
+
+# --- egress incident (2026-11-09): idle backoff, count-only stats, cache ----------
+
+
+def test_worker_idle_backoff_grows_to_cap_and_resets_after_a_claim() -> None:
+    delays: list[float] = []
+
+    async def scenario() -> None:
+        repo = FakeJobRepository()
+        stop = asyncio.Event()
+
+        async def fake_sleep(delay: float, _stop) -> None:
+            delays.append(delay)
+            if len(delays) == 5:
+                await repo.enqueue(type="a", payload={})  # claimed on the next poll
+            if len(delays) == 7:
+                stop.set()
+
+        async def handler(_job) -> None:
+            return None
+
+        worker = Worker(
+            repo, worker_id="w", handlers={"a": handler}, poll_interval_seconds=1.0,
+            max_idle_interval_seconds=10.0, idle_sleep=fake_sleep,
+        )
+        await worker.run_forever(stop_event=stop)
+
+    run(scenario())
+    assert delays == [1.0, 2.0, 4.0, 8.0, 10.0, 1.0, 2.0]
+
+
+def test_real_queue_stats_uses_count_queries_not_row_dumps_and_caches() -> None:
+    now = datetime.now(timezone.utc)
+    client = MockSupabaseClient()
+    client.set_table_data("jobs", [
+        {"id": str(i), "type": "t", "payload": {}, "status": "pending", "retry_count": 0,
+         "max_retries": 1, "last_error": None, "created_at": now.isoformat(),
+         "updated_at": now.isoformat(), "scheduled_for": None, "dedupe_key": None,
+         "worker_id": None, "lease_expires_at": None}
+        for i in range(7)
+    ])
+    selects: list[tuple] = []
+    real_table = client.table
+
+    def spy_table(name):
+        builder = real_table(name)
+        orig = builder.select
+
+        def select(cols="*", *a, **k):
+            selects.append((cols, k.get("count")))
+            return orig(cols, *a, **k)
+
+        builder.select = select
+        return builder
+
+    client.table = spy_table  # observation only; the repo's own code is untouched
+    repo = RealSupabaseJobRepository(client)
+    stats = run(repo.queue_stats(job_types=["t"]))
+    assert stats.pending == 7 and stats.due == 7
+    assert not any(cols == "*" for cols, _ in selects), selects
+    assert sum(1 for _, c in selects if c == "exact") >= 3
+    before = len(selects)
+    run(repo.queue_stats(job_types=["t"]))  # within the TTL: zero DB calls
+    assert len(selects) == before

@@ -17,6 +17,7 @@ statement — no consumer-side read-then-write race window.
 
 from __future__ import annotations
 
+import time
 import uuid
 import random
 from dataclasses import asdict, dataclass, replace
@@ -442,8 +443,11 @@ class FakeJobRepository:
         return _stats_of(self._jobs.values(), job_types=job_types, now=self._now())
 
 
-#: Upper bound on rows a `queue_stats` read pulls per state.
+#: Upper bound on RUNNING rows a `queue_stats` read pulls (bounded by worker concurrency).
 STATS_ROW_CAP = 5000
+
+#: How long `RealSupabaseJobRepository.queue_stats` serves a cached answer.
+DEFAULT_STATS_TTL_SECONDS = 30.0
 
 
 def _stats_of(jobs: Any, *, job_types: list[str] | None, now: datetime) -> QueueStats:
@@ -537,8 +541,14 @@ class RealSupabaseJobRepository:
         fail_rpc_name: str = "fail_job",
         complete_rpc_name: str = "complete_job",
         extend_lease_rpc_name: str = "extend_lease",
+        stats_ttl_seconds: float = DEFAULT_STATS_TTL_SECONDS,
     ) -> None:
         self._client = client
+        # `queue_stats` is polled by claim gates + health panels; a short
+        # per-process cache keeps that off the wire (egress incident,
+        # 2026-11-09). 0 disables.
+        self._stats_ttl = stats_ttl_seconds
+        self._stats_cache: dict[tuple[str, ...] | None, tuple[float, QueueStats]] = {}
         self._schema = schema_name
         self._table = table_name
         self._rpc = rpc_name
@@ -787,53 +797,73 @@ class RealSupabaseJobRepository:
         return self._row_to_job(rows[0])
 
     async def queue_stats(self, *, job_types: list[str] | None = None) -> QueueStats:
-        # Active rows are bounded by the live queue; terminal rows are not,
-        # so only DEAD_LETTER (an operator's to-do list) is read, capped.
+        """Counts via `count="exact"` (head-sized responses) — never row
+        bodies: the old `select=*&limit=5000` per state shipped the whole
+        queue on every call (2026-11-09 egress incident). Only RUNNING
+        rows (bounded by worker concurrency) are read, two columns, to
+        split live vs lease-expired and list the active workers. Cached
+        per `stats_ttl_seconds`."""
+        key = tuple(sorted(job_types)) if job_types is not None else None
+        cached = self._stats_cache.get(key)
+        if cached is not None and self._stats_ttl > 0:
+            at, hit = cached
+            if time.monotonic() - at < self._stats_ttl:
+                return hit
+
         def scoped(builder: Any) -> Any:
             return builder.in_("type", job_types) if job_types is not None else builder
 
-        active = await self._execute(
+        async def count(*, future_only: bool = False, status: str) -> int:
+            builder = self._table_builder().select("id", count="exact").eq("status", status)
+            if future_only:
+                builder = builder.gt("scheduled_for", datetime.now(timezone.utc).isoformat())
+            result = await self._execute(scoped(builder).limit(0))
+            return int(getattr(result, "count", None) or 0)
+
+        pending = await count(status=JobStatus.PENDING.value)
+        future = await count(status=JobStatus.PENDING.value, future_only=True)
+        dead = await count(status=JobStatus.DEAD_LETTER.value)
+        running_rows = await self._execute(
             scoped(
                 self._table_builder()
-                .select("*")
-                .in_("status", [JobStatus.PENDING.value, JobStatus.RUNNING.value])
-                .limit(STATS_ROW_CAP)
-            )
-        )
-        dead = await self._execute(
-            scoped(
-                self._table_builder()
-                .select("*")
-                .eq("status", JobStatus.DEAD_LETTER.value)
+                .select("worker_id,lease_expires_at")
+                .eq("status", JobStatus.RUNNING.value)
                 .limit(STATS_ROW_CAP)
             )
         )
         errored = await self._execute(
             scoped(
                 self._table_builder()
-                .select("*")
+                .select("type,last_error,updated_at")
                 .not_.is_("last_error", "null")
                 .order("updated_at", desc=True)
                 .limit(1)
             )
         )
-        rows = [
-            *(getattr(active, "data", None) or []),
-            *(getattr(dead, "data", None) or []),
-        ]
-        stats = _stats_of(
-            (self._row_to_job(r) for r in rows),
-            job_types=job_types,
-            now=datetime.now(timezone.utc),
+        now = datetime.now(timezone.utc)
+        running = expired = 0
+        workers: set[str] = set()
+        for r in getattr(running_rows, "data", None) or []:
+            lease = r.get("lease_expires_at")
+            if lease is not None and _parse_dt(lease) <= now:
+                expired += 1
+            else:
+                running += 1
+                if r.get("worker_id"):
+                    workers.add(r["worker_id"])
+        latest = (getattr(errored, "data", None) or [None])[0]
+        stats = QueueStats(
+            pending=pending,
+            due=max(pending - future, 0),
+            running=running,
+            lease_expired=expired,
+            dead_letter=dead,
+            last_error=latest["last_error"] if latest else None,
+            last_error_type=latest["type"] if latest else None,
+            last_error_at=_parse_dt(latest["updated_at"]) if latest else None,
+            active_workers=tuple(sorted(workers)),
         )
-        latest = [self._row_to_job(r) for r in (getattr(errored, "data", None) or [])]
-        if latest and latest[0].last_error:
-            stats = replace(
-                stats,
-                last_error=latest[0].last_error,
-                last_error_type=latest[0].type,
-                last_error_at=latest[0].updated_at,
-            )
+        self._stats_cache[key] = (time.monotonic(), stats)
         return stats
 
 
