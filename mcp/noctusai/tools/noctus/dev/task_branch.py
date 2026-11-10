@@ -987,8 +987,30 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps,
             return
         wire.append({"link": link, "target": src, "kind": "node_modules"})
 
+    def _link_toolkit_venv() -> None:
+        """`mcp/noctusai/.venv` - the toolkit interpreter `scripts/hooks/pre-push` runs its keepers with.
+
+        Same class as `.env` / node_modules (gitignored, so absent from every fresh worktree; the 3fc8271ae class, 2nd
+        instance): without it every pre-push keeper prints 'SKIPPED - no toolkit venv at <wt>/mcp/noctusai/.venv
+        (unmeasurable, not a pass)' and the hook that judges the push judges nothing. A venv's scripts carry the PRIMARY's
+        absolute paths, so it is symlinked whole (never copied); a real .venv in the worktree is the caller's own."""
+        rel = os.path.join("mcp", "noctusai", ".venv")
+        src = os.path.join(primary_root, rel)
+        link = os.path.join(wt_root, rel)
+        if not fs.exists(src):
+            skipped.append({"link": link, "reason": (
+                f"primary toolkit .venv absent: {src} - the PRIMARY checkout itself was never provisioned; run "
+                f"`cd {os.path.join(primary_root, 'mcp', 'noctusai')} && python3 -m venv .venv && "
+                f".venv/bin/pip install -r requirements.txt` first")})
+            return
+        if fs.is_dir(link) and not fs.is_symlink(link):
+            skipped.append({"link": link, "reason": "real .venv already present in worktree"})
+            return
+        wire.append({"link": link, "target": src, "kind": "venv"})
+
     _plan_scrubbed_dotenv()
     _link_toolkit_node_modules()
+    _link_toolkit_venv()
 
     def _link_whole_node_modules(rel_pkg: str) -> None:
         """Seed-frontend node_modules ONLY. Nothing ever nests inside these
