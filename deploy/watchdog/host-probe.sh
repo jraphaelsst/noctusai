@@ -9,7 +9,8 @@
 # Prints exactly ONE JSON line (consumed by noctus.dev.prod_watchdog):
 #   {"journald_last_age_s":N|null,"heartbeat_age_s":N|null,
 #    "mem_available_mb":N|null,"swap_used_mb":N|null,"load1":F|null,
-#    "load5":F|null,"ncpu":N|null,"uptime_s":N|null,"now":N}
+#    "load5":F|null,"ncpu":N|null,"uptime_s":N|null,"now":N,
+#    "breaker_tripped":1|0|null,"breaker_key_restricted":1|0|null}
 #
 # READ-ONLY and never fails hard: `set -u` (not -e) — a probe that cannot read
 # something reports null for that field instead of dying, because a missing
@@ -86,8 +87,53 @@ if [[ -r /proc/uptime ]]; then
   uptime_s="${up%%.*}"
 fi
 
-printf '{"journald_last_age_s":%s,"heartbeat_age_s":%s,"mem_available_mb":%s,"swap_used_mb":%s,"load1":%s,"load5":%s,"ncpu":%s,"uptime_s":%s,"now":%s}\n' \
+# Fleet breaker: does `noctus:breaker:fleet` exist in Redis? (1 = tripped, 0 = armed, null = unknown).
+# The watchdog reconciles its sticky alert with THIS, not with its own cache file.
+breaker_tripped=null
+# Same target rule as breaker-trip.sh: the ACL Redis (password via the environment, never argv) once a
+# credential file exists, else today's unauthenticated noctus-redis. Prefer the read-only `probe` ACL user
+# (probe.pass) and fall back to `trip` (trip.pass) until it exists.
+PROBE_PASS_FILE="${NOCTUS_REDIS_PROBE_PASS_FILE:-/opt/noctus/noctusai/deploy/fleet/redis-auth/probe.pass}"
+TRIP_PASS_FILE="${NOCTUS_REDIS_TRIP_PASS_FILE:-/opt/noctus/noctusai/deploy/fleet/redis-auth/trip.pass}"
+acl_user=""; acl_file=""
+if [[ -r "$PROBE_PASS_FILE" ]]; then acl_user="probe"; acl_file="$PROBE_PASS_FILE"
+elif [[ -r "$TRIP_PASS_FILE" ]]; then acl_user="trip"; acl_file="$TRIP_PASS_FILE"; fi
+if [[ -n "$acl_user" ]]; then
+  export REDISCLI_AUTH; REDISCLI_AUTH="$(cat "$acl_file")"
+  bt="$(timeout 10 docker exec -e REDISCLI_AUTH "${NOCTUS_REDIS_CONTAINER:-noctus-redis-acl}" redis-cli --no-auth-warning --user "$acl_user" EXISTS noctus:breaker:fleet 2>/dev/null)"
+else
+  bt="$(timeout 10 docker exec "${NOCTUS_REDIS_CONTAINER:-noctus-redis}" redis-cli EXISTS noctus:breaker:fleet 2>/dev/null)"
+fi
+[[ "$bt" == "0" || "$bt" == "1" ]] && breaker_tripped="$bt"
+
+# Forced-command keys: every authorized_keys line carrying one of OUR key comments must start with
+# `restrict,command="` (1 = all restricted, 0 = at least one is NOT, null = none found / unreadable).
+breaker_key_restricted=null
+seen=0; bad=0
+# authorized_keys files of the users our forced-command keys live under: homes resolved via getent (root,
+# breaker, probe), never guessed; NOCTUS_AUTH_KEYS_FILES overrides (tests).
+auth_files="${NOCTUS_AUTH_KEYS_FILES:-}"
+if [[ -z "$auth_files" ]]; then
+  for u in root breaker probe; do
+    h="$(getent passwd "$u" 2>/dev/null | cut -d: -f6)"
+    [[ -n "$h" ]] && auth_files+=" $h/.ssh/authorized_keys"
+  done
+fi
+for f in $auth_files; do
+  [[ -r "$f" ]] || continue
+  while IFS= read -r line; do
+    case "$line" in
+      *noctus-prod-watchdog*|*noctus-breaker-trip*)
+        seen=1
+        case "$line" in restrict,command=\"*) ;; *) bad=1 ;; esac ;;
+    esac
+  done < "$f"
+done
+if (( seen )); then breaker_key_restricted=$(( bad ? 0 : 1 )); fi
+
+printf '{"journald_last_age_s":%s,"heartbeat_age_s":%s,"mem_available_mb":%s,"swap_used_mb":%s,"load1":%s,"load5":%s,"ncpu":%s,"uptime_s":%s,"now":%s,"breaker_tripped":%s,"breaker_key_restricted":%s}\n' \
   "$journald_age" "$heartbeat_age" "$mem_available_mb" "$swap_used_mb" \
   "$(num_or_null "$load1")" "$(num_or_null "$load5")" \
-  "$(int_or_null "$ncpu")" "$(int_or_null "$uptime_s")" "$(int_or_null "$now")"
+  "$(int_or_null "$ncpu")" "$(int_or_null "$uptime_s")" "$(int_or_null "$now")" \
+  "$breaker_tripped" "$breaker_key_restricted"
 exit 0
