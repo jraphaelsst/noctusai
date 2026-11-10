@@ -18,7 +18,9 @@ answer every objection. Depth: `KB § PATTERNS/common/council.md`. Ledger contra
 ## Workflow
 
 1. **Open the session.** `noctus.dev.council_ledger action=open_session` with stage, subject_kind,
-   subject_ref, trigger, mode, seats (from the stage map below), project.
+   subject_ref, trigger, mode, seats (from the stage map below), project, and `product=<slug>`
+   for market products (so `report product=<slug>` aggregates per product). Parallel seats may
+   call `record_objection` concurrently; labels are assigned under a lock.
 2. **Compose the blind brief.** Subject, constraints, evidence paths, the question to challenge.
    NEVER the author's recommendation or preferred option. Hash it (`brief_sha256`).
 3. **Dispatch seats in parallel** (Agent tool, `run_in_background`): `subagent_type=councillor`
@@ -92,7 +94,9 @@ Pass the lens in the dispatch prompt: "Lens: <name>". Each lens attacks the subj
   recommendation only if the brief says so.
 - Single-chat fallback is allowed only where the stage map or triggers allow it, and is labelled.
 - Every row goes through `noctus.dev.council_ledger`; never hand-edit ledger files, and never read
-  `project-history/council/**` before the verdict (the tool enforces blindness only on its own reads).
+  `project-history/council/**` before the verdict. While a session has no verdict, the
+  `council-read` PreToolUse guard flags (denies once enforcing) direct reads of that path; use
+  `blind_view`/`status` via `council_ledger`. Seats report failures as error text only, never claim text.
 - Cost: independent seats cost roughly 4-15x a single chat; spend them on the stage map, not by habit.
 - Claude only for now; lens councillors Sonnet, advisors their own model, chair Opus.
 - A lens that finds nothing says so; never invent an objection to look useful.

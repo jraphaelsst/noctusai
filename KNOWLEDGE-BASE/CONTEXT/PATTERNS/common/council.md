@@ -72,7 +72,7 @@ objection. Metrics per seat (hit rate, unique hit rate, false-alarm rate, accept
 per hit) have one derivation each in the contract section 3, computed by
 `council_ledger action=report`. Retune signal: a seat with 10+ resolved objections on a stage and
 hit rate under 0.2 is proposed M to O; over 0.6 while O is proposed O to M. The owner ratifies;
-nothing auto-edits the map. `report` splits metrics per mode; only `subagents`/`api` count as independent and drive retune, `single_chat` is reported apart (`independent: false`).
+nothing auto-edits the map. `report` covers merged work plus this tree only (`coverage` field; see the keyed-ledger exception in `KB § PATTERNS/common/ledger-store.md`). `report` splits metrics per mode; only `subagents`/`api` count as independent and drive retune, `single_chat` is reported apart (`independent: false`).
 
 ## 7 · In-app (future)
 
