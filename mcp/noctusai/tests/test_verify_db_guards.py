@@ -28,6 +28,7 @@ sys.path.insert(0, str(REPO_ROOT / "seed" / "lib" / "backend"))
 
 from tools.noctus.dev.verify_db_guards import (  # noqa: E402
     _AGENTS_CAMADAS_PROBES,
+    _AGENTS_EVAL_LOOP_PROBES,
     _AGENTS_FALLBACK_PROBES,
     _AGENTS_GERACAO_PROBES,
     _AGENTS_ISOLATION_PROBES,
@@ -643,6 +644,7 @@ class TestAgentsStudioProbes:
             and p not in _AGENTS_CAMADAS_PROBES
             # 074 fallback number: own group (runtime_settings, no agent fixture), same replay file
             and p not in _AGENTS_FALLBACK_PROBES
+            and p not in _AGENTS_EVAL_LOOP_PROBES  # 075: same replay file
             and p not in _AGENTS_ISOLATION_PROBES
         ]
 
