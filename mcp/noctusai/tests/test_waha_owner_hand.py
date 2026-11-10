@@ -31,6 +31,9 @@ instances:
     personal: true
 """
 RUNNING = {"exists": False}
+HELPER = ("/Applications/Antigravity IDE.app/Contents/Frameworks/Antigravity IDE Helper.app/Contents/MacOS/"
+          "Antigravity IDE Helper --type=utility --utility-sub-type=node.mojom.NodeService --lang=en-US")
+ANTIGRAVITY = ("-zsh -il", HELPER, "/Applications/Antigravity IDE.app/Contents/MacOS/Electron")
 
 
 class FakeTTY:
@@ -52,6 +55,8 @@ class FakeTTY:
 
 class FakeVps:
     """The VPS through the remote runner: its checkout (yml + rendered compose) and the WAHA core."""
+
+    __noc_test_fake__ = True
 
     def __init__(self, vps_yml=YML, compose=None, labels="true"):
         self.vps_yml = vps_yml
@@ -85,12 +90,16 @@ class FakeVps:
 
 
 class FakeIO:
-    def __init__(self, *, env=None, tty=(True, True), devtty=True, chain=("-zsh", "login -pf owner"),
-                 answers=("shadow", "CONFIRMO"), sh=None):
+    def __init__(self, *, env=None, tty=(True, True), devtty=True, chain=ANTIGRAVITY,
+                 answers=("shadow", "CONFIRMO"), sh="default"):
         self._env = env or {"HOME": "/Users/owner", "TERM": "xterm"}
         self._tty, self._devtty, self._chain = tty, devtty, chain
         self.tty = FakeTTY(answers)
-        self.sh = sh if sh is not None else FakeVps()
+        self.sh = FakeVps() if sh == "default" else sh
+        self.grants = []
+
+    def observe_grant(self, grant):
+        self.grants.append(grant)
 
     def env(self):
         return dict(self._env)
@@ -181,11 +190,10 @@ def test_a_wrong_typed_name_or_word_does_nothing_and_is_audited(tmp_path, answer
     out, root = _run(tmp_path, io)
     assert out["status"] == "refused" and not io.sh.touched and io.tty.closed
     shown = "".join(io.tty.out)
-    assert "shadow" in shown and oh.policy_hash(wi._inst(wi.parse_instances(YML), "shadow")) in shown
-    assert "send=disabled" in shown and "markOnline=false" in shown and "fullSync=false" in shown
-    assert "personal=true" in shown and "target host : vps" in shown
     (row,) = _rows(root)
-    assert row["outcome"] == "refused" and row["policy_hash"]
+    assert row["outcome"] == "refused" and row["policy_hash"] and row["policy_hash"] in shown
+    assert "shadow" in shown and "send=disabled" in shown and "markOnline=false" in shown and "fullSync=false" in shown
+    assert "personal=true" in shown and "target host : vps" in shown
 
 
 def test_apply_runs_core_provision_edge_and_audits_confirmed_then_outcome(tmp_path):
@@ -255,16 +263,6 @@ def test_unknown_action_and_remove_are_refused(tmp_path):
 # --- the grant, the MCP surface, the registry ---------------------------------------------------------------------------
 
 
-def test_a_grant_cannot_be_built_outside_the_gate_and_covers_only_its_line_host_and_hash():
-    with pytest.raises(PermissionError):
-        oh.OwnerHandGrant(line="shadow", policy_hash="x", host="vps")
-    inst = wi._inst(wi.parse_instances(YML), "shadow")
-    g = oh.OwnerHandGrant(line="shadow", policy_hash=oh.policy_hash(inst), host="vps", _key=oh._MINT)
-    assert oh.grant_covers(g, inst, "vps") and not oh.grant_covers(g, inst, "other-host")
-    looser = dict(inst, line_policy=dict(inst["line_policy"], auto_repair=True))
-    assert not oh.grant_covers(g, looser, "vps") and not oh.grant_covers(g, inst, "vps", looser)
-
-
 def test_the_mcp_surface_still_refuses_a_personal_line(tmp_path):
     root = _root(tmp_path)
     for action in ("provision", "apply"):
@@ -306,3 +304,164 @@ def test_the_cli_never_passes_the_test_injection():
     start = src.index("elif args.waha_instance_owner_hand:")
     branch = src[start:src.index("elif args.", start + 10)]
     assert "_owner_hand(" in branch and "_test_io" not in branch and "_test_sh" not in branch
+
+
+# --- review round 1 (agents-security on cb639e012) ------------------------------------------------------------------------
+
+TERMINAL = ("-zsh", "login -pf owner", "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal")
+ITERM = ("-zsh", "/usr/bin/login -fpl owner /Applications/iTerm.app/Contents/MacOS/ShellLauncher --launch_shell",
+         "/Applications/iTerm.app/Contents/MacOS/iTermServer-3.5.4 /Users/owner/Library/iTerm2/iterm2-daemon-1.socket")
+VSCODE = ("/bin/zsh -il", "/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper.app/Contents/MacOS/"
+          "Code Helper --type=utility --utility-sub-type=node.mojom.NodeService",
+          "/Applications/Visual Studio Code.app/Contents/MacOS/Electron")
+
+
+@pytest.mark.parametrize("chain", [ANTIGRAVITY, TERMINAL, ITERM, VSCODE])
+def test_a_known_terminal_emulator_ancestor_passes_the_gate(chain):
+    assert oh.human_gate(FakeIO(chain=chain)) is None
+
+
+@pytest.mark.parametrize("chain", [
+    # P1-a: env -i + a pty + a reparented subshell: the chain reaches launchd with no emulator at all
+    ("script -q /dev/null python mcp/noctusai/cli.py --waha-instance-owner-hand apply shadow",),
+    ("/usr/bin/expect -f answers.exp",),
+    ("tmux new-session -d -s x",),
+    ("SCREEN -dmS x",),
+    ("/opt/homebrew/bin/unbuffer python cli.py",),
+    ("socat - EXEC:python,pty",),
+    ("python3 -c import pty; pty.spawn('/bin/zsh')",),
+    ("-zsh",),
+    (),
+    # a denied wrapper anywhere, even under an allowed emulator
+    ("-zsh", "script -q /dev/null zsh") + ANTIGRAVITY,
+    ("-zsh", "tmux: server (/private/tmp/tmux-501/default)") + TERMINAL,
+    ("-zsh", "screen -S x") + ITERM,
+    ("-zsh", "nohup zsh") + VSCODE,
+    ("-zsh", "setsid zsh") + ANTIGRAVITY,
+    ("-zsh", "/usr/bin/expect -f x") + ANTIGRAVITY,
+    ("-zsh", "unbuffer zsh") + ANTIGRAVITY,
+    ("-zsh", "socat - EXEC:zsh,pty") + ANTIGRAVITY,
+    ("-zsh", "/usr/bin/python3 -c import pty;pty.spawn('zsh')") + ANTIGRAVITY,
+    ("/bin/zsh -c x", "claude") + ANTIGRAVITY,
+    ("-zsh", "/Applications/Antigravity IDE.app/Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm",
+     "/Applications/Antigravity IDE.app/Contents/Frameworks/Antigravity IDE Helper (Plugin).app/Contents/MacOS/"
+     "Antigravity IDE Helper (Plugin) --type=utility"),
+    # an extension host is not a terminal
+    ("-zsh", "/Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/"
+             "Code Helper (Plugin) --type=utility"),
+])
+def test_the_parent_chain_is_an_allowlist_and_every_wrapper_shape_is_refused(tmp_path, chain):
+    io = FakeIO(chain=chain)
+    out, root = _run(tmp_path, io)
+    assert out["status"] == "refused" and io.sh.cmds == [] and io.tty.out == []
+    assert _rows(root)[0]["outcome"] == "refused"
+
+
+def test_the_allowlist_and_denylist_are_data_documented_in_the_kb():
+    kb = (MCP.parents[1] / "KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/whatsapp.md").read_text()
+    labels = [lab for lab, _ in oh.TERMINAL_ALLOWLIST]
+    assert {"macOS Terminal", "iTerm2", "Antigravity IDE", "VS Code"} <= set(labels)
+    for lab, _ in oh.TERMINAL_ALLOWLIST + oh.CHAIN_DENYLIST:
+        assert lab in kb, lab
+
+
+@pytest.mark.parametrize("sh", [None, "real", "unmarked"])
+def test_a_test_io_must_carry_an_explicitly_marked_fake_runner(tmp_path, sh):
+    fake = FakeVps()
+    runner = {None: None, "real": wi._sh, "unmarked": lambda host, cmd, timeout=90: fake(host, cmd, timeout)}[sh]
+    io = FakeIO(sh=runner)
+    root = _root(tmp_path)
+    out = oh.owner_hand("apply", "shadow", "invalid.invalid", str(root), _test_io=io)
+    assert out["status"] == "refused" and "test" in out["error"].lower()
+    assert fake.cmds == [] and io.tty.out == [] and io.grants == []
+
+
+def test_a_test_io_outside_a_pytest_test_is_refused(tmp_path, monkeypatch):
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    io = FakeIO()
+    out, _ = _run(tmp_path, io)
+    assert out["status"] == "refused" and io.sh.cmds == [] and io.grants == []
+
+
+def test_a_forged_grant_with_the_private_key_but_no_confirmed_audit_row_is_refused(tmp_path):
+    spec = wi.parse_instances(YML)
+    inst = wi._inst(spec, "shadow")
+    g = oh.OwnerHandGrant(line="shadow", policy_hash=oh.policy_hash(inst), host="vps", _key=oh._MINT)
+    vps = FakeVps()
+    out = wi._apply(spec, "shadow", "vps", True, _test_sh=vps, _owner_grant=g)
+    assert out["status"] == "refused" and out["error"] == wi.PERSONAL_REFUSAL and not vps.touched
+    prov = wi._provision(spec, "shadow", "vps", True, _test_sh=vps, _owner_grant=g)
+    assert prov["status"] == "refused" and not vps.touched
+
+
+def test_a_real_grant_is_single_use(tmp_path):
+    io = FakeIO()
+    out, root = _run(tmp_path, io)
+    assert out["status"] == "applied" and len(io.grants) == 1
+    again = FakeVps()
+    reuse = wi._apply(wi.load_spec(root), "shadow", "vps", True, _test_sh=again, _owner_grant=io.grants[0])
+    assert reuse["status"] == "refused" and not again.touched
+
+
+def _confirmed_row(root, *, nonce, age_s, line="shadow", host="vps", phash=None):
+    import datetime as dt
+    inst = wi._inst(wi.parse_instances(YML), "shadow")
+    ts = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=age_s)).replace(microsecond=0).isoformat()
+    row = {"id": "t" + nonce, "ts": ts, "tool": "waha_owner_hand", "action": "apply", "line": line, "host": host,
+           "policy_hash": phash or oh.policy_hash(inst), "outcome": "confirmed", "grant_digest": oh._digest(nonce),
+           "who": {"git_email": "owner@example.com", "os_user": "owner"}}
+    p = root / oh.LEDGER_REL
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a") as fh:
+        fh.write(json.dumps(row) + "\n")
+    return inst
+
+
+def test_a_grant_needs_a_fresh_matching_confirmed_row_bound_to_its_secret_nonce(tmp_path):
+    inst = _confirmed_row(tmp_path, nonce="n-fresh", age_s=10)
+    mk = lambda **kw: oh.OwnerHandGrant(**{"line": "shadow", "policy_hash": oh.policy_hash(inst), "host": "vps",  # noqa: E731
+                                           "nonce": "n-fresh", "ledger_root": str(tmp_path), "_key": oh._MINT, **kw})
+    assert oh.grant_covers(mk(), inst, "vps")
+    assert not oh.grant_covers(mk(nonce="n-guess"), inst, "vps")          # the ledger holds only a digest
+    assert not oh.grant_covers(mk(), inst, "other-host")
+    looser = dict(inst, line_policy=dict(inst["line_policy"], auto_repair=True))
+    assert not oh.grant_covers(mk(), looser, "vps") and not oh.grant_covers(mk(), inst, "vps", looser)
+    _confirmed_row(tmp_path, nonce="n-old", age_s=6 * 60)
+    assert not oh.grant_covers(mk(nonce="n-old"), inst, "vps")            # older than 5 minutes
+    with pytest.raises(PermissionError):
+        oh.OwnerHandGrant(line="shadow", policy_hash="x", host="vps")
+
+
+def test_a_spooled_audit_must_read_back_or_the_action_is_refused(tmp_path):
+    assert oh._audit_durable(tmp_path, {"ok": True, "status": "written"}, "abc") is None
+    err = oh._audit_durable(tmp_path, {"ok": False, "status": "pending"}, "abc")
+    assert err and "read back" in err
+    p = tmp_path / oh.LEDGER_REL
+    p.parent.mkdir(parents=True)
+    p.write_text(json.dumps({"id": "abc", "outcome": "confirmed"}) + "\n")
+    assert oh._audit_durable(tmp_path, {"ok": False, "status": "pending"}, "abc") is None
+    assert oh._audit_durable(tmp_path, {"ok": False, "status": "error", "error": "x"}, "abc")
+
+
+def test_offline_the_confirmed_row_is_spooled_read_back_and_its_id_shown_on_the_terminal(tmp_path, ledger_repo):
+    import subprocess as sp
+    _bare, clone, _show = ledger_repo
+    sp.run(["git", "remote", "set-url", "origin", str(tmp_path / "gone.git")], cwd=clone, check=True)
+    io = FakeIO()
+    out = oh.owner_hand("provision", "shadow", "vps", str(_root(tmp_path / "w")), _test_io=io)
+    assert out["status"] == "verified", out
+    shown = "".join(io.tty.out)
+    assert out["audit"]["confirmed"]["status"] == "pending"
+    assert out["audit_row_id"] in shown and "spooled" in shown
+
+
+def test_compose_drift_outside_the_policy_is_refused(tmp_path):
+    for old, new in (("devlikeapro/waha:noweb-2026.9.2", "devlikeapro/waha:noweb-2026.9.3"),
+                     ("WHATSAPP_HOOK_HMAC_KEY", "WHATSAPP_HOOK_HMAC_KEY_X"),
+                     ("/app/.sessions", "/app/.sessions2"),
+                     ("nginx:1.27-alpine", "nginx:1.28-alpine")):
+        compose = FakeVps().compose.replace(old, new)
+        assert compose != FakeVps().compose
+        io = FakeIO(sh=FakeVps(compose=compose))
+        out = oh.owner_hand("apply", "shadow", "vps", str(_root(tmp_path / old.replace("/", "_"))), _test_io=io)
+        assert out["status"] == "refused" and "compose" in out["error"] and not io.sh.touched and io.tty.out == []

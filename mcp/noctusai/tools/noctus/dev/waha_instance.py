@@ -473,9 +473,10 @@ PERSONAL_REFUSAL = ("personal line: refused for every agent and tool caller; the
                     "terminal: python mcp/noctusai/cli.py --waha-instance-owner-hand <provision|apply> <line>")
 # Consent for a PERSONAL line is RESOLVED by the owner-hand path (owner decision D49, 2026-11-10; no second factor, no
 # OTP, ever): `waha_owner_hand.owner_hand`, CLI-only (never an MCP tool), refuses without an interactive TTY, inside an
-# agent harness (CLAUDECODE / CLAUDE_CODE_* / a `claude` parent process), and until the human TYPES the line name and
-# CONFIRMO on /dev/tty; every attempt is audited in the `waha-owner-hand.ndjson` ledger. Only the grant it mints after
-# that gate lifts this refusal, bound to line + policy hash + host. Transcript-sentence consent stays removed (forgeable).
+# agent harness, without an allowlisted terminal-emulator ancestor (or with a pty wrapper / multiplexer / claude anywhere
+# in the chain), and until the human TYPES the line name and CONFIRMO on /dev/tty; every attempt is audited in the
+# `waha-owner-hand.ndjson` ledger. Only the grant it mints after that gate lifts this refusal: bound to line + policy
+# hash + host + a secret nonce whose digest is in a fresh `confirmed` audit row, single use. Transcript-sentence consent stays removed (forgeable).
 # The host precondition stays OPEN: NOC-REMEDIATE[personal-core-host-exec-authz] (see vps_exec).
 
 
