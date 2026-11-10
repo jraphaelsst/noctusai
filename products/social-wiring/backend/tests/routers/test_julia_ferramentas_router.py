@@ -107,7 +107,7 @@ class TestAuthMatrix:
         assert r.status_code == 403 and r.json()["code"] == "product_required"
 
     def test_a_product_token_without_the_scope_is_403_scope_missing(self, tools):
-        tools.as_ctx(_product(scopes=["social-wiring:one-chat:read"]))
+        tools.as_ctx(_product(scopes=["social-wiring:unrelated:read"]))
         r = tools.post("buscar_imoveis", {"operacao": "compra"})
         assert r.status_code == 403 and r.json()["code"] == "scope_missing"
 
