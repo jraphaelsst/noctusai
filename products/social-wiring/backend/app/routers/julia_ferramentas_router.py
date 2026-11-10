@@ -2,7 +2,7 @@
 
   POST /api/julia/ferramentas/{nome}     product token, scope `social-wiring:lais-tools`, issuer `agents`
 
-Auth is the agents-bridge pattern (`agents_bridge_router`): `get_auth_context` composed with the
+Auth is the product-token pattern: `get_auth_context` composed with the
 seed's `require_scopes(..., restrict="product_only")`, then an ISSUER check in the body of the
 dependency (a scope string says what a token may do, never who holds it):
 

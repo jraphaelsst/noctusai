@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from uuid import UUID
 
 import httpx
 import pytest
@@ -24,13 +23,11 @@ from app.credentials.registry import (
     ANTHROPIC_API_KEY,
     APPROVAL_RING,
     ACADEMIA_AGENT_ID,
-    SOCIAL_WIRING_API_TOKEN,
 )
 from app.credentials.resolver import CredentialResolver, require_resolved_prod_config
 from app.credentials.service import ExpiryAlert
 from tests.credentials.conftest import (
     ANTHROPIC,
-    ENV_SOCIAL,
     NOW,
     OLD_ACADEMIA,
     assert_no_secret,
@@ -68,22 +65,6 @@ class TestHttpProber:
     async def test_status_mapping(self, code, status):
         prober = _prober(lambda r: httpx.Response(code), [])
         assert (await prober.probe(ACADEMIA_API_TOKEN, OLD_ACADEMIA)).status == status
-
-    @pytest.mark.asyncio
-    async def test_social_wiring_404_means_auth_passed(self):
-        seen: list = []
-        prober = _prober(lambda r: httpx.Response(404), seen)
-        result = await prober.probe(SOCIAL_WIRING_API_TOKEN, ENV_SOCIAL)
-        assert result.ok
-        assert seen[0].url.path.endswith("/00000000-0000-0000-0000-000000000000")
-
-    @pytest.mark.asyncio
-    async def test_social_wiring_uses_the_configured_connection(self):
-        seen: list = []
-        conn = UUID("33333333-3333-3333-3333-333333333333")
-        prober = _prober(lambda r: httpx.Response(200, json={}), seen)
-        await prober.probe(SOCIAL_WIRING_API_TOKEN, ENV_SOCIAL, connection_id=conn)
-        assert seen[0].url.path == f"/api/agents-bridge/one-chat/{conn}"
 
     @pytest.mark.asyncio
     async def test_anthropic_uses_x_api_key(self):
@@ -152,7 +133,6 @@ class TestResolver:
         store.put(ACADEMIA_API_TOKEN.store_key, "pk_db")
         assert resolver.academia_api_token() == "pk_db"
         assert resolver.anthropic_api_key() == ANTHROPIC
-        assert resolver.social_wiring_api_token() is None
 
     def test_ring_storage_key_is_audience_scoped(self):
         assert APPROVAL_RING.store_key == "approval_assertion_secrets:academia-de-reciclagem"

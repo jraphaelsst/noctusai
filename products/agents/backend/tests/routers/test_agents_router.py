@@ -1,14 +1,11 @@
-"""Tests for ``/api/agents`` (contract §E.2, §E.6).
+"""Tests for ``/api/agents`` (contract §E.2).
 
 Auth-boundary tests assert strict ``== 401`` (never ``in (401, 404|422)``,
 CLAUDE.md §1) and a product-token caller gets a clean 403 ``user_required``.
 """
 from __future__ import annotations
 
-from uuid import uuid4
-
-from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID, seed_org_role, seed_pre_cutover_agents
-from noctusai_lib.testing import handler_status
+from tests.routers.conftest import seed_org_role, seed_pre_cutover_agents
 
 
 def _seed_member(agents_client, role: str = "member") -> None:
@@ -40,50 +37,14 @@ class TestAuthBoundary:
 
 
 class TestListAgents:
-    def test_lists_bia_and_one_chat(self, agents_client):
+    def test_lists_the_org_agents(self, agents_client):
         _seed_member(agents_client)
         resp = agents_client.get("/api/agents")
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        keys = {item["key"] for item in body["items"]}
-        assert keys == {"bia", "one-chat"}
-        assert body["total"] == 2
-
-    def test_one_chat_not_configured_carries_aviso(self, agents_client):
-        _seed_member(agents_client)
-        resp = agents_client.get("/api/agents")
-        one_chat = next(a for a in resp.json()["items"] if a["key"] == "one-chat")
-        assert one_chat["estado_externo"] is None
-        assert one_chat["aviso"]
-
-    def test_one_chat_reachable_state(self, agents_client):
-        _seed_member(agents_client)
-        connection_id = uuid4()
-        seed_pre_cutover_agents(agents_client.stores.agents)
-        agents_client.stores.agents.set_external_ref(
-            DEFAULT_ORG_ID, "one-chat", {"connection_id": str(connection_id)}
-        )
-        agents_client.stores.social_wiring.register(
-            connection_id, auto_reply_enabled=True
-        )
-        resp = agents_client.get("/api/agents")
-        one_chat = next(a for a in resp.json()["items"] if a["key"] == "one-chat")
-        assert one_chat["estado_externo"] == {"auto_reply_enabled": True}
-        assert one_chat["aviso"] is None
-
-    def test_one_chat_unreachable_carries_aviso_not_error(self, agents_client):
-        _seed_member(agents_client)
-        connection_id = uuid4()
-        seed_pre_cutover_agents(agents_client.stores.agents)
-        agents_client.stores.agents.set_external_ref(
-            DEFAULT_ORG_ID, "one-chat", {"connection_id": str(connection_id)}
-        )
-        agents_client.stores.social_wiring.fail_connection_ids.add(str(connection_id))
-        resp = agents_client.get("/api/agents")
-        assert resp.status_code == 200, resp.text
-        one_chat = next(a for a in resp.json()["items"] if a["key"] == "one-chat")
-        assert one_chat["estado_externo"] is None
-        assert one_chat["aviso"]
+        assert {item["key"] for item in body["items"]} == {"bia"}
+        assert body["total"] == 1
+        assert set(body["items"][0]) == {"key", "nome", "runtime", "owner_product", "ativo"}
 
 
 class TestToggleAgent:
@@ -100,39 +61,6 @@ class TestToggleAgent:
         body = resp.json()
         assert body["key"] == "bia"
         assert body["ativo"] is True
-
-    def test_one_chat_not_configured_409(self, agents_client):
-        _seed_member(agents_client, role="owner")
-        seed_pre_cutover_agents(agents_client.stores.agents)
-        resp = agents_client.post("/api/agents/one-chat/toggle", json={"ativo": True})
-        assert resp.status_code == 409, resp.text
-        assert resp.json()["code"] == "not_configured"
-
-    def test_one_chat_upstream_failure_502(self, agents_client):
-        _seed_member(agents_client, role="owner")
-        connection_id = uuid4()
-        seed_pre_cutover_agents(agents_client.stores.agents)
-        agents_client.stores.agents.set_external_ref(
-            DEFAULT_ORG_ID, "one-chat", {"connection_id": str(connection_id)}
-        )
-        agents_client.stores.social_wiring.fail_connection_ids.add(str(connection_id))
-        resp = agents_client.post("/api/agents/one-chat/toggle", json={"ativo": True})
-        assert handler_status(resp) == 502, resp.text
-        assert resp.json()["code"] == "upstream_failed"
-
-    def test_one_chat_toggle_success_reflects_bridge_state(self, agents_client):
-        _seed_member(agents_client, role="owner")
-        connection_id = uuid4()
-        seed_pre_cutover_agents(agents_client.stores.agents)
-        agents_client.stores.agents.set_external_ref(
-            DEFAULT_ORG_ID, "one-chat", {"connection_id": str(connection_id)}
-        )
-        agents_client.stores.social_wiring.register(connection_id, auto_reply_enabled=False)
-        resp = agents_client.post("/api/agents/one-chat/toggle", json={"ativo": True})
-        assert resp.status_code == 200, resp.text
-        body = resp.json()
-        assert body["ativo"] is True
-        assert body["estado_externo"] == {"auto_reply_enabled": True}
 
     def test_unknown_agent_key_404(self, agents_client):
         _seed_member(agents_client, role="owner")

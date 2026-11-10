@@ -530,7 +530,6 @@ class TestWrapperPrivilegedChain:
             "SUPABASE_SERVICE_ROLE_KEY": "service-role-fake",
             "ACADEMIA_API_TOKEN": "pk_fake_academia_token",
             "APPROVAL_ASSERTION_SECRETS": "secret-one,secret-two",
-            "SOCIAL_WIRING_API_TOKEN": "pk_fake_social_wiring",
             "SOME_RANDOM_INHERITED_VAR": "should-not-survive",
         }
 

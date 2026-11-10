@@ -6,9 +6,8 @@ through their scoped APIs — never through their databases.
 - **Bia** — Claude Agent SDK (headless), reachable from this app's UI only. She helps
   run the Academia de Reciclagem project: reads its knowledge base and proposes writes,
   which you approve or deny before anything lands.
-- **One Chat** — the WhatsApp assistant that keeps running inside `social-wiring`. Listed
-  here with its on/off toggle (through social-wiring's scoped API); its behaviour is not
-  managed from this product.
+- **Julia** — the SDR agent, hosted here and consumed by `social-wiring` via API; she is the
+  WhatsApp line (legacy name "One Chat", the separate operator bot retired 2026-11-04).
 
 > **Status:** scaffolded 2026-09-14. Domain code is planned, not built — see
 > `project-history/roadmaps/julia-agents-academia-2026-09.md` (milestones M1–M6).
@@ -71,7 +70,7 @@ Ports: backend **8016**, frontend **8200** (single container in prod: uvicorn se
 | Chat with Bia (streamed turns, tool cards) | M4 |
 | Approve / deny Bia's writes to Academia (single-use signed approvals, timeout denies) | M4 |
 | Bia persona (admin-only, versioned, model allowlist) | M4 |
-| Agent list with on/off — Bia, and One Chat via social-wiring | M4, M5 |
+| Agent list with on/off — Bia and Julia | M4, M5 |
 | Isolation suite (no platform secrets in Bia's env; cross-product token denials) | M4 |
 | Julia (SDR) shared lead thread: one thread per lead across all agents, per-agent participants, hand-off notes, consent (opt-in / opt-out, with an auditable event + an in-app notice to the org's owners/admins when a lead asks to stop; the opt-out is a per-org setting owned by social-wiring, which reads the history, re-sends failed notices and reactivates a lead over token routes; a thread banner in the staff view), delete-by-lead | Julia v2 |
 | Julia controls: ligado / drenando / desligado per agent (decided by the agents app on every turn, fail closed) and a per-conversation pause / resume | Julia v2 |

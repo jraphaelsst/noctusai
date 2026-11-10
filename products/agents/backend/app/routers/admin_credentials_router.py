@@ -13,10 +13,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.credentials.registry import SOCIAL_WIRING_API_TOKEN
 from app.credentials.service import CredentialError, CredentialService, CredentialStatus
 from app.dependencies import (
-    get_agent_store_dep,
     get_credential_service_dep,
     require_platform_admin,
 )
@@ -27,7 +25,6 @@ from app.schemas.admin import (
     ProbeOut,
     RenewOut,
 )
-from app.stores.errors import NotFound
 from noctusai_lib.api.auth.session import AuthContext
 
 router = APIRouter(prefix="/api/admin/credentials", tags=["admin-credentials"], include_in_schema=False)
@@ -43,23 +40,6 @@ def _out(status: CredentialStatus) -> CredentialOut:
 
 def _http(exc: CredentialError) -> HTTPException:
     return HTTPException(status_code=exc.http_status, detail={"detail": exc.detail, "code": exc.code})
-
-
-def _one_chat_connection(agent_store, org_id: UUID, name: str) -> UUID | None:
-    """The social-wiring probe targets the org's configured One Chat
-    connection when there is one (otherwise the nil UUID — see prober)."""
-    if name != SOCIAL_WIRING_API_TOKEN.name:
-        return None
-    try:
-        agent_store.ensure_default_agents(org_id)
-        ref = agent_store.get_by_key(org_id, "one-chat").external_ref or {}
-    except NotFound:
-        return None
-    raw = ref.get("connection_id")
-    try:
-        return UUID(str(raw)) if raw else None
-    except ValueError:
-        return None
 
 
 @router.get("", response_model=CredentialListOut)
@@ -109,12 +89,9 @@ async def check_credential(
     name: str,
     ctx: AuthContext = Depends(require_platform_admin),
     service: CredentialService = Depends(get_credential_service_dep),
-    agent_store=Depends(get_agent_store_dep),
 ) -> ProbeOut:
     try:
-        result = await service.probe(
-            name, connection_id=_one_chat_connection(agent_store, ctx.org_id, name)
-        )
+        result = await service.probe(name)
     except CredentialError as exc:
         raise _http(exc) from exc
     return ProbeOut(
@@ -132,7 +109,6 @@ async def renew_credential(
     name: str,
     ctx: AuthContext = Depends(require_platform_admin),
     service: CredentialService = Depends(get_credential_service_dep),
-    agent_store=Depends(get_agent_store_dep),
 ) -> RenewOut:
     """Mint → verify → store → revoke old (see ``app/credentials/service.py``)."""
     try:
@@ -140,7 +116,6 @@ async def renew_credential(
             name,
             actor_user_id=ctx.user_id,
             fallback_org_id=ctx.org_id,
-            connection_id=_one_chat_connection(agent_store, ctx.org_id, name),
         )
     except CredentialError as exc:
         raise _http(exc) from exc

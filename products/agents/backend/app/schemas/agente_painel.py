@@ -6,7 +6,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.schemas.agents import EstadoExternoOut
 
 Origem = Literal["legado", "plataforma", "instancia", "org"]
 Tier = Literal["membro", "org_admin", "plataforma"]
@@ -97,9 +96,6 @@ class AgentePainelOut(BaseModel):
     owner_product: str | None
     usa_canais: bool
     ativo: bool
-    #: an external agent (One Chat): the owning product's live state, or ``aviso`` when unreachable/unconfigured
-    estado_externo: EstadoExternoOut | None = None
-    aviso: str | None = None
     #: the page sections THIS caller may open on THIS agent, in page order (``GET /api/studio/modelo`` titles them)
     secoes: list[str]
     #: the caller may switch it on/off through ``POST /api/agents/{key}/toggle`` (a legado agent, org admin)

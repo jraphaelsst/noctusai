@@ -30,17 +30,13 @@ vi.mock("@/components/studio/ExcluirAgenteDialog", () => ({
 function agente(over: Partial<AgentePainel>): AgentePainel {
   return {
     key: "x", nome: "X", descricao: null, papel: null, capacidades: [], origem: "org", tipo: "studio",
-    runtime: "claude_sdk", owner_product: null, usa_canais: false, ativo: true, estado_externo: null, aviso: null,
+    runtime: "claude_sdk", owner_product: null, usa_canais: false, ativo: true,
     secoes: ["visao-geral"], pode_alternar: false, ...over,
   };
 }
 
 const BIA = agente({ key: "bia", nome: "Bia", origem: "legado", papel: "academia", descricao: "Agente da academia.", pode_alternar: true });
 const JULIA = agente({ key: "julia", nome: "Julia", origem: "instancia", papel: "sdr", capacidades: ["Qualifica leads"] });
-const ONE_CHAT = agente({
-  key: "one-chat", nome: "One Chat", origem: "legado", runtime: "external", ativo: false,
-  aviso: "One Chat ainda não configurado.",
-});
 
 function estado(over: Record<string, unknown>) {
   return { data: undefined, showSkeleton: false, isRefreshing: false, isError: false, refetch: vi.fn(), ...over };
@@ -51,7 +47,7 @@ beforeEach(() => {
   mockTier.mockReturnValue("membro");
   mockIsAdmin.mockReturnValue(false);
   mutateAsync.mockResolvedValue({});
-  mockUsePainel.mockReturnValue(estado({ data: [BIA, JULIA, ONE_CHAT] }));
+  mockUsePainel.mockReturnValue(estado({ data: [BIA, JULIA] }));
 });
 afterEach(() => cleanup());
 
@@ -62,7 +58,7 @@ async function renderPage() {
 describe("Agentes — one card per agent", () => {
   it("renders every agent of the painel, each opening /agentes/:key", async () => {
     await renderPage();
-    for (const a of [BIA, JULIA, ONE_CHAT]) {
+    for (const a of [BIA, JULIA]) {
       expect(screen.getByTestId(`agente-card-${a.key}`)).toBeTruthy();
       expect(screen.getByTestId(`agente-abrir-${a.key}`).getAttribute("href")).toBe(`/agentes/${a.key}`);
     }
@@ -82,9 +78,8 @@ describe("Agentes — one card per agent", () => {
     expect(screen.getByTestId("agente-status-julia").textContent).toBe("Ligado");
   });
 
-  it("shows an external agent's warning instead of a description", async () => {
+  it("shows the capabilities of an agent", async () => {
     await renderPage();
-    expect(screen.getByTestId("agente-aviso-one-chat").textContent).toBe("One Chat ainda não configurado.");
     expect(within(screen.getByTestId("agente-card-julia")).getByText("Qualifica leads")).toBeTruthy();
   });
 
@@ -134,9 +129,8 @@ describe("Agentes — the former /studio console actions", () => {
     expect(screen.getByTestId("agentes-novo").getAttribute("href")).toBe("/agentes/novo");
     expect(screen.getByTestId("agentes-biblioteca-skills")).toBeTruthy();
     expect(screen.getByTestId("content-token")).toBeTruthy();
-    // a legacy / external agent has no delete; a platform agent does, behind the typed-key confirm
+    // a legacy agent has no delete; a platform agent does, behind the typed-key confirm
     expect(screen.queryByTestId("agente-excluir-bia")).toBeNull();
-    expect(screen.queryByTestId("agente-excluir-one-chat")).toBeNull();
     fireEvent.click(screen.getByTestId("agente-excluir-julia"));
     expect(screen.getByTestId("dlg-excluir-julia")).toBeTruthy();
     fireEvent.click(screen.getByTestId("agentes-importar-pacote"));

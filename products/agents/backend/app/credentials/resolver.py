@@ -47,7 +47,6 @@ from app.credentials.registry import (
     ANTHROPIC_API_KEY,
     APPROVAL_RING,
     ACADEMIA_AGENT_ID,
-    SOCIAL_WIRING_API_TOKEN,
     CredentialSpec,
 )
 
@@ -177,9 +176,6 @@ class CredentialResolver:
 
     def academia_api_token(self) -> str | None:
         return self.value(ACADEMIA_API_TOKEN)
-
-    def social_wiring_api_token(self) -> str | None:
-        return self.value(SOCIAL_WIRING_API_TOKEN)
 
     def approval_ring(self) -> KeyRing:
         return resolve_key_ring(self._store, APPROVAL_RING.store_key, env_value=self._env(APPROVAL_RING))

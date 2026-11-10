@@ -21,7 +21,6 @@ from app.stores.errors import NotFound
 
 __all__ = [
     "RUNTIMES",
-    "DEFAULT_AGENT_KEYS",
     "ARQUIVADO",
     "legacy_chat_agent",
     "AgentRecord",
@@ -36,16 +35,6 @@ _TABLE = "agents"
 
 #: Contract §E.1 `runtime` CHECK.
 RUNTIMES = ("claude_sdk", "external")
-
-#: The rows `ensure_default_agents` seeds, per org. The code-defined chat agent (`bia`, claude_sdk) is NO LONGER
-#: seeded (Renata cutover, 2026-10-30): the academia agent is a Studio agent now, the legacy rows are retired by
-#: `agents.arquivar_agente_legado` (053) and their key is free for a new agent -- re-seeding it on every request
-#: would resurrect the retired runtime and squat the key. Existing legacy rows are untouched (data, not code). Never inserted by
-#: the migration itself (org_id is per-org) — the migration header notes
-#: this; this module is the idempotent seeding path. Platform-defined agents are NOT here: they are data
-#: (``definition_scope='plataforma'`` rows); a key that is a platform definition is refused for an org agent by the
-#: create route (``store.get_platform_definition``).
-DEFAULT_AGENT_KEYS = ("one-chat",)
 
 #: 053: the ``definition_mode`` of a retired code-defined agent (row kept for its history, key renamed, never listed).
 ARQUIVADO = "arquivado"
@@ -63,7 +52,7 @@ class AgentRecord:
     ativo: bool
     created_at: datetime
     updated_at: datetime
-    #: 012: ``legacy`` (code-defined: Bia, One Chat) | ``studio`` (a Studio row -- same table, every other agent).
+    #: 012: ``legacy`` (code-defined: Bia) | ``studio`` (a Studio row -- same table, every other agent).
     definition_mode: str = "legacy"
 
     @property
@@ -103,12 +92,6 @@ class AgentStore(Protocol):
         :class:`NotFound` on an unknown key."""
         ...
 
-    def ensure_default_agents(self, org_id: UUID) -> None:
-        """Idempotently create ``one-chat`` (external, owner_product=social-wiring, ``ativo=false``) for
-        ``org_id``. Safe to call every request — a no-op once the row exists. The code-defined chat agent is
-        not seeded any more (see ``DEFAULT_AGENT_KEYS``)."""
-        ...
-
 
 class FakeAgentStore:
     """In-memory :class:`AgentStore`. Deterministic; no IO."""
@@ -146,12 +129,6 @@ class FakeAgentStore:
         row["external_ref"] = ref
         row["updated_at"] = utcnow()
         return self._to_record(row)
-
-    def ensure_default_agents(self, org_id: UUID) -> None:
-        self._ensure_one(
-            org_id, key="one-chat", nome="One Chat", runtime="external",
-            owner_product="social-wiring",
-        )
 
     def seed_legacy_chat_agent(self, org_id: UUID, key: str = "bia", nome: str = "Bia") -> AgentRecord:
         """Fake-only fixture helper: a pre-cutover code-defined chat row (the rows prod still carries until the
@@ -249,24 +226,6 @@ class SupabaseAgentStore:
         if not rows:
             raise NotFound(f"agent {key!r} not found for org {org_id}")
         return self._record(rows[0])
-
-    def ensure_default_agents(self, org_id: UUID) -> None:
-        defaults = [
-            {
-                "org_id": str(org_id),
-                "key": "one-chat",
-                "nome": "One Chat",
-                "runtime": "external",
-                "owner_product": "social-wiring",
-                "ativo": False,
-            },
-        ]
-        # on_conflict on the (org_id, key) unique constraint — idempotent:
-        # an existing row (e.g. an admin already toggled ativo) is left
-        # untouched, never clobbered back to the defaults.
-        self._table().upsert(
-            defaults, on_conflict="org_id,key", ignore_duplicates=True
-        ).execute()
 
     @staticmethod
     def _record(row: dict[str, Any]) -> AgentRecord:

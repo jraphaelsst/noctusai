@@ -29,7 +29,7 @@ from tests.channels.conftest import turn_body
 
 APP = Path(__file__).resolve().parents[2] / "app"
 HTTP_LIBS = {"httpx", "requests", "urllib", "urllib3", "aiohttp", "http", "socket", "websockets", "pycurl", "httplib2"}
-#: The ONLY app module on a channel turn's path that may talk HTTP: social-wiring (CRM tools, the one-chat bridge).
+#: The ONLY app module on a channel turn's path that may talk HTTP: social-wiring (CRM tools).
 ALLOWED_HTTP_MODULES = {"app.clients.social_wiring"}
 #: What EXECUTES a turn (the tool handlers, the runtime that calls them, the report). The router is left out on
 #: purpose: it only wires dependencies (``app.dependencies`` imports half of the app); the callable seams it hands
@@ -123,7 +123,7 @@ class TestTheSocialWiringClientIsPinnedToItsHost:
             return httpx.Response(200, json={"data": []})
 
         cliente = HttpSocialWiringClient(
-            "https://sw.interno.example", "tok", transport=httpx.MockTransport(handler),
+            "https://sw.interno.example", transport=httpx.MockTransport(handler),
             julia_token_resolver=lambda _org: "julia-token")
         for nome in ("detalhes_imovel", "buscar_imoveis", "consultar_empreendimento"):
             await cliente.julia_ferramenta(UUID(int=1), nome, {

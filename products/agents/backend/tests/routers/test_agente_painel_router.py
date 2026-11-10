@@ -25,7 +25,7 @@ def casa(agents_client):
     from app.main import app
 
     studio = FakeStudioDefinitionStore()
-    catalogo = FakeCatalogoStore([CatalogoEntrada("one-chat", "operador", "Responde no WhatsApp.", ("Resposta",), 20)])
+    catalogo = FakeCatalogoStore([CatalogoEntrada("bia", "academia", "Agente da academia.", ("Resposta",), 20)])
     app.dependency_overrides[get_studio_definition_store_dep] = lambda: studio
     app.dependency_overrides[get_catalogo_store_dep] = lambda: catalogo
     # an org Studio agent (pre-v2 content) and the org's instance of a platform definition
@@ -94,19 +94,17 @@ class TestListing:
         r = casa.get(LISTA)
         assert r.status_code == 200, r.text
         por = {a["key"]: a for a in r.json()["items"]}
-        assert set(por) == {"bia", "one-chat", "isaia", "julia"}
-        assert r.json()["total"] == 4
+        assert set(por) == {"bia", "isaia", "julia"}
+        assert r.json()["total"] == 3
         assert por["bia"]["origem"] == "legado" and por["julia"]["origem"] == "instancia"
         assert por["isaia"]["origem"] == "org"
-        assert por["one-chat"]["papel"] == "operador" and por["one-chat"]["capacidades"] == ["Resposta"]
-        # One Chat with no connection: the owning product's state is unknown, said so
-        assert por["one-chat"]["estado_externo"] is None and por["one-chat"]["aviso"]
+        assert por["bia"]["papel"] == "academia" and por["bia"]["capacidades"] == ["Resposta"]
+        assert "estado_externo" not in por["bia"] and "aviso" not in por["bia"]
 
     def test_a_member_sees_only_public_sections_and_cannot_toggle(self, casa):
         _papel(casa, org_role="member", platform=False)
         por = {a["key"]: a for a in casa.get(LISTA).json()["items"]}
         assert por["bia"]["secoes"] == ["visao-geral", "conversar"]
-        assert por["one-chat"]["secoes"] == ["visao-geral"]
         assert por["julia"]["secoes"] == ["visao-geral"]
         assert por["isaia"]["secoes"] == ["visao-geral", "conversar"]
         assert not any(a["pode_alternar"] for a in por.values())
@@ -203,7 +201,7 @@ class TestPersonaByKey:
         r = casa.get("/api/agents/bia/persona")
         assert r.status_code == 404 and r.json()["detail"] == "Nenhuma persona ativa configurada."
 
-    @pytest.mark.parametrize("key", ["one-chat", "isaia", "nao-existe"])
+    @pytest.mark.parametrize("key", ["isaia", "nao-existe"])
     def test_a_key_that_is_not_a_legacy_chat_agent_is_404(self, casa, key):
         seed_org_role(casa, role="owner")
         r = casa.get(f"/api/agents/{key}/persona")

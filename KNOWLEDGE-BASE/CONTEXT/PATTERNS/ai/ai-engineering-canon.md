@@ -76,7 +76,7 @@ crafted agent-computer interface (ACI).
 - **Blocks behind explicit handoffs.** A later stage's logic never folds into an earlier agent; a new
   stage is a new block with a handoff trigger and its own criteria (owner decision, memory
   `project_maya_julia_agent_architecture`). Julia stays leads-only: operator or privileged tools live
-  in a separate operator agent (One Chat), because lead text is attacker-controlled
+  in a separate operator agent (the former WhatsApp operator bot, "One Chat", is retired 2026-11-04), because lead text is attacker-controlled
   (`KB § PATTERNS/security/ai-agent-security-canon.md` §3 lethal trifecta).
 - **Deterministic where the requirement is deterministic.** Qualification state, offering limits,
   identity rules and escalations are code (`A:channels/tool_registry.py:12-20`), and the model is asked

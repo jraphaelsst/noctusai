@@ -89,6 +89,7 @@ class WhatsAppConnectionRecord:
     updated_at: Any
     api_key: Optional[str] = None
     webhook_token: Optional[str] = None
+    # NOC-REMEDIATE[drop-auto-reply-enabled]: dead since the One Chat bridge was retired (feat/one-chat-retire-sw). Drop in its own SW migration once one-chat-retire is deployed and nothing reads it; check prod for rows still true first. Owner-typed go required. projects/noc-whatsapp-lines/PROJECT.md Phase 1. — 2026-11-10
     auto_reply_enabled: bool = False
     # Migration 016 — per-connection intake config.
     # authorized_numbers: empty list = nobody authorized (operator-only bot).
