@@ -42,7 +42,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _guard_failclosed import load_module, run_guard  # noqa: E402
+from _guard_failclosed import DEFAULT_DEADLINE_S, load_module, log_event, run_guard  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GUARD = REPO_ROOT / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "primary_write_guard.py"
@@ -52,10 +52,43 @@ def _load_guard():
     return load_module(GUARD)
 
 
+#: margin kept between the guard's own deadline and run_guard's alarm, so a slow probe refuses with ITS reason
+DEADLINE_MARGIN_S = 1.5
+#: a call slower than this logs its per-stage timings (the next timeout names its stage instead of being a guess)
+SLOW_CALL_S = 2.0
+
+
 def _judge(payload: dict) -> dict | None:
+    import time
+    t0 = time.monotonic()
+    stages: dict[str, float] = {}
+    try:
+        return _judge_timed(payload, stages)
+    finally:
+        total = time.monotonic() - t0
+        if total > SLOW_CALL_S:
+            try:
+                log_event("primary-write", "slow", f"{total:.2f}s", {"session_id": payload.get("session_id")},
+                          extra={"kind": "hook", "stages": {k: round(v, 3) for k, v in stages.items()},
+                                 "tool_name": payload.get("tool_name")})
+            except Exception:  # noqa: BLE001 - telemetry never changes a verdict
+                pass
+
+
+def _judge_timed(payload: dict, stages: dict[str, float]) -> dict | None:
+    import time
+    mark = [time.monotonic()]
+
+    def lap(name: str) -> None:
+        now = time.monotonic()
+        stages[name] = stages.get(name, 0.0) + now - mark[0]
+        mark[0] = now
+
     tool_name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
     guard = _load_guard()
+    guard.set_deadline(DEFAULT_DEADLINE_S - DEADLINE_MARGIN_S)
+    lap("load")
     # Hooks-bypass and hook-integrity are checked FIRST: both are universal,
     # branch- and location-independent concerns (see each function's own
     # docstring), so a command that is also a primary-checkout write gets the
@@ -66,6 +99,7 @@ def _judge(payload: dict) -> dict | None:
         verdict = guard.decide_hook_integrity(tool_name, tool_input, cwd)
     if verdict is None:
         verdict = guard.decide_wired_worktree_npm(tool_name, tool_input, cwd)
+    lap("bypass+integrity")
     ctx = None
     if verdict is None:
         ctx = guard.discover_context(cwd)
@@ -73,7 +107,9 @@ def _judge(payload: dict) -> dict | None:
             # AUTO-CLAIM (2026-11-05): working in a worktree makes it this
             # session's claim, so a later stray primary write can be redirected.
             guard.auto_claim(tool_name, tool_input, payload.get("session_id"), cwd, ctx)
+        lap("context+claim")
         verdict = guard.decide(tool_name, tool_input, cwd, ctx=ctx)
+        lap("decide")
         if verdict is not None and ctx is not None:
             # A refused Edit/Write (file path) or relative-path Bash command whose
             # session claimed a worktree is rewritten into it instead (visible:
@@ -93,10 +129,13 @@ def _judge(payload: dict) -> dict | None:
         base_ctx = ctx if ctx is not None else guard.discover_context(str(REPO_ROOT))
         if base_ctx is not None:
             sid = payload.get("session_id")
-            if base_ctx.guarded and not guard.bash_is_read_only(str(tool_input.get("command") or "")):
+            if (base_ctx.guarded and guard.time_left() >= guard.BEST_EFFORT_MIN_LEFT_S
+                    and not guard.bash_is_read_only(str(tool_input.get("command") or ""))):
                 guard.capture_pretool_baseline(base_ctx, sid)
             else:
+                # no budget for the snapshot: discard, so the Post leg never diffs against a STALE one
                 guard.discard_pretool_baseline(base_ctx, sid)
+        lap("baseline")
     return verdict
 
 
