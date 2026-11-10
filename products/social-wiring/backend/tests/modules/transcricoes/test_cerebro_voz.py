@@ -218,3 +218,17 @@ class TestAnswerTranscricaoStates:
         b = sistema(cc)
         d = cc.get(f"{BASE}/brains/{b['id']}").json()["data"]
         assert all(a["transcricao"] is None for a in d["answers"])
+
+
+def test_cached_switch_reads_the_flag_once_within_the_ttl() -> None:
+    from app.modules.transcricoes.deps import CachedSwitch
+
+    reads: list[int] = []
+
+    def reader() -> bool:
+        reads.append(1)
+        return True
+
+    switch = CachedSwitch(reader, 60.0)
+    assert [switch(), switch(), switch()] == [True, True, True]
+    assert len(reads) == 1
