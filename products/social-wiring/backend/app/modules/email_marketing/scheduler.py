@@ -34,10 +34,12 @@ import logging
 from datetime import datetime, timezone
 
 from noctusai_lib.api import scheduler as seed_scheduler
+from noctusai_lib.primitives.ttl_cache import IdleGate
 
 from app.config import settings
 from app.dependencies import get_admin_client
 from app.modules.email_marketing.services.send_service import SendService
+from app.modules.email_marketing.wake import CAMPAIGNS_GATE, SEND_GATE
 
 logger = logging.getLogger(__name__)
 
@@ -54,37 +56,65 @@ _SCHEDULED_CAMPAIGN_CHECK_SECONDS = getattr(
 _MAX_BATCH_SIZE = getattr(settings, "max_batch_size", 100)
 
 
-async def send_loop_job() -> None:
-    """Process queued ``send_logs`` — pick up to N, send via Resend Batch."""
+async def send_loop_job(*, db=None, gate: IdleGate | None = None) -> None:
+    """Process queued ``send_logs`` — pick up to N, send via Resend Batch.
+
+    Idle-gated: an empty queue backs the loop off to ``SEND_FALLBACK_S`` (a producer in this process wakes it at
+    once — ``wake.wake_send_loop``). A full batch keeps it busy so a backlog drains at the tick rate."""
+    gate = gate or SEND_GATE
+    if not gate.due():
+        return
     try:
-        db = get_admin_client()
+        db = db if db is not None else get_admin_client()
         if db is None:
+            gate.idle()
             return
         svc = SendService(db, settings)
         sent = await svc.process_queued_sends(batch_size=_MAX_BATCH_SIZE)
         if sent > 0:
             logger.info("email_marketing send loop: processed %d emails", sent)
+        if svc.last_picked >= _MAX_BATCH_SIZE:
+            gate.busy()  # a full batch: more may be queued behind it
+        elif svc.last_picked:
+            gate.busy()  # one more look right after real work, then it backs off
+        else:
+            gate.idle()
     except Exception as e:
+        gate.busy()  # a failed read is retried at the tick rate, never remembered as "idle"
         logger.error("email_marketing send loop error: %s", e)
 
 
-def _scheduled_campaigns_sync() -> None:
-    db = get_admin_client()
+def _parse_ts(value: str) -> datetime:
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _scheduled_campaigns_sync(db=None, gate: IdleGate | None = None) -> None:
+    gate = gate or CAMPAIGNS_GATE
+    db = db if db is not None else get_admin_client()
     if db is None:
+        gate.idle()
         return
-    now = datetime.now(timezone.utc).isoformat()
+    now_dt = datetime.now(timezone.utc)
+    now = now_dt.isoformat()
     result = (
         db.table("campaigns")
-        .select("id, org_id")
+        .select("id, org_id, scheduled_at")
         .eq("status", "agendada")
-        .lte("scheduled_at", now)
+        .order("scheduled_at")
+        .limit(100)
         .execute()
     )
-    campaigns = result.data or []
-    if not campaigns:
+    scheduled = result.data or []
+    due = [c for c in scheduled if c.get("scheduled_at") and _parse_ts(c["scheduled_at"]) <= now_dt]
+    if not due:
+        future = [_parse_ts(c["scheduled_at"]) for c in scheduled if c.get("scheduled_at")]
+        # Nothing scheduled -> sleep to the fallback; a campaign scheduled for later -> sleep until it is due.
+        gate.idle(next_due_in_s=(min(future) - now_dt).total_seconds() if future else None)
         return
+    gate.busy()
     svc = SendService(db, settings)
-    for campaign in campaigns:
+    for campaign in due:
         cid = campaign["id"]
         org_id = campaign["org_id"]
         db.table("campaigns").update(
@@ -101,12 +131,18 @@ def _scheduled_campaigns_sync() -> None:
 async def scheduled_campaigns_job() -> None:
     """Trigger sending for campaigns whose ``scheduled_at`` has passed.
 
+    Idle-gated: it sleeps until the next known ``scheduled_at`` (or ``CAMPAIGNS_FALLBACK_S`` when nothing is
+    scheduled); scheduling or rescheduling a campaign wakes it (``wake.wake_campaigns_check``).
+
     Body runs in a worker thread so a hung Supabase call doesn't freeze
     the asyncio loop and starve the other scheduled jobs.
     """
+    if not CAMPAIGNS_GATE.due():
+        return
     try:
         await asyncio.to_thread(_scheduled_campaigns_sync)
     except Exception as e:
+        CAMPAIGNS_GATE.busy()  # a failed read is retried at the tick rate
         logger.error("email_marketing scheduled campaigns job error: %s", e)
 
 
@@ -135,16 +171,19 @@ def configure() -> None:
     registrations land before any ``start_scheduler()`` fires in the
     FastAPI lifespan. Idempotent — re-registering replaces the prior job.
     """
+    # poll-budget: 30s ticks; 0 calls/tick idle (gate), 1 send_logs read when probing; worst 288/day idle (probe every 5 min, a producer wakes it), 2880/day only while a backlog drains; idle=event
     seed_scheduler.register(
         "email_marketing_send_loop",
         send_loop_job,
         seconds=_SEND_LOOP_SECONDS,
     )
+    # poll-budget: 60s ticks; 0 calls/tick idle (gate), 1 campaigns read when probing; worst 144/day (probe every 10 min or at the next scheduled_at, scheduling wakes it); idle=event
     seed_scheduler.register(
         "email_marketing_scheduled_campaigns",
         scheduled_campaigns_job,
         seconds=_SCHEDULED_CAMPAIGN_CHECK_SECONDS,
     )
+    # poll-budget: 5min ticks; 1 call/tick (scan_due_enrollments, named columns, limit 50); worst 288/day; idle=fixed
     seed_scheduler.register(
         "email_marketing_automation_processor",
         automation_processor_job,

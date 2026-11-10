@@ -48,6 +48,7 @@ from app.dependencies import get_current_user, get_current_admin, get_org_id
 from app.schemas.settings import OrgSettingBody, PlatformSettingBody
 from app.services.permissions import require_org_permission
 from noctusai_lib.api.crud_safety import delete_or_404
+from noctusai_lib.config.credentials import invalidate_credential_cache
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
@@ -107,6 +108,7 @@ async def upsert_platform_setting(
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao salvar configuração")
 
+    invalidate_credential_cache()
     logger.info(f"Platform setting upserted: {key}")
     return {"data": result.data[0] if isinstance(result.data, list) else result.data}
 
@@ -170,6 +172,7 @@ async def upsert_org_setting(
     if not result.data:
         raise HTTPException(status_code=500, detail="Erro ao salvar configuração")
 
+    invalidate_credential_cache()
     logger.info(f"Org setting upserted: {key} for org {org_id}")
     return {"data": result.data[0] if isinstance(result.data, list) else result.data}
 

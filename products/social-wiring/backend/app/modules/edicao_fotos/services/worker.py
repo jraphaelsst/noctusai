@@ -95,6 +95,7 @@ async def refresh_catalog(store: ModelCatalogStore) -> Optional[int]:
     return count
 
 
+# poll-budget: 600s default (edicao_fotos_catalog_refresh_seconds); 1 call/tick (llm_model_overrides); worst 144/day per process; idle=fixed (a save refreshes its own process at once)
 async def _refresh_loop(store: ModelCatalogStore, interval: float, stop: asyncio.Event) -> None:
     while not stop.is_set():
         try:

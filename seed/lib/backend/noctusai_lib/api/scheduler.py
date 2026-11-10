@@ -77,6 +77,11 @@ log record emitted INSIDE the run (including from a worker thread the job
 started via `asyncio.to_thread`) also marks it `error`. The ledger write is
 best-effort: it never breaks the job, but a failed write is logged at ERROR.
 
+**Idle ticks are sampled (2026-11-10).** A job on an interval < `FREQUENT_INTERVAL_S` (10 min) writes at most one
+CLEAN row per `HEARTBEAT_S` (5 min); errors, the first run after boot and the first clean run after an error are
+always written. Without it a 30 s job that found nothing inserted 2,880 rows a day (the `scheduler_runs` leg of
+the 2026-11-09 Supabase egress incident, `KB § PATTERNS/backend/polling-request-budget.md`).
+
 **Logging.** APScheduler's verbose DEBUG output (job execution / next
 wakeup chatter) is silenced to WARNING at module import. Job functions
 should log meaningful events at INFO; per-tick noise stays out of prod
@@ -219,10 +224,47 @@ def _ensure_capture_handler() -> None:
             root.addHandler(_capture_handler)
 
 
+#: A job registered on an interval shorter than this is "frequent": its clean runs are sampled (below), not
+#: written one per tick. 10 min = the Operação dead-man's own lateness allowance (`operations_service.MIN_LATENESS`).
+FREQUENT_INTERVAL_S = 600
+#: A frequent job's clean (`ok` / `skipped`) run is recorded at most once per heartbeat per job. It stays under
+#: the dead-man's `interval + 10 min` window, so a healthy job never reads as missing.
+HEARTBEAT_S = 300
+
+_sampling_clock: Callable[[], float] = time.monotonic
+#: job -> (monotonic time of the last row written, status of that row)
+_last_written: dict[str, tuple[float, str]] = {}
+
+
+def set_sampling_clock(clock: Optional[Callable[[], float]]) -> None:
+    """Seam for the heartbeat sampling clock (tests advance time instead of sleeping); None restores the real one."""
+    global _sampling_clock
+    _sampling_clock = clock or time.monotonic
+
+
+def _should_record(run: JobRun) -> bool:
+    """Write-per-tick is a quota bug (2026-11-09: `POST scheduler_runs` ~10k/22h, almost all `ok` runs that did
+    nothing). Errors ALWAYS land, the first clean run after an error lands (recovery is news), the first run
+    after boot lands; after that a frequent job writes one clean row per `HEARTBEAT_S`."""
+    spec = _job_specs.get(run.job)
+    interval = spec.interval_seconds if spec else None
+    now = _sampling_clock()
+    last = _last_written.get(run.job)
+    if run.status == "error" or interval is None or interval >= FREQUENT_INTERVAL_S:
+        _last_written[run.job] = (now, run.status)
+        return True
+    if last is None or last[1] != run.status or now - last[0] >= HEARTBEAT_S:
+        _last_written[run.job] = (now, run.status)
+        return True
+    return False
+
+
 async def _report(run: JobRun) -> None:
     observer = _run_observer
     if observer is None:
         logger.debug("scheduler run %s=%s not recorded: no run observer installed", run.job, run.status)
+        return
+    if not _should_record(run):
         return
     try:
         await asyncio.to_thread(observer.record, run)
@@ -527,4 +569,6 @@ def reset_for_testing() -> None:
         scheduler.shutdown(wait=False)
     scheduler = AsyncIOScheduler(timezone=platform_timezone_name())
     _job_specs.clear()
+    _last_written.clear()
+    set_sampling_clock(None)
     _run_observer = None
