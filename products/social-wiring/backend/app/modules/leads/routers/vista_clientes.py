@@ -4,7 +4,7 @@
   GET  /resumo                  org member · links, pending notices, settings, the last run
   GET  /avisos                  org member · divergence / ambiguous-match notices (?status=pendente&tipo=campo_divergente|match_ambiguo)
   POST /avisos/{id}/resolver    org admin  · {acao: resolvida | ignorada}
-  GET  /config  ·  PUT /config  member / org admin · the org's Vista request budget + the LGPD identity flag (CPF/RG, default OFF)
+  GET  /config  ·  PUT /config  member / org admin · the org's Vista request budget; the LGPD identity flag (CPF/RG, default OFF) can only be turned ON by a PLATFORM admin
 
 Mounted under `/api/leads` BEFORE `leads.router`'s catch-all `/{lead_id}` (see `app/modules/leads/__init__.py`).
 """
@@ -20,7 +20,7 @@ from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException, NotFoundError
 from noctusai_lib.primitives.responses import success_response
 
-from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org_unified
+from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org_unified, get_platform_admin_check, require_platform_admin
 from app.modules.leads.deps import get_leads_client
 from app.modules.leads.services import vista_clientes_sync as svc
 
@@ -112,9 +112,12 @@ def get_config(auth: tuple = Depends(get_current_user_org_unified), client: Any 
 @router.put("/config")
 def put_config(
     body: ConfigIn, request: Request, auth: tuple = Depends(get_current_user_org_unified), client: Any = Depends(get_leads_client),
-    core: Any = Depends(get_vista_clientes_core),
+    core: Any = Depends(get_vista_clientes_core), is_platform_admin: Callable[[str], bool] = Depends(get_platform_admin_check),
 ) -> dict:
     _admin(core, auth, request, "A configuração da sincronização de clientes do Vista")
+    if body.importar_identidade:
+        # CONTRACT ad-lead-intake § 8 (LGPD): CPF/RG import stays OFF until a legal read (LIA + encarregado) -> turning it ON is platform-admin only.
+        require_platform_admin(auth=auth, is_admin=is_platform_admin)
     try:
         e = svc.salvar_config(client, coerce_org_uuid(auth[2]), vista_rps=body.vista_rps, importar_identidade=body.importar_identidade, user_id=getattr(auth[0], "id", None))
     except ValueError as exc:

@@ -24,7 +24,7 @@ class Scene:
         return getattr(self.tc, m)(url, headers=H, **({"json": json} if json is not None else {}))
 
 
-def _scene(org_role):
+def _scene(org_role, platform_admin=False):
     core = MockSupabaseClient()
     core.auth.get_user = MagicMock(return_value=MockUserResponse(MockUser(id=TEST_USER_ID, org_id=ORG, org_role=org_role)))
     core.set_table_data("noctus_users", [{"id": TEST_USER_ID, "org_id": ORG, "org_role": org_role}])
@@ -45,7 +45,7 @@ def _scene(org_role):
         patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=core),
         patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=core),
     ):
-        from app.dependencies import get_current_user_org_unified
+        from app.dependencies import get_current_user_org_unified, get_platform_admin_check
         from app.main import app
         from app.modules.leads.deps import get_leads_client
         from app.modules.leads.routers.vista_clientes import get_vista_adapter_factory, get_vista_clientes_core
@@ -55,6 +55,7 @@ def _scene(org_role):
         # (`require_org_admin_for`) is the real one, reading the trusted `noctus_users` row of `core`.
         app.dependency_overrides[get_current_user_org_unified] = lambda: (MockUser(id=TEST_USER_ID, org_id=ORG), "test-token", ORG)
         app.dependency_overrides[get_vista_clientes_core] = lambda: core
+        app.dependency_overrides[get_platform_admin_check] = lambda: (lambda user_id: platform_admin)
         app.dependency_overrides[get_leads_client] = lambda: db
         # Vista (a network edge) is faked through its DI seam; the auth guard is the real one.
         app.dependency_overrides[get_vista_adapter_factory] = lambda: fabrica
@@ -65,6 +66,11 @@ def _scene(org_role):
 @pytest.fixture
 def cena():
     yield from _scene("owner")
+
+
+@pytest.fixture
+def cena_plataforma():
+    yield from _scene("owner", platform_admin=True)
 
 
 @pytest.fixture
@@ -100,4 +106,22 @@ def test_an_admin_real_run_writes_and_the_resumo_reflects_it(cena):
 def test_config_rejects_an_unreasonable_budget_and_the_identity_flag_defaults_off(cena):
     assert cena.req("get", f"{BASE}/config").json()["data"]["importar_identidade"] is False
     assert cena.req("put", f"{BASE}/config", {"vista_rps": 99, "importar_identidade": False}).status_code == 422
-    assert cena.req("put", f"{BASE}/config", {"vista_rps": 1.0, "importar_identidade": True}).status_code == 200
+
+
+def test_an_org_admin_cannot_turn_the_identity_import_on_and_nothing_is_written(cena):
+    # CONTRACT ad-lead-intake § 8: CPF/RG import is platform-admin only until the legal read.
+    r = cena.req("put", f"{BASE}/config", {"vista_rps": 1.0, "importar_identidade": True})
+    assert r.status_code == 403
+    d = cena.req("get", f"{BASE}/config").json()["data"]
+    assert d["importar_identidade"] is False and d["vista_rps"] == 2.5
+
+
+def test_a_platform_admin_can_turn_the_identity_import_on(cena_plataforma):
+    assert cena_plataforma.req("put", f"{BASE}/config", {"vista_rps": 1.0, "importar_identidade": True}).status_code == 200
+    assert cena_plataforma.req("get", f"{BASE}/config").json()["data"]["importar_identidade"] is True
+
+
+def test_an_org_admin_can_write_false_and_change_the_budget(cena):
+    r = cena.req("put", f"{BASE}/config", {"vista_rps": 1.5, "importar_identidade": False})
+    assert r.status_code == 200 and r.json()["data"] == {"vista_rps": 1.5, "importar_identidade": False}
+    assert cena.req("get", f"{BASE}/config").json()["data"]["vista_rps"] == 1.5
