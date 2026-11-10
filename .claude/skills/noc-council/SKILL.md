@@ -1,14 +1,14 @@
 ---
 name: noc-council
 description: Use to challenge a plan, decision, contract, agent definition, refine or product before it is locked — triggers "council", "convene the council", "run the council", "conselho", "llm council", "five lenses", "challenge this plan", "anti-sycophancy review", "chairman". Independent, blind council as background subagents (five lenses plus the stage's advisors), an Opus chair that dispositions every objection, every row written through noctus.dev.council_ledger, outcomes recorded later so the stage map is retuned from evidence.
-version: 1.3.0
+version: 1.4.0
 ---
 
 # noc-council — independent, blind, measured review
 
 > **Opt-in pilot.** The council is an opt-in pilot (D13). A project may opt in to the full council at every stage; its rules (caps, budget, kill criterion, recorder, review date) live in that project's PROJECT.md (first: `project-history/assistant-chatbot/PROJECT.md`). Decisions D13/D31-D34: that file section 2.
 >
-> **Changelog.** 1.3.0 (2026-11-09): stage-map legend, outsider column renamed `Ou`, pilot clause moved to PROJECT.md. 1.2.0 (2026-11-09, owner D33): the product-* advisors get seats: product-manager (PMg) M idealize, O contract + evaluate; product-architect (PAr) M idealize + phase0, O verify_seed; product-analyst (PAn) M evaluate, O iterate. 1.1.0: report splits metrics per mode. 1.0.0: first map.
+> **Changelog.** 1.4.0 (2026-11-10, trial `decision-pipeline-browser-ops`): step 2 verifies the brief's load-bearing premises against the tree first; an advisor that already gave a specialist position report does not also sit as a seat. 1.3.0 (2026-11-09): stage-map legend, outsider column renamed `Ou`, pilot clause moved to PROJECT.md. 1.2.0 (2026-11-09, owner D33): the product-* advisors get seats: product-manager (PMg) M idealize, O contract + evaluate; product-architect (PAr) M idealize + phase0, O verify_seed; product-analyst (PAn) M evaluate, O iterate. 1.1.0: report splits metrics per mode. 1.0.0: first map.
 
 The author of a plan leans toward agreeing with itself (sycophancy, self-enhancement bias). A
 council gives separate contexts, different priors and domain evidence, then a chair that must
@@ -23,6 +23,11 @@ answer every objection. Depth: `KB § PATTERNS/common/council.md`. Ledger contra
    call `record_objection` concurrently; labels are assigned under a lock.
 2. **Compose the blind brief.** Subject, constraints, evidence paths, the question to challenge.
    NEVER the author's recommendation or preferred option. Hash it (`brief_sha256`).
+   **Premises first:** before dispatching, check every premise the decision rests on against the
+   tree and the live environment (does the credential, adapter, scope or capacity actually exist?)
+   and mark each one `verified <path|command>` or `unverified` in the brief. In council `25e812af`
+   the chair caught a false premise that four specialists missed, and the decider then found a
+   second one (a credential the plan relied on did not exist locally).
 3. **Dispatch seats in parallel** (Agent tool, `run_in_background`): `subagent_type=councillor`
    once per lens (the lens name goes in the prompt, see Lenses) and each advisor by its own name
    (`architect`, `security`, ...). Same brief to all, plus the `session_id` and the seat string.
@@ -100,6 +105,7 @@ Pass the lens in the dispatch prompt: "Lens: <name>". Each lens attacks the subj
 - Cost: independent seats cost roughly 4-15x a single chat; spend them on the stage map, not by habit.
 - Claude only for now; lens councillors Sonnet, advisors their own model, chair Opus.
 - A lens that finds nothing says so; never invent an objection to look useful.
+- **No double seat.** When specialists gave position reports first (team-of-teams §2), those reports go into the brief as evidence, and the same advisors do not sit again as seats. Fill the seat with the next M/O column instead. In `25e812af` the architect sat twice; its seat was the costliest (178k tokens) and the most redundant.
 
 ## In-app (future, not built here)
 Lens and chair prompts become rows in the core prompt registry
