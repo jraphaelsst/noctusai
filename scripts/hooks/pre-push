@@ -11,6 +11,9 @@
 #      sanctioned-deploy override `NOCTUS_ALLOW_MAIN_PUSH=1` is set.
 #   2. DELETION of a protected branch is ALWAYS refused.
 #   3. NON-FAST-FORWARD (force) push to a protected branch is ALWAYS refused.
+#   4. The merge-queue path - `<sha>:refs/heads/mq/<slug>--<sha7>` (<sha7> a prefix of the
+#      pushed sha), nothing else in the push - is allowed from any checkout; an mq ref that
+#      does not name its sha, or rides with another ref, is refused (see _mq_push_guard).
 #
 # It ALSO change-gates the embedding-cache refresh (below). Those refreshes log
 # cost rows to an UNTRACKED spool, so this hook dirties nothing tracked and makes
@@ -38,6 +41,45 @@ blocked=0
 # Capture upfront — the refresh-gate needs the pushed range; the protection
 # loop reuses the captured lines (git provides stdin exactly once).
 PUSH_LINES="$(cat)"
+
+# ─── the merge-queue path (guardian spec, 2026-11-10) ────────────────────────
+# Code reaches dev through `git push origin <sha>:refs/heads/mq/<slug>--<sha7>`: a PURE PUSH of
+# the exact sha, run by the guardian from the PRIMARY checkout (HEAD=dev) - it never enters the
+# branch steward's worktree. Such a push has a BARE SHA as its local ref, so the branch-tree
+# mirror keeper below used to be asked about a branch literally named after the sha, found no
+# pointer and BLOCKED it - reported only as the generic "main is sacred" banner (2026-11-10).
+# The rule: a push whose ONLY remote refs are refs/heads/mq/<slug>--<sha7>, with <sha7> a prefix
+# of the pushed local sha, is the queue path. Nothing may ride along, and an mq ref that does not
+# name the sha it carries is refused. Every other protection below stays intact.
+MQ_REF_RE='^refs/heads/mq/[A-Za-z0-9._/-]+--([0-9a-f]{7})$'
+_mq_exact() {  # $1 remote_ref  $2 local_oid  → 0 iff mq/<slug>--<sha7> and sha7 prefixes the pushed sha
+    [[ "$1" =~ $MQ_REF_RE ]] && [[ "$2" == "${BASH_REMATCH[1]}"* ]]
+}
+_mq_push_guard() {  # reads PUSH_LINES; prints why + returns non-zero when an mq ref is misused
+    local lref loid rref roid n_mq=0 n_other=0 bad=0
+    while read -r lref loid rref roid; do
+        [[ -z "${rref:-}" ]] && continue
+        if [[ "$rref" == refs/heads/mq/* ]]; then
+            n_mq=$((n_mq + 1))
+            if ! _mq_exact "$rref" "$loid"; then
+                echo "🔴 pre-push: '$rref' must be mq/<slug>--<sha7> where <sha7> is a prefix of the pushed sha (${loid:0:12})." >&2
+                bad=1
+            fi
+        else
+            n_other=$((n_other + 1))
+        fi
+    done <<< "$PUSH_LINES"
+    if [[ $n_mq -gt 0 && $n_other -gt 0 ]]; then
+        echo "🔴 pre-push: a merge-queue push (refs/heads/mq/*) rides ALONE - nothing else (dev/main/prod/...) in the same push." >&2
+        bad=1
+    fi
+    return $bad
+}
+if ! _mq_push_guard; then
+    echo "" >&2
+    echo "pre-push BLOCKED (merge-queue ref misuse). KB § PATTERNS/devops/merge-queue.md." >&2
+    exit 1
+fi
 
 # ─── origin/ledgers (2026-09-24) ─────────────────────────────────────────────
 # `ledgers` is the ORPHAN branch holding the append-only project-history
@@ -292,6 +334,12 @@ if [[ -z "${NOCTUS_SKIP_BRANCH_TREE_CHECK:-}" && -x "$PY_PP" && -f "$CLI_PP" ]];
         # sends l_ref="HEAD" (not a refs/heads/ ref) — resolve it to the real
         # current branch so the dev-skip below catches it (else the keeper checks
         # a phantom branch "HEAD" with no pointer and blocks the push).
+        # The exact-sha queue push (bare-sha local ref -> mq/<slug>--<sha7>) names no branch: the
+        # delivery was checked as a branch by its steward's own pushes + the delivery contract.
+        if [[ "$l_ref" =~ ^[0-9a-f]{7,64}$ ]] && _mq_exact "${r_ref:-}" "$l_oid"; then
+            echo "[pre-push] branch-tree mirror: queue path (${r_ref#refs/heads/}) - exact-sha mq push, no branch to check."
+            continue
+        fi
         _bt_branch="${l_ref#refs/heads/}"
         [[ "$_bt_branch" == "HEAD" ]] && _bt_branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo HEAD)"
         # Skip dev (the integration branch has no pointer) + release-managed refs:
@@ -554,7 +602,7 @@ done <<< "$PUSH_LINES"
 
 if [[ "$blocked" -ne 0 ]]; then
     echo "" >&2
-    echo "pre-push BLOCKED (client-side branch protection — main is sacred, § 0)." >&2
+    echo "pre-push BLOCKED (see the 🔴/🔒 line(s) above; client-side branch protection — main is sacred, § 0)." >&2
     exit 1
 fi
 

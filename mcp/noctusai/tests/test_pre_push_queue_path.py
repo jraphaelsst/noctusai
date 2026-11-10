@@ -1,0 +1,127 @@
+"""The pre-push hook recognises the guardian's PURE PUSH as the merge-queue path.
+
+`git push origin <sha>:refs/heads/mq/<slug>--<sha7>` from the PRIMARY checkout (HEAD=dev) was refused
+under the generic "main is sacred" banner: a bare sha is the local ref, so the branch-tree mirror
+keeper was asked about a branch named after the sha and found no pointer (2026-11-10). These tests
+install the REAL hook script in a temp repo (real git, real push); only the toolkit CLI the hook
+shells out to is a stub that answers the mirror keeper the way the real one does for an unknown
+name (exit 1) and everything else green.
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+HOOK = Path(os.environ.get("NOC_PRE_PUSH_HOOK_UNDER_TEST") or Path(__file__).resolve().parents[3] / "scripts" / "hooks" / "pre-push")  # env: red/green proof against the pre-fix hook
+_ENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t", "NOCTUS_HOOK_QUIET": "1"}
+for _k in ("NOCTUS_ALLOW_MAIN_PUSH", "NOCTUS_SKIP_EMBED_REFRESH", "NOCTUS_SKIP_DOC_STALENESS"):
+    _ENV.pop(_k, None)
+_STUB_CLI = """\
+import pathlib, sys
+if sys.argv[1] == "--check-branch-tree-mirror":
+    known = pathlib.Path(__file__).resolve().parent.joinpath("pointers.txt").read_text().split()
+    if sys.argv[2] in known:
+        print("ok"); sys.exit(0)
+    print("[high] No branch-pointer found for %r" % sys.argv[2]); sys.exit(1)
+sys.exit(0)
+"""
+
+
+def git(cwd, *a, check=True, env=None):
+    r = subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True, env={**_ENV, **(env or {})})
+    if check and r.returncode:
+        raise AssertionError(r.stderr)
+    return r
+
+
+@pytest.fixture()
+def repo(tmp_path):
+    origin, repo = tmp_path / "origin.git", tmp_path / "repo"
+    git(tmp_path, "init", "--bare", "-b", "dev", str(origin))
+    git(tmp_path, "clone", str(origin), str(repo))
+    git(repo, "checkout", "-b", "dev")
+    tool = repo / "mcp" / "noctusai"
+    (tool / ".venv" / "bin").mkdir(parents=True)
+    (tool / ".venv" / "bin" / "python").symlink_to(sys.executable)
+    (tool / "cli.py").write_text(_STUB_CLI)
+    (tool / "pointers.txt").write_text("feat/x\n")
+    (repo / "a.txt").write_text("a\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-m", "init")
+    git(repo, "push", "--no-verify", "origin", "dev")  # seeding the fixture only, before the hook exists
+    git(repo, "checkout", "-b", "feat/x")
+    (repo / "b.txt").write_text("b\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-m", "feat: b")
+    git(repo, "checkout", "dev")  # the guardian's checkout: HEAD=dev, the delivery branch is NOT checked out here
+    hook = repo / ".git" / "hooks" / "pre-push"
+    shutil.copy(HOOK, hook)
+    hook.chmod(0o755)
+    return repo
+
+
+def sha(repo, ref="feat/x"):
+    return git(repo, "rev-parse", ref).stdout.strip()
+
+
+def remote_refs(repo):
+    return sorted(ln.split("\t")[1] for ln in git(repo, "ls-remote", "origin").stdout.splitlines())
+
+
+def test_the_exact_sha_mq_push_from_head_dev_is_allowed(repo):
+    s = sha(repo)
+    r = git(repo, "push", "origin", f"{s}:refs/heads/mq/x--{s[:7]}", check=False)
+    assert r.returncode == 0, r.stderr
+    assert f"refs/heads/mq/x--{s[:7]}" in remote_refs(repo)
+    assert "queue path" in r.stdout + r.stderr
+
+
+def test_an_mq_push_whose_sha7_does_not_match_is_refused(repo):
+    s = sha(repo)
+    r = git(repo, "push", "origin", f"{s}:refs/heads/mq/x--abcdef0", check=False)
+    assert r.returncode != 0 and "must be mq/<slug>--<sha7>" in r.stderr
+    assert not any("mq/" in ref for ref in remote_refs(repo))
+
+
+def test_an_mq_ref_without_a_sha7_suffix_is_refused(repo):
+    s = sha(repo)
+    r = git(repo, "push", "origin", f"{s}:refs/heads/mq/x", check=False)
+    assert r.returncode != 0 and "must be mq/<slug>--<sha7>" in r.stderr
+
+
+@pytest.mark.parametrize("other", ["main", "dev", "prod"])
+def test_an_mq_push_combined_with_another_ref_is_refused(repo, other):
+    s = sha(repo)
+    r = git(repo, "push", "origin", f"{s}:refs/heads/mq/x--{s[:7]}", f"{s}:refs/heads/{other}", check=False)
+    assert r.returncode != 0 and "rides ALONE" in r.stderr
+    assert not any(ref.startswith("refs/heads/mq/") for ref in remote_refs(repo))
+    assert not any(ref == f"refs/heads/{other}" and other != "dev" for ref in remote_refs(repo))
+
+
+def test_a_plain_push_to_main_is_still_refused(repo):
+    s = sha(repo)
+    r = git(repo, "push", "origin", f"{s}:refs/heads/main", check=False)
+    assert r.returncode != 0 and "BLOCKED" in r.stderr and "production" in r.stderr
+    assert "refs/heads/main" not in remote_refs(repo)
+
+
+def test_a_bare_sha_push_to_an_ordinary_branch_still_meets_the_mirror_keeper(repo):
+    """The carve-out is the queue ref ONLY: a bare sha pushed to any other branch name is still judged
+    by the branch-tree mirror keeper (the pointer-less name is refused)."""
+    s = sha(repo)
+    r = git(repo, "push", "origin", f"{s}:refs/heads/feat/other", check=False)
+    assert r.returncode != 0 and "branch-tree mirror keeper BLOCKED" in r.stderr
+
+
+def test_the_legacy_head_form_still_runs_the_mirror_keeper_for_its_branch(repo):
+    git(repo, "checkout", "feat/x")
+    s = sha(repo)
+    r = git(repo, "push", "origin", f"HEAD:refs/heads/mq/x--{s[:7]}", check=False)
+    assert r.returncode == 0, r.stderr
+    assert "branch-tree mirror check for 'feat/x'" in r.stdout + r.stderr
