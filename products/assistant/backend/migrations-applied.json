@@ -1,0 +1,4 @@
+{
+  "_doc": "Migration files applied in prod (filename -> sha256 as stored in the ledger). Maintained by noctus.dev.migrate_product confirm=True; applied files are frozen. KB § PATTERNS/architect/vertical-seed.md.",
+  "applied": {}
+}
