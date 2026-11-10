@@ -134,6 +134,44 @@ _HARD_DENY = (
 #: newline, redirection) can chain a second, mutating command behind an allow-listed first word
 #: (`echo; docker exec noctus-waha-x-core ...`), so its presence takes the command off the read-only path.
 _SHELL_META = re.compile(r"[;&|`<>\n\r]|\$\(|\$\{")
+_ACTIVE_IN_DOUBLE = re.compile(r"[`\n\r]|\$\(|\$\{")
+
+
+def _has_shell_meta(command: str) -> bool:
+    """True when the command line carries an ACTIVE shell metacharacter. Quote-aware: `;` `&` `|` `<` `>` are literal
+    inside single or double quotes (a docker `--format '{{.A}}|{{.B}}'` template), while backtick, newline, `$(` and `${`
+    stay active inside double quotes and every metacharacter stays active outside quotes. An unterminated quote or a
+    trailing backslash is unparseable ⇒ meta (fail closed)."""
+    i, n = 0, len(command)
+    while i < n:
+        ch = command[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'":
+            end = command.find("'", i + 1)
+            if end < 0:
+                return True
+            if "\n" in command[i:end] or "\r" in command[i:end]:
+                return True
+            i = end + 1
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n and command[j] != '"':
+                j += 2 if command[j] == "\\" else 1
+            if j >= n:
+                return True
+            if _ACTIVE_IN_DOUBLE.search(command[i + 1:j]):
+                return True
+            i = j + 1
+            continue
+        if _SHELL_META.match(command, i) or command.startswith("$(", i) or command.startswith("${", i):
+            return True
+        i += 1
+    return False
+
+
 #: curl/wget invoked in a way that is not a plain GET (a POST to a WAHA core would defeat the line policy).
 _NON_GET_HTTP = re.compile(
     r"(?:^|\s)(?:-X\s*(?!GET\b|HEAD\b)\S+|--request(?:=|\s+)(?!GET\b|HEAD\b)\S+|-d\b|--data\S*|-F\b|--form\S*|"
@@ -451,7 +489,7 @@ def _leading_binary(command: str) -> str:
 def _is_read_only(command: str) -> bool:
     """True when ONE simple command runs, its binary is allow-listed AND every flag is on that binary's allowlist (the
     parser is an ALLOWLIST at argv level, not a blocklist of known-bad flags)."""
-    if _SHELL_META.search(command):
+    if _has_shell_meta(command):
         return False
     try:
         toks = shlex.split(command)
