@@ -313,7 +313,7 @@ class SocialWiringSettings(ProductSettings):
     edicao_fotos_worker_poll_seconds: float = 2.0
     # How long the worker trusts its last read of `processamento_ativo`
     # (a toggle reaches other processes within this many seconds).
-    edicao_fotos_gate_ttl_seconds: float = 10.0
+    edicao_fotos_gate_ttl_seconds: float = 30.0
     # How often each process reloads the model-catalog overrides the platform
     # admin edits in the UI (a save refreshes its own process immediately). 600 s, not 60: the loop reads
     # `llm_model_overrides` forever, ~1.4k reads/day at 60 s (egress incident 2026-11-09,
@@ -361,7 +361,7 @@ class SocialWiringSettings(ProductSettings):
     transcricao_poll_seconds: float = 2.0
     transcricao_lease_seconds: float = 300.0
     # How long a process trusts its last read of `transcricao_habilitada`.
-    transcricao_gate_ttl_seconds: float = 10.0
+    transcricao_gate_ttl_seconds: float = 30.0
 
     # ─── Geração (app/modules/media_creation) ────────────────────────────
     # Dashboard / Chat / Biblioteca / Headlines / Roteiros. Contract:
