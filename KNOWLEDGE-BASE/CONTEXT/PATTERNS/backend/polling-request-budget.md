@@ -66,7 +66,7 @@ audit its hot paths (loops, schedulers, per-request reads) against this rule.
 
 ## The shape of the fix (2026-11-10 sweep: every other poller, platform-wide)
 
-Seed helpers (`noctusai_lib.primitives.ttl_cache`) — grep before inventing another:
+Seed helpers — grep before inventing another (`noctusai_lib.primitives.ttl_cache`; plus `domain/jobs/wake.py`, the in-process wake registry the seed `Worker` uses, and `JobRepository.queue_stats`' TTL cache, now a `TTLCache`). Hand-rolled TTL caches still to adopt it (`NOC-REMEDIATE[ttl-cache-adopt]`): `api/auth/token_cache.py`, `domain/module_enablement/store.py`, `domain/licensing.py`, `api/auth/org_selection.py`. Invalidation is epoch-fenced: an `invalidate()` / `wake()` during an in-flight read is never undone by it.
 - `TTLCache` — read-through, thread-safe, bounded; a loader that raises caches nothing; `invalidate()` on the write
   path of the same process. Used by `resolve_credential` (30 s), `fetch_budget_brl` (30 s), the photo-editing
   platform-settings row (10 s), the agents qualification standard (published version = immutable; "which is published

@@ -85,6 +85,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.primitives.exceptions import ValidationError_
 from noctusai_lib.primitives.phone import normalize_phone
 from noctusai_lib.primitives.postgrest_errors import is_unique_violation
@@ -319,6 +320,19 @@ def _select_all(
         if len(rows) < _PAGE:
             return out
         start += _PAGE
+
+
+def _select_all_by_id(client: Any, table: str, org_id: UUID, columns: str) -> list[dict]:
+    """Every row of `table` for `org_id`, paged in a STABLE order (`id`) by the seed pager: offset paging over an
+    unordered result set can repeat and skip rows across pages. `columns` MUST include `id` (the pager dedupes on it).
+    For tables that have an `id`; `_select_all` stays for the rest."""
+
+    def fetch_page(start: int, end: int):
+        return (
+            _t(client, table).select(columns).eq("org_id", str(org_id)).order("id").range(start, end).execute().data
+        )
+
+    return list(iter_paged_rows(fetch_page, page_size=_PAGE, label=f"{table} for org_id={org_id}"))
 
 
 def _now() -> str:
@@ -805,8 +819,8 @@ def _refresh_contato_from_sources(
     for clientes that actually have a blank to fill. A steady-state pass finds
     nothing and writes nothing.
     """
-    touches = _select_all(
-        client, "cliente_touches", org_id, columns="cliente_id,origem_tabela,origem_id"
+    touches = _select_all_by_id(
+        client, "cliente_touches", org_id, columns="id,cliente_id,origem_tabela,origem_id"
     )
     if not touches:
         return
@@ -822,7 +836,7 @@ def _refresh_contato_from_sources(
     # pass, every 6 h and on every startup catch-up: KB § PATTERNS/backend/polling-request-budget.md).
     linhas = {
         str(r["id"]): r
-        for r in _select_all(client, "clientes", org_id, columns="id,nome,celular,email")
+        for r in _select_all_by_id(client, "clientes", org_id, columns="id,nome,celular,email")
     }
     for cliente_id, members in membros_por_cliente.items():
         linha = linhas.get(str(cliente_id))
@@ -883,8 +897,14 @@ def _enrich_cliente(
         for campo, valor in candidatos.items()
         if not (linha.get(campo) or "").strip()
     }
-    if patch:
-        _t(client, "clientes").update(patch).eq("id", cliente_id).execute()
+    # Guarded AT WRITE TIME, one column per update: the row above may be seconds (a whole pass) old, and an operator can
+    # type a value in between. `col IS NULL OR col = ''` makes the database re-check the blank, so a value typed
+    # after our read is never overwritten (fill-if-empty held only against the read, not the write).
+    for campo, valor in patch.items():
+        (
+            _t(client, "clientes").update({campo: valor}).eq("id", cliente_id)
+            .or_(f"{campo}.is.null,{campo}.eq.").execute()
+        )
 
 
 def _chave_do_celular(

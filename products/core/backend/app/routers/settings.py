@@ -123,6 +123,7 @@ async def deletar_platform_setting(
     db = get_admin_client()
 
     delete_or_404(db, "platform_settings", ("key", key), message="Configuração não encontrada")
+    invalidate_credential_cache()  # a deleted key must stop resolving at once, not after the 30 s TTL
 
     logger.info(f"Platform setting deleted: {key}")
     return {"message": "Configuração removida com sucesso"}
@@ -189,6 +190,7 @@ async def deletar_org_setting(
     db = get_admin_client()
 
     delete_or_404(db, "org_settings", ("org_id", org_id), ("key", key), message="Configuração não encontrada")
+    invalidate_credential_cache()
 
     logger.info(f"Org setting deleted: {key} for org {org_id}")
     return {"message": "Configuração removida com sucesso"}

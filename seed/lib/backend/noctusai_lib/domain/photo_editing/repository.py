@@ -1321,6 +1321,7 @@ class SupabasePhotoEditingRepository:
         cached = self._platform_cache.peek(1)
         if cached is not None:
             return cached
+        epoch = self._platform_cache.epoch  # an update_platform_settings during this read must win
         row = await self._one(self._t("fotos_platform_settings").select("*").eq("id", 1).limit(1))
         if row is None:
             raise RepositoryError("fotos_platform_settings singleton row is missing")
@@ -1330,7 +1331,7 @@ class SupabasePhotoEditingRepository:
             enums={"velocidade_default": Speed},
             decimals=("preco_storage_gb_mes_usd",),
         )
-        self._platform_cache.put(1, settings)
+        self._platform_cache.put(1, settings, epoch=epoch)
         return settings
 
     async def save_org_settings(self, settings: OrgSettings) -> OrgSettings:

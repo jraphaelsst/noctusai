@@ -236,8 +236,9 @@ async def fetch_budget_brl(org_id: str) -> Optional[float]:
     cached = _budget_cache.peek(org_id, _NO_BUDGET)  # type: ignore[arg-type]
     if cached is not _NO_BUDGET:
         return cached  # type: ignore[return-value]
+    epoch = _budget_cache.epoch  # a write that invalidates while this read is in flight must not be undone by it
     value = await _read_budget_brl(org_id)
-    _budget_cache.put(org_id, value)
+    _budget_cache.put(org_id, value, epoch=epoch)
     return value
 
 

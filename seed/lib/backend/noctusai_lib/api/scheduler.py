@@ -79,7 +79,8 @@ best-effort: it never breaks the job, but a failed write is logged at ERROR.
 
 **Idle ticks are sampled (2026-11-10).** A job on an interval < `FREQUENT_INTERVAL_S` (10 min) writes at most one
 CLEAN row per `HEARTBEAT_S` (5 min); errors, the first run after boot and the first clean run after an error are
-always written. Without it a 30 s job that found nothing inserted 2,880 rows a day (the `scheduler_runs` leg of
+always written. NOTE for readers of `scheduler_runs`: a frequent job's `runs_24h` / run counts are SAMPLED (about
+one row per 5 min), not a tick count -- liveness, not throughput. Without it a 30 s job that found nothing inserted 2,880 rows a day (the `scheduler_runs` leg of
 the 2026-11-09 Supabase egress incident, `KB § PATTERNS/backend/polling-request-budget.md`).
 
 **Logging.** APScheduler's verbose DEBUG output (job execution / next
@@ -244,19 +245,19 @@ def set_sampling_clock(clock: Optional[Callable[[], float]]) -> None:
 
 def _should_record(run: JobRun) -> bool:
     """Write-per-tick is a quota bug (2026-11-09: `POST scheduler_runs` ~10k/22h, almost all `ok` runs that did
-    nothing). Errors ALWAYS land, the first clean run after an error lands (recovery is news), the first run
-    after boot lands; after that a frequent job writes one clean row per `HEARTBEAT_S`."""
+    nothing). Errors ALWAYS land, the first clean run after an error lands (recovery is news), the first run after
+    boot lands; after that a frequent job writes one clean row per `HEARTBEAT_S`. Pure: the sample clock only
+    advances in `_mark_written`, AFTER the observer accepted the row -- a failed write is retried at the next tick."""
     spec = _job_specs.get(run.job)
     interval = spec.interval_seconds if spec else None
-    now = _sampling_clock()
-    last = _last_written.get(run.job)
     if run.status == "error" or interval is None or interval >= FREQUENT_INTERVAL_S:
-        _last_written[run.job] = (now, run.status)
         return True
-    if last is None or last[1] != run.status or now - last[0] >= HEARTBEAT_S:
-        _last_written[run.job] = (now, run.status)
-        return True
-    return False
+    last = _last_written.get(run.job)
+    return last is None or last[1] != run.status or _sampling_clock() - last[0] >= HEARTBEAT_S
+
+
+def _mark_written(run: JobRun) -> None:
+    _last_written[run.job] = (_sampling_clock(), run.status)
 
 
 async def _report(run: JobRun) -> None:
@@ -268,6 +269,7 @@ async def _report(run: JobRun) -> None:
         return
     try:
         await asyncio.to_thread(observer.record, run)
+        _mark_written(run)
     except Exception:  # noqa: BLE001 — the ledger must never break the job; loud, not silent
         logger.error(
             "scheduler run ledger write FAILED for job %r (status=%s): the run happened "

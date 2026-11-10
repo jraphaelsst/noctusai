@@ -44,6 +44,9 @@ _SCHEMA = "agents"
 #: is immutable (migration 032 trigger), so it is cached whole; "which version is published NOW" is cached for a short
 #: TTL and dropped by `publicar` in this process. A DRAFT is never cached (it changes under the key). The client is part
 #: of the key and held by the entry, so a test that swaps the client never reads another test's answer.
+#: CAVEAT: a cached version's `status` may read `publicada` for up to `_VERSAO_CACHE_TTL_S` after a newer publish
+#: archived it (the content is immutable, the status label is not). No consumer decides anything on that label
+#: today -- the "which version is published" question goes through `obter_versao_publicada` (30 s, dropped by `publicar`).
 _VERSAO_CACHE_TTL_S = 60.0
 _PUBLICADA_CACHE_TTL_S = 30.0
 _versao_cache: TTLCache[tuple, tuple] = TTLCache(_VERSAO_CACHE_TTL_S, max_entries=64)
@@ -333,9 +336,10 @@ class SupabasePadraoStore:
         hit = _versao_cache.peek(key)
         if hit is not None:
             return hit[1]
+        epoch = _versao_cache.epoch  # a publish that invalidates during this read must not be undone by it
         versao = self._ler_versao(versao_id)
         if versao.status != "rascunho":
-            _versao_cache.put(key, (self._client, versao))
+            _versao_cache.put(key, (self._client, versao), epoch=epoch)
         return versao
 
     def _ler_versao(self, versao_id):
@@ -370,6 +374,7 @@ class SupabasePadraoStore:
         hit = _publicada_cache.peek(key)
         if hit is not None:
             return self.obter_versao(hit[1])
+        epoch = _publicada_cache.epoch
         padrao = self.obter_padrao(chave)
         resp = (
             self._t("qualificacao_versoes").select("id").eq("padrao_id", str(padrao.id))
@@ -378,7 +383,7 @@ class SupabasePadraoStore:
         if not resp.data:
             raise NotFound(f"padrao {chave!r} sem versao publicada")  # never cached: a publish is awaited
         versao_id = UUID(str(resp.data[0]["id"]))
-        _publicada_cache.put(key, (self._client, versao_id))
+        _publicada_cache.put(key, (self._client, versao_id), epoch=epoch)
         return self.obter_versao(versao_id)
 
     def criar_rascunho(self, padrao_id, notas, copiar_de):

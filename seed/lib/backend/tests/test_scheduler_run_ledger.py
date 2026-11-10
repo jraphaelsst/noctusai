@@ -207,6 +207,29 @@ class TestFrequentJobsDoNotWriteALedgerRowPerIdleTick:
         assert ledger.runs[-1].status == "ok"
 
     @pytest.mark.asyncio
+    async def test_a_failed_ledger_write_does_not_start_the_heartbeat_window(self, clock):
+        class _Flaky(FakeRunLedger):
+            fail = True
+
+            def record(self, run):
+                if self.fail:
+                    raise RuntimeError("402")
+                super().record(run)
+
+        led = _Flaky("demo")
+        sched.set_run_observer(led)
+
+        async def _job():
+            return None
+
+        sched.register("fast2", _job, seconds=30)
+        await _fire("fast2")  # the write fails: nothing recorded, and it must not count as written
+        led.fail = False
+        clock["t"] += 30
+        await _fire("fast2")  # the very next tick retries (was: waited out a 5 min window with no row)
+        assert len(led.runs) == 1
+
+    @pytest.mark.asyncio
     async def test_a_job_that_is_not_frequent_records_every_run(self, ledger, clock):
         async def _job():
             return None

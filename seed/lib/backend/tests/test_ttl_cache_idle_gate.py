@@ -44,7 +44,7 @@ def test_ttl_cache_is_bounded():
     cache: TTLCache[int, int] = TTLCache(30, max_entries=2, clock=_Clock())
     for i in range(5):
         cache.get(i, lambda i=i: i)
-    assert len(cache._items) == 2
+    assert len(cache) == 2
 
 
 def test_idle_gate_probes_once_per_fallback_window_not_per_tick():
@@ -72,4 +72,51 @@ def test_idle_gate_wake_makes_the_next_tick_look_and_next_due_shortens_the_wait(
     assert gate.due()
     gate.idle(next_due_in_s=9999)  # never later than the fallback
     clock.t += 301
+    assert gate.due()
+
+
+def test_idle_gate_a_wake_during_an_in_flight_probe_is_not_lost():
+    clock = _Clock()
+    gate = IdleGate(300, clock=clock)
+    assert gate.due()  # the probe starts (reads an empty queue) ...
+    gate.wake()  # ... a producer queues work and wakes the gate while it runs ...
+    gate.idle()  # ... then the probe reports "empty": that must not put the wake back to sleep
+    assert gate.due()  # the very next tick looks (was: up to 300 s late)
+
+
+def test_ttl_cache_a_load_in_flight_across_an_invalidate_does_not_write_back_the_stale_value():
+    cache: TTLCache[str, str] = TTLCache(30, clock=_Clock())
+
+    def slow_loader() -> str:
+        cache.invalidate("k")  # the write path invalidates while this (pre-write) read is running
+        return "stale"
+
+    assert cache.get("k", slow_loader) == "stale"  # the caller still gets its answer ...
+    assert cache.get("k", lambda: "fresh") == "fresh"  # ... but it is not served to the next one
+
+
+def test_ttl_cache_put_with_a_stale_epoch_is_dropped():
+    cache: TTLCache[str, int] = TTLCache(30, clock=_Clock())
+    epoch = cache.epoch
+    cache.invalidate()
+    assert cache.put("k", 1, epoch=epoch) is False
+    assert cache.peek("k") is None
+    assert cache.put("k", 2, epoch=cache.epoch) is True
+
+
+def test_idle_gate_failures_back_off_exponentially_up_to_the_fallback_and_success_resets():
+    clock = _Clock()
+    gate = IdleGate(300, clock=clock)
+    waits = []
+    for _ in range(6):
+        assert gate.due()
+        gate.failed(base_s=30)
+        t0 = clock.t
+        while not gate.due():
+            clock.t += 1
+        waits.append(clock.t - t0)
+    assert waits == [30, 60, 120, 240, 300, 300]
+    gate.idle()
+    gate.failed(base_s=30)  # idle() reset the counter
+    clock.t += 31
     assert gate.due()
