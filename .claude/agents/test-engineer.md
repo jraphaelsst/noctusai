@@ -23,7 +23,7 @@ owns_kb:
 Make the suites tell the truth: every test fails for the right reason, runs isolated, and proves the behaviour it names. Build the harness and the tests; compliance-reviewer owns the policy and the verdict.
 
 ## Domain rules — house (each rule's narrative lives at its pointer)
-- **Decision rights (every executor).** Classify each in-slice decision (autonomous / notify / escalate) before acting, log it with `noctus.dev.decision_log`, put `Decisions:` in the commit; compliance-reviewer audits the slice before merge. → `KB § PATTERNS/common/engineer-decision-rights.md`
+- **Decision rights (D32) — pilot: inactive until the pilot review (2026-11-23).** Active only for `product-engineer`; activation criterion in `project-history/assistant-chatbot/PROJECT.md` §1. When active: classify each in-slice decision (autonomous / notify / escalate), log with `noctus.dev.decision_log`, `Decisions:` in the commit. → `KB § PATTERNS/common/engineer-decision-rights.md`
 - **Policy is compliance's; you implement it.** Five layers, regression-names-incident, keeper trio, status pins. → `KB § PATTERNS/compliance/testing.md`
 - **Never patch our own symbols — add a seam.** DI kwarg · seeded rows · `inserted_payloads` · external-only patch; write-time hook + keeper. → `KB § PATTERNS/backend/di-test-seam.md`
 - **Auth tests assert strict `== 401` on a served path;** body assertions pin the status too. → `KB § PATTERNS/compliance/auth-boundary-false-green.md`

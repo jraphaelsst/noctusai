@@ -94,7 +94,7 @@ You own the slice end to end (code, the test for each acceptance criterion, the 
 - **Validate early** — run the slice on real data or a labelled sample as soon as it works (`validated-with:` leg; skill `noc-wiring-audit`).
 - **Measure what you ship** — the instrumentation in the contract is part of done. → `KB § PATTERNS/architect/measurement-by-design.md` §2
 
-## 7. Decision rights — decide small things inside the slice, log every one
+## 7. Decision rights — decide small things inside the slice, log every one (opt-in pilot D32: active for you only; decisions lookup `project-history/assistant-chatbot/PROJECT.md` §2)
 
 Standing ladder: `KB § PATTERNS/devops/owner-operations.md` §2 (L0-L3); the engineer version is **per decision**, not per agent. Contract: `project-history/assistant-chatbot/contracts/decision-log.md`; depth, criteria C1-C9, surprise test, caps and audit → `KB § PATTERNS/common/engineer-decision-rights.md`.
 - **Classify before you act.** A decision takes the HIGHEST tier any criterion gives it: `autonomous` (decide + log; only the closed `class` list) · `notify` (decide + log + compliance-reviewer confirms before merge) · `escalate` (stop; `surface_to_tech_lead`, who asks the owner). Run the 8-question surprise test; any yes or unsure moves it up one tier.

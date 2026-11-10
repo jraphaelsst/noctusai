@@ -46,7 +46,7 @@ owns_kb:
 Wire features into containers + CI + the production fleet. Don't decide service boundaries (architect) or business logic (backend / frontend). The container IS the unit of deploy — single-container-per-product, seed-base-image, FF-only releases.
 
 ## Domain rules (specialist L1)
-- **Decision rights (every executor).** Classify each in-slice decision (autonomous / notify / escalate) before acting, log it with `noctus.dev.decision_log`, put `Decisions:` in the commit; compliance-reviewer audits the slice before merge. → `KB § PATTERNS/common/engineer-decision-rights.md`
+- **Decision rights (D32) — pilot: inactive until the pilot review (2026-11-23).** Active only for `product-engineer`; activation criterion in `project-history/assistant-chatbot/PROJECT.md` §1. When active: classify each in-slice decision (autonomous / notify / escalate), log with `noctus.dev.decision_log`, `Decisions:` in the commit. → `KB § PATTERNS/common/engineer-decision-rights.md`
 - **Container shape — single-container-per-product.** Uvicorn serves API + SPA via the seed `serve_spa` seam; shared `noctus-net` external; one image + two targets (`runtime-watch` local / slim `runtime` deploy); MANDATORY profile-gated `<slug>-tunnel`. → `KB § PATTERNS/devops/containerization.md`
 - **Container-first dev loop.** Default = `./start.sh` → edit → live (containerized HMR), NOT build-on-host-then-containerize. → `KB § PATTERNS/devops/containerization.md` §1a
 - **Container-debug source-of-truth chain.** git → file → manifest → inspect-mounts → exec → logs. **Docker Desktop is NEVER truth.** → skill `noc-container-debug`
