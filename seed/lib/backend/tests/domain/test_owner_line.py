@@ -11,6 +11,7 @@ from noctusai_lib.domain.notification_catalog import (
     FakeOwnerRecipientSource,
     NotificationKind,
     OwnerLineNumberMismatch,
+    OwnerLineNumberUnknown,
     OwnerRecipient,
     SupabaseOwnerRecipientSource,
     UndeclaredNotificationKind,
@@ -274,3 +275,73 @@ def test_paired_number_match_uses_br_variants(expected, me, sends):
         with pytest.raises(OwnerLineNumberMismatch):
             t.send_text(R1.numero, "oi")
         assert calls == []
+
+
+class _Ok:
+    def __init__(self):
+        self.calls = []
+
+    def send_text_to_phone_sync(self, phone, text):
+        self.calls.append(phone)
+
+
+def test_device_suffixed_me_id_matches():
+    """WAHA docs (waha.devlike.pro, GET /api/sessions/{session}/me) show ``{"id": "11111111111@c.us", "pushName":
+    ..., "reachoutTimelock": null, "messageCapping": null}`` and return null when the session is stopped; the docs
+    do not mention ``:<device>`` or ``@lid`` forms (newer engines emit them), so both are parsed defensively."""
+    c = _Ok()
+    WahaOwnerLineTransport(lambda: c, expected_numero=EXPECTED, me_fetch=lambda: "5511999990099:12@c.us"
+                           ).send_text(R1.numero, "oi")
+    assert c.calls == [R1.numero]
+
+
+def test_lid_me_id_fails_closed_unknown(caplog):
+    c = _Ok()
+    t = WahaOwnerLineTransport(lambda: c, expected_numero=EXPECTED, me_fetch=lambda: "123456789012345@lid")
+    with caplog.at_level(logging.ERROR):
+        d = notify_owner(P, "aviso", "oi", gate=FakeNotificationGate(P),
+                         recipients=FakeOwnerRecipientSource([R1]), transport=t)
+    assert d.reason == "1 de 1 falharam: linha_noc_numero_desconhecido" and c.calls == []
+    assert "linha_noc_numero_desconhecido" in caplog.text
+    assert issubclass(OwnerLineNumberUnknown, Exception)
+
+
+def test_verification_expires_after_15_minutes_and_refetches():
+    now, fetches, c = [0.0], [], _Ok()
+    t = WahaOwnerLineTransport(lambda: c, expected_numero=EXPECTED, clock=lambda: now[0],
+                               me_fetch=lambda: fetches.append(1) or "5511999990099@c.us")
+    t.send_text(R1.numero, "a")
+    now[0] = 899.0
+    t.send_text(R1.numero, "b")
+    assert len(fetches) == 1
+    now[0] = 901.0
+    t.send_text(R1.numero, "c")
+    assert len(fetches) == 2
+
+
+def test_repair_to_another_number_is_caught_after_expiry():
+    now, me, c = [0.0], ["5511999990099@c.us"], _Ok()
+    t = WahaOwnerLineTransport(lambda: c, expected_numero=EXPECTED, clock=lambda: now[0], me_fetch=lambda: me[0])
+    t.send_text(R1.numero, "a")
+    me[0], now[0] = "5511888880000@c.us", 1000.0
+    with pytest.raises(OwnerLineNumberMismatch):
+        t.send_text(R1.numero, "b")
+
+
+def test_send_failure_drops_the_verification_cache():
+    fetches = []
+
+    class Flaky:
+        n = 0
+
+        def send_text_to_phone_sync(self, phone, text):
+            Flaky.n += 1
+            if Flaky.n == 1:
+                raise ConnectionError("down")
+
+    t = WahaOwnerLineTransport(lambda: Flaky(), expected_numero=EXPECTED,
+                               me_fetch=lambda: fetches.append(1) or "5511999990099@c.us")
+    with pytest.raises(ConnectionError):
+        t.send_text(R1.numero, "a")
+    t.send_text(R1.numero, "b")
+    assert len(fetches) == 2

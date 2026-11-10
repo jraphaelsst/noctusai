@@ -36,12 +36,30 @@ REASON_NO_TRANSPORT = "linha_noc_nao_configurada"
 REASON_NOT_INSTALLED = "linha_noc_nao_instalada"
 REASON_NUMBER_MISMATCH = "linha_noc_numero_divergente"
 REASON_NUMBER_UNDECLARED = "linha_noc_numero_nao_declarado"
+REASON_NUMBER_UNKNOWN = "linha_noc_numero_desconhecido"
+VERIFY_TTL_SECONDS = 900.0
 
 
 class OwnerLineNumberMismatch(RuntimeError):
     """The WAHA session's paired number is not NoctusAI's declared owner-line number (or is unknown)."""
 
     reason_code = REASON_NUMBER_MISMATCH
+
+
+class OwnerLineNumberUnknown(RuntimeError):
+    """The paired account id carries no phone digits (e.g. an ``@lid`` form) — fails closed."""
+
+    reason_code = REASON_NUMBER_UNKNOWN
+
+
+def _paired_digits(me: Optional[str]) -> Optional[str]:
+    """Phone digits of a WAHA ``me.id``: ``<digits>@c.us`` | ``<digits>:<device>@c.us`` | ``<id>@lid`` (None)."""
+    if not me:
+        return None
+    user, _, domain = me.partition("@")
+    if domain.startswith("lid"):
+        return None
+    return user.split(":", 1)[0].lstrip("+") or None
 
 
 def _mask(numero: str) -> str:
@@ -130,33 +148,45 @@ class WahaOwnerLineTransport:
 
     Only NoctusAI's own number may send: on first use ``me_fetch()`` (the session's paired account id/number) is
     compared with ``expected_numero``; a mismatch or unknown account raises ``OwnerLineNumberMismatch``. A match
-    is cached; a failure is not (the next send re-checks)."""
+    is cached for 15 minutes and dropped after any send failure."""
 
     def __init__(self, client_factory: Callable[[], Any], *, expected_numero: str,
-                 me_fetch: Callable[[], Optional[str]]) -> None:
+                 me_fetch: Callable[[], Optional[str]], ttl_seconds: float = VERIFY_TTL_SECONDS,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         expected = set(br_mobile_variants(expected_numero))
         if not expected:
             raise ValueError("owner line: expected_numero is not a valid phone")
         self._factory = client_factory
         self._expected = expected
         self._me_fetch = me_fetch
-        self._verified = False
+        self._ttl = ttl_seconds
+        self._clock = clock
+        self._verified_at: Optional[float] = None
 
     def _verify(self) -> None:
-        if self._verified:
+        if self._verified_at is not None and self._clock() - self._verified_at < self._ttl:
             return
+        self._verified_at = None
         me = self._me_fetch()
+        digits = _paired_digits(me)
+        if me and digits is None:
+            logger.error("seed.owner_line.numero_desconhecido: the session's paired id has no phone digits")
+            raise OwnerLineNumberUnknown(REASON_NUMBER_UNKNOWN)
         # WhatsApp may pair a BR mobile without the 9th digit: match by the seed's variant set.
-        paired = set(br_mobile_variants("+" + me.split("@")[0].lstrip("+"))) if me else set()
+        paired = set(br_mobile_variants("+" + digits)) if digits else set()
         if not paired & self._expected:
             raise OwnerLineNumberMismatch(REASON_NUMBER_MISMATCH)
-        self._verified = True
+        self._verified_at = self._clock()
 
     def send_text(self, numero_e164: str, texto: str) -> None:
         if not is_valid_phone(numero_e164):
             raise ValueError("owner line: recipient number is not a valid phone")
         self._verify()
-        self._factory().send_text_to_phone_sync(numero_e164, texto)
+        try:
+            self._factory().send_text_to_phone_sync(numero_e164, texto)
+        except Exception:
+            self._verified_at = None  # a failure may mean a re-pair: re-verify on the next send
+            raise
 
 
 @dataclass
@@ -294,6 +324,7 @@ __all__ = [
     "OwnerDispatch",
     "OwnerLine",
     "OwnerLineNumberMismatch",
+    "OwnerLineNumberUnknown",
     "OwnerLineTransport",
     "OwnerRecipient",
     "OwnerRecipientSource",
