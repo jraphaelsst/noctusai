@@ -132,7 +132,8 @@ noc VPS
 - [ ] Seed owner-line sender (Protocol + Fake + Real + factory), configured on core Notificações (line + owner number(s)).
 - [ ] agents `notification_kinds.py`: `eval_loop_parada`, `eval_loop_checkpoint`.
 - [ ] Eval-loop gate sends through the gate and the owner line; the bell stays. Tests for suppressed and no_recipient.
-- [ ] Deliver `feat/agents` (075 included) to the dev steward.
+- [ ] Rebuild the eval-loop gate on current `feat/agents` (dev, with agent-layers-api landed, so fc1262b0b is not replayed). **Renumber its migration `075_eval_loops.sql` to the next free number**: 075 is now `075_retire_one_chat.sql`.
+- [ ] Deliver `feat/agents` (eval-loop migration included) to the dev steward.
 **Improvements:** NOC-FILL-IMPROVEMENTS
 
 ### Phase 3 — V2: noc's own agent on L3
