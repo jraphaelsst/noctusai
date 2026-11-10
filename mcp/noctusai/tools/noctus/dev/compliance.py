@@ -17685,10 +17685,131 @@ def check_primary_checkout_commit(
 # `guardian_holds_lease` below (the single "does this session hold it" reader,
 # reusing StewardStore); telemetry: `gate_alignment.record_event`.
 # KB § PATTERNS/common/gate-methodology-sync.md (Guardian tool authorship).
-GUARDIAN_PROTECTED_TOOL_FILES = (
-    "mcp/noctusai/tools/noctus/dev/release_steward.py",
-    "mcp/noctusai/tools/noctus/dev/task_branch.py",
+_GUARDIAN_DEV_PKG = "mcp/noctusai/tools/noctus/dev"
+#: the roots of the derived set: the tools that elect the guardian and move work.
+GUARDIAN_PROTECTED_ROOTS = ("release_steward", "task_branch")
+#: non-Python anchors that decide what lands or ships (verified to exist by the test).
+GUARDIAN_PROTECTED_ANCHORS = (
+    "scripts/hooks/pre-push",
+    "scripts/hooks/claude-guard-release-steward.py",
+    "scripts/hooks/claude-guard-session-heartbeat.py",
+    ".github/workflows/merge-queue.yml",
+    f"{_GUARDIAN_DEV_PKG}/prod_consent.py",
+    f"{_GUARDIAN_DEV_PKG}/ship_consent.py",
 )
+#: a module the roots import that stays OUT: the keeper registry every gate change edits (its authorship is
+#: reviewed per keeper, and fencing it would block every keeper commit from the guardian's seat).
+# NOC-REMEDIATE[guardian-keeper-self-edit]: the guardian can still neuter this keeper through compliance.py (exempt above), scripts/hooks/pre-commit (the keeper registration step) and the cli.py dispatch - all unanchored because every gate change edits them; closes with the queue-only GitHub App push identity (owner reminder 14) plus a CI-side authorship check keyed to that identity (phase 2) — 2026-11-10
+GUARDIAN_PROTECTED_EXEMPT = ("compliance",)
+
+
+class _TreeSource:
+    """Where the derivation reads module text from. Default: the working tree (the snapshot test, no git context)."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def texts(self, rel: str) -> list[str]:
+        p = self.root / rel
+        return [p.read_text(encoding="utf-8")] if p.is_file() else []
+
+
+class _GitSource(_TreeSource):
+    """HEAD UNION the index, never the working tree: an edit the committer left UNSTAGED (an import dropped from a
+    protected module) must not shrink the set, and a deletion must not drop the module. Existence is judged in
+    HEAD or the index; every blob that exists is read (a git failure on an existing blob RAISES -> fail closed)."""
+
+    def _git(self, *args: str) -> bytes:
+        import subprocess
+        r = subprocess.run(["git", *args], cwd=self.root, capture_output=True, timeout=30, check=False)
+        if r.returncode != 0:
+            raise RuntimeError(f"git {' '.join(args[:2])} exited {r.returncode}: {r.stderr.decode('utf-8', 'replace').strip()[:100]}")
+        return r.stdout
+
+    def _load(self) -> dict[str, list[str]]:
+        """ONE ls-tree + ONE ls-files for existence, ONE `cat-file --batch` for every blob (HEAD:<p> and :<p>):
+        a handful of git processes instead of 2-4 per module per call. Any git failure RAISES (fail closed)."""
+        import subprocess
+        if getattr(self, "_cache", None) is not None:
+            return self._cache
+        pkg = _GUARDIAN_DEV_PKG
+        head = {n for n in self._git("ls-tree", "-r", "--name-only", "HEAD", "--", pkg).decode("utf-8").splitlines() if n.endswith(".py")}
+        idx = {n for n in self._git("ls-files", "--", pkg).decode("utf-8").splitlines() if n.endswith(".py")}
+        specs = [f"HEAD:{n}" for n in sorted(head)] + [f":{n}" for n in sorted(idx)]
+        owners = [n for n in sorted(head)] + [n for n in sorted(idx)]
+        cache: dict[str, list[str]] = {}
+        if specs:
+            r = subprocess.run(["git", "cat-file", "--batch"], cwd=self.root, capture_output=True, timeout=60, check=False,
+                               input=("\n".join(specs) + "\n").encode("utf-8"))
+            if r.returncode != 0:
+                raise RuntimeError(f"git cat-file --batch exited {r.returncode}: {r.stderr.decode('utf-8', 'replace').strip()[:100]}")
+            buf, pos = r.stdout, 0
+            for spec, name in zip(specs, owners):
+                nl = buf.index(b"\n", pos)
+                header = buf[pos:nl].decode("utf-8", "replace").split()
+                pos = nl + 1
+                if len(header) == 3 and header[1] == "blob":
+                    size = int(header[2])
+                    cache.setdefault(name, []).append(buf[pos:pos + size].decode("utf-8"))
+                    pos += size + 1
+                elif header[-1:] != ["missing"]:
+                    raise RuntimeError(f"git cat-file: unexpected answer for {spec}: {' '.join(header)[:100]}")
+                # "missing": absent in that rev (it was listed a moment ago, so a race) - not an error
+        self._cache = cache
+        return cache
+
+    def texts(self, rel: str) -> list[str]:
+        return list(self._load().get(rel, []))
+
+
+def _dev_module_imports(src: _TreeSource, module: str, *, module_level: bool) -> set[str]:
+    """Sibling `tools.noctus.dev` modules `module` imports, by AST (never regex), over every text the source has for it.
+    `module_level=True` skips imports inside function bodies (those run lazily, not at import time)."""
+    import ast
+    rel_pkg = _GUARDIAN_DEV_PKG
+    found: set[str] = set()
+    for text in src.texts(f"{rel_pkg}/{module}.py"):  # a root renamed/deleted in this very commit stays protected by NAME
+        stack: list[ast.AST] = [ast.parse(text)]
+        while stack:
+            node = stack.pop()
+            for child in ast.iter_child_nodes(node):
+                if module_level and isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if isinstance(child, ast.ImportFrom):
+                    mod = child.module or ""
+                    if child.level == 1 or mod == "tools.noctus.dev":
+                        if mod and mod != "tools.noctus.dev":
+                            found.add(mod.split(".")[0])
+                        else:
+                            found.update(a.name for a in child.names)
+                    elif mod.startswith("tools.noctus.dev."):
+                        found.add(mod.split(".")[3])
+                elif isinstance(child, ast.Import):
+                    found.update(a.name.split(".")[3] for a in child.names if a.name.startswith("tools.noctus.dev."))
+                stack.append(child)
+    return {m for m in found if src.texts(f"{rel_pkg}/{m}.py")}
+
+
+def derive_guardian_protected_files(repo_root: Path | None = None, *, from_git: bool = False) -> tuple[str, ...]:
+    """The protected set, DERIVED (a hand-kept list drifts): the roots + every module a root imports ANYWHERE
+    (lazy included) + the module-level transitive closure of those + the non-Python anchors, minus the exempt
+    keeper registry. `from_git=True` (what the keeper uses) reads HEAD UNION the index instead of the working tree.
+    Raises on any parse/read/git failure - the keeper then fails CLOSED for the guardian."""
+    root = repo_root or REPO_ROOT
+    src: _TreeSource = _GitSource(root) if from_git else _TreeSource(root)
+    names: set[str] = set(GUARDIAN_PROTECTED_ROOTS)
+    frontier: list[str] = []
+    for r in GUARDIAN_PROTECTED_ROOTS:
+        direct = _dev_module_imports(src, r, module_level=False)
+        names |= direct
+        frontier += sorted(direct)
+    while frontier:
+        for dep in _dev_module_imports(src, frontier.pop(), module_level=True):
+            if dep not in names:
+                names.add(dep)
+                frontier.append(dep)
+    names -= set(GUARDIAN_PROTECTED_EXEMPT)
+    return tuple(sorted({f"{_GUARDIAN_DEV_PKG}/{n}.py" for n in names} | set(GUARDIAN_PROTECTED_ANCHORS)))
 
 
 def guardian_holds_lease(
@@ -17750,6 +17871,7 @@ def check_guardian_tool_authorship(
         except Exception:  # noqa: BLE001 - telemetry never changes a verdict
             pass
 
+    failure = None
     if staged is None:
         root = repo_root or REPO_ROOT
         try:
@@ -17768,20 +17890,32 @@ def check_guardian_tool_authorship(
             _telemetry("unmeasured", failure)
             print(f"[guardian-tool-authorship] UNMEASURED: {failure}; the lease-holder check did not run.", file=sys.stderr)
         staged = [p for p in out.splitlines() if p.strip()]
-    hits = sorted(p for p in staged if p in GUARDIAN_PROTECTED_TOOL_FILES)
+    # (a) cheap path filter first: a commit touching nothing the guardian could be fenced from never derives.
+    relevant = sorted(p for p in staged if (p.startswith(f"{_GUARDIAN_DEV_PKG}/") and p.endswith(".py"))
+                      or p in GUARDIAN_PROTECTED_ANCHORS)
+    if not relevant:
+        return []
+    # (b) then the lease: only the live holder is ever fenced, so only the holder pays for the derivation.
+    holds, lease, why = guardian_holds_lease(session_id, lease_root, now)
+    if not holds:
+        _telemetry("allow", f"not-refused: {why}", ",".join(relevant))
+        return []
+    # (c) derive ONLY for the holder; a derivation failure fails CLOSED here.
+    try:
+        protected = set(derive_guardian_protected_files(repo_root, from_git=True))
+    except Exception as exc:  # noqa: BLE001 - fail CLOSED for the guardian below, never a silent allow
+        derive_error = f"{type(exc).__name__}: {exc}"[:160]
+        if failure:
+            return []  # the staged diff itself was UNMEASURED above; do not stack a second refusal on it
+        _telemetry("unmeasured", f"protected-set derivation failed: {derive_error}")
+        return [{"product": "<repo>", "file": "<protected set>", "severity": "high",
+                 "issue": f"cannot derive the guardian-protected tool set ({derive_error}); refusing while this session "
+                          "holds the release-steward lease (fail closed). KB § PATTERNS/common/gate-methodology-sync.md"}]
+    hits = sorted(p for p in staged if p in protected)
     if not hits:
         return []
-
-    holds, lease, why = guardian_holds_lease(session_id, lease_root, now)
-
-    def _event(outcome: str, reason: str) -> None:
-        _telemetry(outcome, reason, ",".join(hits))
-
-    if not holds:
-        _event("allow", f"not-refused: {why}")
-        return []
     holder = (lease or {}).get("session_name") or str((lease or {}).get("session_id"))[:8]
-    _event("deny", "guardian-staged-steward-tooling")
+    _telemetry("deny", "guardian-staged-steward-tooling", ",".join(hits))
     return [{
         "product": "<repo>",
         "file": ", ".join(hits),

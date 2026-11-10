@@ -1431,3 +1431,47 @@ def test_run_action_passes_run_scoped_through_to_request(world, tmp_path):
     store._scoped_check = None
     res = RS.run_action("request", "sess-1", store=store, slug="x", run_scoped=True)
     assert res["ok"] is False and "run_scoped" in res["error"]  # it reached request() (and was refused there), not dropped
+
+
+# ── the derived / CI-parity checks run in a SANDBOX (throwaway HOME, no git config, no real ~/.noctus) ────────
+
+_WRITES_HOME_CHECK = (
+    "import os, pathlib, subprocess, sys\n"
+    "h = pathlib.Path(os.environ['HOME']); (h / '.noctus').mkdir(parents=True, exist_ok=True)\n"
+    "(h / '.noctus' / 'x').write_text('delivery wrote me')\n"
+    "assert 'NOCTUS_STEWARD_DIR' not in os.environ  # the inherited real dir was dropped\n"
+    "assert os.environ['GIT_CONFIG_NOSYSTEM'] == '1'\n"
+    "assert pathlib.Path(os.environ['GIT_CONFIG_GLOBAL']).read_text() == ''\n"
+    "assert not any(k.startswith('GIT_CONFIG_KEY_') for k in os.environ)\n"
+    "print(h)\n"
+)
+
+
+def test_a_delivery_that_writes_home_noctus_writes_the_sandbox_not_the_real_home(world, tmp_path):
+    real_home = tmp_path / "real-home"
+    (real_home / ".noctus").mkdir(parents=True)
+    _wt, head = _seed_branch(world)
+    arts = (("writes-home", ("{python}", "-c", _WRITES_HOME_CHECK)),)
+    base = {**os.environ, "HOME": str(real_home), "NOCTUS_STEWARD_DIR": str(real_home / ".noctus"),
+            "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": "/nope"}
+    res = RS.export_derived_check(world.repo, artifacts=arts, base_env=base)(head)
+    assert res["ok"] and res["measured"], res
+    assert sorted(p.name for p in (real_home / ".noctus").iterdir()) == []  # the real ~/.noctus is untouched
+    assert str(real_home) not in res["results"][0]["detail"]  # it ran with the throwaway HOME
+
+
+def test_sandbox_setup_failure_is_unmeasured_never_skipped(world, monkeypatch):
+    _wt, head = _seed_branch(world)
+
+    def boom(env, home, ci_env=None):
+        raise OSError("disk full")
+    monkeypatch.setattr(RS, "sandbox_env", boom)
+    res = RS.export_derived_check(world.repo, artifacts=_ARTIFACTS)(head)
+    assert not res["ok"] and not res["measured"] and "sandbox setup failed" in res["detail"]
+
+
+def test_sandbox_env_points_home_into_the_throwaway_dir_and_drops_state_dirs(tmp_path):
+    env = RS.sandbox_env({"PATH": "/usr/bin", "HOME": "/real"}, tmp_path)
+    assert env["HOME"] == str(tmp_path) and env["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert not [k for k in env if k.startswith("NOCTUS_")]
+    assert Path(env["GIT_CONFIG_GLOBAL"]).read_text() == ""
