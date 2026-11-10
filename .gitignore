@@ -62,6 +62,9 @@ venv/
 dist/
 build/
 *.egg-info/
+# tsc incremental-build cache (`tsc -b` writes it beside each tsconfig); left
+# untracked it made a landed worktree read dirty, so cleanup refused it (2026-11-09).
+*.tsbuildinfo
 
 # IDE
 .vscode/
