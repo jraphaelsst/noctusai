@@ -72,6 +72,12 @@ logger = logging.getLogger(__name__)
 _INVITATIONS_TABLE = "invitations"
 
 
+def _breaker_degraded():
+    from noctusai_lib.primitives.supabase_breaker import get_breaker
+
+    return get_breaker().degraded
+
+
 def _create_health_router(product_name: str, version: str = "0.1.0") -> APIRouter:
     router = APIRouter(tags=["Health"])
 
@@ -93,6 +99,8 @@ def _create_health_router(product_name: str, version: str = "0.1.0") -> APIRoute
             "status": "ok",
             "version": version,
             "product": product_name,
+            # Supabase request breaker running without Redis (trips not persisted, fleet key unreadable)
+            "breaker_degraded": _breaker_degraded(),
             "startup_hook_error": getattr(
                 request.app.state, "startup_hook_error", None
             ),

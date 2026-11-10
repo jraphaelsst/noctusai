@@ -50,7 +50,16 @@ from noctusai_lib.domain.jobs.repo import (
     RescheduleLater,
 )
 from noctusai_lib.domain.jobs import wake as _wake
-from noctusai_lib.primitives.supabase_breaker import Breaker, BreakerOpen, get_breaker, source_scope
+from noctusai_lib.primitives.supabase_breaker import (
+    DEFAULT_JOB_CALL_CAP,
+    Breaker,
+    BreakerOpen,
+    JobBudgetExceeded,
+    call_tally,
+    get_breaker,
+    job_scope,
+    source_scope,
+)
 from noctusai_lib.domain.jobs.retry_policy import (
     DEFAULT_POLICY,
     RetryPolicy,
@@ -94,21 +103,20 @@ class Worker:
         idle_sleep: Callable[[float, asyncio.Event | None], Awaitable[None]] | None = None,
         breaker: Breaker | None = None,
         held_poll_seconds: float = 15.0,
-        claim_credit_calls: int = 3,
-        job_credit_calls: int = 200,
+        job_call_cap: int = DEFAULT_JOB_CALL_CAP,
     ) -> None:
         self._repo = repo
-        # Supabase request breaker (2026-11-10): every Supabase call this worker's loop and handlers make is counted
-        # under `worker:<job types>`; a runaway rate trips it and the loop PARKS (zero Supabase calls) until a human
-        # re-arms. `breaker=None` -> the process breaker. KB § PATTERNS/backend/supabase-request-breaker.md
-        # Budget rule (design risk: a per-WORKER source would park every job type on a legit burst): idle/claim calls
-        # count under `worker:<types>:loop`; each job's own calls under `worker:<type>`. Every PROCESSED job refunds
-        # `claim_credit_calls` (claim + mark + heartbeat) to the loop and, when it finished its work, `job_credit_calls`
-        # to its type. Base budget stays 300/5 min (+2,000/h): an idle poller, a retry storm or a handler that burns
-        # calls without finishing jobs trips fast; a worker draining a backlog earns 200 calls of headroom per job.
+        # Supabase request breaker (2026-11-10, redesigned round 4). Two separate things are counted:
+        #  (a) LOOP calls: the claim + claim-gate calls of an EMPTY poll (nothing claimed) are billed to the holdable
+        #      source `worker:<job types>` — the incident shape (idle polling). Exceeding its budget (300/5 min,
+        #      2,000/h) PARKS the loop (zero Supabase calls) until a human re-arms. A poll that claims a job is
+        #      productive and bills nothing: there are NO credits.
+        #  (b) JOB calls: everything one job's handler does is capped per JOB (`job_call_cap`, absolute): past it the
+        #      job is dead-lettered with the reason — never the type, never the other tenants.
+        # All other attribution (claim phase, handlers, bookkeeping) is alert-only. `breaker=None` -> process breaker.
+        # KB § PATTERNS/backend/supabase-request-breaker.md
         self._breaker = breaker
-        self._claim_credit = claim_credit_calls
-        self._job_credit = job_credit_calls
+        self._job_call_cap = job_call_cap
         self._held_poll = held_poll_seconds
         self._breaker_wake: asyncio.Event | None = None
         # Pause switch, consulted before EVERY claim: `False` ⇒ claim
@@ -154,13 +162,19 @@ class Worker:
         """Claim one job and dispatch it. Returns True if a job was
         processed (regardless of success/failure), False if the queue
         was empty (or the claim gate is closed)."""
-        if not await self.claim_allowed():
-            return False
-        job = await self._repo.claim_next(
-            worker_id=self._worker_id,
-            job_types=self._job_types,
-            lease_seconds=self._lease_seconds,
-        )
+        breaker = self._breaker or get_breaker()
+        job = None
+        with call_tally() as tally, source_scope("claim:" + ",".join(self._job_types)):
+            try:
+                if await self.claim_allowed():
+                    job = await self._repo.claim_next(
+                        worker_id=self._worker_id,
+                        job_types=self._job_types,
+                        lease_seconds=self._lease_seconds,
+                    )
+            finally:
+                if job is None:  # an EMPTY poll (or a closed gate / failed claim): bill the loop what it cost
+                    breaker.record_call(self.breaker_source, n=max(1, tally.n))
         if job is None:
             return False
 
@@ -177,22 +191,17 @@ class Worker:
             await self._repo.mark_failed(job.id, error, dead_letter=True)
             return True
 
-        done = await self._dispatch(job, handler)
-        breaker = self._breaker or get_breaker()
-        breaker.credit(self.breaker_source, self._claim_credit)
-        if done:
-            breaker.credit(f"worker:{job.type}", self._job_credit)
+        await self._dispatch(job, handler)
         return True
 
     @property
     def breaker_source(self) -> str:
-        """The loop's breaker source: ``worker:<sorted job types>:loop`` (claims, idle polls, bookkeeping)."""
-        return "worker:" + ",".join(self._job_types) + ":loop"
+        """The loop's HOLDABLE breaker source: ``worker:<sorted job types>`` (empty polls only)."""
+        return "worker:" + ",".join(self._job_types)
 
     @property
     def breaker_sources(self) -> list[str]:
-        """Every source this worker depends on: the loop's plus one ``worker:<type>`` per job type."""
-        return [self.breaker_source, *(f"worker:{t}" for t in self._job_types)]
+        return [self.breaker_source]
 
     async def claim_allowed(self) -> bool:
         """The claim gate's current answer (`True` when there is no gate)."""
@@ -236,7 +245,7 @@ class Worker:
             breaker.subscribe(src, lambda: loop.call_soon_threadsafe(bk_wake.set)) for src in self.breaker_sources
         ]
         try:
-            with source_scope(source):
+            with source_scope("loop:" + ",".join(self._job_types)):
                 # A held source does NOT start on boot: the check below reads Redis (force) before the first claim.
                 hold = await self._hold(breaker, force=True)
                 while True:
@@ -402,10 +411,14 @@ class Worker:
         heartbeat_task = asyncio.ensure_future(self._heartbeat_loop(job.id))
         try:
             try:
-                # Each job type is its own breaker source (`worker:<type>`); the bookkeeping calls below run under the
-                # LOOP's source, so releasing a job of a held type is never refused by that same hold.
-                with source_scope(f"worker:{job.type}"):
+                # Each job runs under an alert-only `job:<type>` source and its own ABSOLUTE call cap; the bookkeeping
+                # calls below run outside the job scope, so finishing a job is never refused by its own cap.
+                with source_scope(f"job:{job.type}"), job_scope(self._job_call_cap):
                     await handler(job)
+            except JobBudgetExceeded as exc:
+                logger.error("worker.job_call_cap job_id=%s type=%s %s", job.id, job.type, exc)
+                await self._repo.mark_failed(job.id, f"supabase call cap exceeded: {exc}", dead_letter=True)
+                return False
             except BreakerOpen as exc:
                 logger.warning(
                     "worker.released_by_breaker job_id=%s type=%s source=%s",

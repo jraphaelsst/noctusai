@@ -26,7 +26,7 @@ from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth.platform import require_platform_admin
 from noctusai_lib.api.auth.session import make_api_token_resolver, make_get_auth_context
 from noctusai_lib.api.schemas import StrictHttpModel
-from noctusai_lib.primitives.supabase_breaker import BREAKER_SOURCE_RE, get_breaker
+from noctusai_lib.primitives.supabase_breaker import BREAKER_REASON_RE, BREAKER_SOURCE_RE, get_breaker
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +36,17 @@ _TIER_REASON = "platform-admin only: require_platform_admin (noctus_users.role =
 _SESSION_COOKIE = "nai_session"
 
 
+_REASON_PATTERN = BREAKER_REASON_RE.pattern  # printable only: no control characters
+
+
 class RearmBody(StrictHttpModel):
     source: str = Field(min_length=1, max_length=120)
-    reason: str = Field(min_length=1, max_length=300)
+    reason: str = Field(min_length=1, max_length=300, pattern=_REASON_PATTERN)
 
 
 class TripBody(StrictHttpModel):
     source: str = Field(min_length=1, max_length=120)
-    reason: str = Field(min_length=1, max_length=300)
+    reason: str = Field(min_length=1, max_length=300, pattern=_REASON_PATTERN)
 
 
 def _source_or_422(source: str) -> str:

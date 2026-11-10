@@ -225,3 +225,30 @@ def test_lifespan_startup_hook_runs_under_the_startup_breaker_source(minimal_set
         pass
     assert seen == ["startup"]
     assert current_source() == "unattributed"
+
+
+def test_source_middleware_is_the_outermost_and_anonymous_401_posts_hold_nothing(minimal_settings):
+    """P1-2: `http` is set by the OUTERMOST middleware; 400 anonymous 401 POSTs leave every source un-held."""
+    from noctusai_lib.api.supabase_source import SupabaseSourceMiddleware
+    from noctusai_lib.primitives.supabase_breaker import get_breaker
+
+    app = _app(minimal_settings)
+    assert app.user_middleware[0].cls is SupabaseSourceMiddleware, "must be the outermost (added last)"
+    client = TestClient(app)
+    codes = {client.post("/api/platform/supabase-breaker/rearm", json={"source": "worker:a", "reason": "x"}).status_code
+             for _ in range(400)}
+    assert codes == {401}
+    status = get_breaker().status()
+    assert status["held"] == {} and status["fleet"] is None
+
+
+def test_health_reports_breaker_degraded(minimal_settings):
+    from noctusai_lib.primitives.supabase_breaker import get_breaker
+
+    app = _app(minimal_settings)
+    get_breaker().degraded = "no REDIS_URL: test"
+    try:
+        body = TestClient(app).get("/api/health").json()
+    finally:
+        get_breaker().degraded = None
+    assert body["breaker_degraded"] == "no REDIS_URL: test"

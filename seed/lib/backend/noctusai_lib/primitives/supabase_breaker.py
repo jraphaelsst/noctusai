@@ -31,6 +31,7 @@ import json
 import logging
 import os
 import re
+import socket
 import threading
 import time
 from collections import deque
@@ -48,10 +49,18 @@ __all__ = [
     "BREAKER_KEY_PREFIX",
     "BREAKER_SOURCE_RE",
     "BreakerOpen",
+    "BREAKER_REASON_RE",
+    "DEFAULT_JOB_CALL_CAP",
+    "JobBudgetExceeded",
+    "MAX_BUDGET_CALLS",
+    "call_tally",
+    "is_holdable",
+    "job_scope",
     "STARTUP_SOURCE",
     "DEFAULT_STARTUP_RULES",
     "UNATTRIBUTED_SOURCE",
     "guard",
+    "refresh_loop",
     "BREAKER_FLEET_KEY",
     "DEFAULT_BACKGROUND_RULES",
     "DEFAULT_HTTP_RULE",
@@ -91,7 +100,17 @@ BREAKER_AUDIT_KEY = f"{BREAKER_KEY_PREFIX}audit"
 BREAKER_AUDIT_CAP = 1000
 #: THE shape of a holdable source name (routes, MCP tool and the Redis key all validate against this one regex;
 #: `fleet` and `http` are deliberately NOT in it — the fleet key is ops-only, http is never held).
-BREAKER_SOURCE_RE = re.compile(r"^(?:(?:worker|scheduler|gate):[A-Za-z0-9_.,:\-]{1,100}|unattributed|startup)$")
+#: ONLY named, owned loops can be held: a Worker loop (`worker:<types>`) or a scheduler job (`scheduler:<job>`). `http`,
+#: `startup`, `unattributed`, `bg:*`, `job:*`, `egress:*` ... are ALERT-ONLY by construction (tech-lead decision, round 4):
+#: request-path or user-facing work can never be refused because of a source it did not name.
+BREAKER_SOURCE_RE = re.compile(r"^(?:worker|scheduler):[A-Za-z0-9_.,:\-]{1,100}$")
+#: a human-supplied reason: printable, no control characters (log/alert/terminal-injection safe)
+BREAKER_REASON_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,300}$")
+#: a configured budget can never exceed this (a "budget" of 10**9 is a disabled breaker)
+MAX_BUDGET_CALLS = 20_000
+#: one JOB (inside a Worker handler or a scheduler run) may make at most this many Supabase calls; the job is failed
+#: with a reason, never the type or the other tenants. Absolute: configured per Worker, never credited.
+DEFAULT_JOB_CALL_CAP = 2000
 _MAX_WINDOW_S = 3600
 
 
@@ -117,8 +136,19 @@ DEFAULT_HTTP_RULE = BudgetRule(300, 6000)
 DEFAULT_STARTUP_RULES: tuple[BudgetRule, ...] = (BudgetRule(60, 1500), BudgetRule(3600, 2000))
 
 
-def is_background(source: str) -> bool:
-    return source != HTTP_SOURCE
+def is_holdable(source: str) -> bool:
+    """True only for the named, owned loops that may be held: ``worker:*`` and ``scheduler:*``."""
+    return source.startswith(("worker:", "scheduler:"))
+
+
+is_background = is_holdable  # historical name
+
+
+#: alert-only sources that are not http/startup/unattributed: spawn_background (`bg:*`), per-job (`job:*`), claim
+#: phases, non-REST egress (`egress:*`).
+DEFAULT_ALERT_RULES: tuple[BudgetRule, ...] = (BudgetRule(300, 3000), BudgetRule(3600, 20000))
+#: stray unscoped work alerts early (it is exactly the incident shape) but is never held.
+DEFAULT_UNATTRIBUTED_RULES: tuple[BudgetRule, ...] = (BudgetRule(300, 300), BudgetRule(3600, 2000))
 
 
 @dataclass
@@ -138,7 +168,11 @@ class BreakerConfig:
             return self.overrides[source]
         if source == STARTUP_SOURCE:
             return self.startup_rules
-        return (self.http_rule,) if source == HTTP_SOURCE else self.background_rules
+        if source == HTTP_SOURCE:
+            return (self.http_rule,)
+        if source == UNATTRIBUTED_SOURCE:
+            return DEFAULT_UNATTRIBUTED_RULES
+        return self.background_rules if is_holdable(source) else DEFAULT_ALERT_RULES
 
     @classmethod
     def from_env(cls, environ: Optional[dict[str, str]] = None) -> "BreakerConfig":
@@ -151,6 +185,9 @@ class BreakerConfig:
                 str(src): tuple(BudgetRule(int(w), int(m)) for w, m in rules)
                 for src, rules in parsed.items()
             }
+            for src, rules in overrides.items():
+                if any(r.max_calls > MAX_BUDGET_CALLS for r in rules):
+                    raise ValueError(f"{src}: max_calls above the ceiling of {MAX_BUDGET_CALLS}")
             if any(not rules for rules in overrides.values()):
                 raise ValueError("a source override needs at least one rule")
         except Exception as exc:  # noqa: BLE001 -- loud, then the canonical defaults (never a silent partial config)
@@ -210,6 +247,55 @@ class BreakerOpen(RuntimeError):
         super().__init__(f"supabase breaker is OPEN for {source!r}: {reason or 'held until a human re-arms'}")
         self.source = source
         self.reason = reason
+
+
+class JobBudgetExceeded(RuntimeError):
+    """One JOB made more Supabase calls than its absolute cap: that job fails (the Worker dead-letters it with this
+    reason; a scheduler run records an error). Never the type, never the other tenants."""
+
+    def __init__(self, calls: int, cap: int) -> None:
+        super().__init__(f"job exceeded its Supabase call cap: {calls} calls >= {cap}")
+        self.calls, self.cap = calls, cap
+
+
+class _JobBudget:
+    __slots__ = ("count", "cap")
+
+    def __init__(self, cap: int) -> None:
+        self.count, self.cap = 0, cap
+
+
+class _Tally:
+    __slots__ = ("n",)
+
+    def __init__(self) -> None:
+        self.n = 0
+
+
+_JOB: contextvars.ContextVar[Optional[_JobBudget]] = contextvars.ContextVar("noctus_supabase_job", default=None)
+_TALLY: contextvars.ContextVar[Optional[_Tally]] = contextvars.ContextVar("noctus_supabase_tally", default=None)
+
+
+@contextlib.contextmanager
+def job_scope(cap: int = DEFAULT_JOB_CALL_CAP) -> Iterator[_JobBudget]:
+    """Everything inside is ONE job: call number ``cap``+1 raises :class:`JobBudgetExceeded` (checked in ``guard``)."""
+    budget = _JobBudget(cap)
+    token = _JOB.set(budget)
+    try:
+        yield budget
+    finally:
+        _JOB.reset(token)
+
+
+@contextlib.contextmanager
+def call_tally() -> Iterator[_Tally]:
+    """Counts the Supabase calls made inside (the Worker uses it to bill an EMPTY poll — claim + gate — to the loop)."""
+    tally = _Tally()
+    token = _TALLY.set(tally)
+    try:
+        yield tally
+    finally:
+        _TALLY.reset(token)
 
 
 class BreakerAlertNotConfigured(RuntimeError, IntegrationNotConfigured):
@@ -273,6 +359,9 @@ class InMemoryBreakerStore:
 
 
 # --- the breaker -----------------------------------------------------------------------------------------------
+
+
+_HOST = socket.gethostname()
 
 
 def _iso(ts: float) -> str:
@@ -347,7 +436,8 @@ class Breaker:
         self.pending_alerts: list[tuple[str, str, str]] = []  # (dedupe_key, subject, body)
         self._alerted: set[str] = set()
         self._indexed: set[str] = set()
-        self._http_alerted_at: Optional[float] = None
+        self.degraded: Optional[str] = None
+        self._alert_only_at: dict[str, float] = {}
         self.sent_alerts = 0
 
     # ---- configuration ----------------------------------------------------------------------------------------
@@ -355,6 +445,10 @@ class Breaker:
     @property
     def key_prefix(self) -> str:
         return f"{BREAKER_KEY_PREFIX}{self.slug}:"
+
+    def marker_key(self, source: str) -> str:
+        """The re-arm marker a human re-arm leaves: `{tripped_at, by, reason}` of the trip it released."""
+        return f"{self.key_prefix}rearm:{source}"
 
     def key_for(self, source: str) -> str:
         return f"{self.key_prefix}{source}"
@@ -377,10 +471,17 @@ class Breaker:
 
     # ---- counting (the hot path) ------------------------------------------------------------------------------
 
-    def record_call(self, source: Optional[str] = None) -> None:
-        """Count ONE Supabase REST call. In-memory only: no network, O(rules); the budget is checked on EVERY call
-        against running per-window bases (rebuilt once per second), so a tight loop trips at exactly budget+1."""
+    def record_call(self, source: Optional[str] = None, n: int = 1) -> None:
+        """Count ``n`` Supabase calls (default 1). In-memory only: no network, O(rules); the budget is checked on EVERY
+        call against running per-window bases (rebuilt once per second), so a tight loop trips at exactly budget+1.
+        A HOLDABLE source (worker loop / scheduler job) trips; every other source only ALERTS."""
         src = source or _SOURCE.get()
+        tally = _TALLY.get()
+        if tally is not None:
+            tally.n += n
+        job = _JOB.get()
+        if job is not None:
+            job.count += n
         now = int(self._clock())
         verdict: Optional[tuple[BudgetRule, int]] = None
         with self._lock:
@@ -393,9 +494,9 @@ class Breaker:
                     dq.popleft()
                 rules = self._config.rules_for(src)
                 self._rules[src] = rules
-                self._bases[src] = [sum(n for sec, n in dq if sec > now - r.window_s) for r in rules]
+                self._bases[src] = [sum(c for sec, c in dq if sec > now - r.window_s) for r in rules]
                 dq.append([now, 0])
-            dq[-1][1] += 1
+            dq[-1][1] += n
             cur = dq[-1][1]
             for rule, base in zip(self._rules[src], self._bases[src]):
                 total = base + cur
@@ -406,38 +507,27 @@ class Breaker:
         rule, count = verdict
         reason = f"{count} Supabase calls in {rule.window_s}s exceeds the budget of {rule.max_calls}"
         rate = count / rule.window_s
-        if is_background(src):
+        if is_holdable(src):
             self.trip(src, reason=reason, rate=rate, window=rule.window_s)
         else:
-            self._alert_http(reason, rate, rule.window_s)
-
-    def credit(self, source: str, calls: int) -> None:
-        """Refund ``calls`` from ``source``'s window: PRODUCTIVE work earns its own headroom. The jobs Worker credits a
-        job type per processed job, so a busy-but-productive worker (backlog drain, webhook surge) is never tripped
-        while a loop that burns calls without finishing work still is."""
-        if calls <= 0:
-            return
-        now = int(self._clock())
-        with self._lock:
-            dq = self._buckets.setdefault(source, deque())
-            if not dq or dq[-1][0] != now:
-                self._rules[source] = self._config.rules_for(source)
-                self._bases[source] = [sum(n for sec, n in dq if sec > now - r.window_s) for r in self._rules[source]]
-                dq.append([now, 0])
-            dq[-1][1] -= calls
+            self._alert_only(src, reason, rate, rule.window_s)
 
     def is_open(self, source: str) -> bool:
-        """Hot-path hold check (in-memory, lock-free dict reads, no IO). ``http`` is never open."""
-        if source == HTTP_SOURCE:
+        """Hot-path hold check (in-memory, lock-free dict reads, no IO). Only holdable sources can be open."""
+        if not is_holdable(source):
             return False
         return source in self._trips or self._fleet is not None or source in self._remote_held
 
     def guard(self, source: Optional[str] = None) -> None:
-        """Raise :class:`BreakerOpen` when the (current) background source is held."""
+        """Raise :class:`BreakerOpen` when the (current) HOLDABLE source is held, and :class:`JobBudgetExceeded` when
+        the current job is past its absolute call cap. Everything else passes."""
         src = source or _SOURCE.get()
         if self.is_open(src):
             hold = self.hold_reason(src) or {}
             raise BreakerOpen(src, str(hold.get("reason", "")))
+        job = _JOB.get()
+        if job is not None and job.count >= job.cap:
+            raise JobBudgetExceeded(job.count, job.cap)
 
     def count(self, source: str, window_s: int) -> int:
         """Calls recorded for ``source`` in the last ``window_s`` seconds (diagnostics/tests)."""
@@ -449,8 +539,10 @@ class Breaker:
 
     def trip(self, source: str, *, reason: str, rate: float = 0.0, window: int = 0, by: str = "auto") -> bool:
         """Hold ``source`` (idempotent). Returns True when this call created the trip."""
-        if not is_background(source):
-            raise ValueError("the http source is alert-only: it can never be tripped")
+        if by != "auto" and not BREAKER_REASON_RE.match(reason or ""):
+            raise ValueError("reason must be printable text without control characters (max 300)")
+        if not is_holdable(source):
+            raise ValueError(f"{source!r} is alert-only: only worker:* and scheduler:* sources can be held")
         with self._lock:
             if source in self._trips:
                 return False
@@ -471,7 +563,8 @@ class Breaker:
 
     def audit(self, op: str, key: str, *, by: str, reason: str) -> None:
         """Best-effort audit row (who/why/when) on the capped Redis list; the MCP tool writes the same shape."""
-        row = {"op": op, "key": key, "by": by, "reason": reason, "at": _iso(self._wall())}
+        row = {"op": op, "key": key, "claimed_by": by, "reason": reason, "at": _iso(self._wall()),
+               "host": _HOST, "pid": os.getpid()}
         if self._store is None:
             return
         try:
@@ -506,17 +599,21 @@ class Breaker:
                    if store_error else ""))
         self._alert(f"trip:{self.slug}:{trip.source}:{trip.tripped_at}", subject, body)
 
-    def _alert_http(self, reason: str, rate: float, window: int) -> None:
+    def _alert_only(self, source: str, reason: str, rate: float, window: int) -> None:
+        """Alert (never stop) for a source that is not a named, owned loop. One alert per source per cooldown."""
         now = self._clock()
         with self._lock:
-            if self._http_alerted_at is not None and now - self._http_alerted_at < self._http_cooldown:
+            last = self._alert_only_at.get(source)
+            if last is not None and now - last < self._http_cooldown:
                 return
-            self._http_alerted_at = now
-        logger.error("breaker: http (user traffic) %s in %s — ALERT only, never stopped", reason, self.slug)
-        self._io(self._alert, f"http:{self.slug}:{int(self._wall())}",
-                 f"[NoctusAI] Supabase http traffic high: {self.slug}",
-                 f"Product: {self.slug}\nSource: http (request handlers; never stopped)\nReason: {reason}\n"
-                 f"Rate: {rate:.2f} calls/s over {window}s\nEvaluate whether this is a loop or a real traffic spike.")
+            self._alert_only_at[source] = now
+        logger.error("breaker: %s %s in %s — ALERT only, this source is never stopped", source, reason, self.slug)
+        self._io(self._alert, f"alert-only:{self.slug}:{source}:{int(self._wall())}",
+                 f"[NoctusAI] Supabase traffic high: {self.slug} {source}",
+                 f"Product: {self.slug}\nSource: {source} (alert-only: request handlers, boot and unattributed work "
+                 f"are never stopped)\nReason: {reason}\nRate: {rate:.2f} calls/s over {window}s\n"
+                 "Evaluate whether this is a loop (a create_task / Thread without source_scope or spawn_background) "
+                 "or a real traffic spike.")
 
     # ---- alert (dedupe + retry; failure is loud and kept) ------------------------------------------------------
 
@@ -632,7 +729,10 @@ class Breaker:
             return
         with self._lock:
             sources = sorted(self._known | set(force_sources) | set(self._trips))
-        keys = [BREAKER_FLEET_KEY] + [self.key_for(s) for s in sources]
+        with self._lock:
+            marker_sources = sorted(s for s, t in self._trips.items() if t.persisted)
+        keys = ([BREAKER_FLEET_KEY] + [self.key_for(s) for s in sources]
+                + [self.marker_key(s) for s in marker_sources])
         try:
             values = self._store.mget(keys)
         except Exception as exc:  # noqa: BLE001 -- fail OPEN by design, never silently
@@ -654,21 +754,34 @@ class Breaker:
             if self._store_down:
                 logger.warning("breaker: Redis reachable again for %s", self.slug)
             self._store_down = False
-            fleet_raw, per_source = values[0], dict(zip(sources, values[1:]))
+            fleet_raw = values[0]
+            per_source = dict(zip(sources, values[1:1 + len(sources)]))
+            markers = dict(zip(marker_sources, values[1 + len(sources):]))
             self._fleet = _parse_trip("fleet", fleet_raw) if fleet_raw else None
             if self._fleet is not None:
                 self._fleet.pop("source", None)
             self._remote_held = {s: _parse_trip(s, v) for s, v in per_source.items() if v and s not in self._trips}
             settled = self._clock() - 2 * self._fleet_ttl
-            released = [s for s, t in self._trips.items()
+            vanished = [s for s, t in self._trips.items()
                         if t.persisted and t.persisted_at <= settled and per_source.get(s) is None]
             woke: list[Callable[[], None]] = []
             to_index: list[str] = []
-            for s in released:  # a human re-armed it elsewhere (MCP tool): the key is gone -> local trip released
-                del self._trips[s]
-                self._alerted = {a for a in self._alerted if not a.startswith(f"trip:{self.slug}:{s}:")}
-                logger.warning("breaker: %s re-armed (key removed) — the source may start again", s)
-                woke.extend(self._subs.get(s, ()))
+            rewrite: list[Trip] = []
+            del_markers: list[str] = []
+            for s in vanished:
+                trip = self._trips[s]
+                marker = _parse_trip(s, markers[s]) if markers.get(s) else None
+                if marker is not None and marker.get("tripped_at") == trip.tripped_at:
+                    # a human re-armed THIS trip elsewhere (the matching marker proves it): release
+                    del self._trips[s]
+                    self._alerted = {a for a in self._alerted if not a.startswith(f"trip:{self.slug}:{s}:")}
+                    logger.warning("breaker: %s re-armed by %s — the source may start again", s, marker.get("by"))
+                    woke.extend(self._subs.get(s, ()))
+                    del_markers.append(s)
+                else:
+                    # the key vanished with NO matching re-arm marker (flush / tampering / expiry): a persisted hold is
+                    # never silently released — rewrite the key and alert
+                    rewrite.append(trip)
             for s, rem in self._remote_held.items():
                 if s not in self._trips:
                     woke.extend(self._subs.get(s, ()))
@@ -678,8 +791,36 @@ class Breaker:
                     woke.extend(subs)
         for src in to_index:  # network: outside the lock
             self._index_observed(src)
+        for s in del_markers:
+            with contextlib.suppress(Exception):
+                self._store.delete(self.marker_key(s))
+        for trip in rewrite:
+            logger.critical("breaker: the key for held source %s VANISHED without a re-arm marker — rewriting it "
+                            "(a persisted hold is never silently released)", trip.source)
+            try:
+                self._store.set(self.key_for(trip.source), trip.as_json())
+                trip.persisted_at = self._clock()
+            except Exception:  # noqa: BLE001 -- still held in memory; the alert below says so
+                logger.error("breaker: could not rewrite the vanished key for %s", trip.source, exc_info=True)
+            self._io(self._alert, f"vanished:{self.slug}:{trip.source}:{int(self._wall())}",
+                     f"[NoctusAI] Supabase breaker key VANISHED: {self.slug} {trip.source}",
+                     f"The held-source key for {trip.source} disappeared without a re-arm marker (Redis flush, "
+                     "eviction or tampering). The hold was kept and the key rewritten. Investigate before re-arming.")
         for cb in woke:
             self._call_sub(cb)
+
+    def set_degraded(self, reason: str) -> None:
+        """The breaker is running without something it needs (e.g. no Redis: trips are not persisted and the fleet key
+        cannot be read). ONE alert, and `/api/health` reports `breaker_degraded`."""
+        with self._lock:
+            if self.degraded == reason:
+                return
+            self.degraded = reason
+        logger.critical("SUPABASE BREAKER DEGRADED for %s: %s", self.slug, reason)
+        self._io(self._alert, f"degraded:{self.slug}:{reason}",
+                 f"[NoctusAI] Supabase breaker DEGRADED: {self.slug}",
+                 f"{self.slug}: {reason}. Trips are held in memory only and the fleet kill switch cannot be read by "
+                 "this process.")
 
     def _index_observed(self, source: str) -> None:
         """A key an operator set by hand (ops has no SADD) is added to this product's index when first observed, so
@@ -722,6 +863,8 @@ class Breaker:
         """Release ``source`` (or the fleet key with ``source='fleet'``). A human, with a reason — never automatic."""
         if not (by or "").strip() or not (reason or "").strip():
             raise ValueError("re-arm needs who (by) and why (reason)")
+        if not BREAKER_REASON_RE.match(reason) or not reason.strip():
+            raise ValueError("reason must be printable text without control characters (max 300)")
         if source == "fleet":
             raise ValueError("the fleet key is re-armed by ops only (noctus.dev.supabase_breaker): a product's Redis "
                              "identity can read it, never delete it")
@@ -730,6 +873,10 @@ class Breaker:
             local = self._trips.get(source)
         if self._store is not None:
             try:
+                if local is not None and local.persisted:
+                    # other processes holding the same trip release only on this matching marker (P2-4)
+                    self._store.set(self.marker_key(source), json.dumps(
+                        {"tripped_at": local.tripped_at, "by": by, "reason": reason}))
                 self._store.delete(key)
             except Exception:
                 if local is None or local.persisted:
@@ -759,9 +906,28 @@ class Breaker:
                 "held_remote": dict(self._remote_held),
                 "known_sources": sorted(self._known),
                 "store_down": self._store_down,
+                "degraded": self.degraded,
                 "pending_alerts": len(self.pending_alerts),
                 "sent_alerts": self.sent_alerts,
             }
+
+
+async def refresh_loop(stop_event: Any = None, *, interval_s: float = 10.0) -> None:
+    """Seed-owned ticker: one cached Redis MGET per process every ``interval_s`` so a process WITHOUT a Worker or
+    scheduler still sees the fleet key / re-arms / vanished keys. Never Supabase; fails open (see ``refresh``)."""
+    import asyncio
+
+    breaker = get_breaker()
+    while stop_event is None or not stop_event.is_set():
+        # poll-budget: 10s; 1 calls/tick; worst 8640/day; idle=same (one Redis MGET per process, never Supabase)
+        await asyncio.to_thread(breaker.refresh)
+        if stop_event is None:
+            await asyncio.sleep(interval_s)
+            continue
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_s)
+        except asyncio.TimeoutError:
+            pass
 
 
 # --- process singleton -----------------------------------------------------------------------------------------

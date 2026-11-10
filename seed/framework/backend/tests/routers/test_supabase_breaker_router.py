@@ -111,11 +111,11 @@ def test_admin_trips_and_rearms_with_a_reason_and_both_are_audited():
     assert c.post(BASE + "/rearm", json={"source": "worker:a", "reason": "fixed, verified"}, cookies=ck).status_code == 200
     assert get_breaker().hold_reason("worker:a") is None
     audit = [json.loads(r) for r in get_breaker()._store.audit]
-    assert [a["op"] for a in audit] == ["trip", "rearm"] and audit[1]["by"] == str(u.padmin)
+    assert [a["op"] for a in audit] == ["trip", "rearm"] and audit[1]["claimed_by"] == str(u.padmin)
 
 
 @pytest.mark.parametrize("path", ["/rearm", "/trip"])
-@pytest.mark.parametrize("source", ["fleet", "http", "worker:a b", "x" * 200, "rm -rf", "worker:"])
+@pytest.mark.parametrize("source", ["fleet", "http", "startup", "unattributed", "bg:x", "worker:a b", "x" * 200, "rm -rf", "worker:"])
 def test_F9_fleet_http_and_malformed_sources_are_refused(path, source):
     c, cookie, u = _build()
     resp = c.post(BASE + path, json={"source": source, "reason": "x"}, cookies=cookie(u.padmin, "aal2"))
@@ -127,3 +127,12 @@ def test_F9_bodies_are_bounded_and_strict():
     ck = cookie(u.padmin, "aal2")
     assert c.post(BASE + "/trip", json={"source": "worker:a", "reason": "r" * 301}, cookies=ck).status_code == 422
     assert c.post(BASE + "/trip", json={"source": "worker:a", "reason": "x", "oops": 1}, cookies=ck).status_code == 422
+
+
+@pytest.mark.parametrize("reason", ["line\nbreak", "esc\x1b[31m", "nul\x00", "tab\t", "x" * 301])
+@pytest.mark.parametrize("path", ["/rearm", "/trip"])
+def test_P3_5_control_characters_and_overlong_reasons_are_422(reason, path):
+    c, cookie, u = _build()
+    resp = c.post(BASE + path, json={"source": "worker:a", "reason": reason}, cookies=cookie(u.padmin, "aal2"))
+    assert resp.status_code == 422
+    assert get_breaker().hold_reason("worker:a") is None

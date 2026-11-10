@@ -831,15 +831,14 @@ def test_every_wired_tool_name_is_a_registered_steward_class_name():
         assert key in rs._MCP_NAMES.values()
 
 
-# NOC-REMEDIATE[supabase-breaker-steward-name]: the `_MCP_NAMES` entry + classify_tool branch for noctus.dev.supabase_breaker land with feat/guard-supabase-breaker (release_steward.py is guardian-protected); until then the refused-in-tool tests skip and test_every_wired_tool_name_is_a_registered_steward_class_name fails on `_MCP_NAMES` — 2026-11-10
-_BREAKER_GATED = "noctus.dev.supabase_breaker" in rs._MCP_NAMES.values()
+# These tests FAIL until feat/guard-supabase-breaker lands the `_MCP_NAMES` entry + `classify_tool` branch (release_steward.py
+# is guardian-protected): the train ships guard first. A skip would hide exactly the hole they pin.
 
 
 class TestSupabaseBreakerBackstop:
     """rearm|trip with confirm=True is steward-class: a non-steward session is refused INSIDE the tool; status and
     dry-runs never are."""
 
-    @pytest.mark.skipif(not _BREAKER_GATED, reason="waits for feat/guard-supabase-breaker (the _MCP_NAMES entry)")
     @pytest.mark.parametrize("action", ["rearm", "trip"])
     def test_confirm_write_from_a_non_steward_is_refused_in_tool(self, store, action):
         store.claim(STEWARD, "noctusai-51", claude_pid=100)
@@ -847,7 +846,6 @@ class TestSupabaseBreakerBackstop:
                             env={rs.SESSION_ENV: PEER})
         assert r["ok"] is False and r["status"] == "refused_not_steward"
 
-    @pytest.mark.skipif(not _BREAKER_GATED, reason="waits for feat/guard-supabase-breaker (the _MCP_NAMES entry)")
     def test_the_steward_is_allowed(self, store):
         store.claim(STEWARD, claude_pid=100)
         assert rs.tool_refusal("noctus.dev.supabase_breaker", {"action": "rearm", "confirm": True}, store=store,
@@ -856,6 +854,8 @@ class TestSupabaseBreakerBackstop:
     @pytest.mark.parametrize("args", [{"action": "status", "confirm": True}, {"action": "rearm", "confirm": False},
                                       {"action": "trip", "confirm": False}, {"action": "status"}])
     def test_status_and_dry_runs_are_never_refused(self, store, args):
+        # the same tool with confirm=True IS steward-class (so this test can fail if the guard is not registered)
+        assert rs.classify_tool("noctus.dev.supabase_breaker", {"action": "rearm", "confirm": True}) is not None
         store.claim(STEWARD, "noctusai-51", claude_pid=100)
         assert rs.tool_refusal("noctus.dev.supabase_breaker", args, store=store,
                                env={rs.SESSION_ENV: PEER}) is None

@@ -34,7 +34,7 @@ def test_rearm_requires_reason_and_is_dry_run_by_default():
     done = _call(ops, "rearm", source="worker:transcricao", product="social-wiring", reason="fixed", by="ana", confirm=True)
     assert done["rearmed"] and KEY not in ops.data
     audit = json.loads(ops.audit[0])
-    assert audit["by"] == "ana" and audit["reason"] == "fixed" and audit["op"] == "rearm"
+    assert audit["claimed_by"] == "ana" and audit["reason"] == "fixed" and audit["op"] == "rearm"
 
 
 def test_trip_fleet_and_source_validation():
@@ -51,7 +51,7 @@ def test_vps_redis_ops_quotes_every_argument_and_surfaces_failures():
 
     def runner(host, cmd):
         sent.append(cmd)
-        return (1, "", "") if cmd.startswith("test -r") else (0, "", "")  # no ops.pass -> plain redis
+        return (0, "", "") if cmd.startswith("if docker ps") else (0, "", "")  # nothing up, no ops.pass -> plain redis
 
     ops = VpsRedisOps("h", runner=runner)
     ops.set("k;rm", '{"a": "b c"}')
@@ -127,13 +127,14 @@ def test_F11a_ssh_host_is_validated_and_options_are_terminated():
 OPS_PASS = "/opt/noctus/noctusai/deploy/fleet/redis-auth/ops.pass"
 
 
-def _runner(*, has_pass: bool, out: str = "", sent=None, rc_probe: int | None = None):
+def _runner(*, has_pass: bool, out: str = "", sent=None, rc_probe: int | None = None, acl_up: bool | None = None):
     sent = sent if sent is not None else []
 
     def run(host, cmd):
         sent.append(cmd)
-        if cmd.startswith("test -r"):
-            return (rc_probe if rc_probe is not None else (0 if has_pass else 1), "", "")
+        if cmd.startswith("if docker ps"):
+            up = has_pass if acl_up is None else acl_up
+            return (rc_probe if rc_probe is not None else 0, ("ACL_UP\n" if up else "") + ("PASS_OK\n" if has_pass else ""), "")
         return (0, out, "")
 
     return run, sent
@@ -146,7 +147,7 @@ def test_acl_branch_authenticates_as_ops_with_the_secret_read_on_the_vps_never_o
     assert cmd.startswith(f'REDISCLI_AUTH="$(cat {OPS_PASS})" docker exec -e REDISCLI_AUTH noctus-redis-acl '
                           "redis-cli --no-auth-warning --user ops set ")
     assert "-a " not in cmd and "--pass" not in cmd.replace("--no-auth-warning", ""), "the secret is never an argument"
-    assert sent[0] == f"test -r {OPS_PASS}"
+    assert sent[0].startswith("if docker ps") and OPS_PASS in sent[0]
 
 
 def test_no_ops_pass_falls_back_to_the_unauthenticated_redis_with_no_auth_flags():
@@ -161,7 +162,7 @@ def test_probe_is_cached_per_instance_and_an_unreachable_host_fails_loud_not_as_
     ops = VpsRedisOps("h", runner=run)
     ops.set("a", "1")
     ops.delete("a")
-    assert sum(1 for c in sent if c.startswith("test -r")) == 1
+    assert sum(1 for c in sent if c.startswith("if docker ps")) == 1
     run2, _ = _runner(has_pass=False, rc_probe=255)
     try:
         VpsRedisOps("h", runner=run2).smembers("k")
@@ -187,8 +188,8 @@ def test_audit_cap_denied_by_the_ops_acl_is_a_loud_warning_not_a_lost_rearm():
 
     def run(host, cmd):
         calls.append(cmd)
-        if cmd.startswith("test -r"):
-            return (0, "", "")
+        if cmd.startswith("if docker ps"):
+            return (0, "ACL_UP\nPASS_OK\n", "")
         if " ltrim " in cmd:
             return (0, "NOPERM this user has no permissions to run the 'ltrim' command\n", "")
         return (0, "", "")
@@ -196,3 +197,73 @@ def test_audit_cap_denied_by_the_ops_acl_is_a_loud_warning_not_a_lost_rearm():
     ops = VpsRedisOps("h", runner=run)
     ops.append_audit(mod.AUDIT_KEY, "{}", 1000)
     assert ops.warnings and "ltrim" in ops.warnings[0].lower()
+
+
+# --- round 4: P3-2 probe the running containers, P3-3 single MGET + filtered/sanitised index, P3-4 identity, P3-5 ----
+
+
+def test_P3_2_a_running_acl_redis_without_a_readable_ops_pass_never_falls_back_to_the_plain_one():
+    run, sent = _runner(has_pass=False, acl_up=True)
+    try:
+        VpsRedisOps("h", runner=run).delete("k")
+    except mod.RedisOpsError as exc:
+        assert "refusing to fall back" in str(exc)
+    else:
+        raise AssertionError("a running noctus-redis-acl must force the ACL path")
+    assert not any("redis-cli" in c for c in sent), "no redis command may have been sent unauthenticated"
+
+
+def test_P3_3_status_uses_one_mget_and_filters_and_sanitises_what_a_product_wrote():
+    slug = "social-wiring"
+    good = f"noctus:breaker:{slug}:worker:transcricao"
+    members = [good, f"noctus:breaker:other:worker:x", f"noctus:breaker:{slug}:worker:a b", "nope",
+               f"noctus:breaker:{slug}:http"] + [f"noctus:breaker:{slug}:worker:t{i}" for i in range(500)]
+    ops = FakeRedisOps({good: json.dumps({"reason": "bad\x1b[31mred\nline" + "x" * 900, "by": "auto"})})
+    ops.smembers = lambda key: members  # a hostile / buggy index
+    calls = []
+    orig = ops.mget
+    ops.mget = lambda keys: (calls.append(keys), orig(keys))[1]
+    out = mod._default_executor(action="status", source="", product=slug, reason="", by="", confirm=False,
+                                ssh_host="h", ops=ops)
+    assert len(calls) == 1, "ONE mget for every key"
+    assert len(calls[0]) <= 1 + mod.MAX_INDEX_MEMBERS and all(k == mod.FLEET_KEY or k.startswith(f"noctus:breaker:{slug}:")
+                                                              for k in calls[0])
+    reason = out["held"][good]["reason"]
+    assert "\x1b" not in reason and "\n" not in reason and len(reason) <= mod.MAX_VALUE_CHARS
+
+
+def test_P3_4_audit_rows_carry_unspoofable_identity_and_a_claimed_by():
+    ops = FakeRedisOps({"noctus:breaker:p:worker:a": json.dumps({"tripped_at": "T1"})})
+    out = mod._default_executor(action="rearm", source="worker:a", product="p", reason="fixed", by="ana", confirm=True,
+                                ssh_host="h", ops=ops)
+    row = json.loads(ops.audit[-1])
+    assert out["rearmed"] and row["claimed_by"] == "ana" and "by" not in row
+    assert {"session", "os_user", "host"} <= set(row)
+    marker = json.loads(ops.data["noctus:breaker:p:rearm:worker:a"])
+    assert marker["tripped_at"] == "T1", "the marker lets the product release exactly this trip"
+
+
+def test_P3_5_reason_with_control_characters_is_refused_in_the_tool():
+    for bad in ("a\nb", "a\x1b[0m", "tab\t", "x" * 301, "   "):
+        out = mod.supabase_breaker("trip", source="worker:a", product="p", reason=bad, confirm=False,
+                                   executor=lambda **kw: {"x": 1})
+        assert out["ok"] is False and out["status"] == "invalid", bad
+
+
+def test_audit_action_reads_both_lists():
+    ops = FakeRedisOps()
+    ops.audit.append(json.dumps({"op": "rearm", "claimed_by": "ana"}))
+    out = mod._default_executor(action="audit", source="", product="p", reason="", by="", confirm=False, ssh_host="h",
+                                ops=ops)
+    assert out["rows"][mod.AUDIT_KEY][0]["claimed_by"] == "ana"
+
+
+def test_P1_3_the_steward_backstop_lives_inside_the_tool_function_not_only_the_mcp_wrapper():
+    import inspect
+
+    assert '_steward.tool_refusal("noctus.dev.supabase_breaker"' in inspect.getsource(mod.supabase_breaker)
+    # status / audit / dry-runs are never refused (an empty store + no session identity = unattributed allow)
+    for action, confirm in (("status", False), ("audit", False), ("rearm", False), ("trip", False)):
+        out = mod.supabase_breaker(action, source="worker:a", product="p", reason="why", confirm=confirm,
+                                   executor=lambda **kw: {"x": 1})
+        assert out.get("status") != "refused_not_steward"

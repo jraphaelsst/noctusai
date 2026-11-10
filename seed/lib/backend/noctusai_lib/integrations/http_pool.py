@@ -51,6 +51,7 @@ _lock = threading.Lock()
 _transport: Optional[httpx.BaseTransport] = None
 
 _SERVICES = ("rest", "auth", "storage")
+_EGRESS_LABELS = ("auth", "storage", "functions")  # bounded breaker labels for non-REST egress
 _CONNECT_STARTS = ("connection.connect_tcp.started", "connection.connect_unix_socket.started",
                    "connection.start_tls.started")
 _CONNECT_ENDS = ("connection.connect_tcp.complete", "connection.connect_unix_socket.complete",
@@ -78,15 +79,20 @@ class TimingTransport(httpx.BaseTransport):
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         service = service_of(request.url)
         if service == "rest":
-            # Supabase request breaker (2026-11-10): the ONE place every seed-built client's PostgREST traffic passes.
-            # A HELD background source is refused here (BreakerOpen), before the call leaves the process, so a job
-            # already in flight fails fast; otherwise the call is counted in memory (no network) under the current
-            # source. The guard may raise; the count must never break a call.
+            # Supabase request breaker: the ONE place every seed-built client's PostgREST traffic passes. `guard`
+            # refuses a held named loop and a job past its absolute call cap (BreakerOpen / JobBudgetExceeded);
+            # the count is in-memory, never raises. Everything that is not a named, owned loop only ALERTS.
             _breaker_guard()
             try:
                 _breaker_record_call()
             except Exception:  # noqa: BLE001 -- the safety net must never break a call
                 logger.error("supabase breaker: count failed", exc_info=True)
+        else:
+            try:  # storage / auth / functions egress is counted too (alert-only: `egress:<service>`)
+                label = request.url.path.lstrip("/").split("/", 1)[0]
+                _breaker_record_call(f"egress:{label if label in _EGRESS_LABELS else 'other'}")
+            except Exception:  # noqa: BLE001
+                logger.error("supabase breaker: egress count failed", exc_info=True)
         if self._record is None:
             from ..api.request_timing import record_db_call as record
         else:

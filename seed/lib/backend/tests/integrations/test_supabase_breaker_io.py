@@ -147,3 +147,9 @@ def test_a_product_cannot_rearm_the_fleet_key():
     with pytest.raises(ValueError):
         b.rearm("fleet", by="ana", reason="x")
     assert r.exists(BREAKER_FLEET_KEY)
+
+
+def test_rearm_marker_and_audit_keys_are_never_indexed_as_held_sources():
+    for k in ("noctus:breaker:p:rearm:worker:a", "noctus:breaker:p:audit", "noctus:breaker:p:index", BREAKER_FLEET_KEY):
+        assert RedisBreakerStore.index_key(k) is None, k
+    assert RedisBreakerStore.index_key("noctus:breaker:p:worker:a") == "noctus:breaker:p:index"

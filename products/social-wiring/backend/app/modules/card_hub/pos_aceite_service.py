@@ -42,12 +42,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any, Callable, Literal, Optional
 from uuid import UUID
 
+from noctusai_lib.primitives.background import run_in_thread
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.primitives.exceptions import AppException, NotFoundError
 from pydantic import BaseModel, Field
@@ -155,7 +155,7 @@ def _em_thread(nome: str, coro_fn: Callable[..., Any], *args: Any, **kwargs: Any
         except Exception:  # noqa: BLE001 - detached; the sweeps recover the row, never silent
             logger.error("pos-aceite: %s falhou", nome, exc_info=True)
 
-    threading.Thread(target=_alvo, name=f"pos-aceite-{nome}", daemon=True).start()
+    run_in_thread(f"pos-aceite-{nome}", _alvo)
 
 
 def agendador_padrao(client: Any, org_id: Any) -> Agendador:

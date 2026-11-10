@@ -17,11 +17,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 from uuid import UUID
 
+from noctusai_lib.primitives.background import run_in_thread
 from noctusai_lib.domain.real_estate import PRODUCT_CODE_SCAN_PATTERN
 from noctusai_lib.primitives.accents import fold_accents
 
@@ -490,7 +490,7 @@ class UploadServiceRetrier:
 
     @staticmethod
     def _thread(fn: Callable[..., None], job_id: UUID) -> None:
-        threading.Thread(target=fn, kwargs={"job_id": job_id}, daemon=True).start()
+        run_in_thread("youtube-chat-command", fn, job_id=job_id)
 
     def retry(self, job_id: str) -> None:
         jid = UUID(job_id)

@@ -101,7 +101,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from noctusai_lib.primitives.supabase_breaker import get_breaker, source_scope
+from noctusai_lib.primitives.supabase_breaker import MAX_BUDGET_CALLS, get_breaker, job_scope, source_scope
 from noctusai_lib.primitives.timeutil import platform_timezone_name
 
 # Silence APScheduler verbose DEBUG logging once at import time. Adopters
@@ -235,7 +235,9 @@ async def _report(run: JobRun) -> None:
         )
 
 
-def _instrument(name: str, fn: Callable[..., Any]) -> Callable[..., Awaitable[Any]]:
+def _instrument(
+    name: str, fn: Callable[..., Any], call_cap: int = MAX_BUDGET_CALLS
+) -> Callable[..., Awaitable[Any]]:
     """Wrap `fn` so every run is timed, classified and reported."""
 
     source = f"scheduler:{name}"
@@ -245,7 +247,7 @@ def _instrument(name: str, fn: Callable[..., Any]) -> Callable[..., Awaitable[An
     async def _run(*args: Any, **kwargs: Any) -> Any:
         # Supabase request breaker (2026-11-10): a held job is DISABLED — it does not run, and (deliberately) writes
         # NO run-ledger row either (that row is itself a Supabase call, i.e. the runaway). Every Supabase call the job
-        # makes — including its own ledger write below — is counted under `scheduler:<job>`.
+        # makes — including its own ledger write below — is counted under `job:scheduler:<job>` (alert-only).
         breaker = get_breaker()
         hold = await breaker.check(source)
         if hold is not None:
@@ -255,7 +257,10 @@ def _instrument(name: str, fn: Callable[..., Any]) -> Callable[..., Awaitable[An
                                 "human re-arms", name, hold.get("scope"), hold.get("reason"))
             return None
         _held_logged.discard(source)
-        with source_scope(source):
+        # The holdable source counts RUNS (a job that fires every second is the runaway shape); what one run does is
+        # alert-only attribution plus an absolute per-run call cap (a failed run, never a held tenant).
+        breaker.record_call(source)
+        with source_scope(f"job:{source}"), job_scope(call_cap):
             return await _run_instrumented(*args, **kwargs)
 
     async def _run_instrumented(*args: Any, **kwargs: Any) -> Any:
@@ -332,6 +337,7 @@ def register(
     seconds: Optional[int] = None,
     cron: Optional[str] = None,
     misfire_grace_time: int = 30,
+    breaker_call_cap: int = MAX_BUDGET_CALLS,
 ) -> None:
     """Register an async job on the module-level scheduler.
 
@@ -401,7 +407,7 @@ def register(
     )
 
     scheduler.add_job(
-        _instrument(name, fn),
+        _instrument(name, fn, breaker_call_cap),
         trigger=trigger,
         id=name,
         replace_existing=True,
@@ -519,7 +525,7 @@ def _publish_job_registry() -> None:
     def _publish() -> None:
         # A bare thread starts with an EMPTY context (-> `unattributed`): name the work (Supabase breaker).
         try:
-            with source_scope("scheduler:_registry"):
+            with source_scope("bg:scheduler-registry"):
                 observer.register_jobs(specs)
         except Exception:  # noqa: BLE001 — boot must not depend on it; loud, not silent
             logger.error(

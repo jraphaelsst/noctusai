@@ -295,7 +295,6 @@ def configure_app(
     app.state.audit_enabled = _audit_enabled
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(RequestMemoMiddleware)  # per-request memo (effective-org resolved once)
-    app.add_middleware(SupabaseSourceMiddleware)  # request-handler Supabase calls are source `http` (breaker)
     app.add_middleware(RequestTimingMiddleware)  # Server-Timing + `req_timing` log line (latency_report)
     app.add_middleware(AuditMiddleware, sink=audit_sink, product_slug=_product_slug, enabled=_audit_enabled)
     # D25: every LLM call made while serving a request is attributed to the
@@ -313,6 +312,9 @@ def configure_app(
     # the handler's real 502/504; only the wire status becomes 503 — the one
     # CloudFlare passes through with our body intact. See its docstring.
     app.add_middleware(EdgeSafeStatusMiddleware)
+    # THE outermost middleware (added LAST): every request-handler Supabase call is source `http` (alert-only), also
+    # for what the middlewares inside it do (audit, auth, rate limit). Product middleware is added after create.
+    app.add_middleware(SupabaseSourceMiddleware)
 
     # -----------------------------------------------------------------------
     # Exception handlers

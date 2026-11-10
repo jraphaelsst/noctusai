@@ -54,7 +54,7 @@ class RedisBreakerStore:
         fleet key and anything else outside a product namespace). A product has RW only on its own namespace and the
         ops identity has no SCAN, so enumeration goes through this index (SADD here, SMEMBERS/SREM by ops)."""
         parts = key.split(":", 3)
-        if len(parts) < 4 or parts[0] != "noctus" or parts[1] != "breaker" or parts[3] in ("index", "audit"):
+        if len(parts) < 4 or parts[0] != "noctus" or parts[1] != "breaker" or parts[3] in ("index", "audit") or parts[3].startswith("rearm:"):
             return None
         return f"noctus:breaker:{parts[2]}:index"
 

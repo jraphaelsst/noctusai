@@ -388,13 +388,22 @@ def create_product_app(
     #     no Supabase), trips persisted in Redis until a human re-arms. Fake store/alerter under pytest.
     #     → KB § PATTERNS/backend/supabase-request-breaker.md
     from noctusai_lib.integrations.supabase_breaker_io import make_breaker_alerter, make_breaker_store
-    from noctusai_lib.primitives.supabase_breaker import STARTUP_SOURCE, configure_breaker, source_scope
+    from noctusai_lib.primitives.background import spawn_background
+    from noctusai_lib.primitives.supabase_breaker import (
+        STARTUP_SOURCE,
+        configure_breaker,
+        refresh_loop,
+        source_scope,
+    )
 
-    configure_breaker(
+    _bk = configure_breaker(
         slug=_product_slug,
         store=make_breaker_store(getattr(settings, "redis_url", None), use_fake=_under_pytest()),
         alerter=make_breaker_alerter(use_fake=_under_pytest()),
     )
+    if not _under_pytest() and not (getattr(settings, "redis_url", None) or os.environ.get("REDIS_URL")):
+        # No Redis: trips are in-memory only and the fleet key cannot be read. One alert + /api/health `breaker_degraded`.
+        _bk.set_degraded("no REDIS_URL: breaker trips are not persisted and the fleet key is unreadable")
 
     # 3c. Owner-notification catalog (2026-11-09) — the gate every owner-facing WhatsApp notification passes:
     #     the owner's per-kind on/off switch (core admin "Notificações") + one ledger row per send in core
@@ -605,9 +614,14 @@ def create_product_app(
                         name,
                         getattr(lifespan_startup, "__name__", lifespan_startup),
                     )
+        _bk_stop = asyncio.Event()
+        if not _under_pytest():
+            # seed-owned 10 s ticker (ONE Redis MGET): processes without a Worker/scheduler still see the fleet key
+            spawn_background("breaker-refresh", refresh_loop(_bk_stop))
         try:
             yield
         finally:
+            _bk_stop.set()
             if lifespan_shutdown:
                 # Same reasoning on the way out, plus one more: an exception
                 # here would skip `shutdown_llm()` below and leak the provider

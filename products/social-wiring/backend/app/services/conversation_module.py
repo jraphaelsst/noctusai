@@ -63,7 +63,7 @@ from noctusai_lib.integrations.redis import (
     make_fake_redis_client,
     make_redis_client,
 )
-from noctusai_lib.primitives.tasks import schedule_coro
+from noctusai_lib.primitives.background import spawn_background
 
 from app.config import settings
 from app.services.julia_agente_service import LEAD_PREFIX
@@ -496,10 +496,11 @@ def start_worker() -> Optional[asyncio.Task]:
         logger.warning("ConversationWorker already running; skipping start.")
         return module.worker_task
 
-    task = schedule_coro(
+    # Explicit breaker source (`bg:social-wiring-conversation-worker`, alert-only): never an anonymous / inherited one.
+    task = spawn_background(
+        "social-wiring-conversation-worker",
         _run_worker_in_thread(module.worker),
         logger=logger,
-        name="social-wiring-conversation-worker",
     )
     module.worker_task = task
     logger.info(
