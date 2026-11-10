@@ -751,6 +751,33 @@ def test_deploy_image_falls_back_to_fresh_subprocess_when_stale(stale_toolkit):
     assert "--deploy-image-confirm" in cmd
 
 
+def test_deploy_image_forwards_redis_auth_off_to_the_fresh_child(stale_toolkit):
+    """The Redis-auth override mode is a plain string: a non-default value must reach the child process, not be
+    dropped (a child that ignored `off` would add the override the operator asked to skip)."""
+    fake_run = _canned_subprocess({"status": "deployed", "exit_code": 0})
+    r = DI.deploy_image("erp-imobiliario", confirm=True, redis_auth="off", subprocess_run=fake_run)
+    assert r["status"] == "deployed" and r["executed_via"] == "fresh_subprocess"
+    assert "--deploy-image-redis-auth=off" in fake_run.calls[0]
+
+
+def test_deploy_image_default_redis_auth_adds_no_flag_and_the_wrapper_never_trips_the_stale_gate(stale_toolkit):
+    """Regression (merge queue RED, run 42908512292): the public wrapper once injected a `_ra_meta` kwarg, which the
+    gate's unmapped-parameter check saw as a non-default value and REFUSED every stale confirm=True deploy."""
+    fake_run = _canned_subprocess({"status": "deployed", "exit_code": 0})
+    r = DI.deploy_image("erp-imobiliario", confirm=True, subprocess_run=fake_run)
+    assert r["status"] == "deployed"
+    assert not any(a.startswith("--deploy-image-redis-auth") for a in fake_run.calls[0])
+
+
+def test_deploy_image_redis_auth_record_injection_is_deliberately_refused_not_dropped(stale_toolkit):
+    """`redis_auth_record` is a test-only injected callable; it cannot cross a process. INTENDED: a non-default
+    value refuses (status refused_stale_toolkit) instead of silently running the child without the recorder."""
+    fake_run = _canned_subprocess({"status": "deployed", "exit_code": 0})
+    r = DI.deploy_image("erp-imobiliario", confirm=True, redis_auth_record=lambda **kw: {"ok": True},
+                        subprocess_run=fake_run)
+    assert r["status"] == "refused_stale_toolkit" and not fake_run.calls
+
+
 # task_branch is the INCIDENT tool: "mutates prod" was never the real line —
 # "can a stale version silently produce a plausible-looking wrong result?"
 # is. A stale `action=start confirm=True` once returned status='started',

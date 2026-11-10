@@ -529,6 +529,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--deploy-image-skip-boot-smoke", action="store_true", help="With --deploy-image: bypass the in-image boot smoke run before the swap — almost always wrong.")
     parser.add_argument("--deploy-image-skip-ancestry-check", action="store_true", help="With --deploy-image: bypass the PROD-PIN ancestry guard (tag='latest'+source='pull' must descend from origin/prod) — almost always wrong.")
     parser.add_argument("--deploy-image-skip-compose-drift-check", action="store_true", help="With --deploy-image: bypass the VPS compose-drift precheck (VPS checkout behind the image's deploy/fleet/) — run noctus.dev.deploy_pull instead; recorded in the result.")
+    parser.add_argument("--deploy-image-redis-auth", choices=["auto", "off"], default="auto", help="With --deploy-image: Redis-auth override mode. auto (default) adds compose.redis-auth.prod.yml to every compose call when present and refuses a listed service without its env; off skips it (recorded in the payload and the ledger). KB § PATTERNS/devops/redis-acl-lockdown.md.")
     parser.add_argument("--deploy-image-allow-inactive", action="store_true", help="With --deploy-image: bypass the catalog-scope refusal for a deliberate, supervised reactivation — almost always wrong.")
     parser.add_argument("--deploy-image-allow-stale-toolkit", action="store_true", help="With --deploy-image: bypass the toolkit-staleness refusal for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; this mirrors the MCP tool's own allow_stale_toolkit escape hatch for a human invoking the CLI directly against a long-lived local checkout). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--projection-reconcile", action="store_true", help="READ-ONLY: fold each registered append-only log and diff it against its stored state row (projection check). consistent|drift|inconclusive|skipped per pair; exit 0 only when every measured pair is consistent. MCP: noctus.dev.projection_reconcile.")
@@ -4175,6 +4176,7 @@ def main():
             skip_compose_drift_check=bool(getattr(args, "deploy_image_skip_compose_drift_check", False)),
             skip_boot_smoke=bool(getattr(args, "deploy_image_skip_boot_smoke", False)),
             allow_inactive=bool(getattr(args, "deploy_image_allow_inactive", False)),
+            redis_auth=getattr(args, "deploy_image_redis_auth", "auto"),
             allow_stale_toolkit=bool(getattr(args, "deploy_image_allow_stale_toolkit", False)),
         )
         print(json.dumps(r, indent=2, default=str))

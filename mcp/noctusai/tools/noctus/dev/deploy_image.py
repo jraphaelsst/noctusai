@@ -69,6 +69,7 @@ prod in the first place. No redundant second ancestry-style check was added.
 """
 from __future__ import annotations
 
+import contextvars
 import datetime as _dt
 import re
 import subprocess
@@ -483,7 +484,6 @@ def _deploy_image_impl(
     skip_compose_drift_check: bool = False,
     redis_auth: str = "auto",
     redis_auth_record: Callable[..., Any] | None = None,
-    _ra_meta: dict | None = None,
     local_diff: Callable[[str, str], tuple[bool | None, list[str], str]] | None = None,
     allow_inactive: bool = False,
     live_products_fn: Callable[[], list[str]] | None = None,
@@ -585,6 +585,7 @@ def _deploy_image_impl(
     # P1-1 (security review r2): the Redis-auth override rides EVERY compose call (deploy + rollback) and a
     # listed service without its generated env refuses BEFORE any container is touched.
     ra_plan = _redis_auth.plan(runner, cf, product, redis_auth)
+    _ra_meta = _RA_META.get()
     if _ra_meta is not None:
         _ra_meta.update({"mode": ra_plan["mode"], "files": ra_plan["files"], "cut_over": ra_plan["cut_over"],
                          "listed": ra_plan["listed"]})
@@ -918,12 +919,19 @@ def _deploy_image_impl(
     return r
 
 
+_RA_META: contextvars.ContextVar = contextvars.ContextVar("deploy_image_redis_auth_meta", default=None)
+
+
 def deploy_image(*args, **kwargs) -> dict:
     """Public entry (same parameters as `_deploy_image_impl`). Adds `redis_auth` (mode, override files, listed
     services, recorded-flag) to EVERY returned payload, success included, so an operator can always see which
     compose files the call used."""
     meta: dict = {}
-    result = _deploy_image_impl(*args, _ra_meta=meta, **kwargs)
+    token = _RA_META.set(meta)  # a ContextVar, NOT a kwarg: an injected kwarg reaches the stale-toolkit gate's
+    try:                         # bound-arguments check and made every stale confirm=True refuse (queue RED, run 42908512292)
+        result = _deploy_image_impl(*args, **kwargs)
+    finally:
+        _RA_META.reset(token)
     if isinstance(result, dict) and meta:
         result.setdefault("redis_auth", meta)
     return result

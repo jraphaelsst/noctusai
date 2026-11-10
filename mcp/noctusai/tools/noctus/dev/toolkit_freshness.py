@@ -428,6 +428,11 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append("--deploy-image-skip-compose-drift-check")
         if kwargs.get("allow_inactive"):
             argv.append("--deploy-image-allow-inactive")
+        # redis_auth is a plain string: forward a non-default value ("off") so the child applies the SAME mode.
+        # (`redis_auth_record` is a test-only injected callable: it cannot cross a process, so a non-default one
+        # is deliberately NOT mapped and `_unmapped_param_diffs` refuses rather than silently dropping it.)
+        if (kwargs.get("redis_auth") or "auto") != "auto":
+            argv.append(f"--deploy-image-redis-auth={kwargs['redis_auth']}")
         return argv
 
     if tool_name == "verify_db_guards":
@@ -513,7 +518,7 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
     "deploy_image": frozenset({
         "product", "confirm", "tag", "source", "ssh_host",
         "skip_ancestry_check", "skip_boot_smoke", "allow_inactive",
-        "skip_compose_drift_check",
+        "skip_compose_drift_check", "redis_auth",
     }),
     "verify_db_guards": frozenset({"project_ref", "probe_ids"}),
     "task_branch": frozenset({
