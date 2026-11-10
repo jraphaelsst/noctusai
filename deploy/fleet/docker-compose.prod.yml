@@ -293,7 +293,7 @@ services:
       # explicit. Without a policy the seed REFUSES every write (fail-closed). A strict line is never given a "*".
       # NOC-REMEDIATE[sw-waha-host-declaration]: the shared `waha` host is only covered by the legacy "*" default. Declare the
       # shared `waha` service as a send-enabled instance in deploy/fleet/waha-instances.yml and render its host aliases here,
-      # checked by a keeper (KB § INTEGRATIONS/whatsapp.md § 6a, S4 residual).
+      # checked by a keeper (KB § INTEGRATIONS/whatsapp.md § 6a, S4 residual). — 2026-11-10
       WAHA_LINE_POLICIES: '{"*":{"send":"enabled","mark_online":true,"full_sync":true,"auto_repair":true}}'
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8011/api/health"]

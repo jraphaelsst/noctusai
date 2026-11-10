@@ -101,12 +101,18 @@ class TestActions:
         r = wi.waha_instance("apply", name="monica", confirm=True, repo_root=str(_tree(tmp_path)))
         assert r["status"] == "blocked"
 
+    @staticmethod
+    def _clean_vps(monkeypatch):
+        monkeypatch.setattr(wi, "run_remote", lambda *a, **k: (0, DATA, "") if "waha-instances.yml" in a[1] else (0, "", ""))
+
     def test_remove_refuses_working_session(self, tmp_path, monkeypatch):
+        self._clean_vps(monkeypatch)
         monkeypatch.setattr(wi, "_session_status", lambda *a: "WORKING")
         r = wi.waha_instance("remove", name="monica", confirm=True, repo_root=str(_tree(tmp_path)))
         assert r["status"] == "blocked"
 
     def test_remove_dry_run_snapshots_volume_first(self, tmp_path, monkeypatch):
+        self._clean_vps(monkeypatch)
         monkeypatch.setattr(wi, "_session_status", lambda *a: "STOPPED")
         r = wi.waha_instance("remove", name="monica", repo_root=str(_tree(tmp_path)))
         assert r["status"] == "planned" and "tar czf" in r["steps"][0]
@@ -570,3 +576,37 @@ def test_apply_refuses_when_only_the_live_label_says_personal_and_when_the_label
 
     out = wi._apply(wi.parse_instances(EDGE), "probe", "h", True, _test_sh=sh_label_down)
     assert out["status"] == "refused" and "fail closed" in out["error"]
+
+
+def _remove_sh(calls, vps_yml=EDGE, label_rc=0, label_out=""):
+    def sh(host, cmd, timeout=90):
+        calls.append(cmd)
+        if cmd.startswith("cat "):
+            return (0, vps_yml, "") if vps_yml is not None else (1, "", "no such file")
+        if "label=noctus.line.personal" in cmd:
+            return label_rc, label_out, "denied" if label_rc else ""
+        return 0, "", ""
+    return sh
+
+
+@pytest.mark.parametrize("confirm,force", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("source", ["local", "vps", "label", "unreadable_vps", "unreadable_label"])
+def test_remove_refuses_a_personal_line_before_any_stop_or_tar(source, confirm, force, monkeypatch):
+    monkeypatch.setattr(wi, "_session_status", lambda *a: pytest.fail("session looked up before the personal check"))
+    calls: list = []
+    kw = {"vps_yml": PERSONAL if source == "vps" else None if source == "unreadable_vps" else EDGE}
+    if source == "label":
+        kw.update(label_out="noctus-waha-probe-core\n")
+    if source == "unreadable_label":
+        kw.update(label_rc=1)
+    local = PERSONAL if source == "local" else EDGE
+    out = wi._remove(wi.parse_instances(local), "probe", "h", confirm, force, _test_sh=_remove_sh(calls, **kw))
+    assert out["status"] == "refused" and out["action"] == "remove", out
+    assert all("tar czf" not in c and "rm -sf" not in c for c in calls)
+
+
+def test_remove_of_a_non_personal_line_still_plans_and_runs(monkeypatch):
+    monkeypatch.setattr(wi, "_session_status", lambda *a: "STOPPED")
+    calls: list = []
+    out = wi._remove(wi.parse_instances(EDGE), "probe", "h", True, False, _test_sh=_remove_sh(calls))
+    assert out["status"] == "removed" and any("tar czf" in c for c in calls)

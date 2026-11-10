@@ -557,6 +557,31 @@ def _provision(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None
             "expect_noweb": want, "read_back": got.get("noweb"), "webhooks": hooks, "foreign_webhooks": foreign}
 
 
+def _personal_refusal(inst: dict, name: str, host: str, sh, action: str) -> "dict | None":
+    """Refusal payload when the line is personal in ANY of the three sources (this checkout's yml, the VPS's own yml, the
+    LIVE container label `noctus.line.personal=true`), or when a source cannot be read (fail closed); None = not personal.
+    Nothing is started, stopped or copied before this runs (not the core, not a volume tar), `force` does not bypass it."""
+    out = lambda why, **kw: {"ok": False, "action": action, "status": "refused", "name": name,  # noqa: E731
+                             "error": why, **kw}
+    if inst.get("personal"):  # nothing at all is touched for a personal line: not even the core
+        return out(PERSONAL_REFUSAL, needs_owner_by_hand=True)
+    # the VPS's own checkout is read first: the strictest of local and VPS wins, unreadable refuses
+    vps_inst, why = _vps_instance(name, host, sh)
+    if vps_inst is None:
+        return out(why)
+    if vps_inst.get("personal"):
+        return out(PERSONAL_REFUSAL, needs_owner_by_hand=True)
+    # the LIVE label is the third source (a core created before the render change / by hand may be personal while both
+    # ymls say otherwise): any labelled container of this line refuses; an unreadable lookup fails closed
+    rc, lab, lerr = sh(host, "docker ps -a --filter label=noctus.line.personal=true --format '{{.Names}}'")
+    if rc != 0:
+        return out(f"cannot read the live `noctus.line.personal` labels ({lerr.strip()[-120:]}): refused (fail closed)")
+    mine = {f"noctus-{core_service(inst)}", core_service(inst), f"noctus-waha-{name}", f"waha-{name}"}
+    if mine & {n.strip().lstrip("/") for n in lab.splitlines() if n.strip()}:
+        return out(PERSONAL_REFUSAL, needs_owner_by_hand=True)
+    return None
+
+
 def _apply(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None) -> dict:
     sh = _test_sh or _sh
     p = _plan(spec, name)
@@ -565,26 +590,9 @@ def _apply(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None) ->
                                       "(an edge line: core -> provision -> edge, in that order)")
         return p
     inst = _inst(spec, name)
-    if inst.get("personal"):  # nothing at all is started for a personal line: not even the core
-        return {"ok": False, "action": "apply", "status": "refused", "name": name, "error": PERSONAL_REFUSAL,
-                "needs_owner_by_hand": True}
-    # the VPS's own checkout is read BEFORE any `compose up`: the strictest of local and VPS wins, unreadable refuses
-    vps_inst, why = _vps_instance(name, host, sh)
-    if vps_inst is None:
-        return {"ok": False, "action": "apply", "status": "refused", "name": name, "error": why}
-    if vps_inst.get("personal"):
-        return {"ok": False, "action": "apply", "status": "refused", "name": name, "error": PERSONAL_REFUSAL,
-                "needs_owner_by_hand": True}
-    # the LIVE label is the third source of "personal" (a core created before the render change / by hand may be personal
-    # while both ymls say otherwise): any labelled container of this line refuses; an unreadable lookup fails closed
-    rc, lab, lerr = sh(host, "docker ps -a --filter label=noctus.line.personal=true --format '{{.Names}}'")
-    if rc != 0:
-        return {"ok": False, "action": "apply", "status": "refused", "name": name,
-                "error": f"cannot read the live `noctus.line.personal` labels ({lerr.strip()[-120:]}): refused (fail closed)"}
-    mine = {f"noctus-{core_service(inst)}", core_service(inst), f"noctus-waha-{name}", f"waha-{name}"}
-    if mine & {n.strip().lstrip("/") for n in lab.splitlines() if n.strip()}:
-        return {"ok": False, "action": "apply", "status": "refused", "name": name, "error": PERSONAL_REFUSAL,
-                "needs_owner_by_hand": True}
+    refused = _personal_refusal(inst, name, host, sh, "apply")
+    if refused is not None:
+        return refused
     rc, _o, err = sh(host, f"cd {VPS_FLEET} && for k in {' '.join(inst_keys(inst).values())}; do "
                             "grep -q \"^$k=.\" .env.fleet || { echo MISSING:$k; exit 3; }; done")
     if rc != 0:
@@ -606,8 +614,13 @@ def _apply(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None) ->
             "stdout": out.strip()[-600:], "error": None if rc == 0 else err.strip()[-600:]}
 
 
-def _remove(spec: dict, name: str, host: str, confirm: bool, force: bool) -> dict:
+def _remove(spec: dict, name: str, host: str, confirm: bool, force: bool, *, _test_sh=None) -> dict:
+    sh = _test_sh or _sh
     inst = _inst(spec, name)
+    # BEFORE the session lookup, the core stop and the volume tar; `force=True` does not bypass it (same as apply)
+    refused = _personal_refusal(inst, name, host, sh, "remove")
+    if refused is not None:
+        return refused
     c = f"noctus-{core_service(inst)}"
     status = _session_status(host, c, name)
     if status == "WORKING" and not force:
@@ -620,7 +633,7 @@ def _remove(spec: dict, name: str, host: str, confirm: bool, force: bool) -> dic
         return {"ok": True, "action": "remove", "status": "planned", "session_status": status, "steps": plan,
                 "note": "DRY RUN -- volume is snapshotted first and NEVER deleted; also drop the instance from waha-instances.yml"}
     for step in plan:
-        rc, _o, err = _sh(host, step, timeout=300)
+        rc, _o, err = sh(host, step, timeout=300)
         if rc != 0:
             return {"ok": False, "action": "remove", "status": "error", "error": err.strip()[-400:], "step": step}
     return {"ok": True, "action": "remove", "status": "removed", "volume_kept": vol}

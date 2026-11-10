@@ -433,3 +433,45 @@ def test_a_plain_explicit_docker_exec_with_confirm_stays_allowed_beside_a_person
     assert out["status"] != "refused", out
     out = exec_cmd("docker exec deadbeef0000 ls /app", confirm=True, run_remote=inv, repo_root=personal_root)
     assert out["ok"] is True
+
+
+HOST_ACCESS = [
+    "cat /var/lib/docker/volumes/abc123/_data/x",             # data root
+    "ls /var/lib/containerd",
+    "cat /proc/1234/environ",                                           # /proc/<digits>
+    "ls /proc/*/root",                                                  # /proc glob
+    "nsenter -t 1 -m sh", "ctr containers ls", "crictl ps", "runc list", "unshare -m sh",
+    "cat /var/li*/docker/x", "ls /v?r/lib", "ls /var/lib/[d]ocker", "cat --file=/etc/pass*",   # absolute-path globs
+]
+
+
+@pytest.mark.parametrize("cmd", HOST_ACCESS)
+@pytest.mark.parametrize("confirm", [False, True])
+def test_host_level_access_is_refused_when_a_personal_line_is_declared(personal_root, cmd, confirm):
+    out = exec_cmd(cmd, confirm=confirm, run_remote=PersonalInventory(), repo_root=personal_root)
+    assert out["status"] == "refused" and "personal-unsafe" in out["error"], (cmd, out)
+
+
+@pytest.mark.parametrize("which", ["local", "vps"])
+def test_host_level_access_is_refused_when_a_source_is_unreadable(root_with, tmp_path, which):
+    root = str(tmp_path / "nowhere") if which == "local" else root_with(PLAIN_VPS_YML)
+    inv = PersonalInventory(vps_yml=False if which == "vps" else PLAIN_VPS_YML)
+    assert exec_cmd("cat /proc/1/environ", run_remote=inv, repo_root=root)["status"] == "refused"
+
+
+def test_host_level_access_is_refused_when_only_the_live_label_says_personal(root_with):
+    inv = PersonalInventory(vps_yml=PLAIN_VPS_YML, label=True)
+    out = exec_cmd("ls /var/lib/docker", run_remote=inv, repo_root=root_with(PLAIN_VPS_YML))
+    assert out["status"] == "refused" and "personal-unsafe" in out["error"]
+
+
+@pytest.mark.parametrize("cmd", HOST_ACCESS)
+def test_host_level_access_stays_allowed_when_no_personal_line_exists_anywhere(root_with, cmd):
+    inv = PersonalInventory(vps_yml=PLAIN_VPS_YML, label=False)
+    out = exec_cmd(cmd, confirm=True, run_remote=inv, repo_root=root_with(PLAIN_VPS_YML))
+    assert out["status"] != "refused", (cmd, out)
+
+
+def test_ordinary_reads_stay_allowed_beside_a_personal_line(personal_root):
+    for cmd in ("cat /etc/hostname", "ls /opt/noctus", "grep -r foo /app"):
+        assert exec_cmd(cmd, run_remote=PersonalInventory(), repo_root=personal_root)["status"] != "refused", cmd

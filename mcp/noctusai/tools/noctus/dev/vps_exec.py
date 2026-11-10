@@ -149,7 +149,7 @@ _HOSTISH = re.compile(r"(?:://|@)([A-Za-z0-9][A-Za-z0-9._-]*)|\b([A-Za-z0-9][A-Z
 # NOC-REMEDIATE[personal-label-drift-check]: a real personal core can be MISSING its `noctus.line.personal` label (created
 # before the render change, a manual `docker run`, a compose override), and then this inventory cannot see it. The ops
 # check (noc-daily-ops): every container whose image is devlikeapro/waha* must carry the label on a declared personal
-# line; alert when a declared personal line's container lacks it, and when a waha container exists that no line declares.
+# line; alert when a declared personal line's container lacks it, and when a waha container exists that no line declares. — 2026-11-10
 #: Every container that is a WAHA: by NAME, by IMAGE ANCESTOR (devlikeapro/waha*, any tag) and by compose PROJECT label.
 #: Rows: id, name, compose service, then per network IPv4, IPv6 and every network alias. `xargs -r` so "none" is rc 0 +
 #: empty (a failure is rc != 0 -> fail closed).
@@ -373,6 +373,45 @@ def personal_unsafe_indirection(command: str, run, repo_root=None) -> str | None
     return why if _personal_guard_active(run, repo_root) else None
 
 
+#: Host paths/binaries that reach a container's data WITHOUT naming the container: the Docker/containerd data root holds
+#: every volume (the personal session store included), `/proc/<pid>/root|environ|fd` is another process's filesystem and
+#: secrets, and the namespace/runtime CLIs enter or read a container directly. No `--data-root` / `data-root` value is
+#: configured anywhere in this repo (grep 2026-11-10), so the defaults are the whole list.
+_DOCKER_DATA_ROOT = re.compile(r"/var/lib/(?:docker|containerd)\b", re.IGNORECASE)
+_PROC_VIEW = re.compile(r"/proc/(?:\d|[*?\[])")
+_HOST_ESCAPE_BINARIES = frozenset({"nsenter", "ctr", "crictl", "runc", "unshare"})
+_GLOB_CHARS = frozenset("*?[")
+
+
+def _host_access_screen(command: str) -> str | None:
+    """Why `command` reaches container data through the HOST (data root, process views, namespace/runtime CLIs, an
+    absolute-path glob) instead of naming a container; None = it does not. shlex argv analysis, not regex alone."""
+    if _DOCKER_DATA_ROOT.search(command):
+        return "the Docker/containerd data root"
+    if _PROC_VIEW.search(command):
+        return "a /proc/<pid> process view"
+    try:
+        toks = shlex.split(command)
+    except ValueError:
+        toks = command.split()
+    for tok in toks:
+        if tok.rsplit("/", 1)[-1] in _HOST_ESCAPE_BINARIES:
+            return f"`{tok.rsplit('/', 1)[-1]}`"
+        for part in (tok, tok.partition("=")[2] if tok.startswith("-") else ""):
+            if part.startswith("/") and _GLOB_CHARS & set(part):
+                return "a glob in an absolute path"
+    return None
+
+
+def personal_unsafe_host_access(command: str, run, repo_root=None) -> str | None:
+    """Reason string when `command` reaches container data via the host AND a personal line is declared (or a source is
+    unreadable); else None. Applies with or without confirm, to read-only commands too (`cat`, `ls`)."""
+    why = _host_access_screen(command)
+    if why is None:
+        return None
+    return why if _personal_guard_active(run, repo_root) else None
+
+
 def touches_waha_core(command: str, container: str | None = None, run=None) -> bool:
     """True when the command (or `container`) targets a WAHA container -- by name, or by id / IP / host name / alias when
     `run` is given and the target RESOLVES to a waha container. An unresolvable lookup fails CLOSED (True)."""
@@ -480,9 +519,12 @@ def exec_cmd(
                       "(KB § INTEGRATIONS/whatsapp.md § 6a)."),
         }
     # NOC-REMEDIATE[personal-core-host-exec-authz]: this is a best-effort tool-level screen, not the control. A command
-    # that picks its container at run time names no id/IP/alias, so it is refused whenever a personal line exists. The
-    # real control is a Docker authorization plugin or an SSH forced command on the host that refuses `exec` (and
-    # cp/attach/logs/inspect/commit/export) on containers labelled noctus.line.personal=true -- out of scope here.
+    # that picks its container at run time, or reaches its data through the host (Docker data root, /proc/<pid>, nsenter,
+    # ctr/crictl/runc/unshare, an absolute-path glob), names no id/IP/alias, so both are refused whenever a personal line
+    # exists. The real control is host-level and out of scope here: (1) a Docker authorization plugin or an SSH forced
+    # command that refuses exec/cp/attach/logs/inspect/commit/export on containers labelled noctus.line.personal=true;
+    # (2) the automation SSH user taken out of root and out of the docker group (docker group == root on the host);
+    # (3) the personal line's volume on an owner-only encrypted mount that user cannot read. — 2026-11-10
     indirect = personal_unsafe_indirection(command, run, repo_root=repo_root)
     if indirect is not None:
         return {
@@ -490,6 +532,14 @@ def exec_cmd(
             "error": (f"personal-unsafe: this command selects its container at run time ({indirect}), so it cannot be "
                       "checked against the `personal: true` lines; refused with or without confirm. Name the container "
                       "explicitly (KB § INTEGRATIONS/whatsapp.md § 6a)."),
+        }
+    host_access = personal_unsafe_host_access(command, run, repo_root=repo_root)
+    if host_access is not None:
+        return {
+            "ok": False, "status": "refused", "exit_code": 1,
+            "error": (f"personal-unsafe: this command reaches container data through the host ({host_access}) and a "
+                      "`personal: true` line is declared (or a source is unreadable); refused with or without confirm "
+                      "(KB § INTEGRATIONS/whatsapp.md § 6a)."),
         }
     waha = touches_waha_core(command, container, run=run)
     read_only = _is_read_only(command) and not waha
@@ -547,5 +597,5 @@ def register(server) -> None:
         return exec_cmd(command, container=container, confirm=confirm, ssh_host=ssh_host)
 
 
-__all__ = ["exec_cmd", "touches_waha_core", "targets_personal_core", "personal_unsafe_indirection", "personal_aliases", "register", "_HARD_DENY", "_READ_BINARIES", "_is_read_only",
+__all__ = ["exec_cmd", "touches_waha_core", "targets_personal_core", "personal_unsafe_indirection", "personal_unsafe_host_access", "personal_aliases", "register", "_HARD_DENY", "_READ_BINARIES", "_is_read_only",
            "_hard_denied"]
