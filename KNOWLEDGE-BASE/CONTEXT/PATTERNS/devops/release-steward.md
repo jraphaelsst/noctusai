@@ -246,15 +246,16 @@ ONE read-only check (`release_steward action=deliverable slug=|branch=`, open to
 `release_steward.deliverable`). `request` runs it at filing; `task_branch action=enqueue` runs it again before it pushes. Read-only
 by construction: its git calls pass an allowlist (no checkout/merge/rebase/commit/add/push; `worktree` only as `list`;
 `status` with `--no-optional-locks`); the trial merge runs with its cwd inside the git dir (merge drivers drop scratch files
-in the cwd); derived files are regenerated in a `git archive` export, never in the worktree. The only state it touches is the
-remote-tracking `origin/dev` ref (`fetch`) and loose objects from `merge-tree`.
+in the cwd); derived files are regenerated in a `git archive` export, never in the worktree. **G1 - what it may touch:**
+the remote-tracking `origin/dev` ref (`fetch --no-write-fetch-head`; enqueue's own fetch likewise: no `FETCH_HEAD`), loose
+objects from `merge-tree`, and the shared verdict store / enqueue attestation below. Never a work tree, an index, HEAD or a branch.
 
 | # | Item | Passes when |
 |---|---|---|
 | 1 | `head_pushed_clean` | local head == `origin/<branch>` (`ls-remote`) AND the branch's worktree has no real dirt (known-benign refresh artifacts and untracked files are not part of the head) |
-| 2 | `merge_buildable` | `origin/dev` is an ancestor of the head, OR `git merge-tree --write-tree origin/dev <head>` is clean. NOT strictly 0-behind: demanding that livelocks while `dev` moves. A conflict names its files |
+| 2 | `merge_buildable` | `origin/dev` is an ancestor of the head, OR `git --attr-source=<dev tip> merge-tree --write-tree origin/dev <head>` is clean. NOT strictly 0-behind: demanding that livelocks while `dev` moves. **Attributes (`merge=union`, the kb-counts/lgpd/gate-inventory drivers) come from DEV only** - a bare-context trial merge reads none, which made every ledger/counts touch a conflict; and never from the head, so a branch cannot declare its own conflict away. A conflict names its files |
 | 3 | `migrations_free` | no migration number the branch adds is claimed by a different file in the composed tree (the head, or the merge-tree result). Reuses `task_branch._MIGRATION_NUM_RE` and the keeper's accepted-duplicates set via `migration_number_collisions` |
-| 4 | `derived_current` | every derived artifact is already current AT the head: `--update-kb-counts --check`, `--render-project-history --check`, `--gen-promotions-index --check` against an export of the head (table `DERIVED_ARTIFACTS`; a missing regenerator is UNMEASURED, never green) |
+| 4 | `derived_current` | every derived artifact is already current AT the head: `--update-kb-counts --check`, `--render-project-history --check`, `--gen-promotions-index --check` against an export of the head (table `DERIVED_ARTIFACTS`; a missing regenerator is UNMEASURED, never green). The export must equal `git ls-tree -r <head>` (an `export-ignore` difference is UNMEASURED) and runs in the hermetic env with `PYTHONPATH` = the HEAD's seed packages (derived from its `requirements.txt` `-e` lines; `noctusai_lib` must import from inside the export, else UNMEASURED), so it never judges the primary's seed lib |
 | 5 | `scoped_green` | the scoped suites are green **the way CI judges them** (below) |
 
 Not measurable is never green: an item that cannot run fails as `UNMEASURED`.
@@ -271,12 +272,16 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
 - *The env is scrubbed the way CI's is.* `hermetic_env`: OS basics only (`HERMETIC_BASE_ENV`) plus the toolkit job's own
   `env:` plus `CI=true`. Everything else (`CLAUDE_*`, `ANTHROPIC_*`, `OPENAI_*`, `SUPABASE_*`, `NOC*` ...) is absent, because it is
   absent on a runner.
-- *Running it takes minutes,* so item 5 accepts a **`verdict_ref`** instead, but only one that records the run: it must carry
-  the markers `env-scrubbed` and `ci-keepers` AND name the head it judged (a green for an older head proves nothing), e.g.
-  `ci-parity@a1b2c3d4e#env-scrubbed,ci-keepers` (`validate_verdict_ref`; `format_verdict_ref` builds one). A bare URL is refused
-  naming the missing marker.
+- *The verdict is a RECORD, not a string.* `run_scoped=true` (`export_ci_parity_check`) APPENDS a record to the append-only
+  store `~/.noctus/deliverable-verdicts.ndjson` (DI seam; `record_verdict`): the full head sha, the head tree, the `test.yml`
+  blob, the interpreter, the flags and test ids it ran, and `ok`. It returns `ci-parity:<id>`. Item 5 accepts only that ref
+  (`validate_verdict_ref`): it resolves the id, requires an EXACT full-sha (and tree) match, `ok=true` and the env-scrubbed /
+  CI-keeper markers the run itself set. Free-form strings, short shas, another head's record and RED records are refused.
+  (A local file is not tamper-proof against an agent with shell access; it closes the typed-string forgery and the
+  stale-head reuse, which is what the contract is for.) Running takes minutes, so the branch steward runs it once and files the ref.
 - `release_steward action=deliverable slug=<s> run_scoped=true` (CLI `--steward-run-scoped`) RUNS the CI-parity check
-  (`export_ci_parity_check`) and its result carries a ready-made `verdict_ref` for the request.
+  (`export_ci_parity_check`) and its result carries the `ci-parity:<id>` ref to file with the request (also for a RED run, which then
+  refuses as RED).
 
 ### Enqueue, cleanup and the pre-push hook
 
@@ -284,11 +289,18 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
   No checkout, merge, rebase, commit, stash or file write in any worktree; a failing branch returns `status=needs_resync`
   (exit 1) naming the items. `branch=` accepts the real branch (a docs- or fix-prefixed one, not only feat-prefixed); otherwise the slug resolves among the
   conventional prefixes and an ambiguous slug refuses. `scripts/hooks/pre-push` recognises exactly this push as the queue path
-  (see `merge-queue.md` § 2a).
+  (see `merge-queue.md` § 2a). The slug is validated with the request rule (`[A-Za-z0-9._/-]+`, no `..`). Right before its push
+  enqueue writes an **attestation** `<git-common-dir>/noc-enqueue/<full sha>.json` (the `deliverable()` verdict + timestamp); the
+  hook's queue path requires a fresh (< 10 min) ok attestation for exactly that sha, so typing the refspec by hand cannot skip the contract.
 - **`landed` / `integrate` auto-cleanup / `cleanup` never remove what is not the caller's**: a worktree claimed by another
-  session that is not dead (`harness_claim_worktree`; `unknown` counts as live), or a branch whose pointer has `role=steward`,
-  is reported `cleanup: {status: skipped_owned, owner, reason}` and the landed verdict is unaffected. A steward may clean its
-  own branch with an explicit `cleanup`; the auto path never does.
+  session that is not dead (`harness_claim_worktree`; `unknown` counts as live), a branch whose pointer has `role=steward`, or - on
+  the AUTO path - a branch whose pointer session is another live/unknown session, is reported
+  `cleanup: {status: skipped_owned, owner, reason}` and the landed verdict is unaffected. A steward (or the pointer's own session)
+  may clean its branch with an explicit `cleanup`; the auto path never does. The auto path **fails closed**: if the pointer store
+  was not fully readable (exception, or `origin/ledgers` unreadable and answered from the dev copy) it skips the deletion with
+  owner unknown. The nested cleanup receives the exact branch and the checked worktree and refuses
+  (`refused_branch_mismatch`) if the worktree holds a different branch. `dead` needs the recorded pid gone AND the heartbeat older than
+  the TTL; every action re-records the caller's pid (`role_touch`), a stale pid alone is not dead.
 - Failures, takeover and prod consent (ejection -> `ejected{reason, conflict, url}` and requeue, 2 ejections -> `blocked_on_steward`;
   stale-guardian takeover that may only resume or roll back; one plan hash per deploy window) are the ratified spec and are
   tracked as follow-ups; this section records what is built.
