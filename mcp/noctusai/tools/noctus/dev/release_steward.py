@@ -874,6 +874,9 @@ class StewardStore:
         self.audit("role_clear", role=role, session_id=session_id, was=row.get("name"))
         return {"ok": True, "status": "role_cleared", "role": role}
 
+    # NOC-REMEDIATE[session-heartbeat-hook]: a session's heartbeat only refreshes when it calls release_steward, so a
+    # long-quiet but alive session ages toward 'dead'; refresh it from a SessionStart/UserPromptSubmit hook instead —
+    # destination: the tooling branch steward (harness hook) — 2026-11-10
     def role_touch(self, session_id: str | None, claude_pid: int | None = None) -> None:
         """Best-effort liveness refresh of the roles this session holds (every action calls it): the heartbeat
         and, when the caller's pid is known, the pid (a restart changes it; a stale pid must not read as dead)."""
@@ -1558,18 +1561,41 @@ def export_env(tree: str | Path, base_env: dict[str, str] | None, workflow_text:
 
 
 def seed_isolation_error(py: str, tree: str | Path, env: dict[str, str]) -> str | None:
-    """When the head carries `noctusai_lib`, importing it under `env` MUST resolve inside the export; otherwise the
-    checks would judge the primary's seed lib. Returns an UNMEASURED reason or None (also None when the head has none)."""
-    if not (Path(tree) / "seed" / "lib" / "backend" / "noctusai_lib").is_dir():
+    """Every seed package the HEAD ships must import from inside the export, else the checks would judge the primary's
+    copy: each top-level package under every path the head's requirements name (`seed_pythonpath`), plus `noctusai_lib`
+    and `noctusai_seed` whenever the head carries them (a head that ships one but does not put it on the path resolves
+    to the venv's editable install = the primary checkout). Returns an UNMEASURED reason or None (None too when the head
+    has no seed packages at all)."""
+    root = Path(tree)
+    names: list[str] = []
+    for base in seed_pythonpath(root):
+        names += sorted(d.name for d in Path(base).iterdir() if (d / "__init__.py").is_file())
+    for pkg, rel in (("noctusai_lib", "seed/lib/backend"), ("noctusai_seed", "seed/framework/backend")):
+        if (root / rel / pkg / "__init__.py").is_file():
+            names.append(pkg)
+    names = sorted(dict.fromkeys(names))
+    if not names:
         return None
-    r = subprocess.run([py, "-c", "import noctusai_lib,sys; print(noctusai_lib.__file__)"], capture_output=True, text=True,
-                       timeout=120, check=False, cwd=str(tree), env=env)
-    got = r.stdout.strip().splitlines()[-1] if r.returncode == 0 and r.stdout.strip() else ""
-    if not got or not os.path.realpath(got).startswith(os.path.realpath(str(tree))):
-        return f"noctusai_lib resolves to {got or '(import failed: ' + r.stderr.strip()[-100:] + ')'}, not the export: the checks would judge the wrong seed lib"
+    probe = ("import importlib, sys\n"
+             "for n in sys.argv[1:]:\n"
+             "    m = importlib.import_module(n)\n"
+             "    print(n + '\\t' + str(getattr(m, '__file__', '')))\n")
+    r = subprocess.run([py, "-c", probe, *names], capture_output=True, text=True, timeout=120, check=False,
+                       cwd=str(tree), env=env)
+    if r.returncode != 0:
+        return f"cannot import the head's seed packages {names} in the export: {r.stderr.strip()[-160:]}"
+    base = os.path.realpath(str(tree))
+    outside = [f"{n} -> {f}" for n, _, f in (ln.partition("\t") for ln in r.stdout.splitlines())
+               if not f or not os.path.realpath(f).startswith(base)]
+    if outside:
+        return (f"seed package(s) resolve OUTSIDE the export ({'; '.join(outside)[:240]}): the checks would judge the "
+                "primary's copy, not the head's")
     return None
 
 
+# NOC-REMEDIATE[guardian-derived-check-sandbox]: the derived-artifact and CI-parity checks EXECUTE the delivery's own
+# cli.py / tests with the guardian's HOME and filesystem (hermetic env only scrubs variables); sandbox them (a throwaway
+# HOME, GIT_CONFIG_NOSYSTEM=1, no write access to ~/.noctus) - destination: the tooling branch steward's next batch — 2026-11-10
 def export_derived_check(cwd: str | Path | None = None, *, artifacts: tuple[tuple[str, tuple[str, ...]], ...] | None = None,
                          python: str | None = None, timeout: int = 300,
                          base_env: dict[str, str] | None = None) -> Callable[[str], dict[str, Any]]:

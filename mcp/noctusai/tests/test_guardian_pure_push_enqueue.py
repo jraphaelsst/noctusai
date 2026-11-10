@@ -1175,3 +1175,25 @@ def test_a_rejected_push_revokes_its_attestation(world):
     hook.chmod(0o755)
     assert world.enqueue()["status"] == "blocked"
     assert _attestation(world, head)["ok"] is False  # the next raw push of this sha cannot ride a leftover ok
+
+
+# =================================================================================================
+# fix round 2, P2-2 residual: seed isolation covers EVERY seed package the head names, plus noctusai_seed
+# =================================================================================================
+
+def test_a_seed_package_the_head_ships_but_does_not_put_on_the_path_is_unmeasured(world):
+    """noctusai_seed exists in the head but its requirements line is missing: it would resolve to the PRIMARY's copy."""
+    _wt, head = _seed_branch(world, extra_files={"seed/framework/backend/noctusai_seed/__init__.py": "WHO = 'head'\n"})
+    res = RS.export_derived_check(world.repo, artifacts=(("noop", ("{python}", "-c", "pass")),))(head)
+    assert not res["ok"] and res["measured"] is False
+    assert "noctusai_seed" in res["detail"] and "UNMEASURED" in res["detail"]
+
+
+def test_every_package_under_a_seed_path_the_requirements_name_must_resolve_inside_the_export(world):
+    _wt, head = _seed_branch(world, extra_files={
+        "seed/framework/backend/noctusai_seed/__init__.py": "WHO = 'head'\n",
+        "seed/extra/backend/another_seed_pkg/__init__.py": "WHO = 'head'\n",
+        "mcp/noctusai/requirements.txt": "-e ../../seed/lib/backend\n-e ../../seed/framework/backend\n-e ../../seed/extra/backend\n"})
+    check = (("seedpkgs", ("{python}", "-c", "import noctusai_lib, noctusai_seed, another_seed_pkg")),)
+    res = RS.export_derived_check(world.repo, artifacts=check)(head)
+    assert res["ok"] and res["measured"], res
