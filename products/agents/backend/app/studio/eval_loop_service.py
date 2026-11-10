@@ -104,10 +104,13 @@ def _pct(x: float) -> str:
 
 
 class EvalLoopService:
-    def __init__(self, loops: LoopStore, sink: Any, consolidacao: Any = None) -> None:
+    def __init__(self, loops: LoopStore, sink: Any, consolidacao: Any = None,
+                 avisar_dono: Callable[..., Any] | None = None) -> None:
         self._loops = loops
         self._sink = sink
         self._consol = consolidacao
+        #: the owner's WhatsApp send — seed ``notify_owner`` (owner line L3) unless a test injects one.
+        self._avisar_dono = avisar_dono
 
     # ── admission (G6 / G7) ────────────────────────────────────────────────
 
@@ -332,12 +335,37 @@ class EvalLoopService:
         self._avisar_dono_whatsapp(rec, kind, dedup, metadata)
 
     def _avisar_dono_whatsapp(self, rec: LoopRecord, kind: str, dedup: str, metadata: dict[str, Any]) -> None:
-        """Seam for the owner's WhatsApp line (catalog kinds ``eval_loop_parada`` / ``eval_loop_checkpoint``, declared in
-        ``app/notification_kinds.py``; texts from ``app/studio/eval_loop_whatsapp.py``). Sends nothing today.
-        NOC-REMEDIATE[eval-loop-owner-whatsapp]: wire ``noctusai_lib.domain.notification_catalog.owner_line.notify_owner`` here (dedupe on ``dedup``) once it lands — 2026-11-10
-        """
-        return None
+        """The owner's WhatsApp notice, from NoctusAI's own line (seed ``notify_owner``; catalog kinds ``eval_loop_parada`` /
+        ``eval_loop_checkpoint`` declared in ``app/notification_kinds.py``; scripted texts in ``app/studio/eval_loop_whatsapp.py``).
 
+        Once per transition: ``fechar_por_run`` only reaches here after its conditional round-close write succeeded, so a retried
+        close never re-sends (``dedup`` is kept in the log line for tracing). ``notify_owner`` records every outcome (switch off,
+        no recipient, line not configured, partial) in core's send ledger; a failure here is logged and never undoes the stop."""
+        from app.notification_kinds import KIND_EVAL_LOOP_CHECKPOINT, KIND_EVAL_LOOP_PARADA, PRODUCT
+        from app.studio.eval_loop_whatsapp import texto_checkpoint, texto_parada
+
+        serie = [s for s in (metadata.get("serie") or []) if s is not None]
+        melhor = max(serie) if serie else None
+        comum = {"agente": rec.agente_chave, "suite": _ROTULO_SUITE.get(rec.suite, rec.suite), "melhor_nota": melhor,
+                 "gasto_usd": rec.gasto_usd, "orcamento_usd": rec.orcamento_usd}
+        try:
+            if kind == KIND_PARADA:
+                catalogo = KIND_EVAL_LOOP_PARADA
+                texto = texto_parada(motivo=str(metadata.get("motivo") or rec.motivo_parada or ""),
+                                     rodadas_feitas=int(metadata.get("rodadas_feitas") or 0), **comum)
+            elif kind == KIND_CHECKPOINT:
+                catalogo = KIND_EVAL_LOOP_CHECKPOINT
+                texto = texto_checkpoint(rodada=int(metadata["checkpoint"]), rodadas_planejadas=rec.rodadas_planejadas,
+                                         rodadas_sem_melhora=len(metadata.get("overcalls") or []), **comum)
+            else:
+                logger.error("agents.eval_loop.whatsapp_kind_desconhecido loop_id=%s kind=%s", rec.id, kind)
+                return
+            avisar = self._avisar_dono
+            if avisar is None:
+                from noctusai_lib.domain.notification_catalog import notify_owner as avisar
+            avisar(PRODUCT, catalogo, texto, org_id=rec.org_id)
+        except Exception:
+            logger.exception("agents.eval_loop.whatsapp_falhou loop_id=%s kind=%s dedup=%s", rec.id, kind, dedup)
 
 def _json_safe(o: Any) -> Any:
     if isinstance(o, dict):
