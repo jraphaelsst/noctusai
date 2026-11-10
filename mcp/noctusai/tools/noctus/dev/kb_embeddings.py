@@ -335,8 +335,8 @@ def search(query: str, top_k: int = 5, min_score: float = 0.0) -> list[dict]:
     """Embed `query`, return the top-K matching KB chunks by cosine similarity.
 
     Returns: `[{path, chunk_idx, chunk_text, score, engine}]` ordered by
-    score desc. Lazy-degrade: empty list if cache missing or embedding API
-    unreachable.
+    score desc. Empty list if cache missing; raises `EmbeddingUnavailable` if the
+    query cannot be embedded.
 
     Engine selection: when sqlite-vec is loaded, uses the native vec0 KNN
     (`MATCH ?` + `LIMIT k`). Otherwise falls back to pure-Python cosine
@@ -344,11 +344,7 @@ def search(query: str, top_k: int = 5, min_score: float = 0.0) -> list[dict]:
     """
     if not CACHE_PATH.exists():
         return []
-    try:
-        q_vec = _embed_sync(query)
-    except Exception:
-        # Advisory layer — fail silently on provider issues.
-        return []
+    q_vec = _ec.embed_query_or_raise(query, _embed_sync)
     conn = _connect()
     _init_schema(conn)
     results: list[dict] = []
@@ -661,8 +657,8 @@ def register(server) -> None:
             "KB § PATTERNS/common/kb-vector-search.md."
         ),
     )
-    def _search(query: str, top_k: int = 5, min_score: float = 0.0) -> list[dict]:
-        return search(query, top_k=top_k, min_score=min_score)
+    def _search(query: str, top_k: int = 5, min_score: float = 0.0) -> list | dict:
+        return _ec.guarded_search(search, query, top_k=top_k, min_score=min_score)
 
     @server.tool(
         name="noctus.dev.kb_embeddings_refresh",
@@ -714,8 +710,8 @@ def register(server) -> None:
             "small overlapping patterns)."
         ),
     )
-    def _similar(text: str, top_k: int = 5) -> list[dict]:
-        return kb_similar(text, top_k=top_k)
+    def _similar(text: str, top_k: int = 5) -> list | dict:
+        return _ec.guarded_search(kb_similar, text, top_k=top_k)
 
     @server.tool(
         name="noctus.dev.kb_validate_owns_kb",
