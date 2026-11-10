@@ -43,6 +43,9 @@ from noctusai_seed.organs import mount_finance
 
 from app.clients.social_wiring import SocialWiringNotConfigured
 from app.config import settings
+
+# Declares the Agentes owner notifications (core Notificações catalog) before the app's lifespan registers them.
+import app.notification_kinds  # noqa: E402,F401
 from app.dependencies import (
     _LazyApiTokenResolver,
     _legacy_jwt_resolver,

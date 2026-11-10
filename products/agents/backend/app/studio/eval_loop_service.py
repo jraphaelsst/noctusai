@@ -329,6 +329,14 @@ class EvalLoopService:
                                 metadata={"dedup_key": dedup, "product": "agents", "link": _LINK, **_json_safe(metadata)})
         except Exception:
             logger.exception("agents.eval_loop.notificacao_falhou loop_id=%s kind=%s", rec.id, kind)
+        self._avisar_dono_whatsapp(rec, kind, dedup, metadata)
+
+    def _avisar_dono_whatsapp(self, rec: LoopRecord, kind: str, dedup: str, metadata: dict[str, Any]) -> None:
+        """Seam for the owner's WhatsApp line (catalog kinds ``eval_loop_parada`` / ``eval_loop_checkpoint``, declared in
+        ``app/notification_kinds.py``; texts from ``app/studio/eval_loop_whatsapp.py``). Sends nothing today.
+        NOC-REMEDIATE[eval-loop-owner-whatsapp]: wire ``noctusai_lib.domain.notification_catalog.owner_line.notify_owner`` here (dedupe on ``dedup``) once it lands — 2026-11-10
+        """
+        return None
 
 
 def _json_safe(o: Any) -> Any:
