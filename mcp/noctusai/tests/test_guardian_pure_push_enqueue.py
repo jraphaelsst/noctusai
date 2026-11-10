@@ -1019,3 +1019,36 @@ def test_an_export_that_differs_from_the_trees_file_list_is_unmeasured(world):
     res = world.derived(head)
     assert not res["ok"] and res["measured"] is False
     assert "src/hidden.txt" in res["detail"] and "export" in res["detail"]
+
+
+# =================================================================================================
+# P3 (adversarial review): small enqueue hardening
+# =================================================================================================
+
+def test_enqueue_does_not_write_fetch_head(world):
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    world.commit(wt, "feat: b")
+    world.push(wt, "feat/x")
+    fetch_head = Path(sh(world.repo, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")) / "FETCH_HEAD"
+    fetch_head.unlink(missing_ok=True)
+    assert world.enqueue(confirm=False)["status"] == "planned"
+    assert not fetch_head.exists()  # remote-tracking refs may move (release-steward.md G1); FETCH_HEAD may not appear
+
+
+@pytest.mark.parametrize("bad", ["x;rm -rf ~", "a b", "../escape", "/abs", "x$(id)", "x\\ny"])
+def test_enqueue_validates_the_slug_with_the_request_rule(world, bad):
+    res = T.task_branch(action="enqueue", slug=bad, confirm=False, run=world.runner(), primary_root=str(world.repo))
+    assert res["status"] == "error" and res["exit_code"] == 1
+    assert "slug" in res["error"] and "[A-Za-z0-9._/-]" in res["error"]
+
+
+def test_the_verdict_ref_fallback_only_follows_a_request_for_the_same_branch(world, tmp_path):
+    store = RS.StewardStore(root=tmp_path / "steward", resolve_head=lambda b: None)
+    store.request("sess-1", "y", branch="docs/y", head_sha="a" * 40, notes="n")
+    # hand the recorded request a verdict_ref the way request() does
+    store._append_event({"ts": "2026-11-10T00:00:00Z", "event": "request", "slug": "y", "branch": "docs/y",
+                         "head_sha": "a" * 40, "verdict_ref": "ci-parity:" + "b" * 32, "requester": {"session_id": "sess-1"}})
+    assert T._request_verdict_ref("y", "docs/y", store=store) == "ci-parity:" + "b" * 32
+    assert T._request_verdict_ref("y", "feat/y", store=store) is None  # same slug, a DIFFERENT branch: not its verdict
