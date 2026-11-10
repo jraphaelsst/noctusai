@@ -2,7 +2,7 @@
 
 Why this exists: the seed `ConversationWorker` drains due conversations on ONE thread,
 and a lead turn is an HTTP call to agents (up to ~60 s). Run inline, it blocked every
-operator (One Chat) batch queued behind it and serialized unrelated lead chats.
+other conversation's batch queued behind it and serialized unrelated lead chats.
 
 The worker thread now only *hands the batch over* (`submit_threadsafe`, non-blocking)
 and the turn runs on the main loop here:

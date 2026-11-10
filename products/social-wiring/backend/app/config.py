@@ -261,7 +261,7 @@ class SocialWiringSettings(ProductSettings):
     # be priced in the seed model catalog (llm/models.py) or the budget
     # guard is silently disabled.
     watermark_vision_model: str = "claude-sonnet-5"
-    # Image / PDF reading for WhatsApp + One Chat attachments (media_service). Sonnet reads images; Haiku
+    # Image / PDF reading for WhatsApp attachments (media_service). Sonnet reads images; Haiku
     # (`chatbot_llm_model`) handles the text-only summaries. Both must be priced in the seed catalog.
     media_vision_model: str = "claude-sonnet-5"
     # Optional listing-page URL template. ``{code}`` is substituted with
