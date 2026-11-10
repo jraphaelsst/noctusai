@@ -880,3 +880,74 @@ def test_enqueue_attests_the_deliverable_verdict_the_pre_push_queue_path_require
     (wt / "src" / "a.txt").write_text("uncommitted\n")
     other = world.enqueue(slug="x")
     assert other["status"] == "needs_resync"
+
+
+# =================================================================================================
+# P2-1: the trial merge honours DEV's .gitattributes (merge=union, merge drivers) - never the head's
+# =================================================================================================
+
+def _dev_with_union_log(world):
+    world.dev_commit(".gitattributes", "*.log merge=union\n")
+    world.dev_commit("events.log", "a\n")
+    sh(world.repo, "git", "fetch", "-q", "origin")
+
+
+def test_a_branch_behind_dev_on_a_merge_union_file_is_accepted(world):
+    """Without dev's attributes the bare-context trial merge text-merged events.log and CONFLICTED: every
+    branch touching an append-only ledger was forced to 0-behind (the livelock)."""
+    _dev_with_union_log(world)
+    wt = world.worktree()
+    (wt / "events.log").write_text("a\nbranch\n")
+    world.set_counts(wt)
+    world.commit(wt, "feat: append to the ledger")
+    world.push(wt, "feat/x")
+    world.dev_commit("events.log", "a\ndev\n")  # dev appended a different line meanwhile
+    d = world.deliverable()
+    m = item(d, "merge_buildable")
+    assert m["ok"], m
+    assert "behind" in m["detail"] and "clean" in m["detail"]
+
+
+def test_a_head_that_declares_merge_union_on_a_conflicting_file_is_still_needs_resync(world):
+    """Attributes come from DEV only: a branch cannot opt its own conflict out by adding merge=union."""
+    wt = world.worktree()
+    (wt / ".gitattributes").write_text("src/a.txt merge=union\n")
+    (wt / "src" / "a.txt").write_text("branch edit\n")
+    world.set_counts(wt)
+    world.commit(wt, "feat: declare union on my own conflict")
+    world.push(wt, "feat/x")
+    world.dev_commit("src/a.txt", "dev edit\n")
+    m = item(world.deliverable(), "merge_buildable")
+    assert not m["ok"] and "src/a.txt" in m["detail"]
+
+
+_STUB_RENDER_CLI = """\
+import pathlib, re, sys
+a = sys.argv
+src = pathlib.Path(a[a.index("--source") + 1]).read_text()
+# like the real renderer: regenerate EVERYTHING between the kb-counts markers (conflict markers included)
+out = re.sub(r"(<!-- kb-counts:start:x -->\\n).*?(<!-- kb-counts:end:x -->)", r"\\1N=9\\n\\2", src, flags=re.S)
+pathlib.Path(a[a.index("--out") + 1]).write_text(out)
+pathlib.Path(a[a.index("--worktree-path") + 1]).joinpath("driver-root-seen.txt").write_text("ran")
+"""
+
+
+def test_the_kb_counts_driver_finds_the_toolkit_when_the_trial_merge_runs_in_the_git_dir(world):
+    """The driver used REPO_ROOT=$(git rev-parse --show-toplevel || pwd): in a git dir that is the git dir itself,
+    mcp/noctusai/cli.py was 'missing', and every counts-block churn became a conflict."""
+    driver = Path(os.environ.get("NOC_MERGE_DRIVER_UNDER_TEST") or Path(__file__).resolve().parents[3] / "scripts" / "hooks" / "merge-kb-counts.sh")
+    sh(world.repo, "git", "config", "merge.kb-counts.driver", f"{driver} %O %A %B %P")
+    world.dev_commit(".gitattributes", "doc.md merge=kb-counts\n")
+    world.dev_commit("mcp/noctusai/cli.py", _STUB_RENDER_CLI)
+    world.dev_commit("doc.md", "prose\n<!-- kb-counts:start:x -->\nN=1\n<!-- kb-counts:end:x -->\nmore prose\n")
+    sh(world.repo, "git", "fetch", "-q", "origin")
+    sh(world.repo, "git", "merge", "-q", "--ff-only", "origin/dev")  # the primary checkout owns the toolkit (stub cli)
+    wt = world.worktree()
+    (wt / "doc.md").write_text("prose\n<!-- kb-counts:start:x -->\nN=3\n<!-- kb-counts:end:x -->\nmore prose\n")  # counts churn on the branch ...
+    world.set_counts(wt)
+    world.commit(wt, "feat: counts bump")
+    world.push(wt, "feat/x")
+    world.dev_commit("doc.md", "prose\n<!-- kb-counts:start:x -->\nN=2\n<!-- kb-counts:end:x -->\nmore prose\n")  # ... and on dev: a text conflict a driver must resolve
+    m = item(world.deliverable(), "merge_buildable")
+    assert m["ok"], m
+    assert (world.repo / "driver-root-seen.txt").read_text() == "ran"  # the primary checkout's toolkit rendered it
