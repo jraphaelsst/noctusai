@@ -13,6 +13,7 @@ Everything domain-shaped is a SEED organ mounted here, no product-local re-imple
 * clients (`mount_clients`)        -- patients: sessions, weekly slots, charges booked into finance, manual
                                        payments; a lead entering `fechado` becomes a patient (`app/crm.py`)
 """
+from noctusai_lib.integrations.whatsapp import parse_line_policy, register_line_policy
 from noctusai_seed import create_product_app
 from noctusai_seed.organs import mount_clients, mount_finance, mount_leads
 from app.config import settings
@@ -21,6 +22,15 @@ from app.crm import CLIENTS_CONFIG, LEADS_CONFIG
 from app.rate_limit import limiter
 from app.routers.contexto_router import router as contexto_router
 from app.routers.whatsapp_router import router as whatsapp_router
+
+# Line policy v1: declare Monica's own line (`MONICA_WAHA_LINE_POLICY`, from waha-instances.yml). A malformed value
+# fails the boot; an absent one leaves the line undeclared => the seed refuses its writes (fail-closed).
+if settings.monica_waha_base_url and settings.monica_waha_line_policy:
+    register_line_policy(
+        settings.monica_waha_base_url,
+        parse_line_policy(settings.monica_waha_line_policy),
+        session=settings.monica_waha_session,
+    )
 
 app = create_product_app(
     name="Monica",

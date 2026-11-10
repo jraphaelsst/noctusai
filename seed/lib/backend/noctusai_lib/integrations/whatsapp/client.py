@@ -19,6 +19,18 @@ from typing import Any, Awaitable, Callable, Literal
 import httpx
 
 from noctusai_lib.integrations import rate_limit
+from noctusai_lib.integrations.whatsapp.log_safety import install_phone_scrub, mask_chat_id, scrub_digits
+from noctusai_lib.integrations.whatsapp.line_policy import (
+    LineEventSink,
+    LinePolicy,
+    LinePolicyDrift,
+    LinePolicyGuard,
+    LineRepairRefused,
+    PolicyReadback,
+    check_session_against_policy,
+    resolve_line_policy,
+    seg as _seg,
+)
 from noctusai_lib.integrations.whatsapp.mappers import (
     build_send_text_body,
     group_info_from_waha,
@@ -34,7 +46,11 @@ from noctusai_lib.integrations.whatsapp.types import (
 )
 from noctusai_lib.primitives.phone import br_mobile_variants
 
-logger = logging.getLogger(__name__)
+logger = install_phone_scrub(logging.getLogger(__name__))
+# httpx logs `HTTP Request: GET <url>` at INFO and a WAHA url carries the phone (`check-exists?phone=<digits>`): scrub it at
+# the source for every process that imports this client, not only those that ran configure_logging.
+for _noisy in ("httpx", "httpcore"):
+    install_phone_scrub(logging.getLogger(_noisy))
 
 # Session statuses `recover_session`'s ladder treats as "recovered enough
 # to stop": SCAN_QR_CODE (fresh pairing needed, but the session is alive
@@ -167,16 +183,21 @@ class WahaNumberCheckError(RuntimeError):
     absent"). ``send_text_to_phone`` falls back to send-then-retry on this."""
 
     def __init__(self, phone: str, status: int | None, detail: str = ""):
-        self.phone, self.status = phone, status
-        super().__init__(f"WAHA check-exists failed for {phone} (status={status}) {detail}".strip())
+        # LGPD: the MESSAGE (what any handler/log/traceback prints) never carries the number. `.phone` is the masked form;
+        # the raw value lives on the private `_phone` for the one caller that needs it.
+        self._phone = phone
+        self.phone, self.status = scrub_digits(phone), status
+        super().__init__(
+            f"WAHA check-exists failed for {scrub_digits(phone)} (status={status}) {scrub_digits(detail)}".strip())
 
 
 class WahaNumberNotOnWhatsApp(RuntimeError):
     """None of the number's candidate spellings is registered on WhatsApp."""
 
     def __init__(self, tried: list[str]):
-        self.tried = tried
-        super().__init__(f"number not on WhatsApp; tried {tried}")
+        self._tried = list(tried)                         # raw, private: only for a caller that must retry/persist
+        self.tried = [scrub_digits(t) for t in tried]     # masked: safe to log, print, put in a message
+        super().__init__(f"number not on WhatsApp; tried {self.tried}")
 
 
 class WahaWebhookError(RuntimeError):
@@ -210,7 +231,9 @@ def _webhook_owned(hook: dict[str, Any], url: str, prefix: str | None) -> bool:
 
 
 def _merged_session_config(
-    existing: dict[str, Any], webhooks: list[dict[str, Any]]
+    existing: dict[str, Any],
+    webhooks: list[dict[str, Any]],
+    policy: LinePolicy | None = None,
 ) -> dict[str, Any]:
     """The PUT body for a webhook write on a POSSIBLY SHARED session.
 
@@ -221,7 +244,8 @@ def _merged_session_config(
     ``markOnline: true, fullSync: false``, which a rebuild from
     ``_session_config`` defaults would have silently flipped). The NOWEB store
     invariant of ``_session_config`` still holds: ``store.enabled`` is forced
-    on, and ``fullSync`` defaults to ``True`` only when absent.
+    on, and ``fullSync`` defaults to ``True`` only when absent. With a line ``policy`` the policy is the authority:
+    ``markOnline`` and ``fullSync`` are WRITTEN from it, overriding whatever the session had.
     """
     config = copy.deepcopy(existing) if existing else {}
     config["webhooks"] = webhooks
@@ -232,11 +256,17 @@ def _merged_session_config(
     if not isinstance(store, dict):
         store = noweb["store"] = {}
     store["enabled"] = True
-    store.setdefault("fullSync", True)
+    if policy is None:
+        store.setdefault("fullSync", True)
+    else:
+        noweb["markOnline"] = policy.mark_online
+        store["fullSync"] = policy.full_sync
     return {"config": config}
 
 
-def _session_config(webhooks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def _session_config(
+    webhooks: list[dict[str, Any]] | None = None, policy: LinePolicy | None = None
+) -> dict[str, Any]:
     """Build a FULL WAHA session-config payload — ALWAYS carries the NOWEB store.
 
     🔴 WAHA's ``PUT /api/sessions/{name}`` (and the config on ``/start``) is a
@@ -262,15 +292,17 @@ def _session_config(webhooks: list[dict[str, Any]] | None = None) -> dict[str, A
     ``test_session_config_wire_key_is_camel_case_full_sync`` — it pins
     the exact wire-format key so this cannot regress silently again.
     """
-    config: dict[str, Any] = {
-        "noweb": {"store": {"enabled": True, "fullSync": True}}
-    }
+    store: dict[str, Any] = {"enabled": True, "fullSync": True if policy is None else policy.full_sync}
+    config: dict[str, Any] = {"noweb": {"store": store}}
+    if policy is not None:
+        # The line policy is the authority on presence + history sync (camelCase wire keys, see below).
+        config["noweb"]["markOnline"] = policy.mark_online
     if webhooks is not None:
         config["webhooks"] = webhooks
     return {"config": config}
 
 
-class WahaClient:
+class WahaClient(LinePolicyGuard):
     """WAHA HTTP client with both sync and async send paths.
 
     Every request routes through `_request` (async) / `_request_sync`
@@ -307,6 +339,8 @@ class WahaClient:
         *,
         external_base_url: str | None = None,
         transport: httpx.AsyncBaseTransport | httpx.BaseTransport | None = None,
+        line_policy: LinePolicy | None = None,
+        line_event_sink: LineEventSink | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -325,6 +359,53 @@ class WahaClient:
         self._transport = transport
         # phone -> (expiry monotonic, ResolvedChat); see resolve_chat_id.
         self._resolve_cache: dict[str, tuple[float, ResolvedChat]] = {}
+        # The line's policy: explicit > registry (url, session) > fail-closed UNDECLARED. Every WRITE to WhatsApp
+        # is refused by `_request` / `_request_sync` when it says `send: disabled` (KB § whatsapp.md § 6a).
+        self._init_line_policy(
+            label=f"{self.base_url}#{session}",
+            policy=resolve_line_policy(self.base_url, session, explicit=line_policy),
+            sink=line_event_sink,
+            resolve_args=(self.base_url, session, line_policy),
+        )
+
+    async def _require_clean_readback_before_pairing(self) -> None:
+        if self.line_policy.send_enabled or not self.line_policy.declared:
+            return
+        rb = await self.verify_line_policy()
+        if not rb.ok:
+            raise LinePolicyDrift(line=self._line_label, mismatches=rb.mismatches)
+
+    async def provision_session(self) -> PolicyReadback:
+        """Set the session config FROM the policy (idempotent) and read it back. WAHA only takes config on
+        ``POST /api/sessions`` (create, ``start: false``) or ``PUT /api/sessions/{s}``; ``/start`` takes none. Create when
+        the session does not exist, else PUT the policy-merged config. These two calls are the only config writes a
+        disabled line allows, and the edge denies them: run this against the CORE (``waha_instance action='provision'``)
+        BEFORE the edge fronts it, then pair."""
+        policy = self._config_policy()
+        if policy is None or not self.line_policy.declared:
+            raise LineRepairRefused(line=self._line_label, op="provision_session", reason="not_config_authoritative")
+        probe = await self._request(
+            "get", f"/api/sessions/{_seg(self.session)}", timeout=15, headers=self._headers())
+        if probe.status_code == 404:
+            body = {"name": self.session, "start": False, **_session_config(policy=policy)}
+            response = await self._request(
+                "post", "/api/sessions", timeout=30, json=body, headers=self._headers(json=True), policy_config=True)
+        else:
+            probe.raise_for_status()
+            existing = _safe_json(probe)
+            config = existing.get("config") if isinstance(existing.get("config"), dict) else {}
+            hooks = config.get("webhooks") if isinstance(config.get("webhooks"), list) else []
+            response = await self._request(
+                "put", f"/api/sessions/{_seg(self.session)}", timeout=30,
+                json=_merged_session_config(config, [dict(h) for h in hooks if isinstance(h, dict)], policy),
+                headers=self._headers(json=True), policy_config=True)
+        response.raise_for_status()
+        return await self.verify_line_policy()
+
+    async def verify_line_policy(self) -> PolicyReadback:
+        """Read the session back (``GET /api/sessions/{session}``) and compare it with the line policy -- run it
+        BEFORE the QR scan. A config you PUT and never read back is unverified."""
+        return check_session_against_policy(await self.get_session(), self.line_policy)
 
     def _resolve_media_url(self, url: str) -> str:
         return rewrite_vendor_media_url(
@@ -351,6 +432,7 @@ class WahaClient:
         json: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         use_base_url: bool = True,
+        policy_config: bool = False,
     ) -> httpx.Response:
         """Single chokepoint for every async WahaClient HTTP call.
 
@@ -365,8 +447,12 @@ class WahaClient:
         vendor-emitted URL — is used as-is, matching the pre-refactor
         call shape exactly.
         """
+        self._guard_write(method, path, policy_config=policy_config)
         await rate_limit.acquire_async("whatsapp")
-        client_kwargs: dict[str, Any] = {"timeout": timeout, "transport": self._transport}
+        _, ahook = self._final_url_hook(policy_config)
+        client_kwargs: dict[str, Any] = {
+            "timeout": timeout, "transport": self._transport, "event_hooks": {"request": [ahook]},
+        }
         if use_base_url:
             client_kwargs["base_url"] = self.base_url
         async with httpx.AsyncClient(**client_kwargs) as client:
@@ -390,12 +476,17 @@ class WahaClient:
         json: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         use_base_url: bool = True,
+        policy_config: bool = False,
     ) -> httpx.Response:
         """Sync twin of `_request` — same chokepoint contract, for the
         worker code paths (`send_text_sync`, `download_media_sync`) that
         call off an event loop."""
+        self._guard_write(method, path, policy_config=policy_config)
         rate_limit.acquire("whatsapp")
-        client_kwargs: dict[str, Any] = {"timeout": timeout, "transport": self._transport}
+        hook, _ = self._final_url_hook(policy_config)
+        client_kwargs: dict[str, Any] = {
+            "timeout": timeout, "transport": self._transport, "event_hooks": {"request": [hook]},
+        }
         if use_base_url:
             client_kwargs["base_url"] = self.base_url
         with httpx.Client(**client_kwargs) as client:
@@ -519,7 +610,7 @@ class WahaClient:
         try:
             resolved = await self.resolve_chat_id(phone)
         except WahaNumberCheckError as exc:
-            logger.warning("WAHA check-exists unavailable (%s); falling back to send-retry", exc)
+            logger.warning("WAHA check-exists unavailable (%s); falling back to send-retry", scrub_digits(exc))
             candidates = self._candidates(phone)
             last: httpx.HTTPStatusError | None = None
             for index, candidate in enumerate(candidates):
@@ -527,7 +618,9 @@ class WahaClient:
                 try:
                     result = await self.send_text(chat_id, text)
                 except httpx.HTTPStatusError as send_exc:
-                    logger.warning("WAHA send to %s failed (%s); trying next variant", chat_id, send_exc)
+                    logger.warning(
+                        "WAHA send to %s failed (%s); trying next variant", mask_chat_id(chat_id), scrub_digits(send_exc)
+                    )
                     last = send_exc
                     continue
                 return self._with_resolution(result, chat_id, index > 0, "send-retry")
@@ -569,7 +662,7 @@ class WahaClient:
         try:
             resolved = self.resolve_chat_id_sync(phone)
         except WahaNumberCheckError as exc:
-            logger.warning("WAHA check-exists unavailable (%s); falling back to send-retry", exc)
+            logger.warning("WAHA check-exists unavailable (%s); falling back to send-retry", scrub_digits(exc))
             candidates = self._candidates(phone)
             last: httpx.HTTPStatusError | None = None
             for index, candidate in enumerate(candidates):
@@ -577,7 +670,9 @@ class WahaClient:
                 try:
                     result = self.send_text_sync(chat_id, text)
                 except httpx.HTTPStatusError as send_exc:
-                    logger.warning("WAHA send to %s failed (%s); trying next variant", chat_id, send_exc)
+                    logger.warning(
+                        "WAHA send to %s failed (%s); trying next variant", mask_chat_id(chat_id), scrub_digits(send_exc)
+                    )
                     last = send_exc
                     continue
                 return self._with_resolution(result, chat_id, index > 0, "send-retry")
@@ -638,8 +733,28 @@ class WahaClient:
     async def get_session(self) -> dict[str, Any]:
         """GET /api/sessions/{session} — status, me, engine."""
         response = await self._request(
-            "get", f"/api/sessions/{self.session}", timeout=15, headers=self._headers()
+            "get", f"/api/sessions/{_seg(self.session)}", timeout=15, headers=self._headers()
         )
+        response.raise_for_status()
+        return _safe_json(response)
+
+    async def me(self) -> dict[str, Any]:
+        """GET /api/sessions/{session}/me -- the paired account (``{"id": "<phone>@c.us", "pushName": ...}``) or ``{}``
+        when unpaired. A READ: allowed on a read-only line (public replacement for callers that reached into the private
+        ``_request_sync`` to fetch it)."""
+        response = await self._request(
+            "get", f"/api/sessions/{_seg(self.session)}/me", timeout=15, headers=self._headers())
+        if response.status_code in (404, 422):
+            return {}
+        response.raise_for_status()
+        return _safe_json(response)
+
+    def me_sync(self) -> dict[str, Any]:
+        """Sync twin of :meth:`me` (worker paths without an event loop)."""
+        response = self._request_sync(
+            "get", f"/api/sessions/{_seg(self.session)}/me", timeout=15, headers=self._headers())
+        if response.status_code in (404, 422):
+            return {}
         response.raise_for_status()
         return _safe_json(response)
 
@@ -660,10 +775,10 @@ class WahaClient:
         This is the canonical fleet default: any chat-capable product needs the
         store on.
         """
-        payload = _session_config()
+        payload = _session_config(policy=self._config_policy())
         response = await self._request(
             "post",
-            f"/api/sessions/{self.session}/start",
+            f"/api/sessions/{_seg(self.session)}/start",
             timeout=30,
             json=payload,
             headers=self._headers(json=True),
@@ -685,10 +800,11 @@ class WahaClient:
         with the stored config — so the durable guarantee is that EVERY config
         write, incl. ``set_webhook``, carries the store; see ``_session_config``.)
         """
-        payload = _session_config()
+        self._guard_repair("restart_session")
+        payload = _session_config(policy=self._config_policy())
         response = await self._request(
             "post",
-            f"/api/sessions/{self.session}/restart",
+            f"/api/sessions/{_seg(self.session)}/restart",
             timeout=30,
             json=payload,
             headers=self._headers(json=True),
@@ -697,10 +813,11 @@ class WahaClient:
         return _safe_json(response)
 
     async def logout_session(self) -> dict[str, Any]:
-        """POST /api/sessions/{session}/logout — unpair the account."""
+        """POST /api/sessions/{session}/logout — unpair the account. Behind ``auto_repair``: it forces a re-pair."""
+        self._guard_repair("logout_session")
         response = await self._request(
             "post",
-            f"/api/sessions/{self.session}/logout",
+            f"/api/sessions/{_seg(self.session)}/logout",
             timeout=30,
             headers=self._headers(json=True),
         )
@@ -756,6 +873,7 @@ class WahaClient:
         <"already_working"|"start"|"restart"|"logout_start">, "paired":
         <bool>, "me": <session "me" dict or None>}``.
         """
+        self._guard_repair("recover_session")
         state = await self.get_session()
         if state.get("status") == "WORKING":
             return recovery_outcome(state, "already_working")
@@ -784,10 +902,15 @@ class WahaClient:
 
         Raises ``WahaSessionNotReady`` when WAHA answers 422 because the
         session is not in ``SCAN_QR_CODE`` (already paired / starting).
+
+        On a read-only (`send: disabled`) line, pairing is GATED on the policy read-back: WAHA's NOWEB `markOnline`
+        defaults to TRUE and ``POST .../start`` takes no config, so an unprovisioned session would broadcast "online"
+        the moment the QR is scanned. Run :meth:`provision_session` first; raises :class:`LinePolicyDrift` otherwise.
         """
+        await self._require_clean_readback_before_pairing()
         response = await self._request(
             "get",
-            f"/api/{self.session}/auth/qr",
+            f"/api/{_seg(self.session)}/auth/qr",
             timeout=15,
             params={"format": "image"},
             headers=self._headers(),
@@ -845,10 +968,11 @@ class WahaClient:
     ) -> dict[str, Any]:
         response = await self._request(
             "put",
-            f"/api/sessions/{self.session}",
+            f"/api/sessions/{_seg(self.session)}",
             timeout=30,
-            json=_merged_session_config(config, webhooks),
+            json=_merged_session_config(config, webhooks, self._config_policy()),
             headers=self._headers(json=True),
+            policy_config=True,
         )
         response.raise_for_status()
         return _safe_json(response)
@@ -882,6 +1006,7 @@ class WahaClient:
         Raises ``WahaWebhookError`` if the current list cannot be read — no
         blind-replace fallback.
         """
+        self._guard_webhook(url)
         prefix = owned_prefix if owned_prefix is not None else _default_owned_prefix(url)
         config, existing = await self._read_session_config("set_webhook")
         merged = [h for h in existing if not _webhook_owned(h, url, prefix)]
@@ -904,6 +1029,7 @@ class WahaClient:
         ``{"removed": 0}``. Raises ``WahaWebhookError`` if the current list
         cannot be read.
         """
+        self._guard_webhook(url_or_prefix)
         config, existing = await self._read_session_config("remove_webhook")
         kept = [h for h in existing if not _webhook_owned(h, url_or_prefix, url_or_prefix)]
         if len(kept) == len(existing):
@@ -930,7 +1056,7 @@ class WahaClient:
         """
         response = await self._request(
             "get",
-            f"/api/{self.session}/chats",
+            f"/api/{_seg(self.session)}/chats",
             timeout=_WAHA_READ_TIMEOUT,
             params={"limit": limit, "offset": offset},
             headers=self._headers(),
@@ -968,7 +1094,7 @@ class WahaClient:
         """
         response = await self._request(
             "get",
-            f"/api/{self.session}/chats/overview",
+            f"/api/{_seg(self.session)}/chats/overview",
             timeout=_WAHA_READ_TIMEOUT,
             params={"limit": limit},
             headers=self._headers(),
@@ -991,7 +1117,7 @@ class WahaClient:
         """
         response = await self._request(
             "get",
-            f"/api/{self.session}/chats/{chat_id}/messages",
+            f"/api/{_seg(self.session)}/chats/{_seg(chat_id)}/messages",
             timeout=_WAHA_HISTORY_TIMEOUT,
             params={"limit": limit},
             headers=self._headers(),
@@ -1041,7 +1167,7 @@ class WahaClient:
         """
         response = await self._request(
             "get",
-            f"/api/{self.session}/lids/{lid}",
+            f"/api/{_seg(self.session)}/lids/{_seg(lid)}",
             timeout=_WAHA_READ_TIMEOUT,
             headers=self._headers(),
         )
@@ -1057,7 +1183,7 @@ class WahaClient:
         Returns an empty list on any error (WAHA not configured / unavailable).
         """
         response = await self._request(
-            "get", f"/api/{self.session}/lids", timeout=_WAHA_READ_TIMEOUT, headers=self._headers()
+            "get", f"/api/{_seg(self.session)}/lids", timeout=_WAHA_READ_TIMEOUT, headers=self._headers()
         )
         if response.status_code >= 400:
             return []
@@ -1097,7 +1223,7 @@ class WahaClient:
         """POST /api/{session}/groups — create a group."""
         response = await self._request(
             "post",
-            f"/api/{self.session}/groups",
+            f"/api/{_seg(self.session)}/groups",
             timeout=15,
             json={
                 "session": self.session,
@@ -1113,7 +1239,7 @@ class WahaClient:
         """GET /api/{session}/groups — groups the session belongs to."""
         response = await self._request(
             "get",
-            f"/api/{self.session}/groups",
+            f"/api/{_seg(self.session)}/groups",
             timeout=_WAHA_READ_TIMEOUT,
             params={"limit": limit, "offset": offset},
             headers=self._headers(),
@@ -1127,7 +1253,7 @@ class WahaClient:
         """GET /api/{session}/groups/{id} — one group's details."""
         response = await self._request(
             "get",
-            f"/api/{self.session}/groups/{group_id}",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}",
             timeout=_WAHA_READ_TIMEOUT,
             headers=self._headers(),
         )
@@ -1143,7 +1269,7 @@ class WahaClient:
         """
         response = await self._request(
             "get",
-            f"/api/{self.session}/groups/{group_id}/participants",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/participants",
             timeout=_WAHA_READ_TIMEOUT,
             headers=self._headers(),
         )
@@ -1162,7 +1288,7 @@ class WahaClient:
         endpoint = "add" if action == "added" else "remove"
         response = await self._request(
             "post",
-            f"/api/{self.session}/groups/{group_id}/participants/{endpoint}",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/participants/{endpoint}",
             timeout=15,
             json={"participants": [{"id": pid} for pid in participant_ids]},
             headers=self._headers(json=True),
@@ -1206,7 +1332,7 @@ class WahaClient:
     ) -> None:
         response = await self._request(
             "post",
-            f"/api/{self.session}/groups/{group_id}/admin/{endpoint}",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/admin/{endpoint}",
             timeout=15,
             json={"participants": [{"id": pid} for pid in participant_ids]},
             headers=self._headers(json=True),
@@ -1232,7 +1358,7 @@ class WahaClient:
         """GET /api/{session}/groups/{id}/invite-code."""
         response = await self._request(
             "get",
-            f"/api/{self.session}/groups/{group_id}/invite-code",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/invite-code",
             timeout=15,
             headers=self._headers(),
         )
@@ -1243,7 +1369,7 @@ class WahaClient:
         """POST /api/{session}/groups/{id}/invite-code/revoke — regenerate."""
         response = await self._request(
             "post",
-            f"/api/{self.session}/groups/{group_id}/invite-code/revoke",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/invite-code/revoke",
             timeout=15,
             headers=self._headers(json=True),
         )
@@ -1254,7 +1380,7 @@ class WahaClient:
         """PUT /api/{session}/groups/{id}/settings/security/messages-admin-only."""
         response = await self._request(
             "put",
-            f"/api/{self.session}/groups/{group_id}/settings/security/messages-admin-only",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/settings/security/messages-admin-only",
             timeout=15,
             json={"value": on},
             headers=self._headers(json=True),
@@ -1265,7 +1391,7 @@ class WahaClient:
         """DELETE /api/{session}/chats/{chatId}/messages/{messageId}."""
         response = await self._request(
             "delete",
-            f"/api/{self.session}/chats/{chat_id}/messages/{message_id}",
+            f"/api/{_seg(self.session)}/chats/{_seg(chat_id)}/messages/{_seg(message_id)}",
             timeout=15,
             headers=self._headers(),
         )
@@ -1275,7 +1401,7 @@ class WahaClient:
         """POST /api/{session}/groups/{id}/leave."""
         response = await self._request(
             "post",
-            f"/api/{self.session}/groups/{group_id}/leave",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/leave",
             timeout=15,
             headers=self._headers(json=True),
         )

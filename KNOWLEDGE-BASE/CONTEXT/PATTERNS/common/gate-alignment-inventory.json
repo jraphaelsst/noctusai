@@ -1215,6 +1215,23 @@
    "class": "never-fires",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-guardian-tool-authorship": {
+   "mechanism": "tool:release_steward (guardian_holds_lease reads the StewardStore lease; remedy names the tooling branch steward)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-10",
+   "shadow": {
+    "since": "2026-11-10",
+    "fires": 0,
+    "true_positives": 0,
+    "effective_fp": 0.0,
+    "promote_when": "waived to blocking at birth: deterministic predicate (exact two files AND live lease held by this very session), ratified by council 09340534; demote if any effective FP"
+   },
+   "source": "release-steward guardian spec, council 09340534 (TOOLING section): the lease holder never authors steward tooling",
+   "telemetry": "gate events: cli exit wrapper (pass/deny) + keeper allow rows naming why it passed (no-lease/stale-lease/no-session/other-holder)"
+  },
   "keeper:check-guc-carveout-guard-hand-written": {
    "severity": "",
    "kind": "keeper",
@@ -2454,6 +2471,22 @@
    "class": "never-fires",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-raw-waha-client-construction": {
+   "mechanism": "api: noctusai_lib.integrations.whatsapp.get_whatsapp_client",
+   "owner": "integrations-engineer",
+   "placement": "warn",
+   "standard": "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a (line policy v1): a WAHA client is built only by the seed factory so the line's fail-closed policy rides on it",
+   "source": "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a",
+   "new": true,
+   "declared": "2026-11-10",
+   "shadow": {
+    "since": "2026-11-10",
+    "fires": 0,
+    "true_positives": 0,
+    "effective_fp": 0.0,
+    "promote_when": ">=7 days and the staged-file delta is clean with 0 effective FP"
+   }
+  },
   "keeper:check-redis-client-via-seam": {
    "severity": "",
    "kind": "keeper",
@@ -3429,7 +3462,31 @@
    ]
   },
   {
+   "id": "J",
+   "decision": "While a council session has no verdict row, direct reads of its project-history/council file are flagged (denied once promoted from shadow); the ledger tool is unaffected",
+   "home": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/council.md",
+   "construction": "mcp/noctusai/tools/noctus/dev/council_ledger.py (tool-assigned labels, seats withheld until verdict)",
+   "gate": "guard:council-read",
+   "telemetry": "guard-events.ndjson warn/deny rows via _guard_failclosed.log_event; gate_alignment walls",
+   "branch": "feat/ac-council-guard",
+   "gates": [
+    "guard:council-read"
+   ]
+  },
+  {
    "id": "D32",
+   "decision": "A WhatsApp line declares its policy (send/mark_online/full_sync/auto_repair); the seed refuses writes on a send:disabled or undeclared line, an edge proxy 403s them, and a WAHA client is built only by the seed factory",
+   "home": "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a",
+   "construction": "api:noctusai_lib.integrations.whatsapp.get_whatsapp_client (policy rides on the client) + waha_instance render (edge deny proxy, dashboard off)",
+   "gate": "keeper:check-raw-waha-client-construction + check_waha_instances_render_sync (policy declared, prod env == declared)",
+   "telemetry": "immutable events whatsapp.line.write_refused / whatsapp.line.repair_refused via LineEventSink",
+   "branch": "feat/ac-line-policy",
+   "gates": [
+    "keeper:check-raw-waha-client-construction"
+   ]
+  },
+  {
+   "id": "D33",
    "decision": "A spec-writing advisor (product-manager, product-architect, product-designer) may Write only spec/notes files (scratchpad dir or projects/<slug>/spec|mockups); the agent files state it and a PreToolUse guard keeps it, warn-first shadow",
    "home": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/gate-methodology-sync.md",
    "construction": ".claude/agents/product-manager.md (the Write-scope rule; the guard derives the writer set from the agent frontmatter)",
@@ -3441,15 +3498,15 @@
    ]
   },
   {
-   "id": "J",
-   "decision": "While a council session has no verdict row, direct reads of its project-history/council file are flagged (denied once promoted from shadow); the ledger tool is unaffected",
-   "home": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/council.md",
-   "construction": "mcp/noctusai/tools/noctus/dev/council_ledger.py (tool-assigned labels, seats withheld until verdict)",
-   "gate": "guard:council-read",
-   "telemetry": "guard-events.ndjson warn/deny rows via _guard_failclosed.log_event; gate_alignment walls",
-   "branch": "feat/ac-council-guard",
+   "id": "D34",
+   "decision": "The release-steward lease holder (guardian) never authors steward tooling (release_steward.py, task_branch.py); only a tooling branch steward does",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md",
+   "construction": "guardian_holds_lease (StewardStore.holder) shared reader + the refusal message names the remedy",
+   "gate": "keeper:check-guardian-tool-authorship",
+   "telemetry": "gate events (deny) and allow rows with the pass-through reason",
+   "branch": "feat/guardian-tool-authorship-keeper",
    "gates": [
-    "guard:council-read"
+    "keeper:check-guardian-tool-authorship"
    ]
   }
  ]

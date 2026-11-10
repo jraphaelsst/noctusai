@@ -35,11 +35,13 @@ from noctusai_lib.integrations.whatsapp.inbox.ingest import (
     OnMessage,
     OnNewChat,
     ParsedMessage,
+    ShouldStore,
     ingest_waha_event,
     notify_message,
     parse_waha_message,
     resolve_chat_identity,
 )
+from noctusai_lib.integrations.whatsapp.inbox.predicates import inbound_one_to_one_only
 from noctusai_lib.integrations.whatsapp.inbox.realtime import (
     EVENT_CHAT_READ,
     EVENT_CHAT_UPSERT,
@@ -81,6 +83,8 @@ __all__ = [
     "notify_message",
     "OnNewChat",
     "ParsedMessage",
+    "ShouldStore",
+    "inbound_one_to_one_only",
     "SupabaseWhatsAppChatStore",
     "WhatsAppChatStore",
     "backfill_connection",

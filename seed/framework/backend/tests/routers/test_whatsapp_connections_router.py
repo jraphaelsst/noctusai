@@ -16,6 +16,7 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
@@ -117,6 +118,18 @@ def _org_dep(*, raise_401=False):
         return (user, "tok", ORG_A)
 
     return _dep
+
+
+@pytest.fixture(autouse=True)
+def _legacy_enabled_line_policy():
+    """These suites drive a FakeWahaClient through the routers: declare the legacy process default (`send: enabled`)
+    through the PUBLIC registry; fail-closed behaviour is covered in the lib suite."""
+    from noctusai_lib.integrations.whatsapp import LinePolicy, clear_line_policies, register_line_policy
+
+    clear_line_policies()
+    register_line_policy("*", LinePolicy("enabled", True, True, True))
+    yield
+    clear_line_policies()
 
 
 def _fake_waha_factory_singleton():
@@ -246,7 +259,7 @@ class TestUpdateAndDelete:
         resp = TestClient(app).delete(f"/api/whatsapp/connections/{created['id']}")
         assert resp.status_code == 204
         assert [h["url"] for h in waha.session_webhooks] == ["https://peer.example.com/hook/x"]
-        assert waha.me is None and waha.session_status == "SCAN_QR_CODE"  # no logout side effect
+        assert waha.paired_me is None and waha.session_status == "SCAN_QR_CODE"  # no logout side effect
 
     def test_delete_still_204_but_logs_error_when_waha_unreadable(self, caplog):
         app, _store, waha = _app()

@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from noctusai_lib.log_scrub import scrub_digits
+
 REDACTED = "[Filtered]"
 
 _SENSITIVE_KEYS = {
@@ -64,7 +66,19 @@ def scrub_event(event: dict[str, Any], hint: Any = None) -> dict[str, Any]:
             if "data" in crumb:
                 crumb["data"] = _scrub_value(crumb["data"])
             if isinstance(crumb.get("message"), str):
-                crumb["message"] = _TOKEN_QS.sub(r"\1\2=" + REDACTED, crumb["message"])
+                crumb["message"] = scrub_digits(_TOKEN_QS.sub(r"\1\2=" + REDACTED, crumb["message"]))
+    # phone numbers in event text (LGPD): the message, the formatted log entry, exception values
+    if isinstance(event.get("message"), str):
+        event["message"] = scrub_digits(event["message"])
+    logentry = event.get("logentry")
+    if isinstance(logentry, dict):
+        for k in ("message", "formatted"):
+            if isinstance(logentry.get(k), str):
+                logentry[k] = scrub_digits(logentry[k])
+    exc = event.get("exception")
+    for item in (exc.get("values") if isinstance(exc, dict) else None) or []:
+        if isinstance(item, dict) and isinstance(item.get("value"), str):
+            item["value"] = scrub_digits(item["value"])
     user = event.get("user")
     if isinstance(user, dict):
         for k in ("email", "ip_address", "username"):

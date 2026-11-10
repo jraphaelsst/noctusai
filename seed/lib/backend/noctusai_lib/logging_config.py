@@ -29,8 +29,10 @@ _IGNORED_KEYS = {
     "message", "taskName",
 }
 
+from noctusai_lib.log_scrub import ScrubbingFormatterMixin, scrub_record  # noqa: E402
 
-class _JSONFormatter(logging.Formatter):
+
+class _JSONFormatter(ScrubbingFormatterMixin, logging.Formatter):
     """
     JSON log formatter for structured logging.
 
@@ -51,6 +53,7 @@ class _JSONFormatter(logging.Formatter):
         self.app_name = app_name
 
     def format(self, record: logging.LogRecord) -> str:
+        scrub_record(record)  # last stop before the bytes leave the process: message, args, traceback, extra= fields
         log_data: Dict[str, Any] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
@@ -77,7 +80,7 @@ class _JSONFormatter(logging.Formatter):
         return json.dumps(log_data, default=str)
 
 
-class _HumanReadableFormatter(logging.Formatter):
+class _HumanReadableFormatter(ScrubbingFormatterMixin, logging.Formatter):
     """
     Human-readable log formatter for development.
 
@@ -90,6 +93,7 @@ class _HumanReadableFormatter(logging.Formatter):
         self.app_name = app_name
 
     def format(self, record: logging.LogRecord) -> str:
+        scrub_record(record)  # last stop before the bytes leave the process: message, args, traceback, extra= fields
         timestamp = datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S")
         correlation_id = get_correlation_id()
 
@@ -170,6 +174,14 @@ def configure_logging(
     console_handler = logging.StreamHandler(stream if stream is not None else sys.stdout)
     console_handler.setLevel(level)
     console_handler.setFormatter(formatter)
+    # LGPD: no phone number reaches a log line. The ROOT handler covers every product logger that propagates; uvicorn
+    # and httpx keep their own handlers/propagation, so they get the filter on the logger itself (`?phone=<digits>`).
+    from noctusai_lib.log_scrub import install_phone_scrub, install_record_factory
+
+    install_record_factory()  # scrub at record CREATION (message, args, traceback, extra= fields): before any handler/hook
+    install_phone_scrub(console_handler)
+    for noisy in ("uvicorn", "uvicorn.access", "uvicorn.error", "httpx", "httpcore"):
+        install_phone_scrub(logging.getLogger(noisy))
     root_logger.addHandler(console_handler)
 
     # Reduce noise from third-party libraries

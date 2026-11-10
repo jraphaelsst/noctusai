@@ -883,6 +883,7 @@ class MediaService:
             logger.warning("media: download refused -- the URL is not a file on the line's WAHA host (ref=%s)", ref_log(urlparse(url).netloc if url else ""))
             raise MediaHostRefused("host_fora_do_waha")
         headers = self._waha_headers()
+        # noc-allow: raw-waha-http -- GET-only, host-pinned (url_de_midia_permitida), no redirects, size-capped stream: it cannot write to WhatsApp
         async with httpx.AsyncClient(timeout=60, follow_redirects=False, transport=self._transport) as client:
             async with client.stream("GET", resolved_url, headers=headers) as response:
                 response.raise_for_status()

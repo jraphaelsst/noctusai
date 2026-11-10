@@ -145,13 +145,9 @@ noc VPS
 **Deploy config (owner, when L3 exists).** Every product container reads these. All unset means notices record `failed` loudly, never silently:
 - `NOC_OWNER_LINE_WAHA_URL` (the L3 WAHA container) + `NOC_OWNER_LINE_WAHA_SESSION` (required in practice) + `NOC_OWNER_LINE_WAHA_API_KEY`;
 - `NOC_OWNER_LINE_EXPECTED_NUMBER` (E.164 of L3). The sender refuses to send unless the paired account matches it, with BR 9th-digit variants accepted. A client's line can never send owner notices.
-- L3 also needs an explicit line-policy entry once S1 replaces `"*"` (Assistant session, feat/ac-line-policy 0f007e6ca):
-  - add it to `WAHA_LINE_POLICIES` (JSON map), key `<NOC_OWNER_LINE_WAHA_URL>#<session>`, e.g. `"http://waha-owner:3000#default"`;
-  - the match is on normalised host:port plus session (`_host_key`), so the spelling of the URL doesn't matter;
-  - value: `{"send":"enabled","mark_online":false,"full_sync":false,"auto_repair":<owner choice>}`. false/false is the quiet default; the owner picks mark_online and full_sync deliberately;
-  - L3 is NOT `personal: true` in `deploy/fleet/waha-instances.yml`, so no personal-line consent sentence is needed.
-  - `NOC-REMEDIATE[owner-line-waha-factory]` switches the framework `me_fetch` to the public `WahaClient.me_sync()` once D2b lands.
-- [x] Stage 2 LANDED on dev at 7d37ba548 (run 42775773787). Prod waits on the go_live council plus the owner's typed go (core 118, agents 076).
+- L3 registers ITS OWN line (`NOC_OWNER_LINE_WAHA_URL` + session) as send-enabled at seed boot, only when the URL AND `NOC_OWNER_LINE_EXPECTED_NUMBER` are set, tighten-only (`register_owner_line_policy`: a stricter policy on that host wins and the transport is refused loudly). Resolved 2026-11-10; the paired-number check still guards a misset URL.
+- An explicit `WAHA_LINE_POLICIES` entry for L3 (key `<URL>#<session>`, matched on normalised host:port + session) is now optional; it can only tighten (e.g. `mark_online:false`, `full_sync:false`). L3 is NOT `personal: true`, so no personal-line consent sentence applies.
+- [x] Stage 2 LANDED on dev at 7d37ba548 (run 42775773787). D2b landed at 681430ac5 (framework `me_fetch` now uses `WahaClient.me_sync()`). Prod waits on the go_live council plus the owner's typed go (core 118, agents 076).
 
 **Improvements:**
 - A new route in an existing router inherits its envelope (noc-contract-first, refined).

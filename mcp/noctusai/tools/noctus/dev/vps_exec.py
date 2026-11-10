@@ -22,6 +22,7 @@ edge into a fail2ban ban. IO is injectable (`run_remote`) for zero-SSH tests.
 """
 from __future__ import annotations
 
+import re
 import shlex
 from typing import Any, Callable
 
@@ -30,14 +31,86 @@ from ._vps_ssh import run_remote as _throttled_ssh
 DEFAULT_HOST = "noctus-vps"
 _MAX_OUT = 20000  # cap each stream so a runaway `cat` can't flood the context
 
-# Leading binaries that are inherently READ-ONLY → run without confirm.
+# Binaries that may run WITHOUT confirm, each with an ARGV-level flag allowlist (`_ARGV_POLICY` below): a binary is
+# not "read-only" -- a binary invoked with these exact flags is. `env`, `find`, `awk`, `sed`, `xargs` are NOT here: they
+# can launch other programs (`env sh`, `find -exec`, `awk system()`, `sed e`), so they need confirm like any write.
 _READ_BINARIES = frozenset({
-    "cat", "grep", "egrep", "fgrep", "rg", "ls", "head", "tail", "wc", "stat",
-    "find", "env", "printenv", "echo", "test", "file", "du", "df", "uname",
-    "hostname", "date", "whoami", "pwd", "which", "readlink", "sort", "uniq",
-    "cut", "tr", "jq", "xxd", "base64", "sed", "awk", "curl", "wget", "id",
-    "getent", "dirname", "basename", "realpath", "md5sum", "sha256sum",
+    "cat", "grep", "egrep", "fgrep", "rg", "ls", "head", "tail", "wc", "stat", "echo", "test", "file", "du", "df",
+    "uname", "hostname", "date", "whoami", "pwd", "which", "readlink", "sort", "uniq", "cut", "tr", "jq", "xxd",
+    "base64", "curl", "wget", "id", "getent", "dirname", "basename", "realpath", "md5sum", "sha256sum", "printenv",
 })
+
+#: per-binary allowed flags. short = single-letter flags (clusters like `-sS` are checked char by char), val_short = short
+#: flags that TAKE a value, long = bare long flags, val_long = long flags that take a value. Anything else -> confirm.
+_ARGV_POLICY: dict[str, dict[str, Any]] = {
+    "cat": {"short": "nbsAETv"},
+    "head": {"short": "qv", "val_short": "nc"}, "tail": {"short": "qv", "val_short": "nc"},
+    "wc": {"short": "lwcmL"}, "stat": {"short": "L", "val_short": "c", "long": {"--dereference"}, "val_long": {"--format"}},
+    "ls": {"short": "lahtrRdSAFi1sc", "long": {"--all", "--human-readable"}},
+    "grep": {"short": "cilLnrRwxvsEFhHoqIazZ", "val_short": "ABCme", "val_long": {"--include", "--exclude", "--max-count"},
+             "long": {"--count", "--ignore-case", "--line-number", "--recursive", "--files-with-matches",
+                      "--invert-match", "--no-messages", "--extended-regexp", "--fixed-strings", "--quiet"}},
+    "echo": {"short": "ne"}, "test": {"short": ""}, "file": {"short": "bi"},
+    "du": {"short": "hsacx", "val_short": "d"}, "df": {"short": "hTi"}, "uname": {"short": "asrmnvpio"},
+    "hostname": {"short": "fis"}, "date": {"short": "u", "val_short": "d"}, "whoami": {"short": ""}, "pwd": {"short": "LP"},
+    "which": {"short": "a"}, "readlink": {"short": "fem"}, "sort": {"short": "nrubfhVc", "val_short": "kt"},
+    "uniq": {"short": "cdui"}, "cut": {"short": "s", "val_short": "dfcb"}, "tr": {"short": "dsc"},
+    "jq": {"short": "rcCSeMa", "long": {"--raw-output", "--compact-output", "--sort-keys"}},
+    "xxd": {"short": "p", "val_short": "lcs"}, "base64": {"short": "d"}, "id": {"short": "unGg"},
+    "getent": {"short": ""}, "dirname": {"short": ""}, "basename": {"short": "a", "val_short": "s"},
+    "realpath": {"short": ""}, "md5sum": {"short": "b"}, "sha256sum": {"short": "b"}, "printenv": {"short": "0"},
+    # HTTP clients: GET-only flags. NO -X/--request, -d/--data*, -F, -T, -K, -o/-O (write files), cookies, --json.
+    "curl": {"short": "sSfLIivk46g", "val_short": "HmAeDw", "long": {"--compressed", "--head", "--insecure", "--silent",
+             "--show-error", "--fail", "--location", "--verbose", "--include"},
+             "val_long": {"--max-time", "--connect-timeout", "--header", "--user-agent", "--resolve", "--retry"}},
+    "wget": {"short": "qSv", "val_short": "OTt", "long": {"--spider", "--quiet", "--no-check-certificate", "--server-response"},
+             "val_long": {"--timeout", "--tries", "--header"}},
+    "rg": {"short": "cilnIwxvsFhHoqz", "val_short": "ABCmeg", "long": {"--count", "--ignore-case", "--files-with-matches"}},
+}
+
+
+def _value_ok(binary: str, flag: str, value: str) -> bool:
+    if binary == "curl" and flag == "-D":
+        return value == "-"           # dump headers to stdout only, never to a file
+    if binary == "curl" and flag == "-w":
+        return "@" not in value        # `-w @file` reads a file
+    if binary == "wget" and flag == "-O":
+        return value == "-"           # stdout only
+    return True
+
+
+def _argv_ok(argv: list[str]) -> bool:
+    pol = _ARGV_POLICY.get(argv[0] if argv else "")
+    if pol is None:
+        return False
+    short, val_short = pol.get("short", ""), pol.get("val_short", "")
+    longs, val_long = pol.get("long", set()), pol.get("val_long", set())
+    i = 1
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--":
+            break
+        if tok.startswith("--"):
+            name, eq, val = tok.partition("=")
+            if name in val_long:
+                if not eq:
+                    i += 1
+            elif name not in longs:
+                return False
+        elif tok.startswith("-") and len(tok) > 1 and not tok[1:].isdigit():
+            chars = tok[1:]
+            for k, ch in enumerate(chars):
+                if ch in val_short:
+                    value = chars[k + 1:] if k < len(chars) - 1 else (argv[i + 1] if i + 1 < len(argv) else "")
+                    if not _value_ok(argv[0], "-" + ch, value):
+                        return False
+                    if k == len(chars) - 1:
+                        i += 1
+                    break
+                if ch not in short:
+                    return False
+        i += 1
+    return True
 # `docker <sub>` is read-only only for these subcommands.
 _DOCKER_READ_SUBCMDS = frozenset({
     "ps", "inspect", "images", "logs", "version", "info", "top", "port",
@@ -55,6 +128,347 @@ _HARD_DENY = (
     "docker compose down", "docker-compose down", "crontab", "iptables -f",
     "ufw disable", "userdel", "passwd ", "> /etc/", ">/etc/",
 )
+
+
+#: A command line is "read-only" only when ONE simple command runs. Any shell metacharacter (`;` `&` `|` `$(` backtick,
+#: newline, redirection) can chain a second, mutating command behind an allow-listed first word
+#: (`echo; docker exec noctus-waha-x-core ...`), so its presence takes the command off the read-only path.
+_SHELL_META = re.compile(r"[;&|`<>\n\r]|\$\(|\$\{")
+_ACTIVE_IN_DOUBLE = re.compile(r"[`\n\r]|\$\(|\$\{")
+
+
+def _has_shell_meta(command: str) -> bool:
+    """True when the command line carries an ACTIVE shell metacharacter. Quote-aware: `;` `&` `|` `<` `>` are literal
+    inside single or double quotes (a docker `--format '{{.A}}|{{.B}}'` template), while backtick, newline, `$(` and `${`
+    stay active inside double quotes and every metacharacter stays active outside quotes. An unterminated quote or a
+    trailing backslash is unparseable ⇒ meta (fail closed). ANSI-C `$'…'` and locale `$"…"` quoting are meta too: bash
+    ends those spans by different rules (`\\'` does NOT close `$'…'`), so this parser and the remote shell would
+    disagree on where the span ends — a disagreement is refused, never guessed (security re-check, 2026-11-10)."""
+    i, n = 0, len(command)
+    while i < n:
+        ch = command[i]
+        if ch == "\\":
+            if i + 1 >= n:
+                return True
+            i += 2
+            continue
+        if ch == "$" and i + 1 < n and command[i + 1] in "'\"":
+            return True
+        if ch == "'":
+            end = command.find("'", i + 1)
+            if end < 0:
+                return True
+            if "\n" in command[i:end] or "\r" in command[i:end]:
+                return True
+            i = end + 1
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n and command[j] != '"':
+                j += 2 if command[j] == "\\" else 1
+            if j >= n:
+                return True
+            if _ACTIVE_IN_DOUBLE.search(command[i + 1:j]):
+                return True
+            i = j + 1
+            continue
+        if _SHELL_META.match(command, i) or command.startswith("$(", i) or command.startswith("${", i):
+            return True
+        i += 1
+    return False
+
+
+#: curl/wget invoked in a way that is not a plain GET (a POST to a WAHA core would defeat the line policy).
+_NON_GET_HTTP = re.compile(
+    r"(?:^|\s)(?:-X\s*(?!GET\b|HEAD\b)\S+|--request(?:=|\s+)(?!GET\b|HEAD\b)\S+|-d\b|--data\S*|-F\b|--form\S*|"
+    r"-T\b|--upload-file\b|--json\b|--post-data\S*|--post-file\S*|--method(?:=|\s+)(?!GET\b|HEAD\b)\S+|--body-\S+)",
+)  # case-sensitive on purpose: `-D-` (dump headers) is a read, `-d` (data) is not
+#: A WAHA core container (`waha-<n>-core` / `noctus-waha-<n>-core`) or ANY docker exec into a waha container: the
+#: line-policy edge does not front these, so touching them is a production write that needs the confirm flow.
+_WAHA_CORE = re.compile(r"waha-[a-z0-9-]*-core", re.IGNORECASE)
+_DOCKER_EXEC_WAHA = re.compile(r"docker\s+(?:container\s+)?exec\b[^\n;|&]*\bwaha", re.IGNORECASE)
+_IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+_HEXID = re.compile(r"^[0-9a-f]{4,64}$")
+_HOSTISH = re.compile(r"(?:://|@)([A-Za-z0-9][A-Za-z0-9._-]*)|\b([A-Za-z0-9][A-Za-z0-9._-]*):\d{2,5}\b")
+# NOC-REMEDIATE[personal-label-drift-check]: a real personal core can be MISSING its `noctus.line.personal` label (created
+# before the render change, a manual `docker run`, a compose override), and then this inventory cannot see it. The ops
+# check (noc-daily-ops): every container whose image is devlikeapro/waha* must carry the label on a declared personal
+# line; alert when a declared personal line's container lacks it, and when a waha container exists that no line declares. — 2026-11-10
+#: Every container that is a WAHA: by NAME, by IMAGE ANCESTOR (devlikeapro/waha*, any tag) and by compose PROJECT label.
+#: Rows: id, name, compose service, then per network IPv4, IPv6 and every network alias. `xargs -r` so "none" is rc 0 +
+#: empty (a failure is rc != 0 -> fail closed).
+_WAHA_INVENTORY = (
+    "{ docker ps -aq --filter name=waha; "
+    "for i in $(docker images -q --filter 'reference=devlikeapro/waha*' | sort -u); do docker ps -aq --filter ancestor=$i; done; "
+    "docker ps -aq --filter label=com.docker.compose.project=noctus-waha; } | sort -u | xargs -r docker inspect "
+    "--format '{{.Id}} {{.Name}} {{index .Config.Labels \"com.docker.compose.service\"}} "
+    "{{if eq (index .Config.Labels \"noctus.line.personal\") \"true\"}}personal-line-label{{end}} "
+    "{{range $k,$v := .NetworkSettings.Networks}}{{$v.IPAddress}} {{$v.GlobalIPv6Address}} {{range $v.Aliases}}{{.}} {{end}}{{end}}'"
+)
+
+
+def _norm_tok(tok: str) -> str:
+    """Lower-case; IP addresses canonicalised (IPv4-mapped IPv6 == the IPv4)."""
+    import ipaddress
+
+    t = tok.strip().lstrip("/").lower().rstrip(".")
+    try:
+        ip = ipaddress.ip_address(t.strip("[]").split("%", 1)[0])
+    except ValueError:
+        return t
+    return str(getattr(ip, "ipv4_mapped", None) or ip)
+
+
+def _waha_inventory(run) -> "list[set[str]] | None":
+    """Per waha container: every identifying token (id, name, compose service, IPs, aliases). None = lookup failed."""
+    try:
+        rc, out, _err = run(_WAHA_INVENTORY)
+    except Exception:  # noqa: BLE001 - an unreachable VPS is "unknown", which is closed
+        return None
+    if rc != 0:
+        return None
+    return [{_norm_tok(x) for x in line.split()} for line in (out or "").splitlines() if line.strip()]
+
+
+def _candidate_targets(command: str, container: str | None) -> set[str]:
+    """Tokens that could NAME a container without containing `waha`: a (short) id, an IP, or a host name."""
+    toks = {t for t in re.split(r"[\s/:=,\"']+", command) if t}
+    out = {t.lower() for t in toks if _HEXID.match(t.lower())}
+    out |= {_norm_tok(ip) for ip in _IPV4.findall(command)}
+    for m6 in re.finditer(r"\[([0-9A-Fa-f:.]+)\]", command):
+        out.add(_norm_tok(m6.group(1)))
+    for m in _HOSTISH.finditer(command):
+        host = _norm_tok(m.group(1) or m.group(2) or "")
+        if host and host not in ("localhost",):
+            out.add(host)
+    if container:
+        out.add(_norm_tok(container))
+    return out
+
+
+def _row_matches(row: set[str], cands: set[str]) -> bool:
+    ids = {x for x in row if _HEXID.match(x)}
+    return any(c in row or (len(c) >= 4 and any(i.startswith(c) for i in ids)) for c in cands)
+
+
+PERSONAL_LABEL_TOKEN = "personal-line-label"  # the inventory emits this for a container stamped noctus.line.personal=true
+
+
+def _aliases_of(yml_text: str) -> set[str]:
+    from .waha_instance import parse_instances
+
+    out: set[str] = set()
+    for inst in parse_instances(yml_text)["instances"]:
+        if inst.get("personal"):
+            n = inst["name"]
+            out |= {f"waha-{n}", f"noctus-waha-{n}", f"waha-{n}-core", f"noctus-waha-{n}-core"}
+    return out
+
+
+def personal_aliases(repo_root=None) -> set[str]:
+    """Names of `personal: true` lines in THIS checkout's waha-instances.yml. Raises when unreadable/unparseable."""
+    from pathlib import Path
+
+    from settings import REPO_ROOT
+
+    from .waha_instance import DATA_REL
+
+    return _aliases_of((Path(repo_root) if repo_root else Path(REPO_ROOT)).joinpath(DATA_REL).read_text(encoding="utf-8"))
+
+
+def _vps_personal_aliases(run) -> set[str]:
+    """Same, from the VPS's OWN checkout. Raises when it cannot be read."""
+    from .waha_instance import VPS_FLEET
+
+    rc, out, _err = run(f"cat {VPS_FLEET}/waha-instances.yml")
+    if rc != 0:
+        raise OSError("VPS waha-instances.yml unreadable")
+    return _aliases_of(out)
+
+
+def targets_personal_core(command: str, container: str | None = None, run=None, repo_root=None) -> bool:
+    """True when the command/container targets a container of a `personal: true` line. Refused with OR without confirm.
+
+    A branch must never be able to LOOSEN this, so "personal" is the UNION of three sources: this checkout's yml, the
+    VPS's own yml, and the LIVE container label `noctus.line.personal=true` (stamped at render). A flip to `personal:
+    false` or a deleted line locally changes none of the other two. If ANY source cannot be read, every waha target is
+    refused as if personal (fail closed)."""
+    waha_names = {t for t in re.split(r"[\s/:=,\"']+", f"{command} {container or ''}".lower()) if "waha" in t}
+    cands = _candidate_targets(command, container) | {_norm_tok(t) for t in waha_names}
+    if not cands:
+        return False
+    aliases: set[str] = set()
+    unreadable = False
+    try:
+        aliases |= personal_aliases(repo_root)
+    except Exception:  # noqa: BLE001 - unreadable local declaration
+        unreadable = True
+    if run is not None:
+        try:
+            aliases |= _vps_personal_aliases(run)
+        except Exception:  # noqa: BLE001 - unreadable VPS declaration
+            unreadable = True
+    low = f"{command} {container or ''}".lower()
+    if any(re.search(rf"(?<![a-z0-9-]){re.escape(a)}(?![a-z0-9-])", low) for a in aliases):
+        return True
+    wahaish = bool(waha_names) or bool(_WAHA_CORE.search(command)) or bool(_DOCKER_EXEC_WAHA.search(command))
+    if run is None:
+        return unreadable and wahaish
+    inv = _waha_inventory(run)
+    if inv is None:
+        return True                      # cannot see the live labels: fail closed
+    hit = [row for row in inv if _row_matches(row, cands)]
+    if any(PERSONAL_LABEL_TOKEN in row or row & aliases for row in hit):
+        return True
+    return unreadable and (wahaish or bool(hit))
+
+
+#: shell/interpreter/launcher binaries: one of these in command position can pick a container at run time (`sh -c`,
+#: `xargs`, a script file) with nothing in the argv that names it.
+_INDIRECT_BINARIES = frozenset({
+    "sh", "bash", "zsh", "dash", "ash", "ksh", "csh", "tcsh", "fish", "busybox", "eval", "source", ".", "xargs", "parallel",
+    "python", "python2", "python3", "perl", "ruby", "node", "php", "lua", "awk", "gawk", "mawk", "watch", "script", "make",
+    "at", "batch", "expect", "ssh", "su",
+})
+_WRAPPER_BINARIES = frozenset({
+    "sudo", "doas", "env", "nohup", "timeout", "time", "command", "builtin", "exec", "nice", "ionice", "stdbuf", "setsid",
+    "flock", "strace", "ltrace", "chroot", "unshare",
+})
+_CONTAINER_CLIS = frozenset({"docker", "docker-compose", "podman", "nerdctl", "ctr", "crictl"})
+_OPERATOR_CHARS = frozenset(";&|()<>")
+_DYNAMIC_EXPANSION = re.compile(r"[`\n\r]|\$[({A-Za-z_@*#?!0-9]")
+
+
+def _dynamic_container_selection(command: str) -> str | None:
+    """Why `command` could pick or reach a container without naming it (None = it names everything it touches).
+
+    Parsed with shlex (operators split out, quotes honoured), not regex alone: expansions (`$(..)`, backticks, `$VAR`),
+    an interpreter / `xargs` / `eval` / script file in command position, `find -exec`, and a docker CLI chained with
+    anything (pipe, `;`, `&&`, redirection) all hide the target from the alias/id/IP match."""
+    if _DYNAMIC_EXPANSION.search(command):
+        return "shell expansion or newline"
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        toks = list(lexer)
+    except ValueError:
+        return "unparseable shell syntax"
+    segments: list[list[str]] = [[]]
+    chained = False
+    for tok in toks:
+        if set(tok) <= _OPERATOR_CHARS:
+            chained = True
+            segments.append([])
+        else:
+            segments[-1].append(tok)
+    uses_cli = False
+    for seg in segments:
+        words = list(seg)
+        while words and "=" in words[0] and words[0].split("=", 1)[0].isidentifier():
+            words = words[1:]
+        while words and words[0].rsplit("/", 1)[-1] in _WRAPPER_BINARIES:
+            words = words[1:]
+            while words and (words[0].startswith("-") or ("=" in words[0] and words[0].split("=", 1)[0].isidentifier())
+                             or re.fullmatch(r"[0-9.]+[smhd]?", words[0])):
+                words = words[1:]
+        if not words:
+            continue
+        head = words[0]
+        base = head.rsplit("/", 1)[-1]
+        if base in _CONTAINER_CLIS:
+            uses_cli = True
+        elif base in _INDIRECT_BINARIES:
+            return f"`{base}` in command position"
+        elif base == "find" and any(w in ("-exec", "-execdir", "-ok", "-okdir") for w in words):
+            return "`find -exec`"
+        elif "/" in head and base not in _READ_BINARIES:
+            return "a script / path executable"
+        elif head.startswith(("~", ".")):
+            return "a script / path executable"
+    if not uses_cli and any(t.rsplit("/", 1)[-1] in _CONTAINER_CLIS for t in toks):
+        uses_cli = True
+    if uses_cli and chained:
+        return "a container CLI chained with another command"
+    return None
+
+
+def _personal_guard_active(run, repo_root=None) -> bool:
+    """True when ANY personal line exists in any of the three sources, or any source cannot be read (fail closed)."""
+    try:
+        if personal_aliases(repo_root):
+            return True
+    except Exception:  # noqa: BLE001
+        return True
+    try:
+        if _vps_personal_aliases(run):
+            return True
+    except Exception:  # noqa: BLE001
+        return True
+    inv = _waha_inventory(run)
+    return inv is None or any(PERSONAL_LABEL_TOKEN in row for row in inv)
+
+
+def personal_unsafe_indirection(command: str, run, repo_root=None) -> str | None:
+    """Reason string when `command` selects its container dynamically AND a personal line is declared (or a source is
+    unreadable); else None. Plain `docker exec <literal-name> ...` is untouched."""
+    why = _dynamic_container_selection(command)
+    if why is None:
+        return None
+    return why if _personal_guard_active(run, repo_root) else None
+
+
+#: Host paths/binaries that reach a container's data WITHOUT naming the container: the Docker/containerd data root holds
+#: every volume (the personal session store included), `/proc/<pid>/root|environ|fd` is another process's filesystem and
+#: secrets, and the namespace/runtime CLIs enter or read a container directly. No `--data-root` / `data-root` value is
+#: configured anywhere in this repo (grep 2026-11-10), so the defaults are the whole list.
+_DOCKER_DATA_ROOT = re.compile(r"/var/lib/(?:docker|containerd)\b", re.IGNORECASE)
+_PROC_VIEW = re.compile(r"/proc/(?:\d|[*?\[])")
+_HOST_ESCAPE_BINARIES = frozenset({"nsenter", "ctr", "crictl", "runc", "unshare"})
+_GLOB_CHARS = frozenset("*?[")
+
+
+def _host_access_screen(command: str) -> str | None:
+    """Why `command` reaches container data through the HOST (data root, process views, namespace/runtime CLIs, an
+    absolute-path glob) instead of naming a container; None = it does not. shlex argv analysis, not regex alone."""
+    if _DOCKER_DATA_ROOT.search(command):
+        return "the Docker/containerd data root"
+    if _PROC_VIEW.search(command):
+        return "a /proc/<pid> process view"
+    try:
+        toks = shlex.split(command)
+    except ValueError:
+        toks = command.split()
+    for tok in toks:
+        if tok.rsplit("/", 1)[-1] in _HOST_ESCAPE_BINARIES:
+            return f"`{tok.rsplit('/', 1)[-1]}`"
+        for part in (tok, tok.partition("=")[2] if tok.startswith("-") else ""):
+            if part.startswith("/") and _GLOB_CHARS & set(part):
+                return "a glob in an absolute path"
+    return None
+
+
+def personal_unsafe_host_access(command: str, run, repo_root=None) -> str | None:
+    """Reason string when `command` reaches container data via the host AND a personal line is declared (or a source is
+    unreadable); else None. Applies with or without confirm, to read-only commands too (`cat`, `ls`)."""
+    why = _host_access_screen(command)
+    if why is None:
+        return None
+    return why if _personal_guard_active(run, repo_root) else None
+
+
+def touches_waha_core(command: str, container: str | None = None, run=None) -> bool:
+    """True when the command (or `container`) targets a WAHA container -- by name, or by id / IP / host name / alias when
+    `run` is given and the target RESOLVES to a waha container. An unresolvable lookup fails CLOSED (True)."""
+    if (_WAHA_CORE.search(command) or (container and "waha" in container.lower())
+            or _DOCKER_EXEC_WAHA.search(command)):
+        return True
+    cands = _candidate_targets(command, container)
+    if not cands or run is None:
+        return False
+    inv = _waha_inventory(run)
+    if inv is None:
+        return True
+    return any(_row_matches(row, cands) for row in inv)
 
 
 def _err(msg: str, **extra) -> dict[str, Any]:
@@ -79,20 +493,30 @@ def _leading_binary(command: str) -> str:
 
 
 def _is_read_only(command: str) -> bool:
-    """True when the command's leading binary is inherently read-only."""
-    bin_ = _leading_binary(command)
-    if bin_ == "docker":
-        try:
-            toks = shlex.split(command)
-        except ValueError:
-            toks = command.split()
-        # docker [global flags] <subcmd>; find the first non-flag after 'docker'
+    """True when ONE simple command runs, its binary is allow-listed AND every flag is on that binary's allowlist (the
+    parser is an ALLOWLIST at argv level, not a blocklist of known-bad flags)."""
+    if _has_shell_meta(command):
+        return False
+    try:
+        toks = shlex.split(command)
+    except ValueError:
+        return False
+    while toks and "=" in toks[0] and not toks[0].startswith("-") and toks[0].split("=", 1)[0].isidentifier():
+        if toks[0].split("=", 1)[0].upper().startswith(("LD_", "DYLD_", "PATH", "BASH_", "SHELL", "IFS")):
+            return False  # an env prefix that changes what runs is not harmless
+        toks = toks[1:]
+    if not toks:
+        return False
+    if toks[0] == "docker":
         after = [t for t in toks[1:] if not t.startswith("-")]
+        flags = [t for t in toks[1:] if t.startswith("-")]
+        if any(f.split("=", 1)[0] in ("-H", "--host", "--context", "--config", "--tls", "--tlsverify") for f in flags):
+            return False
         sub = after[0] if after else ""
         if sub == "system":
             return len(after) > 1 and after[1] == "df"
         return sub in _DOCKER_READ_SUBCMDS
-    return bin_ in _READ_BINARIES
+    return toks[0] in _READ_BINARIES and _argv_ok(toks)
 
 
 def _hard_denied(command: str) -> str | None:
@@ -109,6 +533,7 @@ def exec_cmd(
     confirm: bool = False,
     ssh_host: str = DEFAULT_HOST,
     run_remote: Callable | None = None,
+    repo_root: str | None = None,
 ) -> dict[str, Any]:
     """Run ``command`` on the VPS host, or inside ``container`` (docker exec).
 
@@ -129,7 +554,46 @@ def exec_cmd(
                       "vps.recreate / vps.prune) or run it by hand."),
         }
 
-    read_only = _is_read_only(command)
+    run = _runner(run_remote, ssh_host)
+    if targets_personal_core(command, container, run=run, repo_root=repo_root):
+        return {
+            "ok": False, "status": "refused", "exit_code": 1,
+            "error": ("this targets a container of a `personal: true` WhatsApp line: refused with or without confirm -- "
+                      "a personal number's core is touched by the owner by hand, never through this tool "
+                      "(KB § INTEGRATIONS/whatsapp.md § 6a)."),
+        }
+    # NOC-REMEDIATE[personal-core-host-exec-authz]: this is a best-effort tool-level screen, not the control. A command
+    # that picks its container at run time, or reaches its data through the host (Docker data root, /proc/<pid>, nsenter,
+    # ctr/crictl/runc/unshare, an absolute-path glob), names no id/IP/alias, so both are refused whenever a personal line
+    # exists. The real control is host-level and out of scope here: (1) a Docker authorization plugin or an SSH forced
+    # command that refuses exec/cp/attach/logs/inspect/commit/export on containers labelled noctus.line.personal=true;
+    # (2) the automation SSH user taken out of root and out of the docker group (docker group == root on the host);
+    # (3) the personal line's volume on an owner-only encrypted mount that user cannot read. — 2026-11-10
+    indirect = personal_unsafe_indirection(command, run, repo_root=repo_root)
+    if indirect is not None:
+        return {
+            "ok": False, "status": "refused", "exit_code": 1,
+            "error": (f"personal-unsafe: this command selects its container at run time ({indirect}), so it cannot be "
+                      "checked against the `personal: true` lines; refused with or without confirm. Name the container "
+                      "explicitly (KB § INTEGRATIONS/whatsapp.md § 6a)."),
+        }
+    host_access = personal_unsafe_host_access(command, run, repo_root=repo_root)
+    if host_access is not None:
+        return {
+            "ok": False, "status": "refused", "exit_code": 1,
+            "error": (f"personal-unsafe: this command reaches container data through the host ({host_access}) and a "
+                      "`personal: true` line is declared (or a source is unreadable); refused with or without confirm "
+                      "(KB § INTEGRATIONS/whatsapp.md § 6a)."),
+        }
+    waha = touches_waha_core(command, container, run=run)
+    read_only = _is_read_only(command) and not waha
+    if waha and not confirm:
+        return {
+            "ok": False, "status": "needs_confirm", "exit_code": 1,
+            "message": ("this touches a WAHA container (waha-<n>-core / docker exec into waha*): the line-policy edge "
+                        "does not front it, so it can write to WhatsApp or change the session. It is never "
+                        "read-only -- pass confirm=True only for a deliberate, owner-approved operation."),
+        }
     if not read_only and not confirm:
         return {
             "ok": False, "status": "needs_confirm", "exit_code": 1,
@@ -145,7 +609,6 @@ def exec_cmd(
     else:
         remote = f"sh -lc {shlex.quote(inner)}"
 
-    run = _runner(run_remote, ssh_host)
     rc, out, err = run(remote)
     return {
         "ok": rc == 0,
@@ -178,5 +641,5 @@ def register(server) -> None:
         return exec_cmd(command, container=container, confirm=confirm, ssh_host=ssh_host)
 
 
-__all__ = ["exec_cmd", "register", "_HARD_DENY", "_READ_BINARIES", "_is_read_only",
+__all__ = ["exec_cmd", "touches_waha_core", "targets_personal_core", "personal_unsafe_indirection", "personal_unsafe_host_access", "personal_aliases", "register", "_HARD_DENY", "_READ_BINARIES", "_is_read_only",
            "_hard_denied"]

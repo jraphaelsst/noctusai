@@ -78,6 +78,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -110,7 +111,7 @@ logger = logging.getLogger(__name__)
 # history-rewriting or branch-switching action is structurally impossible.
 _ALLOWED_GIT = frozenset(
     {"fetch", "rev-parse", "merge-base", "rev-list", "log", "diff", "status",
-     "worktree", "rebase", "push", "branch",
+     "worktree", "rebase", "push", "branch", "for-each-ref",
      # read-only content-equivalence proof for a queue-rebased landing
      "cherry", "merge-tree",
      # integrate-time mechanisms (migration renumber, KB-count regen) commit
@@ -175,6 +176,7 @@ def _default_run_local(cmd: list[str], cwd: str | None = None) -> tuple[int, str
 # (`merge_queue.py`) is then the ONLY thing that moves dev for it. A queue ref
 # is the one non-dev destination this tool may push to — never main/prod.
 MQ_PREFIX = "mq/"
+_ENQUEUE_SLUG_RE = re.compile(r"(?!/)(?!.*(?:^|/)\.\.(?:/|$))[A-Za-z0-9._/-]+")
 
 
 def _assert_push_targets_dev(args: tuple[str, ...], dev_branch: str) -> None:
@@ -222,6 +224,18 @@ def _resolve(git, ref: str) -> str | None:
     return out.strip() if rc == 0 and out.strip() else None
 
 
+def _dev_ref(remote: str, dev_branch: str) -> str:
+    """Fully qualified remote-tracking ref. A bare `origin/dev` resolves LOCAL branches and TAGS first, so a
+    branch or tag named like it silently becomes 'dev' (adversarial review N-1)."""
+    return f"refs/remotes/{remote}/{dev_branch}"
+
+
+def _head_ref(branch: str) -> str:
+    """Fully qualified local branch ref: a TAG named `feat/x` otherwise wins `git rev-parse feat/x`, so the
+    merged-check read the tag's commit and `branch -D` removed unmerged work (N-7)."""
+    return branch if branch.startswith("refs/") else f"refs/heads/{branch}"
+
+
 def _is_ancestor(git, a: str, b: str) -> bool:
     """True iff commit `a` is an ancestor of (or equal to) `b`."""
     rc, _o, _e = git("merge-base", "--is-ancestor", a, b)
@@ -229,22 +243,14 @@ def _is_ancestor(git, a: str, b: str) -> bool:
 
 
 def _trial_merge_tree(git, *args: str) -> tuple[int, str, str]:
-    """`git merge-tree --write-tree <args>` run with cwd INSIDE the git dir.
+    """`git merge-tree --write-tree <args>` with cwd INSIDE the git dir (see `release_steward.trial_merge_tree`).
 
-    🔴 git runs the registered custom merge drivers (kb-counts, lgpd-warnings,
-    gate-inventory) for a trial merge and creates their `.merge_file_*` scratch
-    files in the PROCESS cwd. The MCP server's cwd is the PRIMARY checkout, so
-    every `landed`/cleanup probe flashed untracked `.merge_file_*` into the
-    primary and the primary-write guard blamed whichever session happened to
-    be running a Bash call (2026-11-09, feat/assistant-chatbot). A cwd inside
-    the git dir is a bare context: no work tree, nothing to litter. When the
-    git dir cannot be resolved the probe is SKIPPED (rc 2) — proof 2/3 then
-    refuse, the conservative answer — never run with the primary as cwd."""
-    rc, gd, _e = git("rev-parse", "--path-format=absolute", "--git-common-dir")
-    gitdir = gd.strip().splitlines()[0] if rc == 0 and gd.strip() else ""
-    if not gitdir or not os.path.isabs(gitdir):
-        return 2, "", "git dir unresolved; trial merge skipped"
-    return git("merge-tree", "--write-tree", *args, cwd=gitdir)
+    NOTE what that means for attributes: in that bare context nothing reads `.gitattributes`, so `merge=union`
+    files and the custom merge drivers do NOT apply - a branch and dev that both touched such a file report a
+    conflict here. The landed/equivalence PROOFS below are conservative by design (a conflict only means 'not
+    proven', the caller then refuses), so they keep that behaviour; the delivery contract's item 2 passes
+    `attr_tree=<dev tip>` to `release_steward.trial_merge_tree` instead, because there a false conflict is a livelock."""
+    return _steward.trial_merge_tree(git, *args)
 
 
 def _content_on_dev(git, branch: str, dev_ref: str) -> tuple[bool, list[str]]:
@@ -466,6 +472,32 @@ def _rebase_in_progress(runner, wt_path: str) -> bool:
         os.path.isdir(os.path.join(git_dir, "rebase-merge"))
         or os.path.isdir(os.path.join(git_dir, "rebase-apply"))
     )
+
+
+def _rebase_state_left(runner, wt_path: str) -> bool | None:
+    """True when `.git/rebase-merge|rebase-apply` still exists in the worktree's git dir, False when
+    gone, None when the git dir cannot be resolved (unverifiable - never read as 'gone')."""
+    rc, out, _e = runner(["git", "rev-parse", "--git-dir"], cwd=wt_path)
+    if rc != 0 or not out.strip():
+        return None
+    git_dir = out.strip()
+    if not os.path.isabs(git_dir):
+        git_dir = os.path.join(wt_path, git_dir)
+    return (os.path.isdir(os.path.join(git_dir, "rebase-merge"))
+            or os.path.isdir(os.path.join(git_dir, "rebase-apply")))
+
+
+def _abort_rebase_verified(runner, wt_path: str) -> dict[str, Any]:
+    """`git rebase --abort`, then PROVE the state is gone (one retry). A reported "aborted" that left
+    `rebase-merge/` behind is how a conflicted enqueue stranded a branch steward's worktree
+    (2026-11-10, D1). Returns {aborted: bool|None, state_left: bool|None}; `aborted` is None when the
+    git dir could not be resolved to verify."""
+    for _ in range(2):
+        runner(["git", "rebase", "--abort"], cwd=wt_path)
+        left = _rebase_state_left(runner, wt_path)
+        if left is not True:
+            return {"aborted": None if left is None else True, "state_left": left}
+    return {"aborted": False, "state_left": True}
 
 
 def _absolute_wt_path(wt_path: str, root: str) -> str:
@@ -955,8 +987,30 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps,
             return
         wire.append({"link": link, "target": src, "kind": "node_modules"})
 
+    def _link_toolkit_venv() -> None:
+        """`mcp/noctusai/.venv` - the toolkit interpreter `scripts/hooks/pre-push` runs its keepers with.
+
+        Same class as `.env` / node_modules (gitignored, so absent from every fresh worktree; the 3fc8271ae class, 2nd
+        instance): without it every pre-push keeper prints 'SKIPPED - no toolkit venv at <wt>/mcp/noctusai/.venv
+        (unmeasurable, not a pass)' and the hook that judges the push judges nothing. A venv's scripts carry the PRIMARY's
+        absolute paths, so it is symlinked whole (never copied); a real .venv in the worktree is the caller's own."""
+        rel = os.path.join("mcp", "noctusai", ".venv")
+        src = os.path.join(primary_root, rel)
+        link = os.path.join(wt_root, rel)
+        if not fs.exists(src):
+            skipped.append({"link": link, "reason": (
+                f"primary toolkit .venv absent: {src} - the PRIMARY checkout itself was never provisioned; run "
+                f"`cd {os.path.join(primary_root, 'mcp', 'noctusai')} && python3 -m venv .venv && "
+                f".venv/bin/pip install -r requirements.txt` first")})
+            return
+        if fs.is_dir(link) and not fs.is_symlink(link):
+            skipped.append({"link": link, "reason": "real .venv already present in worktree"})
+            return
+        wire.append({"link": link, "target": src, "kind": "venv"})
+
     _plan_scrubbed_dotenv()
     _link_toolkit_node_modules()
+    _link_toolkit_venv()
 
     def _link_whole_node_modules(rel_pkg: str) -> None:
         """Seed-frontend node_modules ONLY. Nothing ever nests inside these
@@ -1313,6 +1367,33 @@ def _migration_collision_candidates(
                 "all_entries": entries,
             })
     return candidates
+
+
+def migration_number_collisions(listing: dict[str, list[str]], introduced: list[str]) -> list[dict]:
+    """PURE tree-based sibling of `check_migration_number_collision` Leg A (the on-disk duplicate scan),
+    for a tree that is NOT checked out (`release_steward.deliverable` item 3 reads the composed tree via
+    `git ls-tree`). `listing` = {migrations dir: [file names in that tree]}; `introduced` = the repo-relative
+    `.sql` paths the branch adds. A collision = one number claimed by 2+ DIFFERENT names in a directory
+    where at least one claimant is introduced (a pair of OTHER branches' files is theirs to resolve - the
+    2026-09-28 scoping). Honors the keeper's `_ACCEPTED_MIGRATION_DUPLICATES`. Uses `_MIGRATION_NUM_RE`."""
+    from .compliance import _ACCEPTED_MIGRATION_DUPLICATES
+    by_dir: dict[str, set[str]] = {}
+    for rel in introduced:
+        directory, _, name = rel.rpartition("/")
+        by_dir.setdefault(directory, set()).add(name)
+    clashes: list[dict] = []
+    for directory, mine in sorted(by_dir.items()):
+        by_number: dict[str, list[str]] = {}
+        for name in sorted(set(listing.get(directory, [])) | mine):
+            m = _MIGRATION_NUM_RE.match(name)
+            if m and name.endswith(".sql"):
+                by_number.setdefault(m.group(1), []).append(name)
+        parts = directory.split("/")
+        product = parts[1] if len(parts) > 1 and parts[0] == "products" else ""
+        for number, names in sorted(by_number.items()):
+            if len(names) > 1 and set(names) & mine and (product, number) not in _ACCEPTED_MIGRATION_DUPLICATES:
+                clashes.append({"directory": directory, "number": number, "names": names})
+    return clashes
 
 
 def _next_free_migration_number(entries: list[str], width: int) -> str:
@@ -2075,6 +2156,12 @@ class PointerOps:
         from tools.noctus.dev import branch_pointer as bp
         return bp._latest_per_branch(bp._read_dev_ledger()).get(branch)
 
+    def latest_checked(self, branch: str) -> "tuple[dict | None, dict]":
+        """`latest` plus how the ledger was read (`store_ok` False = origin/ledgers unreadable, dev copy only)."""
+        from tools.noctus.dev import branch_pointer as bp
+        rows, status = bp.read_dev_ledger_status()
+        return bp._latest_per_branch(rows).get(branch), status
+
     def append(self, **kw: Any) -> dict[str, Any]:
         from tools.noctus.dev import branch_pointer as bp
         return bp.append(**kw)
@@ -2263,8 +2350,101 @@ def _spawn_post_integrate(primary_root: str, dev_branch: str, remote: str) -> di
     return {"status": "scheduled", "pid": proc.pid, "log": str(log_path)}
 
 
+def _ownership_skip(*, abs_wt: str, branch: str, primary_root: str, pointer_fn, caller: str | None,
+                    auto: bool, session_state: "Callable[[str], str] | None") -> dict[str, Any] | None:
+    """Why this teardown must NOT happen, or None when it is the caller's to do.
+
+    A worktree is not the caller's to remove when
+      (1) another session that is not dead claims it (`primary_write_guard` claims, written by
+          `harness_claim_worktree`; liveness from the steward registry, `unknown` counts as live) - and an
+          unreadable/corrupt claims file counts as OWNED, never as "no claims";
+      (2) its branch is a declared long-lived steward branch (branch-tree pointer role 'steward');
+      (3) its branch pointer belongs to ANOTHER session that is not dead - on the AUTO path always, and on a DIRECT
+          cleanup whenever the caller is not that pointer's session (the pointer's own session keeps the old,
+          explicit behaviour);
+      (4) AUTO only, fail closed: the pointer store was not fully readable, or there is neither a pointer (with a
+          session) nor a claim by the caller to say whose it is.
+    2026-11-10: the guardian's `landed slug=agents` removed another session's integration worktree and local ref
+    while that session still worked there. A DIRECT cleanup with an unreadable pointer store still proceeds (an
+    explicit act; the lifecycle verdict is never failed over a pointer failure)."""
+    from tools.noctus.dev import primary_write_guard as _pwg
+    here = os.path.realpath(abs_wt)
+    state_of = session_state or (lambda _s: "unknown")
+    claims, claims_status = _pwg.read_claims_status(primary_root)
+    if claims_status == "unreadable":
+        return {"status": "skipped_owned", "cwd_removed": False,
+                "owner": {"session_id": None, "source": "claims_unreadable"},
+                "reason": (f"the worktree claims file is unreadable or corrupt, so ownership of {abs_wt} cannot be ruled out: "
+                           "left alone (fix .claude/cache/session-worktrees.json or release the claim)")}
+    caller_claims_it = False
+    for sid, claim in sorted(claims.items()):
+        if os.path.realpath(str(claim.get("worktree", ""))) != here:
+            continue
+        if sid == caller:
+            caller_claims_it = True
+            continue
+        state = state_of(sid)
+        if state != "dead":
+            return {"status": "skipped_owned", "cwd_removed": False,
+                    "owner": {"session_id": sid, "source": "worktree_claim", "state": state,
+                              "claimed_at": claim.get("claimed_at")},
+                    "reason": (f"worktree {abs_wt} is claimed by session {sid[:12]} ({state}) - not the caller's to "
+                               "remove; the owner tears it down, or releases the claim (harness_claim_worktree release)")}
+    if pointer_fn is None:
+        return None
+    unreadable: str | None = None
+    ptr = None
+    try:
+        checked = getattr(pointer_fn, "latest_checked", None)
+        if checked is not None:
+            ptr, status = checked(branch)
+            if not status.get("store_ok", True):
+                unreadable = str(status.get("error") or "origin/ledgers unreadable; answered from the dev copy")
+        else:
+            ptr = pointer_fn.latest(branch)
+    except Exception as e:  # noqa: BLE001
+        ptr, unreadable = None, f"{type(e).__name__}: {e}"
+    if unreadable and auto:
+        # Fail CLOSED on the auto path: a steward branch is exactly what a stale/failed read hides. Only the DELETION is
+        # skipped; the git lifecycle verdict (landed/integrated) is unaffected.
+        return {"status": "skipped_owned", "cwd_removed": False,
+                "owner": {"session_id": None, "source": "pointer_store_unreadable", "branch": branch},
+                "reason": (f"cannot prove {branch} is not a long-lived steward branch: the branch-tree pointer store was "
+                           f"not fully readable ({unreadable[:120]}); worktree and ref left alone - re-run cleanup once it is")}
+    if unreadable:
+        logger.warning("task_branch: pointer store unreadable for a direct cleanup of %s (proceeding): %s", branch, unreadable)
+        ptr = None
+    if ptr and ptr.get("role") == "steward":
+        owner = ptr.get("session")
+        if auto or owner != caller:
+            return {"status": "skipped_owned", "cwd_removed": False,
+                    "owner": {"session_id": owner, "source": "steward_branch", "branch": branch},
+                    "reason": (f"{branch} is a long-lived STEWARD branch (branch-tree pointer role 'steward'): its "
+                               "worktree and ref outlive any single landing" +
+                               ("" if auto else " - only the owning session may clean it up"))}
+    pointer_session = (ptr or {}).get("session")
+    if (ptr and pointer_session and pointer_session != caller
+            and ptr.get("status") not in _TERMINAL_POINTER_STATUSES):
+        pstate = state_of(pointer_session)
+        if pstate != "dead":
+            return {"status": "skipped_owned", "cwd_removed": False,
+                    "owner": {"session_id": pointer_session, "source": "pointer_session", "state": pstate, "branch": branch},
+                    "reason": (f"{branch}'s branch-tree pointer belongs to session {str(pointer_session)[:12]} ({pstate}), "
+                               "not the caller: the owner cleans its own worktree (explicit cleanup), or the "
+                               "SessionStart sweep reclaims it once idle")}
+    if auto and not unreadable and not caller_claims_it and not pointer_session:
+        # nothing says whose this is (no pointer carrying a session, no claim by the caller): undeterminable -> not ours
+        return {"status": "skipped_owned", "cwd_removed": False,
+                "owner": {"session_id": None, "source": "no_pointer", "branch": branch},
+                "reason": (f"cannot determine who owns {branch}: no branch-tree pointer with a session and no claim by the "
+                           "caller; left alone (an explicit cleanup by the owner, or the SessionStart sweep, reclaims it)")}
+    return None
+
+
 def _auto_cleanup_after_integrate(
-    runner, wt_path: str, slug: str, task_branch_fn, kwargs: dict[str, Any],
+    runner, wt_path: str, slug: str, task_branch_fn, kwargs: dict[str, Any], *,
+    branch: str | None = None, pointer_fn=None, caller: str | None = None,
+    session_state: "Callable[[str], str] | None" = None,
 ) -> dict[str, Any]:
     """Run `cleanup` for a just-integrated worktree iff it is clean.
 
@@ -2274,11 +2454,19 @@ def _auto_cleanup_after_integrate(
     """
     try:
         abs_wt = _absolute_wt_path(wt_path, _resolve_primary_root(kwargs.get("primary_root")))
+        owned = _ownership_skip(
+            abs_wt=abs_wt, branch=branch or f"{kwargs.get('branch_prefix', 'feat/')}{slug}",
+            primary_root=_resolve_primary_root(kwargs.get("primary_root")), pointer_fn=pointer_fn,
+            caller=caller or os.environ.get(_steward.SESSION_ENV), auto=True, session_state=session_state)
+        if owned:
+            return owned
         if _is_dirty_excluding_gitignored(runner, abs_wt):
             return {"status": "skipped", "cwd_removed": False,
                     "reason": "worktree has uncommitted changes - left in place; the "
                               "SessionStart sweep reclaims it once clean and idle"}
-        res = task_branch_fn(action="cleanup", slug=slug, confirm=True, **kwargs)
+        # the nested cleanup gets the EXACT branch and the worktree that was just checked: it never re-resolves
+        # the slug (a collision could point it at a different worktree) and refuses on any mismatch
+        res = task_branch_fn(action="cleanup", slug=slug, confirm=True, branch=branch, checked_worktree=abs_wt, **kwargs)
     except Exception as e:  # best-effort: a landed integrate must still report success
         return {"status": "error", "cwd_removed": False, "reason": f"{type(e).__name__}: {e}"}
     ok = res.get("status") == "cleaned"
@@ -2396,34 +2584,141 @@ def _train_riders_after_integrate(
     return res
 
 
-def _enqueue_push(git, runner, *, plan: dict[str, Any], branch: str, slug: str, remote: str,
-                  wt_path: str, benign_stashed, introduced_migrations: list[str],
-                  renumbered: list[dict], kb_counts_result: dict[str, Any] | None,
-                  verbose: bool) -> dict[str, Any]:
-    """Push the rebased branch to `mq/<slug>--<sha7>` (a fresh ref per enqueue,
-    so a re-enqueue never needs a force-push). The pre-push hook runs the same
-    dev-delivery keepers on a queue push as on a dev push."""
-    head = _resolve(git, branch) or ""
+def _slice_score_gate(git, *, slug: str, branch: str, branch_prefix: str, dev: str, head: str,
+                      pointer_fn, accept_unscored: str | None,
+                      slice_scores_reader) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Engineer slices must be measured before they land (train: each rider). Returns
+    (refusal | None, accepted-override | None). READ-ONLY - shared by `integrate` and `enqueue`."""
+    _rc_m, _m_out, _e = git("log", "--merges", "--format=%s", f"{dev}..{head}")
+    _riders = _train.parse_train_riders(_m_out.splitlines() if _rc_m == 0 else []) if slug.startswith("train-") else []
+    # The pointer is keyed by the REAL branch name (docs/x, fix/x ...), not feat/<slug>.
+    prefix = branch[:-len(slug)] if branch.endswith(slug) else branch_prefix
+    try:
+        unscored = slice_unscored_riders(_riders or [slug], ops=pointer_fn, branch_prefix=prefix,
+                                         reader=slice_scores_reader)
+    except Exception as e:  # noqa: BLE001 - unreadable ledger must not pass
+        return ({"status": "blocked", "exit_code": 1, "refused": "slice_scores_unreadable",
+                 "error": f"cannot verify slice scores: {type(e).__name__}: {e}"}, None)
+    if not unscored:
+        return None, None
+    why = (accept_unscored or "").strip()
+    if len(why) < 10:
+        return {**_slice_unscored_refusal(unscored), "dev_sha": dev}, None
+    return None, {"reason": why, "slugs": [m["slug"] for m in unscored]}
+
+
+def _write_enqueue_attestation(runner, *, head: str, slug: str, branch: str, contract: dict[str, Any],
+                               ref: str, ok: bool | None = None, only_if_exists: bool = False) -> dict[str, Any]:
+    """Record the deliverable() verdict at `<git-common-dir>/noc-enqueue/<full sha>.json`, scoped to the ONE queue ref
+    it authorises (`ref`, fully qualified). The pre-push queue path refuses an mq push without a fresh ok attestation
+    for exactly that sha AND ref, so the delivery contract cannot be skipped by typing the refspec.
+    `ok=False` + `only_if_exists=True` REVOKES: a needs_resync re-check or a rejected push must not leave an earlier ok
+    behind for a raw push to ride. The git dir is shared plumbing, not a work tree."""
+    rc, out, err = runner(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"])
+    gitdir = out.strip().splitlines()[0] if rc == 0 and out.strip() else ""
+    if not gitdir or not os.path.isabs(gitdir):
+        return {"error": f"git common dir unresolved ({(err or '').strip()[:100]})"}
+    try:
+        d = Path(gitdir) / "noc-enqueue"
+        target = d / f"{head}.json"
+        if only_if_exists and not target.exists():
+            return {"skipped": "no attestation to revoke"}
+        d.mkdir(parents=True, exist_ok=True)
+        rec = {"sha": head, "ref": ref, "ok": bool(contract.get("ok") if ok is None else ok),
+               "verdict": contract.get("verdict"), "ts": time.time(), "slug": slug, "branch": branch,
+               "failing": contract.get("failing") or [],
+               "items": [{k: i[k] for k in ("n", "name", "ok")} for i in contract.get("items", [])]}
+        tmp = d / f".{head}.{os.getpid()}.tmp"
+        tmp.write_text(json.dumps(rec), encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    return {"path": str(target)}
+
+
+def _request_verdict_ref(slug: str, branch: str | None = None, store=None) -> str | None:
+    """The `verdict_ref` the branch steward filed with its request (delivery-contract item 5) - only when that request
+    is for THIS branch: a request filed under the same slug for a different branch is not this branch's verdict."""
+    try:
+        req = (store or _steward.StewardStore()).requests().get(slug) or {}
+        if branch and req.get("branch") != branch:
+            return None
+        return req.get("verdict_ref")
+    except Exception:  # noqa: BLE001 - an unreadable outbox is "no pointer", which the contract then fails loudly
+        return None
+
+
+def _enqueue(git, runner, *, base: dict[str, Any], slug: str, branch: str, confirm: bool, remote: str,
+             dev_branch: str, branch_prefix: str, pointer_fn, accept_unscored: str | None,
+             slice_scores_reader, verdict_ref: str | None,
+             deliverable_kwargs: dict[str, Any] | None) -> dict[str, Any]:
+    """`action='enqueue'` - a PURE PUSH (guardian spec, 2026-11-10).
+
+    Verifies the delivery contract READ-ONLY (`release_steward.deliverable`), then pushes the exact
+    sha: `git push origin <sha>:refs/heads/mq/<slug>--<sha7>`. No checkout, no merge, no rebase, no
+    commit, no stash and no file write in ANY worktree - the guardian never mutates a branch it does
+    not own. A branch that fails the contract comes back `needs_resync` (exit 1) naming the failing
+    items; the BRANCH STEWARD fixes it (merge dev in, renumber, regenerate derived files), pushes and
+    re-requests. (Before this, enqueue ran `merge` + `rebase --rebase-merges` + a kb-counts COMMIT inside
+    the requester's worktree and left rebase state behind on a conflict - the D1 stuck rebase.)
+    Pushes from the caller's repo cwd (never the branch's worktree); the pre-push hook still applies."""
+    # remote-tracking refs may move (release-steward.md G1); FETCH_HEAD is not written
+    git("fetch", remote, "--quiet", "--no-write-fetch-head")
+    dev = _resolve(git, _dev_ref(remote, dev_branch))
+    head = _resolve(git, _head_ref(branch))
+    if not dev or not head:
+        return {**base, "status": "error", "exit_code": 1,
+                "error": f"cannot resolve {remote}/{dev_branch} or {branch}."}
+    ahead = _commits(git, dev, head)
+    if not ahead and _is_ancestor(git, head, dev):
+        return {**base, "status": "up_to_date", "exit_code": 0, "dev_sha": dev,
+                "message": f"{branch} has nothing {remote}/{dev_branch} lacks - nothing to enqueue."}
+    refusal, accepted = _slice_score_gate(
+        git, slug=slug, branch=branch, branch_prefix=branch_prefix, dev=dev, head=head,
+        pointer_fn=pointer_fn, accept_unscored=accept_unscored, slice_scores_reader=slice_scores_reader)
+    if refusal:
+        return {**base, **refusal}
+    behind = _commits(git, head, dev)
+    plan = {**base, "dev_sha": dev, "branch_sha": head, "ahead": len(ahead), "behind": len(behind),
+            "incoming_commits": ahead[:20], **({"accepted_unscored": accepted} if accepted else {})}
+
+    def ro_git(*args: str, cwd: str | None = None):  # deliverable carries its own read-only allowlist
+        return runner(["git", *args], cwd=cwd)
+
+    contract = _steward.deliverable(branch, git=ro_git, remote=remote, dev_branch=dev_branch,
+                                    head_sha=head, verdict_ref=verdict_ref, fetch=False,
+                                    **(deliverable_kwargs or {}))
+    plan["deliverable"] = contract
+    plan["introduced_migrations"] = contract.get("introduced_migrations", [])
     qref = f"{MQ_PREFIX}{slug}--{head[:7]}"
-    rc, out, err = git("push", remote, f"HEAD:refs/heads/{qref}", cwd=wt_path)
-    if benign_stashed:
-        _pop_stash(runner, wt_path, benign_stashed, verbose)
+    if not contract["ok"]:
+        _write_enqueue_attestation(runner, head=head, slug=slug, branch=branch, contract=contract,
+                                   ref=f"refs/heads/{qref}", ok=False, only_if_exists=True)
+        return {**plan, "status": "needs_resync", "exit_code": 1, "failing": contract["failing"],
+                "message": (f"{branch} does not meet the delivery contract - NOT pushed, nothing in its worktree touched. "
+                            f"{_steward.deliverable_refusal(contract)}. The branch steward fixes the item(s) on the branch, "
+                            "pushes, re-requests; the guardian never edits, rebases or renumbers a delivery.")}
+    if not confirm:
+        return {**plan, "status": "planned", "exit_code": 0, "queue_ref": qref,
+                "message": (f"{branch} meets the delivery contract; will push {head[:9]} -> {qref} "
+                            f"(pure push: no checkout/merge/rebase/commit). Pass confirm=True.")}
+    attestation = _write_enqueue_attestation(runner, head=head, slug=slug, branch=branch, contract=contract,
+                                             ref=f"refs/heads/{qref}")
+    if attestation.get("error"):
+        return {**plan, "status": "error", "exit_code": 1, "queue_ref": qref,
+                "error": f"cannot write the enqueue attestation the pre-push queue path requires: {attestation['error']}"}
+    rc, out, err = git("push", remote, f"{head}:refs/heads/{qref}")
     if rc != 0:
+        _write_enqueue_attestation(runner, head=head, slug=slug, branch=branch, contract=contract,
+                                   ref=f"refs/heads/{qref}", ok=False, only_if_exists=True)
         tail = "\n".join((err or out or "").strip().splitlines()[-25:])
-        return {**plan, "status": "blocked", "exit_code": 1, "queue_ref": qref,
-                "hook_output": tail,
+        return {**plan, "status": "blocked", "exit_code": 1, "queue_ref": qref, "hook_output": tail,
                 "message": f"enqueue push of {branch} to {qref} was rejected; fix what it names, re-enqueue.\n{tail}"}
-    res = {**plan, "status": "queued", "exit_code": 0, "queue_ref": qref, "enqueued_sha": head,
-           "introduced_migrations": introduced_migrations,
-           "message": (f"queued {branch} as {qref} ({head[:9]}). The CI merge queue tests it on top of "
-                       f"dev (+ anything queued ahead) and lands it. Check: "
-                       f"task_branch action='landed' slug='{slug}' confirm=True — it finishes "
-                       "the post-landing tail (pointer, primary FF, worktree cleanup) once landed.")}
-    if renumbered:
-        res["migration_renumber"] = {"renumbered": renumbered}
-    if kb_counts_result is not None:
-        res["kb_counts_regenerate"] = kb_counts_result
-    return res
+    return {**plan, "status": "queued", "exit_code": 0, "queue_ref": qref, "enqueued_sha": head,
+            "message": (f"queued {branch} as {qref} ({head[:9]}) by a pure push. The CI merge queue tests it on top of "
+                        f"dev (+ anything queued ahead) and lands it. Check: task_branch action='landed' slug='{slug}' "
+                        "confirm=True - it finishes the post-landing tail (pointer, primary FF, worktree cleanup) "
+                        "once landed.")}
 
 
 def _repo_slug(runner) -> str:
@@ -2451,7 +2746,7 @@ def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_pat
     first rebased onto origin/dev — git drops the already-applied patches and the
     branch becomes merged, which `cleanup`'s merged check then accepts."""
     git("fetch", remote, "--quiet")
-    head = _resolve(git, branch)
+    head = _resolve(git, _head_ref(branch))
     if not head:
         return {**base, "status": "error", "exit_code": 1, "error": f"cannot resolve {branch}"}
     reader = status_reader or _default_queue_status_reader(runner)
@@ -2465,7 +2760,7 @@ def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_pat
         return {**out, "status": "ejected", "exit_code": 1,
                 "message": (f"{branch} was EJECTED by the merge queue: {st.get('description')} "
                             f"({st.get('url', '')}). Fix it on the branch, then enqueue again.")}
-    dev = _resolve(git, f"{remote}/{dev_branch}")
+    dev = _resolve(git, _dev_ref(remote, dev_branch))
     if not confirm:
         return {**out, "status": "landed", "exit_code": 0, "dev_sha": dev,
                 "message": f"{branch} LANDED ({st.get('description')}). Pass confirm=True to run the post-landing tail."}
@@ -2473,14 +2768,14 @@ def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_pat
     if not _is_ancestor(git, head, dev):
         # The queue may have REBASED the entry (new shas, same content): decide
         # "merged" by content, never by ancestry, and never touch the worktree.
-        equivalent, missing = _content_on_dev(git, branch, f"{remote}/{dev_branch}")
+        equivalent, missing = _content_on_dev(git, _head_ref(branch), _dev_ref(remote, dev_branch))
         if not equivalent:
             return {**out, "status": "error", "exit_code": 1, "missing_commits": missing,
                     "error": (f"{branch} reported landed but {len(missing)} commit(s) are NOT on "
                               f"{remote}/{dev_branch} by content: {', '.join(missing[:8]) or '(diff non-empty)'}. "
                               "Worktree left untouched; re-enqueue or integrate the missing work.")}
         out["content_equivalent"] = True
-    new_head = _resolve(git, branch)
+    new_head = _resolve(git, _head_ref(branch))
     result = {**out, "status": "integrated", "exit_code": 0, "dev_sha": dev,
               "message": f"{branch} landed via the merge queue ({st.get('description')})."}
     result["pointer"] = _pointer_transition(
@@ -2490,8 +2785,9 @@ def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_pat
     result["primary_ff"] = _ff_primary_after_integrate(
         runner, _resolve_primary_root(primary_root), dev_branch, remote)
     if auto_cleanup:
-        result["auto_cleanup"] = _auto_cleanup_after_integrate(
-            runner, wt_path, slug, task_branch_fn, cleanup_kwargs)
+        result["auto_cleanup"] = result["cleanup"] = _auto_cleanup_after_integrate(
+            runner, wt_path, slug, task_branch_fn, cleanup_kwargs, branch=branch, pointer_fn=pointer_fn,
+            caller=cleanup_kwargs.get("caller_session"), session_state=cleanup_kwargs.get("session_state"))
         result["message"] += f" Auto-cleanup: {result['auto_cleanup']['status']}."
     if post_integrate_fn is not None:
         try:
@@ -2557,8 +2853,36 @@ def task_branch(
     slugs: list[str] | None = None,
     order: str = "given",
     queue_status_reader: "Callable[[str], dict[str, Any]] | None" = None,
+    branch: str | None = None,
+    verdict_ref: str | None = None,
+    deliverable_kwargs: "dict[str, Any] | None" = None,
+    caller_session: str | None = None,
+    session_state: "Callable[[str], str] | None" = None,
+    checked_worktree: str | None = None,
 ) -> dict[str, Any]:
-    """`action` ∈ {status, start, integrate, cleanup, train, sync_primary}.
+    """`action` ∈ {status, start, enqueue, landed, integrate, cleanup, train, sync_primary}.
+
+    `enqueue` is a PURE PUSH (guardian spec, 2026-11-10): `git push origin
+    <sha>:refs/heads/mq/<slug>--<sha7>` after the read-only delivery-contract
+    preflight (`release_steward.deliverable`) passes. NO checkout, merge, rebase,
+    commit, stash or file write in ANY worktree - a branch that needs any of that
+    comes back `needs_resync` (status, exit 1, failing items named) for its branch
+    steward to fix. `branch=` names the real branch when it is not feat/<slug>
+    (docs/ fix/ ...; otherwise resolved among the conventional prefixes);
+    `verdict_ref` is delivery-contract item 5 (default: the filed request's).
+    `deliverable_kwargs` is the test seam for `deliverable`'s own seams.
+
+    OWNERSHIP (2026-11-10): `cleanup` - and every post-landing auto-cleanup, `landed` and
+    `integrate` alike - never removes a worktree or deletes a branch that is not the caller's to
+    remove: it reports `skipped_owned` (owner, reason) when (1) another session that is not
+    dead holds a worktree claim (`harness_claim_worktree`), or (2) the branch is a long-lived
+    STEWARD branch (its branch-tree pointer has role 'steward'; the auto path always skips
+    those, a direct `cleanup` by the pointer's own session is allowed). `caller_session`
+    (default $CLAUDE_CODE_SESSION_ID) and `session_state` (default: the steward registry's
+    process ids; unknown is treated as live) are the test seams. Never fails a landed verdict.
+    `cleanup` named with `branch=` (and the nested cleanup of `landed`/`integrate`, which also passes
+    `checked_worktree`) REFUSES (`refused_branch_mismatch`) when the worktree it resolves holds a different
+    branch than the one named / checked, instead of adopting whatever the worktree holds.
 
     `train` (merge-all-before-integrating, owner rule 2026-10-24): `slugs=[...]`
     merges each ready `feat/<slug>` --no-ff into ONE `train-<slug|date>` task
@@ -2695,6 +3019,10 @@ def task_branch(
     # branch-tree ledger as a side effect of a unit test.
     pointer_fn = pointer_ops if pointer_ops is not None else (
         PointerOps() if run is None else None)
+    # Ownership (see `_ownership_skip`): who is calling, and whether a claiming session is still alive.
+    # Production reads the steward registry's process ids; an injected runner gets `unknown` (= live).
+    session_state_fn = session_state if session_state is not None else (
+        _steward.StewardStore().session_state if run is None else None)
 
     def git(*args, cwd: str | None = None):
         return _git(runner, *args, cwd=cwd, dev_branch=dev_branch)
@@ -2703,15 +3031,11 @@ def task_branch(
         return {"ok": False, "status": "error", "exit_code": 1,
                 "error": (f"unknown action '{action}' (expected status|start|enqueue|landed|"
                           "integrate|cleanup|train|sync_primary)")}
-    # ── ENQUEUE ── the default landing path (2026-11-05): everything `integrate`
-    # does locally (dirty-file triage, doc-staleness, rebase, migration renumber,
-    # KB-count regen, pre-push keepers) EXCEPT the merged-tip gates, then push to
-    # a merge-queue ref instead of dev. The CI drain runs the full suite on the
-    # composed candidate — on GitHub runners, not this machine — and lands it.
-    queue_mode = action == "enqueue"
-    if queue_mode:
-        action = "integrate"
-        verify_merged_tip = False
+    # ── ENQUEUE ── the default landing path (2026-11-05), a PURE PUSH since
+    # 2026-11-10 (guardian spec): the branch steward makes the branch meet the
+    # delivery contract; enqueue verifies it read-only and pushes the exact sha
+    # to a merge-queue ref. The CI drain composes it on dev and lands it. See
+    # `_enqueue` below - it never touches a worktree.
 
     # ── TRAIN ── merge every ready feat/<slug> into one train branch (see module doc).
     if action == "train":
@@ -2752,17 +3076,42 @@ def task_branch(
                 "exit_code": 0 if ok else 1, "primary_ff": res,
                 "message": _primary_ff_summary(res) or "primary already up to date."}
 
+    if action == "enqueue" and slug and not _ENQUEUE_SLUG_RE.fullmatch(slug):
+        # the SAME rule release_steward.request files under: it becomes a ref name and a worktree path
+        return {"ok": False, "action": action, "slug": slug, "status": "error", "exit_code": 1,
+                "error": (f"invalid slug {slug!r}: a slug is letters, digits and . _ / - ([A-Za-z0-9._/-]+), with no "
+                          "'..' segment and no leading '/'")}
     wt_path = f"{worktrees_dir}/{slug}" if slug else None
+    explicit_branch = branch
     branch = f"{branch_prefix}{slug}" if slug else None
+    branch_note: dict[str, Any] = {}
+    if slug and action in {"integrate", "enqueue", "landed", "cleanup"}:
+        # The branch a slug names is NOT always feat/<slug> (docs/ fix/ ... branches
+        # could not be delivered, 2026-11-10): explicit branch= wins, else resolve among
+        # the conventional prefixes; an ambiguous slug refuses rather than guesses.
+        _res = _steward.resolve_branch_name(slug, git=git, explicit=explicit_branch, default_prefix=branch_prefix)
+        if _res.get("error"):
+            return {"ok": False, "action": action, "slug": slug, "status": "error", "exit_code": 1,
+                    "error": _res["error"], "candidates": _res.get("candidates")}
+        branch = _res["branch"]
+        if _res["source"] != "default":
+            branch_note = {"branch_resolved_from": _res["source"]}
     wt_resolved_from = "canonical"
-    if slug and action in {"integrate", "landed", "cleanup"}:
-        # integrate covers enqueue (queue_mode rewrote the action above).
+    if slug and action in {"integrate", "enqueue", "landed", "cleanup"}:
         _rc_wl0, _wl0, _e0 = git("worktree", "list", "--porcelain")
         wt_path, wt_resolved_from, _elsewhere = _resolve_worktree_for_branch(
             _wl0 if _rc_wl0 == 0 else "", branch, wt_path)
     base: dict[str, Any] = {"ok": True, "action": action, "remote": remote,
                             "slug": slug, "branch": branch, "worktree": wt_path,
-                            "worktree_resolved_from": wt_resolved_from}
+                            "worktree_resolved_from": wt_resolved_from, **branch_note}
+    if slug and action == "enqueue":
+        return _enqueue(
+            git, runner, base=base, slug=slug, branch=branch, confirm=confirm, remote=remote,
+            dev_branch=dev_branch, branch_prefix=branch_prefix, pointer_fn=pointer_fn,
+            accept_unscored=accept_unscored, slice_scores_reader=slice_scores_reader,
+            verdict_ref=verdict_ref if verdict_ref is not None else (
+                _request_verdict_ref(slug, branch) if run is None else None),
+            deliverable_kwargs=deliverable_kwargs)
     if slug and action == "integrate" and wt_resolved_from == "canonical":
         _listed = [w.get("path", "") for w in _parse_worktrees(_wl0 if _rc_wl0 == 0 else "")]
         if _listed and not any(q == wt_path or q.rstrip("/").endswith("/" + wt_path.strip("/"))
@@ -2928,6 +3277,7 @@ def task_branch(
                                            worktrees_dir=worktrees_dir, branch_prefix=branch_prefix,
                                            primary_root=primary_root, run=run, fs=fs, settle=settle,
                                            pointer_ops=pointer_ops, verbose=verbose,
+                                           caller_session=caller_session, session_state=session_state_fn,
                                            settle_and_drain=post_integrate_fn is None,
                                            allow_stale_toolkit=True),
                        status_reader=queue_status_reader)
@@ -2958,21 +3308,12 @@ def task_branch(
                     "message": f"{branch} has nothing {remote}/{dev_branch} lacks — nothing to integrate."}
         # Slice-score gate (engineer slices must be measured before they land).
         # Train: each rider is checked, not just the train branch.
-        _rc_m, _m_out, _e = git("log", "--merges", "--format=%s", f"{dev}..{head}")
-        _riders = _train.parse_train_riders(_m_out.splitlines() if _rc_m == 0 else []) if slug and slug.startswith("train-") else []
-        try:
-            _unscored = slice_unscored_riders(
-                _riders or [slug], ops=pointer_fn, branch_prefix=branch_prefix,
-                reader=slice_scores_reader)
-        except Exception as e:  # noqa: BLE001 - unreadable ledger must not pass
-            return {**base, "status": "blocked", "exit_code": 1, "refused": "slice_scores_unreadable",
-                    "error": f"cannot verify slice scores: {type(e).__name__}: {e}"}
-        _unscored_accept: dict[str, Any] | None = None
-        if _unscored:
-            _why = (accept_unscored or "").strip()
-            if len(_why) < 10:
-                return {**base, **_slice_unscored_refusal(_unscored), "dev_sha": dev}
-            _unscored_accept = {"reason": _why, "slugs": [m["slug"] for m in _unscored]}
+        _gate_refusal, _unscored_accept = _slice_score_gate(
+            git, slug=slug, branch=branch, branch_prefix=branch_prefix, dev=dev, head=head,
+            pointer_fn=pointer_fn, accept_unscored=accept_unscored,
+            slice_scores_reader=slice_scores_reader)
+        if _gate_refusal:
+            return {**base, **_gate_refusal}
         behind = _commits(git, head, dev)
         plan = {**base, "dev_sha": dev, "branch_sha": head,
                 "ahead": len(ahead), "behind": len(behind), "incoming_commits": ahead[:20],
@@ -3118,8 +3459,9 @@ def task_branch(
                 rebase_in_progress = _rebase_in_progress(runner, wt_path)
                 _rc2, cout, _ce = git("diff", "--name-only", "--diff-filter=U", cwd=wt_path)
                 conflicted = [ln.strip() for ln in cout.splitlines() if ln.strip()]
+                abort_state: dict[str, Any] | None = None
                 if rebase_in_progress:
-                    git("rebase", "--abort", cwd=wt_path)
+                    abort_state = _abort_rebase_verified(runner, wt_path)
                 # Restore the stash even on failure so the worktree is clean.
                 if benign_stashed:
                     _pop_stash(runner, wt_path, benign_stashed, verbose)
@@ -3161,9 +3503,13 @@ def task_branch(
                 return {**plan, "status": "conflict", "exit_code": 1,
                         "conflicted_files": conflicted,
                         "blocked_by_dirty": real_after,
+                        **({"rebase_abort": abort_state} if abort_state else {}),
                         "message": (f"rebase of {branch} onto {remote}/{dev_branch} hit conflicts "
-                                    f"in {conflicted or 'unknown files'}; aborted to keep the "
-                                    "worktree clean. Resolve manually in the worktree, then re-run "
+                                    f"in {conflicted or 'unknown files'}; "
+                                    + ("STUCK: `git rebase --abort` did NOT clear the rebase state in "
+                                       f"{wt_path} - run it by hand there. " if abort_state and abort_state["state_left"]
+                                       else "aborted to keep the worktree clean. ")
+                                    + "Resolve manually in the worktree, then re-run "
                                     f"integrate. {detail}").strip()}
             if verbose:
                 logger.debug("task_branch.integrate: rebase succeeded; pushing to %s", dev_branch)
@@ -3399,12 +3745,6 @@ def task_branch(
                     logger.debug("task_branch.integrate: KB-counts regen committed: %s",
                                  kb_counts_result.get("paths"))
             remote_before_push = _resolve(git, f"{remote}/{dev_branch}")
-            if queue_mode:
-                return _enqueue_push(git, runner, plan=plan, branch=branch, slug=slug,
-                                     remote=remote, wt_path=wt_path, benign_stashed=benign_stashed,
-                                     introduced_migrations=introduced_migrations,
-                                     renumbered=all_renumbered, kb_counts_result=kb_counts_result,
-                                     verbose=verbose)
             rc, out, err = git("push", remote, f"HEAD:refs/heads/{dev_branch}", cwd=wt_path)
             if rc != 0:
                 push_failures.append(_classify_push_failure(
@@ -3526,11 +3866,13 @@ def task_branch(
                         f" Train riders: {[r['slug'] for r in result['train_riders']]}.")
                 if auto_cleanup:
                     result["auto_cleanup"] = _auto_cleanup_after_integrate(
-                        runner, wt_path, slug, task_branch, dict(
+                        runner, wt_path, slug, task_branch, branch=branch, pointer_fn=pointer_fn,
+                        caller=caller_session, session_state=session_state_fn, kwargs=dict(
                             remote=remote, dev_branch=dev_branch,
                             worktrees_dir=worktrees_dir, branch_prefix=branch_prefix,
                             primary_root=primary_root, run=run, fs=fs, settle=settle,
                             pointer_ops=pointer_ops, verbose=verbose,
+                            caller_session=caller_session, session_state=session_state_fn,
                             # the detached post-integrate job settles + drains ONCE
                             settle_and_drain=post_integrate_fn is None,
                             allow_stale_toolkit=True))
@@ -3598,14 +3940,30 @@ def task_branch(
     rc_wl, wl_out, _wl = git("worktree", "list", "--porcelain")
     actual = _branch_for_path(wl_out if rc_wl == 0 else "", wt_path)
     if actual and actual != branch:
+        if explicit_branch or checked_worktree:
+            # the caller NAMED a branch (or the auto path already checked one): never adopt a different one
+            return {**base, "status": "refused_branch_mismatch", "exit_code": 1,
+                    "reason": (f"the worktree for slug {slug!r} ({wt_path}) holds {actual}, not the named {branch}: refusing to "
+                               "clean a branch nobody asked for (slug collision) - name the right slug/branch")}
         branch = actual
         base["branch"] = branch
-    dev = _resolve(git, f"{remote}/{dev_branch}")
-    head = _resolve(git, branch)
+    if checked_worktree and os.path.realpath(_absolute_wt_path(wt_path, _resolve_primary_root(primary_root))) != os.path.realpath(checked_worktree):
+        return {**base, "status": "refused_branch_mismatch", "exit_code": 1,
+                "reason": f"cleanup resolved worktree {wt_path}, not the checked {checked_worktree}: refusing"}
+    # Never tear down a worktree/branch that is not the caller's (a live foreign claim, a steward
+    # branch): reported, not failed. The auto-cleanup after landed/integrate checks the same thing.
+    _owned = _ownership_skip(
+        abs_wt=_absolute_wt_path(wt_path, _resolve_primary_root(primary_root)), branch=branch,
+        primary_root=_resolve_primary_root(primary_root), pointer_fn=pointer_fn,
+        caller=caller_session or os.environ.get(_steward.SESSION_ENV), auto=False, session_state=session_state_fn)
+    if _owned:
+        return {**base, **_owned, "exit_code": 0}
+    dev = _resolve(git, _dev_ref(remote, dev_branch))
+    head = _resolve(git, _head_ref(branch))
     merged = bool(dev and head and _is_ancestor(git, head, dev))
     content_merged = False
     if dev and head and not merged:
-        content_merged, _missing = _content_on_dev(git, branch, f"{remote}/{dev_branch}")
+        content_merged, _missing = _content_on_dev(git, _head_ref(branch), _dev_ref(remote, dev_branch))
         merged = content_merged
     if head and not merged:
         return {**base, "status": "blocked", "exit_code": 1, "dev_sha": dev, "branch_sha": head,
@@ -3746,11 +4104,15 @@ def register(server) -> None:
             "sibling (§9a). action='status' (default) lists active self-branch "
             "worktrees + ahead/behind vs origin/dev (read-only); action='start' "
             "slug= forks a worktree on feat/<slug> off origin/dev; action="
-            "'enqueue' slug= (THE DEFAULT LANDING PATH, 2026-11-05) does every "
-            "local integrate step (rebase, migration renumber, doc-staleness, "
-            "KB-count regen, pre-push keepers) but NOT the merged-tip gates, and "
-            "pushes to the CI merge queue ref mq/<slug>--<sha7>; GitHub runners "
-            "test it composed on dev and land it (KB § PATTERNS/devops/"
+            "'enqueue' slug= [branch=] [verdict_ref=] (THE DEFAULT LANDING PATH, "
+            "2026-11-05; a PURE PUSH since 2026-11-10) verifies the delivery "
+            "contract READ-ONLY (release_steward deliverable: head pushed + tree "
+            "clean, merge-buildable, migration numbers free, derived files "
+            "current, scoped green or verdict_ref) and pushes the exact sha to "
+            "the CI merge queue ref mq/<slug>--<sha7> - NO checkout, merge, "
+            "rebase, commit or file write in any worktree; a branch that fails "
+            "comes back status 'needs_resync' naming the items for its branch "
+            "steward to fix; GitHub runners test it composed on dev and land it (KB § PATTERNS/devops/"
             "merge-queue.md). action='landed' slug= reads the queue verdict "
             "(queued/pending/ejected/landed) and, once landed with confirm=True, "
             "runs the post-landing tail (pointer, primary FF, cleanup). action="
@@ -3828,7 +4190,7 @@ def register(server) -> None:
             "HARDWARE ADMISSION (2026-11-04): every real merged-tip gate runs through the "
             "machine-wide heavy slot (noctus.dev.hw_admission); a gate not admitted is NOT run "
             "and the integrate returns status 'waiting_for_slot' (not pushed, no accept-anyway). "
-            "status: status|planned|started|integrated|conflict|up_to_date|"
+            "status: status|planned|started|queued|needs_resync|integrated|conflict|up_to_date|"
             "cleaned|partial|blocked|gate_timeout|waiting_for_slot|refused_stale_toolkit|error. SLICE-SCORE GATE: integrate (and each train rider) of an engineer slice with no slice-scores.ndjson row is refused (blocked, refused='slice_unscored', with the exact log_completion call); accept_unscored='<reason>' (>=10 chars) overrides, recorded as accepted_unscored."
         ),
     )
@@ -3852,6 +4214,8 @@ def register(server) -> None:
         accept_unscored: str | None = None,
         slugs: list[str] | None = None,
         order: str = "given",
+        branch: str | None = None,
+        verdict_ref: str | None = None,
     ) -> dict:
         refused = _steward.tool_refusal("noctus.dev.task_branch", {"action": action, "slug": slug, "confirm": confirm})
         if refused is not None:
@@ -3863,7 +4227,7 @@ def register(server) -> None:
                            wire_products=wire_products,
                            allow_stale_toolkit=allow_stale_toolkit,
                            project=project, brief=brief, paths=paths,
-                           agent=agent, role=role, parent=parent)
+                           agent=agent, role=role, parent=parent, branch=branch, verdict_ref=verdict_ref)
 
 
 __all__ = ["task_branch", "_ALLOWED_GIT", "_BANNED_TOKENS", "_BENIGN_REFRESH_PATTERNS",

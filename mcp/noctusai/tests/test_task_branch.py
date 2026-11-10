@@ -74,6 +74,10 @@ class FakeGit:
         if sub == "rev-parse":
             # `git [-C <wt>] rev-parse <ref>` — the ref is the LAST positional.
             ref = cmd[-1]
+            # task_branch resolves FULLY QUALIFIED refs (N-1/N-7); this fake keys on short names
+            for _pfx in ("refs/heads/", "refs/remotes/"):
+                if ref.startswith(_pfx):
+                    ref = ref[len(_pfx):]
             if ref == "stash@{0}":
                 # The stash contract is SHA-addressed: the stack is shared with
                 # every worktree, so the restore must name its OWN entry rather
@@ -552,7 +556,7 @@ def test_full_lifecycle_emits_no_banned_token_and_only_dev_pushes():
 # ── env auto-wire (the §5a verification-env recipe) ──
 def _seed_primary(primary, *, slugs=("alpha",), with_product_nm=True,
                   with_seed_nm=True, product_nm_entries=("react",),
-                  with_dotenv=True, with_toolkit_nm=True):
+                  with_dotenv=True, with_toolkit_nm=True, with_toolkit_venv=True):
     """Build a fixture PRIMARY tree under `primary` (a tmp Path): seed-frontend
     packages (+ their node_modules) and products/<slug>/frontend (+ node_modules
     seeded with `product_nm_entries` — fixture vendor packages the per-entry
@@ -563,6 +567,8 @@ def _seed_primary(primary, *, slugs=("alpha",), with_product_nm=True,
         (primary / ".env").write_text("VITE_SUPABASE_URL=https://fixture.invalid\n")
     if with_toolkit_nm:
         (primary / "mcp" / "noctusai" / "node" / "node_modules").mkdir(parents=True, exist_ok=True)
+    if with_toolkit_venv:  # mcp/noctusai/.venv: the interpreter pre-push runs its keepers with (wire_env links it)
+        (primary / "mcp" / "noctusai" / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
     for rel in ("seed/lib/frontend", "seed/framework/frontend"):
         (primary / rel).mkdir(parents=True, exist_ok=True)
         if with_seed_nm:
@@ -818,7 +824,7 @@ def test_plan_env_wiring_reports_missing_primary_node_modules(tmp_path):
     primary = tmp_path / "primary"
     wt_root = primary / ".claude" / "worktrees" / "beta"
     _seed_primary(primary, slugs=("beta",), with_seed_nm=False, with_product_nm=False,
-                  with_dotenv=False, with_toolkit_nm=False)
+                  with_dotenv=False, with_toolkit_nm=False, with_toolkit_venv=False)
     _seed_worktree_tree(wt_root)
 
     wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())

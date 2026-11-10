@@ -765,6 +765,12 @@ finance_organ = mount_finance(
     get_core_client=get_core_client,
 )
 
+# Line policy v1: parse WAHA_LINE_POLICIES NOW so a malformed value fails the BOOT, not the first WhatsApp request
+# (KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a).
+from noctusai_lib.integrations.whatsapp import load_line_policies_from_env  # noqa: E402
+
+load_line_policies_from_env()
+
 app = create_product_app(
     name="Social Wiring",
     schema="social_wiring",

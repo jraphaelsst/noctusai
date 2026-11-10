@@ -41,12 +41,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from noctusai_lib.integrations.whatsapp.log_safety import install_phone_scrub, mask_chat_id
 from noctusai_lib.integrations.whatsapp.lid_auth import is_lid, normalize_phone
 
 if TYPE_CHECKING:
     from noctusai_lib.integrations.whatsapp.types import WhatsAppClient
 
-logger = logging.getLogger(__name__)
+logger = install_phone_scrub(logging.getLogger(__name__))
 
 _PHONE_SUFFIXES = ("@c.us", "@s.whatsapp.net")
 
@@ -84,7 +85,7 @@ async def resolve_identity(
             try:
                 pn = await client.get_lid_phone(raw_jid)
             except Exception:
-                logger.warning("resolve_identity: get_lid_phone failed for lid=%s", raw_jid)
+                logger.warning("resolve_identity: get_lid_phone failed for lid=%s", mask_chat_id(raw_jid))
                 pn = None
 
             if pn:
@@ -96,7 +97,7 @@ async def resolve_identity(
             try:
                 cdata = await client.get_contact(raw_jid)
             except Exception:
-                logger.warning("resolve_identity: get_contact failed for lid=%s", raw_jid)
+                logger.warning("resolve_identity: get_contact failed for lid=%s", mask_chat_id(raw_jid))
                 cdata = {}
             result.name = _extract_name(cdata)
 
@@ -106,7 +107,7 @@ async def resolve_identity(
                     cdata_phone = await client.get_contact(result.jid)
                 except Exception:
                     logger.warning(
-                        "resolve_identity: get_contact failed for jid=%s", result.jid
+                        "resolve_identity: get_contact failed for jid=%s", mask_chat_id(result.jid)
                     )
                     cdata_phone = {}
                 # Phone-form contact may give a richer name
@@ -127,7 +128,7 @@ async def resolve_identity(
                 cdata = await client.get_contact(result.jid)
             except Exception:
                 logger.warning(
-                    "resolve_identity: get_contact failed for jid=%s", result.jid
+                    "resolve_identity: get_contact failed for jid=%s", mask_chat_id(result.jid)
                 )
                 cdata = {}
 
@@ -139,7 +140,7 @@ async def resolve_identity(
 
     except Exception:
         logger.warning(
-            "resolve_identity: unexpected error for raw_jid=%s", raw_jid, exc_info=True
+            "resolve_identity: unexpected error for raw_jid=%s", mask_chat_id(raw_jid), exc_info=True
         )
 
     return result

@@ -26,6 +26,11 @@
 - **One tree deployer.** Exactly one session holds the lease: it enqueues to `dev`, lands, blesses,
   deploys and runs prod migrations. Every other team files deliveries and keeps building
   (`release-steward.md`). The deployer is a role, held by whichever session has the lease.
+  It is the **guardian**, a service leaf under the owner (council 09340534, disposition A): its
+  authority is the lane only, never content or priorities. It never patches a delivery branch
+  and never opens a rescue branch (disposition B). An ejection goes back to the team's branch
+  steward, who fixes it on its own branch (disposition K). An orphaned delivery parks as
+  `blocked_on_steward` until the owner names a new branch steward (`release-steward.md` §7a).
 - **Many teams, each self-managing.** A team is one orchestrator (a top-level session) plus the
   subagents and slice branches it dispatches. Inside its zone the team decomposes, builds,
   reviews and resolves on its own, without asking anyone.

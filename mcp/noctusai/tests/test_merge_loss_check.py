@@ -133,6 +133,26 @@ class TestExemptions:
         r = _check(repo, merge_sha=_merge_with_result(repo, BASE.replace("line-8\n", "line-8\nT\n") + block.format(n=4)))
         assert r["verdict"] == "clean", r["dropped"]
 
+    def test_rendered_file_renumbering_is_skipped_and_reported_not_silent(self, repo):
+        hdr = "# Inv\n\n> Generated from `inv.json` by `cli.py --render`.\n\n"
+        base = hdr + "| D1 | a |\n| D2 | c |\n"
+        (repo / "inv.md").write_text(base)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "rendered")
+        ours = hdr + "| D1 | a |\n| D2 | b-ours |\n| D3 | c |\n"
+        theirs = hdr + "| D1 | a |\n| D2 | b-theirs |\n| D3 | c |\n"
+        _branches(repo, ours, theirs, path="inv.md")
+        result = hdr + "| D1 | a |\n| D2 | b-theirs |\n| D3 | b-ours |\n| D4 | c |\n"
+        r = _check(repo, merge_sha=_merge_with_result(repo, result, path="inv.md"))
+        assert r["verdict"] == "clean", r["dropped"]
+        assert any(s["path"] == "inv.md" and "rendered from inv.json" in s["reason"] for s in r["skipped"])
+
+    def test_header_added_only_in_the_merge_does_not_exempt(self, repo):
+        _branches(repo, OURS_ADD, THEIRS_ADD)
+        forged = "> Generated from `x.json` by `y`.\n" + OURS_ADD
+        r = _check(repo, merge_sha=_merge_with_result(repo, forged))
+        assert r["verdict"] == "dropped" and any("THEIRS-NEW" in d["line"] for d in r["dropped"])
+
     def test_project_history_is_skipped_and_reported_not_silent(self, repo):
         _branches(repo, OURS_ADD, THEIRS_ADD, path="project-history/x.ndjson")
         r = _check(repo, merge_sha=_merge_with_result(repo, OURS_ADD, path="project-history/x.ndjson"))

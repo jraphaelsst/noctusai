@@ -151,16 +151,17 @@ python mcp/noctusai/cli.py --release-steward claim --steward-name <name> --stewa
 `ListAgents` and `SendMessage` the announcement. `--steward-session-id` overrides
 `$CLAUDE_CODE_SESSION_ID` for an operator acting for another session.
 
-## 7a · Ejection flow (steward-resolves; not live until build 4 inbox fields; end predicate not live until builds 3+5)
+## 7a · Ejection flow (the branch steward fixes; not live until build 4 inbox fields; end predicate not live until builds 3+5)
 
-Decision 2026-11-10, council a341e383: `project-history/assistant-chatbot/queue-lifecycle-decision.md`. Supersedes `merge-queue.md` §4 "the owning session fixes".
+Guardian spec, council 09340534 (dispositions A: the guardian is a service leaf whose authority is the lane only; B: a rejected delivery returns to its steward, not to a rescue branch; K: ejection fixes belong to the branch steward). It supersedes the rescue-branch flow of the 2026-11-10 queue-lifecycle decision (council a341e383, `project-history/assistant-chatbot/queue-lifecycle-decision.md`) and the older `merge-queue.md` §4 "the owning session fixes".
 
 1. **Diagnose** from the failed log (`noc-steward` §3).
-2. **Ask once, if needed.** An inbox `needs_info` record addressed to the requester's **ROLE** (resolved through the role registry at send time; owner fallback), one batched question, TTL about one CI cycle (~25 min). Method: `noc-questionnaire` peer mode.
-3. **Live requester keeps it.** A live, not-done requester answering "already fixing" within the TTL keeps the fix.
-4. **Otherwise the steward fixes it:** withdraws the `mq/*` ref and **dispatches a rescue engineer** on a NEW `rescue-<slug>` branch (`task_branch start`; never inline coding, so lease/consent/deploy stay responsive). The steward stays accountable for the result. Never patches `feat/*`; never hands work back to a done agent.
-5. **Record and tell.** The inbox records the ownership transfer and the rescue lineage (slug to rescue-slug). `LANDED` plus a diff summary goes to the requester's role (its next session) or the owner, so a wrong domain fix stays visible.
-6. **End predicate** (`release_steward mine`, builds 3+5): a requester may end only when its requests are LANDED (plus DEPLOYED if asked) or ejected-with-transfer, it has no open `mq/*` ref, no rescue of its slug is unlanded and no CI run it depends on is in flight. Teardown rules: `background-agent-lifecycle.md`.
+2. **Withdraw and tell.** The guardian withdraws the `mq/*` ref, writes `ejected{reason, conflict, url}` to the outbox, requeues the other riders, and notifies the branch steward's **ROLE** (resolved through the role registry at send time; owner fallback).
+3. **Ask once, if needed.** An inbox `needs_info` record to that ROLE, one batched question, TTL about one CI cycle (~25 min). Method: `noc-questionnaire` peer mode.
+4. **The branch steward fixes it** on its own branch and files `request` again (the `deliverable` preflight runs again at filing). The guardian never patches the branch, never opens a rescue branch and never dispatches an engineer for it.
+5. **Two strikes.** After 2 ejections the delivery parks as `blocked_on_steward` until its steward re-files a fix the preflight accepts.
+6. **Orphan.** If the steward's session is gone, or silent past the TTL, the delivery stays `blocked_on_steward`. The guardian alerts the owner, and the OWNER names a new branch steward, who adopts the branch (role registry `to_session_id=`). The guardian never adopts it itself.
+7. **End predicate** (`release_steward mine`, builds 3+5): a requester may end only when its requests are LANDED (plus DEPLOYED if asked) or handed to a successor steward the owner named, it has no open `mq/*` ref, and no CI run it depends on is in flight. Teardown rules: `background-agent-lifecycle.md`.
 
 ## 8 · Reboot / multi-steward (2026-11-09/10)
 
@@ -192,11 +193,155 @@ After a machine reboot sessions return under NEW names, so a name is not an iden
   No match at all => pending; unresolvable ones are listed in `unresolvable`, never dropped. The fallback runs git
   with cwd = the git common dir (never the primary work tree). `action=reconcile confirm=True` (steward) acks all
   already-landed in one call.
-- Current practice; topology under review (council f93e1991): shape C - one serialized queue, prod exclusive via a short action lock held by the consent session; decision record on feat/assistant-chatbot project-history/assistant-chatbot/multi-steward-decision.md.
 - **Split delivery.** `request branches=[feat/a, feat/b]` (ordered): `drain` emits ONE `task_branch action=train` then
   ONE enqueue of the train. A request whose notes say "together"/"two branches"/a second `feat/` name without
   `branches=` returns a warning.
 - Telemetry: `role_set|role_clear|reconcile|reconcile_uncertain|train_drain` rows in `release-steward.ndjson`.
+
+### 8a · Withdrawal and the exchange record kinds (2026-11-10)
+
+- **`withdrawn`.** `ack outcome=withdrawn notes=<reason>` (steward; the reason is required) or `action=withdraw slug=`
+  (the requesting session or the steward; a third session gets `refused_not_requester`). A withdrawn row leaves `pending`
+  and `drain`, hides from `mine` unless `include_done`, appears under inbox `include_done`, and writes a `withdraw` audit
+  row. A later `request` for the slug re-opens it as a new revision (`requeued: true`), like any re-file.
+- **One record type, a `kind` field**, appended to the same outbox (append-only, same lock, history never rewritten):
+  `request` (default; every request row carries `kind: request`), `needs_info`, `position`, `decision`.
+  - `needs_info` (`action=ask slug= question= [addressed_to=<role> deadline_min=30]`, steward-only): ONE bounded question
+    with an id `ni-N`, `addressed_to` (the registered role's session, else the requester session, with a warning if the
+    role is unregistered), `deadline_ts` (default now + 30 min) and `owner_fallback: true`. `mine` shows the addressee its
+    open/expired items.
+  - `position` (`action=position slug= notes= [ref=ni-N]`): the answer (`ref` defaults to the latest unanswered
+    needs_info addressed to you) or a peer's stance. An answer after the deadline still counts.
+  - `decision` (`action=decision slug= notes=`, steward-only): the final call; it does not change the request status and
+    retires the slug's answered/expired threads from the inbox.
+  - `inbox` lists answered/expired `needs_info` under `needs_info`; an expired one with no `position` is also under
+    `escalate_to_owner` and named in `next`. Nothing is sent automatically: surfacing only.
+- Telemetry: `withdraw|needs_info|position|decision|needs_info_escalate` rows in `release-steward.ndjson`.
+
+## 8b · The guardian model (ratified 2026-11-10)
+
+The lane holder is a **guardian**: a service leaf under the owner whose authority covers the *lane* (queue, merge into
+`dev`, deploy, watch), never content or priorities. Each branch is owned end to end by its **branch steward**. The two
+meet at one read-only contract, so the guardian never has to touch a branch.
+
+### Glossary
+
+| Term | Meaning |
+|---|---|
+| **guardian** | The `release_steward` lease holder (a.k.a. dev steward): queues, merges into `dev`, deploys, watches the queue. First filed, first served; the owner may override the order, and a delivery that blocks the queue jumps it. |
+| **branch steward** | The session that owns ONE branch end to end: dispatches its team, makes the branch meet the delivery contract, files `request`, fixes its own ejections, and stays alive until the delivery lands. Branch-tree pointer `role=steward` marks its (long-lived) branch; role registry `branch-steward:<branch>` names the session. |
+| **delivery** | One filed `request`: a branch (or an ordered train of branches), its pinned `head_sha`, `products`, `migrations`, and the `verdict_ref` for item 5. Latest head wins on re-filing. |
+| **deliverable** | The verdict of the read-only `deliverable(branch)` preflight: all five contract items pass. |
+| **needs_resync** | The verdict when any item fails. The delivery goes BACK to its branch steward naming the failing item(s); it is recorded (`mine` shows status `needs_resync`) and never reaches the guardian's `drain`. The guardian may also `ack outcome=needs_resync notes=<why>` when its pre-enqueue re-run fails. |
+
+### Roles
+
+| | Guardian | Branch steward |
+|---|---|---|
+| Does | queues (`enqueue` = pure push), `landed`, merges into `dev`, deploys, watches the queue, re-runs `deliverable` before every enqueue | dispatches its team; makes the branch meet the contract (merge `dev` in, renumber, regenerate derived files, run the scoped suites); `request`; fixes its own ejections; stays alive until landed |
+| Post-landing tail | runs `landed` only for deliveries it owns or when asked; gets the ownership skips (`skipped_owned`) on anyone else's worktree | **owns it**: once its work is on `origin/dev` and its worktree is clean, the branch steward (requester / pointer session / worktree-claim holder) runs `task_branch landed` itself - pointer, primary FF, worktree cleanup. The guard allows exactly that and nothing else of the steward class |
+| **NEVER** | edits, rebases, merges into or renumbers a delivery branch; runs a mutating git command in a worktree it does not own; writes feature code or steward tooling; arbitrates content; deploys to prod without consent the owner typed in its own session; removes a worktree/branch it does not own (`skipped_owned`) | enqueues, deploys, touches `mq/*`, `main` or the VPS, or uses the override |
+
+### Delivery contract: `deliverable(branch)`
+
+ONE read-only check (`release_steward action=deliverable slug=|branch=`, open to every session; code:
+`release_steward.deliverable`). `request` runs it at filing; `task_branch action=enqueue` runs it again before it pushes. Read-only
+by construction: its git calls pass an allowlist (no checkout/merge/rebase/commit/add/push; `worktree` only as `list`;
+`status` with `--no-optional-locks`); the trial merge runs with its cwd inside the git dir (merge drivers drop scratch files
+in the cwd); derived files are regenerated in a `git archive` export, never in the worktree. **G1 - what it may touch:**
+the remote-tracking `origin/dev` ref (`fetch --no-write-fetch-head`; enqueue's own fetch likewise: no `FETCH_HEAD`), loose
+objects from `merge-tree`, and the shared verdict store / enqueue attestation below. Never a work tree, an index, HEAD or a branch.
+
+| # | Item | Passes when |
+|---|---|---|
+| 1 | `head_pushed_clean` | local head == `origin/<branch>` (`ls-remote`) AND the branch's worktree has no real dirt (known-benign refresh artifacts and untracked files are not part of the head) |
+| 2 | `merge_buildable` | `origin/dev` is an ancestor of the head, OR `git --attr-source=<dev tip> merge-tree --write-tree origin/dev <head>` is clean. NOT strictly 0-behind: demanding that livelocks while `dev` moves. **Attributes (`merge=union`, the kb-counts/lgpd/gate-inventory drivers) come from DEV only** - a bare-context trial merge reads none, which made every ledger/counts touch a conflict; and never from the head, so a branch cannot declare its own conflict away. A conflict names its files |
+| 3 | `migrations_free` | no migration number the branch adds is claimed by a different file in the composed tree (the head, or the merge-tree result). Reuses `task_branch._MIGRATION_NUM_RE` and the keeper's accepted-duplicates set via `migration_number_collisions` |
+| 4 | `derived_current` | every derived artifact is already current AT the head: `--update-kb-counts --check`, `--render-project-history --check`, `--gen-promotions-index --check` against an export of the head (table `DERIVED_ARTIFACTS`; a missing regenerator is UNMEASURED, never green). The export must equal `git ls-tree -r <head>` (an `export-ignore` difference is UNMEASURED) and runs in the hermetic env with `PYTHONPATH` = the HEAD's seed packages (derived from its `requirements.txt` `-e` lines; EVERY top-level seed package under those paths, plus `noctusai_lib` and `noctusai_seed` when the
+head ships them, must import from inside the export, else UNMEASURED), so it never judges the primary's seed lib |
+| 5 | `scoped_green` | the scoped suites are green **the way CI judges them** (below) |
+
+Not measurable is never green: an item that cannot run fails as `UNMEASURED`.
+
+**Item 4 also carries `cli.py --help` (4b, folded in).** When the delivery's diff vs `origin/dev` includes `mcp/noctusai/cli.py`, the HEAD's
+`cli.py --help` is run in the export (hermetic env, the head's seed packages; never the worktree) and a non-zero exit fails
+item 4, naming the stderr tail. Why: argparse %-formats every help string, so a literal `%A` in a new `--help` text crashes the whole CLI and
+every `cli.py --<flag>` gate with it (merge-loss-gate was ejected on exactly that, 2026-11-10; before this it was discipline in the
+noc-steward skill). The result lists a `cli-help` artifact: `skipped: true` (and the detail says so) when the delivery does not touch
+`cli.py`; when it runs, a `deliverable:cli-help` row (`pass`/`deny`) lands in the same gate-event sink as the other gates.
+
+**Item 5 runs what CI blocks on, in the environment CI has (D1, merge-queue run 42753204233).** Two things passed locally and
+failed in CI: keepers that only WARN in pre-commit but BLOCK in CI (the mcp-first-scripts manifest rows, `check_gate_triad`'s
+inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was set. So:
+
+- *The CI-blocking set is derived, never listed.* From the head's own CI definition: (a) every `cli.py --check-*` step of
+  `.github/workflows/test.yml` that is not `continue-on-error` and needs no CI-resolved argument (`ci_blocking_flags`);
+  (b) every test in `mcp/noctusai/tests/` that asserts a `check_*` keeper returns `[]` on the live tree, found by AST
+  (`ci_keeper_test_ids`: the "real tree is clean" tests that make a pre-commit warning a CI block). CI's "Prime hermetic state"
+  step is replayed first (`ci_prime_flags`).
+- *The env is scrubbed the way CI's is.* `hermetic_env`: OS basics only (`HERMETIC_BASE_ENV`) plus the toolkit job's own
+  `env:` plus `CI=true`. Everything else (`CLAUDE_*`, `ANTHROPIC_*`, `OPENAI_*`, `SUPABASE_*`, `NOC*` ...) is absent, because it is
+  absent on a runner.
+- *The verdict is a RECORD, not a string.* `run_scoped=true` (`export_ci_parity_check`) APPENDS a record to the append-only
+  store `~/.noctus/deliverable-verdicts.ndjson` (DI seam; `record_verdict`): the full head sha, the head tree, the `test.yml`
+  blob, the interpreter, the flags and test ids it ran, and `ok`. It returns `ci-parity:<id>`. Item 5 accepts only that ref
+  (`validate_verdict_ref`): it resolves the id, requires an EXACT full-sha (and tree) match, `ok=true` and the env-scrubbed /
+  CI-keeper markers the run itself set. Free-form strings, short shas, another head's record and RED records are refused.
+  (A local file is not tamper-proof against an agent with shell access; it closes the typed-string forgery and the
+  stale-head reuse, which is what the contract is for.) Running takes minutes, so the branch steward runs it once and files the ref.
+- `release_steward action=deliverable slug=<s> run_scoped=true` (CLI `--steward-run-scoped`) RUNS the CI-parity check
+  (`export_ci_parity_check`) and its result carries the `ci-parity:<id>` ref to file with the request (also for a RED run, which then
+  refuses as RED).
+  The check runs in a **throwaway git checkout** of the export (`_git_init_export`: `git init` + one commit in the temp dir, global/system git
+  config ignored; never the requester's worktree, never the real repository): CI runs in a checkout, `--stamp-seed-version` needs git
+  and the keeper-mirror caches live under the git dir (first live use: "prime step failed" with only the banner as detail). A failing
+  step reports its exit code and the last ~20 MEANINGFUL lines (`meaningful_tail`: ANSI, banner and INFO lines stripped); every red keeper flag
+  carries its last error line. `request run_scoped=true` is never ignored: it runs this check on the branch head, files with the `ci-parity:<id>`
+  it mints (red -> `needs_resync` via item 5; an UNMEASURED run -> `needs_resync` naming the reason) and refuses what it cannot honour
+  (no runner configured, a multi-branch train: one record judges ONE head).
+
+### Enqueue, cleanup and the pre-push hook
+
+- **`task_branch action=enqueue` is a pure push**: `git push origin <sha>:refs/heads/mq/<slug>--<sha7>`, after `deliverable` passes.
+  No checkout, merge, rebase, commit, stash or file write in any worktree; a failing branch returns `status=needs_resync`
+  (exit 1) naming the items. `branch=` accepts the real branch (a docs- or fix-prefixed one, not only feat-prefixed); otherwise the slug resolves among the
+  conventional prefixes and an ambiguous slug refuses. `scripts/hooks/pre-push` recognises exactly this push as the queue path
+  (see `merge-queue.md` § 2a). The slug is validated with the request rule (`[A-Za-z0-9._/-]+`, no `..`). Right before its push
+  enqueue writes an **attestation** `<git-common-dir>/noc-enqueue/<full sha>.json` (the `deliverable()` verdict, timestamp and the ONE
+  fully-qualified queue `ref` it authorises); the hook's queue path requires a fresh (< 10 min) ok attestation for exactly that sha AND
+  that ref, exactly ONE mq ref per push, and a bare full sha as the local side (`HEAD:`/branch forms are refused), so typing the
+  refspec by hand cannot skip the contract. A `needs_resync` re-check or a rejected push REVOKES an earlier ok attestation.
+  All refs are fully qualified (`refs/remotes/<remote>/<dev>`, `refs/heads/<branch>`): a branch or tag NAMED `origin/dev` or
+  `feat/<slug>` cannot make the head read as dev, redirect what is pushed, or let cleanup delete unmerged work; the request's
+  head is compared in full, never by a 7-char prefix.
+- **`landed` / `integrate` auto-cleanup / `cleanup` never remove what is not the caller's**: a worktree claimed by another
+  session that is not dead (`harness_claim_worktree`; `unknown` counts as live), a branch whose pointer has `role=steward`, or - on
+  the AUTO path - a branch whose pointer session is another live/unknown session, is reported
+  `cleanup: {status: skipped_owned, owner, reason}` and the landed verdict is unaffected. A steward (or the pointer's own session)
+  may clean its branch with an explicit `cleanup`; the auto path never does. The auto path **fails closed**: if the pointer store
+  was not fully readable (exception, or `origin/ledgers` unreadable and answered from the dev copy), or nothing says whose the
+  worktree is (no pointer carrying a session and no claim by the caller: `source: no_pointer`), it skips the deletion with owner
+  unknown. A corrupt or unreadable worktree-claims file counts as OWNED (`claims_unreadable`), never as "no claims", and claim
+  writes take an flock. A DIRECT `cleanup` by a session that is not the branch pointer's also leaves a live/unknown pointer
+  session's worktree alone; with the pointer's own session it keeps the old behaviour, and an unreadable pointer store on a direct
+  cleanup still proceeds (an explicit act - the verdict is never failed over a pointer failure). The nested cleanup receives the exact branch and the checked worktree and refuses
+  (`refused_branch_mismatch`) if the worktree holds a different branch. `dead` needs the recorded pid gone AND the heartbeat older than
+  the TTL; every action re-records the caller's pid (`role_touch`), a stale pid alone is not dead.
+- **What is and is not protected (honest G3).** `scripts/hooks/pre-push` refuses client-side pushes to `main`/`prod` (the sanctioned
+  `release` tool sets the override). `dev` is NOT protected client-side or server-side today: there is no GitHub ruleset for it, and the
+  legacy `integrate` pushes `dev` by design (the queue-down fallback). The queue path is guarded by the attestation above, not by the
+  server. A server-side `dev` ruleset (only the queue's workflow identity may push `dev`) is **awaiting_owner**: it needs an owner
+  decision and the repo-admin setting; until then the attestation is a guard against accidents and a typed-refspec bypass, not against
+  a session that deliberately writes the attestation or pushes `dev` itself.
+- **Deferred residuals (named destinations, as in-code `NOC-REMEDIATE` markers).** `guardian-derived-check-sandbox`: items 4/5 execute
+  the delivery's own `cli.py` and tests with the guardian's HOME and filesystem (the hermetic env scrubs variables, not the
+  sandbox) - destination: a throwaway HOME, `GIT_CONFIG_NOSYSTEM=1` and no write access to `~/.noctus`, in the tooling branch steward's next
+  batch. `session-heartbeat-hook`: a session's heartbeat only refreshes when it calls `release_steward`, so a long-quiet alive session ages
+  toward `dead` (which `cleanup` treats as removable only with the pid dead too) - destination: refresh it from a
+  SessionStart/UserPromptSubmit hook.
+- Failures, takeover and prod consent (ejection -> `ejected{reason, conflict, url}` and requeue, 2 ejections -> `blocked_on_steward`;
+  stale-guardian takeover that may only resume or roll back; one plan hash per deploy window) are the ratified spec and are
+  tracked as follow-ups; this section records what is built.
 
 ## 9 · Related
 

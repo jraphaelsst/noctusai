@@ -804,3 +804,161 @@ def test_every_wired_tool_name_is_a_registered_steward_class_name():
                     ("noctus.vps.recreate", "vps.py")):
         assert f'_steward.tool_refusal("{key}"' in src[fn], (key, fn)
         assert key in rs._MCP_NAMES.values()
+
+
+THIRD = "33333333-cccc"
+
+
+class TestWithdrawAndKinds:
+    def test_requester_withdraws_own_request(self, store):
+        store.request(PEER, "alpha", head_sha="a1")
+        r = store.withdraw(PEER, "alpha", "superseded")
+        assert r["ok"] and r["request"]["status"] == "withdrawn" and r["request"]["ack_note"] == "superseded"
+        assert store.inbox()["pending"] == 0 and store.inbox()["drain"] == []
+        assert store.mine(PEER)["requests"] == []
+        assert [m["status"] for m in store.mine(PEER, include_done=True)["requests"]] == ["withdrawn"]
+        assert [x["slug"] for x in store.inbox(include_done=True)["requests"]] == ["alpha"]
+        rows = [json.loads(line) for line in store.audit_path.read_text().splitlines()]
+        assert any(x["event"] == "withdraw" and x["slug"] == "alpha" and x["by"] == PEER for x in rows)
+
+    def test_steward_withdraws_via_ack_with_required_note(self, store):
+        store.claim(STEWARD, claude_pid=100)
+        store.request(PEER, "alpha", head_sha="a1")
+        assert "notes" in store.ack(STEWARD, "alpha", "withdrawn")["error"]
+        assert store.requests()["alpha"]["status"] == "queued_for_steward"
+        r = store.ack(STEWARD, "alpha", "withdrawn", note="requester asked")
+        assert r["status"] == "acked_withdrawn" and store.inbox()["drain"] == []
+
+    def test_third_session_cannot_withdraw(self, store):
+        store.claim(STEWARD, claude_pid=100)
+        store.request(PEER, "alpha", head_sha="a1")
+        r = store.withdraw(THIRD, "alpha", "mine now")
+        assert not r["ok"] and r["status"] == "refused_not_requester"
+        assert store.requests()["alpha"]["status"] == "queued_for_steward"
+        assert store.withdraw(STEWARD, "alpha", "steward may")["ok"]
+
+    def test_withdraw_unknown_slug(self, store):
+        assert "no request" in store.withdraw(PEER, "nope")["error"]
+
+    def test_rerequest_reopens_withdrawn_as_new_revision(self, store):
+        store.request(PEER, "alpha", head_sha="a1")
+        store.withdraw(PEER, "alpha")
+        r = store.request(PEER, "alpha", head_sha="a1")
+        assert r["status"] == "queued_for_steward" and r["request"]["revision"] == 2
+        assert store.inbox()["drain"] == ["task_branch action=enqueue slug=alpha confirm=True"]
+
+    def test_request_rows_carry_kind_request(self, store):
+        assert store.request(PEER, "alpha", head_sha="a1")["request"]["kind"] == "request"
+
+    def test_needs_info_round_trip(self, store, clock):
+        store.claim(STEWARD, claude_pid=100)
+        store.request(PEER, "alpha", head_sha="a1")
+        ask = store.ask(STEWARD, "alpha", "is the migration idempotent?")
+        assert ask["ok"] and ask["needs_info"]["addressed_to"]["session_id"] == PEER
+        assert ask["needs_info"]["owner_fallback"] is True
+        assert ask["needs_info"]["deadline_ts"].startswith("2027-01-15T08:30")  # now + 30 min
+        item = store.mine(PEER)["needs_info"][0]
+        assert item["question"] == "is the migration idempotent?" and item["state"] == "open"
+        assert store.mine(THIRD)["needs_info"] == []
+        assert store.inbox()["needs_info"] == []  # still open: nothing to read yet
+        ans = store.position(PEER, "alpha", "yes, IF NOT EXISTS everywhere", ref=item["id"])
+        assert ans["ok"]
+        assert store.mine(PEER)["needs_info"] == []
+        box = store.inbox()
+        assert [(n["id"], n["state"]) for n in box["needs_info"]] == [(item["id"], "answered")]
+        assert box["needs_info"][0]["answer"] == "yes, IF NOT EXISTS everywhere"
+        assert box["escalate_to_owner"] == []
+
+    def test_needs_info_addressed_to_registered_role(self, store):
+        store.claim(STEWARD, claude_pid=100)
+        store.request(PEER, "alpha", head_sha="a1")
+        store.role_set(THIRD, "agents", claude_pid=300)
+        ask = store.ask(STEWARD, "alpha", "who owns this?", addressed_to="agents")
+        assert ask["needs_info"]["addressed_to"] == {"role": "agents", "session_id": THIRD}
+        assert store.mine(THIRD)["needs_info"][0]["slug"] == "alpha"
+
+    def test_needs_info_is_steward_only(self, store):
+        store.claim(STEWARD, claude_pid=100)
+        store.request(PEER, "alpha", head_sha="a1")
+        assert store.ask(PEER, "alpha", "q?")["status"] == "refused_not_steward"
+
+    def test_expired_needs_info_without_position_escalates(self, store, clock):
+        store.claim(STEWARD, claude_pid=100)
+        store.request(PEER, "alpha", head_sha="a1")
+        ni = store.ask(STEWARD, "alpha", "still alive?")["needs_info"]
+        clock.t += 31 * 60
+        store.heartbeat(STEWARD)
+        box = store.inbox()
+        assert [(n["id"], n["state"]) for n in box["needs_info"]] == [(ni["id"], "expired")]
+        assert [e["id"] for e in box["escalate_to_owner"]] == [ni["id"]]
+        assert "escalate_to_owner" in box["next"]
+        assert store.mine(PEER)["needs_info"][0]["state"] == "expired"
+
+    def test_late_position_after_expiry_still_answers(self, store, clock):
+        store.claim(STEWARD, claude_pid=100)
+        store.request(PEER, "alpha", head_sha="a1")
+        ni = store.ask(STEWARD, "alpha", "q?")["needs_info"]
+        clock.t += 31 * 60
+        store.position(PEER, "alpha", "late", ref=ni["id"])
+        box = store.inbox()
+        assert box["needs_info"][0]["state"] == "answered" and box["escalate_to_owner"] == []
+
+    def test_decision_recorded_steward_only_and_clears_thread(self, store):
+        store.claim(STEWARD, claude_pid=100)
+        store.request(PEER, "alpha", head_sha="a1")
+        ni = store.ask(STEWARD, "alpha", "q?")["needs_info"]
+        store.position(PEER, "alpha", "a", ref=ni["id"])
+        assert store.decide(PEER, "alpha", "ship it")["status"] == "refused_not_steward"
+        d = store.decide(STEWARD, "alpha", "ship it")
+        assert d["ok"] and d["decision"]["kind"] == "decision"
+        assert store.decisions("alpha")[0]["text"] == "ship it"
+        assert store.inbox()["needs_info"] == []
+        assert store.requests()["alpha"]["status"] == "queued_for_steward"
+
+    def test_history_is_append_only(self, store):
+        store.claim(STEWARD, claude_pid=100)
+        store.request(PEER, "alpha", head_sha="a1")
+        before = store.outbox_path.read_text()
+        store.ask(STEWARD, "alpha", "q?")
+        store.withdraw(PEER, "alpha")
+        assert store.outbox_path.read_text().startswith(before)
+
+
+class TestSessionState:
+    """`dead` is the claim that lets another session's worktree be removed (P2-5, adversarial review): a stale pid
+    alone must never read as dead, and every action refreshes the caller's pid (a /clear or restart changes it)."""
+
+    def test_a_stale_pid_with_a_fresh_heartbeat_is_live_not_dead(self, store, alive, clock):
+        store.role_set(PEER, "agents", name="e4", claude_pid=77)
+        alive[77] = False  # the recorded pid is gone ...
+        clock.t += 60      # ... but the session was active a minute ago
+        assert store.session_state(PEER) == "live"
+
+    def test_every_action_refreshes_the_callers_pid(self, store, alive, clock):
+        store.role_set(PEER, "agents", name="e4", claude_pid=77)
+        alive[77], alive[78] = False, True
+        clock.t += 60
+        store.role_touch(PEER, claude_pid=78)  # run_action does this for every action
+        assert store.roles()["roles"]["agents"]["claude_pid"] == 78
+        clock.t += 10_000  # long past the TTL: only the (refreshed, alive) pid keeps it live
+        assert store.session_state(PEER) == "live"
+
+    def test_dead_needs_the_pid_dead_AND_the_heartbeat_older_than_the_ttl(self, store, alive, clock):
+        store.role_set(PEER, "agents", name="e4", claude_pid=77)
+        alive[77] = False
+        clock.t += 7200 + 1
+        assert store.session_state(PEER) == "dead"
+
+    def test_a_stale_heartbeat_with_no_known_pid_is_unknown_never_dead(self, store, clock):
+        store.role_set(PEER, "agents", name="e4", claude_pid=None)
+        clock.t += 100_000
+        assert store.session_state(PEER) == "unknown"
+
+    def test_no_record_is_unknown(self, store):
+        assert store.session_state("never-seen") == "unknown"
+
+    def test_run_action_passes_the_callers_pid_to_role_touch(self, store, alive, clock):
+        store.role_set(PEER, "agents", name="e4", claude_pid=77)
+        alive[77], alive[99] = False, True
+        rs.run_action("mine", PEER, store=store, claude_pid=99)
+        assert store.roles()["roles"]["agents"]["claude_pid"] == 99

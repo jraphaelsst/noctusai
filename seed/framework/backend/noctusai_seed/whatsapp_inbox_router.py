@@ -47,6 +47,10 @@ Security notes:
 ``on_message(org_id, connection_id, chat, message)`` (optional) fires for every newly stored message - inbound
 webhook AND outbound send from this router; best-effort (a raising consumer is logged, never fails the call).
 
+``should_store(message, chat) -> True | False | "<reason>"`` (optional) is the PRE-STORE predicate seam: it runs
+before anything is persisted/published/notified (default: store all). A shadow line passes
+``inbound_one_to_one_only(...)``; a skipped message answers ``200 {"status": "skipped"}``.
+
 Decoupling: imports nothing from ``app.*``; every product concern is a kwarg
 (Class-B DI seam).
 """
@@ -81,6 +85,7 @@ from noctusai_lib.integrations.whatsapp.inbox import (
     OnNewChat,
     WhatsAppChatStore,
     backfill_connection,
+    ShouldStore,
     ingest_waha_event,
     inbox_scope,
     is_backfill_running,
@@ -147,6 +152,14 @@ def _default_resolve_org_id(raw: Any) -> UUID:
     return UUID(str(raw))
 
 
+#: The routes ``read_only=True`` leaves UNMOUNTED, as (HTTP method, path template relative to the router ``prefix``).
+#: An explicit list, not a function-name filter: a test pins it, and a new write route must be added HERE to be covered.
+READ_ONLY_UNMOUNTED_ROUTES: tuple[tuple[str, str], ...] = (
+    ("POST", "/{connection_id}/chats/{chat_id:path}/messages"),  # send
+    ("POST", "/{connection_id}/backfill"),                      # history backfill (a read of WAHA, but a bulk one)
+)
+
+
 def create_whatsapp_inbox_router(
     *,
     chat_store_factory: Callable[[], WhatsAppChatStore],
@@ -163,8 +176,16 @@ def create_whatsapp_inbox_router(
     resolve_org_id: Callable[[Any], UUID] = _default_resolve_org_id,
     mirror_read_to_whatsapp: bool = False,
     backfill_kwargs: Optional[dict[str, Any]] = None,
+    should_store: Optional[ShouldStore] = None,
+    read_only: bool = False,
 ) -> APIRouter:
-    """Build the inbox router (authenticated routes + the public webhook)."""
+    """Build the inbox router (authenticated routes + the public webhook).
+
+    ``read_only=True`` (a shadow line): the send and backfill routes are NOT MOUNTED (construction layer of the
+    zero-write defence, KB § whatsapp.md § 6a) and the read mirror to WhatsApp is forced off; mark-read stays local.
+    """
+    if read_only:
+        mirror_read_to_whatsapp = False
     router = APIRouter(tags=["WhatsApp Inbox"])
     backfill_kwargs = dict(backfill_kwargs or {})
 
@@ -368,7 +389,8 @@ def create_whatsapp_inbox_router(
 
         async def _run() -> None:
             report = await backfill_connection(
-                record=record, chat_store=chats, waha_client=client, lid_cache=lid_cache, **backfill_kwargs
+                record=record, chat_store=chats, waha_client=client, lid_cache=lid_cache,
+                should_store=should_store, **backfill_kwargs
             )
             logger.info(
                 "inbox backfill connection=%s status=%s chats=%d messages=%d",
@@ -434,6 +456,7 @@ def create_whatsapp_inbox_router(
             on_message=on_message,
             lid_cache=lid_cache,
             waha_client_factory=lambda rec: _client_for_identity(rec, store),
+            should_store=should_store,  # PRE-STORE seam (default None = store all); see ingest.ShouldStore
         )
         return {"status": result.status}
 
@@ -445,6 +468,12 @@ def create_whatsapp_inbox_router(
             return None
         return waha_client_factory(base_url=full.base_url, api_key=full.api_key, session=full.session_name)
 
+    if read_only:
+        dead = {(m, f"{prefix}{tail}") for m, tail in READ_ONLY_UNMOUNTED_ROUTES}
+        router.routes[:] = [
+            r for r in router.routes
+            if not any((m, getattr(r, "path", None)) in dead for m in getattr(r, "methods", ()) or ())
+        ]
     return router
 
 

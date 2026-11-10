@@ -117,6 +117,28 @@ from noctusai_lib.integrations.whatsapp.meta_cloud_client import (
     FakeMetaCloudClient,
     MetaCloudClient,
 )
+from noctusai_lib.integrations.whatsapp.line_policy import (
+    FAKE_LINE_URL,
+    UNDECLARED,
+    InMemoryLineEventSink,
+    LineEvent,
+    LineEventSink,
+    LinePolicy,
+    LinePolicyDrift,
+    LinePolicyError,
+    LineRepairRefused,
+    LineWriteRefused,
+    PolicyReadback,
+    check_session_against_policy,
+    clear_line_policies,
+    is_whatsapp_write,
+    load_line_policies_from_env,
+    parse_line_policy,
+    register_line_policy,
+    resolve_line_policy,
+    strictest,
+    set_default_line_event_sink,
+)
 from noctusai_lib.integrations.whatsapp.mappers import (
     build_send_text_body,
     chat_id_for_phone,
@@ -162,6 +184,8 @@ def get_whatsapp_client(
     api_key: str | None = None,
     session: str = "default",
     external_base_url: str | None = None,
+    line_policy: LinePolicy | None = None,
+    line_event_sink: LineEventSink | None = None,
 ) -> WhatsAppClient:
     """Return a real WAHA client when `base_url` is set; `FakeWahaClient` otherwise.
 
@@ -174,14 +198,21 @@ def get_whatsapp_client(
     URLs; `base_url` is the docker-internal host the app *reaches*.
     Defaults to `base_url` (single-host dev — rewrite no-op). See
     `WahaClient` docstring + SESSION-NOTES §4.3.
+
+    THE ONLY sanctioned way to build a WAHA client (keeper `check_raw_waha_client_construction`): the line's
+    policy (``line_policy`` > registry > fail-closed) rides on the client it returns. KB § whatsapp.md § 6a.
     """
     if not base_url:
-        return FakeWahaClient(session=session)
+        return FakeWahaClient(
+            session=session, line_policy=line_policy, line_event_sink=line_event_sink
+        )
     return WahaClient(
         base_url=base_url,
         api_key=api_key,
         session=session,
         external_base_url=external_base_url,
+        line_policy=line_policy,
+        line_event_sink=line_event_sink,
     )
 
 
@@ -213,6 +244,26 @@ def get_meta_cloud_client(
 
 
 __all__ = [
+    "LinePolicyDrift",
+    "strictest",
+    "InMemoryLineEventSink",
+    "LineEvent",
+    "LineEventSink",
+    "LinePolicy",
+    "LinePolicyError",
+    "LineRepairRefused",
+    "LineWriteRefused",
+    "PolicyReadback",
+    "FAKE_LINE_URL",
+    "UNDECLARED",
+    "check_session_against_policy",
+    "clear_line_policies",
+    "is_whatsapp_write",
+    "load_line_policies_from_env",
+    "parse_line_policy",
+    "register_line_policy",
+    "resolve_line_policy",
+    "set_default_line_event_sink",
     "FakeMetaCloudClient",
     "FakeResponseRegistry",
     "FakeWahaClient",

@@ -97,6 +97,19 @@ if have_py; then
     fi
 fi
 
+# ─── 0-pre-b. Guardian tool-authorship gate (BLOCKING) ───────────
+# Keeper `check_guardian_tool_authorship`: the session holding the release-steward
+# lease must not commit release_steward.py / task_branch.py (ratified guardian
+# spec, council 09340534). No lease / expired / unknown session passes.
+if have_py; then
+    if ! "$PY" "$CLI" --check-guardian-tool-authorship --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] guardian tool-authorship gate FAILED. Commit aborted." >&2
+        echo "[pre-commit] The release-steward lease holder does not author steward tooling:" >&2
+        echo "[pre-commit] hand it to the tooling branch steward. KB § PATTERNS/common/gate-methodology-sync.md" >&2
+        exit 1
+    fi
+fi
+
 # ─── 0a. Ledger-only fast path (append-only ledgers, cache-exempt) ───
 # A commit whose ENTIRE staged set is top-level `project-history/*.ndjson`
 # append-only ledger rows (branch-tree pointers, mirror, auto-improvement,
@@ -1121,6 +1134,18 @@ if [[ -n "$STAGED_REDIS_PY" ]] && have_py; then
         echo "[pre-commit] REDIS-CLIENT-VIA-SEAM check FAILED. Commit aborted." >&2
         echo "[pre-commit] Build the client with noctusai_lib.integrations.redis (make_redis_client / make_async_redis_client / redis_connection_url). See KB § PATTERNS/backend/redis-auth-seam.md." >&2
         exit 1
+    fi
+fi
+
+# ─── 6e-sexies-bis. Raw WahaClient construction (warn-first shadow, only when staged seed/product backend python) ─
+# Keeper `check_raw_waha_client_construction` + `KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a`. A WAHA client is built
+# ONLY by the seed factory `get_whatsapp_client`, so the line policy (fail-closed write refusal) always rides on it.
+STAGED_RAWWAHA_PY=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(seed/.*|products/[^/]+/backend/.*)\.py$' || true)
+if [[ -n "$STAGED_RAWWAHA_PY" ]] && have_py; then
+    echo "[pre-commit] python staged — checking raw WahaClient construction..."
+    # WARN-first SHADOW (new gates start at warning; promote to blocking after >=7 shadow days with 0 effective FP).
+    if ! "$PY" "$CLI" --check-raw-waha-client-construction --paths "$(echo "$STAGED_RAWWAHA_PY" | paste -sd, -)" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] WARNING (shadow, not blocking): RAW-WAHA-CLIENT — build the client with noctusai_lib.integrations.whatsapp.get_whatsapp_client(...) so the line policy rides on it. See KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a." >&2
     fi
 fi
 

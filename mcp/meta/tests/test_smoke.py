@@ -41,6 +41,24 @@ pin_in_tree_seed(Path(__file__))
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _fake_line_send_enabled_test_policy():
+    """The fail-closed line policy refuses every WAHA write on a line nobody declared. The tools here run against the seed
+    Fake (no WAHA_BASE_URL), whose line is `fake://waha`: declare an explicit send-enabled TEST policy for exactly that
+    line through the public registry. Production default untouched."""
+    from noctusai_lib.integrations.whatsapp.line_policy import (
+        FAKE_LINE_URL,
+        LinePolicy,
+        clear_line_policies,
+        register_line_policy,
+    )
+
+    clear_line_policies()
+    register_line_policy(FAKE_LINE_URL, LinePolicy("enabled", False, False, False))
+    yield
+    clear_line_policies()
+
+
 # ─── Composition / registry coherence ────────────────────────────────────
 
 

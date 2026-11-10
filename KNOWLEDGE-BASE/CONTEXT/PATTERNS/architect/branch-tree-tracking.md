@@ -6,7 +6,7 @@
 ## 1 · The two trees, mirrored
 
 - **git-tree** — branches, their fork-base (parent edge), current commit (locates the tree), worktree path.
-- **claude-tree** — agents, their role (orchestrator | engineer), the orchestrator that dispatched them (parent edge), the session.
+- **claude-tree** — agents, their role (orchestrator | engineer | steward), the orchestrator that dispatched them (parent edge), the session.
 
 The two are **mirrors pointed at each other**, joined 1:1 by the **branch** (every working branch has exactly one owning agent; every working agent has exactly one branch — this holds by construction under self-branch + dispatch-branch). A `branch-pointer` registry is one row that carries BOTH coordinates. A keeper enforces the mirror at code-level (§5).
 
@@ -32,12 +32,12 @@ The claude-tree's `session` field (the owning Claude session) is **never null by
 
   // ── git-tree coordinate ──────────────────────────────
   "branch": "feat/hd-deploy-tunnel",   // JOIN KEY — the branch (1:1 with the owning agent)
-  "base":   "feat/hot-drift-batch",    // fork base = git parent edge (origin/dev for an orchestrator)
+  "base":   "feat/hot-drift-batch",    // fork base = git parent edge (origin/dev for an orchestrator; task_branch pins it as origin/dev@<sha9>, which the keeper accepts)
   "commit": "c036c711",                // current tip (locates the tree); on status=shipped = the final commit
   "worktree": ".claude/worktrees/hd-deploy-tunnel",  // or null
 
   // ── claude-tree coordinate (mirror) ──────────────────
-  "role":   "engineer",                // orchestrator | engineer
+  "role":   "engineer",                // orchestrator | engineer | steward (a branch steward, release-steward.md)
   "agent":  "hd-deploy-tunnel",        // claude-tree node label (logical, stable — NOT the ephemeral harness id)
   "parent": "tech-lead",               // who dispatched this = claude parent edge (mirrors git `base`'s owner)
   "project": "sw-extraction",          // OPTIONAL — ship-consent approval unit; omitted ⇒ inherited from parent's pointer; unmapped ⇒ the branch name (KB § PATTERNS/devops/ship-consent-riders.md)

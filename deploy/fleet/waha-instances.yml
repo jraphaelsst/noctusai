@@ -6,6 +6,13 @@
 # Secrets are NOT here: each instance reads WAHA_<NAME>_API_KEY / _HMAC_SECRET / _DASHBOARD_PASSWORD from
 # deploy/fleet/.env.fleet, generated ON the VPS (KB § GUIDES/production-deploy.md § 5a step 7).
 # KB § CONTEXT/INTEGRATIONS/whatsapp.md § "One WAHA per number".
+#
+# LINE POLICY v1 (KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a) -- every instance DECLARES, no defaults:
+#   line_policy: {send: enabled|disabled, mark_online: bool, full_sync: bool, auto_repair: bool}   # the platform ceiling
+#   edge_deny_writes: bool   # default false. true = deny proxy `waha-<name>` (nginx) in front of `waha-<name>-core`; 403s every write
+#   dashboard: bool          # default true.  false = WAHA dashboard + Swagger OFF (and no dashboard password key)
+# `send: disabled` REQUIRES edge_deny_writes: true and dashboard: false. A line with no policy is refused by the seed
+# (fail-closed). The product receives the policy as <PRODUCT>_WAHA_LINE_POLICY (`plan` prints it) and registers it at boot.
 image: devlikeapro/waha:noweb-2026.9.2   # WAHA tags are <engine>-<version>; verified pullable on the VPS 2026-10-27. Bump deliberately
 platform: linux/amd64
 engine: NOWEB                      # chat list / history backfill; the store itself is enabled per session by the product's start call
@@ -15,3 +22,4 @@ instances:
   - name: monica                   # -> service waha-monica, http://waha-monica:3000, volume noctus-waha-monica
     product: monica
     session: default               # CORE: always `default`
+    line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}   # monica's CURRENT behaviour, made explicit
