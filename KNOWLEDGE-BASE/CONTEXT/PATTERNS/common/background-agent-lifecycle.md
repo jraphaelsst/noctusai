@@ -11,6 +11,11 @@
 3. **The leader takes over leftovers** (an unfinished verdict, a pending push, a queued run): it runs, files or tracks them itself (`release_steward action=request`, a pointer note, a reminder). Leftovers are never parked in an idle agent.
 4. **Never stop another SESSION.** Peer sessions run in the owner's environment. "End idle agents" means YOUR OWN dispatched agents and shells only; stopping, steering or re-scoping a peer needs the owner's say-so. Informing a peer is allowed and encouraged (`orchestration-craft-canon.md` §6.13), and a notice is information, not a stop order: each session/agent decides how to proceed in its own environment and does not pause for the owner because of it. If the notice reveals a conflict or error, silence is not OK: reply to the sender/steward and resolve it together (`orchestration-craft-canon.md` §6.13).
 
+## Waiting and ending (decision 2026-11-10: `project-history/assistant-chatbot/queue-lifecycle-decision.md`)
+
+- **Waiting (live when D1 lands).** A subagent with a queued delivery hands back, names it as the leftover and ends; it never polls. A top-level session with a pending delivery keeps building and does ONE `release_steward action=mine` per 15 min, riding the owner's load-check cadence (no loop agent), plus at natural checkpoints.
+- **Ending (not live until builds 3+5: rebased-twin cleanup fix, end predicate in `mine`).** A session/agent ends ITSELF only when the `mine` end predicate is true (all requests LANDED, plus DEPLOYED if asked, or ejected-with-transfer; no open `mq/*` ref; no unlanded rescue of its slug; no depended-on CI run in flight). Teardown goes LAST: it salvages its own worktrees through `task_branch landed confirm=True` as the final act, never while a CI run it depends on is in flight (a salvage once cancelled the CI it waited on). Worktrees of dead requesters go to the steward / mole sweep. Ejection handling: `release-steward.md` § 7a.
+
 ## Backstop - `claude-guard-background-agent-idle.py` (advisory, never stops anything)
 
 - **Events:** `PostToolUse` (all tools) and `UserPromptSubmit`, registered in `.claude/settings.json`. A task-notification (the hand-back) wakes the leader into tool calls, so PostToolUse is the event that reliably runs while the leader is acting; it throttles to one scan per 45 s per session.

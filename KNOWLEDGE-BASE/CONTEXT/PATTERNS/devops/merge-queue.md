@@ -86,8 +86,9 @@ Code lives in:
    (`methodology-execution-discipline.md`). The queue tests exactly the tree
    that `dev` will become.
 4. **The queue never edits an entry.** A conflict or a duplicate migration
-   number ejects the entry; it is never auto-resolved on CI. The owning session
-   fixes the branch and enqueues it again. Local renumbering against `dev`
+   number ejects the entry; it is never auto-resolved on CI. The steward resolves
+   the ejection (§4 "Ejections"; supersedes "the owning session fixes the branch",
+   decision 2026-11-10, `project-history/assistant-chatbot/queue-lifecycle-decision.md`). Local renumbering against `dev`
    still happens at enqueue time (`_attempt_migration_renumber`).
    **One carve-out — registered derived ledgers (2026-11-07).** A conflict that
    lies wholly inside ONE set in `merge_queue.DERIVED_SETS` (today: the
@@ -131,7 +132,7 @@ Code lives in:
 - **Enqueue → `landed`.** After enqueueing, keep working on something else and
   check with `task_branch action=landed slug=<slug>`. Pass `confirm=True` once
   it says landed, so the pointer, primary FF and cleanup run. If ejected, read
-  the reason (it links the CI run), fix it on the branch, and enqueue again.
+  the reason (it links the CI run); the steward resolves it (see "Ejections").
 - **About 3–4 sessions writing code at once.** More only adds queue time and
   conflict odds; the codebase's ability to absorb parallel change is the limit,
   not the session count. The figure is not arbitrary:
@@ -151,6 +152,20 @@ Code lives in:
   `train-*` slugs, so feat/julia-golive was flattened and re-hit the conflicts
   its merge had already resolved).
 - **The drain registers the repo's custom merge drivers first** (`scripts/hooks/register-merge-drivers.sh`, after installing toolkit deps). `.gitattributes` only names a driver; unregistered on the runner, derived kb-counts blocks text-merge and eject parallel entries (2026-11-05). Keeper `check_merge_drivers_registered_in_ci`. Merge drivers run before git writes the merged tree (ort), so they re-derive counts against the pre-merge tree: after every composed entry the drain therefore re-runs `cli.py --update-kb-counts` in its worktree and commits changed derived paths as `chore(kb-counts): regenerate derived counts at compose [auto]`; a failing regen ejects the entry (`kb_counts_regen`), never continues silently. → `KB § PATTERNS/common/auto-generated-merge-drivers.md`
+- **Open enqueue (not live until items 1, 4, 6, 9 land, the CLAUDE.md word-budget check
+  against the queue exists, and the owner flips decision item 10).** Any session may
+  enqueue only when the queue is conflict-safe by construction: liveness (1), role
+  registry (4), queue-aware migration numbers (6), derived-artifact regeneration (9).
+  Fitness function: ejections are tracked by cause; if collision-class ejections pass
+  the threshold, open enqueue closes again. Until then the steward enqueues (protocol v1).
+- **Ejections (steward-resolves; not live until build 4, the inbox `needs_info`/transfer
+  fields).** The dev-queue steward (lease holder) diagnoses from the failed log; if it needs
+  information it sends ONE batched question (skill `noc-questionnaire` peer mode, to the
+  requester's ROLE, TTL ~25 min). A live, not-done requester who answers "already fixing"
+  keeps the fix; otherwise the steward withdraws the `mq/*` ref and dispatches a rescue
+  engineer on a NEW `rescue-<slug>` branch. It never patches `feat/*` and never hands work
+  back to a done agent. Flow, lineage and notices: `release-steward.md` § Ejection flow.
+  Until build 4, the steward fixes by hand and notes the transfer in the inbox notes field.
 
 ## 5 · Fallback: `task_branch action=integrate`
 

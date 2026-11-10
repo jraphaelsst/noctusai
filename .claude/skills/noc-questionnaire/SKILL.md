@@ -1,7 +1,7 @@
 ---
 name: noc-questionnaire
 description: Use whenever a decision, scope, preference or meaning is not 100% known — triggers "act as a questionnaire", "questionnaire", "question me", "question me thoroughly", "interview me", "me entreviste", "quero que você me pergunte", "never assume", "don't assume", "ask me along the way", "clarify with me", "confirm with me", "confirm via WhatsApp", "pergunte-me", "me pergunte", "check with the owner". Never-assume interview: research first, ask every unknown in AskUserQuestion rounds, keep a live Claude Doc spec, then plan and wait for "go".
-version: 2.0.0
+version: 2.1.0
 ---
 
 # noc-questionnaire — never assume, interview until the context is complete
@@ -48,6 +48,16 @@ unknown becomes a question; the owner's time is spent deliberately to buy a comp
 2) <pergunta>  → Sim / Não
 Responda ex.: "1A 2Sim".
 ```
+
+## PEER MODE — the asked party is another agent/session, not the owner
+
+Decision 2026-11-10 (`project-history/assistant-chatbot/queue-lifecycle-decision.md`). The steward uses this when it needs information about an ejected entry. The method stays (research first, reduce to the simplest decision, batch, record); the owner-interview machinery does not apply.
+
+- **One batched question,** reduced to the simplest decision (e.g. "already fixing? yes/no; if no, which of A/B?"), with the evidence (run URL, file:line) attached so no research is asked of the peer.
+- **Channel:** an inbox `needs_info` record addressed to the requester's ROLE (role registry, resolved at send time; owner fallback when the role has no live session), TTL one CI cycle (~25 min). The answer is read with `release_steward action=mine` and recorded durably (inbox + steward memory file). Silence at TTL is an answer too: the steward proceeds to the rescue.
+- **No Claude Doc, no `AskUserQuestion`, no waiting for "go"**; keep working on other queue items meanwhile.
+- **Go-live:** the inbox `needs_info`/TTL fields ship with build 4 (noctusai-b5). Until then, INTERIM: `SendMessage` to the role's current session + the steward inbox notes field, labelled interim.
+- Rule it serves: `KB § PATTERNS/devops/release-steward.md` § 7a.
 
 ## Guardrails
 - Silence is not consent: never act on an unanswered question.
