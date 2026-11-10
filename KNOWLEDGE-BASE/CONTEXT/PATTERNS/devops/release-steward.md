@@ -291,6 +291,13 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
 - `release_steward action=deliverable slug=<s> run_scoped=true` (CLI `--steward-run-scoped`) RUNS the CI-parity check
   (`export_ci_parity_check`) and its result carries the `ci-parity:<id>` ref to file with the request (also for a RED run, which then
   refuses as RED).
+  The check runs in a **throwaway git checkout** of the export (`_git_init_export`: `git init` + one commit in the temp dir, global/system git
+  config ignored; never the requester's worktree, never the real repository): CI runs in a checkout, `--stamp-seed-version` needs git
+  and the keeper-mirror caches live under the git dir (first live use: "prime step failed" with only the banner as detail). A failing
+  step reports its exit code and the last ~20 MEANINGFUL lines (`meaningful_tail`: ANSI, banner and INFO lines stripped); every red keeper flag
+  carries its last error line. `request run_scoped=true` is never ignored: it runs this check on the branch head, files with the `ci-parity:<id>`
+  it mints (red -> `needs_resync` via item 5; an UNMEASURED run -> `needs_resync` naming the reason) and refuses what it cannot honour
+  (no runner configured, a multi-branch train: one record judges ONE head).
 
 ### Enqueue, cleanup and the pre-push hook
 
