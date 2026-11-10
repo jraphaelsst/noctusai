@@ -324,6 +324,30 @@ class TestBranchTreeMirrorShippedContradiction:
 
 
 class TestBranchTreeMirrorOrchestratorBase:
+    def test_task_branch_pinned_base_passes_for_an_orchestrator(self, tmp_path):
+        """task_branch start records `origin/dev@<sha9>` (task_branch.py, since edc83c251c); the keeper
+        must accept the writer's own format, or every orchestrator self-branch is refused at push."""
+        root, sha = _init_repo(tmp_path)
+        row = _base_row("feat/orch", sha, role="orchestrator", parent="dev", base=f"origin/dev@{sha[:9]}")
+        _write_ledger(root, [row])
+        issues = check_branch_tree_mirror(branch="feat/orch", repo_root=root)
+        assert issues == [], f"Expected no issues, got: {issues}"
+
+    def test_a_pinned_base_whose_sha_is_not_a_commit_is_blocked(self, tmp_path):
+        root, sha = _init_repo(tmp_path)
+        row = _base_row("feat/orch", sha, role="orchestrator", parent="dev", base="origin/dev@deadbeef0")
+        _write_ledger(root, [row])
+        issues = check_branch_tree_mirror(branch="feat/orch", repo_root=root)
+        assert any("does not resolve" in i["issue"] for i in issues), issues
+
+    def test_an_orchestrator_pinned_to_another_ref_is_still_blocked(self, tmp_path):
+        root, sha = _init_repo(tmp_path)
+        _git(root, "update-ref", "refs/heads/feat/parent", sha)
+        row = _base_row("feat/orch", sha, role="orchestrator", parent="dev", base=f"feat/parent@{sha[:9]}")
+        _write_ledger(root, [row])
+        issues = check_branch_tree_mirror(branch="feat/orch", repo_root=root)
+        assert any("MUST fork from 'origin/dev'" in i["issue"] for i in issues), issues
+
     def test_orchestrator_wrong_base_blocked(self, tmp_path):
         root, sha = _init_repo(tmp_path)
         # Create a feat/parent branch so it resolves.

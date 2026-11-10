@@ -24614,8 +24614,21 @@ def check_branch_tree_mirror(
         rc, _ = _git("cat-file", "-e", f"{sha}^{{commit}}")
         return rc == 0
 
+    def _split_pinned(base: str) -> tuple[str, str]:
+        """``"origin/dev@cc19031f9"`` → ``("origin/dev", "cc19031f9")``; an unpinned base → ``(base, "")``.
+
+        task_branch start records the base pinned to its fork sha (since edc83c251c); git's own ``@{…}``
+        reflog syntax is never a pin."""
+        ref, sep, pin = base.rpartition("@")
+        if sep and ref and re.fullmatch(r"[0-9a-f]{7,40}", pin):
+            return ref, pin
+        return base, ""
+
     def _branch_exists(ref: str) -> bool:
-        """True if ref resolves as a local branch, remote branch, or is origin/dev."""
+        """True if ref resolves as a local or remote branch; a pinned ``ref@sha`` also needs the sha to be a commit."""
+        ref, pin = _split_pinned(ref)
+        if pin and not _commit_exists(pin):
+            return False
         rc, _ = _git("rev-parse", "--verify", ref)
         if rc == 0:
             return True
@@ -24789,8 +24802,8 @@ def check_branch_tree_mirror(
         # ── 2. Consistency: role-aware base/parent pairing ────────────────────
         if recorded_role and recorded_base and recorded_parent:
             if recorded_role == "orchestrator":
-                # Orchestrator MUST fork from origin/dev.
-                if recorded_base != "origin/dev":
+                # Orchestrator MUST fork from origin/dev (pinned or not).
+                if _split_pinned(recorded_base)[0] != "origin/dev":
                     issues.append({
                         "product": "<platform>",
                         "file": file_ref,
