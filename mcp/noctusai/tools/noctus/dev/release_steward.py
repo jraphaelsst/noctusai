@@ -96,6 +96,7 @@ _MCP_NAMES = {
     "mcp__noctusai__noctus_dev_migrate_product": "noctus.dev.migrate_product",
     "mcp__noctusai__noctus_dev_record_applied_migrations": "noctus.dev.record_applied_migrations",
     "mcp__noctusai__noctus_vps_recreate": "noctus.vps.recreate",
+    "mcp__noctusai__noctus_dev_supabase_breaker": "noctus.dev.supabase_breaker",
     "mcp__noctusai__noctus_dev_release_steward": "noctus.dev.release_steward",
 }
 _TASK_BRANCH_GATED = {"enqueue", "integrate", "landed"}
@@ -1226,6 +1227,12 @@ def classify_tool(tool_name: str, tool_input: dict[str, Any] | None) -> Gated | 
         return Gated(f"release {stage}") if stage in _RELEASE_GATED and confirm else None
     if key == "noctus.dev.record_applied_migrations":
         return Gated("record_applied_migrations")  # always a write (it integrates to dev)
+    if key == "noctus.dev.supabase_breaker":
+        # F11b (2026-11-10): re-arming/tripping the prod Supabase breaker - incl. the fleet key that stops every
+        # product's background workers - is a prod mutation. Applied = guardian-only; status and plans stay open. The
+        # urgent single-product case keeps the platform-admin route (AAL2), which already refuses source=fleet.
+        action = args.get("action") or "status"
+        return Gated(f"supabase_breaker {action}") if action in {"rearm", "trip"} and confirm else None
     if key in {"noctus.dev.deploy_pull", "noctus.dev.deploy_image", "noctus.dev.migrate_product", "noctus.vps.recreate"}:
         return Gated(key.removeprefix("noctus.").replace(".", " ")) if confirm else None
     return None
@@ -1254,7 +1261,23 @@ _CLI_GATES: dict[str, tuple[set[str] | None, str, str]] = {
     "--deploy-pull": (None, "--deploy-confirm", "deploy_pull"),
     "--deploy-image": (None, "--deploy-image-confirm", "deploy_image"),
     "--migrate-product": (None, "--migrate-product-confirm", "migrate_product"),
+    # F11b P1-3: the breaker's CLI is a bare switch; the action lives in its own flag (see _CLI_GATE_VALUE_FLAG)
+    "--supabase-breaker": ({"rearm", "trip"}, "--supabase-breaker-confirm", "supabase_breaker"),
 }
+#: gates whose gated VALUE is carried by a separate flag instead of the gate flag itself
+_CLI_GATE_VALUE_FLAG = {"--supabase-breaker": "--supabase-breaker-action"}
+#: every flag a CLI gate reads - an abbreviation of any of them is judged as the flag itself (argparse accepts
+#: unambiguous prefixes unless allow_abbrev=False: `--deploy-image-conf` ran as --deploy-image-confirm, ungated,
+#: 2026-11-10; cli.py now refuses abbreviations, and this backstop covers a checkout with an older cli.py)
+_CLI_GATE_FLAGS = ({f for f in _CLI_GATES} | {c for _a, c, _l in _CLI_GATES.values()}
+                   | set(_CLI_GATE_VALUE_FLAG.values()))
+
+
+def _gate_flag_names(flag: str) -> set[str]:
+    """`flag` itself when it is a gate flag, else every gate flag it abbreviates (over-gating is the safe side)."""
+    if flag in _CLI_GATE_FLAGS or len(flag) < 4:
+        return {flag}
+    return {k for k in _CLI_GATE_FLAGS if k.startswith(flag)} or {flag}
 _GIT_FLAGS_WITH_OPERAND = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
 _PUSH_FLAGS_WITH_OPERAND = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
 
@@ -1302,15 +1325,20 @@ def _cli_gate(words: list[str]) -> Gated | None:
         return None
     vals: dict[str, str | None] = {}
     flags: set[str] = set()
+    value_flags = set(_CLI_GATE_VALUE_FLAG.values())
     for idx, w in enumerate(words):
         if not w.startswith("--"):
             continue
-        flag, eq, val = w.partition("=")
-        flags.add(flag)
-        if flag in _CLI_GATES:
-            nxt = words[idx + 1] if idx + 1 < len(words) else None
-            vals[flag] = val if eq else (nxt if nxt and not nxt.startswith("--") else None)
+        raw, eq, val = w.partition("=")
+        for flag in _gate_flag_names(raw):
+            flags.add(flag)
+            if flag in _CLI_GATES or flag in value_flags:
+                nxt = words[idx + 1] if idx + 1 < len(words) else None
+                vals[flag] = val if eq else (nxt if nxt and not nxt.startswith("--") else None)
     for flag, (allowed, confirm_flag, label) in _CLI_GATES.items():
+        value_flag = _CLI_GATE_VALUE_FLAG.get(flag)
+        if value_flag is not None and flag in flags:
+            vals[flag] = vals.get(value_flag)
         if flag in vals and confirm_flag in flags and (allowed is None or vals[flag] in allowed):
             if flag == "--task-branch":  # carry the slug/branch so `landed` can be judged per branch (branch-steward rule)
                 extra = {}

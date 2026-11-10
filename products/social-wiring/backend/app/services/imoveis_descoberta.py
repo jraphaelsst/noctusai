@@ -23,12 +23,11 @@ import re
 from typing import Any, Awaitable, Callable, Optional
 
 from noctusai_lib.domain.real_estate import Imovel
-from noctusai_lib.integrations import rate_limit
 from noctusai_lib.integrations.vista.client import VistaNotFound, VistaRecordUnpublished
 
 logger = logging.getLogger(__name__)
 
-VISTA_RATE_BUCKET = "vista"
+# Pacing is the seed adapter's job (its per-org `vista:<org>` bucket): no product-side acquire here.
 #: Consecutive misses after which the forward probe of one prefix stops.
 SONDA_MAX_FALHAS_PADRAO = 40
 _CODIGO = re.compile(r"^([A-Z]{2,4})(\d{3,6})$")
@@ -52,7 +51,6 @@ def maiores_por_prefixo(conhecidos: set[str]) -> dict[str, tuple[int, int]]:
 
 async def por_destaques(adapter: Any, conhecidos: set[str], report: Any) -> dict[str, Optional[Imovel]]:
     """Featured codes not yet in the mirror."""
-    await rate_limit.acquire_async(VISTA_RATE_BUCKET)
     report.chamadas["destaques"] = report.chamadas.get("destaques", 0) + 1
     codigos = await adapter.list_destaques()
     return {c: None for c in codigos if c.strip().upper() not in conhecidos}
@@ -69,7 +67,6 @@ def criar_sonda(max_falhas: int = SONDA_MAX_FALHAS_PADRAO) -> Descobridor:
             while falhas < max_falhas:
                 n += 1
                 codigo = f"{prefixo}{n:0{largura}d}"
-                await rate_limit.acquire_async(VISTA_RATE_BUCKET)
                 report.chamadas["sonda"] = report.chamadas.get("sonda", 0) + 1
                 try:
                     imovel = await adapter.refresh_imovel(codigo)

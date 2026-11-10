@@ -27,10 +27,12 @@ client, i.e. the pre-2026-10-21 behaviour).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
 import time
+import weakref
 from typing import Any, Mapping, Optional
 
 import httpx
@@ -170,3 +172,34 @@ def pooled_client(
         # Kill switch: private pool per client, still timed (each call is a new connection by design).
         return httpx.Client(transport=TimingTransport(httpx.HTTPTransport(http2=False)), **kwargs)
     return PooledHttpxClient(transport=shared_transport(), **kwargs)
+
+
+# ─── async pool (Vista and other asyncio vendor clients) ─────────────────────
+_async_clients: "weakref.WeakKeyDictionary[Any, httpx.AsyncClient]" = weakref.WeakKeyDictionary()
+
+
+def shared_async_client() -> Optional[httpx.AsyncClient]:
+    """ONE keep-alive ``httpx.AsyncClient`` per running event loop (an async client is bound to its loop, so it is
+    keyed by loop -- a test's `asyncio.run` never inherits a closed loop's sockets). ``None`` when the pool is off
+    (``NOCTUS_HTTP_POOL=0``) or there is no running loop: the caller then builds a per-call client as before.
+
+    The caller passes `timeout` per request, never relies on the client default; callers never close this client."""
+    if not pool_enabled():
+        return None
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+    with _lock:
+        client = _async_clients.get(loop)
+        if client is None:
+            client = httpx.AsyncClient(
+                http2=False,
+                limits=httpx.Limits(
+                    max_connections=MAX_CONNECTIONS,
+                    max_keepalive_connections=MAX_KEEPALIVE_CONNECTIONS,
+                    keepalive_expiry=KEEPALIVE_EXPIRY_S,
+                ),
+            )
+            _async_clients[loop] = client
+    return client

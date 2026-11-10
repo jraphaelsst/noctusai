@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import date
 from typing import Any
 
 import httpx
@@ -79,7 +80,7 @@ class VistaRESTAdapter:
 
     def __init__(
         self, *, base_url: str, api_key: str,
-        rate_bucket: str = "vista", rate_per_sec: float | None = None, rate_burst: float | None = None,
+        rate_bucket: str = "vista", rate_per_sec: float | None = None, rate_burst: float | None = None, pooled: bool = False,
     ):
         if not base_url:
             raise VistaNotConfigured(
@@ -92,7 +93,7 @@ class VistaRESTAdapter:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         # Pacing (see `VistaClient`): the bucket is per ADAPTER, so a per-org adapter paces itself apart from the rest.
-        self._rate = {"rate_bucket": rate_bucket, "rate_per_sec": rate_per_sec, "rate_burst": rate_burst}
+        self._rate = {"rate_bucket": rate_bucket, "rate_per_sec": rate_per_sec, "rate_burst": rate_burst, "pooled": pooled}
 
     async def get_property(self, code: str) -> PropertyData | None:
         """Fetch property data by code.
@@ -354,6 +355,31 @@ class VistaRESTAdapter:
             page=int(pagination.get("pagina") or page),
             pages=int(pagination.get("paginas") or 1),
         )
+
+    async def list_changed_since(self, since: date, *, page_size: int = 50) -> ImovelPage:
+        client = self._client()
+        fields = await calibrator.get_imovel_list_fields(client)
+        items: list[Imovel] = []
+        page_no, total, pages = 1, 0, 1
+        while True:
+            result = await client.listar_imoveis(
+                fields=fields, order={"DataAtualizacao": "desc"}, page=page_no, page_size=page_size
+            )
+            rows, pagination = extract_items(result.data)
+            if page_no == 1:
+                total = int(pagination.get("total") or len(rows))
+                pages = int(pagination.get("paginas") or 1)
+            reached_older = False
+            for row in rows:
+                imovel = vista_to_imovel(listing=row, detalhes=None)
+                if imovel.data_atualizacao is None or imovel.data_atualizacao < since:
+                    reached_older = True
+                    break
+                items.append(imovel)
+            if reached_older or not rows or page_no >= pages:
+                break
+            page_no += 1
+        return ImovelPage(items=items, total=total, page=page_no, pages=pages)
 
     async def refresh_imovel(self, code: str) -> Imovel:
         if not validate_product_code(code):
