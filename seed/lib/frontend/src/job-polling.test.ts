@@ -9,7 +9,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryObserver, focusManager } from '@tanstack/react-query';
 
-import { handOffToPolling, jobPolling, resetJobHandOffs, type JobPollingQuery } from './job-polling';
+import {
+  handOffToPolling,
+  JOB_POLL_CEILING_MS,
+  JOB_POLL_FAST_WINDOW_MS,
+  JOB_POLL_SLOW_MS,
+  isJobPollingStalled,
+  jobPolling,
+  resetJobHandOffs,
+  resetJobPollingStalled,
+  resumeJobPolling,
+  type JobPollingQuery,
+} from './job-polling';
 
 type Job = { status: 'processando' | 'concluido' };
 const running = (d: Job | undefined) => d?.status === 'processando';
@@ -23,8 +34,8 @@ describe('jobPolling — options', () => {
     expect(o.refetchInterval(q(undefined))).toBe(false);
   });
 
-  it('enables background polling (a no-op while refetchInterval is false)', () => {
-    expect(jobPolling(running, 3000).refetchIntervalInBackground).toBe(true);
+  it('pauses while the tab is hidden (nobody is watching; the focus refetch catches up)', () => {
+    expect(jobPolling(running, 3000).refetchIntervalInBackground).toBe(false);
   });
 
   it("refetches on return to the tab ('always') only while active", () => {
@@ -74,23 +85,27 @@ describe('jobPolling — against a real QueryObserver', () => {
     return { queryFn, unsubscribe };
   }
 
-  it('keeps polling while the tab is hidden — the CoreStudio freeze', async () => {
+  it('does not poll while the tab is hidden, and catches up the moment it is visible', async () => {
     const { queryFn, unsubscribe } = observe(['processando']);
     await vi.advanceTimersByTimeAsync(0);
     expect(queryFn).toHaveBeenCalledTimes(1);
 
     focusManager.setFocused(false); // tab hidden
-    await vi.advanceTimersByTimeAsync(3000);
-    expect(queryFn).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(queryFn).toHaveBeenCalledTimes(1);
+
+    focusManager.setFocused(true); // back: 'always' refetches at once
+    await vi.advanceTimersByTimeAsync(0);
+    expect(queryFn).toHaveBeenCalledTimes(2);
     unsubscribe();
   });
 
   it('stops polling (hidden or not) once the job is done', async () => {
     const { queryFn, unsubscribe } = observe(['processando', 'concluido']);
     await vi.advanceTimersByTimeAsync(0);
-    focusManager.setFocused(false);
     await vi.advanceTimersByTimeAsync(1000); // 2nd fetch → concluido
     expect(queryFn).toHaveBeenCalledTimes(2);
+    focusManager.setFocused(false);
     await vi.advanceTimersByTimeAsync(5000);
     expect(queryFn).toHaveBeenCalledTimes(2);
     focusManager.setFocused(true); // back to the tab: idle ⇒ no focus refetch
@@ -239,5 +254,72 @@ describe('handOffToPolling — a job-starting write hands off to the polled read
     await vi.advanceTimersByTimeAsync(5000);
     expect(other.queryFn).toHaveBeenCalledTimes(1);
     other.unsubscribe();
+  });
+});
+
+describe('jobPolling — a stuck "active" job does not poll forever (2026-11-10 request budget)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => { vi.useRealTimers(); resetJobPollingStalled(); });
+
+  /** Step the clock the way a visible tab does: one tick at a time. */
+  const run = (o: ReturnType<typeof jobPolling<Job>>, query: JobPollingQuery<Job>, ms: number) => {
+    let last: number | false = false;
+    for (let t = 0; t < ms; t += 10_000) {
+      vi.advanceTimersByTime(10_000);
+      last = o.refetchInterval(query);
+    }
+    return last;
+  };
+
+  it('backs off after the fast window, then stops at the ceiling and says so', () => {
+    const o = jobPolling(running, 3000);
+    const query = q({ status: 'processando' });
+    expect(o.refetchInterval(query)).toBe(3000);
+    expect(run(o, query, JOB_POLL_FAST_WINDOW_MS + 10_000)).toBe(JOB_POLL_SLOW_MS);
+    expect(isJobPollingStalled()).toBe(false);
+    expect(run(o, query, JOB_POLL_CEILING_MS)).toBe(false);
+    expect(isJobPollingStalled()).toBe(true);
+  });
+
+  it('time spent hidden does not count toward the ceiling', () => {
+    const o = jobPolling(running, 3000);
+    const query = q({ status: 'processando' });
+    o.refetchInterval(query);
+    vi.advanceTimersByTime(JOB_POLL_CEILING_MS * 2); // hidden: no callbacks ran
+    expect(o.refetchInterval(query)).toBe(3000);
+    expect(isJobPollingStalled()).toBe(false);
+  });
+
+  it('a job that settles and restarts gets a fresh fast window, and clears the flag', () => {
+    const o = jobPolling(running, 3000);
+    const query = q({ status: 'processando' });
+    run(o, query, JOB_POLL_CEILING_MS + 10_000);
+    expect(isJobPollingStalled()).toBe(true);
+    query.state.data = { status: 'concluido' };
+    expect(o.refetchInterval(query)).toBe(false);
+    expect(isJobPollingStalled()).toBe(false);
+    query.state.data = { status: 'processando' };
+    expect(o.refetchInterval(query)).toBe(3000);
+  });
+
+  it('against a real client: past the cap no more fetches; resume polls again', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
+    client.mount();
+    const queryFn = vi.fn(async () => ({ status: 'processando' }) as Job);
+    const observer = new QueryObserver(client, { queryKey: ['stuck'], queryFn, ...jobPolling(running, 1000) });
+    const unsubscribe = observer.subscribe(() => {});
+    await vi.advanceTimersByTimeAsync(JOB_POLL_CEILING_MS + JOB_POLL_FAST_WINDOW_MS);
+    expect(isJobPollingStalled()).toBe(true);
+    const stopped = queryFn.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(queryFn.mock.calls.length).toBe(stopped);
+
+    resumeJobPolling(client);
+    await vi.advanceTimersByTimeAsync(JOB_POLL_SLOW_MS * 3);
+    expect(queryFn.mock.calls.length).toBeGreaterThan(stopped + 1);
+    expect(isJobPollingStalled()).toBe(false);
+    unsubscribe();
+    client.unmount();
+    client.clear();
   });
 });

@@ -109,6 +109,7 @@ export function InactivityWarning({
 
   // Check inactivity every second
   useEffect(() => {
+    // poll-budget: 1s; 0 calls/tick (local clock + localStorage); worst 0/day per open tab; hidden=runs
     const intervalId = setInterval(() => {
       // The newest interaction of ANY tab of this origin counts.
       const lastSeen = Math.max(lastInteractionRef.current, readSharedActivity());

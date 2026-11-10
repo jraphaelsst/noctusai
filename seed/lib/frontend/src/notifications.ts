@@ -20,6 +20,7 @@
 import {
   keepPreviousData,
   useQuery,
+  useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query';
 import { useCacheWriteMutation } from './cache-writes';
@@ -45,10 +46,16 @@ export interface Notificacao {
 
 export interface ContagemNaoLidas {
   nao_lidas: number;
+  /** Newest unread notification id (null when none). Moves even when the count does not. */
+  ultima_id?: string | null;
 }
 
-/** How often the notice list and the unread badge are re-read while the tab is visible. */
-export const NOTIFICATION_POLL_MS = 15_000;
+/**
+ * How often the unread badge is re-read while the tab is visible. ONE cheap count polls; the list is
+ * NOT polled — it refetches when the count moves (request budget, 2026-11-10: two 15 s polls × ~5
+ * Supabase calls each, in every open tab, was the single largest frontend driver of authz lookups).
+ */
+export const NOTIFICATION_POLL_MS = 60_000;
 
 // ── Hook Factory ───────────────────────────────────────────────────
 
@@ -78,10 +85,7 @@ export function createNotificationHooks(
       // ahead of the restored session (else 401 → spurious
       // "servidor indisponível" toast on every standalone page load).
       enabled: authReady && !!user,
-      // Live: the list is what the bell shows AND what the live pop-up reads, so a notice created
-      // while the tab is open reaches both within ~15 s. react-query pauses the interval while the
-      // tab is hidden and refetches on focus -- no extra visibility code.
-      refetchInterval: NOTIFICATION_POLL_MS,
+      // No interval: the list refetches when the unread count moves (see `useContagemNaoLidas`).
       refetchOnWindowFocus: true,
       staleTime: 10 * 1000,
       // Keyed on `page` — paging forward/back is a key change, so `data`
@@ -94,14 +98,25 @@ export function createNotificationHooks(
   function useContagemNaoLidas() {
     const { user } = useAuthStore();
     const authReady = useAuthReady();
+    const qc = useQueryClient();
 
     return useQuery({
       queryKey: ['notificacoes-contagem'],
       queryFn: async () => {
-        const result = await api.get('/api/notificacoes/contagem');
-        return result as ContagemNaoLidas;
+        const previous = qc.getQueryData<ContagemNaoLidas>(['notificacoes-contagem']);
+        const result = (await api.get('/api/notificacoes/contagem')) as ContagemNaoLidas;
+        // A moved count OR a new newest-unread means the list is stale: fetch it once now instead of
+        // polling it. The id catches "one new + one read in the same window" (count unchanged).
+        if (
+          previous &&
+          (previous.nao_lidas !== result.nao_lidas || (previous.ultima_id ?? null) !== (result.ultima_id ?? null))
+        ) {
+          void qc.invalidateQueries({ queryKey: ['notificacoes'] });
+        }
+        return result;
       },
       enabled: authReady && !!user,
+      // poll-budget: 60s; ~5 calls/tick (handler count + auth lookups); worst 7200/day per open tab; hidden=paused
       refetchInterval: NOTIFICATION_POLL_MS,
       refetchOnWindowFocus: true,
       staleTime: 10 * 1000,
