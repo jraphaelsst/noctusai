@@ -18,7 +18,11 @@ about scheduling or not (S3, classification only - D48). It never sends, drafts,
 - `POST /api/classificacao/replay` (admin) - re-classify chosen rows under the registry's current prompt/model
   (new `ai_outputs` rows only).
 - `GET /api/classificacao/amostra` (admin) - stratified sample for labelling; `modo=cego` (default) hides the
-  model's verdict.
+  model's verdict and skips messages the caller already labelled.
+- `POST /api/classificacao/rotulos` (admin) - one owner label (`agendamento|nao_agendamento|nao_sei`, `rodada`) as an
+  append-only event (`ai_feedback_events`, migration 018); a relabel is a new `rodada`, never an update.
+- `GET /api/classificacao/rotulos/progresso` and `.../rotulos/concordancia` (admin) - own progress; model verdict vs
+  owner label as counts (the only place the verdict is shown). UI: page `/avaliacao` (blind, keyboard 1/2/3).
 - Nothing else: no send, mark-read, backfill, chat or message reads, SSE.
 
 ## Input contract (before anything is stored)

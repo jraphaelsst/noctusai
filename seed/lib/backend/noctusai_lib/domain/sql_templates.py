@@ -649,6 +649,62 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON {s}.ai_feedback TO authenticated;
 GRANT ALL ON {s}.ai_feedback TO service_role;"""
 
 
+def ai_feedback_events_table_sql(schema: str, labels: tuple[str, ...]) -> str:
+    """Canonical ``<schema>.ai_feedback_events`` -- the APPEND-ONLY, multi-valued sibling of ``ai_feedback``.
+
+    ``ai_feedback`` is a thumbs toggle (upsert on ``(user_id, output_ref)``, +1/-1). An owner EVALUATING a model needs
+    the opposite shape: a closed enum of verdicts (``labels``, e.g. ``agendamento|nao_agendamento|nao_sei``), every
+    judgement kept as its own dated event, and a re-judgement is a NEW event, never an update. One event per
+    ``(labeler_id, subject_id, round)``; ``round`` is the labeller's own n-th judgement of that subject (the latest
+    round is the effective label), so a double-submitted click is a no-op on the unique key instead of a duplicate.
+    ``subject_id`` is the thing judged (e.g. an intake row); ``output_id`` is the ``ai_outputs`` row the judge was
+    looking at when blind. An UPDATE or DELETE is refused by a trigger. SERVICE ROLE ONLY -- writes go through an
+    admin-gated route, never a browser grant. Idempotent; see ``ai_outputs_table_sql``.
+    """
+    s = _checked_schema(schema)
+    if not labels:
+        raise ValueError("labels must be a non-empty tuple")
+    quoted = ", ".join("'" + _ident(label, "label") + "'" for label in labels)
+    fn = f"{s}.guard_ai_feedback_events_append_only"
+    return f"""CREATE TABLE IF NOT EXISTS {s}.ai_feedback_events (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id      UUID NOT NULL DEFAULT public.current_org_id_for('{s}'),
+    labeler_id  UUID NOT NULL,
+    subject_id  UUID NOT NULL,
+    output_id   UUID,
+    label       TEXT NOT NULL,
+    round       INTEGER NOT NULL DEFAULT 1,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ai_feedback_events_label_check CHECK (label IN ({quoted})),
+    CONSTRAINT ai_feedback_events_round_check CHECK (round >= 1),
+    CONSTRAINT ai_feedback_events_once_per_round UNIQUE (labeler_id, subject_id, round)
+);
+CREATE INDEX IF NOT EXISTS ai_feedback_events_subject_idx ON {s}.ai_feedback_events (subject_id, labeler_id, round DESC);
+CREATE INDEX IF NOT EXISTS ai_feedback_events_org_idx ON {s}.ai_feedback_events (org_id);
+ALTER TABLE {s}.ai_feedback_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS service_role_bypass ON {s}.ai_feedback_events;
+CREATE POLICY service_role_bypass ON {s}.ai_feedback_events FOR ALL TO service_role
+    USING (true) WITH CHECK (true);
+REVOKE ALL ON {s}.ai_feedback_events FROM PUBLIC, anon, authenticated;
+GRANT ALL ON {s}.ai_feedback_events TO service_role;
+COMMENT ON TABLE {s}.ai_feedback_events IS 'tier:org';
+
+CREATE OR REPLACE FUNCTION {fn}()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = {s}, public
+AS $$
+BEGIN
+    RAISE EXCEPTION 'append_only' USING ERRCODE = 'P0001';
+END;
+$$;
+REVOKE ALL ON FUNCTION {fn}() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION {fn}() TO service_role;
+DROP TRIGGER IF EXISTS guard_ai_feedback_events_append_only ON {s}.ai_feedback_events;
+CREATE TRIGGER guard_ai_feedback_events_append_only
+    BEFORE UPDATE OR DELETE ON {s}.ai_feedback_events
+    FOR EACH ROW EXECUTE FUNCTION {fn}();"""
+
+
 def invitation_token_lockdown_sql(schema: str) -> str:
     """Make ``<schema>.invitations.token`` unreadable through the API roles.
 
