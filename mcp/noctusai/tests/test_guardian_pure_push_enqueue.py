@@ -65,6 +65,7 @@ class World:
         self.commit(self.repo, "init")
         sh(self.repo, "git", "push", "origin", "dev")
         self.derived = RS.export_derived_check(self.repo, artifacts=_ARTIFACTS)
+        self.verdict_store = tmp_path / "deliverable-verdicts.ndjson"  # the DI seam: never the real ~/.noctus
 
     # -- git helpers --------------------------------------------------------------------------
     def commit(self, where: Path, msg: str) -> str:
@@ -131,14 +132,17 @@ class World:
             return r.returncode, r.stdout or "", r.stderr or ""
         return run
 
-    def vref(self, branch: str = "feat/x", source: str = "gate_sweep://run/7") -> str:
-        """A verdict pointer that carries what item 5 demands: env-scrubbed + ci-keepers + THIS head."""
-        return RS.format_verdict_ref(source, sh(self.repo, "git", "rev-parse", branch))
+    def vref(self, branch: str = "feat/x", ok: bool = True) -> str:
+        """A REAL verdict record (written by the store's own writer) for THIS head; the ref resolves to it."""
+        return RS.record_verdict(
+            self.verdict_store, head=sh(self.repo, "git", "rev-parse", branch),
+            tree=sh(self.repo, "git", "rev-parse", f"{branch}^{{tree}}"), workflow_blob="0" * 40,
+            interpreter="test", flags=["--check-x"], tests=["tests/test_x.py::test_y"], ok=ok)
 
     def enqueue(self, slug: str = "x", confirm: bool = True, log: list | None = None, **kw):
         if "verdict_ref" not in kw:
             kw["verdict_ref"] = self.vref(kw.get("branch") or f"feat/{slug}")
-        kw.setdefault("deliverable_kwargs", {"derived_check": self.derived})
+        kw.setdefault("deliverable_kwargs", {"derived_check": self.derived, "verdict_store": self.verdict_store})
         return T.task_branch(action="enqueue", slug=slug, confirm=confirm, run=self.runner(log),
                              primary_root=str(self.repo), **kw)
 
@@ -146,6 +150,7 @@ class World:
         if "verdict_ref" not in kw:
             kw["verdict_ref"] = self.vref(branch)
         kw.setdefault("derived_check", self.derived)
+        kw.setdefault("verdict_store", self.verdict_store)
         return RS.deliverable(branch, cwd=self.repo, **kw)
 
     def mq_refs(self) -> list[str]:
@@ -302,7 +307,7 @@ def test_migration_number_claimed_on_dev_fails_item_three_and_a_free_number_pass
     assert item(d, "migrations_free")["ok"], d["items"]
 
 
-def test_scoped_green_needs_a_marked_head_bound_verdict_ref_or_a_passing_scoped_check(world):
+def test_scoped_green_needs_a_resolvable_head_bound_verdict_record_or_a_passing_scoped_check(world):
     wt = world.worktree()
     (wt / "src" / "b.txt").write_text("b\n")
     world.set_counts(wt)
@@ -310,15 +315,19 @@ def test_scoped_green_needs_a_marked_head_bound_verdict_ref_or_a_passing_scoped_
     head = world.push(wt, "feat/x")
     five = item(world.deliverable(verdict_ref=None), "scoped_green")
     assert not five["ok"] and five["n"] == 5 and "no verdict_ref" in five["detail"]
-    good = RS.format_verdict_ref("https://ci.example/run/7", head)
+    good = world.vref()
     assert item(world.deliverable(verdict_ref=good), "scoped_green")["ok"]
-    # a pointer that does not RECORD the hermetic run + the CI-blocking keeper set is not a verdict
-    for bad, why in ((f"https://ci.example/run/7@{head[:9]}", "env-scrubbed, ci-keepers"),
-                     (f"x@{head[:9]}#ci-keepers", "env-scrubbed"),
-                     (f"x@{head[:9]}#env-scrubbed", "ci-keepers"),
-                     ("x@0123456#env-scrubbed,ci-keepers", "does not name the head")):
-        five = item(world.deliverable(verdict_ref=bad), "scoped_green")
-        assert not five["ok"] and why in five["detail"], (bad, five)
+    # a record for ANOTHER head is not this head's verdict (exact full-sha match)
+    other = RS.record_verdict(world.verdict_store, head="0" * 40, tree="1" * 40, workflow_blob="2" * 40,
+                              interpreter="t", flags=[], tests=[], ok=True)
+    five = item(world.deliverable(verdict_ref=other), "scoped_green")
+    assert not five["ok"] and "re-run run_scoped=true on this exact head" in five["detail"]
+    # a RED record is refused; a record for the right head but another tree is refused
+    five = item(world.deliverable(verdict_ref=world.vref(ok=False)), "scoped_green")
+    assert not five["ok"] and "RED" in five["detail"]
+    wrong_tree = RS.record_verdict(world.verdict_store, head=head, tree="3" * 40, workflow_blob="2" * 40,
+                                   interpreter="t", flags=[], tests=[], ok=True)
+    assert "tree" in item(world.deliverable(verdict_ref=wrong_tree), "scoped_green")["detail"]
     assert item(world.deliverable(verdict_ref=None, scoped_check=lambda b, h: {"ok": True, "detail": "pytest green"}),
                 "scoped_green")["ok"]
     assert not item(world.deliverable(verdict_ref=good, scoped_check=lambda b, h: {"ok": False, "detail": "red"}),
@@ -515,7 +524,7 @@ def test_resolve_branch_name_defaults_to_feat_when_nothing_exists(world):
 def _store(world, tmp_path):
     def check(branch, head_sha, verdict_ref):
         return RS.deliverable(branch, cwd=world.repo, head_sha=head_sha, verdict_ref=verdict_ref,
-                              derived_check=world.derived)
+                              derived_check=world.derived, verdict_store=world.verdict_store)
     return RS.StewardStore(root=tmp_path / "steward", deliverable_check=check,
                            resolve_branch=lambda s: RS.resolve_branch_name(s, git=RS._subprocess_git(world.repo)))
 
@@ -729,7 +738,8 @@ def _ci_branch(world, *, rogue_script=False, session_test=False):
 
 
 def _parity(world, **env):
-    return RS.export_ci_parity_check(world.repo, base_env={**os.environ, **env})("feat/x", sh(world.repo, "git", "rev-parse", "feat/x"))
+    return RS.export_ci_parity_check(world.repo, base_env={**os.environ, **env}, verdict_store=world.verdict_store)(
+        "feat/x", sh(world.repo, "git", "rev-parse", "feat/x"))
 
 
 def test_the_ci_blocking_set_is_derived_from_the_workflow_not_hand_listed():
@@ -760,8 +770,13 @@ def test_a_clean_head_passes_the_ci_parity_check_and_it_emits_a_valid_verdict_re
     assert res["ok"], res
     assert res["ran"]["flags"] == ["--check-scripts-manifest"] + ["--check-in-a-later-job"]
     assert res["ran"]["tests"] == ["tests/test_keepers.py::test_real_tree_manifest_clean"]
-    ok, why = RS.validate_verdict_ref(res["verdict_ref"], head)
+    ok, why = RS.validate_verdict_ref(res["verdict_ref"], head, world.verdict_store)
     assert ok, why
+    rec = RS.read_verdict(world.verdict_store, res["verdict_ref"].split(":")[1])
+    assert rec["head"] == head and rec["tree"] == sh(world.repo, "git", "rev-parse", "feat/x^{tree}")
+    assert rec["workflow_blob"] == sh(world.repo, "git", "rev-parse", f"{head}:.github/workflows/test.yml")
+    assert rec["flags"] == res["ran"]["flags"] and rec["tests"] == res["ran"]["tests"] and rec["ok"] is True
+    assert rec["interpreter"].startswith(sys.executable)
 
 
 def test_a_keeper_that_only_warns_in_precommit_but_blocks_in_ci_fails_item_five(world):
@@ -771,11 +786,12 @@ def test_a_keeper_that_only_warns_in_precommit_but_blocks_in_ci_fails_item_five(
     assert "keeper --check-scripts-manifest" in res["detail"]
     assert "test tests/test_keepers.py::test_real_tree_manifest_clean" in res["detail"]
     d = RS.deliverable("feat/x", cwd=world.repo, derived_check=world.derived,
-                       scoped_check=RS.export_ci_parity_check(world.repo), verdict_ref=world.vref())
+                       scoped_check=RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store),
+                       verdict_ref=world.vref(), verdict_store=world.verdict_store)
     five = item(d, "scoped_green")
     assert d["verdict"] == "needs_resync" and not five["ok"] and "manifest" in five["detail"]
-    # the same head with a perfect-looking verdict POINTER would pass: that is why the ref must be validated
-    assert RS.validate_verdict_ref(world.vref(), head)[0]
+    # the red run minted a RED record: filing it as the verdict is refused too
+    assert "RED" in RS.validate_verdict_ref(res["verdict_ref"], head, world.verdict_store)[1]
 
 
 def test_a_test_that_depends_on_the_session_env_is_run_without_it(world, monkeypatch):
@@ -784,7 +800,7 @@ def test_a_test_that_depends_on_the_session_env_is_run_without_it(world, monkeyp
     # proof the keeper is green on the dev machine ...
     assert subprocess.run([sys.executable, "-c", "import os,sys; sys.exit(0 if os.environ.get('CLAUDE_CODE_SESSION_ID') else 1)"]).returncode == 0
     # ... and red the way CI sees it, because the check scrubs the env
-    res = RS.export_ci_parity_check(world.repo)("feat/x", sh(world.repo, "git", "rev-parse", "feat/x"))
+    res = RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store)("feat/x", sh(world.repo, "git", "rev-parse", "feat/x"))
     assert not res["ok"] and "test_real_tree_session_keeper" in res["detail"]
     assert "keeper --check-advisory" not in res["detail"]  # a continue-on-error step does not block CI
 
@@ -794,8 +810,9 @@ def test_a_missing_workflow_is_unmeasured_never_green(world):
     (wt / "src" / "b.txt").write_text("b\n")
     world.commit(wt, "no ci definition")
     head = world.push(wt, "feat/x")
-    res = RS.export_ci_parity_check(world.repo)("feat/x", head)
+    res = RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store)("feat/x", head)
     assert not res["ok"] and "UNMEASURED" in res["detail"]
+    assert not world.verdict_store.exists()  # an unmeasured run mints no record
 
 
 # =================================================================================================
@@ -825,3 +842,21 @@ def test_enqueue_pushes_through_the_real_pre_push_hook_from_the_primary(world):
     res = world.enqueue()
     assert res["status"] == "queued", res
     assert world.mq_refs() == [f"refs/heads/mq/x--{head[:7]}"]
+
+
+# =================================================================================================
+# fix round 1 (adversarial review) - P1-1: a verdict_ref is a RECORD, not a string
+# =================================================================================================
+
+def test_a_forged_verdict_ref_string_is_refused(world):
+    """The old shape (`<anything>@<head sha7>#env-scrubbed,ci-keepers`) was accepted on substrings alone."""
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    world.commit(wt, "feat: b")
+    head = world.push(wt, "feat/x")
+    for forged in (f"anything@{head[:9]}#env-scrubbed,ci-keepers", f"ci-parity:{'0' * 32}", f"ci-parity@{head}#env-scrubbed,ci-keepers",
+                   "ci-parity:not-an-id"):
+        five = item(world.deliverable(verdict_ref=forged), "scoped_green")
+        assert not five["ok"], forged
+        assert "verdict record" in five["detail"] or "free-form" in five["detail"], five["detail"]
