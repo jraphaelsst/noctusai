@@ -922,3 +922,43 @@ class TestWithdrawAndKinds:
         store.ask(STEWARD, "alpha", "q?")
         store.withdraw(PEER, "alpha")
         assert store.outbox_path.read_text().startswith(before)
+
+
+class TestSessionState:
+    """`dead` is the claim that lets another session's worktree be removed (P2-5, adversarial review): a stale pid
+    alone must never read as dead, and every action refreshes the caller's pid (a /clear or restart changes it)."""
+
+    def test_a_stale_pid_with_a_fresh_heartbeat_is_live_not_dead(self, store, alive, clock):
+        store.role_set(PEER, "agents", name="e4", claude_pid=77)
+        alive[77] = False  # the recorded pid is gone ...
+        clock.t += 60      # ... but the session was active a minute ago
+        assert store.session_state(PEER) == "live"
+
+    def test_every_action_refreshes_the_callers_pid(self, store, alive, clock):
+        store.role_set(PEER, "agents", name="e4", claude_pid=77)
+        alive[77], alive[78] = False, True
+        clock.t += 60
+        store.role_touch(PEER, claude_pid=78)  # run_action does this for every action
+        assert store.roles()["roles"]["agents"]["claude_pid"] == 78
+        clock.t += 10_000  # long past the TTL: only the (refreshed, alive) pid keeps it live
+        assert store.session_state(PEER) == "live"
+
+    def test_dead_needs_the_pid_dead_AND_the_heartbeat_older_than_the_ttl(self, store, alive, clock):
+        store.role_set(PEER, "agents", name="e4", claude_pid=77)
+        alive[77] = False
+        clock.t += 7200 + 1
+        assert store.session_state(PEER) == "dead"
+
+    def test_a_stale_heartbeat_with_no_known_pid_is_unknown_never_dead(self, store, clock):
+        store.role_set(PEER, "agents", name="e4", claude_pid=None)
+        clock.t += 100_000
+        assert store.session_state(PEER) == "unknown"
+
+    def test_no_record_is_unknown(self, store):
+        assert store.session_state("never-seen") == "unknown"
+
+    def test_run_action_passes_the_callers_pid_to_role_touch(self, store, alive, clock):
+        store.role_set(PEER, "agents", name="e4", claude_pid=77)
+        alive[77], alive[99] = False, True
+        rs.run_action("mine", PEER, store=store, claude_pid=99)
+        assert store.roles()["roles"]["agents"]["claude_pid"] == 99
