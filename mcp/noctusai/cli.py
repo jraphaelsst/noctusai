@@ -726,7 +726,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bp-branch", metavar="BRANCH", dest="bp_branch", help="With --branch-pointer-*: branch name (JOIN KEY).")
     parser.add_argument("--bp-base", metavar="BASE", dest="bp_base", help="With --branch-pointer-append: fork-base branch.")
     parser.add_argument("--bp-commit", metavar="SHA", dest="bp_commit", help="With --branch-pointer-append/update: current tip commit.")
-    parser.add_argument("--bp-role", metavar="ROLE", choices=["orchestrator", "engineer"], dest="bp_role", help="With --branch-pointer-append: orchestrator | engineer.")
+    parser.add_argument("--bp-role", metavar="ROLE", choices=["orchestrator", "engineer", "steward"], dest="bp_role", help="With --branch-pointer-append: orchestrator | engineer | steward (a branch steward).")
     parser.add_argument("--bp-agent", metavar="AGENT", dest="bp_agent", help="With --branch-pointer-append/query: claude-tree node label.")
     parser.add_argument("--bp-parent", metavar="PARENT", dest="bp_parent", help="With --branch-pointer-append: who dispatched this (claude parent edge).")
     parser.add_argument("--bp-paths", metavar="PATH", nargs="+", dest="bp_paths", help="With --branch-pointer-append/update/query: collision-zone paths (or changed-file list for --branch-pointer-cache-exempt).")
