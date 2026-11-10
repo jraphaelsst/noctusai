@@ -89,7 +89,6 @@ from app.schemas.studio import (
     VersionDetailOut,
     VersionSummaryOut,
 )
-from app.stores.agents import DEFAULT_AGENT_KEYS
 from app.stores._db_errors import erro_de_item, mensagem_conflito
 from app.stores.errors import NotFound
 from app.stores.marcadores import get_marcador_store
@@ -562,10 +561,6 @@ def create_studio_agent(
     store=Depends(get_studio_definition_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
 ) -> AgentSummaryOut:
-    if payload.key in DEFAULT_AGENT_KEYS:
-        # Reserved: `ensure_default_agents` seeds these per org lazily — a
-        # studio agent squatting the key would hijack the legacy row.
-        raise http_error(409, "key_taken", f"A chave '{payload.key}' é reservada.")
     if store.get_platform_definition(payload.key) is not None:
         # A platform-defined key is the platform's: an org agent squatting it would shadow the org's instance.
         raise http_error(409, "key_taken", f"A chave '{payload.key}' é reservada.")

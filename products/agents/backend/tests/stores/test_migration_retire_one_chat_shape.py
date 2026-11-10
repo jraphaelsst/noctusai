@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from app.stores.agents import DEFAULT_AGENT_KEYS
+from app.stores.agents import FakeAgentStore, SupabaseAgentStore
 from noctusai_lib.testing.migrations import migration_sql
 
 SQL = migration_sql(Path(__file__).resolve().parents[2] / "migrations", "retire_one_chat")
@@ -34,4 +34,7 @@ def test_nothing_is_inserted_and_every_delete_is_scoped():
 
 
 def test_python_side_no_longer_seeds_it():
-    assert "one-chat" not in DEFAULT_AGENT_KEYS
+    # the seeding API itself is gone: nothing can re-create the retired row on a request
+    assert not hasattr(FakeAgentStore, "ensure_default_agents")
+    assert not hasattr(SupabaseAgentStore, "ensure_default_agents")
+    assert FakeAgentStore().list(__import__("uuid").uuid4()) == []

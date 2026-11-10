@@ -41,7 +41,6 @@ async def list_agents(
     ctx: AuthContext = Depends(require_member),
     store=Depends(get_agent_store_dep),
 ) -> AgentListOut:
-    (await anyio.to_thread.run_sync(lambda: store.ensure_default_agents(ctx.org_id)))
     records = store.list(ctx.org_id)
 
     items = [_agent_out(record) for record in records]
@@ -55,7 +54,6 @@ async def toggle_agent(
     ctx: AuthContext = Depends(require_platform_content_admin),
     store=Depends(get_agent_store_dep),
 ) -> AgentOut:
-    (await anyio.to_thread.run_sync(lambda: store.ensure_default_agents(ctx.org_id)))
     try:
         record = (await anyio.to_thread.run_sync(lambda: store.get_by_key(ctx.org_id, key)))
     except NotFound as exc:

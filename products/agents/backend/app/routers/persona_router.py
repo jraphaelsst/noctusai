@@ -32,7 +32,6 @@ _AGENTE_NAO_ENCONTRADO = {"detail": "Agente não encontrado.", "code": "not_foun
 
 
 def _agente(agent_store, org_id, key: str):
-    agent_store.ensure_default_agents(org_id)
     agent = legacy_chat_agent(agent_store, org_id, key)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_AGENTE_NAO_ENCONTRADO)

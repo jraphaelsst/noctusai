@@ -84,7 +84,7 @@ Auth: any org member (`require_member`); 401 unauthenticated, 403 for a non-memb
 
 ### 4.1 `GET /api/agents/painel` — the unified listing
 
-Any org member. Ensures the legacy rows and the org's platform instances exist first (`ensure_default_agents`, `ensure_instancias`), then returns one card per agent: `{items: AgentePainel[], total}`.
+Any org member. Ensures the org's platform instances exist first (`ensure_instancias`), then returns one card per agent: `{items: AgentePainel[], total}`.
 
 ### 4.2 `GET /api/agents/{key}/painel` — one card (the page header)
 

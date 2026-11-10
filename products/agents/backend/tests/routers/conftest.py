@@ -149,10 +149,8 @@ def agents_client(client):
 
 def seed_pre_cutover_agents(store, org_id: UUID = DEFAULT_ORG_ID) -> None:
     """The rows a pre-cutover org carries: the code-defined chat agent ``bia`` (no longer seeded by
-    ``ensure_default_agents`` since the Renata cutover, but still present in prod until the runbook retires it)
-    plus the seeded defaults (none)."""
+    code since the Renata cutover, but still present in prod until the runbook retires it)."""
     store.seed_legacy_chat_agent(org_id)
-    store.ensure_default_agents(org_id)
 
 
 def seed_org_role(client, *, user_id: UUID = DEFAULT_USER_ID, org_id: UUID = DEFAULT_ORG_ID, role: str = "owner") -> None:
