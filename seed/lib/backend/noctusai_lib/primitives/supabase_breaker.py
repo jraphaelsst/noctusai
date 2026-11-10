@@ -241,7 +241,7 @@ class BreakerConfig:
                     if floor < DEFAULT_MIN_IDLE_POLL_S:
                         from noctusai_lib.config.deploy_config import is_deploy_context
 
-                        deploy = is_deploy_context()
+                        deploy = is_deploy_context(env)
                         warnings.append(f"NOCTUS_MIN_IDLE_POLL_S={floor:g} is below the default {DEFAULT_MIN_IDLE_POLL_S:g} s"
                                         + ("; clamped to the default in a deploy context" if deploy else ""))
                         floor = DEFAULT_MIN_IDLE_POLL_S if deploy else max(1.0, floor)
@@ -270,10 +270,17 @@ class BreakerConfig:
                     for r in rule_t:  # a RATE ceiling derived from the quota (quota x share / 24 per hour)
                         if r.max_calls * 3600 / r.window_s > ceiling:
                             raise ValueError(f"{src}: {r} exceeds the ceiling of {ceiling} calls/hour")
-                    default_hourly = min(d.max_calls * 3600 / d.window_s for d in probe.rules_for(src))
-                    if min(r.max_calls * 3600 / r.window_s for r in rule_t) > default_hourly:
-                        warnings.append(f"NOCTUS_BREAKER_BUDGETS: {src!r} is LOOSER than the default rules "
-                                        f"(<= {default_hourly:.0f} calls/h); accepted, alerted")
+                    # per WINDOW: each override rule against the default rule of the SAME window (a rule on a window the
+                    # defaults do not have is compared by hourly rate against the defaults' tightest hourly rate)
+                    defaults = probe.rules_for(src)
+                    by_window = {d.window_s: d for d in defaults}
+                    tightest = min(d.max_calls * 3600 / d.window_s for d in defaults)
+                    looser = [r for r in rule_t
+                              if (r.max_calls > by_window[r.window_s].max_calls if r.window_s in by_window
+                                  else r.max_calls * 3600 / r.window_s > tightest)]
+                    if looser:
+                        warnings.append(f"NOCTUS_BREAKER_BUDGETS: {src!r} is LOOSER than the default rules for "
+                                        f"{', '.join(f'{r.window_s}s={r.max_calls}' for r in looser)}; accepted, alerted")
                     overrides[src] = rule_t
             except Exception as exc:  # noqa: BLE001 -- loud, then the canonical defaults (never a silent partial config)
                 warnings.append(f"NOCTUS_BREAKER_BUDGETS is invalid ({type(exc).__name__}: {exc}); using the default budgets")

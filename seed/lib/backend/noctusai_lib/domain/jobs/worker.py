@@ -312,11 +312,17 @@ class Worker:
                         delay = self._poll_interval
                         self._poll_free = True  # the first empty poll after work is free
                         continue
+                    if not self._last_claim_attempted:
+                        # PAUSED (claim gate closed): ignore job wakes and back off toward max_idle, like an outage —
+                        # an enqueue stream must not turn a paused Worker into a gate-reading hot loop.
+                        await self._error_sleep(delay, stop_event)
+                        self._woke_before_poll = False
+                        delay = min(delay * self._idle_multiplier, self._max_idle_interval)
+                        continue
                     self._bill_empty_poll(breaker)
                     await self._idle_sleep(delay, stop_event)
                     if self._waker is not None and self._waker.event.is_set():
                         delay = self._poll_interval
-                        self._ramp = 0  # the wake restarted the backoff ramp: so does its allowance
                         self._woke_before_poll = True  # woken by an enqueue: the next empty poll may be free (capped)
                     else:
                         delay = min(delay * self._idle_multiplier, self._max_idle_interval)

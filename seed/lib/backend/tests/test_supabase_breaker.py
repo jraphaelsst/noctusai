@@ -1225,7 +1225,10 @@ def test_F2_a_gate_closed_worker_with_enqueues_every_2s_for_an_hour_is_never_hel
     b, store, alerter, clock = _deploy_world(monkeypatch)
     repo = CountingRepo(b)
 
+    gate_reads = {"n": 0}
+
     async def gate():  # a paused Worker: the claim gate answers False, no claim is attempted
+        gate_reads["n"] += 1
         return False
 
     async def producer():
@@ -1233,7 +1236,7 @@ def test_F2_a_gate_closed_worker_with_enqueues_every_2s_for_an_hour_is_never_hel
 
     worker = Worker(repo, worker_id="w", handlers={"t": _noop}, breaker=b, claim_gate=gate, poll_interval_seconds=1.0,
                     held_poll_seconds=0.01, clock=clock,
-                    idle_sleep=_virtual_sleep(clock, until=1000.0 + 3600, on_sleep=producer, step=2.0))
+                    idle_sleep=_virtual_sleep(clock, until=1000.0 + 3600, on_sleep=producer))
 
     async def drive():
         stop = asyncio.Event()
@@ -1242,6 +1245,7 @@ def test_F2_a_gate_closed_worker_with_enqueues_every_2s_for_an_hour_is_never_hel
     asyncio.run(drive())
     assert b.hold_reason("worker:t") is None, "a PAUSED worker must never trip the breaker under ordinary enqueue load"
     assert repo.claims == 0 and b.count("worker:t", 3600) == 0, "no claim was attempted, so nothing was billed"
+    assert gate_reads["n"] < 200, f"{gate_reads['n']} gate reads in an hour: a paused Worker must back off, not hot-loop"
 
 
 def test_F2_a_real_deploy_worker_with_idle_backoff_multiplier_1_trips(monkeypatch):
@@ -1284,37 +1288,20 @@ def test_F2_deploy_clamp_makes_a_max_idle_of_1s_a_ramp_to_the_floor_and_run_fore
     assert 300 < repo.claims < 400, f"{repo.claims} polls in an hour at the clamped 10 s idle"
 
 
-def test_F2_a_wake_restarts_the_ramp_allowance():
-    b, store, alerter, clock = make_breaker()
-    worker = _cadence_worker(b, clock, FakeJobRepository())
-    worker._last_poll_calls = 1
-    worker._bill_empty_poll(b)
-    for _ in range(Worker.RAMP_FREE):
-        clock.advance(1.0)
-        worker._bill_empty_poll(b)
-    assert worker._ramp == Worker.RAMP_FREE
-    worker._ramp = 0  # what run_forever does when a wake resets `delay`
-    clock.advance(1.0)
-    worker._bill_empty_poll(b)
-    assert b.count("worker:t", 3600) == 0
-
-
 def test_F1_the_idle_poll_floor_is_finite_bounded_and_clamped_in_a_deploy_context(monkeypatch):
     for bad in ("nan", "inf", "-inf"):
         cfg = BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": bad})
         assert cfg.min_idle_poll_s == 10.0 and any("finite" in w for w in cfg.warnings), bad
     assert BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": "9999"}).min_idle_poll_s == 60.0
-    monkeypatch.setenv("APP_ENV", "production")
-    deploy = BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": "1"})
+    deploy = BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": "1", "APP_ENV": "production"})
     assert deploy.min_idle_poll_s == 10.0 and any("below the default" in w and "clamped" in w for w in deploy.warnings)
-    monkeypatch.delenv("APP_ENV")
     dev = BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": "1"})
     assert dev.min_idle_poll_s == 1.0 and any("below the default" in w for w in dev.warnings)
 
 
 def test_F1_floor_1_in_a_deploy_cannot_let_a_1s_loop_escape(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
-    cfg = BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": "1"})
+    cfg = BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": "1", "APP_ENV": "production"})
     clock = VirtualClock()
     b = Breaker(slug="p", store=InMemoryBreakerStore(), alerter=RecordingAlerter(), clock=clock, wall=clock,
                 sync_io=True, config=cfg)
@@ -1457,3 +1444,89 @@ def test_F10_a_budget_override_looser_than_the_default_is_alerted():
     b, store, alerter, clock = make_breaker(config=cfg)
     b.announce_config_warnings()
     assert any("LOOSER" in body for _, body in alerter.sent)
+
+
+# --- round 9: a wake must not reopen the laundering hole -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("poll_interval", [1.0, 0.25])
+def test_P2_1_a_wake_every_third_poll_with_nothing_claimable_cannot_launder_a_loop_for_an_hour(monkeypatch, poll_interval):
+    from noctusai_lib.domain.jobs import wake
+
+    b, store, alerter, clock = _deploy_world(monkeypatch)
+    repo = CountingRepo(b)
+    n = {"sleeps": 0}
+
+    async def sleep(delay, stop):
+        n["sleeps"] += 1
+        wake_now = n["sleeps"] % 3 == 0  # every third sleep is CUT SHORT by a wake with nothing claimable behind it
+        clock.advance(min(delay, 0.5) if wake_now else delay)
+        if wake_now:
+            wake.notify_enqueued("t")
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        if clock() >= 1000.0 + 3600:
+            stop.set()
+
+    worker = Worker(repo, worker_id="w", handlers={"t": _noop}, breaker=b, poll_interval_seconds=poll_interval,
+                    held_poll_seconds=0.01, clock=clock, idle_sleep=sleep)
+
+    async def drive():
+        stop = asyncio.Event()
+        task = asyncio.create_task(worker.run_forever(stop_event=stop))
+        for _ in range(500):
+            if b.hold_reason("worker:t") is not None:
+                break
+            await asyncio.sleep(0.02)
+        stop.set()
+        await asyncio.wait_for(task, 5)
+
+    asyncio.run(drive())
+    assert b.hold_reason("worker:t") is not None, "a wake, then 1 s and 2 s polls, then a wake: MUST end held"
+
+
+def test_P3_1_a_paused_worker_ignores_job_wakes_and_backs_off_a_bounded_number_of_gate_reads():
+    from noctusai_lib.domain.jobs import wake
+
+    b, store, alerter, clock = make_breaker()
+    reads = {"n": 0}
+
+    async def gate():
+        reads["n"] += 1
+        return False
+
+    worker = Worker(FakeJobRepository(), worker_id="w", handlers={"t": _noop}, breaker=b, claim_gate=gate,
+                    poll_interval_seconds=0.05, max_idle_interval_seconds=0.2, held_poll_seconds=0.01, clock=clock)
+
+    async def drive():
+        stop = asyncio.Event()
+        task = asyncio.create_task(worker.run_forever(stop_event=stop))
+
+        async def spam():  # an enqueue stream waking the job waker every ms
+            while not stop.is_set():
+                wake.notify_enqueued("t")
+                await asyncio.sleep(0.001)
+
+        sp = asyncio.create_task(spam())
+        await asyncio.sleep(0.8)
+        stop.set()
+        await asyncio.wait_for(task, 3)
+        await sp
+
+    asyncio.run(drive())
+    assert reads["n"] <= 10, f"{reads['n']} gate reads in 0.8 s: wakes must not turn a paused Worker into a hot loop"
+
+
+def test_P3_2_the_deploy_check_in_from_env_reads_the_passed_environment_not_os_environ(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")  # the PROCESS is a deploy ...
+    dev_cfg = BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": "1"})  # ... but the env being judged is not
+    assert dev_cfg.min_idle_poll_s == 1.0 and not any("clamped to the default" in w for w in dev_cfg.warnings)
+    prod_cfg = BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": "1", "APP_ENV": "production"})
+    assert prod_cfg.min_idle_poll_s == 10.0
+
+
+def test_P3_3_the_looser_override_warning_compares_each_window_to_the_default_rule_of_the_same_window():
+    cfg = BreakerConfig.from_env({"NOCTUS_BREAKER_BUDGETS": json.dumps({"worker:a": [[300, 800], [3600, 1000]]})})
+    assert any("LOOSER" in w and "300s=800" in w and "3600s" not in w for w in cfg.warnings), cfg.warnings
+    tight = BreakerConfig.from_env({"NOCTUS_BREAKER_BUDGETS": json.dumps({"worker:b": [[300, 100], [3600, 1000]]})})
+    assert not any("LOOSER" in w for w in tight.warnings)

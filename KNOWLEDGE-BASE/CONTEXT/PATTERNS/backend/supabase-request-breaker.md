@@ -39,7 +39,7 @@ On for every product by construction (seed); no per-product code.
   faster than once per second trips inside 5 minutes; exactly once per second is 300 / 5 min (not above it), so the hourly rule
   trips it after ~33 min (2,001 polls); a steady gap above ~1.8 s is NOT held (it falls under the alert-only rules).
   Billing uses the polls' REAL call count (claim + gate Supabase calls), never a floor of 1, and a poll that attempted NO claim
-  (claim gate closed: a paused Worker) is never billed, whatever wakes it. A wake restarts the ramp allowance. The floor itself
+  (claim gate closed: a paused Worker) is never billed, whatever wakes it; a paused Worker also IGNORES job wakes and backs off toward max_idle (so its gate is read a bounded number of times per hour). A wake does NOT reset the ramp allowance (that reopened wake laundering: a wake, then two sub-floor polls, then a wake was never billed); only a gap at or above the floor does. The floor itself
   is bounded: finite, at most 60 s, and below the default (10 s) it is alerted and, in a deploy context, clamped to the default.
   The error-backoff sleep ignores the job waker; `RescheduleLater` delays are clamped to at least the floor. Job arrivals (1-2 jobs/s) are free: each poll after work claims a job or is the free first
   empty. In a DEPLOY context a `max_idle_interval_seconds` below the floor is clamped to it with a loud warning (no product sets

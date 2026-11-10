@@ -341,3 +341,11 @@ def test_F6_vps_classifies_fallback_partial_credentials_and_unverified_in_one_ss
         and "NOCTUS_BREAKER_REDIS_PASSWORD" in sent[0] and "bad slug" not in sent[0]
     bad = VpsRedisOps("h", runner=lambda h, c: (255, "", "ssh down"))
     assert bad.fallback_services(["core"]) is None and bad.warnings
+
+
+def test_P3_4_vps_redis_ops_has_every_public_method_of_the_fake():
+    import inspect
+
+    fake = {n for n, m in inspect.getmembers(FakeRedisOps, predicate=inspect.isfunction) if not n.startswith("_")}
+    real = {n for n, m in inspect.getmembers(VpsRedisOps, predicate=inspect.isfunction) if not n.startswith("_")}
+    assert fake <= real, f"the Fake has methods the real VpsRedisOps lacks: {sorted(fake - real)}"
