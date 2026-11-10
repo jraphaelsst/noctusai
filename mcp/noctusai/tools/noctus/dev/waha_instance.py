@@ -575,6 +575,16 @@ def _apply(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None) ->
     if vps_inst.get("personal"):
         return {"ok": False, "action": "apply", "status": "refused", "name": name, "error": PERSONAL_REFUSAL,
                 "needs_owner_by_hand": True}
+    # the LIVE label is the third source of "personal" (a core created before the render change / by hand may be personal
+    # while both ymls say otherwise): any labelled container of this line refuses; an unreadable lookup fails closed
+    rc, lab, lerr = sh(host, "docker ps -a --filter label=noctus.line.personal=true --format '{{.Names}}'")
+    if rc != 0:
+        return {"ok": False, "action": "apply", "status": "refused", "name": name,
+                "error": f"cannot read the live `noctus.line.personal` labels ({lerr.strip()[-120:]}): refused (fail closed)"}
+    mine = {f"noctus-{core_service(inst)}", core_service(inst), f"noctus-waha-{name}", f"waha-{name}"}
+    if mine & {n.strip().lstrip("/") for n in lab.splitlines() if n.strip()}:
+        return {"ok": False, "action": "apply", "status": "refused", "name": name, "error": PERSONAL_REFUSAL,
+                "needs_owner_by_hand": True}
     rc, _o, err = sh(host, f"cd {VPS_FLEET} && for k in {' '.join(inst_keys(inst).values())}; do "
                             "grep -q \"^$k=.\" .env.fleet || { echo MISSING:$k; exit 3; }; done")
     if rc != 0:

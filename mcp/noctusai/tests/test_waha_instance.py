@@ -96,7 +96,8 @@ class TestActions:
 
     def test_apply_blocks_when_keys_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr(wi, "run_remote", lambda *a, **k: (
-            (0, DATA, "") if "waha-instances.yml" in a[1] else (3, "MISSING:WAHA_MONICA_API_KEY", "")))
+            (0, DATA, "") if "waha-instances.yml" in a[1] else (0, "", "") if "label=noctus.line.personal" in a[1]
+        else (3, "MISSING:WAHA_MONICA_API_KEY", "")))
         r = wi.waha_instance("apply", name="monica", confirm=True, repo_root=str(_tree(tmp_path)))
         assert r["status"] == "blocked"
 
@@ -545,3 +546,27 @@ def test_only_edge_names_are_declared_resolvable_from_the_product_network():
     exec(wi.render_read_only_lines(wi.parse_instances(EDGE)), ns)  # noqa: S102 - the generated module under test
     assert ns["RESOLVABLE_FROM_PRODUCT_NETWORK"] == ("noctus-waha-probe", "waha-probe")
     assert "waha-probe-core:3000" in ns["READ_ONLY_LINES"]  # the core is still matched BY NAME
+
+
+def test_apply_refuses_when_only_the_live_label_says_personal_and_when_the_label_lookup_fails():
+    calls = []
+
+    def sh_label(host, cmd, timeout=90):
+        calls.append(cmd)
+        if cmd.startswith("cat "):
+            return 0, EDGE, ""                      # the VPS yml says NOT personal
+        if "label=noctus.line.personal=true" in cmd:
+            return 0, "noctus-waha-probe-core\n", ""  # the live core is stamped personal
+        return 0, "", ""
+
+    out = wi._apply(wi.parse_instances(EDGE), "probe", "h", True, _test_sh=sh_label)
+    assert out["status"] == "refused" and out["error"] == wi.PERSONAL_REFUSAL
+    assert all("compose" not in c for c in calls)
+
+    def sh_label_down(host, cmd, timeout=90):
+        if cmd.startswith("cat "):
+            return 0, EDGE, ""
+        return (1, "", "daemon down") if "label=" in cmd else (0, "", "")
+
+    out = wi._apply(wi.parse_instances(EDGE), "probe", "h", True, _test_sh=sh_label_down)
+    assert out["status"] == "refused" and "fail closed" in out["error"]

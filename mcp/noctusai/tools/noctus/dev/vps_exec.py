@@ -146,6 +146,10 @@ _DOCKER_EXEC_WAHA = re.compile(r"docker\s+(?:container\s+)?exec\b[^\n;|&]*\bwaha
 _IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 _HEXID = re.compile(r"^[0-9a-f]{4,64}$")
 _HOSTISH = re.compile(r"(?:://|@)([A-Za-z0-9][A-Za-z0-9._-]*)|\b([A-Za-z0-9][A-Za-z0-9._-]*):\d{2,5}\b")
+# NOC-REMEDIATE[personal-label-drift-check]: a real personal core can be MISSING its `noctus.line.personal` label (created
+# before the render change, a manual `docker run`, a compose override), and then this inventory cannot see it. The ops
+# check (noc-daily-ops): every container whose image is devlikeapro/waha* must carry the label on a declared personal
+# line; alert when a declared personal line's container lacks it, and when a waha container exists that no line declares.
 #: Every container that is a WAHA: by NAME, by IMAGE ANCESTOR (devlikeapro/waha*, any tag) and by compose PROJECT label.
 #: Rows: id, name, compose service, then per network IPv4, IPv6 and every network alias. `xargs -r` so "none" is rc 0 +
 #: empty (a failure is rc != 0 -> fail closed).
@@ -275,6 +279,100 @@ def targets_personal_core(command: str, container: str | None = None, run=None, 
     return unreadable and (wahaish or bool(hit))
 
 
+#: shell/interpreter/launcher binaries: one of these in command position can pick a container at run time (`sh -c`,
+#: `xargs`, a script file) with nothing in the argv that names it.
+_INDIRECT_BINARIES = frozenset({
+    "sh", "bash", "zsh", "dash", "ash", "ksh", "csh", "tcsh", "fish", "busybox", "eval", "source", ".", "xargs", "parallel",
+    "python", "python2", "python3", "perl", "ruby", "node", "php", "lua", "awk", "gawk", "mawk", "watch", "script", "make",
+    "at", "batch", "expect", "ssh", "su",
+})
+_WRAPPER_BINARIES = frozenset({
+    "sudo", "doas", "env", "nohup", "timeout", "time", "command", "builtin", "exec", "nice", "ionice", "stdbuf", "setsid",
+    "flock", "strace", "ltrace", "chroot", "unshare",
+})
+_CONTAINER_CLIS = frozenset({"docker", "docker-compose", "podman", "nerdctl", "ctr", "crictl"})
+_OPERATOR_CHARS = frozenset(";&|()<>")
+_DYNAMIC_EXPANSION = re.compile(r"[`\n\r]|\$[({A-Za-z_@*#?!0-9]")
+
+
+def _dynamic_container_selection(command: str) -> str | None:
+    """Why `command` could pick or reach a container without naming it (None = it names everything it touches).
+
+    Parsed with shlex (operators split out, quotes honoured), not regex alone: expansions (`$(..)`, backticks, `$VAR`),
+    an interpreter / `xargs` / `eval` / script file in command position, `find -exec`, and a docker CLI chained with
+    anything (pipe, `;`, `&&`, redirection) all hide the target from the alias/id/IP match."""
+    if _DYNAMIC_EXPANSION.search(command):
+        return "shell expansion or newline"
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        toks = list(lexer)
+    except ValueError:
+        return "unparseable shell syntax"
+    segments: list[list[str]] = [[]]
+    chained = False
+    for tok in toks:
+        if set(tok) <= _OPERATOR_CHARS:
+            chained = True
+            segments.append([])
+        else:
+            segments[-1].append(tok)
+    uses_cli = False
+    for seg in segments:
+        words = list(seg)
+        while words and "=" in words[0] and words[0].split("=", 1)[0].isidentifier():
+            words = words[1:]
+        while words and words[0].rsplit("/", 1)[-1] in _WRAPPER_BINARIES:
+            words = words[1:]
+            while words and (words[0].startswith("-") or ("=" in words[0] and words[0].split("=", 1)[0].isidentifier())
+                             or re.fullmatch(r"[0-9.]+[smhd]?", words[0])):
+                words = words[1:]
+        if not words:
+            continue
+        head = words[0]
+        base = head.rsplit("/", 1)[-1]
+        if base in _CONTAINER_CLIS:
+            uses_cli = True
+        elif base in _INDIRECT_BINARIES:
+            return f"`{base}` in command position"
+        elif base == "find" and any(w in ("-exec", "-execdir", "-ok", "-okdir") for w in words):
+            return "`find -exec`"
+        elif "/" in head and base not in _READ_BINARIES:
+            return "a script / path executable"
+        elif head.startswith(("~", ".")):
+            return "a script / path executable"
+    if not uses_cli and any(t.rsplit("/", 1)[-1] in _CONTAINER_CLIS for t in toks):
+        uses_cli = True
+    if uses_cli and chained:
+        return "a container CLI chained with another command"
+    return None
+
+
+def _personal_guard_active(run, repo_root=None) -> bool:
+    """True when ANY personal line exists in any of the three sources, or any source cannot be read (fail closed)."""
+    try:
+        if personal_aliases(repo_root):
+            return True
+    except Exception:  # noqa: BLE001
+        return True
+    try:
+        if _vps_personal_aliases(run):
+            return True
+    except Exception:  # noqa: BLE001
+        return True
+    inv = _waha_inventory(run)
+    return inv is None or any(PERSONAL_LABEL_TOKEN in row for row in inv)
+
+
+def personal_unsafe_indirection(command: str, run, repo_root=None) -> str | None:
+    """Reason string when `command` selects its container dynamically AND a personal line is declared (or a source is
+    unreadable); else None. Plain `docker exec <literal-name> ...` is untouched."""
+    why = _dynamic_container_selection(command)
+    if why is None:
+        return None
+    return why if _personal_guard_active(run, repo_root) else None
+
+
 def touches_waha_core(command: str, container: str | None = None, run=None) -> bool:
     """True when the command (or `container`) targets a WAHA container -- by name, or by id / IP / host name / alias when
     `run` is given and the target RESOLVES to a waha container. An unresolvable lookup fails CLOSED (True)."""
@@ -381,6 +479,18 @@ def exec_cmd(
                       "a personal number's core is touched by the owner by hand, never through this tool "
                       "(KB § INTEGRATIONS/whatsapp.md § 6a)."),
         }
+    # NOC-REMEDIATE[personal-core-host-exec-authz]: this is a best-effort tool-level screen, not the control. A command
+    # that picks its container at run time names no id/IP/alias, so it is refused whenever a personal line exists. The
+    # real control is a Docker authorization plugin or an SSH forced command on the host that refuses `exec` (and
+    # cp/attach/logs/inspect/commit/export) on containers labelled noctus.line.personal=true -- out of scope here.
+    indirect = personal_unsafe_indirection(command, run, repo_root=repo_root)
+    if indirect is not None:
+        return {
+            "ok": False, "status": "refused", "exit_code": 1,
+            "error": (f"personal-unsafe: this command selects its container at run time ({indirect}), so it cannot be "
+                      "checked against the `personal: true` lines; refused with or without confirm. Name the container "
+                      "explicitly (KB § INTEGRATIONS/whatsapp.md § 6a)."),
+        }
     waha = touches_waha_core(command, container, run=run)
     read_only = _is_read_only(command) and not waha
     if waha and not confirm:
@@ -437,5 +547,5 @@ def register(server) -> None:
         return exec_cmd(command, container=container, confirm=confirm, ssh_host=ssh_host)
 
 
-__all__ = ["exec_cmd", "touches_waha_core", "targets_personal_core", "personal_aliases", "register", "_HARD_DENY", "_READ_BINARIES", "_is_read_only",
+__all__ = ["exec_cmd", "touches_waha_core", "targets_personal_core", "personal_unsafe_indirection", "personal_aliases", "register", "_HARD_DENY", "_READ_BINARIES", "_is_read_only",
            "_hard_denied"]

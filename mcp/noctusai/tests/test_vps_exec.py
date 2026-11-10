@@ -377,3 +377,59 @@ def test_a_container_stamped_personal_is_refused_by_label_even_when_every_declar
                     repo_root=root_with(PLAIN_VPS_YML))["status"] == "refused"
     assert exec_cmd("cat /x", container="1111aaaa", confirm=True, run_remote=inv,
                     repo_root=root_with(PLAIN_VPS_YML))["ok"]  # monica's core has no label: confirm flow only
+
+
+# -- round 6: a command that picks its container at run time names no id/IP/alias ------------------------------------------
+
+DYNAMIC = [
+    "docker exec $(docker ps -q --filter name=owner) sh",
+    "docker exec `docker ps -q --filter name=owner` sh",
+    "docker ps -q | xargs -r docker exec sh",
+    "sh -c 'docker exec $(docker ps -q) id'",
+    "bash -c \"docker logs owner\"",
+    "bash /tmp/x.sh",
+    "./x.sh",
+    "docker ps -q --filter name=owner | head -1",
+    "eval docker exec x sh",
+    "sudo sh -c 'docker exec x sh'",
+    "find / -name x -exec docker exec {} sh ;",
+    "CID=abc; docker exec $CID sh",
+    "docker ps -q && docker exec monica-core id",
+]
+
+
+@pytest.mark.parametrize("cmd", DYNAMIC)
+@pytest.mark.parametrize("confirm", [False, True])
+def test_dynamic_container_selection_is_refused_when_a_personal_line_is_declared(personal_root, cmd, confirm):
+    inv = PersonalInventory()
+    out = exec_cmd(cmd, confirm=confirm, run_remote=inv, repo_root=personal_root)
+    assert out["status"] == "refused" and "personal-unsafe" in out["error"], (cmd, out)
+    assert not any("xargs" in c and "docker exec sh" in c for c in inv.cmds[1:])  # never executed
+
+
+@pytest.mark.parametrize("which", ["local", "vps"])
+def test_dynamic_selection_is_refused_when_a_source_is_unreadable(root_with, tmp_path, which):
+    root = str(tmp_path / "nowhere") if which == "local" else root_with(PLAIN_VPS_YML)
+    inv = PersonalInventory(vps_yml=False if which == "vps" else PLAIN_VPS_YML)
+    assert exec_cmd("docker exec $(docker ps -q) sh", confirm=True, run_remote=inv, repo_root=root)["status"] == "refused"
+
+
+def test_dynamic_selection_is_refused_when_only_the_live_label_says_personal(root_with):
+    inv = PersonalInventory(vps_yml=PLAIN_VPS_YML, label=True)
+    out = exec_cmd("docker exec $(docker ps -q) sh", confirm=True, run_remote=inv, repo_root=root_with(PLAIN_VPS_YML))
+    assert out["status"] == "refused" and "personal-unsafe" in out["error"]
+
+
+def test_dynamic_selection_is_not_blocked_when_no_personal_line_exists_anywhere(root_with):
+    inv = PersonalInventory(vps_yml=PLAIN_VPS_YML, label=False)
+    out = exec_cmd("docker exec $(docker ps -q --filter name=monica) id", confirm=True, run_remote=inv,
+                   repo_root=root_with(PLAIN_VPS_YML))
+    assert out["status"] != "refused"
+
+
+def test_a_plain_explicit_docker_exec_with_confirm_stays_allowed_beside_a_personal_line(personal_root):
+    inv = PersonalInventory()
+    out = exec_cmd("docker exec monica-core id", confirm=True, run_remote=inv, repo_root=personal_root)
+    assert out["status"] != "refused", out
+    out = exec_cmd("docker exec deadbeef0000 ls /app", confirm=True, run_remote=inv, repo_root=personal_root)
+    assert out["ok"] is True

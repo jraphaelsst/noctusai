@@ -166,3 +166,66 @@ def test_register_exposes_ten_vps_tools():
     assert {"noctus.vps.ps", "noctus.vps.health", "noctus.vps.restart",
             "noctus.vps.prune", "noctus.vps.logs"}.issubset(set(names))
     assert all(n.startswith("noctus.vps.") for n in names)
+
+
+# -- personal WhatsApp line: logs/inspect never reach a personal core ------------------------------------------------------
+
+_PERSONAL_YML = """image: devlikeapro/waha:noweb-2026.9.2
+platform: linux/amd64
+engine: NOWEB
+mem_limit: 512m
+node_heap_mb: 384
+instances:
+  - name: owner
+    product: assistant
+    line_policy: {send: disabled, mark_online: false, full_sync: false, auto_repair: false}
+    edge_deny_writes: true
+    webhook_upstream: http://assistant:8030
+    dashboard: false
+    personal: true
+"""
+
+
+class _PersonalRemote:
+    def __init__(self, vps_yml=_PERSONAL_YML, inv_rc=0, label=""):
+        self.cmds, self.vps_yml, self.inv_rc, self.label = [], vps_yml, inv_rc, label
+
+    def __call__(self, cmd):
+        self.cmds.append(cmd)
+        text = cmd if isinstance(cmd, str) else " ".join(cmd)
+        if text.startswith("cat ") and "waha-instances.yml" in text:
+            return (0, self.vps_yml, "") if self.vps_yml is not False else (1, "", "nope")
+        if "docker images" in text and "ancestor" in text:
+            return self.inv_rc, f"9999ffff8888eeee /noctus-waha-owner-core waha-owner-core {self.label} 172.19.0.7\n", ""
+        return 0, "line a\n", ""
+
+
+def _owner_root(tmp_path):
+    d = tmp_path / "deploy" / "fleet"
+    d.mkdir(parents=True)
+    (d / "waha-instances.yml").write_text(_PERSONAL_YML)
+    return tmp_path
+
+
+def test_logs_and_inspect_refuse_a_personal_core_and_never_read_it(monkeypatch, tmp_path):
+    import settings
+    monkeypatch.setattr(settings, "REPO_ROOT", str(_owner_root(tmp_path)))
+    for fn, args in ((V.logs, ("noctus-waha-owner-core",)), (V.inspect, ("waha-owner",)), (V.logs, ("9999ffff",))):
+        f = _PersonalRemote()
+        out = fn(*args, run_remote=f)
+        assert out["status"] == "refused" and "personal" in out["error"], (fn, args, out)
+        assert not any((c if isinstance(c, str) else " ".join(c)).startswith(("docker logs", "docker inspect -f"))
+                       for c in f.cmds)
+
+
+def test_logs_and_inspect_refuse_by_live_label_alone_and_fail_closed_when_unreadable(monkeypatch, tmp_path):
+    import settings
+    plain = _PERSONAL_YML.replace("personal: true", "personal: false")
+    d = tmp_path / "deploy" / "fleet"
+    d.mkdir(parents=True)
+    (d / "waha-instances.yml").write_text(plain)
+    monkeypatch.setattr(settings, "REPO_ROOT", str(tmp_path))
+    assert V.logs("9999ffff", run_remote=_PersonalRemote(vps_yml=plain, label="personal-line-label"))["status"] == "refused"
+    assert V.inspect("noctus-waha-owner-core", run_remote=_PersonalRemote(vps_yml=False))["status"] == "refused"
+    assert V.logs("noctus-waha-owner-core", run_remote=_PersonalRemote(vps_yml=plain, inv_rc=1))["status"] == "refused"
+    assert V.logs("noctus-core", run_remote=_PersonalRemote(vps_yml=plain))["ok"] is True  # unrelated container stays free
