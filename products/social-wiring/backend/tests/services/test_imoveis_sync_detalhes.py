@@ -96,7 +96,7 @@ def test_refresh_updates_the_mirror_row_and_keeps_the_listar_only_fields():
     # detalhes carries no photo / banheiro_social / codigo_imobiliaria: the mirror keeps what it had
     assert row["foto_destaque"] == "https://f/CA0001.jpg" and row["banheiro_social"] is True and row["codigo_imobiliaria"] == "IM-CA0001"
     assert (rep.atualizados, rep.novos, rep.inalterados, rep.removidos) == (1, 0, 0, 0)
-    assert rep.caminho == "detalhes" and rep.chamadas == {"detalhes": 1} and rep.status_final == "ok"
+    assert rep.caminho == "detalhes" and rep.chamadas == {"sinal": 1, "detalhes": 1} and rep.status_final == "ok"
 
 
 def test_the_listar_and_detalhes_paths_build_the_same_row():
@@ -114,12 +114,13 @@ def test_the_listar_and_detalhes_paths_build_the_same_row():
     assert so_detalhes["valor_venda"] == 900000.0 and so_detalhes["caracteristicas"] == ["piscina"]
 
 
-def test_an_unchanged_data_atualizacao_only_touches_sincronizado_em():
+def test_an_unchanged_data_atualizacao_costs_no_detalhes_call_and_no_write():
+    """The change signal sees the code is unchanged: no detalhes call, nothing rewritten (`forcar` still re-reads)."""
     db = _db(mirror=[_linha("CA0001", data_atualizacao="2026-11-02", valor_venda=555.0)], registry=[_reg("CA0001")])
     rep = _rodar(_svc(db, _vista("CA0001")))
     [row] = db.table("imoveis").select("*").execute().data
-    assert row["valor_venda"] == 555.0 and row["sincronizado_em"] != "2026-10-23T00:00:00+00:00"  # touched, not rewritten
-    assert (rep.inalterados, rep.atualizados, rep.upserted) == (1, 0, 0)
+    assert row["valor_venda"] == 555.0 and row["sincronizado_em"] == "2026-10-23T00:00:00+00:00"
+    assert (rep.inalterados, rep.atualizados, rep.upserted) == (0, 0, 0) and rep.chamadas == {"sinal": 1}
     forcado = _rodar(_svc(db, _vista("CA0001")), forcar=True)
     assert forcado.atualizados == 1 and db.table("imoveis").select("*").execute().data[0]["valor_venda"] == 200.0
 

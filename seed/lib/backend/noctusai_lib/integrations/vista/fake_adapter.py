@@ -18,6 +18,7 @@ integration tests against a live tenant, which is the failure
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Optional
 
 from noctusai_lib.integrations.vista.client import VistaNotFound, VistaRecordUnpublished
@@ -193,6 +194,15 @@ class FakeVistaAdapter:
             relacao = {str(c.codigo or n): {"Codigo": c.codigo, "Nome": c.nome, "Email": c.email, "Fone": c.fone} for n, c in enumerate(imovel.corretores)}
             raise VistaRecordUnpublished(code, "/imoveis/detalhes", ["Corretor"], {"Corretor": relacao})
         return imovel.model_copy(update={"foto_destaque": None, "banheiro_social": None, "codigo_imobiliaria": None})
+
+    async def list_changed_since(self, since: date, *, page_size: int = 50) -> ImovelPage:
+        """Seeded imóveis newest-first with `data_atualizacao >= since` (same contract as the Real)."""
+        publicados = [i for i in self._imoveis.values() if i.exibir_no_site is not False]  # an unpublished code is invisible to listar
+        todos = sorted((i for i in publicados if i.data_atualizacao is not None), key=lambda i: i.data_atualizacao, reverse=True)
+        novos = [i for i in todos if i.data_atualizacao >= since]
+        pages = max(1, (len(publicados) + page_size - 1) // page_size)
+        lidas = min(pages, max(1, (len(novos) + page_size) // page_size))
+        return ImovelPage(items=novos, total=len(publicados), page=lidas, pages=pages)
 
     async def list_destaques(self) -> list[str]:
         return list(getattr(self, "_destaques", []))
