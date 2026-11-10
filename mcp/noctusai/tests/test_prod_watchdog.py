@@ -467,7 +467,7 @@ def test_units_verify(tmp_path):
 def _budget(verdict, **extra):
     base = {"ok": verdict != "unknown", "verdict": verdict, "reasons": [f"synthetic {verdict}"],
             "projected_per_day": 300000, "total_calls": 12500, "status_402": 0, "window_hours": 1.0,
-            "trip": verdict == "critical", "trip_402_immediate": extra.get("status_402", 0) >= 100, "reasons_public": [f"public {verdict}: projected 300000/day"],
+            "trip": verdict == "critical", "signature_pin": "off", "trip_402_immediate": extra.get("status_402", 0) >= 100, "reasons_public": [f"public {verdict}: projected 300000/day"],
             "top_shapes": [{"shape": "POST /rest/v1/rpc/claim_next_job", "calls": 9, "projected_per_day": 216}]}
     base.update(extra)
     return lambda: dict(base)
@@ -887,3 +887,120 @@ def test_host_probe_reads_the_breaker_key_from_the_acl_redis_too(tmp_path):
     out = subprocess.run(["bash", str(WATCHDOG_DIR / "host-probe.sh")], capture_output=True, text=True, env=env, timeout=60)
     assert json.loads(out.stdout.strip().splitlines()[-1])["breaker_tripped"] == 1
     assert "noctus-redis-acl" in log.read_text() and "--user trip" in log.read_text()
+
+
+# ── signature pin through the watchdog: reported as on/off, the value never leaves the process ──
+def test_signature_pin_state_is_reported_but_its_value_never_reaches_report_state_or_alerts(tmp_path):
+    from tools.noctus.dev import supabase_request_budget as srb
+
+    pin = "Ab12_-xyz9"
+    em = Sender()
+
+    def check():
+        return srb.supabase_request_budget(
+            source=srb.FakeLogsSource(status_rows=[{"ua": "x", "status": 200, "calls": 9}], shape_rows=[]),
+            env={"SUPABASE_SERVICE_SIG_PREFIX": pin})
+
+    rep = _brun(tmp_path, check, Tripper(), senders={"email": em, "whatsapp": Sender()})
+    blob = json.dumps(rep, default=str) + pw.format_report(rep) + (tmp_path / "b.json").read_text()
+    assert pin not in blob and "signature pin: on" in pw.format_report(rep)
+    off = _brun(tmp_path / "off", _budget("ok"), Tripper())
+    assert "signature pin: off" in pw.format_report(off)
+
+
+# ── N14: the report flags an unconfirmed environment protection, and never fails the run over it ──
+def test_environment_protection_is_confirmed_or_flagged_never_fatal():
+    def fetch(body, status=200):
+        return lambda url, headers, timeout: (status, json.dumps(body).encode())
+
+    env = {"GITHUB_REPOSITORY": "o/r", "WATCHDOG_GH_TOKEN": "SECRETTOK"}
+    on = pw.environment_protection(env, fetch({"deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}}))
+    assert on["status"] == "restricted"
+    off = pw.environment_protection(env, fetch({"deployment_branch_policy": None}))
+    assert off["status"] == "off"
+    assert pw.environment_protection(env, fetch({}, 403))["status"] == "unknown"
+    assert pw.environment_protection({}, fetch({}))["status"] == "unknown"                       # no repo/token
+    assert pw.environment_protection(env, lambda *a: (_ for _ in ()).throw(OSError("x")))["status"] == "unknown"
+    assert "SECRETTOK" not in json.dumps([on, off])  # the token is never echoed
+
+
+def test_run_reports_environment_protection_and_still_exits_zero(tmp_path):
+    rep = pw.run(None, send=False, env=dict(ENV_ALL, GITHUB_REPOSITORY="o/r"), repo_root=REPO, slugs=["core"],
+                 fetcher=Fetch(), ssh_runner=Ssh(), clock=Clock(), senders={"email": Sender()},
+                 budget_check=lambda: {"verdict": "ok", "ok": True},
+                 env_protection_check=lambda env: {"status": "unknown", "detail": "no token"})
+    assert rep["environment_protection"]["status"] == "unknown" and rep["exit_code"] == 0
+    assert any("environment protection" in w for w in rep["warnings"])
+
+
+# ── N11/N12/N13/N10: shell hardening, run for real with fakes on PATH ──
+def _fake_bin(tmp_path, scripts: dict):
+    d = tmp_path / "fakebin"
+    d.mkdir(parents=True, exist_ok=True)
+    for name, body in scripts.items():
+        (d / name).write_text("#!/usr/bin/env bash\n" + body)
+        (d / name).chmod(0o755)
+    return d
+
+
+def test_probe_restriction_scan_covers_root_breaker_and_probe_homes_via_getent(tmp_path):
+    import os as _os
+    homes = {}
+    for u in ("root", "breaker", "probe"):
+        homes[u] = tmp_path / u
+        (homes[u] / ".ssh").mkdir(parents=True)
+    (homes["root"] / ".ssh/authorized_keys").write_text('restrict,command="x" ssh-ed25519 AAAA noctus-prod-watchdog\n')
+    (homes["probe"] / ".ssh/authorized_keys").write_text("ssh-ed25519 AAAA noctus-prod-watchdog\n")  # NOT restricted
+    cases = "\n".join(f'[[ "$2" == "{u}" ]] && echo "{u}:x:0:0::{h}:/bin/sh"' for u, h in homes.items())
+    d = _fake_bin(tmp_path, {"getent": f'[[ "$1" == passwd ]] || exit 2\n{cases}\nexit 0\n'})
+    env = {k: v for k, v in _os.environ.items() if k != "NOCTUS_AUTH_KEYS_FILES"}
+    env["PATH"] = f"{d}:{env['PATH']}"
+    out = subprocess.run(["bash", str(WATCHDOG_DIR / "host-probe.sh")], capture_output=True, text=True, env=env, timeout=60)
+    assert json.loads(out.stdout.strip().splitlines()[-1])["breaker_key_restricted"] == 0
+
+
+def test_installer_fails_up_front_for_a_missing_user_or_a_nologin_shell(tmp_path):
+    import os as _os
+
+    def run(id_rc, shell):
+        d = _fake_bin(tmp_path / f"{id_rc}{shell.replace('/', '_')}", {
+            "id": f'[[ "$1" == "-u" ]] && echo 0 && exit 0\nexit {id_rc}\n',
+            "getent": f'echo "probe:x:1001:1001::{tmp_path}/home:{shell}"\n'})
+        env = {**_os.environ, "PATH": f"{d}:{_os.environ['PATH']}", "NOCTUS_PROBE_USER": "probe"}
+        return subprocess.run(["bash", str(WATCHDOG_DIR / "install-heartbeat.sh"), "--check"],
+                              capture_output=True, text=True, env=env, timeout=30)
+
+    gone = run(1, "/bin/sh")
+    assert gone.returncode != 0 and "does not exist" in gone.stderr
+    nol = run(0, "/usr/sbin/nologin")
+    assert nol.returncode != 0 and "nologin" in nol.stderr
+    txt = (WATCHDOG_DIR / "install-heartbeat.sh").read_text()
+    assert "chown" in txt and not any("chown" in l and "|| true" in l for l in txt.splitlines())
+    assert "root:root" in txt and "0644" in txt
+
+
+@pytest.mark.parametrize("bad", ['{"reason":"r","rate":NaN,"window":"1h","tripped_at":"t","by":"offhost-watchdog"}',
+                                 '{"reason":"r","rate":Infinity,"window":"1h","tripped_at":"t","by":"offhost-watchdog"}',
+                                 '{"reason":"r","rate":-Infinity,"window":"1h","tripped_at":"t","by":"offhost-watchdog"}',
+                                 '{"reason":"r","rate":1e999,"window":"1h","tripped_at":"t","by":"offhost-watchdog"}'])
+def test_breaker_script_rejects_non_finite_numbers(tmp_path, bad):
+    r, store = _trip(tmp_path, bad)
+    assert r.returncode == 2 and not store.exists()
+    assert "allow_nan=False" in (WATCHDOG_DIR / "breaker-trip.sh").read_text()
+
+
+@needs_timeout
+def test_host_probe_prefers_the_probe_credential_and_falls_back_to_trip(tmp_path):
+    import os as _os
+    d, log, store = _acl_docker(tmp_path)
+    trip, probe = tmp_path / "trip.pass", tmp_path / "probe.pass"
+    trip.write_text("tp\n")
+    base = {**_os.environ, "PATH": f"{d}:{_os.environ['PATH']}", "NOCTUS_REDIS_TRIP_PASS_FILE": str(trip),
+            "NOCTUS_REDIS_PROBE_PASS_FILE": str(probe)}
+    subprocess.run(["bash", str(WATCHDOG_DIR / "host-probe.sh")], capture_output=True, text=True, env=base, timeout=60)
+    assert "--user trip" in log.read_text() and "--user probe" not in log.read_text()
+    log.unlink()
+    probe.write_text("pp\n")
+    subprocess.run(["bash", str(WATCHDOG_DIR / "host-probe.sh")], capture_output=True, text=True, env=base, timeout=60)
+    txt = log.read_text()
+    assert "--user probe" in txt and "AUTH: pp" in txt and "--user trip" not in txt

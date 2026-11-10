@@ -134,6 +134,11 @@ jobs:
           # Supabase request-budget leg: a SCOPED PAT (this project only; Logs read + Usage read), see § 7b.
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          # Optional: the logged signature prefix of OUR service_role key. With it, a forged role claim cannot trip.
+          SUPABASE_SERVICE_SIG_PREFIX: ${{ secrets.SUPABASE_SERVICE_SIG_PREFIX }}
+          # Optional: lets the report confirm the environment's branch restriction (never fatal).
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          WATCHDOG_GH_TOKEN: ${{ secrets.WATCHDOG_GH_TOKEN }}
           # Pinned ssh host key (`ssh-keyscan -H <host>` output, captured once): no keyscan-per-run trust.
           NOCTUS_VPS_KNOWN_HOSTS: ${{ secrets.NOCTUS_VPS_KNOWN_HOSTS }}
           TEST_ALERT: ${{ inputs.send_test_alert }}

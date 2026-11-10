@@ -583,12 +583,47 @@ def deliver(kind: str, new: str, subject: str, body: str,
 def _budget_summary(rep: dict) -> dict:
     """The compact slice of a request-budget report that may appear in a PUBLIC run log / the state
     cache: counts and verdict only. No endpoint shape, no reason that names one (those go to email)."""
-    keys = ("verdict", "ok", "trip", "error", "projected_per_day", "total_calls", "eligible_calls",
+    keys = ("verdict", "ok", "trip", "signature_pin", "error", "projected_per_day", "total_calls", "eligible_calls",
             "status_402", "trip_402_immediate", "window_hours")
     out = {k: rep.get(k) for k in keys if k in rep}
     out["reasons"] = list(rep.get("reasons_public") or [])
     out["status"] = rep.get("status") or rep.get("verdict")
     return out
+
+
+def environment_protection(env: Mapping[str, str], fetch: Optional[Callable[..., Any]] = None) -> dict:
+    """Is the GitHub Environment `prod-watchdog` restricted to selected branches? Best-effort, NEVER fatal.
+
+    Needs `GITHUB_REPOSITORY` and an optional `WATCHDOG_GH_TOKEN` (a token allowed to read the repo's environments;
+    the workflow's own GITHUB_TOKEN cannot). Anything unconfirmable is `unknown`, never a failure. The token is
+    never echoed. `fetch(url, headers, timeout) -> (status, bytes)` is the injectable seam.
+    """
+    repo = (env.get("GITHUB_REPOSITORY") or "").strip()
+    token = (env.get("WATCHDOG_GH_TOKEN") or "").strip()
+    if not repo or not token:
+        return {"status": "unknown", "detail": "no GITHUB_REPOSITORY / WATCHDOG_GH_TOKEN: cannot confirm"}
+
+    def _default(url: str, headers: dict, timeout: float) -> tuple[int, bytes]:
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, b""
+
+    try:
+        status, body = (fetch or _default)(
+            f"https://api.github.com/repos/{repo}/environments/prod-watchdog",
+            {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+             "User-Agent": "noctusai-prod-watchdog/1.0"}, 15)
+        if status != 200:
+            return {"status": "unknown", "detail": f"environment API answered HTTP {status}"}
+        pol = (json.loads(body or b"{}") or {}).get("deployment_branch_policy")
+    except Exception as exc:  # unknowable is reported, never raised
+        return {"status": "unknown", "detail": f"could not read the environment: {type(exc).__name__}"}
+    if isinstance(pol, dict) and (pol.get("custom_branch_policies") or pol.get("protected_branches")):
+        return {"status": "restricted", "detail": "deployment branch policy is on"}
+    return {"status": "off", "detail": "no deployment branch policy: restrict prod-watchdog to `main`"}
 
 
 def _shape_detail(rep: dict) -> Optional[str]:
@@ -732,6 +767,7 @@ def run(
     budget_check: Any = "auto",
     breaker_tripper: Any = "auto",
     breaker_rearmed: bool = False,
+    env_protection_check: Any = "auto",
 ) -> dict:
     """One watchdog pass. Returns the report; `report["exit_code"]` is the verdict.
 
@@ -763,6 +799,10 @@ def run(
     if unpinned:
         warnings.append("NOCTUS_VPS_KNOWN_HOSTS unset: ssh host key is trusted via ssh-keyscan on every run "
                         "(pin it: store `ssh-keyscan -H <host>` output as that secret)")
+
+    envp = (environment_protection(env) if env_protection_check == "auto" else env_protection_check(env))
+    if envp["status"] != "restricted":
+        warnings.append(f"environment protection: {envp['status']} — {envp.get('detail')}")
 
     # http leg
     http = http_probe(roster, root, fetch, th["WATCHDOG_HTTP_TIMEOUT_S"])
@@ -867,7 +907,7 @@ def run(
         "state": new, "previous_state": prev, "since": state.get("since"),
         "reasons": reasons, "down_reasons": down_r, "degraded_reasons": deg_r,
         "http": http, "ssh": ssh_leg, "host": host, "counters": counters,
-        "budget": budget, "breaker": breaker,
+        "budget": budget, "breaker": breaker, "environment_protection": envp,
         "alert": alert, "test_alert": test, "channels": cfg,
         "warnings": warnings, "send": send, "state_saved": saved, "exit_code": exit_code,
     }
@@ -889,6 +929,11 @@ def format_report(rep: dict) -> str:
                      f"402s={b.get('status_402')} breaker={rep['breaker'].get('status')}")
     elif b.get("status"):
         lines.append(f"  supabase budget: {b['status']} {b.get('detail') or ''}".rstrip())
+    if b.get("signature_pin"):
+        lines.append(f"  signature pin: {b['signature_pin']}")
+    envp = rep.get("environment_protection")
+    if envp:
+        lines.append(f"  environment protection: {envp['status']}")
     for r in rep["reasons"]:
         lines.append(f"  - {r}")
     a = rep["alert"]

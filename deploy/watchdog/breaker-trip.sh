@@ -51,9 +51,11 @@ payload="$(head -c "$MAX_BYTES" 2>/dev/null)"
 # EXISTS used by the owner's one-time setup check (it proves ssh + forced command + sudo + redis access
 # without tripping the fleet).
 canon="$(printf '%s' "$payload" | python3 -I -c '
-import json, sys
+import json, math, sys
+def _refuse(_c):  # NaN / Infinity / -Infinity are not JSON: refuse them at parse time
+    raise ValueError(_c)
 try:
-    d = json.loads(sys.stdin.read())
+    d = json.loads(sys.stdin.read(), parse_constant=_refuse)
 except Exception:
     sys.exit(2)
 if d == {"verify": True}:
@@ -69,9 +71,9 @@ if not (ok_str(d["reason"], 300) and ok_str(d["window"], 64) and ok_str(d["tripp
 if d["by"] != "offhost-watchdog":
     sys.exit(2)
 r = d["rate"]
-if not ((isinstance(r, (int, float)) and not isinstance(r, bool)) or ok_str(r, 200)):
-    sys.exit(2)
-print(json.dumps(d, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+if not ((isinstance(r, (int, float)) and not isinstance(r, bool) and math.isfinite(r)) or ok_str(r, 200)):
+    sys.exit(2)  # 1e999 parses to inf without parse_constant: isfinite catches it
+print(json.dumps(d, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False))
 ' 2>/dev/null)"
 rc=$?
 if [[ $rc -ne 0 || -z "$canon" ]]; then

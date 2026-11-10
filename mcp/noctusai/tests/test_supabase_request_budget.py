@@ -379,3 +379,49 @@ def test_a_single_or_few_402s_never_trip_but_a_real_wave_does():
     assert rep_for(99)["trip"] is False
     wave = rep_for(srb.DEFAULTS["SUPABASE_BUDGET_MIN_402_TO_TRIP"])
     assert wave["trip"] is True and wave["trip_402_immediate"] is True
+
+
+# ── signature pin (optional hardening of N1): the logged key signature prefix is something a forger cannot know ──
+PIN = "Ab12_-xyz9"
+
+
+@pytest.mark.parametrize("value, ok", [
+    ("abcd", True), ("Ab12_-xyz9", True), ("A" * 16, True),
+    ("abc", False), ("A" * 17, False), ("a b c d", False), ("ab'cd", False), ("ab;cd", False), ("", False), (None, False),
+])
+def test_signature_pin_validation(value, ok):
+    assert srb.valid_sig_prefix(value) is ok
+
+
+def test_pinned_sql_carries_the_clause_and_unpinned_sql_does_not():
+    attr = "log_attributes['request.sb.jwt.apikey.payload.signature_prefix']"
+    assert PIN not in srb.SQL_TRIP_AGG and "signature_prefix" not in srb.SQL_TRIP_AGG
+    assert PIN not in srb.SQL_SHAPES_TRIP
+    for sql in (srb.sql_trip_agg(PIN), srb.sql_shapes_trip(PIN)):
+        assert f"{attr} = '{PIN}'" in sql and "startsWith(" in sql and "'OPTIONS'" in sql
+    assert srb.sql_trip_agg(None) == srb.SQL_TRIP_AGG
+    with pytest.raises(ValueError):
+        srb.sql_trip_agg("x'; drop")
+
+
+def test_predicate_with_a_pin_rejects_a_forged_signature():
+    ok = lambda sig, pin=PIN: srb.is_trip_traffic("service_role", "GET", "/rest/v1/jobs", 200, sig=sig, pin=pin)
+    assert ok(PIN) is True
+    assert ok("WRONGPFX") is False and ok("") is False and ok(None) is False
+    assert ok("WRONGPFX", pin=None) is True            # pin off: behaviour stays as before
+
+
+def test_the_pin_reaches_the_query_but_never_any_public_output():
+    src = srb.FakeLogsSource(status_rows=[{"ua": "x", "status": 200, "calls": 5}], shape_rows=[])
+    rep = srb.evaluate(src, now=NOW, sig_pin=PIN)
+    assert rep["signature_pin"] == "on" and PIN not in repr(rep)
+    assert any(PIN in c[0] for c in src.calls)
+    off = srb.evaluate(srb.FakeLogsSource(), now=NOW)
+    assert off["signature_pin"] == "off"
+
+
+def test_tool_core_reads_the_pin_from_env_and_rejects_a_bad_one_without_echoing_it():
+    good = srb.supabase_request_budget(source=srb.FakeLogsSource(), env={"SUPABASE_SERVICE_SIG_PREFIX": PIN})
+    assert good["signature_pin"] == "on" and PIN not in repr(good)
+    bad = srb.supabase_request_budget(source=srb.FakeLogsSource(), env={"SUPABASE_SERVICE_SIG_PREFIX": "bad value!"})
+    assert bad["ok"] is False and bad["status"] == "error" and "bad value" not in repr(bad)

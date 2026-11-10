@@ -31,7 +31,21 @@ FORCED_CMD="/opt/noctus/noctusai/deploy/watchdog/host-probe.sh"
 # `sudo`, see deploy/watchdog/noctus-breaker.sudoers) instead of root. Unset = the legacy root install.
 PROBE_USER="${NOCTUS_PROBE_USER:-}"
 if [[ -n "$PROBE_USER" ]]; then
-  AUTH_KEYS="${NOCTUS_AUTHORIZED_KEYS:-/home/$PROBE_USER/.ssh/authorized_keys}"
+  # Fail loudly UP FRONT (before any file is touched), never half-install.
+  id "$PROBE_USER" >/dev/null 2>&1 \
+    || { echo "ERROR: NOCTUS_PROBE_USER='$PROBE_USER' does not exist (create it: useradd -m -s /bin/sh $PROBE_USER)" >&2; exit 1; }
+  pw_entry="$(getent passwd "$PROBE_USER")" && [[ -n "$pw_entry" ]] \
+    || { echo "ERROR: getent has no passwd entry for '$PROBE_USER'" >&2; exit 1; }
+  PROBE_HOME="$(cut -d: -f6 <<<"$pw_entry")"
+  PROBE_SHELL="$(cut -d: -f7 <<<"$pw_entry")"
+  [[ -n "$PROBE_HOME" && -n "$PROBE_SHELL" ]] \
+    || { echo "ERROR: '$PROBE_USER' has no home or shell in passwd" >&2; exit 1; }
+  case "$PROBE_SHELL" in
+    */nologin|*/false)
+      echo "ERROR: '$PROBE_USER' has shell $PROBE_SHELL: sshd runs the forced command through the login shell, so a nologin shell refuses it and every probe would fail. Use /bin/sh (restrict + command= + sudoers confine the key)." >&2
+      exit 1 ;;
+  esac
+  AUTH_KEYS="${NOCTUS_AUTHORIZED_KEYS:-$PROBE_HOME/.ssh/authorized_keys}"
   CMD_FIELD="sudo $FORCED_CMD"
 else
   AUTH_KEYS="${NOCTUS_AUTHORIZED_KEYS:-/root/.ssh/authorized_keys}"
@@ -157,8 +171,15 @@ if [[ -n "$PUBKEY_FILE" ]]; then
       printf '\n' >> "$AUTH_KEYS"
     fi
     printf 'restrict,command="%s" %s %s %s\n' "$CMD_FIELD" "$KEY_TYPE" "$KEY_BODY" "$KEY_COMMENT" >> "$AUTH_KEYS"
-    [[ -z "$PROBE_USER" ]] || chown -R "$PROBE_USER": "$(dirname "$AUTH_KEYS")" 2>/dev/null || true
     echo "watchdog key: added to $AUTH_KEYS (restrict + forced command)"
+  fi
+  if [[ -n "$PROBE_USER" ]]; then
+    # The unprivileged user must not be able to edit its own forced command: dir + file are root:root
+    # (sshd StrictModes accepts a root-owned, not group/world-writable authorized_keys under the user's home).
+    chown root:root "$(dirname "$AUTH_KEYS")" "$AUTH_KEYS"
+    chmod 0755 "$(dirname "$AUTH_KEYS")"
+    chmod 0644 "$AUTH_KEYS"
+    echo "watchdog key: $AUTH_KEYS is root:root 0644 (the $PROBE_USER user cannot change its forced command)"
   fi
 fi
 echo "done."

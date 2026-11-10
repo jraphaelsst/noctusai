@@ -27,6 +27,10 @@ CRITICAL verdict (= the breaker trip) counts ONLY requests that carry OUR servic
 status, plus service_role 402s. Everything else (anon, authenticated, key-less, 4xx/5xx) is
 reported and can WARN, never trip.
 
+Optional hardening: when `SUPABASE_SERVICE_SIG_PREFIX` is set (the `signature_prefix` Logs Explorer shows on our own
+service_role calls; a forger cannot know it) trip traffic must also carry it. The value is inlined only after
+validation (`[A-Za-z0-9_-]{4,16}`) and never appears in any output: the report says `signature_pin: on|off`.
+
 Verdict (thresholds are per-day projections, env-overridable):
   critical  trip traffic: projected total > 250k · a single shape > 50k · ANY service_role 402
   warn      projected total > 100k (any traffic) · a single shape > 15k · critical-sized non-trip traffic
@@ -47,6 +51,10 @@ from typing import Any, Callable, Mapping, Optional, Protocol
 DEFAULT_PROJECT_REF = "nyplttplcoyiiqjrvtiw"
 MGMT_BASE = "https://api.supabase.com"
 TOKEN_ENV = "SUPABASE_ACCESS_TOKEN"
+#: optional pin: the logged `signature_prefix` of OUR service_role key. A forger can write any signature
+#: segment but cannot know ours, so with the pin set only calls carrying it can trip. Never logged/printed.
+SIG_PREFIX_ENV = "SUPABASE_SERVICE_SIG_PREFIX"
+_SIG_PREFIX_RE = re.compile(r"[A-Za-z0-9_-]{4,16}")
 PROJECT_REF_ENV = "SUPABASE_PROJECT_REF"
 MAX_WINDOW_HOURS = 24.0
 _UA = "noctusai-request-budget/1.0"
@@ -63,22 +71,45 @@ DEFAULTS: dict[str, float] = {
 ROLE_ATTR = "log_attributes['request.sb.jwt.apikey.payload.role']"
 METHOD_ATTR = "log_attributes['request.method']"
 PATH_ATTR = "log_attributes['request.path']"
+SIG_ATTR = "log_attributes['request.sb.jwt.apikey.payload.signature_prefix']"
 STATUS_ATTR = "toUInt32OrZero(log_attributes['response.status_code'])"
 #: The role claim is the DECODED header, NOT a verified identity (a forged `service_role` is logged too), and
 #: some answers come BEFORE key-auth (CORS OPTIONS preflight, /auth/v1/verify|authorize|callback 3xx,
 #: functions with verify_jwt=false). PostgREST verifies the JWT signature, so a forged key gets 401 there:
 #: trip traffic = claim service_role AND /rest/v1/ AND not OPTIONS AND the status below.
-_TRIP_BASE = (f"source='edge_logs' and {ROLE_ATTR}='service_role' and "
-              f"startsWith({PATH_ATTR}, '/rest/v1/') and {METHOD_ATTR} != 'OPTIONS'")
+def valid_sig_prefix(value: Optional[str]) -> bool:
+    return isinstance(value, str) and _SIG_PREFIX_RE.fullmatch(value) is not None
+
+
+def _trip_base(pin: Optional[str]) -> str:
+    base = (f"source='edge_logs' and {ROLE_ATTR}='service_role' and "
+            f"startsWith({PATH_ATTR}, '/rest/v1/') and {METHOD_ATTR} != 'OPTIONS'")
+    if pin is None:
+        return base
+    if not valid_sig_prefix(pin):  # the only thing ever inlined: [A-Za-z0-9_-]{4,16}, so no quoting can break out
+        raise ValueError(f"{SIG_PREFIX_ENV} must match [A-Za-z0-9_-]{{4,16}}")
+    return f"{base} and {SIG_ATTR} = '{pin}'"
+
+
 _OK_STATUS = f"({STATUS_ATTR} >= 200 and {STATUS_ATTR} < 400)"
-_TRIP_WHERE = f"{_TRIP_BASE} and ({_OK_STATUS} or {STATUS_ATTR} = 402)"
 _SHAPE_COLS = (f"select {METHOD_ATTR} m, {PATH_ATTR} p, "
                "log_attributes['request.search'] s, count() calls from logs where ")
 SQL_SHAPES = _SHAPE_COLS + "source='edge_logs' group by m, p, s order by calls desc limit 3000"
-SQL_SHAPES_TRIP = _SHAPE_COLS + _TRIP_WHERE + " group by m, p, s order by calls desc limit 3000"
-#: ONE ungrouped aggregate decides the trip: no user-agent/status cardinality a spray could crowd out of a LIMIT.
-SQL_TRIP_AGG = (f"select countIf({_OK_STATUS}) eligible, countIf({STATUS_ATTR} = 402) n402 "
-                f"from logs where {_TRIP_BASE}")
+
+
+def sql_shapes_trip(pin: Optional[str] = None) -> str:
+    return (_SHAPE_COLS + f"{_trip_base(pin)} and ({_OK_STATUS} or {STATUS_ATTR} = 402)"
+            " group by m, p, s order by calls desc limit 3000")
+
+
+def sql_trip_agg(pin: Optional[str] = None) -> str:
+    """ONE ungrouped aggregate decides the trip: no user-agent/status cardinality a spray could crowd out of a LIMIT."""
+    return (f"select countIf({_OK_STATUS}) eligible, countIf({STATUS_ATTR} = 402) n402 "
+            f"from logs where {_trip_base(pin)}")
+
+
+SQL_SHAPES_TRIP = sql_shapes_trip()
+SQL_TRIP_AGG = sql_trip_agg()
 #: reporting only (totals, UA families, 4xx): grouped and LIMITed, never decides a trip.
 SQL_STATUS_UA = (
     f"select log_attributes['request.headers.user_agent'] ua, {STATUS_ATTR} status, "
@@ -377,10 +408,13 @@ def _usage_block(source: LogsSource) -> dict:
             "realtime_requests_24h": tot["total_realtime_requests"], "note": USAGE_NOTE_NO_EGRESS}
 
 
-def is_trip_traffic(role: str, method: str, path: str, status: int, *, count_402: bool = True) -> bool:
-    """Python twin of `_TRIP_WHERE` (documented + tested together): only calls that PostgREST authenticated
+def is_trip_traffic(role: str, method: str, path: str, status: int, *, count_402: bool = True,
+                    sig: Optional[str] = None, pin: Optional[str] = None) -> bool:
+    """Python twin of `sql_trip_agg` (documented + tested together): only calls that PostgREST authenticated
     can trip. See the SQL note above for why the role claim alone is not an identity."""
     if role != "service_role" or (method or "").upper() == "OPTIONS" or not (path or "").startswith("/rest/v1/"):
+        return False
+    if pin is not None and sig != pin:
         return False
     return 200 <= status < 400 or (count_402 and status == 402)
 
@@ -394,18 +428,19 @@ def _shape_counter(rows: list[dict]) -> Counter:
 
 def evaluate(source: LogsSource, *, window_hours: float = 1.0, now: Optional[str] = None,
              start: Optional[str] = None, end: Optional[str] = None,
-             th: Optional[Mapping[str, float]] = None, top_n: int = 10) -> dict:
+             th: Optional[Mapping[str, float]] = None, top_n: int = 10, sig_pin: Optional[str] = None) -> dict:
     """Read the window, reduce to shapes, judge against the thresholds. Never raises on a read failure."""
     th = dict(th) if th is not None else dict(DEFAULTS)
     s_dt, e_dt, hours = _window(window_hours, now, start, end)
     s_iso, e_iso = _iso(s_dt), _iso(e_dt)
     per_day = 24.0 / hours
-    base = {"window_hours": round(hours, 3), "start": s_iso, "end": e_iso, "thresholds": th}
+    base = {"window_hours": round(hours, 3), "start": s_iso, "end": e_iso, "thresholds": th,
+            "signature_pin": "on" if sig_pin else "off"}  # the value itself never appears in any output
     try:
         status_rows = source.query_logs(SQL_STATUS_UA, s_iso, e_iso)
         shape_rows = source.query_logs(SQL_SHAPES, s_iso, e_iso)
-        trip_rows = source.query_logs(SQL_SHAPES_TRIP, s_iso, e_iso)
-        agg_rows = source.query_logs(SQL_TRIP_AGG, s_iso, e_iso)
+        trip_rows = source.query_logs(sql_shapes_trip(sig_pin), s_iso, e_iso)
+        agg_rows = source.query_logs(sql_trip_agg(sig_pin), s_iso, e_iso)
     except LogsError as exc:
         return {**base, "ok": False, "verdict": "unknown", "trip": False, "error": str(exc),
                 "transient": exc.transient, "reasons": [f"could not read the Supabase logs: {exc}"],
@@ -515,7 +550,11 @@ def supabase_request_budget(
         return {"ok": False, "status": "not_configured", "verdict": "unknown",
                 "error": f"{TOKEN_ENV} is not set (a Supabase personal access token, read-only use)"}
     try:
-        rep = evaluate(src, window_hours=window_hours, start=start, end=end, th=thresholds(env), top_n=top_n)
+        pin = (env.get(SIG_PREFIX_ENV) or "").strip() or None
+        if pin is not None and not valid_sig_prefix(pin):
+            raise ValueError(f"{SIG_PREFIX_ENV} must match [A-Za-z0-9_-]{{4,16}} (value not shown)")
+        rep = evaluate(src, window_hours=window_hours, start=start, end=end, th=thresholds(env), top_n=top_n,
+                       sig_pin=pin)
     except ValueError as exc:
         return {"ok": False, "status": "error", "verdict": "unknown", "error": str(exc)}
     return {"status": rep["verdict"], **rep}
@@ -540,6 +579,6 @@ def register(server) -> None:
         return supabase_request_budget(window_hours=window_hours, start=start, end=end, top_n=top_n)
 
 
-__all__ = ["DEFAULT_PROJECT_REF", "FakeLogsSource", "LogsError", "LogsSource", "RealLogsSource", "evaluate",
+__all__ = ["DEFAULT_PROJECT_REF", "valid_sig_prefix", "sql_trip_agg", "sql_shapes_trip", "FakeLogsSource", "LogsError", "LogsSource", "RealLogsSource", "evaluate",
            "make_source", "normalize_path", "normalize_search", "register", "shape_key",
            "supabase_request_budget", "thresholds", "ua_family"]

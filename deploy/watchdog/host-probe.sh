@@ -90,12 +90,17 @@ fi
 # Fleet breaker: does `noctus:breaker:fleet` exist in Redis? (1 = tripped, 0 = armed, null = unknown).
 # The watchdog reconciles its sticky alert with THIS, not with its own cache file.
 breaker_tripped=null
-# Same target rule as breaker-trip.sh: the ACL Redis (user `trip`, password via the environment, never argv)
-# once its credential file exists, else today's unauthenticated noctus-redis.
+# Same target rule as breaker-trip.sh: the ACL Redis (password via the environment, never argv) once a
+# credential file exists, else today's unauthenticated noctus-redis. Prefer the read-only `probe` ACL user
+# (probe.pass) and fall back to `trip` (trip.pass) until it exists.
+PROBE_PASS_FILE="${NOCTUS_REDIS_PROBE_PASS_FILE:-/opt/noctus/noctusai/deploy/fleet/redis-auth/probe.pass}"
 TRIP_PASS_FILE="${NOCTUS_REDIS_TRIP_PASS_FILE:-/opt/noctus/noctusai/deploy/fleet/redis-auth/trip.pass}"
-if [[ -r "$TRIP_PASS_FILE" ]]; then
-  export REDISCLI_AUTH; REDISCLI_AUTH="$(cat "$TRIP_PASS_FILE")"
-  bt="$(timeout 10 docker exec -e REDISCLI_AUTH "${NOCTUS_REDIS_CONTAINER:-noctus-redis-acl}" redis-cli --no-auth-warning --user trip EXISTS noctus:breaker:fleet 2>/dev/null)"
+acl_user=""; acl_file=""
+if [[ -r "$PROBE_PASS_FILE" ]]; then acl_user="probe"; acl_file="$PROBE_PASS_FILE"
+elif [[ -r "$TRIP_PASS_FILE" ]]; then acl_user="trip"; acl_file="$TRIP_PASS_FILE"; fi
+if [[ -n "$acl_user" ]]; then
+  export REDISCLI_AUTH; REDISCLI_AUTH="$(cat "$acl_file")"
+  bt="$(timeout 10 docker exec -e REDISCLI_AUTH "${NOCTUS_REDIS_CONTAINER:-noctus-redis-acl}" redis-cli --no-auth-warning --user "$acl_user" EXISTS noctus:breaker:fleet 2>/dev/null)"
 else
   bt="$(timeout 10 docker exec "${NOCTUS_REDIS_CONTAINER:-noctus-redis}" redis-cli EXISTS noctus:breaker:fleet 2>/dev/null)"
 fi
@@ -105,7 +110,16 @@ fi
 # `restrict,command="` (1 = all restricted, 0 = at least one is NOT, null = none found / unreadable).
 breaker_key_restricted=null
 seen=0; bad=0
-for f in ${NOCTUS_AUTH_KEYS_FILES:-/root/.ssh/authorized_keys /home/breaker/.ssh/authorized_keys}; do
+# authorized_keys files of the users our forced-command keys live under: homes resolved via getent (root,
+# breaker, probe), never guessed; NOCTUS_AUTH_KEYS_FILES overrides (tests).
+auth_files="${NOCTUS_AUTH_KEYS_FILES:-}"
+if [[ -z "$auth_files" ]]; then
+  for u in root breaker probe; do
+    h="$(getent passwd "$u" 2>/dev/null | cut -d: -f6)"
+    [[ -n "$h" ]] && auth_files+=" $h/.ssh/authorized_keys"
+  done
+fi
+for f in $auth_files; do
   [[ -r "$f" ]] || continue
   while IFS= read -r line; do
     case "$line" in
