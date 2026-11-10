@@ -80,11 +80,14 @@ services:
     container_name: noctus-redis-acl
     expose:
       - "6379"
-    # maxmemory + volatile-lru: only keys WITH a TTL (sessions, limiter counters, caches) are evicted; the
-    # breaker keys have none and can never be evicted. mem_limit > maxmemory leaves headroom for AOF rewrite.
+    # APP data only (the breaker has its own instance below). volatile-lru: only keys WITH a TTL (sessions,
+    # limiter counters, caches) are evicted. mem_limit is ~2x maxmemory: a BGREWRITEAOF fork can copy-on-write
+    # up to the whole dataset, so a tight limit would OOM-kill Redis exactly when it is busiest.
+    # ALERT (NOC-REMEDIATE below): used_memory > 80% of maxmemory, or container memory > 80% of mem_limit
+    # (`noctus.vps.stats`); both fire long before eviction starts failing writes.
     command: ["redis-server", "--appendonly", "yes", "--aclfile", "/etc/redis/users.acl",
               "--maxmemory", "512mb", "--maxmemory-policy", "volatile-lru"]
-    mem_limit: 768m
+    mem_limit: 1g
     volumes:
       - redis_acl_data:/data
       - ./redis-auth/users.acl:/etc/redis/users.acl:ro
@@ -100,6 +103,46 @@ services:
     restart: unless-stopped
     healthcheck:
       # `healthcheck` ACL user: nopass, +ping only (the default user is off). Reveals liveness, nothing else.
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning --user healthcheck --pass x ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    profiles:
+      - redis-acl
+
+  # ── breaker-redis — a DEDICATED, tiny Redis for the fleet breaker keys (noctus:breaker:*) ───────────────
+  # Round-3 decision: the breaker shares NOTHING with app data. Under the app Redis's volatile-lru a runaway that
+  # fills memory makes `SETNX noctus:breaker:fleet` fail with OOM exactly when it must succeed, and a hung Lua
+  # script on the app instance would freeze the breaker too. Here: nothing but breaker keys, `noeviction` (a full
+  # instance REFUSES writes loudly instead of dropping a trip), no scripting for ANY user (-@scripting in every
+  # aclfile line), AOF on. 64mb is ~thousands of times the real footprint (a handful of tiny keys + a capped
+  # audit list); mem_limit leaves AOF-rewrite headroom. Same digest pin, same internal network, same profile.
+  # Users: breaker-users.acl (hashes only, gitignored) rendered by `noctus.dev.redis_acl`.
+  # NOC-REMEDIATE[redis-memory-alert]: alert on used_memory > 80% of maxmemory for BOTH instances (needs an `info`
+  # grant for the probe user or a watchdog exec; `noctus.vps.stats` container memory is the interim signal). — 2026-11-10
+  breaker-redis:
+    image: redis:7.4.6-alpine@sha256:3b73847e72874be07e6657b129a94761662b79bc0f679273757d4218573b2a98
+    container_name: noctus-breaker-redis
+    expose:
+      - "6379"
+    command: ["redis-server", "--appendonly", "yes", "--aclfile", "/etc/redis/users.acl",
+              "--maxmemory", "64mb", "--maxmemory-policy", "noeviction"]
+    mem_limit: 192m
+    volumes:
+      - breaker_redis_data:/data
+      - ./redis-auth/breaker-users.acl:/etc/redis/users.acl:ro
+    networks:
+      noctus-data:
+        aliases: [noctus-breaker-redis]
+    user: redis
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    restart: unless-stopped
+    healthcheck:
       test: ["CMD-SHELL", "redis-cli --no-auth-warning --user healthcheck --pass x ping | grep -q PONG"]
       interval: 30s
       timeout: 5s
@@ -197,6 +240,7 @@ networks:
 volumes:
   redis_data:
   redis_acl_data:
+  breaker_redis_data:
   waha_sessions:
   cache_pg_data:
     name: noctus-cache-pg-data

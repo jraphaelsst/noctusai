@@ -461,7 +461,7 @@ def _curl_edge(hostname: str, timeout: int = 20) -> tuple[bool, str]:
 
 
 @_toolkit_freshness.refuse_gate("deploy_image")
-def deploy_image(
+def _deploy_image_impl(
     product: str,
     ssh_host: str = "noctus-vps",
     repo_dir: str = DEFAULT_REPO_DIR,
@@ -482,6 +482,8 @@ def deploy_image(
     skip_boot_smoke: bool = False,
     skip_compose_drift_check: bool = False,
     redis_auth: str = "auto",
+    redis_auth_record: Callable[..., Any] | None = None,
+    _ra_meta: dict | None = None,
     local_diff: Callable[[str, str], tuple[bool | None, list[str], str]] | None = None,
     allow_inactive: bool = False,
     live_products_fn: Callable[[], list[str]] | None = None,
@@ -583,9 +585,18 @@ def deploy_image(
     # P1-1 (security review r2): the Redis-auth override rides EVERY compose call (deploy + rollback) and a
     # listed service without its generated env refuses BEFORE any container is touched.
     ra_plan = _redis_auth.plan(runner, cf, product, redis_auth)
+    if _ra_meta is not None:
+        _ra_meta.update({"mode": ra_plan["mode"], "files": ra_plan["files"], "cut_over": ra_plan["cut_over"],
+                         "listed": ra_plan["listed"]})
+        if redis_auth == "off" and confirm:
+            # A deliberate hole in the guard: record WHICH override files it skipped, every time.
+            probe = _redis_auth.plan(runner, cf, product, "auto")
+            _ra_meta["skipped_files"] = probe["files"]
+            _ra_meta["recorded"] = _redis_auth.record_off("deploy_image", product, probe["files"], record=redis_auth_record)
     if ra_plan["error"]:
         return {"ok": False, "status": "error", "exit_code": 1, "product": product, "error": ra_plan["error"],
-                "redis_auth": ra_plan["mode"]}
+                "redis_auth": {"mode": ra_plan["mode"], "files": ra_plan["files"], "cut_over": ra_plan["cut_over"],
+                               "listed": ra_plan["listed"]}}
     ra_files = ra_plan["files"]
 
     # ── PRE-FLIGHT (read-only): the running image id ──
@@ -905,6 +916,17 @@ def deploy_image(
     r["health"] = health
     r["health_states"] = states
     return r
+
+
+def deploy_image(*args, **kwargs) -> dict:
+    """Public entry (same parameters as `_deploy_image_impl`). Adds `redis_auth` (mode, override files, listed
+    services, recorded-flag) to EVERY returned payload, success included, so an operator can always see which
+    compose files the call used."""
+    meta: dict = {}
+    result = _deploy_image_impl(*args, _ra_meta=meta, **kwargs)
+    if isinstance(result, dict) and meta:
+        result.setdefault("redis_auth", meta)
+    return result
 
 
 def register(server) -> None:

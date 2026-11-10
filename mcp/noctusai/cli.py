@@ -574,6 +574,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tunnel-config-confirm", action="store_true", help="With --tunnel-config=apply: actually write the live config + restart the tunnel (production mutation).")
     parser.add_argument("--redis-acl", metavar="ACTION", choices=["check", "render"], help="Prod Redis ACL lockdown, derived from the live roster: check = committed deploy/fleet/compose.redis-auth.prod.yml in sync (offline); render = plan (add --redis-acl-write to write the override + gitignored aclfile/env/pass files from REDIS_ACL_MASTER_SECRET). Never touches the VPS. MCP: noctus.dev.redis_acl. KB § PATTERNS/devops/redis-acl-lockdown.md.")
     parser.add_argument("--redis-acl-write", action="store_true", help="With --redis-acl=render: write the files (needs REDIS_ACL_MASTER_SECRET in env or deploy/fleet/.env.fleet).")
+    parser.add_argument("--redis-acl-services", metavar="SVC,SVC", default=None, help="With --redis-acl=render --redis-acl-write: the services to CUT OVER (written to the host-local compose.redis-auth.prod.yml). Re-render without a service to roll it back; an empty value removes the override.")
     parser.add_argument("--merge-queue-interval", type=float, default=60, help="With --merge-queue=watch: poll interval in seconds.")
     parser.add_argument("--merge-queue-sha", default=None, help="With --merge-queue=status: the enqueued sha.")
     parser.add_argument("--task-branch-slugs", default=None, help="With --task-branch=train: comma-separated ready feat/<slug> branches to merge --no-ff into ONE train-<name> branch (omit => dry-run candidate listing; --task-branch-slug names the train). Merge-all-before-integrating: one integrate of the train lands them all.")
@@ -4298,7 +4299,8 @@ def main():
 
     elif getattr(args, "redis_acl", None):
         from tools.noctus.dev.redis_acl import redis_acl as _redis_acl
-        r = _redis_acl(args.redis_acl, write=bool(args.redis_acl_write), worktree_path=args.worktree_path)
+        r = _redis_acl(args.redis_acl, write=bool(args.redis_acl_write), services=args.redis_acl_services,
+                       worktree_path=args.worktree_path)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 

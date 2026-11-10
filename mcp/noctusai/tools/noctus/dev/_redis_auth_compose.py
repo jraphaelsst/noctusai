@@ -22,47 +22,64 @@ from typing import Callable
 OVERRIDE_NAME = "compose.redis-auth.prod.yml"
 ENV_DIR = "redis-auth/env"
 REDIS_ACL_CONTAINER = "noctus-redis-acl"
+BREAKER_REDIS_CONTAINER = "noctus-breaker-redis"
 
 Probe = Callable[[list[str]], tuple[int, str, str]]
 
 
+def _listed(override_text: str) -> list[str]:
+    """Services listed in the override (block between `services:` and top-level `networks:`)."""
+    import re
+
+    body = override_text.split("\nservices:\n", 1)[-1].split("\nnetworks:\n", 1)[0]
+    return re.findall(r"^  ([a-z][a-z0-9\-]*):\s*$", body, flags=re.M)
+
+
 def plan(probe: Probe, base_compose: str, product: str, mode: str = "auto") -> dict:
-    """-> {'files': [extra -f paths], 'error': str|None, 'mode': ..., 'listed': bool}.
+    """-> {'files': [extra -f paths], 'error': str|None, 'mode': ..., 'listed': bool, 'cut_over': [...]}.
 
     `probe` runs a command on the deploy host (list form); `base_compose` is the base file's path there.
+    The override is HOST-LOCAL (rendered by `redis_acl render --services`), so "absent" is the normal state
+    before a cutover and this guard is inert until the guardian deliberately renders it.
     """
+    base = {"files": [], "error": None, "mode": mode, "listed": False, "cut_over": []}
     if mode == "off":
-        return {"files": [], "error": None, "mode": "off", "listed": False}
+        return base
     if mode != "auto":
-        return {"files": [], "error": f"redis-auth mode must be 'auto' or 'off', got {mode!r}", "mode": mode, "listed": False}
+        return {**base, "error": f"redis-auth mode must be 'auto' or 'off', got {mode!r}"}
     fleet_dir = posixpath.dirname(base_compose)
     override = posixpath.join(fleet_dir, OVERRIDE_NAME)
     rc, _o, err = probe(["test", "-f", override])
     if rc == 1:
-        return {"files": [], "error": None, "mode": "auto", "listed": False}
+        return base
     if rc != 0:
-        return {"files": [], "mode": "auto", "listed": False,
-                "error": f"redis-auth override probe failed (rc={rc}: {(err or '').strip()[:120]}) - refusing: "
-                         "an unverifiable override must not be treated as absent"}
-    rc, _o, err = probe(["grep", "-q", f"^  {product}:$", override])
-    if rc == 1:
-        return {"files": [override], "error": None, "mode": "auto", "listed": False}
+        return {**base, "error": f"redis-auth override probe failed (rc={rc}: {(err or '').strip()[:120]}) - refusing: "
+                                 "an unverifiable override must not be treated as absent"}
+    rc, text, err = probe(["cat", override])
     if rc != 0:
-        return {"files": [], "mode": "auto", "listed": False,
-                "error": f"redis-auth override read failed (rc={rc}) - refusing"}
-    env_file = posixpath.join(fleet_dir, ENV_DIR, f"{product}.env")
-    rc, _o, _e = probe(["test", "-s", env_file])
-    if rc != 0:
-        return {"files": [override], "mode": "auto", "listed": True,
-                "error": f"{override} lists {product} but its generated env file {env_file} is missing/empty "
-                         f"(rc={rc}). Render it first: python mcp/noctusai/cli.py --redis-acl render --redis-acl-write. "
-                         "Refusing to recreate: this service would silently fall back to the unauthenticated Redis."}
-    rc, out, _e = probe(["docker", "inspect", "-f", "{{.State.Running}}", REDIS_ACL_CONTAINER])
-    if rc != 0 or out.strip() != "true":
-        return {"files": [override], "mode": "auto", "listed": True,
-                "error": f"{override} lists {product} but {REDIS_ACL_CONTAINER} is not running - refusing: the "
-                         "recreated service would point at a Redis that is not there (step 2 of the rollout first)."}
-    return {"files": [override], "error": None, "mode": "auto", "listed": True}
+        return {**base, "error": f"redis-auth override read failed (rc={rc}: {(err or '').strip()[:120]}) - refusing"}
+    cut_over = _listed(text)
+    base = {**base, "files": [override], "cut_over": cut_over, "listed": product in cut_over}
+    # EVERY listed service's generated env file must exist: compose resolves the whole project, so one missing file
+    # breaks (or silently skips) a recreate of ANY service.
+    missing = []
+    for svc in cut_over:
+        env_file = posixpath.join(fleet_dir, ENV_DIR, f"{svc}.env")
+        rc, _o, _e = probe(["test", "-s", env_file])
+        if rc != 0:
+            missing.append(env_file)
+    if missing:
+        return {**base, "error": f"{override} lists {cut_over} but generated env file(s) {missing} are missing/empty. "
+                                 "Render them first: python mcp/noctusai/cli.py --redis-acl render --redis-acl-write "
+                                 f"--redis-acl-services {','.join(cut_over)}. Refusing to recreate: a service would "
+                                 "silently fall back to the unauthenticated Redis."}
+    if base["listed"]:
+        for container in (REDIS_ACL_CONTAINER, BREAKER_REDIS_CONTAINER):
+            rc, out, _e = probe(["docker", "inspect", "-f", "{{.State.Running}}", container])
+            if rc != 0 or out.strip() != "true":
+                return {**base, "error": f"{override} lists {product} but {container} is not running - refusing: the "
+                                         "recreated service would point at a Redis that is not there (rollout step 2 first)."}
+    return base
 
 
 def compose_cmd(base_compose: str, extra_files: list[str], *rest: str) -> list[str]:
@@ -70,3 +87,21 @@ def compose_cmd(base_compose: str, extra_files: list[str], *rest: str) -> list[s
     for f in extra_files:
         cmd += ["-f", f]
     return cmd + list(rest)
+
+
+def record_off(tool: str, product: str, files: list[str], record=None) -> bool:
+    """`mode="off"` is a deliberate hole in the guard: leave a ledger row every time it is used (best effort,
+    never raises; the caller reports `recorded` in the payload)."""
+    try:
+        if record is None:
+            from . import auto_improvement
+
+            record = auto_improvement.log_entry
+        r = record(scope="broad", kind="finding", target="deploy/fleet/compose.redis-auth.prod.yml",
+                   agent="devops-engineer",
+                   description=(f"{tool}(redis_auth='off') used for {product}: the Redis-auth override was NOT added "
+                                f"to the compose call (override files that would have applied: {files or 'none'}). "
+                                "A recreate under this mode can return a cut-over service to the unauthenticated Redis."))
+        return bool(r.get("ok", True)) if isinstance(r, dict) else True
+    except Exception:  # noqa: BLE001 - audit trail must never break a deploy
+        return False

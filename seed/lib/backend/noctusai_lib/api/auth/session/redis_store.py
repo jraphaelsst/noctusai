@@ -51,6 +51,7 @@ from uuid import UUID
 
 import secrets
 
+from noctusai_lib.api.auth.session.store import is_valid_session_id
 from noctusai_lib.api.auth.session.types import AuthContext, SessionTokens
 from noctusai_lib.security.encrypted_tokens import (
     MultiKeyDecryptor,
@@ -62,6 +63,9 @@ logger = logging.getLogger(__name__)
 # Namespaced so session keys never collide with the LLM cache or rate-limiter
 # in a shared Redis db.
 _KEY_PREFIX = "nai_session:"
+# NOC-REMEDIATE[session-dual-read-sunset]: drop `_adopt_legacy` / `_legacy_key` and the legacy-key delete once
+# every pre-hash record has expired (max session TTL is 24h; remove after one full TTL past the hash deploy,
+# verify with `noctus.vps.exec redis-cli --scan --pattern 'nai_session:*'` showing only 64-hex names). — 2026-11-10
 # NOC-REMEDIATE[redis-session-mac]: session records carry no MAC and the `nai_session:` family is a shared
 # name across products, so a compromised product's Redis user can WRITE a record another product will honour
 # (cross-product session forging). Fix at this seam: a per-product key prefix or an HMAC over the record keyed
@@ -143,6 +147,10 @@ class RedisSessionStore:
         TTL, so deploying the hash logs nobody out. No-op (ResponseError 'no such key') when there is none."""
         from redis.exceptions import ResponseError
 
+        # ONLY a legacy-shaped id may adopt. Without this, presenting a key HASH `H` as a cookie RENAMEd the
+        # victim's `nai_session:H` onto sha256(H): the attacker got the session and the victim was logged out.
+        if not is_valid_session_id(session_id):
+            return
         try:
             await client.rename(self._legacy_key(session_id), self._key(session_id))
         except ResponseError:
@@ -226,7 +234,11 @@ class RedisSessionStore:
     async def delete(self, session_id: str) -> None:
         client = self._get_client()
         # Both forms: a not-yet-migrated legacy record must not outlive its logout.
-        await client.delete(self._key(session_id), self._legacy_key(session_id))
+        # (Only a legacy-shaped id owns a legacy key: `delete(<a key hash>)` must not log the victim out.)
+        keys = [self._key(session_id)]
+        if is_valid_session_id(session_id):
+            keys.append(self._legacy_key(session_id))
+        await client.delete(*keys)
 
     async def read_tokens(self, session_id: str) -> SessionTokens | None:
         record = await self._read_record(session_id)

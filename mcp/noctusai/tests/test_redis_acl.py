@@ -68,7 +68,9 @@ class TestPasswords:
             ra.derive_password(bad, "core")
 
 
-class TestAclfile:
+
+
+class TestAppAclfile:
     ROSTER = ["agents", "core", "social-wiring"]
 
     def _acl(self):
@@ -82,80 +84,148 @@ class TestAclfile:
 
     def test_no_plaintext_password_only_hashes(self):
         acl = self._acl()
-        for u in (*self.ROSTER, "ops", "trip", "probe"):
+        for u in (*self.ROSTER, "ops-app"):
             pw = ra.derive_password(MASTER, u)
-            assert pw not in acl
-            assert f"#{hashlib.sha256(pw.encode()).hexdigest()}" in acl
+            assert pw not in acl and f"#{hashlib.sha256(pw.encode()).hexdigest()}" in acl
         assert MASTER not in acl
 
-    def test_product_fleet_key_read_only_and_own_breaker_rw(self):
-        ln = self._line("core")
-        assert f"%R~{ra.FLEET_KEY}" in ln and f"%RW~{ra.FLEET_KEY}" not in ln
-        assert "%RW~noctus:breaker:core:*" in ln
-        assert "noctus:breaker:agents" not in ln  # never a peer's breaker keys
-        assert "~noctus:breaker:*" not in ln
+    def test_app_redis_carries_no_breaker_grants_at_all(self):  # P2-A
+        acl = self._acl()
+        assert "noctus:breaker" not in acl and "user trip" not in acl and "user probe" not in acl
 
-    def test_product_commands_exclude_dangerous_admin(self):
+    def test_product_commands_exclude_dangerous_admin_scripting(self):
         ln = self._line("core")
-        assert "+@all -@dangerous -@admin -@scripting" in ln
-        assert "+keys" not in ln
+        assert "+@all -@dangerous -@admin -@scripting" in ln and "+eval " in ln + " " and "+keys" not in ln
         assert "+keys" in self._line("social-wiring")  # declared exception (NOC-REMEDIATE[redis-keys-scan])
-
-    def test_trip_can_set_fleet_only_never_del(self):
-        ln = self._line("trip")
-        assert f"%RW~{ra.FLEET_KEY}" in ln and "+setnx" in ln and "+set " not in ln + " " and "+del" not in ln and "+@" not in ln.replace("-@all", "")
-
-    def test_ops_scoped_to_breaker_keys_and_owns_del(self):
-        ln = self._line("ops")
-        assert "~noctus:breaker:*" in ln and "+del" in ln and "+rpush" in ln
-        assert "+flushall" not in ln and "+config" not in ln
 
     def test_every_key_family_is_listed_for_products(self):
         ln = self._line("agents")
         for pat, _src in ra.APP_KEY_FAMILIES:
-            assert f"~{pat}" in ln
+            assert f"~{pat}" in ln and f"~agents:*" in ln
+
+    def test_ops_on_app_redis_has_no_keys_only_acl_log(self):
+        ln = self._line("ops")
+        assert "~" not in ln.split("resetchannels", 1)[1] and "+acl|log" in ln and "+get" not in ln
 
     def test_healthcheck_ping_only(self):
         ln = next(x for x in self._acl().splitlines() if x.startswith("user healthcheck "))
         assert "nopass" in ln and "-@all +ping" in ln and "~" not in ln
 
 
-class TestOverride:
-    def test_committed_override_in_sync_with_derived_roster(self):
-        r = ra.redis_acl("check", repo_root=str(REPO))
-        assert r["ok"], r  # fix: python mcp/noctusai/cli.py --redis-acl render
+class TestBreakerAclfile:
+    ROSTER = ["agents", "core"]
 
-    def test_no_secrets_in_override(self):
+    def _acl(self):
+        return ra.render_breaker_aclfile(self.ROSTER, MASTER)
+
+    def _line(self, user):
+        return next(ln for ln in self._acl().splitlines() if ln.startswith(f"user {user} "))
+
+    def test_no_app_keys_no_scripting_for_anyone(self):
+        acl = self._acl()
+        for app in ("nai_session", "LIMITS", "queue:", "conversation:"):
+            assert app not in acl
+        for ln in acl.splitlines():
+            for banned in ("+eval", "+script", "+function", "+@all", "+scan", "+keys"):
+                assert banned not in ln, (banned, ln)
+
+    def test_hashes_only_and_breaker_passwords_distinct_from_app_passwords(self):
+        acl = self._acl()
+        for u in ("trip", "probe", "ops"):
+            assert ra.derive_password(MASTER, u) not in acl
+        assert ra.breaker_user_password(MASTER, "core") != ra.derive_password(MASTER, "core")
+        assert ra.breaker_user_password(MASTER, "core") not in acl
+
+    def test_product_rw_own_sources_ro_rearm_and_fleet(self):
+        ln = self._line("core")
+        for sfx in ("worker:*", "scheduler:*", "gate:*", "audit", "index"):
+            assert f"%RW~noctus:breaker:core:{sfx}" in ln
+        assert "%R~noctus:breaker:core:rearm:*" in ln and "%RW~noctus:breaker:core:rearm" not in ln
+        assert f"%R~{ra.FLEET_KEY}" in ln and f"%RW~{ra.FLEET_KEY}" not in ln
+        assert "noctus:breaker:agents" not in ln and "~noctus:breaker:*" not in ln
+
+    def test_trip_setnx_only_probe_exists_only_ops_scoped(self):
+        trip, probe, ops = self._line("trip"), self._line("probe"), self._line("ops")
+        assert f"%RW~{ra.FLEET_KEY}" in trip and "+setnx" in trip and "+set " not in trip + " " and "+del" not in trip
+        assert f"%R~{ra.FLEET_KEY}" in probe and "%RW" not in probe and "+exists" in probe
+        for cmd in ("+set", "+setnx", "+del", "+get "):
+            assert cmd not in probe.replace("-@all", "") + " "
+        assert "~noctus:breaker:*" in ops and "+del" in ops and "+ltrim" in ops and "+sadd" in ops and "+smembers" in ops
+        assert "+flushall" not in ops and "+config" not in ops and "+script" not in ops
+
+    def test_default_off_and_healthcheck(self):
+        assert "user default off" in self._acl().splitlines()
+
+
+class TestOverride:  # P1-B: host-local, written only for the services deliberately cut over
+    def test_no_override_is_committed(self):
+        assert not (REPO / ra.OVERRIDE_REL).exists()
+        assert ra.OVERRIDE_REL in (REPO / ".gitignore").read_text()
+        assert "deploy/fleet/redis-auth/" in (REPO / ".gitignore").read_text()
+
+    def test_override_lists_exactly_the_cut_over_services_without_secrets(self):
         text = ra.render_override(["core"])
-        assert "PASSWORD" not in text and "env/core.env" in text and ra.DATA_NET in text
+        assert "PASSWORD" not in text and "env/core.env" in text and ra.DATA_NET in text and "agents" not in text
+        assert ra.parse_override_services(text) == ["core"]
 
-    def test_service_env_carries_creds_and_fail_closed_flag(self):
+    def test_service_env_carries_both_connections_and_fail_closed_flag(self):
         env = ra.render_service_env("core", MASTER)
         assert "REDIS_USERNAME=core" in env and "REDIS_REQUIRE_AUTH=true" in env
-        assert f"REDIS_PASSWORD={ra.derive_password(MASTER, 'core')}" in env
-        assert f"REDIS_URL={ra.REDIS_URL}" in env
+        assert f"REDIS_PASSWORD={ra.derive_password(MASTER, 'core')}" in env and f"REDIS_URL={ra.REDIS_URL}" in env
+        assert f"NOCTUS_BREAKER_REDIS_URL={ra.BREAKER_URL}" in env and "NOCTUS_BREAKER_REDIS_USERNAME=core" in env
+        assert f"NOCTUS_BREAKER_REDIS_PASSWORD={ra.breaker_user_password(MASTER, 'core')}" in env
+
+    def _tree(self, tmp_path):
+        (tmp_path / "deploy/fleet").mkdir(parents=True)
+        (tmp_path / ra.COMPOSE_REL).write_text(COMPOSE)
+        (tmp_path / ra.SCOPE_REL).write_text(SCOPE)
+        return tmp_path
 
     def test_render_write_without_master_errors_and_leaks_nothing(self, tmp_path):
-        (tmp_path / "deploy/fleet").mkdir(parents=True)
-        (tmp_path / ra.COMPOSE_REL).write_text(COMPOSE)
-        (tmp_path / ra.SCOPE_REL).write_text(SCOPE)
-        r = ra.redis_acl("render", write=True, repo_root=str(tmp_path), env={})
+        t = self._tree(tmp_path)
+        r = ra.redis_acl("render", write=True, repo_root=str(t), env={})
         assert not r["ok"] and "REDIS_ACL_MASTER_SECRET" in r["error"]
-        assert not (tmp_path / ra.OUT_DIR_REL / "users.acl").exists()
+        assert not (t / ra.OUT_DIR_REL / "users.acl").exists() and not (t / ra.OVERRIDE_REL).exists()
 
-    def test_render_write_files_modes_and_no_secret_in_payload(self, tmp_path):
-        (tmp_path / "deploy/fleet").mkdir(parents=True)
-        (tmp_path / ra.COMPOSE_REL).write_text(COMPOSE)
-        (tmp_path / ra.SCOPE_REL).write_text(SCOPE)
-        r = ra.redis_acl("render", write=True, repo_root=str(tmp_path), env={ra.MASTER_ENV: MASTER})
+    def test_render_without_services_leaves_the_override_alone_and_services_rerender_cuts_over_and_back(self, tmp_path):
+        t = self._tree(tmp_path)
+        env = {ra.MASTER_ENV: MASTER}
+        r = ra.redis_acl("render", write=True, repo_root=str(t), env=env)
+        assert r["ok"] and r["cut_over"] == "unchanged" and not (t / ra.OVERRIDE_REL).exists()
+        assert ra.redis_acl("check", repo_root=str(t))["status"] == "no_override"
+        r = ra.redis_acl("render", write=True, repo_root=str(t), env=env, services="core,agents")
+        assert r["cut_over"] == ["agents", "core"]
+        assert ra.parse_override_services((t / ra.OVERRIDE_REL).read_text()) == ["agents", "core"]
+        # per-service rollback = re-render WITHOUT it
+        ra.redis_acl("render", write=True, repo_root=str(t), env=env, services="agents")
+        assert ra.parse_override_services((t / ra.OVERRIDE_REL).read_text()) == ["agents"]
+        assert ra.redis_acl("check", repo_root=str(t))["ok"]
+        ra.redis_acl("render", write=True, repo_root=str(t), env=env, services="")
+        assert not (t / ra.OVERRIDE_REL).exists()
+
+    def test_services_outside_the_roster_refused(self, tmp_path):
+        t = self._tree(tmp_path)
+        r = ra.redis_acl("render", write=True, repo_root=str(t), env={ra.MASTER_ENV: MASTER}, services="igig")
+        assert not r["ok"] and "roster" in r["error"]
+
+    def test_render_files_modes_and_no_secret_in_payload(self, tmp_path):
+        t = self._tree(tmp_path)
+        r = ra.redis_acl("render", write=True, repo_root=str(t), env={ra.MASTER_ENV: MASTER})
         assert r["ok"] and MASTER not in str(r) and ra.derive_password(MASTER, "core") not in str(r)
-        out = tmp_path / ra.OUT_DIR_REL
-        assert (out / "env/core.env").stat().st_mode & 0o777 == 0o600
-        assert (out / "ops.pass").stat().st_mode & 0o777 == 0o600
-        assert ra.redis_acl("check", repo_root=str(tmp_path))["ok"]
+        out = t / ra.OUT_DIR_REL
+        for f in ("env/core.env", "ops.pass", "ops-app.pass", "trip.pass", "probe.pass"):
+            assert (out / f).stat().st_mode & 0o777 == 0o600, f
+        assert (out / "breaker-users.acl").is_file() and (out / "users.acl").is_file()
+        assert (out / "probe.pass").read_text().strip() == ra.derive_password(MASTER, "probe")
+
+    def test_check_flags_a_cut_over_service_without_env_file(self, tmp_path):
+        t = self._tree(tmp_path)
+        (t / ra.OVERRIDE_REL).write_text(ra.render_override(["core"]))
+        r = ra.redis_acl("check", repo_root=str(t))
+        assert not r["ok"] and r["missing_or_not_in_roster"] == ["core"]
 
 
-# ── behaviour against a real redis-server ────────────────────────────────────────────────────
+# ── behaviour against real redis-server instances ───────────────────────────────────────────
 
 def _free_port() -> int:
     with socket.socket() as s:
@@ -163,40 +233,43 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _boot(tmp_path_factory, name, aclfile_text, extra=()):
+    redis = pytest.importorskip("redis")
+    d = tmp_path_factory.mktemp(name)
+    (d / "users.acl").write_text(aclfile_text)
+    port = _free_port()
+    proc = subprocess.Popen(
+        ["redis-server", "--port", str(port), "--bind", "127.0.0.1", "--dir", str(d), "--aclfile", str(d / "users.acl"),
+         "--save", "", "--appendonly", "no", *extra], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(50):
+        try:
+            socket.create_connection(("127.0.0.1", port), 0.1).close()
+            return proc, port, redis
+        except OSError:
+            time.sleep(0.1)
+    proc.terminate()
+    pytest.skip("redis-server did not start")
+
+
+ROSTER3 = ["agents", "core", "social-wiring"]
+
+
 @pytest.mark.skipif(shutil.which("redis-server") is None, reason="redis-server not installed")
-class TestLiveRedis:
+class TestLiveApp:
     @pytest.fixture(scope="class")
     def server(self, tmp_path_factory):
-        redis = pytest.importorskip("redis")
-        d = tmp_path_factory.mktemp("redis")
-        roster = ["agents", "core", "social-wiring"]
-        (d / "users.acl").write_text(ra.render_aclfile(roster, MASTER))
-        port = _free_port()
-        proc = subprocess.Popen(
-            ["redis-server", "--port", str(port), "--bind", "127.0.0.1", "--dir", str(d),
-             "--aclfile", str(d / "users.acl"), "--save", "", "--appendonly", "no"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        try:
-            for _ in range(50):
-                try:
-                    socket.create_connection(("127.0.0.1", port), 0.1).close()
-                    break
-                except OSError:
-                    time.sleep(0.1)
-            else:
-                pytest.skip("redis-server did not start")
-            yield port, redis
-        finally:
-            proc.terminate()
-            proc.wait(5)
+        proc, port, redis = _boot(tmp_path_factory, "app", ra.render_aclfile(ROSTER3, MASTER))
+        yield port, redis
+        proc.terminate()
+        proc.wait(5)
 
-    def _c(self, server, user):
+    def _c(self, server, user, pw_user=None):
         port, redis = server
-        return redis.Redis(port=port, username=user, password=ra.derive_password(MASTER, user), decode_responses=True)
+        return redis.Redis(port=port, username=user, password=ra.derive_password(MASTER, pw_user or user), decode_responses=True)
 
     def test_unauthenticated_and_default_user_refused(self, server):
         port, redis = server
-        with pytest.raises(redis.exceptions.AuthenticationError if hasattr(redis.exceptions, "AuthenticationError") else Exception):
+        with pytest.raises(redis.exceptions.AuthenticationError):
             redis.Redis(port=port).get("k")
         with pytest.raises(Exception):
             redis.Redis(port=port, username="default", password="").get("k")
@@ -214,35 +287,26 @@ class TestLiveRedis:
             k = pat.replace("*", "probe")
             assert c.set(k, "1", ex=60), k
             assert c.get(k) == "1"
-        # limits' Lua INCR+EXPIRE shape: EVAL under the caller's key permissions
         assert c.eval("return redis.call('incr', KEYS[1])", 1, "LIMITSprobe-lua") >= 1
-        sha = c.script_load("return 1")
-        assert c.evalsha(sha, 0) == 1
+        assert c.evalsha(c.script_load("return 1"), 0) == 1
         c.xadd("rt:wa:conn:1", {"a": "b"})
         c.zadd("queue:conversation_due", {"c1": 1})
 
-    def test_product_cannot_touch_fleet_key_or_peer_breaker(self, server):
-        ops = self._c(server, "ops")
-        ops.set(ra.FLEET_KEY, "{}")
-        c, peer = self._c(server, "core"), self._c(server, "agents")
+    def test_no_breaker_key_is_reachable_on_the_app_redis(self, server):
         _, redis = server
-        assert c.get(ra.FLEET_KEY) == "{}"  # read-only is exactly what the breaker needs
-        for call in (lambda: c.set(ra.FLEET_KEY, "x"), lambda: c.delete(ra.FLEET_KEY),
-                     lambda: c.set("noctus:breaker:agents:worker:x", "x"), lambda: c.rpush(ra.AUDIT_KEY, "x"),
-                     lambda: c.expire(ra.FLEET_KEY, 1)):
+        c = self._c(server, "core")
+        for call in (lambda: c.get(ra.FLEET_KEY), lambda: c.set(ra.FLEET_KEY, "x"),
+                     lambda: c.set("noctus:breaker:core:worker:x", "1")):
             with pytest.raises(redis.exceptions.NoPermissionError):
                 call()
-        assert c.set("noctus:breaker:core:worker:x", "1") and c.mget([ra.FLEET_KEY, "noctus:breaker:core:worker:x"])
-        assert c.delete("noctus:breaker:core:worker:x") == 1
-        with pytest.raises(redis.exceptions.NoPermissionError):
-            peer.set("noctus:breaker:core:worker:x", "x")
 
     def test_product_cannot_run_admin_or_dangerous_commands(self, server):
         c = self._c(server, "core")
         _, redis = server
         for call in (c.flushall, c.flushdb, lambda: c.config_get("*"), lambda: c.keys("*"), c.shutdown,
                      lambda: c.execute_command("ACL", "LIST"), lambda: c.execute_command("SORT", "x"),
-                     lambda: c.script_flush(), lambda: c.script_kill(), lambda: c.execute_command("FUNCTION", "FLUSH"), lambda: c.client_list()):
+                     lambda: c.script_flush(), lambda: c.script_kill(), lambda: c.execute_command("FUNCTION", "FLUSH"),
+                     lambda: c.client_list()):
             with pytest.raises(redis.exceptions.NoPermissionError):
                 call()
 
@@ -252,54 +316,56 @@ class TestLiveRedis:
         assert "download:cache:a" in sw.keys("download:cache:*")
 
     def test_unlisted_key_family_denied(self, server):
-        c = self._c(server, "core")
         _, redis = server
         with pytest.raises(redis.exceptions.NoPermissionError):
-            c.set("something:else", "1")
+            self._c(server, "core").set("something:else", "1")
 
-    def test_trip_sets_fleet_nx_but_cannot_delete_or_touch_others(self, server):
+    def test_ops_on_the_app_redis_reads_acl_log_and_touches_no_key(self, server):
+        _, redis = server
+        ops = self._c(server, "ops", "ops-app")
+        assert ops.ping() and isinstance(ops.acl_log(), list)
+        for call in (lambda: ops.get("nai_session:x"), lambda: ops.set("llm:x", "1"), ops.flushall):
+            with pytest.raises(redis.exceptions.NoPermissionError):
+                call()
+
+
+@pytest.mark.skipif(shutil.which("redis-server") is None, reason="redis-server not installed")
+class TestLiveBreaker:
+    @pytest.fixture(scope="class")
+    def server(self, tmp_path_factory):
+        proc, port, redis = _boot(tmp_path_factory, "brk", ra.render_breaker_aclfile(ROSTER3, MASTER),
+                                  ("--maxmemory", "64mb", "--maxmemory-policy", "noeviction"))
+        yield port, redis
+        proc.terminate()
+        proc.wait(5)
+
+    def _c(self, server, user):
         port, redis = server
-        trip = self._c(server, "trip")
-        ops = self._c(server, "ops")
-        ops.delete(ra.FLEET_KEY)
-        assert trip.setnx(ra.FLEET_KEY, '{"by":"offhost-watchdog"}')
-        assert not trip.setnx(ra.FLEET_KEY, "other")  # an earlier trip stands
-        with pytest.raises(redis.exceptions.NoPermissionError):
-            trip.set(ra.FLEET_KEY, "x", ex=1)  # cannot overwrite/expire the trip
-        assert trip.exists(ra.FLEET_KEY) == 1
-        for call in (lambda: trip.delete(ra.FLEET_KEY), lambda: trip.set("noctus:breaker:core:x", "1"),
-                     lambda: trip.rpush(ra.AUDIT_KEY, "x"), lambda: trip.get("nai_session:x")):
-            with pytest.raises(redis.exceptions.NoPermissionError):
-                call()
+        pw = ra.breaker_user_password(MASTER, user) if user in ROSTER3 else ra.derive_password(MASTER, user)
+        return redis.Redis(port=port, username=user, password=pw, decode_responses=True)
 
-    def test_ops_rearms_audits_reads_index_never_scans(self, server):
+    def test_noeviction_and_no_scripting_for_anyone(self, server):
         _, redis = server
-        ops = self._c(server, "ops")
-        ops.set(ra.FLEET_KEY, "{}")
-        assert ops.delete(ra.FLEET_KEY) == 1  # the ONLY identity that may re-arm
-        ops.rpush(ra.AUDIT_KEY, "{}")
-        assert ops.lrange(ra.AUDIT_KEY, 0, -1)
-        core = self._c(server, "core")
-        core.sadd("noctus:breaker:core:index", "noctus:breaker:core:worker:x")  # product keeps its own index
-        assert ops.smembers("noctus:breaker:core:index") == {"noctus:breaker:core:worker:x"}
-        assert ops.srem("noctus:breaker:core:index", "noctus:breaker:core:worker:x") == 1
-        for call in (lambda: ops.scan(0), lambda: ops.keys("*")):
+        for u in (*ROSTER3, "ops", "trip", "probe"):
+            c = self._c(server, u)
+            for call in (lambda: c.eval("return 1", 0), lambda: c.script_load("return 1"), lambda: c.execute_command("FUNCTION", "LIST")):
+                with pytest.raises(redis.exceptions.NoPermissionError):
+                    call()
+
+    def test_product_fleet_key_read_only_own_sources_rw(self, server):
+        _, redis = server
+        self._c(server, "ops").set(ra.FLEET_KEY, "{}")
+        c = self._c(server, "core")
+        assert c.get(ra.FLEET_KEY) == "{}"
+        for call in (lambda: c.set(ra.FLEET_KEY, "x"), lambda: c.delete(ra.FLEET_KEY), lambda: c.expire(ra.FLEET_KEY, 1),
+                     lambda: c.set("noctus:breaker:agents:worker:x", "x"), lambda: c.rpush(ra.AUDIT_KEY, "x")):
             with pytest.raises(redis.exceptions.NoPermissionError):
                 call()
-        for call in (lambda: ops.get("nai_session:x"), ops.flushall, lambda: ops.config_get("*")):
-            with pytest.raises(redis.exceptions.NoPermissionError):
-                call()
+        assert c.set("noctus:breaker:core:worker:x", "1") and c.set("noctus:breaker:core:scheduler:j", "1")
+        assert c.mget([ra.FLEET_KEY, "noctus:breaker:core:worker:x"]) == ["{}", "1"]
+        assert c.delete("noctus:breaker:core:worker:x") == 1
 
-    def test_ops_ltrims_the_audit_list_and_sadds_a_hand_tripped_key_into_the_index(self, server):
-        ops = self._c(server, "ops")
-        for i in range(5):
-            ops.rpush(ra.AUDIT_KEY, f"row{i}")
-        assert ops.ltrim(ra.AUDIT_KEY, -3, -1) and ops.lrange(ra.AUDIT_KEY, 0, -1) == ["row2", "row3", "row4"]
-        ops.set("noctus:breaker:core:worker:hand", "{}")
-        assert ops.sadd("noctus:breaker:core:index", "noctus:breaker:core:worker:hand") == 1
-        assert "noctus:breaker:core:worker:hand" in ops.smembers("noctus:breaker:core:index")
-
-    def test_product_audit_list_and_index_inside_its_own_breaker_namespace(self, server):
+    def test_product_audit_and_index_inside_its_own_namespace(self, server):
         _, redis = server
         c = self._c(server, "core")
         for i in range(5):
@@ -308,6 +374,28 @@ class TestLiveRedis:
         assert c.sadd("noctus:breaker:core:index", "k1", "k2") == 2 and c.srem("noctus:breaker:core:index", "k1") == 1
         for call in (lambda: c.sadd("noctus:breaker:agents:index", "x"), lambda: c.rpush("noctus:breaker:agents:audit", "x"),
                      lambda: c.ltrim(ra.AUDIT_KEY, 0, 0), lambda: c.sadd("noctus:breaker:index", "x")):
+            with pytest.raises(redis.exceptions.NoPermissionError):
+                call()
+
+    def test_rearm_markers_are_read_only_for_products_and_written_only_by_ops(self, server):
+        _, redis = server
+        c, ops = self._c(server, "core"), self._c(server, "ops")
+        key = "noctus:breaker:core:rearm:worker:x"
+        assert ops.set(key, "1")
+        assert c.get(key) == "1"  # the product can READ its marker
+        for call in (lambda: c.set(key, "2"), lambda: c.delete(key), lambda: c.expire(key, 1)):
+            with pytest.raises(redis.exceptions.NoPermissionError):
+                call()
+        assert ops.delete(key) == 1
+
+    def test_trip_setnx_only(self, server):
+        _, redis = server
+        trip, ops = self._c(server, "trip"), self._c(server, "ops")
+        ops.delete(ra.FLEET_KEY)
+        assert trip.setnx(ra.FLEET_KEY, '{"by":"offhost-watchdog"}')
+        assert not trip.setnx(ra.FLEET_KEY, "other") and trip.exists(ra.FLEET_KEY) == 1
+        for call in (lambda: trip.set(ra.FLEET_KEY, "x", ex=1), lambda: trip.delete(ra.FLEET_KEY),
+                     lambda: trip.set("noctus:breaker:core:x", "1"), lambda: trip.rpush(ra.AUDIT_KEY, "x")):
             with pytest.raises(redis.exceptions.NoPermissionError):
                 call()
 
@@ -322,36 +410,49 @@ class TestLiveRedis:
             with pytest.raises(redis.exceptions.NoPermissionError):
                 call()
 
+    def test_ops_rearms_audits_ltrims_index_never_scans(self, server):
+        _, redis = server
+        ops, core = self._c(server, "ops"), self._c(server, "core")
+        ops.set(ra.FLEET_KEY, "{}")
+        assert ops.delete(ra.FLEET_KEY) == 1
+        for i in range(5):
+            ops.rpush(ra.AUDIT_KEY, f"row{i}")
+        assert ops.ltrim(ra.AUDIT_KEY, -3, -1) and ops.lrange(ra.AUDIT_KEY, 0, -1) == ["row2", "row3", "row4"]
+        ops.set("noctus:breaker:core:worker:hand", "{}")
+        assert ops.sadd("noctus:breaker:core:index", "noctus:breaker:core:worker:hand") == 1
+        assert "noctus:breaker:core:worker:hand" in ops.smembers("noctus:breaker:core:index")
+        for call in (lambda: ops.scan(0), lambda: ops.keys("*"), lambda: ops.get("nai_session:x"), ops.flushall,
+                     lambda: ops.config_get("*"), lambda: ops.script_kill()):
+            with pytest.raises(redis.exceptions.NoPermissionError):
+                call()
 
-# ── round 2 ──────────────────────────────────────────────────────────────────────────────────
+    def test_ops_cannot_reconfigure_the_instance(self, server):
+        port, redis = server
+        admin = redis.Redis(port=port, username="ops", password=ra.derive_password(MASTER, "ops"))
+        with pytest.raises(redis.exceptions.NoPermissionError):
+            admin.config_set("maxmemory-policy", "allkeys-lru")  # noeviction is set at boot and stays
 
-class TestRound2Acl:
-    ROSTER = ["agents", "core"]
 
-    def _line(self, user):
-        return next(ln for ln in ra.render_aclfile(self.ROSTER, MASTER).splitlines() if ln.startswith(f"user {user} "))
+class TestHardeningFlags:
+    def _seg(self, name, nxt):
+        text = (REPO / "deploy/fleet/compose.infra.prod.yml").read_text()
+        return text[text.index(f"  {name}:\n"):text.index(f"  {nxt}:\n")]
 
-    def test_ops_has_no_scan_but_a_set_index_and_script_kill(self):  # P2-1 / P2-4
-        ln = self._line("ops")
-        assert "+scan" not in ln and "+keys" not in ln
-        assert "+smembers" in ln and "+srem" in ln and "+sadd" in ln and "+ltrim" in ln
-        assert "+script|kill" in ln and "+function|kill" in ln
+    def test_app_redis_bounded_digest_pinned_and_roomy(self):
+        seg = self._seg("redis-acl", "breaker-redis")
+        assert "--maxmemory" in seg and "volatile-lru" in seg and "mem_limit: 1g" in seg
+        assert "redis:7-alpine" not in seg and "@sha256:" in seg and "redis:7.4.6" in seg
 
-    def test_product_may_maintain_its_own_breaker_index(self):
-        assert "%RW~noctus:breaker:core:*" in self._line("core")  # <slug>:index lives under it
+    def test_breaker_redis_is_tiny_noeviction_aof_internal_only(self):
+        seg = self._seg("breaker-redis", "cache-pg")
+        assert '"--maxmemory", "64mb"' in seg and "noeviction" in seg and "--appendonly" in seg
+        assert "mem_limit:" in seg and "@sha256:" in seg and "redis:7.4.6" in seg and "noctus-net" not in seg
+        assert "breaker-users.acl" in seg and "noctus-breaker-redis" in seg
 
-    @pytest.mark.parametrize("bad", ["noctus", "default", "ops", "trip", "healthcheck", "wa", "rt", "llm", "queue", "conversation"])
-    def test_reserved_slugs_refused(self, bad):  # P3
-        compose = f"services:\n  {bad}: {{env_file: ['../../.env']}}\n"
-        with pytest.raises(ValueError, match="reserved"):
-            ra.derive_roster(compose, f"{bad}\n")
+    def test_neither_instance_joins_the_shared_network(self):
+        for name, nxt in (("redis-acl", "breaker-redis"), ("breaker-redis", "cache-pg")):
+            assert "noctus-net" not in self._seg(name, nxt)
 
-    def test_per_user_generation_override(self):  # P3
-        a = ra.derive_password(MASTER, "core", {"*": "1", "core": "2"})
-        assert a == ra.derive_password(MASTER, "core", "2") and a != ra.derive_password(MASTER, "agents", {"*": "1", "core": "2"})
-        assert ra.parse_generation_overrides("core=2, ops=3") == {"core": "2", "ops": "3"}
-        with pytest.raises(ValueError):
-            ra.parse_generation_overrides("core=#2")
 
 
 class TestMasterParsing:  # P1-2
@@ -419,26 +520,18 @@ class TestSecretWrites:  # P3
             ra._write_secret(tmp_path / "link" / "x", "s", 0o600)
 
 
-class TestAclfileHardeningFlags:
-    def test_infra_compose_bounds_redis_memory_and_pins_digest(self):
-        text = (REPO / "deploy/fleet/compose.infra.prod.yml").read_text()
-        seg = text[text.index("  redis-acl:"):text.index("  cache-pg:")]
-        assert "--maxmemory" in seg and "volatile-lru" in seg and "mem_limit:" in seg
-        assert "redis:7-alpine" not in seg and "@sha256:" in seg
 
 
-class TestProbeUser:  # N10: the read-only host probe must not be `trip`
-    def test_probe_line_is_exists_only_on_the_fleet_key(self):
-        ln = next(x for x in ra.render_aclfile(["core"], MASTER).splitlines() if x.startswith("user probe "))
-        assert f"%R~{ra.FLEET_KEY}" in ln and "%RW" not in ln and "+exists" in ln
-        for cmd in ("+set", "+setnx", "+del", "+get ", "+@"):
-            assert cmd not in ln.replace("-@all", "")
+class TestSlugsAndGenerations:
+    @pytest.mark.parametrize("bad", ["noctus", "default", "ops", "trip", "probe", "healthcheck", "wa", "rt", "llm", "queue", "conversation"])
+    def test_reserved_slugs_refused(self, bad):
+        compose = f"services:\n  {bad}: {{env_file: ['../../.env']}}\n"
+        with pytest.raises(ValueError, match="reserved"):
+            ra.derive_roster(compose, f"{bad}\n")
 
-    def test_probe_pass_written_0600(self, tmp_path):
-        (tmp_path / "deploy/fleet").mkdir(parents=True)
-        (tmp_path / ra.COMPOSE_REL).write_text(COMPOSE)
-        (tmp_path / ra.SCOPE_REL).write_text(SCOPE)
-        assert ra.redis_acl("render", write=True, repo_root=str(tmp_path), env={ra.MASTER_ENV: MASTER})["ok"]
-        f = tmp_path / ra.OUT_DIR_REL / "probe.pass"
-        assert f.stat().st_mode & 0o777 == 0o600
-        assert f.read_text().strip() == ra.derive_password(MASTER, "probe")
+    def test_per_user_generation_override(self):
+        a = ra.derive_password(MASTER, "core", {"*": "1", "core": "2"})
+        assert a == ra.derive_password(MASTER, "core", "2") and a != ra.derive_password(MASTER, "agents", {"*": "1", "core": "2"})
+        assert ra.parse_generation_overrides("core=2, ops=3") == {"core": "2", "ops": "3"}
+        with pytest.raises(ValueError):
+            ra.parse_generation_overrides("core=#2")

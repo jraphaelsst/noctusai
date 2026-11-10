@@ -1,38 +1,35 @@
-"""noctus.dev.redis_acl -- derive prod Redis's ACL file + per-service creds from the live roster.
+"""noctus.dev.redis_acl -- derive prod Redis's ACL files + per-service creds from the live roster.
 
-**Why (2026-11-10, security review F3 of the Supabase request breaker).** Prod Redis
-(`noctus-redis`) ran with no auth on `noctus-net`, a network every container shares -- n8n
-(public UI, Redis node, Code node) and WAHA included. It is about to become the authority
-for the fleet-wide breaker (`noctus:breaker:fleet`): anyone on the network could SET it (fleet
-DoS) or DEL a trip (silently disarm a runaway). This tool makes the lockdown DERIVED, never a
-hand-kept list (keeper `check_hardcoded_product_slug_set`):
+**Why (2026-11-10, security review F3 of the Supabase request breaker).** Prod Redis (`noctus-redis`) ran with no
+auth on `noctus-net`, a network every container shares (n8n, WAHA, cloudflared ...) and is about to hold the
+fleet-wide breaker (`noctus:breaker:fleet`). Round-3 decision: TWO instances on the internal `noctus-data` net.
 
-  roster  = services of `deploy/fleet/docker-compose.prod.yml` that load the root `.env`
-            (`env_file: ../../.env`)  INTERSECT  `deploy/fleet/build-scope.txt` (live products).
-            An asleep product gets NO Redis user.
+  noctus-redis-acl      APP data (sessions, limiter, quota, chatbot, caches). volatile-lru, EVAL allowed for `limits`.
+  noctus-breaker-redis  ONLY the breaker keys. `--maxmemory 64mb noeviction`, no scripting for anyone, AOF on:
+                        a runaway filling the app Redis can no longer make `SETNX noctus:breaker:fleet` fail
+                        with OOM, and a hung Lua script cannot freeze the breaker.
+
+  roster  = services of `deploy/fleet/docker-compose.prod.yml` that load the root `.env` (`env_file: ../../.env`)
+            INTERSECT `deploy/fleet/build-scope.txt` (live). An asleep product gets NO Redis user.
   secrets = ONE master (`REDIS_ACL_MASTER_SECRET`, a `.env.fleet` name; value never committed).
             password(user) = HMAC-SHA256(master, "noctus-redis-acl:v<gen>:<user>") hex.
-  outputs (all under `deploy/fleet/redis-auth/`, gitignored except the override):
-    users.acl            what Redis loads (`--aclfile`): HASHES only (`#<sha256>`), never plaintext
-    env/<service>.env    per-service REDIS_URL + REDIS_USERNAME + REDIS_PASSWORD (+ REQUIRE_AUTH)
-    ops.pass trip.pass probe.pass   0600 secrets for `noctus.dev.supabase_breaker` / `breaker-trip.sh` / `host-probe.sh`
-    compose.redis-auth.prod.yml   COMMITTED override (no secrets): one `env_file` + `networks`
-                         entry per roster service; applied per service during the rollout.
+  outputs, all on the VPS and GITIGNORED (nothing here is committed - round 3):
+    redis-auth/users.acl          app Redis aclfile (sha256 hashes only)
+    redis-auth/breaker-users.acl  breaker Redis aclfile (sha256 hashes only)
+    redis-auth/env/<service>.env  REDIS_URL/USERNAME/PASSWORD + REDIS_REQUIRE_AUTH and
+                                  NOCTUS_BREAKER_REDIS_URL/USERNAME/PASSWORD
+    redis-auth/{ops,ops-app,trip,probe}.pass   0600 secrets for the breaker tool / forced commands
+    compose.redis-auth.prod.yml   the override: written ONLY for the services passed to `render --services`.
+                                  Cutting a service over = re-render with it; rolling it back = re-render without it.
 
-Users:
-  default      OFF. The whole point.
-  healthcheck  nopass, `+ping` only (container healthcheck; reveals liveness, nothing else).
-  <service>    key patterns = the app families actually used by the seed seam (APP_KEY_FAMILIES,
-               each cites its code), `~<slug>:*` for its own future namespace, `%RW~noctus:breaker:<slug>:*`,
-               `%R~noctus:breaker:fleet` READ-ONLY. Commands `+@all -@dangerous -@admin`.
-  trip         ONLY `SETNX`/`GET`/`EXISTS` on `noctus:breaker:fleet` (the off-host watchdog's forced
-               command). Cannot DEL: a compromised watchdog key can trip, never re-arm.
-  probe        `%R~noctus:breaker:fleet`, `EXISTS`/`PING` only (the read-only host probe; never `trip`).
-  ops          breaker keys + audit list only (`noctus:breaker:*`): GET/MGET/SET/DEL/RPUSH/LRANGE/
-               EXISTS/TTL/SMEMBERS/SREM (per-product index sets, NO scan) + `acl|log`. Re-arm (DEL) lives here and nowhere else.
+Users, app Redis:      default OFF; healthcheck (+ping); <service> (app key families, no breaker keys);
+                       ops (acl|log + ping only, no keys: verification).
+Users, breaker Redis:  default OFF; healthcheck; <service> (RW its own worker/scheduler/gate/audit/index keys,
+                       READ-ONLY its `rearm:*` markers and the fleet key); trip (SETNX fleet only: cannot expire,
+                       overwrite or DEL); probe (EXISTS fleet only); ops (the only writer of rearm markers, fleet
+                       DEL, audit; no SCAN).
 
-Never returns a secret in the payload. Offline: `render` writes files, `check` diffs the committed
-override against the derived roster. The live rollout is by the guardian session, per
+Never returns a secret in the payload. Offline. The live rollout is by the guardian session, per
 `KB § PATTERNS/devops/redis-acl-lockdown.md`.
 """
 from __future__ import annotations
@@ -58,6 +55,13 @@ OVERRIDES_ENV = "REDIS_ACL_GENERATION_OVERRIDES"
 DATA_NET = "noctus-data"
 REDIS_HOST = "noctus-redis-acl"
 REDIS_URL = f"redis://{REDIS_HOST}:6379/0"
+#: The DEDICATED breaker Redis (service `breaker-redis`): breaker keys only, same internal net.
+BREAKER_HOST = "noctus-breaker-redis"
+BREAKER_URL = f"redis://{BREAKER_HOST}:6379/0"
+#: The env names a product reads for the breaker connection (the breaker branch adopts exactly these).
+BREAKER_ENV_URL = "NOCTUS_BREAKER_REDIS_URL"
+BREAKER_ENV_USERNAME = "NOCTUS_BREAKER_REDIS_USERNAME"
+BREAKER_ENV_PASSWORD = "NOCTUS_BREAKER_REDIS_PASSWORD"
 
 BREAKER_PREFIX = "noctus:breaker:"
 FLEET_KEY = f"{BREAKER_PREFIX}fleet"
@@ -84,20 +88,22 @@ APP_KEY_FAMILIES: tuple[tuple[str, str], ...] = (
 #: download-cache orphan sweep uses KEYS (blocking) -- switch it to scan_iter, then drop this. -- 2026-11-10
 EXTRA_COMMANDS: dict[str, tuple[str, ...]] = {"social-wiring": ("+keys",)}
 
-#: Commands a product user gets: everything except the dangerous/admin categories (FLUSHALL, CONFIG,
-#: DEBUG, KEYS, SHUTDOWN, ACL, CLIENT KILL/LIST ...) and the scripting category (SCRIPT FLUSH/KILL, FUNCTION *
-#: are neither admin nor dangerous -- found by a live probe). Only the Lua surface `limits` uses stays:
-#: EVAL/EVALSHA/SCRIPT LOAD/EXISTS, which run under the CALLER's key permissions.
+#: APP Redis, product users: everything except the dangerous/admin categories (FLUSHALL, CONFIG, DEBUG, KEYS,
+#: SHUTDOWN, ACL, CLIENT KILL/LIST ...) and the scripting category (SCRIPT FLUSH/KILL, FUNCTION * are neither
+#: admin nor dangerous -- found by a live probe). Only the Lua surface `limits` uses stays: EVAL/EVALSHA/SCRIPT
+#: LOAD/EXISTS, which run under the CALLER's key permissions.
 PRODUCT_COMMANDS = "+@all -@dangerous -@admin -@scripting +eval +evalsha +script|load +script|exists"
-
-# `ltrim` enforces the 1000-row audit cap after RPUSH; `sadd` lists a key ops trips by hand in the product's
-# index. No SCAN/KEYS: key names are bearer secrets elsewhere and SCAN ignores key patterns. `status` enumerates via
-# each product's own index SET `noctus:breaker:<slug>:index` (SMEMBERS) + the fleet key. `script|kill` /
-# `function|kill` let ops stop a runaway Lua script (the EVAL freeze) without CONFIG/SHUTDOWN.
-OPS_COMMANDS = (
-    "-@all +get +mget +set +del +rpush +ltrim +lrange +llen +exists +ttl +pttl +smembers +sadd +srem +sismember +scard +ping +hello +auth "
-    "+client|setname +acl|log +acl|whoami +script|kill +function|kill"
-)
+#: BREAKER Redis, product users: an explicit allow-list, NO scripting (nothing there needs it).
+BREAKER_PRODUCT_COMMANDS = ("-@all +get +mget +set +del +exists +ttl +pttl +sadd +srem +smembers +sismember +scard "
+                            "+rpush +ltrim +lrange +llen +ping +hello +auth +client|setname")
+#: ops on the BREAKER Redis. `ltrim` keeps the audit cap, `sadd` lists a hand-tripped key in the product's index.
+#: No SCAN/KEYS (key names are bearer secrets elsewhere; SCAN ignores key patterns): `status` enumerates via each
+#: product's `noctus:breaker:<slug>:index` SET (SMEMBERS) + the fleet key. No scripting: a write-then-loop Lua script
+#: cannot be killed (SCRIPT KILL refuses once the script wrote), so nobody gets to start one here.
+OPS_COMMANDS = ("-@all +get +mget +set +del +rpush +ltrim +lrange +llen +exists +ttl +pttl +smembers +sadd +srem "
+                "+sismember +scard +ping +hello +auth +client|setname +acl|log +acl|whoami")
+#: ops on the APP Redis: verification only (`ACL LOG` after a cutover), zero key access.
+OPS_APP_COMMANDS = "-@all +acl|log +acl|whoami +ping +hello +auth"
 #: Slugs that would turn `~<slug>:*` / the user name into something other than "this product".
 RESERVED_SLUGS = frozenset({"noctus", "default", "ops", "trip", "probe", "healthcheck", "redis", "limits", "limiter",
                             "nai", "rt", "llm", "wa", "queue", "conversation", "ratelimit", "download", "quota"})
@@ -107,6 +113,15 @@ HEALTHCHECK_COMMANDS = "-@all +ping"
 # Read-only host probe (off-host watchdog's host-probe.sh): "is the fleet breaker tripped?" and nothing else.
 # Deliberately NOT `trip`: that identity can SETNX, a probe must never be able to write.
 PROBE_COMMANDS = "-@all +exists +ping +hello +auth"
+
+#: Per-product breaker key shapes on the breaker Redis. Sources always start worker:/scheduler:/gate:; `rearm:*`
+#: markers are written ONLY by ops (a product holds READ on them), so a compromised product cannot forge or
+#: clear a re-arm.
+BREAKER_RW_SUFFIXES = ("worker:*", "scheduler:*", "gate:*", "audit", "index")
+BREAKER_RO_SUFFIXES = ("rearm:*",)
+
+# NOC-REMEDIATE[breaker-audit-offhost]: `noctus:breaker:audit` lives only on the VPS breaker Redis; mirror it
+# off-host (watchdog or Supabase-independent sink) so an attacker or a disk loss cannot erase the trail. — 2026-11-10
 
 
 def _resolve_root(repo_root: str | None, worktree_path: str | None) -> Path:
@@ -191,34 +206,52 @@ def _key_patterns(patterns: list[str]) -> str:
     return " ".join(patterns)
 
 
+def _pw(master: str, user: str, generation) -> str:
+    return _hash(derive_password(master, user, generation))
+
+
 def render_aclfile(roster: list[str], master: str, generation="1") -> str:
-    """The aclfile Redis loads. Passwords appear ONLY as sha256 hashes. NO comments: Redis rejects them in an
-    aclfile (found by running the rendered file through a real redis-server). `client|setinfo` is omitted from the
-    explicit lists (absent before Redis 7.2; redis-py swallows its refusal); products get it via +@all on 7.2+."""
+    """APP Redis aclfile. Passwords appear ONLY as sha256 hashes. NO comments: Redis rejects them in an aclfile
+    (found by running the rendered file through a real redis-server). `client|setinfo` is omitted from the explicit
+    lists (absent before Redis 7.2; redis-py swallows its refusal); products get it via +@all on 7.2+.
+    NO breaker keys here: the breaker has its own instance (`render_breaker_aclfile`)."""
     lines = [
         "user default off",
         f"user healthcheck on nopass resetkeys resetchannels {HEALTHCHECK_COMMANDS}",
     ]
     fams = [p for p, _ in APP_KEY_FAMILIES]
     for slug in roster:
-        pats = [f"~{p}" for p in fams] + [f"~{slug}:*", f"%RW~{BREAKER_PREFIX}{slug}:*", f"%R~{FLEET_KEY}"]
+        pats = [f"~{p}" for p in fams] + [f"~{slug}:*"]
         cmds = " ".join((PRODUCT_COMMANDS, *EXTRA_COMMANDS.get(slug, ())))
         lines.append(
-            f"user {slug} on #{_hash(derive_password(master, slug, generation))} resetkeys resetchannels "
+            f"user {slug} on #{_pw(master, slug, generation)} resetkeys resetchannels "
             f"{_key_patterns(pats)} {cmds}"
         )
-    lines.append(
-        f"user trip on #{_hash(derive_password(master, 'trip', generation))} resetkeys resetchannels "
-        f"%RW~{FLEET_KEY} {TRIP_COMMANDS}"
-    )
-    lines.append(
-        f"user probe on #{_hash(derive_password(master, 'probe', generation))} resetkeys resetchannels "
-        f"%R~{FLEET_KEY} {PROBE_COMMANDS}"
-    )
-    lines.append(
-        f"user ops on #{_hash(derive_password(master, 'ops', generation))} resetkeys resetchannels "
-        f"~{BREAKER_PREFIX}* {OPS_COMMANDS}"
-    )
+    lines.append(f"user ops on #{_pw(master, 'ops-app', generation)} resetkeys resetchannels {OPS_APP_COMMANDS}")
+    return "\n".join(lines) + "\n"
+
+
+def breaker_user_password(master: str, slug: str, generation="1") -> str:
+    """A product's password on the BREAKER Redis: distinct from its app password (no credential reuse)."""
+    return derive_password(master, f"breaker-{slug}", generation)
+
+
+def render_breaker_aclfile(roster: list[str], master: str, generation="1") -> str:
+    """BREAKER Redis aclfile: breaker keys only, no scripting for anyone."""
+    lines = [
+        "user default off",
+        f"user healthcheck on nopass resetkeys resetchannels {HEALTHCHECK_COMMANDS}",
+    ]
+    for slug in roster:
+        pats = [f"%RW~{BREAKER_PREFIX}{slug}:{sfx}" for sfx in BREAKER_RW_SUFFIXES]
+        pats += [f"%R~{BREAKER_PREFIX}{slug}:{sfx}" for sfx in BREAKER_RO_SUFFIXES] + [f"%R~{FLEET_KEY}"]
+        lines.append(
+            f"user {slug} on #{_hash(breaker_user_password(master, slug, generation))} resetkeys resetchannels "
+            f"{_key_patterns(pats)} {BREAKER_PRODUCT_COMMANDS}"
+        )
+    lines.append(f"user trip on #{_pw(master, 'trip', generation)} resetkeys resetchannels %RW~{FLEET_KEY} {TRIP_COMMANDS}")
+    lines.append(f"user probe on #{_pw(master, 'probe', generation)} resetkeys resetchannels %R~{FLEET_KEY} {PROBE_COMMANDS}")
+    lines.append(f"user ops on #{_pw(master, 'ops', generation)} resetkeys resetchannels ~{BREAKER_PREFIX}* {OPS_COMMANDS}")
     return "\n".join(lines) + "\n"
 
 
@@ -229,23 +262,25 @@ def render_service_env(slug: str, master: str, generation="1") -> str:
         f"REDIS_USERNAME={slug}\n"
         f"REDIS_PASSWORD={derive_password(master, slug, generation)}\n"
         "REDIS_REQUIRE_AUTH=true\n"
+        f"{BREAKER_ENV_URL}={BREAKER_URL}\n"
+        f"{BREAKER_ENV_USERNAME}={slug}\n"
+        f"{BREAKER_ENV_PASSWORD}={breaker_user_password(master, slug, generation)}\n"
     )
 
 
-def render_override(roster: list[str]) -> str:
-    """The COMMITTED compose override: no secrets, one block per roster service."""
+def render_override(services: list[str]) -> str:
+    """The compose override (gitignored, written on the VPS): one block per CUT-OVER service."""
     out = [
-        "# GENERATED by noctus.dev.redis_acl (python mcp/noctusai/cli.py --redis-acl render) -- do not hand-edit.",
-        "# Derived from docker-compose.prod.yml services that load the root .env  INTERSECT  build-scope.txt.",
-        "# Applied ONLY during/after the Redis lockdown rollout, as a second -f:",
-        "#   docker compose -f docker-compose.prod.yml -f compose.redis-auth.prod.yml up -d <service>",
-        "# Removing the second -f is the one-line rollback for a service (env_file + network drop away).",
-        "# The env files it names are written on the VPS by the same tool (gitignored, 0600).",
+        "# GENERATED on the VPS by noctus.dev.redis_acl (render --services ...) -- gitignored, do not hand-edit.",
+        "# Lists ONLY the services deliberately cut over to the authenticated Redis. While this file exists every",
+        "# toolkit compose call adds it as a second -f and refuses a listed service whose env file is missing.",
+        "# Cut a service over = re-render with it; roll it back = re-render WITHOUT it (or `--services ''` to remove).",
+        "# Manual compose: docker compose -f docker-compose.prod.yml -f compose.redis-auth.prod.yml up -d <svc>",
         "# KB § PATTERNS/devops/redis-acl-lockdown.md",
         "",
         "services:",
     ]
-    for slug in roster:
+    for slug in services:
         out += [
             f"  {slug}:",
             "    env_file:",
@@ -326,39 +361,66 @@ def _write_secret(path: Path, text: str, mode: int) -> None:
         raise
 
 
+def _normalize_services(services, roster: list[str]) -> list[str]:
+    svc = sorted({x.strip() for x in (services.split(",") if isinstance(services, str) else services) if x.strip()})
+    unknown = [x for x in svc if x not in roster]
+    if unknown:
+        raise ValueError(f"--services {unknown} not in the derived roster {roster}")
+    return svc
+
+
+def parse_override_services(text: str) -> list[str]:
+    """Service names listed in a rendered override (the block between `services:` and top-level `networks:`)."""
+    body = text.split("\nservices:\n", 1)[-1].split("\nnetworks:\n", 1)[0]
+    return re.findall(r"^  ([a-z][a-z0-9\-]*):\s*$", body, flags=re.M)
+
+
 def _check(root: Path) -> dict:
     roster = _load(root)
-    want = render_override(roster)
     p = root / OVERRIDE_REL
-    have = p.read_text(encoding="utf-8") if p.is_file() else None
-    ok = have == want
-    return {"ok": ok, "action": "check", "status": "in_sync" if ok else "drift", "roster": roster,
-            "override_present": have is not None,
-            **({} if ok else {"fix": "python mcp/noctusai/cli.py --redis-acl render"})}
+    if not p.is_file():
+        return {"ok": True, "action": "check", "status": "no_override", "roster": roster, "cut_over": []}
+    listed = parse_override_services(p.read_text(encoding="utf-8"))
+    env_dir = root / OUT_DIR_REL / "env"
+    missing = [x for x in listed if x not in roster or not (env_dir / f"{x}.env").is_file()]
+    ok = not missing
+    return {"ok": ok, "action": "check", "status": "in_sync" if ok else "drift", "roster": roster, "cut_over": listed,
+            **({} if ok else {"missing_or_not_in_roster": missing,
+                              "fix": "python mcp/noctusai/cli.py --redis-acl render --redis-acl-write --redis-acl-services <list>"})}
 
 
-def _render(root: Path, write: bool, env: dict[str, str] | None, env_file: str | None) -> dict:
+def _render(root: Path, write: bool, env: dict[str, str] | None, env_file: str | None, services) -> dict:
     roster = _load(root)
-    override = render_override(roster)
-    result: dict = {"ok": True, "action": "render", "roster": roster, "users": ["default(off)", "healthcheck", *roster, "trip", "probe", "ops"],
-                    "key_families": [p for p, _ in APP_KEY_FAMILIES], "written": []}
+    svc = None if services is None else _normalize_services(services, roster)
+    result: dict = {"ok": True, "action": "render", "roster": roster,
+                    "app_users": ["default(off)", "healthcheck", *roster, "ops"],
+                    "breaker_users": ["default(off)", "healthcheck", *roster, "trip", "probe", "ops"],
+                    "key_families": [p for p, _ in APP_KEY_FAMILIES], "written": [],
+                    "cut_over": svc if svc is not None else "unchanged"}
     if write:
-        (root / OVERRIDE_REL).write_text(override, encoding="utf-8")
-        result["written"].append(OVERRIDE_REL)
         master, gen = _read_master(root, env, env_file)
         try:
             out = root / OUT_DIR_REL
             _ensure_private_dir(out)
             _write_secret(out / "users.acl", render_aclfile(roster, master, gen), 0o644)
+            _write_secret(out / "breaker-users.acl", render_breaker_aclfile(roster, master, gen), 0o644)
             for slug in roster:
                 _write_secret(out / "env" / f"{slug}.env", render_service_env(slug, master, gen), 0o600)
-            _write_secret(out / "ops.pass", derive_password(master, "ops", gen) + "\n", 0o600)
-            _write_secret(out / "trip.pass", derive_password(master, "trip", gen) + "\n", 0o600)
-            _write_secret(out / "probe.pass", derive_password(master, "probe", gen) + "\n", 0o600)
+            for name, user in (("ops", "ops"), ("ops-app", "ops-app"), ("trip", "trip"), ("probe", "probe")):
+                _write_secret(out / f"{name}.pass", derive_password(master, user, gen) + "\n", 0o600)
+            result["written"] += [f"{OUT_DIR_REL}/users.acl", f"{OUT_DIR_REL}/breaker-users.acl",
+                                  f"{OUT_DIR_REL}/env/<service>.env x{len(roster)}",
+                                  *(f"{OUT_DIR_REL}/{n}.pass" for n in ("ops", "ops-app", "trip", "probe"))]
+            ov = root / OVERRIDE_REL
+            if svc is not None:
+                if svc:
+                    ov.write_text(render_override(svc), encoding="utf-8")
+                    result["written"].append(OVERRIDE_REL)
+                else:
+                    ov.unlink(missing_ok=True)
+                    result["written"].append(f"{OVERRIDE_REL} (removed: no service is cut over)")
         except ValueError as e:
             return {"ok": False, "action": "render", "status": "error", "error": str(e), "written": result["written"]}
-        result["written"] += [f"{OUT_DIR_REL}/users.acl", f"{OUT_DIR_REL}/env/<service>.env x{len(roster)}",
-                              f"{OUT_DIR_REL}/ops.pass", f"{OUT_DIR_REL}/trip.pass", f"{OUT_DIR_REL}/probe.pass"]
     result["status"] = "written" if write else "planned"
     return result
 
@@ -367,19 +429,21 @@ def redis_acl(
     action: str = "check",
     *,
     write: bool = False,
+    services=None,
     env_file: str | None = None,
     repo_root: str | None = None,
     worktree_path: str | None = None,
     env: dict[str, str] | None = None,
 ) -> dict:
-    """action='check' (override in sync with the derived roster; offline) | 'render' (plan; write=True
-    writes the committed override + the gitignored aclfile/env/pass files; needs REDIS_ACL_MASTER_SECRET)."""
+    """action='check' (the host-local override is consistent: every cut-over service is in the roster and has its
+    env file; offline) | 'render' (plan; write=True writes both aclfiles, per-service env, pass files, and -- when
+    `services` is given -- the override listing exactly those services; `services=[]`/'' removes it; None leaves it)."""
     root = _resolve_root(repo_root, worktree_path)
     try:
         if action == "check":
             return _check(root)
         if action == "render":
-            return _render(root, write, env, env_file)
+            return _render(root, write, env, env_file, services)
     except (ValueError, OSError) as e:
         return {"ok": False, "action": action, "status": "error", "error": str(e)}
     return {"ok": False, "action": action, "error": f"unknown action {action!r} -- expected 'check' or 'render'"}
@@ -389,17 +453,19 @@ def register(server) -> None:
     @server.tool(
         name="noctus.dev.redis_acl",
         description=(
-            "Prod Redis ACL lockdown, DERIVED (KB § PATTERNS/devops/redis-acl-lockdown.md). Roster = live "
-            "services loading the root .env (compose x build-scope.txt). action='check' (default, offline): the "
-            "committed deploy/fleet/compose.redis-auth.prod.yml matches the derived roster. action='render': "
-            "plan; write=True writes the override + gitignored users.acl (sha256 hashes only) / per-service env / "
-            "ops+trip pass files from REDIS_ACL_MASTER_SECRET (env or .env.fleet). Never returns a secret. "
-            "Never touches the VPS."
+            "Prod Redis ACL lockdown, DERIVED (KB § PATTERNS/devops/redis-acl-lockdown.md). Two instances: app Redis "
+            "+ a dedicated breaker Redis. Roster = live services loading the root .env (compose x build-scope.txt). "
+            "action='check' (default, offline): the host-local compose.redis-auth.prod.yml is consistent. "
+            "action='render': plan; write=True writes the gitignored aclfiles (sha256 hashes only), per-service env, "
+            "pass files from REDIS_ACL_MASTER_SECRET and, with services='a,b', the override naming exactly the "
+            "services to cut over (services='' removes it). Never returns a secret. Never touches the VPS."
         ),
     )
-    def _redis_acl(action: str = "check", write: bool = False, env_file: str = "", worktree_path: str = "") -> dict:
-        return redis_acl(action, write=write, env_file=env_file or None, worktree_path=worktree_path or None)
+    def _redis_acl(action: str = "check", write: bool = False, services: str | None = None,
+                   env_file: str = "", worktree_path: str = "") -> dict:
+        return redis_acl(action, write=write, services=services, env_file=env_file or None,
+                         worktree_path=worktree_path or None)
 
 
-__all__ = ["redis_acl", "register", "derive_roster", "derive_password", "render_aclfile",
-           "render_service_env", "render_override", "APP_KEY_FAMILIES"]
+__all__ = ["redis_acl", "register", "derive_roster", "derive_password", "render_aclfile", "render_breaker_aclfile",
+           "render_service_env", "render_override", "parse_override_services", "APP_KEY_FAMILIES"]
