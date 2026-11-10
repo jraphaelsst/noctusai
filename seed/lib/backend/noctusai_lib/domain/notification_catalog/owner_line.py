@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Protocol
 
-from noctusai_lib.primitives.phone import phone_digits
+from noctusai_lib.primitives.phone import is_valid_phone
 
 from .catalog import (
     NotificationGate,
@@ -33,6 +33,7 @@ RECIPIENTS_TABLE = "notification_owner_recipients"
 RECIPIENTS_TTL_SECONDS = 60.0
 REASON_NO_RECIPIENT = "nenhum destinatário do dono configurado"
 REASON_NO_TRANSPORT = "linha_noc_nao_configurada"
+REASON_NOT_INSTALLED = "linha_noc_nao_instalada"
 
 
 @dataclass(frozen=True)
@@ -112,22 +113,34 @@ class SupabaseOwnerRecipientSource:
 
 
 class WahaOwnerLineTransport:
-    """Sends through an injected WAHA client (``client_factory()`` → object with ``send_text_sync(chat_id, text)``)."""
+    """Sends through an injected WAHA client (``client_factory()`` → object with ``send_text_to_phone_sync(phone,
+    text)``, which resolves BR 9th-digit variants via check-exists with a send-retry fallback)."""
 
     def __init__(self, client_factory: Callable[[], Any]) -> None:
         self._factory = client_factory
 
     def send_text(self, numero_e164: str, texto: str) -> None:
-        digits = phone_digits(numero_e164)
-        if not digits:
+        if not is_valid_phone(numero_e164):
             raise ValueError("owner line: recipient number is not a valid phone")
-        self._factory().send_text_sync(f"{digits}@c.us", texto)
+        self._factory().send_text_to_phone_sync(numero_e164, texto)
 
 
 @dataclass
 class OwnerLine:
     recipients: OwnerRecipientSource
     transport: Optional[OwnerLineTransport]
+    installed: bool = True
+
+
+class _UnreadableRecipientSource:
+    """Production stand-in when the recipients cannot be read: ``active()`` raises, so ``notify_owner`` records
+    ``failed`` loudly instead of a misleading ``no_recipient``."""
+
+    def __init__(self, why: str) -> None:
+        self._why = why
+
+    def active(self) -> list[OwnerRecipient]:
+        raise RuntimeError(self._why)
 
 
 def make_owner_line(
@@ -137,8 +150,8 @@ def make_owner_line(
     """Real recipients+transport when configured; otherwise the missing piece is absent (transport-less ⇒ the
     send records ``failed`` loudly, never a silent Fake)."""
     if core_client_factory is None:
-        logger.warning("owner line: no core client — recipients kept in memory only (empty)")
-        recipients: OwnerRecipientSource = FakeOwnerRecipientSource()
+        logger.error("owner line: no core client — recipients unreadable, sends will record failed")
+        recipients: OwnerRecipientSource = _UnreadableRecipientSource("sem cliente core")
     else:
         recipients = SupabaseOwnerRecipientSource(core_client_factory)
     transport = WahaOwnerLineTransport(waha_factory) if waha_factory is not None else None
@@ -161,7 +174,9 @@ def configure_owner_line(
 
 def get_owner_line() -> OwnerLine:
     """The installed line, or an empty one (no recipients, no transport) when none was installed."""
-    return _line if _line is not None else OwnerLine(recipients=FakeOwnerRecipientSource(), transport=None)
+    return _line if _line is not None else OwnerLine(
+        recipients=FakeOwnerRecipientSource(), transport=None, installed=False,
+    )
 
 
 # ── the send ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -179,6 +194,7 @@ def notify_owner(
     require_declared(product, kind)  # programming error, raised on purpose
     gate = gate or get_notification_gate(product)
     line = get_owner_line()
+    not_installed = not line.installed and recipients is None and transport is None
     recipients = recipients if recipients is not None else line.recipients
     transport = transport if transport is not None else line.transport
 
@@ -192,6 +208,9 @@ def notify_owner(
     try:
         if not gate.allowed(kind):
             return _done("suppressed", 0, 0, "desligado pelo dono")
+        if not_installed:
+            logger.error("seed.owner_line.nao_instalada product=%s kind=%s", product, kind)
+            return _done("failed", 0, 0, REASON_NOT_INSTALLED)
         active = recipients.active()
     except Exception as exc:  # noqa: BLE001 — recorded as failed, never raised
         logger.error("owner line: could not read switch/recipients product=%s kind=%s", product, kind,

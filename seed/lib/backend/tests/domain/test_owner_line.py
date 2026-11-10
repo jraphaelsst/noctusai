@@ -141,24 +141,45 @@ def test_supabase_source_ttl_cache():
     assert src.active() == [] and db.reads == 2
 
 
-def test_waha_transport_chat_id_and_error_propagation():
+def test_waha_transport_sends_to_phone_and_propagates_errors():
     calls = []
 
     class C:
-        def send_text_sync(self, chat_id, text):
-            calls.append((chat_id, text))
+        def send_text_to_phone_sync(self, phone, text):
+            calls.append((phone, text))
 
     WahaOwnerLineTransport(lambda: C()).send_text("+5511999990001", "oi")
-    assert calls == [("5511999990001@c.us", "oi")]
+    assert calls == [("+5511999990001", "oi")]
 
     class Bad:
-        def send_text_sync(self, *_a):
+        def send_text_to_phone_sync(self, *_a):
             raise ConnectionError("down")
 
     with pytest.raises(ConnectionError):
         WahaOwnerLineTransport(lambda: Bad()).send_text("+5511999990001", "oi")
     with pytest.raises(ValueError):
         WahaOwnerLineTransport(lambda: C()).send_text("abc", "oi")
+    assert len(calls) == 1
+
+
+def test_not_installed_default_fails_loudly(caplog):
+    gate = FakeNotificationGate(P)
+    with caplog.at_level(logging.ERROR):
+        d = notify_owner(P, "aviso", "oi", gate=gate)
+    assert (d.status, d.reason) == ("failed", "linha_noc_nao_instalada")
+    assert f"seed.owner_line.nao_instalada product={P} kind=aviso" in caplog.text
+    assert gate.sends[-1]["reason"] == "linha_noc_nao_instalada"
+    # switch off still wins over "not installed"
+    off = FakeNotificationGate(P, disabled={"aviso"})
+    assert notify_owner(P, "aviso", "oi", gate=off).status == "suppressed"
+
+
+def test_make_owner_line_without_core_client_fails_not_fakes():
+    line = make_owner_line(None, lambda: object())
+    configure_owner_line(recipients=line.recipients, transport=line.transport)
+    gate = FakeNotificationGate(P)
+    d = notify_owner(P, "aviso", "oi", gate=gate)
+    assert d.status == "failed" and d.status != "no_recipient"
 
 
 def test_make_owner_line_transport_presence():
