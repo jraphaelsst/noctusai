@@ -28,8 +28,8 @@ S3 classifies it as about scheduling or not (classification only, D48: no reply,
   one `ai_outputs` row per (message, prompt_version, model); runs on the seed jobs Worker only (poll-budget line in
   `shadow/worker.py`); no live LLM call in tests.
 - **Google connection (S7, D50):** the org admin connects Google in `/configuracoes/google`. `connect/start` mints a
-  server-bound single-use `state` (SHA-256 stored, 10 min, bound to org/user, carries the PKCE verifier Fernet-encrypted
-  in `oauth_states`); the signed `GET /api/google/oauth/callback` consumes it (unknown/replayed/expired => 400), exchanges
+  server-bound single-use `state` (SHA-256 stored, 10 min, bound to org/user AND to the starting browser via the host-only
+  cookie `__Host-ast_goauth`, carries the PKCE verifier Fernet-encrypted in `oauth_states`); the signed `GET /api/google/oauth/callback` consumes it (unknown/replayed/expired => 400), exchanges
   the code and writes the grant to `oauth_credentials` (seed CredentialStore, one row per org). No route returns a token.
   Scopes are least privilege: openid, userinfo.email, calendar.events, drive.readonly, drive.file (no Gmail, no full
   calendar/drive); incremental auth is off. `disconnect` revokes at Google then deletes; a dead refresh token is the

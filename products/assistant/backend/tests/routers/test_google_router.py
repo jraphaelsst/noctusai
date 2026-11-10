@@ -46,6 +46,11 @@ class _RevokeFails(FakeOAuthProvider):
         raise RuntimeError("network down")
 
 
+class _FailingPut(FakeCredentialStore):
+    def put(self, *a, **k):
+        raise RuntimeError("db down")
+
+
 class _Clients:
     def __init__(self, calendar, drive) -> None:
         self._calendar, self._drive = calendar, drive
@@ -79,6 +84,12 @@ def world(client):
     w = type("W", (), {})()
     w.provider = FakeOAuthProvider(name="google", use_pkce=True, predetermined_tokens=_tokens())
     w.states, w.store = FakeOAuthStateStore(), FakeCredentialStore()
+    w.is_admin, w.nonce, w.removed = True, None, []
+
+    def _remove(org, actor):
+        w.removed.append((org, actor))
+        w.store.delete(org, gc.STORE_PROVIDER)
+
     cal = FakeCalendarAdapter()
     base = datetime.now(timezone.utc) + timedelta(days=1)
     for i in range(7):  # 7 events: the proof must cut at 5
@@ -95,20 +106,30 @@ def world(client):
         gr.get_state_store: lambda: w.states,
         gr.get_credential_store: lambda: w.store,
         gr.get_google_clients: lambda: w.clients,
+        gr.get_membership_checker: lambda: (lambda user_id, org_id: w.is_admin),
+        gr.get_grant_remover: lambda: _remove,
     })
     yield w
-    for dep in (gr.require_org_admin, gr.get_provider, gr.get_state_store, gr.get_credential_store, gr.get_google_clients):
+    for dep in (gr.require_org_admin, gr.get_provider, gr.get_state_store, gr.get_credential_store, gr.get_google_clients,
+                gr.get_membership_checker, gr.get_grant_remover):
         app.dependency_overrides.pop(dep, None)
+
+
+COOKIE = "__Host-ast_goauth"
 
 
 def _start(w) -> str:
     resp = w.client.post("/api/google/connect/start")
     assert resp.status_code == 200
+    w.nonce = resp.cookies.get(COOKIE) or resp.headers["set-cookie"].split(";")[0].split("=", 1)[1]
     return parse_qs(urlsplit(resp.json()["url"]).query)["state"][0]
 
 
-def _callback(w, **params):
-    return w.client.raw().get("/api/google/oauth/callback", params=params, follow_redirects=False)
+def _callback(w, cookie="browser", **params):
+    """`cookie`: 'browser' = the cookie connect/start set; None = no cookie; any other string = that cookie value."""
+    value = w.nonce if cookie == "browser" else cookie
+    headers = {"Cookie": f"{COOKIE}={value}"} if value else {}
+    return w.client.raw().get("/api/google/oauth/callback", params=params, headers=headers, follow_redirects=False)
 
 
 def _connect(w, scopes=None, refresh=REFRESH) -> None:
@@ -276,3 +297,106 @@ def test_missing_google_client_or_encryption_key_is_a_503(client):
         assert client.get("/api/google/status").status_code == 503  # no valid ENCRYPTION_KEY
     finally:
         app.dependency_overrides.pop(gr.require_org_admin, None)
+
+
+# ----- G-1: the flow is bound to the browser that started it -----
+def test_connect_start_sets_a_host_only_httponly_cookie(world):
+    cookie = world.client.post("/api/google/connect/start").headers["set-cookie"]
+    low = cookie.lower()
+    assert cookie.startswith(f"{COOKIE}=") and "secure" in low and "httponly" in low and "samesite=lax" in low
+    assert "max-age=600" in low and "path=/" in low and "domain" not in low
+
+
+def test_a_valid_state_without_the_browser_cookie_is_refused_and_stores_nothing(world):
+    state = _start(world)
+    resp = _callback(world, cookie=None, state=state, code="c1")  # e.g. the victim a link was sent to
+    assert resp.status_code == 400 and world.store.get(ORG, gc.STORE_PROVIDER) is None
+
+
+def test_a_valid_state_with_another_cookie_is_refused_and_burns_the_state(world):
+    state = _start(world)
+    assert _callback(world, cookie="attacker-made-cookie", state=state, code="c1").status_code == 400
+    assert world.store.get(ORG, gc.STORE_PROVIDER) is None
+    assert _callback(world, state=state, code="c1").status_code == 400  # burned: the real browser cannot reuse it
+
+
+def test_the_cookie_is_cleared_on_every_exit_of_the_callback(world):
+    def cleared(resp):
+        sc = resp.headers.get("set-cookie", "").lower()
+        return sc.startswith(COOKIE.lower() + "=") and ("max-age=0" in sc or "expires=" in sc)
+
+    ok = _callback(world, state=_start(world), code="c1")
+    denied = _callback(world, state=_start(world), error="access_denied")
+    bad_state = _callback(world, state="forged", code="c1")
+    no_cookie = _callback(world, cookie=None, state=_start(world), code="c1")
+    assert all(cleared(r) for r in (ok, denied, bad_state, no_cookie))
+
+
+# ----- G-2: tier declaration -----
+def test_the_callback_router_declares_the_oauth_callback_category():
+    assert gr.callback_router.access_tier == "service" and gr.callback_router.access_tier_category == "oauth-callback"
+
+
+# ----- G-4: rate limit + one flow in flight -----
+def test_connect_start_is_rate_limited_to_10_per_minute(world):
+    codes = [world.client.post("/api/google/connect/start").status_code for _ in range(11)]
+    assert codes[:10] == [200] * 10 and codes[10] == 429
+
+
+def test_a_new_start_supersedes_the_previous_one_for_the_same_user(world):
+    first = _start(world)
+    first_nonce = world.nonce
+    second = _start(world)
+    assert _callback(world, cookie=first_nonce, state=first, code="c1").status_code == 400
+    assert _callback(world, state=second, code="c1").status_code == 303
+
+
+# ----- G-5: the starter must still be an admin when Google calls back -----
+def test_a_user_demoted_between_start_and_callback_cannot_store_a_grant(world):
+    state = _start(world)
+    world.is_admin = False
+    assert _callback(world, state=state, code="c1").headers["location"].endswith("google=erro")
+    assert world.store.get(ORG, gc.STORE_PROVIDER) is None
+
+
+def test_a_membership_check_that_fails_refuses_too(world):
+    def boom(user_id, org_id):
+        raise RuntimeError("core db down")
+
+    world.app.dependency_overrides[gr.get_membership_checker] = lambda: boom
+    assert _callback(world, state=_start(world), code="c1").headers["location"].endswith("google=erro")
+    assert world.store.get(ORG, gc.STORE_PROVIDER) is None
+
+
+# ----- G-6: no orphan grants -----
+def test_reconnect_revokes_the_previous_refresh_token_first(world):
+    _connect(world)
+    world.provider = FakeOAuthProvider(name="google", use_pkce=True, predetermined_tokens=_tokens(refresh="1//NEW-REFRESH"))
+    assert _callback(world, state=_start(world), code="c2").headers["location"].endswith("google=conectado")
+    assert world.provider.revoked_tokens == [REFRESH]
+    assert world.store.get(ORG, gc.STORE_PROVIDER).tokens["refresh_token"] == "1//NEW-REFRESH"
+
+
+def test_reconnect_with_the_same_refresh_token_does_not_revoke_it(world):
+    _connect(world)
+    assert _callback(world, state=_start(world), code="c2").headers["location"].endswith("google=conectado")
+    assert world.provider.revoked_tokens == []
+
+
+def test_disconnect_with_no_token_never_calls_revoke(world):
+    world.store.put(ORG, gc.STORE_PROVIDER, {"scope": []}, metadata={})
+    assert world.client.post("/api/google/disconnect").json() == {"connected": False, "revoked": None}
+    assert world.provider.revoked_tokens == [] and world.store.get(ORG, gc.STORE_PROVIDER) is None
+
+
+def test_a_persist_failure_revokes_the_grant_that_was_just_issued(world):
+    world.store = _FailingPut()
+    resp = _callback(world, state=_start(world), code="c1")
+    assert resp.headers["location"].endswith("google=erro")
+    assert world.provider.revoked_tokens == [REFRESH]
+
+
+def test_disconnect_goes_through_the_remover_with_the_actor(world):
+    _connect(world)
+    world.client.post("/api/google/disconnect")
+    assert world.removed == [(ORG, "user-1")]

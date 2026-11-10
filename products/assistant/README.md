@@ -52,11 +52,15 @@ not start without an enforced `LLM_SPEND_LIMITS` entry (rows stay `pending`). De
 Settings tab `/configuracoes/google` (admin): Conectar / Desconectar, the connected account, the granted scopes and a
 "Testar conexao" proof (next 5 calendar events + 5 most recent Drive files, names only; each half fails on its own).
 
-- **Flow**: `connect/start` mints a server-bound single-use `state` (10 min, SHA-256 stored, bound to the org/user, carries
-  the PKCE verifier Fernet-encrypted in `assistant.oauth_states`) and returns the consent URL; Google redirects the browser
+- **Flow**: `connect/start` mints a server-bound single-use `state` (10 min, SHA-256 stored, bound to the org/user AND to the
+  starting browser through the host-only cookie `__Host-ast_goauth` (Secure, HttpOnly, SameSite=Lax, Max-Age=600; the
+  callback must present it, else 400 and the state is burned), one flow in flight per user, 10/min on `connect/start`,
+  carries the PKCE verifier Fernet-encrypted in `assistant.oauth_states`) and returns the consent URL; Google redirects the browser
   to the callback, which consumes the state (unknown / replayed / expired / other-provider => 400), exchanges the code
   with the verifier and writes the grant to `assistant.oauth_credentials` (seed `CredentialStore`, Fernet at rest, one
-  row per org). No route ever returns a token. `disconnect` revokes at Google, then deletes (an unreachable Google still
+  row per org). No route ever returns a token. The callback re-checks the starter is still an org admin; a reconnect revokes the previous refresh token; a persist failure
+  revokes the new grant. Every connect/disconnect/reconnect_needed is an append-only row of `google_conexao_eventos`
+  (trigger, same transaction). `disconnect` revokes at Google, then deletes (an unreachable Google still
   deletes locally and answers `revoked: false`). A dead refresh token flags `needs_reconnection` instead of a 500.
 - **Scopes (least privilege)**: `openid`, `userinfo.email`, `calendar.events`, `drive.readonly`, `drive.file`. No Gmail,
   no full `calendar`, no full `drive`. Incremental auth is off, so the token carries exactly these.

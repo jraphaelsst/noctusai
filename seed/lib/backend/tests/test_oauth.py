@@ -73,6 +73,7 @@ def test_oauth_module_all_includes_every_public_symbol():
             "FakeScopeResolver",
             "GoogleProvider",
             "GoogleScopeResolver",
+            "IssuedState",
             "MetaScopeResolver",
             "OAuthCallbackResult",
             "OAuthProvider",

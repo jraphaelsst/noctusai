@@ -32,6 +32,7 @@ from noctusai_lib.security.oauth import GoogleProvider, TokenSet, make_oauth_sta
 from noctusai_lib.security.token_store import make_credential_store
 
 from app.config import settings
+from app.dependencies import _db
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,10 @@ if _stray:
 OAUTH_PROVIDER = "google"          # path / state-store provider name
 STORE_PROVIDER = CALENDAR_PROVIDER  # the seed resolvers read this row for BOTH the calendar and the drive adapters
 CALLBACK_PATH = "/api/google/oauth/callback"
+#: The browser binding of a flow (login-CSRF / account-linking defence): host-only (`__Host-`: Secure, Path=/, no
+#: Domain), HttpOnly, SameSite=Lax (a top-level GET from Google still carries it; a cross-site subresource does not).
+COOKIE_NAME = "__Host-ast_goauth"
+COOKIE_MAX_AGE = 600
 STATES_TABLE = "oauth_states"
 CREDENTIALS_TABLE = "oauth_credentials"
 
@@ -87,6 +92,9 @@ def frontend_url(path: str) -> str:
     return uri[: -len(CALLBACK_PATH)] + path if uri.endswith(CALLBACK_PATH) else path
 
 
+# NOC-REMEDIATE[encryption-key-rotation]: one ENCRYPTION_KEY encrypts every Fernet column of this product (WAHA api key,
+# Google grants, PKCE verifiers); rotation needs the seed MultiKeyDecryptor wired through the stores. Destination: a
+# seed-level key-ring seam for the credential stores -- 2026-11-10
 def fernet_key() -> bytes:
     from noctusai_lib.security.api_keys import EncryptionNotConfigured
 
@@ -149,6 +157,25 @@ def persist_tokens(store, *, org_id: str, user_id: str, tokens: TokenSet) -> dic
         },
     )
     return {"scopes": granted}
+
+
+def user_is_org_admin(user_id: str, org_id: str) -> bool:
+    """Is `user_id` an admin of `org_id` RIGHT NOW (trusted `noctus_users` row, the seed membership resolver)? Raises on
+    a DB error: the caller fails closed."""
+    from noctusai_lib.api.auth.session.scopes import ADMIN_ORG_ROLES, resolve_org_membership
+
+    membership = resolve_org_membership(_db.get_core_client(), user_id)
+    return (
+        membership is not None
+        and str(membership.get("org_id")) == str(org_id)
+        and membership.get("org_role") in ADMIN_ORG_ROLES
+    )
+
+
+def remove_grant(admin_client, org_id: str, actor_id: str) -> None:
+    """Delete the org's grant through `assistant.google_desconectar` (one transaction: the delete and its `disconnect`
+    event, which names the actor)."""
+    admin_client.rpc("google_desconectar", {"p_org_id": org_id, "p_provider": STORE_PROVIDER, "p_actor_id": actor_id}).execute()
 
 
 @dataclass(frozen=True)

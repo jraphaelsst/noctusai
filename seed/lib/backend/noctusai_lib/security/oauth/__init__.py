@@ -54,6 +54,7 @@ from noctusai_lib.security.oauth.types import (
 )
 from noctusai_lib.security.oauth.state_store import (
     FakeOAuthStateStore,
+    IssuedState,
     OAuthStateRecord,
     OAuthStateStore,
     SupabaseOAuthStateStore,
@@ -76,6 +77,7 @@ __all__ = [
     "FakeScopeResolver",
     "GoogleProvider",
     "GoogleScopeResolver",
+    "IssuedState",
     "MetaScopeResolver",
     "OAuthCallbackResult",
     "OAuthProvider",
