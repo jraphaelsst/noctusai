@@ -332,7 +332,7 @@ variables" dropped (Extrair Pesquisa covers it); DELETE instead of GET navigatio
 
 ## Slice plan (file-disjoint)
 
-- **S0b (engineer-seed)** — `seed/lib/backend/noctusai_lib/integrations/documents/plain_text.py` + tests
+- **S0b (product-engineer)** — `seed/lib/backend/noctusai_lib/integrations/documents/plain_text.py` + tests
   (2nd consumer after `drive_census._extract_docx`; optionally migrate that one). Don't edit existing
   `noctusai_lib` `__init__` files.
 - **BE-A brains core (backend)** — the migration (all §2 DDL), `cerebro_templates.py`,

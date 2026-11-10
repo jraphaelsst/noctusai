@@ -3,7 +3,7 @@
  *
  * Mirrors the ERP TanStack Query hook shape (useQuery/useMutation + toast).
  * Hooks are the ONLY place useQuery/useMutation appears — never in page
- * components directly (per engineer-seed protocol).
+ * components directly (per product-engineer protocol).
  *
  * Backend contract: products/orbity/backend/app/schemas/tasks.py
  *   TaskStatus  : "todo" | "doing" | "done" | "canceled"

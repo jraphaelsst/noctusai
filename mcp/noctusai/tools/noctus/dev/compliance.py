@@ -19509,6 +19509,7 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_skill_format())
     all_issues.extend(check_agent_format())
     all_issues.extend(check_agent_archetype_contract())
+    all_issues.extend(check_agent_names_resolve())
     # agent-context-architecture (2026-05-26) — agent files declare full-domain
     # owns_kb in frontmatter; keeper enforces existence + body-pointer mirror +
     # exclusive ownership. KB § PATTERNS/common/agent-context-architecture.md.
@@ -20280,7 +20281,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
 
 # Agents that intentionally own no KB territory (meta-roles / procedure-docs).
 # Their frontmatter MUST declare `owns_kb: []` explicitly (no ambiguity).
-_AGENT_KB_OWNS_NOTHING = frozenset({"product-engineer"})
+_AGENT_KB_OWNS_NOTHING = frozenset({"product-engineer", "engineer-seed"})
 
 # Repo-root-relative untracked allowlist for check_git_leftovers — files that
 # may legitimately appear at depth 1 untracked. Anything else trips the keeper.
@@ -20471,6 +20472,85 @@ def check_agent_archetype_contract(repo_root: Path | None = None) -> list[dict]:
                 })
     return issues
 
+# ── check_agent_names_resolve — methodology surfaces must name real agents ──
+# Born from the engineer-seed -> product-engineer retirement (2026-11-09): live
+# references outlived the agent file. Scans prose/contract surfaces + code
+# comments for agent names (subagent_type values, `.claude/agents/<name>.md`
+# paths, backticked role-shaped names) and requires each to resolve to
+# `.claude/agents/<name>.md`. A file carrying `deprecated:` frontmatter is an
+# alias: it resolves, but every reference is a warning with the retirement note.
+_AGENT_NAME_ROLE = r"(?:engineer|architect|advisor|reviewer|designer|scout|analyst|manager|engineer-seed)"
+_AGENT_NAME_RES = (
+    re.compile(r"subagent_type\s*[:=]\s*[\"'`]?([a-z][a-z0-9-]+)"),
+    re.compile(r"\.claude/agents/([a-z][a-z0-9-]+)\.md"),
+    re.compile(r"`((?!noc-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*-" + _AGENT_NAME_ROLE + r")`"),
+)
+# Role-shaped backticked tokens that are NOT agents (tool/skill/product names).
+_AGENT_NAME_NOT_AGENTS = frozenset({
+    "noc-security-audit", "access-tier-security", "tech-lead", "task-engineer",
+    # Legit non-file names: an agents.kind value, a DB-source agent (lives in
+    # Agents Studio, the .md is a gated mirror), a proposed-agent design concept,
+    # and an operator task name.
+    "dev-advisor", "media-analyst", "orchestrator-operator", "dispatch-engineer",
+})
+_AGENT_NAME_SCAN_GLOBS = (
+    ".claude/**/*.md", "KNOWLEDGE-BASE/**/*.md", "CLAUDE.md", "CONTEXTUALIZE.md", "CLAUDE/*.md",
+    "products/*/**/CONTRACT*.md", "products/*/**/*-contract.md",
+)
+
+
+def check_agent_names_resolve(repo_root: Path | None = None) -> list[dict]:
+    """Agent names named on methodology surfaces must resolve to `.claude/agents/<name>.md`.
+
+    Unresolved name -> `high`. Name resolving to a `deprecated:` alias ->
+    `warning` carrying the retirement note. Archived/closed project trees and
+    the alias file itself are out of scope. Skills dir is scanned like any
+    surface (a docs slice owns fixing it).
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    agents_dir = root / ".claude" / "agents"
+    if not agents_dir.is_dir():
+        return issues
+    resolved: dict[str, str | None] = {}
+    for md in agents_dir.glob("*.md"):
+        fm = _parse_frontmatter(md.read_text(encoding="utf-8", errors="replace")) or {}
+        resolved[md.stem] = (fm.get("deprecated") or "").strip().strip('"') or None
+    seen_files: set[Path] = set()
+    for pattern in _AGENT_NAME_SCAN_GLOBS:
+        for f in sorted(root.glob(pattern)):
+            if f in seen_files or not f.is_file() or "node_modules" in f.parts:
+                continue
+            seen_files.add(f)
+            rel = str(f.relative_to(root))
+            if rel == ".claude/agents/engineer-seed.md" or rel.startswith(("archive/", "project-history/")):
+                continue
+            try:
+                text = f.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            names: set[str] = set()
+            for rx in _AGENT_NAME_RES:
+                names.update(rx.findall(text))
+            # Deprecated aliases are also caught as bare words (contract tables, prose).
+            for alias, note in resolved.items():
+                if note and re.search(rf"(?<![\w/.-]){re.escape(alias)}(?![\w-])", text):
+                    names.add(alias)
+            for name in sorted(names - _AGENT_NAME_NOT_AGENTS):
+                if name in resolved:
+                    note = resolved[name]
+                    if note:
+                        issues.append({
+                            "product": "<harness>", "file": rel, "severity": "warning",
+                            "issue": f"Agent `{name}` is a deprecated alias ({note}) — redirect the reference.",
+                        })
+                    continue
+                issues.append({
+                    "product": "<harness>", "file": rel, "severity": "high",
+                    "issue": f"Agent name `{name}` does not resolve to `.claude/agents/{name}.md` — retired/renamed/typo; redirect it.",
+                })
+    return issues
+
 
 def _parse_frontmatter_owns_kb(text: str) -> list[str] | None:
     """Extract the `owns_kb:` list from agent frontmatter.
@@ -20593,7 +20673,7 @@ def check_agent_kb_alignment(repo_root: Path | None = None) -> list[dict]:
                 "product": "<harness>", "file": rel,
                 "issue": (
                     f"Meta-agent `{stem}` declares non-empty `owns_kb:` — "
-                    f"meta-agents (product-engineer) "
+                    f"meta-agents (product-engineer, the engineer-seed alias) "
                     f"own no KB territory. Declare `owns_kb: []`."
                 ),
                 "severity": "high",
