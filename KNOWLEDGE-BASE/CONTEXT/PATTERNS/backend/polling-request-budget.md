@@ -75,6 +75,10 @@ audit its hot paths (loops, schedulers, per-request reads) against this rule.
     `# poll-budget-ok: <reason of 10+ chars>` on the call's line or up to 3 lines above.
   - **R4** (TypeScript) a `refetchInterval` whose value is not literal `false` / `undefined` / `0`, any
     `setInterval(`, and `refetchIntervalInBackground: true` (needs `hidden=runs` in its declaration).
+  - **Scope:** seed lib plus the ACTIVE products only, derived from `deploy/fleet/active-scope.txt` (never a
+    hand-kept list). An asleep product is not checked (`KB § PATTERNS/architect/product-working-scope.md`);
+    **activating a product (adding it to active scope) makes the keeper apply to it**, so declare or fix its
+    loops/polls before waking it.
   - **The declaration** sits on the construct's line or up to 3 lines above, and is valid only if it carries a
     number followed by `/day` (so it was multiplied out); an empty or numberless declaration is itself a finding:
     - Python: `# poll-budget: <cadence>; <k> calls/tick; worst <N>/day; idle=<backoff|event|fixed>`
