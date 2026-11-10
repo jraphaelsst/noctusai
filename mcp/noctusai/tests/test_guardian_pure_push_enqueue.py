@@ -526,6 +526,7 @@ def _store(world, tmp_path):
         return RS.deliverable(branch, cwd=world.repo, head_sha=head_sha, verdict_ref=verdict_ref,
                               derived_check=world.derived, verdict_store=world.verdict_store)
     return RS.StewardStore(root=tmp_path / "steward", deliverable_check=check,
+                           resolve_head=lambda b: sh_rc(world.repo, "git", "rev-parse", "--verify", "--quiet", f"refs/heads/{b}").stdout.strip() or None,
                            resolve_branch=lambda s: RS.resolve_branch_name(s, git=RS._subprocess_git(world.repo)))
 
 
@@ -1262,3 +1263,149 @@ def test_a_head_that_does_not_touch_cli_py_skips_the_check_and_says_so(world, tm
     assert row["skipped"] is True and row["ok"] is True
     assert "skipped" in four["detail"] and "cli.py --help" in four["detail"]
     assert not [e for e in _help_events(tmp_path) if e.get("guard") == "deliverable:cli-help"]
+
+
+# =================================================================================================
+# fix round 3 (first live use): run_scoped must measure the REAL repo shape, say why it failed, and never be ignored
+# =================================================================================================
+
+_BANNER = ("\x1b[1m╔" + "═" * 58 + "╗\x1b[0m\n\x1b[1m║                NoctusAI Dev Toolkit                      ║\x1b[0m\n"
+           "\x1b[1m╚" + "═" * 58 + "╝\x1b[0m\n")
+
+_GIT_NEEDY_CLI = (
+    "import pathlib, subprocess, sys\n"
+    f"BANNER = {_BANNER!r}\n"
+    "root = pathlib.Path(__file__).resolve().parents[2]\n"
+    "flag = sys.argv[1]\n"
+    "if flag == '--stamp':\n"
+    "    sys.stdout.write(BANNER)\n"
+    "    if not (root / '.git').exists():\n"
+    "        print('[stamp] git not available - skipping stamp.')\n"
+    "        sys.exit(1)\n"
+    "    sys.exit(0)\n"
+    "if flag == '--check-gitdir-is-the-export':\n"  # the keeper-mirror caches live under <git-common-dir>: never the primary's
+    "    gd = subprocess.run(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], capture_output=True, text=True, cwd=root).stdout.strip()\n"
+    "    sys.exit(0 if gd.startswith(str(root.resolve())) else 1)\n"
+    "sys.exit(0)\n")
+
+
+def test_run_scoped_gives_the_export_a_throwaway_git_repo_like_ci_has(world):
+    """CI runs in a checkout: `--stamp-seed-version` needs git and the keeper caches live under the git dir. The export
+    has no .git; a throwaway `git init` of the export (a temp dir, never a worktree) provides it."""
+    wf = _WORKFLOW.replace("--check-in-a-later-job", "--check-gitdir-is-the-export")
+    wt = world.worktree()
+    for rel, text in ((".github/workflows/test.yml", wf), ("mcp/noctusai/cli.py", _GIT_NEEDY_CLI),
+                      ("mcp/noctusai/tests/test_keepers.py", _KEEPER_TESTS), ("scripts/MANIFEST", "tool.sh\n"),
+                      ("scripts/tool.sh", "#!/bin/sh\n")):
+        (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wt / rel).write_text(text)
+    world.set_counts(wt)
+    world.commit(wt, "ci definition whose prime step needs git")
+    head = world.push(wt, "feat/x")
+    before = sh(world.repo, "git", "rev-list", "--all", "--count"), sh(world.repo, "git", "worktree", "list", "--porcelain")
+    res = RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store)("feat/x", head)
+    assert res["ok"], res
+    assert "--check-gitdir-is-the-export" in res["ran"]["flags"]
+    assert (sh(world.repo, "git", "rev-list", "--all", "--count"), sh(world.repo, "git", "worktree", "list", "--porcelain")) == before
+    assert RS.validate_verdict_ref(res["verdict_ref"], head, world.verdict_store)[0]
+
+
+def test_the_meaningful_tail_drops_ansi_and_banner_and_keeps_the_error():
+    noisy = (_BANNER + "2026-11-10 04:20:09 | INFO     | [noctusai-mcp-cli] env_bootstrap | env_bootstrap: no repo-root .env\n"
+             + "".join(f"progress line {i}\n" for i in range(40)) + "\x1b[91mBoom: the real error\x1b[0m\nTraceback tail\n")
+    tail = RS.meaningful_tail(noisy, max_lines=20)
+    assert "NoctusAI Dev Toolkit" not in tail and "\x1b" not in tail and "═" not in tail and "env_bootstrap" not in tail
+    assert "Boom: the real error" in tail and "Traceback tail" in tail
+    assert len(tail.splitlines()) <= 20 and "progress line 39" in tail and "progress line 0" not in tail
+    assert RS.meaningful_tail(_BANNER) == ""
+
+
+def test_a_failing_prime_step_reports_the_real_error_not_the_banner(world):
+    wt = world.worktree()
+    cli = ("import sys\nsys.stdout.write(%r)\nprint('RealError: the stamp could not be written', file=sys.stderr)\nsys.exit(3)\n" % _BANNER)
+    for rel, text in ((".github/workflows/test.yml", _WORKFLOW), ("mcp/noctusai/cli.py", cli)):
+        (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wt / rel).write_text(text)
+    world.set_counts(wt)
+    world.commit(wt, "a prime step that fails loudly")
+    head = world.push(wt, "feat/x")
+    res = RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store)("feat/x", head)
+    assert not res["ok"] and "UNMEASURED" in res["detail"]
+    assert "RealError: the stamp could not be written" in res["detail"]
+    assert "NoctusAI Dev Toolkit" not in res["detail"] and "\x1b" not in res["detail"]
+
+
+def test_a_red_keeper_flag_carries_its_own_error_in_the_result(world):
+    _wt, head = _ci_branch(world, rogue_script=True)
+    res = RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store)("feat/x", head)
+    assert not res["ok"] and "script(s) without a manifest row" in res["detail"]
+
+
+# -- request(run_scoped=True) is not silently ignored ------------------------------------------------------------
+
+def test_request_run_scoped_runs_the_ci_parity_check_and_files_with_its_ref(world, tmp_path):
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    world.commit(wt, "feat: b")
+    head = world.push(wt, "feat/x")
+    calls = []
+
+    def scoped(branch, full_head):
+        calls.append((branch, full_head))
+        ref = RS.record_verdict(world.verdict_store, head=full_head, tree=sh(world.repo, "git", "rev-parse", f"{full_head}^{{tree}}"),
+                                workflow_blob="0" * 40, interpreter="t", flags=["--check-x"], tests=[], ok=True)
+        return {"ok": True, "detail": "ran", "verdict_ref": ref}
+
+    store = _store(world, tmp_path)
+    store._scoped_check = scoped
+    res = store.request("sess-1", "x", run_scoped=True)  # NO verdict_ref given: the run supplies it
+    assert res["ok"] and res["status"] == "queued_for_steward", res
+    assert calls == [("feat/x", head)]
+    assert res["request"]["verdict_ref"].startswith("ci-parity:")
+    assert res["scoped"]["verdict_ref"] == res["request"]["verdict_ref"]
+    assert res["deliverable"]["verdict"] == "deliverable"
+
+
+def test_request_run_scoped_with_a_red_run_is_needs_resync_naming_item_five(world, tmp_path):
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    world.commit(wt, "feat: b")
+    world.push(wt, "feat/x")
+    store = _store(world, tmp_path)
+
+    def red(branch, full_head):
+        ref = RS.record_verdict(world.verdict_store, head=full_head, tree=sh(world.repo, "git", "rev-parse", f"{full_head}^{{tree}}"),
+                                workflow_blob="0" * 40, interpreter="t", flags=[], tests=[], ok=False)
+        return {"ok": False, "detail": "RED: keeper --check-x", "verdict_ref": ref}
+    store._scoped_check = red
+    res = store.request("sess-1", "x", run_scoped=True)
+    assert res["ok"] is False and res["status"] == "needs_resync" and "scoped_green" in res["failing"]
+
+
+def test_request_refuses_run_scoped_it_cannot_honour_rather_than_ignoring_it(world, tmp_path):
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    world.commit(wt, "feat: b")
+    world.push(wt, "feat/x")
+    store = _store(world, tmp_path)
+    store._scoped_check = None
+    no_runner = store.request("sess-1", "x", run_scoped=True)
+    assert no_runner["ok"] is False and "run_scoped" in no_runner["error"] and "no CI-parity runner" in no_runner["error"]
+    train = store.request("sess-1", "x", run_scoped=True, branches=["feat/x", "feat/y"])
+    assert train["ok"] is False and "per branch" in train["error"]
+    assert store.requests() == {}  # a refused flag files nothing
+
+
+def test_run_action_passes_run_scoped_through_to_request(world, tmp_path):
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    world.commit(wt, "feat: b")
+    world.push(wt, "feat/x")
+    store = _store(world, tmp_path)
+    store._scoped_check = None
+    res = RS.run_action("request", "sess-1", store=store, slug="x", run_scoped=True)
+    assert res["ok"] is False and "run_scoped" in res["error"]  # it reached request() (and was refused there), not dropped

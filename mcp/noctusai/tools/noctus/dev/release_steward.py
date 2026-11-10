@@ -273,7 +273,8 @@ class StewardStore:
                  landed_check: Callable[[str, str | None], dict[str, Any]] | None = None,
                  inline_gate: Callable[[str, str | None, str | None], dict[str, Any]] | None = None,
                  deliverable_check: Callable[[str, str | None, str | None], dict[str, Any]] | None = None,
-                 resolve_branch: Callable[[str], dict[str, Any]] | None = None) -> None:
+                 resolve_branch: Callable[[str], dict[str, Any]] | None = None,
+                 scoped_check: Callable[[str, str], dict[str, Any]] | None = None) -> None:
         self.root = Path(root) if root is not None else default_root()
         # Same posture as inline_gate/landed_check: production runs the real delivery-contract preflight
         # (`deliverable`) at filing; a store built on an explicit root (tests) skips it unless it injects one.
@@ -281,6 +282,10 @@ class StewardStore:
             (lambda b, h, v: deliverable(b, head_sha=h, verdict_ref=v)) if root is None else None)
         self._resolve_branch = resolve_branch if resolve_branch is not None else (
             resolve_branch_name if root is None else None)
+        # `request(run_scoped=True)` runs the CI-parity check (minutes) and files with the ref it mints. Production runs
+        # the real one; an explicit-root store (tests) has none unless it injects one - and then REFUSES the flag.
+        self._scoped_check = scoped_check if scoped_check is not None else (
+            export_ci_parity_check() if root is None else None)
         # Production (root=None -> ~/.noctus) runs the real gate; a store built on an explicit root
         # (tests, tooling) opts out unless it injects one - the gate reads the shared pointer ledger.
         self._inline_gate = inline_gate if inline_gate is not None else (
@@ -557,7 +562,7 @@ class StewardStore:
                 products: list[str] | None = None, migrations: bool = False,
                 notes: str | None = None, inline_reason: str | None = None,
                 inline_note: str | None = None, branches: list[str] | None = None,
-                verdict_ref: str | None = None) -> dict[str, Any]:
+                verdict_ref: str | None = None, run_scoped: bool = False) -> dict[str, Any]:
         """NON-BLOCKING: file a delivery for the steward and return at once.
 
         DELIVERY CONTRACT: the filing first runs the read-only `deliverable(branch)` preflight; a branch that
@@ -591,7 +596,25 @@ class StewardStore:
                 warnings.append(f"could not resolve {branch}'s head; pass head_sha=<sha> so the steward "
                                 "enqueues the right commit")
         contract: dict[str, Any] | None = None
-        if self._deliverable_check is not None:
+        scoped_run: dict[str, Any] | None = None
+        if run_scoped:
+            # NEVER silently ignored: run it, or refuse with the reason.
+            if branches and len(branches) > 1:
+                return _err("run_scoped=true is per branch: file each branch of a split delivery with its own run_scoped request "
+                            "(a verdict record judges ONE head), or run `release_steward action=deliverable run_scoped=true` per branch")
+            if self._scoped_check is None:
+                return _err("run_scoped=true: no CI-parity runner is configured on this store (refusing rather than ignoring the flag)")
+            full_head = self.resolve_head(branch)
+            if not full_head:
+                return _err(f"run_scoped=true: cannot resolve {branch}'s head to judge (is the branch local?)")
+            head_sha = full_head
+            scoped_run = self._scoped_check(branch, full_head)
+            if scoped_run.get("verdict_ref"):
+                verdict_ref = scoped_run["verdict_ref"]  # green OR red: item 5 resolves the record and judges it
+            else:  # UNMEASURED run: no record was minted - needs_resync naming item 5 with the reason
+                contract = {"ok": False, "verdict": "needs_resync", "head_sha": full_head, "failing": ["scoped_green"],
+                            "items": [{"n": 5, "name": "scoped_green", "ok": False, "detail": scoped_run.get("detail", "")}]}
+        if contract is None and self._deliverable_check is not None:
             for b in (branches or [branch]):
                 contract = self._deliverable_check(b, head_sha if b == branch else None, verdict_ref)
                 if not contract.get("ok"):
@@ -630,6 +653,8 @@ class StewardStore:
             "ok": True, "status": "queued_for_steward", "request": after,
             "deliverable": ({"verdict": contract["verdict"], "items": [{k: i[k] for k in ("n", "name", "ok")} for i in contract["items"]]}
                             if contract else None),
+            "scoped": ({"ok": scoped_run.get("ok"), "detail": scoped_run.get("detail"), "verdict_ref": scoped_run.get("verdict_ref")}
+                       if scoped_run is not None else None),
             "updated_head": bool(before) and before.get("head_sha") != after.get("head_sha"),
             "steward": holder if holder and holder["state"] == "live" else None,
             "next": "KEEP BUILDING the remaining work; do not wait. release_steward action=mine shows the outcome.",
@@ -1872,6 +1897,40 @@ def validate_verdict_ref(ref: str | None, head: str | None, store: str | Path | 
                   f"+ {len(rec.get('tests') or [])} real-tree keeper test(s), green")
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+_NOISE_RE = re.compile(r"[\u2550-\u257f]|NoctusAI Dev Toolkit|\|\s*INFO\s*\||env_bootstrap")
+
+
+def meaningful_tail(text: str | None, max_lines: int = 20) -> str:
+    """The last `max_lines` MEANINGFUL lines of a command's output: ANSI escapes stripped, the toolkit banner (box-drawing
+    lines + its title), INFO log lines and blank lines dropped. A failure used to report only the banner (the first live use:
+    'UNMEASURED: prime step failed (<banner>)'), which names no cause."""
+    lines = [_ANSI_RE.sub("", ln).rstrip() for ln in (text or "").splitlines()]
+    keep = [ln for ln in lines if ln.strip() and not _NOISE_RE.search(ln)]
+    return "\n".join(keep[-max_lines:])
+
+
+def _last_line(text: str | None) -> str:
+    tail = meaningful_tail(text, 1)
+    return tail[:200]
+
+
+def _git_init_export(tree: str | Path, head: str, timeout: int = 300) -> str | None:
+    """CI runs in a CHECKOUT: `--stamp-seed-version` needs git ('git not available - skipping stamp', exit 1 in a bare export) and
+    the keeper-mirror caches live under `<git-common-dir>`. Give the export a throwaway repository: a fresh `git init` of the
+    export with one commit, in the temp dir (never the requester's worktree, never the real repository, so its caches stay
+    the export's own). Global/system git config is ignored so no inherited hooks path or identity leaks in. Returns an error or None."""
+    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_AUTHOR_NAME": "noc-ci-parity", "GIT_AUTHOR_EMAIL": "noc-ci-parity@localhost",
+           "GIT_COMMITTER_NAME": "noc-ci-parity", "GIT_COMMITTER_EMAIL": "noc-ci-parity@localhost"}
+    for argv in (["git", "init", "-q", "-b", "dev"], ["git", "add", "-A"],
+                 ["git", "commit", "-q", "-m", f"ci-parity export of {head[:12]}"]):
+        r = subprocess.run(argv, cwd=str(tree), capture_output=True, text=True, timeout=timeout, check=False, env=env)
+        if r.returncode != 0:
+            return f"could not make the export a git checkout (`{' '.join(argv[:2])}`): {meaningful_tail(r.stderr or r.stdout, 5)}"
+    return None
+
+
 def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None = None, timeout: int = 1500,
                            base_env: dict[str, str] | None = None,
                            verdict_store: str | Path | None = None) -> Callable[[str, str], dict[str, Any]]:
@@ -1898,6 +1957,9 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             iso = seed_isolation_error(py, tree, env)
             if iso:
                 return {"ok": False, "detail": f"UNMEASURED: {iso}"}
+            gerr = _git_init_export(tree, head, timeout)
+            if gerr:
+                return {"ok": False, "detail": f"UNMEASURED: {gerr}"}
             flags, prime = ci_blocking_flags(text), ci_prime_flags(text)
             tool_dir = Path(tree) / "mcp" / "noctusai"
             ids = ci_keeper_test_ids(tool_dir / "tests")
@@ -1910,15 +1972,16 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 r = run([py, "cli.py", f], tool_dir)
                 if r.returncode != 0:
                     return {"ok": False, "detail": f"UNMEASURED: CI's prime step `cli.py {f}` failed in the hermetic export "
-                                                   f"({(r.stderr or r.stdout).strip()[-160:]})"}
+                                                   f"(exit {r.returncode}):\n{meaningful_tail((r.stdout or '') + chr(10) + (r.stderr or ''))}"}
             for f in flags:
-                if run([py, "mcp/noctusai/cli.py", f], Path(tree)).returncode != 0:
-                    failed.append(f"keeper {f}")
+                r = run([py, "mcp/noctusai/cli.py", f], Path(tree))
+                if r.returncode != 0:
+                    failed.append(f"keeper {f}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}")
             if ids:
                 r = run([py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *ids], tool_dir)
                 if r.returncode != 0:
                     names = re.findall(r"^FAILED (\S+)", r.stdout or "", flags=re.M)
-                    failed += [f"test {n}" for n in names] or [f"pytest exit {r.returncode}: {(r.stdout or r.stderr).strip()[-160:]}"]
+                    failed += [f"test {n}" for n in names] or [f"pytest exit {r.returncode}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}"]
             ran = f"{len(flags)} CI-blocking keeper flag(s) + {len(ids)} real-tree keeper test(s), env-scrubbed"
             git = _subprocess_git(cwd)
             rc_t, head_tree, _e = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
@@ -2168,7 +2231,7 @@ def run_action(action: str, session_id: str | None, *, store: StewardStore | Non
                              head_sha=kw.get("head_sha"), products=kw.get("products"),
                              migrations=bool(kw.get("migrations")), notes=kw.get("notes"),
                              inline_reason=kw.get("inline_reason"), inline_note=kw.get("inline_note"), branches=kw.get("branches"),
-                             verdict_ref=kw.get("verdict_ref"))
+                             verdict_ref=kw.get("verdict_ref"), run_scoped=bool(kw.get("run_scoped")))
     if action == "deliverable":
         return store.check_deliverable(kw.get("slug"), kw.get("branch"), kw.get("head_sha"), kw.get("verdict_ref"),
                                     run_scoped=bool(kw.get("run_scoped")))
@@ -2246,5 +2309,5 @@ def register(server) -> None:
 
 
 __all__ = ["deliverable", "export_derived_check", "export_ci_parity_check", "ci_blocking_flags", "ci_keeper_test_ids",
-           "hermetic_env", "export_env", "export_cli_help_check", "seed_pythonpath", "validate_verdict_ref", "record_verdict", "read_verdict", "default_verdict_store", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
+           "hermetic_env", "export_env", "export_cli_help_check", "meaningful_tail", "seed_pythonpath", "validate_verdict_ref", "record_verdict", "read_verdict", "default_verdict_store", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
            "tool_refusal", "run_action", "register", "REQUEST_CMD", "OVERRIDE_ENV"]
