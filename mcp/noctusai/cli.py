@@ -243,6 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-agent-format", action="store_true", help="Keeper: every .claude/agents/<name>.md has valid required frontmatter (name: matching filename + description: + EXPLICIT tools:). Omitting `tools:` inherits ~400 deferred tool names (KB § PATTERNS/dispatch-engineer-tuning.md).")
     parser.add_argument("--check-agent-archetype-contract", action="store_true", help="Keeper: advisor agents (architect/security/compliance-reviewer) declare NO Edit/Write in tools: (read-only contract enforced at the tool layer). Executor agents (backend-engineer/frontend-engineer/devops-engineer/product-engineer) body references `product-engineer` protocol.")
     parser.add_argument("--refresh-keeper-cache", action="store_true", help="Refresh the local keeper-pattern cache (.claude/cache/keeper-patterns.sqlite) from compliance.py + tests. Mirrors the keepers so doc-authoring agents can lookup patterns BEFORE authoring (avoid gated rework). Pair --force to bypass the in-sync short-circuit. Auto-run by pre-commit on compliance.py change; lazy-rebuilt on query-time source_sha mismatch. KB § PATTERNS/keeper-pattern-cache.md.")
+    parser.add_argument("--check-agent-names-resolve", action="store_true", help="Keeper: agent names on methodology surfaces (.claude/**, KB, CLAUDE.md, CONTRACT*.md; subagent_type values, .claude/agents/<name>.md paths, backticked role-shaped names) must resolve to .claude/agents/<name>.md; deprecated aliases (`deprecated:` frontmatter) warn with the retirement note. MCP keeper check_agent_names_resolve.")
     parser.add_argument("--keeper-pattern-lookup", metavar="KEEPER_OR_FILE", help="Query the keeper-pattern cache by keeper-name substring OR file path (e.g. .claude/agents/devops-engineer.md → agent-format + agent-archetype). Print matching pattern rows. The keeper-check-before-doc'ing discipline starts here.")
     parser.add_argument("--check-keeper-cache-freshness", action="store_true", help="Keeper: the local cache must mirror compliance.py — cache_meta.source_sha must equal sha256(compliance.py). Severity high. Pre-commit gate (auto-refresh) + standalone CLI check. Run --refresh-keeper-cache to fix. (Pair --force with --refresh-keeper-cache to rebuild even when in-sync; the existing --force flag is shared.)")
     parser.add_argument("--refresh-agent-context-cache", action="store_true", help="Refresh the local agent-context cache (.claude/cache/agent-context.sqlite) from .claude/agents/*.md + each agent's owns_kb-declared KB paths. At dispatch, an agent's compact bundle (frontmatter + body + per-owned-KB extract) replaces N Reads. Per-agent bundle_sha guards in-sync agents; --force rebuilds anyway. Pair with --agent <name> to limit scope. Auto-run by pre-commit on agent.md OR owned-KB change. KB § PATTERNS/agent-context-architecture.md.")
@@ -3160,9 +3161,10 @@ def main():
         # severity=warning only — advisory, never blocks commits.
         sys.exit(0)
 
-    elif args.check_skill_format or args.check_agent_format or args.check_agent_archetype_contract:
+    elif args.check_skill_format or args.check_agent_format or args.check_agent_archetype_contract or args.check_agent_names_resolve:
         from tools.noctus.dev.compliance import (
             check_skill_format, check_agent_format, check_agent_archetype_contract,
+            check_agent_names_resolve,
         )
         issues: list = []
         which = []
@@ -3172,6 +3174,8 @@ def main():
             issues += check_agent_format(); which.append("agent-format")
         if args.check_agent_archetype_contract:
             issues += check_agent_archetype_contract(); which.append("agent-archetype-contract")
+        if args.check_agent_names_resolve:
+            issues += check_agent_names_resolve(); which.append("agent-names-resolve")
         label = " + ".join(which)
         if not issues:
             print(f"  {GREEN}✓ harness-layer {label}: clean.{RESET}")

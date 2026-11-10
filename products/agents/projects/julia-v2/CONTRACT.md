@@ -928,7 +928,7 @@ The branch-tree pointer project is `julia-maya-v2`. Each slice uses `noctus.dev.
 | **A-QUAL** standard + engine | backend-engineer | agents `migrations/<qualificacao>`, `app/qualificacao/**` (engine, models, store Fake+Real+factory), `app/routers/qualificacao_router.py` (+1 line in `main.py`, C2) | W0 |
 | **A-THREAD** threads + controls | backend-engineer | agents `migrations/<threads>,<controles>`, `app/stores/conversations*.py`, `app/stores/threads.py`, `app/channels/{controles,retention}.py`, `app/routers/channel_threads_router.py` (new) (+1 line `main.py`, C2) | W0 |
 | **SW-G** supervision fixes | backend-engineer | SW `app/modules/{supervisao,atendimento_blocos}/**`, `app/modules/pipeline/{aceite,funil_eventos}.py`, `app/services/julia_contatos_service.py` (first-response fns only), `routers/whatsapp_connections_router.py` (1114-1124 only), SW `migrations/<supervisao>` | rename |
-| **MCP** `noctus.agents.content` | engineer-seed / devops | `mcp/noctusai/tools/noctus/agents/**`, tests | A-CONT API shape (contract-first: §2.4 is the contract; build against a Fake) |
+| **MCP** `noctus.agents.content` | product-engineer / devops | `mcp/noctusai/tools/noctus/agents/**`, tests | A-CONT API shape (contract-first: §2.4 is the contract; build against a Fake) |
 
 ### W2 · integration
 

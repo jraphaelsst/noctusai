@@ -29,9 +29,9 @@ C1 means no overlapping files; C2 means the overlap is additive only; C3 means t
 **Wave 1 · foundations (parallel)**
 | Slice | Owner | Class | Scope |
 |---|---|---|---|
-| S1 | engineer-seed | C1 | Seed seams: `appBasePath` + `returnTo`, SSR-safe `useTheme` + no-flash head script, `env.CORE_APP_URL` (D2) |
-| S2 | engineer-seed | C1 | Seed organs: i18n primitive, `ConsentBanner` (equal reject/accept, bottom bar), consent-gated analytics loaders + first-party event client (D3, D8) |
-| S3 | engineer-seed | C1 | E-mail Protocol + Fake + Real + factory (formalize; core's duplicate becomes a consumer); leads domain per D4 |
+| S1 | product-engineer | C1 | Seed seams: `appBasePath` + `returnTo`, SSR-safe `useTheme` + no-flash head script, `env.CORE_APP_URL` (D2) |
+| S2 | product-engineer | C1 | Seed organs: i18n primitive, `ConsentBanner` (equal reject/accept, bottom bar), consent-gated analytics loaders + first-party event client (D3, D8) |
+| S3 | product-engineer | C1 | E-mail Protocol + Fake + Real + factory (formalize; core's duplicate becomes a consumer); leads domain per D4 |
 | S4 | backend-engineer | C1 | **Contract first** (`noc-contract-first`). Migrations: `website_settings` (versioned), `leads`, `lead_activities`, `site_events`, `blog_posts`, `marketing` role + `is_website_editor()`. Routers: public settings (subset), **public plans**, leads (Turnstile, dedupe, fan-out via WAHA / e-mail / `outbound_webhook`), `signup_enabled` enforcement on `/api/auth/signup`, admin CRUD. The OpenAPI contract is published before any frontend slice |
 
 **Wave 2 · routing + site**
