@@ -424,8 +424,25 @@ def create_product_app(
 
                 return get_whatsapp_client(base_url=_ol_url, api_key=_ol_key, session=_ol_session)
 
-            _line = make_owner_line(lambda: db.get_core_client(), _owner_line_waha if _ol_url else None)
-            configure_owner_line(recipients=_line.recipients, transport=_line.transport)
+            _ol_expected = os.environ.get("NOC_OWNER_LINE_EXPECTED_NUMBER", "").strip() or None
+
+            def _owner_line_me():
+                # The session's paired account (WAHA GET /api/sessions/{session}/me) — only NoctusAI's own number
+                # may send owner notices. NOC-REMEDIATE[owner-line-waha-factory]: use the client's own `me` method once S1 adds it — 2026-11-10
+                client = _owner_line_waha()
+                resp = client._request_sync(
+                    "get", f"/api/sessions/{client.session}/me", timeout=10, headers=client._headers(),
+                )
+                resp.raise_for_status()
+                return (resp.json() or {}).get("id")
+
+            _line = make_owner_line(
+                lambda: db.get_core_client(), _owner_line_waha if _ol_url else None,
+                expected_numero=_ol_expected, me_fetch=_owner_line_me,
+            )
+            configure_owner_line(
+                recipients=_line.recipients, transport=_line.transport, transport_reason=_line.transport_reason,
+            )
     except Exception:  # noqa: BLE001 — loud, never fatal (startup-hook-must-not-be-fatal)
         logger.error("owner line install failed for %s — owner notifications will record failed", _product_slug,
                      exc_info=True)
