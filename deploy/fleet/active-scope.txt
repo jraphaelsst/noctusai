@@ -17,8 +17,10 @@
 # Last refresh: 2026-11-05
 # Asleep (on disk, ativo=false): academia-de-reciclagem, adconnect, commerce, community, daily-life, dev-team, erp-imobiliario, igig, knowledge-extractor, orbity, p-studio, personal-finance, store, therapy-platform
 # Active in catalog but no products/<slug>/ dir: none
+# assistant: added by hand in feat/ac-s2-assistant-scaffold ahead of core migration 119 (catalog row, deploy_scope='dev'); the next --refresh-build-scope reproduces it.
 
 agents
+assistant
 core
 monica
 seed
