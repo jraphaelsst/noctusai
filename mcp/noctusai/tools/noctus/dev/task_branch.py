@@ -243,6 +243,9 @@ def _content_on_dev(git, branch: str, dev_ref: str) -> tuple[bool, list[str]]:
     batch-mate that edits nearby lines shifts the patch-id CONTEXT of a
     byte-identical change. Any non-derived line the merge would add still
     refuses.
+    Proof 4: every missing commit has a rebased twin on dev, or is derived-only
+    (`_rebased_twins_on_dev`). Covers a branch that landed long ago, after which
+    dev edited the same files again.
     Returns (equivalent, commits_missing_from_dev)."""
     rc, out, _e = git("cherry", dev_ref, branch)
     missing = [ln[2:].strip() for ln in out.splitlines() if ln.startswith("+")] if rc == 0 else []
@@ -254,7 +257,49 @@ def _content_on_dev(git, branch: str, dev_ref: str) -> tuple[bool, list[str]]:
         return True, []
     if _post_images_on_dev(git, branch, dev_ref):
         return True, []
+    if missing and _rebased_twins_on_dev(git, missing, dev_ref):
+        return True, []
     return False, missing
+
+
+def _rebased_twins_on_dev(git, missing: list[str], dev_ref: str) -> bool:
+    """Proof 4 of `_content_on_dev`: every commit `cherry` calls missing is
+    either derived-only (touches nothing but the KB-count docs) or has a TWIN on
+    dev — same author email, same author timestamp, same subject, same file set.
+    A rebase or cherry-pick (the queue's replay) preserves all four and changes
+    only the sha + patch context.
+
+    Covers the shape proofs 1–3 miss (2026-11-09, 11 false refusals while
+    cleaning one session's landed worktrees): a branch that landed days ago,
+    after which dev edited the SAME files again. The patch-id context has
+    drifted and a trial merge of the stale tip conflicts on those later edits,
+    yet every commit is on dev. A commit with no twin still refuses."""
+    rc, log, _e = git("log", dev_ref, "--no-merges", "--since=60 days ago",
+                      "--format=%H%x1f%ae%x1f%at%x1f%s")
+    if rc != 0:
+        return False
+    on_dev: dict[tuple[str, str, str], list[str]] = {}
+    for ln in log.splitlines():
+        parts = ln.split("\x1f", 3)
+        if len(parts) == 4:
+            on_dev.setdefault((parts[1], parts[2], parts[3]), []).append(parts[0])
+    for sha in missing:
+        files = _commit_files(git, sha)
+        if files is None:
+            return False
+        if files and files <= _KB_COUNTS_DERIVED:
+            continue
+        rc, meta, _e = git("log", "-1", "--format=%ae%x1f%at%x1f%s", sha)
+        key = tuple(meta.strip().split("\x1f", 2)) if rc == 0 else ()
+        if len(key) != 3 or not any(_commit_files(git, t) == files for t in on_dev.get(key, [])):
+            return False
+    return True
+
+
+def _commit_files(git, sha: str) -> frozenset[str] | None:
+    """The paths one commit touches (None when git cannot answer)."""
+    rc, out, _e = git("log", "-1", "--no-renames", "--name-only", "--format=", sha)
+    return frozenset(p.strip() for p in out.splitlines() if p.strip()) if rc == 0 else None
 
 
 def _post_images_on_dev(git, branch: str, dev_ref: str) -> bool:

@@ -134,3 +134,57 @@ def test_cleanup_still_refuses_unmerged_branch(tmp_path):
     res = T.task_branch(action="cleanup", slug="x", confirm=True, primary_root=str(primary),
                         run=_runner(primary))
     assert res["status"] == "blocked"
+
+
+def _stale_landed(tmp_path, *, twin: bool):
+    """Proof 4 shape: the queue replayed the entry onto a dev whose nearby lines
+    had moved (patch-id context differs), and dev later edited the SAME line
+    again, so `cherry` and a trial merge both miss it. `twin=False` lands a
+    recommit with the same subject but a different author date instead."""
+    bare = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "dev", str(bare)], check=True)
+    primary = tmp_path / "primary"
+    subprocess.run(["git", "clone", "-q", str(bare), str(primary)], check=True, capture_output=True)
+    _sh(primary, "checkout", "-q", "-b", "dev")
+    (primary / "shared.txt").write_text("1\n2\n3\n4\n5\n6\n7\n")
+    _sh(primary, "add", "."); _sh(primary, "commit", "-qm", "base")
+    _sh(primary, "push", "-q", "origin", "dev")
+    wt = primary / ".claude" / "worktrees" / "x"
+    _sh(primary, "worktree", "add", "-q", "-b", "feat/x", str(wt), "origin/dev")
+    (wt / "shared.txt").write_text("1\n2\n3\n4\n5b\n6\n7\n")
+    _sh(wt, "add", ".")
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "feat: five becomes 5b"],
+                   cwd=wt, check=True, env={**os.environ, "GIT_AUTHOR_DATE": "@1762000000 +0000"})
+    other = primary.parent / "other"
+    subprocess.run(["git", "clone", "-q", str(bare), str(other)], check=True, capture_output=True)
+    _sh(other, "checkout", "-q", "dev")
+    (other / "shared.txt").write_text("1\n2\n3x\n4\n5\n6\n7\n")
+    _sh(other, "add", "."); _sh(other, "commit", "-qm", "peer moves the context")
+    if twin:
+        _sh(other, "fetch", "-q", str(primary), "feat/x")
+        _sh(other, "cherry-pick", "FETCH_HEAD")
+    else:
+        (other / "shared.txt").write_text("1\n2\n3x\n4\n5b\n6\n7\n")
+        _sh(other, "add", "."); _sh(other, "commit", "-qm", "feat: five becomes 5b")
+    (other / "shared.txt").write_text("1\n2\n3x\n4\n5c\n6\n7\n")
+    _sh(other, "add", "."); _sh(other, "commit", "-qm", "later dev edit of the same line")
+    _sh(other, "push", "-q", "origin", "dev")
+    return primary, wt
+
+
+def test_cleanup_accepts_a_long_landed_branch_by_its_rebased_twin(tmp_path):
+    primary, wt = _stale_landed(tmp_path, twin=True)
+    _sh(primary, "fetch", "-q", "origin")
+    assert _sh(primary, "cherry", "origin/dev", "feat/x").startswith("+")  # proof 1 misses it
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, primary_root=str(primary),
+                        run=_runner(primary))
+    assert res["status"] == "cleaned", res
+    assert not wt.exists()
+
+
+def test_cleanup_refuses_a_same_subject_commit_that_is_not_a_twin(tmp_path):
+    primary, wt = _stale_landed(tmp_path, twin=False)
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, primary_root=str(primary),
+                        run=_runner(primary))
+    assert res["status"] == "blocked", res
+    assert wt.exists()
