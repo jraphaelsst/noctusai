@@ -26,8 +26,15 @@
 #      ONLY to the `--out` scratch file we hand it, never to a tracked file;
 #   2. if NO conflict markers remain in that render → write it to %A, exit 0
 #      (resolved). If markers REMAIN (a genuine concurrent PROSE edit outside
-#      the counts blocks) → leave %A untouched and exit 1 so git surfaces the
-#      real conflict to the human.
+#      the counts blocks) → write the render, MARKERS INCLUDED, to %A and exit 1
+#      so git surfaces the real conflict to the human.
+#
+# 🔴 ON EVERY CONFLICT EXIT, %A MUST HOLD THE 3-WAY MERGE (with markers). git
+# takes %A as the merge RESULT; a non-zero exit only flags the path. Leaving %A
+# as "ours" therefore shows a conflicted file with NO markers whose other-side
+# lines are silently gone (2026-11-10: dev's `agent-creator` row vanished from
+# 06-AGENTS.md during a feature-branch merge). The render-failure and no-%P
+# exits hand back the plain 3-way merge for the same reason.
 #
 # Counts-only churn → silently correct. Real prose conflict → still surfaced.
 # Mirrors the `.gitattributes merge=union` precedent for append-only ndjson;
@@ -62,12 +69,6 @@ PATHNAME="${4:-}"
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
-# Fallback: if git didn't pass %P (older git), we don't know WHICH doc's blocks
-# to regenerate → behave like the default driver (leave %A as-is, signal
-# conflict) rather than guess.
-if [[ -z "$PATHNAME" ]]; then
-    exit 1
-fi
 
 # venv-aware Python resolution — identical contract to scripts/hooks/pre-commit
 # (worktrees have no venv of their own → fall back to the main repo's via
@@ -85,6 +86,8 @@ fi
 CLI="$REPO_ROOT/mcp/noctusai/cli.py"
 
 has_markers() { grep -qE '^(<<<<<<<|=======|>>>>>>>)' "$1" 2>/dev/null; }
+# Hand git a conflicted RESULT: copy $1 (a 3-way merge, markers included) into %A, exit 1.
+surface_conflict() { cp "$1" "$CURRENT"; exit 1; }
 
 # Scratch file for the render. Cleaned up on every exit path, including the
 # `set -e` ones — a merge driver that litters temp files into the repo is the
@@ -102,7 +105,13 @@ MF_RC=$?
 set -e
 if (( MF_RC < 0 || MF_RC > 127 )); then
     echo "merge-kb-counts: git merge-file failed ($MF_RC) for $PATHNAME" >&2
-    exit 1
+    exit 1   # no merge to hand back; %A stays ours and git flags the path
+fi
+
+# Fallback: if git didn't pass %P (older git), we don't know WHICH doc's blocks
+# to regenerate → hand back the plain 3-way merge and signal a conflict.
+if [[ -z "$PATHNAME" ]]; then
+    surface_conflict "$MERGED"
 fi
 
 # 1. Render the MERGED content with the counts blocks regenerated from the tree.
@@ -113,21 +122,21 @@ fi
 #    this is where it bites — install them (merge-queue.yml does).
 if ! { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; } || [[ ! -f "$CLI" ]]; then
     echo "merge-kb-counts: no usable python ($PY) or CLI ($CLI); cannot re-derive counts for $PATHNAME" >&2
-    exit 1
+    surface_conflict "$MERGED"
 fi
 if ! "$PY" "$CLI" --render-kb-counts "$PATHNAME" --source "$MERGED" \
         --out "$RENDERED" --worktree-path "$REPO_ROOT" >/dev/null 2>"$RENDERED.err"; then
     echo "merge-kb-counts: render of $PATHNAME failed (missing toolkit deps?); refusing to keep stale counts:" >&2
     tail -n 5 "$RENDERED.err" >&2 || true
     rm -f "$RENDERED.err"
-    exit 1
+    surface_conflict "$MERGED"
 fi
 rm -f "$RENDERED.err"
 
-# 2. Decide: clean → resolved; markers remain → real (prose) conflict, surface
-#    it with %A exactly as git left it.
+# 2. Decide: clean → resolved; markers remain → real (prose) conflict: hand git
+#    the render WITH its markers (counts already regenerated) and flag it.
 if has_markers "$RENDERED"; then
-    exit 1
+    surface_conflict "$RENDERED"
 fi
 cp "$RENDERED" "$CURRENT"     # hand the regenerated, conflict-free file back to git
 exit 0

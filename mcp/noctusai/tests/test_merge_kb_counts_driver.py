@@ -6,9 +6,12 @@ script inside a throwaway repo whose ``mcp/noctusai/cli.py`` is a recording stub
 
 The contract under test (see the script header):
   * exit 0 + regenerated content in %A when the render leaves no conflict markers;
-  * exit 1 + %A byte-identical when markers remain (a real prose conflict);
-  * a failed render exits 1 (real conflict, %A untouched) — never stale counts;
-  * no %P → exit 1 without invoking the CLI;
+  * exit 1 + %A = the 3-way merge WITH its conflict markers when markers remain (a real
+    prose conflict) — git reads %A as the result, so leaving %A as "ours" silently drops
+    the other side's lines (agent-creator row, 06-AGENTS.md, 2026-11-10);
+  * a failed render exits 1 with %A = the 3-way merge (markers included) — never stale
+    counts presented as resolved, never the other side dropped;
+  * no %P → exit 1 with %A = the 3-way merge, without invoking the CLI;
   * the driver writes %A and NOTHING else — no tracked file, no temp leftover
     (the 2026-08-17 rebase-loop regression).
 """
@@ -116,7 +119,7 @@ def test_counts_only_conflict_resolves_into_A(fake_repo, tmp_path):
     assert Path(argv[argv.index("--worktree-path") + 1]).resolve() == fake_repo.resolve()
 
 
-def test_prose_conflict_leaves_A_untouched_and_exits_1(fake_repo, tmp_path):
+def test_prose_conflict_keeps_markers_in_A_and_exits_1(fake_repo, tmp_path):
     current = _current(tmp_path, CONFLICTED)
     rc, _, _ = _run(fake_repo, tmp_path, current, "KB.md", "keep")
     assert rc == 1
@@ -124,7 +127,8 @@ def test_prose_conflict_leaves_A_untouched_and_exits_1(fake_repo, tmp_path):
 
 
 def test_render_failure_is_a_real_conflict_never_stale_counts(fake_repo, tmp_path):
-    # Missing toolkit deps must NOT silently keep stale counts: exit 1, %A untouched.
+    # Missing toolkit deps must NOT silently keep stale counts: exit 1, %A = the 3-way merge
+    # (identity merge here, so it equals the input).
     for text in (CONFLICTED, RESOLVED):
         current = _current(tmp_path, text)
         rc, calls, _ = _run(fake_repo, tmp_path, current, "KB.md", "fail")
@@ -174,4 +178,44 @@ def test_same_line_prose_edits_on_both_sides_surface_a_conflict(fake_repo, tmp_p
     current = _current(tmp_path, ours)
     rc, _, _ = _run(fake_repo, tmp_path, current, "KB.md", "keep", base=base, other=other)
     assert rc == 1
-    assert current.read_text() == ours                                # %A untouched
+    out = current.read_text()
+    # %A carries the conflict, BOTH sides visible — never "ours" alone without markers.
+    assert "<<<<<<<" in out and ">>>>>>>" in out, out
+    assert "Mônica T." in out and "Nós no Limiar" in out, out
+
+
+def test_insert_next_to_an_edited_line_never_silently_drops_theirs(fake_repo, tmp_path):
+    # Regression 2026-11-10: ours rewrote a roster line, theirs inserted a NEW line right
+    # after it. git flagged the file conflicted, but %A was left as ours with no markers,
+    # so the inserted line vanished from a file that looked clean.
+    base_doc = "# Agents\n- old roster line\n- agents-security\n\n| total | 1 |\n"
+    ours_doc = "# Agents\n- NEW roster line\n- agents-security\n\n| total | 2 |\n"
+    theirs_doc = "# Agents\n- roster line (theirs edit)\n- agents-security\n- agent-creator\n\n| total | 1 |\n"
+    base = tmp_path / "b.md"; base.write_text(base_doc)
+    other = tmp_path / "t.md"; other.write_text(theirs_doc)
+    current = _current(tmp_path, ours_doc)
+    rc, _, _ = _run(fake_repo, tmp_path, current, "KB.md", "keep", base=base, other=other)
+    out = current.read_text()
+    assert "agent-creator" in out, out
+    if rc == 0:
+        assert "<<<<<<<" not in out
+    else:
+        assert "<<<<<<<" in out
+
+
+def test_render_failure_on_a_real_merge_keeps_both_sides_in_A(fake_repo, tmp_path):
+    base = tmp_path / "b.md"; base.write_text(_BASE_DOC)
+    other = tmp_path / "t.md"; other.write_text(_THEIRS_DOC)
+    current = _current(tmp_path, _OURS_DOC)
+    rc, _, _ = _run(fake_repo, tmp_path, current, "KB.md", "fail", base=base, other=other)
+    assert rc == 1
+    assert "Nós no Limiar" in current.read_text()                   # theirs never dropped
+
+
+def test_missing_pathname_still_hands_git_the_3way_merge(fake_repo, tmp_path):
+    base = tmp_path / "b.md"; base.write_text(_BASE_DOC)
+    other = tmp_path / "t.md"; other.write_text(_THEIRS_DOC)
+    current = _current(tmp_path, _OURS_DOC)
+    rc, calls, _ = _run(fake_repo, tmp_path, current, None, "render", base=base, other=other)
+    assert rc == 1 and calls == []
+    assert "Nós no Limiar" in current.read_text()

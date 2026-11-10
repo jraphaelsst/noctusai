@@ -127,6 +127,30 @@ class TestPlatformDefinition:
         agent = studio.store.get_platform_definition("media-analyst")
         assert agent.espelhado and agent.superficie_claude == sup
 
+    def test_a_layer_travels_the_creation_chain_and_the_patch(self, studio):
+        """073 (agent layers): ``modelo`` + ``pai_agent_id`` reach the definition at create and through PATCH, and the
+        chain rule (the parent must be a template) answers 409 pai_invalido before the row exists, never an un-layered orphan."""
+        studio.store.mark_platform_org(DEFAULT_ORG_ID)
+        _platform_admin(studio)
+        base = studio.post(f"{PLAT}/agents", json={"key": "agente-base", "nome": "Agente base", "modelo": True})
+        assert base.status_code == 201, base.text
+        assert base.json()["modelo"] is True and base.json()["pai_agent_id"] is None
+        sdr = studio.post(f"{PLAT}/agents", json={"key": "sdr-base", "nome": "SDR base", "modelo": True,
+                                                  "pai_agent_id": base.json()["id"]})
+        assert sdr.status_code == 201, sdr.text
+        assert sdr.json()["pai_agent_id"] == base.json()["id"]
+        assert studio.store.get_platform_definition("sdr-base").pai_agent_id == UUID(base.json()["id"])
+        solto = studio.post(f"{PLAT}/agents", json={"key": "solto", "nome": "Solto"})
+        assert solto.status_code == 201
+        filho_de_nao_modelo = studio.post(f"{PLAT}/agents", json={"key": "x1", "nome": "X", "pai_agent_id": solto.json()["id"]})
+        assert filho_de_nao_modelo.status_code == 409 and filho_de_nao_modelo.json()["code"] == "pai_invalido"
+        assert studio.store.get_platform_definition("x1") is None  # refused BEFORE create: no un-layered orphan
+        ligado = studio.patch(f"{PLAT}/agents/solto", json={"pai_agent_id": sdr.json()["id"]})
+        assert ligado.status_code == 200, ligado.text
+        assert ligado.json()["pai_agent_id"] == sdr.json()["id"]
+        nulo = studio.patch(f"{PLAT}/agents/solto", json={"modelo": None})
+        assert nulo.status_code == 422 and nulo.json()["code"] == "invalid_field"
+
     def test_the_mirror_rules_are_refused_at_creation(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)
         _platform_admin(studio)

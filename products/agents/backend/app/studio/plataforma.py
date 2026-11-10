@@ -22,7 +22,7 @@ from typing import Any
 from uuid import UUID
 
 from app.stores.errors import NotFound
-from app.stores.studio_definitions import StudioAgentRecord, StudioConflict
+from app.stores.studio_definitions import StudioAgentRecord, StudioConflict, validar_camada_nova
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,7 @@ def ensure_definicao(
     escopo_qualificacao: str | None = None, padrao_qualificacao: str | None = None,
     rascunho_padrao: dict[str, Any] | None = None, instanciavel: bool = False, papel: str | None = None,
     exemplar: bool = False, kind: str = "runtime", fonte: str = "git", superficie_claude: dict[str, Any] | None = None,
+    modelo: bool = False, pai_agent_id: UUID | None = None,
 ) -> StudioAgentRecord:
     """Idempotently create the platform DEFINITION of ``key`` in ``org_id`` (which must be the platform org -- the
     DB trigger / the Fake refuse anywhere else: ``definition_not_platform``) with an empty draft carrying only the
@@ -64,6 +65,10 @@ def ensure_definicao(
         raise ValueError("nome is required to create a new platform definition")
     if papel == "gerador" and any(d.papel == "gerador" for d in studio_store.list_platform_definitions()):
         raise StudioConflict("gerador_ja_existe", "another platform definition already is the generator")
+    camada = {k: v for k, v in (("modelo", modelo), ("pai_agent_id", pai_agent_id)) if v}
+    if camada:
+        validar_camada_nova(studio_store.get_agent_by_id, org_id, camada, instanciavel=instanciavel,
+                            owner_product=owner_product)
     agent = studio_store.create_studio_agent(
         org_id, key, nome, descricao, runtime=runtime, owner_product=owner_product,
         definition_scope="plataforma", escopo_qualificacao=escopo_qualificacao,
@@ -73,6 +78,10 @@ def ensure_definicao(
     if superficie_claude is not None:
         # The surface is validated against the agent's kind (A10), which exists only once the row does.
         agent = studio_store.update_definicao(org_id, key, {"superficie_claude": dict(superficie_claude)})
+    if camada:
+        # 073: the layer is validated against the chain (the parent must be a template, depth-capped), which needs
+        # the row to exist, so it lands right after create through the same update path a PATCH uses.
+        agent = studio_store.update_definicao(org_id, key, camada)
     draft = studio_store.create_draft(org_id, agent.id, None, created_by or agent.id)
     if rascunho_padrao:
         studio_store.update_draft(org_id, draft.id, dict(rascunho_padrao))
