@@ -234,6 +234,7 @@ export default function Certidoes() {
       return;
     }
     setCooldownSegs(tjspFila.cooldown.segundos_restantes);
+    // poll-budget: 1s; 0 calls/tick (TJSP cooldown countdown, re-seeded from the server); worst 0/day per open tab; hidden=runs
     const interval = setInterval(() => {
       setCooldownSegs((prev) => (prev > 0 ? prev - 1 : 0));
     }, 1000);

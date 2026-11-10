@@ -163,7 +163,8 @@ const KEY = ['core-operations'] as const;
 
 export function useRoutines() {
   const o = useOperationsApi();
-  return useQuery({ queryKey: [...KEY, 'routines'], queryFn: o.routines, refetchInterval: 60_000 });
+  // poll-budget: 120s (admin operations page); ~5 calls/tick; worst 3600/day per open tab; hidden=paused
+  return useQuery({ queryKey: [...KEY, 'routines'], queryFn: o.routines, refetchInterval: 120_000 });
 }
 
 export function useJobRuns(product: string, job: string, enabled: boolean) {
