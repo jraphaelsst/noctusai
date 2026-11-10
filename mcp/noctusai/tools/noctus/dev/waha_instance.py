@@ -90,6 +90,11 @@ def render_read_only_lines(spec: dict) -> str:
             for host in read_only_aliases(inst):
                 rows[host] = json.loads(line_policy_json(inst))
     body = "".join(f"    {h!r}: {v!r},\n" for h, v in sorted(rows.items()))
+    # hosts that resolve from the PRODUCT network (noctus-net): only the edge names. The `-core` names sit on a private
+    # network, are matched by name and must NOT count as "unresolvable aliases" in the seed (that would fail every
+    # unrelated host closed).
+    resolvable = sorted({h for inst in spec["instances"] if inst["line_policy"]["send"] == "disabled"
+                         for h in (f"waha-{inst['name']}", f"noctus-waha-{inst['name']}")})
     return (
         '"""GENERATED from deploy/fleet/waha-instances.yml by noctus.dev.waha_instance action=\'render\' -- DO NOT EDIT.\n\n'
         "Every host:port (every container/service alias, ports 3000 and 3001) of a `send: disabled` line, with its declared\n"
@@ -97,6 +102,7 @@ def render_read_only_lines(spec: dict) -> str:
         "fails when this file differs from the render. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a.\n"
         '"""\n'
         "READ_ONLY_LINES: dict[str, dict] = {" + ("\n" + body if body else "") + "}\n"
+        f"RESOLVABLE_FROM_PRODUCT_NETWORK: tuple[str, ...] = {tuple(resolvable)!r}\n"
     )
 
 
@@ -235,6 +241,11 @@ def services_of(inst: dict) -> list[str]:
     return [core_service(inst), f"waha-{n}"] if inst.get("edge_deny_writes") else [f"waha-{n}"]
 
 
+def _personal_label(inst: dict) -> str:
+    """The container label vps_exec trusts from the LIVE inventory: a branch cannot un-stamp a running container."""
+    return '    labels:\n      noctus.line.personal: "true"\n' if inst.get("personal") else ""
+
+
 def _edge_service(inst: dict) -> str:
     n = inst["name"]
     conf = _EDGE_CONF.replace("{name}", n).replace("{webhook_upstream}", inst["webhook_upstream"].rstrip("/"))
@@ -258,7 +269,7 @@ def _edge_service(inst: dict) -> str:
       - waha_{n.replace('-', '_')}_edge
     mem_limit: 64m
     restart: unless-stopped
-    healthcheck:
+{_personal_label(inst)}    healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3000/ping || exit 1"]
       interval: 30s
       timeout: 5s
@@ -286,6 +297,7 @@ def _service(spec: dict, inst: dict) -> str:
         ui = """      WAHA_DASHBOARD_ENABLED: "false"
       WHATSAPP_SWAGGER_ENABLED: "false"
 """
+    labels = _personal_label(inst)
     out = f"""  {svc}:
     # {inst['product']}'s own WhatsApp number (session `{inst.get('session')}`). {where}
     image: {spec['image']}
@@ -304,7 +316,7 @@ def _service(spec: dict, inst: dict) -> str:
       - {core_net}
     mem_limit: {spec['mem_limit']}
     restart: unless-stopped
-    healthcheck:
+{labels}    healthcheck:
       test: ["CMD-SHELL", "node -e \\"fetch('http://localhost:3000/ping').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\\""]
       interval: 30s
       timeout: 5s
@@ -466,6 +478,17 @@ PERSONAL_REFUSAL = ("personal line: provisioning requires an out-of-band owner c
 # file in core), bound to line name + policy hash + expiry + nonce, single use, checked server-side. — 2026-11-10
 
 
+def _vps_instance(name: str, host: str, sh) -> "tuple[dict | None, str]":
+    """The instance as the VPS's OWN checkout of waha-instances.yml declares it: (inst, "") or (None, why)."""
+    rc, text, err = sh(host, f"cat {VPS_FLEET}/waha-instances.yml")
+    if rc != 0:
+        return None, f"cannot read the VPS's own waha-instances.yml ({err.strip()[-120:]}): the ceiling is unknown"
+    try:
+        return _inst(parse_instances_text(text), name), ""
+    except ValueError as exc:
+        return None, f"the VPS checkout does not declare line {name!r} ({exc}): deploy_pull first"
+
+
 def _provision(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None) -> dict:
     """Create/align the session config from the policy against the CORE, then READ IT BACK (explicit, idempotent).
 
@@ -484,13 +507,9 @@ def _provision(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None
 
     if inst.get("personal"):
         return refuse(PERSONAL_REFUSAL, needs_owner_by_hand=True)
-    rc, text, err = sh(host, f"cat {VPS_FLEET}/waha-instances.yml")
-    if rc != 0:
-        return refuse(f"cannot read the VPS's own waha-instances.yml ({err.strip()[-120:]}): the ceiling is unknown")
-    try:
-        vps_inst = _inst(parse_instances_text(text), name)
-    except ValueError as exc:
-        return refuse(f"the VPS checkout does not declare line {name!r} ({exc}): deploy_pull first")
+    vps_inst, why = _vps_instance(name, host, sh)
+    if vps_inst is None:
+        return refuse(why)
     vps_want = policy_noweb(vps_inst)
     bad = _loosening(want, vps_want, "the VPS checkout")
     if bad:
@@ -538,7 +557,8 @@ def _provision(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None
             "expect_noweb": want, "read_back": got.get("noweb"), "webhooks": hooks, "foreign_webhooks": foreign}
 
 
-def _apply(spec: dict, name: str, host: str, confirm: bool) -> dict:
+def _apply(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None) -> dict:
+    sh = _test_sh or _sh
     p = _plan(spec, name)
     if not confirm:
         p.update(action="apply", note="DRY RUN -- pass confirm=True to `compose up -d --no-deps` this ONE instance "
@@ -548,7 +568,14 @@ def _apply(spec: dict, name: str, host: str, confirm: bool) -> dict:
     if inst.get("personal"):  # nothing at all is started for a personal line: not even the core
         return {"ok": False, "action": "apply", "status": "refused", "name": name, "error": PERSONAL_REFUSAL,
                 "needs_owner_by_hand": True}
-    rc, _o, err = _sh(host, f"cd {VPS_FLEET} && for k in {' '.join(inst_keys(inst).values())}; do "
+    # the VPS's own checkout is read BEFORE any `compose up`: the strictest of local and VPS wins, unreadable refuses
+    vps_inst, why = _vps_instance(name, host, sh)
+    if vps_inst is None:
+        return {"ok": False, "action": "apply", "status": "refused", "name": name, "error": why}
+    if vps_inst.get("personal"):
+        return {"ok": False, "action": "apply", "status": "refused", "name": name, "error": PERSONAL_REFUSAL,
+                "needs_owner_by_hand": True}
+    rc, _o, err = sh(host, f"cd {VPS_FLEET} && for k in {' '.join(inst_keys(inst).values())}; do "
                             "grep -q \"^$k=.\" .env.fleet || { echo MISSING:$k; exit 3; }; done")
     if rc != 0:
         return {"ok": False, "action": "apply", "status": "blocked",
@@ -556,15 +583,15 @@ def _apply(spec: dict, name: str, host: str, confirm: bool) -> dict:
     up = f"cd {VPS_FLEET} && docker compose -f compose.waha.yml up -d --no-deps "
     if inst.get("edge_deny_writes"):
         # core first (private network), session config from the policy, and ONLY THEN the edge that fronts it
-        rc, out, err = _sh(host, up + core_service(inst), timeout=300)
+        rc, out, err = sh(host, up + core_service(inst), timeout=300)
         if rc != 0:
             return {"ok": False, "action": "apply", "status": "error", "name": name, "error": err.strip()[-600:]}
-        prov = _provision(spec, name, host, True)
+        prov = _provision(spec, name, host, True, _test_sh=_test_sh)
         if not prov["ok"]:
             return {"ok": False, "action": "apply", "status": "provision_failed", "name": name, "provision": prov}
-        rc, out, err = _sh(host, up + f"waha-{name}", timeout=300)
+        rc, out, err = sh(host, up + f"waha-{name}", timeout=300)
     else:
-        rc, out, err = _sh(host, up + " ".join(services_of(inst)), timeout=300)
+        rc, out, err = sh(host, up + " ".join(services_of(inst)), timeout=300)
     return {"ok": rc == 0, "action": "apply", "status": "applied" if rc == 0 else "error", "name": name,
             "stdout": out.strip()[-600:], "error": None if rc == 0 else err.strip()[-600:]}
 

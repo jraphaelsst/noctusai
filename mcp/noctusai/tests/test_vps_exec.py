@@ -15,11 +15,24 @@ sys.path.insert(0, str(_REPO_ROOT / "mcp" / "noctusai"))
 from tools.noctus.dev.vps_exec import exec_cmd, _is_read_only, _hard_denied
 
 
+PLAIN_VPS_YML = """image: devlikeapro/waha:noweb-2026.9.2
+platform: linux/amd64
+engine: NOWEB
+mem_limit: 512m
+node_heap_mb: 384
+instances:
+  - name: monica
+    product: monica
+    line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}
+"""
 def _fake_run(captured):
     def _run(cmd):
+        if cmd.startswith("cat ") and "waha-instances.yml" in cmd:   # the VPS's own declaration (readable, no personal line)
+            return (0, PLAIN_VPS_YML, "")
         captured["cmd"] = cmd
         return (0, "OUTPUT", "")
     return _run
+
 
 
 # ── read-allowlist runs WITHOUT confirm ──────────────────────────────
@@ -153,7 +166,7 @@ def test_any_waha_core_target_needs_the_confirm_flow_even_when_the_binary_is_a_r
     assert touches_waha_core(cmd, container)
     cap = {}
     assert exec_cmd(cmd, container=container, run_remote=_fake_run(cap))["status"] == "needs_confirm"
-    assert cap.get("cmd") is None  # a name match never even needed the inventory lookup
+    assert "--filter name=waha" in cap.get("cmd", "{ docker ps -aq --filter name=waha")  # only the label inventory ran, never the command
     assert exec_cmd(cmd, container=container, confirm=True, run_remote=_fake_run(cap))["ok"] is True
 
 
@@ -191,8 +204,10 @@ class Inventory:
 
     def __call__(self, cmd):
         self.cmds.append(cmd)
+        if cmd.startswith("cat ") and "waha-instances.yml" in cmd:
+            return 0, PLAIN_VPS_YML, ""
         if "--filter name=waha" in cmd:
-            return self.rc, "abc123def4567890 /noctus-waha-assistant-core 172.18.0.7 \n", ""
+            return self.rc, "abc123def4567890 /noctus-waha-assistant-core waha-assistant-core 172.18.0.7 \n", ""
         return 0, "OUT", ""
 
 
@@ -205,7 +220,7 @@ class Inventory:
 def test_an_id_or_ip_that_resolves_to_a_waha_core_needs_confirm(cmd, container):
     inv = Inventory()
     out = exec_cmd(cmd, container=container, run_remote=inv)
-    assert out["status"] == "needs_confirm" and all("--filter name=waha" in c for c in inv.cmds)
+    assert out["status"] == "needs_confirm" and all(c.startswith("cat ") or "--filter name=waha" in c for c in inv.cmds)
     assert exec_cmd(cmd, container=container, confirm=True, run_remote=inv)["ok"] is True
 
 
@@ -213,8 +228,8 @@ def test_an_id_or_ip_of_another_container_still_runs_free_and_a_failed_lookup_fa
     inv = Inventory()
     assert exec_cmd("docker logs deadbeef0000", run_remote=inv)["status"] == "ok"
     assert exec_cmd("curl -sS http://172.18.0.99:3000/", run_remote=inv)["status"] == "ok"
-    broken = Inventory(rc=1)
-    assert exec_cmd("docker logs deadbeef0000", run_remote=broken)["status"] == "needs_confirm"
+    broken = Inventory(rc=1)   # cannot see the live labels: refused as if personal (round 5), not merely confirm-gated
+    assert exec_cmd("docker logs deadbeef0000", run_remote=broken)["status"] == "refused"
 
 
 def test_plain_reads_without_any_container_like_token_do_no_inventory_lookup():
@@ -256,15 +271,18 @@ def personal_root(tmp_path):
 class PersonalInventory:
     """Two waha containers: monica's (enabled) and the owner's personal core; id, label, IPv4, IPv6, network alias."""
 
-    def __init__(self, rc=0):
-        self.rc, self.cmds = rc, []
+    def __init__(self, rc=0, vps_yml=None, label=False):
+        self.rc, self.cmds, self.vps_yml, self.label = rc, [], YML if vps_yml is None else vps_yml, label
 
     def __call__(self, cmd):
         self.cmds.append(cmd)
+        if cmd.startswith("cat ") and "waha-instances.yml" in cmd:
+            return (0, self.vps_yml, "") if self.vps_yml is not False else (1, "", "no such file")
         if "docker images" in cmd and "ancestor" in cmd and "label=com.docker.compose.project" in cmd:
+            tag = "personal-line-label" if self.label else ""
             return self.rc, (
-                "1111aaaa2222bbbb /noctus-waha-monica waha-monica 172.18.0.4 fd00::4 monica-line\n"
-                "9999ffff8888eeee /renamed-container waha-owner-core 172.19.0.7 fd00::7 secret-alias.internal\n"), ""
+                "1111aaaa2222bbbb /noctus-waha-monica waha-monica  172.18.0.4 fd00::4 monica-line\n"
+                f"9999ffff8888eeee /noctus-waha-owner-core waha-owner-core {tag} 172.19.0.7 fd00::7 secret-alias.internal\n"), ""
         return 0, "OUT", ""
 
 
@@ -309,3 +327,53 @@ def test_the_inventory_covers_name_image_ancestor_and_compose_label():
     for part in ("name=waha", "reference=devlikeapro/waha*", "ancestor=", "label=com.docker.compose.project=noctus-waha",
                  "GlobalIPv6Address", "Aliases"):
         assert part in _WAHA_INVENTORY
+
+
+# -- round 5: a branch can only TIGHTEN what counts as personal -----------------------------------------------------------
+
+NO_PERSONAL_YML = YML.replace("    personal: true\n", "    personal: false\n")
+LINE_DELETED_YML = YML[:YML.index("  - name: owner")]
+
+
+@pytest.fixture
+def root_with(tmp_path):
+    def make(yml: str) -> str:
+        d = tmp_path / "deploy" / "fleet"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "waha-instances.yml").write_text(yml)
+        return str(tmp_path)
+    return make
+
+
+@pytest.mark.parametrize("local_yml", [NO_PERSONAL_YML, LINE_DELETED_YML])
+@pytest.mark.parametrize("cmd", ["docker exec noctus-waha-owner-core sh", "docker logs 9999ffff8888",
+                                 "curl -sS http://172.19.0.7:3000/"])
+def test_flipping_or_deleting_the_line_locally_does_not_unlock_a_core_the_live_label_says_is_personal(root_with, local_yml, cmd):
+    """Local yml and the VPS yml both say 'not personal' / absent; ONLY the live container label says personal."""
+    inv = PersonalInventory(vps_yml=LINE_DELETED_YML, label=True)
+    out = exec_cmd(cmd, confirm=True, run_remote=inv, repo_root=root_with(local_yml))
+    assert out["status"] == "refused" and "personal" in out["error"], out
+
+
+def test_the_vps_copy_alone_is_enough_even_when_the_label_is_missing_and_the_local_file_lies(root_with):
+    inv = PersonalInventory(vps_yml=YML, label=False)
+    out = exec_cmd("docker exec noctus-waha-owner-core sh", confirm=True, run_remote=inv,
+                   repo_root=root_with(LINE_DELETED_YML))
+    assert out["status"] == "refused"
+
+
+@pytest.mark.parametrize("which", ["local", "vps"])
+def test_if_any_source_is_unreadable_every_waha_target_is_refused_as_if_personal(root_with, tmp_path, which):
+    root = str(tmp_path / "nowhere") if which == "local" else root_with(PLAIN_VPS_YML)
+    inv = PersonalInventory(vps_yml=False if which == "vps" else PLAIN_VPS_YML)
+    for cmd in ("docker logs noctus-waha-monica", "docker exec noctus-waha-monica sh", "docker logs 1111aaaa2222"):
+        assert exec_cmd(cmd, confirm=True, run_remote=inv, repo_root=root)["status"] == "refused", (which, cmd)
+    assert exec_cmd("docker logs deadbeef0000", run_remote=inv, repo_root=root)["ok"]  # unrelated containers stay free
+
+
+def test_a_container_stamped_personal_is_refused_by_label_even_when_every_declaration_is_clean(root_with):
+    inv = PersonalInventory(vps_yml=PLAIN_VPS_YML, label=True)
+    assert exec_cmd("cat /x", container="9999ffff", confirm=True, run_remote=inv,
+                    repo_root=root_with(PLAIN_VPS_YML))["status"] == "refused"
+    assert exec_cmd("cat /x", container="1111aaaa", confirm=True, run_remote=inv,
+                    repo_root=root_with(PLAIN_VPS_YML))["ok"]  # monica's core has no label: confirm flow only

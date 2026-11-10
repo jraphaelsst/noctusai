@@ -720,7 +720,7 @@ class Clock:
 
 def test_the_address_cache_expires_so_a_recreated_container_cannot_hide_behind_an_old_ip():
     clock, dns = Clock(), {"waha-x": ["10.0.0.5"], "social": ["10.0.0.20"]}
-    set_host_resolver(lambda h: dns.get(h), clock=clock)
+    set_host_resolver(lambda h: dns.get(h), _test_clock=clock)
     register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
     register_line_policy("*", LEGACY)
     assert resolve_line_policy("http://social:3000").send_enabled            # cached: social -> 10.0.0.20
@@ -732,7 +732,7 @@ def test_the_address_cache_expires_so_a_recreated_container_cannot_hide_behind_a
 
 def test_a_live_client_re_resolves_in_the_final_url_hook_before_the_request_leaves():
     clock, dns = Clock(), {"waha-x": ["10.0.0.5"], "social": ["10.0.0.20"]}
-    set_host_resolver(lambda h: dns.get(h), clock=clock)
+    set_host_resolver(lambda h: dns.get(h), _test_clock=clock)
     register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
     register_line_policy("*", LEGACY)
     seen: list[str] = []
@@ -767,3 +767,75 @@ def test_ipv4_mapped_ipv6_is_the_ipv4_address():
     register_line_policy("*", LEGACY)
     assert not resolve_line_policy("http://[::ffff:10.0.0.5]:3000").send_enabled
     assert not resolve_line_policy("http://[::ffff:a00:5]:3000").send_enabled
+
+
+# --- round 5: unrelated "*" lines keep working, failures cached, DNS off the loop, resolver only ADDS -------------------
+
+
+def test_declaring_a_disabled_line_leaves_an_unrelated_star_line_sending():
+    """The `-core` names never resolve from the product network; they must not poison every other host."""
+    from noctusai_lib.integrations.whatsapp.line_policy import address_alias_candidates
+
+    set_host_resolver(lambda h: {"waha-x": ["10.0.0.5"], "social": ["10.0.0.20"], "wahahost": ["10.0.0.30"]}.get(h))
+    register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
+    register_line_policy("*", LEGACY)
+    assert resolve_line_policy("http://social:3000").send_enabled
+    # the generated-set model: -core aliases are listed but NOT resolvable from noctus-net -> excluded from the address check
+    all_ro = {"waha-x:3000": SHADOW_R, "waha-x-core:3000": SHADOW_R, "noctus-waha-x-core:3001": SHADOW_R}
+    kept = address_alias_candidates(all_ro, all_ro, frozenset({"waha-x"}))
+    assert set(kept) == {"waha-x:3000"}
+    # a runtime-registered alias is always compared; a generated one only when it is declared resolvable
+    assert set(address_alias_candidates({**all_ro, "late:3000": SHADOW_R}, all_ro, frozenset({"waha-x"}))) == {"waha-x:3000", "late:3000"}
+
+
+def test_lookup_failures_are_cached_for_the_ttl():
+    calls: list[str] = []
+    clock = Clock()
+
+    def resolver(h):
+        calls.append(h)
+        return None
+
+    set_host_resolver(resolver, _test_clock=clock)
+    register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
+    for _ in range(5):
+        resolve_line_policy("http://ghost.invalid:3000")
+    assert calls.count("ghost.invalid") == 1          # five requests, one lookup
+    clock.t += 61
+    resolve_line_policy("http://ghost.invalid:3000")
+    assert calls.count("ghost.invalid") == 2          # re-tried after the TTL
+
+
+def test_an_injected_resolver_only_adds_matches_it_cannot_hide_a_real_address():
+    # `localhost` really resolves to loopback; an injected resolver that claims a different address cannot replace that
+    set_host_resolver(lambda h: ["10.9.9.9"] if h == "localhost" else None)
+    from noctusai_lib.integrations.whatsapp.line_policy import _addrs
+
+    got = _addrs("localhost")
+    assert "10.9.9.9" in got and ("127.0.0.1" in got or "::1" in got)
+
+
+def test_the_async_hook_resolves_in_a_worker_thread_not_on_the_event_loop():
+    import threading
+
+    clock, dns = Clock(), {"waha-x": ["10.0.0.5"], "social": ["10.0.0.20"]}
+    where: list[str] = []
+
+    def resolver(h):
+        where.append(threading.current_thread().name)
+        return dns.get(h)
+
+    set_host_resolver(resolver, _test_clock=clock)
+    register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
+    register_line_policy("*", LEGACY)
+    c = WahaClient("http://social:3000", "k", "default",
+                   transport=httpx.MockTransport(lambda r: httpx.Response(200, json={})))
+    where.clear()
+    clock.t += 61                                      # force a fresh lookup inside the request
+    main = threading.current_thread().name
+
+    async def go():
+        await c.send_text("a@c.us", "x")
+
+    asyncio.run(go())
+    assert where and all(w != main for w in where), where

@@ -154,6 +154,7 @@ _WAHA_INVENTORY = (
     "for i in $(docker images -q --filter 'reference=devlikeapro/waha*' | sort -u); do docker ps -aq --filter ancestor=$i; done; "
     "docker ps -aq --filter label=com.docker.compose.project=noctus-waha; } | sort -u | xargs -r docker inspect "
     "--format '{{.Id}} {{.Name}} {{index .Config.Labels \"com.docker.compose.service\"}} "
+    "{{if eq (index .Config.Labels \"noctus.line.personal\") \"true\"}}personal-line-label{{end}} "
     "{{range $k,$v := .NetworkSettings.Networks}}{{$v.IPAddress}} {{$v.GlobalIPv6Address}} {{range $v.Aliases}}{{.}} {{end}}{{end}}'"
 )
 
@@ -202,44 +203,76 @@ def _row_matches(row: set[str], cands: set[str]) -> bool:
     return any(c in row or (len(c) >= 4 and any(i.startswith(c) for i in ids)) for c in cands)
 
 
-def personal_aliases(repo_root=None) -> set[str]:
-    """Every name a `personal: true` line's containers answer to, from THIS checkout's waha-instances.yml. An
-    unreadable/unparseable file is an error (callers fail closed), never "no personal lines"."""
-    from pathlib import Path
+PERSONAL_LABEL_TOKEN = "personal-line-label"  # the inventory emits this for a container stamped noctus.line.personal=true
 
-    from settings import REPO_ROOT
 
-    from .waha_instance import DATA_REL, parse_instances
+def _aliases_of(yml_text: str) -> set[str]:
+    from .waha_instance import parse_instances
 
-    text = (Path(repo_root) if repo_root else Path(REPO_ROOT)).joinpath(DATA_REL).read_text(encoding="utf-8")
     out: set[str] = set()
-    for inst in parse_instances(text)["instances"]:
+    for inst in parse_instances(yml_text)["instances"]:
         if inst.get("personal"):
             n = inst["name"]
             out |= {f"waha-{n}", f"noctus-waha-{n}", f"waha-{n}-core", f"noctus-waha-{n}-core"}
     return out
 
 
+def personal_aliases(repo_root=None) -> set[str]:
+    """Names of `personal: true` lines in THIS checkout's waha-instances.yml. Raises when unreadable/unparseable."""
+    from pathlib import Path
+
+    from settings import REPO_ROOT
+
+    from .waha_instance import DATA_REL
+
+    return _aliases_of((Path(repo_root) if repo_root else Path(REPO_ROOT)).joinpath(DATA_REL).read_text(encoding="utf-8"))
+
+
+def _vps_personal_aliases(run) -> set[str]:
+    """Same, from the VPS's OWN checkout. Raises when it cannot be read."""
+    from .waha_instance import VPS_FLEET
+
+    rc, out, _err = run(f"cat {VPS_FLEET}/waha-instances.yml")
+    if rc != 0:
+        raise OSError("VPS waha-instances.yml unreadable")
+    return _aliases_of(out)
+
+
 def targets_personal_core(command: str, container: str | None = None, run=None, repo_root=None) -> bool:
-    """True when the command/container targets a container of a `personal: true` line -- by name, or (via the inventory)
-    by id / IP / compose label / network alias / host name. Refused with OR without confirm. Fail CLOSED when the
-    declaration cannot be read, or when a candidate target cannot be resolved while personal lines exist."""
-    try:
-        aliases = personal_aliases(repo_root)
-    except Exception:  # noqa: BLE001 - cannot tell which lines are personal: refuse anything that smells like a waha
-        return touches_waha_core(command, container, run=run)
-    if not aliases:
+    """True when the command/container targets a container of a `personal: true` line. Refused with OR without confirm.
+
+    A branch must never be able to LOOSEN this, so "personal" is the UNION of three sources: this checkout's yml, the
+    VPS's own yml, and the LIVE container label `noctus.line.personal=true` (stamped at render). A flip to `personal:
+    false` or a deleted line locally changes none of the other two. If ANY source cannot be read, every waha target is
+    refused as if personal (fail closed)."""
+    waha_names = {t for t in re.split(r"[\s/:=,\"']+", f"{command} {container or ''}".lower()) if "waha" in t}
+    cands = _candidate_targets(command, container) | {_norm_tok(t) for t in waha_names}
+    if not cands:
         return False
+    aliases: set[str] = set()
+    unreadable = False
+    try:
+        aliases |= personal_aliases(repo_root)
+    except Exception:  # noqa: BLE001 - unreadable local declaration
+        unreadable = True
+    if run is not None:
+        try:
+            aliases |= _vps_personal_aliases(run)
+        except Exception:  # noqa: BLE001 - unreadable VPS declaration
+            unreadable = True
     low = f"{command} {container or ''}".lower()
     if any(re.search(rf"(?<![a-z0-9-]){re.escape(a)}(?![a-z0-9-])", low) for a in aliases):
         return True
-    cands = _candidate_targets(command, container)
-    if not cands or run is None:
-        return False
+    wahaish = bool(waha_names) or bool(_WAHA_CORE.search(command)) or bool(_DOCKER_EXEC_WAHA.search(command))
+    if run is None:
+        return unreadable and wahaish
     inv = _waha_inventory(run)
     if inv is None:
+        return True                      # cannot see the live labels: fail closed
+    hit = [row for row in inv if _row_matches(row, cands)]
+    if any(PERSONAL_LABEL_TOKEN in row or row & aliases for row in hit):
         return True
-    return any(_row_matches(row, cands) and row & aliases for row in inv)
+    return unreadable and (wahaish or bool(hit))
 
 
 def touches_waha_core(command: str, container: str | None = None, run=None) -> bool:

@@ -95,7 +95,8 @@ class TestActions:
         assert r["status"] == "planned" and r["env_fleet_keys_to_generate_on_vps"][0] == "WAHA_MONICA_API_KEY"
 
     def test_apply_blocks_when_keys_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(wi, "run_remote", lambda *a, **k: (3, "MISSING:WAHA_MONICA_API_KEY", ""))
+        monkeypatch.setattr(wi, "run_remote", lambda *a, **k: (
+            (0, DATA, "") if "waha-instances.yml" in a[1] else (3, "MISSING:WAHA_MONICA_API_KEY", "")))
         r = wi.waha_instance("apply", name="monica", confirm=True, repo_root=str(_tree(tmp_path)))
         assert r["status"] == "blocked"
 
@@ -319,7 +320,7 @@ class TestRound2Edge:
             for port in (3000, 3001):
                 assert rows[f"{host}:{port}"]["send"] == "disabled", (host, port)
         assert not any(k.startswith(("waha-monica", "noctus-waha-monica")) for k in rows)  # enabled lines are not listed
-        assert wi.render_read_only_lines(wi.parse_instances(DATA)).strip().endswith("READ_ONLY_LINES: dict[str, dict] = {}")
+        assert "READ_ONLY_LINES: dict[str, dict] = {}" in wi.render_read_only_lines(wi.parse_instances(DATA))
 
     def test_the_repo_read_only_module_is_the_render(self):
         assert (REPO / wi.READ_ONLY_REL).read_text() == wi.render_read_only_lines(wi.load_spec(REPO))
@@ -503,3 +504,44 @@ def test_the_test_only_runner_is_absent_from_the_public_function_and_the_tool_sc
     import inspect
     assert "_test_sh" not in inspect.signature(wi.waha_instance).parameters
     assert "_test_sh" in inspect.signature(wi._provision).parameters and "TEST-ONLY" in wi._provision.__doc__
+
+
+# --- round 5: label stamp, apply reads the VPS first, resolvable aliases ----------------------------------------------------
+
+
+def test_a_personal_line_stamps_the_live_container_label_on_core_and_edge_and_others_do_not():
+    import yaml
+    d = yaml.safe_load(wi.render_compose(wi.parse_instances(PERSONAL)))["services"]
+    for svc in ("waha-probe-core", "waha-probe"):
+        assert d[svc]["labels"] == {"noctus.line.personal": "true"}, svc
+    plain = yaml.safe_load(wi.render_compose(wi.parse_instances(EDGE)))["services"]
+    assert all("labels" not in v for v in plain.values())
+
+
+def test_apply_reads_the_vps_yml_before_any_compose_up_and_the_strictest_wins():
+    calls = []
+
+    def sh_personal_on_vps(host, cmd, timeout=90):
+        calls.append(cmd)
+        return (0, PERSONAL, "") if cmd.startswith("cat ") else (0, "", "")
+
+    out = wi._apply(wi.parse_instances(EDGE), "probe", "h", True, _test_sh=sh_personal_on_vps)
+    assert out["status"] == "refused" and out["error"] == wi.PERSONAL_REFUSAL
+    assert len(calls) == 1 and calls[0].startswith("cat ")  # nothing was started
+
+    calls.clear()
+
+    def sh_unreadable(host, cmd, timeout=90):
+        calls.append(cmd)
+        return (1, "", "no such file")
+
+    out = wi._apply(wi.parse_instances(EDGE), "probe", "h", True, _test_sh=sh_unreadable)
+    assert out["status"] == "refused" and "ceiling is unknown" in out["error"]
+    assert all("compose" not in c for c in calls)
+
+
+def test_only_edge_names_are_declared_resolvable_from_the_product_network():
+    ns: dict = {}
+    exec(wi.render_read_only_lines(wi.parse_instances(EDGE)), ns)  # noqa: S102 - the generated module under test
+    assert ns["RESOLVABLE_FROM_PRODUCT_NETWORK"] == ("noctus-waha-probe", "waha-probe")
+    assert "waha-probe-core:3000" in ns["READ_ONLY_LINES"]  # the core is still matched BY NAME

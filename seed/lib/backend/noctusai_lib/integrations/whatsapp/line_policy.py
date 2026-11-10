@@ -291,15 +291,16 @@ _clock: "Any" = None
 #: host -> (resolved-at, addresses). SHORT TTL: a container can be recreated with another IP; a forever-cache would keep
 #: matching the old one and let the new address fall through to "*".
 _ADDR_TTL = 60.0
-_addr_cache: dict[str, "tuple[float, frozenset[str]]"] = {}
+_addr_cache: "dict[str, tuple[float, frozenset[str] | None]]" = {}
 
 
-def set_host_resolver(fn: "Any | None", clock: "Any | None" = None) -> None:
-    """Inject ``fn(host) -> iterable[str] | None`` (tests, or a product with its own DNS view) and optionally a monotonic
-    ``clock``. None restores getaddrinfo / time.monotonic. These are DI seams, not patch points."""
+def set_host_resolver(fn: "Any | None", *, _test_clock: "Any | None" = None) -> None:
+    """Inject ``fn(host) -> iterable[str] | None``: a product's OWN extra DNS view. It can only ADD matches -- its answer is
+    unioned with ``getaddrinfo`` and never replaces it, so an injected resolver cannot make a read-only machine look like
+    something else. ``_test_clock`` is a TEST-ONLY monotonic clock (for the TTL); production code never passes it."""
     global _resolve_host, _clock
     with _lock:
-        _resolve_host, _clock = fn, clock
+        _resolve_host, _clock = fn, _test_clock
         _addr_cache.clear()
 
 
@@ -331,7 +332,9 @@ def _default_resolver(host: str) -> "set[str] | None":
 
 
 def _addrs(host: str) -> "frozenset[str] | None":
-    """Resolved addresses of ``host`` (an IP literal is itself), cached for ``_ADDR_TTL`` on success; None = unresolvable."""
+    """Resolved addresses of ``host`` (an IP literal is itself), cached for ``_ADDR_TTL`` -- FAILURES too, so a dead name
+    costs one lookup per TTL, not one per request; None = unresolvable. getaddrinfo is blocking: callers on an event loop
+    go through :func:`aresolve_line_policy`."""
     import ipaddress
 
     try:
@@ -342,15 +345,17 @@ def _addrs(host: str) -> "frozenset[str] | None":
     hit = _addr_cache.get(host)
     if hit is not None and _now() - hit[0] < _ADDR_TTL:
         return hit[1]
-    try:
-        found = (_resolve_host or _default_resolver)(host)
-    except Exception:  # noqa: BLE001 - a resolver failure is "unknown", which fails closed below
-        found = None
-    if not found:
-        return None
-    out = frozenset(_norm_ip(str(a)) for a in found)
+    found: set[str] = set()
+    for resolver in (_default_resolver, _resolve_host):   # injected answers are UNIONED, never a replacement
+        if resolver is None:
+            continue
+        try:
+            found |= set(resolver(host) or ())
+        except Exception:  # noqa: BLE001 - a resolver failure is "unknown", which fails closed below
+            pass
+    out = frozenset(_norm_ip(str(a)) for a in found) if found else None
     with _lock:
-        _addr_cache[host] = (_now(), out)
+        _addr_cache[host] = (_now(), out)  # type: ignore[assignment]
     return out
 
 
@@ -395,6 +400,30 @@ def _all_read_only() -> dict[str, LinePolicy]:
     for h, p in _runtime_read_only.items():
         out[h] = strictest(out[h], p) if h in out else p
     return out
+
+
+def _resolvable_hosts(module: str = _GENERATED_MODULE) -> "frozenset[str] | None":
+    """Hosts of the GENERATED read-only set that resolve from the product network (noctus-net): the edge aliases. The
+    `-core` names live on a private network and never resolve from a product, so they are matched BY NAME only -- counting
+    them as "unresolvable aliases" would fail every unrelated host closed. None = the module does not say (all count)."""
+    import importlib
+
+    try:
+        rows = getattr(importlib.import_module(module), "RESOLVABLE_FROM_PRODUCT_NETWORK", None)
+    except ImportError:
+        return None
+    return frozenset(rows) if rows is not None else None
+
+
+def address_alias_candidates(
+    all_ro: "dict[str, LinePolicy]", generated: "dict[str, LinePolicy]", resolvable: "frozenset[str] | None"
+) -> "dict[str, LinePolicy]":
+    """The read-only aliases whose ADDRESS is compared with a request host: every runtime-registered one, plus the
+    generated ones that are resolvable from the product network."""
+    if resolvable is None:
+        return dict(all_ro)
+    return {a: p for a, p in all_ro.items()
+            if a not in generated or a.rsplit(":", 1)[0] in resolvable}
 
 
 def _read_only_for(host_key: str) -> Optional[LinePolicy]:
@@ -539,7 +568,8 @@ def resolve_line_policy(
                 return replace(UNDECLARED, webhook_relay=None)
         else:
             unresolved_alias = False
-            for alias, pol in all_ro.items():
+            gen_rows = _generated_read_only()
+            for alias, pol in address_alias_candidates(all_ro, gen_rows, _resolvable_hosts()).items():
                 theirs = _addrs(alias.rsplit(":", 1)[0])
                 if theirs is None:
                     unresolved_alias = True
@@ -563,6 +593,23 @@ def resolve_line_policy(
     if gen is not None and gen.webhook_relay:
         out = replace(out, webhook_relay=gen.webhook_relay)  # the generated ceiling's relay is authoritative
     return out
+
+
+async def aresolve_line_policy(
+    base_url: str, session: Optional[str] = None, *, explicit: Optional[LinePolicy] = None
+) -> LinePolicy:
+    """:func:`resolve_line_policy` for a running event loop: the blocking getaddrinfo runs in a worker thread, and only when
+    this process has a read-only line at all (otherwise there is no DNS to do and no thread hop)."""
+    import asyncio
+
+    if not _all_read_only_nonempty():
+        return resolve_line_policy(base_url, session, explicit=explicit)
+    return await asyncio.to_thread(resolve_line_policy, base_url, session, explicit=explicit)
+
+
+def _all_read_only_nonempty() -> bool:
+    with _lock:
+        return bool(_all_read_only())
 
 
 # --- the guard both WahaClient and FakeWahaClient share --------------------------------------------------------------
@@ -609,6 +656,11 @@ class LinePolicyGuard:
             EVENT_WRITE_REFUSED, self._line_label, f"{method.upper()} {endpoint}", reason, self.line_policy.as_dict()))
         raise LineWriteRefused(line=self._line_label, method=method.upper(), path=endpoint, reason=reason)
 
+    async def _arefresh_policy(self) -> None:
+        args = getattr(self, "_policy_resolve_args", None)
+        if args:
+            self.line_policy = strictest(self.line_policy, await aresolve_line_policy(args[0], args[1], explicit=args[2]))
+
     def _refresh_policy(self) -> None:
         """Re-resolve right before a request leaves (DNS can move: a container recreated with a new IP). The policy can
         only get STRICTER: the fresh answer is merged with the current one, never replaces it with a looser one."""
@@ -626,7 +678,8 @@ class LinePolicyGuard:
             self._guard_write(request.method, request.url.raw_path.decode('ascii', 'replace'), policy_config=policy_config)
 
         async def acheck(request) -> None:
-            check(request)
+            await self._arefresh_policy()   # DNS off the event loop
+            self._guard_write(request.method, request.url.raw_path.decode('ascii', 'replace'), policy_config=policy_config)
 
         return check, acheck
 

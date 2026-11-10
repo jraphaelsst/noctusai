@@ -5,3 +5,4 @@ policy. The seed resolves these STRICTEST-WINS and never lets `"*"` apply to the
 fails when this file differs from the render. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a.
 """
 READ_ONLY_LINES: dict[str, dict] = {}
+RESOLVABLE_FROM_PRODUCT_NETWORK: tuple[str, ...] = ()

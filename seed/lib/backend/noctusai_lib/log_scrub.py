@@ -12,13 +12,16 @@ import re
 import traceback
 from typing import Any
 
-#: 8+ digits NOT glued to a letter, digit or hyphen: a UUID (`00000000-0000-4000-...`) and any hex token keep their digit
-#: runs (a bare lookahead would mangle ~5% of UUIDs), while `5511...@c.us`, `phone=5511...` and `true_5511...@c.us_ABC` are caught.
-_DIGIT_RUN = re.compile(r"(?<![0-9A-Za-z-])\d{8,}(?![0-9A-Za-z-])")
+#: INVERTED rule: a leaked phone is worse than an unreadable log. EXACT UUID shapes (8-4-4-4-12) and pure hex tokens of 32+
+#: characters (hashes, trace ids) are exempt; EVERY other run of 8+ digits is scrubbed, glued to letters/hyphens/underscores
+#: or not (`5511...-1600000000@g.us`, `tel5511...`, `id=x5511...`, `true_5511...@c.us_ABC`).
+_UUID = r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+_HEX32 = r"(?<![0-9A-Za-z])[0-9a-fA-F]{32,}(?![0-9A-Za-z])"
+_DIGIT_RUN = re.compile(rf"(?P<keep>{_UUID}|{_HEX32})|(?P<run>\d{{8,}})")
 
 
 def scrub_digits(text: Any) -> str:
-    return _DIGIT_RUN.sub(lambda m: "…" + m.group()[-4:], str(text))
+    return _DIGIT_RUN.sub(lambda m: m.group("keep") or "…" + m.group("run")[-4:], str(text))
 
 
 class PhoneScrubFilter(logging.Filter):
@@ -109,3 +112,9 @@ class ScrubbingFormatterMixin:
 
     def formatException(self, ei: Any) -> str:  # noqa: N802 - stdlib name
         return scrub_digits(super().formatException(ei))  # type: ignore[misc]
+
+    def format(self, record: logging.LogRecord) -> str:
+        # Scrub HERE too (message, args, traceback, `extra=` fields): a custom logger class, a logger created before
+        # configure_logging, or a non-chaining record factory never ran the creation-time scrub; the formatter is the
+        # last stop before the bytes leave the process.
+        return super().format(scrub_record(record))  # type: ignore[misc]

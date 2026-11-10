@@ -29,7 +29,7 @@ _IGNORED_KEYS = {
     "message", "taskName",
 }
 
-from noctusai_lib.log_scrub import ScrubbingFormatterMixin  # noqa: E402
+from noctusai_lib.log_scrub import ScrubbingFormatterMixin, scrub_record  # noqa: E402
 
 
 class _JSONFormatter(ScrubbingFormatterMixin, logging.Formatter):
@@ -53,6 +53,7 @@ class _JSONFormatter(ScrubbingFormatterMixin, logging.Formatter):
         self.app_name = app_name
 
     def format(self, record: logging.LogRecord) -> str:
+        scrub_record(record)  # last stop before the bytes leave the process: message, args, traceback, extra= fields
         log_data: Dict[str, Any] = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
@@ -92,6 +93,7 @@ class _HumanReadableFormatter(ScrubbingFormatterMixin, logging.Formatter):
         self.app_name = app_name
 
     def format(self, record: logging.LogRecord) -> str:
+        scrub_record(record)  # last stop before the bytes leave the process: message, args, traceback, extra= fields
         timestamp = datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S")
         correlation_id = get_correlation_id()
 

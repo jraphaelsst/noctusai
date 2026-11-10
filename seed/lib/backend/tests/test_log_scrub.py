@@ -99,13 +99,34 @@ def test_sentry_breadcrumbs_and_event_text_are_scrubbed():
     assert not re.search(r"\d{8,}", repr(ev)), ev
 
 
-def test_uuids_and_hex_ids_keep_their_digits_but_phone_shapes_do_not():
+def test_only_exact_uuids_and_long_hex_tokens_are_exempt_every_other_digit_run_is_scrubbed():
     from noctusai_lib.log_scrub import scrub_digits
 
     for keep in ("00000000-0000-4000-8000-00000000a002", "48ab962b-ec86-517e-9e42-7b581f622377",
-                 "3EB0123456789ABCDEF", "00000000-1111-2222-3333-444455556666"):
+                 "00000000-1111-2222-3333-444455556666", "d41d8cd98f00b204e9800998ecf8427e",
+                 "x=3EB0AB12-0000-4000-8000-123456789012"):
         assert scrub_digits(keep) == keep, keep
-    for phone, expect in (("5511999990001@c.us", "…0001@c.us"), ("phone=5511999990001&x=1", "phone=…0001&x=1"),
-                          ("+5511999990001", "+…0001"), ("true_5511999990001@c.us_3EB0AB", "true_…0001@c.us_3EB0AB"),
-                          ("to 5511999990001.", "to …0001.")):
+    for phone, expect in (
+        ("5511999990001@c.us", "…0001@c.us"), ("phone=5511999990001&x=1", "phone=…0001&x=1"),
+        ("+5511999990001", "+…0001"), ("true_5511999990001@c.us_3EB0AB", "true_…0001@c.us_3EB0AB"),
+        ("to 5511999990001.", "to …0001."),
+        # the three escapes the previous lookaround rule missed:
+        ("5511999990001-1600000000@g.us", "…0001-…0000@g.us"),
+        ("tel5511999990001", "tel…0001"),
+        ("id=x5511999990001", "id=x…0001"),
+        ("3EB0123456789ABC", "3EB…6789ABC"),  # a short hex-ish token: readability loses, nothing leaks
+    ):
         assert scrub_digits(phone) == expect, phone
+
+
+def test_the_formatter_scrubs_extras_even_when_the_record_never_went_through_the_creation_hooks():
+    """A custom logger class / a logger made before configure_logging / a non-chaining factory: the formatter is the
+    last stop and must still scrub message, args and `extra=` fields."""
+    from noctusai_lib.logging_config import _JSONFormatter
+
+    rec = logging.LogRecord("x", logging.WARNING, __file__, 1, "to %s", ("5511999990001",), None)
+    rec.__dict__["chat"] = "5511999990001@c.us"   # an extra attached by a plain Logger that nobody re-classed
+    import json
+
+    data = json.loads(_JSONFormatter(app_name="t").format(rec))   # decoded: the raw text escapes the ellipsis as \u2026
+    assert data["chat"] == "…0001@c.us" and data["message"] == "to …0001", data
