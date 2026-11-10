@@ -1063,3 +1063,4 @@
 {"ts": "2026-11-09", "event": "worktree-sweep", "path": "/Users/rapha/Documents/repository/NoctusAI/noctusai/.claude/worktrees/agent-ae3e73d39910227af", "branch": null, "sha": null, "reason": "merged-to-dev"}
 {"ts": "2026-11-10T03:10:34.502136+00:00", "kind": "salvage-before-delete:branch", "target": "feat/jl-s3-agents-grants", "dry_run": false, "ok": true, "preserved": []}
 {"ts": "2026-11-10T03:10:40.576833+00:00", "kind": "salvage-before-delete:branch", "target": "feat/jl-s5-agents-grants-ui", "dry_run": false, "ok": true, "preserved": []}
+{"ts": "2026-11-10T03:10:43.002613+00:00", "kind": "salvage-before-delete:branch", "target": "feat/agents-org-fallback", "dry_run": false, "ok": true, "preserved": ["recovery-pointer: origin/feat/agents-org-fallback @ aab886630357 (0 unique commits, subject='chore(stand-in): name the 074 fallback-number CHECK as pinned above the DB')", "patch-archive: skipped — 0 unique commits (content on dev)"]}
