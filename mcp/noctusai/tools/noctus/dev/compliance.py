@@ -7778,25 +7778,61 @@ _WAHA_FACTORY_RELS = {
     "seed/lib/backend/noctusai_lib/integrations/whatsapp/__init__.py",
     "seed/lib/backend/noctusai_lib/integrations/whatsapp/client.py",
 }
-_RAW_WAHA_ALLOW = re.compile(r"#\s*noc-allow:\s*raw-waha-client\s*[-\u2014\u2013]+\s*\S")
+_RAW_WAHA_ALLOW = re.compile(r"#\s*noc-allow:\s*raw-waha-(?:client|http)\s*[-\u2014\u2013]+\s*\S")
+_HTTPX_CALLS = frozenset({"get", "post", "put", "delete", "patch", "request", "stream", "head", "options"})
+_HTTPX_CLIENTS = frozenset({"Client", "AsyncClient"})
 
 
-def _raw_waha_client_findings(source: str) -> list[int]:
+def _raw_waha_client_findings(source: str) -> list[tuple[int, str]]:
+    """(line, kind): `client` = a raw `WahaClient(...)`; `http` = a raw `httpx` call in a file that talks to WAHA (it
+    bypasses the line policy's choke point). Allowed by `# noc-allow: raw-waha-(client|http) -- <reason>` on the call
+    line or the line above (a GET-only, host-pinned fetch is a legitimate reason; a write never is)."""
     import ast
 
     tree = ast.parse(source)
     lines = source.splitlines()
-    out: list[int] = []
+    parents: dict[int, ast.AST] = {}
+    for n in ast.walk(tree):
+        for c in ast.iter_child_nodes(n):
+            parents[id(c)] = n
+
+    def waha_in_scope(call: ast.AST) -> bool:
+        """The enclosing function mentions WAHA in CODE (a name, attribute, argument, keyword or string literal -- not
+        its docstring): a comment or docstring naming WAHA does not make a Meta/Vista call a WAHA call."""
+        scope = call
+        while id(scope) in parents and not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+            scope = parents[id(scope)]
+        doc = None
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) and scope.body:
+            first = scope.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                doc = first.value
+        for n in ast.walk(scope):
+            text = (n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute)
+                    else n.arg if isinstance(n, (ast.arg, ast.keyword)) and n.arg
+                    else n.value if isinstance(n, ast.Constant) and isinstance(n.value, str) and n is not doc else "")
+            if "waha" in str(text).lower():
+                return True
+        return False
+
+    def allowed(lineno: int) -> bool:
+        return any(0 < n <= len(lines) and _RAW_WAHA_ALLOW.search(lines[n - 1]) for n in (lineno, lineno - 1))
+
+    out: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         f = node.func
         name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
-        if name != "WahaClient":
+        if name == "WahaClient":
+            kind = "client"
+        elif (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "httpx"
+              and (f.attr in _HTTPX_CALLS or f.attr in _HTTPX_CLIENTS) and waha_in_scope(node)):
+            kind = "http"
+        else:
             continue
-        if 0 < node.lineno <= len(lines) and _RAW_WAHA_ALLOW.search(lines[node.lineno - 1]):
-            continue
-        out.append(node.lineno)
+        if not allowed(node.lineno):
+            out.append((node.lineno, kind))
     return out
 
 
@@ -7830,19 +7866,21 @@ def check_raw_waha_client_construction(
         ):
             continue
         try:
-            linenos = _raw_waha_client_findings(f.read_text(encoding="utf-8"))
+            found = _raw_waha_client_findings(f.read_text(encoding="utf-8"))
         except (SyntaxError, UnicodeDecodeError):
             continue  # un-parseable files are check_outlined's finding
-        for lineno in linenos:
+        for lineno, kind in found:
+            what = ("builds a WAHA client directly (`WahaClient(...)`)" if kind == "client"
+                    else "calls WAHA over raw `httpx` (skips the line policy's choke point)")
             issues.append({
                 "product": parts[1] if parts[0] == "products" else "seed",
                 "file": rel,
                 "line": lineno,
                 "issue": (
-                    f"`{rel}:{lineno}` builds a WAHA client directly (`WahaClient(...)`). Every WAHA client is built by "
+                    f"`{rel}:{lineno}` {what}. Every WAHA client is built by "
                     "the seed factory `noctusai_lib.integrations.whatsapp.get_whatsapp_client(...)` so the line's "
                     "policy (send: enabled|disabled, fail-closed when undeclared) rides on it. Escape a vetted "
-                    "line with `# noc-allow: raw-waha-client -- <reason>`. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."
+                    "GET-only line with `# noc-allow: raw-waha-client|raw-waha-http -- <reason>`. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."
                 ),
                 "severity": "high",
             })
@@ -25834,6 +25872,16 @@ def check_waha_instances_render_sync(repo_root: Path | None = None) -> list[dict
                  "severity": "high", "symbol": "waha-instances-unparseable"}]
     have = out_p.read_text(encoding="utf-8") if out_p.is_file() else None
     policy_issues = _waha_product_policy_env_issues(root, data_p)
+    from .waha_instance import READ_ONLY_REL, render_read_only_lines
+    ro_p = root / READ_ONLY_REL
+    ro_want = render_read_only_lines(parse_instances(data_p.read_text(encoding="utf-8")))
+    if not ro_p.is_file() or ro_p.read_text(encoding="utf-8") != ro_want:
+        policy_issues.append({
+            "file": READ_ONLY_REL,
+            "issue": ("the seed's read-only host set is MISSING or DIFFERENT from the render of waha-instances.yml "
+                      "(every alias of a `send: disabled` line must be sticky in the seed) -- regenerate: "
+                      "noctus.dev.waha_instance action='render' write=True. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."),
+            "severity": "high", "symbol": "waha-read-only-lines-drift"})
     if have == want:
         return policy_issues
     return policy_issues + [{"file": "deploy/fleet/compose.waha.yml",

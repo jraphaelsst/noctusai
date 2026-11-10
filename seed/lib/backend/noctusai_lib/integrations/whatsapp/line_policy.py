@@ -34,7 +34,7 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Protocol
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ SEND_ENABLED = "enabled"
 SEND_DISABLED = "disabled"
 _SEND_VALUES = (SEND_ENABLED, SEND_DISABLED)
 _POLICY_KEYS = ("send", "mark_online", "full_sync", "auto_repair")
+_OPTIONAL_KEYS = ("webhook_relay",)
 #: Env var carrying a JSON map ``{"<base_url>" | "<base_url>#<session>" | "*": <policy>}`` for processes whose
 #: lines are DB-sourced (a connection row holds the URL) and so cannot be named by one ``<PRODUCT>_WAHA_LINE_POLICY``.
 LINE_POLICIES_ENV = "WAHA_LINE_POLICIES"
@@ -64,6 +65,15 @@ class LineWriteRefused(RuntimeError):
         super().__init__(f"line {line}: write {method} {path} refused ({reason})")
 
 
+class LinePolicyDrift(RuntimeError):
+    """The session WAHA actually runs does not match the line policy (e.g. NOWEB's `markOnline` defaults to TRUE).
+    Pairing (QR) on a read-only line is refused until the read-back is clean."""
+
+    def __init__(self, *, line: str, mismatches: "tuple[str, ...]"):
+        self.line, self.mismatches = line, mismatches
+        super().__init__(f"line {line}: session does not match the policy: {'; '.join(mismatches)}")
+
+
 class LineRepairRefused(RuntimeError):
     """The line's policy has ``auto_repair: false``: the seed will not re-pair (restart/logout/QR) on its own."""
 
@@ -83,14 +93,20 @@ class LinePolicy:
     #: but session-config writes leave ``markOnline`` / ``fullSync`` as their owner set them (the 2026-10-15 shared-
     #: session hazard). A line named by URL is its own config authority.
     config_authority: bool = True
+    #: For a `send: disabled` line: the ONLY webhook base `set_webhook` / `remove_webhook` may touch (the edge's relay,
+    #: e.g. ``http://waha-<n>:3001``). None = no webhook may be (re)registered on a disabled line.
+    webhook_relay: Optional[str] = None
 
     @property
     def send_enabled(self) -> bool:
         return self.send == SEND_ENABLED
 
     def as_dict(self) -> dict[str, Any]:
-        return {"send": self.send, "mark_online": self.mark_online, "full_sync": self.full_sync,
-                "auto_repair": self.auto_repair}
+        out: dict[str, Any] = {"send": self.send, "mark_online": self.mark_online, "full_sync": self.full_sync,
+                               "auto_repair": self.auto_repair}
+        if self.webhook_relay:
+            out["webhook_relay"] = self.webhook_relay
+        return out
 
     def as_json(self) -> str:
         return json.dumps(self.as_dict(), separators=(",", ":"), sort_keys=False)
@@ -111,7 +127,7 @@ def parse_line_policy(raw: "str | Mapping[str, Any]") -> LinePolicy:
             raise LinePolicyError(f"line policy is not valid JSON: {exc}") from exc
     if not isinstance(data, Mapping):
         raise LinePolicyError("line policy must be a JSON object")
-    unknown = sorted(set(data) - set(_POLICY_KEYS))
+    unknown = sorted(set(data) - set(_POLICY_KEYS) - set(_OPTIONAL_KEYS))
     if unknown:
         raise LinePolicyError(f"line policy: unknown key(s) {unknown}")
     missing = [k for k in _POLICY_KEYS if k not in data]
@@ -122,7 +138,11 @@ def parse_line_policy(raw: "str | Mapping[str, Any]") -> LinePolicy:
     for key in ("mark_online", "full_sync", "auto_repair"):
         if not isinstance(data[key], bool):
             raise LinePolicyError(f"line policy: {key} must be a boolean, got {data[key]!r}")
-    return LinePolicy(data["send"], data["mark_online"], data["full_sync"], data["auto_repair"])
+    relay = data.get("webhook_relay")
+    if relay is not None and not (isinstance(relay, str) and re.match(r"^https?://[^/\s]+$", relay)):
+        raise LinePolicyError("line policy: webhook_relay must be a bare http(s)://host[:port] base")
+    return LinePolicy(data["send"], data["mark_online"], data["full_sync"], data["auto_repair"],
+                      webhook_relay=relay)
 
 
 # --- what is a write to WhatsApp ---------------------------------------------------------------------------------------
@@ -138,7 +158,12 @@ def parse_line_policy(raw: "str | Mapping[str, Any]") -> LinePolicy:
 #:      non-read verb on any other path, unknown endpoints included.
 _SESSION_START = re.compile(r"^/api/sessions/[^/]+/start$", re.IGNORECASE)
 _SESSION_CONFIG_PUT = re.compile(r"^/api/sessions/[^/]+$", re.IGNORECASE)
-_SEND_CLASS = re.compile(r"^/api/(send|reaction|starttyping|stoptyping|forwardmessage)", re.IGNORECASE)
+_SEND_CLASS = re.compile(
+    r"^/api/(send|reaction|starttyping|stoptyping|forwardmessage|[^/]+/presence)", re.IGNORECASE)
+#: Encoded control characters, `?`, `#`, `/`, `%` or a backslash in the RAW spelling: the shape of every smuggling
+#: attempt (`logout%3F/start`, `%0D%0A` splitting). A legitimate segment never needs them (`seg()` would have produced
+#: them only for a hostile id), so such a request is a write whatever it decodes to. MIRRORED by the edge (400).
+_SUSPICIOUS = re.compile(r"%(0[0-9a-f]|1[0-9a-f]|2[0356f]|3f|5c|7f)|\\", re.IGNORECASE)
 _READ_VERBS = ("GET", "HEAD", "OPTIONS")
 
 
@@ -169,11 +194,21 @@ def is_whatsapp_write(method: str, path: str) -> bool:
     """True when ``method path`` writes to WhatsApp (or might: the allow-list is session start + plain reads, never the
     other way round). Judged on BOTH the raw and the dot-normalised path: either one being a write makes it one."""
     verb = method.upper()
+    if _SUSPICIOUS.search(re.sub(r"^https?://[^/]+", "", path).split("?", 1)[0]):
+        return True
     return any(_classify(verb, p) for p in _paths(path))
 
 
+_SESSION_CREATE = re.compile(r"^/api/sessions/?$", re.IGNORECASE)
+
+
 def is_session_config_put(method: str, path: str) -> bool:
-    return method.upper() == "PUT" and all(_SESSION_CONFIG_PUT.match(p) for p in _paths(path))
+    """The two calls that SET session config on WAHA: `PUT /api/sessions/{n}` and `POST /api/sessions` (create).
+    (`POST .../start` takes no body on WAHA: it can never carry config.)"""
+    verb = method.upper()
+    ps = _paths(path)
+    return (verb == "PUT" and all(_SESSION_CONFIG_PUT.match(p) for p in ps)) or (
+        verb == "POST" and all(_SESSION_CREATE.match(p) for p in ps))
 
 
 def redact_path(path: str) -> str:
@@ -231,9 +266,59 @@ _registry: dict[str, LinePolicy] = {}
 _env_loaded = False
 
 
+def _host_key(base_url: str) -> str:
+    """Normalised HOST:PORT -- never the URL string. Spelling (case, trailing slash, scheme, default port, path) cannot
+    make one line look like another."""
+    raw = (base_url or "").strip()
+    sp = urlsplit(raw if "://" in raw else "http://" + raw)
+    port = sp.port or (443 if sp.scheme == "https" else 80)
+    return f"{(sp.hostname or '').lower()}:{port}"
+
+
 def _key(base_url: str, session: Optional[str]) -> str:
-    base = (base_url or "").rstrip("/").lower()
+    base = _host_key(base_url)
     return f"{base}#{session}" if session else base
+
+
+#: host:port -> policy for every line that is read-only, runtime part. STICKY: registering a `send: disabled` line adds
+#: it (all its spellings of the same host:port); nothing removes it except `clear_line_policies` (tests).
+_runtime_read_only: dict[str, LinePolicy] = {}
+
+
+def _generated_read_only() -> dict[str, LinePolicy]:
+    try:
+        from noctusai_lib.integrations.whatsapp.read_only_lines import READ_ONLY_LINES
+    except ImportError:  # the generated file is absent: nothing declared
+        return {}
+    return {h: parse_line_policy(spec) for h, spec in READ_ONLY_LINES.items()}
+
+
+def _read_only_for(host_key: str) -> Optional[LinePolicy]:
+    gen = _generated_read_only().get(host_key)
+    rt = _runtime_read_only.get(host_key)
+    if gen and rt:
+        return strictest(gen, rt)
+    return gen or rt
+
+
+def strictest(a: LinePolicy, b: LinePolicy) -> LinePolicy:
+    """The tighter of two policies: `disabled` wins, every flag is the AND, the webhook relay of the disabled one."""
+    disabled_one = a if not a.send_enabled else b
+    return LinePolicy(
+        SEND_ENABLED if (a.send_enabled and b.send_enabled) else SEND_DISABLED,
+        a.mark_online and b.mark_online, a.full_sync and b.full_sync, a.auto_repair and b.auto_repair,
+        declared=a.declared or b.declared, config_authority=a.config_authority or b.config_authority,
+        webhook_relay=disabled_one.webhook_relay or a.webhook_relay or b.webhook_relay,
+    )
+
+
+def _looser(new: LinePolicy, prior: LinePolicy) -> bool:
+    return (
+        (new.send_enabled and not prior.send_enabled)
+        or (new.mark_online and not prior.mark_online)
+        or (new.full_sync and not prior.full_sync)
+        or (new.auto_repair and not prior.auto_repair)
+    )
 
 
 def _check_registrable(base_url: str, policy: LinePolicy, allow_memory_sink: bool) -> None:
@@ -252,21 +337,37 @@ def register_line_policy(
     base_url: str, policy: LinePolicy, *, session: Optional[str] = None, allow_memory_sink: bool = False
 ) -> None:
     """Declare a line's policy at product boot. ``base_url="*"`` is the process-wide default (legacy products whose
-    lines are DB-sourced); it cannot carry a session. A strict line is never given a ``"*"``."""
+    lines are DB-sourced); it cannot carry a session. A strict line is never given a ``"*"``.
+
+    `send: disabled` is STICKY: a host:port that is (or becomes) read-only can never be re-registered with a looser
+    policy (:class:`LinePolicyError`), and ``"*"`` never resolves for it."""
     if base_url == "*" and session:
         raise LinePolicyError('"*" is the process-wide default and cannot be scoped to a session')
     _check_registrable(base_url, policy, allow_memory_sink)
     with _lock:
         if base_url == "*":
+            prior = _registry.get("*")
+            if prior is not None and _looser(policy, prior):
+                raise LinePolicyError('"*" is already registered with a stricter policy; it cannot be loosened')
             _registry["*"] = replace(policy, config_authority=False)
-        else:
-            _registry[_key(base_url, session)] = policy
+            return
+        hk, key = _host_key(base_url), _key(base_url, session)
+        for prior in (_registry.get(key), _registry.get(hk), _read_only_for(hk)):
+            if prior is not None and _looser(policy, prior):
+                raise LinePolicyError(
+                    f"line {base_url!r}: refusing to loosen an already declared policy ({prior.as_json()}); "
+                    "a read-only line is sticky for the life of the process"
+                )
+        _registry[key] = policy
+        if not policy.send_enabled:
+            _runtime_read_only[hk] = strictest(_runtime_read_only[hk], policy) if hk in _runtime_read_only else policy
 
 
 def clear_line_policies() -> None:
     global _env_loaded
     with _lock:
         _registry.clear()
+        _runtime_read_only.clear()
         _env_loaded = False
 
 
@@ -298,17 +399,30 @@ def load_line_policies_from_env(
     return len(parsed)
 
 
-def resolve_line_policy(base_url: str, session: Optional[str] = None) -> LinePolicy:
-    """(url, session) -> (url) -> ``"*"`` -> :data:`UNDECLARED` (fail-closed)."""
+def resolve_line_policy(
+    base_url: str, session: Optional[str] = None, *, explicit: Optional[LinePolicy] = None
+) -> LinePolicy:
+    """The STRICTEST of: the explicit policy, the registry entry ((host,session) -> host -> ``"*"``), and the seed's
+    read-only host set (generated from waha-instances.yml + every disabled line registered at runtime). ``"*"`` is never
+    consulted for a read-only host. Nothing found -> :data:`UNDECLARED` (fail-closed). A policy can only ever get
+    stricter on the way in, so no code path can loosen a declared read-only line."""
     global _env_loaded
     if not _env_loaded:
         load_line_policies_from_env()  # raises on a bad value: loud on EVERY call, never a silent UNDECLARED
         _env_loaded = True
+    hk = _host_key(base_url)
     with _lock:
-        for key in (_key(base_url, session), _key(base_url, None), "*"):
-            if key in _registry:
-                return _registry[key]
-    return UNDECLARED
+        ro = _read_only_for(hk)
+        reg = _registry.get(_key(base_url, session)) or _registry.get(hk)
+        if reg is None and ro is None:
+            reg = _registry.get("*")
+    found = [p for p in (explicit, reg, ro) if p is not None]
+    if not found:
+        return UNDECLARED
+    out = found[0]
+    for p in found[1:]:
+        out = strictest(out, p)
+    return out
 
 
 # --- the guard both WahaClient and FakeWahaClient share --------------------------------------------------------------
@@ -357,12 +471,24 @@ class LinePolicyGuard:
         """httpx request event hook (sync + async twins): re-judges the FINAL request URL after httpx has built and
         normalised it, so no spelling of the path can slip past the pre-check."""
         def check(request) -> None:
-            self._guard_write(request.method, request.url.path, policy_config=policy_config)
+            self._guard_write(request.method, request.url.raw_path.decode('ascii', 'replace'), policy_config=policy_config)
 
         async def acheck(request) -> None:
             check(request)
 
         return check, acheck
+
+    def _guard_webhook(self, url: str) -> None:
+        """On a disabled line a webhook may only be (re)registered under the declared relay base (the edge's 3001)."""
+        if self.line_policy.send_enabled:
+            return
+        relay = (self.line_policy.webhook_relay or "").rstrip("/")
+        if relay and (url == relay or url.startswith(relay + "/")):
+            return
+        reason = "webhook_url_not_relay" if self.line_policy.declared else "no_line_policy"
+        self.line_event_sink.record(LineEvent(
+            EVENT_WRITE_REFUSED, self._line_label, "PUT /api/sessions/*/webhooks", reason, self.line_policy.as_dict()))
+        raise LineWriteRefused(line=self._line_label, method="PUT", path="/api/sessions/*/webhooks", reason=reason)
 
     def _guard_repair(self, op: str) -> None:
         if self.line_policy.auto_repair:

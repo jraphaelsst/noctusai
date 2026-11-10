@@ -22,6 +22,7 @@ edge into a fail2ban ban. IO is injectable (`run_remote`) for zero-SSH tests.
 """
 from __future__ import annotations
 
+import re
 import shlex
 from typing import Any, Callable
 
@@ -57,6 +58,28 @@ _HARD_DENY = (
 )
 
 
+#: A command line is "read-only" only when ONE simple command runs. Any shell metacharacter (`;` `&` `|` `$(` backtick,
+#: newline, redirection) can chain a second, mutating command behind an allow-listed first word
+#: (`echo; docker exec noctus-waha-x-core ...`), so its presence takes the command off the read-only path.
+_SHELL_META = re.compile(r"[;&|`<>\n\r]|\$\(|\$\{")
+#: curl/wget invoked in a way that is not a plain GET (a POST to a WAHA core would defeat the line policy).
+_NON_GET_HTTP = re.compile(
+    r"(?:^|\s)(?:-X\s*(?!GET\b|HEAD\b)\S+|--request(?:=|\s+)(?!GET\b|HEAD\b)\S+|-d\b|--data\S*|-F\b|--form\S*|"
+    r"-T\b|--upload-file\b|--json\b|--post-data\S*|--post-file\S*|--method(?:=|\s+)(?!GET\b|HEAD\b)\S+|--body-\S+)",
+)  # case-sensitive on purpose: `-D-` (dump headers) is a read, `-d` (data) is not
+#: A WAHA core container (`waha-<n>-core` / `noctus-waha-<n>-core`) or ANY docker exec into a waha container: the
+#: line-policy edge does not front these, so touching them is a production write that needs the confirm flow.
+_WAHA_CORE = re.compile(r"waha-[a-z0-9-]*-core", re.IGNORECASE)
+_DOCKER_EXEC_WAHA = re.compile(r"docker\s+(?:container\s+)?exec\b[^\n;|&]*\bwaha", re.IGNORECASE)
+
+
+def touches_waha_core(command: str, container: str | None = None) -> bool:
+    return bool(
+        _WAHA_CORE.search(command) or (container and "waha" in container.lower())
+        or _DOCKER_EXEC_WAHA.search(command)
+    )
+
+
 def _err(msg: str, **extra) -> dict[str, Any]:
     return {"ok": False, "status": "error", "exit_code": 1, "error": msg, **extra}
 
@@ -79,8 +102,12 @@ def _leading_binary(command: str) -> str:
 
 
 def _is_read_only(command: str) -> bool:
-    """True when the command's leading binary is inherently read-only."""
+    """True when ONE simple command runs and its leading binary is inherently read-only."""
+    if _SHELL_META.search(command):
+        return False
     bin_ = _leading_binary(command)
+    if bin_ in ("curl", "wget") and _NON_GET_HTTP.search(command):
+        return False
     if bin_ == "docker":
         try:
             toks = shlex.split(command)
@@ -129,7 +156,14 @@ def exec_cmd(
                       "vps.recreate / vps.prune) or run it by hand."),
         }
 
-    read_only = _is_read_only(command)
+    read_only = _is_read_only(command) and not touches_waha_core(command, container)
+    if touches_waha_core(command, container) and not confirm:
+        return {
+            "ok": False, "status": "needs_confirm", "exit_code": 1,
+            "message": ("this touches a WAHA container (waha-<n>-core / docker exec into waha*): the line-policy edge "
+                        "does not front it, so it can write to WhatsApp or change the session. It is never "
+                        "read-only -- pass confirm=True only for a deliberate, owner-approved operation."),
+        }
     if not read_only and not confirm:
         return {
             "ok": False, "status": "needs_confirm", "exit_code": 1,
@@ -178,5 +212,5 @@ def register(server) -> None:
         return exec_cmd(command, container=container, confirm=confirm, ssh_host=ssh_host)
 
 
-__all__ = ["exec_cmd", "register", "_HARD_DENY", "_READ_BINARIES", "_is_read_only",
+__all__ = ["exec_cmd", "touches_waha_core", "register", "_HARD_DENY", "_READ_BINARIES", "_is_read_only",
            "_hard_denied"]

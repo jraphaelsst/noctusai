@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from pathlib import Path
 
 from settings import REPO_ROOT
@@ -61,7 +62,42 @@ def line_policy_json(inst: dict) -> str:
     """The `<PRODUCT>_WAHA_LINE_POLICY` env value of an instance -- byte-identical to the seed's
     `LinePolicy.as_json()` (a test pins the parity)."""
     pol = inst["line_policy"]
-    return json.dumps({k: pol[k] for k in _POLICY_KEYS}, separators=(",", ":"))
+    out = {k: pol[k] for k in _POLICY_KEYS}
+    if inst.get("edge_deny_writes"):
+        out["webhook_relay"] = relay_base(inst)  # the ONLY webhook base a read-only line may register
+    return json.dumps(out, separators=(",", ":"))
+
+
+def relay_base(inst: dict) -> str:
+    return f"http://waha-{inst['name']}:3001"
+
+
+READ_ONLY_REL = "seed/lib/backend/noctusai_lib/integrations/whatsapp/read_only_lines.py"
+
+
+def read_only_aliases(inst: dict) -> list[str]:
+    """Every host:port a read-only line answers on (service + container names, API + relay ports)."""
+    n = inst["name"]
+    names = [f"waha-{n}", f"noctus-waha-{n}", f"waha-{n}-core", f"noctus-waha-{n}-core"]
+    return sorted(f"{h}:{p}" for h in names for p in (3000, 3001))
+
+
+def render_read_only_lines(spec: dict) -> str:
+    """Generated seed module: the strictest-wins read-only host set derived from the declared instances."""
+    rows = {}
+    for inst in spec["instances"]:
+        if inst["line_policy"]["send"] == "disabled":
+            for host in read_only_aliases(inst):
+                rows[host] = json.loads(line_policy_json(inst))
+    body = "".join(f"    {h!r}: {v!r},\n" for h, v in sorted(rows.items()))
+    return (
+        '"""GENERATED from deploy/fleet/waha-instances.yml by noctus.dev.waha_instance action=\'render\' -- DO NOT EDIT.\n\n'
+        "Every host:port (every container/service alias, ports 3000 and 3001) of a `send: disabled` line, with its declared\n"
+        "policy. The seed resolves these STRICTEST-WINS and never lets `\"*\"` apply to them. check_waha_instances_render_sync\n"
+        "fails when this file differs from the render. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a.\n"
+        '"""\n'
+        "READ_ONLY_LINES: dict[str, dict] = {" + ("\n" + body if body else "") + "}\n"
+    )
 
 
 def _validate_policy(i: int, name: str, inst: dict) -> None:
@@ -135,19 +171,25 @@ EDGE_IMAGE = "nginx:1.27-alpine"
 #: Port 3001 is the WEBHOOK RELAY: the core lives on a private network and cannot reach the product, so it POSTs its
 #: webhooks to `http://waha-<n>:3001/<path>` and the edge forwards them to the declared `webhook_upstream`.
 #: NOC-REMEDIATE[edge-live-verification]: `nginx -t` and the live curl matrix (every verb x the send/presence/session
-#: paths x dot-segment and %2e/%2f spellings) have not run -- no docker daemon in the S1 environment; S6 runs them on the
+#: paths x dot-segment, %2e/%2f, `logout%3F/start`, `start%3F`, `%0D%0A`, `%5c` and X-HTTP-Method-Override spellings) have not run -- no docker daemon in the S1 environment; S6 runs them on the
 #: throwaway probe line before the personal number is paired. — 2026-11-10
 _EDGE_CONF = """\
 resolver 127.0.0.11 valid=10s ipv6=off;
 map "$$request_method $$uri" $$wa_write {
   default 1;
   "~* ^POST /api/sessions/[^/]+/start$$" 0;
-  "~* ^(GET|HEAD|OPTIONS) /api/(send|reaction|starttyping|stoptyping|forwardmessage)" 1;
+  "~* ^(GET|HEAD|OPTIONS) /api/(send|reaction|starttyping|stoptyping|forwardmessage|[^/]+/presence)" 1;
   "~* ^(GET|HEAD|OPTIONS) /" 0;
 }
 server {
   listen 3000;
   client_max_body_size 2m;
+  # smuggling spellings (encoded control chars, `?` `#` `/` `%`, backslash) are refused BEFORE the decision is taken:
+  # the decision is on the decoded $$uri, and `logout%3F/start` decodes to a path the core reads as the legacy logout.
+  if ($$request_uri ~* "%(0[0-9a-f]|1[0-9a-f]|2[0356f]|3f|5c|7f)|\\x5c") { return 400; }
+  proxy_set_header X-HTTP-Method-Override "";
+  proxy_set_header X-HTTP-Method "";
+  proxy_set_header X-Method-Override "";
   location / {
     if ($$wa_write) { return 403 '{"error":"line_write_refused","detail":"this line is read-only (send: disabled)"}'; }
     set $$up http://waha-{name}-core:3000;
@@ -159,6 +201,10 @@ server {
 server {
   listen 3001;
   client_max_body_size 2m;
+  if ($$request_uri ~* "%(0[0-9a-f]|1[0-9a-f]|2[0356f]|3f|5c|7f)|\\x5c") { return 400; }
+  proxy_set_header X-HTTP-Method-Override "";
+  proxy_set_header X-HTTP-Method "";
+  proxy_set_header X-Method-Override "";
   location / {
     if ($$request_method != POST) { return 405; }
     set $$hook {webhook_upstream};
@@ -348,19 +394,87 @@ def _plan(spec: dict, name: str) -> dict:
     }
 
 
+def policy_noweb(inst: dict) -> dict:
+    """The `noweb` block WAHA must hold for this line (camelCase wire keys): from the DECLARED policy."""
+    pol = inst["line_policy"]
+    return {"markOnline": pol["mark_online"], "store": {"enabled": True, "fullSync": pol["full_sync"]}}
+
+
+#: Runs INSIDE the core container (its API key never leaves it). WAHA takes config only on `POST /api/sessions`
+#: (create, start:false) or `PUT /api/sessions/{s}`; `/start` takes none and NOWEB's markOnline defaults to TRUE -- so
+#: this is the step that makes a read-only line's first pairing silent. Idempotent: create when absent, else merge+PUT.
+#: No single quote may appear (it is wrapped in one for the remote shell).
+_PROVISION_JS = (
+    'const H={"X-Api-Key":process.env.WHATSAPP_API_KEY,"Content-Type":"application/json"};'
+    'const nw=JSON.parse(process.env.POLICY_NOWEB);const S=process.env.POLICY_SESSION;'
+    '(async()=>{const u=(process.env.POLICY_BASE||"http://localhost:3000")+"/api/sessions";let r=await fetch(u+"/"+S,{headers:H});'
+    'if(r.status===404){r=await fetch(u,{method:"POST",headers:H,body:JSON.stringify({name:S,start:false,config:{noweb:nw}})});}'
+    'else{const j=await r.json();const c=j.config||{};const o=c.noweb||{};c.noweb=Object.assign({},o,nw);'
+    'c.noweb.store=Object.assign({},o.store||{},nw.store);'
+    'r=await fetch(u+"/"+S,{method:"PUT",headers:H,body:JSON.stringify({config:c})});}'
+    'if(r.status>=300){console.log("ERR "+r.status);process.exit(2);}'
+    'r=await fetch(u+"/"+S,{headers:H});const j=await r.json();'
+    'console.log(JSON.stringify((j.config&&j.config.noweb)||null));})().catch(e=>{console.log("ERR "+e.message);process.exit(3);});'
+)
+
+
+def _noweb_matches(got, want: dict) -> bool:
+    return (isinstance(got, dict) and got.get("markOnline") is want["markOnline"]
+            and isinstance(got.get("store"), dict) and got["store"].get("enabled") is True
+            and got["store"].get("fullSync") is want["store"]["fullSync"])
+
+
+def _provision(spec: dict, name: str, host: str, confirm: bool) -> dict:
+    """Create/align the session config from the policy against the CORE, then READ IT BACK (explicit, idempotent)."""
+    inst = _inst(spec, name)
+    want = policy_noweb(inst)
+    core = f"noctus-{core_service(inst)}"
+    cmd = (f"docker exec -e POLICY_NOWEB={shlex.quote(json.dumps(want, separators=(',', ':')))} "
+           f"-e POLICY_SESSION={shlex.quote(inst['session'])} {core} node -e '{_PROVISION_JS}'")
+    plan = {"ok": True, "action": "provision", "name": name, "status": "planned", "core": core,
+            "expect_noweb": want, "steps": ["create (start:false) or PUT merged config on the core",
+                                           "read the config back from the core and compare with the policy"]}
+    if not confirm:
+        plan["note"] = "DRY RUN -- pass confirm=True; run BEFORE the edge fronts the core and BEFORE any QR scan"
+        return plan
+    rc, out, err = _sh(host, cmd, timeout=120)
+    if rc != 0:
+        return {"ok": False, "action": "provision", "status": "error", "name": name,
+                "error": (out.strip() or err.strip())[-400:]}
+    try:
+        got = json.loads(out.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"ok": False, "action": "provision", "status": "error", "name": name,
+                "error": f"unparseable read-back: {out.strip()[-200:]}"}
+    ok = _noweb_matches(got, want)
+    return {"ok": ok, "action": "provision", "status": "verified" if ok else "drift", "name": name,
+            "expect_noweb": want, "read_back": got}
+
+
 def _apply(spec: dict, name: str, host: str, confirm: bool) -> dict:
     p = _plan(spec, name)
     if not confirm:
-        p.update(action="apply", note="DRY RUN -- pass confirm=True to `compose up -d --no-deps` this ONE instance")
+        p.update(action="apply", note="DRY RUN -- pass confirm=True to `compose up -d --no-deps` this ONE instance "
+                                      "(an edge line: core -> provision -> edge, in that order)")
         return p
-    _inst(spec, name)
     inst = _inst(spec, name)
     rc, _o, err = _sh(host, f"cd {VPS_FLEET} && for k in {' '.join(inst_keys(inst).values())}; do "
                             "grep -q \"^$k=.\" .env.fleet || { echo MISSING:$k; exit 3; }; done")
     if rc != 0:
         return {"ok": False, "action": "apply", "status": "blocked",
                 "error": f"required .env.fleet keys missing/empty on the VPS (generate them first): {_o.strip() or err.strip()}"}
-    rc, out, err = _sh(host, f"cd {VPS_FLEET} && docker compose -f compose.waha.yml up -d --no-deps {' '.join(services_of(inst))}", timeout=300)
+    up = f"cd {VPS_FLEET} && docker compose -f compose.waha.yml up -d --no-deps "
+    if inst.get("edge_deny_writes"):
+        # core first (private network), session config from the policy, and ONLY THEN the edge that fronts it
+        rc, out, err = _sh(host, up + core_service(inst), timeout=300)
+        if rc != 0:
+            return {"ok": False, "action": "apply", "status": "error", "name": name, "error": err.strip()[-600:]}
+        prov = _provision(spec, name, host, True)
+        if not prov["ok"]:
+            return {"ok": False, "action": "apply", "status": "provision_failed", "name": name, "provision": prov}
+        rc, out, err = _sh(host, up + f"waha-{name}", timeout=300)
+    else:
+        rc, out, err = _sh(host, up + " ".join(services_of(inst)), timeout=300)
     return {"ok": rc == 0, "action": "apply", "status": "applied" if rc == 0 else "error", "name": name,
             "stdout": out.strip()[-600:], "error": None if rc == 0 else err.strip()[-600:]}
 
@@ -396,18 +510,22 @@ def waha_instance(action: str = "list", name: str | None = None, ssh_host: str =
             text = render_compose(spec)
             if write:
                 (root / COMPOSE_REL).write_text(text, encoding="utf-8")
-            return {"ok": True, "action": "render", "written": write, "compose": text}
+                (root / READ_ONLY_REL).write_text(render_read_only_lines(spec), encoding="utf-8")
+            return {"ok": True, "action": "render", "written": write, "compose": text,
+                    "read_only_lines": render_read_only_lines(spec)}
         if action == "list":
             return _list(spec, ssh_host)
         if action in ("plan", "add"):
             return _plan(spec, name or "")
+        if action == "provision":
+            return _provision(spec, name or "", ssh_host, confirm)
         if action == "apply":
             return _apply(spec, name or "", ssh_host, confirm)
         if action == "remove":
             return _remove(spec, name or "", ssh_host, confirm, force)
     except ValueError as e:
         return {"ok": False, "action": action, "status": "error", "error": str(e)}
-    return {"ok": False, "action": action, "error": f"unknown action {action!r} -- render|list|plan|apply|remove"}
+    return {"ok": False, "action": action, "error": f"unknown action {action!r} -- render|list|plan|provision|apply|remove"}
 
 
 def register(server) -> None:
@@ -415,7 +533,7 @@ def register(server) -> None:
         name="noctus.dev.waha_instance",
         description=(
             "One WAHA Core container per WhatsApp number, declared as data (deploy/fleet/waha-instances.yml -> rendered "
-            "compose.waha.yml). action=render (offline; write=True refreshes the file) | list (declared vs running vs health "
+            "compose.waha.yml). action=render (offline; write=True refreshes the file + the seed read-only host set) | list (declared vs running vs health "
             "vs RSS vs session status) | plan/add (the service + the .env.fleet key NAMES to generate on the VPS -- values never "
             "cross the wire) | apply (confirm=True: compose up -d --no-deps for ONE instance; refuses when keys are missing) | "
             "remove (confirm=True; refuses a WORKING session unless force; snapshots the volume first, never deletes it). "
@@ -429,4 +547,5 @@ def register(server) -> None:
 
 
 __all__ = ["waha_instance", "register", "render_compose", "parse_instances", "env_keys", "inst_keys", "load_spec",
-           "line_policy_json", "core_service", "services_of"]
+           "line_policy_json", "core_service", "services_of", "render_read_only_lines", "READ_ONLY_REL",
+           "relay_base", "policy_noweb"]

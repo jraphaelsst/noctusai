@@ -34,6 +34,7 @@ from uuid import UUID
 import httpx
 from starlette.concurrency import run_in_threadpool
 
+from noctusai_lib.integrations.whatsapp.log_safety import install_phone_scrub, mask_chat_id
 from noctusai_lib.integrations.whatsapp.connection_store import (
     WhatsAppConnectionRecord,
     WhatsAppConnectionStore,
@@ -44,7 +45,7 @@ from noctusai_lib.integrations.whatsapp.inbox.types import ORIGIN_BACKFILL
 from noctusai_lib.integrations.whatsapp.lid_auth import LidPhoneCache
 from noctusai_lib.integrations.whatsapp.mappers import normalize_waha_id
 
-logger = logging.getLogger(__name__)
+logger = install_phone_scrub(logging.getLogger(__name__))
 
 _IN_FLIGHT: set[str] = set()
 _IN_FLIGHT_LOCK = threading.Lock()
@@ -162,7 +163,7 @@ async def _run(
             raw = await waha_client.fetch_chat_messages(jid, limit=max_messages)
         except Exception as exc:  # noqa: BLE001
             report.errors.append(f"fetch_chat_messages failed: {type(exc).__name__}")
-            logger.warning("inbox backfill: fetch failed connection=%s chat=%s", record.id, jid, exc_info=True)
+            logger.warning("inbox backfill: fetch failed connection=%s chat=%s", record.id, mask_chat_id(jid), exc_info=True)
             continue
         await run_in_threadpool(lambda: chat_store.ensure_chat(
             org_id=record.org_id, connection_id=record.id, chat_id=identity.chat_id,

@@ -124,6 +124,7 @@ from noctusai_lib.integrations.whatsapp.line_policy import (
     LineEvent,
     LineEventSink,
     LinePolicy,
+    LinePolicyDrift,
     LinePolicyError,
     LineRepairRefused,
     LineWriteRefused,
@@ -135,6 +136,7 @@ from noctusai_lib.integrations.whatsapp.line_policy import (
     parse_line_policy,
     register_line_policy,
     resolve_line_policy,
+    strictest,
     set_default_line_event_sink,
 )
 from noctusai_lib.integrations.whatsapp.mappers import (
@@ -242,6 +244,8 @@ def get_meta_cloud_client(
 
 
 __all__ = [
+    "LinePolicyDrift",
+    "strictest",
     "InMemoryLineEventSink",
     "LineEvent",
     "LineEventSink",

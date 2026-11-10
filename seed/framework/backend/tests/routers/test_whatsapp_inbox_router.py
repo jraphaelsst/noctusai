@@ -585,3 +585,12 @@ def test_read_only_router_does_not_mount_send_or_backfill_and_never_mirrors_read
     sends = {x for x in full if x[0] == "POST" and (x[1].endswith("/messages") or x[1].endswith("/backfill"))}
     assert len(sends) == 2 and sends.isdisjoint(ro)
     assert {x for x in full if x[0] == "GET"} <= ro and any(p.endswith("/read") for _, p in ro)
+
+
+def test_read_only_unmounted_routes_are_an_explicit_pinned_list():
+    from noctusai_seed.whatsapp_inbox_router import READ_ONLY_UNMOUNTED_ROUTES
+
+    assert READ_ONLY_UNMOUNTED_ROUTES == (
+        ("POST", "/{connection_id}/chats/{chat_id:path}/messages"),
+        ("POST", "/{connection_id}/backfill"),
+    )

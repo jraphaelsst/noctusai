@@ -26,6 +26,10 @@ from noctusai_lib.integrations.whatsapp import (
 from noctusai_lib.integrations.whatsapp.client import WahaClient, _merged_session_config, _session_config
 
 SHADOW = LinePolicy("disabled", False, False, False)
+SHADOW_R = LinePolicy("disabled", False, False, False, webhook_relay="http://waha-x:3001")
+RELAY_URL = "http://waha-x:3001/api/whatsapp/webhook/tok"
+PROVISIONED = {"name": "default", "status": "SCAN_QR_CODE",
+               "config": {"noweb": {"markOnline": False, "store": {"enabled": True, "fullSync": False}}}}
 LEGACY = LinePolicy("enabled", True, True, True)
 
 
@@ -138,10 +142,10 @@ def test_sync_path_is_guarded_too():
 
 
 def test_disabled_line_still_reads_and_runs_the_session_lifecycle():
-    waha = Waha()
+    waha = Waha(PROVISIONED)
     c = waha.client(SHADOW)
     run(c.get_session()); run(c.list_chats()); run(c.start_session()); run(c.get_qr())
-    assert {m for m, _, _ in waha.calls} == {"GET", "POST"} and len(waha.calls) == 4
+    assert {m for m, _, _ in waha.calls} == {"GET", "POST"} and len(waha.calls) == 5  # get_qr reads the session back first
 
 
 def test_enabled_line_sends():
@@ -180,7 +184,7 @@ def test_merge_overrides_existing_with_policy_but_wildcard_keeps_them():
 
 def test_set_webhook_on_a_policy_line_pins_presence_off():
     waha = Waha({"name": "default", "config": {"noweb": {"markOnline": True}}})
-    run(waha.client(SHADOW).set_webhook("https://p.example/wh/t", ["message"]))
+    run(waha.client(SHADOW_R).set_webhook(RELAY_URL, ["message"]))
     put = [b for m, _, b in waha.calls if m == "PUT"][0]["config"]
     assert put["noweb"]["markOnline"] is False and put["noweb"]["store"]["fullSync"] is False
 
@@ -221,7 +225,7 @@ def test_readback_flags_every_divergence_and_unreported_keys():
 def test_fake_honours_the_same_policy():
     sink = InMemoryLineEventSink()
     f = FakeWahaClient(line_policy=SHADOW, line_event_sink=sink)
-    run(f.start_session())
+    run(f.provision_session())
     for coro in (f.send_text("a@c.us", "x"), f.send_seen("a@c.us"), f.create_group("g", []),
                  f.delete_message("a@c.us", "m"), f.leave_group("g@g.us")):
         with pytest.raises(LineWriteRefused):
@@ -245,9 +249,10 @@ def test_fake_resolves_through_the_same_registry_and_is_fail_closed():
 
 def test_fake_readback_reflects_what_start_actually_wrote_and_can_fail():
     f = FakeWahaClient(line_policy=SHADOW)
-    assert not run(f.verify_line_policy()).ok  # never started: nothing reported, not a pass
-    run(f.start_session())
-    assert run(f.verify_line_policy()).ok
+    assert not run(f.verify_line_policy()).ok  # nothing reported, not a pass
+    run(f.start_session())  # WAHA's /start takes NO body: it never becomes the config
+    assert not run(f.verify_line_policy()).ok
+    assert run(f.provision_session()).ok and run(f.verify_line_policy()).ok
     f.session_noweb["markOnline"] = True  # drift on the "server"
     assert not run(f.verify_line_policy()).ok
 
@@ -259,7 +264,7 @@ def test_undeclared_line_start_writes_the_all_off_flags_not_wahas_defaults():
     assert noweb["markOnline"] is False and noweb["store"]["fullSync"] is False
     f = FakeWahaClient(line_policy=UNDECLARED)
     run(f.start_session())
-    assert f.session_noweb["markOnline"] is False
+    assert f.last_start_payload["config"]["noweb"]["markOnline"] is False
 
 
 # --- compliance-review fixes ------------------------------------------------------------------------------------------
@@ -303,7 +308,7 @@ def test_final_url_hook_refuses_a_path_that_only_becomes_a_write_after_httpx_nor
 
 
 def test_a_disabled_line_allows_only_sessions_get_start_and_qr():
-    waha, sink = Waha(), InMemoryLineEventSink()
+    waha, sink = Waha(PROVISIONED), InMemoryLineEventSink()
     c = waha.client(SHADOW, sink)
     run(c.get_session()); run(c.start_session()); run(c.get_qr())
     for m, path in (("put", "/api/sessions/default"), ("post", "/api/sessions/default/stop"),
@@ -312,12 +317,12 @@ def test_a_disabled_line_allows_only_sessions_get_start_and_qr():
             run(c._request(m, path, timeout=5, json={"config": {"noweb": {"markOnline": True}}}))
     with pytest.raises(LineRepairRefused):
         run(c.logout_session())
-    assert [m for m, _, _ in waha.calls] == ["GET", "POST", "GET"]
+    assert [m for m, _, _ in waha.calls] == ["GET", "POST", "GET", "GET"]
 
 
 def test_the_only_config_write_on_a_disabled_line_is_the_policy_derived_one():
     waha = Waha({"name": "default", "config": {"noweb": {"markOnline": True}}})
-    run(waha.client(SHADOW).set_webhook("https://p.example/wh/t", ["message"]))
+    run(waha.client(SHADOW_R).set_webhook(RELAY_URL, ["message"]))
     assert [m for m, _, _ in waha.calls].count("PUT") == 1
 
 
@@ -362,3 +367,207 @@ def test_a_disabled_line_needs_a_persistent_sink_unless_a_test_says_otherwise():
         assert resolve_line_policy("http://w2:3000") == SHADOW
     finally:
         set_default_line_event_sink(saved)
+
+
+# --- round 2: WAHA takes config only on create/PUT, smuggling spellings, sticky read-only, webhook relay -------------------
+
+from noctusai_lib.integrations.whatsapp import LinePolicyDrift  # noqa: E402
+
+
+class RealisticWaha:
+    """WAHA's real session-config semantics: POST /start takes NO body and never touches config; NOWEB's markOnline
+    defaults to TRUE; config is set only by POST /api/sessions (create) or PUT /api/sessions/{s}."""
+
+    DEFAULT = {"noweb": {"markOnline": True, "store": {"enabled": False, "fullSync": False}}}
+
+    def __init__(self):
+        self.state = None
+        self.calls: list[tuple[str, str]] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        import json
+
+        m, p = request.method, request.url.path
+        body = json.loads(request.content) if request.content else {}
+        self.calls.append((m, p))
+        if m == "GET" and p == "/api/sessions/default":
+            return httpx.Response(404, json={}) if self.state is None else httpx.Response(200, json=self.state)
+        if m == "POST" and p == "/api/sessions":
+            self.state = {"name": body["name"], "status": "STOPPED", "config": body.get("config", {})}
+        elif m == "PUT" and p == "/api/sessions/default":
+            self.state["config"] = body["config"]
+        elif m == "POST" and p == "/api/sessions/default/start":
+            if self.state is None:
+                self.state = {"name": "default", "status": "SCAN_QR_CODE", "config": dict(self.DEFAULT)}
+            self.state["status"] = "SCAN_QR_CODE"  # body IGNORED
+        elif m == "GET" and p == "/api/default/auth/qr":
+            return httpx.Response(200, content=b"PNG")
+        return httpx.Response(200, json=self.state or {})
+
+    def client(self, policy):
+        return WahaClient("http://waha.test", "k", "default", transport=httpx.MockTransport(self), line_policy=policy)
+
+
+def test_start_alone_leaves_markonline_true_and_pairing_is_refused_until_provisioned():
+    w = RealisticWaha()
+    c = w.client(SHADOW_R)
+    run(c.start_session())
+    assert w.state["config"]["noweb"]["markOnline"] is True  # what WAHA really does
+    with pytest.raises(LinePolicyDrift) as e:
+        run(c.get_qr())
+    assert "markOnline" in str(e.value)
+    assert ("GET", "/api/default/auth/qr") not in w.calls  # the QR was never even requested
+
+
+def test_provision_creates_with_start_false_then_pairing_is_allowed():
+    w = RealisticWaha()
+    c = w.client(SHADOW_R)
+    rb = run(c.provision_session())
+    assert rb.ok and w.state["config"]["noweb"]["markOnline"] is False
+    run(c.start_session())
+    assert run(c.get_qr()) == b"PNG"
+    assert w.state["config"]["noweb"] == {"markOnline": False, "store": {"enabled": True, "fullSync": False}}
+
+
+def test_provision_is_idempotent_and_repairs_an_existing_session():
+    w = RealisticWaha()
+    w.state = {"name": "default", "status": "STOPPED", "config": dict(RealisticWaha.DEFAULT)}
+    c = w.client(SHADOW_R)
+    assert run(c.provision_session()).ok and run(c.provision_session()).ok
+    assert [x for x in w.calls if x[0] == "POST" and x[1] == "/api/sessions"] == []  # exists -> PUT, never a 2nd create
+    assert w.state["config"]["noweb"]["markOnline"] is False
+
+
+def test_provision_needs_a_declared_config_authoritative_line():
+    with pytest.raises(LineRepairRefused):
+        run(RealisticWaha().client(UNDECLARED).provision_session())
+
+
+def test_the_edge_class_config_calls_are_still_refused_for_everyone_else():
+    w = RealisticWaha()
+    c = w.client(SHADOW_R)
+    for m, path in (("post", "/api/sessions"), ("put", "/api/sessions/default")):
+        with pytest.raises(LineWriteRefused):
+            run(c._request(m, path, timeout=5, json={"config": {}}))
+    assert w.calls == []
+
+
+@pytest.mark.parametrize("path", [
+    "/api/sessions/logout%3F/start", "/api/sessions/default/start%3F", "/api/sessions/default%0D%0A/start",
+    "/api/sessions/default%5Cstart", "/api/sessions/a%2Fb/start", "/api/sessions/default%23/start",
+    "/api/sessions/default%00/start", "/api/sessions/default%7F/start", "/api/sessions/default%25/start",
+    "/api/sessions/a\\b/start",
+])
+def test_smuggling_spellings_are_writes_whatever_they_decode_to(path):
+    assert is_whatsapp_write("post", path) is True
+    waha = Waha()
+    with pytest.raises(LineWriteRefused):
+        run(waha.client(SHADOW)._request("post", path, timeout=5))
+    assert waha.calls == []
+
+
+def test_presence_subscribe_on_get_is_a_write():
+    assert is_whatsapp_write("get", "/api/default/presence/5511999990001@c.us") is True
+    assert is_whatsapp_write("get", "/api/default/chats") is False
+
+
+# --- sticky read-only ------------------------------------------------------------------------------------------------
+
+
+def test_a_read_only_host_stays_read_only_whatever_star_explicit_or_spelling_say():
+    register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
+    register_line_policy("*", LEGACY)
+    for spelling in ("http://waha-x:3000", "http://WAHA-X:3000/", "waha-x:3000", "http://waha-x:3000/api/x"):
+        assert not resolve_line_policy(spelling, "default").send_enabled, spelling
+        assert not resolve_line_policy(spelling, "default", explicit=LEGACY).send_enabled  # explicit cannot loosen
+    assert resolve_line_policy("http://other:3000").send_enabled  # "*" still serves everybody else
+    c = get_whatsapp_client(base_url="http://WAHA-X:3000/", api_key="k", line_policy=LEGACY)
+    assert not c.line_policy.send_enabled
+
+
+def test_re_registering_a_read_only_host_with_a_looser_policy_is_refused_but_tightening_is_fine():
+    register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
+    for loose in (LEGACY, LinePolicy("disabled", True, False, False)):
+        with pytest.raises(LinePolicyError, match="sticky|loosen"):
+            register_line_policy("http://waha-x:3000", loose, allow_memory_sink=True)
+    with pytest.raises(LinePolicyError):
+        register_line_policy("WAHA-X:3000", LEGACY)  # another spelling of the same host
+    register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)  # identical is fine
+    assert not resolve_line_policy("http://waha-x:3000").auto_repair
+
+
+def test_strictest_is_the_and_of_every_flag():
+    from noctusai_lib.integrations.whatsapp import strictest
+
+    s = strictest(LEGACY, LinePolicy("enabled", False, True, False))
+    assert (s.send, s.mark_online, s.full_sync, s.auto_repair) == ("enabled", False, True, False)
+    assert strictest(LEGACY, SHADOW_R).webhook_relay == "http://waha-x:3001"
+
+
+def test_the_generated_read_only_host_set_is_loadable():
+    from noctusai_lib.integrations.whatsapp import read_only_lines
+
+    assert isinstance(read_only_lines.READ_ONLY_LINES, dict)
+    for spec in read_only_lines.READ_ONLY_LINES.values():
+        assert parse_line_policy(spec).send_enabled is False
+
+
+# --- webhooks on a disabled line -------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("policy,url", [
+    (SHADOW_R, "https://evil.example/wh"), (SHADOW_R, "http://waha-x:3001.evil.example/a"),
+    (SHADOW_R, "http://waha-x:3000/api/x"), (SHADOW, RELAY_URL), (UNDECLARED, RELAY_URL),
+])
+def test_set_and_remove_webhook_on_a_disabled_line_only_accept_the_declared_relay(policy, url):
+    waha, sink = Waha({"name": "default", "config": {}}), InMemoryLineEventSink()
+    c = waha.client(policy, sink)
+    with pytest.raises(LineWriteRefused):
+        run(c.set_webhook(url, ["message"]))
+    with pytest.raises(LineWriteRefused):
+        run(c.remove_webhook(url))
+    assert waha.calls == [] and len(sink.events) == 2
+    f = FakeWahaClient(line_policy=policy)
+    with pytest.raises(LineWriteRefused):
+        run(f.set_webhook(url, ["message"]))
+    with pytest.raises(LineWriteRefused):
+        run(f.remove_webhook(url))
+
+
+def test_relay_url_is_accepted_and_fake_logout_is_guarded():
+    f = FakeWahaClient(line_policy=SHADOW_R)
+    run(f.set_webhook(RELAY_URL, ["message"]))
+    with pytest.raises(LineRepairRefused):
+        run(f.logout_session())
+    with pytest.raises(LinePolicyDrift):
+        run(f.get_qr())  # the Fake gates pairing on the read-back too
+    run(f.provision_session())
+    run(f.get_qr()) if f.session_status == "SCAN_QR_CODE" else None
+
+
+# --- no phone numbers in logs ----------------------------------------------------------------------------------------
+
+
+def test_no_run_of_eight_digits_reaches_a_whatsapp_log_line(caplog):
+    import logging
+    import re
+
+    from noctusai_lib.integrations.whatsapp.log_safety import mask_chat_id
+
+    assert mask_chat_id("5511999990001@c.us") == "…0001@c.us" and mask_chat_id("abc") == "abc"
+
+    def handler(request):
+        if request.url.path.endswith("check-exists"):
+            raise httpx.ConnectError("boom for " + str(request.url))  # the URL (with the phone) is in the message
+        return httpx.Response(500, json={}, request=request)
+
+    c = WahaClient("http://waha.test", "k", "default", transport=httpx.MockTransport(handler), line_policy=LEGACY)
+    with caplog.at_level(logging.DEBUG):
+        try:
+            c.send_text_to_phone_sync("5511999990001", "hi")
+        except Exception:  # noqa: BLE001 - every variant fails on purpose; the logs are what is under test
+            pass
+        logging.getLogger("noctusai_lib.integrations.whatsapp.identity").warning(
+            "x lid=%s", "5511999990001@lid", exc_info=(ValueError, ValueError("GET /api/contacts?id=5511999990001@c.us"), None))
+    assert caplog.records, "the failure paths must have logged"
+    assert not re.search(r"\d{8,}", caplog.text), caplog.text

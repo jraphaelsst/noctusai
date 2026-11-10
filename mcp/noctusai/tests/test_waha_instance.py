@@ -38,6 +38,9 @@ def _tree(tmp_path, data=DATA, compose="render"):
     d = tmp_path / "deploy" / "fleet"
     d.mkdir(parents=True)
     (d / "waha-instances.yml").write_text(data)
+    ro = tmp_path / wi.READ_ONLY_REL
+    ro.parent.mkdir(parents=True, exist_ok=True)
+    ro.write_text(wi.render_read_only_lines(wi.parse_instances(data)))
     if compose == "render":
         (d / "compose.waha.yml").write_text(wi.render_compose(wi.parse_instances(data)))
     elif compose is not None:
@@ -147,7 +150,8 @@ class TestLinePolicy:
         plan = wi._plan(wi.parse_instances(EDGE), "probe")
         c = plan["product_env_contract"]
         assert c["ASSISTANT_X_WAHA_LINE_POLICY"] == (
-            '{"send":"disabled","mark_online":false,"full_sync":false,"auto_repair":false}')
+            '{"send":"disabled","mark_online":false,"full_sync":false,"auto_repair":false,'
+            '"webhook_relay":"http://waha-probe:3001"}')
         assert c["ASSISTANT_X_WAHA_BASE_URL"] == "http://waha-probe:3000"
         assert plan["services"] == ["waha-probe-core", "waha-probe"]
         assert "WAHA_PROBE_DASHBOARD_PASSWORD" not in plan["env_fleet_keys_to_generate_on_vps"]
@@ -214,6 +218,7 @@ class TestEdgeAndDashboard:
             "/api/contacts/check-exists", "/api/files/x.jpg", "/api/sessions", "/api/sessions/default",
             "/api/sessions/default/start", "/api/sessionsX", "/api/default/auth/qr", "/ping", "/api/unknown",
             "/api/default/status/text", "/api/default/profile/name",
+            "/api/default/presence/5511999990001@c.us", "/api/default/presence",
             "/api/sessions/default/logout", "/api/sessions/default/stop", "/api/sessions/default/restart",
             "/api/sessions/../sendText", "/api/default/chats/../../sendText", "/api/sessions/default/start/../../../sendSeen",
             "/api/default/chats/%2e%2e/%2e%2e/sendText", "/api/SESSIONS/default/START",
@@ -262,3 +267,116 @@ class TestActiveProductsDeclarePolicy:
     def test_either_declaration_form_passes(self, tmp_path):
         for n, env in enumerate(("      SHOP_WAHA_LINE_POLICY: '{}'\n", "      WAHA_LINE_POLICIES: '{}'\n")):
             assert check_waha_instances_render_sync(repo_root=self._tree(tmp_path / str(n), env)) == []
+
+
+class TestRound2Edge:
+    def _conf(self):
+        import yaml
+        d = yaml.safe_load(wi.render_compose(wi.parse_instances(EDGE)))
+        return d["services"]["waha-probe"]["environment"]["EDGE_CONF"].replace("$$", "$")
+
+    def test_smuggling_spellings_are_rejected_with_400_on_both_ports_and_the_seed_agrees(self):
+        import importlib.util
+        import re
+        spec = importlib.util.spec_from_file_location(
+            "lp3", REPO / "seed/lib/backend/noctusai_lib/integrations/whatsapp/line_policy.py")
+        lp = importlib.util.module_from_spec(spec)
+        sys.modules["lp3"] = lp
+        spec.loader.exec_module(lp)
+        conf = self._conf()
+        rxs = re.findall(r'if \(\$request_uri ~\* "(.*?)"\) \{ return 400; \}', conf)
+        assert len(rxs) == 2 and rxs[0] == rxs[1]  # API server AND the webhook relay
+        rx = rxs[0]
+        bad = ["/api/sessions/logout%3F/start", "/api/sessions/default/start%3f", "/api/sessions/default%0D%0A/start",
+               "/api/sessions/default%0a", "/api/sessions/a%5Cb/start", "/api/sessions/a%5cb", "/api/sessions/a%2Fb/start",
+               "/api/sessions/a%23b/start", "/api/sessions/%00", "/api/sessions/%7f", "/api/sessions/%25", "/x\\y"]
+        for uri in bad:
+            assert re.search(rx, uri, re.I), uri
+            assert lp.is_whatsapp_write("post", uri.replace("\\", "\\")), uri
+        for good in ("/api/default/auth/qr?format=image", "/api/sessions/default/start", "/api/default/chats",
+                     "/api/sessions/%2e%2e/x", "/hooks/abc"):
+            assert not re.search(rx, good, re.I), good
+
+    def test_method_override_headers_are_stripped_on_both_servers(self):
+        conf = self._conf()
+        for h in ("X-HTTP-Method-Override", "X-HTTP-Method", "X-Method-Override"):
+            assert conf.count(f'proxy_set_header {h} "";') == 2
+
+    def test_the_relay_url_is_part_of_the_policy_and_the_read_only_set_covers_every_alias(self):
+        import json
+        spec = wi.parse_instances(EDGE)
+        probe = [i for i in spec["instances"] if i["name"] == "probe"][0]
+        assert json.loads(wi.line_policy_json(probe))["webhook_relay"] == "http://waha-probe:3001"
+        text = wi.render_read_only_lines(spec)
+        ns: dict = {}
+        exec(text, ns)  # noqa: S102 - the generated module, under test
+        rows = ns["READ_ONLY_LINES"]
+        for host in ("waha-probe", "noctus-waha-probe", "waha-probe-core", "noctus-waha-probe-core"):
+            for port in (3000, 3001):
+                assert rows[f"{host}:{port}"]["send"] == "disabled", (host, port)
+        assert not any(k.startswith(("waha-monica", "noctus-waha-monica")) for k in rows)  # enabled lines are not listed
+        assert wi.render_read_only_lines(wi.parse_instances(DATA)).strip().endswith("READ_ONLY_LINES: dict[str, dict] = {}")
+
+    def test_the_repo_read_only_module_is_the_render(self):
+        assert (REPO / wi.READ_ONLY_REL).read_text() == wi.render_read_only_lines(wi.load_spec(REPO))
+
+    def test_provision_script_runs_for_real_against_a_waha_shaped_server(self, tmp_path):
+        """Executes the exact JS `provision` runs inside the core, against a local server with WAHA's semantics
+        (404 until created; /start ignores its body; markOnline defaults true)."""
+        import json
+        import shutil
+        import subprocess
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        if not shutil.which("node"):
+            pytest.skip("node not available")
+        state: dict = {"s": None, "calls": []}
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, code, body):
+                raw = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def _body(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                return json.loads(self.rfile.read(n) or b"{}")
+
+            def do_GET(self):
+                state["calls"].append(("GET", self.path, self.headers.get("X-Api-Key")))
+                self._send(404 if state["s"] is None else 200, state["s"] or {})
+
+            def do_POST(self):
+                b = self._body()
+                state["calls"].append(("POST", self.path, b.get("start")))
+                state["s"] = {"name": b["name"], "config": b["config"]}
+                self._send(201, state["s"])
+
+            def do_PUT(self):
+                b = self._body()
+                state["calls"].append(("PUT", self.path, None))
+                state["s"]["config"] = b["config"]
+                self._send(200, state["s"])
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        inst = wi.parse_instances(EDGE)["instances"][2]
+        want = wi.policy_noweb(inst)
+        env = {"PATH": "/usr/bin:/bin:/opt/homebrew/bin", "WHATSAPP_API_KEY": "k", "POLICY_SESSION": "default",
+               "POLICY_NOWEB": json.dumps(want), "POLICY_BASE": f"http://127.0.0.1:{srv.server_port}"}
+        assert "'" not in wi._PROVISION_JS
+        outs = [subprocess.run([shutil.which("node"), "-e", wi._PROVISION_JS], env=env, capture_output=True, text=True,
+                               timeout=60) for _ in range(2)]  # twice: create, then idempotent PUT
+        srv.shutdown()
+        assert [o.returncode for o in outs] == [0, 0], [o.stdout + o.stderr for o in outs]
+        assert wi._noweb_matches(json.loads(outs[1].stdout.strip().splitlines()[-1]), want)
+        posts = [c for c in state["calls"] if c[0] == "POST"]
+        assert len(posts) == 1 and posts[0][2] is False and all(c[2] in ("k", False, None) for c in state["calls"])
+        assert any(c[0] == "PUT" for c in state["calls"])

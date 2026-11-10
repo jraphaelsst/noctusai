@@ -152,6 +152,14 @@ def _default_resolve_org_id(raw: Any) -> UUID:
     return UUID(str(raw))
 
 
+#: The routes ``read_only=True`` leaves UNMOUNTED, as (HTTP method, path template relative to the router ``prefix``).
+#: An explicit list, not a function-name filter: a test pins it, and a new write route must be added HERE to be covered.
+READ_ONLY_UNMOUNTED_ROUTES: tuple[tuple[str, str], ...] = (
+    ("POST", "/{connection_id}/chats/{chat_id:path}/messages"),  # send
+    ("POST", "/{connection_id}/backfill"),                      # history backfill (a read of WAHA, but a bulk one)
+)
+
+
 def create_whatsapp_inbox_router(
     *,
     chat_store_factory: Callable[[], WhatsAppChatStore],
@@ -461,7 +469,11 @@ def create_whatsapp_inbox_router(
         return waha_client_factory(base_url=full.base_url, api_key=full.api_key, session=full.session_name)
 
     if read_only:
-        router.routes[:] = [r for r in router.routes if getattr(r, "name", None) not in ("send_message", "start_backfill")]
+        dead = {(m, f"{prefix}{tail}") for m, tail in READ_ONLY_UNMOUNTED_ROUTES}
+        router.routes[:] = [
+            r for r in router.routes
+            if not any((m, getattr(r, "path", None)) in dead for m in getattr(r, "methods", ()) or ())
+        ]
     return router
 
 

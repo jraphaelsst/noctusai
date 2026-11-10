@@ -19,10 +19,13 @@ from typing import Any, Awaitable, Callable, Literal
 import httpx
 
 from noctusai_lib.integrations import rate_limit
+from noctusai_lib.integrations.whatsapp.log_safety import install_phone_scrub, mask_chat_id, scrub_digits
 from noctusai_lib.integrations.whatsapp.line_policy import (
     LineEventSink,
     LinePolicy,
+    LinePolicyDrift,
     LinePolicyGuard,
+    LineRepairRefused,
     PolicyReadback,
     check_session_against_policy,
     resolve_line_policy,
@@ -43,7 +46,7 @@ from noctusai_lib.integrations.whatsapp.types import (
 )
 from noctusai_lib.primitives.phone import br_mobile_variants
 
-logger = logging.getLogger(__name__)
+logger = install_phone_scrub(logging.getLogger(__name__))
 
 # Session statuses `recover_session`'s ladder treats as "recovered enough
 # to stop": SCAN_QR_CODE (fresh pairing needed, but the session is alive
@@ -351,9 +354,43 @@ class WahaClient(LinePolicyGuard):
         # is refused by `_request` / `_request_sync` when it says `send: disabled` (KB § whatsapp.md § 6a).
         self._init_line_policy(
             label=f"{self.base_url}#{session}",
-            policy=line_policy or resolve_line_policy(self.base_url, session),
+            policy=resolve_line_policy(self.base_url, session, explicit=line_policy),
             sink=line_event_sink,
         )
+
+    async def _require_clean_readback_before_pairing(self) -> None:
+        if self.line_policy.send_enabled or not self.line_policy.declared:
+            return
+        rb = await self.verify_line_policy()
+        if not rb.ok:
+            raise LinePolicyDrift(line=self._line_label, mismatches=rb.mismatches)
+
+    async def provision_session(self) -> PolicyReadback:
+        """Set the session config FROM the policy (idempotent) and read it back. WAHA only takes config on
+        ``POST /api/sessions`` (create, ``start: false``) or ``PUT /api/sessions/{s}``; ``/start`` takes none. Create when
+        the session does not exist, else PUT the policy-merged config. These two calls are the only config writes a
+        disabled line allows, and the edge denies them: run this against the CORE (``waha_instance action='provision'``)
+        BEFORE the edge fronts it, then pair."""
+        policy = self._config_policy()
+        if policy is None or not self.line_policy.declared:
+            raise LineRepairRefused(line=self._line_label, op="provision_session", reason="not_config_authoritative")
+        probe = await self._request(
+            "get", f"/api/sessions/{_seg(self.session)}", timeout=15, headers=self._headers())
+        if probe.status_code == 404:
+            body = {"name": self.session, "start": False, **_session_config(policy=policy)}
+            response = await self._request(
+                "post", "/api/sessions", timeout=30, json=body, headers=self._headers(json=True), policy_config=True)
+        else:
+            probe.raise_for_status()
+            existing = _safe_json(probe)
+            config = existing.get("config") if isinstance(existing.get("config"), dict) else {}
+            hooks = config.get("webhooks") if isinstance(config.get("webhooks"), list) else []
+            response = await self._request(
+                "put", f"/api/sessions/{_seg(self.session)}", timeout=30,
+                json=_merged_session_config(config, [dict(h) for h in hooks if isinstance(h, dict)], policy),
+                headers=self._headers(json=True), policy_config=True)
+        response.raise_for_status()
+        return await self.verify_line_policy()
 
     async def verify_line_policy(self) -> PolicyReadback:
         """Read the session back (``GET /api/sessions/{session}``) and compare it with the line policy -- run it
@@ -563,7 +600,7 @@ class WahaClient(LinePolicyGuard):
         try:
             resolved = await self.resolve_chat_id(phone)
         except WahaNumberCheckError as exc:
-            logger.warning("WAHA check-exists unavailable (%s); falling back to send-retry", exc)
+            logger.warning("WAHA check-exists unavailable (%s); falling back to send-retry", scrub_digits(exc))
             candidates = self._candidates(phone)
             last: httpx.HTTPStatusError | None = None
             for index, candidate in enumerate(candidates):
@@ -571,7 +608,9 @@ class WahaClient(LinePolicyGuard):
                 try:
                     result = await self.send_text(chat_id, text)
                 except httpx.HTTPStatusError as send_exc:
-                    logger.warning("WAHA send to %s failed (%s); trying next variant", chat_id, send_exc)
+                    logger.warning(
+                        "WAHA send to %s failed (%s); trying next variant", mask_chat_id(chat_id), scrub_digits(send_exc)
+                    )
                     last = send_exc
                     continue
                 return self._with_resolution(result, chat_id, index > 0, "send-retry")
@@ -613,7 +652,7 @@ class WahaClient(LinePolicyGuard):
         try:
             resolved = self.resolve_chat_id_sync(phone)
         except WahaNumberCheckError as exc:
-            logger.warning("WAHA check-exists unavailable (%s); falling back to send-retry", exc)
+            logger.warning("WAHA check-exists unavailable (%s); falling back to send-retry", scrub_digits(exc))
             candidates = self._candidates(phone)
             last: httpx.HTTPStatusError | None = None
             for index, candidate in enumerate(candidates):
@@ -621,7 +660,9 @@ class WahaClient(LinePolicyGuard):
                 try:
                     result = self.send_text_sync(chat_id, text)
                 except httpx.HTTPStatusError as send_exc:
-                    logger.warning("WAHA send to %s failed (%s); trying next variant", chat_id, send_exc)
+                    logger.warning(
+                        "WAHA send to %s failed (%s); trying next variant", mask_chat_id(chat_id), scrub_digits(send_exc)
+                    )
                     last = send_exc
                     continue
                 return self._with_resolution(result, chat_id, index > 0, "send-retry")
@@ -831,7 +872,12 @@ class WahaClient(LinePolicyGuard):
 
         Raises ``WahaSessionNotReady`` when WAHA answers 422 because the
         session is not in ``SCAN_QR_CODE`` (already paired / starting).
+
+        On a read-only (`send: disabled`) line, pairing is GATED on the policy read-back: WAHA's NOWEB `markOnline`
+        defaults to TRUE and ``POST .../start`` takes no config, so an unprovisioned session would broadcast "online"
+        the moment the QR is scanned. Run :meth:`provision_session` first; raises :class:`LinePolicyDrift` otherwise.
         """
+        await self._require_clean_readback_before_pairing()
         response = await self._request(
             "get",
             f"/api/{_seg(self.session)}/auth/qr",
@@ -930,6 +976,7 @@ class WahaClient(LinePolicyGuard):
         Raises ``WahaWebhookError`` if the current list cannot be read — no
         blind-replace fallback.
         """
+        self._guard_webhook(url)
         prefix = owned_prefix if owned_prefix is not None else _default_owned_prefix(url)
         config, existing = await self._read_session_config("set_webhook")
         merged = [h for h in existing if not _webhook_owned(h, url, prefix)]
@@ -952,6 +999,7 @@ class WahaClient(LinePolicyGuard):
         ``{"removed": 0}``. Raises ``WahaWebhookError`` if the current list
         cannot be read.
         """
+        self._guard_webhook(url_or_prefix)
         config, existing = await self._read_session_config("remove_webhook")
         kept = [h for h in existing if not _webhook_owned(h, url_or_prefix, url_or_prefix)]
         if len(kept) == len(existing):

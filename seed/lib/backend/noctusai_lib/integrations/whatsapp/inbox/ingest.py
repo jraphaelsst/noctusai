@@ -30,6 +30,7 @@ from uuid import UUID
 
 from starlette.concurrency import run_in_threadpool
 
+from noctusai_lib.integrations.whatsapp.log_safety import install_phone_scrub, mask_chat_id
 from noctusai_lib.integrations.whatsapp.connection_store import WhatsAppConnectionRecord
 from noctusai_lib.integrations.whatsapp.identity import resolve_identity
 from noctusai_lib.integrations.whatsapp.inbox.realtime import (
@@ -55,7 +56,7 @@ from noctusai_lib.integrations.whatsapp.mappers import (
     normalize_waha_id,
 )
 
-logger = logging.getLogger(__name__)
+logger = install_phone_scrub(logging.getLogger(__name__))
 
 OnNewChat = Callable[[UUID, UUID, InboxChat], Awaitable[None]]
 #: ``on_message(org_id, connection_id, chat, message)`` - fired for every message that was NEWLY stored (inbound
@@ -359,7 +360,7 @@ async def notify_message(
         await on_message(org_id, connection_id, chat, message)
     except Exception:  # noqa: BLE001 - a consumer bug must not fail the webhook / the send
         logger.exception(
-            "on_message failed (connection=%s chat=%s message=%s)", connection_id, chat.chat_id, message.id
+            "on_message failed (connection=%s chat=%s message=%s)", connection_id, mask_chat_id(chat.chat_id), message.id
         )
 
 
@@ -378,7 +379,7 @@ async def _fire_new_chat(
     except Exception:  # noqa: BLE001 - a consumer bug must not fail the webhook
         logger.exception(
             "on_new_chat failed (connection=%s chat=%s) - claim released, the next inbound "
-            "message of this chat retries", connection_id, chat.chat_id,
+            "message of this chat retries", connection_id, mask_chat_id(chat.chat_id),
         )
         await _io(
             chat_store.release_new_chat_notification, org_id=org_id, connection_id=connection_id,

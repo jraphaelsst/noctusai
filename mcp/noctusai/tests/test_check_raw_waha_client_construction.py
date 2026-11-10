@@ -49,3 +49,25 @@ def test_paths_scope_judges_only_the_given_files(tmp_path):
 
 def test_real_repo_is_clean():
     assert check_raw_waha_client_construction(repo_root=REPO) == []
+
+
+def test_raw_httpx_in_a_waha_function_is_flagged_unless_marked_get_only(tmp_path):
+    src = (
+        "import httpx\n"
+        "async def pull(waha_base):\n"
+        "    async with httpx.AsyncClient() as c:\n"       # line 3: flagged
+        "        await c.get(waha_base)\n"
+        "async def pull_ok(waha_base):\n"
+        "    # noc-allow: raw-waha-http -- GET-only host-pinned fetch\n"
+        "    async with httpx.AsyncClient() as c:\n"       # allowed (line above)
+        "        await c.get(waha_base)\n"
+        "async def meta(url):\n"
+        '    """Not WAHA: mentions waha only in the docstring."""\n'
+        "    return httpx.get(url)\n"                       # not flagged
+        "def post_it(session):\n"
+        "    return httpx.post(f'http://waha/api/{session}/sendText')\n"  # line 13: flagged
+    )
+    root = _tree(tmp_path, {f"{LIB}/domain/h.py": src})
+    out = check_raw_waha_client_construction(repo_root=root)
+    assert sorted(i["line"] for i in out) == [3, 13]
+    assert all("raw `httpx`" in i["issue"] for i in out)

@@ -31,7 +31,9 @@ from noctusai_lib.integrations.whatsapp.line_policy import (
     FAKE_LINE_URL,
     LineEventSink,
     LinePolicy,
+    LinePolicyDrift,
     LinePolicyGuard,
+    LineRepairRefused,
     PolicyReadback,
     check_session_against_policy,
     resolve_line_policy,
@@ -77,7 +79,7 @@ class FakeWahaClient(LinePolicyGuard):
         # then "*") > fail-closed UNDECLARED. A suite that drives sends declares `"*"` through the public registry.
         self._init_line_policy(
             label=f"fake#{session}",
-            policy=line_policy or resolve_line_policy(FAKE_LINE_URL, session),
+            policy=resolve_line_policy(FAKE_LINE_URL, session, explicit=line_policy),
             sink=line_event_sink,
         )
         #: the `noweb` block the last `start_session` actually wrote (None before any start) -- what get_session echoes.
@@ -262,14 +264,23 @@ class FakeWahaClient(LinePolicyGuard):
             },
         }
 
+    async def provision_session(self) -> PolicyReadback:
+        """Mirror of ``WahaClient.provision_session``: the ONLY thing that sets the Fake's session config."""
+        policy = self._config_policy()
+        if policy is None or not self.line_policy.declared:
+            raise LineRepairRefused(line=self._line_label, op="provision_session", reason="not_config_authoritative")
+        self.session_noweb = copy.deepcopy(_session_config(policy=policy)["config"]["noweb"])
+        return await self.verify_line_policy()
+
     async def verify_line_policy(self) -> PolicyReadback:
         return check_session_against_policy(await self.get_session(), self.line_policy)
 
     async def start_session(self) -> dict[str, Any]:
         self.start_count += 1
         # what a real start writes: the line policy's flags (UNDECLARED's when undeclared), or the legacy default
+        # WAHA's POST /start takes NO body: the payload is recorded for assertions but it never becomes the session's
+        # config (only `provision_session` -- WAHA's create/PUT -- does). So an unprovisioned Fake reads back as drift.
         self.last_start_payload = _session_config(policy=self._config_policy())
-        self.session_noweb = copy.deepcopy(self.last_start_payload["config"]["noweb"])
         if self.credentials_dead:
             # Mirrors WAHA answering 409 "already started" on a session
             # that's genuinely stuck — nothing changes; the caller must
@@ -298,12 +309,17 @@ class FakeWahaClient(LinePolicyGuard):
         return {"name": self.session, "status": self.session_status}
 
     async def logout_session(self) -> dict[str, Any]:
+        self._guard_repair("logout_session")
         self.me = None
         self.credentials_dead = False
         self.session_status = "SCAN_QR_CODE"
         return {"name": self.session, "status": self.session_status}
 
     async def get_qr(self) -> bytes:
+        if not self.line_policy.send_enabled and self.line_policy.declared:
+            rb = await self.verify_line_policy()
+            if not rb.ok:
+                raise LinePolicyDrift(line=self._line_label, mismatches=rb.mismatches)
         if self.session_status != "SCAN_QR_CODE":
             raise WahaSessionNotReady(status=self.session_status)
         return _FAKE_QR_PNG
@@ -314,6 +330,7 @@ class FakeWahaClient(LinePolicyGuard):
         """Mirror ``WahaClient.set_webhook``: MERGE into ``session_webhooks``
         (drop own url / ``owned_prefix`` entries, append the new one).
         ``webhook_config`` stays the last-registered entry (back-compat)."""
+        self._guard_webhook(url)
         if self.fail_webhook_read:
             raise WahaWebhookError("set_webhook", "cannot read current webhooks")
         prefix = owned_prefix if owned_prefix is not None else _default_owned_prefix(url)
@@ -333,6 +350,7 @@ class FakeWahaClient(LinePolicyGuard):
 
     async def remove_webhook(self, url_or_prefix: str) -> dict[str, Any]:
         """Mirror ``WahaClient.remove_webhook`` (no-op when nothing matches)."""
+        self._guard_webhook(url_or_prefix)
         if self.fail_webhook_read:
             raise WahaWebhookError("remove_webhook", "cannot read current webhooks")
         kept = [
