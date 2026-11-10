@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Protocol
 
-from noctusai_lib.primitives.phone import is_valid_phone
+from noctusai_lib.primitives.phone import br_mobile_variants, is_valid_phone
 
 from .catalog import (
     NotificationGate,
@@ -34,6 +34,18 @@ RECIPIENTS_TTL_SECONDS = 60.0
 REASON_NO_RECIPIENT = "nenhum destinatário do dono configurado"
 REASON_NO_TRANSPORT = "linha_noc_nao_configurada"
 REASON_NOT_INSTALLED = "linha_noc_nao_instalada"
+REASON_NUMBER_MISMATCH = "linha_noc_numero_divergente"
+REASON_NUMBER_UNDECLARED = "linha_noc_numero_nao_declarado"
+
+
+class OwnerLineNumberMismatch(RuntimeError):
+    """The WAHA session's paired number is not NoctusAI's declared owner-line number (or is unknown)."""
+
+    reason_code = REASON_NUMBER_MISMATCH
+
+
+def _mask(numero: str) -> str:
+    return "…" + "".join(c for c in numero if c.isdigit())[-4:]
 
 
 @dataclass(frozen=True)
@@ -114,14 +126,36 @@ class SupabaseOwnerRecipientSource:
 
 class WahaOwnerLineTransport:
     """Sends through an injected WAHA client (``client_factory()`` → object with ``send_text_to_phone_sync(phone,
-    text)``, which resolves BR 9th-digit variants via check-exists with a send-retry fallback)."""
+    text)``, which resolves BR 9th-digit variants via check-exists with a send-retry fallback).
 
-    def __init__(self, client_factory: Callable[[], Any]) -> None:
+    Only NoctusAI's own number may send: on first use ``me_fetch()`` (the session's paired account id/number) is
+    compared with ``expected_numero``; a mismatch or unknown account raises ``OwnerLineNumberMismatch``. A match
+    is cached; a failure is not (the next send re-checks)."""
+
+    def __init__(self, client_factory: Callable[[], Any], *, expected_numero: str,
+                 me_fetch: Callable[[], Optional[str]]) -> None:
+        expected = set(br_mobile_variants(expected_numero))
+        if not expected:
+            raise ValueError("owner line: expected_numero is not a valid phone")
         self._factory = client_factory
+        self._expected = expected
+        self._me_fetch = me_fetch
+        self._verified = False
+
+    def _verify(self) -> None:
+        if self._verified:
+            return
+        me = self._me_fetch()
+        # WhatsApp may pair a BR mobile without the 9th digit: match by the seed's variant set.
+        paired = set(br_mobile_variants("+" + me.split("@")[0].lstrip("+"))) if me else set()
+        if not paired & self._expected:
+            raise OwnerLineNumberMismatch(REASON_NUMBER_MISMATCH)
+        self._verified = True
 
     def send_text(self, numero_e164: str, texto: str) -> None:
         if not is_valid_phone(numero_e164):
             raise ValueError("owner line: recipient number is not a valid phone")
+        self._verify()
         self._factory().send_text_to_phone_sync(numero_e164, texto)
 
 
@@ -130,6 +164,7 @@ class OwnerLine:
     recipients: OwnerRecipientSource
     transport: Optional[OwnerLineTransport]
     installed: bool = True
+    transport_reason: Optional[str] = None  # why ``transport`` is None (default: not configured)
 
 
 class _UnreadableRecipientSource:
@@ -146,6 +181,9 @@ class _UnreadableRecipientSource:
 def make_owner_line(
     core_client_factory: Optional[Callable[[], Any]],
     waha_factory: Optional[Callable[[], Any]],
+    *,
+    expected_numero: Optional[str] = None,
+    me_fetch: Optional[Callable[[], Optional[str]]] = None,
 ) -> OwnerLine:
     """Real recipients+transport when configured; otherwise the missing piece is absent (transport-less ⇒ the
     send records ``failed`` loudly, never a silent Fake)."""
@@ -154,8 +192,16 @@ def make_owner_line(
         recipients: OwnerRecipientSource = _UnreadableRecipientSource("sem cliente core")
     else:
         recipients = SupabaseOwnerRecipientSource(core_client_factory)
-    transport = WahaOwnerLineTransport(waha_factory) if waha_factory is not None else None
-    return OwnerLine(recipients=recipients, transport=transport)
+    transport: Optional[OwnerLineTransport] = None
+    reason: Optional[str] = None
+    if waha_factory is not None:
+        if not expected_numero or me_fetch is None or not br_mobile_variants(expected_numero):
+            logger.error("owner line: WAHA is set but the line's number is not declared (NOC_OWNER_LINE_EXPECTED_NUMBER)"
+                         " — no transport, sends will record failed")
+            reason = REASON_NUMBER_UNDECLARED
+        else:
+            transport = WahaOwnerLineTransport(waha_factory, expected_numero=expected_numero, me_fetch=me_fetch)
+    return OwnerLine(recipients=recipients, transport=transport, transport_reason=reason)
 
 
 # ── process-wide line (installed by the seed framework, like the gate) ───────────────────────────────────────────
@@ -164,11 +210,13 @@ _line: Optional[OwnerLine] = None
 
 def configure_owner_line(
     *, recipients: Optional[OwnerRecipientSource] = None, transport: Optional[OwnerLineTransport] = None,
+    transport_reason: Optional[str] = None,
 ) -> None:
     """Install the process-wide owner line. Both ``None`` clears it."""
     global _line
     _line = None if recipients is None and transport is None else OwnerLine(
         recipients=recipients if recipients is not None else FakeOwnerRecipientSource(), transport=transport,
+        transport_reason=transport_reason,
     )
 
 
@@ -196,6 +244,7 @@ def notify_owner(
     line = get_owner_line()
     not_installed = not line.installed and recipients is None and transport is None
     recipients = recipients if recipients is not None else line.recipients
+    transport_reason = line.transport_reason if transport is None else None
     transport = transport if transport is not None else line.transport
 
     def _done(status: str, n: int, ok: int, reason: Optional[str]) -> OwnerDispatch:
@@ -220,7 +269,7 @@ def notify_owner(
         return _done("no_recipient", 0, 0, REASON_NO_RECIPIENT)
     if transport is None:
         logger.error("seed.owner_line.nao_configurada product=%s kind=%s", product, kind)
-        return _done("failed", len(active), 0, REASON_NO_TRANSPORT)
+        return _done("failed", len(active), 0, transport_reason or REASON_NO_TRANSPORT)
 
     delivered, errors = 0, []
     for r in active:
@@ -228,9 +277,11 @@ def notify_owner(
             transport.send_text(r.numero, texto)
             delivered += 1
         except Exception as exc:  # noqa: BLE001 — counted; the reason names the class, never text/numbers
-            errors.append(type(exc).__name__)
-            logger.error("owner line: send failed product=%s kind=%s err=%s", product, kind, type(exc).__name__,
-                         exc_info=True)
+            code = getattr(exc, "reason_code", None) or type(exc).__name__
+            errors.append(code)
+            # class name + masked recipient only: vendor exceptions carry the full number in their message
+            logger.error("owner line: send failed product=%s kind=%s err=%s to=%s", product, kind, code,
+                         _mask(r.numero))
     n = len(active)
     status = status_for(recipients=n, delivered=delivered, failed=n - delivered)
     reason = None if status == "sent" else f"{n - delivered} de {n} falharam: {', '.join(sorted(set(errors)))}"
@@ -242,6 +293,7 @@ __all__ = [
     "FakeOwnerRecipientSource",
     "OwnerDispatch",
     "OwnerLine",
+    "OwnerLineNumberMismatch",
     "OwnerLineTransport",
     "OwnerRecipient",
     "OwnerRecipientSource",

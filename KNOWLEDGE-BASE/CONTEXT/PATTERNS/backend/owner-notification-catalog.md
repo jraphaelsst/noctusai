@@ -42,7 +42,7 @@ notify_owner("agents", "eval_loop_parada", texto)   # -> OwnerDispatch(status, r
 It runs `gate.allowed` -> recipients (core `public.notification_owner_recipients`, 60 s cache) -> one WAHA send per
 recipient -> `gate.record`. It never raises (an undeclared kind does). No transport configured records `failed` /
 `linha_noc_nao_configurada` and logs `seed.owner_line.nao_configurada` at ERROR. Env: `NOC_OWNER_LINE_WAHA_URL`,
-`NOC_OWNER_LINE_WAHA_SESSION` (default `default`), `NOC_OWNER_LINE_WAHA_API_KEY`; unset URL = no transport.
+`NOC_OWNER_LINE_WAHA_SESSION` (default `default`), `NOC_OWNER_LINE_WAHA_API_KEY`, `NOC_OWNER_LINE_EXPECTED_NUMBER` (E.164 of NoctusAI's own number); unset URL = no transport. URL set without the expected number = no transport (`linha_noc_numero_nao_declarado`); on first send the session's paired number is checked against it (`linha_noc_numero_divergente` = nothing sent).
 
 ## Adding a notification (the checklist)
 

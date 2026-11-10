@@ -10,6 +10,7 @@ from noctusai_lib.domain.notification_catalog import (
     FakeOwnerLineTransport,
     FakeOwnerRecipientSource,
     NotificationKind,
+    OwnerLineNumberMismatch,
     OwnerRecipient,
     SupabaseOwnerRecipientSource,
     UndeclaredNotificationKind,
@@ -141,6 +142,13 @@ def test_supabase_source_ttl_cache():
     assert src.active() == [] and db.reads == 2
 
 
+EXPECTED = "+5511999990099"
+
+
+def _waha(factory, me="5511999990099@c.us"):
+    return WahaOwnerLineTransport(factory, expected_numero=EXPECTED, me_fetch=lambda: me)
+
+
 def test_waha_transport_sends_to_phone_and_propagates_errors():
     calls = []
 
@@ -148,7 +156,7 @@ def test_waha_transport_sends_to_phone_and_propagates_errors():
         def send_text_to_phone_sync(self, phone, text):
             calls.append((phone, text))
 
-    WahaOwnerLineTransport(lambda: C()).send_text("+5511999990001", "oi")
+    _waha(lambda: C()).send_text("+5511999990001", "oi")
     assert calls == [("+5511999990001", "oi")]
 
     class Bad:
@@ -156,9 +164,9 @@ def test_waha_transport_sends_to_phone_and_propagates_errors():
             raise ConnectionError("down")
 
     with pytest.raises(ConnectionError):
-        WahaOwnerLineTransport(lambda: Bad()).send_text("+5511999990001", "oi")
+        _waha(lambda: Bad()).send_text("+5511999990001", "oi")
     with pytest.raises(ValueError):
-        WahaOwnerLineTransport(lambda: C()).send_text("abc", "oi")
+        _waha(lambda: C()).send_text("abc", "oi")
     assert len(calls) == 1
 
 
@@ -184,4 +192,85 @@ def test_make_owner_line_without_core_client_fails_not_fakes():
 
 def test_make_owner_line_transport_presence():
     assert make_owner_line(lambda: _Db([]), None).transport is None
-    assert make_owner_line(lambda: _Db([]), lambda: object()).transport is not None
+    ok = make_owner_line(lambda: _Db([]), lambda: object(), expected_numero=EXPECTED, me_fetch=lambda: "x")
+    assert ok.transport is not None
+
+
+def test_waha_url_without_expected_number_has_no_transport(caplog):
+    with caplog.at_level(logging.ERROR):
+        line = make_owner_line(lambda: _Db([]), lambda: object())
+    assert line.transport is None
+    configure_owner_line(recipients=FakeOwnerRecipientSource([R1]), transport=line.transport,
+                         transport_reason=line.transport_reason)
+    gate = FakeNotificationGate(P)
+    d = notify_owner(P, "aviso", "oi", gate=gate)
+    assert (d.status, d.reason) == ("failed", "linha_noc_numero_nao_declarado")
+
+
+def test_matching_paired_number_sends_and_is_cached():
+    calls, fetches = [], []
+
+    class C:
+        def send_text_to_phone_sync(self, phone, text):
+            calls.append(phone)
+
+    t = WahaOwnerLineTransport(lambda: C(), expected_numero=EXPECTED,
+                               me_fetch=lambda: fetches.append(1) or "5511999990099@c.us")
+    t.send_text(R1.numero, "a")
+    t.send_text(R2.numero, "b")
+    assert len(calls) == 2 and len(fetches) == 1
+
+
+@pytest.mark.parametrize("me", ["5511888880000@c.us", None, ""])
+def test_divergent_or_unknown_paired_number_sends_nothing(me):
+    calls = []
+
+    class C:
+        def send_text_to_phone_sync(self, phone, text):
+            calls.append(phone)
+
+    t = WahaOwnerLineTransport(lambda: C(), expected_numero=EXPECTED, me_fetch=lambda: me)
+    d = notify_owner(P, "aviso", "oi", gate=FakeNotificationGate(P), recipients=FakeOwnerRecipientSource([R1]),
+                     transport=t)
+    assert (d.status, d.reason) == ("failed", "1 de 1 falharam: linha_noc_numero_divergente")
+    assert calls == []
+
+
+def test_send_failure_log_never_carries_the_number(caplog):
+    class Leaky:
+        def send_text(self, numero, texto):
+            raise RuntimeError(f"number {numero} is not on WhatsApp")
+
+    with caplog.at_level(logging.DEBUG):
+        d = _send(FakeNotificationGate(P), FakeOwnerRecipientSource([R1]), Leaky())
+    assert d.status == "failed"
+    import re
+    for rec in caplog.records:
+        text = rec.getMessage() + (rec.exc_text or "") + str(rec.exc_info)
+        assert not re.search(r"\+?\d{10,15}", text), text
+    assert any("0001" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize("expected,me,sends", [
+    ("+5511999990099", "551199990099@c.us", True),    # declared with the 9, paired without it
+    ("+551199990099", "5511999990099@c.us", True),    # declared without, paired with
+    ("+5511999990099", "5511999990098@c.us", False),  # differs in a non-9 digit
+    ("+5511999990099", "551199990098@c.us", False),
+    ("+14155550123", "14155550123@c.us", True),       # foreign: exact digits
+    ("+14155550123", "14155550124@c.us", False),
+])
+def test_paired_number_match_uses_br_variants(expected, me, sends):
+    calls = []
+
+    class C:
+        def send_text_to_phone_sync(self, phone, text):
+            calls.append(phone)
+
+    t = WahaOwnerLineTransport(lambda: C(), expected_numero=expected, me_fetch=lambda: me)
+    if sends:
+        t.send_text(R1.numero, "oi")
+        assert calls == [R1.numero]
+    else:
+        with pytest.raises(OwnerLineNumberMismatch):
+            t.send_text(R1.numero, "oi")
+        assert calls == []
