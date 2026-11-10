@@ -211,14 +211,31 @@ def _parse_rows(text: str) -> list[dict]:
     return rows
 
 
-def _store_text() -> str:
-    """origin/ledgers' copy (+ this clone's spooled rows). A store read failure
-    is LOGGED and the dev copy still answers — the S2 dual-read contract."""
+def _store_text_status() -> tuple[str, str | None]:
+    """(origin/ledgers' copy + this clone's spooled rows, None) or ("", why it could not be read).
+    A store read failure is LOGGED and the dev copy still answers - the S2 dual-read contract - but a caller
+    that must not act on a possibly-stale answer (worktree cleanup) needs to SEE that it fell back."""
     try:
-        return _ledger().read_text()
+        return _ledger().read_text(), None
     except LedgerStoreError as exc:
         logger.warning("branch_pointer: origin/ledgers unreadable (%s) — dev copy only", exc)
-        return ""
+        return "", str(exc)
+
+
+def _store_text() -> str:
+    return _store_text_status()[0]
+
+
+def read_dev_ledger_status(runner=None) -> tuple[list[dict], dict]:
+    """`_read_dev_ledger` plus how it was read: {"store_ok": bool, "error": str | None}."""
+    run = runner or _run
+    rc, out, _err = run(["git", "show", f"origin/dev:{LEDGER_REL}"])
+    if rc == 0:
+        dev_text = out
+    else:
+        dev_text = LEDGER_PATH.read_text(encoding="utf-8") if LEDGER_PATH.exists() else ""
+    store_text, store_err = _store_text_status()
+    return _parse_rows(merge_ndjson_text(dev_text, store_text)), {"store_ok": store_err is None, "error": store_err}
 
 
 def _read_dev_ledger(runner=None) -> list[dict]:
@@ -230,13 +247,7 @@ def _read_dev_ledger(runner=None) -> list[dict]:
     seed put every pre-move row in both); resolution is latest-by-ts, so the
     merged order does not matter.
     """
-    run = runner or _run
-    rc, out, _err = run(["git", "show", f"origin/dev:{LEDGER_REL}"])
-    if rc == 0:
-        dev_text = out
-    else:
-        dev_text = LEDGER_PATH.read_text(encoding="utf-8") if LEDGER_PATH.exists() else ""
-    return _parse_rows(merge_ndjson_text(dev_text, _store_text()))
+    return read_dev_ledger_status(runner)[0]
 
 
 def _read_local_ledger() -> list[dict]:

@@ -2121,6 +2121,12 @@ class PointerOps:
         from tools.noctus.dev import branch_pointer as bp
         return bp._latest_per_branch(bp._read_dev_ledger()).get(branch)
 
+    def latest_checked(self, branch: str) -> "tuple[dict | None, dict]":
+        """`latest` plus how the ledger was read (`store_ok` False = origin/ledgers unreadable, dev copy only)."""
+        from tools.noctus.dev import branch_pointer as bp
+        rows, status = bp.read_dev_ledger_status()
+        return bp._latest_per_branch(rows).get(branch), status
+
     def append(self, **kw: Any) -> dict[str, Any]:
         from tools.noctus.dev import branch_pointer as bp
         return bp.append(**kw)
@@ -2334,11 +2340,28 @@ def _ownership_skip(*, abs_wt: str, branch: str, primary_root: str, pointer_fn, 
                     "reason": (f"worktree {abs_wt} is claimed by session {sid[:12]} ({state}) - not the caller's to "
                                "remove; the owner tears it down, or releases the claim (harness_claim_worktree release)")}
     if pointer_fn is not None:
+        unreadable: str | None = None
         try:
-            ptr = pointer_fn.latest(branch)
-        except Exception as e:  # noqa: BLE001 - a pointer failure is reported, never blocks the git lifecycle
-            logger.warning("task_branch: steward-branch check for %s skipped, pointer store unreadable: %s", branch, e)
-            ptr = None  # (same contract as `_pointer_transition`; the claim check above is the hard signal)
+            checked = getattr(pointer_fn, "latest_checked", None)
+            if checked is not None:
+                ptr, status = checked(branch)
+                if not status.get("store_ok", True):
+                    unreadable = str(status.get("error") or "origin/ledgers unreadable; answered from the dev copy")
+            else:
+                ptr = pointer_fn.latest(branch)
+        except Exception as e:  # noqa: BLE001
+            ptr, unreadable = None, f"{type(e).__name__}: {e}"
+        if unreadable and auto:
+            # Fail CLOSED on the auto path: a steward branch is exactly what a stale/failed read hides. Only the
+            # DELETION is skipped; the git lifecycle verdict (landed/integrated) is unaffected. A direct, explicit
+            # `cleanup` keeps the old contract (a pointer failure is reported, never blocks the lifecycle).
+            return {"status": "skipped_owned", "cwd_removed": False,
+                    "owner": {"session_id": None, "source": "pointer_store_unreadable", "branch": branch},
+                    "reason": (f"cannot prove {branch} is not a long-lived steward branch: the branch-tree pointer store was "
+                               f"not fully readable ({unreadable[:120]}); worktree and ref left alone - re-run cleanup once it is")}
+        if unreadable:
+            logger.warning("task_branch: steward-branch check for %s skipped, pointer store unreadable: %s", branch, unreadable)
+            ptr = None
         if ptr and ptr.get("role") == "steward":
             owner = ptr.get("session")
             if auto or owner != caller:
