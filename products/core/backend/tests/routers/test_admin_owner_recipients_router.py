@@ -71,14 +71,14 @@ def test_non_platform_admins_are_403(env, who, method, url, body):
 def test_add_normalizes_and_lists(env):
     r = env.client.post(f"{BASE}/recipients", json={"numero": "(11) 99999-9999", "nome": " Dono "})
     assert r.status_code == 201
-    item = r.json()
+    item = r.json()["data"]
     assert item["numero"] == "+5511999999999" and item["nome"] == "Dono" and item["ativo"] is True
     assert set(item) == {"id", "numero", "nome", "ativo", "created_at"}
     stored = env.db.table("notification_owner_recipients").select("*").execute().data[0]
     assert stored["alterado_por"] == ADMIN_USER
     listing = env.client.get(f"{BASE}/recipients")
     assert listing.status_code == 200
-    assert [i["numero"] for i in listing.json()["items"]] == ["+5511999999999"]
+    assert [i["numero"] for i in listing.json()["data"]["items"]] == ["+5511999999999"]
 
 
 @pytest.mark.parametrize("bad", ["abc", "123", "+0000"])
@@ -96,11 +96,11 @@ def test_duplicate_number_is_409_even_in_another_spelling(env):
 
 
 def test_patch_toggles_and_renames(env):
-    rid = env.client.post(f"{BASE}/recipients", json={"numero": "+5511999999999"}).json()["id"]
+    rid = env.client.post(f"{BASE}/recipients", json={"numero": "+5511999999999"}).json()["data"]["id"]
     r = env.client.patch(f"{BASE}/recipients/{rid}", json={"ativo": False})
-    assert r.status_code == 200 and r.json()["ativo"] is False
+    assert r.status_code == 200 and r.json()["data"]["ativo"] is False
     r = env.client.patch(f"{BASE}/recipients/{rid}", json={"nome": "Sócio"})
-    assert r.json()["nome"] == "Sócio" and r.json()["ativo"] is False
+    assert r.json()["data"]["nome"] == "Sócio" and r.json()["data"]["ativo"] is False
 
 
 def test_patch_unknown_is_404(env):
@@ -110,14 +110,14 @@ def test_patch_unknown_is_404(env):
 
 
 def test_patch_rejects_unknown_fields(env):
-    rid = env.client.post(f"{BASE}/recipients", json={"numero": "+5511999999999"}).json()["id"]
+    rid = env.client.post(f"{BASE}/recipients", json={"numero": "+5511999999999"}).json()["data"]["id"]
     assert env.client.patch(f"{BASE}/recipients/{rid}", json={"numero": "+5511888888888"}).status_code == 422
 
 
 def test_delete_is_204_then_404(env):
-    rid = env.client.post(f"{BASE}/recipients", json={"numero": "+5511999999999"}).json()["id"]
+    rid = env.client.post(f"{BASE}/recipients", json={"numero": "+5511999999999"}).json()["data"]["id"]
     assert env.client.delete(f"{BASE}/recipients/{rid}").status_code == 204
-    assert env.client.get(f"{BASE}/recipients").json() == {"items": []}
+    assert env.client.get(f"{BASE}/recipients").json() == {"data": {"items": []}}
     again = env.client.delete(f"{BASE}/recipients/{rid}")
     assert again.status_code == 404
     assert again.json()["code"] == "destinatario_nao_encontrado"
@@ -126,12 +126,12 @@ def test_delete_is_204_then_404(env):
 def test_owner_line_unconfigured(env, monkeypatch):
     monkeypatch.delenv("NOC_OWNER_LINE_WAHA_URL", raising=False)
     r = env.client.get(f"{BASE}/owner-line")
-    assert r.status_code == 200 and r.json() == {"configurada": False, "instancia": None}
+    assert r.status_code == 200 and r.json() == {"data": {"configurada": False, "instancia": None}}
 
 
 def test_owner_line_configured_shows_host_only(env, monkeypatch):
     monkeypatch.setenv("NOC_OWNER_LINE_WAHA_URL", "http://waha-noc:3000/some/path")
-    assert env.client.get(f"{BASE}/owner-line").json() == {"configurada": True, "instancia": "waha-noc:3000"}
+    assert env.client.get(f"{BASE}/owner-line").json() == {"data": {"configurada": True, "instancia": "waha-noc:3000"}}
 
 
 def test_existing_switch_routes_still_resolve(env):

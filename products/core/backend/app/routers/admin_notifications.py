@@ -67,7 +67,7 @@ def _err(status: int, code: str, message: str) -> HTTPException:
 # Declared BEFORE the `/{product}` routes so `recipients` / `owner-line` are never read as a product slug.
 @router.get("/owner-line")
 async def get_owner_line(_: AuthContext = Depends(require_platform_admin_dep)):
-    return rec_svc.owner_line_status()
+    return {"data": rec_svc.owner_line_status()}
 
 
 @router.get("/recipients")
@@ -75,7 +75,7 @@ async def list_recipients(
     _: AuthContext = Depends(require_platform_admin_dep),
     db: Any = Depends(get_trusted_db),
 ):
-    return {"items": await run_blocking(rec_svc.list_recipients, db)}
+    return {"data": {"items": await run_blocking(rec_svc.list_recipients, db)}}
 
 
 @router.post("/recipients", status_code=201)
@@ -85,9 +85,10 @@ async def add_recipient(
     db: Any = Depends(get_trusted_db),
 ):
     try:
-        return await run_blocking(
+        item = await run_blocking(
             lambda: rec_svc.add_recipient(db, numero=body.numero, nome=body.nome, user_id=_user_id(auth))
         )
+        return {"data": item}
     except rec_svc.InvalidNumber:
         raise _err(422, "numero_invalido", "Número de telefone inválido.")
     except rec_svc.DuplicateNumber:
@@ -102,11 +103,13 @@ async def patch_recipient(
     db: Any = Depends(get_trusted_db),
 ):
     try:
-        return await run_blocking(
+        item = await run_blocking(
             lambda: rec_svc.update_recipient(
-                db, recipient_id=recipient_id, patch=body.model_dump(mode="json", exclude_unset=True), user_id=_user_id(auth)
+                db, recipient_id=recipient_id, patch=body.model_dump(mode="json", exclude_unset=True),
+                user_id=_user_id(auth),
             )
         )
+        return {"data": item}
     except rec_svc.RecipientNotFound:
         raise _err(404, "destinatario_nao_encontrado", "Destinatário não encontrado.")
 
