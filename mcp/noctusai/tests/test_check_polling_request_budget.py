@@ -235,6 +235,26 @@ class TestR4Frontend:
         assert len(_run(tmp_path, {"seed/lib/frontend/src/h.ts": "setInterval(f, 10);\n"})) == 1
 
 
+class TestActiveScope:
+    """Asleep products (absent from deploy/fleet/active-scope.txt) are not checked; waking one makes the keeper apply."""
+
+    def _scope(self, tmp: Path, slugs: str) -> None:
+        f = tmp / "deploy" / "fleet" / "active-scope.txt"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(slugs, encoding="utf-8")
+
+    def test_asleep_product_skipped_then_checked_once_active(self, tmp_path):
+        files = {
+            "products/awake/backend/app/a.py": LOOP,
+            "products/asleep/backend/app/a.py": LOOP,
+            "products/asleep/frontend/src/b.ts": "setInterval(f, 10);\n",
+        }
+        self._scope(tmp_path, "awake\n")
+        assert [i["file"] for i in _run(tmp_path, files)] == ["products/awake/backend/app/a.py"]
+        self._scope(tmp_path, "awake\nasleep\n")
+        assert len(check_polling_request_budget(repo_root=tmp_path)) >= 2
+
+
 class TestSelf:
     def test_message_cites_the_doc_and_the_fix(self, tmp_path):
         msg = _run(tmp_path, {PY: LOOP})[0]["issue"]
