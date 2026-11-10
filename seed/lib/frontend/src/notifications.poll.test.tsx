@@ -9,8 +9,11 @@ vi.mock('./auth', () => ({ useAuthReady: () => true }));
 import { createNotificationHooks, NOTIFICATION_POLL_MS } from './notifications';
 
 let naoLidas = 0;
+let ultimaId: string | null = null;
 const get = vi.fn(async (url: string) =>
-  url.startsWith('/api/notificacoes/contagem') ? { nao_lidas: naoLidas } : { data: [], pagination: {} },
+  url.startsWith('/api/notificacoes/contagem')
+    ? { nao_lidas: naoLidas, ultima_id: ultimaId }
+    : { data: [], pagination: {} },
 );
 const hooks = createNotificationHooks({ get } as never, () => ({ user: { id: 'u' } }));
 const calls = (prefix: string) => get.mock.calls.filter(([u]) => u.startsWith(prefix)).length;
@@ -23,7 +26,7 @@ function setup() {
   renderHook(() => { hooks.useNotificacoes(1, 10); hooks.useContagemNaoLidas(); }, { wrapper });
 }
 
-beforeEach(() => { vi.useFakeTimers(); get.mockClear(); naoLidas = 0; focusManager.setFocused(true); });
+beforeEach(() => { vi.useFakeTimers(); get.mockClear(); naoLidas = 0; ultimaId = null; focusManager.setFocused(true); });
 afterEach(() => { cleanup(); vi.useRealTimers(); focusManager.setFocused(undefined); });
 
 describe('notification bell request budget', () => {
@@ -44,6 +47,17 @@ describe('notification bell request budget', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
     const listBefore = calls('/api/notificacoes?');
     naoLidas = 1;
+    await act(async () => { await vi.advanceTimersByTimeAsync(NOTIFICATION_POLL_MS + 1_000); });
+    expect(calls('/api/notificacoes?')).toBeGreaterThan(listBefore);
+  });
+
+  it('re-reads the list when a new unread arrives and another is read in the same window (count unchanged)', async () => {
+    naoLidas = 1;
+    ultimaId = 'n1';
+    setup();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    const listBefore = calls('/api/notificacoes?');
+    ultimaId = 'n2'; // n2 arrived, n1 was read elsewhere: still 1 unread
     await act(async () => { await vi.advanceTimersByTimeAsync(NOTIFICATION_POLL_MS + 1_000); });
     expect(calls('/api/notificacoes?')).toBeGreaterThan(listBefore);
   });

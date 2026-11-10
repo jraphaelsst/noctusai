@@ -322,6 +322,30 @@ class NotificationFlowSuite:
         assert resp.status_code == 200
         assert resp.json()["nao_lidas"] == 2
 
+    def test_count_reports_newest_unread_id(self, client):
+        """`/contagem` also returns the newest UNREAD id, in the same single query.
+
+        The bell polls only this endpoint and refetches the list when it changes. Count alone misses
+        "one new + one read in the same poll window" (count unchanged, new-lead pop-up never shows).
+        The newest unread id moves in that case, so the bell keys on (nao_lidas, ultima_id).
+        """
+        client._mock_supabase.set_table_data("notifications", [
+            {"id": "old", "user_id": TEST_USER_ID, "read": False, "created_at": "2026-01-01T00:00:00Z"},
+            {"id": "new", "user_id": TEST_USER_ID, "read": False, "created_at": "2026-01-02T00:00:00Z"},
+            {"id": "newest-but-read", "user_id": TEST_USER_ID, "read": True, "created_at": "2026-01-03T00:00:00Z"},
+        ])
+        resp = client.get("/api/notificacoes/contagem")
+        assert resp.status_code == 200
+        assert resp.json() == {"nao_lidas": 2, "ultima_id": "new"}
+
+    def test_count_with_nothing_unread_has_no_newest_id(self, client):
+        client._mock_supabase.set_table_data("notifications", [
+            {"id": "n1", "user_id": TEST_USER_ID, "read": True, "created_at": "2026-01-01T00:00:00Z"},
+        ])
+        resp = client.get("/api/notificacoes/contagem")
+        assert resp.status_code == 200
+        assert resp.json() == {"nao_lidas": 0, "ultima_id": None}
+
     def test_mark_one_as_read(self, client):
         """Mark a single notification as read."""
         client._mock_supabase.set_table_data("notifications", [

@@ -46,6 +46,8 @@ export interface Notificacao {
 
 export interface ContagemNaoLidas {
   nao_lidas: number;
+  /** Newest unread notification id (null when none). Moves even when the count does not. */
+  ultima_id?: string | null;
 }
 
 /**
@@ -103,8 +105,12 @@ export function createNotificationHooks(
       queryFn: async () => {
         const previous = qc.getQueryData<ContagemNaoLidas>(['notificacoes-contagem']);
         const result = (await api.get('/api/notificacoes/contagem')) as ContagemNaoLidas;
-        // A moved count means the list is stale: fetch it once now instead of polling it.
-        if (previous && previous.nao_lidas !== result.nao_lidas) {
+        // A moved count OR a new newest-unread means the list is stale: fetch it once now instead of
+        // polling it. The id catches "one new + one read in the same window" (count unchanged).
+        if (
+          previous &&
+          (previous.nao_lidas !== result.nao_lidas || (previous.ultima_id ?? null) !== (result.ultima_id ?? null))
+        ) {
           void qc.invalidateQueries({ queryKey: ['notificacoes'] });
         }
         return result;
