@@ -352,3 +352,103 @@ def test_every_executor_may_record_and_validate(tmp_path, agent):
     """D32: the `agent` field is not restricted to product-engineer; the keeper accepts the resulting file."""
     assert rec(tmp_path, agent=agent)["ok"] is True
     assert check_decision_log_schema(tmp_path) == []
+
+
+# ── v1.2: assigned vs decided (BN), spec-validated AC (ZY), presence (N), product (Q) ──────────────────────────────
+
+SPEC = ("# Spec\n\n## Acceptance criteria\n1. The page lists orders.\n"
+        "2. Add a migration creating the orders table in products/p/backend/migrations/.\n"
+        "3. Publish the contract project-history/x/contracts/orders.md.\n\n## Notes\n4. not a criterion\n")
+
+
+def _spec_repo(repo):
+    commit(repo, {"docs/spec.md": SPEC}, "spec\n\nAC: 1")  # the spec itself, justified as AC 1 (spec is in the diff)
+    return repo
+
+
+def test_spec_criteria_parses_only_the_acceptance_section_and_ac_labels():
+    c = dl.spec_criteria(SPEC + "\n- AC-9: labelled anywhere\n")
+    assert set(c) == {"1", "2", "3", "9"} and "migration" in c["2"]
+
+
+def test_assigned_migration_passes_without_owner_row(repo):
+    _spec_repo(repo)
+    commit(repo, {"products/p/backend/migrations/001_orders.sql": "select 1;\n"},
+           "mig\n\nSpec: docs/spec.md\nAssigned: 2")
+    r = aud(repo, ["products/p", "docs"])
+    assert not [f for f in r["findings"] if f["check"] == "gated_surface" and f["severity"] == "block"]
+    assert any(f["check"] == "gated_surface" and f["severity"] == "info" for f in r["findings"])
+
+
+def test_executor_decided_migration_still_needs_owner_row(repo):
+    _spec_repo(repo)
+    # AC 1 is real but names no migration: self-tagging does not assign a surface the spec never named
+    commit(repo, {"products/p/backend/migrations/002_extra.sql": "select 1;\n"}, "mig\n\nSpec: docs/spec.md\nAssigned: 1")
+    assert "gated_surface" in checks(aud(repo, ["products/p", "docs"]), "block")
+    commit(repo, {"products/p/backend/migrations/003_x.sql": "select 1;\n"}, "mig\n\nSpec: docs/spec.md")
+    assert "gated_surface" in checks(aud(repo, ["products/p", "docs"]), "block")
+
+
+def test_unknown_ac_token_is_a_finding_and_does_not_justify(repo):
+    _spec_repo(repo)
+    commit(repo, {"products/p/loose.py": "1\n"}, "x\n\nSpec: docs/spec.md\nAC: 99")
+    r = aud(repo, ["products/p", "docs"])
+    assert "ac_unknown" in checks(r, "block") and "unjustified_file" in checks(r, "block")
+    commit(repo, {"products/p/loose.py": "2\n"}, "y\n\nSpec: docs/spec.md\nAC: AC-1")
+    assert "unjustified_file" not in checks(aud(repo, ["products/p", "docs"]))
+
+
+def test_missing_spec_is_blocked_and_no_spec_is_warned(repo):
+    commit(repo, {"products/p/a.py": "1\n"}, "x\n\nSpec: docs/nope.md\nAC: 1")
+    assert "spec" in checks(aud(repo), "block")
+    commit(repo, {"products/p/b.py": "1\n"}, "y\n\nAC: 1")
+    # no Spec: anywhere in a fresh tree => unverified warning only
+    r = dl.audit(repo, slice_id=SLICE, base="main", slice_paths=["products/p"], spec="docs/nope.md")
+    assert "spec" in checks(r, "block")
+
+
+def test_unvalidated_ac_without_any_spec_warns(repo):
+    commit(repo, {"products/p/a.py": "1\n"}, "x\n\nAC: 7")
+    r = aud(repo)
+    assert "spec" in checks(r, "warn") and "unjustified_file" not in checks(r)
+
+
+def test_decided_trailer_without_decisions_trailer_is_unlogged(repo):
+    rec(repo, paths=["products/p/a.py"])
+    commit(repo, {"products/p/a.py": "1\n"}, "x\n\nDecided: chose a retry\nDecisions: D-s1-001")
+    assert "unlogged_decision" not in checks(aud(repo))
+    commit(repo, {"products/p/a.py": "2\n"}, "y\n\nDecided: chose a backoff")
+    assert "unlogged_decision" in checks(aud(repo), "block")
+
+
+def test_new_route_with_no_row_and_no_assignment_is_unlogged(repo):
+    commit(repo, {"products/p/r.py": "@router.get('/x')\ndef x(): ...\n"}, "x\n\nAC: 1")
+    assert "unlogged_decision" in checks(aud(repo), "block")
+
+
+def test_new_route_assigned_by_the_spec_is_not_unlogged(repo):
+    _spec_repo(repo)
+    commit(repo, {"products/p/r.py": "@router.get('/x')\ndef x(): ...\n"}, "x\n\nSpec: docs/spec.md\nAssigned: 1")
+    # AC 1 says "The page lists orders" (no file named): not an assignment of r.py
+    assert "unlogged_decision" in checks(aud(repo, ["products/p", "docs"]), "block")
+    commit(repo, {"docs/spec2.md": "## Acceptance criteria\n1. Add the route in products/p/r2.py.\n"}, "s\n\nAC: 1")
+    commit(repo, {"products/p/r2.py": "@router.get('/y')\ndef y(): ...\n"}, "r\n\nSpec: docs/spec2.md\nAssigned: 1")
+    r = dl.audit(repo, slice_id=SLICE, base="main", slice_paths=["products/p", "docs"], spec="docs/spec2.md")
+    assert not [f for f in r["findings"] if f["check"] == "unlogged_decision" and f.get("file") == "products/p/r2.py"]
+
+
+def test_product_field_validated_listed_and_filtered(tmp_path):
+    assert rec(tmp_path, product="social-wiring")["ok"]
+    assert rec(tmp_path, product="Bad Slug")["refused"]
+    assert [d["product"] for d in dl.list_decisions(tmp_path, product="social-wiring")["decisions"]] == ["social-wiring"]
+    assert dl.list_decisions(tmp_path, product="other")["count"] == 0
+
+
+def test_merge_path_audit_is_warn_only_with_telemetry(repo, tmp_path):
+    commit(repo, {"products/p/loose.py": "1\n"})
+    tp = tmp_path / "tele" / "decision-audit.ndjson"
+    s = dl.merge_path_audit(repo, slice_id=SLICE, base="main", telemetry_path=tp)
+    assert s["mode"] == "warn" and s["blocks"] >= 1 and s["blocking"] is False and "unjustified_file" in s["block_checks"]
+    assert json.loads(tp.read_text().splitlines()[0])["slice"] == SLICE
+    bad = dl.merge_path_audit(repo, slice_id=SLICE, base="nope", telemetry_path=tp)
+    assert bad["status"] == "inconclusive"

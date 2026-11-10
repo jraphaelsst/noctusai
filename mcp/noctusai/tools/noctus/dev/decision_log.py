@@ -70,7 +70,7 @@ DECISION_MAX = 200
 
 FIELDS: dict[str, dict[str, bool]] = {  # name -> required?
     "decision": {"id": True, "ts": True, "agent": True, "slice_id": True, "branch": True, "commit_sha": False,
-                 "ac_ref": False, "tier": True, "class": True, "criteria_hit": True, "reversibility": True,
+                 "ac_ref": False, "product": False, "tier": True, "class": True, "criteria_hit": True, "reversibility": True,
                  "blast_radius": True, "surprise_test": True, "paths": True, "decision": True,
                  "options_considered": False, "revert_hint": False, "supersedes": False},
     "review": {"ts": True, "id_ref": True, "outcome": True, "reviewer_kind": True, "reviewer": True, "note": False},
@@ -153,6 +153,9 @@ def validate_row(row: Any) -> list[str]:
     for k in ("ac_ref", "options_considered", "revert_hint", "supersedes"):
         if k in row and not _nonempty(row[k]):
             errs.append(f"decision.{k}, when present, must be a non-empty string")
+    if "product" in row and not (isinstance(row["product"], str) and _SLICE_RE.match(row["product"])):
+        errs.append(f"decision.product, when present, must be a product slug matching {_SLICE_RE.pattern}; "
+                    f"got {row['product']!r}")
     if "supersedes" in row and _nonempty(row["supersedes"]) and not _ID_RE.match(row["supersedes"]):
         errs.append(f"decision.supersedes must look like D-<slice>-<NNN>; got {row['supersedes']!r}")
     if "commit_sha" in row and not (isinstance(row["commit_sha"], str) and _SHA_RE.match(row["commit_sha"])):
@@ -260,7 +263,8 @@ def _covers(row_path: str, f: str) -> bool:
 def record(root: Path, *, slice_id: str, agent: str, branch: str, tier: str, cls: str, criteria_hit: list,
            reversibility: str, blast_radius: str, surprise_test: str, paths: list, decision: str,
            commit_sha: str | None = None, ac_ref: str | None = None, options_considered: str | None = None,
-           revert_hint: str | None = None, supersedes: str | None = None, ts: str | None = None) -> dict:
+           revert_hint: str | None = None, supersedes: str | None = None, ts: str | None = None,
+           product: str | None = None) -> dict:
     if not isinstance(slice_id, str) or not _SLICE_RE.match(slice_id):
         return _err(f"slice_id must match {_SLICE_RE.pattern}; got {slice_id!r}", refused=True)
     ts = ts or now_iso()
@@ -269,7 +273,7 @@ def record(root: Path, *, slice_id: str, agent: str, branch: str, tier: str, cls
     n = sum(1 for r in existing if r["record"] == "decision") + 1
     row: dict[str, Any] = {"record": "decision", "id": f"D-{slice_id}-{n:03d}", "ts": ts, "agent": agent,
                            "slice_id": slice_id, "branch": branch}
-    for k, v in (("commit_sha", commit_sha), ("ac_ref", ac_ref)):
+    for k, v in (("commit_sha", commit_sha), ("ac_ref", ac_ref), ("product", product)):
         if v is not None:
             row[k] = v
     row.update({"tier": tier, "class": cls, "criteria_hit": criteria_hit, "reversibility": reversibility,
@@ -331,7 +335,8 @@ def _all_rows(root: Path) -> list[tuple[Path, list[dict]]]:
 
 
 def list_decisions(root: Path, *, slice_id: str | None = None, tier: str | None = None, cls: str | None = None,
-                   outcome: str | None = None, agent: str | None = None, limit: int = 200) -> dict:
+                   outcome: str | None = None, agent: str | None = None, limit: int = 200,
+                   product: str | None = None) -> dict:
     out: list[dict] = []
     for _p, rows in _all_rows(root):
         oc = effective_outcomes(rows)
@@ -339,7 +344,7 @@ def list_decisions(root: Path, *, slice_id: str | None = None, tier: str | None 
             if r["record"] != "decision":
                 continue
             if ((slice_id and r["slice_id"] != slice_id) or (tier and r["tier"] != tier) or
-                    (cls and r["class"] != cls) or (agent and r["agent"] != agent) or
+                    (cls and r["class"] != cls) or (product and r.get("product") != product) or (agent and r["agent"] != agent) or
                     (outcome and oc[r["id"]] != outcome)):
                 continue
             out.append({**r, "outcome": oc[r["id"]]})
@@ -359,8 +364,68 @@ TEXT_LINE_RE = re.compile(r">[^<>{}]*[A-Za-zÀ-ÿ]{3,}[^<>{}]*<|(label|title|pla
                           r"subject)\s*[=:]\s*[\"'`][^\"'`]*[A-Za-zÀ-ÿ]{3,}", re.IGNORECASE)
 SENSITIVE_RE = re.compile(r"(^|/)(auth|billing|payments?|secrets?|credentials?)[^/]*(/|\.[a-z]+$)|stripe", re.IGNORECASE)
 DEP_MANIFEST_RE = re.compile(r"(^|/)(package\.json|pyproject\.toml|requirements[^/]*\.txt)$")
-TRAILER_RE = re.compile(r"^(AC|AC-Ref|Ac-Ref):\s*\S+", re.MULTILINE)
+TRAILER_RE = re.compile(r"^(AC|AC-Ref|Ac-Ref):\s*(.+)$", re.MULTILINE)
+ASSIGNED_RE = re.compile(r"^Assigned:\s*(.+)$", re.MULTILINE)
+DECIDED_RE = re.compile(r"^Decided:\s*\S+", re.MULTILINE)
+SPEC_TRAILER_RE = re.compile(r"^Spec:\s*(\S+)\s*$", re.MULTILINE)
 DECISIONS_TRAILER_RE = re.compile(r"^Decisions:\s*(.+)$", re.MULTILINE)
+# Severity of the merge-path audit (task_branch enqueue/integrate). Contract §10: starts as warn, promoted to block on data.
+MERGE_PATH_AUDIT_MODE = "warn"
+
+# A spec criterion "assigns" a gated surface when its text names the file/dir, or the surface's own keyword.
+_SURFACE_WORDS = (
+    (MIGRATION_RE, re.compile(r"migrations?\b", re.IGNORECASE)),
+    (CONTRACT_RE, re.compile(r"\bcontracts?\b", re.IGNORECASE)),
+    (ACCESS_TIER_RE, re.compile(r"access[- _]tiers?", re.IGNORECASE)),
+    (RLS_RE, re.compile(r"\bRLS\b|row[- ]level", re.IGNORECASE)),
+)
+
+
+def _norm_token(t: str) -> str:
+    t = t.strip().strip("`*.,;:()[]").lower()
+    t = re.sub(r"^ac[-_ ]*", "", t)
+    return t.lstrip("0") or ("0" if t.startswith("0") else t)
+
+
+def spec_criteria(text: str) -> dict[str, str]:
+    """The spec's numbered acceptance criteria -> {normalized id: criterion text}. Sources: numbered list items inside a
+    heading containing 'acceptance criteria'; explicit ``AC-<id>`` / ``AC<n>`` labelled lines anywhere."""
+    out: dict[str, str] = {}
+    cur: str | None = None
+    sec_level: int | None = None
+    for ln in text.splitlines():
+        h = re.match(r"^(#{1,6})\s+(.*)$", ln)
+        if h:
+            if sec_level is not None and len(h.group(1)) <= sec_level:
+                sec_level = None
+            if re.search(r"acceptance\s+criteri", h.group(2), re.IGNORECASE):
+                sec_level = len(h.group(1))
+            cur = None
+            continue
+        m_ac = re.match(r"^\s*(?:[-*]\s*)?\**AC[-_ ]?([A-Za-z0-9][\w-]*)\**[:.)\s-]+(.*)$", ln)
+        m_num = re.match(r"^\s*(\d+)[.)]\s+(.*)$", ln) if sec_level is not None else None
+        m = m_ac or m_num
+        if m:
+            cur = _norm_token(m.group(1))
+            out[cur] = (out.get(cur, "") + " " + m.group(2)).strip()
+        elif cur and ln.strip() and ln[:1].isspace():
+            out[cur] += " " + ln.strip()
+        else:
+            cur = None
+    return out
+
+
+def _tokens(raw: str) -> list[str]:
+    return [t for t in re.split(r"[,;\s]+", raw) if t.strip("`*.()[]")]
+
+
+def _criterion_assigns(crit_text: str, f: str) -> bool:
+    """Does this criterion's text assign file ``f`` (named path/dir/basename, or the gated surface's keyword)?"""
+    parts = f.split("/")
+    names = {f, parts[-1]} | {"/".join(parts[:i]) for i in range(2, len(parts))}
+    if any(n and n in crit_text for n in names):
+        return True
+    return any(fr.search(f) and w.search(crit_text) for fr, w in _SURFACE_WORDS if fr is not RLS_RE) or False
 
 
 def _g(root: Path, *args: str) -> tuple[int, str]:
@@ -415,7 +480,8 @@ def select_recheck(rows: list[dict], seed: str) -> dict:
             "autonomous_total": len(auto), "seed": seed}
 
 
-def audit(root: Path, *, slice_id: str, base: str, slice_paths: list[str] | None = None, seed: str | None = None) -> dict:
+def audit(root: Path, *, slice_id: str, base: str, slice_paths: list[str] | None = None, seed: str | None = None,
+          spec: str | None = None) -> dict:
     """Contract §6 findings for ``git diff <base>...HEAD`` in ``root`` against the slice's ledger."""
     path = slice_file(root, slice_id)
     rows = read_rows(path) if path and path.exists() else []
@@ -450,15 +516,77 @@ def audit(root: Path, *, slice_id: str, base: str, slice_paths: list[str] | None
     def rows_for(f: str) -> list[dict]:
         return [r for r in decs if any(_covers(p, f) for p in r["paths"])]
 
-    # 1. migrations / RLS / access tiers / contracts need an owner-accepted escalate row
+    # commit facts (checks 1, 6, N): trailers per commit, per file; the spec (explicit or `Spec:` trailer) validates them
+    rc3, log = _g(root, "log", "--format=%x1e%H%n%B%x1f", "--name-only", f"{base}..HEAD")
+    commits: list[dict] = []
+    for blk in log.split("\x1e")[1:]:
+        head, _, files_part = blk.partition("\x1f")
+        sha, _, msg = head.partition("\n")
+        commits.append({"sha": sha, "msg": msg, "files": [x.strip() for x in files_part.splitlines() if x.strip()]})
+    spec_rel = spec or next((m.group(1) for c in commits for m in [SPEC_TRAILER_RE.search(c["msg"])] if m), None)
+    crits: dict[str, str] | None = None
+    if spec_rel:
+        sp = (root / spec_rel).resolve()
+        if root.resolve() in sp.parents and sp.is_file():
+            crits = spec_criteria(sp.read_text(errors="replace"))
+        if not crits:
+            add("spec", "block", f"spec {spec_rel!r} is missing, outside the tree, or has no numbered acceptance "
+                "criteria: AC:/Assigned: trailers cannot be validated (an unmeasurable check is never clear)")
+            crits = None
+    elif any(TRAILER_RE.search(c["msg"]) or ASSIGNED_RE.search(c["msg"]) for c in commits):
+        add("spec", "warn", "no spec referenced (spec=<path> or a `Spec: <path>` commit trailer): AC:/Assigned: trailers "
+            "were NOT validated against the acceptance criteria and count unverified (contract §10: promote to block)")
+    ids = {r["id"] for r in decs}
+    file_ref: dict[str, bool] = defaultdict(bool)       # file -> some commit carrying a valid AC/Assigned/Decisions ref
+    file_assigned: dict[str, list[str]] = defaultdict(list)  # file -> criterion texts of valid Assigned: tokens
+    unknown_seen: set[tuple[str, str]] = set()
+    for c in commits:
+        sha, msg = c["sha"], c["msg"]
+        valid_ac = unverified_ac = False
+        valid_assigned: list[str] = []
+        for kind, raw in [("AC", m[1]) for m in TRAILER_RE.findall(msg)] + [("Assigned", m) for m in ASSIGNED_RE.findall(msg)]:
+            for tok in _tokens(raw):
+                if crits is None:
+                    unverified_ac = True
+                elif _norm_token(tok) in crits:
+                    valid_ac = True
+                    if kind == "Assigned":
+                        valid_assigned.append(crits[_norm_token(tok)])
+                elif (sha, tok) not in unknown_seen:
+                    unknown_seen.add((sha, tok))
+                    add("ac_unknown", "block", f"commit {sha[:9]}: {kind}: {tok} is not a numbered acceptance criterion "
+                        f"of {spec_rel}", commit=sha)
+        for tid in (t for m in DECISIONS_TRAILER_RE.findall(msg) for t in re.split(r"[,\s]+", m) if t):
+            if tid not in ids:
+                add("trailer", "block", f"commit {sha[:9]}: Decisions: trailer names {tid}, which is not a row of "
+                    f"slice {slice_id!r}")
+        if DECIDED_RE.search(msg) and not DECISIONS_TRAILER_RE.search(msg):
+            add("unlogged_decision", "block", f"commit {sha[:9]}: marked `Decided:` (executor-decided) but carries no "
+                "`Decisions: D-…` trailer and so no log row", commit=sha)
+        has_ref = valid_ac or unverified_ac or bool(DECISIONS_TRAILER_RE.search(msg))
+        for f in c["files"]:
+            if has_ref:
+                file_ref[f] = True
+            file_assigned[f] += valid_assigned
+
+    def assigned(f: str) -> bool:
+        return any(_criterion_assigns(t, f) for t in file_assigned.get(f, []))
+
+    # 1. migrations / RLS / access tiers / contracts: spec-ASSIGNED work passes (Assigned: <AC> naming the surface in the
+    #    spec); an executor-DECIDED change there needs an owner-accepted escalate row
     owner_ok = [r for r in decs if r["tier"] == "escalate" and oc[r["id"]] == "accepted"
                 and any(v["reviewer_kind"] == "owner" and v["outcome"] == "accepted" for v in reviews[r["id"]])]
     gated = [f for f in changed if MIGRATION_RE.search(f) or ACCESS_TIER_RE.search(f) or CONTRACT_RE.search(f)
              or any(RLS_RE.search(l) for l in pf.get(f, {}).get("added", []) + pf.get(f, {}).get("removed", []))]
     for f in gated:
-        if not any(any(_covers(p, f) for p in r["paths"]) for r in owner_ok):
-            add("gated_surface", "block", f"{f}: migration/RLS/access-tier/contract change with no owner-accepted "
-                "escalate row covering it", file=f)
+        if any(any(_covers(p, f) for p in r["paths"]) for r in owner_ok):
+            continue
+        if assigned(f):
+            add("gated_surface", "info", f"{f}: gated surface, spec-assigned (Assigned: trailer matches a criterion "
+                "naming it); no owner escalate row needed", file=f)
+            continue
+        add("gated_surface", "block", f"{f}: migration/RLS/access-tier/contract change that is neither spec-assigned "
+            "(Assigned: <AC> naming it) nor covered by an owner-accepted escalate row", file=f)
     # 2. new route / page / customer-facing text under autonomous rows
     for f in changed:
         added = pf.get(f, {}).get("added", [])
@@ -495,25 +623,25 @@ def audit(root: Path, *, slice_id: str, base: str, slice_paths: list[str] | None
         if new and not any(r["tier"] != "autonomous" for r in rows_for(f)):
             add("runtime_dep", "block", f"{f}: new runtime dependency {', '.join(new)} with no notify-or-higher row "
                 "covering the manifest", file=f)
-    # 6. changed file with no row and no AC trailer; Decisions: trailers must name real rows
-    rc3, log = _g(root, "log", "--format=%x1e%H%n%B%x1f", "--name-only", f"{base}..HEAD")
-    file_commits: dict[str, list[tuple[str, str]]] = defaultdict(list)
-    ids = {r["id"] for r in decs}
-    for blk in log.split("\x1e")[1:]:
-        head, _, files_part = blk.partition("\x1f")
-        sha, _, msg = head.partition("\n")
-        for tid in (t for m in DECISIONS_TRAILER_RE.findall(msg) for t in re.split(r"[,\s]+", m) if t):
-            if tid not in ids:
-                add("trailer", "block", f"commit {sha[:9]}: Decisions: trailer names {tid}, which is not a row of "
-                    f"slice {slice_id!r}")
-        has_ref = bool(TRAILER_RE.search(msg) or DECISIONS_TRAILER_RE.search(msg))
-        for f in (x.strip() for x in files_part.splitlines()):
-            if f:
-                file_commits[f].append((sha, "ref" if has_ref else ""))
+    # 6. changed file with no row and no VALID AC/Assigned trailer
     for f in changed:
-        if not rows_for(f) and not any(tag for _s, tag in file_commits.get(f, [])):
-            add("unjustified_file", "block", f"{f}: changed with no decision row covering it and no AC:/Decisions: "
-                "trailer on any commit that touches it", file=f)
+        if not rows_for(f) and not file_ref.get(f):
+            add("unjustified_file", "block", f"{f}: changed with no decision row covering it and no valid "
+                "AC:/Assigned:/Decisions: trailer on any commit that touches it", file=f)
+    # N. presence: a new route / page / runtime dependency is an executor decision; with no row and no spec assignment
+    #    it was made silently
+    for f in changed:
+        added = pf.get(f, {}).get("added", [])
+        kinds = []
+        if f.endswith(".py") and any(ROUTE_RE.match("+" + l) for l in added):
+            kinds.append("new route")
+        if status.get(f) == "A" and PAGE_RE.search(f):
+            kinds.append("new page")
+        if DEP_MANIFEST_RE.search(f) and sorted(_deps_at(root, "WORKTREE", f) - _deps_at(root, base, f)):
+            kinds.append("new runtime dependency")
+        if kinds and not rows_for(f) and not assigned(f):
+            add("unlogged_decision", "block", f"{f}: {', '.join(kinds)} with no decision row and no spec assignment "
+                "(Assigned: <AC> naming it): an executor decision was made without logging it", file=f)
     # 7. one_commit rows with a migration in the diff
     if any(MIGRATION_RE.search(f) for f in changed):
         for r in live:
@@ -528,6 +656,35 @@ def audit(root: Path, *, slice_id: str, base: str, slice_paths: list[str] | None
     blocks = [f for f in findings if f["severity"] == "block"]
     return {"ok": not blocks, "status": "blocked" if blocks else "clear", "slice": slice_id, "base": base,
             "changed_files": len(changed), "findings": findings, "recheck": select_recheck(rows, seed or slice_id)}
+
+
+# ── merge-path wiring (contract §10) ─────────────────────────────────────────
+
+def merge_path_audit(root: Path, *, slice_id: str, base: str, telemetry_path: Path | None = None) -> dict:
+    """The audit as the merge path runs it (``task_branch`` enqueue/integrate), independent of any reviewer dispatch.
+    Mode is ``MERGE_PATH_AUDIT_MODE`` ('warn': findings are reported, nothing is blocked). Returns a compact summary
+    (never raises: an unmeasurable audit is reported ``inconclusive``) and appends one telemetry row (best effort) to
+    ``~/.noctus/decision-audit.ndjson`` so the promote-to-block criterion can be measured."""
+    try:
+        res = audit(root, slice_id=slice_id, base=base)
+    except Exception as exc:  # noqa: BLE001 - surfaced, never a silent pass
+        res = {"ok": False, "status": "inconclusive", "error": f"audit raised: {exc}", "findings": []}
+    fs = res.get("findings", [])
+    blocks = [f for f in fs if f["severity"] == "block"]
+    summary = {"mode": MERGE_PATH_AUDIT_MODE, "status": res.get("status"), "slice": slice_id,
+               "blocks": len(blocks), "warns": sum(1 for f in fs if f["severity"] == "warn"),
+               "block_checks": sorted({f["check"] for f in blocks}),
+               "blocking": bool(blocks) and MERGE_PATH_AUDIT_MODE == "block"}
+    if res.get("error"):
+        summary["error"] = res["error"]
+    try:
+        tp = telemetry_path or Path.home() / ".noctus" / "decision-audit.ndjson"
+        tp.parent.mkdir(parents=True, exist_ok=True)
+        with tp.open("a") as fh:
+            fh.write(json.dumps({"ts": now_iso(), **summary}) + "\n")
+    except OSError:
+        pass
+    return summary
 
 
 # ── report (contract §5, proposals only) ─────────────────────────────────────
@@ -649,7 +806,7 @@ def run(action: str, *, root: Path | None = None, **kw: Any) -> dict:
             blast_radius=kw["blast_radius"], surprise_test=kw["surprise_test"], paths=kw["paths"],
             decision=kw["decision"], commit_sha=kw.get("commit_sha"), ac_ref=kw.get("ac_ref"),
             options_considered=kw.get("options_considered"), revert_hint=kw.get("revert_hint"),
-            supersedes=kw.get("supersedes"), ts=kw.get("ts"))
+            supersedes=kw.get("supersedes"), ts=kw.get("ts"), product=kw.get("product"))
     if action == "review":
         e = _req(kw, "id_ref", "outcome", "reviewer_kind", "reviewer")
         return _err(e) if e else review(root, id_ref=kw["id_ref"], outcome=kw["outcome"],
@@ -657,11 +814,11 @@ def run(action: str, *, root: Path | None = None, **kw: Any) -> dict:
                                         note=kw.get("note"), ts=kw.get("ts"))
     if action == "list":
         return list_decisions(root, slice_id=kw.get("slice_id"), tier=kw.get("tier"), cls=kw.get("decision_class"),
-                              outcome=kw.get("outcome"), agent=kw.get("agent"), limit=int(kw.get("limit") or 200))
+                              outcome=kw.get("outcome"), agent=kw.get("agent"), limit=int(kw.get("limit") or 200), product=kw.get("product"))
     if action == "audit":
         e = _req(kw, "slice", "base")
         return _err(e) if e else audit(root, slice_id=kw["slice"], base=kw["base"], slice_paths=kw.get("slice_paths"),
-                                       seed=kw.get("seed"))
+                                       seed=kw.get("seed"), spec=kw.get("spec"))
     if action == "report":
         return report(root)
     return _err(f"action must be one of record|review|list|audit|report; got {action!r}")
@@ -678,14 +835,14 @@ def register(server) -> None:  # noqa: ANN001
             "internal_error_text,internal_naming,test_added,in_file_refactor,log_line,validation_tightened,null_handling,"
             "typo,other}, criteria_hit[C1..C9] (the criteria whose autonomous level is EXCEEDED), reversibility, "
             "blast_radius, surprise_test, paths[], decision ('We will …', <=200 chars); optional commit_sha, ac_ref, "
-            "options_considered, revert_hint, supersedes. Refuses a tier below the floor the fields imply, class=other as "
+            "options_considered, revert_hint, supersedes, product (slug; per-product aggregation). Refuses a tier below the floor the fields imply, class=other as "
             "autonomous, and the 3rd same class+file as autonomous (status reclassify_required); the 6th autonomous / 4th "
             "notify returns status checkin_required and writes nothing. Returns the id + the `Decisions:` commit trailer.\n"
             "  review — id_ref, outcome{pending_review,accepted,vetoed,reclassified,superseded}, reviewer_kind"
             "{compliance_reviewer,tech_lead,owner,product_analyst}, reviewer; optional note.\n"
             "  list   — filters slice_id, tier, decision_class, outcome, agent, limit.\n"
             "  audit  — slice, base (git diff <base>...HEAD in worktree_path); optional slice_paths[] (declared paths; "
-            "without it that check is reported unmeasured), seed. Contract §6 findings (block/warn) + the 1-in-5 recheck "
+            "without it that check is reported unmeasured), seed, spec (repo-relative spec file whose numbered acceptance criteria validate AC:/Assigned: trailers; else a `Spec:` commit trailer). Contract §6 findings (block/warn) + the 1-in-5 recheck "
             "sample and every class=other row.\n"
             "  report — per class uses/vetoed/reclassified + demote/promote PROPOSALS (the owner ratifies).\n"
             "worktree_path pins the tree."
@@ -709,6 +866,8 @@ def register(server) -> None:  # noqa: ANN001
         options_considered: str | None = None,
         revert_hint: str | None = None,
         supersedes: str | None = None,
+        product: str | None = None,
+        spec: str | None = None,
         id_ref: str | None = None,
         outcome: str | None = None,
         reviewer_kind: str | None = None,
@@ -725,10 +884,10 @@ def register(server) -> None:  # noqa: ANN001
                    decision_class=decision_class, criteria_hit=criteria_hit, reversibility=reversibility,
                    blast_radius=blast_radius, surprise_test=surprise_test, paths=paths, decision=decision,
                    commit_sha=commit_sha, ac_ref=ac_ref, options_considered=options_considered,
-                   revert_hint=revert_hint, supersedes=supersedes, id_ref=id_ref, outcome=outcome,
+                   revert_hint=revert_hint, supersedes=supersedes, product=product, spec=spec, id_ref=id_ref, outcome=outcome,
                    reviewer_kind=reviewer_kind, reviewer=reviewer, note=note, slice=slice, base=base,
                    slice_paths=slice_paths, seed=seed, limit=limit)
 
 
 __all__ = ["run", "record", "review", "audit", "report", "validate_row", "validate_file_rows", "tier_floor",
-           "check_schema", "select_recheck", "register", "ENUMS"]
+           "check_schema", "select_recheck", "merge_path_audit", "spec_criteria", "register", "ENUMS"]
