@@ -58,8 +58,9 @@ class RedisBreakerStore:
             return None
         return f"noctus:breaker:{parts[2]}:index"
 
-    def set(self, key: str, value: str) -> None:
-        self._r.set(key, value)  # no TTL by design: a trip persists across restarts until a human re-arms
+    def set(self, key: str, value: str, ttl: Optional[int] = None) -> None:
+        # no TTL for a trip by design (it persists across restarts until a human re-arms); a re-arm MARKER gets one
+        self._r.set(key, value, ex=ttl) if ttl else self._r.set(key, value)
         idx = self.index_key(key)
         if idx:
             self._r.sadd(idx, key)

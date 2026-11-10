@@ -31,6 +31,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from fastapi import FastAPI
+from noctusai_lib.api.supabase_source import SeedFastAPI
 
 from noctusai_lib.domain.ai.consent import configure_consent_module
 from noctusai_lib.logging_config import configure_logging, resolve_json_logs
@@ -647,7 +648,7 @@ def create_product_app(
     has_lifespan = True  # now always true — we own shutdown_llm
 
     # 6. Create the FastAPI app
-    app = FastAPI(
+    app = SeedFastAPI(  # outermost `http` source wrapper, also over middleware a product adds later
         title=f"NoctusAI {name} API",
         description=f"Backend API for {name}",
         version=version,

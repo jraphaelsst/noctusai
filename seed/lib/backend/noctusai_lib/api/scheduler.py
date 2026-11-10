@@ -260,7 +260,7 @@ def _instrument(
         # The holdable source counts RUNS (a job that fires every second is the runaway shape); what one run does is
         # alert-only attribution plus an absolute per-run call cap (a failed run, never a held tenant).
         breaker.record_call(source)
-        with source_scope(f"job:{source}"), job_scope(call_cap):
+        with source_scope(f"job:{source}"), job_scope(call_cap, hard=breaker.job_hard_limit(call_cap)):
             return await _run_instrumented(*args, **kwargs)
 
     async def _run_instrumented(*args: Any, **kwargs: Any) -> Any:

@@ -9,6 +9,8 @@ KB § PATTERNS/backend/supabase-request-breaker.md
 """
 from __future__ import annotations
 
+from fastapi import FastAPI
+
 from noctusai_lib.primitives.supabase_breaker import HTTP_SOURCE, source_scope
 
 
@@ -22,3 +24,12 @@ class SupabaseSourceMiddleware:
             return
         with source_scope(HTTP_SOURCE):
             await self.app(scope, receive, send)
+
+
+class SeedFastAPI(FastAPI):
+    """``FastAPI`` whose ASGI stack is ALWAYS wrapped by :class:`SupabaseSourceMiddleware` at the outermost layer, built
+    lazily at the first request — so middleware a product adds AFTER ``create_product_app`` (token audit, rate limits, ...)
+    still runs inside the `http` source instead of `unattributed`."""
+
+    def build_middleware_stack(self):
+        return SupabaseSourceMiddleware(super().build_middleware_stack())

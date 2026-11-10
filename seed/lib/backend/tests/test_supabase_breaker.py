@@ -79,8 +79,8 @@ def _fresh_singleton():
 def test_runaway_worker_trips_within_window_loop_stops_key_written_one_alert():
     b, store, alerter, clock = make_breaker()
     repo = RunawayRepo(b, clock)
-    worker = Worker(repo, worker_id="w", handlers={"transcricao": _noop}, poll_interval_seconds=0.01,
-                    idle_sleep=_no_sleep, breaker=b, held_poll_seconds=0.01)
+    worker = Worker(repo, worker_id="w", handlers={"transcricao": _noop}, poll_interval_seconds=1.0,
+                    idle_sleep=_no_sleep, breaker=b, held_poll_seconds=0.01, clock=clock)
 
     async def drive():
         stop = asyncio.Event()
@@ -104,7 +104,7 @@ def test_runaway_worker_trips_within_window_loop_stops_key_written_one_alert():
 
 
 def test_http_over_threshold_alerts_never_stops():
-    b, store, alerter, clock = make_breaker()
+    b, store, alerter, clock = make_breaker(config=BreakerConfig(daily_quota=10**9))  # isolate from the aggregate
     for _ in range(7000):
         b.record_call("http")
         clock.advance(0.01)
@@ -160,8 +160,8 @@ def test_parked_worker_resumes_after_rearm():
     b, store, alerter, clock = make_breaker(fleet_ttl_s=0.0)
     b.trip("worker:transcricao", reason="runaway")
     repo = RunawayRepo(b, clock)
-    worker = Worker(repo, worker_id="w", handlers={"transcricao": _noop}, poll_interval_seconds=0.01,
-                    idle_sleep=_no_sleep, breaker=b, held_poll_seconds=0.01)
+    worker = Worker(repo, worker_id="w", handlers={"transcricao": _noop}, poll_interval_seconds=1.0,
+                    idle_sleep=_no_sleep, breaker=b, held_poll_seconds=0.01, clock=clock)
 
     async def drive():
         stop = asyncio.Event()
@@ -187,7 +187,7 @@ def test_rearm_from_another_process_releases_only_with_the_matching_marker():
     store.data["noctus:breaker:prod-x:rearm:worker:a"] = json.dumps({"tripped_at": trip_ts, "by": "ops:ana"})
     b.check_sync("worker:a", force=True)
     assert b.hold_reason("worker:a") is None
-    assert "noctus:breaker:prod-x:rearm:worker:a" not in store.data, "the marker is consumed"
+    assert "noctus:breaker:prod-x:rearm:worker:a" in store.data, "markers expire by TTL; products never delete them"
 
 
 def test_P2_4_a_vanished_key_without_a_marker_never_releases_the_hold_it_is_rewritten_and_alerted():
@@ -301,7 +301,8 @@ def _transport_client():
 
 def test_F4_a_handler_looping_1000_calls_is_stopped_at_the_per_job_cap_not_the_type():
     b = get_breaker()
-    b.configure(slug="t", store=InMemoryBreakerStore(), alerter=RecordingAlerter(), config=BreakerConfig())
+    b.configure(slug="t", store=InMemoryBreakerStore(), alerter=RecordingAlerter(),
+                config=BreakerConfig(job_cap_enforce=True))
     b._sync_io = True
     reached = []
     inner = httpx.MockTransport(lambda req: (reached.append(1), httpx.Response(200, json=[]))[1])
@@ -321,7 +322,7 @@ def test_F4_a_handler_looping_1000_calls_is_stopped_at_the_per_job_cap_not_the_t
 
 
 def test_worker_dead_letters_a_job_over_its_call_cap_with_a_reason_and_keeps_serving():
-    b, store, alerter, clock = make_breaker()
+    b, store, alerter, clock = make_breaker(config=BreakerConfig(job_cap_enforce=True))
     repo = FakeJobRepository()
 
     async def hog(job):
@@ -368,36 +369,6 @@ def test_F5_request_middleware_sets_http_explicitly():
     assert current_source() == "unattributed"
 
 
-class BusyRepo(FakeJobRepository):
-    async def claim_next(self, *a, **kw):
-        get_breaker  # noqa: B018 -- the breaker under test is passed to the Worker; claims are productive here
-        self.breaker.record_call()
-        return await super().claim_next(*a, **kw)
-
-
-def test_busy_productive_worker_never_trips_its_loop_and_there_are_no_credits():
-    b, store, alerter, clock = make_breaker()
-    repo = BusyRepo()
-    repo.breaker = b
-
-    async def noop(job):
-        for _ in range(10):
-            b.record_call()
-
-    worker = Worker(repo, worker_id="w", handlers={"t": noop}, breaker=b, idle_sleep=_no_sleep,
-                    poll_interval_seconds=0.001)
-
-    async def drive():
-        for _ in range(500):  # a backlog drain: 500 jobs, ~11 calls each, back to back
-            await repo.enqueue(type="t", payload={})
-        for _ in range(500):
-            assert await worker.run_once() is True
-
-    asyncio.run(drive())
-    assert b.hold_reason("worker:t") is None and not store.data
-    assert not hasattr(b, "credit"), "the credit scheme is deleted"
-
-
 def test_job_of_a_held_type_is_released_not_failed_or_dead_lettered():
     b, store, alerter, clock = make_breaker()
     repo = FakeJobRepository()
@@ -434,7 +405,7 @@ def test_F10_rearm_and_manual_trip_write_a_capped_audit_row():
 
 
 def test_startup_and_unattributed_are_alert_only_never_held():
-    b, store, alerter, clock = make_breaker()
+    b, store, alerter, clock = make_breaker(config=BreakerConfig(daily_quota=10**9))
     for _ in range(1400):  # a heavy boot: recovery sweeps (the seed's own boot is ~2 calls)
         b.record_call("startup")
     assert not alerter.sent
@@ -528,13 +499,17 @@ def test_spawn_background_sets_an_explicit_alert_only_source_for_tasks_and_threa
     assert seen == ["bg:conversation-worker", "bg:conversation-worker", "bg:pos-aceite", "bg:sync-fn"]
 
 
-def test_P3_7_budget_env_above_the_ceiling_is_rejected_and_defaults_apply(caplog):
+def test_P3_7_budget_ceiling_is_a_rate_in_calls_per_hour_across_windows():
     from noctusai_lib.primitives.supabase_breaker import MAX_BUDGET_CALLS
 
-    cfg = BreakerConfig.from_env({"NOCTUS_BREAKER_BUDGETS": json.dumps({"worker:a": [[300, MAX_BUDGET_CALLS + 1]]})})
-    assert cfg.overrides == {}
-    ok = BreakerConfig.from_env({"NOCTUS_BREAKER_BUDGETS": json.dumps({"worker:a": [[300, MAX_BUDGET_CALLS]]})})
-    assert ok.overrides["worker:a"][0].max_calls == MAX_BUDGET_CALLS
+    def cfg(rules):
+        return BreakerConfig.from_env({"NOCTUS_BREAKER_BUDGETS": json.dumps({"worker:a": rules})})
+
+    assert cfg([[3600, MAX_BUDGET_CALLS + 1]]).overrides == {}
+    assert cfg([[300, MAX_BUDGET_CALLS // 12 + 1]]).overrides == {}, "5-minute rule above 20,000/h-equivalent"
+    assert cfg([[60, MAX_BUDGET_CALLS // 60 + 1]]).overrides == {}
+    assert cfg([[3600, MAX_BUDGET_CALLS]]).overrides["worker:a"][0].max_calls == MAX_BUDGET_CALLS
+    assert cfg([[300, MAX_BUDGET_CALLS // 12]]).overrides["worker:a"][0].window_s == 300
 
 
 def test_P3_5_reason_must_be_printable_text():
@@ -576,7 +551,10 @@ def test_refresh_loop_ticks_once_per_interval_and_stops():
     async def drive():
         stop = asyncio.Event()
         task = asyncio.create_task(refresh_loop(stop, interval_s=0.02))
-        await asyncio.sleep(0.15)
+        for _ in range(250):  # wait for 3 ticks (up to 5 s): independent of machine load
+            if store.calls >= 3:
+                break
+            await asyncio.sleep(0.02)
         stop.set()
         await asyncio.wait_for(task, 2)
 
@@ -635,3 +613,294 @@ def test_configure_app_adds_the_source_middleware_last_so_it_is_outermost():
     last = src.rfind("app.add_middleware(")
     assert src[last:last + 60].startswith("app.add_middleware(SupabaseSourceMiddleware"), "must be the LAST add_middleware"
     assert adds
+
+
+# --- round 5: cadence billing (P1-A), aggregate (P1-B), observe-mode job cap (P2-A), swallow-proof cap (P2-B) --------
+
+
+def _cadence_worker(b, clock, repo, handler=_noop, **kw):
+    return Worker(repo, worker_id="w", handlers={"t": handler}, breaker=b, poll_interval_seconds=1.0,
+                  held_poll_seconds=0.01, clock=clock, **kw)
+
+
+@pytest.mark.parametrize("step,jobs", [(1.0, 400), (0.5, 600)])  # 1 job/s for 400 s; 2 jobs/s for 300 s
+def test_P1_A_steady_job_arrivals_never_hold_the_worker(step, jobs):
+    b, store, alerter, clock = make_breaker()
+    repo = FakeJobRepository()
+    n = {"jobs": 0}
+
+    async def idle_sleep(delay, stop):  # a producer in the same process enqueues jobs: each enqueue WAKES the worker
+        clock.advance(step)
+        await repo.enqueue(type="t", payload={})
+        n["jobs"] += 1
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        if n["jobs"] >= jobs:
+            stop.set()
+
+    worker = _cadence_worker(b, clock, repo, idle_sleep=idle_sleep)
+
+    async def drive():
+        stop = asyncio.Event()
+        await repo.enqueue(type="t", payload={})
+        await asyncio.wait_for(worker.run_forever(stop_event=stop), 20)
+
+    asyncio.run(drive())
+    assert b.hold_reason("worker:t") is None, "job arrival volume must never park a Worker"
+    assert b.count("worker:t", 3600) == 0, "every empty poll followed work or a wake: all free"
+    assert not store.data
+
+
+def test_P1_A_a_claim_loop_with_no_sleep_still_trips():
+    b, store, alerter, clock = make_breaker()
+    repo = RunawayRepo(b, clock)
+    worker = _cadence_worker(b, clock, repo, idle_sleep=_no_sleep)
+
+    async def drive():
+        stop = asyncio.Event()
+        task = asyncio.create_task(worker.run_forever(stop_event=stop))
+        for _ in range(250):  # wait for the trip (up to 5 s) instead of a fixed sleep: machine-load independent
+            if b.hold_reason("worker:t") is not None:
+                break
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(0.05)
+        stop.set()
+        await asyncio.wait_for(task, 2)
+
+    asyncio.run(drive())
+    assert b.hold_reason("worker:t") is not None and repo.claims <= 310
+
+
+def test_P1_A_claim_errors_with_the_error_backoff_for_10_minutes_never_hold():
+    b, store, alerter, clock = make_breaker()
+
+    class DownRepo(FakeJobRepository):
+        calls = 0
+
+        async def claim_next(self, *a, **kw):
+            DownRepo.calls += 1
+            b.record_call()  # each failed claim still makes a Supabase call
+            raise ConnectionError("supabase outage")
+
+    async def idle_sleep(delay, stop):
+        clock.advance(delay)  # the loop's own backoff is what advances time
+        if clock() - 1000.0 >= 600:
+            stop.set()
+
+    worker = _cadence_worker(b, clock, DownRepo(), idle_sleep=idle_sleep)
+
+    async def drive():
+        stop = asyncio.Event()
+        await asyncio.wait_for(worker.run_forever(stop_event=stop), 20)
+
+    asyncio.run(drive())
+    assert b.hold_reason("worker:t") is None, "an outage must never trip every Worker fleet-wide"
+    assert DownRepo.calls < 60, f"error backoff must bound the retries ({DownRepo.calls} claims in 10 min)"
+
+
+def test_P1_A_the_first_empty_poll_after_work_or_a_wake_is_free_back_to_back_empties_are_not():
+    b, store, alerter, clock = make_breaker()
+    worker = _cadence_worker(b, clock, FakeJobRepository())
+    worker._bill_empty_poll(b)  # boot: free
+    clock.advance(0.2)
+    worker._bill_empty_poll(b)  # second empty 0.2s after the first, no work/wake between: billed
+    assert b.count("worker:t", 60) == 1
+    worker._poll_free = True  # work or a wake happened
+    clock.advance(0.2)
+    worker._bill_empty_poll(b)
+    assert b.count("worker:t", 60) == 1
+    clock.advance(1.5)  # honouring the declared cadence: free
+    worker._bill_empty_poll(b)
+    assert b.count("worker:t", 60) == 1
+
+
+def test_P1_A_a_future_dated_enqueue_does_not_wake_the_worker():
+    from datetime import datetime, timedelta, timezone
+
+    from noctusai_lib.domain.jobs import wake
+
+    async def drive():
+        w = wake.register(asyncio.get_running_loop(), ["t"])
+        repo = FakeJobRepository()
+        await repo.enqueue(type="t", payload={}, scheduled_for=datetime.now(timezone.utc) + timedelta(hours=1))
+        await asyncio.sleep(0.01)
+        future_woke = w.event.is_set()
+        await repo.enqueue(type="t", payload={})
+        await asyncio.sleep(0.01)
+        now_woke = w.event.is_set()
+        wake.unregister(w)
+        return future_woke, now_woke
+
+    assert asyncio.run(drive()) == (False, True)
+
+
+def test_P1_B_the_incident_shape_spread_over_several_loops_raises_the_aggregate_alert():
+    b, store, alerter, clock = make_breaker()
+    sources = ["bg:a", "job:b", "worker-x", "bg:c", "job:d", "bg:e"]  # each ~1,900/h: UNDER every per-source threshold
+    total = 11_400
+    for i in range(total):
+        b.record_call(sources[i % 6])
+        clock.advance(3600 / total)
+    subjects = [s for s, _ in alerter.sent]
+    assert any("*" in s for s in subjects), subjects
+    assert not any(src in s for s in subjects for src in sources if src != "*"), "no per-source alert: only the aggregate"
+    body = next(body for s, body in alerter.sent if "*" in s)
+    assert "quota" in body and "projected daily" in body
+
+
+def test_P1_B_alert_only_defaults_are_2000_per_hour_and_the_daily_quota_is_configurable():
+    from noctusai_lib.primitives.supabase_breaker import DEFAULT_ALERT_RULES, DEFAULT_DAILY_QUOTA
+
+    assert DEFAULT_ALERT_RULES[-1].max_calls == 2000 and DEFAULT_ALERT_RULES[-1].window_s == 3600
+    cfg = BreakerConfig.from_env({"NOCTUS_SUPABASE_DAILY_QUOTA": "100000", "NOCTUS_BREAKER_AGGREGATE_SHARE": "0.25"})
+    assert cfg.daily_quota == 100000 and cfg.aggregate_share == 0.25 and DEFAULT_DAILY_QUOTA == 500_000
+    assert BreakerConfig.from_env({"NOCTUS_BREAKER_AGGREGATE_SHARE": "7"}).aggregate_share == 0.5
+
+
+def test_P1_B_the_fleet_key_refuses_bg_only_on_explicit_opt_in():
+    for opt_in, held in ((False, False), (True, True)):
+        b, store, alerter, clock = make_breaker(config=BreakerConfig(fleet_holds_bg=opt_in), fleet_ttl_s=0.0)
+        store.data[BREAKER_FLEET_KEY] = json.dumps({"reason": "402", "by": "offhost-watchdog"})
+        b.refresh()
+        assert b.is_open("bg:x") is held
+        assert b.is_open("http") is False and b.is_open("startup") is False
+
+
+def test_P2_A_the_per_job_cap_is_observe_mode_by_default_alert_at_cap_dead_letter_at_the_ceiling():
+    b, store, alerter, clock = make_breaker()
+    with job_scope(100) as budget:
+        for _ in range(150):
+            b.record_call("job:t")
+            b.guard("job:t")  # past the cap, below the hard ceiling: NOT refused
+    assert budget.hard == 20_000 and not budget.over
+    assert sum("job-cap" in s for s, _ in alerter.sent) == 1, "one alert, at the cap"
+    b2, *_ = make_breaker(config=BreakerConfig(job_cap_enforce=True))
+    assert b2.job_hard_limit(100) == 100 and b.job_hard_limit(100) == 20_000
+
+
+def test_P2_A_per_type_caps_map():
+    b, store, alerter, clock = make_breaker(config=BreakerConfig(job_cap_enforce=True))
+    repo = FakeJobRepository()
+    seen = {}
+
+    async def h(job):
+        seen[job.type] = True
+        for _ in range(30):
+            b.record_call()
+            b.guard()
+
+    w = Worker(repo, worker_id="w", handlers={"small": h, "big": h}, breaker=b, idle_sleep=_no_sleep,
+               job_call_cap=1000, job_call_caps={"small": 10})
+
+    async def drive():
+        await repo.enqueue(type="small", payload={})
+        await repo.enqueue(type="big", payload={})
+        await w.run_once()
+        await w.run_once()
+
+    asyncio.run(drive())
+    states = {j.type: j.status.value for j in repo._jobs.values()}
+    assert states == {"small": "dead_letter", "big": "completed"}
+
+
+def test_P2_B_a_handler_that_swallows_the_cap_exception_is_still_dead_lettered():
+    for variant in ("except_jobbudget", "except_exception"):
+        b, store, alerter, clock = make_breaker(config=BreakerConfig(job_cap_enforce=True))
+        repo = FakeJobRepository()
+
+        async def sneaky(job, variant=variant):
+            for _ in range(30):
+                try:
+                    b.record_call()
+                    b.guard()
+                except JobBudgetExceeded:
+                    if variant == "except_jobbudget":
+                        pass  # swallowed, handler returns normally
+                except Exception:
+                    pass
+
+        w = Worker(repo, worker_id="w", handlers={"t": sneaky}, breaker=b, idle_sleep=_no_sleep, job_call_cap=10)
+
+        async def drive():
+            await repo.enqueue(type="t", payload={})
+            await w.run_once()
+
+        asyncio.run(drive())
+        (job,) = repo._jobs.values()
+        assert job.status.value == "dead_letter", variant
+
+
+def test_P2_B_spawned_work_does_not_inherit_the_per_job_budget_or_tally():
+    from noctusai_lib.primitives.background import run_in_thread, spawn_background
+    from noctusai_lib.primitives.supabase_breaker import _JOB, _TALLY, call_tally
+
+    seen = []
+
+    async def drive():
+        with job_scope(5), call_tally():
+            async def coro():
+                seen.append((_JOB.get(), _TALLY.get()))
+
+            await spawn_background("c", coro())
+            t = run_in_thread("t", lambda: seen.append((_JOB.get(), _TALLY.get())))
+            t.join(2)
+
+    asyncio.run(drive())
+    assert seen == [(None, None), (None, None)]
+
+
+def test_P3_2_marker_survives_a_deploy_overlap_without_false_vanished_alerts():
+    store, alerter, clock = InMemoryBreakerStore(), RecordingAlerter(), Clock()
+    mk = lambda: Breaker(slug="p", store=store, alerter=alerter, clock=clock, wall=clock, sync_io=True, fleet_ttl_s=1.0)
+    a, b = mk(), mk()  # old container (a) and new container (b) of the same product
+    a.trip("worker:t", reason="runaway")
+    clock.advance(30)
+    b.trip("worker:t", reason="runaway again")  # b's own trip overwrites the key with ITS tripped_at
+    clock.advance(30)
+    key_ts = json.loads(store.data["noctus:breaker:p:worker:t"])["tripped_at"]
+    for br in (a, b):
+        br.check_sync("worker:t", force=True)
+    # the MCP re-arm: marker (TTL, never deleted by a product) carrying the PERSISTED key's tripped_at, then DEL
+    store.data["noctus:breaker:p:rearm:worker:t"] = json.dumps({"tripped_at": key_ts, "by": "ops:ana"})
+    del store.data["noctus:breaker:p:worker:t"]
+    clock.advance(30)
+    for br in (a, b):
+        br.check_sync("worker:t", force=True)
+    assert a.hold_reason("worker:t") is None and b.hold_reason("worker:t") is None
+    assert not any("VANISHED" in s for s, _ in alerter.sent)
+    assert "noctus:breaker:p:rearm:worker:t" in store.data, "markers expire by TTL; products never delete them"
+
+
+def test_P3_3_an_in_memory_only_trip_is_repersisted_when_redis_recovers():
+    b, store, alerter, clock = make_breaker(fleet_ttl_s=0.0)
+    store.down = True
+    b.trip("worker:a", reason="runaway")
+    assert not b._trips["worker:a"].persisted
+    store.down = False
+    b.check_sync("worker:a", force=True)
+    assert b._trips["worker:a"].persisted and "noctus:breaker:prod-x:worker:a" in store.data
+
+
+def test_P3_5_the_seed_app_wraps_the_whole_stack_so_product_middleware_added_later_runs_inside_http():
+    from fastapi.testclient import TestClient
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    from noctusai_lib.api.supabase_source import SeedFastAPI
+    from noctusai_lib.primitives.supabase_breaker import current_source
+
+    seen = []
+
+    class ProductTokenAudit(BaseHTTPMiddleware):  # a product adds this AFTER create_product_app
+        async def dispatch(self, request, call_next):
+            seen.append(current_source())
+            return await call_next(request)
+
+    app = SeedFastAPI()
+    app.add_middleware(ProductTokenAudit)
+
+    @app.get("/x")
+    def _x():
+        return {}
+
+    TestClient(app).get("/x")
+    assert seen == ["http"]

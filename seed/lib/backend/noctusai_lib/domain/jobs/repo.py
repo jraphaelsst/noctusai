@@ -272,7 +272,8 @@ class FakeJobRepository:
         self._jobs[job.id] = job
         if dedupe_key is not None:
             self._dedupe_index[dedupe_key] = job.id
-        notify_enqueued(job.type)
+        if job.scheduled_for is None or job.scheduled_for <= now:  # a future-dated job is not claimable yet: no wake
+            notify_enqueued(job.type)
         return job
 
     async def claim_next(
@@ -670,7 +671,8 @@ class RealSupabaseJobRepository:
         # A job just landed in this process: the cached queue_stats is stale
         # (claim gates must see it) and any in-process worker should wake.
         self._stats_cache.clear()
-        notify_enqueued(job.type)
+        if job.scheduled_for is None or job.scheduled_for <= job.created_at:  # future-dated: not claimable, no wake
+            notify_enqueued(job.type)
         return job
 
     async def claim_next(

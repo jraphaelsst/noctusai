@@ -267,3 +267,47 @@ def test_P1_3_the_steward_backstop_lives_inside_the_tool_function_not_only_the_m
         out = mod.supabase_breaker(action, source="worker:a", product="p", reason="why", confirm=confirm,
                                    executor=lambda **kw: {"x": 1})
         assert out.get("status") != "refused_not_steward"
+
+
+# --- round 5: marker TTL, auth detection by rc + stderr only -------------------------------------------------------
+
+
+def test_marker_is_written_with_a_ttl_and_the_persisted_keys_tripped_at():
+    ops = FakeRedisOps({"noctus:breaker:p:worker:a": json.dumps({"tripped_at": "T9"})})
+    mod._default_executor(action="rearm", source="worker:a", product="p", reason="fixed", by="ana", confirm=True,
+                          ssh_host="h", ops=ops)
+    marker_key = "noctus:breaker:p:rearm:worker:a"
+    assert json.loads(ops.data[marker_key])["tripped_at"] == "T9" and ops.ttls[marker_key] == mod.MARKER_TTL_S
+
+
+def test_P3_4_vps_set_with_ttl_sends_EX():
+    sent: list[str] = []
+    ops = VpsRedisOps("h", runner=lambda h, c: (sent.append(c), (0, "ACL_UP\nPASS_OK\n" if c.startswith("if docker ps") else "OK\n", ""))[1])
+    ops.set("k", "v", ttl=86400)
+    assert sent[-1].endswith("set k v EX 86400")
+
+
+def test_P3_4_a_product_written_value_that_says_NOAUTH_is_data_not_an_auth_failure():
+    value = json.dumps({"reason": "NOAUTH WRONGPASS NOPERM", "by": "auto"})
+    run, _ = _runner(has_pass=True, out=json.dumps([value]))
+    got = VpsRedisOps("h", runner=run).mget(["k"])
+    assert got == [value]
+
+
+def test_P3_4_auth_errors_are_read_from_rc_and_stderr():
+    def make(rc, out, err):
+        def run(host, cmd):
+            if cmd.startswith("if docker ps"):
+                return (0, "ACL_UP\nPASS_OK\n", "")
+            return (rc, out, err)
+        return VpsRedisOps("h", runner=run)
+
+    for rc, out, err, marker in ((1, "", "NOAUTH Authentication required.", "NOAUTH"),
+                                 (0, "[]", "WRONGPASS invalid username-password pair", "WRONGPASS"),
+                                 (1, "NOPERM no permissions", "", "NOPERM")):
+        try:
+            make(rc, out, err).mget(["k"])
+        except mod.RedisOpsError as exc:
+            assert marker in str(exc)
+        else:
+            raise AssertionError(marker)

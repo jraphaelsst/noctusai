@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -104,19 +105,28 @@ class Worker:
         breaker: Breaker | None = None,
         held_poll_seconds: float = 15.0,
         job_call_cap: int = DEFAULT_JOB_CALL_CAP,
+        job_call_caps: dict[str, int] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._repo = repo
-        # Supabase request breaker (2026-11-10, redesigned round 4). Two separate things are counted:
-        #  (a) LOOP calls: the claim + claim-gate calls of an EMPTY poll (nothing claimed) are billed to the holdable
-        #      source `worker:<job types>` — the incident shape (idle polling). Exceeding its budget (300/5 min,
-        #      2,000/h) PARKS the loop (zero Supabase calls) until a human re-arms. A poll that claims a job is
-        #      productive and bills nothing: there are NO credits.
-        #  (b) JOB calls: everything one job's handler does is capped per JOB (`job_call_cap`, absolute): past it the
-        #      job is dead-lettered with the reason — never the type, never the other tenants.
+        # Supabase request breaker (2026-11-10; cadence billing, round 5). Two separate things are watched:
+        #  (a) LOOP CADENCE: the loop is billed (to the holdable `worker:<job types>`) ONLY for an empty poll that
+        #      violates its declared cadence — an empty claim less than `poll_interval_seconds` after the previous
+        #      empty claim, with no wake and no processed job in between. The first empty poll after a processed job
+        #      or a wake is FREE, and so is a failed claim when the loop applied its error backoff. So job arrival
+        #      volume (even 1 job/s for an hour) can never park a Worker; a loop that polls FASTER than its cadence
+        #      (the incident: no backoff) trips at 300 billed polls / 5 min or 2,000 / h and PARKS until a human re-arms.
+        #  (b) JOB CALLS: per-job cap (`job_call_cap`, per-type `job_call_caps`): in OBSERVE mode (default) the cap
+        #      only alerts and the job is dead-lettered at MAX_BUDGET_CALLS; `breaker.job_cap_enforce` flips it.
         # All other attribution (claim phase, handlers, bookkeeping) is alert-only. `breaker=None` -> process breaker.
         # KB § PATTERNS/backend/supabase-request-breaker.md
         self._breaker = breaker
         self._job_call_cap = job_call_cap
+        self._job_call_caps = dict(job_call_caps or {})
+        self._clock = clock
+        self._last_empty_at: float | None = None
+        self._poll_free = True  # the first poll (boot) and any poll after work / a wake / an error backoff is free
+        self._last_poll_calls = 0
         self._held_poll = held_poll_seconds
         self._breaker_wake: asyncio.Event | None = None
         # Pause switch, consulted before EVERY claim: `False` ⇒ claim
@@ -162,7 +172,6 @@ class Worker:
         """Claim one job and dispatch it. Returns True if a job was
         processed (regardless of success/failure), False if the queue
         was empty (or the claim gate is closed)."""
-        breaker = self._breaker or get_breaker()
         job = None
         with call_tally() as tally, source_scope("claim:" + ",".join(self._job_types)):
             try:
@@ -173,8 +182,7 @@ class Worker:
                         lease_seconds=self._lease_seconds,
                     )
             finally:
-                if job is None:  # an EMPTY poll (or a closed gate / failed claim): bill the loop what it cost
-                    breaker.record_call(self.breaker_source, n=max(1, tally.n))
+                self._last_poll_calls = tally.n  # `run_forever` bills a cadence-violating empty poll from this
         if job is None:
             return False
 
@@ -234,6 +242,7 @@ class Worker:
         """
         logger.info("worker.start worker_id=%s", self._worker_id)
         delay = self._poll_interval
+        err_delay: float | None = None
         # In-process enqueues of a type this worker serves cut the idle
         # sleep (see `jobs/wake.py`); cross-process producers wait <= cap.
         loop = asyncio.get_running_loop()
@@ -262,17 +271,31 @@ class Worker:
                         self._waker.event.clear()
                     try:
                         processed = await self.run_once()
+                        err_delay = None
                     except BreakerOpen:
                         processed = False  # the claim itself was refused: the source is held now
+                    except Exception:  # noqa: BLE001 -- an outage must back off, never kill the loop nor bill the breaker
+                        err_delay = (
+                            self._poll_interval if err_delay is None
+                            else min(err_delay * self._idle_multiplier, self._max_idle_interval)
+                        )
+                        logger.exception("worker.claim_failed worker_id=%s backing off %.1fs", self._worker_id, err_delay)
+                        self._poll_free = True  # the backoff IS the cadence: the next empty poll is free
+                        self._last_empty_at = None
+                        await self._idle_sleep(err_delay, stop_event)
+                        continue
                     hold = await self._hold(breaker)
                     if hold:
                         continue  # tripped (or fleet-held) while that job ran: it finished; now stop claiming
                     if processed:
                         delay = self._poll_interval
+                        self._poll_free = True  # the first empty poll after work is free
                         continue
+                    self._bill_empty_poll(breaker)
                     await self._idle_sleep(delay, stop_event)
                     if self._waker is not None and self._waker.event.is_set():
                         delay = self._poll_interval
+                        self._poll_free = True  # woken by an enqueue: the next empty poll is free
                     else:
                         delay = min(delay * self._idle_multiplier, self._max_idle_interval)
         finally:
@@ -283,6 +306,16 @@ class Worker:
                 _wake.unregister(self._waker)
                 self._waker = None
             logger.info("worker.stop worker_id=%s", self._worker_id)
+
+    def _bill_empty_poll(self, breaker: Breaker) -> None:
+        """Bill the loop ONLY for a cadence violation: this empty poll came less than `poll_interval_seconds` after the
+        previous empty one with nothing (work, wake, error backoff) in between."""
+        now = self._clock()
+        free, self._poll_free = self._poll_free, False
+        last, self._last_empty_at = self._last_empty_at, now
+        if free or last is None or now - last >= self._poll_interval:
+            return
+        breaker.record_call(self.breaker_source, n=max(1, self._last_poll_calls))
 
     async def _hold(self, breaker: Breaker, *, force: bool = False) -> dict | None:
         """The first hold among the loop's source and every job-type source it serves (a held TYPE parks the loop:
@@ -389,6 +422,14 @@ class Worker:
         except asyncio.CancelledError:
             raise
 
+    async def _dead_letter_over_cap(self, job: Job, budget: Any) -> bool:
+        """The job made more Supabase calls than its hard limit, however its handler ended: dead-letter it."""
+        logger.error("worker.job_call_cap job_id=%s type=%s calls=%d hard=%d", job.id, job.type, budget.count, budget.hard)
+        await self._repo.mark_failed(
+            job.id, f"supabase call cap exceeded: {budget.count} calls >= {budget.hard}", dead_letter=True
+        )
+        return False
+
     async def _dispatch(self, job: Job, handler: JobHandler) -> bool:
         """Run the handler (with a background lease-heartbeat) and
         translate its outcome into repo calls.
@@ -409,11 +450,14 @@ class Worker:
           lost on shutdown, then re-raise so the loop unwinds.
         """
         heartbeat_task = asyncio.ensure_future(self._heartbeat_loop(job.id))
+        budget = None
         try:
             try:
                 # Each job runs under an alert-only `job:<type>` source and its own ABSOLUTE call cap; the bookkeeping
                 # calls below run outside the job scope, so finishing a job is never refused by its own cap.
-                with source_scope(f"job:{job.type}"), job_scope(self._job_call_cap):
+                cap = self._job_call_caps.get(job.type, self._job_call_cap)
+                hard = (self._breaker or get_breaker()).job_hard_limit(cap)
+                with source_scope(f"job:{job.type}"), job_scope(cap, hard=hard) as budget:
                     await handler(job)
             except JobBudgetExceeded as exc:
                 logger.error("worker.job_call_cap job_id=%s type=%s %s", job.id, job.type, exc)
@@ -454,6 +498,8 @@ class Worker:
                 await self._repo.reschedule(job.id, delay_s=exc.delay_s)
                 return True
             except Exception as exc:
+                if budget is not None and budget.over:  # a handler's own `except` can swallow JobBudgetExceeded: not here
+                    return await self._dead_letter_over_cap(job, budget)
                 logger.warning(
                     "worker.retry job_id=%s type=%s retry_count=%d error=%s",
                     job.id,
@@ -485,7 +531,9 @@ class Worker:
                     )
                 raise
 
-            # Success path.
+            # Success path — unless the handler ran past its HARD call limit and swallowed the refusal itself.
+            if budget is not None and budget.over:
+                return await self._dead_letter_over_cap(job, budget)
             await self._repo.mark_completed(job.id)
             return True
         finally:

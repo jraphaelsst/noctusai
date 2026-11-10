@@ -22,7 +22,7 @@ import logging
 import threading
 from typing import Any, Callable, Optional
 
-from noctusai_lib.primitives.supabase_breaker import source_scope
+from noctusai_lib.primitives.supabase_breaker import detach_context, source_scope
 from noctusai_lib.primitives.tasks import schedule_coro
 
 __all__ = ["run_in_thread", "spawn_background"]
@@ -39,6 +39,7 @@ def run_in_thread(name: str, fn: Callable[..., Any], *args: Any, daemon: bool = 
 
     def _run() -> None:
         try:
+            detach_context()  # the spawner's per-job budget / call tally are not this thread's
             with source_scope(f"bg:{name}"):
                 fn(*args, **kwargs)
         except Exception:  # noqa: BLE001 -- logged loudly; a detached thread has no caller to raise to
@@ -57,6 +58,7 @@ def spawn_background(name: str, target: Any, *args: Any, logger: Optional[loggin
         coro = target if inspect.iscoroutine(target) else target(*args, **kwargs)
 
         async def _scoped() -> Any:
+            detach_context()
             with source_scope(f"bg:{name}"):
                 return await coro
 

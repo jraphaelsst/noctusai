@@ -35,6 +35,7 @@ AUDIT_KEY = f"{PREFIX}audit"
 # parity with noctusai_lib.primitives.supabase_breaker.BREAKER_SOURCE_RE (a test pins it); `fleet` is handled apart
 _SOURCE_RE = re.compile(r"^(?:worker|scheduler):[A-Za-z0-9_.,:\-]{1,100}$")
 _REASON_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,300}$")  # parity with BREAKER_REASON_RE
+MARKER_TTL_S = 86_400  # a re-arm marker is read by every process holding the trip: it expires, it is never deleted
 MAX_INDEX_MEMBERS = 200
 MAX_VALUE_CHARS = 500
 AUDIT_CAP = 1000
@@ -49,7 +50,7 @@ class RedisOps(Protocol):
 
     def mget(self, keys: list[str]) -> list[str | None]: ...
 
-    def set(self, key: str, value: str) -> None: ...
+    def set(self, key: str, value: str, ttl: int | None = None) -> None: ...
 
     def delete(self, key: str) -> None: ...
 
@@ -70,6 +71,7 @@ class FakeRedisOps:
         self.data = dict(data or {})
         self.audit: list[str] = []
         self.removed_from_index: set[str] = set()
+        self.ttls: dict[str, int | None] = {}
 
     def smembers(self, key: str) -> list[str]:
         prefix = key.removesuffix("index")
@@ -85,8 +87,9 @@ class FakeRedisOps:
     def mget(self, keys: list[str]) -> list[str | None]:
         return [self.data.get(k) for k in keys]
 
-    def set(self, key: str, value: str) -> None:
+    def set(self, key: str, value: str, ttl: int | None = None) -> None:
         self.data[key] = value
+        self.ttls[key] = ttl
         self.removed_from_index.discard(key)
 
     def delete(self, key: str) -> None:
@@ -152,11 +155,21 @@ class VpsRedisOps:
             container = self._container or REDIS_PLAIN_CONTAINER
             cmd = f"docker exec {shlex.quote(container)} redis-cli {quoted}"
         rc, out, err = self._run(cmd)
-        text = f"{out}\n{err}"
-        denied = next((m for m in _AUTH_ERRORS if m in text), None)
-        if rc != 0 or denied or "ERR" in out.split("\n", 1)[0][:4]:
-            raise RedisOpsError(f"redis-cli {args[0]} failed (rc={rc}{', ' + denied if denied else ''}): "
-                                f"{(err or out).strip()[:300]}")
+        # Detection uses rc + STDERR only: stdout carries product-written values (a value saying "NOAUTH" must not be
+        # read as an auth failure, nor hide one). A non-zero rc may carry the redis error on stdout; a zero rc with
+        # non-JSON stdout is judged by what that stdout STARTS with.
+        head = (err or "").strip() if err.strip() else (out.strip()[:200] if rc != 0 else "")
+        if rc != 0:
+            denied = next((m for m in _AUTH_ERRORS if m in head), None)
+            raise RedisOpsError(f"redis-cli {args[0]} failed (rc={rc}{', ' + denied if denied else ''}): {head[:300]}")
+        denied = next((m for m in _AUTH_ERRORS if m in (err or "")), None)
+        if denied:
+            raise RedisOpsError(f"redis-cli {args[0]} failed ({denied}): {err.strip()[:300]}")
+        if args[0] != "--json":  # writers answer OK / an integer: an error reply with rc 0 is judged by its START only
+            lead = out.lstrip()
+            bad = next((m for m in (*_AUTH_ERRORS, "ERR ", "(error)", "WRONGTYPE") if lead.startswith(m)), None)
+            if bad:
+                raise RedisOpsError(f"redis-cli {args[0]} failed ({bad}): {lead[:200]}")
         return out
 
     def _json(self, *args: str):
@@ -164,7 +177,11 @@ class VpsRedisOps:
         try:
             return json.loads(out)
         except ValueError as exc:
-            raise RedisOpsError(f"redis-cli {args[0]} returned unparseable output: {out[:120]!r}") from exc
+            lead = out.strip()
+            denied = next((m for m in _AUTH_ERRORS if lead.startswith(m) or lead.startswith("(error) " + m)), None)
+            raise RedisOpsError(
+                f"redis-cli {args[0]} returned unparseable output{' (' + denied + ')' if denied else ''}: {lead[:120]!r}"
+            ) from exc
 
     def get(self, key: str) -> str | None:
         return self.mget([key])[0]
@@ -184,8 +201,8 @@ class VpsRedisOps:
             raise RedisOpsError("redis-cli mget returned an unexpected shape")
         return [None if v is None else str(v) for v in values]
 
-    def set(self, key: str, value: str) -> None:
-        self._cli("set", key, value)
+    def set(self, key: str, value: str, ttl: int | None = None) -> None:
+        self._cli("set", key, value, *(("EX", str(ttl)) if ttl else ()))
 
     def delete(self, key: str) -> None:
         self._cli("del", key)
@@ -314,7 +331,7 @@ def _default_executor(*, action: str, source: str, product: str, reason: str, by
                 parsed = _parse(current)
                 tripped_at = parsed.get("tripped_at") if isinstance(parsed, dict) else None
                 ops.set(f"{PREFIX}{product}:rearm:{source}", json.dumps(
-                    {"tripped_at": tripped_at, "by": f"ops:{who}", "reason": reason, "at": when}))
+                    {"tripped_at": tripped_at, "by": f"ops:{who}", "reason": reason, "at": when}), ttl=MARKER_TTL_S)
             ops.delete(key)
             if source != "fleet":
                 ops.srem(f"{PREFIX}{product}:index", key)  # keep the index honest (ops has +srem, not +scan)
