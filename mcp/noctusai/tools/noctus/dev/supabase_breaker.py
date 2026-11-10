@@ -230,6 +230,32 @@ class VpsRedisOps:
         return {k: sorted(v) for k, v in result.items()}
 
 
+    def mget(self, keys: list[str]) -> list[str | None]:
+        """ONE ssh, ONE MGET (JSON array: nil stays distinguishable from an empty / multi-line value)."""
+        if not keys:
+            return []
+        values = self._json("mget", *keys)
+        if not isinstance(values, list) or len(values) != len(keys):
+            raise RedisOpsError("redis-cli mget returned an unexpected shape")
+        return [None if v is None else str(v) for v in values]
+
+    def set(self, key: str, value: str, ttl: int | None = None) -> None:
+        self._cli("set", key, value, *(("EX", str(ttl)) if ttl else ()))
+
+    def delete(self, key: str) -> None:
+        self._cli("del", key)
+
+    def srem(self, key: str, member: str) -> None:
+        self._cli("srem", key, member)
+
+    def append_audit(self, key: str, value: str, cap: int) -> None:
+        self._cli("rpush", key, value)
+        try:
+            self._cli("ltrim", key, str(-cap), "-1")  # capped audit list
+        except RedisOpsError as exc:  # the row IS written; a denied/failed cap must be loud, never undo a re-arm
+            self.warnings.append(f"audit cap (ltrim) not applied: {exc}")
+
+
 def _live_slugs() -> list[str]:
     """The catalog-live product slugs (deploy/fleet/build-scope.txt, derived — never a hand list) + core."""
     root = Path(__file__).resolve().parents[5]
