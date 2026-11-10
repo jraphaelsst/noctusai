@@ -153,7 +153,9 @@ def test_rearm_restarts_source_and_requires_a_reason():
     out = b.rearm("worker:a", by="ana", reason="idle backoff deployed, verified")
     assert out["ok"] and b.hold_reason("worker:a") is None
     assert "noctus:breaker:prod-x:worker:a" not in store.data
-    assert json.loads(store.data["noctus:breaker:prod-x:rearm:worker:a"])["by"] == "ana", "the re-arm marker is left"
+    assert "noctus:breaker:prod-x:rearm:worker:a" not in store.data, "rearm:* is READ-ONLY for a product identity"
+    row = json.loads(store.audit[-1])
+    assert row["op"] == "rearm" and row["tripped_at"] and row["key"] == "noctus:breaker:prod-x:worker:a"
 
 
 def test_parked_worker_resumes_after_rearm():
@@ -904,3 +906,31 @@ def test_P3_5_the_seed_app_wraps_the_whole_stack_so_product_middleware_added_lat
 
     TestClient(app).get("/x")
     assert seen == ["http"]
+
+
+def test_round6_a_route_rearm_in_one_process_releases_the_others_via_the_audit_row_without_a_marker():
+    store, alerter, clock = InMemoryBreakerStore(), RecordingAlerter(), Clock()
+    mk = lambda: Breaker(slug="p", store=store, alerter=alerter, clock=clock, wall=clock, sync_io=True, fleet_ttl_s=1.0)
+    a, b = mk(), mk()
+    a.trip("worker:t", reason="runaway")
+    clock.advance(30)
+    b.check_sync("worker:t", force=True)  # b observes the persisted key as a remote hold... then both hold
+    b.trip("worker:t", reason="runaway")  # (b trips on its own too: two local holds on one key)
+    clock.advance(30)
+    a.rearm("worker:t", by="ana", reason="fixed and verified")  # the platform-admin route path: DEL + audit row, NO marker
+    assert not any(k.startswith("noctus:breaker:p:rearm:") for k in store.data)
+    clock.advance(30)
+    b.check_sync("worker:t", force=True)
+    assert b.hold_reason("worker:t") is None, "the audit row (matching tripped_at) releases the other process"
+    assert not any("VANISHED" in s for s, _ in alerter.sent)
+
+
+def test_round6_an_audit_row_for_a_different_trip_does_not_release_a_vanished_hold():
+    b, store, alerter, clock = make_breaker(fleet_ttl_s=1.0)
+    b.trip("worker:t", reason="runaway")
+    clock.advance(30)
+    store.audit.append(json.dumps({"op": "rearm", "key": "noctus:breaker:prod-x:worker:t",
+                                   "tripped_at": "1999-01-01T00:00:00+00:00"}))
+    store.data.clear()
+    b.check_sync("worker:t", force=True)
+    assert b.hold_reason("worker:t") is not None and any("VANISHED" in s for s, _ in alerter.sent)

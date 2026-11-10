@@ -144,7 +144,7 @@ def test_acl_branch_authenticates_as_ops_with_the_secret_read_on_the_vps_never_o
     run, sent = _runner(has_pass=True)
     VpsRedisOps("h", runner=run).set("noctus:breaker:p:worker:a", "{}")
     cmd = sent[-1]
-    assert cmd.startswith(f'REDISCLI_AUTH="$(cat {OPS_PASS})" docker exec -e REDISCLI_AUTH noctus-redis-acl '
+    assert cmd.startswith(f'REDISCLI_AUTH="$(cat {OPS_PASS})" docker exec -e REDISCLI_AUTH noctus-breaker-redis '
                           "redis-cli --no-auth-warning --user ops set ")
     assert "-a " not in cmd and "--pass" not in cmd.replace("--no-auth-warning", ""), "the secret is never an argument"
     assert sent[0].startswith("if docker ps") and OPS_PASS in sent[0]
@@ -209,7 +209,7 @@ def test_P3_2_a_running_acl_redis_without_a_readable_ops_pass_never_falls_back_t
     except mod.RedisOpsError as exc:
         assert "refusing to fall back" in str(exc)
     else:
-        raise AssertionError("a running noctus-redis-acl must force the ACL path")
+        raise AssertionError("a running noctus-breaker-redis must force the ACL path")
     assert not any("redis-cli" in c for c in sent), "no redis command may have been sent unauthenticated"
 
 

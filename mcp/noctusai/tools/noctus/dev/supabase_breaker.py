@@ -104,7 +104,7 @@ class FakeRedisOps:
 
 
 OPS_PASS_FILE = "/opt/noctus/noctusai/deploy/fleet/redis-auth/ops.pass"
-REDIS_ACL_CONTAINER = "noctus-redis-acl"
+REDIS_ACL_CONTAINER = "noctus-breaker-redis"  # the DEDICATED breaker Redis (feat/redis-acl-lockdown)
 REDIS_PLAIN_CONTAINER = "noctus-redis"
 _AUTH_ERRORS = ("NOAUTH", "WRONGPASS", "NOPERM")
 
@@ -113,7 +113,7 @@ class VpsRedisOps:
     """`redis-cli` in the Redis container over the shared throttled + circuit-broken SSH chokepoint.
 
     Branch (probed once per instance): when ``ops.pass`` is readable on the VPS the fleet Redis is behind ACLs
-    (feat/redis-acl-lockdown) -> container ``noctus-redis-acl`` and the ``ops`` user, the secret read ON THE VPS into
+    (feat/redis-acl-lockdown) -> container ``noctus-breaker-redis`` and the ``ops`` user, the secret read ON THE VPS into
     ``REDISCLI_AUTH`` (never sent over SSH, never on argv). Otherwise today's unauthenticated ``noctus-redis``. A probe
     that cannot reach the host raises: an ssh failure must never silently select the unauthenticated Redis.
     Key enumeration never SCANs (the ops ACL has no ``+scan``): per-product index sets ``noctus:breaker:<slug>:index``."""

@@ -402,9 +402,13 @@ def create_product_app(
         store=make_breaker_store(getattr(settings, "redis_url", None), use_fake=_under_pytest()),
         alerter=make_breaker_alerter(use_fake=_under_pytest()),
     )
-    if not _under_pytest() and not (getattr(settings, "redis_url", None) or os.environ.get("REDIS_URL")):
-        # No Redis: trips are in-memory only and the fleet key cannot be read. One alert + /api/health `breaker_degraded`.
-        _bk.set_degraded("no REDIS_URL: breaker trips are not persisted and the fleet key is unreadable")
+    from noctusai_lib.config.deploy_config import is_deploy_context as _is_deploy
+    from noctusai_lib.integrations.supabase_breaker_io import RedisBreakerStore as _RedisStore
+
+    if not _under_pytest() and _is_deploy() and not isinstance(_bk.store, _RedisStore):
+        # A deployed process whose breaker has no Redis: trips are in-memory only and the fleet key cannot be read.
+        # One alert + /api/health `breaker_degraded`.
+        _bk.set_degraded("no breaker Redis: breaker trips are not persisted and the fleet key is unreadable")
 
     # 3c. Owner-notification catalog (2026-11-09) — the gate every owner-facing WhatsApp notification passes:
     #     the owner's per-kind on/off switch (core admin "Notificações") + one ledger row per send in core

@@ -78,16 +78,31 @@ Reason: printable text, no control characters, <= 300 (`BREAKER_REASON_RE`, rout
   `claimed_by` plus the unspoofable `session` (CLAUDE_CODE_SESSION_ID), `os_user`, `host`. `rearm`/`trip` with `confirm=True`
   are steward-class: refused INSIDE `supabase_breaker()` for a non-steward session (CLI, fresh subprocess, peer servers).
 
-## Redis ACL compatibility (feat/redis-acl-lockdown)
+## Redis: the dedicated breaker instance (feat/redis-acl-lockdown)
 
-Product identity = read `noctus:breaker:fleet`, read/write `noctus:breaker:<slug>:*` only (to be tightened with feat/redis-acl-lockdown: R-only on `noctus:breaker:<slug>:rearm:*`) (source keys, index, audit,
-markers); it can never delete the fleet key. The MCP tool probes the VPS ONCE (`docker ps` + the ops password file): a running
-`noctus-redis-acl` REQUIRES the ACL path (secret read on the VPS into `REDISCLI_AUTH`, never over SSH or on argv, `--user ops`)
-and never falls back to the plain `noctus-redis`; no ACL container and no password file = today's unauthenticated Redis; an
-unreachable probe raises. `NOAUTH`/`WRONGPASS`/`NOPERM` fail loud, read from the exit code and STDERR only (stdout carries product-written values and is parsed as JSON). `status` reads the fleet key + each live product's index
-(`SMEMBERS`, products from `deploy/fleet/build-scope.txt`), keeps only well-formed keys of that product (<= 200), then ONE
-`MGET --json`; product-written values are data (control characters stripped, length capped) before they are echoed. The audit
-cap needs `+ltrim` on the ops user; a denied LTRIM is a returned warning, never a lost re-arm.
+The breaker lives on its own Redis, `noctus-breaker-redis` (breaker keys ONLY, `noeviction`), never on the app Redis.
+- **Connection.** `make_breaker_store` reads `NOCTUS_BREAKER_REDIS_URL` + `NOCTUS_BREAKER_REDIS_USERNAME` /
+  `NOCTUS_BREAKER_REDIS_PASSWORD` and passes them to `make_redis_client` explicitly; `REDIS_*` stays the app connection.
+  Unset: in a deploy context it FALLS BACK to the app Redis with a loud warning (`NOC-REMEDIATE[breaker-redis-cutover]`: the
+  cutover is per service and gradual; after the ACL cutover the app user has no breaker keys and every write is NOPERM);
+  outside a deploy it keeps the in-memory Fake. A deployed process whose store is not Redis sets `breaker_degraded`.
+- **Product grant (pinned by a test).** RW `noctus:breaker:<slug>:{worker:*,scheduler:*,gate:*,audit,index}`; READ-ONLY
+  `noctus:breaker:<slug>:rearm:*` and `noctus:breaker:fleet`. Commands: GET MGET SET DEL EXISTS TTL PTTL SADD SREM SMEMBERS
+  SISMEMBER SCARD RPUSH LTRIM LRANGE LLEN PING — no MULTI/EXEC, SCAN, KEYS or scripting (the audit cap is a non-transactional
+  pipeline). A spy test lists every key and command the store touches against that grant. The product never writes `rearm:*`
+  nor the fleet key nor the global audit list, and cannot re-arm the fleet (`Breaker.rearm("fleet")` raises).
+- **Re-arm signal between processes.** A re-arm by ops (MCP tool) writes the read-only marker `rearm:<source>` (TTL 1 day) and
+  the global audit row. A re-arm by a product process (the platform-admin route) writes NO marker: it DELs the key and appends
+  a `rearm` row carrying the PERSISTED key's `tripped_at` to `noctus:breaker:<slug>:audit`; another process of the same product
+  whose key vanished releases only on a matching marker OR a matching audit row, else it rewrites the key and alerts CRITICAL.
+- **MCP tool** (`VpsRedisOps`): probes the VPS once. A running `noctus-breaker-redis` REQUIRES the ACL path (`ops` user, secret
+  read on the VPS into `REDISCLI_AUTH`, never over SSH or on argv) and never falls back to the plain `noctus-redis` (used only
+  before the cutover, when neither the container nor `ops.pass` exists). An unreachable probe raises. `NOAUTH`/`WRONGPASS`/
+  `NOPERM` fail loud, read from the exit code and STDERR only. `status` reads the fleet key + each live product's index
+  (`SMEMBERS`, products from `deploy/fleet/build-scope.txt`), keeps only well-formed keys of that product (<= 200), then ONE
+  `MGET --json`; product-written values are data (control characters stripped, length capped) before they are echoed. The
+  off-host `breaker-trip.sh` (feat/supabase-request-telemetry) targets the same container.
+- `rearm`/`trip` with `confirm=True` are steward-class (in-tool refusal for non-steward sessions).
 
 ## Rules for code that adds a loop
 1. A long-lived loop is a registered Worker or scheduler job. Anything else that detaches work uses `spawn_background(name,

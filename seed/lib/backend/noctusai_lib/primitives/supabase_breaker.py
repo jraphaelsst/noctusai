@@ -271,6 +271,8 @@ class BreakerStore(Protocol):
 
     def append_audit(self, key: str, value: str, cap: int) -> None: ...
 
+    def lrange(self, key: str, count: int) -> list[str]: ...
+
 
 class BreakerAlerter(Protocol):
     """Sends the owner alert through a channel that does NOT depend on Supabase. Raises on failure."""
@@ -414,6 +416,10 @@ class InMemoryBreakerStore:
         self.audit.append(value)
         del self.audit[:-cap]
 
+    def lrange(self, key: str, count: int) -> list[str]:
+        self._guard()
+        return list(self.audit[-count:])
+
 
 # --- the breaker -----------------------------------------------------------------------------------------------
 
@@ -499,6 +505,10 @@ class Breaker:
         self.sent_alerts = 0
 
     # ---- configuration ----------------------------------------------------------------------------------------
+
+    @property
+    def store(self) -> Optional[BreakerStore]:
+        return self._store
 
     @property
     def key_prefix(self) -> str:
@@ -640,10 +650,12 @@ class Breaker:
         self._io(self._persist_and_alert, trip)
         return True
 
-    def audit(self, op: str, key: str, *, by: str, reason: str) -> None:
+    def audit(self, op: str, key: str, *, by: str, reason: str, tripped_at: Optional[str] = None) -> None:
         """Best-effort audit row (who/why/when) on the capped Redis list; the MCP tool writes the same shape."""
         row = {"op": op, "key": key, "claimed_by": by, "reason": reason, "at": _iso(self._wall()),
                "host": _HOST, "pid": os.getpid()}
+        if tripped_at:
+            row["tripped_at"] = tripped_at  # the nonce other processes match against the persisted key
         if self._store is None:
             return
         try:
@@ -856,6 +868,7 @@ class Breaker:
             woke: list[Callable[[], None]] = []
             to_index: list[str] = []
             rewrite: list[Trip] = []
+            unmarked: list[Trip] = []
             for s in vanished:
                 trip = self._trips[s]
                 marker = _parse_trip(s, markers[s]) if markers.get(s) else None
@@ -866,9 +879,7 @@ class Breaker:
                     logger.warning("breaker: %s re-armed by %s — the source may start again", s, marker.get("by"))
                     woke.extend(self._subs.get(s, ()))
                 else:
-                    # the key vanished with NO matching re-arm marker (flush / tampering / expiry): a persisted hold is
-                    # never silently released — rewrite the key and alert
-                    rewrite.append(trip)
+                    unmarked.append(trip)  # decided below, outside the lock (it may need a network read)
             for s, rem in self._remote_held.items():
                 if s not in self._trips:
                     woke.extend(self._subs.get(s, ()))
@@ -876,6 +887,22 @@ class Breaker:
             if self._fleet is not None:
                 for subs in self._subs.values():
                     woke.extend(subs)
+        for trip in unmarked:
+            # A re-arm by a PRODUCT process (the platform-admin route) cannot write the read-only marker key; it leaves a
+            # `rearm` row carrying the released trip's `tripped_at` in the product's own audit list instead.
+            if self._audit_shows_rearm(trip):
+                with self._lock:
+                    if self._trips.get(trip.source) is trip:
+                        del self._trips[trip.source]
+                        self._alerted = {a for a in self._alerted
+                                         if not a.startswith(f"trip:{self.slug}:{trip.source}:")}
+                        woke.extend(self._subs.get(trip.source, ()))
+                logger.warning("breaker: %s re-armed (audit row matches the persisted trip) — the source may start again",
+                               trip.source)
+            else:
+                # the key vanished with NO matching marker or audit row (flush / eviction / tampering): a persisted hold
+                # is never silently released — rewrite the key and alert
+                rewrite.append(trip)
         for src in to_index:  # network: outside the lock
             self._index_observed(src)
         self._repersist_unpersisted()  # Redis is reachable again: in-memory-only trips become visible to the fleet
@@ -893,6 +920,25 @@ class Breaker:
                      "eviction or tampering). The hold was kept and the key rewritten. Investigate before re-arming.")
         for cb in woke:
             self._call_sub(cb)
+
+    def _audit_shows_rearm(self, trip: Trip) -> bool:
+        if self._store is None or not hasattr(self._store, "lrange"):
+            return False
+        want = trip.key_tripped_at or trip.tripped_at
+        try:
+            rows = self._store.lrange(f"{self.key_prefix}audit", 30)
+        except Exception:  # noqa: BLE001 -- unreadable audit = no proof of a re-arm: the hold stays
+            logger.error("breaker: could not read the audit list to verify a re-arm of %s", trip.source, exc_info=True)
+            return False
+        for raw in rows:
+            try:
+                row = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            if (isinstance(row, dict) and row.get("op") == "rearm" and row.get("tripped_at") == want
+                    and row.get("key") == self.key_for(trip.source)):
+                return True
+        return False
 
     def set_degraded(self, reason: str) -> None:
         """The breaker is running without something it needs (e.g. no Redis: trips are not persisted and the fleet key
@@ -967,13 +1013,16 @@ class Breaker:
         key = BREAKER_FLEET_KEY if source == "fleet" else self.key_for(source)
         with self._lock:
             local = self._trips.get(source)
+        persisted_ts = ""
         if self._store is not None:
             try:
-                if local is not None and local.persisted:
-                    # other processes holding the same trip release only on this matching marker (P2-4)
-                    self._store.set(self.marker_key(source), json.dumps(
-                        {"tripped_at": local.key_tripped_at or local.tripped_at, "by": by, "reason": reason}),
-                        ttl=MARKER_TTL_S)
+                # NO marker write: `rearm:*` is READ-ONLY for a product's Redis identity (only ops writes markers).
+                # Other processes of this product learn of the re-arm from the `rearm` audit row below, which carries
+                # the `tripped_at` of the PERSISTED key (read before the DEL: another process may have written it).
+                with contextlib.suppress(Exception):
+                    raw = self._store.get(key)
+                    if raw:
+                        persisted_ts = str(_parse_trip(source, raw).get("tripped_at") or "")
                 self._store.delete(key)
             except Exception:
                 if local is None or local.persisted:
@@ -986,7 +1035,8 @@ class Breaker:
                 self._fleet = None
             self._alerted = {a for a in self._alerted if not a.startswith(f"trip:{self.slug}:{source}:")}
             woke = list(self._subs.get(source, ())) if source != "fleet" else [c for s in self._subs.values() for c in s]
-        self.audit("rearm", key, by=by, reason=reason)
+        self.audit("rearm", key, by=by, reason=reason,
+                   tripped_at=(persisted_ts or (local.key_tripped_at or local.tripped_at)) if local is not None else None)
         self._emit_event({"event": "breaker.rearmed", "product": self.slug, "source": source, "by": by,
                           "reason": reason})
         for cb in woke:

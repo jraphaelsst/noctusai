@@ -65,6 +65,9 @@ class RedisBreakerStore:
         if idx:
             self._r.sadd(idx, key)
 
+    def lrange(self, key: str, count: int) -> list[str]:
+        return list(self._r.lrange(key, -count, -1))
+
     def index(self, key: str) -> None:
         idx = self.index_key(key)
         if idx:
@@ -77,26 +80,53 @@ class RedisBreakerStore:
             self._r.srem(idx, key)
 
     def append_audit(self, key: str, value: str, cap: int) -> None:
-        pipe = self._r.pipeline()
+        pipe = self._r.pipeline(transaction=False)  # batching only: MULTI/EXEC are not in a product's ACL grant
         pipe.rpush(key, value)
         pipe.ltrim(key, -cap, -1)  # capped: the audit list never grows without bound
         pipe.execute()
 
 
-def make_breaker_store(redis_url: Optional[str] = None, *, use_fake: bool = False) -> Any:
-    """Real Redis store when a URL resolves, else (or ``use_fake``) the in-memory Fake.
+BREAKER_REDIS_URL_ENV = "NOCTUS_BREAKER_REDIS_URL"
+BREAKER_REDIS_USER_ENV = "NOCTUS_BREAKER_REDIS_USERNAME"
+BREAKER_REDIS_PASS_ENV = "NOCTUS_BREAKER_REDIS_PASSWORD"
 
-    A missing URL returns the Fake AND logs loudly: a breaker whose trips do not persist is a degraded breaker."""
+
+def make_breaker_store(
+    redis_url: Optional[str] = None, *, use_fake: bool = False, environ: Optional[dict[str, str]] = None,
+    deploy: Optional[bool] = None,
+) -> Any:
+    """The breaker's store: the DEDICATED breaker Redis (feat/redis-acl-lockdown) when ``NOCTUS_BREAKER_REDIS_URL`` is set —
+    credentials passed explicitly (``NOCTUS_BREAKER_REDIS_USERNAME`` / ``..._PASSWORD``; ``REDIS_*`` stays the app
+    connection). Unset: in a DEPLOY context fall back to the app Redis (``redis_url`` / ``REDIS_URL``) with a loud warning
+    (the cutover is per service and gradual); outside a deploy keep the in-memory Fake. ``use_fake`` always wins."""
     if use_fake:
         return InMemoryBreakerStore()
-    url = redis_url or os.environ.get("REDIS_URL") or ""
-    if not url:
-        logger.error("breaker: no REDIS_URL — trips will be held in memory only (lost on restart, invisible to the "
-                     "fleet key and the MCP tool)")
-        return InMemoryBreakerStore()
+    env = environ if environ is not None else os.environ
     from noctusai_lib.integrations.redis import make_redis_client
 
-    return RedisBreakerStore(make_redis_client(url, socket_connect_timeout=2, socket_timeout=2))
+    breaker_url = (env.get(BREAKER_REDIS_URL_ENV) or "").strip()
+    if breaker_url:
+        client = make_redis_client(
+            breaker_url,
+            username=(env.get(BREAKER_REDIS_USER_ENV) or None),
+            password=(env.get(BREAKER_REDIS_PASS_ENV) or None),
+            socket_connect_timeout=2, socket_timeout=2,
+        )
+        return RedisBreakerStore(client)
+    if deploy is None:
+        from noctusai_lib.config.deploy_config import is_deploy_context
+
+        deploy = is_deploy_context()
+    app_url = redis_url or env.get("REDIS_URL") or ""
+    if deploy and app_url:
+        # NOC-REMEDIATE[breaker-redis-cutover]: set NOCTUS_BREAKER_REDIS_URL/USERNAME/PASSWORD for this service (the per-service env file of feat/redis-acl-lockdown) so the breaker leaves the app Redis — destination: the redis-acl-lockdown rollout, service by service — 2026-11-10
+        logger.warning("breaker: %s is unset — falling back to the APP Redis for breaker keys. After the ACL cutover the app "
+                       "user has no breaker keys and every breaker write fails NOPERM: set the dedicated breaker Redis "
+                       "credentials (NOC-REMEDIATE[breaker-redis-cutover]).", BREAKER_REDIS_URL_ENV)
+        return RedisBreakerStore(make_redis_client(app_url, socket_connect_timeout=2, socket_timeout=2))
+    logger.error("breaker: no %s%s — trips are held in memory only (lost on restart, invisible to the fleet key and the "
+                 "MCP tool)", BREAKER_REDIS_URL_ENV, " and no app Redis" if deploy else " (not a deploy context)")
+    return InMemoryBreakerStore()
 
 
 class ResendBreakerAlerter:
