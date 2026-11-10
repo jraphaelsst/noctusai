@@ -360,6 +360,7 @@ def _avisos_conteudo(
     exigidas = chaves_exigidas(
         tool_policy=inp.tool_policy, tem_skills=bool(skills) or bool(refs), com_cliente=com_cliente, canal=inp.canal,
         com_qualificacao=inp.qualificacao is not None, com_dados_org=com_dados_org,
+        ferramentas_ativas={f.ferramenta for f in cont.ferramentas if f.ativo},
     )
     preenchidas = {t.chave for t in cont.textos if t.conteudo.strip()}
     faltam = sorted((exigidas - preenchidas) | S.ausentes)
