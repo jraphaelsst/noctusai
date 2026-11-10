@@ -736,6 +736,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--transcription-rotulo", metavar="TEXT", dest="transcription_rotulo", help="With --transcription-submit/-transcribe: optional label (<=120 chars).")
     parser.add_argument("--transcription-segmentos", action="store_true", dest="transcription_segmentos", help="With --transcription-submit: also return timed segments.")
     parser.add_argument("--transcription-timeout", metavar="SECONDS", type=float, default=3600, dest="transcription_timeout", help="With --transcription-transcribe: client-side wait budget (default 3600).")
+    parser.add_argument("--source-register", action="store_true", help="Source-reliability register (skill noc-research): read the folded per-source view or log one event. MCP: noctus.dev.source_register.")
+    parser.add_argument("--source-register-confirm", action="store_true", help="With --source-register --source-register-action log: append (a write). Without it, dry-run only.")
+    for _sr in ("action", "query", "tier-filter", "source", "outcome", "tier", "label", "claim", "evidence", "question", "note", "by"):
+        parser.add_argument(f"--source-register-{_sr}", default="read" if _sr == "action" else "", dest=f"source_register_{_sr.replace('-', '_')}", help=f"With --source-register: the {_sr} argument.")
+    parser.add_argument("--source-register-limit", type=int, default=50, dest="source_register_limit", help="With --source-register: max rows on read.")
+    parser.add_argument("--source-register-allow-stale-toolkit", action="store_true", help="With --source-register: bypass the toolkit-staleness fresh-subprocess hop (escape hatch).")
     return parser
 
 
@@ -4780,6 +4786,13 @@ def main():
         else:
             print("[branch-pointer] non-exempt paths present — cache refresh applies")
             sys.exit(1)
+
+    elif args.source_register:
+        from tools.noctus.dev.source_register import source_register as _source_register
+        _sr_kw = {k: getattr(args, f"source_register_{k}") for k in ("query", "tier_filter", "limit", "source", "outcome", "tier", "label", "claim", "evidence", "question", "note", "by")}
+        r = _source_register(args.source_register_action, **_sr_kw, confirm=bool(getattr(args, "source_register_confirm", False)), allow_stale_toolkit=bool(getattr(args, "source_register_allow_stale_toolkit", False)))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
 
     else:
         # Default: validate + analyze

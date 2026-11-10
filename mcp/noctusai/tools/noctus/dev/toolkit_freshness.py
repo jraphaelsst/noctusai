@@ -476,6 +476,16 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append(f"--task-branch-train-order={kwargs['order']}")
         return argv
 
+    if tool_name == "source_register":
+        argv = ["--source-register"]
+        for k in ("action", "query", "tier_filter", "limit", "source", "outcome", "tier", "label",
+                  "claim", "evidence", "question", "note", "by"):
+            if kwargs.get(k) not in (None, ""):
+                argv.append(f"--source-register-{k.replace('_', '-')}={kwargs[k]}")
+        if kwargs.get("confirm"):
+            argv.append("--source-register-confirm")
+        return argv
+
     return None
 
 
@@ -505,6 +515,10 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
         "role", "parent", "wire_env", "verbose", "keep_worktree",
         "wire_products", "accept_unmeasured", "accept_unmeasured_reason", "accept_unscored",
         "slugs", "order",
+    }),
+    "source_register": frozenset({
+        "action", "query", "tier_filter", "limit", "source", "outcome", "tier", "label",
+        "claim", "evidence", "question", "note", "by", "confirm",
     }),
 }
 
