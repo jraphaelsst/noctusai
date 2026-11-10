@@ -131,6 +131,21 @@
    "declared": "2026-11-07",
    "source": "Claude Code hooks reference (code.claude.com/docs/en/hooks: PostToolUse/UserPromptSubmit additionalContext, SubagentStop); owner rule 2026-11-07; verified against 33 real subagent transcripts+meta.json"
   },
+  "guard:council-read": {
+   "mechanism": "mcp/noctusai/tools/noctus/dev/council_ledger.py (neutral recorder: tool-assigned labels, seats withheld until verdict)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-09",
+   "shadow": null,
+   "source": "council verdict a9a6be54 objection J (blind recorder was prompt-only); Claude Code hooks reference (PreToolUse Read/Grep/Glob/Bash)",
+   "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson (warn in shadow, deny at enforce); read by gate_alignment walls",
+   "kind": "guard",
+   "wired_in": [
+    "PreToolUse"
+   ]
+  },
   "guard:dev-advance": {
    "mechanism": "KB § PATTERNS/architect/orchestration-craft-canon.md §6.13 (push leg + noc-branch-dispatch guardrail); advisory pull backstop, never blocks",
    "owner": "tooling-engineer",
@@ -3383,6 +3398,18 @@
    "branch": "feat/assistant-owner-d31-d34",
    "gates": [
     "guard:advisor-write"
+   ]
+  },
+  {
+   "id": "J",
+   "decision": "While a council session has no verdict row, direct reads of its project-history/council file are flagged (denied once promoted from shadow); the ledger tool is unaffected",
+   "home": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/council.md",
+   "construction": "mcp/noctusai/tools/noctus/dev/council_ledger.py (tool-assigned labels, seats withheld until verdict)",
+   "gate": "guard:council-read",
+   "telemetry": "guard-events.ndjson warn/deny rows via _guard_failclosed.log_event; gate_alignment walls",
+   "branch": "feat/ac-council-guard",
+   "gates": [
+    "guard:council-read"
    ]
   }
  ]
