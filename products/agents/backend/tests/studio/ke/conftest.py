@@ -43,7 +43,10 @@ from tests.routers.conftest import (  # noqa: F401
 )
 
 from app.stores.studio_definitions import FakeStudioDefinitionStore
+from app.notifications import FakeNotificationSink
 from app.stores.studio_eval_consolidacao import FakeConsolidacaoStore
+from app.stores.studio_eval_loops import FakeLoopStore
+from app.studio.eval_loop_service import EvalLoopService
 from app.stores.studio_evals import FakeEvalStore
 from app.stores.studio_knowledge import FakeStudioKnowledgeStore
 from noctusai_lib.domain.editorial import FakeEditorialStore
@@ -54,6 +57,7 @@ def _build_local_app() -> FastAPI:
     from fastapi import HTTPException
 
     from app.routers.editorial_router import router as editorial_router
+    from app.routers.studio_eval_loops_router import router as loops_router
     from app.routers.studio_evals_router import router as evals_router
     from app.routers.studio_knowledge_router import router as knowledge_router
     from noctusai_lib.primitives.exceptions import http_exception_handler
@@ -69,6 +73,7 @@ def _build_local_app() -> FastAPI:
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.include_router(knowledge_router)
     app.include_router(evals_router)
+    app.include_router(loops_router)
     app.include_router(editorial_router)
     return app
 
@@ -86,6 +91,10 @@ class _Stores:
         self.defs = FakeStudioDefinitionStore()
         #: eval consolidation (state / transitions / skipped ledger) shared across a test's requests
         self.consol = FakeConsolidacaoStore(self.evals)
+        #: eval-loop gate (loops + rounds) and the in-app notification sink its stop notices go to
+        self.loops = FakeLoopStore()
+        self.sink = FakeNotificationSink(admin_ids=["owner-1"])
+        self.loop_service = EvalLoopService(self.loops, self.sink, self.consol)
         #: version_id -> the per-part hashes the Fake compiler returns "now" (absent => None => nothing can be skipped)
         self.partes: dict[UUID, dict[str, str]] = {}
         #: version_id -> the hash the Fake compiler returns for it "now".
@@ -108,7 +117,9 @@ def ke_client():
     with patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb), \
          patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb), \
          patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb):
-        from app.routers.studio_agents_router import get_consolidacao_store_dep, get_studio_definition_store_dep
+        from app.routers.studio_agents_router import (
+            get_consolidacao_store_dep, get_loop_service_dep, get_loop_store_dep, get_studio_definition_store_dep,
+        )
         from app.routers.studio_evals_router import get_current_hash_dep, get_current_partes_dep, get_eval_store_dep
         from app.routers.studio_knowledge_router import get_studio_knowledge_store_dep
 
@@ -120,6 +131,8 @@ def ke_client():
         app.dependency_overrides[get_current_hash_dep] = lambda: stores.current_hash
         app.dependency_overrides[get_current_partes_dep] = lambda: stores.current_partes
         app.dependency_overrides[get_consolidacao_store_dep] = lambda: stores.consol
+        app.dependency_overrides[get_loop_store_dep] = lambda: stores.loops
+        app.dependency_overrides[get_loop_service_dep] = lambda: stores.loop_service
 
         from app.routers.editorial_router import editorial_deps
 

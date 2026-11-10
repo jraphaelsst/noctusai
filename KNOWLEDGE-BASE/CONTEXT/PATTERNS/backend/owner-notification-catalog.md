@@ -21,12 +21,28 @@ notification system we have. this is what i mean when i say 'warn me' or 'notify
 |---|---|
 | Declarations + gate (Protocol, `FakeNotificationGate`, `SupabaseNotificationGate`, `make_notification_gate`) | `seed/lib/backend/noctusai_lib/domain/notification_catalog/` |
 | Gate installed per product (Fake under pytest), declared kinds registered at boot | `seed/framework/backend/noctusai_seed/app.py` §3c + lifespan |
+| Owner line (the sender): `notify_owner`, recipients source, WAHA transport, `make_owner_line`; installed at boot next to the gate | `notification_catalog/owner_line.py` + `app.py` §3c-bis |
 | Tables: `public.notification_kinds` (the switch; `enabled` is never written by the upsert) · `public.notification_sends` (one row per dispatch decision: sent / partial / failed / suppressed / no_recipient; no message text, no phone numbers) | core migration `117_notification_catalog.sql` |
 | Admin API `/api/admin/notifications` (platform tier) + page `AdminNotificacoes.tsx` | `products/core/` |
 | SW kinds + the two send paths that pass the gate: `NotificationService._dispatch` (roster `notification_recipients`) and `julia_relatorio_service._gerar_e_entregar` (Julia's report destination) plus the Vista divergence digest | `products/social-wiring/backend/app/services/` |
 
 **Failure posture — fail toward warning.** If the switch can't be read, the gate logs an ERROR and sends anyway.
 A ledger write that fails is logged and never raises. Products cache the switch for 60 s, and the page says so.
+
+## Owner line
+
+NoctusAI's own WhatsApp number (L3) sends every owner notification for every product; a client's line is never used.
+Contract: `projects/noc-whatsapp-lines/owner-line-CONTRACT.md`. A product calls
+
+```python
+from noctusai_lib.domain.notification_catalog import notify_owner
+notify_owner("agents", "eval_loop_parada", texto)   # -> OwnerDispatch(status, recipients, delivered, reason)
+```
+
+It runs `gate.allowed` -> recipients (core `public.notification_owner_recipients`, 60 s cache) -> one WAHA send per
+recipient -> `gate.record`. It never raises (an undeclared kind does). No transport configured records `failed` /
+`linha_noc_nao_configurada` and logs `seed.owner_line.nao_configurada` at ERROR. Env: `NOC_OWNER_LINE_WAHA_URL`,
+`NOC_OWNER_LINE_WAHA_SESSION` (default `default`), `NOC_OWNER_LINE_WAHA_API_KEY`, `NOC_OWNER_LINE_EXPECTED_NUMBER` (E.164 of NoctusAI's own number); unset URL = no transport. URL set without the expected number = no transport (`linha_noc_numero_nao_declarado`); on first send the session's paired number is checked against it (`linha_noc_numero_divergente` = nothing sent).
 
 ## Adding a notification (the checklist)
 

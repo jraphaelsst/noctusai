@@ -39,6 +39,7 @@ from app.routers.studio_agents_router import (
     get_compiled_hash_provider,
     get_compiled_partes_provider,
     get_consolidacao_store_dep,
+    get_loop_service_dep,
     get_eval_gate_dep,
     get_knowledge_catalog_dep,
     get_studio_definition_store_dep,
@@ -109,6 +110,7 @@ def studio_eval_scheduler(
     broker=Depends(get_approval_broker_dep),
     judge=Depends(get_eval_judge_dep),
     consolidacao=Depends(get_consolidacao_store_dep),
+    loops=Depends(get_loop_service_dep),
 ):
     """``scheduler(run_id)`` for ``POST .../evals/runs`` (§J2.2): starts the
     runner for the CALLER's org in the background. The run row was created
@@ -133,6 +135,7 @@ def studio_eval_scheduler(
         guardar_vazamento=not chamador_e_admin_da_plataforma(ctx),
         turn_driver_factory=get_eval_turn_driver,
         consolidacao=consolidacao,
+        loops=loops,
     )
     app_state = request.app.state
 

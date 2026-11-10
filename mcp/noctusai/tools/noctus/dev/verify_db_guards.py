@@ -5080,6 +5080,35 @@ _AGENTS_FALLBACK_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# 076: the eval-loop gate (G1-G7). Self-provisioning like every agents probe: a probe agent, then the loop rows.
+_LOOPS_MIGS = (_m("031"), "076_eval_loops.sql")
+
+
+def _loop_insert(status: str, motivo: str, stopped: str) -> str:
+    return (f"INSERT INTO {_JV2}.eval_loops (org_id, agent_id, agente_chave, suite, rodadas_planejadas, piso, "
+            "orcamento_usd, status, motivo_parada, stopped_at, started_by) "
+            f"VALUES (v_org, v_agent, 'noc-probe', 'comportamento', 5, 0.8, 20, '{status}', {motivo}, {stopped}, v_org);")
+
+
+_AGENTS_EVAL_LOOP_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="eval_loops.stopped_loop_says_why_and_when", guard_name="eval_loops_parada_consistente",
+        migrations=_LOOPS_MIGS, setup=_JV2_AGENT, attack=_loop_insert("parado", "NULL", "NULL"),
+        fragments=("eval_loops_parada_consistente",), what="a stopped eval loop with no stop reason or time",
+        rationale="G4's mid-flight notice and the owner's review read motivo_parada: a loop stopped without a reason "
+                  "is a stop nobody can explain.",
+    ),
+    _julia_v2_probe(
+        probe_id="eval_loops.one_active_loop_per_suite", guard_name="uq_agents_eval_loops_ativo_por_suite",
+        migrations=_LOOPS_MIGS, setup="\n    ".join((_JV2_AGENT, _loop_insert("ativo", "NULL", "NULL"))),
+        attack=_loop_insert("ativo", "NULL", "NULL"),
+        fragments=("uq_agents_eval_loops_ativo_por_suite",), what="a second ACTIVE loop on the same agent and suite",
+        rationale="Two loops racing one suite would each read the other's rounds as score noise, so G4 would stop "
+                  "(or not) on someone else's run.",
+    ),
+)
+
+
 _AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
     # ── 031 · platform definition / instance / content mode ──
     _julia_v2_probe(
@@ -6225,6 +6254,172 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
         probe_id="audit_logs.delete_refused_outside_purge",
         op_sql="    DELETE FROM public.audit_logs WHERE id = v_id;",
         what="DELETE of an audit_logs row outside purge_expired_audit_logs",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Registry — core owner-notice recipient events append-only guard (migration 118).
+# ---------------------------------------------------------------------------
+#
+# Self-provisioning: `recipient_id` has no FK (a removed recipient keeps its
+# history), so each probe inserts its own throwaway event inside the
+# rollback-only wrapper.
+
+_OWNER_RECIPIENT_EVENTS_GUARD = "notification_owner_recipient_events_append_only"
+
+
+def _owner_recipient_events_probe(*, probe_id: str, op_sql: str, what: str) -> GuardProbe:
+    fragment_lit = _sql_lit("notification_owner_recipient_events is append-only")
+    what_lit = _sql_lit(what)
+    sql = _do_block(f"""
+DECLARE
+  v_id bigint;
+BEGIN
+  IF to_regclass('public.notification_owner_recipient_events') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.notification_owner_recipient_events does not exist (core 118 not applied)';
+  END IF;
+  BEGIN
+    INSERT INTO public.notification_owner_recipient_events (recipient_id, evento, ator)
+    VALUES (gen_random_uuid(), 'adicionado', gen_random_uuid())
+    RETURNING id INTO v_id;
+{op_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the append-only guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product="core",
+        schema="public",
+        guard_name=_OWNER_RECIPIENT_EVENTS_GUARD,
+        kind="write_refusal",
+        migrations=("118_notification_owner_recipients.sql",),
+        sql=sql,
+        rationale=(
+            "The recipient events are the who/when history of the numbers that receive the owner's WhatsApp "
+            "notices; a rewritable or deletable event would let a change to that list leave no trace."
+        ),
+    )
+
+
+def _owner_recipient_probe(*, probe_id: str, guard_name: str, setup_sql: str, op_sql: str, fragment: str,
+                           what: str, rationale: str) -> GuardProbe:
+    """Probe on the recipients/events pair: `setup_sql` runs as the probe owner, `op_sql` is the refused operation."""
+    fragment_lit = _sql_lit(fragment)
+    what_lit = _sql_lit(what)
+    sql = _do_block(f"""
+DECLARE
+  v_id uuid;
+  v_ev bigint;
+BEGIN
+  IF to_regclass('public.notification_owner_recipient_events') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.notification_owner_recipient_events does not exist (core 118 not applied)';
+  END IF;
+  BEGIN
+{setup_sql}
+{op_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id, product="core", schema="public", guard_name=guard_name, kind="write_refusal",
+        migrations=("118_notification_owner_recipients.sql",), sql=sql, rationale=rationale,
+    )
+
+
+_OWNER_RECIPIENT_FIXTURE = """    INSERT INTO public.notification_owner_recipients (numero, alterado_por, alterado_em)
+    VALUES ('+5500000000001', gen_random_uuid(), now())
+    RETURNING id INTO v_id;"""
+
+_OWNER_RECIPIENT_EVENTS_PROBES: tuple[GuardProbe, ...] = (
+    _owner_recipient_events_probe(
+        probe_id="notification_owner_recipient_events.update_refused",
+        op_sql="    UPDATE public.notification_owner_recipient_events SET evento = 'removido' WHERE id = v_id;",
+        what="UPDATE of an owner-recipient event",
+    ),
+    _owner_recipient_events_probe(
+        probe_id="notification_owner_recipient_events.delete_refused",
+        op_sql="    DELETE FROM public.notification_owner_recipient_events WHERE id = v_id;",
+        what="DELETE of an owner-recipient event",
+    ),
+    _owner_recipient_probe(
+        probe_id="notification_owner_recipients.numero_update_refused",
+        guard_name="notification_owner_recipients_touch",
+        setup_sql=_OWNER_RECIPIENT_FIXTURE,
+        op_sql="    UPDATE public.notification_owner_recipients SET numero = '+5500000000002' WHERE id = v_id;",
+        fragment="numero is immutable",
+        what="changing a recipient's number in place",
+        rationale=(
+            "The number is who receives the owner's notices; swapping it in place would redirect them with no "
+            "event (the trigger only sees ativo/nome). Remove and re-add leaves an adicionado/removido trail."
+        ),
+    ),
+    _owner_recipient_probe(
+        probe_id="notification_owner_recipients.plain_delete_refused",
+        guard_name="notification_owner_recipients_record_event",
+        setup_sql=_OWNER_RECIPIENT_FIXTURE,
+        op_sql="    DELETE FROM public.notification_owner_recipients WHERE id = v_id;",
+        fragment="only allowed through remover_destinatario_dono",
+        what="a plain DELETE of a recipient (outside the removal RPC)",
+        rationale="A delete without the RPC has no attributable actor and would blame the last editor.",
+    ),
+    _owner_recipient_probe(
+        probe_id="notification_owner_recipients.unstamped_update_refused",
+        guard_name="notification_owner_recipients_touch",
+        setup_sql=_OWNER_RECIPIENT_FIXTURE,
+        op_sql="    UPDATE public.notification_owner_recipients SET ativo = false WHERE id = v_id;",
+        fragment="must restamp alterado_em",
+        what="an UPDATE that does not restamp the actor",
+        rationale="An update that keeps the old alterado_por/alterado_em would record the previous admin as its author.",
+    ),
+    _owner_recipient_probe(
+        probe_id="notification_owner_recipients.truncate_refused",
+        guard_name="notification_owner_recipients_touch",
+        setup_sql="    NULL;",
+        op_sql="    TRUNCATE public.notification_owner_recipients;",
+        fragment="is append-only",
+        what="TRUNCATE of the owner-notice recipients",
+        rationale="TRUNCATE skips row triggers: wiping the recipients would leave no removido events at all.",
+    ),
+    _owner_recipient_probe(
+        probe_id="notification_owner_recipient_events.truncate_refused",
+        guard_name=_OWNER_RECIPIENT_EVENTS_GUARD,
+        setup_sql="    NULL;",
+        op_sql="    TRUNCATE public.notification_owner_recipient_events;",
+        fragment="is append-only",
+        what="TRUNCATE of the owner-recipient events",
+        rationale="TRUNCATE skips row-level triggers, so the append-only history needs its own statement trigger.",
+    ),
+    _owner_recipient_probe(
+        probe_id="notification_owner_recipient_events.direct_insert_refused",
+        guard_name="notification_owner_recipient_events_definer_only",
+        setup_sql="    SET LOCAL ROLE service_role;",
+        op_sql=("    INSERT INTO public.notification_owner_recipient_events (recipient_id, evento, ator)\n"
+                "    VALUES (gen_random_uuid(), 'adicionado', gen_random_uuid());"),
+        fragment="permission denied",
+        what="service_role inserting a forged owner-recipient event",
+        rationale=(
+            "service_role holds SELECT only on the events; only the SECURITY DEFINER trigger function writes, "
+            "so every event comes from a real change and cannot be forged by any product container."
+        ),
     ),
 )
 
@@ -11841,6 +12036,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_ISOLATION_PROBES,
     *_AGENTS_CAMADAS_PROBES,
     *_AGENTS_FALLBACK_PROBES,
+    *_AGENTS_EVAL_LOOP_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
     _CLIENTE_CONFLITO_STATUS_PROBE,
@@ -11848,6 +12044,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ATENDIMENTO_CONFLITO_STATUS_PROBE,
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
+    *_OWNER_RECIPIENT_EVENTS_PROBES,
     *_CORE_AI_USAGE_PROBES,
     *_CORE_FUNNEL_PROBES,
     *_PLATFORM_TEMPLATES_PROBES,
