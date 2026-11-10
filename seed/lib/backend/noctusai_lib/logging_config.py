@@ -170,6 +170,13 @@ def configure_logging(
     console_handler = logging.StreamHandler(stream if stream is not None else sys.stdout)
     console_handler.setLevel(level)
     console_handler.setFormatter(formatter)
+    # LGPD: no phone number reaches a log line. The ROOT handler covers every product logger that propagates; uvicorn
+    # and httpx keep their own handlers/propagation, so they get the filter on the logger itself (`?phone=<digits>`).
+    from noctusai_lib.log_scrub import install_phone_scrub
+
+    install_phone_scrub(console_handler)
+    for noisy in ("uvicorn", "uvicorn.access", "uvicorn.error", "httpx", "httpcore"):
+        install_phone_scrub(logging.getLogger(noisy))
     root_logger.addHandler(console_handler)
 
     # Reduce noise from third-party libraries

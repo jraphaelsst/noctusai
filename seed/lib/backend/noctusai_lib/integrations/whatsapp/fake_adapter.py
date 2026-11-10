@@ -90,7 +90,8 @@ class FakeWahaClient(LinePolicyGuard):
         # Session-admin state machine. Unpaired by default — mirrors a
         # fresh WAHA container before any QR scan.
         self.session_status: str = "SCAN_QR_CODE"
-        self.me: dict[str, Any] | None = None
+        #: the paired account (`WahaClient.me()` is the public READ of it; renamed from `me`, which now names that method)
+        self.paired_me: dict[str, Any] | None = None
         self.webhook_config: dict[str, Any] | None = None
         # Models WAHA's config.webhooks list (shared-session semantics).
         self.session_webhooks: list[dict[str, Any]] = []
@@ -256,7 +257,7 @@ class FakeWahaClient(LinePolicyGuard):
         return {
             "name": self.session,
             "status": self.session_status,
-            "me": self.me,
+            "me": self.paired_me,
             "engine": {"engine": "FAKE"},
             "config": {
                 "webhooks": [dict(h) for h in self.session_webhooks],
@@ -275,6 +276,12 @@ class FakeWahaClient(LinePolicyGuard):
     async def verify_line_policy(self) -> PolicyReadback:
         return check_session_against_policy(await self.get_session(), self.line_policy)
 
+    async def me(self) -> dict[str, Any]:
+        return dict(self.paired_me) if isinstance(self.paired_me, dict) else {}
+
+    def me_sync(self) -> dict[str, Any]:
+        return dict(self.paired_me) if isinstance(self.paired_me, dict) else {}
+
     async def start_session(self) -> dict[str, Any]:
         self.start_count += 1
         # what a real start writes: the line policy's flags (UNDECLARED's when undeclared), or the legacy default
@@ -288,7 +295,7 @@ class FakeWahaClient(LinePolicyGuard):
             return {"name": self.session, "status": self.session_status}
         # Starting a fresh (unpaired) session puts it into SCAN_QR_CODE so
         # a QR is available; an already-paired session stays WORKING.
-        if self.me is None:
+        if self.paired_me is None:
             self.session_status = "SCAN_QR_CODE"
         return {"name": self.session, "status": self.session_status}
 
@@ -302,7 +309,7 @@ class FakeWahaClient(LinePolicyGuard):
             return {"name": self.session, "status": self.session_status}
         # A restart drops an unpaired session back to QR; a paired one
         # (credentials would persist on a real WAHA volume) comes back up.
-        if self.me is None:
+        if self.paired_me is None:
             self.session_status = "SCAN_QR_CODE"
         else:
             self.session_status = "WORKING"
@@ -310,7 +317,7 @@ class FakeWahaClient(LinePolicyGuard):
 
     async def logout_session(self) -> dict[str, Any]:
         self._guard_repair("logout_session")
-        self.me = None
+        self.paired_me = None
         self.credentials_dead = False
         self.session_status = "SCAN_QR_CODE"
         return {"name": self.session, "status": self.session_status}
@@ -451,7 +458,7 @@ class FakeWahaClient(LinePolicyGuard):
         self, *, phone: str = "5511999999999", push_name: str = "Fake"
     ) -> None:
         """Test helper: flip the fake to a paired/WORKING session."""
-        self.me = {"id": f"{phone}@c.us", "pushName": push_name}
+        self.paired_me = {"id": f"{phone}@c.us", "pushName": push_name}
         self.session_status = "WORKING"
 
     def simulate_stuck_session(
@@ -468,7 +475,7 @@ class FakeWahaClient(LinePolicyGuard):
         and ``restart_session`` become no-ops (status stays ``status``)
         until ``logout_session`` runs.
         """
-        self.me = {"id": f"{phone}@c.us", "pushName": push_name}
+        self.paired_me = {"id": f"{phone}@c.us", "pushName": push_name}
         self.session_status = status
         self.credentials_dead = True
 

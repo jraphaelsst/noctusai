@@ -294,7 +294,10 @@ class TestRound2Edge:
             assert re.search(rx, uri, re.I), uri
             assert lp.is_whatsapp_write("post", uri.replace("\\", "\\")), uri
         for good in ("/api/default/auth/qr?format=image", "/api/sessions/default/start", "/api/default/chats",
-                     "/api/sessions/%2e%2e/x", "/hooks/abc"):
+                     "/api/sessions/%2e%2e/x", "/hooks/abc",
+                     # N6: the QUERY is not judged (the seed judges the path only) -- %20 %26 %2F there are legitimate
+                     "/api/default/chats?search=a%20b", "/api/contacts?x=a%26b", "/api/files?path=%2Ftmp%2Fx",
+                     "/api/default/auth/qr?format=image&n=%0d"):
             assert not re.search(rx, good, re.I), good
 
     def test_method_override_headers_are_stripped_on_both_servers(self):
@@ -376,7 +379,120 @@ class TestRound2Edge:
                                timeout=60) for _ in range(2)]  # twice: create, then idempotent PUT
         srv.shutdown()
         assert [o.returncode for o in outs] == [0, 0], [o.stdout + o.stderr for o in outs]
-        assert wi._noweb_matches(json.loads(outs[1].stdout.strip().splitlines()[-1]), want)
+        assert wi._noweb_matches(json.loads(outs[1].stdout.strip().splitlines()[-1])['noweb'], want)
         posts = [c for c in state["calls"] if c[0] == "POST"]
         assert len(posts) == 1 and posts[0][2] is False and all(c[2] in ("k", False, None) for c in state["calls"])
         assert any(c[0] == "PUT" for c in state["calls"])
+
+
+# --- round 3: provision is tighten-only, owner-consented for personal lines ---------------------------------------------
+
+PERSONAL = EDGE.replace("    dashboard: false\n", "    dashboard: false\n    personal: true\n", 1)
+
+
+class FakeVps:
+    """The VPS as seen through `_sh` (DI): its own checkout of waha-instances.yml + the running core."""
+
+    def __init__(self, vps_yml: str, running: dict):
+        self.vps_yml, self.running, self.cmds = vps_yml, running, []
+
+    def __call__(self, host, cmd, timeout=90):
+        self.cmds.append(cmd)
+        if cmd.startswith("cat ") and "waha-instances.yml" in cmd:
+            return 0, self.vps_yml, ""
+        if "node -e" in cmd and "POLICY_NOWEB" not in cmd:
+            return 0, json.dumps(self.running), ""
+        if "POLICY_NOWEB" in cmd:
+            relay = "http://waha-probe:3001"
+            return 0, json.dumps({"noweb": {"markOnline": False, "store": {"enabled": True, "fullSync": False}},
+                                  "webhooks": [f"{relay}/hook"]}), ""
+        return 1, "", "unexpected"
+
+    @property
+    def wrote(self):
+        return any("POLICY_NOWEB" in c for c in self.cmds)
+
+
+import json  # noqa: E402
+
+EXISTING = {"exists": True, "noweb": {"markOnline": True, "store": {"enabled": False, "fullSync": False}}, "webhooks": []}
+
+
+def _prov(caller_yml, vps, **kw):
+    return wi._provision(wi.parse_instances(caller_yml), "probe", "h", kw.pop("confirm", True), sh=vps, **kw)
+
+
+def test_a_branch_that_loosens_markonline_cannot_be_written_onto_the_core():
+    loose = EDGE.replace("{send: disabled, mark_online: false,", "{send: disabled, mark_online: true,")
+    vps = FakeVps(EDGE, EXISTING)
+    out = _prov_loose = wi._provision(wi.parse_instances(loose.replace("send: disabled, mark_online: true", "send: disabled, mark_online: true")),
+                                      "probe", "h", True, sh=vps)
+    assert out["status"] == "refused" and "markOnline" in out["error"] and "VPS" in out["error"]
+    assert not vps.wrote
+
+
+def test_loosening_vs_the_running_session_is_refused_naming_the_field():
+    vps = FakeVps(EDGE, {"exists": True, "noweb": {"markOnline": False, "store": {"enabled": True, "fullSync": False}},
+                         "webhooks": []})
+    loose = EDGE.replace("full_sync: false,", "full_sync: true,")
+    vps.vps_yml = loose  # the VPS agrees with the caller: only the RUNNING session is tighter
+    out = wi._provision(wi.parse_instances(loose), "probe", "h", True, sh=vps)
+    assert out["status"] == "refused" and "store.fullSync" in out["error"] and "running" in out["error"]
+    assert not vps.wrote
+
+
+def test_an_unknown_vps_ceiling_refuses():
+    vps = FakeVps(DATA, EXISTING)  # the VPS does not declare `probe`
+    out = _prov(EDGE, vps)
+    assert out["status"] == "refused" and "deploy_pull" in out["error"] and not vps.wrote
+
+
+def test_tightening_an_untouched_default_session_writes_and_verifies_the_relay_webhooks():
+    vps = FakeVps(EDGE, EXISTING)
+    out = _prov(EDGE, vps)
+    assert out["status"] == "verified" and out["foreign_webhooks"] == [] and vps.wrote
+    dry = _prov(EDGE, FakeVps(EDGE, EXISTING), confirm=False)
+    assert dry["status"] == "planned"
+
+
+def test_a_foreign_webhook_surviving_the_write_is_drift():
+    class Evil(FakeVps):
+        def __call__(self, host, cmd, timeout=90):
+            rc, out, err = super().__call__(host, cmd, timeout)
+            if "POLICY_NOWEB" in cmd:
+                d = json.loads(out); d["webhooks"].append("https://evil.example/h"); out = json.dumps(d)
+            return rc, out, err
+
+    out = _prov(EDGE, Evil(EDGE, EXISTING))
+    assert out["status"] == "drift" and out["foreign_webhooks"] == ["https://evil.example/h"]
+
+
+def test_a_personal_line_needs_the_owners_typed_consent_not_a_flag():
+    vps = FakeVps(PERSONAL, EXISTING)
+    out = _prov(PERSONAL, vps)  # confirm=True is just a flag any agent sets
+    assert out["status"] == "refused" and out["needs_owner_consent"] is True and not vps.wrote
+    assert "personal-line-probe" in out["error"]
+    bogus = _prov(PERSONAL, FakeVps(PERSONAL, EXISTING), consent_session_id="no-such-session")
+    assert bogus["status"] == "refused" and bogus["needs_owner_consent"] is True
+
+
+def test_personal_flag_on_either_checkout_triggers_the_consent_gate():
+    # caller's checkout says non-personal, the VPS says personal
+    out = _prov(EDGE, FakeVps(PERSONAL, EXISTING))
+    assert out["status"] == "refused" and out["needs_owner_consent"] is True
+
+
+def test_the_owners_typed_sentence_in_a_real_transcript_unlocks_it_and_an_agent_authored_one_does_not(tmp_path):
+    def transcript(sid, records):
+        d = tmp_path / ".claude" / "projects" / "-p"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{sid}.jsonl").write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+
+    phrase = "I authorize personal-line-probe to be published to production."
+    transcript("good", [{"type": "user", "promptSource": "typed", "message": {"content": phrase}}])
+    transcript("agent", [{"type": "assistant", "message": {"content": [{"type": "text", "text": phrase}]}}])
+    assert wi._owner_consent("probe", "good", home=tmp_path)[0] is True
+    ok, why = wi._owner_consent("probe", "agent", home=tmp_path)
+    assert ok is False and "no human-typed message" in why
+    assert wi._owner_consent("probe", "", home=tmp_path)[0] is False
+    assert wi._owner_consent("other-line", "good", home=tmp_path)[0] is False  # bound to THIS line's name

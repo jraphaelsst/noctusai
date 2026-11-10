@@ -266,13 +266,67 @@ _registry: dict[str, LinePolicy] = {}
 _env_loaded = False
 
 
+def _host_only(base_url: str) -> str:
+    """Lower-cased hostname without IPv6 brackets or a trailing dot (``waha-x.`` is ``waha-x``)."""
+    raw = (base_url or "").strip()
+    sp = urlsplit(raw if "://" in raw else "http://" + raw)
+    return (sp.hostname or "").lower().rstrip(".")
+
+
 def _host_key(base_url: str) -> str:
-    """Normalised HOST:PORT -- never the URL string. Spelling (case, trailing slash, scheme, default port, path) cannot
-    make one line look like another."""
+    """Normalised HOST:PORT -- never the URL string. Spelling (case, trailing slash/dot, scheme, default port, path,
+    IPv6 brackets) cannot make one line look like another."""
     raw = (base_url or "").strip()
     sp = urlsplit(raw if "://" in raw else "http://" + raw)
     port = sp.port or (443 if sp.scheme == "https" else 80)
-    return f"{(sp.hostname or '').lower()}:{port}"
+    return f"{_host_only(raw)}:{port}"
+
+
+# --- address-level aliasing (container IP, container id, env-overridden base URL) -------------------------------------
+#: ``host -> set of resolved addresses`` resolver. A SEAM (DI), not a patch point: tests inject a table; production uses
+#: getaddrinfo. Raising / returning None means "cannot resolve".
+HostResolver = Any
+_resolve_host: "Any" = None
+_addr_cache: dict[str, frozenset[str]] = {}
+
+
+def set_host_resolver(fn: "Any | None") -> None:
+    """Inject ``fn(host) -> iterable[str] | None`` (tests, or a product with its own DNS view). None restores getaddrinfo."""
+    global _resolve_host
+    with _lock:
+        _resolve_host = fn
+        _addr_cache.clear()
+
+
+def _default_resolver(host: str) -> "set[str] | None":
+    import socket
+
+    try:
+        return {ai[4][0] for ai in socket.getaddrinfo(host, None)}
+    except OSError:
+        return None
+
+
+def _addrs(host: str) -> "frozenset[str] | None":
+    """Resolved addresses of ``host`` (an IP literal is itself), cached per process on success; None = unresolvable."""
+    import ipaddress
+
+    try:
+        return frozenset({str(ipaddress.ip_address(host))})
+    except ValueError:
+        pass
+    if host in _addr_cache:
+        return _addr_cache[host]
+    try:
+        found = (_resolve_host or _default_resolver)(host)
+    except Exception:  # noqa: BLE001 - a resolver failure is "unknown", which fails closed below
+        found = None
+    if not found:
+        return None
+    out = frozenset(str(a) for a in found)
+    with _lock:
+        _addr_cache[host] = out
+    return out
 
 
 def _key(base_url: str, session: Optional[str]) -> str:
@@ -285,12 +339,27 @@ def _key(base_url: str, session: Optional[str]) -> str:
 _runtime_read_only: dict[str, LinePolicy] = {}
 
 
-def _generated_read_only() -> dict[str, LinePolicy]:
+_GENERATED_MODULE = "noctusai_lib.integrations.whatsapp.read_only_lines"
+
+
+def _generated_read_only(module: str = _GENERATED_MODULE) -> dict[str, LinePolicy]:
+    import importlib
+
     try:
-        from noctusai_lib.integrations.whatsapp.read_only_lines import READ_ONLY_LINES
-    except ImportError:  # the generated file is absent: nothing declared
-        return {}
-    return {h: parse_line_policy(spec) for h, spec in READ_ONLY_LINES.items()}
+        rows = importlib.import_module(module).READ_ONLY_LINES
+    except (ImportError, AttributeError) as exc:  # absent ceiling = we cannot know which lines are read-only: refuse
+        raise LinePolicyError(
+            "read_only_lines.py (generated from deploy/fleet/waha-instances.yml by noctus.dev.waha_instance render) "
+            "is missing or malformed: the read-only host set is unknown"
+        ) from exc
+    return {h: parse_line_policy(spec) for h, spec in rows.items()}
+
+
+def _all_read_only() -> dict[str, LinePolicy]:
+    out = dict(_generated_read_only())
+    for h, p in _runtime_read_only.items():
+        out[h] = strictest(out[h], p) if h in out else p
+    return out
 
 
 def _read_only_for(host_key: str) -> Optional[LinePolicy]:
@@ -308,12 +377,18 @@ def strictest(a: LinePolicy, b: LinePolicy) -> LinePolicy:
         SEND_ENABLED if (a.send_enabled and b.send_enabled) else SEND_DISABLED,
         a.mark_online and b.mark_online, a.full_sync and b.full_sync, a.auto_repair and b.auto_repair,
         declared=a.declared or b.declared, config_authority=a.config_authority or b.config_authority,
-        webhook_relay=disabled_one.webhook_relay or a.webhook_relay or b.webhook_relay,
+        # two different relays: neither wins -- no relay at all (no webhook may be registered) is the strict answer
+        webhook_relay=(a.webhook_relay if a.webhook_relay == b.webhook_relay
+                       else (disabled_one.webhook_relay if (a.send_enabled != b.send_enabled) else None)),
     )
 
 
 def _looser(new: LinePolicy, prior: LinePolicy) -> bool:
+    """`new` allows something `prior` forbids. A DIFFERENT webhook relay on a read-only line is a loosening too: the
+    relay is where the core is allowed to send, and the declared one is the only one."""
     return (
+        (not prior.send_enabled and bool(prior.webhook_relay) and new.webhook_relay != prior.webhook_relay)
+        or
         (new.send_enabled and not prior.send_enabled)
         or (new.mark_online and not prior.mark_online)
         or (new.full_sync and not prior.full_sync)
@@ -368,6 +443,7 @@ def clear_line_policies() -> None:
     with _lock:
         _registry.clear()
         _runtime_read_only.clear()
+        _addr_cache.clear()
         _env_loaded = False
 
 
@@ -413,8 +489,25 @@ def resolve_line_policy(
     hk = _host_key(base_url)
     with _lock:
         ro = _read_only_for(hk)
-        reg = _registry.get(_key(base_url, session)) or _registry.get(hk)
-        if reg is None and ro is None:
+        explicit_reg = _registry.get(_key(base_url, session)) or _registry.get(hk)
+        reg = explicit_reg
+        all_ro = _all_read_only()
+    if ro is None and all_ro and not base_url.startswith("fake://"):
+        # not a known alias BY NAME: it may still be the same machine (container IP, container id, an env-overridden
+        # base URL). Compare resolved addresses; if the host cannot be resolved, fail CLOSED unless it is positively
+        # known to be a send-enabled line (an explicit, non-"*" registry entry).
+        mine = _addrs(_host_only(base_url))
+        if mine is None:
+            if explicit_reg is None or not explicit_reg.send_enabled:
+                return replace(UNDECLARED, webhook_relay=None)
+        else:
+            for alias, pol in all_ro.items():
+                theirs = _addrs(alias.rsplit(":", 1)[0])
+                if theirs and theirs & mine:
+                    ro = pol
+                    break
+    if reg is None and ro is None:
+        with _lock:
             reg = _registry.get("*")
     found = [p for p in (explicit, reg, ro) if p is not None]
     if not found:
@@ -422,6 +515,9 @@ def resolve_line_policy(
     out = found[0]
     for p in found[1:]:
         out = strictest(out, p)
+    gen = _generated_read_only().get(hk)
+    if gen is not None and gen.webhook_relay:
+        out = replace(out, webhook_relay=gen.webhook_relay)  # the generated ceiling's relay is authoritative
     return out
 
 

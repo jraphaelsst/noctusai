@@ -114,9 +114,10 @@ def _validate_policy(i: int, name: str, inst: dict) -> None:
     for k in ("mark_online", "full_sync", "auto_repair"):
         if not isinstance(pol[k], bool):
             raise ValueError(f"instances[{i}] ({name}): line_policy.{k} must be a boolean")
-    for opt in ("edge_deny_writes", "dashboard"):
+    for opt in ("edge_deny_writes", "dashboard", "personal"):
         if opt in inst and not isinstance(inst[opt], bool):
             raise ValueError(f"instances[{i}] ({name}): `{opt}` must be a boolean")
+    inst.setdefault("personal", False)
     inst.setdefault("edge_deny_writes", False)
     inst.setdefault("dashboard", True)
     if pol["send"] == "disabled" and not (inst["edge_deny_writes"] and inst["dashboard"] is False):
@@ -130,6 +131,10 @@ def _validate_policy(i: int, name: str, inst: dict) -> None:
         if not isinstance(up, str) or not re.match(r"^https?://[A-Za-z0-9._-]+(:\d+)?(/[A-Za-z0-9._~/-]*)?$", up):
             raise ValueError(f"instances[{i}] ({name}): `edge_deny_writes: true` requires `webhook_upstream: http://<product>:<port>` "
                              "(the edge relays the core's webhooks there; the core has no route to the product)")
+
+
+def parse_instances_text(text: str) -> dict:
+    return parse_instances(text)
 
 
 def parse_instances(text: str) -> dict:
@@ -184,9 +189,10 @@ map "$$request_method $$uri" $$wa_write {
 server {
   listen 3000;
   client_max_body_size 2m;
-  # smuggling spellings (encoded control chars, `?` `#` `/` `%`, backslash) are refused BEFORE the decision is taken:
+  # smuggling spellings in the PATH (encoded control chars, `?` `#` `/` `%`, backslash; the query string is not judged, the
+  # seed judges the path only) are refused BEFORE the decision is taken:
   # the decision is on the decoded $$uri, and `logout%3F/start` decodes to a path the core reads as the legacy logout.
-  if ($$request_uri ~* "%(0[0-9a-f]|1[0-9a-f]|2[0356f]|3f|5c|7f)|\\x5c") { return 400; }
+  if ($$request_uri ~* "^[^?]*(%(0[0-9a-f]|1[0-9a-f]|2[0356f]|3f|5c|7f)|\\x5c)") { return 400; }
   proxy_set_header X-HTTP-Method-Override "";
   proxy_set_header X-HTTP-Method "";
   proxy_set_header X-Method-Override "";
@@ -201,7 +207,7 @@ server {
 server {
   listen 3001;
   client_max_body_size 2m;
-  if ($$request_uri ~* "%(0[0-9a-f]|1[0-9a-f]|2[0356f]|3f|5c|7f)|\\x5c") { return 400; }
+  if ($$request_uri ~* "^[^?]*(%(0[0-9a-f]|1[0-9a-f]|2[0356f]|3f|5c|7f)|\\x5c)") { return 400; }
   proxy_set_header X-HTTP-Method-Override "";
   proxy_set_header X-HTTP-Method "";
   proxy_set_header X-Method-Override "";
@@ -400,22 +406,46 @@ def policy_noweb(inst: dict) -> dict:
     return {"markOnline": pol["mark_online"], "store": {"enabled": True, "fullSync": pol["full_sync"]}}
 
 
-#: Runs INSIDE the core container (its API key never leaves it). WAHA takes config only on `POST /api/sessions`
-#: (create, start:false) or `PUT /api/sessions/{s}`; `/start` takes none and NOWEB's markOnline defaults to TRUE -- so
-#: this is the step that makes a read-only line's first pairing silent. Idempotent: create when absent, else merge+PUT.
-#: No single quote may appear (it is wrapped in one for the remote shell).
+#: Both scripts run INSIDE the core container (its API key never leaves it). WAHA takes config only on
+#: `POST /api/sessions` (create, start:false) or `PUT /api/sessions/{s}`; `/start` takes none and NOWEB's markOnline
+#: defaults to TRUE -- so provisioning is the step that makes a read-only line's first pairing silent. No single quote may
+#: appear in either (each is wrapped in one for the remote shell).
+_READ_JS = (
+    'const H={"X-Api-Key":process.env.WHATSAPP_API_KEY};const S=process.env.POLICY_SESSION;'
+    '(async()=>{const r=await fetch((process.env.POLICY_BASE||"http://localhost:3000")+"/api/sessions/"+S,{headers:H});'
+    'if(r.status===404){console.log(JSON.stringify({exists:false}));return;}'
+    'const j=await r.json();const c=j.config||{};'
+    'console.log(JSON.stringify({exists:true,noweb:c.noweb||null,webhooks:(c.webhooks||[]).map(w=>w.url)}));'
+    '})().catch(e=>{console.log("ERR "+e.message);process.exit(3);});'
+)
 _PROVISION_JS = (
     'const H={"X-Api-Key":process.env.WHATSAPP_API_KEY,"Content-Type":"application/json"};'
-    'const nw=JSON.parse(process.env.POLICY_NOWEB);const S=process.env.POLICY_SESSION;'
+    'const nw=JSON.parse(process.env.POLICY_NOWEB);const S=process.env.POLICY_SESSION;const RELAY=process.env.POLICY_RELAY||"";'
     '(async()=>{const u=(process.env.POLICY_BASE||"http://localhost:3000")+"/api/sessions";let r=await fetch(u+"/"+S,{headers:H});'
     'if(r.status===404){r=await fetch(u,{method:"POST",headers:H,body:JSON.stringify({name:S,start:false,config:{noweb:nw}})});}'
     'else{const j=await r.json();const c=j.config||{};const o=c.noweb||{};c.noweb=Object.assign({},o,nw);'
     'c.noweb.store=Object.assign({},o.store||{},nw.store);'
+    # tighten webhooks too: only the declared relay may stay registered
+    'if(RELAY){c.webhooks=(c.webhooks||[]).filter(w=>w.url&&w.url.startsWith(RELAY+"/"));}'
     'r=await fetch(u+"/"+S,{method:"PUT",headers:H,body:JSON.stringify({config:c})});}'
     'if(r.status>=300){console.log("ERR "+r.status);process.exit(2);}'
-    'r=await fetch(u+"/"+S,{headers:H});const j=await r.json();'
-    'console.log(JSON.stringify((j.config&&j.config.noweb)||null));})().catch(e=>{console.log("ERR "+e.message);process.exit(3);});'
+    'r=await fetch(u+"/"+S,{headers:H});const j=await r.json();const c=j.config||{};'
+    'console.log(JSON.stringify({noweb:c.noweb||null,webhooks:(c.webhooks||[]).map(w=>w.url)}));'
+    '})().catch(e=>{console.log("ERR "+e.message);process.exit(3);});'
 )
+
+#: policy fields that LOOSEN when they go from false to true (markOnline broadcasts presence, fullSync pulls history)
+_NOWEB_FIELDS = (("markOnline", lambda n: n.get("markOnline")),
+                 ("store.fullSync", lambda n: (n.get("store") or {}).get("fullSync")))
+
+
+def _loosening(want: dict, ceiling: dict | None, label: str) -> list[str]:
+    """Fields where `want` is looser (true) than `ceiling` (false). A missing ceiling field is not a loosening."""
+    out = []
+    for name, get in _NOWEB_FIELDS:
+        if ceiling is not None and get(ceiling) is False and get(want) is True:
+            out.append(f"{name}: wants true but {label} has false")
+    return out
 
 
 def _noweb_matches(got, want: dict) -> bool:
@@ -424,20 +454,79 @@ def _noweb_matches(got, want: dict) -> bool:
             and got["store"].get("fullSync") is want["store"]["fullSync"])
 
 
-def _provision(spec: dict, name: str, host: str, confirm: bool) -> dict:
-    """Create/align the session config from the policy against the CORE, then READ IT BACK (explicit, idempotent)."""
+def _consent_phrase_slug(name: str) -> str:
+    return f"personal-line-{name}"
+
+
+def _owner_consent(name: str, session_id: str, home=None) -> tuple[bool, str]:
+    """The owner's typed consent for a PERSONAL line, verified against the harness-written session transcript by the
+    existing prod_consent machinery (an agent supplies the session id, never the evidence)."""
+    from .compliance import _canonical_authorization_phrase, _find_authorization_evidence
+
+    slug = _consent_phrase_slug(name)
+    if not session_id:
+        return False, (f"personal line: the OWNER must type, verbatim: {_canonical_authorization_phrase(slug)!r} -- then "
+                       "pass that session's id as consent_session_id")
+    if _find_authorization_evidence(slug, session_id, home=home) is None:
+        return False, (f"personal line: no human-typed message in session {session_id} carries "
+                       f"{_canonical_authorization_phrase(slug)!r}")
+    return True, ""
+
+
+def _provision(spec: dict, name: str, host: str, confirm: bool, *, sh=None, consent_session_id: str = "") -> dict:
+    """Create/align the session config from the policy against the CORE, then READ IT BACK (explicit, idempotent).
+
+    The caller's checkout is NOT trusted: provisioning may only TIGHTEN, compared with BOTH the running config and the
+    VPS's own checkout of waha-instances.yml (a branch with `mark_online: true` cannot write itself onto the live core).
+    A `personal: true` line additionally needs the owner's typed consent, verified against the transcript."""
+    sh = sh or _sh
     inst = _inst(spec, name)
     want = policy_noweb(inst)
     core = f"noctus-{core_service(inst)}"
-    cmd = (f"docker exec -e POLICY_NOWEB={shlex.quote(json.dumps(want, separators=(',', ':')))} "
-           f"-e POLICY_SESSION={shlex.quote(inst['session'])} {core} node -e '{_PROVISION_JS}'")
-    plan = {"ok": True, "action": "provision", "name": name, "status": "planned", "core": core,
-            "expect_noweb": want, "steps": ["create (start:false) or PUT merged config on the core",
-                                           "read the config back from the core and compare with the policy"]}
+    refuse = lambda why, **kw: {"ok": False, "action": "provision", "status": "refused", "name": name,  # noqa: E731
+                                "error": why, **kw}
+
+    rc, text, err = sh(host, f"cat {VPS_FLEET}/waha-instances.yml")
+    if rc != 0:
+        return refuse(f"cannot read the VPS's own waha-instances.yml ({err.strip()[-120:]}): the ceiling is unknown")
+    try:
+        vps_inst = _inst(parse_instances_text(text), name)
+    except ValueError as exc:
+        return refuse(f"the VPS checkout does not declare line {name!r} ({exc}): deploy_pull first")
+    vps_want = policy_noweb(vps_inst)
+    bad = _loosening(want, vps_want, "the VPS checkout")
+    if bad:
+        return refuse("REFUSED, loosening vs the VPS's own waha-instances.yml: " + "; ".join(bad))
+
+    if inst.get("personal") or vps_inst.get("personal"):
+        ok, why = _owner_consent(name, consent_session_id)
+        if not ok:
+            return refuse(why, needs_owner_consent=True)
+
+    probe = f"docker exec -e POLICY_SESSION={shlex.quote(inst['session'])} {core} node -e '{_READ_JS}'"
+    rc, out, err = sh(host, probe, timeout=60)
+    try:
+        running = json.loads(out.strip().splitlines()[-1]) if rc == 0 else None
+    except (ValueError, IndexError):
+        running = None
+    if running is None:
+        return refuse(f"cannot read the running config from {core}: {(out.strip() or err.strip())[-160:]}")
+    bad = _loosening(want, running.get("noweb") if running.get("exists") else None, "the running session")
+    if bad:
+        return refuse("REFUSED, loosening vs the running session: " + "; ".join(bad))
+
+    relay = relay_base(inst) if inst.get("edge_deny_writes") else ""
+    plan = {"ok": True, "action": "provision", "name": name, "status": "planned", "core": core, "expect_noweb": want,
+            "running": running, "personal": bool(inst.get("personal") or vps_inst.get("personal")),
+            "steps": ["create (start:false) or PUT merged config on the core (foreign webhooks dropped)",
+                      "read the config back from the core: noweb == policy and every webhook under the relay"]}
     if not confirm:
         plan["note"] = "DRY RUN -- pass confirm=True; run BEFORE the edge fronts the core and BEFORE any QR scan"
         return plan
-    rc, out, err = _sh(host, cmd, timeout=120)
+    cmd = (f"docker exec -e POLICY_NOWEB={shlex.quote(json.dumps(want, separators=(',', ':')))} "
+           f"-e POLICY_SESSION={shlex.quote(inst['session'])} -e POLICY_RELAY={shlex.quote(relay)} "
+           f"{core} node -e '{_PROVISION_JS}'")
+    rc, out, err = sh(host, cmd, timeout=120)
     if rc != 0:
         return {"ok": False, "action": "provision", "status": "error", "name": name,
                 "error": (out.strip() or err.strip())[-400:]}
@@ -446,12 +535,14 @@ def _provision(spec: dict, name: str, host: str, confirm: bool) -> dict:
     except (ValueError, IndexError):
         return {"ok": False, "action": "provision", "status": "error", "name": name,
                 "error": f"unparseable read-back: {out.strip()[-200:]}"}
-    ok = _noweb_matches(got, want)
+    hooks = got.get("webhooks") or []
+    foreign = [u for u in hooks if relay and not str(u).startswith(relay + "/")]
+    ok = _noweb_matches(got.get("noweb"), want) and not foreign
     return {"ok": ok, "action": "provision", "status": "verified" if ok else "drift", "name": name,
-            "expect_noweb": want, "read_back": got}
+            "expect_noweb": want, "read_back": got.get("noweb"), "webhooks": hooks, "foreign_webhooks": foreign}
 
 
-def _apply(spec: dict, name: str, host: str, confirm: bool) -> dict:
+def _apply(spec: dict, name: str, host: str, confirm: bool, consent_session_id: str = "") -> dict:
     p = _plan(spec, name)
     if not confirm:
         p.update(action="apply", note="DRY RUN -- pass confirm=True to `compose up -d --no-deps` this ONE instance "
@@ -469,7 +560,7 @@ def _apply(spec: dict, name: str, host: str, confirm: bool) -> dict:
         rc, out, err = _sh(host, up + core_service(inst), timeout=300)
         if rc != 0:
             return {"ok": False, "action": "apply", "status": "error", "name": name, "error": err.strip()[-600:]}
-        prov = _provision(spec, name, host, True)
+        prov = _provision(spec, name, host, True, consent_session_id=consent_session_id)
         if not prov["ok"]:
             return {"ok": False, "action": "apply", "status": "provision_failed", "name": name, "provision": prov}
         rc, out, err = _sh(host, up + f"waha-{name}", timeout=300)
@@ -501,7 +592,7 @@ def _remove(spec: dict, name: str, host: str, confirm: bool, force: bool) -> dic
 
 def waha_instance(action: str = "list", name: str | None = None, ssh_host: str = "noctus-vps", confirm: bool = False,
                   force: bool = False, write: bool = False, repo_root: str | None = None,
-                  worktree_path: str | None = None) -> dict:
+                  worktree_path: str | None = None, consent_session_id: str = "") -> dict:
     """See module docstring. DRY-RUN by default; production writes need confirm=True."""
     try:
         root = _root(repo_root, worktree_path)
@@ -518,9 +609,9 @@ def waha_instance(action: str = "list", name: str | None = None, ssh_host: str =
         if action in ("plan", "add"):
             return _plan(spec, name or "")
         if action == "provision":
-            return _provision(spec, name or "", ssh_host, confirm)
+            return _provision(spec, name or "", ssh_host, confirm, consent_session_id=consent_session_id)
         if action == "apply":
-            return _apply(spec, name or "", ssh_host, confirm)
+            return _apply(spec, name or "", ssh_host, confirm, consent_session_id)
         if action == "remove":
             return _remove(spec, name or "", ssh_host, confirm, force)
     except ValueError as e:
@@ -536,14 +627,17 @@ def register(server) -> None:
             "compose.waha.yml). action=render (offline; write=True refreshes the file + the seed read-only host set) | list (declared vs running vs health "
             "vs RSS vs session status) | plan/add (the service + the .env.fleet key NAMES to generate on the VPS -- values never "
             "cross the wire) | apply (confirm=True: compose up -d --no-deps for ONE instance; refuses when keys are missing) | "
+            "provision (creates/aligns the session config FROM the policy on the core; TIGHTEN-ONLY vs the VPS's own yml and the running "
+            "config; a personal line needs the owner's typed consent via consent_session_id) | "
             "remove (confirm=True; refuses a WORKING session unless force; snapshots the volume first, never deletes it). "
             "DRY-RUN default. KB § CONTEXT/INTEGRATIONS/whatsapp.md § One WAHA per number."
         ),
     )
     def _waha_instance(action: str = "list", name: str = "", ssh_host: str = "noctus-vps", confirm: bool = False,
-                       force: bool = False, write: bool = False, worktree_path: str = "") -> dict:
+                       force: bool = False, write: bool = False, worktree_path: str = "",
+                       consent_session_id: str = "") -> dict:
         return waha_instance(action=action, name=name or None, ssh_host=ssh_host, confirm=confirm, force=force,
-                             write=write, worktree_path=worktree_path or None)
+                             write=write, worktree_path=worktree_path or None, consent_session_id=consent_session_id)
 
 
 __all__ = ["waha_instance", "register", "render_compose", "parse_instances", "env_keys", "inst_keys", "load_spec",

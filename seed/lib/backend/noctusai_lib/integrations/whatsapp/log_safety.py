@@ -15,39 +15,13 @@ construction leg. — 2026-11-10
 """
 from __future__ import annotations
 
-import logging
-import re
-import traceback
 from typing import Any
 
-_DIGIT_RUN = re.compile(r"\d{8,}")
+from noctusai_lib.log_scrub import PhoneScrubFilter, install_phone_scrub, scrub_digits
+
+__all__ = ["PhoneScrubFilter", "install_phone_scrub", "mask_chat_id", "scrub_digits"]
 
 
 def mask_chat_id(value: Any) -> str:
     """``<digits>@suffix`` -> ``…<last4>@suffix``; anything without a long digit run is returned unchanged."""
     return scrub_digits(str(value if value is not None else ""))
-
-
-def scrub_digits(text: Any) -> str:
-    return _DIGIT_RUN.sub(lambda m: "…" + m.group()[-4:], str(text))
-
-
-class PhoneScrubFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        try:
-            record.msg = scrub_digits(record.getMessage())
-            record.args = ()
-            if record.exc_info:
-                record.exc_text = scrub_digits("".join(traceback.format_exception(*record.exc_info)))
-                record.exc_info = None
-            elif record.exc_text:
-                record.exc_text = scrub_digits(record.exc_text)
-        except Exception:  # noqa: BLE001 - a logging filter must never break the call it observes
-            record.msg, record.args = "<log line withheld: could not be scrubbed>", ()
-        return True
-
-
-def install_phone_scrub(logger: logging.Logger) -> logging.Logger:
-    if not any(isinstance(f, PhoneScrubFilter) for f in logger.filters):
-        logger.addFilter(PhoneScrubFilter())
-    return logger

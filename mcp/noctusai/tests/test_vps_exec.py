@@ -135,10 +135,10 @@ def test_metacharacters_and_non_get_http_leave_the_read_only_path(cmd):
     assert _is_read_only(cmd) is False
     cap = {}
     out = exec_cmd(cmd, run_remote=_fake_run(cap))
-    assert out["status"] == "needs_confirm" and "cmd" not in cap
+    assert out["status"] == "needs_confirm" and "docker exec" not in cap.get("cmd", "")  # the command never reached the VPS
 
 
-@pytest.mark.parametrize("cmd", ["curl -sS -D- http://localhost:8001/sw.js", "curl -X GET http://localhost:1/", "grep -c a /x"])
+@pytest.mark.parametrize("cmd", ["curl -sS -D- http://localhost:8001/sw.js", "grep -c a /x"])
 def test_plain_reads_still_run_free(cmd):
     assert _is_read_only(cmd) is True
 
@@ -153,5 +153,72 @@ def test_any_waha_core_target_needs_the_confirm_flow_even_when_the_binary_is_a_r
     assert touches_waha_core(cmd, container)
     cap = {}
     assert exec_cmd(cmd, container=container, run_remote=_fake_run(cap))["status"] == "needs_confirm"
-    assert "cmd" not in cap
+    assert cap.get("cmd") is None  # a name match never even needed the inventory lookup
     assert exec_cmd(cmd, container=container, confirm=True, run_remote=_fake_run(cap))["ok"] is True
+
+
+# ── round 3: argv-level ALLOWLIST, free-path binaries that can run other programs, id/IP resolution ───────────────────
+
+
+@pytest.mark.parametrize("cmd", [
+    "env sh", "env", "find / -exec sh {} +", "find /tmp -name x", "awk 'BEGIN{system(\"id\")}'", "sed -n 1p /etc/hostname",
+    "xargs rm", "curl -K /tmp/cfg http://x", "curl --config /tmp/cfg http://x", "curl -o /tmp/x http://x",
+    "curl -O http://x", "curl -T f http://x", "curl --upload-file f http://x", "curl --data-raw a http://x",
+    "curl -c jar http://x", "curl -X GET http://x", "curl --request GET http://x", "curl -w @/etc/passwd http://x",
+    "curl -D /tmp/h http://x", "curl --json {} http://x", "wget -O /tmp/x http://x", "wget --post-data=a http://x",
+    "wget -i list", "wget -P /tmp http://x", "sort -o /etc/x f", "grep --pre=sh a f", "rg --pre sh a f", "tail -F f",
+    "ls --color=always -Z", "cat --nonsense f", "LD_PRELOAD=/x cat f", "docker --host tcp://x ps", "docker -H x ps",
+])
+def test_anything_off_the_argv_allowlist_needs_confirm(cmd):
+    assert _is_read_only(cmd) is False, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat /etc/hostname", "ls -la /opt", "grep -rn --include=*.py foo /app", "head -n 5 /etc/hosts", "tail -n 80 /var/log/x",
+    "curl -sS -D- http://localhost:8001/sw.js", "curl -sSI -m 5 -H 'Accept: x' http://localhost:1/", "curl -sk --max-time 3 http://x",
+    "wget -qO- http://localhost:1/", "wget --spider http://x", "jq -r .a f", "sort -k2 -t, f", "df -h", "docker ps -a",
+    "docker logs --tail 50 noctus-core", "docker inspect noctus-core",
+])
+def test_the_allowlisted_reads_still_run_free(cmd):
+    assert _is_read_only(cmd) is True, cmd
+
+
+class Inventory:
+    """A VPS whose waha containers are known: id, name and IP."""
+
+    def __init__(self, rc=0):
+        self.rc, self.cmds = rc, []
+
+    def __call__(self, cmd):
+        self.cmds.append(cmd)
+        if cmd.startswith("docker ps -aq --filter name=waha"):
+            return self.rc, "abc123def4567890 /noctus-waha-assistant-core 172.18.0.7 \n", ""
+        return 0, "OUT", ""
+
+
+@pytest.mark.parametrize("cmd,container", [
+    ("docker logs abc123def456", None),             # container id (short)
+    ("docker inspect abc123def4567890", None),      # full id
+    ("curl -sS http://172.18.0.7:3000/api/sessions", None),   # the core's IP
+    ("cat /app/.sessions/x", "abc123de"),           # container= given by id
+])
+def test_an_id_or_ip_that_resolves_to_a_waha_core_needs_confirm(cmd, container):
+    inv = Inventory()
+    out = exec_cmd(cmd, container=container, run_remote=inv)
+    assert out["status"] == "needs_confirm" and all(c.startswith("docker ps -aq") for c in inv.cmds)
+    assert exec_cmd(cmd, container=container, confirm=True, run_remote=inv)["ok"] is True
+
+
+def test_an_id_or_ip_of_another_container_still_runs_free_and_a_failed_lookup_fails_closed():
+    inv = Inventory()
+    assert exec_cmd("docker logs deadbeef0000", run_remote=inv)["status"] == "ok"
+    assert exec_cmd("curl -sS http://172.18.0.99:3000/", run_remote=inv)["status"] == "ok"
+    broken = Inventory(rc=1)
+    assert exec_cmd("docker logs deadbeef0000", run_remote=broken)["status"] == "needs_confirm"
+
+
+def test_plain_reads_without_any_container_like_token_do_no_inventory_lookup():
+    inv = Inventory()
+    exec_cmd("docker ps -a", run_remote=inv)
+    exec_cmd("cat /etc/hostname", run_remote=inv)
+    assert all(not c.startswith("docker ps -aq") for c in inv.cmds)

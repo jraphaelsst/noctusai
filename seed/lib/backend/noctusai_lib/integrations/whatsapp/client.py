@@ -47,6 +47,10 @@ from noctusai_lib.integrations.whatsapp.types import (
 from noctusai_lib.primitives.phone import br_mobile_variants
 
 logger = install_phone_scrub(logging.getLogger(__name__))
+# httpx logs `HTTP Request: GET <url>` at INFO and a WAHA url carries the phone (`check-exists?phone=<digits>`): scrub it at
+# the source for every process that imports this client, not only those that ran configure_logging.
+for _noisy in ("httpx", "httpcore"):
+    install_phone_scrub(logging.getLogger(_noisy))
 
 # Session statuses `recover_session`'s ladder treats as "recovered enough
 # to stop": SCAN_QR_CODE (fresh pairing needed, but the session is alive
@@ -179,16 +183,21 @@ class WahaNumberCheckError(RuntimeError):
     absent"). ``send_text_to_phone`` falls back to send-then-retry on this."""
 
     def __init__(self, phone: str, status: int | None, detail: str = ""):
-        self.phone, self.status = phone, status
-        super().__init__(f"WAHA check-exists failed for {phone} (status={status}) {detail}".strip())
+        # LGPD: the MESSAGE (what any handler/log/traceback prints) never carries the number. `.phone` is the masked form;
+        # the raw value lives on the private `_phone` for the one caller that needs it.
+        self._phone = phone
+        self.phone, self.status = scrub_digits(phone), status
+        super().__init__(
+            f"WAHA check-exists failed for {scrub_digits(phone)} (status={status}) {scrub_digits(detail)}".strip())
 
 
 class WahaNumberNotOnWhatsApp(RuntimeError):
     """None of the number's candidate spellings is registered on WhatsApp."""
 
     def __init__(self, tried: list[str]):
-        self.tried = tried
-        super().__init__(f"number not on WhatsApp; tried {tried}")
+        self._tried = list(tried)                         # raw, private: only for a caller that must retry/persist
+        self.tried = [scrub_digits(t) for t in tried]     # masked: safe to log, print, put in a message
+        super().__init__(f"number not on WhatsApp; tried {self.tried}")
 
 
 class WahaWebhookError(RuntimeError):
@@ -725,6 +734,26 @@ class WahaClient(LinePolicyGuard):
         response = await self._request(
             "get", f"/api/sessions/{_seg(self.session)}", timeout=15, headers=self._headers()
         )
+        response.raise_for_status()
+        return _safe_json(response)
+
+    async def me(self) -> dict[str, Any]:
+        """GET /api/sessions/{session}/me -- the paired account (``{"id": "<phone>@c.us", "pushName": ...}``) or ``{}``
+        when unpaired. A READ: allowed on a read-only line (public replacement for callers that reached into the private
+        ``_request_sync`` to fetch it)."""
+        response = await self._request(
+            "get", f"/api/sessions/{_seg(self.session)}/me", timeout=15, headers=self._headers())
+        if response.status_code in (404, 422):
+            return {}
+        response.raise_for_status()
+        return _safe_json(response)
+
+    def me_sync(self) -> dict[str, Any]:
+        """Sync twin of :meth:`me` (worker paths without an event loop)."""
+        response = self._request_sync(
+            "get", f"/api/sessions/{_seg(self.session)}/me", timeout=15, headers=self._headers())
+        if response.status_code in (404, 422):
+            return {}
         response.raise_for_status()
         return _safe_json(response)
 

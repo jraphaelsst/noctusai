@@ -259,7 +259,7 @@ class TestUpdateAndDelete:
         resp = TestClient(app).delete(f"/api/whatsapp/connections/{created['id']}")
         assert resp.status_code == 204
         assert [h["url"] for h in waha.session_webhooks] == ["https://peer.example.com/hook/x"]
-        assert waha.me is None and waha.session_status == "SCAN_QR_CODE"  # no logout side effect
+        assert waha.paired_me is None and waha.session_status == "SCAN_QR_CODE"  # no logout side effect
 
     def test_delete_still_204_but_logs_error_when_waha_unreadable(self, caplog):
         app, _store, waha = _app()

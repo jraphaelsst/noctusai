@@ -23,6 +23,7 @@ from noctusai_lib.integrations.whatsapp import (
     register_line_policy,
     resolve_line_policy,
 )
+from noctusai_lib.integrations.whatsapp.line_policy import set_host_resolver
 from noctusai_lib.integrations.whatsapp.client import WahaClient, _merged_session_config, _session_config
 
 SHADOW = LinePolicy("disabled", False, False, False)
@@ -38,6 +39,7 @@ def _no_legacy_wildcard():
     clear_line_policies()  # overrides the package autouse: these tests start from an EMPTY registry (fail-closed)
     yield
     clear_line_policies()
+    set_host_resolver(None)
 
 
 class Waha:
@@ -475,6 +477,7 @@ def test_presence_subscribe_on_get_is_a_write():
 
 
 def test_a_read_only_host_stays_read_only_whatever_star_explicit_or_spelling_say():
+    set_host_resolver(lambda h: {"other": ["10.0.0.9"], "waha-x": ["10.0.0.5"]}.get(h))
     register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
     register_line_policy("*", LEGACY)
     for spelling in ("http://waha-x:3000", "http://WAHA-X:3000/", "waha-x:3000", "http://waha-x:3000/api/x"):
@@ -571,3 +574,134 @@ def test_no_run_of_eight_digits_reaches_a_whatsapp_log_line(caplog):
             "x lid=%s", "5511999990001@lid", exc_info=(ValueError, ValueError("GET /api/contacts?id=5511999990001@c.us"), None))
     assert caplog.records, "the failure paths must have logged"
     assert not re.search(r"\d{8,}", caplog.text), caplog.text
+
+
+# --- round 3: address-level aliases, relay ceiling, missing ceiling -----------------------------------------------------
+
+DNS = {"waha-x": ["10.0.0.5"], "waha-x-core": ["10.0.0.6"], "noctus-waha-x": ["10.0.0.5"],
+       "social": ["10.0.0.20"], "abc123def456": ["10.0.0.6"], "ip6": ["fd00::5"]}
+
+
+def _declare_shadow():
+    set_host_resolver(lambda h: DNS.get(h))
+    register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
+    register_line_policy("http://waha-x-core:3000", SHADOW_R, allow_memory_sink=True)
+    register_line_policy("*", LEGACY)
+
+
+@pytest.mark.parametrize("url", [
+    "http://waha-x.:3000",            # trailing dot
+    "http://WAHA-X.:3000/",
+    "http://10.0.0.5:3000",           # the edge's container IP
+    "http://10.0.0.6:3000",           # the core's container IP
+    "http://abc123def456:3000",       # container id (docker DNS) resolving to the core
+    "http://noctus-waha-x:3000",      # container_name alias
+])
+def test_every_alias_of_a_read_only_machine_stays_read_only_even_with_a_star(url):
+    _declare_shadow()
+    assert not resolve_line_policy(url, "default").send_enabled, url
+    assert not get_whatsapp_client(base_url=url, api_key="k").line_policy.send_enabled
+
+
+def test_an_unrelated_resolvable_host_still_gets_the_star():
+    _declare_shadow()
+    assert resolve_line_policy("http://social:3000").send_enabled
+
+
+def test_an_unresolvable_host_fails_closed_unless_positively_known_send_enabled():
+    _declare_shadow()
+    assert not resolve_line_policy("http://nowhere.invalid:3000").send_enabled  # "*" alone is not "positively known"
+    register_line_policy("http://nowhere.invalid:3000", LEGACY)  # an explicit, non-star, enabled declaration is
+    assert resolve_line_policy("http://nowhere.invalid:3000").send_enabled
+
+
+def test_a_process_with_no_read_only_line_does_no_dns_at_all():
+    def boom(h):
+        raise AssertionError("no DNS expected")
+
+    set_host_resolver(boom)
+    register_line_policy("*", LEGACY)
+    assert resolve_line_policy("http://anything.invalid:3000").send_enabled
+
+
+def test_ipv6_literals_and_brackets_are_normalised():
+    _declare_shadow()
+    register_line_policy("http://ip6:3000", SHADOW_R, allow_memory_sink=True)
+    assert not resolve_line_policy("http://[fd00::5]:3000").send_enabled
+
+
+def test_the_declared_relay_is_authoritative_and_a_different_one_is_refused():
+    register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
+    other = LinePolicy("disabled", False, False, False, webhook_relay="http://evil:3001")
+    with pytest.raises(LinePolicyError):
+        register_line_policy("http://waha-x:3000", other, allow_memory_sink=True)
+    with pytest.raises(LinePolicyError):
+        register_line_policy("http://waha-x:3000", SHADOW, allow_memory_sink=True)  # dropping the relay is a change too
+    # an explicit policy naming another relay cannot redirect webhooks either
+    got = resolve_line_policy("http://waha-x:3000", explicit=other)
+    assert got.webhook_relay is None or got.webhook_relay == "http://waha-x:3001"
+    c = get_whatsapp_client(base_url="http://waha-x:3000", api_key="k", line_policy=other)
+    with pytest.raises(LineWriteRefused):
+        run(c.set_webhook("http://evil:3001/hook", ["message"]))
+
+
+def test_a_missing_generated_ceiling_raises_instead_of_meaning_none():
+    from noctusai_lib.integrations.whatsapp.line_policy import _generated_read_only
+
+    with pytest.raises(LinePolicyError, match="missing"):
+        _generated_read_only("noctusai_lib.integrations.whatsapp.no_such_generated_module")
+
+
+# --- no phone number in an exception message or a log record (owner-line pass) ----------------------------------------------
+
+
+def test_exception_messages_and_logs_never_carry_a_phone_on_5xx_then_404(caplog):
+    import logging
+    import re
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path.endswith("check-exists"):
+            return httpx.Response(503, json={}, request=request)  # the check endpoint is down: 5xx
+        return httpx.Response(404, json={"error": "no"}, request=request)  # then every send variant: 404
+
+    c = WahaClient("http://waha.test", "k", "default", transport=httpx.MockTransport(handler), line_policy=LEGACY)
+    caught: list[BaseException] = []
+    with caplog.at_level(logging.DEBUG):
+        for call in (lambda: c.send_text_to_phone_sync("5511999990001", "hi"),
+                     lambda: run(c.send_text_to_phone("5511999990001", "hi")),
+                     lambda: run(c.check_exists("5511999990001")),
+                     lambda: run(c.resolve_chat_id("5511999990001"))):
+            try:
+                call()
+            except Exception as exc:  # noqa: BLE001 - every variant fails on purpose; the messages are under test
+                caught.append(exc)
+    assert caught and caplog.records
+    phone = re.compile(r"\+?\d{10,}")
+    for rec in caplog.records:
+        assert not phone.search(rec.getMessage()), rec.getMessage()
+        assert not phone.search(rec.exc_text or ""), rec.exc_text
+    for exc in caught:
+        chain = [exc, exc.__cause__, exc.__context__]
+        for e in filter(None, chain):
+            assert not phone.search(str(e)), (type(e).__name__, str(e))
+    from noctusai_lib.integrations.whatsapp import WahaNumberCheckError, WahaNumberNotOnWhatsApp
+
+    e1 = WahaNumberCheckError("5511999990001", 503, "GET /x?phone=5511999990001")
+    e2 = WahaNumberNotOnWhatsApp(["5511999990001", "551199990001"])
+    assert not phone.search(str(e1)) and not phone.search(str(e2)) and not phone.search(repr(e2.tried))
+    assert e1._phone == "5511999990001" and e2._tried == ["5511999990001", "551199990001"]  # raw kept privately
+
+
+def test_me_is_a_public_read_allowed_on_a_read_only_line():
+    waha = Waha({"id": "5511999990001@c.us", "pushName": "Owner"})
+    c = waha.client(SHADOW)
+    assert run(c.me())["pushName"] == "Owner" and c.me_sync()["pushName"] == "Owner"
+    assert [m for m, _, _ in waha.calls] == ["GET", "GET"] and all(p.endswith("/me") for _, p, _ in waha.calls)
+    assert is_whatsapp_write("get", "/api/sessions/default/me") is False
+    f = FakeWahaClient(line_policy=SHADOW)
+    assert run(f.me()) == {}
+    f.simulate_pair(phone="5511999990001")
+    assert run(f.me())["id"] == "5511999990001@c.us"

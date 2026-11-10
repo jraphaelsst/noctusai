@@ -31,14 +31,86 @@ from ._vps_ssh import run_remote as _throttled_ssh
 DEFAULT_HOST = "noctus-vps"
 _MAX_OUT = 20000  # cap each stream so a runaway `cat` can't flood the context
 
-# Leading binaries that are inherently READ-ONLY → run without confirm.
+# Binaries that may run WITHOUT confirm, each with an ARGV-level flag allowlist (`_ARGV_POLICY` below): a binary is
+# not "read-only" -- a binary invoked with these exact flags is. `env`, `find`, `awk`, `sed`, `xargs` are NOT here: they
+# can launch other programs (`env sh`, `find -exec`, `awk system()`, `sed e`), so they need confirm like any write.
 _READ_BINARIES = frozenset({
-    "cat", "grep", "egrep", "fgrep", "rg", "ls", "head", "tail", "wc", "stat",
-    "find", "env", "printenv", "echo", "test", "file", "du", "df", "uname",
-    "hostname", "date", "whoami", "pwd", "which", "readlink", "sort", "uniq",
-    "cut", "tr", "jq", "xxd", "base64", "sed", "awk", "curl", "wget", "id",
-    "getent", "dirname", "basename", "realpath", "md5sum", "sha256sum",
+    "cat", "grep", "egrep", "fgrep", "rg", "ls", "head", "tail", "wc", "stat", "echo", "test", "file", "du", "df",
+    "uname", "hostname", "date", "whoami", "pwd", "which", "readlink", "sort", "uniq", "cut", "tr", "jq", "xxd",
+    "base64", "curl", "wget", "id", "getent", "dirname", "basename", "realpath", "md5sum", "sha256sum", "printenv",
 })
+
+#: per-binary allowed flags. short = single-letter flags (clusters like `-sS` are checked char by char), val_short = short
+#: flags that TAKE a value, long = bare long flags, val_long = long flags that take a value. Anything else -> confirm.
+_ARGV_POLICY: dict[str, dict[str, Any]] = {
+    "cat": {"short": "nbsAETv"},
+    "head": {"short": "qv", "val_short": "nc"}, "tail": {"short": "qv", "val_short": "nc"},
+    "wc": {"short": "lwcmL"}, "stat": {"short": "L", "val_short": "c", "long": {"--dereference"}, "val_long": {"--format"}},
+    "ls": {"short": "lahtrRdSAFi1sc", "long": {"--all", "--human-readable"}},
+    "grep": {"short": "cilLnrRwxvsEFhHoqIazZ", "val_short": "ABCme", "val_long": {"--include", "--exclude", "--max-count"},
+             "long": {"--count", "--ignore-case", "--line-number", "--recursive", "--files-with-matches",
+                      "--invert-match", "--no-messages", "--extended-regexp", "--fixed-strings", "--quiet"}},
+    "echo": {"short": "ne"}, "test": {"short": ""}, "file": {"short": "bi"},
+    "du": {"short": "hsacx", "val_short": "d"}, "df": {"short": "hTi"}, "uname": {"short": "asrmnvpio"},
+    "hostname": {"short": "fis"}, "date": {"short": "u", "val_short": "d"}, "whoami": {"short": ""}, "pwd": {"short": "LP"},
+    "which": {"short": "a"}, "readlink": {"short": "fem"}, "sort": {"short": "nrubfhVc", "val_short": "kt"},
+    "uniq": {"short": "cdui"}, "cut": {"short": "s", "val_short": "dfcb"}, "tr": {"short": "dsc"},
+    "jq": {"short": "rcCSeMa", "long": {"--raw-output", "--compact-output", "--sort-keys"}},
+    "xxd": {"short": "p", "val_short": "lcs"}, "base64": {"short": "d"}, "id": {"short": "unGg"},
+    "getent": {"short": ""}, "dirname": {"short": ""}, "basename": {"short": "a", "val_short": "s"},
+    "realpath": {"short": ""}, "md5sum": {"short": "b"}, "sha256sum": {"short": "b"}, "printenv": {"short": "0"},
+    # HTTP clients: GET-only flags. NO -X/--request, -d/--data*, -F, -T, -K, -o/-O (write files), cookies, --json.
+    "curl": {"short": "sSfLIivk46g", "val_short": "HmAeDw", "long": {"--compressed", "--head", "--insecure", "--silent",
+             "--show-error", "--fail", "--location", "--verbose", "--include"},
+             "val_long": {"--max-time", "--connect-timeout", "--header", "--user-agent", "--resolve", "--retry"}},
+    "wget": {"short": "qSv", "val_short": "OTt", "long": {"--spider", "--quiet", "--no-check-certificate", "--server-response"},
+             "val_long": {"--timeout", "--tries", "--header"}},
+    "rg": {"short": "cilnIwxvsFhHoqz", "val_short": "ABCmeg", "long": {"--count", "--ignore-case", "--files-with-matches"}},
+}
+
+
+def _value_ok(binary: str, flag: str, value: str) -> bool:
+    if binary == "curl" and flag == "-D":
+        return value == "-"           # dump headers to stdout only, never to a file
+    if binary == "curl" and flag == "-w":
+        return "@" not in value        # `-w @file` reads a file
+    if binary == "wget" and flag == "-O":
+        return value == "-"           # stdout only
+    return True
+
+
+def _argv_ok(argv: list[str]) -> bool:
+    pol = _ARGV_POLICY.get(argv[0] if argv else "")
+    if pol is None:
+        return False
+    short, val_short = pol.get("short", ""), pol.get("val_short", "")
+    longs, val_long = pol.get("long", set()), pol.get("val_long", set())
+    i = 1
+    while i < len(argv):
+        tok = argv[i]
+        if tok == "--":
+            break
+        if tok.startswith("--"):
+            name, eq, val = tok.partition("=")
+            if name in val_long:
+                if not eq:
+                    i += 1
+            elif name not in longs:
+                return False
+        elif tok.startswith("-") and len(tok) > 1 and not tok[1:].isdigit():
+            chars = tok[1:]
+            for k, ch in enumerate(chars):
+                if ch in val_short:
+                    value = chars[k + 1:] if k < len(chars) - 1 else (argv[i + 1] if i + 1 < len(argv) else "")
+                    if not _value_ok(argv[0], "-" + ch, value):
+                        return False
+                    if k == len(chars) - 1:
+                        i += 1
+                    break
+                if ch not in short:
+                    return False
+        i += 1
+    return True
 # `docker <sub>` is read-only only for these subcommands.
 _DOCKER_READ_SUBCMDS = frozenset({
     "ps", "inspect", "images", "logs", "version", "info", "top", "port",
@@ -71,13 +143,55 @@ _NON_GET_HTTP = re.compile(
 #: line-policy edge does not front these, so touching them is a production write that needs the confirm flow.
 _WAHA_CORE = re.compile(r"waha-[a-z0-9-]*-core", re.IGNORECASE)
 _DOCKER_EXEC_WAHA = re.compile(r"docker\s+(?:container\s+)?exec\b[^\n;|&]*\bwaha", re.IGNORECASE)
+_IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+_HEXID = re.compile(r"^[0-9a-f]{4,64}$")
+#: waha containers: id, name, every network IP. `xargs -r` so "none" is rc 0 + empty (a failure is rc != 0 -> fail closed).
+_WAHA_INVENTORY = (
+    "docker ps -aq --filter name=waha | xargs -r docker inspect "
+    "--format '{{.Id}} {{.Name}} {{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}'"
+)
 
 
-def touches_waha_core(command: str, container: str | None = None) -> bool:
-    return bool(
-        _WAHA_CORE.search(command) or (container and "waha" in container.lower())
-        or _DOCKER_EXEC_WAHA.search(command)
-    )
+def _waha_inventory(run) -> "list[set[str]] | None":
+    """Per waha container: {full id, name, ips}. None = the lookup failed (callers fail CLOSED)."""
+    try:
+        rc, out, _err = run(_WAHA_INVENTORY)
+    except Exception:  # noqa: BLE001 - an unreachable VPS is "unknown", which is closed
+        return None
+    if rc != 0:
+        return None
+    return [set(line.split()) for line in (out or "").splitlines() if line.strip()]
+
+
+def _candidate_targets(command: str, container: str | None) -> set[str]:
+    """Tokens that could NAME a container without containing `waha`: a (short) id or an IP address."""
+    toks = {t for t in re.split(r"[\s/:=,\"']+", command) if t}
+    out = {t.lower() for t in toks if _HEXID.match(t.lower())}
+    out |= set(_IPV4.findall(command))
+    if container:
+        out.add(container.strip().lower())
+    return out
+
+
+def touches_waha_core(command: str, container: str | None = None, run=None) -> bool:
+    """True when the command (or `container`) targets a WAHA container -- by name, or by id / IP when `run` is given and
+    the target RESOLVES to a waha container. An unresolvable lookup fails CLOSED (True)."""
+    if (_WAHA_CORE.search(command) or (container and "waha" in container.lower())
+            or _DOCKER_EXEC_WAHA.search(command)):
+        return True
+    cands = _candidate_targets(command, container)
+    if not cands or run is None:
+        return False
+    inv = _waha_inventory(run)
+    if inv is None:
+        return True
+    for row in inv:
+        names = {x.lstrip("/").lower() for x in row}
+        ids = {x.lower() for x in row if _HEXID.match(x.lower())}
+        for c in cands:
+            if c in names or any(i.startswith(c) for i in ids if len(c) >= 4) or c in row:
+                return True
+    return False
 
 
 def _err(msg: str, **extra) -> dict[str, Any]:
@@ -102,24 +216,30 @@ def _leading_binary(command: str) -> str:
 
 
 def _is_read_only(command: str) -> bool:
-    """True when ONE simple command runs and its leading binary is inherently read-only."""
+    """True when ONE simple command runs, its binary is allow-listed AND every flag is on that binary's allowlist (the
+    parser is an ALLOWLIST at argv level, not a blocklist of known-bad flags)."""
     if _SHELL_META.search(command):
         return False
-    bin_ = _leading_binary(command)
-    if bin_ in ("curl", "wget") and _NON_GET_HTTP.search(command):
+    try:
+        toks = shlex.split(command)
+    except ValueError:
         return False
-    if bin_ == "docker":
-        try:
-            toks = shlex.split(command)
-        except ValueError:
-            toks = command.split()
-        # docker [global flags] <subcmd>; find the first non-flag after 'docker'
+    while toks and "=" in toks[0] and not toks[0].startswith("-") and toks[0].split("=", 1)[0].isidentifier():
+        if toks[0].split("=", 1)[0].upper().startswith(("LD_", "DYLD_", "PATH", "BASH_", "SHELL", "IFS")):
+            return False  # an env prefix that changes what runs is not harmless
+        toks = toks[1:]
+    if not toks:
+        return False
+    if toks[0] == "docker":
         after = [t for t in toks[1:] if not t.startswith("-")]
+        flags = [t for t in toks[1:] if t.startswith("-")]
+        if any(f.split("=", 1)[0] in ("-H", "--host", "--context", "--config", "--tls", "--tlsverify") for f in flags):
+            return False
         sub = after[0] if after else ""
         if sub == "system":
             return len(after) > 1 and after[1] == "df"
         return sub in _DOCKER_READ_SUBCMDS
-    return bin_ in _READ_BINARIES
+    return toks[0] in _READ_BINARIES and _argv_ok(toks)
 
 
 def _hard_denied(command: str) -> str | None:
@@ -156,8 +276,10 @@ def exec_cmd(
                       "vps.recreate / vps.prune) or run it by hand."),
         }
 
-    read_only = _is_read_only(command) and not touches_waha_core(command, container)
-    if touches_waha_core(command, container) and not confirm:
+    run = _runner(run_remote, ssh_host)
+    waha = touches_waha_core(command, container, run=run)
+    read_only = _is_read_only(command) and not waha
+    if waha and not confirm:
         return {
             "ok": False, "status": "needs_confirm", "exit_code": 1,
             "message": ("this touches a WAHA container (waha-<n>-core / docker exec into waha*): the line-policy edge "
@@ -179,7 +301,6 @@ def exec_cmd(
     else:
         remote = f"sh -lc {shlex.quote(inner)}"
 
-    run = _runner(run_remote, ssh_host)
     rc, out, err = run(remote)
     return {
         "ok": rc == 0,
