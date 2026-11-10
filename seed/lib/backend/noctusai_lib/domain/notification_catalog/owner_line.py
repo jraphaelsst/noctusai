@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Protocol
 
-from noctusai_lib.primitives.phone import is_valid_phone, phone_digits
+from noctusai_lib.primitives.phone import br_mobile_variants, is_valid_phone
 
 from .catalog import (
     NotificationGate,
@@ -134,7 +134,7 @@ class WahaOwnerLineTransport:
 
     def __init__(self, client_factory: Callable[[], Any], *, expected_numero: str,
                  me_fetch: Callable[[], Optional[str]]) -> None:
-        expected = phone_digits(expected_numero)
+        expected = set(br_mobile_variants(expected_numero))
         if not expected:
             raise ValueError("owner line: expected_numero is not a valid phone")
         self._factory = client_factory
@@ -146,8 +146,9 @@ class WahaOwnerLineTransport:
         if self._verified:
             return
         me = self._me_fetch()
-        paired = phone_digits("+" + me.split("@")[0].lstrip("+")) if me else None
-        if paired != self._expected:
+        # WhatsApp may pair a BR mobile without the 9th digit: match by the seed's variant set.
+        paired = set(br_mobile_variants("+" + me.split("@")[0].lstrip("+"))) if me else set()
+        if not paired & self._expected:
             raise OwnerLineNumberMismatch(REASON_NUMBER_MISMATCH)
         self._verified = True
 
@@ -194,7 +195,7 @@ def make_owner_line(
     transport: Optional[OwnerLineTransport] = None
     reason: Optional[str] = None
     if waha_factory is not None:
-        if not expected_numero or me_fetch is None or not phone_digits(expected_numero):
+        if not expected_numero or me_fetch is None or not br_mobile_variants(expected_numero):
             logger.error("owner line: WAHA is set but the line's number is not declared (NOC_OWNER_LINE_EXPECTED_NUMBER)"
                          " — no transport, sends will record failed")
             reason = REASON_NUMBER_UNDECLARED

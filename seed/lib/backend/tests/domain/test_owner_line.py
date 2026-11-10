@@ -10,6 +10,7 @@ from noctusai_lib.domain.notification_catalog import (
     FakeOwnerLineTransport,
     FakeOwnerRecipientSource,
     NotificationKind,
+    OwnerLineNumberMismatch,
     OwnerRecipient,
     SupabaseOwnerRecipientSource,
     UndeclaredNotificationKind,
@@ -248,3 +249,28 @@ def test_send_failure_log_never_carries_the_number(caplog):
         text = rec.getMessage() + (rec.exc_text or "") + str(rec.exc_info)
         assert not re.search(r"\+?\d{10,15}", text), text
     assert any("0001" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.parametrize("expected,me,sends", [
+    ("+5511999990099", "551199990099@c.us", True),    # declared with the 9, paired without it
+    ("+551199990099", "5511999990099@c.us", True),    # declared without, paired with
+    ("+5511999990099", "5511999990098@c.us", False),  # differs in a non-9 digit
+    ("+5511999990099", "551199990098@c.us", False),
+    ("+14155550123", "14155550123@c.us", True),       # foreign: exact digits
+    ("+14155550123", "14155550124@c.us", False),
+])
+def test_paired_number_match_uses_br_variants(expected, me, sends):
+    calls = []
+
+    class C:
+        def send_text_to_phone_sync(self, phone, text):
+            calls.append(phone)
+
+    t = WahaOwnerLineTransport(lambda: C(), expected_numero=expected, me_fetch=lambda: me)
+    if sends:
+        t.send_text(R1.numero, "oi")
+        assert calls == [R1.numero]
+    else:
+        with pytest.raises(OwnerLineNumberMismatch):
+            t.send_text(R1.numero, "oi")
+        assert calls == []
