@@ -61,6 +61,7 @@ line's own status).
 | WhatsApp client (WAHA + Meta Cloud) | yes | `seed/lib/backend/noctusai_lib/integrations/whatsapp/` | consume |
 | Notification kinds + switch + ledger | yes (2026-11-09) | `noctusai_lib.domain.notification_catalog` + core 117 | consume; declare agents kinds |
 | One WAHA line per container | **yes** (found in P0) | `deploy/fleet/waha-instances.yml` (source of truth, one entry per number) → rendered `deploy/fleet/compose.waha.yml` via `noctus.dev.waha_instance action=render`; keeper `check_waha_instances_render_sync`; `KB § INTEGRATIONS/whatsapp.md` "One WAHA per number". Live instance: `monica` | consume: each line = one registry entry. Coordinate with the Assistant session, whose L2 should be an entry here too |
+| Per-LINE send policy (anti-ban: allowlist, never initiate, 30–60 s jitter, ≤2/min ≤30/h ≤100/day, warm-up ramp, kill switch on FIRST/SECOND_WARNING, repetition and loop halts) | **no**. The shared `whatsapp` bucket is 5 rps / burst 10, far too fast for a fresh line | spec: `project-history/assistant-chatbot/research/waha-anti-ban.md` (feat/ac-research-skill) | the **Assistant session builds it** in the seed `integrations/whatsapp` as a per-instance policy; L1 and L3 consume it (agreed 2026-11-10) |
 | Owner-line sender (platform session + owner number(s)) | **no** | — | build in the seed (Phase 2): Protocol + Fake + Real + factory; config on core Notificações |
 | Agent from templates on its own line | partial | agents layers 073 + creator | Phase 3 |
 
@@ -108,7 +109,11 @@ noc VPS
   - `(base_url, session_name)` is unique across orgs (SW 321), and create hardcodes `session_name="default"`. That gives one session per WAHA server, which fits one WAHA per container.
   - **Phase 1 approach:** re-point the existing row's `base_url` at L1's container. This carries less risk than adding a second row, which would need `agente_leads_ativo` set on exactly one row. `noctusai-e1` reviews any slice touching `julia_linha` / `whatsapp_connections`.
   - Still open: which phone number the `default` session is paired to (WAHA `session/me`).
-- [ ] Read the Assistant branch's WAHA-per-container design and its state; agree the seam with the Assistant session.
+- [x] Agree the seam with the Assistant session (2026-11-10):
+  - No new mechanism: each line is one `waha-instances.yml` entry.
+  - L1 and L3 land first; the Assistant adds `assistant` in the same shape and rebases. One owner per line; the second lander rebases.
+  - The Assistant session builds the per-line anti-ban policy in the seed, and we consume it.
+  - Nobody else plans work in core Notificações; the owner line is ours.
 - [ ] Check where an owner number could live (core settings vs the notification page) and who reads it.
 **Improvements:** NOC-FILL-IMPROVEMENTS
 
@@ -133,8 +138,8 @@ noc VPS
 
 ## 7. Open questions (owner)
 
-1. The Assistant on your **personal** number: this supersedes D42 (the spare number). The Assistant session confirms
-   with you.
+1. The Assistant on your **personal** number? The Assistant session asks you directly and records the answer as D46. Until
+   then D42 (spare/burnable number) stands for L2.
 2. When will the third number exist? Phase 3 starts then. Until then the owner line has no sender, so the eval-loop
    gate stays held: there's no interim channel.
 3. Which number(s) receive owner notifications: only yours, or also a second admin?
