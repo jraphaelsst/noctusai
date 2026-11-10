@@ -60,7 +60,7 @@ line's own status).
 |---|---|---|---|
 | WhatsApp client (WAHA + Meta Cloud) | yes | `seed/lib/backend/noctusai_lib/integrations/whatsapp/` | consume |
 | Notification kinds + switch + ledger | yes (2026-11-09) | `noctusai_lib.domain.notification_catalog` + core 117 | consume; declare agents kinds |
-| One WAHA line per container | in flight | Assistant slice 1 (`feat/assistant-chatbot`) | consume when it lands; Phase 0 reads its state |
+| One WAHA line per container | **yes** (found in P0) | `deploy/fleet/waha-instances.yml` (source of truth, one entry per number) → rendered `deploy/fleet/compose.waha.yml` via `noctus.dev.waha_instance action=render`; keeper `check_waha_instances_render_sync`; `KB § INTEGRATIONS/whatsapp.md` "One WAHA per number". Live instance: `monica` | consume: each line = one registry entry. Coordinate with the Assistant session, whose L2 should be an entry here too |
 | Owner-line sender (platform session + owner number(s)) | **no** | — | build in the seed (Phase 2): Protocol + Fake + Real + factory; config on core Notificações |
 | Agent from templates on its own line | partial | agents layers 073 + creator | Phase 3 |
 
