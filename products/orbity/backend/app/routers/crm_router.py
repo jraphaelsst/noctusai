@@ -58,10 +58,12 @@ from app.schemas.crm import (
     ScoringRuleUpdate,
     StageMoveRequest,
 )
+from noctusai_lib.api.access_tiers import access_tier
+from noctusai_lib.domain.licensing import enforce_license
 from app.rate_limit import limiter
 from app.services.automation_service import AutomationService
 from app.services.automation_triggers import adisparar
-from app.services.crm_service import CRMService
+from app.services.crm_service import CaptureStageInvalid, CRMService
 
 logger = logging.getLogger(__name__)
 
@@ -517,11 +519,26 @@ def delete_scoring_rule(
 # Public lead capture (unauthenticated)
 # ---------------------------------------------------------------------------
 
+def _capture_org_key(request: Request) -> str:
+    """Per-ORG limiter key on the CANONICAL org id: `{ABC...}` / upper-case / un-hyphenated spellings of one UUID are ONE
+    bucket (a raw path string would hand the caller a fresh bucket per spelling). An unparsable id keeps its raw value."""
+    raw = str(request.path_params.get("org_id", ""))
+    try:
+        raw = str(UUID(raw))
+    except ValueError:
+        pass
+    return f"capture-org:{raw}"
+
+
 @capture_router.post(
     "/api/capture/{org_id}",
     status_code=status.HTTP_201_CREATED,
 )
-@limiter.limit("20/minute;200/hour", key_func=client_ip_key)
+@access_tier("public", reason="lead capture form (per-IP and per-org rate limited, custom_fields capped, org-checked stage)", category="lead-capture")
+# `shared_limit(scope=)` pins the bucket: slowapi's default scope is the request PATH, so `/api/capture/<id>` spelled in 2^32 case/hyphen
+# variants would otherwise be 2^32 fresh buckets (per IP and per org alike).
+@limiter.shared_limit("20/minute;200/hour", scope="capture-ip", key_func=client_ip_key)
+@limiter.shared_limit("120/minute;1500/hour", scope="capture-org", key_func=_capture_org_key)  # per ORG, on top of per IP: a botnet of IPs still cannot flood one tenant
 async def capture_lead(
     request: Request,  # required positionally by @limiter.limit (slowapi)
     org_id: UUID,
@@ -536,13 +553,25 @@ async def capture_lead(
     Known keys (name/email/phone/company/source/value/stage_id) map to
     lead columns; everything else lands in custom_fields JSONB.
     """
+    # The org must exist AND hold an orbity license BEFORE anything is written (a public id of an org without orbity -- or a
+    # made-up one -- is a 404, never a lead row): same gate every authenticated call passes. 503 when the check is down.
+    try:
+        enforce_license(org_id, None)
+    except HTTPException as exc:
+        raise HTTPException(status_code=404 if exc.status_code == 403 else exc.status_code, detail="Organização não encontrada") from exc
     try:
         # model_dump(mode="json") serializes UUID → str for stage_id
         raw = payload.model_dump(mode="json")
         svc = _admin_crm(org_id)
         row = svc.capture_lead(raw)
+    except CaptureStageInvalid as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception:
         logger.exception("capture_lead failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao registrar lead")
+    # NOC-REMEDIATE[orbity-capture-automation-budget]: a captured lead starts the org's `lead_created` flows, whose steps can
+    # send WhatsApp. WhatsApp is OFF for orbity in prod (no WAHA line policy => the seed refuses every send) and capture is
+    # already capped per IP and per org (120/min), so a per-org SEND budget for capture-triggered automations is moot today;
+    # it must exist (per-org sends/hour counted in the engine) BEFORE orbity's WhatsApp is switched on. — 2026-11-10
     await adisparar("lead_created", org_id, lead_id=row.get("id"))
     return {"ok": True, "id": row.get("id")}

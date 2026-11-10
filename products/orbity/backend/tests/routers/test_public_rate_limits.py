@@ -23,6 +23,97 @@ class TestPublicRateLimits:
         assert 429 in codes
         assert codes[0] != 429
 
+    def test_capture_is_rate_limited_per_org_across_many_ips(self, client):
+        """A botnet of distinct IPs stays under the per-IP limit; the per-ORG limit still stops the flood."""
+        org = "00000000-0000-0000-0000-0000000000f1"
+        codes = [
+            client.raw().post(f"/api/capture/{org}", json={"name": "x"}, headers={"CF-Connecting-IP": f"10.9.{i // 250}.{i % 250 + 1}"}).status_code
+            for i in range(125)
+        ]
+        assert 429 in codes
+        assert codes[0] != 429
+
+    def test_capture_limiter_shares_one_bucket_across_spellings_of_one_org_id(self, client):
+        """Case-varied / un-hyphenated spellings of ONE org id (the ones the path parser accepts) are one per-org bucket
+        (distinct IPs, so only the per-org limit can trip); brace/urn spellings are covered by the key unit test below."""
+        org = "00000000-0000-0000-0000-0000000000f2"
+        spellings = [org, org.upper(), org.replace("-", "")]
+        codes = []
+        for i in range(125):
+            codes.append(client.raw().post(
+                f"/api/capture/{spellings[i % len(spellings)]}", json={"name": "x"},
+                headers={"CF-Connecting-IP": f"10.8.{i // 250}.{i % 250 + 1}"}).status_code)
+        assert 429 in codes
+
+    def test_capture_org_key_is_canonical(self):
+        """The limiter key is built from the canonical UUID: every spelling is ONE bucket; junk keeps its raw value."""
+        from types import SimpleNamespace
+
+        from app.routers.crm_router import _capture_org_key
+
+        org = "00000000-0000-0000-0000-0000000000f3"
+        key = lambda raw: _capture_org_key(SimpleNamespace(path_params={"org_id": raw}))  # noqa: E731
+        assert {key(org), key(org.upper()), key("{" + org + "}"), key(org.replace("-", "")), key("urn:uuid:" + org)} == {f"capture-org:{org}"}
+        assert key("not-a-uuid") == "capture-org:not-a-uuid"
+
+    def test_capture_for_an_org_without_orbity_is_404_and_writes_nothing(self, client):
+        from noctusai_lib.domain.licensing import FakeLicenseChecker, configure_license_gate, get_license_gate, restore_license_gate
+
+        before = get_license_gate()
+        configure_license_gate("orbity", FakeLicenseChecker(allow_all=False, licensed=set()))
+        try:
+            client.mock_supabase.set_table_data("leads", [])
+            r = client.raw().post(f"/api/capture/{ORG}", json={"name": "x"})
+            assert r.status_code == 404
+            assert client.mock_supabase.table("leads").inserted_payloads == []
+            configure_license_gate("orbity", FakeLicenseChecker(allow_all=False, licensed={(ORG, "orbity")}))
+            client.mock_supabase.set_table_data("lead_stages", [])
+            assert client.raw().post(f"/api/capture/{ORG}", json={"name": "x"}).status_code == 201
+        finally:
+            restore_license_gate(before)
+
+    def test_capture_is_503_when_the_license_check_is_down(self, client):
+        from noctusai_lib.domain.licensing import FakeLicenseChecker, configure_license_gate, get_license_gate, restore_license_gate
+
+        before = get_license_gate()
+        configure_license_gate("orbity", FakeLicenseChecker(allow_all=False, unavailable=True))
+        try:
+            assert client.raw().post(f"/api/capture/{ORG}", json={"name": "x"}).status_code == 503
+        finally:
+            restore_license_gate(before)
+
+    def test_capture_custom_fields_are_capped_by_count(self, client):
+        body = {"name": "x", **{f"k{i}": "v" for i in range(21)}}
+        assert client.raw().post(f"/api/capture/{ORG}", json=body).status_code == 422
+
+    def test_capture_custom_fields_are_capped_by_bytes(self, client):
+        assert client.raw().post(f"/api/capture/{ORG}", json={"name": "x", "blob": "a" * 9000}).status_code == 422
+
+    def test_capture_within_the_caps_is_accepted(self, client):
+        client.mock_supabase.set_table_data("lead_stages", [])
+        assert client.raw().post(f"/api/capture/{ORG}", json={"name": "x", "utm": "a", "campanha": "b"}).status_code == 201
+
+    def test_capture_stage_of_another_org_is_refused(self, client):
+        other_stage = str(uuid4())
+        client.mock_supabase.set_table_data("lead_stages", [
+            {"id": other_stage, "org_id": "00000000-0000-0000-0000-0000000000aa", "name": "N", "position": 0}])
+        r = client.raw().post(f"/api/capture/{ORG}", json={"name": "x", "stage_id": other_stage})
+        assert r.status_code == 422
+
+    def test_capture_stage_of_this_org_is_accepted(self, client):
+        mine = str(uuid4())
+        client.mock_supabase.set_table_data("lead_stages", [{"id": mine, "org_id": ORG, "name": "N", "position": 0}])
+        r = client.raw().post(f"/api/capture/{ORG}", json={"name": "x", "stage_id": mine})
+        assert r.status_code == 201
+
+    def test_token_guessing_cannot_dodge_the_limit_with_a_fresh_path(self, client):
+        """slowapi's default scope is the request PATH; a token-link path carries the token, so without a pinned scope each
+        guess would be a fresh bucket. 35 DIFFERENT tokens from one IP must trip the 30/minute limit."""
+        codes = [client.raw().get(f"/api/reports/public/{uuid4()}").status_code for _ in range(35)]
+        assert 429 in codes
+        codes = [client.raw().get(f"/api/content/approve/{uuid4()}").status_code for _ in range(35)]
+        assert 429 in codes
+
     def test_capture_body_still_validated_as_body(self, client):
         resp = client.raw().post(f"/api/capture/{ORG}", json={"email": "not-an-email"})
         assert resp.status_code == 422

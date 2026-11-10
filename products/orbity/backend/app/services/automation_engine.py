@@ -788,6 +788,20 @@ def _failure_reason(exc: Exception) -> str:
     return "Falha inesperada ao executar a etapa da automação."
 
 
+def has_due_work(db: Any) -> bool:
+    """O(1) idle gate for the 1-minute sweep: ONE ``limit 1`` existence query for "a due pending action OR a possibly-stale
+    processing one", the same predicate as :func:`orgs_with_due_work`. The empty queue (the usual case) costs a single
+    PostgREST call per tick instead of the two paged scans -- KB § PATTERNS/backend/polling-request-budget.md."""
+    now = _now_iso()
+    stale_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=STALE_CLAIM_MINUTES)).isoformat()
+    rows = (
+        db.table("automation_pending_actions").select("id")
+        .or_(f'and(status.eq.pending,scheduled_for.lte."{now}"),and(status.eq.processing,claimed_at.lt."{stale_cutoff}")')
+        .limit(1).execute().data
+    )
+    return bool(rows)
+
+
 def orgs_with_due_work(db: Any) -> list[str]:
     """Org ids that have a due 'pending' action or a possibly-stale 'processing'
     one — paged (PostgREST caps an unbounded select at 1 000 rows silently)."""

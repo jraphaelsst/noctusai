@@ -27,6 +27,7 @@ from noctusai_lib.domain.finance.errors import FinanceError
 from noctusai_lib.integrations.cnpj_registry.errors import CnpjNotFoundError, CnpjRegistryError
 from noctusai_lib.integrations.cnpj_registry.types import CnpjRegistryLookup
 from noctusai_lib.primitives.identificador import validar_cnpj
+from noctusai_lib.api.access_tiers import access_tier
 from noctusai_seed.organ_auth import make_organ_auth
 
 from app import billing
@@ -176,6 +177,7 @@ async def lookup_cnpj(
 
 
 @router.get("/{client_id}/offboarding-preview", status_code=status.HTTP_200_OK)
+@access_tier("org", reason="org ADMIN of the selected org (make_organ_auth.admin)")
 async def offboarding_preview(client_id: str, auth: tuple = Depends(admin_dependency)) -> dict:
     org_id = str(coerce_org_uuid(auth[2]))
     try:
@@ -188,6 +190,7 @@ async def offboarding_preview(client_id: str, auth: tuple = Depends(admin_depend
 
 
 @router.post("/{client_id}/archive", status_code=status.HTTP_200_OK)
+@access_tier("org", reason="org ADMIN of the selected org (make_organ_auth.admin)")
 async def archive_client(
     client_id: str,
     payload: Optional[ArchiveRequest] = None,
@@ -220,6 +223,7 @@ async def archive_client(
 
 
 @router.delete("/{client_id}", status_code=status.HTTP_200_OK)
+@access_tier("org", reason="org ADMIN of the selected org (make_organ_auth.admin)")
 async def delete_client(client_id: str, auth: tuple = Depends(admin_dependency)) -> dict:
     """Soft-delete the client (``deleted_at``/``deleted_by``): hidden from every list/picker, rows kept.
 

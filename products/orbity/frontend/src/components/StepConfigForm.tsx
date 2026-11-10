@@ -62,7 +62,7 @@ export function parseWaitConfig(config: Record<string, unknown> | undefined): {
 }
 
 const INPUT =
-  "flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring";
 
 export function SendMessageFields({
   template,
@@ -101,7 +101,7 @@ export function SendMessageFields({
         onChange={(e) => onChange(e.target.value)}
         onSelect={() => { touched.current = true; }}
         placeholder="Olá {{nome}}, tudo bem? Aqui é da agência..."
-        className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
+        className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring resize-y"
       />
       <div className="mt-2 flex flex-wrap items-center gap-1.5" data-testid="aut-variable-chips">
         <span className="text-xs text-muted-foreground">Inserir variável:</span>

@@ -327,7 +327,7 @@ function FlowDialogInner({
                 setForm((f) => ({ ...f, name: e.target.value }))
               }
               placeholder="Ex.: Boas-vindas para novos leads"
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <div>
@@ -340,7 +340,7 @@ function FlowDialogInner({
                   trigger_type: e.target.value as TriggerType,
                 }))
               }
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             >
               {(Object.keys(TRIGGER_LABELS) as TriggerType[]).map((t) => (
                 <option key={t} value={t} disabled={!LIVE_TRIGGERS.has(t)}>
@@ -559,7 +559,7 @@ function StepDialogInner({
                   setConfigStr(STEP_CONFIG_PLACEHOLDERS[t] ?? "{}");
                 }
               }}
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             >
               {(Object.keys(STEP_TYPE_LABELS) as StepType[]).map((s) => (
                 <option key={s} value={s}>
@@ -589,7 +589,7 @@ function StepDialogInner({
                 setConfigError("");
               }}
               placeholder={STEP_CONFIG_PLACEHOLDERS[stepType] ?? "{}"}
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
+              className="flex w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring resize-y"
             />
           </div>
           )}
@@ -956,7 +956,7 @@ function FlowsTab() {
                       title={
                         flow.active ? "Desativar fluxo" : "Ativar fluxo"
                       }
-                      className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
+                      className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-hidden ${
                         flow.active ? "bg-primary" : "bg-muted-foreground/30"
                       } disabled:opacity-50`}
                     >

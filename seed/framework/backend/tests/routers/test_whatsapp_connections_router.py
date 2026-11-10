@@ -237,6 +237,29 @@ class TestUpdateAndDelete:
         assert resp.status_code == 200
         assert resp.json()["label"] == "New"
 
+    @pytest.mark.parametrize("field,value", [("base_url", "http://169.254.169.254/"), ("session_name", "other")])
+    def test_patch_cannot_repoint_the_connection(self, field, value):
+        """base_url / session_name are server-derived (as on create): a caller-supplied host is an SSRF that would send
+        the decrypted WAHA key to an arbitrary URL."""
+        app, store, _waha = _app()
+        created = self._create(app)
+        resp = TestClient(app).patch(f"/api/whatsapp/connections/{created['id']}", json={field: value})
+        assert resp.status_code == 422
+        assert TestClient(app).get("/api/whatsapp/connections").json()[0][field] != value
+
+    def test_patch_webhook_url_must_be_under_the_apps_own_route(self):
+        """Same owned-prefix check as POST /{id}/webhook: a PATCHed URL shaped like another app's would later be removed
+        from the shared WAHA session by DELETE."""
+        app, _store, _waha = _app()
+        created = self._create(app)
+        foreign = TestClient(app).patch(
+            f"/api/whatsapp/connections/{created['id']}", json={"webhook_url": "https://other-app.example.com/api/whatsapp/webhook/x"})
+        assert foreign.status_code == 422 and foreign.json()["detail"]["code"] == "webhook_url_foreign"
+        ok = TestClient(app).patch(
+            f"/api/whatsapp/connections/{created['id']}",
+            json={"webhook_url": "https://product.example.com/api/whatsapp/webhook/mine"})
+        assert ok.status_code == 200 and ok.json()["webhook_url"] == "https://product.example.com/api/whatsapp/webhook/mine"
+
     def test_patch_missing_connection_404(self):
         app, _store, _waha = _app()
         resp = TestClient(app).patch(

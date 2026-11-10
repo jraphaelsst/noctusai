@@ -41,12 +41,11 @@ import {
   CheckCircle2,
   RotateCcw,
   Globe,
-  Instagram,
-  Facebook,
   Linkedin,
   Twitter,
   ClipboardList,
 } from "lucide-react";
+import { Facebook, Instagram } from "@noctusai/lib/brand-icons";
 import {
   useCampaigns,
   useCreateCampaign,
@@ -280,7 +279,7 @@ function ApprovalLinkDialog({
                 max={90}
                 value={expiresInDays}
                 onChange={(e) => setExpiresInDays(Math.max(1, parseInt(e.target.value) || 7))}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
             <div className="flex justify-end gap-3">
@@ -433,7 +432,7 @@ function PostDialogInner({
                 onChange={(e) =>
                   setForm((f) => ({ ...f, platform: e.target.value as Platform }))
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <option value="instagram">Instagram</option>
                 <option value="facebook">Facebook</option>
@@ -449,7 +448,7 @@ function PostDialogInner({
                 onChange={(e) =>
                   setForm((f) => ({ ...f, status: e.target.value as PostStatus }))
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <option value="draft">Rascunho</option>
                 <option value="pending_approval">Aguard. aprovação</option>
@@ -467,7 +466,7 @@ function PostDialogInner({
               onChange={(e) =>
                 setForm((f) => ({ ...f, campaign_id: e.target.value || undefined }))
               }
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             >
               <option value="">— Sem campanha —</option>
               {campaigns.map((c) => (
@@ -485,7 +484,7 @@ function PostDialogInner({
               value={form.caption ?? ""}
               onChange={(e) => setForm((f) => ({ ...f, caption: e.target.value }))}
               placeholder="Escreva a legenda do post..."
-              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
+              className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring resize-none"
             />
           </div>
 
@@ -496,7 +495,7 @@ function PostDialogInner({
               value={form.hashtags ?? ""}
               onChange={(e) => setForm((f) => ({ ...f, hashtags: e.target.value }))}
               placeholder="#hashtag1 #hashtag2"
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
 
@@ -516,7 +515,7 @@ function PostDialogInner({
                     scheduled_for: e.target.value ? `${e.target.value}:00Z` : "",
                   }))
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
             <div>
@@ -526,7 +525,7 @@ function PostDialogInner({
                 value={form.media_url ?? ""}
                 onChange={(e) => setForm((f) => ({ ...f, media_url: e.target.value }))}
                 placeholder="https://..."
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
           </div>
@@ -655,7 +654,7 @@ function PipelineTab({
                       return (
                         <div
                           key={post.id}
-                          className="rounded-md border border-border bg-card p-3 shadow-sm hover:shadow-md transition-shadow"
+                          className="rounded-md border border-border bg-card p-3 shadow-xs hover:shadow-md transition-shadow"
                         >
                           {/* Platform badge */}
                           <span
@@ -982,7 +981,7 @@ function CampaignDialogInner({
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
               placeholder="Ex: Campanha Junho 2026"
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -993,7 +992,7 @@ function CampaignDialogInner({
                 required
                 value={form.month}
                 onChange={(e) => setForm((f) => ({ ...f, month: e.target.value }))}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
             <div>
@@ -1003,7 +1002,7 @@ function CampaignDialogInner({
                 onChange={(e) =>
                   setForm((f) => ({ ...f, status: e.target.value as CampaignStatus }))
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <option value="active">Ativa</option>
                 <option value="paused">Pausada</option>

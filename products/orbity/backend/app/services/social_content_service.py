@@ -36,6 +36,8 @@ from uuid import UUID
 from noctusai_lib.domain.notifications import write_in_app
 from noctusai_lib.primitives.roles import ADMIN_ROLES
 
+from noctusai_lib.api.token_link import TokenLinkGone, token_fingerprint
+
 logger = logging.getLogger(__name__)
 
 
@@ -336,93 +338,50 @@ class PublicApprovalService:
     def _t(self, table: str):
         return self._db.table(table)
 
-    def fetch_by_token(self, token: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
-        """Fetch (approval, post) by public_token.
-
-        Returns None if token not found. Raises ValueError if expired or decided.
-
-        Callers MUST validate that `token` parses as a UUID before calling
-        this method — both public_get_approval and public_submit_approval
-        in social_content_router do this (a malformed token is a 404, not
-        a DB round-trip). A non-UUID token handed to this method would
-        otherwise reach postgres as a raw string comparison against a
-        UUID column (public_token) and raise 22P02, which propagates as
-        an unhandled Exception (caller raises 502).
-        """
+    def fetch_approval_row(self, token: str) -> dict[str, Any] | None:
+        """The approval row a (canonical-UUID) ``public_token`` opens, or None. Feed it to
+        ``noctusai_lib.api.token_link.resolve_token_link`` (expiry fails closed, malformed = 404) -- never call it with a raw
+        caller string. The token is a bearer credential: it is never logged (``token_fingerprint``)."""
         try:
-            result = (
-                self._t("post_approvals")
-                .select("*")
-                .eq("public_token", token)
-                .execute()
-            )
+            result = self._t("post_approvals").select("*").eq("public_token", token).execute()
         except Exception:
-            logger.exception("public_approval.fetch_by_token failed token=%s", token)
+            logger.exception("public_approval.fetch_approval_row failed %s", token_fingerprint(token))
             raise
         rows = result.data or []
-        if not rows:
-            return None
-        approval = rows[0]
+        return rows[0] if rows else None
 
-        # Expiry check
-        expires_at_str = approval.get("expires_at", "")
-        if expires_at_str:
-            try:
-                expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
-                if datetime.now(timezone.utc) > expires_at:
-                    raise ValueError("Approval link has expired")
-            except ValueError:
-                raise
-            except Exception:
-                logger.warning(
-                    "public_approval.fetch_by_token: could not parse expires_at=%s",
-                    expires_at_str,
-                )
-
-        # Fetch the post
-        post_id = approval.get("post_id", "")
+    def post_of(self, approval: dict[str, Any]) -> dict[str, Any] | None:
+        """The post an approval is for -- read ONLY inside the approval row's own org (the link row must never reach another
+        org's post, even if its ``post_id`` was forged or mis-set)."""
+        post_id, org_id = approval.get("post_id", ""), approval.get("org_id", "")
         try:
             post_result = (
-                self._t("content_posts")
-                .select("*")
-                .eq("id", post_id)
-                .execute()
+                self._t("content_posts").select("*").eq("org_id", org_id).eq("id", post_id).execute()
             )
         except Exception:
-            logger.exception(
-                "public_approval.fetch_by_token: post fetch failed post_id=%s", post_id
-            )
+            logger.exception("public_approval.post_of failed post_id=%s", post_id)
             raise
         post_rows = post_result.data or []
         if not post_rows:
-            logger.warning(
-                "public_approval.fetch_by_token: post not found post_id=%s", post_id
-            )
+            logger.warning("public_approval.post_of: no post in the approval's org post_id=%s", post_id)
             return None
-        return approval, post_rows[0]
+        return post_rows[0]
 
     def decide(
         self,
-        token: str,
+        approval: dict[str, Any],
         decision: str,
         feedback: str | None,
     ) -> dict[str, Any]:
-        """Apply client decision (approved|revision) and update post status.
+        """Apply the client's decision (approved|revision) for an approval already resolved through the token link.
 
-        Validates token, expiry, and idempotency (already-decided) before writing.
-        Returns the updated approval row.
-        """
-        pair = self.fetch_by_token(token)
-        if pair is None:
-            raise LookupError("Approval token not found")
-        approval, post = pair
-
-        # Idempotency: already decided
-        if approval.get("status") != "pending":
-            raise ValueError(f"Approval already decided: {approval['status']}")
-
-        approval_id = approval["id"]
-        post_id = approval["post_id"]
+        ONE-TIME: the UPDATE re-states ``status = 'pending'``; 0 rows means someone decided first (a double click, a replay)
+        -> :class:`TokenLinkGone`. The post is updated inside the approval's own org only. Returns the updated approval."""
+        approval_id, org_id = approval["id"], approval["org_id"]
+        post = self.post_of(approval)
+        if post is None:
+            raise LookupError("Approval post not found")
+        post_id = post["id"]
         decided_at = datetime.now(timezone.utc).isoformat()
 
         update_approval = {
@@ -435,18 +394,20 @@ class PublicApprovalService:
                 self._t("post_approvals")
                 .update(update_approval)
                 .eq("id", approval_id)
+                .eq("org_id", org_id)
+                .eq("status", "pending")
                 .execute()
             )
             rows = a_result.data or []
             if not rows:
-                raise RuntimeError("Approval update returned no data")
+                raise TokenLinkGone("approval already decided")
             updated_approval = rows[0]
 
-            # Mirror decision onto post status
+            # Mirror decision onto post status (same org as the approval)
             new_post_status = "approved" if decision == "approved" else "revision"
             self._t("content_posts").update({"status": new_post_status}).eq(
-                "id", post_id
-            ).execute()
+                "org_id", org_id
+            ).eq("id", post_id).execute()
 
             # NOC-REMEDIATE[orbity-content-publish]: if new_post_status == "approved"
             # and auto-publish is configured, call the seed Meta integration here:
@@ -454,12 +415,10 @@ class PublicApprovalService:
             #   adapter = get_meta_adapter(org_id=..., access_token=...)
             #   adapter.publish_instagram_post(post_id=post_id, ...) — 2026-06-03
 
-        except (LookupError, ValueError):
+        except (LookupError, TokenLinkGone):
             raise
         except Exception:
-            logger.exception(
-                "public_approval.decide failed token=%s approval_id=%s", token, approval_id
-            )
+            logger.exception("public_approval.decide failed approval_id=%s", approval_id)
             raise
         # The client's decision is already committed; a notification failure must
         # not undo it, so it is logged at ERROR (never swallowed) and returned.
