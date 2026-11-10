@@ -17,7 +17,6 @@ statement — no consumer-side read-then-write race window.
 
 from __future__ import annotations
 
-import time
 import uuid
 import random
 from dataclasses import asdict, dataclass, replace
@@ -36,6 +35,7 @@ from noctusai_lib.domain.jobs.retry_policy import (
     next_retry_at,
 )
 from noctusai_lib.primitives.postgrest_errors import is_unique_violation
+from noctusai_lib.primitives.ttl_cache import TTLCache
 
 
 class DeadLetterError(RuntimeError):
@@ -550,7 +550,9 @@ class RealSupabaseJobRepository:
         # per-process cache keeps that off the wire (egress incident,
         # 2026-11-09). 0 disables.
         self._stats_ttl = stats_ttl_seconds
-        self._stats_cache: dict[tuple[str, ...] | None, tuple[float, QueueStats]] = {}
+        self._stats_cache: TTLCache[tuple[str, ...] | None, QueueStats] = TTLCache(
+            max(stats_ttl_seconds, 1e-9), max_entries=64
+        )
         self._schema = schema_name
         self._table = table_name
         self._rpc = rpc_name
@@ -669,7 +671,7 @@ class RealSupabaseJobRepository:
         _ = result  # Keep linter happy without assuming response shape.
         # A job just landed in this process: the cached queue_stats is stale
         # (claim gates must see it) and any in-process worker should wake.
-        self._stats_cache.clear()
+        self._stats_cache.invalidate()  # also fences a stats read already in flight
         notify_enqueued(job.type)
         return job
 
@@ -810,11 +812,11 @@ class RealSupabaseJobRepository:
         split live vs lease-expired and list the active workers. Cached
         per `stats_ttl_seconds`."""
         key = tuple(sorted(job_types)) if job_types is not None else None
-        cached = self._stats_cache.get(key)
-        if cached is not None and self._stats_ttl > 0:
-            at, hit = cached
-            if time.monotonic() - at < self._stats_ttl:
+        if self._stats_ttl > 0:
+            hit = self._stats_cache.peek(key)
+            if hit is not None:
                 return hit
+        epoch = self._stats_cache.epoch
 
         def scoped(builder: Any) -> Any:
             return builder.in_("type", job_types) if job_types is not None else builder
@@ -869,7 +871,8 @@ class RealSupabaseJobRepository:
             last_error_at=_parse_dt(latest["updated_at"]) if latest else None,
             active_workers=tuple(sorted(workers)),
         )
-        self._stats_cache[key] = (time.monotonic(), stats)
+        if self._stats_ttl > 0:
+            self._stats_cache.put(key, stats, epoch=epoch)
         return stats
 
 
