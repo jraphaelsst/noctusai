@@ -184,6 +184,7 @@ def register_all(server) -> None:
     from . import vps
     from . import vps_exec
     from . import vps_exec_sql
+    from . import source_register
 
     absorption_tracking.register(server)
     agent_context.register(server)
@@ -357,6 +358,7 @@ def register_all(server) -> None:
     vps.register(server)
     vps_exec.register(server)
     vps_exec_sql.register(server)
+    source_register.register(server)
 
 
 __all__ = ["register_all"]

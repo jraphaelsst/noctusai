@@ -231,8 +231,15 @@ generalization for any channel:
    able to tell, and the code must not use forwarded text as evidence.
 5. **Deterministic floors for legal actions** (STOP/opt-out without the model).
 6. **One outbound chokepoint** re-reading the off switch at send time.
-7. **Platform-policy fit:** unofficial APIs carry ban risk; WhatsApp's general-purpose-bot ban (from
-   2026-01-15) restricts what a Business line may host.
+7. **Platform-policy fit:** unofficial APIs carry ban risk. The *Meta Terms for WhatsApp Business
+   Platform* §4.7 "Provedores de IA" bars AI/ML providers from the Business Platform when a
+   general-purpose AI assistant is the primary (not incidental) functionality; a business may still use
+   an AI Provider as its Solution Provider, and platform data may not train AI models. Read 2026-11-10 at
+   https://www.facebook.com/legal/Meta-Terms-for-WhatsApp-Business-Platform (301 from
+   whatsapp.com/legal/business-solution-terms; page updated 2026-09-23) — **paraphrase via summariser**,
+   re-read raw text before quoting. It binds the Business Platform (Cloud API), not a personal line on
+   WAHA. The **"from 2026-01-15" effective date is UNVERIFIED**: not on the current terms page nor on the
+   Business Policy page (searched 2026-11-09/10, `project-history/assistant-chatbot/research/waha-anti-ban.md`).
 
 ---
 
