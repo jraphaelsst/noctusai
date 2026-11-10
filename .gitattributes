@@ -6,6 +6,8 @@
 project-history/vector-costs.ndjson      merge=union
 project-history/auto-improvement.ndjson  merge=union
 project-history/*.ndjson                 merge=union
+# merge-loss detector telemetry (one row per detector run; KB § PATTERNS/common/auto-generated-merge-drivers.md)
+project-history/merge-loss-detector.ndjson  merge=union
 
 # Docs carrying auto-generated `<!-- kb-counts:start:X -->…:end:X -->` inventory
 # blocks. The counts are DETERMINISTICALLY regenerated from the tree by the

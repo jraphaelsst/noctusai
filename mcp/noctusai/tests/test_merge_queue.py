@@ -307,6 +307,43 @@ def test_entry_carrying_merge_commits_lands_via_no_ff_merge(world):
     assert ci.last(other)[0] == "success"
 
 
+def _train_world(world):
+    work = world["work"]
+    sh(work, "git", "fetch", "-q", "origin")
+    sh(work, "git", "checkout", "-q", "-B", "side", "origin/dev")
+    commit(work, "side.txt", "s\n", "side", 1900)
+    sh(work, "git", "checkout", "-q", "-B", "feat/train", "origin/dev")
+    commit(work, "t.txt", "t\n", "t", 1950)
+    subprocess.run(["git", "merge", "-q", "--no-ff", "--no-edit", "side"], cwd=work, check=True,
+                   capture_output=True)
+    enqueue(world, "other", [("o.txt", "o\n")], 2000)
+    sh(work, "git", "checkout", "-q", "feat/train")
+    sha = sh(work, "git", "rev-parse", "HEAD")
+    sh(work, "git", "push", "-q", "origin", f"{sha}:refs/heads/mq/train--{sha[:7]}")
+
+
+def test_merge_composition_runs_the_shadow_merge_loss_detector_and_never_ejects(world):
+    _train_world(world)
+    seen: list[tuple[str, str]] = []
+    logs: list[str] = []
+
+    def detector(wt, merge_sha):
+        seen.append((wt, merge_sha))
+        return "merge-loss: SHADOW DROPPED 1 line(s) - simulated"
+    q = mq.Queue("o/r", run=FakeCI(world["origin"]), run_id="7", poll_s=0, sleep=lambda s: None,
+                 workdir=world["runner"], log=logs.append, regen=_NOREGEN, merge_loss=detector)
+    res = q.drain()
+    assert {x["slug"] for x in res.landed} == {"other", "train"} and not res.ejected   # shadow: lands anyway
+    assert len(seen) == 1                       # only the --no-ff merge entry, not the plain ones
+    assert len(seen[0][1]) == 40
+    assert any("[merge-loss]" in m and "SHADOW DROPPED" in m for m in logs)
+
+
+def test_shadow_detector_without_a_cli_reports_skipped_not_silence(world, tmp_path):
+    q = make_queue(world, FakeCI(world["origin"]))
+    assert "skipped" in q._merge_loss_shadow(str(tmp_path), "a" * 40)
+
+
 def test_dry_run_touches_nothing(world):
     enqueue(world, "a", [("a.txt", "a\n")], 2000)
     before = origin_dev(world)

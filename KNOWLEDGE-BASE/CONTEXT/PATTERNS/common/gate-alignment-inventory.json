@@ -1498,6 +1498,15 @@
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
   },
+  "keeper:check-merge-drivers-have-contract-coverage": {
+   "mechanism": "write-path: mcp/noctusai/tests/test_merge_driver_contract.py discovers drivers from .gitattributes plus register-merge-drivers.sh and fails any driver without a SPECS fixture",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-10",
+   "source": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/auto-generated-merge-drivers.md"
+  },
   "keeper:check-merge-drivers-registered-in-ci": {
    "severity": "",
    "kind": "keeper",
@@ -1514,6 +1523,15 @@
    },
    "class": "never-fires",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-merge-loss": {
+   "mechanism": "tool: noctus.dev.merge_loss_check judges the merge RESULT (index at MERGE_HEAD) for any lost added line; construction leg is tests/test_merge_driver_contract.py",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-10",
+   "source": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/auto-generated-merge-drivers.md"
   },
   "keeper:check-methodology-doc-refs": {
    "severity": "high",
@@ -3314,6 +3332,19 @@
    "branch": "feat/measurement-mindset-rule-gate",
    "gates": [
     "keeper:check-measurable-by-design"
+   ]
+  },
+  {
+   "id": "D29",
+   "decision": "A custom git merge driver hands git the 3-way merge (markers included) on every conflict or failure exit, never 'ours' alone; one parametrized contract test DISCOVERS every driver from .gitattributes + register-merge-drivers.sh, a keeper fails a driver with no SPECS fixture, and a SHADOW merge-loss detector judges the merge RESULT (pre-commit at MERGE_HEAD + merge-queue compose) for any line one side added that vanished. Promotion to blocking needs >=20 shadow runs with 0 unexplained false alarms",
+   "home": "KB § PATTERNS/common/auto-generated-merge-drivers.md",
+   "construction": "mcp/noctusai/tests/test_merge_driver_contract.py (SPECS fixture per driver, discovery-driven)",
+   "gate": "keeper:check-merge-drivers-have-contract-coverage",
+   "telemetry": "project-history/merge-loss-detector.ndjson row per detector run + an auto-improvement finding per drop; keeper events via the cli wrapper",
+   "branch": "feat/merge-loss-gate",
+   "gates": [
+    "keeper:check-merge-drivers-have-contract-coverage",
+    "keeper:check-merge-loss"
    ]
   }
  ]

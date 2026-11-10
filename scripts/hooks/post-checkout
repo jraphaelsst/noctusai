@@ -92,6 +92,7 @@ if have_py; then
     # OpenAI embeddings + noc-graph rebuild) are DEFERRED out of intermediate branch
     # switches — they fire ONLY at the dev-delivery push (pre-push) + lazily on read.
     # Only the CHEAP zero-OpenAI structural settles run here. KB § branch-tree-tracking §3.
+    # NOC-REMEDIATE[hook-silent-fallback]: cache refresh pipes below (auto-improvement, agent-context, keeper, memory-embed) — the pipe's exit is tail/sed's and `|| true` swallows it, so a failing refresh prints at most 2 lines and the hook still reports success; make it a bounded_run with the real rc surfaced as a loud warning (cache freshness is separately gated by check_all_cache_freshness, hence advisory) — 2026-11-10
     if echo "$CHANGED" | grep -qE '^project-history/auto-improvement\.ndjson$'; then
         "$PY" "$CLI" --refresh-auto-improvement-cache 2>&1 | tail -2 || true
     fi
