@@ -82,6 +82,7 @@ from env_bootstrap import redact_secrets_in_text
 
 from . import _catalog_scope_guard
 from . import release_steward as _steward
+from . import _redis_auth_compose as _redis_auth
 from . import toolkit_freshness as _toolkit_freshness
 from ._vps_ssh import run_remote as _throttled_ssh
 
@@ -328,11 +329,14 @@ def _boot_smoke(runner, product: str, image_id: str) -> tuple[str, str]:
     return "failed", tail or f"exit {rc}"
 
 
-def _compose(runner, compose_file: str, action: str, *rest) -> tuple[int, str, str]:
-    """Run `docker compose -f <file> <action> ...` — only the safe actions."""
+def _compose(runner, compose_file: str, action: str, *rest, extra_files=()) -> tuple[int, str, str]:
+    """Run `docker compose -f <file> [-f <override> ...] <action> ...` — only the safe actions.
+
+    `extra_files` carries the Redis-auth override (`_redis_auth_compose.plan`): a recreate without it
+    silently returns a locked product to the unauthenticated Redis, on deploy AND on rollback."""
     if action not in _COMPOSE_ALLOWED:
         raise ValueError(f"deploy_image: compose '{action}' not on the safe allowlist {sorted(_COMPOSE_ALLOWED)}")
-    return runner(["docker", "compose", "-f", compose_file, action, *rest])
+    return runner(_redis_auth.compose_cmd(compose_file, list(extra_files), action, *rest))
 
 
 def _container_port(runner, container: str) -> str | None:
@@ -477,6 +481,7 @@ def deploy_image(
     skip_ancestry_check: bool = False,
     skip_boot_smoke: bool = False,
     skip_compose_drift_check: bool = False,
+    redis_auth: str = "auto",
     local_diff: Callable[[str, str], tuple[bool | None, list[str], str]] | None = None,
     allow_inactive: bool = False,
     live_products_fn: Callable[[], list[str]] | None = None,
@@ -575,6 +580,13 @@ def deploy_image(
     container = f"noctus-{product}"
     image = f"{image_repo}/noctus-{product}"
     cf = f"{repo_dir}/{compose_file}"
+    # P1-1 (security review r2): the Redis-auth override rides EVERY compose call (deploy + rollback) and a
+    # listed service without its generated env refuses BEFORE any container is touched.
+    ra_plan = _redis_auth.plan(runner, cf, product, redis_auth)
+    if ra_plan["error"]:
+        return {"ok": False, "status": "error", "exit_code": 1, "product": product, "error": ra_plan["error"],
+                "redis_auth": ra_plan["mode"]}
+    ra_files = ra_plan["files"]
 
     # ── PRE-FLIGHT (read-only): the running image id ──
     rc, cur, err = _docker(runner, "inspect", "-f", "{{.Image}}", container)
@@ -614,7 +626,7 @@ def deploy_image(
         # Capture the FAILED container's logs BEFORE the recreate destroys them.
         failed_logs = _failed_container_logs(runner, container)
         _docker(runner, "tag", prev, f"{image}:{tag}")  # retag :latest from the committed snapshot
-        _compose(runner, cf, "up", "-d", "--force-recreate", product)
+        _compose(runner, cf, "up", "-d", "--force-recreate", product, extra_files=ra_files)
         rb_health, rb_states = _poll_health(runner, napper, container, probe_timeout,
                                             poll_interval, port=probe_port, startup_grace=probe_grace,
                                             path=health_path)
@@ -637,7 +649,7 @@ def deploy_image(
                    if restored else
                    f"⚠️ ROLLBACK FAILED — container is on {running_now[:19]} (health={rb_health}). "
                    f"MANUAL RECOVERY: docker tag {prev} {image}:{tag} && "
-                   f"docker compose -f {cf} up -d --force-recreate {product}")
+                   f"docker compose -f {cf} {' '.join('-f ' + f for f in ra_files)} up -d --force-recreate {product}")
             ),
         }
 
@@ -667,7 +679,7 @@ def deploy_image(
     # ── ACQUIRE the new image: pull from GHCR (source=pull, the live model) OR
     #    use an already-built local tag (source=local, the build-on-VPS model) ──
     if source == "pull":
-        rc_p, out_p, err_p = _compose(runner, cf, "pull", product)
+        rc_p, out_p, err_p = _compose(runner, cf, "pull", product, extra_files=ra_files)
         if rc_p != 0:
             return {**base, "status": "error", "exit_code": 1,
                     "reason": f"`compose pull {product}` failed: {err_p.strip() or out_p.strip()}. "
@@ -777,7 +789,7 @@ def deploy_image(
 
     # ── DEPLOY (force-recreate so the swap ALWAYS takes — `up -d` alone can skip
     #    recreation when only the tag target changed) ──
-    rc_u, out_u, err_u = _compose(runner, cf, "up", "-d", "--force-recreate", product)
+    rc_u, out_u, err_u = _compose(runner, cf, "up", "-d", "--force-recreate", product, extra_files=ra_files)
     if rc_u != 0 and _is_transport_failure(rc_u, err_u, out_u):
         # The SSH link dropped mid-`up` (e.g. a broken mux master): the recreate
         # may well have landed. Re-check ONCE over a fresh connection before

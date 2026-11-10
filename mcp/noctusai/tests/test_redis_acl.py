@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.noctus.dev import redis_acl as ra  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
-MASTER = "m" * 48
+MASTER = "ab12" * 16  # shape of `openssl rand -hex 32`
 
 COMPOSE = """
 services:
@@ -62,7 +62,7 @@ class TestPasswords:
     def test_generation_rotates(self):
         assert ra.derive_password(MASTER, "core", "1") != ra.derive_password(MASTER, "core", "2")
 
-    @pytest.mark.parametrize("bad", ["", "short"])
+    @pytest.mark.parametrize("bad", ["", "short", "m" * 48, "# set me", "AB12" * 16, "ab12" * 15])
     def test_weak_master_refused(self, bad):
         with pytest.raises(ValueError):
             ra.derive_password(bad, "core")
@@ -82,7 +82,7 @@ class TestAclfile:
 
     def test_no_plaintext_password_only_hashes(self):
         acl = self._acl()
-        for u in (*self.ROSTER, "ops", "trip"):
+        for u in (*self.ROSTER, "ops", "trip", "probe"):
             pw = ra.derive_password(MASTER, u)
             assert pw not in acl
             assert f"#{hashlib.sha256(pw.encode()).hexdigest()}" in acl
@@ -103,7 +103,7 @@ class TestAclfile:
 
     def test_trip_can_set_fleet_only_never_del(self):
         ln = self._line("trip")
-        assert f"%RW~{ra.FLEET_KEY}" in ln and "+set" in ln and "+del" not in ln and "+@" not in ln.replace("-@all", "")
+        assert f"%RW~{ra.FLEET_KEY}" in ln and "+setnx" in ln and "+set " not in ln + " " and "+del" not in ln and "+@" not in ln.replace("-@all", "")
 
     def test_ops_scoped_to_breaker_keys_and_owns_del(self):
         ln = self._line("ops")
@@ -262,22 +262,162 @@ class TestLiveRedis:
         trip = self._c(server, "trip")
         ops = self._c(server, "ops")
         ops.delete(ra.FLEET_KEY)
-        assert trip.set(ra.FLEET_KEY, '{"by":"offhost-watchdog"}', nx=True)
-        assert trip.set(ra.FLEET_KEY, "other", nx=True) is None  # an earlier trip stands
+        assert trip.setnx(ra.FLEET_KEY, '{"by":"offhost-watchdog"}')
+        assert not trip.setnx(ra.FLEET_KEY, "other")  # an earlier trip stands
+        with pytest.raises(redis.exceptions.NoPermissionError):
+            trip.set(ra.FLEET_KEY, "x", ex=1)  # cannot overwrite/expire the trip
         assert trip.exists(ra.FLEET_KEY) == 1
         for call in (lambda: trip.delete(ra.FLEET_KEY), lambda: trip.set("noctus:breaker:core:x", "1"),
                      lambda: trip.rpush(ra.AUDIT_KEY, "x"), lambda: trip.get("nai_session:x")):
             with pytest.raises(redis.exceptions.NoPermissionError):
                 call()
 
-    def test_ops_rearms_audits_and_scans_but_nothing_else(self, server):
+    def test_ops_rearms_audits_reads_index_never_scans(self, server):
         _, redis = server
         ops = self._c(server, "ops")
         ops.set(ra.FLEET_KEY, "{}")
         assert ops.delete(ra.FLEET_KEY) == 1  # the ONLY identity that may re-arm
         ops.rpush(ra.AUDIT_KEY, "{}")
         assert ops.lrange(ra.AUDIT_KEY, 0, -1)
-        assert list(ops.scan_iter(match="noctus:breaker:*")) is not None
+        core = self._c(server, "core")
+        core.sadd("noctus:breaker:core:index", "noctus:breaker:core:worker:x")  # product keeps its own index
+        assert ops.smembers("noctus:breaker:core:index") == {"noctus:breaker:core:worker:x"}
+        assert ops.srem("noctus:breaker:core:index", "noctus:breaker:core:worker:x") == 1
+        for call in (lambda: ops.scan(0), lambda: ops.keys("*")):
+            with pytest.raises(redis.exceptions.NoPermissionError):
+                call()
         for call in (lambda: ops.get("nai_session:x"), ops.flushall, lambda: ops.config_get("*")):
             with pytest.raises(redis.exceptions.NoPermissionError):
                 call()
+
+    def test_probe_exists_only_refused_on_set_setnx_del(self, server):
+        _, redis = server
+        self._c(server, "ops").set(ra.FLEET_KEY, "{}")
+        probe = self._c(server, "probe")
+        assert probe.ping() and probe.exists(ra.FLEET_KEY) == 1
+        for call in (lambda: probe.set(ra.FLEET_KEY, "x"), lambda: probe.setnx(ra.FLEET_KEY, "x"),
+                     lambda: probe.delete(ra.FLEET_KEY), lambda: probe.get(ra.FLEET_KEY),
+                     lambda: probe.exists("nai_session:x"), lambda: probe.exists("noctus:breaker:core:x")):
+            with pytest.raises(redis.exceptions.NoPermissionError):
+                call()
+
+
+# ── round 2 ──────────────────────────────────────────────────────────────────────────────────
+
+class TestRound2Acl:
+    ROSTER = ["agents", "core"]
+
+    def _line(self, user):
+        return next(ln for ln in ra.render_aclfile(self.ROSTER, MASTER).splitlines() if ln.startswith(f"user {user} "))
+
+    def test_ops_has_no_scan_but_a_set_index_and_script_kill(self):  # P2-1 / P2-4
+        ln = self._line("ops")
+        assert "+scan" not in ln and "+keys" not in ln
+        assert "+smembers" in ln and "+srem" in ln
+        assert "+script|kill" in ln and "+function|kill" in ln
+
+    def test_product_may_maintain_its_own_breaker_index(self):
+        assert "%RW~noctus:breaker:core:*" in self._line("core")  # <slug>:index lives under it
+
+    @pytest.mark.parametrize("bad", ["noctus", "default", "ops", "trip", "healthcheck", "wa", "rt", "llm", "queue", "conversation"])
+    def test_reserved_slugs_refused(self, bad):  # P3
+        compose = f"services:\n  {bad}: {{env_file: ['../../.env']}}\n"
+        with pytest.raises(ValueError, match="reserved"):
+            ra.derive_roster(compose, f"{bad}\n")
+
+    def test_per_user_generation_override(self):  # P3
+        a = ra.derive_password(MASTER, "core", {"*": "1", "core": "2"})
+        assert a == ra.derive_password(MASTER, "core", "2") and a != ra.derive_password(MASTER, "agents", {"*": "1", "core": "2"})
+        assert ra.parse_generation_overrides("core=2, ops=3") == {"core": "2", "ops": "3"}
+        with pytest.raises(ValueError):
+            ra.parse_generation_overrides("core=#2")
+
+
+class TestMasterParsing:  # P1-2
+    EXAMPLE = REPO / "deploy/fleet/.env.fleet.example"
+
+    def test_shipped_example_is_not_a_usable_master(self, tmp_path):
+        r = ra.redis_acl("render", write=True, repo_root=str(tmp_path), env={}, env_file=str(self.EXAMPLE))
+        assert not r["ok"]
+
+    def _read(self, tmp_path, body):
+        f = tmp_path / "e"
+        f.write_text(body)
+        return ra._read_master(tmp_path, {}, str(f))
+
+    def test_inline_comment_is_never_the_secret(self, tmp_path):
+        with pytest.raises(ValueError, match="master"):
+            self._read(tmp_path, f"{ra.MASTER_ENV}=  # >= 32 chars; set on VPS only\n")
+        with pytest.raises(ValueError, match="master"):
+            self._read(tmp_path, f"{ra.MASTER_ENV}=#abcdef\n")
+
+    def test_valid_hex_with_trailing_comment_and_quotes(self, tmp_path):
+        assert self._read(tmp_path, f"{ra.MASTER_ENV}={MASTER}  # rotated 2026-11\n")[0] == MASTER
+        assert self._read(tmp_path, f'export {ra.MASTER_ENV}="{MASTER}"\n')[0] == MASTER
+
+    def test_non_hex_or_short_master_refused(self, tmp_path):
+        for bad in ("short", "z" * 64, "AB12" * 16):
+            with pytest.raises(ValueError, match="master"):
+                self._read(tmp_path, f"{ra.MASTER_ENV}={bad}\n")
+
+    def test_generation_same_rule(self, tmp_path):
+        assert self._read(tmp_path, f"{ra.MASTER_ENV}={MASTER}\n{ra.GENERATION_ENV}=3  # bump\n")[1] == "3"
+        with pytest.raises(ValueError, match="GENERATION"):
+            self._read(tmp_path, f"{ra.MASTER_ENV}={MASTER}\n{ra.GENERATION_ENV}=# one\n")
+        with pytest.raises(ValueError, match="GENERATION"):
+            self._read(tmp_path, f"{ra.MASTER_ENV}={MASTER}\n{ra.GENERATION_ENV}=abc\n")
+
+    def test_env_var_master_validated_too(self, tmp_path):
+        with pytest.raises(ValueError):
+            ra._read_master(tmp_path, {ra.MASTER_ENV: "# nope"}, None)
+
+
+class TestSecretWrites:  # P3
+    def test_dirs_0700_and_no_symlink_follow(self, tmp_path):
+        (tmp_path / "deploy/fleet").mkdir(parents=True)
+        (tmp_path / ra.COMPOSE_REL).write_text(COMPOSE)
+        (tmp_path / ra.SCOPE_REL).write_text(SCOPE)
+        assert ra.redis_acl("render", write=True, repo_root=str(tmp_path), env={ra.MASTER_ENV: MASTER})["ok"]
+        out = tmp_path / ra.OUT_DIR_REL
+        assert out.stat().st_mode & 0o777 == 0o700 and (out / "env").stat().st_mode & 0o777 == 0o700
+
+    def test_symlink_target_is_replaced_not_followed(self, tmp_path):
+        victim = tmp_path / "victim"
+        victim.write_text("keep")
+        d = tmp_path / "d"
+        d.mkdir()
+        (d / "ops.pass").symlink_to(victim)
+        ra._write_secret(d / "ops.pass", "secret\n", 0o600)
+        assert victim.read_text() == "keep" and not (d / "ops.pass").is_symlink()
+
+    def test_symlinked_output_dir_refused(self, tmp_path):
+        real = tmp_path / "real"
+        real.mkdir()
+        (tmp_path / "link").symlink_to(real)
+        with pytest.raises(ValueError, match="symlink"):
+            ra._write_secret(tmp_path / "link" / "x", "s", 0o600)
+
+
+class TestAclfileHardeningFlags:
+    def test_infra_compose_bounds_redis_memory_and_pins_digest(self):
+        text = (REPO / "deploy/fleet/compose.infra.prod.yml").read_text()
+        seg = text[text.index("  redis-acl:"):text.index("  cache-pg:")]
+        assert "--maxmemory" in seg and "volatile-lru" in seg and "mem_limit:" in seg
+        assert "redis:7-alpine" not in seg and "@sha256:" in seg
+
+
+class TestProbeUser:  # N10: the read-only host probe must not be `trip`
+    def test_probe_line_is_exists_only_on_the_fleet_key(self):
+        ln = next(x for x in ra.render_aclfile(["core"], MASTER).splitlines() if x.startswith("user probe "))
+        assert f"%R~{ra.FLEET_KEY}" in ln and "%RW" not in ln and "+exists" in ln
+        for cmd in ("+set", "+setnx", "+del", "+get ", "+@"):
+            assert cmd not in ln.replace("-@all", "")
+
+    def test_probe_pass_written_0600(self, tmp_path):
+        (tmp_path / "deploy/fleet").mkdir(parents=True)
+        (tmp_path / ra.COMPOSE_REL).write_text(COMPOSE)
+        (tmp_path / ra.SCOPE_REL).write_text(SCOPE)
+        assert ra.redis_acl("render", write=True, repo_root=str(tmp_path), env={ra.MASTER_ENV: MASTER})["ok"]
+        f = tmp_path / ra.OUT_DIR_REL / "probe.pass"
+        assert f.stat().st_mode & 0o777 == 0o600
+        assert f.read_text().strip() == ra.derive_password(MASTER, "probe")

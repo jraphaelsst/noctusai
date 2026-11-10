@@ -73,11 +73,18 @@ services:
   # redis://noctus-redis-acl:6379 with REDIS_USERNAME/REDIS_PASSWORD (the seam, redis-auth-seam.md).
   # Runbook + per-step rollback: KB § PATTERNS/devops/redis-acl-lockdown.md.
   redis-acl:
-    image: redis:7-alpine
+    # PINNED BY DIGEST to redis 7.4.6 (index digest, 2026-11-10): CVE-2025-49844 (Lua use-after-free -> RCE) and
+    # CVE-2025-46818 are fixed in 7.2.11 / 7.4.6 / 8.0.4 / 8.2.2; the floating 7-alpine tag can resolve to a vulnerable build. NEVER run an
+    # older one: rollout steps 0 and 2 refuse < 7.4.6. Bump deliberately (verify `redis-server --version` first).
+    image: redis:7.4.6-alpine@sha256:3b73847e72874be07e6657b129a94761662b79bc0f679273757d4218573b2a98
     container_name: noctus-redis-acl
     expose:
       - "6379"
-    command: ["redis-server", "--appendonly", "yes", "--aclfile", "/etc/redis/users.acl"]
+    # maxmemory + volatile-lru: only keys WITH a TTL (sessions, limiter counters, caches) are evicted; the
+    # breaker keys have none and can never be evicted. mem_limit > maxmemory leaves headroom for AOF rewrite.
+    command: ["redis-server", "--appendonly", "yes", "--aclfile", "/etc/redis/users.acl",
+              "--maxmemory", "512mb", "--maxmemory-policy", "volatile-lru"]
+    mem_limit: 768m
     volumes:
       - redis_acl_data:/data
       - ./redis-auth/users.acl:/etc/redis/users.acl:ro
