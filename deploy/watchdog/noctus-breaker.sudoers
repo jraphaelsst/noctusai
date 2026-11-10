@@ -1,0 +1,9 @@
+# /etc/sudoers.d/noctus-breaker   (install: sudo install -m 0440 -o root -g root noctus-breaker.sudoers /etc/sudoers.d/noctus-breaker; validate: visudo -cf)
+#
+# The off-host watchdog's breaker key logs in as the unprivileged user `breaker`. Its only power is
+# this ONE command, with NO arguments (the trailing "" forbids any), as root:
+breaker ALL=(root) NOPASSWD: /opt/noctus/noctusai/deploy/watchdog/breaker-trip.sh ""
+#
+# Requirements (verify on the VPS): the script and its parent directories are owned by root and not
+# writable by `breaker`; `breaker` has no shell login besides the forced command and is not in the
+# `docker` group (docker-group membership would be root-equivalent, which is why sudo is used instead).

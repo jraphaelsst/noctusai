@@ -465,7 +465,9 @@ def test_units_verify(tmp_path):
 # ── supabase request-budget leg + fleet breaker (telemetry for the polling-budget rule) ──
 def _budget(verdict, **extra):
     base = {"ok": verdict != "unknown", "verdict": verdict, "reasons": [f"synthetic {verdict}"],
-            "projected_per_day": 300000, "total_calls": 12500, "status_402": 0, "window_hours": 1.0}
+            "projected_per_day": 300000, "total_calls": 12500, "status_402": 0, "window_hours": 1.0,
+            "trip": verdict == "critical", "reasons_public": [f"public {verdict}: projected 300000/day"],
+            "top_shapes": [{"shape": "POST /rest/v1/rpc/claim_next_job", "calls": 9, "projected_per_day": 216}]}
     base.update(extra)
     return lambda: dict(base)
 
@@ -476,7 +478,9 @@ class Tripper:
 
     def __call__(self, payload):
         self.payloads.append(payload)
-        return self.ok, "tripped" if self.ok else "rc=255: down"
+        if not self.ok:
+            return False, "rc=255: down"
+        return True, "tripped" if len(self.payloads) == 1 else "already tripped"
 
 
 def _brun(tmp_path, check, tripper, *, send=True, rearmed=False, senders=None):
@@ -498,9 +502,9 @@ def test_critical_trips_after_n_runs_with_the_exact_payload_and_alerts_once(tmp_
     assert pl["rate"] == 300000 and pl["window"] == "1h"
     assert second["alert"]["due"] == "breaker" and second["state"] == pw.DEGRADED
     assert any("DISJUNTOR" in s for s, _ in wa.sent) and len(em.sent) == 1  # WhatsApp + email, one each
-    # third run: still critical, still tripped: NO second trip, NO second alert (dedupe)
+    # third run: still critical: the (idempotent, NX) trip is re-asserted, but NO second alert (dedupe)
     third = _brun(tmp_path, _budget("critical"), t, senders=senders)
-    assert len(t.payloads) == 1 and third["alert"]["due"] is None and third["state"] == pw.DEGRADED
+    assert len(t.payloads) == 2 and third["alert"]["due"] is None and third["state"] == pw.DEGRADED
 
 
 def test_a_402_trips_immediately(tmp_path):
@@ -517,7 +521,7 @@ def test_sticky_breaker_reminds_and_never_auto_rearms(tmp_path):
     for _ in range(3):
         rep = _brun(tmp_path, _budget("ok"), t, senders=senders)
         assert rep["state"] == pw.DEGRADED and rep["breaker"]["status"] == "tripped"
-    assert len(t.payloads) == 1
+    assert len(t.payloads) == 1  # verdict ok: nothing to re-assert
 
 
 def test_rearm_ack_clears_the_sticky_alert_and_the_next_critical_trips_again(tmp_path):
@@ -657,4 +661,101 @@ def test_breaker_script_parses_and_installer_docs_name_the_key_line():
     assert subprocess.run(["bash", "-n", str(WATCHDOG_DIR / "breaker-trip.sh")]).returncode == 0
     assert (WATCHDOG_DIR / "breaker-trip.sh").stat().st_mode & 0o111
     kb = (REPO / "KNOWLEDGE-BASE/CONTEXT/PATTERNS/devops/prod-watchdog.md").read_text()
-    assert 'command="/opt/noctus/noctusai/deploy/watchdog/breaker-trip.sh"' in kb
+    assert 'command="sudo /opt/noctus/noctusai/deploy/watchdog/breaker-trip.sh"' in kb
+    assert (WATCHDOG_DIR / "noctus-breaker.sudoers").read_text().count("breaker-trip.sh") >= 1
+
+
+# ── F6: re-trip after a re-arm; reconcile the state with the REAL key via the host probe ──
+def _host(**kw):
+    return (0, json.dumps({**GOOD_HOST, **kw}), "")
+
+
+def _brun_host(tmp_path, check, tripper, host_extra, *, send=True):
+    return pw.run(tmp_path / "h.json", send=send, env=ENV_ALL, repo_root=REPO, slugs=["core"],
+                  fetcher=Fetch(), ssh_runner=Ssh(_host(**host_extra)), clock=Clock(),
+                  senders={"email": Sender(), "whatsapp": Sender()}, budget_check=check, breaker_tripper=tripper)
+
+
+def test_after_a_human_rearm_the_next_critical_trips_again_without_any_ack(tmp_path):
+    t = Tripper()
+    _brun_host(tmp_path, _budget("critical", status_402=3), t, {"breaker_tripped": 0})
+    assert len(t.payloads) == 1
+    # the key is GONE on the host (re-armed by a human): the sticky alert clears by itself ...
+    rep = _brun_host(tmp_path, _budget("ok"), t, {"breaker_tripped": 0})
+    assert rep["state"] == pw.UP and rep["breaker"]["status"] == "armed"
+    # ... and the next critical trips again (the cache file never gets to veto it)
+    rep = _brun_host(tmp_path, _budget("critical", status_402=3), t, {"breaker_tripped": 0})
+    assert len(t.payloads) == 2 and rep["breaker"]["status"] == "tripped"
+
+
+def test_a_key_found_set_on_the_host_is_adopted_and_alerted_once(tmp_path):
+    t = Tripper()
+    rep = _brun_host(tmp_path, _budget("ok"), t, {"breaker_tripped": 1})
+    assert rep["breaker"]["status"] == "tripped" and rep["state"] == pw.DEGRADED and t.payloads == []
+    again = _brun_host(tmp_path, _budget("ok"), t, {"breaker_tripped": 1})
+    assert again["alert"]["due"] is None and again["state"] == pw.DEGRADED
+
+
+def test_an_unreadable_host_signal_never_clears_a_sticky_breaker(tmp_path):
+    t = Tripper()
+    _brun_host(tmp_path, _budget("critical", status_402=1), t, {"breaker_tripped": 1})
+    rep = _brun_host(tmp_path, _budget("ok"), t, {"breaker_tripped": None})
+    assert rep["state"] == pw.DEGRADED
+
+
+# ── F12: the probe reports whether our forced-command keys are really restricted ──
+def test_unrestricted_forced_command_key_is_degraded():
+    host = dict(GOOD_HOST, breaker_key_restricted=0)
+    state, down, deg = pw.classify(_http_ok(), host, None, {}, TH)
+    assert state == pw.DEGRADED and any("restrict" in r for r in deg)
+    for fine in (1, None):
+        assert pw.classify(_http_ok(), dict(GOOD_HOST, breaker_key_restricted=fine), None, {}, TH)[0] == pw.UP
+
+
+def test_known_hosts_is_pinned_from_env_and_keyscan_is_never_run_when_pinned(tmp_path):
+    calls = []
+
+    def fake_run(args, **kw):
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, stdout="{}", stderr="")
+
+    env = {"NOCTUS_VPS_KNOWN_HOSTS": "|1|abc|def ssh-ed25519 AAAAKEY"}
+    rc, out, err = pw._ssh_once("h", "/k", "probe", env=env, run=fake_run, user="breaker", stdin_text="{}")
+    assert rc == 0 and all(c[0] != "ssh-keyscan" for c in calls)
+    ssh = calls[-1]
+    assert "breaker@h" in ssh and "StrictHostKeyChecking=yes" in ssh
+    kh = [a for a in ssh if a.startswith("UserKnownHostsFile=")][0].split("=", 1)[1]
+    assert "AAAAKEY" in Path(kh).read_text()
+    # unpinned: falls back to keyscan (and run() warns loudly)
+    pw._ssh_once("h", "/k", "probe", env={}, run=fake_run, sleep=lambda s: None)
+    assert any(c[0] == "ssh-keyscan" for c in calls)
+
+
+# ── F8: a public run log carries counts and verdict only; shapes go to the email body alone ──
+def test_report_and_state_carry_no_shapes_and_only_email_gets_them(tmp_path):
+    wa, em = Sender(), Sender()
+    rep = _brun(tmp_path, _budget("critical", status_402=2), Tripper(), senders={"email": em, "whatsapp": wa})
+    blob = json.dumps(rep, default=str) + pw.format_report(rep) + (tmp_path / "b.json").read_text()
+    assert "claim_next_job" not in blob
+    assert rep["budget"]["verdict"] == "critical" and "top_shapes" not in rep["budget"]
+    assert any("claim_next_job" in b for _, b in em.sent)
+    assert not any("claim_next_job" in b for _, b in wa.sent)
+
+
+# ── F1 end to end: an anonymous flood alerts at most, it never reaches the tripper ──
+def test_anonymous_flood_through_the_real_evaluator_never_trips_the_fleet(tmp_path):
+    from tools.noctus.dev import supabase_request_budget as srb
+
+    flood = [{"ua": "curl/8", "status": 401, "role": "anon", "calls": 1500},
+             {"ua": "curl/8", "status": 403, "role": "anon", "calls": 1500}]  # 3k/h
+
+    def check():
+        src = srb.FakeLogsSource(status_rows=flood, trip_shape_rows=[],
+                                 shape_rows=[{"m": "GET", "p": "/rest/v1/clientes", "s": "", "calls": 3000}])
+        return srb.supabase_request_budget(source=src, env={}, window_hours=1.0)
+
+    t = Tripper()
+    for _ in range(4):
+        rep = _brun(tmp_path, check, t)
+    assert t.payloads == [] and rep["breaker"]["status"] == "armed"
+    assert rep["budget"]["verdict"] in ("ok", "warn")

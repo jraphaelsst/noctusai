@@ -2,12 +2,13 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # breaker-trip.sh — VPS-side FORCED COMMAND for the off-host fleet-breaker key.
 #
-# The breaker key's authorized_keys entry (the OWNER installs it; see
-# KB § PATTERNS/devops/prod-watchdog.md § Fleet breaker):
-#   restrict,command="/opt/noctus/noctusai/deploy/watchdog/breaker-trip.sh" <pubkey>
-# so the key can run ONLY this script. $SSH_ORIGINAL_COMMAND is ignored. This is a
-# DIFFERENT key from the host-probe (read-only) key: a read-only key must never gain
-# a write, and a write key must never gain a read.
+# The key belongs to a dedicated UNPRIVILEGED user `breaker` (never root). Its authorized_keys
+# entry (the OWNER installs it; see KB § PATTERNS/devops/prod-watchdog.md § 7b):
+#   restrict,command="sudo /opt/noctus/noctusai/deploy/watchdog/breaker-trip.sh" <pubkey> noctus-breaker-trip
+# and /etc/sudoers.d/noctus-breaker (deploy/watchdog/noctus-breaker.sudoers) lets `breaker` run exactly
+# this script, no arguments, as root (the script needs docker). So the key can run ONLY this script;
+# $SSH_ORIGINAL_COMMAND is ignored. This is a DIFFERENT key from the host-probe (read-only) key: a
+# read-only key must never gain a write, and a write key must never gain a read.
 #
 # What it does — exactly one thing: SET `noctus:breaker:fleet` (NX) in the fleet Redis
 # to a JSON read from stdin, after validating it. While that key exists every product's

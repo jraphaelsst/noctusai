@@ -20,9 +20,16 @@ SHAPE. Protocol + Fake + Real + factory (the house seed IO shape) in one stdlib-
 watchdog runs under a bare python with no pip install, so nothing here imports outside the stdlib.
 The token comes from env (`SUPABASE_ACCESS_TOKEN`) and is never logged, echoed or put in a repr.
 
+TRIP TRAFFIC (security review 2026-11-10, F1). edge_logs also records anonymous, key-less and
+rejected requests, so anyone hammering the public project URL would otherwise trip the breaker. The
+CRITICAL verdict (= the breaker trip) counts ONLY requests that carry OUR service_role key
+(`request.sb.jwt.apikey.payload.role = 'service_role'`; only our servers hold it) with a 2xx/3xx
+status, plus service_role 402s. Everything else (anon, authenticated, key-less, 4xx/5xx) is
+reported and can WARN, never trip.
+
 Verdict (thresholds are per-day projections, env-overridable):
-  critical  projected total > 250k · a single shape > 50k · ANY 402 in the window
-  warn      projected total > 100k · a single shape > 15k
+  critical  trip traffic: projected total > 250k · a single shape > 50k · ANY service_role 402
+  warn      projected total > 100k (any traffic) · a single shape > 15k · critical-sized non-trip traffic
   unknown   the logs could not be read (never green, never red)
 """
 from __future__ import annotations
@@ -51,15 +58,18 @@ DEFAULTS: dict[str, float] = {
     "SUPABASE_BUDGET_CRIT_SHAPE_PER_DAY": 50_000,
 }
 
-SQL_SHAPES = (
-    "select log_attributes['request.method'] m, log_attributes['request.path'] p, "
-    "log_attributes['request.search'] s, count() calls from logs where source='edge_logs' "
-    "group by m, p, s order by calls desc limit 3000"
-)
+ROLE_ATTR = "log_attributes['request.sb.jwt.apikey.payload.role']"
+STATUS_ATTR = "toUInt32OrZero(log_attributes['response.status_code'])"
+#: our servers' calls that count toward a trip: 2xx/3xx, plus the 402 a restricted project answers them.
+_TRIP_WHERE = (f"source='edge_logs' and {ROLE_ATTR}='service_role' and "
+               f"(({STATUS_ATTR} >= 200 and {STATUS_ATTR} < 400) or {STATUS_ATTR} = 402)")
+_SHAPE_COLS = ("select log_attributes['request.method'] m, log_attributes['request.path'] p, "
+               "log_attributes['request.search'] s, count() calls from logs where ")
+SQL_SHAPES = _SHAPE_COLS + "source='edge_logs' group by m, p, s order by calls desc limit 3000"
+SQL_SHAPES_TRIP = _SHAPE_COLS + _TRIP_WHERE + " group by m, p, s order by calls desc limit 3000"
 SQL_STATUS_UA = (
-    "select log_attributes['request.headers.user_agent'] ua, "
-    "log_attributes['response.status_code'] status, count() calls from logs "
-    "where source='edge_logs' group by ua, status order by calls desc limit 1000"
+    f"select log_attributes['request.headers.user_agent'] ua, {STATUS_ATTR} status, {ROLE_ATTR} role, "
+    "count() calls from logs where source='edge_logs' group by ua, status, role order by calls desc limit 1000"
 )
 USAGE_NOTE_NO_EGRESS = (
     "the Supabase Management API v1 exposes request counts only - no org egress or quota figure; "
@@ -91,7 +101,6 @@ _OP_ALT = "|".join(_OPS)
 _FILTER_VALUE = re.compile(rf"^(?P<neg>not\.)?(?P<op>{_OP_ALT})\.(?P<rest>.*)$", re.S)
 _INLINE_FILTER = re.compile(rf"\.(?P<op>{_OP_ALT})\.(?:\([^)]*\)|[^,)]*)")
 _KEEP_VERBATIM = frozenset({"select", "order", "columns", "on_conflict", "returning", "count"})
-_STORAGE_MODES = frozenset({"sign", "public", "authenticated", "upload", "info"})
 
 
 def _scrub(text: str) -> str:
@@ -141,20 +150,53 @@ def normalize_search(search: Optional[str]) -> str:
     return "&".join(sorted(parts))
 
 
-def _norm_segment(seg: str) -> str:
-    if _UUID.fullmatch(seg) or "@" in seg or seg.isdigit() or re.fullmatch(r"[0-9a-fA-F]{16,}", seg):
-        return "?"
-    return _scrub(seg)
+_API_PREFIXES = frozenset({"rest", "auth", "storage", "functions"})
+_IDENT = re.compile(r"[a-z_][a-z0-9_]{0,62}")  # a table / function name position
+_FN_IDENT = re.compile(r"[a-z0-9][a-z0-9_-]{0,62}")  # edge function names allow hyphens
+_AUTH_FIRST = frozenset({
+    "token", "user", "signup", "verify", "recover", "logout", "admin", "otp", "magiclink", "resend",
+    "factors", "reauthenticate", "authorize", "callback", "settings", "health", "sso", "identities",
+    ".well-known", "invite", "jwks", "oauth",
+})
+_STORAGE_OPS = frozenset({"object", "render", "bucket", "upload", "s3", "cdn"})
+_STORAGE_MODES = frozenset({"sign", "public", "authenticated", "upload", "info", "image"})
 
 
 def normalize_path(path: Optional[str]) -> str:
-    """Request path -> shape: ids, emails and storage object names -> `?`."""
-    segs = (urllib.parse.unquote(path or "").split("?", 1)[0]).split("/")
-    if len(segs) > 5 and segs[1:4] == ["storage", "v1", "object"]:
-        keep = 6 if segs[4] in _STORAGE_MODES else 5  # '' storage v1 object [mode] bucket
-        head = [_norm_segment(s) for s in segs[:keep]]
-        return "/".join(head + (["?"] if len(segs) > keep else []))
-    return "/".join(_norm_segment(s) for s in segs) or "/"
+    """Request path -> shape by ALLOWLIST: `/{rest|auth|storage|functions}/v1/<known first segment>`;
+    every other segment (ids, emails, filenames, object keys, unknown prefixes) -> `?`."""
+    segs = [x for x in (urllib.parse.unquote(path or "").split("?", 1)[0]).split("/") if x]
+    if not segs:
+        return "/"
+    if len(segs) < 2 or segs[0] not in _API_PREFIXES or segs[1] != "v1":
+        return "/?"
+    api, rest = segs[0], segs[2:]
+    head = f"/{api}/v1"
+    if not rest:
+        return head
+    first, tail = rest[0], rest[1:]
+    if api == "rest":
+        if not _IDENT.fullmatch(first):
+            return head + "/?"
+        if first == "rpc" and tail and _IDENT.fullmatch(tail[0]):
+            return f"{head}/rpc/{tail[0]}" + ("/?" if len(tail) > 1 else "")
+        return f"{head}/{first}" + ("/?" if tail else "")
+    if api == "auth":
+        if first not in _AUTH_FIRST:
+            return head + "/?"
+        return f"{head}/{first}" + ("/?" if tail else "")
+    if api == "storage":
+        if first not in _STORAGE_OPS:
+            return head + "/?"
+        keep = [first]
+        while tail and len(keep) < 3 and tail[0] in _STORAGE_MODES:
+            keep.append(tail[0])
+            tail = tail[1:]
+        return f"{head}/{'/'.join(keep)}" + ("/?" if tail else "")
+    # functions
+    if not _FN_IDENT.fullmatch(first):
+        return head + "/?"
+    return f"{head}/{first}" + ("/?" if tail else "")
 
 
 def ua_family(ua: Optional[str]) -> str:
@@ -178,9 +220,11 @@ def shape_key(method: Any, path: Any, search: Any) -> str:
 class FakeLogsSource:
     """Deterministic source for tests: rows keyed by which query is asked."""
 
-    def __init__(self, *, shape_rows=None, status_rows=None, usage_rows=None,
+    def __init__(self, *, shape_rows=None, status_rows=None, usage_rows=None, trip_shape_rows=None,
                  error: Optional[LogsError] = None) -> None:
         self.shape_rows = list(shape_rows or [])
+        #: the service_role-only shapes; None = "the shapes are all our own traffic"
+        self.trip_shape_rows = self.shape_rows if trip_shape_rows is None else list(trip_shape_rows)
         self.status_rows = list(status_rows or [])
         self.usage_rows = list(usage_rows or [])
         self.error = error
@@ -190,7 +234,9 @@ class FakeLogsSource:
         self.calls.append((sql, start, end))
         if self.error:
             raise self.error
-        return list(self.shape_rows if "request.search" in sql else self.status_rows)
+        if "request.search" in sql:
+            return list(self.trip_shape_rows if "service_role" in sql else self.shape_rows)
+        return list(self.status_rows)
 
     def usage_counts(self, interval: str = "1day") -> list[dict]:
         if self.error:
@@ -310,6 +356,18 @@ def _usage_block(source: LogsSource) -> dict:
             "realtime_requests_24h": tot["total_realtime_requests"], "note": USAGE_NOTE_NO_EGRESS}
 
 
+def _is_trip_traffic(role: str, status: int) -> bool:
+    """Only OUR servers' successful calls (and the 402 a restricted project answers them) can trip."""
+    return role == "service_role" and (200 <= status < 400 or status == 402)
+
+
+def _shape_counter(rows: list[dict]) -> Counter:
+    c: Counter = Counter()
+    for r in rows:
+        c[shape_key(r.get("m"), r.get("p"), r.get("s"))] += _int(r.get("calls"))
+    return c
+
+
 def evaluate(source: LogsSource, *, window_hours: float = 1.0, now: Optional[str] = None,
              start: Optional[str] = None, end: Optional[str] = None,
              th: Optional[Mapping[str, float]] = None, top_n: int = 10) -> dict:
@@ -322,70 +380,95 @@ def evaluate(source: LogsSource, *, window_hours: float = 1.0, now: Optional[str
     try:
         status_rows = source.query_logs(SQL_STATUS_UA, s_iso, e_iso)
         shape_rows = source.query_logs(SQL_SHAPES, s_iso, e_iso)
+        trip_rows = source.query_logs(SQL_SHAPES_TRIP, s_iso, e_iso)
     except LogsError as exc:
-        return {**base, "ok": False, "verdict": "unknown", "error": str(exc), "transient": exc.transient,
-                "reasons": [f"could not read the Supabase logs: {exc}"]}
+        return {**base, "ok": False, "verdict": "unknown", "trip": False, "error": str(exc),
+                "transient": exc.transient, "reasons": [f"could not read the Supabase logs: {exc}"],
+                "reasons_public": [f"could not read the Supabase logs: {exc}"]}
 
     ua_totals: Counter = Counter()
-    total = n402 = n4xx = 0
+    total = eligible = n402 = n402_all = n4xx = 0
     for r in status_rows:
-        c, st = _int(r.get("calls")), _int(r.get("status"))
+        c, st, role = _int(r.get("calls")), _int(r.get("status")), str(r.get("role") or "")
         total += c
         ua_totals[ua_family(r.get("ua"))] += c
+        if _is_trip_traffic(role, st):
+            eligible += c
+            if st == 402:
+                n402 += c
         if st == 402:
-            n402 += c
+            n402_all += c
         if 400 <= st < 500:
             n4xx += c
-    shapes: Counter = Counter()
-    for r in shape_rows:
-        shapes[shape_key(r.get("m"), r.get("p"), r.get("s"))] += _int(r.get("calls"))
+    shapes = _shape_counter(shape_rows)
+    trip_shapes = _shape_counter(trip_rows)
     if not status_rows:
         total = sum(shapes.values())
+        eligible = sum(trip_shapes.values())
 
     projected = int(round(total * per_day))
+    projected_eligible = int(round(eligible * per_day))
     shape_sum = sum(shapes.values())
     top = [{"shape": k, "calls": c, "projected_per_day": int(round(c * per_day)),
             "pct": round(100.0 * c / total, 1) if total else 0.0}
            for k, c in shapes.most_common(max(1, int(top_n)))]
 
-    offenders: list[dict] = []
-    level = "ok"
+    w_tot, c_tot = th["SUPABASE_BUDGET_WARN_TOTAL_PER_DAY"], th["SUPABASE_BUDGET_CRIT_TOTAL_PER_DAY"]
+    w_shp, c_shp = th["SUPABASE_BUDGET_WARN_SHAPE_PER_DAY"], th["SUPABASE_BUDGET_CRIT_SHAPE_PER_DAY"]
+    # (offender, public sentence): the public sentence never names an endpoint
+    found: list[tuple[dict, str]] = []
     if n402:
-        level = "critical"
-        offenders.append({"reason": "http_402", "level": "critical", "calls": n402,
-                          "detail": "Supabase answers 402 (Fair Use restriction): every call is being refused"})
-    if projected > th["SUPABASE_BUDGET_CRIT_TOTAL_PER_DAY"]:
-        level = "critical"
-        offenders.append({"reason": "total_projected", "level": "critical", "projected_per_day": projected})
-    elif projected > th["SUPABASE_BUDGET_WARN_TOTAL_PER_DAY"]:
-        level = level if level == "critical" else "warn"
-        offenders.append({"reason": "total_projected", "level": "warn", "projected_per_day": projected})
+        found.append(({"reason": "http_402", "level": "critical", "calls": n402,
+                       "detail": "Supabase answers our service_role calls 402 (Fair Use restriction)"},
+                      f"{n402} service_role calls answered 402 in the window (project restricted)"))
+    if projected_eligible > c_tot:
+        found.append(({"reason": "total_projected", "level": "critical", "projected_per_day": projected_eligible},
+                      f"our servers project {projected_eligible:,} calls/day (critical)"))
+    elif projected_eligible > w_tot:
+        found.append(({"reason": "total_projected", "level": "warn", "projected_per_day": projected_eligible},
+                      f"our servers project {projected_eligible:,} calls/day (warn)"))
+    elif projected > w_tot:  # not ours: reported, may alert, never trips
+        found.append(({"reason": "total_projected_all", "level": "warn", "projected_per_day": projected},
+                      f"all traffic (incl. anonymous/other) projects {projected:,} calls/day (warn)"))
+    seen: set[str] = set()
+    for k, c in trip_shapes.most_common():
+        p = c * per_day
+        if p > c_shp:
+            lvl = "critical"
+        elif p > w_shp:
+            lvl = "warn"
+        else:
+            break  # sorted: nothing below can exceed
+        seen.add(k)
+        found.append(({"reason": "shape_projected", "level": lvl, "shape": k, "calls": c,
+                       "projected_per_day": int(round(p))},
+                      f"one endpoint shape of ours projects {int(round(p)):,} calls/day ({lvl})"))
     for k, c in shapes.most_common():
         p = c * per_day
-        if p > th["SUPABASE_BUDGET_CRIT_SHAPE_PER_DAY"]:
-            level = "critical"
-            offenders.append({"reason": "shape_projected", "level": "critical", "shape": k, "calls": c,
-                              "projected_per_day": int(round(p))})
-        elif p > th["SUPABASE_BUDGET_WARN_SHAPE_PER_DAY"]:
-            level = level if level == "critical" else "warn"
-            offenders.append({"reason": "shape_projected", "level": "warn", "shape": k, "calls": c,
-                              "projected_per_day": int(round(p))})
-        else:
-            break  # most_common is sorted: nothing below can exceed
-    offenders.sort(key=lambda o: 0 if o["level"] == "critical" else 1)
+        if p <= w_shp:
+            break
+        if k not in seen:  # whatever is not our trip traffic can only warn
+            found.append(({"reason": "shape_projected_all", "level": "warn", "shape": k, "calls": c,
+                           "projected_per_day": int(round(p))},
+                          f"one endpoint shape (any traffic) projects {int(round(p)):,} calls/day (warn)"))
+    found.sort(key=lambda t: 0 if t[0]["level"] == "critical" else 1)
+    offenders = [o for o, _ in found]
+    level = "critical" if any(o["level"] == "critical" for o in offenders) else ("warn" if offenders else "ok")
 
     reasons = []
     for o in offenders:
         if o["reason"] == "http_402":
-            reasons.append(f"{o['calls']} calls answered 402 in the window (project restricted)")
-        elif o["reason"] == "total_projected":
+            reasons.append(f"{o['calls']} service_role calls answered 402 in the window (project restricted)")
+        elif o["reason"].startswith("total_projected"):
             reasons.append(f"projected {o['projected_per_day']:,} calls/day ({o['level']})")
         else:
             reasons.append(f"{o['shape']}: {o['projected_per_day']:,}/day ({o['level']})")
     return {
-        **base, "ok": True, "verdict": level, "reasons": reasons,
+        **base, "ok": True, "verdict": level, "trip": level == "critical",
+        "reasons": reasons, "reasons_public": [pub for _, pub in found],
         "total_calls": total, "projected_per_day": projected,
-        "status_402": n402, "status_4xx": n4xx, "restricted": n402 > 0,
+        "eligible_calls": eligible, "projected_eligible_per_day": projected_eligible,
+        "status_402": n402, "status_402_all": n402_all, "status_4xx": n4xx, "restricted": n402 > 0,
         "top_shapes": top, "offenders": offenders,
         "by_user_agent": [{"family": f, "calls": c} for f, c in ua_totals.most_common(10)],
         "coverage_pct": round(100.0 * shape_sum / total, 1) if total else 100.0,
@@ -417,8 +500,9 @@ def register(server) -> None:
             "Measure Supabase request volume from the project's own edge logs (Management API "
             "analytics logs endpoint) and return ok|warn|critical|unknown: total + projected calls/day, top "
             "endpoint SHAPES (method + path + query shape; ids/emails/filter values replaced by ?), user-agent "
-            "families, 4xx/402 counts, usage block. critical = projected >250k/day, a shape >50k/day or any "
-            "402; warn = >100k/day or a shape >15k/day (env-overridable). window_hours default 1, max 24; or "
+            "families, 4xx/402 counts, usage block. critical (= the breaker trip) counts ONLY our own "
+            "service_role traffic (2xx/3xx + 402s): >250k/day, a shape >50k/day or any 402; anonymous/other "
+            "traffic can only warn (>100k/day or a shape >15k/day; env-overridable). window_hours default 1, max 24; or "
             "start+end ISO. Needs SUPABASE_ACCESS_TOKEN in env. READ-ONLY. prod_watchdog runs it every 10 "
             "min and trips the fleet breaker on critical. KB § PATTERNS/backend/polling-request-budget.md"
         ),

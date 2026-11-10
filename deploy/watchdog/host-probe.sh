@@ -9,7 +9,8 @@
 # Prints exactly ONE JSON line (consumed by noctus.dev.prod_watchdog):
 #   {"journald_last_age_s":N|null,"heartbeat_age_s":N|null,
 #    "mem_available_mb":N|null,"swap_used_mb":N|null,"load1":F|null,
-#    "load5":F|null,"ncpu":N|null,"uptime_s":N|null,"now":N}
+#    "load5":F|null,"ncpu":N|null,"uptime_s":N|null,"now":N,
+#    "breaker_tripped":1|0|null,"breaker_key_restricted":1|0|null}
 #
 # READ-ONLY and never fails hard: `set -u` (not -e) — a probe that cannot read
 # something reports null for that field instead of dying, because a missing
@@ -86,8 +87,31 @@ if [[ -r /proc/uptime ]]; then
   uptime_s="${up%%.*}"
 fi
 
-printf '{"journald_last_age_s":%s,"heartbeat_age_s":%s,"mem_available_mb":%s,"swap_used_mb":%s,"load1":%s,"load5":%s,"ncpu":%s,"uptime_s":%s,"now":%s}\n' \
+# Fleet breaker: does `noctus:breaker:fleet` exist in Redis? (1 = tripped, 0 = armed, null = unknown).
+# The watchdog reconciles its sticky alert with THIS, not with its own cache file.
+breaker_tripped=null
+bt="$(timeout 10 docker exec "${NOCTUS_REDIS_CONTAINER:-noctus-redis}" redis-cli EXISTS noctus:breaker:fleet 2>/dev/null)"
+[[ "$bt" == "0" || "$bt" == "1" ]] && breaker_tripped="$bt"
+
+# Forced-command keys: every authorized_keys line carrying one of OUR key comments must start with
+# `restrict,command="` (1 = all restricted, 0 = at least one is NOT, null = none found / unreadable).
+breaker_key_restricted=null
+seen=0; bad=0
+for f in ${NOCTUS_AUTH_KEYS_FILES:-/root/.ssh/authorized_keys /home/breaker/.ssh/authorized_keys}; do
+  [[ -r "$f" ]] || continue
+  while IFS= read -r line; do
+    case "$line" in
+      *noctus-prod-watchdog*|*noctus-breaker-trip*)
+        seen=1
+        case "$line" in restrict,command=\"*) ;; *) bad=1 ;; esac ;;
+    esac
+  done < "$f"
+done
+if (( seen )); then breaker_key_restricted=$(( bad ? 0 : 1 )); fi
+
+printf '{"journald_last_age_s":%s,"heartbeat_age_s":%s,"mem_available_mb":%s,"swap_used_mb":%s,"load1":%s,"load5":%s,"ncpu":%s,"uptime_s":%s,"now":%s,"breaker_tripped":%s,"breaker_key_restricted":%s}\n' \
   "$journald_age" "$heartbeat_age" "$mem_available_mb" "$swap_used_mb" \
   "$(num_or_null "$load1")" "$(num_or_null "$load5")" \
-  "$(int_or_null "$ncpu")" "$(int_or_null "$uptime_s")" "$(int_or_null "$now")"
+  "$(int_or_null "$ncpu")" "$(int_or_null "$uptime_s")" "$(int_or_null "$now")" \
+  "$breaker_tripped" "$breaker_key_restricted"
 exit 0

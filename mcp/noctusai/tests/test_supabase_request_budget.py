@@ -67,6 +67,26 @@ def test_normalize_path_keeps_the_endpoint_identity():
     assert srb.normalize_path(f"/rest/v1/clientes/{UUID}") == "/rest/v1/clientes/?"
 
 
+# F8: the path is an ALLOWLIST (/{rest|auth|storage|functions}/v1/<known first segment>), everything else `?`
+@pytest.mark.parametrize("path, expected", [
+    ("/storage/v1/render/image/public/fotos/joao_cpf_123456.jpg", "/storage/v1/render/image/public/?"),
+    ("/storage/v1/object/sign/contratos/maria-silva-rg.pdf", "/storage/v1/object/sign/?"),
+    ("/rest/v1/maria.silva", "/rest/v1/?"),
+    ("/rest/v1/rpc/claim_next_job", "/rest/v1/rpc/claim_next_job"),
+    ("/rest/v1/rpc/Maria.Silva", "/rest/v1/rpc/?"),
+    ("/rest/v1/clientes/extra/maria", "/rest/v1/clientes/?"),
+    ("/auth/v1/token", "/auth/v1/token"),
+    ("/auth/v1/secret-thing-joao", "/auth/v1/?"),
+    ("/auth/v1/admin/users/abc", "/auth/v1/admin/?"),
+    ("/functions/v1/send-mail/joao", "/functions/v1/send-mail/?"),
+    ("/some/other/maria", "/?"),
+    ("/", "/"),
+    ("", "/"),
+])
+def test_normalize_path_is_an_allowlist(path, expected):
+    assert srb.normalize_path(path) == expected
+
+
 def test_user_agent_family_never_carries_a_version_or_free_text():
     assert srb.ua_family("python-httpx/0.27.2") == "python-httpx"
     assert srb.ua_family("Mozilla/5.0 (Macintosh) AppleWebKit") == "browser"
@@ -76,8 +96,11 @@ def test_user_agent_family_never_carries_a_version_or_free_text():
 
 
 # ── verdicts ─────────────────────────────────────────────────────────────────
-def _source(shape_rows, status_rows, usage=None):
-    return srb.FakeLogsSource(shape_rows=shape_rows, status_rows=status_rows, usage_rows=usage)
+def _source(shape_rows, status_rows, usage=None, trip_shape_rows=None):
+    """Rows default to our own servers' traffic (role service_role); anon rows say so explicitly."""
+    status_rows = [{"role": "service_role", **r} for r in status_rows]
+    return srb.FakeLogsSource(shape_rows=shape_rows, status_rows=status_rows, usage_rows=usage,
+                              trip_shape_rows=trip_shape_rows)
 
 
 def _eval(source, **kw):
@@ -259,3 +282,50 @@ def test_registered_and_cli_wired():
     cli = (REPO / "mcp/noctusai/cli.py").read_text()
     assert "supabase_request_budget.register(server)" in init
     assert "--supabase-request-budget" in cli
+
+
+# ── F1: only OUR servers' traffic can trip the breaker (anonymous floods must not) ──
+def test_anonymous_junk_flood_never_trips_it_can_only_warn():
+    anon = [{"ua": "curl/8", "status": 401, "role": "anon", "calls": 3000},
+            {"ua": "curl/8", "status": 403, "role": "anon", "calls": 3000},
+            {"ua": "curl/8", "status": 400, "role": "", "calls": 20_000}]
+    rep = srb.evaluate(
+        srb.FakeLogsSource(status_rows=anon, trip_shape_rows=[],
+                           shape_rows=[{"m": "GET", "p": "/rest/v1/clientes", "s": "", "calls": 26_000}]),
+        now=NOW, window_hours=1.0)
+    assert rep["verdict"] == "warn" and rep["trip"] is False
+    assert rep["total_calls"] == 26_000 and rep["eligible_calls"] == 0
+    assert all(o["level"] != "critical" for o in rep["offenders"])
+
+
+def test_an_anon_or_keyless_402_does_not_trip():
+    rows = [{"ua": "x", "status": 402, "role": "anon", "calls": 50}, {"ua": "x", "status": 402, "role": "", "calls": 50}]
+    rep = srb.evaluate(srb.FakeLogsSource(status_rows=rows, trip_shape_rows=[], shape_rows=[]), now=NOW)
+    assert rep["verdict"] != "critical" and rep["trip"] is False and rep["status_402"] == 0
+    assert rep["status_402_all"] == 100
+
+
+def test_service_role_failures_and_errors_are_not_trip_traffic_but_service_role_402_is():
+    rows = [{"ua": "python-httpx/0.27", "status": 500, "role": "service_role", "calls": 30_000}]
+    rep = srb.evaluate(srb.FakeLogsSource(status_rows=rows, trip_shape_rows=[], shape_rows=[]), now=NOW)
+    assert rep["trip"] is False and rep["eligible_calls"] == 0
+    rows = [{"ua": "python-httpx/0.27", "status": 402, "role": "service_role", "calls": 5}]
+    rep = srb.evaluate(srb.FakeLogsSource(status_rows=rows, trip_shape_rows=[], shape_rows=[]), now=NOW)
+    assert rep["trip"] is True and rep["verdict"] == "critical" and rep["status_402"] == 5
+
+
+def test_the_trip_queries_filter_on_the_service_role_claim_and_non_error_status():
+    src = srb.FakeLogsSource(status_rows=[], shape_rows=[])
+    srb.evaluate(src, now=NOW)
+    sqls = [c[0] for c in src.calls]
+    trip_sql = [q for q in sqls if "request.search" in q and "service_role" in q]
+    assert trip_sql, sqls
+    assert "request.sb.jwt.apikey.payload.role" in trip_sql[0]
+    assert any("request.sb.jwt.apikey.payload.role" in q for q in sqls if "request.search" not in q)
+
+
+def test_reports_carry_counts_only_reasons_for_public_logs():
+    rep = _eval(_source([{"m": "POST", "p": "/rest/v1/rpc/claim_next_job", "s": "", "calls": 2200}],
+                        [{"ua": "python-httpx/0.27", "status": 200, "calls": 2200}]))
+    assert "claim_next_job" in " ".join(rep["reasons"])
+    assert rep["reasons_public"] and "claim_next_job" not in " ".join(rep["reasons_public"])

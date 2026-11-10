@@ -84,6 +84,8 @@ EMAIL_FROM = "NoctusAI <noreply@noctusai.com>"
 HOST_PROBE_FIELDS = (
     "journald_last_age_s", "heartbeat_age_s", "mem_available_mb", "swap_used_mb",
     "load1", "load5", "ncpu", "uptime_s", "now",
+    #: 1 = the fleet-breaker key exists in Redis · 1/0 = every forced-command key line carries `restrict,command=`
+    "breaker_tripped", "breaker_key_restricted",
 )
 #: ssh's own exit status for "could not connect / authenticate".
 SSH_CONNECT_FAILURE_RC = 255
@@ -215,36 +217,53 @@ def make_ssh_runner(env: Mapping[str, str]) -> Optional[SshRunner]:
     if not host or not key or not Path(key).is_file():
         return None
 
+    user = (env.get("WATCHDOG_PROBE_USER") or "root").strip() or "root"
+
     def _run() -> tuple[int, str, str]:
-        return _ssh_once(host, key, "probe")
+        return _ssh_once(host, key, "probe", env=env, user=user)
 
     return _run
 
 
-def _ssh_once(host: str, key: str, remote_cmd: str, stdin_text: Optional[str] = None) -> tuple[int, str, str]:
-    """ONE authenticated ssh connection to a forced-command key (the remote command is
-    ignored by the forced command; it is only a label). Keyscan is a pre-auth handshake."""
+def _ssh_once(host: str, key: str, remote_cmd: str, stdin_text: Optional[str] = None, *,
+              env: Optional[Mapping[str, str]] = None, user: str = "root",
+              run: Callable[..., Any] = subprocess.run, sleep: Callable[[float], None] = time.sleep,
+              ) -> tuple[int, str, str]:
+    """ONE authenticated ssh connection to a forced-command key (the remote command is ignored by the
+    forced command; it is only a label).
+
+    Host-key pinning: `NOCTUS_VPS_KNOWN_HOSTS` (a secret holding the `ssh-keyscan -H` line(s),
+    captured ONCE by the owner) is the trust anchor. Only when it is unset does this fall back to a
+    keyscan on every run (trust-on-first-use each time: a network attacker on the path could answer),
+    and `run()` warns about that loudly.
+    """
+    env = os.environ if env is None else env
     kh = Path(tempfile.mkdtemp(prefix="watchdog-kh-")) / "known_hosts"
-    for attempt in range(3):
-        try:
-            r = subprocess.run(["ssh-keyscan", "-H", host], capture_output=True, text=True, timeout=30)
-            if r.stdout.strip():
-                kh.write_text(r.stdout, encoding="utf-8")
-                break
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        if attempt < 2:
-            time.sleep(5)
-    if not kh.exists():
-        return SSH_CONNECT_FAILURE_RC, "", "ssh-keyscan produced no host key after 3 tries"
+    pinned = (env.get("NOCTUS_VPS_KNOWN_HOSTS") or "").strip()
+    if pinned:
+        kh.write_text(pinned + "\n", encoding="utf-8")
+        kh.chmod(0o600)
+    else:
+        for attempt in range(3):
+            try:
+                r = run(["ssh-keyscan", "-H", host], capture_output=True, text=True, timeout=30)
+                if r.stdout.strip():
+                    kh.write_text(r.stdout, encoding="utf-8")
+                    break
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            if attempt < 2:
+                sleep(5)
+        if not kh.exists():
+            return SSH_CONNECT_FAILURE_RC, "", "ssh-keyscan produced no host key after 3 tries"
     try:
-        r = subprocess.run(
+        r = run(
             ["ssh", "-i", key,
              "-o", "StrictHostKeyChecking=yes",
              "-o", f"UserKnownHostsFile={kh}",
              "-o", "ConnectTimeout=20",
              "-o", "BatchMode=yes",
-             f"root@{host}", remote_cmd],
+             f"{user}@{host}", remote_cmd],
             input=stdin_text, capture_output=True, text=True, timeout=60,
         )
     except subprocess.TimeoutExpired:
@@ -258,16 +277,18 @@ def make_breaker_tripper(env: Mapping[str, str]) -> Optional[BreakerTripper]:
     """Real breaker tripper from env, or None when not configured.
 
     Needs `NOCTUS_VPS_HOST` + `WATCHDOG_BREAKER_KEY_FILE`: a SEPARATE forced-command key
-    (`deploy/watchdog/breaker-trip.sh`) that can only SET `noctus:breaker:fleet` (NX). The
-    host-probe key is read-only and is never reused for this write.
+    (`deploy/watchdog/breaker-trip.sh`) that can only SET `noctus:breaker:fleet` (NX). It logs in as the
+    dedicated unprivileged `breaker` user (`WATCHDOG_BREAKER_USER`), whose only power is a sudoers entry
+    for exactly that script. The host-probe key is read-only and is never reused for this write.
     """
     host = (env.get("NOCTUS_VPS_HOST") or "").strip()
     key = (env.get("WATCHDOG_BREAKER_KEY_FILE") or "").strip()
     if not host or not key or not Path(key).is_file():
         return None
+    user = (env.get("WATCHDOG_BREAKER_USER") or "breaker").strip() or "breaker"
 
     def _trip(payload: dict) -> tuple[bool, str]:
-        rc, out, err = _ssh_once(host, key, "trip", json.dumps(payload, separators=(",", ":")))
+        rc, out, err = _ssh_once(host, key, "trip", json.dumps(payload, separators=(",", ":")), env=env, user=user)
         if rc != 0:
             return False, f"rc={rc}: " + ((err or out or "").strip()[-200:].replace(host, "<host>") or "no output")
         try:
@@ -440,6 +461,8 @@ def classify(http: list[dict], host: Optional[dict], host_error: Optional[str],
         swap = host.get("swap_used_mb")
         if swap is not None and swap > th["WATCHDOG_SWAP_USED_MAX_MB"]:
             deg.append(f"swap em uso: {int(swap)} MB")
+        if host.get("breaker_key_restricted") == 0:
+            deg.append("chave de comando forçado do watchdog/breaker SEM `restrict,command=` no authorized_keys")
         load1, ncpu = host.get("load1"), host.get("ncpu")
         if load1 is None or not ncpu:
             deg.append("load/ncpu ilegível no host-probe")
@@ -515,8 +538,9 @@ def compose_message(kind: str, new: str, reasons: list[str], since: Optional[flo
 
 
 def deliver(kind: str, new: str, subject: str, body: str,
-            senders: Mapping[str, Sender], cfg: Mapping[str, dict]) -> dict:
-    """Send per routing; returns per-channel results + `delivered`."""
+            senders: Mapping[str, Sender], cfg: Mapping[str, dict], detail: Optional[str] = None) -> dict:
+    """Send per routing; returns per-channel results + `delivered`. `detail` (endpoint shapes) is
+    appended to the EMAIL body only: WhatsApp and every public log carry counts and verdicts."""
     primary, also = route(kind, new)
     results: dict[str, dict] = {}
 
@@ -529,10 +553,10 @@ def deliver(kind: str, new: str, subject: str, body: str,
             results[ch] = {"ok": False, "detail": "NOT CONFIGURED — missing " + (", ".join(missing) or "sender")}
             return False
         try:
-            ok, detail = fn(subject, body)
+            ok, info = fn(subject, body + ("\n\n" + detail if detail and ch == "email" else ""))
         except Exception as exc:  # a sender bug must surface, not abort the run
-            ok, detail = False, f"sender raised {type(exc).__name__}: {exc}"
-        results[ch] = {"ok": bool(ok), "detail": detail}
+            ok, info = False, f"sender raised {type(exc).__name__}: {exc}"
+        results[ch] = {"ok": bool(ok), "detail": info}
         return bool(ok)
 
     for ch in primary:
@@ -548,25 +572,39 @@ def deliver(kind: str, new: str, subject: str, body: str,
 
 # ── supabase request-budget leg + fleet breaker ──────────────────────────────
 def _budget_summary(rep: dict) -> dict:
-    """The compact, LGPD-safe slice of a request-budget report (shapes are already normalised)."""
-    keys = ("verdict", "ok", "error", "projected_per_day", "total_calls", "status_402", "window_hours", "reasons")
+    """The compact slice of a request-budget report that may appear in a PUBLIC run log / the state
+    cache: counts and verdict only. No endpoint shape, no reason that names one (those go to email)."""
+    keys = ("verdict", "ok", "trip", "error", "projected_per_day", "total_calls", "eligible_calls",
+            "status_402", "window_hours")
     out = {k: rep.get(k) for k in keys if k in rep}
-    out["top_shapes"] = (rep.get("top_shapes") or [])[:3]
+    out["reasons"] = list(rep.get("reasons_public") or [])
     out["status"] = rep.get("status") or rep.get("verdict")
     return out
 
 
+def _shape_detail(rep: dict) -> Optional[str]:
+    shapes = rep.get("top_shapes") or []
+    if rep.get("verdict") not in ("warn", "critical") or not shapes:
+        return None
+    lines = [f"- {t['shape']}: {t['calls']} chamadas na janela (~{t['projected_per_day']}/dia)" for t in shapes[:5]]
+    return "Principais endpoints (shapes normalizados, só neste e-mail):\n" + "\n".join(lines)
+
+
 def _budget_leg(state: dict, counters: dict, th: Mapping[str, float], env: Mapping[str, str], now: float, *,
-                send: bool, budget_check: Any, breaker_tripper: Any, breaker_rearmed: bool,
-                warnings: list[str]) -> tuple[dict, dict, list[str], bool]:
+                host: Optional[dict], send: bool, budget_check: Any, breaker_tripper: Any,
+                breaker_rearmed: bool, warnings: list[str]) -> tuple[dict, dict, list[str], bool, Optional[str]]:
     """Measure the Supabase request volume; on CRITICAL trip the fleet breaker.
 
-    Returns `(budget, breaker, degraded_reasons, trip_due)`. Verdict policy (each needs
-    WATCHDOG_CONSECUTIVE runs, so one deploy burst never trips): WARN -> alert only;
-    CRITICAL -> trip + alert; a 402 (project already restricted) trips IMMEDIATELY. Never
-    auto-re-arms: the `breaker` state is sticky (reminders every WATCHDOG_REMINDER_HOURS)
-    until a human re-arms through `noctus.dev.supabase_breaker` and acks with --breaker-rearmed.
-    An unreadable/unconfigured measurement is a warning, never a trip and never green-by-silence.
+    Returns `(budget, breaker, degraded_reasons, trip_due, shape_detail)`. Verdict policy (each needs
+    WATCHDOG_CONSECUTIVE runs, so one deploy burst never trips): WARN -> alert only; CRITICAL -> trip +
+    alert; a service_role 402 (project already restricted) trips IMMEDIATELY. Only OUR servers' traffic
+    (service_role, 2xx/3xx or 402) can be critical, so an anonymous flood can warn, never trip.
+
+    The trip is re-asserted on EVERY critical verdict (Redis NX makes it idempotent and keeps the first
+    reason), so a re-arm can never leave the off-host leg blind. The sticky `breaker` state is reconciled
+    with the REAL key via the host probe (`breaker_tripped`): key gone => a human re-armed => the alert
+    clears; key present with no state => adopted + alerted once. Never auto-re-arms: re-arm is
+    `noctus.dev.supabase_breaker`. An unreadable/unconfigured measurement is a warning, never a trip.
     """
     n = int(th["WATCHDOG_CONSECUTIVE"])
     deg: list[str] = []
@@ -575,10 +613,23 @@ def _budget_leg(state: dict, counters: dict, th: Mapping[str, float], env: Mappi
         counters["budget_warn"] = counters["budget_crit"] = 0
         warnings.append("breaker acknowledged as re-armed by a human: sticky alert cleared")
 
+    key_now = host.get("breaker_tripped") if host else None
+    existing = state.get("breaker") if isinstance(state.get("breaker"), dict) else None
+    iso_now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+    if key_now == 1 and not (existing and existing.get("confirmed")):
+        state["breaker"] = existing = {"confirmed": True, "tripped_at": iso_now, "alerted": False, "adopted": True,
+                                       "reason": "chave encontrada ativa no host (acionada fora desta execução)"}
+    elif key_now == 0 and existing and existing.get("confirmed"):
+        state.pop("breaker", None)
+        existing = None
+        counters["budget_crit"] = 0
+        warnings.append("breaker key is gone on the host (re-armed by a human): sticky alert cleared")
+
     check = budget_check
     if check == "auto":
         src = _budget.make_source(env)
         check = (lambda: _budget.supabase_request_budget(source=src, env=env, window_hours=1.0)) if src else None
+    raw: dict = {}
     if check is None:
         budget = {"status": "not_configured",
                   "detail": f"{_budget.TOKEN_ENV} unset: Supabase request-budget leg skipped (no breaker protection)"}
@@ -596,18 +647,17 @@ def _budget_leg(state: dict, counters: dict, th: Mapping[str, float], env: Mappi
         if verdict == "unknown":
             warnings.append(f"Supabase request budget unmeasured: {raw.get('error') or raw.get('status')}")
 
-    existing = state.get("breaker") if isinstance(state.get("breaker"), dict) else None
     crit_now = budget.get("verdict") == "critical"
     n402 = int(budget.get("status_402") or 0)
     breaker: dict[str, Any] = {"status": "tripped" if existing and existing.get("confirmed") else "armed"}
 
-    if crit_now and not (existing and existing.get("confirmed")) and (n402 > 0 or counters.get("budget_crit", 0) >= n):
+    if crit_now and (n402 > 0 or counters.get("budget_crit", 0) >= n):
         top = "; ".join((budget.get("reasons") or [])[:3])
         payload = {
             "reason": (top or "Supabase request budget critical")[:300],
             "rate": int(budget.get("projected_per_day") or 0),
             "window": f"{budget.get('window_hours') or 1:g}h",
-            "tripped_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+            "tripped_at": iso_now,
             "by": "offhost-watchdog",
         }
         tripper = make_breaker_tripper(env) if breaker_tripper == "auto" else breaker_tripper
@@ -616,8 +666,9 @@ def _budget_leg(state: dict, counters: dict, th: Mapping[str, float], env: Mappi
         elif tripper is None:
             breaker = {"status": "not_configured",
                        "detail": "NOCTUS_VPS_HOST / WATCHDOG_BREAKER_KEY_FILE unset: cannot trip the breaker"}
-            deg.append("Supabase CRÍTICO mas o disjuntor NÃO pôde ser acionado (chave do breaker não configurada): "
-                       + payload["reason"])
+            if not existing:
+                deg.append("Supabase CRÍTICO mas o disjuntor NÃO pôde ser acionado (chave do breaker não "
+                           "configurada): " + payload["reason"])
             warnings.append(breaker["detail"])
         else:
             try:
@@ -625,28 +676,29 @@ def _budget_leg(state: dict, counters: dict, th: Mapping[str, float], env: Mappi
             except Exception as exc:
                 ok, detail = False, f"tripper raised {type(exc).__name__}"
             if ok:
-                state["breaker"] = existing = {"confirmed": True, "tripped_at": payload["tripped_at"],
-                                               "reason": payload["reason"], "rate": payload["rate"],
-                                               "alerted": False, "detail": detail}
+                if detail == "tripped" or not existing:  # a NEW trip (or a key we had lost): alert it
+                    state["breaker"] = existing = {"confirmed": True, "tripped_at": payload["tripped_at"],
+                                                   "reason": payload["reason"], "rate": payload["rate"],
+                                                   "alerted": False, "detail": detail}
                 breaker = {"status": "tripped", "detail": detail}
-                trip_due = True
             else:
                 breaker = {"status": "trip_failed", "detail": detail}
-                deg.append("Supabase CRÍTICO e o disjuntor FALHOU ao acionar (tentará de novo na próxima "
-                           f"execução): {payload['reason']}")
+                if not existing:
+                    deg.append("Supabase CRÍTICO e o disjuntor FALHOU ao acionar (tentará de novo na próxima "
+                               f"execução): {payload['reason']}")
                 warnings.append(f"breaker trip failed: {detail}")
 
     if existing and existing.get("confirmed"):
         breaker["tripped_at"] = existing.get("tripped_at")
         if not existing.get("alerted"):
-            trip_due = True  # trip confirmed earlier but the alert never reached anyone: retry it
+            trip_due = True  # a trip whose alert never reached anyone: (re)try it
         deg.append(f"DISJUNTOR DO SUPABASE ACIONADO em {existing.get('tripped_at')}: workers/schedulers de todos os "
                    f"produtos parados, APIs no ar ({existing.get('reason')}). Rearme é humano: "
-                   "noctus.dev.supabase_breaker; depois confirme com --breaker-rearmed.")
+                   "noctus.dev.supabase_breaker (o alerta some sozinho quando a chave sai do Redis).")
     elif budget.get("verdict") == "warn" and counters.get("budget_warn", 0) >= n:
         deg.append("Supabase request budget em ATENÇÃO (sem acionar o disjuntor): "
                    + "; ".join((budget.get("reasons") or [])[:3]))
-    return budget, breaker, deg, trip_due
+    return budget, breaker, deg, trip_due, _shape_detail(raw)
 
 
 def run(
@@ -678,6 +730,7 @@ def run(
     roster = slugs if slugs is not None else default_roster(root)
     fetch = fetcher or _edge.fetch
     runner = make_ssh_runner(env) if ssh_runner == "auto" else ssh_runner
+    unpinned = ssh_runner == "auto" and runner is not None and not (env.get("NOCTUS_VPS_KNOWN_HOSTS") or "").strip()
     cfg = channel_config(env)
     snd = make_senders(env) if senders is None else dict(senders)
     for ch in cfg:
@@ -690,6 +743,10 @@ def run(
         warnings.append(warn)
     counters = state["counters"] = dict(state.get("counters") or {})
     ssh_state = state["ssh"] = dict(state.get("ssh") or {})
+
+    if unpinned:
+        warnings.append("NOCTUS_VPS_KNOWN_HOSTS unset: ssh host key is trusted via ssh-keyscan on every run "
+                        "(pin it: store `ssh-keyscan -H <host>` output as that secret)")
 
     # http leg
     http = http_probe(roster, root, fetch, th["WATCHDOG_HTTP_TIMEOUT_S"])
@@ -730,8 +787,8 @@ def run(
                 host_error = f"forced command exited {rc}: {err_clean or host_error}"
             ssh_leg = {"status": "ok" if host else "probe_error", "rc": rc, "detail": host_error or ""}
 
-    budget, breaker, budget_deg, trip_due = _budget_leg(
-        state, counters, th, env, now, send=send, budget_check=budget_check,
+    budget, breaker, budget_deg, trip_due, shape_detail = _budget_leg(
+        state, counters, th, env, now, host=host, send=send, budget_check=budget_check,
         breaker_tripper=breaker_tripper, breaker_rearmed=breaker_rearmed, warnings=warnings)
 
     new, down_r, deg_r = classify(http, host, host_error, counters, th, extra_degraded=budget_deg)
@@ -757,7 +814,7 @@ def run(
         subject, body = compose_message(kind, new, reasons, state.get("since"), now)
         alert.update({"subject": subject, "body": body})
         if send:
-            res = deliver(kind, new, subject, body, snd, cfg)
+            res = deliver(kind, new, subject, body, snd, cfg, detail=shape_detail)
             alert.update(res)
             if res["delivered"]:
                 state["alerted_state"] = new

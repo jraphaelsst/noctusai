@@ -18,7 +18,7 @@ name: Prod Watchdog (off-host)
 # WhatsApp. Schedules fire only from the default branch (main), and GitHub may
 # delay or skip a cron tick under load.
 #
-# Secrets (names only): NOCTUS_VPS_HOST, NOCTUS_VPS_WATCHDOG_KEY, SUPABASE_ACCESS_TOKEN, NOCTUS_VPS_BREAKER_KEY, RESEND_API_KEY,
+# Secrets (names only): NOCTUS_VPS_HOST, NOCTUS_VPS_WATCHDOG_KEY, SUPABASE_ACCESS_TOKEN (scoped PAT), NOCTUS_VPS_BREAKER_KEY, NOCTUS_VPS_KNOWN_HOSTS, RESEND_API_KEY,
 # WAHA_BASE_URL, WAHA_API_KEY, WAHA_SESSION, WATCHDOG_ALERT_WHATSAPP.
 # Variable: WATCHDOG_ALERT_EMAIL. Runbook: KB § PATTERNS/devops/prod-watchdog.md.
 
@@ -61,11 +61,9 @@ jobs:
       WAHA_SESSION: ${{ secrets.WAHA_SESSION }}
       WATCHDOG_ALERT_WHATSAPP: ${{ secrets.WATCHDOG_ALERT_WHATSAPP }}
       WATCHDOG_ALERT_EMAIL: ${{ vars.WATCHDOG_ALERT_EMAIL || 'joaoraphaelsst@gmail.com' }}
-      # Supabase request-budget leg + fleet breaker (KB § PATTERNS/devops/prod-watchdog.md § 7b).
-      # The account-wide PAT lives ONLY here, never in a prod container.
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
-      BREAKER_KEY: ${{ secrets.NOCTUS_VPS_BREAKER_KEY }}
+      # NOTE: SUPABASE_ACCESS_TOKEN and the breaker key are deliberately NOT job-level env: this is a
+      # PUBLIC repo and job env is visible to every step/action. They are scoped to the one step that
+      # needs each (KB § PATTERNS/devops/prod-watchdog.md § 7b).
       STATE_FILE: .prod-watchdog/state.json
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -101,6 +99,8 @@ jobs:
           echo "WATCHDOG_SSH_KEY_FILE=$HOME/.ssh/watchdog-key" >> "$GITHUB_ENV"
 
       - name: Write the breaker key (a SEPARATE forced-command key that can only SET the breaker)
+        env:
+          BREAKER_KEY: ${{ secrets.NOCTUS_VPS_BREAKER_KEY }}
         run: |
           if [[ -n "${NOCTUS_VPS_HOST:-}" && -n "${BREAKER_KEY:-}" ]]; then
             mkdir -p ~/.ssh && chmod 700 ~/.ssh
@@ -119,6 +119,11 @@ jobs:
         working-directory: mcp/noctusai
         env:
           NOCTUSAI_HOME: ${{ github.workspace }}
+          # Supabase request-budget leg: a SCOPED PAT (this project only; Logs read + Usage read), see § 7b.
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          # Pinned ssh host key (`ssh-keyscan -H <host>` output, captured once): no keyscan-per-run trust.
+          NOCTUS_VPS_KNOWN_HOSTS: ${{ secrets.NOCTUS_VPS_KNOWN_HOSTS }}
           TEST_ALERT: ${{ inputs.send_test_alert }}
           BREAKER_REARMED: ${{ inputs.breaker_rearmed }}
         run: |
