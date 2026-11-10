@@ -186,3 +186,50 @@ def test_real_queue_stats_uses_count_queries_not_row_dumps_and_caches() -> None:
     before = len(selects)
     run(repo.queue_stats(job_types=["t"]))  # within the TTL: zero DB calls
     assert len(selects) == before
+
+
+def test_in_process_enqueue_wakes_an_idle_backed_off_worker() -> None:
+    """A job enqueued in this process is claimed at once, not after the
+    (up to 30s) idle sleep; works from another thread too."""
+    import threading
+    import time
+
+    async def scenario() -> list[float]:
+        repo = FakeJobRepository()
+        stop = asyncio.Event()
+        done: list[float] = []
+
+        async def handler(_job) -> None:
+            done.append(time.monotonic())
+
+        worker = Worker(
+            repo, worker_id="w", handlers={"a": handler}, poll_interval_seconds=0.05,
+            max_idle_interval_seconds=30.0,
+        )
+        task = asyncio.create_task(worker.run_forever(stop_event=stop))
+        await asyncio.sleep(0.8)  # idle sleeps have grown well past 0.2s
+        t0 = time.monotonic()
+        await repo.enqueue(type="a", payload={})
+        await asyncio.sleep(0.2)
+        t1 = time.monotonic()
+        # off-loop producer (run_blocking / to_thread shape)
+        th = threading.Thread(target=lambda: asyncio.run(repo.enqueue(type="a", payload={})))
+        th.start()
+        th.join()
+        await asyncio.sleep(0.2)
+        stop.set()
+        await task
+        return [done[0] - t0, done[1] - t1]
+
+    first, second = run(scenario())
+    assert first < 0.15 and second < 0.15, (first, second)
+
+
+def test_real_enqueue_drops_the_queue_stats_cache() -> None:
+    client = MockSupabaseClient()
+    client.set_table_data("jobs", [])
+    repo = RealSupabaseJobRepository(client)
+    run(repo.queue_stats(job_types=["t"]))
+    assert repo._stats_cache
+    run(repo.enqueue(type="t", payload={}))
+    assert not repo._stats_cache

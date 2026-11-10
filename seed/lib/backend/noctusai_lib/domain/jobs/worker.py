@@ -49,6 +49,7 @@ from noctusai_lib.domain.jobs.repo import (
     LeaseLostError,
     RescheduleLater,
 )
+from noctusai_lib.domain.jobs import wake as _wake
 from noctusai_lib.domain.jobs.retry_policy import (
     DEFAULT_POLICY,
     RetryPolicy,
@@ -108,10 +109,13 @@ class Worker:
         # `claim_next_job` RPCs per hour and exhausted the Supabase egress
         # quota (every REST call then returned 402). Each consecutive idle
         # poll now doubles the sleep up to `max_idle_interval_seconds`, and
-        # the first claimed job resets it to `poll_interval_seconds`.
+        # the first claimed job resets it to `poll_interval_seconds`. At the
+        # 30s cap that is ~120 claim calls/hour PER worker (~1.2k/hour for ~10
+        # workers). In-process enqueues wake the worker at once (`jobs/wake.py`).
         self._max_idle_interval = max(max_idle_interval_seconds, poll_interval_seconds)
         self._idle_multiplier = max(idle_backoff_multiplier, 1.0)
         self._idle_sleep = idle_sleep or self._default_idle_sleep
+        self._waker: _wake.Waker | None = None
         self._job_types: list[str] = sorted(self._handlers.keys())
         # Lease + heartbeat: a claimed job is reclaimable by another
         # worker once `lease_seconds` elapses without a heartbeat — the
@@ -189,30 +193,47 @@ class Worker:
         """
         logger.info("worker.start worker_id=%s", self._worker_id)
         delay = self._poll_interval
+        # In-process enqueues of a type this worker serves cut the idle
+        # sleep (see `jobs/wake.py`); cross-process producers wait <= cap.
+        self._waker = _wake.register(asyncio.get_running_loop(), self._job_types)
         try:
             while True:
                 if stop_event is not None and stop_event.is_set():
                     break
+                # A wake that lands before this claim is covered by the claim
+                # itself; one that lands after it ends the next idle sleep.
+                if self._waker is not None:
+                    self._waker.event.clear()
                 processed = await self.run_once()
                 if processed:
                     delay = self._poll_interval
                     continue
                 await self._idle_sleep(delay, stop_event)
-                delay = min(delay * self._idle_multiplier, self._max_idle_interval)
+                if self._waker is not None and self._waker.event.is_set():
+                    delay = self._poll_interval
+                else:
+                    delay = min(delay * self._idle_multiplier, self._max_idle_interval)
         finally:
+            if self._waker is not None:
+                _wake.unregister(self._waker)
+                self._waker = None
             logger.info("worker.stop worker_id=%s", self._worker_id)
 
     # --- internals ---------------------------------------------------
 
-    @staticmethod
-    async def _default_idle_sleep(delay: float, stop_event: asyncio.Event | None) -> None:
-        if stop_event is None:
+    async def _default_idle_sleep(self, delay: float, stop_event: asyncio.Event | None) -> None:
+        """Sleep up to `delay`; return early on stop_event or an in-process wake."""
+        events = [e for e in (stop_event, self._waker.event if self._waker else None) if e]
+        if not events:
             await asyncio.sleep(delay)
             return
+        tasks = [asyncio.ensure_future(e.wait()) for e in events]
         try:
-            await asyncio.wait_for(stop_event.wait(), timeout=delay)
-        except asyncio.TimeoutError:
-            pass  # normal idle wakeup; loop back
+            await asyncio.wait(tasks, timeout=delay, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _heartbeat_loop(self, job_id: str) -> None:
         """Extend the claimed job's lease at `_heartbeat_interval` while

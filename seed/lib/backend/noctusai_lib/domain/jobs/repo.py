@@ -29,6 +29,7 @@ from noctusai_lib.domain.jobs.entity import (
     JobStatus,
     with_status_transition,
 )
+from noctusai_lib.domain.jobs.wake import notify_enqueued
 from noctusai_lib.domain.jobs.retry_policy import (
     DEFAULT_POLICY,
     RetryPolicy,
@@ -271,6 +272,7 @@ class FakeJobRepository:
         self._jobs[job.id] = job
         if dedupe_key is not None:
             self._dedupe_index[dedupe_key] = job.id
+        notify_enqueued(job.type)
         return job
 
     async def claim_next(
@@ -665,6 +667,10 @@ class RealSupabaseJobRepository:
         # Real Supabase returns inserted row(s) on `result.data`. We
         # trust our own `Job` instance because it's what we sent.
         _ = result  # Keep linter happy without assuming response shape.
+        # A job just landed in this process: the cached queue_stats is stale
+        # (claim gates must see it) and any in-process worker should wake.
+        self._stats_cache.clear()
+        notify_enqueued(job.type)
         return job
 
     async def claim_next(
