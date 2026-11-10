@@ -115,6 +115,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── dev-prod-parity.md
 │   │   │   ├── dev-fleet-dormant.md
 │   │   │   ├── dev-team.md
+│   │   │   ├── team-of-teams.md
 │   │   │   ├── dev-toolkit-scaffolders.md
 │   │   ├── devops/
 │   │   │   ├── usage-evaluation.md
@@ -441,6 +442,7 @@ KNOWLEDGE-BASE/
 | Shared-library conventions (privatize / absorb / rename; catalog tool) | `CONTEXT/PATTERNS/architect/shared-library-conventions.md` |
 | Project execution (phase-header ticks, improvements block, improvements.md retrospective tool) | `CONTEXT/PATTERNS/architect/project-execution.md` |
 | Product working scope (`ativo` + `deploy_scope` = which products we touch and where; inactive never live; reactivation lands in dev) | `CONTEXT/PATTERNS/architect/product-working-scope.md` |
+| Team of teams — one tree deployer, self-managing teams with one orchestrator each; peer decisions = independent position reports up to the manager (smallest team holding all parties), recorded common ground down, everyone continues; improvement proposals anywhere in the tree get an exit (accepted/adapted/rejected or forwarded with destination), never "noted"; role-addressed so it scales | `CONTEXT/PATTERNS/architect/team-of-teams.md` |
 | Proposals & improvements (two systems — per-project folders, ONE bundled proposal per phase, promote boundary) | `CONTEXT/PATTERNS/common/proposals-and-improvements.md` |
 | LGPD awareness (keeper principle, the five questions, noctus.dev.lgpd_flag tool) | `CONTEXT/PATTERNS/security/lgpd.md` |
 | DRE structure for small Brazilian e-commerce stores — NBC TG 1002/1001 line shape, where the DAS goes (whole DAS in Deduções for Simples; DAS-MEI as fixed cost), e-commerce items (gateway fees, antecipação, marketplace commission, freight, chargebacks, refunds, installment interest), tiered sources, open questions, when a contador (CRC) is required; agent `accountant` | `CONTEXT/PATTERNS/finance/dre-structure.md` |

@@ -340,6 +340,7 @@ A handover moves ownership of a zone, a ship drive or a freeze. It is complete o
 - **Commit only your own work.** Enumerate your files before staging; a peer's edits in a shared tree are not yours (`project-execution.md` §2.10).
 - **Last finisher merges** the overlap and records why (`branch-tree-tracking.md` §3).
 - **The queue never resolves a conflict for you**; an ejected entry is fixed on its branch by its owner (`merge-queue.md` §3 invariant 4).
+- **Peers never bargain the decision.** Each party sends a position report to the manager and continues on its recorded common ground (`KB § PATTERNS/architect/team-of-teams.md` §2); proposals across team lines get an exit, never "noted" (§3).
 - **Collapse competing integrates**: when B builds on A's unlanded branch, one integrate lands both; A stops after verifying all its commits are in B (`ship-consent-riders.md` "Concurrent sessions" item 4).
 
 ### 6.9 No escalation through peers

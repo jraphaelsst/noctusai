@@ -647,10 +647,11 @@ def list_proposals(agent=None, product=None):
                 continue
             content = f.read_text()
             status = "pending"
-            if "**status:** accepted" in content.lower():
-                status = "accepted"
-            elif "**status:** rejected" in content.lower():
-                status = "rejected"
+            low = content.lower()
+            for candidate in VALID_NOTE_STATUSES:
+                if f"**status:** {candidate}" in low:
+                    status = candidate
+                    break
             title = ""
             for line in content.splitlines():
                 if line.startswith("# Proposal:"):
@@ -660,7 +661,10 @@ def list_proposals(agent=None, product=None):
     return results
 
 
-VALID_NOTE_STATUSES = ("accepted", "rejected", "adapted")
+# ``forwarded`` = "passed on" (KB § PATTERNS/architect/team-of-teams.md §3): the
+# proposal's zone belongs to another team, or the call is above this orchestrator.
+# The reason MUST name the destination; the receiver then owes the same exit.
+VALID_NOTE_STATUSES = ("accepted", "rejected", "adapted", "forwarded")
 
 
 def update_proposal_status(
@@ -677,7 +681,9 @@ def update_proposal_status(
 
     Valid statuses: ``accepted`` · ``rejected`` · ``adapted`` (for surface
     notes where the tech-lead approves but adapts the route — re-dispatch
-    happens with a brief that reflects the adaptation).
+    happens with a brief that reflects the adaptation) · ``forwarded``
+    (passed on to the owning team or the next level up; ``reason`` names the
+    destination and is required).
 
     When ``product`` is given, looks in ``products/<product>/proposals/``.
     When ``project`` is given, looks in the project's ``proposals/`` folder
@@ -706,6 +712,11 @@ def update_proposal_status(
     if status not in VALID_NOTE_STATUSES:
         return {
             "error": f"invalid status {status!r}; valid: {VALID_NOTE_STATUSES}"
+        }
+    if status == "forwarded" and not reason.strip():
+        return {
+            "error": "status 'forwarded' requires a reason naming the destination "
+            "(the owning team's orchestrator role, or the next level up)"
         }
 
     if products_dir is not None:
@@ -830,7 +841,10 @@ def register(server) -> None:
             "Accept / reject / adapt a proposal or dispatch note. "
             "status='accepted' | 'rejected' | 'adapted' (the 'adapted' value "
             "is for SURFACE notes where the tech-lead approves the alt route "
-            "but adapts it — re-dispatch with the adapted brief follows). "
+            "but adapts it — re-dispatch with the adapted brief follows) | "
+            "'forwarded' (passed on to the team that owns the zone or the next "
+            "level up; `reason` is REQUIRED and names the destination — "
+            "KB § PATTERNS/architect/team-of-teams.md §3). "
             "`reason` is the rationale and is recorded as a durable trailer "
             "in the note (audit trail). Pass `project=<slug>` to search a "
             "project's proposals/ folder (surface/delivery notes live there); "
