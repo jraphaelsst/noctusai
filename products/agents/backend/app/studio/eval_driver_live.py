@@ -325,8 +325,6 @@ class LiveEvalTurnDriver:
             alertas=FakeThreadAlertaStore(), metricas=self._metricas,
         )
         controles.set(org_id, definicao.id, modo=str(thread.fixture.get("modo") or "ligado"))
-        if "fase_testes" in thread.fixture:  # the org's testing-phase switch (default ON); a case narrating "not testing" sets it
-            controles.set_fase_testes(org_id, definicao.id, bool(thread.fixture["fase_testes"]))
         externo = f"eval-{uuid4()}"
         return _Mundo(
             contexto=contexto_de_avaliacao(thread.fixture),

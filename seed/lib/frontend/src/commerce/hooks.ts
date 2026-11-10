@@ -534,6 +534,7 @@ export function createCommerceHooks(apiOrBase: string | CommerceApi) {
       queryKey: commerceKeys.publicOrder(token ?? ''),
       queryFn: () => unwrap(api.get(`/api/storefront/orders/${token}`)),
       enabled: !!token,
+      // poll-budget: 5s while pending_payment (opt-in poll), stops on any other status; 3 calls/tick; worst 51840/day per open tab; hidden=paused
       refetchInterval: opts.poll
         ? (query) => (query.state.data?.status === 'pending_payment' ? ORDER_POLL_MS : false)
         : false,

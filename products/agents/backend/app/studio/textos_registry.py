@@ -225,8 +225,6 @@ TEXTOS.update({
     # definition carries no such field. Until it does, the texts follow the tools of the qualification follow-up they
     # serve (NOC-REMEDIATE[reengajamento-sinal]: replace by a declared agent-side signal when one exists -- 2026-11-10)
     "contexto.titulo_reengajamento": _canal("contexto", ferramentas=_REENGAJAMENTO),
-    # Julia v3 §12.2: optional label of the "testing phase" state line (no line is rendered while it is blank)
-    "contexto.rotulo_fase_testes": _canal("contexto", obrigatoria=False),
     # a SIGNAL to the model when the lead's message is one of the stop words: Julia decides the opt-out (owner, 2026-11-08)
     "contexto.sinal_opt_out": _canal("contexto", obrigatoria=False),
     **{f"credito.{k}": _canal("credito", ferramentas=_CREDITO) for k in ("pedir", "consentiu", "recusou")},

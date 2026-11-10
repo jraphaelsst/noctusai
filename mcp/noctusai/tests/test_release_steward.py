@@ -376,6 +376,93 @@ class TestClassifyBash:
     def test_heredoc_fed_to_a_shell_is_scanned(self):
         assert rs.classify_bash("bash <<'EOF'\ngit push origin HEAD:dev\nEOF") is not None
 
+    # F11b P1-3: the breaker's CLI path. The action rides in its own flag; status and plans stay open.
+    @pytest.mark.parametrize("cmd", [
+        "python mcp/noctusai/cli.py --supabase-breaker --supabase-breaker-action=trip --supabase-breaker-source=fleet "
+        "--supabase-breaker-reason=x --supabase-breaker-confirm",
+        "python mcp/noctusai/cli.py --supabase-breaker --supabase-breaker-action rearm --supabase-breaker-source fleet "
+        "--supabase-breaker-reason x --supabase-breaker-confirm",
+    ])
+    def test_supabase_breaker_cli_writes_are_gated(self, cmd):
+        hit = rs.classify_bash(cmd)
+        assert hit is not None and "supabase_breaker" in hit.kind, cmd
+
+    @pytest.mark.parametrize("cmd", [
+        "python mcp/noctusai/cli.py --supabase-breaker",
+        "python mcp/noctusai/cli.py --supabase-breaker --supabase-breaker-confirm",            # action defaults to status
+        "python mcp/noctusai/cli.py --supabase-breaker --supabase-breaker-action=trip --supabase-breaker-reason=x",
+    ])
+    def test_supabase_breaker_cli_status_and_plans_stay_open(self, cmd):
+        assert rs.classify_bash(cmd) is None, cmd
+
+    # 2026-11-10: argparse accepted unambiguous prefixes, so `--deploy-image-conf` ran as --deploy-image-confirm while
+    # the gate matched exact flags only. cli.py now refuses abbreviations; the gate backstops an older cli.py.
+    @pytest.mark.parametrize("cmd,needle", [
+        ("python mcp/noctusai/cli.py --deploy-image agents --deploy-image-conf", "deploy_image"),
+        ("python mcp/noctusai/cli.py --task-branch enqueue --task-branch-conf --task-branch-slug x", "task_branch enqueue"),
+        ("python mcp/noctusai/cli.py --supabase-breaker --supabase-breaker-act=trip --supabase-breaker-c", "supabase_breaker"),
+    ])
+    def test_an_abbreviated_gate_flag_is_judged_as_the_flag(self, cmd, needle):
+        hit = rs.classify_bash(cmd)
+        assert hit is not None and needle in hit.kind, cmd
+
+
+#: gates installed AHEAD of their cli.py flags: the gate lands first so the CLI is never ungated for a moment.
+#: Drop the entry in the branch that adds the flags (merge order guard -> cli-gate-hardening -> feat/supabase-breaker).
+_GATE_AHEAD_OF_CLI = {"--supabase-breaker": "feat/supabase-breaker"}
+
+
+@__import__("functools").lru_cache(maxsize=1)
+def _cli_option_strings() -> frozenset[str]:
+    """Every `--long` option the REAL parser declares (its --help), incl. flags built in loops/f-strings."""
+    import re
+    r = subprocess.run([sys.executable, str(REPO / "mcp/noctusai/cli.py"), "--help"],
+                       capture_output=True, text=True, timeout=120, cwd=str(REPO))
+    assert r.returncode == 0, r.stderr[-400:]
+    return frozenset(re.findall(r"(?<![\w-])--[a-z0-9][a-z0-9-]*", r.stdout))
+
+
+def _shortest_unambiguous_prefix(flag: str, options: set[str]) -> str:
+    """The shortest prefix argparse (allow_abbrev=True) would resolve to `flag` alone; `flag` when none is shorter."""
+    for n in range(4, len(flag)):
+        if [o for o in options if o.startswith(flag[:n])] == [flag]:
+            return flag[:n]
+    return flag
+
+
+def _gate_cases():
+    """One case per (gate, spelling), GENERATED from _CLI_GATES so a new gate is covered without editing this file."""
+    for flag, (allowed, confirm, label) in sorted(rs._CLI_GATES.items()):
+        value = sorted(allowed)[0] if allowed else "agents"
+        value_flag = rs._CLI_GATE_VALUE_FLAG.get(flag)
+        for form in ("eq", "prefix"):
+            yield pytest.param(flag, value, value_flag, confirm, label, form, id=f"{flag}-{form}")
+
+
+@pytest.mark.parametrize("flag,value,value_flag,confirm,label,form", list(_gate_cases()))
+def test_every_cli_gate_holds_for_the_eq_form_and_the_shortest_prefix(flag, value, value_flag, confirm, label, form):
+    options = _cli_option_strings()
+    if flag not in options and flag in _GATE_AHEAD_OF_CLI:
+        pytest.skip(f"{flag} is gated ahead of its CLI flags, which arrive with {_GATE_AHEAD_OF_CLI[flag]}")
+    for f in (flag, confirm, *([value_flag] if value_flag else [])):
+        assert f in options, f"{f} is gated but cli.py declares no such option - the gate table drifted"
+    spell = (lambda f: f) if form == "eq" else (lambda f: _shortest_unambiguous_prefix(f, options))
+    if value_flag:
+        words = [spell(flag), f"{spell(value_flag)}={value}"]
+    else:
+        words = [f"{spell(flag)}={value}"]
+    cmd = " ".join(["python mcp/noctusai/cli.py", *words, spell(confirm)])
+    hit = rs.classify_bash(cmd)
+    assert hit is not None and hit.kind.startswith(label), cmd
+
+
+def test_cli_refuses_abbreviated_flags():
+    """The root of the bypass: cli.py must not resolve `--task-branch-conf` to --task-branch-confirm."""
+    import subprocess
+    r = subprocess.run([sys.executable, str(REPO / "mcp/noctusai/cli.py"), "--task-branch", "status", "--task-branch-conf"],
+                       capture_output=True, text=True, timeout=120, cwd=str(REPO))
+    assert r.returncode == 2 and "unrecognized arguments: --task-branch-conf" in r.stderr, r.stderr[-400:]
+
 
 class TestClassifyTool:
     def test_task_branch_matrix(self):
@@ -401,6 +488,20 @@ class TestClassifyTool:
         assert rs.classify_tool(f"mcp__noctusai__{tool}", {"confirm": True})
         assert rs.classify_tool(f"mcp__noctusai__{tool}", {"confirm": False}) is None
         assert rs.classify_tool(f"mcp__noctusai__{tool}", {}) is None
+
+    @pytest.mark.parametrize("action", ["rearm", "trip"])
+    def test_supabase_breaker_writes_are_guardian_only(self, action):
+        """F11b: re-arming or tripping the prod Supabase breaker (incl. the fleet key that stops every product's
+        background workers) is a prod mutation - guardian-only when applied; plans and status stay open."""
+        tool = "mcp__noctusai__noctus_dev_supabase_breaker"
+        gated = rs.classify_tool(tool, {"action": action, "source": "fleet", "reason": "r", "confirm": True})
+        assert gated and action in gated.kind
+        assert rs.classify_tool(tool, {"action": action, "source": "fleet", "reason": "r", "confirm": False}) is None
+        assert rs.classify_tool(tool, {"action": action, "source": "fleet", "reason": "r"}) is None
+
+    def test_supabase_breaker_status_is_never_gated(self):
+        assert rs.classify_tool("mcp__noctusai__noctus_dev_supabase_breaker", {"action": "status", "confirm": True}) is None
+        assert rs.classify_tool("mcp__noctusai__noctus_dev_supabase_breaker", {}) is None
 
     def test_record_applied_migrations_always_gated(self):
         assert rs.classify_tool("mcp__noctusai__noctus_dev_record_applied_migrations", {"product": "x"})
@@ -810,10 +911,9 @@ def test_settings_registers_the_hook_for_bash_and_the_steward_class_tools():
     assert len(entries) == 1
     import re
     matcher = re.compile(f"^(?:{entries[0]['matcher']})$")
-    for name in ("Bash", "mcp__noctusai__noctus_dev_task_branch", "mcp__noctusai__noctus_dev_release",
-                 "mcp__noctusai__noctus_dev_release_steward", "mcp__noctusai__noctus_dev_deploy_pull",
-                 "mcp__noctusai__noctus_dev_deploy_image", "mcp__noctusai__noctus_dev_migrate_product",
-                 "mcp__noctusai__noctus_dev_record_applied_migrations", "mcp__noctusai__noctus_vps_recreate"):
+    # DERIVED from the classifier's own name table: a tool added to _MCP_NAMES without its matcher entry would be
+    # classified but never reach the guard (the hook never fires), a silent hole.
+    for name in ("Bash", *rs._MCP_NAMES):
         assert matcher.match(name), name
     assert not matcher.match("mcp__noctusai__noctus_dev_pytest")
 

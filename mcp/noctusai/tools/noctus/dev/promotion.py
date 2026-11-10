@@ -570,6 +570,10 @@ def _index_build(workspace_root: Path) -> str:
     lines: list[str] = []
     lines.append(_PROMO_START_MARKER)
     lines.append("")
+    # NOC-REMEDIATE[promotions-index-hint]: this hint (and the one below) names `--workspace .`, which cli.py has never
+    # had - `--gen-promotions-index` runs from the workspace root. The text is baked into every generated PROMOTIONS.md,
+    # so changing it here makes each seed workspace's --check drift until regenerated - destination: the next
+    # seed-workspace sync (KB § PATTERNS/architect/seed-workspace.md) — 2026-11-10
     lines.append(
         f"_DERIVED — do not hand-edit. Regenerate with "
         f"`python mcp/noctusai/cli.py --gen-promotions-index --workspace .`. "

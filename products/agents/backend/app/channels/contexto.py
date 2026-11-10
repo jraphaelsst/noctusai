@@ -68,11 +68,9 @@ lit = _lit
 
 def render_contexto_system(
     conteudo: ConteudoBundle, *, agora: datetime, fuso: str, estado: Any | None, dossie: Dossie,
-    tag: str | None = None, fase_testes: bool | None = None,
+    tag: str | None = None,
 ) -> str:
-    """``fase_testes`` is the org's testing-phase switch (``controle.fase_testes``, Julia v3 §12.2); ``None`` = not
-    given. It renders one state line when the optional text ``contexto.rotulo_fase_testes`` is filled.
-    ``estado`` is the request's ``contexto.estado`` (``None`` = not sent); a re-engagement turn is the
+    """``estado`` is the request's ``contexto.estado`` (``None`` = not sent); a re-engagement turn is the
     one whose ``estado.reengajamento`` names the flow. ``tag`` is the turn's random provenance tag: when given, a
     first section tells the model (in DB wording, ``{tag}`` filled here) that only envelopes keyed with it are
     platform data -- the tag itself never appears in anything a lead can read."""
@@ -89,9 +87,6 @@ def render_contexto_system(
     out.append(f"## {T('contexto.titulo_estado')}")
     local = agora.astimezone(ZoneInfo(fuso))
     out.append(f"{T('contexto.rotulo_data_hora')}: {local.strftime('%Y-%m-%d %H:%M')} ({fuso})")
-    rotulo_fase = conteudo.texto("contexto.rotulo_fase_testes").strip()
-    if fase_testes is not None and rotulo_fase:
-        out.append(f"{rotulo_fase}: {T('contexto.sim') if fase_testes else T('contexto.nao')}")
     if estado is not None:
         out.append(f"{T('contexto.rotulo_encerrado')}: {T('contexto.sim') if estado.encerrado else T('contexto.nao')}")
         if getattr(estado, "atendente_nome", None):

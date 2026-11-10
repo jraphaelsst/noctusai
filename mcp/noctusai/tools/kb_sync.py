@@ -534,7 +534,7 @@ def methodology_reference_gaps(root: Path) -> list[str]:
 # update_kb_counts — native port of scripts/update-kb-counts.py
 # ════════════════════════════════════════════════════════════════════
 
-def _products() -> list[tuple[str, str]]:
+def _products(repo: Path) -> list[tuple[str, str]]:
     """Product roster — DERIVED from the canonical `start.sh` registry via
     `parse_products_registry()` (the keeper-mandated source —
     `feedback_hardcoded_product_slug_set_keeper`: never freeze a ≥3-slug
@@ -543,10 +543,22 @@ def _products() -> list[tuple[str, str]]:
     pointed at was itself stale (2026-05-18 clean-context self-test, 2nd
     pass). Deriving makes the roster self-healing for every future
     product. No silent fallback: an unreadable registry RAISES, never
-    renders a silently-truncated roster (no-silent-errors)."""
+    renders a silently-truncated roster (no-silent-errors).
+
+    ``repo`` is the tree being rendered: the registry is read from
+    ``<repo>/start.sh`` EXPLICITLY. The no-arg default resolves relative to
+    the IMPORTED ``noctusai_lib`` — in a worktree that is the PRIMARY
+    checkout's editable install, so counts silently described the wrong
+    tree's roster."""
     from noctusai_lib.config.cors_registry import parse_products_registry
 
-    entries = parse_products_registry()
+    start_sh = Path(repo) / "start.sh"
+    if not start_sh.is_file():
+        raise RuntimeError(
+            f"{start_sh} not found — cannot derive the product roster for "
+            "this tree (no-silent-errors)."
+        )
+    entries = parse_products_registry(start_sh)
     if not entries:
         raise RuntimeError(
             "parse_products_registry() returned no products — start.sh "
@@ -669,7 +681,7 @@ def _render_inventory(repo: Path) -> str:
         "test_files": 0,
         "test_fns": 0,
     }
-    for name, path in _products():
+    for name, path in _products(repo):
         s = _product_stats(repo, path)
         rows.append(
             f"| {name} | {s['routers']} | {s['services']} | {s['pages']} | {s['hooks']} "

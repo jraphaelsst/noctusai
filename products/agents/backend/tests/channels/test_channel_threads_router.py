@@ -415,7 +415,7 @@ def test_the_member_readable_controle_carries_mode_and_counters_only_no_prompt_o
     thr.thread()
     thr.controles.set(thr.chan.org_id, thr.chan.agent.id, modo="ligado")
     body = thr.chan.client.get("/api/studio/agents/julia/controle").json()
-    assert set(body) == {"agent_key", "modo", "aceita_novos_leads", "dreno_inatividade_dias", "fase_testes", "modo_avaliacao", "avaliacao_usuarios", "avaliacao_herdada", "avaliacao_resolvidos", "avaliacao_resolucao_erro", "threads_abertas", "drenagem"}
+    assert set(body) == {"agent_key", "modo", "aceita_novos_leads", "dreno_inatividade_dias", "modo_avaliacao", "avaliacao_usuarios", "avaliacao_herdada", "avaliacao_resolvidos", "avaliacao_resolucao_erro", "threads_abertas", "drenagem"}
     assert set(body["drenagem"]) == {"abertas", "ociosas", "efetivas", "concluida", "idade_max_dias", "idades_dias"}
     flat = str(body)
     for forbidden in ("prompt", "compiled", "secao", "ferramenta", "versao", "hash"):
