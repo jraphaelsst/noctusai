@@ -49,7 +49,7 @@ from fastapi.routing import APIRoute
 from app.channels import admissao, extracao
 from app.channels import turno as turno_mod
 from app.channels.bubbles import split_into_bubbles
-from app.channels.controles import ControleIndisponivel, LeadIdentidade, aplicar_controles
+from app.channels.controles import MAX_RETOMADAS_PADRAO, ControleIndisponivel, LeadIdentidade, aplicar_controles
 from app.stores.agent_controles import NucleoIndisponivel
 from app.channels.retention import ChannelRetention
 from app.config import settings
@@ -357,6 +357,9 @@ async def run_channel_turn(
                 plataforma=plataforma, agent_key=agent.key, usuarios_avaliacao=usuarios_avaliacao,
                 lead=_lead_identidade(payload), contact=payload.contact.model_dump(mode="json"),
                 version_id=prep.r.versao.id if prep is not None else None, messages=msg_store, agora=agora,
+                max_retomadas_seguidas=(
+                    prep.padrao.parametros.max_retomadas_seguidas if prep is not None else MAX_RETOMADAS_PADRAO),
+                tier_retomada=getattr(payload.contexto.estado, "reengajamento", None) if payload.contexto is not None else None,
                 admitir_novo_lead=lambda: admissao.motivo_novo_lead_limitado(
                     conversations=conv_store, messages=msg_store, org_id=org_id, agent_id=agent.id,
                     limites=conformidade.limites(org_id, agent.id), agora=agora,

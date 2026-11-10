@@ -500,7 +500,7 @@ class _SkillRef:
 
 _CRITERIO_FIELDS = ("grupo", "rotulo", "descricao_modelo", "tipo", "opcoes", "unidade", "sensivel", "pontuacao", "ordem", "ativo", "eixo", "escopo", "validade_dias")
 _ESTAGIO_FIELDS = ("rotulo", "descricao", "ordem", "regra", "conclusivo", "terminal")
-_PARAM_FIELDS = ("minimo_para_ofertar", "lote_ofertas", "score_max", "eixos", "pedir_identificacao_quando")
+_PARAM_FIELDS = ("minimo_para_ofertar", "lote_ofertas", "score_max", "eixos", "pedir_identificacao_quando", "max_retomadas_seguidas")
 
 
 def _norm_opcoes(opcoes: Any) -> Any:

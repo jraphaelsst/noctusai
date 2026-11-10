@@ -132,6 +132,12 @@ class TestTurnResponse:
         assert r.status == status and not r.atendeu
         assert r.partes == () and r.actions == () and r.thread is None
 
+    async def test_limite_retomadas_is_a_known_not_served_status(self):
+        """The follow-up cap's status: agents answers it to a `reengajamento` turn; SW must parse it, not call it a fault."""
+        assert "limite_retomadas" in STATUS_SEM_ATENDIMENTO
+        r = await _client(lambda _r: httpx.Response(200, json={"status": "limite_retomadas"})).run_turn(_req())
+        assert r.status == "limite_retomadas" and not r.atendeu and r.partes == ()
+
     async def test_an_unknown_status_is_an_upstream_fault_not_a_guess(self):
         with pytest.raises(AgentsUpstreamError):
             await _client(lambda _r: httpx.Response(200, json=_body(status="vai_que_funciona"))).run_turn(_req())

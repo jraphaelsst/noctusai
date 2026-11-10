@@ -1499,6 +1499,7 @@
           "conversa_com_outro_responsavel",
           "conversa_com_outro_agente",
           "reengajamento_ignorado",
+          "limite_retomadas",
           "lead_opt_out",
           "limite_atingido",
           "limite_taxa",

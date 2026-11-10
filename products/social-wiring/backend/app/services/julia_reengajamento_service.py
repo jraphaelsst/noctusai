@@ -382,6 +382,9 @@ async def agendar_apos_outbound(
 #: `(deps, connection, chat_id, contato, estado_extra, marker_id) -> bool` (True = a message went out).
 #: Bound to `julia_lead_turn_service.run_reengajamento_turn` by the worker module; tests inject a recorder.
 TurnRunner = Callable[..., Any]
+#: What a turn runner returns (instead of a bool) when agents refused the follow-up because the lead already got the
+#: maximum in a row with no reply (`limite_retomadas`, the owner's cap, decided by agents): the contact's sequence ENDS.
+RESULTADO_LIMITE_RETOMADAS = "limite_retomadas"
 
 
 def _ultimo_default(cfg: dict[str, Any]) -> Optional[str]:
@@ -413,6 +416,15 @@ async def _contexto_do_job(deps: Any, job: Job) -> tuple[str, Optional[dict[str,
     # julia-v2: no local pause gate -- agents answers `reengajamento_ignorado` when the agent is off / paused / not the
     # active participant, and the turn sends nothing (the mirror `agente_pausado` is display only).
     return "ok", contato, connection
+
+
+async def _encerrar_sequencia(deps: Any, org_id: Any, contato: dict[str, Any]) -> None:
+    """agents' follow-up cap was hit: this contact is followed up NO MORE. `gen + 1` + `encerrado_at` make every other queued
+    job of the contato stale (the sibling tier / the regua), then the cold-lead hook runs once. A reply from the lead reopens
+    the contact (`registrar_inbound` clears `encerrado_at`). The `agente_nao_atendeu {status}` timeline event is written by
+    the turn runner's not-served handling."""
+    julia_contatos_service.bump_gen(deps.scoped, contato["id"], encerrado_at=datetime.now(timezone.utc).isoformat())
+    await _chamar_lead_frio(deps.scoped, org_id, contato)
 
 
 def _evento_timeline(db: Any, org_id: UUID | str, contato: dict[str, Any], **extra: Any) -> None:
@@ -462,6 +474,9 @@ async def executar_default(
     if bloqueio is not None:
         return bloqueio
     enviou = await run_turn(deps, connection, contato["chat_id"], contato, {"reengajamento": tier}, f"reeng:{job.id}")
+    if enviou == RESULTADO_LIMITE_RETOMADAS:
+        await _encerrar_sequencia(deps, org_id, contato)
+        return RESULTADO_LIMITE_RETOMADAS
     if enviou:
         _evento_timeline(deps.scoped, org_id, contato, tier=tier)
     if _ultimo_default(obter_config(deps.scoped, org_id)) == job.type:
@@ -519,6 +534,9 @@ async def executar_tentativa(
              "tentativa": int(tentativa["ordem"]), "regua_id": str(regua["id"])},
             f"regua:{job.id}",
         )
+        if enviou == RESULTADO_LIMITE_RETOMADAS:
+            await _encerrar_sequencia(deps, org_id, contato)
+            return RESULTADO_LIMITE_RETOMADAS
         if enviou:
             _evento_timeline(db, org_id, contato, regua_id=str(regua["id"]), ordem=int(tentativa["ordem"]))
     proxima = _proxima_tentativa(regua, int(tentativa["ordem"]))
