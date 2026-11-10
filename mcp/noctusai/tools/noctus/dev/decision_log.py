@@ -1,4 +1,4 @@
-"""``noctus.dev.decision_log`` — the product-engineer decision log (contract v1:
+"""``noctus.dev.decision_log`` — the executor decision log (any executor agent; contract v1.1:
 project-history/assistant-chatbot/contracts/decision-log.md).
 
 A decision is one append-only ndjson row: ``project-history/decisions/<YYYY-MM>/<slice_id>.ndjson`` (decision rows +
@@ -671,7 +671,7 @@ def register(server) -> None:  # noqa: ANN001
     @server.tool(
         name="noctus.dev.decision_log",
         description=(
-            "The product-engineer decision log (contract: project-history/assistant-chatbot/contracts/decision-log.md). "
+            "The executor decision log (every executor; contract: project-history/assistant-chatbot/contracts/decision-log.md). "
             "ndjson per slice under project-history/decisions/<YYYY-MM>/, append-only, ledger-first (no DB).\n\n"
             "ACTIONS\n"
             "  record — slice_id, agent, branch, tier{autonomous,notify,escalate}, decision_class{edge_case,"

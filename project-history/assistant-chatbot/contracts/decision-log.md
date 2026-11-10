@@ -1,7 +1,9 @@
-# Contract — product-engineer decision log (v1, 2026-11-09)
+# Contract — executor decision log (v1.1, 2026-11-09)
+
+> **Changelog.** v1.1 (2026-11-09): generalised from product-engineer to EVERY executor (owner decision D32: backend, frontend, devops, integrations, ai, test, tooling; product-engineer is the reference); compliance-reviewer's pre-merge audit applies to every executor slice; §9 records the as-built resolutions of v1 ambiguities, taken from `mcp/noctusai/tools/noctus/dev/decision_log.py` and its tests. v1 (2026-11-09): first contract.
 
 > Owner decisions (2026-11-09, in the live spec doc):
-> - product-engineer "decides small things in scope", designed safely.
+> - Every executor (product-engineer as the reference) "decides small things in scope", designed safely.
 > - Starting caps are 5 autonomous and 3 notify decisions per slice, a 1-in-5 audit sample, and a repeat of 3 escalating a decision. Data retunes these; the owner ratifies each change.
 > - compliance-reviewer audits BEFORE merge. product-analyst judges outcomes AFTER ship.
 >
@@ -82,3 +84,17 @@ Each acceptance criterion needs ≥ 1 test.
 - Through `noctus.dev.ledger_store`, whose schema is registered there: `project-history/decisions/<YYYY-MM>/<slice_id>.ndjson`, append-only.
 - An offline keeper validates staged rows.
 - The audit runs as `noctus.dev.decision_log action=audit slice=<id> base=<ref>` and returns the §6 findings.
+
+## 9 · As-built resolutions (v1.1; the tool is the source, this records what it decided)
+- **`agent`**: any non-empty string. The tool and keeper do not restrict it to product-engineer; every executor name is valid.
+- **`record` discriminator**: every row carries `record: decision|review`; unknown fields are refused, never dropped.
+- **`decision` text**: must start with `We will ` (1..200 characters).
+- **`ts`**: ISO-8601 UTC (`2026-11-09T12:00:00Z`). The file lives at `decisions/<YYYY-MM>/<slice_id>.ndjson`, the month taken from the first decision's `ts`; the first row of a file must be a decision row.
+- **Tier is never trusted**: `tier_floor` derives the minimum from `criteria_hit` (C1,C2,C3,C5,C6 => notify; C4,C7,C8,C9 => escalate), `reversibility`, `blast_radius`, `class=other` (>= notify) and `surprise_test=escalated_by_test` (+1 tier). A row below its floor is refused.
+- **Caps count live rows only**: superseded or reclassified-away decisions do not count. At the cap, `record` writes nothing and returns `status=checkin_required`. The 3rd autonomous decision of one class on the same path returns `status=reclassify_required` (record it as notify+ with `supersedes`).
+- **Outcome is derived**: latest `review` row wins, default `pending_review`; a `supersedes` link marks the earlier row `superseded`.
+- **Owner-accepted escalate** (audit check 1): an `escalate` row whose effective outcome is `accepted` AND that has at least one `review` with `reviewer_kind=owner` and `outcome=accepted`; its `paths` must cover the gated file.
+- **`audit` inputs**: `slice`, `base` (diffs `<base>...HEAD`), optional `slice_paths`. Without `slice_paths` the outside-declared-paths check is NOT measured and a `warn` says so. An unreadable base returns `status=inconclusive` (never clear). Findings carry `severity` `block` or `warn`; only `block` blocks. Warn-only: sensitive paths (auth/billing/secrets) with no notify+ row, customer-facing text under autonomous rows, a slice with no decision rows. Block: gated surface, new route/page under autonomous, paths outside the slice, new runtime dependency, a `Decisions:` trailer naming a row that is not in the slice, an unjustified file (no row and no `AC:`/`Decisions:` trailer), `one_commit` with a migration in the diff, caps exceeded.
+- **Recheck sample**: deterministic given a seed (default the slice id): `ceil(n/5)` autonomous rows ranked by sha256, plus every `class=other` row.
+- **`report`** action: per-class uses, vetoes, reclassifications, clean uses since the last bad outcome; proposals only (demote, or eligible for re-promotion at 10 clean uses); the owner ratifies.
+- **Storage**: the ledger is an in-tree ndjson in the branch's own git (the `council_ledger` pattern), not `ledger_store` (which holds fixed flat ledger names). The keeper `check_decision_log_schema` validates rows and, when staged, that the diff only appends at EOF.

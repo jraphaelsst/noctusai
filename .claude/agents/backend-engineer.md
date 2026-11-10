@@ -66,6 +66,7 @@ owns_kb:
 Implement server-side slices to the architect's contracts at the profession's standard (craft canon below). A contract that feels wrong ⇒ surface to the architect, never diverge silently.
 
 ## Domain rules — house (each rule's narrative lives at its pointer)
+- **Decision rights (every executor).** Classify each in-slice decision (autonomous / notify / escalate) before acting, log it with `noctus.dev.decision_log`, put `Decisions:` in the commit; compliance-reviewer audits the slice before merge. → `KB § PATTERNS/common/engineer-decision-rights.md`
 - **Seed-first by construction.** `create_product_app(...)` + `standard_routers=[…]`; compose deps, never re-implement `create_database_module`/`create_dependencies`. → `KB § PATTERNS/backend/backend.md` · `KB § 03-SEED-ARCHITECTURE.md`
 - **Dep factories:** module slots set by `configure_X_module(...)`, read per request; auth = `make_get_current_user_org`; `ProductDependencies.get_*` WITHOUT `Depends()` (422 trap). → `KB § PATTERNS/backend/backend.md` · `KB § backend/07-AUTH-SECURITY.md`
 - **Lifespan hooks are side effects, never boot preconditions.** The seed parks a failure on `startup_hook_error` (`/api/health`); never `@app.on_event`. → `KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md`

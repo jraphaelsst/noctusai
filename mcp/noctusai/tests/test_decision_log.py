@@ -344,3 +344,11 @@ def test_run_dispatch_and_unknown_action(tmp_path):
     assert out["ok"] and dl.run("list", root=tmp_path)["count"] == 1
     assert "missing required" in dl.run("record", root=tmp_path, slice_id=SLICE)["error"]
     assert "action must be one of" in dl.run("nope", root=tmp_path)["error"]
+
+
+@pytest.mark.parametrize("agent", ["backend-engineer", "frontend-engineer", "devops-engineer", "integrations-engineer",
+                                   "ai-engineer", "test-engineer", "tooling-engineer", "product-engineer"])
+def test_every_executor_may_record_and_validate(tmp_path, agent):
+    """D32: the `agent` field is not restricted to product-engineer; the keeper accepts the resulting file."""
+    assert rec(tmp_path, agent=agent)["ok"] is True
+    assert check_decision_log_schema(tmp_path) == []
