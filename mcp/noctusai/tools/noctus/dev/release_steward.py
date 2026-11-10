@@ -1763,6 +1763,26 @@ def sandbox_env(env: dict[str, str], home: str | Path, ci_env: dict[str, str] | 
 # Residual (2026-11-10): the sandbox is environmental (HOME + state-dir overrides + no git config), not a kernel
 # sandbox - macOS has no unprivileged FS sandbox, so a delivery hard-coding an absolute path can still write it.
 # That is covered by the per-delivery review + the checks running in a `git archive` export, not by this leg.
+
+
+def _missing_regenerator_diagnostics(tree: str, regenerator: str) -> dict[str, Any]:
+    """Where item 4 looked when a regenerator was not a file, so the verdict diagnoses itself.
+
+    2026-11-10: a guardian enqueue on the MCP fresh-subprocess path reported every regenerator "missing at the
+    head" for a head that ships cli.py; from a shell the same check was green. The suspects are the process's
+    cwd / TMPDIR, not the head, so record them with the export's real contents (read-only)."""
+    probe = Path(regenerator)
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    try:
+        top = sorted(os.listdir(tree))
+    except OSError as exc:
+        top = [f"<unreadable: {type(exc).__name__}>"]
+    return {"export_dir": tree, "export_dir_existed": os.path.isdir(tree), "expected": regenerator,
+            "nearest_existing": str(probe), "cwd": os.getcwd(),
+            "tmpdir": os.environ.get("TMPDIR", "") or tempfile.gettempdir(), "export_top": top[:40]}
+
+
 def export_derived_check(cwd: str | Path | None = None, *, artifacts: tuple[tuple[str, tuple[str, ...]], ...] | None = None,
                          python: str | None = None, timeout: int = 300,
                          base_env: dict[str, str] | None = None) -> Callable[[str], dict[str, Any]]:
@@ -1793,8 +1813,12 @@ def export_derived_check(cwd: str | Path | None = None, *, artifacts: tuple[tupl
                 argv = [t.format(python=py, tree=tree) for t in template]
                 regenerator = next((a for a in argv[1:] if a.startswith(tree) and a.endswith(".py")), None)
                 if regenerator and not os.path.isfile(regenerator):
-                    results.append({"name": name, "ok": False, "measured": False,
-                                    "detail": f"regenerator missing at the head ({regenerator[len(tree) + 1:]})"})
+                    diag = _missing_regenerator_diagnostics(tree, regenerator)
+                    results.append({"name": name, "ok": False, "measured": False, "diagnostics": diag,
+                                    "detail": (f"regenerator missing at the head ({regenerator[len(tree) + 1:]}); "
+                                               f"export={diag['export_dir']} existed={diag['export_dir_existed']} "
+                                               f"nearest={diag['nearest_existing']} cwd={diag['cwd']} "
+                                               f"tmpdir={diag['tmpdir']} top={','.join(diag['export_top'][:12])}")})
                     continue
                 try:
                     r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, cwd=tree, env=env)

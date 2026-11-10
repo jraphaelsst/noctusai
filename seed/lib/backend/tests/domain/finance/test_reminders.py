@@ -37,6 +37,7 @@ from noctusai_lib.domain.finance.reminders import (
 from noctusai_lib.domain.finance.reminders import service as svc
 from noctusai_lib.integrations.rate_limit import VirtualClock
 from noctusai_lib.integrations.whatsapp.client import WahaClient
+from noctusai_lib.integrations.whatsapp.line_policy import LinePolicy
 
 from .conftest import CFG, ORG_A, ORG_B, mk_entry
 
@@ -389,7 +390,10 @@ def test_normalize_phone():
 
 
 def waha(handler):
-    return WahaClient("http://waha", "k", "default", transport=httpx.MockTransport(handler))
+    return WahaClient(
+        "http://waha", "k", "default", transport=httpx.MockTransport(handler),
+        line_policy=LinePolicy("enabled", True, True, True),
+    )
 
 
 def test_real_whatsapp_channel_sends_through_waha():
@@ -495,3 +499,24 @@ def test_same_receivable_hits_distinct_rules_on_distinct_days(env, mk):
     assert env.run(on=TODAY)["sent"] == 1                       # -3: three days before
     assert env.run(on=date.fromordinal(TODAY.toordinal() + 3))["sent"] == 1   # 0: on the day
     assert len(env.s.rows("reminder_log")) == 2
+
+
+def test_a_line_without_a_server_is_a_permanent_send_error_never_a_silent_fake():
+    """`get_whatsapp_client("")` would return a FakeWahaClient and the reminder would 'succeed' without leaving the
+    process; the real resolver must refuse instead."""
+    from types import SimpleNamespace as NS
+
+    rec = NS(id="00000000-0000-4000-8000-000000000001", extra={"purpose": "billing"}, base_url="",
+             api_key="k", session_name="default")
+
+    class Store:
+        def list_connections(self, *, org_id):
+            return [rec]
+
+        def get_connection(self, *, connection_id, org_id, decrypt):
+            return rec
+
+    ch = WhatsAppReminderChannel(make_waha_client_resolver(Store()))
+    with pytest.raises(ReminderSendError) as e:
+        ch.send(org_id=ORG_A, to="11999998888", text="oi")
+    assert e.value.transient is False

@@ -32,7 +32,7 @@ The claude-tree's `session` field (the owning Claude session) is **never null by
 
   // ── git-tree coordinate ──────────────────────────────
   "branch": "feat/hd-deploy-tunnel",   // JOIN KEY — the branch (1:1 with the owning agent)
-  "base":   "feat/hot-drift-batch",    // fork base = git parent edge (origin/dev for an orchestrator)
+  "base":   "feat/hot-drift-batch",    // fork base = git parent edge (origin/dev for an orchestrator; task_branch pins it as origin/dev@<sha9>, which the keeper accepts)
   "commit": "c036c711",                // current tip (locates the tree); on status=shipped = the final commit
   "worktree": ".claude/worktrees/hd-deploy-tunnel",  // or null
 

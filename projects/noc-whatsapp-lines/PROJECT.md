@@ -145,7 +145,7 @@ noc VPS
 **Deploy config (owner, when L3 exists).** Every product container reads these. All unset means notices record `failed` loudly, never silently:
 - `NOC_OWNER_LINE_WAHA_URL` (the L3 WAHA container) + `NOC_OWNER_LINE_WAHA_SESSION` (required in practice) + `NOC_OWNER_LINE_WAHA_API_KEY`;
 - `NOC_OWNER_LINE_EXPECTED_NUMBER` (E.164 of L3). The sender refuses to send unless the paired account matches it, with BR 9th-digit variants accepted. A client's line can never send owner notices.
-- L3 also needs an explicit line-policy key once S1 replaces `"*"` (host-keyed; format from the Assistant session). `NOC-REMEDIATE[owner-line-waha-factory]` tracks this.
+- L3 registers ITS OWN line (`NOC_OWNER_LINE_WAHA_URL` + session) as send-enabled at seed boot, only when the URL AND `NOC_OWNER_LINE_EXPECTED_NUMBER` are set, tighten-only (`register_owner_line_policy`: a stricter policy on that host wins and the transport is refused loudly). Resolved 2026-11-10; the paired-number check still guards a misset URL.
 
 **Improvements:**
 - A new route in an existing router inherits its envelope (noc-contract-first, refined).

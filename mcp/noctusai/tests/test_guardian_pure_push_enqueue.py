@@ -16,6 +16,7 @@ import hashlib
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -280,6 +281,27 @@ def test_a_missing_regenerator_is_unmeasured_never_green(world):
     four = item(world.deliverable(derived_check=broken), "derived_current")
     assert not four["ok"] and "regenerator missing" in four["artifacts"][0]["detail"]
     assert four["artifacts"][0]["measured"] is False
+
+
+def test_a_missing_regenerator_names_where_it_looked(world):
+    """2026-11-10: a guardian enqueue (MCP fresh-subprocess path) reported every regenerator "missing at the
+    head" for a head that ships cli.py, and it did not reproduce from a shell. The detail must carry enough to
+    diagnose the next occurrence on its own: the export dir, whether it exists, the process cwd + TMPDIR, the
+    nearest existing parent of the expected path and a sample of what the export does contain."""
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    world.commit(wt, "feat: b")
+    world.push(wt, "feat/x")
+    broken = RS.export_derived_check(world.repo, artifacts=(("kb-counts", ("{python}", "{tree}/nope/cli.py", "--check")),))
+    art = item(world.deliverable(derived_check=broken), "derived_current")["artifacts"][0]
+    diag = art["diagnostics"]
+    assert diag["export_dir"].startswith(tempfile.gettempdir()) or "noc-deliverable-" in diag["export_dir"]
+    assert diag["export_dir_existed"] is True
+    assert diag["cwd"] and "tmpdir" in diag
+    assert diag["nearest_existing"].endswith(Path(diag["export_dir"]).name)  # nope/ is absent; the export root is not
+    assert "src" in diag["export_top"]
+    assert "export=" in art["detail"] and "top=" in art["detail"]
 
 
 def test_migration_number_claimed_on_dev_fails_item_three_and_a_free_number_passes(world):

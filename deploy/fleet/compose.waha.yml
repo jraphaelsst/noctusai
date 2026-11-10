@@ -1,6 +1,6 @@
 # GENERATED from deploy/fleet/waha-instances.yml by noctus.dev.waha_instance action='render' -- DO NOT EDIT.
 # One WAHA Core container per WhatsApp number. Run from deploy/fleet on the VPS (reads .env.fleet):
-#   docker compose -f compose.waha.yml up -d --no-deps waha-<name>
+#   docker compose -f compose.waha.yml up -d --no-deps waha-<name>   (an edge line: waha-<name>-core waha-<name>)
 # KB § CONTEXT/INTEGRATIONS/whatsapp.md § One WAHA per number.
 name: noctus-waha
 

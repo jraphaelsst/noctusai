@@ -34,17 +34,18 @@ from uuid import UUID
 import httpx
 from starlette.concurrency import run_in_threadpool
 
+from noctusai_lib.integrations.whatsapp.log_safety import install_phone_scrub, mask_chat_id
 from noctusai_lib.integrations.whatsapp.connection_store import (
     WhatsAppConnectionRecord,
     WhatsAppConnectionStore,
 )
-from noctusai_lib.integrations.whatsapp.inbox.ingest import parse_waha_message, resolve_chat_identity
+from noctusai_lib.integrations.whatsapp.inbox.ingest import ShouldStore, parse_waha_message, resolve_chat_identity
 from noctusai_lib.integrations.whatsapp.inbox.store import WhatsAppChatStore, parse_ts
 from noctusai_lib.integrations.whatsapp.inbox.types import ORIGIN_BACKFILL
 from noctusai_lib.integrations.whatsapp.lid_auth import LidPhoneCache
 from noctusai_lib.integrations.whatsapp.mappers import normalize_waha_id
 
-logger = logging.getLogger(__name__)
+logger = install_phone_scrub(logging.getLogger(__name__))
 
 _IN_FLIGHT: set[str] = set()
 _IN_FLIGHT_LOCK = threading.Lock()
@@ -63,6 +64,7 @@ class BackfillReport:
     chats_synced: int = 0
     chats_skipped: int = 0
     messages_inserted: int = 0
+    messages_skipped: int = 0  # dropped by the pre-store predicate
     errors: list[str] = field(default_factory=list)
 
 
@@ -81,6 +83,7 @@ async def backfill_connection(
     max_messages_per_chat: int = 500,
     chat_limit: int = 200,
     force: bool = False,
+    should_store: Optional[ShouldStore] = None,
 ) -> BackfillReport:
     """Pull one connection's WAHA history into the inbox tables. Never raises
     for a WAHA failure - the outcome is in the report (a bad chat must not
@@ -97,6 +100,7 @@ async def backfill_connection(
             report, record=record, chat_store=chat_store, waha_client=waha_client, lid_cache=lid_cache,
             cutoff=datetime.now(timezone.utc) - timedelta(days=days),
             max_messages=max_messages_per_chat, chat_limit=chat_limit, force=force,
+            should_store=should_store,
         )
     finally:
         with _IN_FLIGHT_LOCK:
@@ -120,7 +124,7 @@ async def _list_all_chats(waha_client: Any, limit: int) -> list[dict[str, Any]]:
 async def _run(
     report: BackfillReport, *, record: WhatsAppConnectionRecord, chat_store: WhatsAppChatStore,
     waha_client: Any, lid_cache: Optional[LidPhoneCache], cutoff: datetime, max_messages: int,
-    chat_limit: int, force: bool,
+    chat_limit: int, force: bool, should_store: Optional[ShouldStore] = None,
 ) -> None:
     try:
         chats = await _list_all_chats(waha_client, chat_limit)
@@ -159,7 +163,7 @@ async def _run(
             raw = await waha_client.fetch_chat_messages(jid, limit=max_messages)
         except Exception as exc:  # noqa: BLE001
             report.errors.append(f"fetch_chat_messages failed: {type(exc).__name__}")
-            logger.warning("inbox backfill: fetch failed connection=%s chat=%s", record.id, jid, exc_info=True)
+            logger.warning("inbox backfill: fetch failed connection=%s chat=%s", record.id, mask_chat_id(jid), exc_info=True)
             continue
         await run_in_threadpool(lambda: chat_store.ensure_chat(
             org_id=record.org_id, connection_id=record.id, chat_id=identity.chat_id,
@@ -177,6 +181,9 @@ async def _run(
             if ts is None or ts < cutoff:
                 continue
             message = replace(parsed.message, chat_id=identity.chat_id)
+            if should_store is not None and should_store(message, identity) is not True:
+                report.messages_skipped += 1  # the same pre-store contract as live ingest
+                continue
             inserted = await run_in_threadpool(lambda m=message: chat_store.insert_message(
                 org_id=record.org_id, connection_id=record.id, message=m,
             ))

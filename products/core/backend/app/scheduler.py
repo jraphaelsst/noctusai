@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from noctusai_lib.api.scheduler import register, start_scheduler, stop_scheduler
@@ -156,10 +156,13 @@ async def owner_brief_job(db: Optional[Any] = None) -> dict:
     return vars(result)
 
 
-async def scheduler_runs_retention_job(db: Optional[Any] = None) -> dict:
-    """Trim `public.scheduler_runs`: ok/skipped rows after 14 days, errors after 90."""
+async def scheduler_runs_retention_job(db: Optional[Any] = None, now: Optional[datetime] = None) -> dict:
+    """Trim `public.scheduler_runs`: ok/skipped rows after 14 days, errors after 90.
+
+    `now` is the clock seam: tests pass the same instant their fixture rows are dated from.
+    """
     client = db if db is not None else get_admin_client()
-    now = now_utc()
+    now = now if now is not None else now_utc()
     ok_cutoff = (now - timedelta(days=RUNS_RETENTION_OK_DAYS)).isoformat()
     err_cutoff = (now - timedelta(days=RUNS_RETENTION_ERROR_DAYS)).isoformat()
 

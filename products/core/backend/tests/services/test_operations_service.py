@@ -238,6 +238,6 @@ class TestCoreJobs:
             {**_run("p", "a", "error", timedelta(days=30)), "id": 3},
             {**_run("p", "a", "error", timedelta(days=100)), "id": 4},
         ])
-        await core_scheduler.scheduler_runs_retention_job(db)
+        await core_scheduler.scheduler_runs_retention_job(db, now=NOW)
         left = sorted(r["id"] for r in db.table("scheduler_runs").select("*").execute().data)
         assert left == [2, 3]
