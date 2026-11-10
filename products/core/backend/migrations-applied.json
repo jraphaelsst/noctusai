@@ -30,6 +30,10 @@
     "111_sso_product_sessions.sql": "bb65abd89f13b4399e032e00c622d7e39500f16ff041cc4a51a6b197f995d199",
     "112_ai_usage_dashboard.sql": "514fffe1859ddf874a413e4efae7865d0626bbf0975d89f2e31514fa137020b2",
     "113_plataforma_agentes.sql": "57ef992b83d24b52a3be3b788424511c8fcec19f33693e475547ce76058a4b23",
-    "114_spend_reservations.sql": "2ed2e16fcc77704bf0ae7cf48cec170624769da3e6a9b58a5dac287b7bc79fad"
+    "114_spend_reservations.sql": "2ed2e16fcc77704bf0ae7cf48cec170624769da3e6a9b58a5dac287b7bc79fad",
+    "115_retrieval_organ.sql": "54c745bc1091df6d8043ddb3a72f3fe5c1b029e99668b88cda0518e16bee86b5",
+    "116_ai_call_pipeline.sql": "0da63b8fbf15bd92e217b15555c543fa281d8a3fb036efa2b962ecc0be73ebd8",
+    "117_notification_catalog.sql": "d7057d43eefc4320e572af179f4a61c6ecaf142a67178e245ba9c1c8d42d3865",
+    "118_notification_owner_recipients.sql": "404ce350d5f5739788c92693f3d3ea6d49450345352e91215a246ddf70bb52d9"
   }
 }
