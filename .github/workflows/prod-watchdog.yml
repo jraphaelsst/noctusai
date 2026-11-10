@@ -18,7 +18,7 @@ name: Prod Watchdog (off-host)
 # WhatsApp. Schedules fire only from the default branch (main), and GitHub may
 # delay or skip a cron tick under load.
 #
-# Secrets (names only): NOCTUS_VPS_HOST, NOCTUS_VPS_WATCHDOG_KEY, RESEND_API_KEY,
+# Secrets (names only): NOCTUS_VPS_HOST, NOCTUS_VPS_WATCHDOG_KEY, SUPABASE_ACCESS_TOKEN, NOCTUS_VPS_BREAKER_KEY, RESEND_API_KEY,
 # WAHA_BASE_URL, WAHA_API_KEY, WAHA_SESSION, WATCHDOG_ALERT_WHATSAPP.
 # Variable: WATCHDOG_ALERT_EMAIL. Runbook: KB § PATTERNS/devops/prod-watchdog.md.
 
@@ -29,6 +29,10 @@ on:
     inputs:
       send_test_alert:
         description: "Also push a TEST message through every configured alert channel"
+        type: boolean
+        default: false
+      breaker_rearmed:
+        description: "A human re-armed the Supabase fleet breaker (noctus.dev.supabase_breaker): clear the sticky alert"
         type: boolean
         default: false
 
@@ -57,6 +61,11 @@ jobs:
       WAHA_SESSION: ${{ secrets.WAHA_SESSION }}
       WATCHDOG_ALERT_WHATSAPP: ${{ secrets.WATCHDOG_ALERT_WHATSAPP }}
       WATCHDOG_ALERT_EMAIL: ${{ vars.WATCHDOG_ALERT_EMAIL || 'joaoraphaelsst@gmail.com' }}
+      # Supabase request-budget leg + fleet breaker (KB § PATTERNS/devops/prod-watchdog.md § 7b).
+      # The account-wide PAT lives ONLY here, never in a prod container.
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      BREAKER_KEY: ${{ secrets.NOCTUS_VPS_BREAKER_KEY }}
       STATE_FILE: .prod-watchdog/state.json
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -91,6 +100,17 @@ jobs:
           chmod 600 ~/.ssh/watchdog-key
           echo "WATCHDOG_SSH_KEY_FILE=$HOME/.ssh/watchdog-key" >> "$GITHUB_ENV"
 
+      - name: Write the breaker key (a SEPARATE forced-command key that can only SET the breaker)
+        run: |
+          if [[ -n "${NOCTUS_VPS_HOST:-}" && -n "${BREAKER_KEY:-}" ]]; then
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            printf '%s\n' "$BREAKER_KEY" > ~/.ssh/breaker-key
+            chmod 600 ~/.ssh/breaker-key
+            echo "WATCHDOG_BREAKER_KEY_FILE=$HOME/.ssh/breaker-key" >> "$GITHUB_ENV"
+          else
+            echo "::warning::breaker key not set (NOCTUS_VPS_BREAKER_KEY): a CRITICAL Supabase budget will alert but cannot trip the fleet breaker."
+          fi
+
       # Stdlib only, no pip: the module imports nothing outside the standard
       # library. It does its own ssh-keyscan (3 tries) + ONE ssh call with
       # StrictHostKeyChecking=yes / ConnectTimeout=20 / BatchMode=yes, and only
@@ -100,8 +120,12 @@ jobs:
         env:
           NOCTUSAI_HOME: ${{ github.workspace }}
           TEST_ALERT: ${{ inputs.send_test_alert }}
+          BREAKER_REARMED: ${{ inputs.breaker_rearmed }}
         run: |
           args=(--state "$GITHUB_WORKSPACE/$STATE_FILE" --send)
+          if [[ "${BREAKER_REARMED:-false}" == "true" ]]; then
+            args+=(--breaker-rearmed)
+          fi
           if [[ "${TEST_ALERT:-false}" == "true" ]]; then
             args+=(--test-alert)
           fi
@@ -109,7 +133,7 @@ jobs:
 
       - name: Remove key
         if: always()
-        run: rm -f ~/.ssh/watchdog-key
+        run: rm -f ~/.ssh/watchdog-key ~/.ssh/breaker-key
 
       - name: Save watchdog state
         id: save

@@ -97,6 +97,23 @@ bash deploy/watchdog/install-heartbeat.sh --check --watchdog-pubkey /root/watchd
 
 Local dry probe (sends nothing, no state): `python mcp/noctusai/cli.py --prod-watchdog` (add `--watchdog-state F`, `--send`, `--watchdog-test-alert`, `--json`).
 
+## 7b. Supabase request budget + fleet breaker (added 2026-11-10)
+
+> Telemetry + stop leg of `KB § PATTERNS/backend/polling-request-budget.md`. Same run, same state file, same alert routing.
+
+- **Sensor** — `noctus.dev.supabase_request_budget` (`cli.py --supabase-request-budget`), stdlib-only, imported by this module. Reads the project's OWN edge logs: Management API `GET /v1/projects/{ref}/analytics/endpoints/logs` (ClickHouse SQL, `iso_timestamp_start/end`, 24 h max; `logs.all` is 410 Gone) plus `usage.api-counts`. Every endpoint is reduced to a SHAPE (`GET /rest/v1/jobs ?id=eq.?&type=eq.?`): ids, emails, phones and filter values never reach a report (LGPD). The v1 API has **no org egress/quota figure**: the budget is judged on request volume.
+- **Verdict** (per-day projections; env `SUPABASE_BUDGET_{WARN,CRIT}_{TOTAL,SHAPE}_PER_DAY`): **critical** = total > 250k · one shape > 50k · any 402; **warn** = total > 100k · one shape > 15k; **unknown** = logs unreadable (never green, never red).
+- **Policy per run** (each needs `WATCHDOG_CONSECUTIVE` runs; a 402 trips at once): warn -> alert only (DEGRADED); critical -> **trip the fleet breaker** + alert; unknown/unconfigured -> a warning in the report, never a trip.
+- **Breaker** — Redis key `noctus:breaker:fleet` = JSON `{reason, rate, window, tripped_at, by:"offhost-watchdog"}`, no TTL. While it exists every product's workers/schedulers stay stopped and the APIs keep serving (seed side: `feat/supabase-breaker`). The watchdog sets it through ONE ssh call to a **separate forced-command key** running `deploy/watchdog/breaker-trip.sh`: it validates the exact shape, re-serialises it, does `SET ... NX` (the first trip's reason stands) and can do nothing else, never delete. The host-probe key stays read-only.
+- **Never auto-re-arms.** The trip is sticky in the watchdog state: DEGRADED + one alert per trip + the normal reminder cadence, even after traffic drops (it drops BECAUSE the breaker works). A human re-arms with `noctus.dev.supabase_breaker`, then clears the alert with `--breaker-rearmed` (workflow_dispatch input `breaker_rearmed`).
+- **Owner setup (nothing here installs itself):** (1) GitHub secret `SUPABASE_ACCESS_TOKEN` (the account PAT: NEVER in a prod container) and optional `SUPABASE_PROJECT_REF`; (2) GitHub secret `NOCTUS_VPS_BREAKER_KEY` (private half of a NEW ed25519 key); (3) on the VPS, in `/root/.ssh/authorized_keys`:
+
+```
+restrict,command="/opt/noctus/noctusai/deploy/watchdog/breaker-trip.sh" ssh-ed25519 AAAA...pubkey... noctus-breaker-trip
+```
+
+  Without (1) the leg reports `not_configured` (loud warning); without (2) a critical still alerts and says it could not trip.
+
 ## 8. Limits (named, so nobody trusts it for what it does not check)
 
 - **GitHub cron is best-effort** — ticks can be delayed by many minutes or skipped under load; "every 10 min" is a target, and DOWN needs 2 runs, so detection latency is ~20 min at best and can be longer.

@@ -460,3 +460,201 @@ def test_units_verify(tmp_path):
     r = subprocess.run(["systemd-analyze", "verify", str(tmp_path / "noctus-heartbeat.timer")],
                        capture_output=True, text=True)
     assert "noctus-heartbeat" not in r.stderr or r.returncode == 0, r.stderr
+
+
+# ── supabase request-budget leg + fleet breaker (telemetry for the polling-budget rule) ──
+def _budget(verdict, **extra):
+    base = {"ok": verdict != "unknown", "verdict": verdict, "reasons": [f"synthetic {verdict}"],
+            "projected_per_day": 300000, "total_calls": 12500, "status_402": 0, "window_hours": 1.0}
+    base.update(extra)
+    return lambda: dict(base)
+
+
+class Tripper:
+    def __init__(self, ok=True):
+        self.ok, self.payloads = ok, []
+
+    def __call__(self, payload):
+        self.payloads.append(payload)
+        return self.ok, "tripped" if self.ok else "rc=255: down"
+
+
+def _brun(tmp_path, check, tripper, *, send=True, rearmed=False, senders=None):
+    return pw.run(tmp_path / "b.json", send=send, env=ENV_ALL, repo_root=REPO, slugs=["core"],
+                  fetcher=Fetch(), ssh_runner=Ssh(), clock=Clock(),
+                  senders=senders if senders is not None else {"email": Sender(), "whatsapp": Sender()},
+                  budget_check=check, breaker_tripper=tripper, breaker_rearmed=rearmed)
+
+
+def test_critical_trips_after_n_runs_with_the_exact_payload_and_alerts_once(tmp_path):
+    t, wa, em = Tripper(), Sender(), Sender()
+    senders = {"email": em, "whatsapp": wa}
+    first = _brun(tmp_path, _budget("critical"), t, senders=senders)
+    assert t.payloads == [] and first["breaker"]["status"] == "armed" and first["state"] == pw.UP
+    second = _brun(tmp_path, _budget("critical"), t, senders=senders)
+    assert len(t.payloads) == 1 and second["breaker"]["status"] == "tripped"
+    pl = t.payloads[0]
+    assert set(pl) == {"reason", "rate", "window", "tripped_at", "by"} and pl["by"] == "offhost-watchdog"
+    assert pl["rate"] == 300000 and pl["window"] == "1h"
+    assert second["alert"]["due"] == "breaker" and second["state"] == pw.DEGRADED
+    assert any("DISJUNTOR" in s for s, _ in wa.sent) and len(em.sent) == 1  # WhatsApp + email, one each
+    # third run: still critical, still tripped: NO second trip, NO second alert (dedupe)
+    third = _brun(tmp_path, _budget("critical"), t, senders=senders)
+    assert len(t.payloads) == 1 and third["alert"]["due"] is None and third["state"] == pw.DEGRADED
+
+
+def test_a_402_trips_immediately(tmp_path):
+    t = Tripper()
+    rep = _brun(tmp_path, _budget("critical", status_402=500), t)
+    assert len(t.payloads) == 1 and rep["breaker"]["status"] == "tripped"
+
+
+def test_sticky_breaker_reminds_and_never_auto_rearms(tmp_path):
+    t, em = Tripper(), Sender()
+    senders = {"email": em, "whatsapp": Sender()}
+    _brun(tmp_path, _budget("critical", status_402=1), t, senders=senders)
+    # traffic is back to ok (workers stopped) but the breaker is STILL tripped -> still DEGRADED
+    for _ in range(3):
+        rep = _brun(tmp_path, _budget("ok"), t, senders=senders)
+        assert rep["state"] == pw.DEGRADED and rep["breaker"]["status"] == "tripped"
+    assert len(t.payloads) == 1
+
+
+def test_rearm_ack_clears_the_sticky_alert_and_the_next_critical_trips_again(tmp_path):
+    t = Tripper()
+    _brun(tmp_path, _budget("critical", status_402=1), t)
+    rep = _brun(tmp_path, _budget("ok"), t, rearmed=True)
+    assert rep["state"] == pw.UP and rep["breaker"]["status"] == "armed"
+    _brun(tmp_path, _budget("critical", status_402=1), t)
+    assert len(t.payloads) == 2
+
+
+def test_failed_trip_is_degraded_loud_and_retried(tmp_path):
+    t = Tripper(ok=False)
+    rep = _brun(tmp_path, _budget("critical", status_402=1), t)
+    assert rep["breaker"]["status"] == "trip_failed" and rep["state"] == pw.DEGRADED
+    assert any("FALHOU" in r for r in rep["degraded_reasons"])
+    t.ok = True
+    rep = _brun(tmp_path, _budget("critical", status_402=1), t)
+    assert rep["breaker"]["status"] == "tripped" and len(t.payloads) == 2
+
+
+def test_critical_without_a_configured_tripper_still_alerts_and_says_it_could_not_trip(tmp_path):
+    rep = _brun(tmp_path, _budget("critical", status_402=1), None)
+    assert rep["breaker"]["status"] == "not_configured" and rep["state"] == pw.DEGRADED
+    assert any("NÃO pôde" in r for r in rep["degraded_reasons"])
+
+
+def test_dry_run_never_trips(tmp_path):
+    t = Tripper()
+    rep = _brun(tmp_path, _budget("critical", status_402=1), t, send=False)
+    assert t.payloads == [] and rep["breaker"]["status"] == "dry_run_would_trip"
+
+
+def test_warn_alerts_after_n_runs_but_never_trips(tmp_path):
+    t = Tripper()
+    first = _brun(tmp_path, _budget("warn", projected_per_day=120000), t)
+    assert first["state"] == pw.UP
+    second = _brun(tmp_path, _budget("warn", projected_per_day=120000), t)
+    assert second["state"] == pw.DEGRADED and t.payloads == []
+    assert any("ATENÇÃO" in r for r in second["degraded_reasons"])
+
+
+def test_unknown_and_unconfigured_never_alert_and_never_trip(tmp_path):
+    for check in (_budget("unknown", error="HTTP 503"), None):
+        t = Tripper()
+        for _ in range(3):
+            rep = pw.run(
+                tmp_path / f"u{id(check)}.json", send=True, env=ENV_ALL, repo_root=REPO, slugs=["core"],
+                fetcher=Fetch(), ssh_runner=Ssh(), clock=Clock(),
+                senders={"email": Sender(), "whatsapp": Sender()}, budget_check=check, breaker_tripper=t)
+        assert rep["state"] == pw.UP and t.payloads == []
+
+
+def test_auto_budget_without_a_token_is_not_configured_and_makes_no_call():
+    rep = pw.run(None, env=ENV_ALL, repo_root=REPO, slugs=["core"], fetcher=Fetch(), ssh_runner=Ssh(),
+                 senders={"email": Sender()})
+    assert rep["budget"]["status"] == "not_configured"
+
+
+def test_a_raising_check_is_unknown_not_a_crash(tmp_path):
+    def boom():
+        raise RuntimeError("secret-token-xyz")
+
+    rep = _brun(tmp_path, boom, Tripper())
+    assert rep["budget"]["verdict"] == "unknown" and "secret-token-xyz" not in repr(rep)
+
+
+def test_breaker_tripper_needs_host_and_its_own_key(tmp_path):
+    assert pw.make_breaker_tripper({}) is None
+    key = tmp_path / "k"
+    key.write_text("x")
+    assert pw.make_breaker_tripper({"NOCTUS_VPS_HOST": "h", "WATCHDOG_BREAKER_KEY_FILE": str(key)}) is not None
+    # the read-only probe key alone must never enable the write
+    assert pw.make_breaker_tripper({"NOCTUS_VPS_HOST": "h", "WATCHDOG_SSH_KEY_FILE": str(key)}) is None
+
+
+# ── deploy/watchdog/breaker-trip.sh: the forced command, run for real with a fake docker ──
+def _fake_docker(tmp_path, *, preexisting=False):
+    store = tmp_path / "redis.json"
+    if preexisting:
+        store.write_text("FIRST")
+    d = tmp_path / "bin"
+    d.mkdir()
+    (d / "docker").write_text(f"""#!/usr/bin/env bash
+# docker exec <c> redis-cli SET <key> <val> NX | EXISTS <key>
+shift 3
+cmd="$1"; key="$2"
+if [[ "$cmd" == "SET" ]]; then
+  [[ "$key" == "noctus:breaker:fleet" && "$4" == "NX" ]] || exit 9
+  if [[ -e "{store}" ]]; then echo; else printf '%s' "$3" > "{store}"; echo OK; fi
+elif [[ "$cmd" == "EXISTS" ]]; then [[ -e "{store}" ]] && echo 1 || echo 0
+else exit 9; fi
+""")
+    (d / "docker").chmod(0o755)
+    return d, store
+
+
+needs_timeout = pytest.mark.skipif(shutil.which('timeout') is None, reason='coreutils timeout missing (the VPS has it)')
+
+
+def _trip(tmp_path, payload, **kw):
+    import os as _os
+    d, store = _fake_docker(tmp_path, **kw)
+    r = subprocess.run(["bash", str(WATCHDOG_DIR / "breaker-trip.sh")], input=payload, capture_output=True, text=True,
+                       env={**_os.environ, "PATH": f"{d}:{_os.environ['PATH']}"}, timeout=30)
+    return r, store
+
+
+GOOD = {"reason": "critical", "rate": 300000, "window": "1h", "tripped_at": "2026-11-10T12:00:00Z", "by": "offhost-watchdog"}
+
+
+@needs_timeout
+def test_breaker_script_sets_only_the_canonical_key_and_never_overwrites(tmp_path):
+    r, store = _trip(tmp_path, json.dumps(GOOD))
+    assert r.returncode == 0 and json.loads(r.stdout) == {"tripped": True, "already": False}
+    assert json.loads(store.read_text()) == GOOD
+    d = tmp_path / "bin"
+    import os as _os
+    r2 = subprocess.run(["bash", str(WATCHDOG_DIR / "breaker-trip.sh")], input=json.dumps(dict(GOOD, reason="LATER")),
+                        capture_output=True, text=True, env={**_os.environ, "PATH": f"{d}:{_os.environ['PATH']}"}, timeout=30)
+    assert json.loads(r2.stdout) == {"tripped": False, "already": True}
+    assert json.loads(store.read_text())["reason"] == "critical"
+
+
+@pytest.mark.parametrize("bad", [
+    "not json", "[]", json.dumps({**GOOD, "by": "someone"}), json.dumps({k: v for k, v in GOOD.items() if k != "rate"}),
+    json.dumps({**GOOD, "extra": 1}), json.dumps({**GOOD, "reason": "x" * 301}), json.dumps({**GOOD, "reason": "a\nb"}),
+    json.dumps({**GOOD, "rate": True}), json.dumps({**GOOD, "window": ""}),
+])
+@needs_timeout
+def test_breaker_script_refuses_anything_but_the_exact_shape(tmp_path, bad):
+    r, store = _trip(tmp_path, bad)
+    assert r.returncode == 2 and not store.exists()
+
+
+def test_breaker_script_parses_and_installer_docs_name_the_key_line():
+    assert subprocess.run(["bash", "-n", str(WATCHDOG_DIR / "breaker-trip.sh")]).returncode == 0
+    assert (WATCHDOG_DIR / "breaker-trip.sh").stat().st_mode & 0o111
+    kb = (REPO / "KNOWLEDGE-BASE/CONTEXT/PATTERNS/devops/prod-watchdog.md").read_text()
+    assert 'command="/opt/noctus/noctusai/deploy/watchdog/breaker-trip.sh"' in kb
