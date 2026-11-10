@@ -103,6 +103,11 @@ _RELEASE_GATED = {"bless", "promote", "backmerge"}
 OUTCOMES = ("enqueued", "landed", "ejected", "deployed", "withdrawn", "needs_resync")
 NEEDS_INFO_DEFAULT_MIN = 30
 _ADVANCED = {"enqueued", "landed", "deployed"}
+#: a request is CLOSED once landed, deployed or withdrawn; every other status (queued_for_steward, and the outcomes a
+#: delivery can be left at - enqueued, ejected, needs_resync) is OPEN and may already be in origin/dev. Derived from
+#: OUTCOMES, never hand-listed: only the closed set is named (2026-11-10, rows stuck at `enqueued`/`ejected`).
+_CLOSED = {"landed", "deployed", "withdrawn"}
+_OPEN_STATUSES = {"queued_for_steward", *OUTCOMES} - _CLOSED
 
 
 # -- time / ids -------------------------------------------------------------
@@ -816,8 +821,11 @@ class StewardStore:
 
     def inbox(self, include_done: bool = False) -> dict[str, Any]:
         rows = list(self.requests().values())
-        queued = sorted((r for r in rows if r["status"] == "queued_for_steward"), key=lambda r: r["requested_at"])
-        pending, already_landed, unresolvable, uncertain = self._partition(queued)
+        open_rows = sorted((r for r in rows if r["status"] in _OPEN_STATUSES), key=lambda r: r["requested_at"])
+        todo, already_landed, unresolvable, uncertain = self._partition(open_rows)
+        # only never-enqueued requests drain; an `enqueued`/`ejected` row not yet in dev is the queue's, not the inbox's
+        pending = [r for r in todo if r["status"] == "queued_for_steward"]
+        unresolvable = [r for r in unresolvable if r["status"] == "queued_for_steward"]
         shown = sorted(rows, key=lambda r: r["requested_at"]) if include_done else pending
         grouped: dict[str, list[str]] = {}
         for r in shown:
@@ -870,8 +878,8 @@ class StewardStore:
             _cur, err = self._require_holder(session_id, "reconcile")
         if err:
             return err
-        queued = [r for r in self.requests().values() if r["status"] == "queued_for_steward"]
-        _todo, landed, _unres, uncertain = self._partition(sorted(queued, key=lambda r: r["requested_at"]))
+        open_rows = [r for r in self.requests().values() if r["status"] in _OPEN_STATUSES]
+        _todo, landed, _unres, uncertain = self._partition(sorted(open_rows, key=lambda r: r["requested_at"]))
         slugs = [r["slug"] for r in landed]
         if not confirm:
             return {"ok": True, "status": "planned", "would_ack": slugs,
@@ -1167,14 +1175,16 @@ class StewardStore:
         lease, state = self.holder()
         reqs = list(self.requests().values())
         queued = [r for r in reqs if r["status"] == "queued_for_steward"]
-        _todo, landed, unres, unsure = self._partition(queued)
+        _todo, landed, unres, unsure = self._partition([r for r in reqs if r["status"] in _OPEN_STATUSES])
+        unres = [r for r in unres if r["status"] == "queued_for_steward"]
         roles = self.roles()
         return {
             "ok": True, "status": "status", "state": state, "steward": self.public_holder(),
             "i_am_steward": bool(lease and state == "live" and session_id and lease.get("session_id") == session_id),
             "session_id": session_id, "ttl_default_s": self.default_ttl_s,
             "roles": roles["roles"], "stale_roles": roles["stale_roles"],
-            "outbox": {"pending": len(queued) - len(landed), "already_landed": len(landed),
+            "outbox": {"pending": len(queued) - sum(1 for r in landed if r["status"] == "queued_for_steward"),
+                       "already_landed": len(landed),
                        "unresolvable": len(unres), "uncertain": len(unsure),
                        "enqueued": sum(1 for r in reqs if r["status"] == "enqueued")},
             "mine": self.mine(session_id)["requests"],
