@@ -831,6 +831,9 @@ async def _executar(
     actions = _numerar(turno.actions)
     if texto_final.strip():
         svc.threads.marcar_turno(org_id, thread.id, agent.id)
+        # the agent's own reply is an interaction too: it refreshes the inactivity deadline (last_message_at), so a
+        # thread never closes between a long turn's start and its reply
+        svc.conversations.touch_activity(org_id, thread.id)
     status = (
         "handoff" if any(a["type"] == "handoff" for a in actions)
         else "concluido" if any(a["type"] == "lead_pronto" for a in actions)

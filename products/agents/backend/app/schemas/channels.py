@@ -457,7 +457,7 @@ class AlertaActionOut(_ActionOut):
     the report destination. One per ``tipo`` per turn."""
 
     type: Literal["alerta"]
-    tipo: Literal["lead_insatisfeito", "erro_agente", "desvio", "outro"]
+    tipo: Literal["lead_insatisfeito", "erro_agente", "desvio", "outro", "emergencia"]
     descricao: str
     alerta_id: str
 

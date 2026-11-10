@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 JOB_NAME = "agents_credential_maintenance"
 CHANNEL_PURGE_JOB_NAME = "agents_channel_retention_purge"
+INATIVIDADE_JOB_NAME = "agents_thread_inatividade"
 
 
 async def credential_maintenance_job() -> None:
@@ -43,6 +44,15 @@ async def channel_retention_purge_job() -> None:
     )
 
 
+async def thread_inatividade_job() -> None:
+    """Every minute: close the participants whose inactivity window (an open emergency) elapsed. The close is one
+    atomic compare-and-set per participant, so a second replica / a re-run writes no second event."""
+    from app.channels.thread_service import encerrar_inativos
+    from app.stores.threads import get_thread_store
+
+    await asyncio.to_thread(encerrar_inativos, get_thread_store(settings))
+
+
 def configure() -> None:
     # Generous grace: a restart spanning 09:00 should still run today.
     register(JOB_NAME, credential_maintenance_job, cron="0 9 * * *", misfire_grace_time=6 * 3600)
@@ -50,3 +60,4 @@ def configure() -> None:
         CHANNEL_PURGE_JOB_NAME, channel_retention_purge_job, cron="30 3 * * *",
         misfire_grace_time=6 * 3600,
     )
+    register(INATIVIDADE_JOB_NAME, thread_inatividade_job, cron="* * * * *", misfire_grace_time=60)

@@ -102,6 +102,7 @@ products/agents/backend/app/
   it also refunds the per-tool call count, the global `max_chamadas_ferramenta_turno` still bounds a loop); every other code counts. The refusal log line carries `classe=`.
   Past `max_recusas_por_turno` / `max_erros_ferramenta_por_turno` the toolset stops the turn (`should_stop`) and the turn
   ends in a hand-off to the org owner + a flagged event (silence, or the DB text `runtime.parada_segura`).
+- Emergency (migration 079): `sinalizar_alerta tipo=emergencia` sets `thread_participantes.fecha_inativo_min=10`; the thread stays open, the `agents_thread_inatividade` job (every minute) closes the participant via `transicionar` (motivo `inatividade`) once `conversations.last_message_at` + window passed (every message, including the agent's reply, refreshes it); `encerrar` is refused with `emergencia_aberta` meanwhile (a lead's stop request is exempt).
 - Julia v3 (CONTRACT §12): `sinalizar_alerta` (-> `agents.thread_alertas`, action `alerta`, one per tipo per turn),
   `registrar_documento` (an ID photo/scan -> flag on `lead_identificacao`, CPF satisfied pending extraction, action
   `documento_identificacao`; the id is checked against the inbound lead message, whose `provider_message_id` is stored

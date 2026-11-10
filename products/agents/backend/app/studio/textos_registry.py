@@ -132,7 +132,10 @@ CODIGOS_RECUSA: tuple[str, ...] = (
 #: (the tool answers with the bare code -- never prose from code) until its content gains the row.
 #: ``skill_nao_aberta`` is RETIRED (the server auto-loads a tool's skill, ``DECISAO-SKILL-AUTOLOAD.md``): never emitted; the row
 #: stays accepted so a draft that still carries it keeps validating.
-CODIGOS_RECUSA_OPCIONAIS: tuple[str, ...] = ("documento_nao_encontrado", "documento_sem_midia", "skill_nao_aberta")
+#: ``emergencia_aberta``: ``encerrar`` refused while an emergency window is open (it closes by inactivity). The Q7 slice owns
+#: this registry; this minimal entry is only what the tests need.
+CODIGOS_RECUSA_OPCIONAIS: tuple[str, ...] = (
+    "documento_nao_encontrado", "documento_sem_midia", "skill_nao_aberta", "emergencia_aberta")
 #: ``motivo_codigo`` values the MODEL may pass to ``handoff`` (labels live in the tool row's ``parametros``).
 MOTIVOS_HANDOFF: tuple[str, ...] = (
     "pedido_humano", "reclamacao", "assunto_sensivel", "parceria", "fora_do_escopo", "outro",

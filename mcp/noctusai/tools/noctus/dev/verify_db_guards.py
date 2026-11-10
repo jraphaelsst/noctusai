@@ -5090,6 +5090,34 @@ def _loop_insert(status: str, motivo: str, stopped: str) -> str:
             f"VALUES (v_org, v_agent, 'noc-probe', 'comportamento', 5, 0.8, 20, '{status}', {motivo}, {stopped}, v_org);")
 
 
+# 079: an emergency stays open and closes by inactivity (window column + the emergency alert tipo).
+_EMERGENCIA_MIGS = (_m("033"), _m("035"), "057_julia_v3_alertas_documentos.sql", "079_emergencia_inatividade.sql")
+_JV2_PARTICIPANTE = (
+    f"INSERT INTO {_JV2}.thread_participantes (thread_id, agent_id, org_id, estado) "
+    "VALUES (v_thread, v_agent, v_org, 'ativo');"
+)
+_AGENTS_EMERGENCIA_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="thread_alertas.tipo_is_a_closed_set", guard_name="thread_alertas_tipo_check",
+        migrations=_EMERGENCIA_MIGS, setup="\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread())),
+        attack=(f"INSERT INTO {_JV2}.thread_alertas (org_id, thread_id, agent_id, tipo, descricao) "
+                "VALUES (v_org, v_thread, v_agent, 'tipo_inventado', 'x');"),
+        fragments=("thread_alertas_tipo_check",), what="an alert of a tipo the app does not know",
+        rationale="SW turns each alert tipo into a notice to the owner; an unknown tipo would be stored and "
+                  "never routed.",
+    ),
+    _julia_v2_probe(
+        probe_id="thread_participantes.inactivity_window_is_positive_and_bounded",
+        guard_name="ck_thread_participantes_fecha_inativo_min",
+        migrations=_EMERGENCIA_MIGS,
+        setup="\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread(), _JV2_PARTICIPANTE)),
+        attack=f"UPDATE {_JV2}.thread_participantes SET fecha_inativo_min = 0 WHERE thread_id = v_thread;",
+        fragments=("ck_thread_participantes_fecha_inativo_min",), what="an inactivity window of zero minutes",
+        rationale="A zero window would close the participant on the next minute tick regardless of activity.",
+    ),
+)
+
+
 _AGENTS_EVAL_LOOP_PROBES: tuple[GuardProbe, ...] = (
     _julia_v2_probe(
         probe_id="eval_loops.stopped_loop_says_why_and_when", guard_name="eval_loops_parada_consistente",
@@ -12037,6 +12065,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_CAMADAS_PROBES,
     *_AGENTS_FALLBACK_PROBES,
     *_AGENTS_EVAL_LOOP_PROBES,
+    *_AGENTS_EMERGENCIA_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
     _CLIENTE_CONFLITO_STATUS_PROBE,
