@@ -20,11 +20,14 @@ a session that reads "the owner does it by hand" as an obstacle -- not a hostile
 root on the VPS can pair a number without this tool). What such a session cannot produce by accident is a human at a
 real terminal window, so:
 
-* the parent process chain is an ALLOWLIST: walked to launchd (pid 1), it must contain a known terminal emulator
-  (TERMINAL_ALLOWLIST -- data) and nothing from CHAIN_DENYLIST (pty/reparent wrappers, `claude`, IDE extension hosts /
-  language servers) anywhere; a chain that cannot be read, or reaches launchd with no emulator, is refused. This is what
-  stops `env -i ... script -q /dev/null <cmd> < answers` from a reparented subshell, `expect`, `tmux new -d` +
-  `send-keys`;
+* the parent process chain is judged on each ancestor's REAL executable image (libproc `proc_pidpath`, never argv,
+  which a process sets itself -- `exec -a`), and STRUCTURALLY: walking up from this process, only the system shells and
+  `/usr/bin/login` (SHELL_IMAGES, by path) may sit between it and the nearest other ancestor, which must be a pinned
+  terminal emulator (EMULATORS -- data): its image at the pinned path under /Applications or /System/Applications, the
+  RUNNING pid satisfying the pinned code-signing requirement (`codesign --verify -R`, Apple anchor + team id), and the
+  app itself started by launchd as a LaunchServices-registered application (`lsappinfo`). Anything unreadable refuses.
+  This is what stops `exec -a <Terminal path> script ...`, an emulator path passed as an argument, a renamed `script`,
+  `python` + `pty.spawn`, `expect`, `tmux`, `env -i ... &` reparented to launchd, and an Electron binary run as node;
 * stdin AND stdout are TTYs, /dev/tty opens, no CLAUDECODE / CLAUDE_CODE_* in the env;
 * the human TYPES the line name and CONFIRMO on /dev/tty (never stdin; no flag can pre-answer it);
 * the `confirmed` audit row is written (or spooled AND read back, its id shown on the terminal) BEFORE anything touches
@@ -33,7 +36,8 @@ real terminal window, so:
 
 No second factor, ever (owner decision). What this control does NOT stop (documented residuals, KB § 6a): in-process
 Python that deliberately reaches into this module's private state; a process that types into a real terminal window
-(osascript / accessibility APIs); an agent hosted in an allowlisted IDE's own terminal; VPS root/automation reading the
+(osascript / accessibility APIs, NOC-REMEDIATE[owner-hand-accessibility-injection]); an agent hosted in an allowlisted
+IDE's own terminal; VPS root/automation reading the
 session files until NOC-REMEDIATE[personal-core-host-exec-authz] is built.
 """
 from __future__ import annotations
@@ -63,28 +67,43 @@ _HARNESS_ENV_EXACT = ("CLAUDECODE",)
 _HARNESS_ENV_PREFIX = "CLAUDE_CODE_"
 _MAX_HOPS = 64
 
-#: (label, regex on an ancestor's full command line). At least ONE ancestor must match. The terminal's pty host only --
-#: an IDE's extension host ("Helper (Plugin)") is NOT a terminal and is on the denylist.
-TERMINAL_ALLOWLIST: tuple[tuple[str, str], ...] = (
-    ("macOS Terminal", r"/Terminal\.app/Contents/MacOS/Terminal(\s|$)"),
-    ("iTerm2", r"/iTerm\.app/Contents/MacOS/(iTerm2|iTermServer-[\w.]+)(\s|$)"),
-    ("Antigravity IDE", r"/Antigravity IDE Helper\.app/Contents/MacOS/Antigravity IDE Helper(\s|$)"),
-    ("VS Code", r"/Code Helper\.app/Contents/MacOS/Code Helper(\s|$)"),
+#: The only images allowed between this process and its terminal emulator, by exact path (never a name, never argv).
+SHELL_IMAGES: tuple[str, ...] = ("/bin/zsh", "/bin/bash", "/bin/sh", "/usr/bin/login")
+_AG = "/Applications/Antigravity IDE.app/Contents"
+_VSC = "/Applications/Visual Studio Code.app/Contents"
+#: Pinned terminal emulators. `entry_images` = the process that is the shell's parent (the pty host); its running pid must
+#: satisfy `entry_requirement`. `app` = for an IDE, the main app process that must be the pty host's parent (None: the
+#: entry IS the app). The app process must be launchd's child and LaunchServices-registered as `bundle_id`. Team ids read
+#: with `codesign -dv` on the owner's machine, 2026-11-10 (Antigravity EQHXZ8M8AV, VS Code UBF8T346G9). iTerm2 is not
+#: installed there, so nothing is pinned for it (add it here, with its team id read the same way, when it is).
+#: The IDE extension host ("Helper (Plugin)") and language servers are NOT terminals: not listed, so refused.
+EMULATORS: tuple[dict, ...] = (
+    {"label": "macOS Terminal", "bundle_id": "com.apple.Terminal",
+     "entry_images": ("/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal",),
+     "entry_requirement": 'anchor apple and identifier "com.apple.Terminal"', "app": None},
+    {"label": "Antigravity IDE", "bundle_id": "com.google.antigravity-ide",
+     "entry_images": (f"{_AG}/Frameworks/Antigravity IDE Helper.app/Contents/MacOS/Antigravity IDE Helper",),
+     "entry_requirement": ('anchor apple generic and identifier "com.google.antigravity-ide.helper" and '
+                           'certificate leaf[subject.OU] = "EQHXZ8M8AV"'),
+     "app": {"images": (f"{_AG}/MacOS/Electron",),
+             "requirement": ('anchor apple generic and identifier "com.google.antigravity-ide" and '
+                             'certificate leaf[subject.OU] = "EQHXZ8M8AV"')}},
+    {"label": "VS Code", "bundle_id": "com.microsoft.VSCode",
+     "entry_images": (f"{_VSC}/Frameworks/Code Helper.app/Contents/MacOS/Code Helper",),
+     "entry_requirement": ('anchor apple generic and identifier "com.microsoft.VSCode.helper" and '
+                           'certificate leaf[subject.OU] = "UBF8T346G9"'),
+     "app": {"images": (f"{_VSC}/MacOS/Code", f"{_VSC}/MacOS/Electron"),
+             "requirement": ('anchor apple generic and identifier "com.microsoft.VSCode" and '
+                             'certificate leaf[subject.OU] = "UBF8T346G9"')}},
 )
-#: (label, regex). ANY ancestor matching ANY of these refuses, even under an allowed emulator.
-CHAIN_DENYLIST: tuple[tuple[str, str], ...] = (
-    ("script", r"(^|/)script(\s|$)"),
-    ("expect", r"(^|/)expect(\s|$)"),
-    ("tmux", r"(^|/)tmux(:|\s|$)"),
-    ("screen", r"(?i)(^|/)screen(\s|$)"),
-    ("nohup", r"(^|/)nohup(\s|$)"),
-    ("setsid", r"(^|/)setsid(\s|$)"),
-    ("unbuffer", r"(^|/)unbuffer(\s|$)"),
-    ("socat", r"(^|/)socat(\s|$)"),
-    ("python -c pty", r"(^|/)python[\d.]*\s.*-c.*\bpty\b"),
-    ("claude", r"(^|/)claude(\s|$)|@anthropic-ai/claude-code|claude-code/cli"),
-    ("IDE extension host / language server", r"language_server|Helper \(Plugin\)"),
-)
+#: A test IO may target only this host (RFC 2606 `.invalid`: it can never resolve), so the seam cannot reach the VPS.
+TEST_HOST = "noc-test.invalid"
+
+# NOC-REMEDIATE[owner-hand-accessibility-injection]: a process that TYPES into a real, pinned terminal window (osascript
+# `keystroke`, CGEventPost, accessibility APIs) passes every check here, by design of what this gate can see. Cheap next
+# check: refuse while any application other than the pinned emulators holds Accessibility or Automation (Apple Events)
+# rights in TCC (read-only: `tccutil` has no list; read the user TCC.db where permitted, else report "unverifiable").
+# Not a blocker for D49 (the owner accepted the host residual) — 2026-11-10
 
 _MINT = object()  # module-private: only `owner_hand` holds it when it builds a grant
 
@@ -114,6 +133,7 @@ class OwnerHandGrant:
     nonce: str = field(default="", repr=False)
     ledger_root: "str | None" = None
     fields_hash: str = ""
+    test: bool = False  # minted under a test IO: only ever honoured for TEST_HOST, a temp ledger and the fake store
     _key: object = field(repr=False, compare=False, default=None)
     _state: dict = field(default_factory=dict, repr=False, compare=False)
 
@@ -169,6 +189,8 @@ def grant_covers(grant, inst: dict, host: str, vps_inst: "dict | None" = None) -
     audit row. Any read failure is False (fail closed)."""
     if not isinstance(grant, OwnerHandGrant) or grant._key is not _MINT or not grant.nonce:
         return False
+    if _store_problem(grant.test, grant.host, grant.ledger_root):
+        return False  # a production grant needs the real store; a test grant, the test host + temp ledger + fake store
     if grant.line != inst.get("name") or grant.host != host:
         return False
     want = grant.fields_hash or grant.policy_hash
@@ -202,6 +224,28 @@ def shadow_shape_problems(inst: dict) -> list[str]:
     return out
 
 
+_BUNDLE_RX = re.compile(r'bundleID="([^"]+)"')
+
+
+def _proc_image(pid: int) -> "str | None":
+    """The kernel's record of a process's executable path (libproc proc_pidpath); None when unreadable."""
+    import ctypes
+    import ctypes.util
+
+    try:
+        lib = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib", use_errno=True)
+    except OSError:
+        return None
+    buf = ctypes.create_string_buffer(4096)  # PROC_PIDPATHINFO_MAXSIZE
+    n = lib.proc_pidpath(ctypes.c_int(pid), buf, ctypes.c_uint32(4096))
+    if n <= 0:
+        return None
+    try:
+        return os.path.normpath(buf.value.decode("utf-8"))
+    except UnicodeDecodeError:
+        return None
+
+
 class _RealIO:
     """The process's real terminal, environment, parent chain, identity and remote runner."""
 
@@ -214,28 +258,48 @@ class _RealIO:
     def open_tty(self):
         return open("/dev/tty", "r+", encoding="utf-8")  # noqa: SIM115 - closed by the caller
 
-    def parent_commands(self) -> "list[str] | None":
-        """Command lines of every ancestor up to (not incl.) launchd, nearest first. None when the chain cannot be read
-        or does not reach pid 1 within _MAX_HOPS."""
+    def ancestors(self) -> "list[tuple[int, str | None]] | None":
+        """(pid, REAL executable image) of every ancestor up to (not incl.) launchd, nearest first. The image comes from
+        the kernel (libproc proc_pidpath), the parent pid from the kernel's process table -- never from argv. None when
+        the chain cannot be read or does not reach pid 1 within _MAX_HOPS."""
         out, pid = [], os.getppid()
         for _ in range(_MAX_HOPS):
             if pid <= 1:
                 return out
             try:
-                r = subprocess.run(["ps", "-o", "ppid=", "-o", "command=", "-p", str(pid)],
+                r = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)],
                                    capture_output=True, text=True, timeout=5, check=False)
-            except (OSError, subprocess.SubprocessError):
+                ppid = int(r.stdout.strip()) if r.returncode == 0 else None
+            except (OSError, subprocess.SubprocessError, ValueError):
                 return None
-            line = r.stdout.strip()
-            if r.returncode != 0 or not line:
+            if ppid is None:
                 return None
-            ppid, _, cmd = line.partition(" ")
-            out.append(cmd.strip())
-            try:
-                pid = int(ppid)
-            except ValueError:
-                return None
+            out.append((pid, _proc_image(pid)))
+            pid = ppid
         return None
+
+    def signature_ok(self, pid: int, requirement: str) -> bool:
+        """The RUNNING process satisfies the code-signing requirement (dynamic validity, not the file on disk)."""
+        try:
+            r = subprocess.run(["codesign", "--verify", f"-R={requirement}", str(pid)],
+                               capture_output=True, text=True, timeout=15, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return r.returncode == 0
+
+    def app_bundle(self, pid: int) -> "str | None":
+        """The LaunchServices bundle id of the application with this pid; None when it is not a registered app."""
+        try:
+            asn = subprocess.run(["lsappinfo", "find", f"pid={pid}"], capture_output=True, text=True, timeout=5,
+                                 check=False).stdout.strip()
+            if not asn:
+                return None
+            info = subprocess.run(["lsappinfo", "info", "-only", "bundleid", asn], capture_output=True, text=True,
+                                  timeout=5, check=False).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+        m = _BUNDLE_RX.search(info)
+        return m.group(1) if m else None
 
     def git_email(self) -> str:
         try:
@@ -253,18 +317,47 @@ class _RealIO:
     sh = None  # production: waha_instance's own runner, never overridable from here
 
 
-def chain_problem(chain: "list[str] | None") -> "str | None":
-    """None when the ancestor chain has a known terminal emulator and no denied wrapper; else why not."""
+def _emulator_for(image: str) -> "dict | None":
+    for e in EMULATORS:
+        if image in e["entry_images"]:
+            return e
+    return None
+
+
+def chain_problem(io) -> "str | None":
+    """None when the nearest non-shell ancestor is a pinned, correctly signed terminal emulator started by launchd as a
+    registered app, with only system shells / login in between; else why not. Judged on real images, never argv."""
+    chain = io.ancestors()
     if chain is None:
         return "the parent process chain cannot be read up to launchd: refused (fail closed)"
-    for cmd in chain:
-        for label, rx in CHAIN_DENYLIST:
-            if re.search(rx, cmd):
-                return (f"`{label}` is in the parent process chain: the owner runs this directly in a terminal window "
-                        "(no pty wrapper, multiplexer or agent)")
-    if not any(re.search(rx, cmd) for cmd in chain for _, rx in TERMINAL_ALLOWLIST):
-        names = ", ".join(lab for lab, _ in TERMINAL_ALLOWLIST)
-        return f"no known terminal emulator in the parent process chain (allowed: {names}): refused"
+    allowed = ", ".join(e["label"] for e in EMULATORS)
+    i = 0
+    while i < len(chain) and chain[i][1] in SHELL_IMAGES:
+        i += 1
+    if i == len(chain):
+        return f"no terminal emulator above the shell (reached launchd; allowed: {allowed}): refused"
+    pid, image = chain[i]
+    if not image:
+        return f"the executable image of ancestor pid {pid} cannot be read: refused (fail closed)"
+    emu = _emulator_for(image)
+    if emu is None:
+        return (f"the shell's parent is `{image}`, not a pinned terminal emulator (allowed: {allowed}): the owner runs "
+                "this directly in a terminal window (no pty wrapper, multiplexer, interpreter or agent)")
+    if not io.signature_ok(pid, emu["entry_requirement"]):
+        return f"{emu['label']} (pid {pid}) does not satisfy its pinned code-signing requirement: refused"
+    if emu["app"] is not None:
+        if i + 1 >= len(chain):
+            return f"{emu['label']}'s terminal host has no app above it: refused"
+        i += 1
+        pid, image = chain[i]
+        if image not in emu["app"]["images"]:
+            return f"{emu['label']}'s terminal host was not started by the {emu['label']} app (`{image}`): refused"
+        if not io.signature_ok(pid, emu["app"]["requirement"]):
+            return f"the {emu['label']} app (pid {pid}) does not satisfy its pinned code-signing requirement: refused"
+    if i != len(chain) - 1:
+        return f"{emu['label']} (pid {pid}) was not started by launchd (something launched it): refused"
+    if io.app_bundle(pid) != emu["bundle_id"]:
+        return f"{emu['label']} (pid {pid}) is not a registered {emu['bundle_id']} application: refused"
     return None
 
 
@@ -280,19 +373,54 @@ def human_gate(io) -> "str | None":
         io.open_tty().close()
     except OSError as exc:
         return f"/dev/tty cannot be opened ({exc.__class__.__name__}): no controlling terminal"
-    return chain_problem(io.parent_commands())
+    return chain_problem(io)
 
 
-def _test_runner_problem(io) -> "str | None":
-    """A test IO must carry its OWN runner, explicitly marked as a test fake -- never the real one -- and only inside a
-    pytest test. This is what keeps the test seam from being a gate bypass that still reaches the VPS."""
+def _under_temp(root: "str | Path | None") -> bool:
+    import tempfile
+
+    if not root:
+        return False
+    try:
+        r, t = Path(root).resolve(), Path(tempfile.gettempdir()).resolve()
+    except OSError:
+        return False
+    return r == t or t in r.parents
+
+
+def _store_problem(test: bool, host: str, root: "str | Path | None") -> "str | None":
+    """Production: the audit ledger is the real store. Test: the fake store, a ledger root under the temp dir and the
+    reserved TEST_HOST -- so neither a test seam nor a test grant can ever audit to, or act on, anything real."""
+    from ._ledger_store import MODE_FAKE, MODE_GIT, store_mode
+
+    try:
+        mode = store_mode()
+    except ValueError as exc:
+        return str(exc)
+    if not test:
+        if mode != MODE_GIT:
+            return "the audit ledger must be the real store (origin/ledgers); NOCTUS_LEDGER_STORE=fake is test-only"
+        return None
+    if mode != MODE_FAKE:
+        return "a test IO needs the fake ledger store (NOCTUS_LEDGER_STORE=fake): refused"
+    if host != TEST_HOST:
+        return f"a test IO may only target the reserved host {TEST_HOST}, not {host!r}: refused"
+    if not _under_temp(root):
+        return "a test IO needs its ledger root under the temp dir: refused"
+    return None
+
+
+def _test_runner_problem(io, host: str, root: "str | Path | None") -> "str | None":
+    """A test IO must carry its OWN runner, explicitly marked as a test fake -- never the real one -- only inside a
+    pytest test, on the fake store, a temp ledger root and TEST_HOST. This keeps the test seam from being a gate bypass
+    that still reaches the VPS or the real ledger."""
     if not os.environ.get("PYTEST_CURRENT_TEST"):
         return "a test IO was passed outside a pytest test: refused (the CLI never passes one)"
     sh = getattr(io, "sh", None)
     if sh is None or sh is wi._sh or getattr(sh, "__noc_test_fake__", False) is not True:
         return ("a test IO must carry its own runner explicitly marked as a test fake (`__noc_test_fake__ = True`); "
                 "the real remote runner is never reachable through it")
-    return None
+    return _store_problem(True, host, root)
 
 
 def _now() -> str:
@@ -321,6 +449,13 @@ def _audit_durable(root: Path, res: dict, row_id: str) -> "str | None":
             return None
         return f"audit row {row_id} was spooled but could not be read back from the spool"
     return f"the audit row could not be written ({res.get('error') or res.get('status')})"
+
+
+def _audit_notice(row_id: str, res: dict) -> str:
+    """What the owner sees about the `confirmed` row: its id, and whether it is published or only spooled."""
+    state = ("spooled (not yet published to origin/ledgers; the next ledger publish carries it)"
+             if res.get("status") == "pending" else "written")
+    return f"\n  audit row {row_id} {state}\n\n"
 
 
 def _ask(tty, prompt: str) -> str:
@@ -387,8 +522,6 @@ def owner_hand(action: str, name: str, ssh_host: str = "noctus-vps", repo_root: 
     never passes it and it is not part of any tool schema; production code must never pass it."""
     import yaml
 
-    from ._ledger_store import MODE_GIT, store_mode
-
     io = _test_io or _RealIO()
     root = Path(repo_root) if repo_root else Path(wi.REPO_ROOT)
     who = {"git_email": io.git_email(), "os_user": io.os_user()}
@@ -402,12 +535,10 @@ def owner_hand(action: str, name: str, ssh_host: str = "noctus-vps", repo_root: 
 
     if action not in ACTIONS:
         return refuse(f"unknown action {action!r} -- {'|'.join(ACTIONS)}")
-    if _test_io is not None:
-        why = _test_runner_problem(_test_io)
-        if why:
-            return refuse(why)
-    elif store_mode() != MODE_GIT:
-        return refuse("the audit ledger must be the real store (origin/ledgers); NOCTUS_LEDGER_STORE=fake is test-only")
+    why = (_test_runner_problem(_test_io, ssh_host, root) if _test_io is not None
+           else _store_problem(False, ssh_host, root))
+    if why:
+        return refuse(why)
     why = human_gate(io)
     if why:
         return refuse(why)
@@ -460,16 +591,17 @@ def owner_hand(action: str, name: str, ssh_host: str = "noctus-vps", repo_root: 
             tty.write(f"\n  REFUSED: {why}\n")
             return {"ok": False, "action": action, "name": name, "status": "refused", "audit": pre,
                     "error": why + ": refused before touching the VPS (fail closed)"}
-        state = "spooled (not yet published to origin/ledgers; the next ledger publish carries it)" \
-            if pre.get("status") == "pending" else "written"
-        tty.write(f"\n  audit row {row_id} {state}\n\n")
+        tty.write(_audit_notice(row_id, pre))
     finally:
         tty.close()
 
-    if _test_io is not None and _test_runner_problem(_test_io):  # the minter re-checks: never a grant over the real runner
-        return refuse("refused at mint: " + str(_test_runner_problem(_test_io)))
+    # the minter re-checks the seam and the store: never a grant over the real runner, a real host or a swapped store
+    why = (_test_runner_problem(_test_io, ssh_host, root) if _test_io is not None
+           else _store_problem(False, ssh_host, root))
+    if why:
+        return refuse("refused at mint: " + why)
     grant = OwnerHandGrant(line=name, policy_hash=phash, host=ssh_host, nonce=nonce, ledger_root=str(root),
-                           fields_hash=fields, _key=_MINT)
+                           fields_hash=fields, test=_test_io is not None, _key=_MINT)
     if _test_io is not None and hasattr(_test_io, "observe_grant"):
         _test_io.observe_grant(grant)
     kw = {"_test_sh": sh} if _test_io is not None else {}
@@ -491,4 +623,5 @@ def owner_hand(action: str, name: str, ssh_host: str = "noctus-vps", repo_root: 
 
 
 __all__ = ["owner_hand", "human_gate", "chain_problem", "policy_hash", "compose_fingerprint", "grant_covers",
-           "shadow_shape_problems", "OwnerHandGrant", "TERMINAL_ALLOWLIST", "CHAIN_DENYLIST", "LEDGER_NAME", "COMMAND"]
+           "shadow_shape_problems", "OwnerHandGrant", "EMULATORS", "SHELL_IMAGES", "TEST_HOST", "LEDGER_NAME",
+           "COMMAND"]
