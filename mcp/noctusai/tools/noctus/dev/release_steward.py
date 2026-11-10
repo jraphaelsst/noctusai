@@ -874,8 +874,9 @@ class StewardStore:
         self.audit("role_clear", role=role, session_id=session_id, was=row.get("name"))
         return {"ok": True, "status": "role_cleared", "role": role}
 
-    def role_touch(self, session_id: str | None) -> None:
-        """Best-effort liveness refresh of the roles this session holds (every action calls it)."""
+    def role_touch(self, session_id: str | None, claude_pid: int | None = None) -> None:
+        """Best-effort liveness refresh of the roles this session holds (every action calls it): the heartbeat
+        and, when the caller's pid is known, the pid (a restart changes it; a stale pid must not read as dead)."""
         if not session_id:
             return
         with contextlib.suppress(Exception), self._locked("release-steward-roles"):
@@ -884,23 +885,38 @@ class StewardStore:
             for row in roles.values():
                 if row.get("session_id") == session_id:
                     row["heartbeat_ts"], hit = self.clock(), True
+                    if claude_pid:  # the caller's own pid, for a row that names the caller's session
+                        row["claude_pid"] = claude_pid
             if hit:
                 self._write_roles(roles)
 
     def session_state(self, session_id: str | None) -> str:
-        """`live` | `dead` | `unknown` for a session, from the process ids the steward registry holds (role rows
-        and the lease carry `claude_pid`). No record at all is `unknown` - callers that must not act on
-        someone else's work (worktree cleanup) treat `unknown` as live, never as gone."""
+        """`live` | `dead` | `unknown` for a session, from the steward registry (role rows + the lease).
+
+        `dead` is the claim that lets someone else's worktree be removed, so it needs BOTH signals: the recorded
+        process is gone AND the heartbeat is older than the TTL (every action refreshes both - `role_touch` also
+        re-records the caller's pid, which changes across /clear or a restart). A fresh heartbeat or a live pid
+        is `live`. A stale heartbeat with no recorded pid is `unknown` (no evidence either way), and so is no
+        record at all - callers that must not act on someone else's work treat `unknown` as live."""
         if not session_id:
             return "unknown"
-        pids: list[int | None] = [r.get("claude_pid") for r in self._read_roles().values() if r.get("session_id") == session_id]
+        rows = [r for r in self._read_roles().values() if r.get("session_id") == session_id]
         lease = self._read_lease()
-        if lease and lease.get("session_id") == session_id:
-            pids.append(lease.get("claude_pid"))
-        known = [p for p in pids if p]
-        if not known:
+        if lease and lease.get("session_id") == session_id and not lease.get("corrupt"):
+            rows.append(lease)
+        if not rows:
             return "unknown"
-        return "live" if any(self.pid_alive(p) for p in known) else "dead"
+        now, all_dead = self.clock(), True
+        for r in rows:
+            ttl = int(r.get("ttl_s") or self.default_ttl_s)
+            if now - float(r.get("heartbeat_ts") or 0) <= ttl:
+                return "live"
+            pid = r.get("claude_pid")
+            if pid and self.pid_alive(pid):
+                return "live"
+            if not pid:
+                all_dead = False
+        return "dead" if all_dead else "unknown"
 
     def roles(self) -> dict[str, Any]:
         out: dict[str, dict[str, Any]] = {}
@@ -2041,7 +2057,7 @@ def run_action(action: str, session_id: str | None, *, store: StewardStore | Non
                claude_pid: int | None = None, child_session: bool = False, **kw: Any) -> dict[str, Any]:
     store = store or StewardStore()
     if action != "status":
-        store.role_touch(session_id)
+        store.role_touch(session_id, claude_pid)
     if action == "status":
         return store.status(session_id)
     if action == "mine":
