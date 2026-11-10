@@ -16,7 +16,7 @@
 | **Daily Life** | `products/daily-life/` | Personal productivity hub: tasks, goals, habits, schedule, notes | 8005/8110 | `daily_life` |
 | **AdConnect** | `products/adconnect/` | B2B ad-inventory marketplace (custom JWT auth; MVP in flight on `adconnect-mvp-implementation`) | 8007/8130 | `adconnect` |
 | **Dev Team** | `products/dev-team/` | agno multi-agent dev team (engine at `dev_team/`, MCP exposure `noctus.team.*`; switch-flip gated by `ANTHROPIC_API_KEY`; frontend port off-pattern — see `vite.config.ts`) | 8009/8123 | `dev_team` |
-| **Social Wiring** | `products/social-wiring/` | Real-estate operations hub: leads, funil/cards, imóveis, contratos, marketing, CoreStudio — plus the WhatsApp transport + CRM of **Julia**, the SDR agent whose brain is hosted in `agents` (renamed from "Lais" 2026-10-19; `julia_*` tables, `/julia/*` pages; atendimento blocks + Maya supervision; public-number protection: org staff list, per-org limits + blocklist, structured media, log hygiene). Consolidation target of `media-scheduling`/`youtube-crawler`/`mailing`/`imobi-scheduling` (Wave 4, 2026-05-16) | 8011/8160 | `social_wiring` |
+| **Social Wiring** | `products/social-wiring/` | Real-estate operations hub: leads, funil/cards, imóveis, contratos, marketing, CoreStudio — plus the WhatsApp transport + CRM of **Julia**, the SDR agent whose brain is hosted in `agents` (renamed from "Lais" 2026-10-19; `julia_*` tables, `/julia/*` pages; atendimento blocks + Maya supervision; public-number protection: org staff list, per-org limits + blocklist, structured media, log hygiene). Consolidation target of `media-scheduling`/`youtube-crawler`/`mailing`/`imobi-scheduling` (Wave 4, 2026-05-16) | 8011/8160 | `social_wiring` Serves the exclusividades showcase from its own mirror via a per-consumer scoped key (`GET /api/vitrine/exclusivos`, scope `vitrine:exclusivos:read`). |
 | **Knowledge Extractor** | `products/knowledge-extractor/` | Course-methodology RAG: Drive→transcribe→summarize→extract methodology→pgvector KB. Backend-only; absorbed from the sibling `knowledge-extractor` repo 2026-05-23 (seam-swap + container gate in flight, `container-first-codify-and-absorb-ke`) | 8012/8150 | `knowledge_extractor` |
 | **IgIg** | `products/igig/` | Agency ERP for a communication agency: CRM/orçamentos + calculadora de escopo, Central da Marca + Cofre, planejamento editorial, esteira de produção criativa + portal de aprovação white-label, distribuição/métricas, financeiro/retainers + DRE, e **Custos** (funções + profissionais) — a tabela de custo/hora que M1/M5/M6 compartilham via `custo_hora_efetivo`. Domain data on Supabase (schema `igig`) através do seam `noctusai_lib.integrations.persistence`; RLS em todas as tabelas. Merges into `orbity` in the future | 8013/8170 | `igig` |
 | **P Studio** | `products/p-studio/` | ERP for a real-estate photography/AV production studio: cadastros (clientes/imóveis/serviços/equipamentos), comercial funnel (`negocios`), shoot scheduling (`captacoes` + equipment checklist), production pipeline (`producoes`), financeiro with real bank billing. Billing goes through a `ProvedorCobranca` Protocol — Asaas is the only adapter allowed to know Asaas vocabulary, so the move to Banco do Brasil is an adapter swap. Absorbed 2026-08-13 from the sibling workspace `cadu/p-studio/` (project `p-studio-absorption-rollout`); schema + PostgREST exposure were already applied to the shared Supabase before absorption | 8014/8180 | `p_studio` |
@@ -55,12 +55,12 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Igig | 23 | 26 | 33 | 27 | 44 | 978 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 10 | 0 | 28 | 10 | 25 | 191 |
-| Agents | 34 | 1 | 82 | 51 | 205 | 3,023 |
+| Agents | 34 | 1 | 82 | 51 | 206 | 3,029 |
 | Community | 23 | 29 | 49 | 30 | 58 | 657 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 40 | 7 | 8 | 64 |
 | Monica | 2 | 1 | 15 | 0 | 8 | 37 |
-| **Total** | **357** | **431** | **895** | **542** | **1595** | **22,593** |
+| **Total** | **357** | **431** | **895** | **542** | **1596** | **22,599** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
