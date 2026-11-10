@@ -16,6 +16,7 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
@@ -117,6 +118,18 @@ def _org_dep(*, raise_401=False):
         return (user, "tok", ORG_A)
 
     return _dep
+
+
+@pytest.fixture(autouse=True)
+def _legacy_enabled_line_policy():
+    """These suites drive a FakeWahaClient through the routers: declare the legacy process default (`send: enabled`)
+    through the PUBLIC registry; fail-closed behaviour is covered in the lib suite."""
+    from noctusai_lib.integrations.whatsapp import LinePolicy, clear_line_policies, register_line_policy
+
+    clear_line_policies()
+    register_line_policy("*", LinePolicy("enabled", True, True, True))
+    yield
+    clear_line_policies()
 
 
 def _fake_waha_factory_singleton():

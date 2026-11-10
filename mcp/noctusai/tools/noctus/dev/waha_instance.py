@@ -89,6 +89,11 @@ def _validate_policy(i: int, name: str, inst: dict) -> None:
                          "can send")
     if pol["send"] == "enabled" and inst["edge_deny_writes"]:
         raise ValueError(f"instances[{i}] ({name}): `edge_deny_writes: true` contradicts `send: enabled`")
+    if inst["edge_deny_writes"]:
+        up = inst.get("webhook_upstream")
+        if not isinstance(up, str) or not re.match(r"^https?://[A-Za-z0-9._-]+(:\d+)?(/[A-Za-z0-9._~/-]*)?$", up):
+            raise ValueError(f"instances[{i}] ({name}): `edge_deny_writes: true` requires `webhook_upstream: http://<product>:<port>` "
+                             "(the edge relays the core's webhooks there; the core has no route to the product)")
 
 
 def parse_instances(text: str) -> dict:
@@ -122,14 +127,21 @@ def parse_instances(text: str) -> dict:
 EDGE_IMAGE = "nginx:1.27-alpine"
 
 #: nginx edge of a read-only line. ONE decision table, mirrored by the seed's `is_whatsapp_write` (a test pins parity
-#: on a path matrix): the session lifecycle passes; a GET passes UNLESS it is a send-class path (WAHA still serves some
-#: sends on GET); everything else -- every non-read verb on any other path, unknown endpoints included -- is a 403.
-#: `~*` = case-insensitive (WAHA's router is). `$$` is compose's escape for a literal `$`.
+#: on a path matrix, normalising dot-segments the way nginx does): on a `send: disabled` line only
+#: `POST /api/sessions/{n}/start` and plain reads pass; a read on a send-class path (WAHA still serves some sends on GET),
+#: logout/stop/restart/PUT-config/DELETE and every unknown non-read endpoint are 403. `~*` = case-insensitive (WAHA's
+#: router is). The decision is taken on `$uri` (decoded, dot-resolved, slashes merged) and THAT is what is forwarded
+#: (`$uri$is_args$args`), never the raw request line, so what was judged is what is sent. `$$` is compose's escape for `$`.
+#: Port 3001 is the WEBHOOK RELAY: the core lives on a private network and cannot reach the product, so it POSTs its
+#: webhooks to `http://waha-<n>:3001/<path>` and the edge forwards them to the declared `webhook_upstream`.
+#: NOC-REMEDIATE[edge-live-verification]: `nginx -t` and the live curl matrix (every verb x the send/presence/session
+#: paths x dot-segment and %2e/%2f spellings) have not run -- no docker daemon in the S1 environment; S6 runs them on the
+#: throwaway probe line before the personal number is paired. — 2026-11-10
 _EDGE_CONF = """\
 resolver 127.0.0.11 valid=10s ipv6=off;
 map "$$request_method $$uri" $$wa_write {
   default 1;
-  "~* ^[A-Z]+ /api/sessions(/|$$)" 0;
+  "~* ^POST /api/sessions/[^/]+/start$$" 0;
   "~* ^(GET|HEAD|OPTIONS) /api/(send|reaction|starttyping|stoptyping|forwardmessage)" 1;
   "~* ^(GET|HEAD|OPTIONS) /" 0;
 }
@@ -139,9 +151,20 @@ server {
   location / {
     if ($$wa_write) { return 403 '{"error":"line_write_refused","detail":"this line is read-only (send: disabled)"}'; }
     set $$up http://waha-{name}-core:3000;
-    proxy_pass $$up;
+    proxy_pass $$up$$uri$$is_args$$args;
     proxy_set_header Host $$host;
     proxy_read_timeout 60s;
+  }
+}
+server {
+  listen 3001;
+  client_max_body_size 2m;
+  location / {
+    if ($$request_method != POST) { return 405; }
+    set $$hook {webhook_upstream};
+    proxy_pass $$hook$$uri$$is_args$$args;
+    proxy_set_header Host $$host;
+    proxy_read_timeout 30s;
   }
 }
 """
@@ -159,7 +182,7 @@ def services_of(inst: dict) -> list[str]:
 
 def _edge_service(inst: dict) -> str:
     n = inst["name"]
-    conf = _EDGE_CONF.replace("{name}", n)
+    conf = _EDGE_CONF.replace("{name}", n).replace("{webhook_upstream}", inst["webhook_upstream"].rstrip("/"))
     body = "".join("        " + ln + "\n" if ln else "\n" for ln in conf.splitlines())
     return f"""  waha-{n}:
     # EDGE DENY for {inst['product']}'s read-only line `{n}` (send: disabled): http://waha-{n}:3000 is THIS proxy; it 403s every
@@ -174,8 +197,10 @@ def _edge_service(inst: dict) -> str:
     command: ["/bin/sh", "-c", "printf '%s' \\"$$EDGE_CONF\\" > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]
     expose:
       - "3000"
+      - "3001"
     networks:
       - noctus-net
+      - waha_{n.replace('-', '_')}_edge
     mem_limit: 64m
     restart: unless-stopped
     healthcheck:
@@ -193,6 +218,8 @@ def _service(spec: dict, inst: dict) -> str:
     edge = inst.get("edge_deny_writes", False)
     dash = inst.get("dashboard", True)
     svc = core_service(inst)
+    # an edge line's core is reachable ONLY through its edge: a private network, never noctus-net
+    core_net = f"waha_{n.replace('-', '_')}_edge" if edge else "noctus-net"
     where = f"internal only; reach it through the edge `waha-{n}`" if edge else f"Internal only: http://waha-{n}:3000"
     if dash:
         ui = f"""      WAHA_DASHBOARD_USERNAME: admin
@@ -219,7 +246,7 @@ def _service(spec: dict, inst: dict) -> str:
     volumes:
       - waha_{n.replace('-', '_')}:/app/.sessions
     networks:
-      - noctus-net
+      - {core_net}
     mem_limit: {spec['mem_limit']}
     restart: unless-stopped
     healthcheck:
@@ -241,7 +268,12 @@ def render_compose(spec: dict) -> str:
         "name: noctus-waha\n\nservices:\n"
     ]
     out += [_service(spec, i) for i in spec["instances"]]
-    out.append("\nnetworks:\n  noctus-net:\n    name: noctus-net\n    external: true\n\nvolumes:\n")
+    out.append("\nnetworks:\n  noctus-net:\n    name: noctus-net\n    external: true\n")
+    for i in spec["instances"]:
+        if i.get("edge_deny_writes"):
+            n = i["name"]
+            out.append(f"  waha_{n.replace('-', '_')}_edge:\n    name: noctus-waha-{n}-edge\n")
+    out.append("\nvolumes:\n")
     for i in spec["instances"]:
         n = i["name"]
         out.append(f"  waha_{n.replace('-', '_')}:\n    name: noctus-waha-{n}\n")

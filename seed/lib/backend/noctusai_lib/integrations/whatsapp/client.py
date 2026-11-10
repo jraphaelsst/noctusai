@@ -26,6 +26,7 @@ from noctusai_lib.integrations.whatsapp.line_policy import (
     PolicyReadback,
     check_session_against_policy,
     resolve_line_policy,
+    seg as _seg,
 )
 from noctusai_lib.integrations.whatsapp.mappers import (
     build_send_text_body,
@@ -354,12 +355,6 @@ class WahaClient(LinePolicyGuard):
             sink=line_event_sink,
         )
 
-    def _config_policy(self) -> LinePolicy | None:
-        """The policy that drives session-config writes: only a DECLARED, config-authoritative one (an undeclared line
-        or the legacy ``"*"`` default keeps the session's existing config)."""
-        p = self.line_policy
-        return p if (p.declared and p.config_authority) else None
-
     async def verify_line_policy(self) -> PolicyReadback:
         """Read the session back (``GET /api/sessions/{session}``) and compare it with the line policy -- run it
         BEFORE the QR scan. A config you PUT and never read back is unverified."""
@@ -390,6 +385,7 @@ class WahaClient(LinePolicyGuard):
         json: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         use_base_url: bool = True,
+        policy_config: bool = False,
     ) -> httpx.Response:
         """Single chokepoint for every async WahaClient HTTP call.
 
@@ -404,9 +400,12 @@ class WahaClient(LinePolicyGuard):
         vendor-emitted URL — is used as-is, matching the pre-refactor
         call shape exactly.
         """
-        self._guard_write(method, path)
+        self._guard_write(method, path, policy_config=policy_config)
         await rate_limit.acquire_async("whatsapp")
-        client_kwargs: dict[str, Any] = {"timeout": timeout, "transport": self._transport}
+        _, ahook = self._final_url_hook(policy_config)
+        client_kwargs: dict[str, Any] = {
+            "timeout": timeout, "transport": self._transport, "event_hooks": {"request": [ahook]},
+        }
         if use_base_url:
             client_kwargs["base_url"] = self.base_url
         async with httpx.AsyncClient(**client_kwargs) as client:
@@ -430,13 +429,17 @@ class WahaClient(LinePolicyGuard):
         json: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         use_base_url: bool = True,
+        policy_config: bool = False,
     ) -> httpx.Response:
         """Sync twin of `_request` — same chokepoint contract, for the
         worker code paths (`send_text_sync`, `download_media_sync`) that
         call off an event loop."""
-        self._guard_write(method, path)
+        self._guard_write(method, path, policy_config=policy_config)
         rate_limit.acquire("whatsapp")
-        client_kwargs: dict[str, Any] = {"timeout": timeout, "transport": self._transport}
+        hook, _ = self._final_url_hook(policy_config)
+        client_kwargs: dict[str, Any] = {
+            "timeout": timeout, "transport": self._transport, "event_hooks": {"request": [hook]},
+        }
         if use_base_url:
             client_kwargs["base_url"] = self.base_url
         with httpx.Client(**client_kwargs) as client:
@@ -679,7 +682,7 @@ class WahaClient(LinePolicyGuard):
     async def get_session(self) -> dict[str, Any]:
         """GET /api/sessions/{session} — status, me, engine."""
         response = await self._request(
-            "get", f"/api/sessions/{self.session}", timeout=15, headers=self._headers()
+            "get", f"/api/sessions/{_seg(self.session)}", timeout=15, headers=self._headers()
         )
         response.raise_for_status()
         return _safe_json(response)
@@ -704,7 +707,7 @@ class WahaClient(LinePolicyGuard):
         payload = _session_config(policy=self._config_policy())
         response = await self._request(
             "post",
-            f"/api/sessions/{self.session}/start",
+            f"/api/sessions/{_seg(self.session)}/start",
             timeout=30,
             json=payload,
             headers=self._headers(json=True),
@@ -730,7 +733,7 @@ class WahaClient(LinePolicyGuard):
         payload = _session_config(policy=self._config_policy())
         response = await self._request(
             "post",
-            f"/api/sessions/{self.session}/restart",
+            f"/api/sessions/{_seg(self.session)}/restart",
             timeout=30,
             json=payload,
             headers=self._headers(json=True),
@@ -739,10 +742,11 @@ class WahaClient(LinePolicyGuard):
         return _safe_json(response)
 
     async def logout_session(self) -> dict[str, Any]:
-        """POST /api/sessions/{session}/logout — unpair the account."""
+        """POST /api/sessions/{session}/logout — unpair the account. Behind ``auto_repair``: it forces a re-pair."""
+        self._guard_repair("logout_session")
         response = await self._request(
             "post",
-            f"/api/sessions/{self.session}/logout",
+            f"/api/sessions/{_seg(self.session)}/logout",
             timeout=30,
             headers=self._headers(json=True),
         )
@@ -830,7 +834,7 @@ class WahaClient(LinePolicyGuard):
         """
         response = await self._request(
             "get",
-            f"/api/{self.session}/auth/qr",
+            f"/api/{_seg(self.session)}/auth/qr",
             timeout=15,
             params={"format": "image"},
             headers=self._headers(),
@@ -888,10 +892,11 @@ class WahaClient(LinePolicyGuard):
     ) -> dict[str, Any]:
         response = await self._request(
             "put",
-            f"/api/sessions/{self.session}",
+            f"/api/sessions/{_seg(self.session)}",
             timeout=30,
             json=_merged_session_config(config, webhooks, self._config_policy()),
             headers=self._headers(json=True),
+            policy_config=True,
         )
         response.raise_for_status()
         return _safe_json(response)
@@ -973,7 +978,7 @@ class WahaClient(LinePolicyGuard):
         """
         response = await self._request(
             "get",
-            f"/api/{self.session}/chats",
+            f"/api/{_seg(self.session)}/chats",
             timeout=_WAHA_READ_TIMEOUT,
             params={"limit": limit, "offset": offset},
             headers=self._headers(),
@@ -1011,7 +1016,7 @@ class WahaClient(LinePolicyGuard):
         """
         response = await self._request(
             "get",
-            f"/api/{self.session}/chats/overview",
+            f"/api/{_seg(self.session)}/chats/overview",
             timeout=_WAHA_READ_TIMEOUT,
             params={"limit": limit},
             headers=self._headers(),
@@ -1034,7 +1039,7 @@ class WahaClient(LinePolicyGuard):
         """
         response = await self._request(
             "get",
-            f"/api/{self.session}/chats/{chat_id}/messages",
+            f"/api/{_seg(self.session)}/chats/{_seg(chat_id)}/messages",
             timeout=_WAHA_HISTORY_TIMEOUT,
             params={"limit": limit},
             headers=self._headers(),
@@ -1084,7 +1089,7 @@ class WahaClient(LinePolicyGuard):
         """
         response = await self._request(
             "get",
-            f"/api/{self.session}/lids/{lid}",
+            f"/api/{_seg(self.session)}/lids/{_seg(lid)}",
             timeout=_WAHA_READ_TIMEOUT,
             headers=self._headers(),
         )
@@ -1100,7 +1105,7 @@ class WahaClient(LinePolicyGuard):
         Returns an empty list on any error (WAHA not configured / unavailable).
         """
         response = await self._request(
-            "get", f"/api/{self.session}/lids", timeout=_WAHA_READ_TIMEOUT, headers=self._headers()
+            "get", f"/api/{_seg(self.session)}/lids", timeout=_WAHA_READ_TIMEOUT, headers=self._headers()
         )
         if response.status_code >= 400:
             return []
@@ -1140,7 +1145,7 @@ class WahaClient(LinePolicyGuard):
         """POST /api/{session}/groups — create a group."""
         response = await self._request(
             "post",
-            f"/api/{self.session}/groups",
+            f"/api/{_seg(self.session)}/groups",
             timeout=15,
             json={
                 "session": self.session,
@@ -1156,7 +1161,7 @@ class WahaClient(LinePolicyGuard):
         """GET /api/{session}/groups — groups the session belongs to."""
         response = await self._request(
             "get",
-            f"/api/{self.session}/groups",
+            f"/api/{_seg(self.session)}/groups",
             timeout=_WAHA_READ_TIMEOUT,
             params={"limit": limit, "offset": offset},
             headers=self._headers(),
@@ -1170,7 +1175,7 @@ class WahaClient(LinePolicyGuard):
         """GET /api/{session}/groups/{id} — one group's details."""
         response = await self._request(
             "get",
-            f"/api/{self.session}/groups/{group_id}",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}",
             timeout=_WAHA_READ_TIMEOUT,
             headers=self._headers(),
         )
@@ -1186,7 +1191,7 @@ class WahaClient(LinePolicyGuard):
         """
         response = await self._request(
             "get",
-            f"/api/{self.session}/groups/{group_id}/participants",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/participants",
             timeout=_WAHA_READ_TIMEOUT,
             headers=self._headers(),
         )
@@ -1205,7 +1210,7 @@ class WahaClient(LinePolicyGuard):
         endpoint = "add" if action == "added" else "remove"
         response = await self._request(
             "post",
-            f"/api/{self.session}/groups/{group_id}/participants/{endpoint}",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/participants/{endpoint}",
             timeout=15,
             json={"participants": [{"id": pid} for pid in participant_ids]},
             headers=self._headers(json=True),
@@ -1249,7 +1254,7 @@ class WahaClient(LinePolicyGuard):
     ) -> None:
         response = await self._request(
             "post",
-            f"/api/{self.session}/groups/{group_id}/admin/{endpoint}",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/admin/{endpoint}",
             timeout=15,
             json={"participants": [{"id": pid} for pid in participant_ids]},
             headers=self._headers(json=True),
@@ -1275,7 +1280,7 @@ class WahaClient(LinePolicyGuard):
         """GET /api/{session}/groups/{id}/invite-code."""
         response = await self._request(
             "get",
-            f"/api/{self.session}/groups/{group_id}/invite-code",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/invite-code",
             timeout=15,
             headers=self._headers(),
         )
@@ -1286,7 +1291,7 @@ class WahaClient(LinePolicyGuard):
         """POST /api/{session}/groups/{id}/invite-code/revoke — regenerate."""
         response = await self._request(
             "post",
-            f"/api/{self.session}/groups/{group_id}/invite-code/revoke",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/invite-code/revoke",
             timeout=15,
             headers=self._headers(json=True),
         )
@@ -1297,7 +1302,7 @@ class WahaClient(LinePolicyGuard):
         """PUT /api/{session}/groups/{id}/settings/security/messages-admin-only."""
         response = await self._request(
             "put",
-            f"/api/{self.session}/groups/{group_id}/settings/security/messages-admin-only",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/settings/security/messages-admin-only",
             timeout=15,
             json={"value": on},
             headers=self._headers(json=True),
@@ -1308,7 +1313,7 @@ class WahaClient(LinePolicyGuard):
         """DELETE /api/{session}/chats/{chatId}/messages/{messageId}."""
         response = await self._request(
             "delete",
-            f"/api/{self.session}/chats/{chat_id}/messages/{message_id}",
+            f"/api/{_seg(self.session)}/chats/{_seg(chat_id)}/messages/{_seg(message_id)}",
             timeout=15,
             headers=self._headers(),
         )
@@ -1318,7 +1323,7 @@ class WahaClient(LinePolicyGuard):
         """POST /api/{session}/groups/{id}/leave."""
         response = await self._request(
             "post",
-            f"/api/{self.session}/groups/{group_id}/leave",
+            f"/api/{_seg(self.session)}/groups/{_seg(group_id)}/leave",
             timeout=15,
             headers=self._headers(json=True),
         )

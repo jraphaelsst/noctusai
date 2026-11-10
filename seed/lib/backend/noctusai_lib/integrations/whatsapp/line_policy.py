@@ -27,12 +27,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import posixpath
 import re
 import threading
 from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Protocol
+from urllib.parse import quote, unquote
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,8 @@ _POLICY_KEYS = ("send", "mark_online", "full_sync", "auto_repair")
 #: lines are DB-sourced (a connection row holds the URL) and so cannot be named by one ``<PRODUCT>_WAHA_LINE_POLICY``.
 LINE_POLICIES_ENV = "WAHA_LINE_POLICIES"
 
+#: registry key under which a FakeWahaClient resolves its policy (no real URL exists for a fake)
+FAKE_LINE_URL = "fake://waha"
 EVENT_WRITE_REFUSED = "whatsapp.line.write_refused"
 EVENT_REPAIR_REFUSED = "whatsapp.line.repair_refused"
 
@@ -125,26 +129,51 @@ def parse_line_policy(raw: "str | Mapping[str, Any]") -> LinePolicy:
 
 #: The decision table, ONE place. It is MIRRORED by the edge deny proxy's nginx `map` (rendered by
 #: `noctus.dev.waha_instance`; a test evaluates the rendered map against `is_whatsapp_write` over a path matrix).
-#: Case-insensitive on purpose: WAHA's router is. Order matters, first match wins:
-#:   1. the session lifecycle / config / QR (`/api/sessions...`) is NOT a WhatsApp write, any verb;
-#:   2. a read verb on a send-class path IS (WAHA still serves some sends on GET);
-#:   3. any other read verb is a read;
-#:   4. everything else -- every non-read verb on any other path, unknown endpoints included -- is a write.
-_SESSION_LIFECYCLE = re.compile(r"^/api/sessions(/|$)", re.IGNORECASE)
+#: Case-insensitive on purpose: WAHA's router is. Order matters, first match wins. On a `send: disabled` line:
+#:   1. `POST /api/sessions/{name}/start` passes (the pairing entry point; its config is written FROM the policy);
+#:   2. a read verb on a send-class path IS a write (WAHA still serves some sends on GET);
+#:   3. any other read verb passes (this includes `GET /api/sessions...` and the QR);
+#:   4. everything else is a write: logout, stop, restart, DELETE, a session-config PUT (it could set markOnline or move
+#:      webhooks -- the client's own policy-derived config PUT is the only exception, see `policy_config`), every
+#:      non-read verb on any other path, unknown endpoints included.
+_SESSION_START = re.compile(r"^/api/sessions/[^/]+/start$", re.IGNORECASE)
+_SESSION_CONFIG_PUT = re.compile(r"^/api/sessions/[^/]+$", re.IGNORECASE)
 _SEND_CLASS = re.compile(r"^/api/(send|reaction|starttyping|stoptyping|forwardmessage)", re.IGNORECASE)
 _READ_VERBS = ("GET", "HEAD", "OPTIONS")
 
 
-def is_whatsapp_write(method: str, path: str) -> bool:
-    """True when ``method path`` writes to WhatsApp (or might: the allow-list is the session lifecycle + plain reads,
-    never the other way round). ``path`` is the WAHA path or a full URL."""
-    verb = method.upper()
-    p = re.sub(r"^https?://[^/]+", "", path).split("?", 1)[0]
-    if _SESSION_LIFECYCLE.match(p):
+def seg(value: str) -> str:
+    """Percent-encode ONE path segment: ``/`` and ``?`` can never leave the segment and ``.`` / ``..`` can never be a
+    dot-segment (httpx would normalise them away and reroute the request: ``/api/sessions/../sendText``)."""
+    out = quote(str(value), safe="@")
+    return out.replace(".", "%2E") if ".." in out or out == "." else out
+
+
+def _paths(path: str) -> list[str]:
+    raw = re.sub(r"^https?://[^/]+", "", path).split("?", 1)[0]
+    norm = posixpath.normpath(unquote(raw)) if raw else raw
+    if raw.startswith("/") and not norm.startswith("/"):
+        norm = "/" + norm
+    return [raw, norm] if norm != raw else [raw]
+
+
+def _classify(verb: str, p: str) -> bool:
+    if verb == "POST" and _SESSION_START.match(p):
         return False
     if verb in _READ_VERBS:
         return bool(_SEND_CLASS.match(p))
     return True
+
+
+def is_whatsapp_write(method: str, path: str) -> bool:
+    """True when ``method path`` writes to WhatsApp (or might: the allow-list is session start + plain reads, never the
+    other way round). Judged on BOTH the raw and the dot-normalised path: either one being a write makes it one."""
+    verb = method.upper()
+    return any(_classify(verb, p) for p in _paths(path))
+
+
+def is_session_config_put(method: str, path: str) -> bool:
+    return method.upper() == "PUT" and all(_SESSION_CONFIG_PUT.match(p) for p in _paths(path))
 
 
 def redact_path(path: str) -> str:
@@ -207,9 +236,26 @@ def _key(base_url: str, session: Optional[str]) -> str:
     return f"{base}#{session}" if session else base
 
 
-def register_line_policy(base_url: str, policy: LinePolicy, *, session: Optional[str] = None) -> None:
+def _check_registrable(base_url: str, policy: LinePolicy, allow_memory_sink: bool) -> None:
+    # NOC-REMEDIATE[line-event-persistence]: refusal events reach only the in-memory sink until S2 (products/assistant)
+    # ships its append-only events table and calls set_default_line_event_sink(...). Until then a send:disabled line
+    # cannot be registered without an explicit allow_memory_sink=True (tests only) -- a refusal nobody can audit later
+    # must not be what protects a personal number. — 2026-11-10
+    if not policy.send_enabled and isinstance(_default_sink, InMemoryLineEventSink) and not allow_memory_sink:
+        raise LinePolicyError(
+            f"line {base_url!r}: refusing to register `send: disabled` while the event sink is in-memory "
+            "(refusals would not be persisted); call set_default_line_event_sink(<persistent sink>) first"
+        )
+
+
+def register_line_policy(
+    base_url: str, policy: LinePolicy, *, session: Optional[str] = None, allow_memory_sink: bool = False
+) -> None:
     """Declare a line's policy at product boot. ``base_url="*"`` is the process-wide default (legacy products whose
-    lines are DB-sourced); a product that should be strict never registers it."""
+    lines are DB-sourced); it cannot carry a session. A strict line is never given a ``"*"``."""
+    if base_url == "*" and session:
+        raise LinePolicyError('"*" is the process-wide default and cannot be scoped to a session')
+    _check_registrable(base_url, policy, allow_memory_sink)
     with _lock:
         if base_url == "*":
             _registry["*"] = replace(policy, config_authority=False)
@@ -224,8 +270,11 @@ def clear_line_policies() -> None:
         _env_loaded = False
 
 
-def load_line_policies_from_env(environ: Optional[Mapping[str, str]] = None) -> int:
-    """Register every entry of ``WAHA_LINE_POLICIES`` (JSON map). Raises :class:`LinePolicyError` on a bad value."""
+def load_line_policies_from_env(
+    environ: Optional[Mapping[str, str]] = None, *, allow_memory_sink: bool = False
+) -> int:
+    """Register every entry of ``WAHA_LINE_POLICIES`` (JSON map) ATOMICALLY: everything is parsed and validated first,
+    so a bad entry registers nothing. Raises :class:`LinePolicyError`."""
     env = os.environ if environ is None else environ
     raw = env.get(LINE_POLICIES_ENV, "").strip()
     if not raw:
@@ -236,21 +285,25 @@ def load_line_policies_from_env(environ: Optional[Mapping[str, str]] = None) -> 
         raise LinePolicyError(f"{LINE_POLICIES_ENV} is not valid JSON: {exc}") from exc
     if not isinstance(mapping, dict):
         raise LinePolicyError(f"{LINE_POLICIES_ENV} must be a JSON object")
+    parsed: list[tuple[str, Optional[str], LinePolicy]] = []
     for url, spec in mapping.items():
         base, _, session = str(url).partition("#")
-        register_line_policy(base if base != "*" else "*", parse_line_policy(spec), session=session or None)
-    return len(mapping)
+        if base == "*" and session:
+            raise LinePolicyError(f'{LINE_POLICIES_ENV}: "{url}" -- "*" cannot be scoped to a session')
+        policy = parse_line_policy(spec)
+        _check_registrable(base, policy, allow_memory_sink)
+        parsed.append((base, session or None, policy))
+    for base, session, policy in parsed:
+        register_line_policy(base, policy, session=session, allow_memory_sink=allow_memory_sink)
+    return len(parsed)
 
 
 def resolve_line_policy(base_url: str, session: Optional[str] = None) -> LinePolicy:
     """(url, session) -> (url) -> ``"*"`` -> :data:`UNDECLARED` (fail-closed)."""
     global _env_loaded
     if not _env_loaded:
-        with _lock:
-            already = _env_loaded
-            _env_loaded = True
-        if not already:
-            load_line_policies_from_env()
+        load_line_policies_from_env()  # raises on a bad value: loud on EVERY call, never a silent UNDECLARED
+        _env_loaded = True
     with _lock:
         for key in (_key(base_url, session), _key(base_url, None), "*"):
             if key in _registry:
@@ -279,14 +332,37 @@ class LinePolicyGuard:
     def _refusal_reason(self) -> str:
         return "send_disabled" if self.line_policy.declared else "no_line_policy"
 
-    def _guard_write(self, method: str, path: str) -> None:
-        if self.line_policy.send_enabled or not is_whatsapp_write(method, path):
+    def _config_policy(self) -> "LinePolicy | None":
+        """The policy that drives session-config writes. Declared + config-authoritative: the line's own policy. The
+        legacy ``"*"`` default: None (existing keys preserved). UNDECLARED: its (all-off) flags -- never WAHA's defaults."""
+        p = self.line_policy
+        if not p.declared:
+            return UNDECLARED
+        return p if p.config_authority else None
+
+    def _guard_write(self, method: str, path: str, *, policy_config: bool = False) -> None:
+        if self.line_policy.send_enabled:
+            return
+        if policy_config and is_session_config_put(method, path):
+            return  # the client's own policy-derived config PUT (markOnline/fullSync come FROM the policy)
+        if not is_whatsapp_write(method, path):
             return
         reason = self._refusal_reason()
         endpoint = redact_path(path)
         self.line_event_sink.record(LineEvent(
             EVENT_WRITE_REFUSED, self._line_label, f"{method.upper()} {endpoint}", reason, self.line_policy.as_dict()))
         raise LineWriteRefused(line=self._line_label, method=method.upper(), path=endpoint, reason=reason)
+
+    def _final_url_hook(self, policy_config: bool = False):
+        """httpx request event hook (sync + async twins): re-judges the FINAL request URL after httpx has built and
+        normalised it, so no spelling of the path can slip past the pre-check."""
+        def check(request) -> None:
+            self._guard_write(request.method, request.url.path, policy_config=policy_config)
+
+        async def acheck(request) -> None:
+            check(request)
+
+        return check, acheck
 
     def _guard_repair(self, op: str) -> None:
         if self.line_policy.auto_repair:

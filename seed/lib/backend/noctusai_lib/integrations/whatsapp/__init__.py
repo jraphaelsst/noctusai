@@ -118,6 +118,7 @@ from noctusai_lib.integrations.whatsapp.meta_cloud_client import (
     MetaCloudClient,
 )
 from noctusai_lib.integrations.whatsapp.line_policy import (
+    FAKE_LINE_URL,
     UNDECLARED,
     InMemoryLineEventSink,
     LineEvent,
@@ -249,6 +250,7 @@ __all__ = [
     "LineRepairRefused",
     "LineWriteRefused",
     "PolicyReadback",
+    "FAKE_LINE_URL",
     "UNDECLARED",
     "check_session_against_policy",
     "clear_line_policies",

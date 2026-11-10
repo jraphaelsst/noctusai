@@ -139,9 +139,14 @@ def make_waha_client_resolver(
     from noctusai_lib.integrations.whatsapp import get_whatsapp_client
 
     read_purpose = purpose_of or (lambda rec: str((rec.extra or {}).get("purpose") or PURPOSE_GENERAL))
-    build = client_factory or (
-        lambda rec: get_whatsapp_client(base_url=rec.base_url, api_key=rec.api_key, session=rec.session_name)
-    )
+    def _factory(rec: Any) -> Any:
+        if not rec.base_url:
+            # get_whatsapp_client("") would hand back a FakeWahaClient: a reminder would "succeed" without leaving the
+            # process. The inbox router answers 503 here; the domain layer's equivalent is a permanent send error.
+            raise ReminderSendError("linha de WhatsApp sem servidor configurado (base_url vazio)", transient=False)
+        return get_whatsapp_client(base_url=rec.base_url, api_key=rec.api_key, session=rec.session_name)
+
+    build = client_factory or _factory
 
     def resolve(org_id: str) -> Any:
         records = store.list_connections(org_id=UUID(str(org_id)))

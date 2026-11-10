@@ -29,6 +29,7 @@ EDGE = DATA + """  - name: probe
     product: assistant-x
     line_policy: {send: disabled, mark_online: false, full_sync: false, auto_repair: false}
     edge_deny_writes: true
+    webhook_upstream: http://assistant-x:8030
     dashboard: false
 """
 
@@ -169,6 +170,16 @@ class TestEdgeAndDashboard:
         assert edge["image"].startswith("nginx:") and edge["container_name"] == "noctus-waha-probe"
         assert "waha-probe-core:3000" in edge["environment"]["EDGE_CONF"]
         assert "ports" not in core and "ports" not in edge
+        # item 8: the core is on a PRIVATE network only (nothing on noctus-net can skip the edge); the edge bridges both
+        assert core["networks"] == ["waha_probe_edge"] and edge["networks"] == ["noctus-net", "waha_probe_edge"]
+        assert d["networks"]["waha_probe_edge"] == {"name": "noctus-waha-probe-edge"}
+        # what was judged is what is forwarded: the normalised $uri, never the raw request line
+        assert "proxy_pass $$up$$uri$$is_args$$args;" in edge["environment"]["EDGE_CONF"]
+        assert "set $$hook http://assistant-x:8030;" in edge["environment"]["EDGE_CONF"]
+
+    def test_edge_requires_a_webhook_upstream(self):
+        with pytest.raises(ValueError, match="webhook_upstream"):
+            wi.parse_instances(EDGE.replace("    webhook_upstream: http://assistant-x:8030\n", ""))
 
     def test_rendered_edge_decision_table_equals_the_seed_classifier(self):
         """Evaluate the rendered nginx `map` (first regex match wins, `~*` = case-insensitive) over a path matrix and
@@ -186,8 +197,12 @@ class TestEdgeAndDashboard:
         block = re.search(r"map \"[^\"]+\" \$wa_write \{(.*?)\n\}", conf, re.S).group(1)
         rules = re.findall(r'^\s*(default|"~\* (.*?)")\s+(\d);', block, re.M)
 
+        import posixpath
+        from urllib.parse import unquote
+
         def edge_denies(method: str, uri: str) -> bool:
-            subject = f"{method} {uri}"
+            # nginx's $uri: percent-decoded and dot-resolved BEFORE the map sees it
+            subject = f"{method} {posixpath.normpath(unquote(uri))}"
             for key, rx, val in rules:  # nginx `map`: regex keys in order of appearance; `default` is the fallback
                 if key != "default" and re.search(rx, subject, re.I):
                     return val == "1"
@@ -199,6 +214,9 @@ class TestEdgeAndDashboard:
             "/api/contacts/check-exists", "/api/files/x.jpg", "/api/sessions", "/api/sessions/default",
             "/api/sessions/default/start", "/api/sessionsX", "/api/default/auth/qr", "/ping", "/api/unknown",
             "/api/default/status/text", "/api/default/profile/name",
+            "/api/sessions/default/logout", "/api/sessions/default/stop", "/api/sessions/default/restart",
+            "/api/sessions/../sendText", "/api/default/chats/../../sendText", "/api/sessions/default/start/../../../sendSeen",
+            "/api/default/chats/%2e%2e/%2e%2e/sendText", "/api/SESSIONS/default/START",
         )]
         for method, path in matrix:
             assert edge_denies(method, path) is lp.is_whatsapp_write(method, path), (method, path)
@@ -224,3 +242,23 @@ class TestProdComposeCarriesThePolicy:
         assert check_waha_instances_render_sync(repo_root=self._root(tmp_path / "a", bad))
         good = "      MONICA_WAHA_LINE_POLICY: '{\"send\":\"enabled\",\"mark_online\":true,\"full_sync\":true,\"auto_repair\":true}'\n"
         assert check_waha_instances_render_sync(repo_root=self._root(tmp_path / "b", good)) == []
+
+
+class TestActiveProductsDeclarePolicy:
+    def _tree(self, tmp_path, svc_env: str):
+        root = _tree(tmp_path)
+        (root / "deploy/fleet/active-scope.txt").write_text("core\nshop\n")
+        app = root / "products/shop/backend/app"
+        app.mkdir(parents=True)
+        (app / "x.py").write_text("from noctusai_lib.integrations.whatsapp import get_whatsapp_client\n")
+        (root / "deploy/fleet/docker-compose.prod.yml").write_text(
+            "services:\n  shop:\n    image: x\n    environment:\n      A: b\n" + svc_env + "  other:\n    image: y\n")
+        return root
+
+    def test_a_deployed_product_that_builds_waha_clients_without_a_policy_is_flagged(self, tmp_path):
+        out = check_waha_instances_render_sync(repo_root=self._tree(tmp_path, ""))
+        assert [i["symbol"] for i in out] == ["waha-product-without-line-policy"]
+
+    def test_either_declaration_form_passes(self, tmp_path):
+        for n, env in enumerate(("      SHOP_WAHA_LINE_POLICY: '{}'\n", "      WAHA_LINE_POLICIES: '{}'\n")):
+            assert check_waha_instances_render_sync(repo_root=self._tree(tmp_path / str(n), env)) == []

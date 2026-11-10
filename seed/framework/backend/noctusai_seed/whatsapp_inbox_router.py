@@ -169,8 +169,15 @@ def create_whatsapp_inbox_router(
     mirror_read_to_whatsapp: bool = False,
     backfill_kwargs: Optional[dict[str, Any]] = None,
     should_store: Optional[ShouldStore] = None,
+    read_only: bool = False,
 ) -> APIRouter:
-    """Build the inbox router (authenticated routes + the public webhook)."""
+    """Build the inbox router (authenticated routes + the public webhook).
+
+    ``read_only=True`` (a shadow line): the send and backfill routes are NOT MOUNTED (construction layer of the
+    zero-write defence, KB § whatsapp.md § 6a) and the read mirror to WhatsApp is forced off; mark-read stays local.
+    """
+    if read_only:
+        mirror_read_to_whatsapp = False
     router = APIRouter(tags=["WhatsApp Inbox"])
     backfill_kwargs = dict(backfill_kwargs or {})
 
@@ -374,7 +381,8 @@ def create_whatsapp_inbox_router(
 
         async def _run() -> None:
             report = await backfill_connection(
-                record=record, chat_store=chats, waha_client=client, lid_cache=lid_cache, **backfill_kwargs
+                record=record, chat_store=chats, waha_client=client, lid_cache=lid_cache,
+                should_store=should_store, **backfill_kwargs
             )
             logger.info(
                 "inbox backfill connection=%s status=%s chats=%d messages=%d",
@@ -452,6 +460,8 @@ def create_whatsapp_inbox_router(
             return None
         return waha_client_factory(base_url=full.base_url, api_key=full.api_key, session=full.session_name)
 
+    if read_only:
+        router.routes[:] = [r for r in router.routes if getattr(r, "name", None) not in ("send_message", "start_backfill")]
     return router
 
 

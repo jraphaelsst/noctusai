@@ -25737,6 +25737,55 @@ def check_tunnel_ingress_snapshot_sync(
     }]
 
 
+_WAHA_CLIENT_NAMES = frozenset({
+    "get_whatsapp_client", "make_waha_client_resolver", "create_whatsapp_inbox_router",
+    "create_whatsapp_connections_router", "send_text_to_phone", "WhatsAppConnectionStore",
+})
+
+
+def _uses_waha_client(source: str) -> bool:
+    """AST, not text: a comment or docstring that merely NAMES the factory is not a use."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in _WAHA_CLIENT_NAMES:
+            return True
+        if isinstance(node, ast.Attribute) and node.attr in _WAHA_CLIENT_NAMES:
+            return True
+        if isinstance(node, ast.alias) and node.name.split(".")[-1] in _WAHA_CLIENT_NAMES:
+            return True
+    return False
+
+
+def _waha_products_without_policy(root: Path, compose_text: str) -> list[dict]:
+    """Every ACTIVE product that builds a WAHA client and is deployed (has a service in docker-compose.prod.yml) MUST
+    carry a declared line policy there (`<PRODUCT>_WAHA_LINE_POLICY` or `WAHA_LINE_POLICIES`) -- otherwise the seed
+    refuses every write on its lines at runtime (fail-closed) and nobody finds out until a send fails."""
+    out: list[dict] = []
+    for d in _active_product_dirs(root / "products"):
+        app_dir = d / "backend" / "app"
+        if not app_dir.is_dir():
+            continue
+        m = re.search(rf"^  {re.escape(d.name)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|^\S|\Z)", compose_text, re.M | re.S)
+        if not m:
+            continue  # not deployed: no prod service to carry a policy
+        uses = any(
+            _uses_waha_client(f.read_text(encoding="utf-8", errors="ignore"))
+            for f in app_dir.rglob("*.py") if "tests" not in f.parts and not f.name.startswith("test_")
+        )
+        if uses and not re.search(r"WAHA_LINE_POLICY|WAHA_LINE_POLICIES", m.group(1)):
+            out.append({
+                "file": "deploy/fleet/docker-compose.prod.yml",
+                "issue": (f"product `{d.name}` builds WAHA clients but its prod service declares no line policy "
+                          f"(`{d.name.upper().replace('-', '_')}_WAHA_LINE_POLICY` or `WAHA_LINE_POLICIES`) -- the seed "
+                          "would refuse every write on its lines (fail-closed). KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."),
+                "severity": "high", "symbol": "waha-product-without-line-policy",
+            })
+    return out
+
+
 def _waha_product_policy_env_issues(root: Path, data_p: Path) -> list[dict]:
     """A product service in docker-compose.prod.yml that points `<PRODUCT>_WAHA_BASE_URL` at a declared instance MUST
     carry `<PRODUCT>_WAHA_LINE_POLICY` equal to that instance's declared `line_policy` (the platform ceiling) --
@@ -25750,7 +25799,7 @@ def _waha_product_policy_env_issues(root: Path, data_p: Path) -> list[dict]:
     except Exception:
         return []  # the caller already reports an unparseable declaration
     text = prod.read_text(encoding="utf-8")
-    out: list[dict] = []
+    out: list[dict] = _waha_products_without_policy(root, text)
     for inst in spec["instances"]:
         up = inst["product"].upper().replace("-", "_")
         if not re.search(rf"^\s*{up}_WAHA_BASE_URL:\s*http://waha-{re.escape(inst['name'])}:3000\s*$", text, re.M):

@@ -12,6 +12,7 @@ per `KB § PATTERNS/seed-fake-real-adapter.md`.
 from __future__ import annotations
 
 import asyncio
+import copy
 from typing import Any
 
 from noctusai_lib.integrations.whatsapp.client import (
@@ -22,16 +23,18 @@ from noctusai_lib.integrations.whatsapp.client import (
     WahaSessionNotReady,
     WahaWebhookError,
     _default_owned_prefix,
+    _session_config,
     _webhook_owned,
     recovery_outcome,
 )
 from noctusai_lib.integrations.whatsapp.line_policy import (
-    SEND_ENABLED,
+    FAKE_LINE_URL,
     LineEventSink,
     LinePolicy,
     LinePolicyGuard,
     PolicyReadback,
     check_session_against_policy,
+    resolve_line_policy,
 )
 from noctusai_lib.integrations.whatsapp.types import (
     GroupInfo,
@@ -70,13 +73,15 @@ class FakeWahaClient(LinePolicyGuard):
         line_event_sink: LineEventSink | None = None,
     ):
         self.session = session
-        # Same policy contract as WahaClient (KB § whatsapp.md § 6a). No policy passed = an unconfigured dev/test
-        # stand-in (everything enabled, so existing suites keep driving it); pass `UNDECLARED` to exercise fail-closed.
+        # Same policy contract as WahaClient (KB § whatsapp.md § 6a): explicit > the SAME registry (key `fake://waha`,
+        # then "*") > fail-closed UNDECLARED. A suite that drives sends declares `"*"` through the public registry.
         self._init_line_policy(
             label=f"fake#{session}",
-            policy=line_policy or LinePolicy(SEND_ENABLED, True, True, True),
+            policy=line_policy or resolve_line_policy(FAKE_LINE_URL, session),
             sink=line_event_sink,
         )
+        #: the `noweb` block the last `start_session` actually wrote (None before any start) -- what get_session echoes.
+        self.session_noweb: dict[str, Any] | None = None
         self.sent_messages: list[dict[str, Any]] = []
         self.inbound_queue: list[WhatsAppInboundMessage] = []
         self.media_bytes: dict[str, bytes] = {}
@@ -253,10 +258,7 @@ class FakeWahaClient(LinePolicyGuard):
             "engine": {"engine": "FAKE"},
             "config": {
                 "webhooks": [dict(h) for h in self.session_webhooks],
-                "noweb": {
-                    "markOnline": self.line_policy.mark_online,
-                    "store": {"enabled": True, "fullSync": self.line_policy.full_sync},
-                },
+                **({"noweb": copy.deepcopy(self.session_noweb)} if self.session_noweb else {}),
             },
         }
 
@@ -265,6 +267,9 @@ class FakeWahaClient(LinePolicyGuard):
 
     async def start_session(self) -> dict[str, Any]:
         self.start_count += 1
+        # what a real start writes: the line policy's flags (UNDECLARED's when undeclared), or the legacy default
+        self.last_start_payload = _session_config(policy=self._config_policy())
+        self.session_noweb = copy.deepcopy(self.last_start_payload["config"]["noweb"])
         if self.credentials_dead:
             # Mirrors WAHA answering 409 "already started" on a session
             # that's genuinely stuck — nothing changes; the caller must

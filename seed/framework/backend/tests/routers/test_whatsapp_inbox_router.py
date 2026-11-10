@@ -17,6 +17,18 @@ from urllib.parse import urlparse
 from unittest.mock import MagicMock
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _legacy_enabled_line_policy():
+    """These suites drive a FakeWahaClient through the routers' sends: declare the legacy process default (`send:
+    enabled`) through the PUBLIC registry; fail-closed behaviour is covered in the lib suite."""
+    from noctusai_lib.integrations.whatsapp import LinePolicy, clear_line_policies, register_line_policy
+
+    clear_line_policies()
+    register_line_policy("*", LinePolicy("enabled", True, True, True))
+    yield
+    clear_line_policies()
 from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
@@ -556,3 +568,20 @@ def test_purge_is_org_scoped_and_strict_401():
     assert TestClient(app).post(
         f"/api/whatsapp/connections/{conn_id}/purge", json={"confirm": "Mônica"}
     ).status_code == 404
+
+
+def test_read_only_router_does_not_mount_send_or_backfill_and_never_mirrors_reads():
+    """A shadow line: construction layer of the zero-write defence. The routes simply do not exist."""
+    from noctusai_seed.whatsapp_inbox_router import create_whatsapp_inbox_router
+
+    def build(read_only):
+        r = create_whatsapp_inbox_router(
+            chat_store_factory=lambda: None, connection_store_factory=lambda: None,
+            get_current_user_org=lambda: None, mirror_read_to_whatsapp=True, read_only=read_only,
+        )
+        return {(m, route.path) for route in r.routes for m in getattr(route, "methods", ())}
+
+    full, ro = build(False), build(True)
+    sends = {x for x in full if x[0] == "POST" and (x[1].endswith("/messages") or x[1].endswith("/backfill"))}
+    assert len(sends) == 2 and sends.isdisjoint(ro)
+    assert {x for x in full if x[0] == "GET"} <= ro and any(p.endswith("/read") for _, p in ro)
