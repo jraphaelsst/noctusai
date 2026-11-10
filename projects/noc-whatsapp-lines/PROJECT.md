@@ -24,7 +24,7 @@ So this project is **three WhatsApp lines on ONE server (the noc VPS), one WAHA 
 | Line | Number | Who talks on it | Owning work |
 |---|---|---|---|
 | **L1** | the owner's **business** number | **Julia** (One imobiliária SDR, agents product) | `agents` session (this branch) + SW session `noctusai-e1` for Julia's SW wiring |
-| **L2** | the owner's **personal** number | the owner's **Assistant** (products/assistant) | Assistant session (`feat/assistant-chatbot`, branch steward) |
+| **L2** | the owner's **personal** number (D46), read-only shadow mode | the owner's **Assistant** (products/assistant) | Assistant session (`feat/assistant-chatbot`, branch steward) |
 | **L3** | a **third** number, to be bought | **noc's own agent**, which also sends every owner notification | `agents` session (this branch), built LAST |
 
 Validation ladder (the owner's "probe"):
@@ -118,6 +118,8 @@ noc VPS
 **Improvements:** NOC-FILL-IMPROVEMENTS
 
 ### Phase 1 — V1: Julia and the Assistant on separate lines, one server
+- [ ] Retire the One Chat leftovers (bot routes, catalog row, docs), with Julia as the line (`feat/one-chat-retire`). SW hunks are reviewed by `noctusai-e1`.
+- [ ] Add a `julia` (L1) entry in `waha-instances.yml`, pinned with a healthcheck. Re-point One's `whatsapp_connections.base_url` to it. The owner re-scans …4172 there, then the legacy `noctus-services-waha-1` retires.
 - [ ] The Assistant session lands its WAHA-per-container mechanism (their branch).
 - [ ] Julia moves to the business number on her own container (owner scans the QR).
 - [ ] V1 probe: both lines live, isolated, healthy for 24 h.
@@ -138,8 +140,15 @@ noc VPS
 
 ## 7. Open questions (owner)
 
-1. The Assistant on your **personal** number? The Assistant session asks you directly and records the answer as D46. Until
-   then D42 (spare/burnable number) stands for L2.
+1. ~~The Assistant on your personal number?~~ **Answered (D46, Assistant spec rev 18):** the Assistant goes on the
+   PERSONAL number in READ-ONLY shadow mode. It stores inbound messages, runs the implied request and stores the reply it
+   would send, and sends nothing (`send: disabled`). Its first job is to classify "about scheduling or not". D42 is
+   superseded.
+1b. ~~Which number is L1?~~ **Answered (owner, 2026-11-10):** the existing One Chat line …4172. "julia is the new one
+   chat"; the One Chat leftovers should have been erased when Julia came in, so they are retired in Phase 1
+   (`feat/one-chat-retire`). Phase 1 moves …4172 into its own registry container.
+   - Note: the memory from 2026-11-04 said Julia and owner notifications share ONE number. Today's decision supersedes
+     it: owner notifications go on L3 (noc's line), never a client's line.
 2. When will the third number exist? Phase 3 starts then. Until then the owner line has no sender, so the eval-loop
    gate stays held: there's no interim channel.
 3. Which number(s) receive owner notifications: only yours, or also a second admin?
