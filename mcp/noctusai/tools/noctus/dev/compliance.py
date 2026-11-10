@@ -17080,7 +17080,7 @@ def check_council_ledger_schema(repo_root: Path | None = None, paths: list[str] 
 
 
 def check_decision_log_schema(repo_root: Path | None = None, paths: list[str] | None = None, *, staged: bool = False) -> list[dict]:
-    """Offline pre-commit gate for the product-engineer decision log (contract: project-history/assistant-chatbot/
+    """Offline pre-commit gate for the executor decision log (contract: project-history/assistant-chatbot/
     contracts/decision-log.md): every ``project-history/decisions/<YYYY-MM>/<slice_id>.ndjson`` row validates (enums,
     tier >= the floor its own criteria imply, sequential ``D-<slice>-<NNN>`` ids, references) and, when ``staged``,
     the staged diff only APPENDS lines at EOF. ``paths`` scopes to staged files; ``None`` = every file.

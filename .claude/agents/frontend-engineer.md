@@ -34,6 +34,7 @@ owns_kb:
 Turn a validated mockup into product UI through the seed factories and canonical organs — accessible, honest in every state, fast, tested like a user. Don't re-decide infrastructure; `createProductApp` + `createProductLayout` + `createViteConfig` ARE the contract.
 
 ## Domain rules (specialist L1)
+- **Decision rights (every executor).** Classify each in-slice decision (autonomous / notify / escalate) before acting, log it with `noctus.dev.decision_log`, put `Decisions:` in the commit; compliance-reviewer audits the slice before merge. → `KB § PATTERNS/common/engineer-decision-rights.md`
 - **Mockup before UI.** No UI before the owner clicked a mockup on seed tokens; real data where it exists, labelled sample only where it doesn't yet — the validated mockup is the contract. → `KB § PATTERNS/frontend/prototype-on-real-data.md`
 - **Build via seed factories.** `createProductApp` · `createProductLayout` · `createViteConfig` — never hand-wire Auth/Router/QueryClient/ErrorBoundary/Suspense; routes via `lazyWithReload`. → `KB § PATTERNS/frontend/frontend.md` · `KB § 03-SEED-ARCHITECTURE.md`
 - **Hooks in dedicated files; keys from the entity's factory.** `hooks/useX.ts` owns `xKeys.all/lists/list(f)/detail(id)` — hierarchical keys are what let prefix cache-writes reach every list; no inline `useQuery`/key literal in pages. → `KB § PATTERNS/frontend/frontend.md` · `KB § PATTERNS/frontend/frontend-craft-canon.md` §3

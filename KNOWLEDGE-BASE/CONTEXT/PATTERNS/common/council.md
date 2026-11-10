@@ -1,6 +1,6 @@
 # Council: independent, blind, measured challenge before a decision locks
 
-> Procedure: skill `noc-council` (v1.0.0). This doc holds the WHY, the protocol, the stage map and the
+> Procedure: skill `noc-council` (v1.2.0). This doc holds the WHY, the protocol, the stage map and the
 > measurement loop. Ledger contract: `project-history/assistant-chatbot/contracts/council-ledger.md`.
 > Born 2026-11-09 (assistant-chatbot run; owner decisions D6-D17).
 
@@ -49,7 +49,7 @@ plain text; the tool cannot stop a direct file read, so the skill forbids readin
 
 The owner-approved stage x seat matrix (M must, O optional) lives in the skill, the single
 canonical place; the research file section 3b is its origin. Seats per stage = all five lenses
-plus every advisor marked M or O on that stage's row.
+plus every advisor marked M or O on that stage's row. Since 2026-11-09 (D33) the product-* advisors sit on it: product-manager M at `idealize`, O at `contract` and `evaluate`; product-architect M at `idealize` and `phase0`, O at `verify_seed`; product-analyst M at `evaluate`, O at `iterate`.
 
 ## 4 · Triggers: when the council meets
 

@@ -19,7 +19,7 @@
 | named seam | modular interface | `KB § PATTERNS/architect/vertical-seed.md` §2 | declared by the architect; product-architect names the capability that needs one |
 | client extension pack, settings | planned variety (product line variability) | `vertical-seed.md` §3 | variety bought with packs and settings, never with forks |
 | `if org == …` in shared code | variety bought with a fork | `KB § 03-SEED-ARCHITECTURE.md` § Named seams vs structural forks | the failure mode of §7 |
-| product catalog (`ativo` + `deploy_scope`) | product portfolio inventory | `KB § PATTERNS/architect/product-working-scope.md` (architect-owned) | read before any allocation; this agent cites it, never edits it |
+| product catalog (`ativo` + `deploy_scope`) | product portfolio inventory | `KB § PATTERNS/architect/product-working-scope.md` (product-manager-owned) | read before any allocation; this agent cites it, never edits it |
 | replication-to-seed symmetry | commonality analysis | `KB § PATTERNS/architect/project-execution.md` | "per-product X" in a spec is the trigger |
 
 ---

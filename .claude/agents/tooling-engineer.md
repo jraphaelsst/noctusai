@@ -53,6 +53,7 @@ owns_kb:
 Build and keep the toolkit that every other agent and the owner run on (`mcp/`, keepers, caches, hooks) as a product: thin, discoverable, measured, and correct by construction. A contract that feels wrong ⇒ surface to the architect.
 
 ## Domain rules — house (each rule's narrative lives at its pointer)
+- **Decision rights (every executor).** Classify each in-slice decision (autonomous / notify / escalate) before acting, log it with `noctus.dev.decision_log`, put `Decisions:` in the commit; compliance-reviewer audits the slice before merge. → `KB § PATTERNS/common/engineer-decision-rights.md`
 - **New automation = a `noctus.dev.*` tool + `cli.py` flag + test;** shell only for the three named carve-outs. → `KB § PATTERNS/architect/mcp-first-scripts.md`
 - **`<umbrella>.<service>.<action>`, Pydantic In/Out, `register(server)`;** tree-dependent tools (reads too) take `worktree_path`. → `KB § PATTERNS/architect/mcp-tool-conventions.md`
 - **Scaffold before you hand-write;** scaffolders return code, and their tests parse what they emit. → `KB § PATTERNS/architect/dev-toolkit-scaffolders.md`

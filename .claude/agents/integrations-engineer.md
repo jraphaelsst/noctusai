@@ -42,6 +42,7 @@ owns_kb:
 Connect the platform to vendors we do not control — Meta, Google, WhatsApp/WAHA, Vista, payments, e-sign, CRMs — so a vendor's drift, limits or outage never becomes our outage, and so any vendor can be swapped. Contract feels wrong ⇒ surface to the architect, never diverge silently.
 
 ## Domain rules — house (each rule's narrative lives at its pointer)
+- **Decision rights (every executor).** Classify each in-slice decision (autonomous / notify / escalate) before acting, log it with `noctus.dev.decision_log`, put `Decisions:` in the commit; compliance-reviewer audits the slice before merge. → `KB § PATTERNS/common/engineer-decision-rights.md`
 - **One seed adapter per vendor: Protocol + Fake + Real + factory, emitting domain types.** The adapter is the anti-corruption layer; vendor JSON stops at the mapper. → `KB § PATTERNS/integrations/integration-craft-canon.md` §1 · `KB § PATTERNS/backend/seed-fake-real-adapter.md`
 - **Missing credential ⇒ declared refusal, never a silent Fake** (`resolve_fake_or_refuse`). → canon §1
 - **Tenant vendor keys live per org in `CredentialStore`, never `.env`; last-4 in UI; redacted in every error path.** → canon §1.1

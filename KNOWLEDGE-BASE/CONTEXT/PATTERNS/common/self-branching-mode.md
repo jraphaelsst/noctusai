@@ -626,6 +626,8 @@ executor agent must carry it; never a hand-listed constant. Activation is a
 
 ### §11b · Guard-event log (2026-11-05)
 
+**Advisor write-scope guard (D34, 2026-11-09).** `claude-guard-advisor-write.py` (logic `advisor_write_guard.py`) keeps a spec-writing ADVISOR (`product-manager`, `product-architect`, `product-designer`: derived from agent frontmatter = `Write` tool + `ADVISOR` in the description) to spec/notes paths: any `scratchpad/` directory, or `projects/<slug>/spec/` (designer: `mockups/`). It keys on the hook payload's `agent_type`, which a branch-level keeper cannot see because the tech-lead commits these files. WARN-FIRST SHADOW: a violation is logged as a `warn` event and the write proceeds; promote with `MODE = "enforce"` (or env `NOC_ADVISOR_WRITE_MODE=enforce`) on evidence from `gate_alignment walls`. Fails closed like the others (`[noc-guard:advisor-write]`).
+
 Every deny and every rewrite from a PreToolUse guard (`_guard_failclosed.run_guard`: primary-write, test-seams, heavy-run, executor-dispatch, harness-signature) appends one JSON line to guard-events.ndjson in the gitignored .claude/cache directory (machine-local, runtime-only): `ts`, `guard`, `outcome` (`deny`|`rewrite`), `tool`, `target` (path or command, 200 chars), `reason`, `session`, `cwd`. The 2026-11-05 gates audit could count guard friction only by grepping transcripts; now a `jq -r .guard` over that file, piped to `sort | uniq -c`, answers it. A failed write is reported on stderr and never changes the verdict. Tests point it elsewhere via `NOCTUS_GUARD_EVENT_LOG` (autouse fixture).
 
 ## §12 · The primary/origin divergence loop (2026-08-31) — six encounters, one unlifted fix

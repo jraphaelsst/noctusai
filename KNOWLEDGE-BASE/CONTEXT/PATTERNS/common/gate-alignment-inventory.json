@@ -108,6 +108,20 @@
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
    "note": "landed by feat/access-tiers-gate; no firing history yet"
   },
+  "guard:advisor-write": {
+   "mechanism": ".claude/agents/product-manager.md",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-09",
+   "source": "owner decision D34 2026-11-09 (spec-writing advisors keep Write for spec/notes only); Claude Code hooks reference (PreToolUse payload carries agent_type inside a subagent)",
+   "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson (warn events in shadow, deny at enforce); read by gate_alignment walls",
+   "kind": "guard",
+   "wired_in": [
+    "PreToolUse"
+   ]
+  },
   "guard:background-agent-idle": {
    "mechanism": "KB § PATTERNS/common/background-agent-lifecycle.md (product-engineer hand-back clause + noc-branch-dispatch step 5b); advisory backstop, never blocks",
    "owner": "tooling-engineer",
@@ -3357,6 +3371,18 @@
    "branch": "feat/assistant-decision-log",
    "gates": [
     "keeper:check-decision-log-schema"
+   ]
+  },
+  {
+   "id": "D31",
+   "decision": "A spec-writing advisor (product-manager, product-architect, product-designer) may Write only spec/notes files (scratchpad dir or projects/<slug>/spec|mockups); the agent files state it and a PreToolUse guard keeps it, warn-first shadow",
+   "home": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/gate-methodology-sync.md",
+   "construction": ".claude/agents/product-manager.md (the Write-scope rule; the guard derives the writer set from the agent frontmatter)",
+   "gate": "guard:advisor-write",
+   "telemetry": "guard-events.ndjson warn/deny rows via _guard_failclosed.log_event; gate_alignment walls",
+   "branch": "feat/assistant-owner-d31-d34",
+   "gates": [
+    "guard:advisor-write"
    ]
   }
  ]

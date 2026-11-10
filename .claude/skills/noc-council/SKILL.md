@@ -1,10 +1,12 @@
 ---
 name: noc-council
 description: Use to challenge a plan, decision, contract, agent definition, refine or product before it is locked — triggers "council", "convene the council", "run the council", "conselho", "llm council", "five lenses", "challenge this plan", "anti-sycophancy review", "chairman". Independent, blind council as background subagents (five lenses plus the stage's advisors), an Opus chair that dispositions every objection, every row written through noctus.dev.council_ledger, outcomes recorded later so the stage map is retuned from evidence.
-version: 1.1.0
+version: 1.2.0
 ---
 
 # noc-council — independent, blind, measured review
+
+> **Changelog.** 1.2.0 (2026-11-09, owner D33): the product-* advisors get seats: product-manager (PMg) M idealize, O contract + evaluate; product-architect (PAr) M idealize + phase0, O verify_seed; product-analyst (PAn) M evaluate, O iterate. 1.1.0: report splits metrics per mode. 1.0.0: first map.
 
 The author of a plan leans toward agreeing with itself (sycophancy, self-enhancement bias). A
 council gives separate contexts, different priors and domain evidence, then a chair that must
@@ -48,25 +50,26 @@ answer every objection. Depth: `KB § PATTERNS/common/council.md`. Ledger contra
 Seats = all five lenses (C F E O X) plus every advisor marked M or O on the stage's row. M = must,
 O = optional on its stated condition, `-` = no.
 
-| Stage | C | F | E | O | X | Arch | Sec | AgS | Cmp | Leg | Acc | PD |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| idealize (classify, market spec, interview) | M | M | M | M | O | O | - | O | - | O | O | M |
-| phase0 / seed-first | M | M | O | - | M | M | O | - | - | - | - | - |
-| verify_seed | - | O | - | - | M | O | - | - | - | - | - | - |
-| mockup | O | - | O | M | - | - | - | - | - | O | - | M |
-| contract | M | O | - | - | M | M if stateful/cross-product else O | M if auth/public route/new table tier | O | - | O | O | - |
-| build (scaffold + build) | - | - | - | - | M | O | O | O | - | - | - | - |
-| wire | - | - | - | O | M | - | - | - | - | - | - | O |
-| test_review (pre-merge) | M | - | - | - | - | - | O | O | M | - | - | - |
-| security_pass | - | - | - | - | - | - | M | M if LLM exposed | - | O | - | - |
-| evaluate (UX + a11y) | O | - | M | M | - | - | - | - | - | - | - | M |
-| ship (routine) | - | - | - | - | M | - | - | - | - | - | - | - |
-| go_live (first) | all lenses + every relevant advisor (full council) |
-| iterate (step 4) | M | M | M | M | M | O by target (agent: AgS; UI: PD) | | | | | | |
-| owner_question | M | M | M | M | M | - | - | - | - | - | - | - |
+| Stage | C | F | E | O | X | Arch | Sec | AgS | Cmp | Leg | Acc | PD | PMg | PAr | PAn |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| idealize (classify, market spec, interview) | M | M | M | M | O | O | - | O | - | O | O | M | M | M | - |
+| phase0 / seed-first | M | M | O | - | M | M | O | - | - | - | - | - | - | M | - |
+| verify_seed | - | O | - | - | M | O | - | - | - | - | - | - | - | O | - |
+| mockup | O | - | O | M | - | - | - | - | - | O | - | M | - | - | - |
+| contract | M | O | - | - | M | M if stateful/cross-product else O | M if auth/public route/new table tier | O | - | O | O | - | O | - | - |
+| build (scaffold + build) | - | - | - | - | M | O | O | O | - | - | - | - | - | - | - |
+| wire | - | - | - | O | M | - | - | - | - | - | - | O | - | - | - |
+| test_review (pre-merge) | M | - | - | - | - | - | O | O | M | - | - | - | - | - | - |
+| security_pass | - | - | - | - | - | - | M | M if LLM exposed | - | O | - | - | - | - | - |
+| evaluate (UX + a11y) | O | - | M | M | - | - | - | - | - | - | - | M | O | - | M |
+| ship (routine) | - | - | - | - | M | - | - | - | - | - | - | - | - | - | - |
+| go_live (first) | all lenses + every relevant advisor (full council, product-* advisors included when relevant) |
+| iterate (step 4) | M | M | M | M | M | O by target (agent: AgS; UI: PD) | | | | | | | - | - | O |
+| owner_question | M | M | M | M | M | - | - | - | - | - | - | - | - | - | - |
 
 Columns: Arch architect, Sec security, AgS agents-security, Cmp compliance-reviewer, Leg
-legal-advisor, Acc accountant, PD product-designer. Each advisor runs as its own subagent with its
+legal-advisor, Acc accountant, PD product-designer, PMg product-manager, PAr product-architect,
+PAn product-analyst. Each advisor runs as its own subagent with its
 own configured model.
 
 **When the council meets.** Project `assistant-chatbot` (D13): the full council at EVERY stage.
