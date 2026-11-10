@@ -1052,3 +1052,91 @@ def test_the_verdict_ref_fallback_only_follows_a_request_for_the_same_branch(wor
                          "head_sha": "a" * 40, "verdict_ref": "ci-parity:" + "b" * 32, "requester": {"session_id": "sess-1"}})
     assert T._request_verdict_ref("y", "docs/y", store=store) == "ci-parity:" + "b" * 32
     assert T._request_verdict_ref("y", "feat/y", store=store) is None  # same slug, a DIFFERENT branch: not its verdict
+
+
+# =================================================================================================
+# fix round 2, N-1/N-6/N-7: refs are always fully qualified - a branch or tag NAMED like a ref must not win
+# =================================================================================================
+
+def _poison_refnames(world, head: str, old: str):
+    """A local branch AND a tag named origin/dev (both at the branch head), and a tag named feat/x at an OLD commit:
+    every unqualified `origin/dev` / `feat/x` now resolves to the wrong commit."""
+    sh(world.repo, "git", "branch", "origin/dev", head)
+    sh(world.repo, "git", "tag", "origin/dev", head)
+    sh(world.repo, "git", "tag", "feat/x", old)
+
+
+def test_a_branch_and_a_tag_named_origin_dev_cannot_make_the_head_read_as_dev(world):
+    wt = world.worktree()
+    (wt / "src" / "a.txt").write_text("branch edit\n")
+    world.set_counts(wt)
+    head = world.commit(wt, "feat: edit a")
+    world.push(wt, "feat/x")
+    old = sh(world.repo, "git", "rev-parse", "origin/dev")
+    world.dev_commit("src/a.txt", "dev edit\n")
+    _poison_refnames(world, head, old)
+    two = item(world.deliverable(), "merge_buildable")
+    assert not two["ok"] and "contains" not in two["detail"] and "src/a.txt" in two["detail"], two
+
+
+def test_poisoned_refnames_cannot_hide_a_migration_collision_either(world):
+    mig = "products/p/backend/migrations"
+    (world.repo / mig).mkdir(parents=True)
+    (world.repo / mig / "001_init.sql").write_text("-- 1\n")
+    world.commit(world.repo, "p: 001")
+    sh(world.repo, "git", "push", "origin", "dev")
+    old = sh(world.repo, "git", "rev-parse", "dev")
+    wt = world.worktree()
+    (wt / mig).mkdir(parents=True, exist_ok=True)
+    (wt / mig / "002_branch.sql").write_text("-- branch 2\n")
+    world.set_counts(wt)
+    head = world.commit(wt, "p: 002 branch")
+    world.push(wt, "feat/x")
+    world.dev_commit(f"{mig}/002_dev.sql", "-- dev 2\n")
+    _poison_refnames(world, head, old)  # origin/dev now names the HEAD: the migration diff would be empty
+    d = world.deliverable(derived_check=lambda h: {"ok": True, "measured": True, "detail": "n/a", "results": []})
+    three = item(d, "migrations_free")
+    assert item(d, "merge_buildable")["ok"]
+    assert not three["ok"] and "number 002" in three["detail"], three  # not "adds no migration"
+
+
+def test_a_tag_named_like_the_branch_cannot_redirect_what_enqueue_pushes(world):
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    head = world.commit(wt, "feat: b")
+    world.push(wt, "feat/x")
+    old = sh(world.repo, "git", "rev-parse", "origin/dev")
+    sh(world.repo, "git", "tag", "feat/x", old)  # `git rev-parse feat/x` would now say the OLD commit
+    sh(world.repo, "git", "tag", "origin/dev", old)
+    res = world.enqueue(verdict_ref=world.vref("refs/heads/feat/x"))
+    assert res["status"] == "queued", res
+    assert res["enqueued_sha"] == head and res["queue_ref"] == f"mq/x--{head[:7]}"
+    assert world.mq_refs() == [f"refs/heads/mq/x--{head[:7]}"]
+
+
+def test_a_same_name_tag_cannot_make_cleanup_delete_unmerged_work(world):
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    unmerged = world.commit(wt, "feat: unmerged work")
+    sh(world.repo, "git", "tag", "feat/x", sh(world.repo, "git", "rev-parse", "origin/dev"))  # a MERGED commit
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=world.runner(), primary_root=str(world.repo),
+                        caller_session="sess-me")
+    assert res["status"] == "blocked" and "not on" in res["reason"], res
+    assert sh(world.repo, "git", "rev-parse", "--verify", "refs/heads/feat/x") == unmerged
+    assert wt.is_dir()
+
+
+def test_the_head_is_compared_in_full_not_by_a_seven_char_prefix(world):
+    wt = world.worktree()
+    (wt / "src" / "b.txt").write_text("b\n")
+    world.set_counts(wt)
+    head = world.commit(wt, "feat: b")
+    world.push(wt, "feat/x")
+    lookalike = head[:7] + "0" * 33  # same 7-char prefix, a different commit
+    d = world.deliverable(head_sha=lookalike)
+    one = item(d, "head_pushed_clean")
+    assert not one["ok"] and "request names head" in one["detail"], one
+    assert item(world.deliverable(head_sha=head), "head_pushed_clean")["ok"]
+    assert item(world.deliverable(head_sha=head[:12]), "head_pushed_clean")["ok"]  # an abbreviation of THIS head is fine

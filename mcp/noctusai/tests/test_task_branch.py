@@ -74,6 +74,10 @@ class FakeGit:
         if sub == "rev-parse":
             # `git [-C <wt>] rev-parse <ref>` — the ref is the LAST positional.
             ref = cmd[-1]
+            # task_branch resolves FULLY QUALIFIED refs (N-1/N-7); this fake keys on short names
+            for _pfx in ("refs/heads/", "refs/remotes/"):
+                if ref.startswith(_pfx):
+                    ref = ref[len(_pfx):]
             if ref == "stash@{0}":
                 # The stash contract is SHA-addressed: the stack is shared with
                 # every worktree, so the restore must name its OWN entry rather

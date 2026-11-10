@@ -224,6 +224,18 @@ def _resolve(git, ref: str) -> str | None:
     return out.strip() if rc == 0 and out.strip() else None
 
 
+def _dev_ref(remote: str, dev_branch: str) -> str:
+    """Fully qualified remote-tracking ref. A bare `origin/dev` resolves LOCAL branches and TAGS first, so a
+    branch or tag named like it silently becomes 'dev' (adversarial review N-1)."""
+    return f"refs/remotes/{remote}/{dev_branch}"
+
+
+def _head_ref(branch: str) -> str:
+    """Fully qualified local branch ref: a TAG named `feat/x` otherwise wins `git rev-parse feat/x`, so the
+    merged-check read the tag's commit and `branch -D` removed unmerged work (N-7)."""
+    return branch if branch.startswith("refs/") else f"refs/heads/{branch}"
+
+
 def _is_ancestor(git, a: str, b: str) -> bool:
     """True iff commit `a` is an ancestor of (or equal to) `b`."""
     rc, _o, _e = git("merge-base", "--is-ancestor", a, b)
@@ -2602,8 +2614,8 @@ def _enqueue(git, runner, *, base: dict[str, Any], slug: str, branch: str, confi
     Pushes from the caller's repo cwd (never the branch's worktree); the pre-push hook still applies."""
     # remote-tracking refs may move (release-steward.md G1); FETCH_HEAD is not written
     git("fetch", remote, "--quiet", "--no-write-fetch-head")
-    dev = _resolve(git, f"{remote}/{dev_branch}")
-    head = _resolve(git, branch)
+    dev = _resolve(git, _dev_ref(remote, dev_branch))
+    head = _resolve(git, _head_ref(branch))
     if not dev or not head:
         return {**base, "status": "error", "exit_code": 1,
                 "error": f"cannot resolve {remote}/{dev_branch} or {branch}."}
@@ -2679,7 +2691,7 @@ def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_pat
     first rebased onto origin/dev — git drops the already-applied patches and the
     branch becomes merged, which `cleanup`'s merged check then accepts."""
     git("fetch", remote, "--quiet")
-    head = _resolve(git, branch)
+    head = _resolve(git, _head_ref(branch))
     if not head:
         return {**base, "status": "error", "exit_code": 1, "error": f"cannot resolve {branch}"}
     reader = status_reader or _default_queue_status_reader(runner)
@@ -2693,7 +2705,7 @@ def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_pat
         return {**out, "status": "ejected", "exit_code": 1,
                 "message": (f"{branch} was EJECTED by the merge queue: {st.get('description')} "
                             f"({st.get('url', '')}). Fix it on the branch, then enqueue again.")}
-    dev = _resolve(git, f"{remote}/{dev_branch}")
+    dev = _resolve(git, _dev_ref(remote, dev_branch))
     if not confirm:
         return {**out, "status": "landed", "exit_code": 0, "dev_sha": dev,
                 "message": f"{branch} LANDED ({st.get('description')}). Pass confirm=True to run the post-landing tail."}
@@ -2701,14 +2713,14 @@ def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_pat
     if not _is_ancestor(git, head, dev):
         # The queue may have REBASED the entry (new shas, same content): decide
         # "merged" by content, never by ancestry, and never touch the worktree.
-        equivalent, missing = _content_on_dev(git, branch, f"{remote}/{dev_branch}")
+        equivalent, missing = _content_on_dev(git, _head_ref(branch), _dev_ref(remote, dev_branch))
         if not equivalent:
             return {**out, "status": "error", "exit_code": 1, "missing_commits": missing,
                     "error": (f"{branch} reported landed but {len(missing)} commit(s) are NOT on "
                               f"{remote}/{dev_branch} by content: {', '.join(missing[:8]) or '(diff non-empty)'}. "
                               "Worktree left untouched; re-enqueue or integrate the missing work.")}
         out["content_equivalent"] = True
-    new_head = _resolve(git, branch)
+    new_head = _resolve(git, _head_ref(branch))
     result = {**out, "status": "integrated", "exit_code": 0, "dev_sha": dev,
               "message": f"{branch} landed via the merge queue ({st.get('description')})."}
     result["pointer"] = _pointer_transition(
@@ -3891,12 +3903,12 @@ def task_branch(
         caller=caller_session or os.environ.get(_steward.SESSION_ENV), auto=False, session_state=session_state_fn)
     if _owned:
         return {**base, **_owned, "exit_code": 0}
-    dev = _resolve(git, f"{remote}/{dev_branch}")
-    head = _resolve(git, branch)
+    dev = _resolve(git, _dev_ref(remote, dev_branch))
+    head = _resolve(git, _head_ref(branch))
     merged = bool(dev and head and _is_ancestor(git, head, dev))
     content_merged = False
     if dev and head and not merged:
-        content_merged, _missing = _content_on_dev(git, branch, f"{remote}/{dev_branch}")
+        content_merged, _missing = _content_on_dev(git, _head_ref(branch), _dev_ref(remote, dev_branch))
         merged = content_merged
     if head and not merged:
         return {**base, "status": "blocked", "exit_code": 1, "dev_sha": dev, "branch_sha": head,

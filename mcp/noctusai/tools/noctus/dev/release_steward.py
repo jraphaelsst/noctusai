@@ -1903,8 +1903,11 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
         if not head:
             problems.append(f"branch {branch} does not exist locally")
         else:
-            if head_sha and not head.startswith(head_sha[:7]) and not head_sha.startswith(head[:7]):
-                problems.append(f"the request names head {head_sha[:9]} but {branch} is at {head[:9]} (re-request)")
+            if head_sha:
+                # FULL-sha equality (an abbreviation is expanded first): a 7-char prefix is forgeable by grinding
+                rc_h, full_h, _e = git("rev-parse", "--verify", "--quiet", f"{head_sha}^{{commit}}")
+                if rc_h != 0 or full_h.strip() != head:
+                    problems.append(f"the request names head {head_sha[:9]} but {branch} is at {head[:9]} (re-request)")
             rc, o, e = git("ls-remote", "--heads", remote, f"refs/heads/{branch}")
             remote_sha = o.split()[0] if rc == 0 and o.strip() else None
             if rc != 0:
@@ -1938,7 +1941,7 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
     try:
         if fetch:
             git("fetch", "--quiet", "--no-write-fetch-head", remote, dev_branch)
-        dev = local_ref(f"{remote}/{dev_branch}")
+        dev = local_ref(f"refs/remotes/{remote}/{dev_branch}")  # fully qualified: a branch/tag NAMED origin/dev must not win
         out["dev_sha"] = dev
         if not head or not dev:
             items.append(_item(2, DELIVERABLE_ITEMS[1], False,
