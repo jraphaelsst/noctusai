@@ -6259,6 +6259,73 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — core owner-notice recipient events append-only guard (migration 118).
+# ---------------------------------------------------------------------------
+#
+# Self-provisioning: `recipient_id` has no FK (a removed recipient keeps its
+# history), so each probe inserts its own throwaway event inside the
+# rollback-only wrapper.
+
+_OWNER_RECIPIENT_EVENTS_GUARD = "notification_owner_recipient_events_append_only"
+
+
+def _owner_recipient_events_probe(*, probe_id: str, op_sql: str, what: str) -> GuardProbe:
+    fragment_lit = _sql_lit("notification_owner_recipient_events is append-only")
+    what_lit = _sql_lit(what)
+    sql = _do_block(f"""
+DECLARE
+  v_id bigint;
+BEGIN
+  IF to_regclass('public.notification_owner_recipient_events') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.notification_owner_recipient_events does not exist (core 118 not applied)';
+  END IF;
+  BEGIN
+    INSERT INTO public.notification_owner_recipient_events (recipient_id, evento)
+    VALUES (gen_random_uuid(), 'adicionado')
+    RETURNING id INTO v_id;
+{op_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the append-only guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product="core",
+        schema="public",
+        guard_name=_OWNER_RECIPIENT_EVENTS_GUARD,
+        kind="write_refusal",
+        migrations=("118_notification_owner_recipients.sql",),
+        sql=sql,
+        rationale=(
+            "The recipient events are the who/when history of the numbers that receive the owner's WhatsApp "
+            "notices; a rewritable or deletable event would let a change to that list leave no trace."
+        ),
+    )
+
+
+_OWNER_RECIPIENT_EVENTS_PROBES: tuple[GuardProbe, ...] = (
+    _owner_recipient_events_probe(
+        probe_id="notification_owner_recipient_events.update_refused",
+        op_sql="    UPDATE public.notification_owner_recipient_events SET evento = 'removido' WHERE id = v_id;",
+        what="UPDATE of an owner-recipient event",
+    ),
+    _owner_recipient_events_probe(
+        probe_id="notification_owner_recipient_events.delete_refused",
+        op_sql="    DELETE FROM public.notification_owner_recipient_events WHERE id = v_id;",
+        what="DELETE of an owner-recipient event",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — public.ai_usage append-only guard (core migration 091, D25).
 # ---------------------------------------------------------------------------
 #
@@ -11878,6 +11945,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ATENDIMENTO_CONFLITO_STATUS_PROBE,
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
+    *_OWNER_RECIPIENT_EVENTS_PROBES,
     *_CORE_AI_USAGE_PROBES,
     *_CORE_FUNNEL_PROBES,
     *_PLATFORM_TEMPLATES_PROBES,
