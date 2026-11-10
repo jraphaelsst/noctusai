@@ -96,6 +96,7 @@ import json
 import logging
 import os
 import shlex
+import re
 import subprocess
 import tempfile
 import threading
@@ -375,6 +376,10 @@ def _is_connection_failure(rc: int, stderr: str) -> bool:
     return any(marker in low for marker in _CONN_ERROR_MARKERS)
 
 
+# A host is an ssh_config alias / DNS name, never an option: it must start alphanumeric (no leading '-').
+_SSH_HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
 # ── the real ssh runner (the injectable seam for tests) ─────────────────────
 def _real_ssh(
     ssh_host: str, remote_cmd: str, connect_timeout: int, timeout: float | None
@@ -384,6 +389,8 @@ def _real_ssh(
     concrete finite value before it ever reaches here (see ``_DEFAULT_REMOTE_TIMEOUT``)
     — ``None`` is accepted defensively (e.g. a direct/test call) but is never what a
     real deploy path forwards."""
+    if not _SSH_HOST_RE.match(ssh_host or ""):
+        raise ValueError(f"refusing ssh host {ssh_host!r}: must match {_SSH_HOST_RE.pattern}")
     args = [
         "ssh",
         "-o", f"ConnectTimeout={connect_timeout}",
@@ -391,6 +398,7 @@ def _real_ssh(
         # Multiplex: reuse ONE master connection across all ops so a fleet
         # deploy is ~1 real connection, not ~50 (fail2ban rate-ban avoidance).
         *_multiplex_opts(),
+        "--",  # end of options: a host can never be read as an ssh option (-oProxyCommand=... injection)
         ssh_host,
         remote_cmd,
     ]
@@ -462,6 +470,8 @@ def run_remote(
     ``_now`` / ``_sleep`` / ``_state_path`` / ``_runner`` are test seams (inject to
     run with zero real SSH and zero real sleep).
     """
+    if not _SSH_HOST_RE.match(ssh_host or ""):
+        raise ValueError(f"refusing ssh host {ssh_host!r}: must match {_SSH_HOST_RE.pattern}")
     now = _now or time.time
     sleep = _sleep or time.sleep
     runner = _runner or _real_ssh

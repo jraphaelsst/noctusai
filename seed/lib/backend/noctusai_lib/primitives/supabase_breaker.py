@@ -30,6 +30,7 @@ import contextvars
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections import deque
@@ -42,7 +43,13 @@ from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "BREAKER_AUDIT_KEY",
+    "BREAKER_AUDIT_CAP",
     "BREAKER_KEY_PREFIX",
+    "BREAKER_SOURCE_RE",
+    "BreakerOpen",
+    "UNATTRIBUTED_SOURCE",
+    "guard",
     "BREAKER_FLEET_KEY",
     "DEFAULT_BACKGROUND_RULES",
     "DEFAULT_HTTP_RULE",
@@ -66,8 +73,18 @@ __all__ = [
 ]
 
 HTTP_SOURCE = "http"
+#: A Supabase call made outside ANY declared scope (a lifespan `create_task` loop, a bare `Thread(...)`): budgeted and
+#: trippable exactly like a background source. Request handlers are `http` EXPLICITLY (SupabaseSourceMiddleware), so
+#: "no scope" can never mean "user traffic, never stopped" (security review F5, 2026-11-10).
+# NOC-REMEDIATE[breaker-unscoped-loop]: a keeper flagging a lifespan/startup `create_task(` or `Thread(` that makes Supabase calls without `source_scope(...)` — destination: the polling-budget keeper (feat/polling-budget-keeper) — 2026-11-10
+UNATTRIBUTED_SOURCE = "unattributed"
 BREAKER_KEY_PREFIX = "noctus:breaker:"
 BREAKER_FLEET_KEY = f"{BREAKER_KEY_PREFIX}fleet"
+BREAKER_AUDIT_KEY = f"{BREAKER_KEY_PREFIX}audit"
+BREAKER_AUDIT_CAP = 1000
+#: THE shape of a holdable source name (routes, MCP tool and the Redis key all validate against this one regex;
+#: `fleet` and `http` are deliberately NOT in it — the fleet key is ops-only, http is never held).
+BREAKER_SOURCE_RE = re.compile(r"^(?:(?:worker|scheduler|gate):[A-Za-z0-9_.,:\-]{1,100}|unattributed)$")
 _MAX_WINDOW_S = 3600
 
 
@@ -130,7 +147,7 @@ class BreakerConfig:
 
 # --- source attribution ----------------------------------------------------------------------------------------
 
-_SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar("noctus_supabase_source", default=HTTP_SOURCE)
+_SOURCE: contextvars.ContextVar[str] = contextvars.ContextVar("noctus_supabase_source", default=UNATTRIBUTED_SOURCE)
 
 
 def current_source() -> str:
@@ -161,11 +178,24 @@ class BreakerStore(Protocol):
 
     def delete(self, key: str) -> None: ...
 
+    def append_audit(self, key: str, value: str, cap: int) -> None: ...
+
 
 class BreakerAlerter(Protocol):
     """Sends the owner alert through a channel that does NOT depend on Supabase. Raises on failure."""
 
     def send(self, subject: str, body: str) -> None: ...
+
+
+class BreakerOpen(RuntimeError):
+    """Raised by the HTTP transport when the current background source is HELD: the call is refused before it leaves
+    the process, so a job already in flight fails fast instead of running on until it returns. The jobs Worker treats
+    it as "release the job", never as a failure that burns retries."""
+
+    def __init__(self, source: str, reason: str = "") -> None:
+        super().__init__(f"supabase breaker is OPEN for {source!r}: {reason or 'held until a human re-arms'}")
+        self.source = source
+        self.reason = reason
 
 
 class BreakerAlertNotConfigured(RuntimeError, IntegrationNotConfigured):
@@ -197,6 +227,7 @@ class InMemoryBreakerStore:
 
     def __init__(self) -> None:
         self.data: dict[str, str] = {}
+        self.audit: list[str] = []
         self.down = False
         self.calls = 0
 
@@ -220,6 +251,11 @@ class InMemoryBreakerStore:
     def delete(self, key: str) -> None:
         self._guard()
         self.data.pop(key, None)
+
+    def append_audit(self, key: str, value: str, cap: int) -> None:
+        self._guard()
+        self.audit.append(value)
+        del self.audit[:-cap]
 
 
 # --- the breaker -----------------------------------------------------------------------------------------------
@@ -285,7 +321,8 @@ class Breaker:
 
         self._lock = threading.RLock()
         self._buckets: dict[str, deque[list[int]]] = {}  # source -> deque of [second, count]
-        self._last_eval: dict[str, int] = {}
+        self._rules: dict[str, tuple[BudgetRule, ...]] = {}
+        self._bases: dict[str, list[int]] = {}
         self._trips: dict[str, Trip] = {}
         self._remote_held: dict[str, dict[str, Any]] = {}
         self._known: set[str] = set()
@@ -326,24 +363,29 @@ class Breaker:
     # ---- counting (the hot path) ------------------------------------------------------------------------------
 
     def record_call(self, source: Optional[str] = None) -> None:
-        """Count ONE Supabase REST call. In-memory only: no network, O(1), evaluates budgets at most once a second."""
+        """Count ONE Supabase REST call. In-memory only: no network, O(rules); the budget is checked on EVERY call
+        against running per-window bases (rebuilt once per second), so a tight loop trips at exactly budget+1."""
         src = source or _SOURCE.get()
         now = int(self._clock())
+        verdict: Optional[tuple[BudgetRule, int]] = None
         with self._lock:
             dq = self._buckets.get(src)
             if dq is None:
                 dq = self._buckets[src] = deque()
-            if dq and dq[-1][0] == now:
-                dq[-1][1] += 1
-            else:
-                dq.append([now, 1])
-            if self._last_eval.get(src) == now:
-                return
-            self._last_eval[src] = now
-            horizon = now - _MAX_WINDOW_S
-            while dq and dq[0][0] <= horizon:
-                dq.popleft()
-            verdict = self._violation(src, dq, now)
+            if not dq or dq[-1][0] != now:
+                horizon = now - _MAX_WINDOW_S
+                while dq and dq[0][0] <= horizon:
+                    dq.popleft()
+                rules = self._config.rules_for(src)
+                self._rules[src] = rules
+                self._bases[src] = [sum(n for sec, n in dq if sec > now - r.window_s) for r in rules]
+                dq.append([now, 0])
+            dq[-1][1] += 1
+            cur = dq[-1][1]
+            for rule, base in zip(self._rules[src], self._bases[src]):
+                total = base + cur
+                if total > rule.max_calls and (verdict is None or total / rule.window_s > verdict[1] / verdict[0].window_s):
+                    verdict = (rule, total)
         if verdict is None:
             return
         rule, count = verdict
@@ -354,14 +396,33 @@ class Breaker:
         else:
             self._alert_http(reason, rate, rule.window_s)
 
-    def _violation(self, src: str, dq: "deque[list[int]]", now: int) -> Optional[tuple[BudgetRule, int]]:
-        worst: Optional[tuple[BudgetRule, int]] = None
-        for rule in self._config.rules_for(src):
-            cutoff = now - rule.window_s
-            count = sum(n for sec, n in dq if sec > cutoff)
-            if count > rule.max_calls and (worst is None or count / rule.window_s > worst[1] / worst[0].window_s):
-                worst = (rule, count)
-        return worst
+    def credit(self, source: str, calls: int) -> None:
+        """Refund ``calls`` from ``source``'s window: PRODUCTIVE work earns its own headroom. The jobs Worker credits a
+        job type per processed job, so a busy-but-productive worker (backlog drain, webhook surge) is never tripped
+        while a loop that burns calls without finishing work still is."""
+        if calls <= 0:
+            return
+        now = int(self._clock())
+        with self._lock:
+            dq = self._buckets.setdefault(source, deque())
+            if not dq or dq[-1][0] != now:
+                self._rules[source] = self._config.rules_for(source)
+                self._bases[source] = [sum(n for sec, n in dq if sec > now - r.window_s) for r in self._rules[source]]
+                dq.append([now, 0])
+            dq[-1][1] -= calls
+
+    def is_open(self, source: str) -> bool:
+        """Hot-path hold check (in-memory, lock-free dict reads, no IO). ``http`` is never open."""
+        if source == HTTP_SOURCE:
+            return False
+        return source in self._trips or self._fleet is not None or source in self._remote_held
+
+    def guard(self, source: Optional[str] = None) -> None:
+        """Raise :class:`BreakerOpen` when the (current) background source is held."""
+        src = source or _SOURCE.get()
+        if self.is_open(src):
+            hold = self.hold_reason(src) or {}
+            raise BreakerOpen(src, str(hold.get("reason", "")))
 
     def count(self, source: str, window_s: int) -> int:
         """Calls recorded for ``source`` in the last ``window_s`` seconds (diagnostics/tests)."""
@@ -388,8 +449,20 @@ class Breaker:
                         source, self.slug, reason)
         for cb in subs:
             self._call_sub(cb)
+        if by != "auto":
+            self.audit("trip", self.key_for(source), by=by, reason=reason)
         self._io(self._persist_and_alert, trip)
         return True
+
+    def audit(self, op: str, key: str, *, by: str, reason: str) -> None:
+        """Best-effort audit row (who/why/when) on the capped Redis list; the MCP tool writes the same shape."""
+        row = {"op": op, "key": key, "by": by, "reason": reason, "at": _iso(self._wall())}
+        if self._store is None:
+            return
+        try:
+            self._store.append_audit(BREAKER_AUDIT_KEY, json.dumps(row), BREAKER_AUDIT_CAP)
+        except Exception:  # noqa: BLE001 -- the audit must not undo a trip/re-arm; loud, not silent
+            logger.error("breaker: audit row not written for %s %s", op, key, exc_info=True)
 
     def _persist_and_alert(self, trip: Trip) -> None:
         store_error: Optional[str] = None
@@ -635,6 +708,7 @@ class Breaker:
                 self._fleet = None
             self._alerted = {a for a in self._alerted if not a.startswith(f"trip:{self.slug}:{source}:")}
             woke = list(self._subs.get(source, ())) if source != "fleet" else [c for s in self._subs.values() for c in s]
+        self.audit("rearm", key, by=by, reason=reason)
         self._emit_event({"event": "breaker.rearmed", "product": self.slug, "source": source, "by": by,
                           "reason": reason})
         for cb in woke:
@@ -684,6 +758,11 @@ def reset_breaker_for_tests() -> None:
     global _breaker
     with _breaker_lock:
         _breaker = None
+
+
+def guard(source: Optional[str] = None) -> None:
+    """Module-level hot-path gate the HTTP transport calls BEFORE a REST call leaves the process."""
+    get_breaker().guard(source)
 
 
 def record_call(source: Optional[str] = None) -> None:

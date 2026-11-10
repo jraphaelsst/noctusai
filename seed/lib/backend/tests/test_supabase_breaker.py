@@ -14,8 +14,11 @@ import pytest
 from noctusai_lib.domain.jobs import FakeJobRepository, Worker
 from noctusai_lib.integrations.http_pool import TimingTransport
 from noctusai_lib.primitives.supabase_breaker import (
+    BREAKER_AUDIT_KEY,
     BREAKER_FLEET_KEY,
+    BREAKER_SOURCE_RE,
     Breaker,
+    BreakerOpen,
     BreakerConfig,
     InMemoryBreakerStore,
     RecordingAlerter,
@@ -51,7 +54,7 @@ class RunawayRepo(FakeJobRepository):
 
     async def claim_next(self, *a, **kw):
         self.claims += 1
-        self.breaker.record_call("worker:transcricao")  # the transport hook, against THIS breaker
+        self.breaker.record_call("worker:transcricao:loop")  # the transport hook, against THIS breaker
         self.clock.advance(0.1)  # 10 calls / s: a 1 s idle poll x10 workers
         return None
 
@@ -90,7 +93,7 @@ def test_runaway_worker_trips_within_window_loop_stops_key_written_one_alert():
 
     claims = asyncio.run(drive())
     assert claims <= 330, f"tripped late: {claims} calls (budget 300 / 5 min)"
-    key = "noctus:breaker:prod-x:worker:transcricao"
+    key = "noctus:breaker:prod-x:worker:transcricao:loop"
     assert key in store.data, "trip must be persisted (no TTL) in Redis"
     state = json.loads(store.data[key])
     assert state["by"] == "auto" and state["window"] == 300 and state["rate"] > 1
@@ -113,7 +116,7 @@ def test_http_over_threshold_alerts_never_stops():
 
 def test_held_source_does_not_start_on_boot():
     b, store, alerter, clock = make_breaker()
-    store.data["noctus:breaker:prod-x:worker:transcricao"] = json.dumps({"reason": "runaway", "by": "auto"})
+    store.data["noctus:breaker:prod-x:worker:transcricao:loop"] = json.dumps({"reason": "runaway", "by": "auto"})
     repo = RunawayRepo(b, clock)
     worker = Worker(repo, worker_id="w", handlers={"transcricao": _noop}, idle_sleep=_no_sleep, breaker=b,
                     held_poll_seconds=0.01)
@@ -151,7 +154,7 @@ def test_rearm_restarts_source_and_requires_a_reason():
 
 def test_parked_worker_resumes_after_rearm():
     b, store, alerter, clock = make_breaker(fleet_ttl_s=0.0)
-    b.trip("worker:transcricao", reason="runaway")
+    b.trip("worker:transcricao:loop", reason="runaway")
     repo = RunawayRepo(b, clock)
     worker = Worker(repo, worker_id="w", handlers={"transcricao": _noop}, poll_interval_seconds=0.01,
                     idle_sleep=_no_sleep, breaker=b, held_poll_seconds=0.01)
@@ -161,7 +164,7 @@ def test_parked_worker_resumes_after_rearm():
         task = asyncio.create_task(worker.run_forever(stop_event=stop))
         await asyncio.sleep(0.1)
         assert repo.claims == 0
-        await asyncio.to_thread(b.rearm, "worker:transcricao", by="ana", reason="fixed and verified")
+        await asyncio.to_thread(b.rearm, "worker:transcricao:loop", by="ana", reason="fixed and verified")
         await asyncio.sleep(0.1)
         stop.set()
         await asyncio.wait_for(task, 2)
@@ -215,7 +218,7 @@ def test_source_attribution_follows_threads_and_the_transport_counts_rest_only()
 
     asyncio.run(drive())
     assert b.count("worker:z", 60) == 1
-    assert b.count("http", 60) == 1
+    assert b.count("unattributed", 60) == 1, "outside any scope a call is UNATTRIBUTED, never silently user traffic"
 
 
 def test_count_overhead_is_negligible_and_never_touches_the_network():
@@ -261,3 +264,104 @@ def test_scheduler_job_held_does_not_run_and_writes_no_ledger():
     asyncio.run(wrapped())
     assert ran == [1, 1]
     sch.reset_for_testing()
+
+
+# --- security review 2026-11-10 (F4 / F5 / design risk / F10) ------------------------------------------------------
+
+
+def _transport_client():
+    inner = httpx.MockTransport(lambda req: httpx.Response(200, json=[]))
+    return httpx.Client(transport=TimingTransport(inner), base_url="https://x.supabase.co"), inner
+
+
+def test_F4_handler_looping_1000_calls_under_a_tripped_source_makes_at_most_budget_plus_one():
+    b = get_breaker()
+    b.configure(slug="t", store=InMemoryBreakerStore(), alerter=RecordingAlerter(), config=BreakerConfig())
+    b._sync_io = True
+    reached = []
+    inner = httpx.MockTransport(lambda req: (reached.append(1), httpx.Response(200, json=[]))[1])
+    client = httpx.Client(transport=TimingTransport(inner), base_url="https://x.supabase.co")
+    refused = 0
+    with source_scope("worker:transcricao"):
+        for _ in range(1000):
+            try:
+                client.get("/rest/v1/jobs")
+            except BreakerOpen:
+                refused += 1
+    assert len(reached) <= 301, f"{len(reached)} calls left the process (budget 300/5min, so <= budget+1)"
+    assert refused >= 699 and b.hold_reason("worker:transcricao") is not None
+    with source_scope("http"):
+        client.get("/rest/v1/jobs")  # user traffic is never refused
+
+
+def test_F5_unscoped_calls_are_budgeted_and_trippable_http_is_explicit():
+    b, store, alerter, clock = make_breaker()
+    for _ in range(301):
+        b.record_call()  # no scope: a lifespan create_task loop / bare Thread
+    assert b.hold_reason("unattributed") is not None, "an unscoped runaway loop must be stoppable"
+    assert b.hold_reason("http") is None
+    assert BREAKER_SOURCE_RE.match("unattributed")
+
+
+def test_F5_request_middleware_sets_http_explicitly():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from noctusai_lib.api.supabase_source import SupabaseSourceMiddleware
+    from noctusai_lib.primitives.supabase_breaker import current_source
+
+    app = FastAPI()
+    app.add_middleware(SupabaseSourceMiddleware)
+
+    @app.get("/x")
+    def _x():  # a threadpool handler: the context is copied into the worker thread
+        return {"source": current_source()}
+
+    assert TestClient(app).get("/x").json() == {"source": "http"}
+    assert current_source() == "unattributed"
+
+
+def test_productive_worker_is_not_tripped_but_a_call_burner_is():
+    b, store, alerter, clock = make_breaker()
+    # a backlog drain: 50 jobs, each spends 150 calls and FINISHES -> earns 200 headroom per job
+    for _ in range(50):
+        for _ in range(150):
+            b.record_call("worker:t")
+        b.credit("worker:t", 200)
+    assert b.hold_reason("worker:t") is None
+    # a handler burning calls without finishing a job: trips at the base budget
+    for _ in range(301):
+        b.record_call("worker:burner")
+    assert b.hold_reason("worker:burner") is not None
+
+
+def test_job_of_a_held_type_is_released_not_failed_or_dead_lettered():
+    b, store, alerter, clock = make_breaker()
+    repo = FakeJobRepository()
+
+    async def handler(job):
+        b.guard("worker:t")  # what the transport does on the job's first Supabase call
+
+    worker = Worker(repo, worker_id="w", handlers={"t": handler}, breaker=b, held_poll_seconds=0.01,
+                    idle_sleep=_no_sleep)
+
+    async def drive():
+        await repo.enqueue(type="t", payload={})
+        b.trip("worker:t", reason="burning")
+        await worker.run_once()
+
+    asyncio.run(drive())
+    states = {j.status.value for j in repo._jobs.values()}
+    assert states == {"pending"}, f"a breaker release must go back to PENDING (never failed/dead-letter), got {states}"
+
+
+def test_F10_rearm_and_manual_trip_write_a_capped_audit_row():
+    b, store, alerter, clock = make_breaker()
+    b.trip("worker:a", reason="manual stop", by="ana")
+    b.rearm("worker:a", by="ana", reason="fixed")
+    rows = [json.loads(r) for r in store.audit]
+    assert [r["op"] for r in rows] == ["trip", "rearm"] and rows[1]["by"] == "ana" and rows[1]["reason"] == "fixed"
+    assert BREAKER_AUDIT_KEY == "noctus:breaker:audit"
+    for i in range(1200):
+        store.append_audit(BREAKER_AUDIT_KEY, str(i), 1000)
+    assert len(store.audit) == 1000

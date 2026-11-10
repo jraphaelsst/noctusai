@@ -54,6 +54,12 @@ class RedisBreakerStore:
     def delete(self, key: str) -> None:
         self._r.delete(key)
 
+    def append_audit(self, key: str, value: str, cap: int) -> None:
+        pipe = self._r.pipeline()
+        pipe.rpush(key, value)
+        pipe.ltrim(key, -cap, -1)  # capped: the audit list never grows without bound
+        pipe.execute()
+
 
 def make_breaker_store(redis_url: Optional[str] = None, *, use_fake: bool = False) -> Any:
     """Real Redis store when a URL resolves, else (or ``use_fake``) the in-memory Fake.

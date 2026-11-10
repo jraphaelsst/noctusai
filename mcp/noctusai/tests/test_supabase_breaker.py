@@ -75,3 +75,48 @@ def test_registered_under_the_dev_namespace():
 
     mod.register(_Server())
     assert seen["name"] == "noctus.dev.supabase_breaker" and "rearm" in seen["description"]
+
+
+def test_F9_source_regex_is_in_parity_with_the_seed_primitive():
+    from noctusai_lib.primitives.supabase_breaker import BREAKER_SOURCE_RE
+
+    assert mod._SOURCE_RE.pattern == BREAKER_SOURCE_RE.pattern
+
+
+def test_F10_audit_list_is_capped():
+    ops = FakeRedisOps()
+    for i in range(1300):
+        ops.append_audit(mod.AUDIT_KEY, str(i), mod.AUDIT_CAP)
+    assert len(ops.audit) == 1000
+    sent: list[str] = []
+    VpsRedisOps("h", runner=lambda h, c: (sent.append(c), (0, "", ""))[1]).append_audit(mod.AUDIT_KEY, "{}", 1000)
+    assert any(" ltrim " in c and "-1000" in c for c in sent), "the real path must LTRIM too"
+
+
+def test_F11a_ssh_host_is_validated_and_options_are_terminated():
+    import pytest as _pytest
+
+    from tools.noctus.dev import _vps_ssh as ssh
+
+    for bad in ("-oProxyCommand=touch /tmp/x", "-F/etc/passwd", "a b", "host;rm", "", "a" + "\n" + "b"):
+        with _pytest.raises(ValueError):
+            ssh.run_remote(bad, "true")
+    seen: list[list[str]] = []
+
+    class _P:
+        returncode, stdout, stderr = 0, "", ""
+
+    def fake_run(args, **kw):
+        seen.append(args)
+        return _P()
+
+    import subprocess
+
+    orig = subprocess.run
+    subprocess.run = fake_run  # external boundary (the OS), not our own module
+    try:
+        ssh._real_ssh("noctus-vps", "true", 5, 5)
+    finally:
+        subprocess.run = orig
+    args = seen[0]
+    assert args[-3:] == ["--", "noctus-vps", "true"]

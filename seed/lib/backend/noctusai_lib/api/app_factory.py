@@ -28,6 +28,7 @@ from noctusai_lib.primitives.exceptions import (
 )
 from .request_memo import RequestMemoMiddleware
 from .request_timing import RequestTimingMiddleware
+from .supabase_source import SupabaseSourceMiddleware
 from .security_headers import SecurityHeadersMiddleware
 from .audit import AuditMiddleware, AuditSink
 from noctusai_lib.integrations.llm.attribution import UsageAttributionMiddleware
@@ -294,6 +295,7 @@ def configure_app(
     app.state.audit_enabled = _audit_enabled
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(RequestMemoMiddleware)  # per-request memo (effective-org resolved once)
+    app.add_middleware(SupabaseSourceMiddleware)  # request-handler Supabase calls are source `http` (breaker)
     app.add_middleware(RequestTimingMiddleware)  # Server-Timing + `req_timing` log line (latency_report)
     app.add_middleware(AuditMiddleware, sink=audit_sink, product_slug=_product_slug, enabled=_audit_enabled)
     # D25: every LLM call made while serving a request is attributed to the

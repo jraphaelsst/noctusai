@@ -17,10 +17,16 @@ for every product, by the seed.
 | Core (counting, budgets, trip/hold/re-arm, alert dedupe+retry) | `noctusai_lib/primitives/supabase_breaker.py` |
 | Redis state store + owner email alerter (Fake+Real+factory) | `noctusai_lib/integrations/supabase_breaker_io.py` |
 | THE count point | `integrations/http_pool.py` `TimingTransport.handle_request` — one `rest` call = one count; every seed-built client rides it (pooled, kill-switch, and the stock-client fallback via `force_postgrest_http1`) |
-| Source attribution (contextvar) | `worker:<sorted job types>` by `jobs/worker.py`; `scheduler:<job>` by `api/scheduler.py` `_instrument`; default `http` |
+| Source attribution (contextvar) | `worker:<types>:loop` (claims/idle/bookkeeping) + `worker:<type>` per job (inside `Worker._dispatch`); `scheduler:<job>` by `api/scheduler.py` `_instrument`; `http` set EXPLICITLY per request by `SupabaseSourceMiddleware`; anything else is `unattributed` |
 | Install per app | `create_product_app` step 3d (Fake store/alerter under pytest) |
-| Platform-admin route | `GET/POST /api/platform/supabase-breaker[/rearm|/trip]` (auto-mounted, tier `platform`) |
+| Platform-admin route | `GET/POST /api/platform/supabase-breaker[/rearm|/trip]` (auto-mounted, tier `platform`, canonical `require_platform_admin` incl. admin-MFA AAL2; refuses `fleet`/`http`) |
 | Independent human tool | MCP `noctus.dev.supabase_breaker action=status|rearm|trip` (Redis over the VPS SSH chokepoint; works when Supabase is down) |
+
+**Unattributed = background.** The contextvar default is `unattributed`, budgeted and trippable like a background source, so a lifespan `create_task` loop or bare `Thread(` outside the Worker/scheduler is stoppable; `http` is never the default. NOC-REMEDIATE[breaker-unscoped-loop] (keeper for a loop without `source_scope`) is routed to the polling keeper.
+
+**A held source refuses calls in flight.** `TimingTransport` raises `BreakerOpen` before a REST call of a held background source leaves the process (a job already running fails fast; a tight loop makes at most budget+1 calls). The Worker catches it and RELEASES the job (reschedule, retry budget untouched — never failed/dead-lettered).
+
+**Productive workers are not tripped.** Idle/claim calls count under the loop source; each job's calls under its type. Each processed job refunds 3 calls to the loop (claim+mark+heartbeat) and, when it finished, 200 to its type (`credit`). Base stays 300/5 min + 2,000/h: a poller, a retry storm or a handler burning calls without finishing jobs trips; a worker draining a backlog (e.g. 50 jobs x 150 calls) never does.
 
 **Budgets** (`BreakerConfig`, defaults are the canonical answer): background trips at **> 300 calls / 5 min** (1/s
 sustained) or **> 2,000 / 1 h**; `http` NEVER stops, it ALERTS above **6,000 / 5 min / process** (cooldown 1 h). Per-source
@@ -45,8 +51,7 @@ keys fails OPEN (sources keep running) and alerts "breaker BLIND" once per outag
 `NoctusAI <noreply@noctusai.com>`). Missing config raises `BreakerAlertNotConfigured` naming what is missing; the alert is
 logged at CRITICAL and kept for retry (30 s doubling to 15 min). A trip with no alerter is still a trip.
 
-**Re-arm is human-only and needs a reason** (route / MCP tool / `Breaker.rearm`): deletes the key, records who+why (MCP: an
-audit list `noctus:breaker:audit`), the parked source resumes within ~10-15 s. A re-arm that cannot delete a persisted key
+**Re-arm is human-only and needs a reason** (route / MCP tool / `Breaker.rearm`): deletes the key, records who+why (route and MCP both: the capped (1,000) list `noctus:breaker:audit`), the parked source resumes within ~10-15 s. A re-arm that cannot delete a persisted key
 raises — it never pretends.
 
 ## Rules for code that adds a loop

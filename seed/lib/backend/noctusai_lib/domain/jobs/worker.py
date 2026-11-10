@@ -50,7 +50,7 @@ from noctusai_lib.domain.jobs.repo import (
     RescheduleLater,
 )
 from noctusai_lib.domain.jobs import wake as _wake
-from noctusai_lib.primitives.supabase_breaker import Breaker, get_breaker, source_scope
+from noctusai_lib.primitives.supabase_breaker import Breaker, BreakerOpen, get_breaker, source_scope
 from noctusai_lib.domain.jobs.retry_policy import (
     DEFAULT_POLICY,
     RetryPolicy,
@@ -94,12 +94,21 @@ class Worker:
         idle_sleep: Callable[[float, asyncio.Event | None], Awaitable[None]] | None = None,
         breaker: Breaker | None = None,
         held_poll_seconds: float = 15.0,
+        claim_credit_calls: int = 3,
+        job_credit_calls: int = 200,
     ) -> None:
         self._repo = repo
         # Supabase request breaker (2026-11-10): every Supabase call this worker's loop and handlers make is counted
         # under `worker:<job types>`; a runaway rate trips it and the loop PARKS (zero Supabase calls) until a human
         # re-arms. `breaker=None` -> the process breaker. KB § PATTERNS/backend/supabase-request-breaker.md
+        # Budget rule (design risk: a per-WORKER source would park every job type on a legit burst): idle/claim calls
+        # count under `worker:<types>:loop`; each job's own calls under `worker:<type>`. Every PROCESSED job refunds
+        # `claim_credit_calls` (claim + mark + heartbeat) to the loop and, when it finished its work, `job_credit_calls`
+        # to its type. Base budget stays 300/5 min (+2,000/h): an idle poller, a retry storm or a handler that burns
+        # calls without finishing jobs trips fast; a worker draining a backlog earns 200 calls of headroom per job.
         self._breaker = breaker
+        self._claim_credit = claim_credit_calls
+        self._job_credit = job_credit_calls
         self._held_poll = held_poll_seconds
         self._breaker_wake: asyncio.Event | None = None
         # Pause switch, consulted before EVERY claim: `False` ⇒ claim
@@ -168,13 +177,22 @@ class Worker:
             await self._repo.mark_failed(job.id, error, dead_letter=True)
             return True
 
-        await self._dispatch(job, handler)
+        done = await self._dispatch(job, handler)
+        breaker = self._breaker or get_breaker()
+        breaker.credit(self.breaker_source, self._claim_credit)
+        if done:
+            breaker.credit(f"worker:{job.type}", self._job_credit)
         return True
 
     @property
     def breaker_source(self) -> str:
-        """The breaker source name: ``worker:<sorted job types>``."""
-        return "worker:" + ",".join(self._job_types)
+        """The loop's breaker source: ``worker:<sorted job types>:loop`` (claims, idle polls, bookkeeping)."""
+        return "worker:" + ",".join(self._job_types) + ":loop"
+
+    @property
+    def breaker_sources(self) -> list[str]:
+        """Every source this worker depends on: the loop's plus one ``worker:<type>`` per job type."""
+        return [self.breaker_source, *(f"worker:{t}" for t in self._job_types)]
 
     async def claim_allowed(self) -> bool:
         """The claim gate's current answer (`True` when there is no gate)."""
@@ -214,25 +232,30 @@ class Worker:
         breaker = self._breaker or get_breaker()
         source = self.breaker_source
         self._breaker_wake = bk_wake = asyncio.Event()
-        unsubscribe = breaker.subscribe(source, lambda: loop.call_soon_threadsafe(bk_wake.set))
+        unsubscribes = [
+            breaker.subscribe(src, lambda: loop.call_soon_threadsafe(bk_wake.set)) for src in self.breaker_sources
+        ]
         try:
             with source_scope(source):
                 # A held source does NOT start on boot: the check below reads Redis (force) before the first claim.
-                hold = await breaker.check(source, force=True)
+                hold = await self._hold(breaker, force=True)
                 while True:
                     if stop_event is not None and stop_event.is_set():
                         break
                     bk_wake.clear()
                     if hold:
-                        if not await self._park(breaker, source, hold, stop_event):
+                        if not await self._park(breaker, hold, stop_event):
                             break
                         delay = self._poll_interval
                     # A wake that lands before this claim is covered by the claim
                     # itself; one that lands after it ends the next idle sleep.
                     if self._waker is not None:
                         self._waker.event.clear()
-                    processed = await self.run_once()
-                    hold = await breaker.check(source)
+                    try:
+                        processed = await self.run_once()
+                    except BreakerOpen:
+                        processed = False  # the claim itself was refused: the source is held now
+                    hold = await self._hold(breaker)
                     if hold:
                         continue  # tripped (or fleet-held) while that job ran: it finished; now stop claiming
                     if processed:
@@ -244,22 +267,36 @@ class Worker:
                     else:
                         delay = min(delay * self._idle_multiplier, self._max_idle_interval)
         finally:
-            unsubscribe()
+            for off in unsubscribes:
+                off()
             self._breaker_wake = None
             if self._waker is not None:
                 _wake.unregister(self._waker)
                 self._waker = None
             logger.info("worker.stop worker_id=%s", self._worker_id)
 
+    async def _hold(self, breaker: Breaker, *, force: bool = False) -> dict | None:
+        """The first hold among the loop's source and every job-type source it serves (a held TYPE parks the loop:
+        claiming a job whose every Supabase call would be refused only churns claims)."""
+        found = None
+        for src in self.breaker_sources:
+            breaker.register_source(src)  # all registered BEFORE the first (forced) read so one MGET covers them
+        for src in self.breaker_sources:
+            hold = await breaker.check(src, force=force)
+            force = False  # one Redis read covers every registered source
+            if hold is not None and found is None:
+                found = hold
+        return found
+
     async def _park(
-        self, breaker: Breaker, source: str, hold: dict, stop_event: asyncio.Event | None
+        self, breaker: Breaker, hold: dict, stop_event: asyncio.Event | None
     ) -> bool:
         """The breaker holds this source: claim NOTHING (zero Supabase calls) until it is re-armed. Re-checks Redis
         every `held_poll_seconds` (one cached MGET, never Supabase). Returns False if asked to stop meanwhile."""
         logger.critical(
             "worker.held_by_breaker worker_id=%s source=%s scope=%s reason=%s — NOT claiming jobs until a human "
             "re-arms (noctus.dev.supabase_breaker / the platform-admin route)",
-            self._worker_id, source, hold.get("scope"), hold.get("reason"),
+            self._worker_id, hold.get("source") or self.breaker_source, hold.get("scope"), hold.get("reason"),
         )
         while True:
             if stop_event is not None and stop_event.is_set():
@@ -269,9 +306,9 @@ class Worker:
             await self._idle_sleep_held(stop_event)
             if stop_event is not None and stop_event.is_set():
                 return False
-            hold = await breaker.check(source, force=True)
+            hold = await self._hold(breaker, force=True)
             if hold is None:
-                logger.warning("worker.released_by_breaker worker_id=%s source=%s — resuming", self._worker_id, source)
+                logger.warning("worker.released_by_breaker worker_id=%s — resuming", self._worker_id)
                 return True
 
     async def _idle_sleep_held(self, stop_event: asyncio.Event | None) -> None:
@@ -334,10 +371,16 @@ class Worker:
                         self._worker_id,
                     )
                     return
+                except BreakerOpen:
+                    logger.error(
+                        "worker.heartbeat_refused job_id=%s worker_id=%s: breaker holds the loop; the lease will "
+                        "expire and the job be reclaimed", job_id, self._worker_id,
+                    )
+                    return
         except asyncio.CancelledError:
             raise
 
-    async def _dispatch(self, job: Job, handler: JobHandler) -> None:
+    async def _dispatch(self, job: Job, handler: JobHandler) -> bool:
         """Run the handler (with a background lease-heartbeat) and
         translate its outcome into repo calls.
 
@@ -348,6 +391,10 @@ class Worker:
           mark_failed(policy=self._retry_policy) → FAILED → PENDING
           (if retries remain under the policy) or DEAD_LETTER
           (if exhausted).
+        - `BreakerOpen` (the Supabase breaker holds this job type, F4): the job is
+          RELEASED (rescheduled, retry budget untouched) — never failed or
+          dead-lettered. If even the release is refused (fleet hold) the job
+          keeps its lease and is reclaimed after it expires.
         - `BaseException` (KeyboardInterrupt, SystemExit,
           asyncio.CancelledError): mark_failed(...) so the job isn't
           lost on shutdown, then re-raise so the loop unwinds.
@@ -355,7 +402,24 @@ class Worker:
         heartbeat_task = asyncio.ensure_future(self._heartbeat_loop(job.id))
         try:
             try:
-                await handler(job)
+                # Each job type is its own breaker source (`worker:<type>`); the bookkeeping calls below run under the
+                # LOOP's source, so releasing a job of a held type is never refused by that same hold.
+                with source_scope(f"worker:{job.type}"):
+                    await handler(job)
+            except BreakerOpen as exc:
+                logger.warning(
+                    "worker.released_by_breaker job_id=%s type=%s source=%s",
+                    job.id, job.type, exc.source,
+                )
+                try:
+                    await self._repo.reschedule(job.id, delay_s=self._held_poll)
+                except BreakerOpen:
+                    logger.error(
+                        "worker.release_refused job_id=%s: the breaker holds the loop too; the job keeps its lease "
+                        "and is reclaimed when it expires",
+                        job.id,
+                    )
+                return False
             except DeadLetterError as exc:
                 logger.warning(
                     "worker.dead_letter job_id=%s type=%s reason=%s",
@@ -364,7 +428,7 @@ class Worker:
                     exc,
                 )
                 await self._repo.mark_failed(job.id, str(exc), dead_letter=True)
-                return
+                return False
             except RescheduleLater as exc:
                 # Not a failure: back to PENDING after the delay, retry
                 # budget untouched.
@@ -375,7 +439,7 @@ class Worker:
                     exc.delay_s,
                 )
                 await self._repo.reschedule(job.id, delay_s=exc.delay_s)
-                return
+                return True
             except Exception as exc:
                 logger.warning(
                     "worker.retry job_id=%s type=%s retry_count=%d error=%s",
@@ -387,7 +451,7 @@ class Worker:
                 await self._repo.mark_failed(
                     job.id, str(exc), policy=self._retry_policy
                 )
-                return
+                return False
             except BaseException as exc:
                 # Shutdown signals — surface the failure for diagnostics
                 # but DO NOT swallow; let the loop unwind cleanly.
@@ -410,6 +474,7 @@ class Worker:
 
             # Success path.
             await self._repo.mark_completed(job.id)
+            return True
         finally:
             heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

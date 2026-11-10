@@ -7,7 +7,7 @@ role read): it talks to ``noctus-redis`` over the toolkit's throttled SSH chokep
 
   action=status                         every held key + its state (read-only)
   action=rearm source=<s> [product=<p>] reason=<why> [by=<who>]   DEL the key + audit row. WRITE.
-  action=trip  source=<s> [product=<p>] reason=<why> [by=<who>]    SET the key by hand (``source=fleet`` = stop EVERYTHING).
+  action=trip  source=<s> [product=<p>] reason=<why> [by=<who>]    SET the key by hand (``source=fleet`` = stop EVERYTHING; ops-only, the platform-admin route refuses it).
 
 ``source`` is ``fleet`` or a background source (``worker:<types>`` / ``scheduler:<job>``; never ``http``); any other needs
 ``product``. A reason is REQUIRED for rearm/trip. Dry-run by default (``confirm=False`` plans only). The seed breaker
@@ -30,7 +30,9 @@ from . import toolkit_freshness as _toolkit_freshness
 PREFIX = "noctus:breaker:"
 FLEET_KEY = f"{PREFIX}fleet"
 AUDIT_KEY = f"{PREFIX}audit"
-_SOURCE_RE = re.compile(r"^(worker|scheduler|gate):[A-Za-z0-9_.,:\-]+$")
+# parity with noctusai_lib.primitives.supabase_breaker.BREAKER_SOURCE_RE (a test pins it); `fleet` is handled apart
+_SOURCE_RE = re.compile(r"^(?:(?:worker|scheduler|gate):[A-Za-z0-9_.,:\-]{1,100}|unattributed)$")
+AUDIT_CAP = 1000
 _PRODUCT_RE = re.compile(r"^[a-z][a-z0-9\-]{0,40}$")
 ACTIONS = ("status", "rearm", "trip")
 
@@ -44,7 +46,7 @@ class RedisOps(Protocol):
 
     def delete(self, key: str) -> None: ...
 
-    def rpush(self, key: str, value: str) -> None: ...
+    def append_audit(self, key: str, value: str, cap: int) -> None: ...
 
 
 class RedisOpsError(RuntimeError):
@@ -70,8 +72,9 @@ class FakeRedisOps:
     def delete(self, key: str) -> None:
         self.data.pop(key, None)
 
-    def rpush(self, key: str, value: str) -> None:
+    def append_audit(self, key: str, value: str, cap: int) -> None:
         self.audit.append(value)
+        del self.audit[:-cap]
 
 
 class VpsRedisOps:
@@ -104,8 +107,9 @@ class VpsRedisOps:
     def delete(self, key: str) -> None:
         self._cli("del", key)
 
-    def rpush(self, key: str, value: str) -> None:
+    def append_audit(self, key: str, value: str, cap: int) -> None:
         self._cli("rpush", key, value)
+        self._cli("ltrim", key, str(-cap), "-1")  # capped audit list
 
 
 def _key(source: str, product: str) -> str:
@@ -154,15 +158,16 @@ def _default_executor(*, action: str, source: str, product: str, reason: str, by
             if current is None:
                 return {**plan, "note": "key absent: nothing to re-arm (the source is not held)"}
             ops.delete(key)
-            ops.rpush(AUDIT_KEY, json.dumps({"op": "rearm", "key": key, "by": who, "reason": reason, "at": when,
-                                             "was": current}))
+            ops.append_audit(AUDIT_KEY, json.dumps({"op": "rearm", "key": key, "by": who, "reason": reason, "at": when,
+                                                    "was": current}), AUDIT_CAP)
             return {**plan, "rearmed": True}
         state = json.dumps({"reason": reason, "rate": 0, "window": 0, "tripped_at": when, "by": f"manual:{who}"})
         plan = {"action": "trip", "key": key, "state": json.loads(state), "already_held": current is not None}
         if not confirm:
             return plan
         ops.set(key, state)
-        ops.rpush(AUDIT_KEY, json.dumps({"op": "trip", "key": key, "by": who, "reason": reason, "at": when}))
+        ops.append_audit(AUDIT_KEY, json.dumps({"op": "trip", "key": key, "by": who, "reason": reason, "at": when}),
+                         AUDIT_CAP)
         return {**plan, "tripped": True}
     except RedisOpsError as exc:
         return {"ok": False, "status": "error", "error": str(exc)}

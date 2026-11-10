@@ -35,6 +35,7 @@ from typing import Any, Mapping, Optional
 
 import httpx
 
+from noctusai_lib.primitives.supabase_breaker import guard as _breaker_guard
 from noctusai_lib.primitives.supabase_breaker import record_call as _breaker_record_call
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,10 @@ class TimingTransport(httpx.BaseTransport):
         service = service_of(request.url)
         if service == "rest":
             # Supabase request breaker (2026-11-10): the ONE place every seed-built client's PostgREST traffic passes.
-            # In-memory count attributed to the current source (worker/scheduler/http); never network, never raises.
+            # A HELD background source is refused here (BreakerOpen), before the call leaves the process, so a job
+            # already in flight fails fast; otherwise the call is counted in memory (no network) under the current
+            # source. The guard may raise; the count must never break a call.
+            _breaker_guard()
             try:
                 _breaker_record_call()
             except Exception:  # noqa: BLE001 -- the safety net must never break a call

@@ -3,12 +3,13 @@
 Auto-mounted on EVERY product by ``create_product_app`` (registry key ``"supabase_breaker"``), like ``me`` / ``mfa``:
 
 * ``GET  /api/platform/supabase-breaker``        — this process's breaker state (held sources, fleet key, counts).
-* ``POST /api/platform/supabase-breaker/rearm``  — release a held source (or ``fleet``); a reason is REQUIRED.
-* ``POST /api/platform/supabase-breaker/trip``   — hold a background source by hand (never ``http``).
+* ``POST /api/platform/supabase-breaker/rearm``  — release a held background source; a reason is REQUIRED.
+* ``POST /api/platform/supabase-breaker/trip``   — hold a background source by hand.
 
-Tier ``platform`` (strict: no token 401, anyone but a ``noctus_users.role='admin'`` 403). The role read goes through the
-trusted ``resolve_platform_admin_role``; it needs core Supabase, so when Supabase itself is the thing that is down use the
-independent path ``noctus.dev.supabase_breaker`` (talks to Redis over the VPS, no Supabase).
+``fleet`` and ``http`` are NOT accepted anywhere here (the fleet kill switch is ops-only: ``noctus.dev.supabase_breaker``;
+``http`` is never held). Auth is the canonical ``require_platform_admin`` (strict 401 / 403, the admin-MFA AAL2 assurance
+gate included): the product's session/API-token ``get_auth_context`` + the trusted ``noctus_users.role`` read. That read
+needs core Supabase, so when Supabase itself is the thing that is down use the independent MCP tool.
 
 KB § PATTERNS/backend/supabase-request-breaker.md
 """
@@ -18,46 +19,57 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import Field
 
 from noctusai_lib.api.access_tiers import access_tier, make_router
 from noctusai_lib.api.auth._blocking import run_blocking
-from noctusai_lib.api.auth.platform import resolve_platform_admin_role
+from noctusai_lib.api.auth.platform import require_platform_admin
+from noctusai_lib.api.auth.session import make_api_token_resolver, make_get_auth_context
 from noctusai_lib.api.schemas import StrictHttpModel
-from noctusai_lib.primitives.supabase_breaker import HTTP_SOURCE, get_breaker
+from noctusai_lib.primitives.supabase_breaker import BREAKER_SOURCE_RE, get_breaker
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["create_supabase_breaker_router"]
 
-_TIER_REASON = "platform-admin only: noctus_users.role == 'admin' via resolve_platform_admin_role"
+_TIER_REASON = "platform-admin only: require_platform_admin (noctus_users.role == 'admin' + admin-MFA assurance)"
+_SESSION_COOKIE = "nai_session"
 
 
 class RearmBody(StrictHttpModel):
-    source: str
-    reason: str
+    source: str = Field(min_length=1, max_length=120)
+    reason: str = Field(min_length=1, max_length=300)
 
 
 class TripBody(StrictHttpModel):
-    source: str
-    reason: str
+    source: str = Field(min_length=1, max_length=120)
+    reason: str = Field(min_length=1, max_length=300)
 
 
-def create_supabase_breaker_router(deps) -> APIRouter:
-    async def platform_admin_dep(auth=Depends(deps.get_current_user)) -> Any:
-        user, _token = auth
-        role = await run_blocking(resolve_platform_admin_role, deps.get_core_client(), user.id)
-        if role != "admin":
-            raise HTTPException(
-                status_code=403,
-                detail={"detail": "Restrito a administradores da plataforma NoctusAI", "code": "platform_admin_required"},
-            )
-        return user
+def _source_or_422(source: str) -> str:
+    if not BREAKER_SOURCE_RE.match(source):
+        raise HTTPException(
+            status_code=422,
+            detail={"detail": "source must be a background source (worker:<types> | scheduler:<job> | gate:<name> | "
+                              "unattributed); the fleet key is ops-only", "code": "source_invalid"},
+        )
+    return source
 
-    router = make_router(tier="platform", guard=platform_admin_dep, prefix="/api/platform/supabase-breaker",
+
+def create_supabase_breaker_router(deps, settings) -> APIRouter:
+    from noctusai_seed.auth_router import get_session_store  # deferred: auth_router is heavy
+
+    get_auth_context = make_get_auth_context(
+        session_store=get_session_store(settings),
+        api_token_resolver=make_api_token_resolver(),
+        session_cookie_name=_SESSION_COOKIE,
+    )
+    platform_admin = require_platform_admin(get_auth_context=get_auth_context, get_core_client=deps.get_core_client)
+    router = make_router(tier="platform", guard=platform_admin, prefix="/api/platform/supabase-breaker",
                          tags=["Platform · Supabase breaker"])
 
-    def _actor(user: Any) -> str:
-        return str(getattr(user, "email", None) or getattr(user, "id", "unknown"))
+    def _actor(ctx: Any) -> str:
+        return str(getattr(ctx, "user_id", None) or "unknown")
 
     @router.get("")
     @access_tier("platform", reason=_TIER_REASON)
@@ -68,25 +80,24 @@ def create_supabase_breaker_router(deps) -> APIRouter:
 
     @router.post("/rearm")
     @access_tier("platform", reason=_TIER_REASON)
-    async def breaker_rearm(body: RearmBody, user=Depends(platform_admin_dep)) -> dict:
+    async def breaker_rearm(body: RearmBody, ctx=Depends(platform_admin)) -> dict:
+        source = _source_or_422(body.source)
         if not body.reason.strip():
             raise HTTPException(status_code=422, detail={"detail": "reason is required", "code": "reason_required"})
         try:
-            return await run_blocking(get_breaker().rearm, body.source, by=_actor(user), reason=body.reason.strip())
+            return await run_blocking(get_breaker().rearm, source, by=_actor(ctx), reason=body.reason.strip())
         except Exception as exc:  # the key may still exist: say so, never pretend it was released
-            logger.error("breaker rearm failed for %s", body.source, exc_info=True)
-            raise HTTPException(status_code=502, detail={"detail": f"re-arm failed: {type(exc).__name__}: {exc}",
+            logger.error("breaker rearm failed for %s", source, exc_info=True)
+            raise HTTPException(status_code=502, detail={"detail": f"re-arm failed: {type(exc).__name__}",
                                                          "code": "rearm_failed"})
 
     @router.post("/trip")
     @access_tier("platform", reason=_TIER_REASON)
-    async def breaker_trip(body: TripBody, user=Depends(platform_admin_dep)) -> dict:
-        if body.source == HTTP_SOURCE or not body.source.strip():
-            raise HTTPException(status_code=422, detail={"detail": "only background sources can be tripped",
-                                                         "code": "source_invalid"})
+    async def breaker_trip(body: TripBody, ctx=Depends(platform_admin)) -> dict:
+        source = _source_or_422(body.source)
         if not body.reason.strip():
             raise HTTPException(status_code=422, detail={"detail": "reason is required", "code": "reason_required"})
-        created = await run_blocking(get_breaker().trip, body.source, reason=body.reason.strip(), by=_actor(user))
-        return {"ok": True, "source": body.source, "created": created}
+        created = await run_blocking(get_breaker().trip, source, reason=body.reason.strip(), by=_actor(ctx))
+        return {"ok": True, "source": source, "created": created}
 
     return router

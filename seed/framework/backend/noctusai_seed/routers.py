@@ -699,7 +699,7 @@ def _build_me_router(deps, settings, product_name: str, version: str) -> APIRout
 def _build_supabase_breaker_router(deps, settings, product_name: str, version: str) -> APIRouter:
     # Auto-mounted by create_product_app on every product (platform-admin only).
     from noctusai_seed.supabase_breaker_router import create_supabase_breaker_router
-    return create_supabase_breaker_router(deps)
+    return create_supabase_breaker_router(deps, settings)
 
 
 # Maintenance contract for _STANDARD_ROUTERS:
