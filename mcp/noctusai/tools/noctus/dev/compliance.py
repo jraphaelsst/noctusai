@@ -16121,22 +16121,6 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "there is no live index to probe; the only writer stamps it NULL-only after checking no other corretor claims the Codigo. "
         "Replace with a real GuardProbe in the SAME change that applies it.",
     ),
-    # agents 076 (eval-loop gate) is NOT APPLIED (file-only until the tech-lead runs migrate_product): a CHECK that an active loop
-    # carries no stop reason and a stopped one carries both, and the partial UNIQUE that keeps one ACTIVE loop per (agent, suite).
-    # Both are also enforced in the API (FakeLoopStore/SupabaseLoopStore map the 23505 to 409 loop_ativo_existente; the stop paths write
-    # status+reason+time together). Neither exists in prod to probe yet.
-    (
-        "products/agents/backend/migrations/076_eval_loops.sql",
-        "eval_loops_parada_consistente",
-        "Row-consistency CHECK (active <=> no stop reason/time) written only by the loop store's stop paths; migration unapplied "
-        "(file-only), no live constraint to probe. Replace with a real GuardProbe in the SAME change that applies it.",
-    ),
-    (
-        "products/agents/backend/migrations/076_eval_loops.sql",
-        "uq_agents_eval_loops_ativo_por_suite",
-        "Partial UNIQUE (agent_id, suite) WHERE status='ativo'; migration unapplied (file-only), no live index to probe. "
-        "Replace with a real GuardProbe in the SAME change that applies it.",
-    ),
     # SW 332 (ad-lead intake, corretor divergence tipos) is NOT APPLIED (file-only until the tech-lead runs migrate_product): a
     # vocabulary CHECK on `tipo` (three values, written only from the TIPO_* literals of ad_lead_intake_service) and the widened
     # UNIQUE (org, lead, código, tipo) that keeps one open warning per tipo. Neither exists in prod to probe yet.

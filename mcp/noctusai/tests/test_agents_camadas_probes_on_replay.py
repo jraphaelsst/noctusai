@@ -1,4 +1,4 @@
-"""Agents 073 (agent layers BASE -> SDR -> agent) and 074 (hand-off fallback number): every GuardProbe of each
+"""Agents 073 (agent layers BASE -> SDR -> agent), 074 (hand-off fallback number) and 075 (eval-loop gate): every GuardProbe of each
 migration runs on the REAL core + agents chain on PGlite and reports `refused`. Own groups, like 049's geracao
 probes: the 012-017 studio-probe class excludes them."""
 from __future__ import annotations
@@ -18,6 +18,8 @@ _GROUPS = {
                               {"agents_camada_check", "guard_agent_camada", "guard_version_pai_pin"}),
     "074_numero_fallback_atendimento.sql": (vdg._AGENTS_FALLBACK_PROBES,
                                             {"runtime_settings_key_check", "runtime_settings_numero_fallback_e164"}),
+    "075_eval_loops.sql": (vdg._AGENTS_EVAL_LOOP_PROBES,
+                           {"eval_loops_parada_consistente", "uq_agents_eval_loops_ativo_por_suite"}),
 }
 
 

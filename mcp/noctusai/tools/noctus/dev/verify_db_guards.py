@@ -5080,6 +5080,35 @@ _AGENTS_FALLBACK_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# 076: the eval-loop gate (G1-G7). Self-provisioning like every agents probe: a probe agent, then the loop rows.
+_LOOPS_MIGS = (_m("031"), "076_eval_loops.sql")
+
+
+def _loop_insert(status: str, motivo: str, stopped: str) -> str:
+    return (f"INSERT INTO {_JV2}.eval_loops (org_id, agent_id, agente_chave, suite, rodadas_planejadas, piso, "
+            "orcamento_usd, status, motivo_parada, stopped_at, started_by) "
+            f"VALUES (v_org, v_agent, 'noc-probe', 'comportamento', 5, 0.8, 20, '{status}', {motivo}, {stopped}, v_org);")
+
+
+_AGENTS_EVAL_LOOP_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="eval_loops.stopped_loop_says_why_and_when", guard_name="eval_loops_parada_consistente",
+        migrations=_LOOPS_MIGS, setup=_JV2_AGENT, attack=_loop_insert("parado", "NULL", "NULL"),
+        fragments=("eval_loops_parada_consistente",), what="a stopped eval loop with no stop reason or time",
+        rationale="G4's mid-flight notice and the owner's review read motivo_parada: a loop stopped without a reason "
+                  "is a stop nobody can explain.",
+    ),
+    _julia_v2_probe(
+        probe_id="eval_loops.one_active_loop_per_suite", guard_name="uq_agents_eval_loops_ativo_por_suite",
+        migrations=_LOOPS_MIGS, setup="\n    ".join((_JV2_AGENT, _loop_insert("ativo", "NULL", "NULL"))),
+        attack=_loop_insert("ativo", "NULL", "NULL"),
+        fragments=("uq_agents_eval_loops_ativo_por_suite",), what="a second ACTIVE loop on the same agent and suite",
+        rationale="Two loops racing one suite would each read the other's rounds as score noise, so G4 would stop "
+                  "(or not) on someone else's run.",
+    ),
+)
+
+
 _AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
     # ── 031 · platform definition / instance / content mode ──
     _julia_v2_probe(
@@ -11841,6 +11870,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_ISOLATION_PROBES,
     *_AGENTS_CAMADAS_PROBES,
     *_AGENTS_FALLBACK_PROBES,
+    *_AGENTS_EVAL_LOOP_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
     _CLIENTE_CONFLITO_STATUS_PROBE,
