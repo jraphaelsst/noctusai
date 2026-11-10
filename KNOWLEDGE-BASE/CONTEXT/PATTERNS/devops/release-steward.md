@@ -151,6 +151,17 @@ python mcp/noctusai/cli.py --release-steward claim --steward-name <name> --stewa
 `ListAgents` and `SendMessage` the announcement. `--steward-session-id` overrides
 `$CLAUDE_CODE_SESSION_ID` for an operator acting for another session.
 
+## 7a · Ejection flow (steward-resolves; not live until build 4 inbox fields; end predicate not live until builds 3+5)
+
+Decision 2026-11-10, council a341e383: `project-history/assistant-chatbot/queue-lifecycle-decision.md`. Supersedes `merge-queue.md` §4 "the owning session fixes".
+
+1. **Diagnose** from the failed log (`noc-steward` §3).
+2. **Ask once, if needed.** An inbox `needs_info` record addressed to the requester's **ROLE** (resolved through the role registry at send time; owner fallback), one batched question, TTL about one CI cycle (~25 min). Method: `noc-questionnaire` peer mode.
+3. **Live requester keeps it.** A live, not-done requester answering "already fixing" within the TTL keeps the fix.
+4. **Otherwise the steward fixes it:** withdraws the `mq/*` ref and **dispatches a rescue engineer** on a NEW `rescue-<slug>` branch (`task_branch start`; never inline coding, so lease/consent/deploy stay responsive). The steward stays accountable for the result. Never patches `feat/*`; never hands work back to a done agent.
+5. **Record and tell.** The inbox records the ownership transfer and the rescue lineage (slug to rescue-slug). `LANDED` plus a diff summary goes to the requester's role (its next session) or the owner, so a wrong domain fix stays visible.
+6. **End predicate** (`release_steward mine`, builds 3+5): a requester may end only when its requests are LANDED (plus DEPLOYED if asked) or ejected-with-transfer, it has no open `mq/*` ref, no rescue of its slug is unlanded and no CI run it depends on is in flight. Teardown rules: `background-agent-lifecycle.md`.
+
 ## 8 · Reboot / multi-steward (2026-11-09/10)
 
 After a machine reboot sessions return under NEW names, so a name is not an identity — a ROLE is.

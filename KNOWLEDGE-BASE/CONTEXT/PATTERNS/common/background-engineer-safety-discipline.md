@@ -97,7 +97,7 @@ The N≥4 recurrence in a single session (well past the N=3 formalize threshold 
 - [[dispatch-with-project-and-notes]] — the surface-note shape (`kind="surface"`) this rule consumes; the `file_proposal` infra already exists, this rule pins which situations REQUIRE filing one.
 - [[drift-fix-on-contact]] — Roles split (tech-lead RESOLVES, engineers SURFACE) — same shape applied here to safety-gate bypass rather than drift.
 - [[scoped-auto-improvement]] — the two-leg footer (`drift-found:` + `scoped-improvement:`) is the standard surface channel; safety-wall surfaces additionally call `surface_to_tech_lead` because they BLOCK execution (footer alone wouldn't pause the engineer).
-- [[engineer-seed]] §0a / §9 — the standing protocol section that bakes this rule into every dispatch; §9 already lists the most common forbidden shapes (`--no-verify`, `--force`, `reset --hard`) — this rule expands the catalog + adds the surface protocol.
+- [[product-engineer]] §0a / §9 — the standing protocol section that bakes this rule into every dispatch; §9 already lists the most common forbidden shapes (`--no-verify`, `--force`, `reset --hard`) — this rule expands the catalog + adds the surface protocol.
 - [[dispatch-engineer-tuning]] §4b — the brief-template section that ensures every dispatch carries the verbatim safety language + the `surface_to_tech_lead` tool name so the engineer knows the ergonomic round-trip exists.
 - [[no silent errors]] — universal ancestor; auto-mode silent bypass IS the silent-error shape.
 - [[main is sacred; dev is integration layer]] — the production-side reason shared-branch writes need explicit authorization.

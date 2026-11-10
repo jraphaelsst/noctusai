@@ -1,6 +1,6 @@
 """Deny dispatching an EXECUTOR subagent with no worktree to work in.
 
-An executor (backend/frontend/devops-engineer, engineer-seed) writes code; an
+An executor (backend/frontend/devops-engineer, product-engineer) writes code; an
 executor launched with neither `isolation: "worktree"` nor a brief naming an
 EXISTING `.claude/worktrees/<slug>` directory writes into whatever tree the
 caller sits in — the shared primary on `dev` (CLAUDE.md §1 self-branching).

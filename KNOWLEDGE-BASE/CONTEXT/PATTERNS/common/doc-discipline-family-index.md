@@ -21,6 +21,10 @@ Doc-propagation sync has a mechanical twin for **live org/product state**: a com
 
 Staleness of ALL living docs is gated deterministically: code a doc covers changing materially without the doc (or a `Docs-Reviewed: <doc> — <reason>` trailer) fails AT COMMIT TIME (commit-msg hook over the staged diff; the agent updates covering docs in the same commit, unprompted — owner order 2026-11-04) with pre-push/CI as the backstop, and false status/path claims fail against a shrink-only ratchet (keeper `check_doc_staleness`, tool `noctus.dev.doc_staleness`). → `KB § PATTERNS/common/doc-staleness-gate.md`
 
+## Adjacent (not a §1 member): doc type
+
+Symbols compress a doc; the doc TYPE says what it is for. Every doc is exactly one of tutorial, how-to, reference or explanation (Diátaxis), never blended. → `KB § PATTERNS/common/doc-symbology.md` §6b.
+
 ## Why a family line
 
 These 8 rules shared one framework, and a session that needs one of them typically needs the rest — so a single router hop costs a lookup and returns 7 always-on lines of budget. The forcing function is the router keeper's rule-COUNT ceiling; the procedure is `/gc` step 5. → `KB § PATTERNS/common/claude-md-router-discipline.md`

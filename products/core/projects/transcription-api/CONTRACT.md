@@ -98,7 +98,7 @@ Minutes from failures **we** caused (worker crash, timeout, unavailable) are ref
 |---|---|---|---|
 | A · Core migration | backend-engineer | `products/core/backend/migrations/NNN_transcription_api.sql` + its migration test | this contract |
 | B · Core API + worker + sweeps | backend-engineer | `products/core/backend/app/routers/transcriptions.py`, `app/services/transcription_api/**`, router + worker registration in `app/main.py`, `app/config.py` fields, tests under `products/core/backend/tests/` | contract (parallel with A; schema is fixed here) |
-| C · Client tool | engineer-seed | `mcp/noctusai/tools/noctus/transcription/**`, its tests, `mcp/noctusai/cli.py` flags | contract only |
+| C · Client tool | product-engineer | `mcp/noctusai/tools/noctus/transcription/**`, its tests, `mcp/noctusai/cli.py` flags | contract only |
 | D · Compose + env | tech-lead | `deploy/fleet/docker-compose.prod.yml` (core joins `transcribe-net`; transcriber off the opt-in profile, `restart: unless-stopped`), `deploy/fleet/env.fleet.keys` | §6 VPS measurement (SW contract) passes |
 | E · Worker cap | coordinated with noctusai-76 | `seed/lib/backend/noctusai_lib/integrations/transcription/server/engine.py` (+ test) | — |
 | F · Enable | tech-lead + owner | `transcricao_api_habilitada = true` after D, deploy, smoke | non-product deploy path (`b27397f43`, another session) + D |

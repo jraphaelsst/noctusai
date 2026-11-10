@@ -1018,12 +1018,12 @@ requires 217, 221, 224 and 225 applied, and is applied to prod with owner consen
 `migrate_product` before the image deploy.
 
 ### Wave 0 (integrate before wave 1)
-- **S0a (engineer-seed, backend):**
+- **S0a (product-engineer, backend):**
   - `noctusai_lib/domain/jobs/lifecycle.py` (`WorkerHandle`: start/stop/is_running over a `Worker`, stop timeout, cancel on timeout) + tests;
   - `integrations/meta`: `get_business_discovery(ig_user_id, username, *, fields, after=None) -> BusinessDiscoveryPage` on the Facebook-Login adapter Protocol + Fake + Real (`_meta_api` error mapping) + tests, including a recorded live shape check (views served or not);
   - `integrations/media/safe_fetch.py` + tests.
   - Do not edit unrelated `__init__` exports beyond adding the new names. The template sync is done by the pre-commit hook.
-- **S0b (engineer-seed, frontend):** `seed/lib/frontend/src/realtime/readSseStream.ts` (+ export) and HelpChatBubble migrated onto it (its tests stay green).
+- **S0b (product-engineer, frontend):** `seed/lib/frontend/src/realtime/readSseStream.ts` (+ export) and HelpChatBubble migrated onto it (its tests stay green).
 - **BE-0 (backend):**
   - `migrations/229_cs_geracao.sql` + migration test + `APPLIED.md` entry;
   - `app/modules/media_creation/geracao_taxonomias.py`;

@@ -101,7 +101,7 @@ with live data; once he restates a rule, it replaces any default proposed earlie
 - Batch questions (≤ 4 per round; several rounds fine); present observed facts (what the data shows,
   what a studied app does) as **options, never decisions**; long free-text answers in plain chat with a
   compact reply format (`1a 2c 3b`) — a cancelled question form loses what he typed (same memory).
-- Use skill `noc-questionnaire` to reduce each ask to the simplest human decision and record answers.
+- Use skill `noc-questionnaire` to run the never-assume interview and record answers.
 - As an ADVISOR subagent you cannot ask the owner directly: return the question batch to the
   tech-lead, who asks and relays. Never fill a gap with your preference and label it a decision.
 - Check rules against live data and show collisions ("this rule makes the 23 portals with no spend

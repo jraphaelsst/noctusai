@@ -551,7 +551,7 @@ is often reporting an accessibility bug (§7).
 - [ ] E2E with Playwright (core, social-wiring have `@playwright/test`): role locators
   (`page.getByRole`), web-first assertions, no fixed sleeps, an axe scan on each smoke route
   (Playwright — Best practices; Accessibility testing).
-- [ ] Run the FULL vitest of every product you touched before returning (engineer-seed §3), through the
+- [ ] Run the FULL vitest of every product you touched before returning (product-engineer §3), through the
   hardware gate.
 
 **The dual-React harness gap — resolved, with one residual.** Render tests used to crash with

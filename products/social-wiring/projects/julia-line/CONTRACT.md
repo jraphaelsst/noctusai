@@ -165,8 +165,8 @@ Reconciled with S9: the SW proxy passes agents' bodies through bare; a 422's `co
 
 | # | Owner | Files | Migration | Depends on |
 |---|---|---|---|---|
-| S1 | engineer-seed | `noctusai_lib/api/auth/grants/*`, `noctusai_seed/platform_grants_router.py` (+ M2M token pieces) | — | — |
-| S2 | engineer-seed | `seed/lib/frontend/.../whatsapp-connections/*` | — | — |
+| S1 | product-engineer | `noctusai_lib/api/auth/grants/*`, `noctusai_seed/platform_grants_router.py` (+ M2M token pieces) | — | — |
+| S2 | product-engineer | `seed/lib/frontend/.../whatsapp-connections/*` | — | — |
 | S3 | backend (agents) | `app/grants/*`, `routers/plataforma_grants_router.py`, `dependencies.py` scopes, `channel_tools_token_router.py` | AG-B | S1 |
 | S4 | backend (agents) | `studio/especificacoes*.py`, `spec_formatos.py`, `compiler.py`, `prontidao.py`, `studio_conteudo_router.py`, `routers/channel_specs_router.py`, `content-v3/*` | AG-A | — |
 | S5 | frontend (agents) | grants page, `ChannelsTab.tsx`, `ChannelTokenCard.tsx` | — | S3 |

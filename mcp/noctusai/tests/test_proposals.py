@@ -92,3 +92,34 @@ class TestListProposals:
         all_proposals = list_proposals()
         keeper_proposals = list_proposals(agent="keeper")
         assert len(keeper_proposals) <= len(all_proposals)
+
+
+class TestForwardedStatus:
+    """``forwarded`` = passed on (KB § PATTERNS/architect/team-of-teams.md §3).
+    It is an exit only when the reason names the destination."""
+
+    def _seed(self, tmp_path):
+        products = tmp_path / "products"
+        d = products / "demo" / "proposals"
+        d.mkdir(parents=True)
+        (d / "orch-1-x.md").write_text("# Proposal: x\n\n**Status:** pending\n")
+        return products
+
+    def test_forwarded_without_reason_is_refused(self, tmp_path):
+        from tools.noctus.dev.proposals import update_proposal_status
+        products = self._seed(tmp_path)
+        out = update_proposal_status("orch-1-x.md", "forwarded", products_dir=products)
+        assert "error" in out and "destination" in out["error"]
+        assert "**Status:** pending" in (products / "demo/proposals/orch-1-x.md").read_text()
+
+    def test_forwarded_with_destination_is_recorded(self, tmp_path):
+        from tools.noctus.dev.proposals import update_proposal_status
+        products = self._seed(tmp_path)
+        out = update_proposal_status(
+            "orch-1-x.md", "forwarded", reason="to the dev-queue steward role",
+            products_dir=products,
+        )
+        assert "error" not in out
+        text = (products / "demo/proposals/orch-1-x.md").read_text()
+        assert "**Status:** forwarded" in text
+        assert "to the dev-queue steward role" in text

@@ -142,7 +142,7 @@ It dual-reads like the mirror keeper. It fires only when the mechanism (§3) AND
 ## 6 · Fusion map — one branching methodology (8-way sync, deliverable C)
 Consolidate the scattered branching surfaces into ONE methodology with this doc as the tracking-layer anchor:
 - `KB § PATTERNS/common/branching.md` + `common/self-branching-mode.md` + `architect/branching-dispatch.md` + `architect/branching-and-merging.md` → one canonical "unified branching (incl. dispatch + tracking)" spine, the others cross-link (lossless-doc-refactor: prove lossless).
-- Wire the branch-pointer lifecycle (§3) into: `engineer-seed.md` (the standing protocol — create+push pointer before self-branch; update+push on every commit; never skip), `noc-self-branch` + `noc-branch-dispatch` skills (the procedure steps), `architect.md` (pre-dispatch contextualize-on-the-map), CLAUDE.md §1 (one-liner + pointer), MEMORY.md + a memory entry, CONTEXTUALIZE.md (fresh agents read the live map), and the noc-graph (auto).
+- Wire the branch-pointer lifecycle (§3) into: `product-engineer.md` (the standing protocol — create+push pointer before self-branch; update+push on every commit; never skip), `noc-self-branch` + `noc-branch-dispatch` skills (the procedure steps), `architect.md` (pre-dispatch contextualize-on-the-map), CLAUDE.md §1 (one-liner + pointer), MEMORY.md + a memory entry, CONTEXTUALIZE.md (fresh agents read the live map), and the noc-graph (auto).
 - Keeper sync: `check_branch_tree_mirror` joins the eight-way-sync keeper family; keeper-pattern-cache refresh.
 
 > Throughout: this is additive to — and the enforcement layer for — the existing self-branch + dispatch-branch rules; nothing in the current methodology is weakened, only made globally observable and code-enforced.

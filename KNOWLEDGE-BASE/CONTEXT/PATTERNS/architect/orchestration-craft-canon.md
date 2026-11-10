@@ -25,15 +25,15 @@ The house vocabulary is methodology, not doctrine (`KB § 01-PHILOSOPHY.md`). Th
 | Standard term (source) | House term | Where the house version lives | Note |
 |---|---|---|---|
 | orchestrator / lead agent (Anthropic), supervisor (LangGraph), manager agent (CrewAI), team lead (Claude Code agent teams), Tech Lead (Larson, Kua) | **tech-lead session** | `CONTEXTUALIZE.md` §6 ("you ARE the tech-lead"); `dev_team/src/dev_team/charters/leader.md` | no agent file; one per conversation. The family index calls it "Orchestrator=architect" (`KB § PATTERNS/common/orchestration-family-index.md`) — that means the *role language* (architect + engineers), not the read-only `architect` agent. See §10 P7. |
-| worker / subagent (Anthropic), worker agent (LangGraph), teammate (Claude Code) | **engineer** (executor subagent) | `.claude/agents/engineer-seed.md` + the 8 other executors | works in its own worktree, commits its own branch only |
+| worker / subagent (Anthropic), worker agent (LangGraph), teammate (Claude Code) | **engineer** (executor subagent) | `.claude/agents/product-engineer.md` + the 8 other executors | works in its own worktree, commits its own branch only |
 | agent-as-tool (OpenAI Agents SDK) | **dispatch / consult** | `KB § PATTERNS/architect/dispatch-engineer-tuning.md` §4d | control stays with the tech-lead; the result returns to it |
 | handoff (OpenAI Agents SDK, LangGraph) | **HANDOVER** between sessions; never inside one | §6.7 | the tech-lead never hands the user conversation to a specialist ("one face to the user", `leader.md` §9) |
 | delegation brief / task description (Anthropic) | **brief** (minimum-viable brief) | `dispatch-engineer-tuning.md` §4d; `noctus.dev.engineer_brief_compose` | objective + reference + scope + acceptance |
-| structured return | **short-form return** + delivery/surface note | `engineer-seed.md` §4; `KB § PATTERNS/common/dispatch-with-project-and-notes.md` | the three trailing legs are mandatory even when clean |
+| structured return | **short-form return** + delivery/surface note | `product-engineer.md` §4; `KB § PATTERNS/common/dispatch-with-project-and-notes.md` | the three trailing legs are mandatory even when clean |
 | shared artefact store / filesystem hand-off (Anthropic), blackboard (Hearsay-II lineage) | **branch-pointer ledger** + git commits + proposal files | `KB § PATTERNS/architect/branch-tree-tracking.md` §2 | `notes` is the inter-agent comms channel (§2 "`brief` vs `notes`") |
 | task with lifecycle (A2A) | **branch pointer** with `status` | `branch-tree-tracking.md` §2 status enum | `on_going`/`blocked`/`shipped`/`canceled`/`stale`/`deferred` ≈ working/input-required/completed/canceled/failed |
 | Agent Card (A2A), subagent `description` (Claude Code) | agent frontmatter `description` + `owns_kb` | `.claude/agents/*.md` | the description is what routes delegation |
-| SOP encoded in prompts (MetaGPT) | **skill** (`.claude/skills/noc-*`) + standing protocol | `engineer-seed.md`; `noc-branch-dispatch` | procedure as a reusable artefact |
+| SOP encoded in prompts (MetaGPT) | **skill** (`.claude/skills/noc-*`) + standing protocol | `product-engineer.md`; `noc-branch-dispatch` | procedure as a reusable artefact |
 | merge queue / merge train / "not rocket science rule" | **CI merge queue** | `KB § PATTERNS/devops/merge-queue.md` | the one path into `dev` since 2026-11-05 |
 | optimistic concurrency control | work in a worktree, validate at enqueue/queue, eject on conflict | `merge-queue.md` §3 invariant 4 | the default |
 | lock / lease | **claim** (`on_going` pointer `paths`), **FREEZE** message | `branch-tree-tracking.md` §3; §6.6 here | a claim is a claim, not evidence (`KB § PATTERNS/common/claim-vs-evidence-shared-state.md`) |
@@ -171,7 +171,7 @@ The matrix has no executor↔executor chat channel, on purpose. Cognition's warn
 
 **Principle.** Anthropic found that each subagent needs "an objective, an output format, guidance on the tools and sources to use, and clear task boundaries", and that short briefs like "research the semiconductor shortage" produced duplicated and misread work. Claude Code teammates "don't inherit the lead's conversation history", so the spawn prompt must carry task-specific detail. Cognition's first principle says the same thing more strongly: share the context, not only the instruction.
 
-**How it applies here.** The minimum-viable brief (`dispatch-engineer-tuning.md` §4d): Goal · Reference (a commit SHA or the canonical file) · Scope (files to modify) · Acceptance (a command whose output proves it), on top of the `engineer-seed` standing protocol. `noctus.dev.engineer_brief_compose` appends "Your recent misses". The standing protocol carries the boundaries (worktree, own branch, no bypass).
+**How it applies here.** The minimum-viable brief (`dispatch-engineer-tuning.md` §4d): Goal · Reference (a commit SHA or the canonical file) · Scope (files to modify) · Acceptance (a command whose output proves it), on top of the `product-engineer` standing protocol. `noctus.dev.engineer_brief_compose` appends "Your recent misses". The standing protocol carries the boundaries (worktree, own branch, no bypass).
 
 **What a brief must also carry, from the research:**
 - **The decisions already made that this slice must not re-decide** — names, shapes, styles, the contract path (Cognition: actions carry implicit decisions).
@@ -186,7 +186,7 @@ The matrix has no executor↔executor chat channel, on purpose. Cognition's warn
 
 **Principle.** Anthropic has subagents write their output to external storage and "pass lightweight references back to the coordinator", to minimize the "game of telephone" and save tokens. MAST's verification category (FM-3.1 premature termination, FM-3.2 no or incomplete verification, FM-3.3 incorrect verification — together about 23% of observed failures) shows that the return is where systems lie to themselves.
 
-**How it applies here.** The return is short and structured (`engineer-seed.md` §4): status, worktree, commits, tests, `interpretation:`, codification events, `drift-found:`, `scoped-improvement:`, delivery note. The artefacts are git commits and pointer `notes` — lightweight references. The tech-lead verifies from its own shell (`git -C <wt> log --oneline origin/dev..HEAD`), not from the return's prose (`dispatch-engineer-tuning.md` §4d). Every slice is scored (`check_engineer_slice_scored`).
+**How it applies here.** The return is short and structured (`product-engineer.md` §4): status, worktree, commits, tests, `interpretation:`, codification events, `drift-found:`, `scoped-improvement:`, delivery note. The artefacts are git commits and pointer `notes` — lightweight references. The tech-lead verifies from its own shell (`git -C <wt> log --oneline origin/dev..HEAD`), not from the return's prose (`dispatch-engineer-tuning.md` §4d). Every slice is scored (`check_engineer_slice_scored`).
 
 **Checklist.** Never relay a return to the user before checking its SHAs and its acceptance command yourself. An absent trailing leg reads as "didn't look".
 
@@ -226,18 +226,19 @@ MAST (Cemri et al., arXiv 2503.13657) annotated 1,600+ traces across 7 framework
 
 | MAST mode (share of failures) | House mitigation | Pointer |
 |---|---|---|
-| FM-1.1 Disobey task specification (11.8%) | tight brief with Acceptance command; `interpretation:` leg restates the ask | `dispatch-engineer-tuning.md` §4d; `engineer-seed.md` §4 |
+| FM-1.1 Disobey task specification (11.8%) | tight brief with Acceptance command; `interpretation:` leg restates the ask | `dispatch-engineer-tuning.md` §4d; `product-engineer.md` §4 |
 | FM-1.2 Disobey role specification (1.5%) | tool allowlists (advisors cannot edit); worktree isolation hooks | `.claude/agents/*.md` `tools:`; `primary_write_guard` |
 | FM-1.3 Step repetition (15.7%) | brief similarity radar; `paths_overlap` pre-dispatch; recent-misses block | `KB § PATTERNS/common/brief-similarity-radar.md`; `branch-tree-tracking.md` §4 |
 | FM-1.4 Loss of conversation history (2.8%) | durable state in PROJECT.md, pointer `notes`, `dispatch_resume_brief` | `surface-and-resume-tooling.md` §2.4 |
 | FM-1.5 Unaware of termination conditions (12.4%) | Acceptance = a command; stop-and-surface rule | `dispatch-with-project-and-notes.md` |
 | FM-2.1 Conversation reset (2.2%) | resume briefs composed from original + surface + response | `surface-and-resume-tooling.md` §2.4 |
 | FM-2.2 Fail to ask for clarification (6.8%) | `surface_to_tech_lead` → BLOCK; `noc-questionnaire` for the owner | `surface-and-resume-tooling.md` §2.1 |
-| FM-2.3 Task derailment (7.4%) | file-disjoint scope; `drift-found:` instead of fixing outside the slice | `engineer-seed.md` §2, §4 |
-| FM-2.4 Information withholding (0.85%) | mandatory trailing legs; `notes` on every commit | `engineer-seed.md` §4; `branch-tree-tracking.md` §3 step 3 |
+| FM-2.3 Task derailment (7.4%) | file-disjoint scope; `drift-found:` instead of fixing outside the slice | `product-engineer.md` §2, §4 |
+| FM-2.4 Information withholding (0.85%) | mandatory trailing legs; `notes` on every commit | `product-engineer.md` §4; `branch-tree-tracking.md` §3 step 3 |
 | FM-2.5 Ignored other agent's input (1.9%) | contract-first; read own pointer before delivering (MERGE-CONFLICT notes) | §5.6 |
 | FM-2.6 Reasoning-action mismatch (13.2%) | verify SHAs and acceptance from the tech-lead's shell | `dispatch-engineer-tuning.md` §4d |
-| FM-3.1 Premature termination (6.2%) | `partial`/`blocked` statuses are legitimate; slice scoring | `engineer-seed.md` §4 |
+| FM-3.1 Premature termination (6.2%) | `partial`/`blocked` statuses are legitimate; slice scoring | `product-engineer.md` §4 |
+| Contradictory outputs: two advisors disagree on the same question (not a MAST mode; `dev_team` `leader.md`:14 stuck-trigger) | pause and ask: the tech-lead never picks a side or averages them; it puts both positions to the owner through `noc-questionnaire` | §5.5; `surface-and-resume-tooling.md` §2.1 |
 | FM-3.2 No or incomplete verification (8.2%) | scoped gates + `gate_sweep`; merged-tip gates; the merge queue tests the combined tree | `merge-queue.md` §3; `KB § PATTERNS/common/methodology-execution-discipline.md` |
 | FM-3.3 Incorrect verification (9.1%) | verdict-channel integrity: the verdict must belong to what is judged; inconclusive ≠ red | `methodology-execution-discipline.md`; CLAUDE.md §1 |
 
@@ -339,6 +340,7 @@ A handover moves ownership of a zone, a ship drive or a freeze. It is complete o
 - **Commit only your own work.** Enumerate your files before staging; a peer's edits in a shared tree are not yours (`project-execution.md` §2.10).
 - **Last finisher merges** the overlap and records why (`branch-tree-tracking.md` §3).
 - **The queue never resolves a conflict for you**; an ejected entry is fixed on its branch by its owner (`merge-queue.md` §3 invariant 4).
+- **Peers never bargain the decision.** Each party sends a position report to the manager and continues on its recorded common ground (`KB § PATTERNS/architect/team-of-teams.md` §2); proposals across team lines get an exit, never "noted" (§3).
 - **Collapse competing integrates**: when B builds on A's unlanded branch, one integrate lands both; A stops after verifying all its commits are in B (`ship-consent-riders.md` "Concurrent sessions" item 4).
 
 ### 6.9 No escalation through peers
@@ -439,6 +441,9 @@ Who to consult or route to, by need. Advisors are read-only; executors work in a
 | `legal-advisor` | advisor | contracts, LGPD program, e-signature validity | facts from the owner or `product-designer` | with `security` on LGPD |
 | `accountant` | advisor | DRE, tax, where a cost or revenue item belongs | finance data shapes from `backend-engineer` | with finance organ work |
 | `product-designer` | advisor + mockups | mockup-first before any new screen; IA, content, accessibility | the owner's answers; constraints from `architect` | before `frontend-engineer` |
+| `product-manager` | advisor + spec | the what and why: stories, testable acceptance, metric target, scope-creep log, backlog draft | the owner's answers | before `product-architect` and `product-designer`; the tech-lead turns the spec into dispatch |
+| `product-architect` | advisor + spec | which organ, module, market product, pack or tier carries each function; variant matrix; capability interfaces | the spec; the catalog | with `architect` (seams) and `product-designer` (screens) |
+| `product-analyst` | advisor | post-ship: did the metric move (met / not met / inconclusive); decision reviews; council outcomes | the spec target and measured data | after ship, feeds `product-manager` and the decision log |
 | `backend-engineer` | executor | routers, services, schemas, migrations, RLS, backend tests | the contract; `security` notes | parallel with `frontend-engineer` on one contract |
 | `frontend-engineer` | executor | pages, components, TanStack hooks, states | the contract; the mockup | after `product-designer`, parallel with backend |
 | `integrations-engineer` | executor | vendor adapters (Fake+Real+factory), OAuth, webhooks | vendor docs; `security` review | with `security` |
@@ -446,12 +451,12 @@ Who to consult or route to, by need. Advisors are read-only; executors work in a
 | `test-engineer` | executor | test harness, strategy, contract tests at seams | the contract and the seams | after the contract, alongside builders |
 | `tooling-engineer` | executor | `noctus.dev.*` tools, keepers, caches, `cli.py` | the gate's mechanism (gate ↔ methodology sync) | when a rule needs a gate |
 | `devops-engineer` | executor | containers, CI, deploys, rollbacks, observability | `predeploy_check` green; owner consent for prod | after landing, for ship |
-| `engineer-seed` | executor (default) | any slice without a better specialist; the standing protocol every executor follows | a minimum-viable brief | the default dispatch |
+| `product-engineer` | executor (default) | any slice without a better specialist, or one coupled full-stack slice; the standing protocol every executor follows; decides small things in scope and logs them (`engineer-decision-rights.md`) | a minimum-viable brief | the default dispatch; its slice is audited by `compliance-reviewer` before merge |
 | `ops-steward` | advisor / L3 executor | daily brief, triage, pre-approved maintenance | access to watchdog and ledgers | owner's morning; routes findings to the tech-lead |
 | `reverse-engineer` | study executor | mapping an external app read-only | the owner's logged-in browser, staged approval | feeds `architect` and `product-designer` |
 | `skill-scout` | meta | finding and vendoring skills in-home | a capability gap from any agent | feeds `skill-creator` |
 
-(Eighteen files in `.claude/agents/` as of 2026-11-05. `orchestrator-operator` was retired the same day — the merge queue replaced its inbox drain, `KB § 06-AGENTS.md`.)
+(Twenty-three files in `.claude/agents/` as of 2026-11-09 (eighteen at 2026-11-05, then the council pair and the three product advisors); `engineer-seed` was absorbed into `product-engineer` on 2026-11-09. `orchestrator-operator` was retired on 2026-11-05 — the merge queue replaced its inbox drain, `KB § 06-AGENTS.md`.)
 
 ---
 

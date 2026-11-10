@@ -6,6 +6,8 @@
 > environment does that work target?" Set in the UI by the user; read by every
 > agent before touching a product.
 
+> **Ownership (D31, 2026-11-09):** maintained by agent `product-manager` (records the owner's decisions, keeps this doc accurate); the OWNER decides each product's state, no agent does. Path kept under `architect/` because CLAUDE.md points here.
+
 ---
 
 ## 1 · The three states

@@ -2,7 +2,7 @@
 
 🔒 **OPS-ONLY** — invoked by agent `ops-steward` as a weekly L3 step (skill `noc-daily-ops`) or by
 the tech-lead session (orchestrator-operator retired 2026-11-05). Other specialist agents (backend / frontend / devops / compliance / security /
-architect / engineer-seed) MUST NOT call this tool, same shape as `release` / `deploy_pull` /
+architect / product-engineer) MUST NOT call this tool, same shape as `release` / `deploy_pull` /
 `archive` (doc-discipline, not runtime-enforced — the methodology layer's call-restriction
 model). devops-engineer OWNS the KB doc (`tmp-artifact-cleanup.md`); it does NOT invoke the
 tool.
@@ -227,7 +227,7 @@ def register(server) -> None:
             "deploy_pull / archive — doc-discipline, not runtime-enforced). ops-steward "
             "(weekly, skill noc-daily-ops) or the tech-lead invokes this with dry_run=False; "
             "other specialist agents (backend / frontend / devops / compliance / security / "
-            "architect / engineer-seed) MUST NOT call it. "
+            "architect / product-engineer) MUST NOT call it. "
             "Sweeps retired engineer-dispatch patch artifacts from /tmp/*.patch. A patch is "
             "retired when (a) its git-patch-id matches a patch-id on origin/dev (content "
             "landed), (b) it is older than max_age_days (default 14) and unmatched "

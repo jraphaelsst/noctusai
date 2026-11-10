@@ -6,7 +6,7 @@
 ## Tools
 
 <!-- kb-counts:start:mcp_tools -->
-**312 tools total** (auto-counted from `mcp/noctusai/tools/`).
+**314 tools total** (auto-counted from `mcp/noctusai/tools/`).
 <!-- kb-counts:end:mcp_tools -->
 
 ### Context
@@ -211,13 +211,30 @@ python mcp/noctusai/cli.py --review-session-latest           # newest *.jsonl in
 
 - **Subagents (`Agent`-tool dispatches) run inside that same session runtime** — they are sub-tasks of the same process, not separate machines. They reach the **same already-running stdio server**. **No online service, no container, no tunnel** is needed for local subagents.
 - **The gate is the agent's tool-allowlist, not transport.** An agent whose definition allows the MCP tools can call them; a restricted one cannot. Fix for "agent can't see MCP" = widen the allowlist / dispatch a tool-broad agent — **not** infrastructure.
-- **Repo-defined agents** (`.claude/agents/`): `engineer-seed` has no `tools:` line → inherits **all tools** (full `mcp__noctusai__*`); `orchestrator-operator` was retired 2026-11-05 (the CI merge queue replaced its inbox drain). Built-in types: `general-purpose`/`claude` = `*` (full); `Explore`/`Plan` are **read-only by harness design** — intentionally NOT granted mutating MCP (their contract is read code, not run dev tools); honor the carve-out, don't route mutating work through them.
+- **Repo-defined agents** (`.claude/agents/`): every agent declares an explicit `tools:` allowlist (executors: `Bash, Read, Edit, Write, Grep, Glob, mcp__noctusai__*`); `engineer-seed` was retired 2026-11-09 into `product-engineer` (the standing executor protocol + decision rights); `orchestrator-operator` was retired 2026-11-05 (the CI merge queue replaced its inbox drain). Built-in types: `general-purpose`/`claude` = `*` (full); `Explore`/`Plan` are **read-only by harness design** — intentionally NOT granted mutating MCP (their contract is read code, not run dev tools); honor the carve-out, don't route mutating work through them.
 - **`agents-security`** (advisor, read-only: Bash/Read/Grep/Glob/WebSearch/WebFetch + `mcp__noctusai__*`, opus, 2026-11-04) is the LLM-agent security specialist (public, multi-tenant, tool-using agents; Julia first). It owns `KB § PATTERNS/security/ai-agent-threat-model.md`; the generic `security` advisor keeps webhooks/LGPD/auth. Its section-5 must-haves seed the future agent-creator template.
 - **`agent-creator`** (in trial, 2026-11-09) is the agent-creation process as a Claude Code agent: it creates an agent from a template checkpoint (`agente-base` → `sdr-base`) with the owner-ratified required minimum (name + purpose, audience + channel, template), evals, readiness and owner publish, and is refined while the templates are built. Listed here, not in the CLAUDE.md router, while in trial. → `project-history/roadmaps/agent-templates-2026-11.md` (creator path) · `.claude/skills/noc-new-agent/SKILL.md`.
+- **`councillor` + `council-chair`** (advisors, read-only: Read/Grep/Glob + `mcp__noctusai__*`; sonnet / opus, 2026-11-09) are the council seats run by skill `noc-council`: one parameterised lens agent (lens passed per dispatch) and the chair that dispositions every anonymised objection. Depth: `KB § PATTERNS/common/council.md`.
 - **Specialist roster, 2026-11-05 refinement** (`archive/projects/2026-11-05/01-agent-refinement/`): each agent is a lean L1 index whose depth lives in a cited craft-canon KB doc it owns. New hires — `integrations-engineer` (OAuth/webhooks/Meta/Google/WAHA/Vista; `KB § PATTERNS/integrations/integration-craft-canon.md`) · `ai-engineer` (LLM features, agents, evals; `KB § PATTERNS/ai/ai-engineering-canon.md`) · `test-engineer` (test harness + strategy; `KB § PATTERNS/compliance/test-engineering-canon.md`) · `tooling-engineer` (the `mcp/` toolkit, keepers, caches, hooks; `KB § PATTERNS/tooling/tooling-craft-canon.md`) — executors; `product-designer` (mockup-first, a11y; `KB § PATTERNS/design/design-craft-canon.md`) · `legal-advisor` (Brazilian law + LGPD program; `KB § PATTERNS/legal/legal-advisor-canon.md`) — advisors. Ownership moved to them from backend/architect/devops/frontend the same day; `owns_kb:` in each agent file is the source of truth.
+- **Product roles, 2026-11-09** (`project-history/assistant-chatbot/research/product-roles-research.md`): `product-architect` (product structure in Ulrich's sense: function-to-organ allocation, variant matrix; `KB § PATTERNS/product/product-architecture-canon.md`) · `product-manager` (the what and why: stories, acceptance, metric target, scope log; `KB § PATTERNS/product/product-management-canon.md`) · `product-analyst` (post-ship: met / not met / inconclusive; `KB § PATTERNS/product/product-analysis-canon.md`) — advisors; `product-engineer` — the executor that absorbed `engineer-seed` and decides small things in scope (`KB § PATTERNS/common/engineer-decision-rights.md`). The owner decides every scope and priority question; the council stage map is unchanged (owner decides after a walkthrough).
+
+  **Product roles routing** (one screen; the product-* roles are opt-in pilots, see `project-history/assistant-chatbot/PROJECT.md`):
+
+  | Question | Who answers | Not |
+  |---|---|---|
+  | Is this worth building, for whom, what is done, what metric? | product-manager | architect |
+  | What is each function made of (organ / seed / vertical / pack), what is shared across products? | product-architect (a proposal; architect ratifies) | backend |
+  | How is it built: seams, tenancy, schema, ADRs, layering | architect | product-architect |
+  | What do the screens look like, flows, a11y, mockup | product-designer | frontend |
+  | Implement the API / data / migration | backend-engineer | product-engineer |
+  | Implement the page / component | frontend-engineer | product-designer |
+  | Did the shipped feature move its metric? | product-analyst | product-manager |
+  | Slice execution with product judgement (small decisions logged) | product-engineer | any advisor |
+  | Example: "add a page" | product-manager (why, acceptance) then product-designer (mockup) then product-architect (which organ) then architect (seam, if stateful) then frontend-engineer (build) | |
+
 - **Container + tunnel is only for an out-of-runtime consumer** (remote CI, another machine, a deployed cloud agent that is NOT a subagent of this session). Then flip noctosai to HTTP/SSE (`server.py` notes this is a one-line `server.run()` change, no tool-code changes), containerize, expose via ingress/tunnel. Unnecessary for the dispatched-subagent workflow.
 
-→ `KB § PATTERNS/branching-first-orchestration` (dispatch) · `KB § 01-PHILOSOPHY.md § Context budget discipline` (MCP keep-list) · `.claude/agents/engineer-seed.md`
+→ `KB § PATTERNS/branching-first-orchestration` (dispatch) · `KB § 01-PHILOSOPHY.md § Context budget discipline` (MCP keep-list) · `.claude/agents/product-engineer.md`
 
 ## Architecture
 
