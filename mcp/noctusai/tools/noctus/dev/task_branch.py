@@ -176,6 +176,7 @@ def _default_run_local(cmd: list[str], cwd: str | None = None) -> tuple[int, str
 # (`merge_queue.py`) is then the ONLY thing that moves dev for it. A queue ref
 # is the one non-dev destination this tool may push to — never main/prod.
 MQ_PREFIX = "mq/"
+_ENQUEUE_SLUG_RE = re.compile(r"(?!/)(?!.*(?:^|/)\.\.(?:/|$))[A-Za-z0-9._/-]+")
 
 
 def _assert_push_targets_dev(args: tuple[str, ...], dev_branch: str) -> None:
@@ -2573,10 +2574,14 @@ def _write_enqueue_attestation(runner, *, head: str, slug: str, branch: str, con
     return {"path": str(d / f"{head}.json")}
 
 
-def _request_verdict_ref(slug: str) -> str | None:
-    """The `verdict_ref` the branch steward filed with its request (delivery-contract item 5)."""
+def _request_verdict_ref(slug: str, branch: str | None = None, store=None) -> str | None:
+    """The `verdict_ref` the branch steward filed with its request (delivery-contract item 5) - only when that request
+    is for THIS branch: a request filed under the same slug for a different branch is not this branch's verdict."""
     try:
-        return (_steward.StewardStore().requests().get(slug) or {}).get("verdict_ref")
+        req = (store or _steward.StewardStore()).requests().get(slug) or {}
+        if branch and req.get("branch") != branch:
+            return None
+        return req.get("verdict_ref")
     except Exception:  # noqa: BLE001 - an unreadable outbox is "no pointer", which the contract then fails loudly
         return None
 
@@ -2595,7 +2600,8 @@ def _enqueue(git, runner, *, base: dict[str, Any], slug: str, branch: str, confi
     re-requests. (Before this, enqueue ran `merge` + `rebase --rebase-merges` + a kb-counts COMMIT inside
     the requester's worktree and left rebase state behind on a conflict - the D1 stuck rebase.)
     Pushes from the caller's repo cwd (never the branch's worktree); the pre-push hook still applies."""
-    git("fetch", remote, "--quiet")
+    # remote-tracking refs may move (release-steward.md G1); FETCH_HEAD is not written
+    git("fetch", remote, "--quiet", "--no-write-fetch-head")
     dev = _resolve(git, f"{remote}/{dev_branch}")
     head = _resolve(git, branch)
     if not dev or not head:
@@ -3003,6 +3009,11 @@ def task_branch(
                 "exit_code": 0 if ok else 1, "primary_ff": res,
                 "message": _primary_ff_summary(res) or "primary already up to date."}
 
+    if action == "enqueue" and slug and not _ENQUEUE_SLUG_RE.fullmatch(slug):
+        # the SAME rule release_steward.request files under: it becomes a ref name and a worktree path
+        return {"ok": False, "action": action, "slug": slug, "status": "error", "exit_code": 1,
+                "error": (f"invalid slug {slug!r}: a slug is letters, digits and . _ / - ([A-Za-z0-9._/-]+), with no "
+                          "'..' segment and no leading '/'")}
     wt_path = f"{worktrees_dir}/{slug}" if slug else None
     explicit_branch = branch
     branch = f"{branch_prefix}{slug}" if slug else None
@@ -3032,7 +3043,7 @@ def task_branch(
             dev_branch=dev_branch, branch_prefix=branch_prefix, pointer_fn=pointer_fn,
             accept_unscored=accept_unscored, slice_scores_reader=slice_scores_reader,
             verdict_ref=verdict_ref if verdict_ref is not None else (
-                _request_verdict_ref(slug) if run is None else None),
+                _request_verdict_ref(slug, branch) if run is None else None),
             deliverable_kwargs=deliverable_kwargs)
     if slug and action == "integrate" and wt_resolved_from == "canonical":
         _listed = [w.get("path", "") for w in _parse_worktrees(_wl0 if _rc_wl0 == 0 else "")]
