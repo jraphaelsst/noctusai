@@ -262,6 +262,13 @@ head ships them, must import from inside the export, else UNMEASURED), so it nev
 
 Not measurable is never green: an item that cannot run fails as `UNMEASURED`.
 
+**Item 4 also carries `cli.py --help` (4b, folded in).** When the delivery's diff vs `origin/dev` includes `mcp/noctusai/cli.py`, the HEAD's
+`cli.py --help` is run in the export (hermetic env, the head's seed packages; never the worktree) and a non-zero exit fails
+item 4, naming the stderr tail. Why: argparse %-formats every help string, so a literal `%A` in a new `--help` text crashes the whole CLI and
+every `cli.py --<flag>` gate with it (merge-loss-gate was ejected on exactly that, 2026-11-10; before this it was discipline in the
+noc-steward skill). The result lists a `cli-help` artifact: `skipped: true` (and the detail says so) when the delivery does not touch
+`cli.py`; when it runs, a `deliverable:cli-help` row (`pass`/`deny`) lands in the same gate-event sink as the other gates.
+
 **Item 5 runs what CI blocks on, in the environment CI has (D1, merge-queue run 42753204233).** Two things passed locally and
 failed in CI: keepers that only WARN in pre-commit but BLOCK in CI (the mcp-first-scripts manifest rows, `check_gate_triad`'s
 inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was set. So:
