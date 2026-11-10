@@ -409,6 +409,9 @@ def create_product_app(
         # A deployed process whose breaker has no Redis: trips are in-memory only and the fleet key cannot be read.
         # One alert + /api/health `breaker_degraded`.
         _bk.set_degraded("no breaker Redis: breaker trips are not persisted and the fleet key is unreadable")
+    elif not _under_pytest() and getattr(_bk.store, "on_app_redis_fallback", False):
+        _bk.set_degraded("breaker on app-Redis fallback (NOCTUS_BREAKER_REDIS_URL unset): after the ACL cutover every "
+                         "breaker write is refused")
 
     # 3c. Owner-notification catalog (2026-11-09) — the gate every owner-facing WhatsApp notification passes:
     #     the owner's per-kind on/off switch (core admin "Notificações") + one ledger row per send in core
@@ -621,6 +624,7 @@ def create_product_app(
                     )
         _bk_stop = asyncio.Event()
         if not _under_pytest():
+            await asyncio.to_thread(_bk.probe)  # boot probe: a refused credential degrades the breaker NOW, not at the first trip
             # seed-owned 10 s ticker (ONE Redis MGET): processes without a Worker/scheduler still see the fleet key
             spawn_background("breaker-refresh", refresh_loop(_bk_stop))
         try:

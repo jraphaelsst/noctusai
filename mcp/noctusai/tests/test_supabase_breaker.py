@@ -311,3 +311,25 @@ def test_P3_4_auth_errors_are_read_from_rc_and_stderr():
             assert marker in str(exc)
         else:
             raise AssertionError(marker)
+
+
+def test_P2_2_status_lists_the_services_running_the_breaker_on_the_app_redis_fallback():
+    ops = FakeRedisOps()
+    ops.fallback = ["core", "social-wiring"]
+    out = mod._default_executor(action="status", source="", product="social-wiring", reason="", by="", confirm=False,
+                                ssh_host="h", ops=ops)
+    assert out["on_app_redis_fallback"] == ["social-wiring"]
+
+
+def test_P2_2_vps_fallback_services_is_one_ssh_and_reports_services_without_the_breaker_url():
+    sent: list[str] = []
+
+    def run(host, cmd):
+        sent.append(cmd)
+        return (0, "social-wiring\n", "")
+
+    out = VpsRedisOps("h", runner=run).fallback_services(["core", "social-wiring", "bad slug;rm"])
+    assert out == ["social-wiring"] and len(sent) == 1
+    assert "NOCTUS_BREAKER_REDIS_URL" in sent[0] and "bad slug" not in sent[0], "slugs are validated, never interpolated raw"
+    bad = VpsRedisOps("h", runner=lambda h, c: (255, "", "ssh down"))
+    assert bad.fallback_services(["core"]) is None and bad.warnings

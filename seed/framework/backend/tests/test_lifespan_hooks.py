@@ -252,3 +252,12 @@ def test_health_reports_breaker_degraded(minimal_settings):
     finally:
         get_breaker().degraded = None
     assert body["breaker_degraded"] == "no REDIS_URL: test"
+
+
+def test_app_marks_the_app_redis_fallback_degraded_and_probes_the_breaker_redis_at_boot():
+    import inspect
+
+    from noctusai_seed import app as seed_app
+
+    src = inspect.getsource(seed_app)
+    assert "on_app_redis_fallback" in src and "set_degraded" in src and "_bk.probe" in src

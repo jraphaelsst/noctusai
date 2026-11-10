@@ -72,6 +72,11 @@ class FakeRedisOps:
         self.audit: list[str] = []
         self.removed_from_index: set[str] = set()
         self.ttls: dict[str, int | None] = {}
+        self.warnings: list[str] = []
+        self.fallback: list[str] = []  # services on the app-Redis fallback (tests)
+
+    def fallback_services(self, slugs: list[str]) -> list[str] | None:
+        return [s for s in self.fallback if s in slugs]
 
     def smembers(self, key: str) -> list[str]:
         prefix = key.removesuffix("index")
@@ -192,6 +197,21 @@ class VpsRedisOps:
     def lrange(self, key: str, count: int) -> list[str]:
         return [str(m) for m in (self._json("lrange", key, str(-count), "-1") or [])]
 
+    def fallback_services(self, slugs: list[str]) -> list[str] | None:
+        """Live services whose container has NO `NOCTUS_BREAKER_REDIS_URL`: they run the breaker on the APP Redis
+        (loud `breaker_degraded` in their /api/health). One ssh; None when it cannot be read (a warning is kept)."""
+        names = " ".join(shlex.quote(s) for s in slugs if _PRODUCT_RE.match(s))
+        if not names:
+            return []
+        script = (f"for s in {names}; do c=noctus-$s; docker inspect \"$c\" >/dev/null 2>&1 || continue; "
+                  "docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \"$c\" "
+                  "| grep -q '^NOCTUS_BREAKER_REDIS_URL=.' || echo \"$s\"; done")
+        rc, out, err = self._run(script)
+        if rc != 0:
+            self.warnings.append(f"could not list the services on the app-Redis fallback (rc={rc}): {(err or '').strip()[:120]}")
+            return None
+        return sorted(ln.strip() for ln in out.splitlines() if _PRODUCT_RE.match(ln.strip()))
+
     def mget(self, keys: list[str]) -> list[str | None]:
         """ONE ssh, ONE MGET (JSON array: nil stays distinguishable from an empty / multi-line value)."""
         if not keys:
@@ -311,7 +331,11 @@ def _default_executor(*, action: str, source: str, product: str, reason: str, by
                 keys.extend(_members_ok(slug, ops.smembers(f"{PREFIX}{slug}:index")))
             values = ops.mget(keys)
             held = {k: _parse(v) for k, v in zip(keys, values) if v}
+            slugs = [product] if product else _live_slugs()
+            fallback = ops.fallback_services(slugs) if hasattr(ops, "fallback_services") else None
             return {"action": "status", "held": held, "fleet_held": FLEET_KEY in held, "count": len(held),
+                    "on_app_redis_fallback": fallback,
+                    **({"warnings": list(ops.warnings)} if getattr(ops, "warnings", None) else {}),
                     "note": "per-source keys are listed from the per-product index sets (a key set by hand with "
                             "action=trip is indexed by the product when it observes it)"}
         if action == "audit":

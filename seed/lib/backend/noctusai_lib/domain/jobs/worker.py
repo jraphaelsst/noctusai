@@ -50,6 +50,7 @@ from noctusai_lib.domain.jobs.repo import (
     LeaseLostError,
     RescheduleLater,
 )
+from noctusai_lib.config.deploy_config import is_deploy_context
 from noctusai_lib.domain.jobs import wake as _wake
 from noctusai_lib.primitives.supabase_breaker import (
     DEFAULT_JOB_CALL_CAP,
@@ -109,13 +110,18 @@ class Worker:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._repo = repo
-        # Supabase request breaker (2026-11-10; cadence billing, round 5). Two separate things are watched:
-        #  (a) LOOP CADENCE: the loop is billed (to the holdable `worker:<job types>`) ONLY for an empty poll that
-        #      violates its declared cadence — an empty claim less than `poll_interval_seconds` after the previous
-        #      empty claim, with no wake and no processed job in between. The first empty poll after a processed job
-        #      or a wake is FREE, and so is a failed claim when the loop applied its error backoff. So job arrival
-        #      volume (even 1 job/s for an hour) can never park a Worker; a loop that polls FASTER than its cadence
-        #      (the incident: no backoff) trips at 300 billed polls / 5 min or 2,000 / h and PARKS until a human re-arms.
+        # Supabase request breaker (2026-11-10; PLATFORM-floor billing, round 7). Two separate things are watched:
+        #  (a) LOOP CADENCE against a PLATFORM floor (`NOCTUS_MIN_IDLE_POLL_S`, default 10 s) — not the Worker's own
+        #      declared cadence (a loop declaring poll=max_idle=1 s would otherwise always be "on cadence"). Every
+        #      consecutive EMPTY poll whose gap from the previous empty poll is below the floor is billed (to the holdable
+        #      `worker:<job types>`), EXCEPT: the first empty poll after a processed job; the first RAMP_FREE sub-floor
+        #      polls of a backoff ramp; wake-followed empty polls, at most `max_free_wake_polls` per 5 min (so a producer
+        #      that keeps waking the loop with nothing claimable cannot launder it); and failed claims while the loop
+        #      applies its error backoff. Idle at >= the floor is never billed, and job-arrival volume (1-2 jobs/s) is
+        #      free: each poll after work claims a job or is the free first empty. A loop that polls faster than the
+        #      floor for long (no backoff, or max_idle below the floor) trips at 300 billed polls / 5 min or 2,000 / h
+        #      and PARKS until a human re-arms. In a DEPLOY context a `max_idle_interval_seconds` below the floor is
+        #      clamped to it (loudly) at construction.
         #  (b) JOB CALLS: per-job cap (`job_call_cap`, per-type `job_call_caps`): in OBSERVE mode (default) the cap
         #      only alerts and the job is dead-lettered at MAX_BUDGET_CALLS; `breaker.job_cap_enforce` flips it.
         # All other attribution (claim phase, handlers, bookkeeping) is alert-only. `breaker=None` -> process breaker.
@@ -125,7 +131,10 @@ class Worker:
         self._job_call_caps = dict(job_call_caps or {})
         self._clock = clock
         self._last_empty_at: float | None = None
-        self._poll_free = True  # the first poll (boot) and any poll after work / a wake / an error backoff is free
+        self._poll_free = True  # the first poll (boot) and any poll after work / an error backoff is free
+        self._woke_before_poll = False  # the idle sleep that preceded the next poll ended on an enqueue wake
+        self._ramp = 0  # consecutive sub-floor empty polls since the last reset (the backoff ramp's free allowance)
+        self._free_wakes: list[float] = []  # timestamps of wake-followed empty polls that were let through free
         self._last_poll_calls = 0
         self._held_poll = held_poll_seconds
         self._breaker_wake: asyncio.Event | None = None
@@ -148,6 +157,14 @@ class Worker:
         # the first claimed job resets it to `poll_interval_seconds`. At the
         # 30s cap that is ~120 claim calls/hour PER worker (~1.2k/hour for ~10
         # workers). In-process enqueues wake the worker at once (`jobs/wake.py`).
+        _floor = (breaker or get_breaker())._config.min_idle_poll_s
+        if max_idle_interval_seconds < _floor and is_deploy_context():
+            logger.warning(
+                "worker %s: max_idle_interval_seconds=%.1f is below the platform idle-poll floor %.1f s "
+                "(NOCTUS_MIN_IDLE_POLL_S) — clamped to the floor in a deploy context",
+                worker_id, max_idle_interval_seconds, _floor,
+            )
+            max_idle_interval_seconds = _floor
         self._max_idle_interval = max(max_idle_interval_seconds, poll_interval_seconds)
         self._idle_multiplier = max(idle_backoff_multiplier, 1.0)
         self._idle_sleep = idle_sleep or self._default_idle_sleep
@@ -295,7 +312,7 @@ class Worker:
                     await self._idle_sleep(delay, stop_event)
                     if self._waker is not None and self._waker.event.is_set():
                         delay = self._poll_interval
-                        self._poll_free = True  # woken by an enqueue: the next empty poll is free
+                        self._woke_before_poll = True  # woken by an enqueue: the next empty poll may be free (capped)
                     else:
                         delay = min(delay * self._idle_multiplier, self._max_idle_interval)
         finally:
@@ -307,13 +324,29 @@ class Worker:
                 self._waker = None
             logger.info("worker.stop worker_id=%s", self._worker_id)
 
+    RAMP_FREE = 6  # a backoff ramp from 1 s doubles to >= the floor in ~4 steps: those sub-floor polls are not abuse
+    WAKE_WINDOW_S = 300.0
+
     def _bill_empty_poll(self, breaker: Breaker) -> None:
-        """Bill the loop ONLY for a cadence violation: this empty poll came less than `poll_interval_seconds` after the
-        previous empty one with nothing (work, wake, error backoff) in between."""
+        """Bill this empty poll to the loop when it is below the PLATFORM floor (see `__init__`)."""
         now = self._clock()
-        free, self._poll_free = self._poll_free, False
+        floor = breaker._config.min_idle_poll_s
+        free_after_work, self._poll_free = self._poll_free, False
+        woke, self._woke_before_poll = self._woke_before_poll, False
         last, self._last_empty_at = self._last_empty_at, now
-        if free or last is None or now - last >= self._poll_interval:
+        if free_after_work or last is None:
+            self._ramp = 0
+            return
+        if now - last >= floor:  # honouring the floor: not billed, and the ramp starts over
+            self._ramp = 0
+            return
+        self._ramp += 1
+        if woke:
+            self._free_wakes = [t for t in self._free_wakes if now - t < self.WAKE_WINDOW_S]
+            if len(self._free_wakes) < breaker._config.max_free_wake_polls:
+                self._free_wakes.append(now)
+                return
+        elif self._ramp <= self.RAMP_FREE:
             return
         breaker.record_call(self.breaker_source, n=max(1, self._last_poll_calls))
 

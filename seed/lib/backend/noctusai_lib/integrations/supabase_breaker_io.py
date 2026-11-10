@@ -39,6 +39,9 @@ class RedisBreakerStore:
     """`BreakerStore` over a sync Redis client from the seam. Short socket timeouts: a dead Redis must fail fast
     (the breaker fails open), never hang a request or a worker."""
 
+    #: True when this store runs on the APP Redis because `NOCTUS_BREAKER_REDIS_URL` is unset (the app marks it degraded)
+    on_app_redis_fallback = False
+
     def __init__(self, client: Any) -> None:
         self._r = client
 
@@ -106,12 +109,23 @@ def make_breaker_store(
 
     breaker_url = (env.get(BREAKER_REDIS_URL_ENV) or "").strip()
     if breaker_url:
-        client = make_redis_client(
-            breaker_url,
-            username=(env.get(BREAKER_REDIS_USER_ENV) or None),
-            password=(env.get(BREAKER_REDIS_PASS_ENV) or None),
-            socket_connect_timeout=2, socket_timeout=2,
-        )
+        from noctusai_lib.integrations.redis import RedisAuthRequired
+
+        try:
+            # ONLY the breaker credentials: "" (not None) stops the seam falling back to REDIS_USERNAME/REDIS_PASSWORD,
+            # and require_auth=True refuses to connect unauthenticated.
+            client = make_redis_client(
+                breaker_url,
+                username=(env.get(BREAKER_REDIS_USER_ENV) or ""),
+                password=(env.get(BREAKER_REDIS_PASS_ENV) or ""),
+                require_auth=True,
+                socket_connect_timeout=2, socket_timeout=2,
+            )
+        except RedisAuthRequired as exc:
+            logger.critical("breaker: %s is set but no breaker credentials resolved (%s / %s): refusing to connect "
+                            "unauthenticated — the breaker runs on the in-memory Fake (degraded)",
+                            BREAKER_REDIS_URL_ENV, BREAKER_REDIS_USER_ENV, BREAKER_REDIS_PASS_ENV)
+            return InMemoryBreakerStore()
         return RedisBreakerStore(client)
     if deploy is None:
         from noctusai_lib.config.deploy_config import is_deploy_context
@@ -123,7 +137,9 @@ def make_breaker_store(
         logger.warning("breaker: %s is unset — falling back to the APP Redis for breaker keys. After the ACL cutover the app "
                        "user has no breaker keys and every breaker write fails NOPERM: set the dedicated breaker Redis "
                        "credentials (NOC-REMEDIATE[breaker-redis-cutover]).", BREAKER_REDIS_URL_ENV)
-        return RedisBreakerStore(make_redis_client(app_url, socket_connect_timeout=2, socket_timeout=2))
+        fallback = RedisBreakerStore(make_redis_client(app_url, socket_connect_timeout=2, socket_timeout=2))
+        fallback.on_app_redis_fallback = True
+        return fallback
     logger.error("breaker: no %s%s — trips are held in memory only (lost on restart, invisible to the fleet key and the "
                  "MCP tool)", BREAKER_REDIS_URL_ENV, " and no app Redis" if deploy else " (not a deploy context)")
     return InMemoryBreakerStore()

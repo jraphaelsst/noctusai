@@ -28,25 +28,31 @@ On for every product by construction (seed); no per-product code.
 
 - THE count point: `integrations/http_pool.py` `TimingTransport.handle_request` — every seed-built client rides it (pooled,
   kill-switch, stock fallback). In-memory, O(1), no network (~0.4 us per call).
-- **Worker split — CADENCE billing, not volume.** (a) LOOP: an empty poll is billed (`max(1, calls made)`) to
-  `worker:<types>` ONLY when it is a cadence violation: it came less than `poll_interval_seconds` after the previous empty
-  poll with no wake and no processed job in between. The first empty poll after a processed job or after a wake is FREE; a
-  claim that raised (an outage) is not billed because the loop applies its own error backoff (1 s doubling to the idle cap,
-  the loop survives). A future-dated enqueue does not wake the Worker. So job-arrival volume (1 job/s for an hour, 2 jobs/s)
-  can never park a Worker, while a loop with no backoff (the incident) trips at 300 billed polls / 5 min or 2,000 / h and
-  PARKS. No credits exist. (b) JOB: everything one job does counts toward its own cap (`job_call_cap`, per-type
-  `job_call_caps`). **OBSERVE mode (default):** reaching the cap only ALERTS (`job-cap:*`, once per job) and the job is
-  dead-lettered at the hard ceiling `MAX_BUDGET_CALLS`; **ENFORCE** (`NOCTUS_BREAKER_JOB_CAP_ENFORCE=1`) dead-letters at the
-  cap. The Worker checks the budget AFTER the handler however it ended, so a handler's own `except` cannot swallow it.
-  Scheduler runs likewise (default per-run 20,000). `NOC-REMEDIATE[breaker-job-cap-calibration]`: tighten per-type caps from
-  measured p99, then flip the default.
+- **Worker split — platform-FLOOR billing, not volume.** (a) LOOP: every consecutive EMPTY poll whose gap from the previous
+  empty poll is below the PLATFORM floor `NOCTUS_MIN_IDLE_POLL_S` (default 10 s) is billed (`max(1, calls made)`) to
+  `worker:<types>`. Not the Worker's own declared cadence: a loop declaring `poll=max_idle=1 s` is "on its cadence" every
+  time, so billing against it could never trip (the round-6 hole; the test now uses a REAL Worker with the default idle sleep).
+  Free: the first empty poll after a processed job; the first 6 sub-floor polls of a backoff ramp (1,2,4,8 s...); wake-followed
+  empty polls, at most 30 per 5 min (a producer that keeps waking an empty loop cannot launder it); failed claims while the
+  loop applies its error backoff (1 s doubling to the idle cap; the loop survives). Idle at >= the floor is never billed.
+  What is TRUE: the loop is held when its billed empty polls exceed 300 / 5 min or 2,000 / h — i.e. a loop that keeps polling
+  faster than the floor for long, which at a steady gap g trips when g is below ~1.8 s (a steady 5 s idle poll is NOT held; it
+  is within the alert-only rules). Job arrivals (1-2 jobs/s) are free: each poll after work claims a job or is the free first
+  empty. In a DEPLOY context a `max_idle_interval_seconds` below the floor is clamped to it with a loud warning (no product sets
+  `max_idle_interval_seconds` today: all use the default 30 s). A poll that claims a job bills nothing; **there is no credit
+  scheme**. (b) JOB: everything one job does counts toward its own cap (`job_call_cap`, per-type
+  `job_call_caps`), both clamped to `MAX_BUDGET_CALLS`. **OBSERVE mode (default):** reaching the cap only ALERTS (`job-cap:*`,
+  once per job) and the job is dead-lettered at the hard ceiling; **ENFORCE** (`NOCTUS_BREAKER_JOB_CAP_ENFORCE=1`)
+  dead-letters at the cap. The Worker checks the budget AFTER the handler however it ended, so a handler's own `except` cannot
+  swallow it. Scheduler runs likewise (default per-run 20,000). `NOC-REMEDIATE[breaker-job-cap-calibration]`: tighten per-type
+  caps from measured p99, then flip the default.
 - **Per-process AGGREGATE (the incident shape).** Every call also feeds `*`: alert when the projected daily total (last hour
   x24, last 5 min x288) passes `NOCTUS_BREAKER_AGGREGATE_SHARE` (default 0.5) of `NOCTUS_SUPABASE_DAILY_QUOTA`. Default quota
   500,000 calls/day = the incident-derived planning figure for the Free plan (Supabase publishes an egress quota, 5 GB/month,
   not a call count; ~620k/day exhausted it). ~620k/day spread over six loops each under its own threshold raises exactly
   this alert. It only ALERTS: the FLEET-WIDE aggregate trip is the off-host watchdog's job (feat/supabase-request-telemetry).
   Opt-in `NOCTUS_BREAKER_FLEET_HOLDS_BG=1` lets the fleet key also refuse `bg:*` (default off).
-- **Absolute ceiling.** A configured rule is a RATE: `max_calls x 3600 / window` above 20,000 calls/hour is rejected; `NOCTUS_BREAKER_BUDGETS`
+- **Env cannot loosen the nets.** `NOCTUS_SUPABASE_DAILY_QUOTA` above the default raises a config alert and is clamped to 2x the default; overrides of `*`, `http`, `startup`, `unattributed` are ignored (alerted). A per-source rule is a RATE (`max_calls x 3600 / window`) and may not exceed the ceiling DERIVED from the quota (quota x share / 24 per hour, ~10,416 by default) — rejected otherwise; `NOCTUS_BREAKER_BUDGETS`
   (JSON per source) can tune but never disable or exceed it. The hourly 2,000 on a holdable source is the default floor.
 - **Fleet key** `noctus:breaker:fleet` holds every Worker loop and scheduler tick of every product. It does NOT stop request
   handling, boot, or jobs already running (their per-job cap still applies). Read from Redis at most every 10 s per process
@@ -60,6 +66,8 @@ owner emailed once per trip via the seed Resend sender (`RESEND_API_KEY` + `NOCT
 `WATCHDOG_ALERT_EMAIL`; `NOCTUS_BREAKER_ALERT_FROM`); failures raise `BreakerAlertNotConfigured`, logged CRITICAL, kept and
 retried. Redis down: the trip still stops the source in memory and alerts; reading fails OPEN, loudly. **No REDIS_URL:** one
 alert and `/api/health` reports `breaker_degraded`.
+
+**Re-arm order.** The `rearm` audit row is appended FIRST and is mandatory: if it cannot be written the key is NOT deleted and the route answers 502. Its nonce is the PERSISTED key's `tripped_at` (read first), so a serving process that holds the trip only remotely can re-arm one a peer holds locally. Every release by this path is announced (event + alert with claimed_by/host/pid/at). The audit row and the RO `rearm:*` are SIGNALS, **not a security boundary** (the product's own Redis identity can write its audit list). Route re-arms are mutating requests, so they reach core's append-only `audit_logs` via the `AuditMiddleware`; a dedicated EOA row is `NOC-REMEDIATE[breaker-rearm-eoa]` (with `breaker-event-table`). The audit lookback scans the whole capped list (1,000), filtered by key.
 
 **A persisted hold is never silently released.** If the key vanishes (flush, eviction) the product rewrites it and alerts
 CRITICAL; it releases only on a matching re-arm marker `noctus:breaker:<slug>:rearm:<source>` (TTL 1 day, never deleted by a
@@ -85,7 +93,11 @@ The breaker lives on its own Redis, `noctus-breaker-redis` (breaker keys ONLY, `
   `NOCTUS_BREAKER_REDIS_PASSWORD` and passes them to `make_redis_client` explicitly; `REDIS_*` stays the app connection.
   Unset: in a deploy context it FALLS BACK to the app Redis with a loud warning (`NOC-REMEDIATE[breaker-redis-cutover]`: the
   cutover is per service and gradual; after the ACL cutover the app user has no breaker keys and every write is NOPERM);
-  outside a deploy it keeps the in-memory Fake. A deployed process whose store is not Redis sets `breaker_degraded`.
+  outside a deploy it keeps the in-memory Fake. A deployed process whose store is not Redis, OR is on the app-Redis fallback,
+  sets `breaker_degraded` (also on a Redis refusal of this service's credentials/ACL: NoPermission/Authentication is
+  configuration, not an outage), and a boot probe (GET of the fleet key) degrades it at startup. The client resolves ONLY the
+  breaker credentials (never `REDIS_USERNAME`/`REDIS_PASSWORD`) and refuses to connect unauthenticated. MCP `status` lists the
+  services whose container has no `NOCTUS_BREAKER_REDIS_URL` (`on_app_redis_fallback`).
 - **Product grant (pinned by a test).** RW `noctus:breaker:<slug>:{worker:*,scheduler:*,gate:*,audit,index}`; READ-ONLY
   `noctus:breaker:<slug>:rearm:*` and `noctus:breaker:fleet`. Commands: GET MGET SET DEL EXISTS TTL PTTL SADD SREM SMEMBERS
   SISMEMBER SCARD RPUSH LTRIM LRANGE LLEN PING — no MULTI/EXEC, SCAN, KEYS or scripting (the audit cap is a non-transactional

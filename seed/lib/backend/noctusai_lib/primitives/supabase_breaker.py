@@ -121,6 +121,10 @@ DEFAULT_JOB_CALL_CAP = 2000
 DEFAULT_DAILY_QUOTA = 500_000
 DEFAULT_AGGREGATE_SHARE = 0.5
 AGGREGATE_SOURCE = "*"
+DEFAULT_MIN_IDLE_POLL_S = 10.0
+DEFAULT_MAX_FREE_WAKE_POLLS = 30
+#: sources whose budgets are the safety nets themselves: an env override of any of these is IGNORED (loudly)
+NON_OVERRIDABLE_SOURCES = frozenset({"*", "http", "startup", "unattributed"})
 #: a re-arm marker outlives a flush-vs-rearm race but not forever (1 day)
 MARKER_TTL_S = 86_400
 _MAX_WINDOW_S = 3600
@@ -178,6 +182,15 @@ class BreakerConfig:
     aggregate_share: float = DEFAULT_AGGREGATE_SHARE
     job_cap_enforce: bool = False
     fleet_holds_bg: bool = False  # opt-in: the fleet key also refuses `bg:*` (default off)
+    #: PLATFORM floor for an idle poll (`NOCTUS_MIN_IDLE_POLL_S`): a Worker whose consecutive empty polls come closer than
+    #: this is a loop with no (or too short a) backoff, whatever cadence it declares for itself.
+    min_idle_poll_s: float = DEFAULT_MIN_IDLE_POLL_S
+    max_free_wake_polls: int = DEFAULT_MAX_FREE_WAKE_POLLS  # per 5 min: wake-followed empty polls that stay free
+    warnings: list[str] = field(default_factory=list)  # config problems found at load: logged + alerted once
+
+    def source_hour_ceiling(self) -> int:
+        """No per-source rule may allow more per HOUR than the aggregate alert would: quota x share / 24."""
+        return max(1, int(self.daily_quota * self.aggregate_share / 24))
 
     def aggregate_rules(self) -> tuple[BudgetRule, ...]:
         """Alert when the rolling PROJECTED daily total (last hour x24, last 5 min x288) passes the share of the quota."""
@@ -201,39 +214,56 @@ class BreakerConfig:
     def from_env(cls, environ: Optional[dict[str, str]] = None) -> "BreakerConfig":
         env = environ if environ is not None else os.environ
         extra: dict[str, Any] = {}
+        warnings: list[str] = []
         try:
             if env.get("NOCTUS_SUPABASE_DAILY_QUOTA", "").strip():
-                extra["daily_quota"] = max(1, int(env["NOCTUS_SUPABASE_DAILY_QUOTA"]))
+                quota = max(1, int(env["NOCTUS_SUPABASE_DAILY_QUOTA"]))
+                if quota > DEFAULT_DAILY_QUOTA:
+                    warnings.append(f"NOCTUS_SUPABASE_DAILY_QUOTA={quota:,} is above the default {DEFAULT_DAILY_QUOTA:,}"
+                                    + (f"; clamped to {2 * DEFAULT_DAILY_QUOTA:,} (2x the default)"
+                                       if quota > 2 * DEFAULT_DAILY_QUOTA else ""))
+                extra["daily_quota"] = min(quota, 2 * DEFAULT_DAILY_QUOTA)
             if env.get("NOCTUS_BREAKER_AGGREGATE_SHARE", "").strip():
                 share = float(env["NOCTUS_BREAKER_AGGREGATE_SHARE"])
                 if not 0 < share <= 1:
                     raise ValueError("share must be in (0, 1]")
                 extra["aggregate_share"] = share
+            if env.get("NOCTUS_MIN_IDLE_POLL_S", "").strip():
+                floor = float(env["NOCTUS_MIN_IDLE_POLL_S"])
+                if floor < 1.0:
+                    warnings.append(f"NOCTUS_MIN_IDLE_POLL_S={floor} is below 1 s; clamped to 1 s")
+                extra["min_idle_poll_s"] = max(1.0, floor)
         except ValueError as exc:
-            logger.error("invalid aggregate quota config (%s) — using the defaults", exc)
+            warnings.append(f"invalid breaker config ({exc}); using the defaults")
             extra = {}
         truthy = ("1", "true", "yes", "on")
         extra["job_cap_enforce"] = env.get("NOCTUS_BREAKER_JOB_CAP_ENFORCE", "").strip().lower() in truthy
         extra["fleet_holds_bg"] = env.get("NOCTUS_BREAKER_FLEET_HOLDS_BG", "").strip().lower() in truthy
+        probe = cls(**extra)
         raw = env.get("NOCTUS_BREAKER_BUDGETS", "").strip()
-        if not raw:
-            return cls(**extra)
-        try:
-            parsed = json.loads(raw)
-            overrides = {
-                str(src): tuple(BudgetRule(int(w), int(m)) for w, m in rules)
-                for src, rules in parsed.items()
-            }
-            if any(not rules for rules in overrides.values()):
-                raise ValueError("a source override needs at least one rule")
-            for src, rules in overrides.items():
-                for r in rules:  # a RATE ceiling: calls per HOUR, whatever the window
-                    if r.max_calls * 3600 / r.window_s > MAX_BUDGET_CALLS:
-                        raise ValueError(f"{src}: {r} exceeds the ceiling of {MAX_BUDGET_CALLS} calls/hour")
-        except Exception as exc:  # noqa: BLE001 -- loud, then the canonical defaults (never a silent partial config)
-            logger.error("NOCTUS_BREAKER_BUDGETS is invalid (%s: %s) — using the default budgets", type(exc).__name__, exc)
-            return cls(**extra)
-        return cls(overrides=overrides, **extra)
+        overrides: dict[str, tuple[BudgetRule, ...]] = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                for src, rules in parsed.items():
+                    src = str(src)
+                    if src in NON_OVERRIDABLE_SOURCES:
+                        warnings.append(f"NOCTUS_BREAKER_BUDGETS: {src!r} is a safety net and cannot be overridden; ignored")
+                        continue
+                    rule_t = tuple(BudgetRule(int(w), int(m)) for w, m in rules)
+                    if not rule_t:
+                        raise ValueError("a source override needs at least one rule")
+                    ceiling = probe.source_hour_ceiling()
+                    for r in rule_t:  # a RATE ceiling derived from the quota (quota x share / 24 per hour)
+                        if r.max_calls * 3600 / r.window_s > ceiling:
+                            raise ValueError(f"{src}: {r} exceeds the ceiling of {ceiling} calls/hour")
+                    overrides[src] = rule_t
+            except Exception as exc:  # noqa: BLE001 -- loud, then the canonical defaults (never a silent partial config)
+                warnings.append(f"NOCTUS_BREAKER_BUDGETS is invalid ({type(exc).__name__}: {exc}); using the default budgets")
+                overrides = {}
+        for w in warnings:
+            logger.error("breaker config: %s", w)
+        return cls(overrides=overrides, warnings=warnings, **extra)
 
 
 # --- source attribution ----------------------------------------------------------------------------------------
@@ -328,10 +358,11 @@ def job_scope(cap: int = DEFAULT_JOB_CALL_CAP, *, hard: Optional[int] = None) ->
     """Everything inside is ONE job. At ``cap`` calls an alert fires (once); at ``hard`` calls the next call raises
     :class:`JobBudgetExceeded` (checked in ``guard``) and the Worker dead-letters the job. ``hard`` defaults to the cap in
     ENFORCE mode and to ``MAX_BUDGET_CALLS`` (never lower than the cap) in OBSERVE mode (the default)."""
+    cap = min(cap, MAX_BUDGET_CALLS)
     if hard is None:
         enforce = get_breaker()._config.job_cap_enforce
-        hard = cap if enforce else max(cap, MAX_BUDGET_CALLS)
-    budget = _JobBudget(cap, hard)
+        hard = cap if enforce else MAX_BUDGET_CALLS
+    budget = _JobBudget(cap, min(hard, MAX_BUDGET_CALLS))
     token = _JOB.set(budget)
     try:
         yield budget
@@ -386,7 +417,7 @@ class InMemoryBreakerStore:
 
     def __init__(self) -> None:
         self.data: dict[str, str] = {}
-        self.audit: list[str] = []
+        self.audits: dict[str, list[str]] = {}  # per list key, like Redis
         self.down = False
         self.calls = 0
 
@@ -413,12 +444,13 @@ class InMemoryBreakerStore:
 
     def append_audit(self, key: str, value: str, cap: int) -> None:
         self._guard()
-        self.audit.append(value)
-        del self.audit[:-cap]
+        rows = self.audits.setdefault(key, [])
+        rows.append(value)
+        del rows[:-cap]
 
     def lrange(self, key: str, count: int) -> list[str]:
         self._guard()
-        return list(self.audit[-count:])
+        return list(self.audits.get(key, [])[-count:])
 
 
 # --- the breaker -----------------------------------------------------------------------------------------------
@@ -446,6 +478,17 @@ class Trip:
     def as_json(self) -> str:
         return json.dumps({"reason": self.reason, "rate": round(self.rate, 3), "window": self.window,
                            "tripped_at": self.tripped_at, "by": self.by})
+
+
+_CONFIG_ERROR_NAMES = frozenset({"NoPermissionError", "AuthenticationError", "AuthenticationWrongNumberOfArgsError",
+                                 "RedisAuthRequired"})
+
+
+def _is_config_error(exc: BaseException) -> bool:
+    """A Redis refusal of OUR credentials / ACL is configuration, not a transient outage."""
+    text = str(exc)
+    return (type(exc).__name__ in _CONFIG_ERROR_NAMES
+            or any(m in text for m in ("NOPERM", "WRONGPASS", "NOAUTH", "invalid username-password")))
 
 
 def _parse_trip(source: str, raw: str) -> dict[str, Any]:
@@ -599,7 +642,8 @@ class Breaker:
 
     def job_hard_limit(self, cap: int) -> int:
         """The call count at which a job is FAILED: the cap itself in ENFORCE mode, else MAX_BUDGET_CALLS (observe)."""
-        return cap if self._config.job_cap_enforce else max(cap, MAX_BUDGET_CALLS)
+        cap = min(cap, MAX_BUDGET_CALLS)
+        return cap if self._config.job_cap_enforce else MAX_BUDGET_CALLS
 
     def is_open(self, source: str) -> bool:
         """Hot-path hold check (in-memory, lock-free dict reads, no IO). Only holdable sources can be open."""
@@ -650,19 +694,25 @@ class Breaker:
         self._io(self._persist_and_alert, trip)
         return True
 
-    def audit(self, op: str, key: str, *, by: str, reason: str, tripped_at: Optional[str] = None) -> None:
-        """Best-effort audit row (who/why/when) on the capped Redis list; the MCP tool writes the same shape."""
+    def audit(self, op: str, key: str, *, by: str, reason: str, tripped_at: Optional[str] = None,
+              required: bool = False) -> None:
+        """Audit row (who/why/when) on the capped Redis list; the MCP tool writes the same shape. Best effort, except
+        ``required=True`` (a re-arm): a failed append RAISES so the caller does not go on to delete the key."""
         row = {"op": op, "key": key, "claimed_by": by, "reason": reason, "at": _iso(self._wall()),
                "host": _HOST, "pid": os.getpid()}
         if tripped_at:
             row["tripped_at"] = tripped_at  # the nonce other processes match against the persisted key
         if self._store is None:
+            if required:
+                raise RuntimeError("no breaker store: cannot append the mandatory re-arm audit row")
             return
         try:
             # inside THIS product's Redis namespace (its ACL user cannot write the global ops audit list)
             self._store.append_audit(f"{self.key_prefix}audit", json.dumps(row), BREAKER_AUDIT_CAP)
-        except Exception:  # noqa: BLE001 -- the audit must not undo a trip/re-arm; loud, not silent
+        except Exception:  # noqa: BLE001 -- loud; mandatory for a re-arm, best effort otherwise
             logger.error("breaker: audit row not written for %s %s", op, key, exc_info=True)
+            if required:
+                raise
 
     def _persist_and_alert(self, trip: Trip) -> None:
         store_error: Optional[str] = None
@@ -675,6 +725,9 @@ class Breaker:
                 trip.persisted_at = self._clock()
             except Exception as exc:  # noqa: BLE001 -- never block the trip; named in the alert, logged loudly
                 store_error = f"{type(exc).__name__}: {exc}"
+                if _is_config_error(exc):
+                    self.set_degraded(f"the breaker Redis refused this service's credentials/ACL ({type(exc).__name__}): "
+                                      "trips are NOT persisted")
         if store_error:
             logger.error("breaker: trip for %s is held IN MEMORY ONLY (Redis write failed: %s) — it will not survive "
                          "a restart and other processes do not see it", trip.source, store_error)
@@ -834,6 +887,12 @@ class Breaker:
         try:
             values = self._store.mget(keys)
         except Exception as exc:  # noqa: BLE001 -- fail OPEN by design, never silently
+            if _is_config_error(exc):
+                with self._lock:
+                    self._last_refresh = self._clock()
+                self.set_degraded(f"the breaker Redis refused this service's credentials/ACL ({type(exc).__name__}): "
+                                  "configuration, not an outage — breaker state is NOT being read or persisted")
+                return
             with self._lock:
                 self._last_refresh = self._clock()
                 first = not self._store_down
@@ -925,20 +984,51 @@ class Breaker:
         if self._store is None or not hasattr(self._store, "lrange"):
             return False
         want = trip.key_tripped_at or trip.tripped_at
+        key = self.key_for(trip.source)
         try:
-            rows = self._store.lrange(f"{self.key_prefix}audit", 30)
+            rows = self._store.lrange(f"{self.key_prefix}audit", BREAKER_AUDIT_CAP)
         except Exception:  # noqa: BLE001 -- unreadable audit = no proof of a re-arm: the hold stays
             logger.error("breaker: could not read the audit list to verify a re-arm of %s", trip.source, exc_info=True)
             return False
-        for raw in rows:
+        for raw in reversed(rows):  # newest first, up to the whole capped list, filtered by key
             try:
                 row = json.loads(raw)
             except (TypeError, ValueError):
                 continue
-            if (isinstance(row, dict) and row.get("op") == "rearm" and row.get("tripped_at") == want
-                    and row.get("key") == self.key_for(trip.source)):
+            if (isinstance(row, dict) and row.get("op") == "rearm" and row.get("key") == key
+                    and row.get("tripped_at") == want):
+                # An audit row is writable by the product's own Redis identity: it is a SIGNAL, not a security boundary
+                # (RO on `rearm:*` is not one either). Every release by this path is announced loudly.
+                info = {k: row.get(k) for k in ("claimed_by", "host", "pid", "at", "reason")}
+                self._emit_event({"event": "breaker.released_by_audit_row", "product": self.slug, "source": trip.source,
+                                  **info})
+                self._io(self._alert, f"audit-release:{self.slug}:{trip.source}:{want}",
+                         f"[NoctusAI] Supabase breaker RELEASED by an audit row: {self.slug} {trip.source}",
+                         f"{trip.source} was released because the product audit list carries a matching `rearm` row "
+                         f"(claimed_by={info['claimed_by']}, host={info['host']}, pid={info['pid']}, at={info['at']}, "
+                         f"reason={info['reason']!r}). Verify a human did this.")
                 return True
         return False
+
+    def probe(self) -> bool:
+        """Boot probe: one GET of the fleet key. A failure degrades the breaker (config refusal or unreachable) instead
+        of surfacing only at the first trip."""
+        if self._store is None:
+            self.set_degraded("no breaker store configured")
+            return False
+        try:
+            self._store.get(BREAKER_FLEET_KEY)
+            return True
+        except Exception as exc:  # noqa: BLE001 -- classified, never swallowed
+            kind = ("refused this service's credentials/ACL" if _is_config_error(exc) else "is unreachable")
+            self.set_degraded(f"the breaker Redis {kind} at boot ({type(exc).__name__}: {str(exc)[:120]})")
+            return False
+
+    def announce_config_warnings(self) -> None:
+        """Alert (once per distinct warning) about env that tried to loosen the safety nets (quota above default ...)."""
+        for w in self._config.warnings:
+            self._io(self._alert, f"config:{self.slug}:{w}", f"[NoctusAI] Supabase breaker CONFIG warning: {self.slug}",
+                     f"{self.slug}: {w}")
 
     def set_degraded(self, reason: str) -> None:
         """The breaker is running without something it needs (e.g. no Redis: trips are not persisted and the fleet key
@@ -1014,18 +1104,23 @@ class Breaker:
         with self._lock:
             local = self._trips.get(source)
         persisted_ts = ""
+        audited = False
         if self._store is not None:
             try:
-                # NO marker write: `rearm:*` is READ-ONLY for a product's Redis identity (only ops writes markers).
-                # Other processes of this product learn of the re-arm from the `rearm` audit row below, which carries
-                # the `tripped_at` of the PERSISTED key (read before the DEL: another process may have written it).
+                # `rearm:*` is READ-ONLY for a product's Redis identity (only ops writes markers): other processes learn of
+                # a re-arm from the `rearm` AUDIT row, which carries the `tripped_at` of the PERSISTED key (read first:
+                # another process may have written it — this process may hold the trip only remotely, or not at all).
                 with contextlib.suppress(Exception):
                     raw = self._store.get(key)
                     if raw:
                         persisted_ts = str(_parse_trip(source, raw).get("tripped_at") or "")
+                nonce = persisted_ts or ((local.key_tripped_at or local.tripped_at) if local is not None else "")
+                # the row goes in BEFORE the DEL and is MANDATORY: if it cannot be written the key stays and this raises
+                self.audit("rearm", key, by=by, reason=reason, tripped_at=nonce or None, required=True)
+                audited = True
                 self._store.delete(key)
             except Exception:
-                if local is None or local.persisted:
+                if local is None or local.persisted or audited:
                     raise  # the key may still exist: never pretend it was released
                 logger.warning("breaker: Redis unreachable; releasing the in-memory-only trip for %s", source)
         with self._lock:
@@ -1035,8 +1130,6 @@ class Breaker:
                 self._fleet = None
             self._alerted = {a for a in self._alerted if not a.startswith(f"trip:{self.slug}:{source}:")}
             woke = list(self._subs.get(source, ())) if source != "fleet" else [c for s in self._subs.values() for c in s]
-        self.audit("rearm", key, by=by, reason=reason,
-                   tripped_at=(persisted_ts or (local.key_tripped_at or local.tripped_at)) if local is not None else None)
         self._emit_event({"event": "breaker.rearmed", "product": self.slug, "source": source, "by": by,
                           "reason": reason})
         for cb in woke:
@@ -1098,6 +1191,7 @@ def configure_breaker(**kwargs: Any) -> Breaker:
     """Install the product's slug / Redis store / alerter / event sink on the process breaker."""
     b = get_breaker()
     b.configure(**kwargs)
+    b.announce_config_warnings()
     return b
 
 

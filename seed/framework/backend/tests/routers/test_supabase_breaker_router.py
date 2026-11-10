@@ -110,7 +110,7 @@ def test_admin_trips_and_rearms_with_a_reason_and_both_are_audited():
     assert get_breaker().hold_reason("worker:a") is not None
     assert c.post(BASE + "/rearm", json={"source": "worker:a", "reason": "fixed, verified"}, cookies=ck).status_code == 200
     assert get_breaker().hold_reason("worker:a") is None
-    audit = [json.loads(r) for r in get_breaker()._store.audit]
+    audit = [json.loads(r) for r in get_breaker()._store.audits["noctus:breaker:prod-x:audit"]]
     assert [a["op"] for a in audit] == ["trip", "rearm"] and audit[1]["claimed_by"] == str(u.padmin)
 
 

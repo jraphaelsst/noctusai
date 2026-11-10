@@ -154,7 +154,7 @@ def test_rearm_restarts_source_and_requires_a_reason():
     assert out["ok"] and b.hold_reason("worker:a") is None
     assert "noctus:breaker:prod-x:worker:a" not in store.data
     assert "noctus:breaker:prod-x:rearm:worker:a" not in store.data, "rearm:* is READ-ONLY for a product identity"
-    row = json.loads(store.audit[-1])
+    row = json.loads(store.audits["noctus:breaker:prod-x:audit"][-1])
     assert row["op"] == "rearm" and row["tripped_at"] and row["key"] == "noctus:breaker:prod-x:worker:a"
 
 
@@ -395,12 +395,13 @@ def test_F10_rearm_and_manual_trip_write_a_capped_audit_row():
     b, store, alerter, clock = make_breaker()
     b.trip("worker:a", reason="manual stop", by="ana")
     b.rearm("worker:a", by="ana", reason="fixed")
-    rows = [json.loads(r) for r in store.audit]
+    rows = [json.loads(r) for r in store.audits["noctus:breaker:prod-x:audit"]]
     assert [r["op"] for r in rows] == ["trip", "rearm"] and rows[1]["claimed_by"] == "ana" and rows[1]["reason"] == "fixed"
     assert BREAKER_AUDIT_KEY == "noctus:breaker:audit"
     for i in range(1200):
         store.append_audit(BREAKER_AUDIT_KEY, str(i), 1000)
-    assert len(store.audit) == 1000
+    assert len(store.audits[BREAKER_AUDIT_KEY]) == 1000 and len(store.audits["noctus:breaker:prod-x:audit"]) == 2, \
+        "audit lists are keyed, like Redis"
 
 
 # --- startup is its own source; unattributed still catches stray loops (coordinator review 2026-11-10) -------------
@@ -501,17 +502,40 @@ def test_spawn_background_sets_an_explicit_alert_only_source_for_tasks_and_threa
     assert seen == ["bg:conversation-worker", "bg:conversation-worker", "bg:pos-aceite", "bg:sync-fn"]
 
 
-def test_P3_7_budget_ceiling_is_a_rate_in_calls_per_hour_across_windows():
-    from noctusai_lib.primitives.supabase_breaker import MAX_BUDGET_CALLS
+def test_P3_7_per_source_ceiling_is_derived_from_the_quota_as_a_rate_per_hour():
+    ceiling = BreakerConfig().source_hour_ceiling()
+    assert ceiling == int(500_000 * 0.5 / 24)
 
-    def cfg(rules):
-        return BreakerConfig.from_env({"NOCTUS_BREAKER_BUDGETS": json.dumps({"worker:a": rules})})
+    def cfg(rules, **env):
+        return BreakerConfig.from_env({"NOCTUS_BREAKER_BUDGETS": json.dumps({"worker:a": rules}), **env})
 
-    assert cfg([[3600, MAX_BUDGET_CALLS + 1]]).overrides == {}
-    assert cfg([[300, MAX_BUDGET_CALLS // 12 + 1]]).overrides == {}, "5-minute rule above 20,000/h-equivalent"
-    assert cfg([[60, MAX_BUDGET_CALLS // 60 + 1]]).overrides == {}
-    assert cfg([[3600, MAX_BUDGET_CALLS]]).overrides["worker:a"][0].max_calls == MAX_BUDGET_CALLS
-    assert cfg([[300, MAX_BUDGET_CALLS // 12]]).overrides["worker:a"][0].window_s == 300
+    assert cfg([[3600, ceiling + 1]]).overrides == {}
+    assert cfg([[300, ceiling // 12 + 1]]).overrides == {}
+    assert cfg([[60, ceiling // 60 + 1]]).overrides == {}
+    assert cfg([[3600, ceiling]]).overrides["worker:a"][0].max_calls == ceiling
+    assert cfg([[300, ceiling // 12]]).overrides["worker:a"][0].window_s == 300
+
+
+def test_P2_3_env_cannot_loosen_the_safety_nets():
+    from noctusai_lib.primitives.supabase_breaker import DEFAULT_DAILY_QUOTA
+
+    huge = BreakerConfig.from_env({"NOCTUS_SUPABASE_DAILY_QUOTA": str(10**9)})
+    assert huge.daily_quota == 2 * DEFAULT_DAILY_QUOTA and any("clamped" in w for w in huge.warnings)
+    above = BreakerConfig.from_env({"NOCTUS_SUPABASE_DAILY_QUOTA": str(DEFAULT_DAILY_QUOTA + 1)})
+    assert above.daily_quota == DEFAULT_DAILY_QUOTA + 1 and any("above the default" in w for w in above.warnings)
+    assert BreakerConfig().warnings == []
+    nets = BreakerConfig.from_env({"NOCTUS_BREAKER_BUDGETS": json.dumps(
+        {"*": [[3600, 10**6]], "http": [[300, 10**6]], "startup": [[60, 10**6]], "unattributed": [[300, 10**6]],
+         "worker:ok": [[3600, 100]]})})
+    assert set(nets.overrides) == {"worker:ok"} and sum("safety net" in w for w in nets.warnings) == 4
+    assert BreakerConfig.from_env({"NOCTUS_MIN_IDLE_POLL_S": "0.01"}).min_idle_poll_s == 1.0
+
+
+def test_P2_3_config_warnings_are_alerted_once_when_the_breaker_is_configured():
+    b, store, alerter, clock = make_breaker(config=BreakerConfig.from_env({"NOCTUS_SUPABASE_DAILY_QUOTA": "900000"}))
+    b.announce_config_warnings()
+    b.announce_config_warnings()
+    assert len(alerter.sent) == 1 and "CONFIG" in alerter.sent[0][0]
 
 
 def test_P3_5_reason_must_be_printable_text():
@@ -700,20 +724,32 @@ def test_P1_A_claim_errors_with_the_error_backoff_for_10_minutes_never_hold():
     assert DownRepo.calls < 60, f"error backoff must bound the retries ({DownRepo.calls} claims in 10 min)"
 
 
-def test_P1_A_the_first_empty_poll_after_work_or_a_wake_is_free_back_to_back_empties_are_not():
+def test_P1_1_billing_rules_free_after_work_ramp_allowance_floor_reset_and_wake_cap():
     b, store, alerter, clock = make_breaker()
     worker = _cadence_worker(b, clock, FakeJobRepository())
     worker._bill_empty_poll(b)  # boot: free
-    clock.advance(0.2)
-    worker._bill_empty_poll(b)  # second empty 0.2s after the first, no work/wake between: billed
-    assert b.count("worker:t", 60) == 1
-    worker._poll_free = True  # work or a wake happened
-    clock.advance(0.2)
+    for _ in range(Worker.RAMP_FREE):  # the backoff ramp's allowance: sub-floor gaps, free
+        clock.advance(1.0)
+        worker._bill_empty_poll(b)
+    assert b.count("worker:t", 3600) == 0
+    clock.advance(1.0)
+    worker._bill_empty_poll(b)  # past the allowance, still polling every 1 s (< 10 s floor): billed
+    assert b.count("worker:t", 3600) == 1
+    worker._poll_free = True  # a job was processed
+    clock.advance(1.0)
     worker._bill_empty_poll(b)
-    assert b.count("worker:t", 60) == 1
-    clock.advance(1.5)  # honouring the declared cadence: free
+    assert b.count("worker:t", 3600) == 1
+    clock.advance(10.0)  # honouring the platform floor: free, and the ramp starts over
     worker._bill_empty_poll(b)
-    assert b.count("worker:t", 60) == 1
+    clock.advance(1.0)
+    worker._bill_empty_poll(b)
+    assert b.count("worker:t", 3600) == 1
+    # wake-followed empty polls: free up to the cap per 5 minutes, then billed
+    for _ in range(b._config.max_free_wake_polls + 3):
+        worker._woke_before_poll = True
+        clock.advance(0.5)
+        worker._bill_empty_poll(b)
+    assert b.count("worker:t", 3600) == 1 + 3, "30 free wake-followed polls, then billed"
 
 
 def test_P1_A_a_future_dated_enqueue_does_not_wake_the_worker():
@@ -929,8 +965,202 @@ def test_round6_an_audit_row_for_a_different_trip_does_not_release_a_vanished_ho
     b, store, alerter, clock = make_breaker(fleet_ttl_s=1.0)
     b.trip("worker:t", reason="runaway")
     clock.advance(30)
-    store.audit.append(json.dumps({"op": "rearm", "key": "noctus:breaker:prod-x:worker:t",
+    store.audits.setdefault("noctus:breaker:prod-x:audit", []).append(json.dumps({"op": "rearm", "key": "noctus:breaker:prod-x:worker:t",
                                    "tripped_at": "1999-01-01T00:00:00+00:00"}))
     store.data.clear()
     b.check_sync("worker:t", force=True)
     assert b.hold_reason("worker:t") is not None and any("VANISHED" in s for s, _ in alerter.sent)
+
+
+# --- round 7 P1-1: a REAL Worker configuration (default idle sleep) against the PLATFORM floor -----------------------
+
+
+class StepClock:
+    """Each read advances 1.0 s: every poll of the Worker is 1 s after the previous one, as with poll=max_idle=1."""
+
+    def __init__(self) -> None:
+        self.t = 1000.0
+
+    def __call__(self) -> float:
+        self.t += 1.0
+        return self.t
+
+
+def _real_worker(b, repo, clock, **kw):
+    # the DEFAULT idle sleep (no injected sleeper). The real sleep is shortened to 1 ms; the clock models 1 s per poll.
+    return Worker(repo, worker_id="w", handlers={"t": _noop}, breaker=b, poll_interval_seconds=0.001,
+                  max_idle_interval_seconds=0.001, held_poll_seconds=0.01, clock=clock, **kw)
+
+
+def test_P1_1_a_real_worker_with_poll_equal_max_idle_of_1s_and_the_default_sleep_TRIPS():
+    b, store, alerter, clock = make_breaker()
+    worker = _real_worker(b, FakeJobRepository(), StepClock())
+
+    async def drive():
+        stop = asyncio.Event()
+        task = asyncio.create_task(worker.run_forever(stop_event=stop))
+        for _ in range(500):  # wait for the trip (up to 10 s), independent of machine load
+            if b.hold_reason("worker:t") is not None:
+                break
+            await asyncio.sleep(0.02)
+        stop.set()
+        await asyncio.wait_for(task, 3)
+
+    asyncio.run(drive())
+    assert b.hold_reason("worker:t") is not None, "a loop polling every 1 s with no backoff MUST be stopped"
+    assert "noctus:breaker:prod-x:worker:t" in store.data
+
+
+def test_P1_1_a_producer_that_keeps_waking_an_empty_loop_cannot_launder_it():
+    from noctusai_lib.domain.jobs import wake
+
+    b, store, alerter, clock = make_breaker()
+    worker = _real_worker(b, FakeJobRepository(), StepClock())
+
+    async def drive():
+        stop = asyncio.Event()
+        task = asyncio.create_task(worker.run_forever(stop_event=stop))
+
+        async def spam():  # enqueues that never leave anything claimable: pure wake traffic
+            while not stop.is_set():
+                wake.notify_enqueued("t")
+                await asyncio.sleep(0.001)
+
+        sp = asyncio.create_task(spam())
+        for _ in range(500):
+            if b.hold_reason("worker:t") is not None:
+                break
+            await asyncio.sleep(0.02)
+        stop.set()
+        await asyncio.wait_for(task, 3)
+        await sp
+
+    asyncio.run(drive())
+    assert b.hold_reason("worker:t") is not None, "wake-followed empty polls are free only up to the per-window cap"
+
+
+def test_P1_1_a_worker_idling_at_the_floor_or_slower_is_never_billed():
+    b, store, alerter, clock = make_breaker()
+
+    class Slow:
+        t = 0.0
+
+        def __call__(self):
+            Slow.t += 30.0  # the default max_idle: 30 s between polls
+            return Slow.t
+
+    worker = _real_worker(b, FakeJobRepository(), Slow())
+
+    async def drive():
+        stop = asyncio.Event()
+        task = asyncio.create_task(worker.run_forever(stop_event=stop))
+        await asyncio.sleep(0.3)
+        stop.set()
+        await asyncio.wait_for(task, 3)
+
+    asyncio.run(drive())
+    assert b.hold_reason("worker:t") is None and b.count("worker:t", 3600) == 0
+
+
+def test_P1_1_in_a_deploy_context_a_max_idle_below_the_floor_is_clamped_loudly(monkeypatch, caplog):
+    monkeypatch.setenv("APP_ENV", "production")
+    b, *_ = make_breaker()
+    with caplog.at_level("WARNING"):
+        w = Worker(FakeJobRepository(), worker_id="w", handlers={"t": _noop}, breaker=b, poll_interval_seconds=1.0,
+                   max_idle_interval_seconds=1.0)
+    assert w._max_idle_interval == b._config.min_idle_poll_s == 10.0
+    assert "clamped to the floor" in caplog.text
+    monkeypatch.delenv("APP_ENV")
+    w2 = Worker(FakeJobRepository(), worker_id="w", handlers={"t": _noop}, breaker=b, poll_interval_seconds=1.0,
+                max_idle_interval_seconds=1.0)
+    assert w2._max_idle_interval == 1.0, "outside a deploy the declared value stands (and is billed against the floor)"
+
+
+# --- round 7: P2-1 route re-arm from a remote-only holder, P2-2 degraded, P3 clamps / lookback ------------------------
+
+
+def test_P2_1_a_rearm_from_a_breaker_holding_the_trip_only_remotely_releases_a_peer_that_holds_it_locally():
+    store, alerter, clock = InMemoryBreakerStore(), RecordingAlerter(), Clock()
+    mk = lambda: Breaker(slug="p", store=store, alerter=alerter, clock=clock, wall=clock, sync_io=True, fleet_ttl_s=1.0)
+    holder, server = mk(), mk()  # `server` serves the platform-admin route; `holder` runs the Worker that tripped
+    holder.trip("worker:t", reason="runaway")
+    clock.advance(30)
+    server.check_sync("worker:t", force=True)  # the serving process sees only a REMOTE hold: no local trip at all
+    assert "worker:t" not in server._trips and server.hold_reason("worker:t") is not None
+    server.rearm("worker:t", by="ana", reason="fixed and verified")
+    row = json.loads(store.audits["noctus:breaker:p:audit"][-1])
+    assert row["tripped_at"], "the nonce comes from the PERSISTED key, not from a local trip the server never had"
+    clock.advance(30)
+    holder.check_sync("worker:t", force=True)
+    assert holder.hold_reason("worker:t") is None, "the route's re-arm must not be reverted by the holder"
+    assert not any("VANISHED" in s for s, _ in alerter.sent)
+    assert any("RELEASED by an audit row" in s for s, _ in alerter.sent), "every audit-row release is announced"
+
+
+def test_P2_1_the_audit_row_is_written_BEFORE_the_delete_and_is_mandatory():
+    class NoAudit(InMemoryBreakerStore):
+        def append_audit(self, key, value, cap):
+            raise ConnectionError("audit list unwritable")
+
+    store, alerter, clock = NoAudit(), RecordingAlerter(), Clock()
+    b = Breaker(slug="p", store=store, alerter=alerter, clock=clock, wall=clock, sync_io=True)
+    b.trip("worker:t", reason="runaway")
+    with pytest.raises(ConnectionError):
+        b.rearm("worker:t", by="ana", reason="fixed")
+    assert "noctus:breaker:p:worker:t" in store.data, "no audit row => the key is NOT deleted"
+    assert b.hold_reason("worker:t") is not None
+
+
+def test_P2_2_a_credentials_refusal_is_degraded_configuration_not_a_transient_outage():
+    class NoPermissionError(Exception):  # the redis-py class name
+        pass
+
+    class Denied(InMemoryBreakerStore):
+        def mget(self, keys):
+            raise NoPermissionError("this user has no permissions to run the 'mget' command")
+
+        def get(self, key):
+            raise NoPermissionError("NOPERM")
+
+        def set(self, key, value, ttl=None):
+            raise NoPermissionError("NOPERM")
+
+    store, alerter, clock = Denied(), RecordingAlerter(), Clock()
+    b = Breaker(slug="p", store=store, alerter=alerter, clock=clock, wall=clock, sync_io=True, fleet_ttl_s=0.0)
+    b.refresh()
+    assert b.degraded and "configuration, not an outage" in b.degraded
+    assert not any("BLIND" in s for s, _ in alerter.sent) and any("DEGRADED" in s for s, _ in alerter.sent)
+    b2 = Breaker(slug="p", store=Denied(), alerter=RecordingAlerter(), clock=clock, wall=clock, sync_io=True)
+    b2.trip("worker:t", reason="runaway")
+    assert b2.degraded and "NOT persisted" in b2.degraded
+
+
+def test_P2_2_the_boot_probe_degrades_on_failure_and_passes_on_a_healthy_store():
+    ok, _, a_ok, clock = make_breaker()
+    assert ok.probe() is True and ok.degraded is None
+    store = InMemoryBreakerStore()
+    store.down = True
+    b = Breaker(slug="p", store=store, alerter=RecordingAlerter(), clock=clock, wall=clock, sync_io=True)
+    assert b.probe() is False and "unreachable at boot" in b.degraded
+
+
+def test_P3_2_cap_and_hard_are_clamped_to_the_ceiling():
+    from noctusai_lib.primitives.supabase_breaker import MAX_BUDGET_CALLS
+
+    with job_scope(10**9, hard=10**9) as budget:
+        assert budget.cap == MAX_BUDGET_CALLS and budget.hard == MAX_BUDGET_CALLS
+    b, *_ = make_breaker(config=BreakerConfig(job_cap_enforce=True))
+    assert b.job_hard_limit(10**9) == MAX_BUDGET_CALLS
+
+
+def test_P3_5_the_audit_lookback_scans_the_whole_capped_list_filtered_by_key():
+    b, store, alerter, clock = make_breaker(fleet_ttl_s=1.0)
+    b.trip("worker:t", reason="runaway")
+    ts = b._trips["worker:t"].tripped_at
+    audit_key = "noctus:breaker:prod-x:audit"
+    store.audits[audit_key] = [json.dumps({"op": "rearm", "key": "noctus:breaker:prod-x:worker:t", "tripped_at": ts})]
+    store.audits[audit_key] += [json.dumps({"op": "trip", "key": "noctus:breaker:prod-x:worker:z"}) for _ in range(500)]
+    clock.advance(30)
+    del store.data["noctus:breaker:prod-x:worker:t"]
+    b.check_sync("worker:t", force=True)  # the matching row is 500 rows deep: the old 30-row window would miss it
+    assert b.hold_reason("worker:t") is None

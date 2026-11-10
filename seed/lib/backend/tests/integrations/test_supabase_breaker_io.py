@@ -195,3 +195,24 @@ def test_breaker_store_selection_dedicated_redis_then_loud_app_fallback_then_fak
     assert isinstance(make_breaker_store(environ={"REDIS_URL": "redis://app:6379/0"}, deploy=False), InMemoryBreakerStore)
     assert isinstance(make_breaker_store(environ={}, deploy=True), InMemoryBreakerStore)
     assert isinstance(make_breaker_store(environ=env, deploy=True, use_fake=True), InMemoryBreakerStore)
+
+
+def test_P3_3_the_breaker_client_uses_only_breaker_credentials_and_refuses_unauthenticated(caplog):
+    from noctusai_lib.integrations.supabase_breaker_io import make_breaker_store
+
+    base = {"NOCTUS_BREAKER_REDIS_URL": "redis://noctus-breaker-redis:6379/0", "REDIS_USERNAME": "app-user",
+            "REDIS_PASSWORD": "app-secret"}
+    with caplog.at_level("CRITICAL"):
+        st = make_breaker_store(environ=base, deploy=True)  # breaker creds absent: NO fallback to REDIS_*
+    assert isinstance(st, InMemoryBreakerStore) and "refusing to connect unauthenticated" in caplog.text
+    ok = make_breaker_store(environ={**base, "NOCTUS_BREAKER_REDIS_USERNAME": "sw", "NOCTUS_BREAKER_REDIS_PASSWORD": "bk"},
+                            deploy=True)
+    kw = ok._r.connection_pool.connection_kwargs
+    assert (kw["username"], kw["password"]) == ("sw", "bk") and ok.on_app_redis_fallback is False
+
+
+def test_P2_2_the_app_redis_fallback_is_flagged_so_the_app_can_mark_it_degraded():
+    from noctusai_lib.integrations.supabase_breaker_io import make_breaker_store
+
+    fb = make_breaker_store(environ={"REDIS_URL": "redis://app:6379/0"}, deploy=True)
+    assert fb.on_app_redis_fallback is True
