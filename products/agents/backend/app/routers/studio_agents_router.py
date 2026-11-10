@@ -51,6 +51,7 @@ from app.dependencies import (
     require_evals_run_access,
     get_conformidade_store_dep,
     get_geracao_store_dep,
+    get_notification_sink_dep,
     get_skills_store_dep,
     require_agent_delete,
     require_member,
@@ -111,6 +112,7 @@ from app.studio.eval_mecanismo_service import (
     TodosConsolidados,
     iniciar_suite_mecanismo,
 )
+from app.studio.eval_loop_service import resumo_mecanismo
 from app.studio.plataforma import ensure_instancias
 from app.studio.spend import KIND_MECANISMO_RUN, get_spend_ceiling_dep, reserve_run, settle_run
 from app.studio.models import (
@@ -243,6 +245,24 @@ def get_consolidacao_store_dep(evals=Depends(get_eval_store_dep)):
     from app.stores.studio_eval_consolidacao import get_consolidacao_store
 
     return get_consolidacao_store(settings, evals)
+
+
+def get_loop_store_dep():
+    """Seam over the eval-loop store (loops + rounds, migration 075). Tests override it with a shared Fake."""
+    from app.stores.studio_eval_loops import get_loop_store
+
+    return get_loop_store(settings)
+
+
+def get_loop_service_dep(
+    loops=Depends(get_loop_store_dep),
+    sink=Depends(get_notification_sink_dep),
+    consolidacao=Depends(get_consolidacao_store_dep),
+):
+    """The eval-loop gate (G1-G7): admission of a round, its close hook, the stop notification. One seam for both suites."""
+    from app.studio.eval_loop_service import EvalLoopService
+
+    return EvalLoopService(loops, sink, consolidacao)
 
 
 # ── error helpers ───────────────────────────────────────────────────────────
@@ -1232,7 +1252,9 @@ async def run_mecanismo_suite(
     driver=Depends(get_eval_turn_driver),
     ceiling=Depends(get_spend_ceiling_dep),
     consolidacao=Depends(get_consolidacao_store_dep),
+    loops=Depends(get_loop_service_dep),
     rodar_tudo: bool = Query(False),
+    loop_id: UUID | None = Query(None, description="Eval-loop gate: book this run as the next round of the loop (G1-G7)."),
 ) -> MecanismoRunIniciadaOut:
     """Book a mechanism-suite run against the CURRENT draft hash and execute it IN THE BACKGROUND (a live suite takes
     minutes: it must not hold an HTTP request). Platform admin only (the suite is platform IP). 202 + the run id;
@@ -1250,6 +1272,12 @@ async def run_mecanismo_suite(
     if hasattr(driver, "definir_agente"):
         driver.definir_agente(agent.key)
     limite = settings.studio_mecanismo_run_budget_usd
+    if loop_id is not None:
+        # G6/G7: refuses a closed loop, an open round, a spent budget and an unchanged hash with nothing to consolidate;
+        # the run's cost cap is clamped to what the loop budget has left.
+        limite = (await anyio.to_thread.run_sync(lambda: loops.admitir(
+            ctx.org_id, agent.id, loop_id, suite="mecanismo", compiled_hash=compiled.hash, limite_usd=limite,
+            ler_resumo=lambda rid: resumo_mecanismo(mecanismo, ctx.org_id, agent.id, rid)))).limite_usd
     try:
         with store_errors():
             run_id, casos = iniciar_suite_mecanismo(
@@ -1266,6 +1294,20 @@ async def run_mecanismo_suite(
     except DriverSemTipo as exc:
         raise http_error(409, "driver_indisponivel", "O executor de turnos da avaliação não está configurado.") from exc
 
+    def _fechar_loop() -> None:
+        if loop_id is not None:
+            loops.fechar_sem_falhar(
+                ctx.org_id, lambda: resumo_mecanismo(mecanismo, ctx.org_id, agent.id, run_id), run_id=run_id, run_tipo="mecanismo")
+
+    if loop_id is not None:
+        try:
+            await anyio.to_thread.run_sync(lambda: loops.abrir(
+                ctx.org_id, loop_id, run_id=run_id, run_tipo="mecanismo", compiled_hash=compiled.hash,
+                partes=dict(compiled.partes) or None))
+        except Exception:
+            mecanismo.fail_run(ctx.org_id, run_id, erro="loop_indisponivel")
+            raise
+
     if ctx.caller_kind == "product":
         # The shared daily ceiling (seed, same key as the eval runs): over it / unverifiable -> the booked run fails.
         try:
@@ -1273,6 +1315,7 @@ async def run_mecanismo_suite(
                 ceiling, org_id=ctx.org_id, kind=KIND_MECANISMO_RUN, run_id=run_id, amount_usd=limite))
         except Exception:
             mecanismo.fail_run(ctx.org_id, run_id, erro="Limite diário de custo atingido.")
+            await anyio.to_thread.run_sync(_fechar_loop)
             raise
 
     async def _executar() -> None:
@@ -1280,10 +1323,12 @@ async def run_mecanismo_suite(
             resultado = await concluir_suite_mecanismo(
                 mecanismo, driver, casos, org_id=ctx.org_id, run_id=run_id, limite_usd=limite, consolidacao=consolidacao,
                 agent_id=agent.id, compiled_hash=compiled.hash)
+            await anyio.to_thread.run_sync(_fechar_loop)  # G3/G4/G5/G7: close the round, stop + notify when a rule fires
             if resultado.erro_de_harness is None:  # a crashed/harness-failed run keeps its cap counting
                 settle_run(ceiling, kind=KIND_MECANISMO_RUN, run_id=run_id, actual_usd=float(resultado.custo_usd or 0.0))
         except Exception:  # noqa: BLE001 -- the run is already marked `falhou` (fixed text); nothing else to do
             logger.exception("agents.studio.mecanismo_run_falhou run_id=%s", run_id)
+            await anyio.to_thread.run_sync(_fechar_loop)  # a crashed run closes its round as a neutral (no score) one
 
     from app.routers.conversations_router import _track_background_task  # lazy: that router imports this one
 

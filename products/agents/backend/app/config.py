@@ -264,6 +264,9 @@ class SeedSettings(ProductSettings):
     # `STUDIO_MECANISMO_RUN_BUDGET_USD` env override. A run that reaches it is cut short and never
     # opens the publish gate.
     studio_mecanismo_run_budget_usd: float = 5.00
+    # Eval-loop gate (migration 075, G7): the total spend of ONE refinement loop (template loops: US$ 20). Reaching it stops
+    # the loop for an owner decision. `STUDIO_EVAL_LOOP_BUDGET_USD` env override; a token-started loop may not exceed it.
+    studio_eval_loop_budget_usd: float = 20.00
     # The rolling-24h per-org ceiling on token-started runs (eval + mecanismo) is the SEED setting
     # `daily_spend_ceiling_usd` (DAILY_SPEND_CEILING_USD, default 10) -- see app/studio/spend.py.
 

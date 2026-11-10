@@ -46,6 +46,11 @@ EVALS_RUN_ROUTES = {
     ("POST", "/api/studio/agents/{key}/evals/runs/{run_id}/cancel"),
     ("POST", "/api/studio/agents/{key}/draft/mecanismo-runs"),
     ("GET", "/api/studio/agents/{key}/mecanismo-runs/{run_id}"),
+    # the eval-loop gate (migration 075, G1-G7): open / read / stop a refinement loop -- the same token that runs the rounds
+    ("POST", "/api/studio/agents/{key}/evals/loops"),
+    ("GET", "/api/studio/agents/{key}/evals/loops"),
+    ("GET", "/api/studio/agents/{key}/evals/loops/{loop_id}"),
+    ("POST", "/api/studio/agents/{key}/evals/loops/{loop_id}/stop"),
 }
 #: The mechanism routes also accept the dev-advisor `studio:publish` token, but ONLY on a dev-advisor agent (F5).
 MECANISMO_ROUTES = sorted(r for r in EVALS_RUN_ROUTES if "mecanismo" in r[1])
