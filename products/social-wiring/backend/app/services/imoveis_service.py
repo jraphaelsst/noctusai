@@ -27,12 +27,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID
 
 from noctusai_lib.domain.real_estate import Imovel, PropertyData, imovel_to_property_data, parse_corretores
-from noctusai_lib.integrations import rate_limit
 from noctusai_lib.integrations.vista.client import VistaNotFound, VistaRecordUnpublished
 
 from app.services import corretores_enriquecimento, imoveis_descoberta, imovel_ref_avisos, vista_divergencias
@@ -111,7 +110,7 @@ _REGISTRY_TABLE = "imovel_registry"
 # minutes instead of 4 is not worth discovering their rate limit in
 # production.
 DEFAULT_SYNC_CONCURRENCY = 6
-VISTA_RATE_BUCKET = "vista"
+# Pacing: the seed adapter's per-org bucket (`vista:<org>`) is the ONLY pacer -- no product-side acquire.
 #: The per-code refresh runs 4 at a time (owner/coordinator 2026-11-03): ~2k detalhes calls per tier, not a burst.
 DETALHES_CONCURRENCY = 4
 #: A listing is "vitrine" (shown to the public, refreshed every run) when its Status is one of these and it is not hidden.
@@ -854,6 +853,39 @@ class ImovelSyncService:
     def _e_vitrine(linha: dict) -> bool:
         return (linha.get("status") or "").strip().lower() in STATUS_VITRINE and linha.get("exibir_no_site") is not False
 
+    async def _sinal_de_mudanca(self, espelho: dict[str, dict], report: SyncReport) -> Optional[dict[str, str]]:
+        """norm(codigo) -> codigo of every imóvel Vista changed (or that we do not know) since the mirror's newest
+        `data_atualizacao`, from ONE `list_changed_since` read (paged only while the rows are newer than the watermark).
+
+        `None` = the signal is unusable and the caller walks everything: nothing to compare against, listar silent
+        (`total == 0` -- never read as "nothing changed"), or the call failed (recorded on `report.sonda_falhas`)."""
+        marcas = [str(r["data_atualizacao"])[:10] for r in espelho.values() if r.get("data_atualizacao")]
+        if not marcas:
+            return None
+        marca = date.fromisoformat(max(marcas))
+        report.chamadas["sinal"] = report.chamadas.get("sinal", 0) + 1
+        try:
+            pagina = await self._adapter.list_changed_since(marca)
+        except Exception as exc:
+            report.sonda_falhas.append(f"sinal: {type(exc).__name__}")
+            logger.warning("imoveis change signal failed (%s) -- full per-code walk", type(exc).__name__)
+            return None
+        report.chamadas["sinal"] = max(report.chamadas["sinal"], int(pagina.page or 1))
+        if not pagina.total:
+            logger.warning("imoveis change signal: listar empty -- full per-code walk")
+            return None
+        mudados: dict[str, str] = {}
+        for imovel in pagina.items:
+            norm = imovel.codigo.strip().upper()
+            atual = espelho.get(norm)
+            if (
+                atual is not None and atual.get("sincronizado_em") and imovel.data_atualizacao is not None
+                and str(atual.get("data_atualizacao") or "")[:10] == imovel.data_atualizacao.isoformat()
+            ):
+                continue
+            mudados[norm] = imovel.codigo
+        return mudados
+
     async def sync_detalhes(
         self,
         org_id: UUID,
@@ -885,16 +917,29 @@ class ImovelSyncService:
 
         espelho = self._indice_espelho(org_id)
         fora = self._removidos_no_registro(org_id)
+        # The change signal (1 cheap listar call): only changed / unknown codes are read with detalhes. `None` = no signal
+        # (forced, empty mirror, listar silent or failing) => the full per-code walk, exactly as before.
+        mudados = None if forcar else await self._sinal_de_mudanca(espelho, report)
         alvo: list[str] = []
         for norm, linha in espelho.items():
             vitrine = self._e_vitrine(linha) and norm not in fora
-            if escopo == "todos" or (escopo == "vitrine") == vitrine:
+            if not (escopo == "todos" or (escopo == "vitrine") == vitrine):
+                continue
+            # A vitrine code is re-read on a `todos` run even if unchanged: that is the removal check (a hidden or deleted
+            # code is gone from listar, so the signal can never see it). Everything else only when it changed.
+            if mudados is None or (vitrine and escopo == "todos") or norm in mudados:
                 alvo.append(linha["codigo"])
 
         buscados: dict[str, Optional[Imovel]] = {c: None for c in alvo}
+        if mudados is not None and escopo in ("vitrine", "todos"):
+            for codigo in mudados.values():  # new in Vista (unknown to the mirror): found by the signal, no forward probe needed
+                if codigo.strip().upper() not in espelho and codigo not in buscados:
+                    buscados[codigo] = None
+                    report.descobertos.append(codigo)
         if descobrir and escopo in ("vitrine", "todos"):
             conhecidos = set(espelho)
-            for descobridor in (descobridores if descobridores is not None else self._descobridores_padrao()):
+            padrao = [] if mudados is not None else self._descobridores_padrao()
+            for descobridor in (descobridores if descobridores is not None else padrao):
                 try:
                     achados = await descobridor(self._adapter, conhecidos, report)
                 except Exception as exc:
@@ -977,7 +1022,6 @@ class ImovelSyncService:
         `desfecho` one of `DETALHE_OK | DETALHE_SUMIU | DETALHE_OCULTO | DETALHE_FALHOU`. A transport/auth failure is
         `DETALHE_FALHOU` (recorded on `report.detalhes_failed` when given) -- NEVER read as the code being gone. Shared by
         `sync_detalhes` and `refresh_codigo`."""
-        await rate_limit.acquire_async(VISTA_RATE_BUCKET)
         if report is not None:
             report.chamadas["detalhes"] = report.chamadas.get("detalhes", 0) + 1
         try:
@@ -1238,7 +1282,6 @@ class ImovelSyncService:
         )
 
     async def _fetch_page(self, page_no: int, page_size: int, report: SyncReport):
-        await rate_limit.acquire_async(VISTA_RATE_BUCKET)
         report.chamadas["listar"] = report.chamadas.get("listar", 0) + 1
         try:
             page = await self._adapter.list_imoveis(
@@ -1373,7 +1416,6 @@ class ImovelSyncService:
 
         async def enrich_one(index: int, imovel: Imovel) -> None:
             async with sem:
-                await rate_limit.acquire_async(VISTA_RATE_BUCKET)
                 report.chamadas["listar"] = report.chamadas.get("listar", 0) + 1  # get_imovel = one listar row ...
                 report.chamadas["detalhes"] = report.chamadas.get("detalhes", 0) + 1  # ... + one detalhes
                 try:
