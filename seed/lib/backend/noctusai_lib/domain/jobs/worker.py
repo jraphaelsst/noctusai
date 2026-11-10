@@ -286,6 +286,7 @@ class Worker:
             with source_scope("loop:" + ",".join(self._job_types)):
                 # A held source does NOT start on boot: the check below reads Redis (force) before the first claim.
                 hold = await self._hold(breaker, force=True)
+                # poll-budget: claim poll, 1s base multiplying to the 300s cap when idle, reset on work, cut short by an in-process enqueue wake, parked while the breaker holds; 1 calls/tick (rpc claim_next_job); worst 288/day per idle worker at the 300s cap, 86400/day only while busy at the 1s base; idle=backoff
                 while True:
                     if stop_event is not None and stop_event.is_set():
                         break
@@ -471,6 +472,7 @@ class Worker:
         (e.g. `complete_job` is a no-op once already COMPLETED).
         """
         try:
+            # poll-budget: lease heartbeat at lease_seconds/2 (300s at the 600s default) while a job runs; 1 calls/tick (rpc extend_lease); worst 288/day per continuously running job, 0/day when idle; idle=event
             while True:
                 await asyncio.sleep(self._heartbeat_interval)
                 try:
