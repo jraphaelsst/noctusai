@@ -39,16 +39,23 @@ real terminal window, so:
   the VPS; the grant `waha_instance` accepts is bound to line + policy hash + host + a secret nonce whose DIGEST is in
   that row, is honoured only while that row is < 5 minutes old, and is single-use (the outcome row consumes it).
 
-A test IO runs the whole call in the TEST owner-hand scope: the real ssh runner (`_vps_ssh.run_remote`) then refuses every
-command, so a test-marked runner that forwards to it, or an ssh alias for the test host, reaches nothing; only a
-PRODUCTION grant minted on the real ledger store opens it.
+A test IO runs the whole call in the TEST owner-hand scope: `_vps_ssh.run_remote` then refuses every command, so a
+test-marked runner that forwards THROUGH it reaches nothing (one that spawns /usr/bin/ssh itself reaches the VPS -- no
+capability beyond the plain ssh of the residuals below). Inside any owner-hand call ssh and git run by absolute system
+path; outside it every other caller is unchanged.
 
-No second factor, ever (owner decision). What this control does NOT stop (documented residuals, KB § 6a): in-process
-Python that deliberately reaches into this module's private state (it must then write its `confirmed` row through the
-real store: it lands on origin/ledgers, or in the local spool when offline); a process that DRIVES a real Terminal window
-(`open -a Terminal x.command`, AppleScript `do script`, accessibility keystrokes --
-NOC-REMEDIATE[owner-hand-accessibility-injection]); VPS root/automation reading the session files until
-NOC-REMEDIATE[personal-core-host-exec-authz] is built.
+No second factor, ever (owner decision). This client-side gate guards only the SANCTIONED path; it is not the control on
+the personal line. Documented residuals (KB § 6a): (a) code running as this uid acts on the personal line with no grant
+and NO audit row -- `_vps_ssh.run_remote("noctus-vps", "... docker compose -f compose.waha.yml up -d --no-deps
+waha-<n>-core")` with an empty scope, patching `_owner_allows` then calling `_apply`, or plain `ssh noctus-vps` from any
+shell; and a row minted through a patched gate cannot be told apart from the owner's. Only
+NOC-REMEDIATE[personal-core-host-exec-authz] on the VPS closes this (an SSH forced command or a docker authz plugin
+refusing `compose up/create/start` of `noctus.line.personal=true` services under the automation key); (b) a process that
+DRIVES a real Terminal window (`open -a Terminal x.command`, AppleScript `do script`, accessibility keystrokes --
+NOC-REMEDIATE[owner-hand-accessibility-injection]); (c) code planted into what the owner's command loads (venv
+`site-packages/*.pth`, `sitecustomize`, `pyvenv.cfg` home, `~/.zshrc`) runs inside the genuine Terminal session before
+any check and cannot be detected in-process; `~/.ssh/config` (ProxyCommand, Host remap) decides where ssh connects;
+(d) VPS root/automation reading the session files until NOC-REMEDIATE[personal-core-host-exec-authz] is built.
 """
 from __future__ import annotations
 
@@ -94,7 +101,11 @@ EMULATORS: tuple[dict, ...] = (
 )
 OPEN_TERMINAL = "Abra o Terminal.app (Aplicativos › Utilitários) e rode o comando lá."
 #: Variables that make the interpreter (or the loader) run code the owner did not type.
-_INJECTION_ENV = ("PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME", "PYTHONUSERBASE", "PYTHONINSPECT")
+_INJECTION_ENV = ("PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME", "PYTHONUSERBASE", "PYTHONINSPECT",
+                  # /usr/bin/git is the xcrun shim: these pick which toolchain (and so which git) it runs
+                  "DEVELOPER_DIR", "SDKROOT", "TOOLCHAINS")
+#: Any GIT_* (GIT_DIR, GIT_SSH_COMMAND, GIT_CONFIG_*, GIT_EXEC_PATH...) can redirect where the audit row is written.
+_INJECTION_ENV_PREFIXES = ("DYLD_", "GIT_")
 #: PATH must START with this: a tool any library resolves through PATH (git for the ledger, ssh) is then the system one.
 _SAFE_PATH_PREFIX = "/usr/bin:/bin"
 #: A test IO may target only this host (RFC 2606 `.invalid`: it can never resolve), so the seam cannot reach the VPS.
@@ -103,11 +114,15 @@ TEST_HOST = "noc-test.invalid"
 # NOC-REMEDIATE[owner-hand-accessibility-injection]: a process that DRIVES a real, pinned Terminal window passes the
 # chain check by design of what it can see: (1) a LaunchServices launch (`open -a Terminal x.command`, no TCC prompt) of
 # a script that runs this command; (2) AppleScript `do script` / System Events `keystroke`, CGEventPost, accessibility
-# APIs typing the answers; (3) TIOCSTI from a process holding our tty. Built here: input is flushed (tcflush TCIFLUSH)
-# before every prompt, and any process other than this one and its own shell/login chain that has our tty as its
-# controlling terminal refuses (sysctl KERN_PROC_TTY). Still open: (1) and (2). Cheap next check: refuse while any app
-# other than Terminal holds Accessibility or Automation (Apple Events) rights in TCC (read the user TCC.db where
-# permitted, else "unverifiable"), and refuse when Terminal's launch came from a `.command` document.
+# APIs typing the answers -- these need an Automation or Accessibility TCC grant ALREADY held by the agent's host app
+# (both prompt the owner the first time); (3) TIOCSTI from a process holding our tty. Built here: input is flushed
+# (tcflush TCIFLUSH) before every prompt, and any process other than this one and its own shell/login chain that has our
+# tty as its controlling terminal refuses (sysctl KERN_PROC_TTY). Still open: (1) and (2). Cheap next check: refuse
+# while any app other than Terminal holds Accessibility or Automation rights, and when Terminal's launch came from a
+# `.command` document. Design constraint: reading TCC.db needs Full Disk Access for the process doing it; without it a
+# fail-closed check would refuse EVERY run, so the design must either ask the owner to grant FDA to Terminal or treat
+# "unreadable" as a warning with that decision named. (A `sitecustomize` refusal was considered and NOT built: this
+# venv's interpreter loads one on every start, so it would refuse every run while catching only accidents.)
 # Not a blocker for D49 (the owner accepted the host residual) — 2026-11-10
 
 _MINT = object()  # module-private: only `owner_hand` holds it when it builds a grant
@@ -478,7 +493,7 @@ def human_gate(io) -> "str | None":
     hits = sorted(k for k in env if k in _HARNESS_ENV_EXACT or k.startswith(_HARNESS_ENV_PREFIX))
     if hits:
         return _refused(f"running inside an agent harness (env {', '.join(hits)} present)")
-    inject = sorted(k for k in env if k in _INJECTION_ENV or k.startswith("DYLD_"))
+    inject = sorted(k for k in env if k in _INJECTION_ENV or k.startswith(_INJECTION_ENV_PREFIXES))
     if inject:
         return _refused(f"code-injection variables are set ({', '.join(inject)}): unset them")
     path = env.get("PATH", "")
@@ -643,12 +658,11 @@ def owner_hand(action: str, name: str, ssh_host: str = "noctus-vps", repo_root: 
     """Run provision/apply for ONE personal line, only for an interactive human who typed the confirmation. Under a test
     IO the whole call runs in waha_instance's TEST owner-hand scope: its real remote runner refuses every command, so no
     wrapper a test IO carries can ever reach a real host."""
-    token = wi._OWNER_HAND_SCOPE.set(wi.OWNER_HAND_TEST_SCOPE) if _test_io is not None else None
+    token = wi._OWNER_HAND_SCOPE.set(wi.OWNER_HAND_TEST_SCOPE if _test_io is not None else wi.OWNER_HAND_LIVE_SCOPE)
     try:
         return _owner_hand(action, name, ssh_host, repo_root, _test_io=_test_io)
     finally:
-        if token is not None:
-            wi._OWNER_HAND_SCOPE.reset(token)
+        wi._OWNER_HAND_SCOPE.reset(token)
 
 
 def _owner_hand(action: str, name: str, ssh_host: str, repo_root: "str | None", *, _test_io=None) -> dict:

@@ -293,6 +293,13 @@ REFUSED_CHAINS = {
     "path-homebrew-first": dict(env={"PATH": "/opt/homebrew/bin:/usr/bin:/bin"}),
     "path-usr-bin-only": dict(env={"PATH": "/usr/bin"}),
     "path-missing": dict(env={"HOME": "/h"}),
+    # round 5, P3: /usr/bin/git is the xcrun shim (toolchain selectors), and GIT_* can redirect the audit row
+    "developer-dir": dict(env={"PATH": SAFE_PATH, "DEVELOPER_DIR": "/tmp/xcode"}),
+    "sdkroot": dict(env={"PATH": SAFE_PATH, "SDKROOT": "/tmp/sdk"}),
+    "toolchains": dict(env={"PATH": SAFE_PATH, "TOOLCHAINS": "x"}),
+    "git-dir": dict(env={"PATH": SAFE_PATH, "GIT_DIR": "/tmp/elsewhere.git"}),
+    "git-ssh-command": dict(env={"PATH": SAFE_PATH, "GIT_SSH_COMMAND": "/tmp/fake-ssh"}),
+    "git-config-count": dict(env={"PATH": SAFE_PATH, "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "remote.origin.url"}),
 }
 
 
@@ -590,6 +597,24 @@ def test_a_test_grant_never_opens_the_real_runner_and_neither_does_a_grant_off_t
         with wi._GrantScope(g):
             assert wi._sh(H, "true") == (1, "", wi.OWNER_HAND_RUNNER_REFUSAL)
             assert _vps_ssh.run_remote(H, "true") == (1, "", wi.OWNER_HAND_RUNNER_REFUSAL)
+    assert wi._OWNER_HAND_SCOPE.get() is None
+
+
+def test_inside_owner_hand_ssh_and_git_run_by_absolute_path_and_every_other_caller_is_unchanged():
+    from tools.noctus.dev import _ledger_store as ls
+    from tools.noctus.dev import _vps_ssh
+    assert _vps_ssh._ssh_program() == "ssh" and ls._git_program() == "git"  # outside: PATH, as before
+    for scope in (wi.OWNER_HAND_LIVE_SCOPE, wi.OWNER_HAND_TEST_SCOPE):
+        token = wi._OWNER_HAND_SCOPE.set(scope)
+        try:
+            assert _vps_ssh._ssh_program() == "/usr/bin/ssh" and ls._git_program() == "/usr/bin/git"
+        finally:
+            wi._OWNER_HAND_SCOPE.reset(token)
+    token = wi._OWNER_HAND_SCOPE.set(wi.OWNER_HAND_LIVE_SCOPE)
+    try:  # the live owner's pre-grant reads of the VPS checkout are not refused
+        assert wi._owner_scope_problem() is None
+    finally:
+        wi._OWNER_HAND_SCOPE.reset(token)
     assert wi._OWNER_HAND_SCOPE.get() is None
 
 

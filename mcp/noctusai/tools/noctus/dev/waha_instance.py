@@ -30,6 +30,7 @@ from workspace import resolve_caller_root
 from ._vps_ssh import (  # noqa: F401 - re-exported for the owner-hand path
     _OWNER_HAND_SCOPE,
     OWNER_HAND_RUNNER_REFUSAL,
+    OWNER_HAND_LIVE_SCOPE,
     OWNER_HAND_TEST_SCOPE,
     _owner_scope_problem,
     run_remote,
@@ -384,7 +385,7 @@ class _GrantScope:
         self.grant, self.token = grant, None
 
     def __enter__(self):
-        if self.grant is not None and _OWNER_HAND_SCOPE.get() is not OWNER_HAND_TEST_SCOPE:
+        if self.grant is not None and _OWNER_HAND_SCOPE.get() is not OWNER_HAND_TEST_SCOPE:  # LIVE -> the grant
             self.token = _OWNER_HAND_SCOPE.set(self.grant)
         return self
 

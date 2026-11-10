@@ -386,7 +386,7 @@ def _real_ssh(
     — ``None`` is accepted defensively (e.g. a direct/test call) but is never what a
     real deploy path forwards."""
     args = [
-        "ssh",
+        _ssh_program(),
         "-o", f"ConnectTimeout={connect_timeout}",
         "-o", "BatchMode=yes",
         # Multiplex: reuse ONE master connection across all ops so a fleet
@@ -440,13 +440,27 @@ def _normalize(argv: str | Sequence[str]) -> str:
 #: grant, or a test-marked runner that forwards here, from ever reaching ssh.
 _OWNER_HAND_SCOPE: "contextvars.ContextVar[object]" = contextvars.ContextVar("waha_owner_hand_scope", default=None)
 OWNER_HAND_TEST_SCOPE = object()
+#: The owner-hand path is running for real (before its grant exists): ssh is allowed, by absolute path.
+OWNER_HAND_LIVE_SCOPE = object()
+SYSTEM_SSH = "/usr/bin/ssh"
+SYSTEM_GIT = "/usr/bin/git"
+
+
+def in_owner_hand_scope() -> bool:
+    """True inside any owner-hand call (live, test or under a grant): tools then run by absolute system path."""
+    return _OWNER_HAND_SCOPE.get() is not None
+
+
+def _ssh_program() -> str:
+    """`ssh` through PATH for every other caller (unchanged); the system ssh by absolute path inside owner-hand."""
+    return SYSTEM_SSH if in_owner_hand_scope() else "ssh"
 OWNER_HAND_RUNNER_REFUSAL = ("owner-hand: the real remote runner refuses under a test owner-hand scope (only a "
                              "production grant minted on the real ledger store reaches ssh)")
 
 
 def _owner_scope_problem() -> "str | None":
     scope = _OWNER_HAND_SCOPE.get()
-    if scope is None:
+    if scope is None or scope is OWNER_HAND_LIVE_SCOPE:
         return None
     if scope is OWNER_HAND_TEST_SCOPE or getattr(scope, "test", True) is not False:
         return OWNER_HAND_RUNNER_REFUSAL
