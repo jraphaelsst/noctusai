@@ -81,7 +81,8 @@ enqueue's. Legacy `integrate` is unchanged.
 **The pre-push hook knows this push, and only for `enqueue`.** `scripts/hooks/pre-push` recognises the queue path: a push whose ONLY
 remote refs are `refs/heads/mq/<slug>--<sha7>`, with `<sha7>` a prefix of the pushed local sha, AND a fresh attestation: right before its
 push enqueue writes `<git-common-dir>/noc-enqueue/<full sha>.json` (the `deliverable()` verdict, ok, matching sha, written < 10 min ago).
-Without it the hook REFUSES and names `task_branch action=enqueue` as the remedy (a hand-typed exact-sha push would otherwise skip the
+The attestation names the one fully-qualified queue ref it authorises; the hook also requires exactly ONE mq ref per push and a bare full sha
+as the local side. A needs_resync re-check or a rejected push revokes it. Without it the hook REFUSES and names `task_branch action=enqueue` as the remedy (a hand-typed exact-sha push would otherwise skip the
 whole delivery contract). Its local ref is a bare sha, which used to make the
 branch-tree mirror keeper look for a branch named after the sha and block the push (reported only as the generic "main is
 sacred" banner). Now: a bare-sha push to an exact mq ref skips that per-branch check; an mq ref that does not name its sha is
