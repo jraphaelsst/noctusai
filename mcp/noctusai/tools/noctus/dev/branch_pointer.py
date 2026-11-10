@@ -124,7 +124,13 @@ STATUSES: frozenset[str] = frozenset({
     "on_going", "shipped", "blocked", "canceled", "stale", "deferred",
     "integrated-worktree-live",
 })
-ROLES: frozenset[str] = frozenset({"orchestrator", "engineer"})
+# "steward" = a BRANCH STEWARD (ratified guardian spec, 2026-11-10): the session
+# that owns one branch end to end and files its delivery (release-steward.md).
+# Neither an orchestrator nor an engineer: the claude-tree keeper's role-aware
+# base/parent pairing (orchestrator forks origin/dev; engineer forks near its
+# parent) deliberately applies to neither; the role/agent/parent-populated
+# check still does.
+ROLES: frozenset[str] = frozenset({"orchestrator", "engineer", "steward"})
 # CLAUDE.md §2: "Tech-lead = the orchestrator". Callers naming the role the
 # way the router does were refused (2026-11-07); canonicalise, never store
 # the alias (the ledger keeps one spelling).
