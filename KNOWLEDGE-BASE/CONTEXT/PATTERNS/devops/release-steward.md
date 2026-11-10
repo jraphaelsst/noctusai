@@ -198,6 +198,26 @@ After a machine reboot sessions return under NEW names, so a name is not an iden
   `branches=` returns a warning.
 - Telemetry: `role_set|role_clear|reconcile|reconcile_uncertain|train_drain` rows in `release-steward.ndjson`.
 
+### 8a · Withdrawal and the exchange record kinds (2026-11-10)
+
+- **`withdrawn`.** `ack outcome=withdrawn notes=<reason>` (steward; the reason is required) or `action=withdraw slug=`
+  (the requesting session or the steward; a third session gets `refused_not_requester`). A withdrawn row leaves `pending`
+  and `drain`, hides from `mine` unless `include_done`, appears under inbox `include_done`, and writes a `withdraw` audit
+  row. A later `request` for the slug re-opens it as a new revision (`requeued: true`), like any re-file.
+- **One record type, a `kind` field**, appended to the same outbox (append-only, same lock, history never rewritten):
+  `request` (default; every request row carries `kind: request`), `needs_info`, `position`, `decision`.
+  - `needs_info` (`action=ask slug= question= [addressed_to=<role> deadline_min=30]`, steward-only): ONE bounded question
+    with an id `ni-N`, `addressed_to` (the registered role's session, else the requester session, with a warning if the
+    role is unregistered), `deadline_ts` (default now + 30 min) and `owner_fallback: true`. `mine` shows the addressee its
+    open/expired items.
+  - `position` (`action=position slug= notes= [ref=ni-N]`): the answer (`ref` defaults to the latest unanswered
+    needs_info addressed to you) or a peer's stance. An answer after the deadline still counts.
+  - `decision` (`action=decision slug= notes=`, steward-only): the final call; it does not change the request status and
+    retires the slug's answered/expired threads from the inbox.
+  - `inbox` lists answered/expired `needs_info` under `needs_info`; an expired one with no `position` is also under
+    `escalate_to_owner` and named in `next`. Nothing is sent automatically: surfacing only.
+- Telemetry: `withdraw|needs_info|position|decision|needs_info_escalate` rows in `release-steward.ndjson`.
+
 ## 9 · Related
 
 `KB § PATTERNS/devops/merge-queue.md` (the queue this role feeds; §4 session

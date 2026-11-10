@@ -97,7 +97,8 @@ _MCP_NAMES = {
 }
 _TASK_BRANCH_GATED = {"enqueue", "integrate", "landed"}
 _RELEASE_GATED = {"bless", "promote", "backmerge"}
-OUTCOMES = ("enqueued", "landed", "ejected", "deployed")
+OUTCOMES = ("enqueued", "landed", "ejected", "deployed", "withdrawn")
+NEEDS_INFO_DEFAULT_MIN = 30
 _ADVANCED = {"enqueued", "landed", "deployed"}
 
 
@@ -515,7 +516,7 @@ class StewardStore:
                     "branches": ev.get("branches") or [],
                     "products": ev.get("products") or [], "migrations": bool(ev.get("migrations")),
                     "notes": ev.get("notes"), "requester": ev.get("requester") or {},
-                    "requested_at": ev["ts"], "status": "queued_for_steward",
+                    "requested_at": ev["ts"], "status": "queued_for_steward", "kind": "request",
                     "revision": (cur or {}).get("revision", 0) + 1, "dev_sha": None, "ack_note": None,
                     "requeued": bool(cur and cur["status"] != "queued_for_steward"),
                 }
@@ -602,8 +603,11 @@ class StewardStore:
     def mine(self, session_id: str | None, include_done: bool = False) -> dict[str, Any]:
         rows = [r for r in self.requests().values() if r["requester"].get("session_id") == session_id]
         if not include_done:
-            rows = [r for r in rows if r["status"] != "deployed"]
-        return {"ok": True, "status": "mine", "requests": sorted(rows, key=lambda r: r["requested_at"])}
+            rows = [r for r in rows if r["status"] not in ("deployed", "withdrawn")]
+        ni = [n for n in self.needs_info() if n["state"] in ("open", "expired")
+              and n["addressed_to"].get("session_id") == session_id]
+        return {"ok": True, "status": "mine", "requests": sorted(rows, key=lambda r: r["requested_at"]),
+                "needs_info": ni}
 
     def _classify(self, r: dict[str, Any]) -> dict[str, Any]:
         """landed | pending | unresolvable for one request (a train is landed only when ALL its branches are)."""
@@ -657,8 +661,12 @@ class StewardStore:
                 self.audit("train_drain", slug=r["slug"], branches=r["branches"])
             else:
                 drain.append(f"task_branch action=enqueue slug={r['slug']} confirm=True")
+        decided = {d["slug"] for d in self.decisions()}
+        threads = [n for n in self.needs_info() if n["state"] in ("answered", "expired") and n["slug"] not in decided]
+        escalate = [n for n in threads if n["state"] == "expired" and n.get("owner_fallback")]
         out: dict[str, Any] = {
             "ok": True, "status": "inbox", "pending": len(pending), "by_requester": grouped,
+            "needs_info": threads, "escalate_to_owner": escalate,
             "requests": shown, "already_landed": already_landed, "unresolvable": unresolvable,
             "uncertain": uncertain,
             "drain": drain,
@@ -675,6 +683,12 @@ class StewardStore:
                            "matched/unmatched files) - NEVER auto-acked; decide by hand (ask the requester / diff the "
                            "unmatched files) | ") + out["next"]
             self.audit("reconcile_uncertain", slugs=[r["slug"] for r in uncertain])
+        if any(n["state"] == "answered" for n in threads):
+            out["next"] += " | needs_info ANSWERED (see needs_info[]): read the answer, then act or action=decision"
+        if escalate:
+            out["next"] += (f" | escalate_to_owner: {len(escalate)} needs_info expired with no position "
+                            f"({', '.join(n['id'] for n in escalate)}) - tell the owner; nothing was sent for you")
+            self.audit("needs_info_escalate", ids=[n["id"] for n in escalate])
         if unresolvable:
             out["next"] += (f" | {len(unresolvable)} request(s) could not be resolved to a branch/sha: "
                             "ask the requester to re-request with head_sha=")
@@ -805,6 +819,8 @@ class StewardStore:
             note: str | None = None) -> dict[str, Any]:
         if outcome not in OUTCOMES:
             return _err(f"outcome must be one of {'|'.join(OUTCOMES)}")
+        if outcome == "withdrawn" and not (note or "").strip():
+            return _err("outcome=withdrawn needs notes=<the reason>")
         with self._locked("release-steward"):
             _cur, err = self._require_holder(session_id, "ack")
         if err:
@@ -817,9 +833,131 @@ class StewardStore:
             after = self.requests()[slug]
         self.touch(session_id)
         words = {"enqueued": "ENQUEUED", "landed": f"LANDED {dev_sha or ''}".strip(),
-                 "ejected": f"EJECTED {note or ''}".strip(), "deployed": "DEPLOYED"}
+                 "ejected": f"EJECTED {note or ''}".strip(), "deployed": "DEPLOYED",
+                 "withdrawn": f"WITHDRAWN {note or ''}".strip()}
         return {"ok": True, "status": f"acked_{outcome}", "request": after,
                 "next": f"SendMessage {after['requester'].get('name')}: {words[outcome]} (slug {slug})"}
+
+    def withdraw(self, session_id: str | None, slug: str, note: str | None = None) -> dict[str, Any]:
+        """The requesting session (or the steward) takes a request back; it leaves pending/drain."""
+        with self._locked("ship-requests"):
+            cur = self.requests().get(slug)
+            if cur is None:
+                return _err(f"no request for slug {slug!r} in the outbox")
+            with self._locked("release-steward"):
+                _l, not_steward = self._require_holder(session_id, "withdraw")
+            if not session_id or (cur["requester"].get("session_id") != session_id and not_steward):
+                return {"ok": False, "status": "refused_not_requester", "steward": self.public_holder(),
+                        "error": f"only the requesting session or the steward may withdraw {slug!r}. {KB_POINTER}"}
+            if cur["status"] == "withdrawn":
+                return {"ok": True, "status": "withdrawn", "unchanged": True, "request": cur}
+            self._append_event({"ts": _iso(self.clock()), "event": "ack", "slug": slug, "outcome": "withdrawn",
+                                "dev_sha": None, "note": (note or "").strip() or "withdrawn by requester",
+                                "acked_by": session_id})
+            after = self.requests()[slug]
+        self.audit("withdraw", slug=slug, by=session_id, was=cur["status"], note=after["ack_note"])
+        return {"ok": True, "status": "withdrawn", "request": after,
+                "next": "nothing more to do; request the slug again to re-open it as a new revision"}
+
+    # -- steward<->requester exchange records (append-only, same outbox) --------
+    def _kind_events(self, kind: str) -> list[dict[str, Any]]:
+        return [e for e in self._events() if e.get("event") == kind]
+
+    def decisions(self, slug: str | None = None) -> list[dict[str, Any]]:
+        return [{**e, "kind": "decision"} for e in self._kind_events("decision") if slug in (None, e.get("slug"))]
+
+    def needs_info(self, slug: str | None = None) -> list[dict[str, Any]]:
+        """Fold needs_info + position rows into threads: open | answered | expired (answered wins)."""
+        positions = self._kind_events("position")
+        now = self.clock()
+        out = []
+        for e in self._kind_events("needs_info"):
+            if slug not in (None, e.get("slug")):
+                continue
+            ans = next((p for p in positions if p.get("ref") == e["id"]), None)
+            expired = now >= float(e.get("deadline_epoch") or 0)
+            out.append({**e, "kind": "needs_info",
+                        "state": "answered" if ans else ("expired" if expired else "open"),
+                        "answer": ans.get("text") if ans else None, "answered_by": ans.get("by") if ans else None})
+        return out
+
+    def ask(self, session_id: str | None, slug: str, question: str, addressed_to: str | None = None,
+            deadline_min: float | None = None) -> dict[str, Any]:
+        """Steward-only: ONE bounded question about a slug (kind=needs_info)."""
+        with self._locked("release-steward"):
+            _cur, err = self._require_holder(session_id, "needs_info")
+        if err:
+            return err
+        question = (question or "").strip()
+        if not question:
+            return _err("needs_info needs question=<one bounded question>")
+        with self._locked("ship-requests"):
+            req = self.requests().get(slug)
+            if req is None:
+                return _err(f"no request for slug {slug!r} in the outbox")
+            target: dict[str, Any] = {"role": None, "session_id": req["requester"].get("session_id")}
+            warn = None
+            if addressed_to:
+                row = self._read_roles().get(addressed_to)
+                if addressed_to == "dev-steward":
+                    row = self._read_lease()
+                if row and row.get("session_id"):
+                    target = {"role": addressed_to, "session_id": row["session_id"]}
+                else:
+                    warn = f"role {addressed_to!r} is not registered; addressed to the requester session instead"
+            now = self.clock()
+            minutes = float(deadline_min) if deadline_min else NEEDS_INFO_DEFAULT_MIN
+            n = len(self._kind_events("needs_info")) + 1
+            row = {"ts": _iso(now), "event": "needs_info", "id": f"ni-{n}", "slug": slug, "question": question,
+                   "addressed_to": target, "asked_by": session_id, "deadline_ts": _iso(now + minutes * 60),
+                   "deadline_epoch": now + minutes * 60, "owner_fallback": True}
+            self._append_event(row)
+        self.audit("needs_info", id=row["id"], slug=slug, by=session_id, addressed_to=target)
+        out = {"ok": True, "status": "needs_info_asked", "needs_info": {**row, "kind": "needs_info", "state": "open"},
+               "next": f"SendMessage the addressee: needs_info {row['id']} on {slug} (answer: action=position ref={row['id']})"}
+        if warn:
+            out["warnings"] = [warn]
+        return out
+
+    def position(self, session_id: str | None, slug: str, text: str, ref: str | None = None) -> dict[str, Any]:
+        """A requester's answer to a needs_info, or any session's stance on a slug (kind=position)."""
+        text = (text or "").strip()
+        if not text:
+            return _err("position needs notes=<your answer or stance>")
+        if not session_id:
+            return _err(f"no session identity ({SESSION_ENV} unset)")
+        with self._locked("ship-requests"):
+            if self.requests().get(slug) is None:
+                return _err(f"no request for slug {slug!r} in the outbox")
+            if ref is None:  # default: the latest unanswered needs_info on this slug addressed to me
+                mine = [n for n in self.needs_info(slug) if n["state"] != "answered"
+                        and n["addressed_to"].get("session_id") == session_id]
+                ref = mine[-1]["id"] if mine else None
+            elif not any(n["id"] == ref and n["slug"] == slug for n in self.needs_info()):
+                return _err(f"no needs_info {ref!r} on slug {slug!r}")
+            row = {"ts": _iso(self.clock()), "event": "position", "slug": slug, "ref": ref, "text": text, "by": session_id}
+            self._append_event(row)
+        self.audit("position", slug=slug, ref=ref, by=session_id)
+        return {"ok": True, "status": "position_recorded", "position": {**row, "kind": "position"},
+                "next": "KEEP BUILDING; the steward reads this from its inbox"}
+
+    def decide(self, session_id: str | None, slug: str, text: str) -> dict[str, Any]:
+        """Steward-only: the final call on a slug (kind=decision). Does not change the request's status."""
+        with self._locked("release-steward"):
+            _cur, err = self._require_holder(session_id, "decision")
+        if err:
+            return err
+        text = (text or "").strip()
+        if not text:
+            return _err("decision needs notes=<the call>")
+        with self._locked("ship-requests"):
+            if self.requests().get(slug) is None:
+                return _err(f"no request for slug {slug!r} in the outbox")
+            row = {"ts": _iso(self.clock()), "event": "decision", "slug": slug, "text": text, "decided_by": session_id}
+            self._append_event(row)
+        self.audit("decision", slug=slug, by=session_id)
+        return {"ok": True, "status": "decision_recorded", "decision": {**row, "kind": "decision"},
+                "next": f"SendMessage the requester: DECISION on {slug}: {text}"}
 
     def status(self, session_id: str | None) -> dict[str, Any]:
         lease, state = self.holder()
@@ -1099,7 +1237,7 @@ def tool_refusal(tool_name: str, args: dict[str, Any], *, store: StewardStore | 
 # -- the MCP tool + CLI entry -----------------------------------------------
 
 ACTIONS = ("status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack",
-           "role", "roles", "reconcile")
+           "role", "roles", "reconcile", "withdraw", "ask", "position", "decision")
 
 
 def run_action(action: str, session_id: str | None, *, store: StewardStore | None = None,
@@ -1136,6 +1274,15 @@ def run_action(action: str, session_id: str | None, *, store: StewardStore | Non
                               to_session_id=kw.get("to_session_id"))
     if action == "reconcile":
         return store.reconcile(session_id, confirm=bool(kw.get("confirm")))
+    if action == "withdraw":
+        return store.withdraw(session_id, kw.get("slug") or "", kw.get("notes"))
+    if action == "ask":
+        return store.ask(session_id, kw.get("slug") or "", kw.get("question") or "", kw.get("addressed_to"),
+                         kw.get("deadline_min"))
+    if action == "position":
+        return store.position(session_id, kw.get("slug") or "", kw.get("notes") or "", kw.get("ref"))
+    if action == "decision":
+        return store.decide(session_id, kw.get("slug") or "", kw.get("notes") or "")
     if action == "ack":
         return store.ack(session_id, kw.get("slug") or "", kw.get("outcome") or "", kw.get("dev_sha"), kw.get("notes"))
     return _err(f"unknown action {action!r} ({'|'.join(ACTIONS)})")
@@ -1154,8 +1301,8 @@ def register(server) -> None:
             "re-requesting a slug keeps the latest head_sha; an inline-agent delivery >=100 LoC or >=3 files wants "
             "inline_reason=orchestrator_owned|single_coherent_voice|shared_state|owner_directed + inline_note, else a "
             "warning names the specialists to dispatch) | mine (my requests' outcomes) | inbox [include_done] (pending, grouped by "
-            "requester, with the batched drain list) | ack slug= outcome=enqueued|landed|ejected|deployed [dev_sha= "
-            "notes=] (steward) | role role=<role> [name= op=set|clear to_session_id=] (durable ROLE->session map: dev-steward "
+            "requester, with the batched drain list) | ack slug= outcome=enqueued|landed|ejected|deployed|withdrawn [dev_sha= "
+            "notes= (required for withdrawn)] (steward) | withdraw slug= [notes=] (the requester or steward takes a request back) | ask slug= question= [addressed_to=<role> deadline_min=30] (steward: kind=needs_info, one bounded question; unanswered past the deadline = escalate_to_owner in inbox) | position slug= notes= [ref=<ni-id>] (answer / stance) | decision slug= notes= (steward's final call) | role role=<role> [name= op=set|clear to_session_id=] (durable ROLE->session map: dev-steward "
             "is derived from the lease, also branch-steward:<branch>, agents, products/sw, ...; any session sets its own, "
             "steward sets others') | roles (the map, stale/dead sessions flagged) | reconcile [confirm=True] (steward: ack "
             "every inbox request already in origin/dev - `git cherry` - as landed; inbox/status list them as already_landed, "
@@ -1174,7 +1321,9 @@ def register(server) -> None:
                          migrations: bool = False, notes: str | None = None, outcome: str | None = None,
                          dev_sha: str | None = None, include_done: bool = False,
                          inline_reason: str | None = None, inline_note: str | None = None, branches: list[str] | None = None,
-                         role: str | None = None, op: str | None = None, confirm: bool = False) -> dict:
+                         role: str | None = None, op: str | None = None, confirm: bool = False,
+                         question: str | None = None, addressed_to: str | None = None,
+                         deadline_min: float | None = None, ref: str | None = None) -> dict:
         return run_action(
             action, os.environ.get(SESSION_ENV), claude_pid=os.getppid(),
             child_session=os.environ.get("CLAUDE_CODE_CHILD_SESSION") == "1",
@@ -1182,7 +1331,8 @@ def register(server) -> None:
             branch=branch, head_sha=head_sha, products=products, migrations=migrations, notes=notes,
             outcome=outcome, dev_sha=dev_sha, include_done=include_done,
             inline_reason=inline_reason, inline_note=inline_note, branches=branches,
-            role=role, op=op, confirm=confirm)
+            role=role, op=op, confirm=confirm, question=question, addressed_to=addressed_to,
+            deadline_min=deadline_min, ref=ref)
 
 
 __all__ = ["StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
