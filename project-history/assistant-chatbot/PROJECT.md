@@ -30,6 +30,12 @@ Council, decision rights and the product-* agents are **opt-in pilots**. This pr
 
 Files that cite these ids point here (`project-history/assistant-chatbot/PROJECT.md` section 2). Research behind them: `project-history/assistant-chatbot/research/`.
 
+## 2a · Browser-runner gate list (council 25e812af, decision `browser-ops-decision.md`)
+No server-side browser is built until ALL of these hold:
+- (a) The residual Instagram jobs the API cannot do are listed, with recurring demand.
+- (b) A measured RSS spike under a cgroup `mem_limit`/`oom_score_adj` shows the runner fits on the VPS without risking WAHA. The source is the local container study.
+- (c) A one-command kill switch exists (stop, wipe the volume, the vendor-side revoke steps listed for the owner), plus recorded-DOM fixtures, a Fake the Assistant builds against, and a defined acceptance run (account, action count, who watches).
+
 ## 3 · Revert order (each piece backs out independently)
 
 1. **Council:** drop the "pilot" status: set the skill's `description` trigger back to manual only and stop calling `open_session`. Nothing else depends on it; ledger files under `project-history/council/` stay as history. The product-* seat lines in the product agents are inert without the skill.
