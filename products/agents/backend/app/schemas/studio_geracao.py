@@ -122,6 +122,9 @@ class SecaoGerada(BaseModel):
     conteudo: str = Field(..., max_length=LIMITS["section.conteudo"])
     ordem: int | None = None
     ativo: bool = True
+    #: Rules this section carries (closed list). The section that tells the agent to disagree respectfully and never
+    #: agree to please (the canonical template keeps it inside ``honestidade``) MUST list ``discordar-com-respeito``.
+    regras: list[str] = Field(default_factory=list, max_length=8)
 
 
 class SaidaSecoes(_Saida):

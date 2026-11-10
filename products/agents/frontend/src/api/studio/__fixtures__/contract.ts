@@ -97,8 +97,8 @@ export const DRAFT_DETAIL: VersionDetail = {
   publish_override_reason: null,
   eval_run_id: null,
   secoes: [
-    { id: SEC_ID, chave: "identidade", titulo: "Identidade", ordem: 10, conteudo: "Você é uma estrategista de conteúdo.", ativo: true },
-    { id: SEC2_ID, chave: "metodo", titulo: "Método", ordem: 20, conteudo: "Pesquise antes de propor.", ativo: true },
+    { id: SEC_ID, chave: "identidade", titulo: "Identidade", ordem: 10, conteudo: "Você é uma estrategista de conteúdo.", ativo: true, regras: [] },
+    { id: SEC2_ID, chave: "metodo", titulo: "Método", ordem: 20, conteudo: "Pesquise antes de propor.", ativo: true, regras: [] },
   ],
   skills: [
     {

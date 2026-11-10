@@ -151,7 +151,10 @@ def version_bundle(store, org_id: UUID, version: VersionRecord, *, conteudo: boo
         idioma=version.idioma,
         tool_policy=dict(version.tool_policy),
         secoes=tuple(
-            SectionData(id=s.id, chave=s.chave, titulo=s.titulo, ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo)
+            SectionData(
+                id=s.id, chave=s.chave, titulo=s.titulo, ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo,
+                regras=tuple(s.regras),
+            )
             for s in secoes
         ),
         skills=tuple(
