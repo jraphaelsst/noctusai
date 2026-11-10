@@ -500,6 +500,7 @@ def register_retention_sweep(
         except Exception:
             logger.error("card_hub.documentos: retention sweep %s failed", name, exc_info=True)
 
+    # poll-budget: retention sweep, hours=24 default; 1 calls/tick (all-org sweep, queries scale with org count); worst 1/day tick; idle=fixed
     (scheduler or seed_scheduler).register(name, _job, hours=hours)
     logger.info("card_hub retention sweep %s configured: every %sh", name, hours)
     return name

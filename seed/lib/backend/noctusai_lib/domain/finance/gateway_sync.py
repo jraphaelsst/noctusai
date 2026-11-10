@@ -362,6 +362,7 @@ def register_gateway_sync(
         except Exception:
             logger.error("finance gateway sync job %s failed", job_id, exc_info=True)
 
+    # poll-budget: finance gateway sync, hours=6 default; 1 calls/tick (all-org gateway reads; scales with org count); worst 4/day ticks; idle=fixed
     (scheduler or seed_scheduler).register(job_id, _job, hours=hours)
     return job_id
 
