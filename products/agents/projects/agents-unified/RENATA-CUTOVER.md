@@ -1,5 +1,7 @@
 # Renata cutover — runbook
 
+> **Note (2026-11-10):** One Chat (the WhatsApp operator bot) was retired 2026-11-04; Julia is the line. References below to One Chat, its toggle or its bridge are historical.
+
 > **What happens.** The academia agent stops being the code-defined **Bia** (`app/agents/bia/`, `definition_mode='legacy'`) and becomes **Renata**, a Studio agent created with the wizard. Renata gets Bia's in-app history (conversations, messages, approvals, session transcripts), the academia token principal, and the old `/bia` URLs. The code-defined `bia` row is archived, which frees the key `bia` for a future marketing agent.
 >
 > **Built in:** migration `053_renata_cutover.sql` · `app/stores/cutover.py` · `app/routers/agentes_cutover_router.py` · the academia tool group (`app/studio/ferramentas_registry.py`) · CONTRACT §9.

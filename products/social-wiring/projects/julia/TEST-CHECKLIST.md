@@ -1,5 +1,7 @@
 # Live test checklist — Lais module (our own agent, "Julia")
 
+> **Note (2026-11-10):** One Chat (the WhatsApp operator bot) was retired 2026-11-04; Julia is the line. References below to One Chat, its toggle or its bridge are historical.
+
 One section per shipped page. Walk it with the owner in prod; tick each line or note what broke.
 Contract: `specs/julia-agent-contract.md` (§11 wins over §10, §10 over §1–§9).
 

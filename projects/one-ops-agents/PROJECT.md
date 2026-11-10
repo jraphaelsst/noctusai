@@ -1,5 +1,7 @@
 # PROJECT — One Ops: the agents product as a multi-agent chat platform
 
+> **Note (2026-11-10):** One Chat (the WhatsApp operator bot) was retired 2026-11-04; Julia is the line. References below to One Chat, its toggle or its bridge are historical.
+
 > **Status:** Phase A in flight (2026-09-19) · **Owner:** tech-lead · **Branch:** `feat/one-ops-agents`
 > **Products touched:** `agents` (primary) · `social-wiring` (Phase F)
 > **Deploy posture:** 🔴 dev-visible throughout; ONE prod-promotion decision at the end (§7).

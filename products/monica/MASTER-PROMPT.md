@@ -23,7 +23,7 @@ products/monica/backend/app/
 ```
 
 - **inbox → leads**: `on_new_chat` fires once per chat first created by an inbound non-group message (atomic claim on the chat row); a deleted lead is NOT recreated (intended — the chat row persists). `on_message` (seed seam, added with this product) fires for every newly stored message, inbound and outbound.
-- **WAHA**: Monica's own instance via `MONICA_WAHA_BASE_URL`; no default; unset ⇒ 503. Never the shared CORE-tier instance (single session, social-wiring's "One Chat" number). Realtime: Redis if `REDIS_URL`, else an explicit single-worker declaration, else the boot refuses.
+- **WAHA**: Monica's own instance via `MONICA_WAHA_BASE_URL`; no default; unset ⇒ 503. Never the shared CORE-tier instance (single session, the number of social-wiring's Julia line, legacy WAHA name "One Chat"). Realtime: Redis if `REDIS_URL`, else an explicit single-worker declaration, else the boot refuses.
 - **Contexto**: org specs of the agent definition `monica-leads` (agents `agent_version_specs` declare the fields, `agent_org_specs` hold the values). The agent itself is later; the definition is not activated on any channel.
 - Errors: agents' 422 is re-emitted flat `{detail, code, **fields}`; refused token 403; no agents link 503; agent not created for the org 404.
 

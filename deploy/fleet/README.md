@@ -255,7 +255,6 @@ crash-looping, not merely degraded):
 | Key | Used by | Notes |
 |---|---|---|
 | `APPROVAL_ASSERTION_SECRETS` | agents **and** academia-de-reciclagem | comma-separated HS256 signing keys (contract §D). Raw CSV string, NOT a JSON array — a `["a","b"]`-shaped value fails loud at boot by design. `agents` signs with element `[0]`; either side accepts any element. |
-| `SOCIAL_WIRING_API_TOKEN` | agents only | the `social-wiring:one-chat:read`+`:toggle`-scoped product token for the One Chat bridge (contract §E.6). |
 
 **Boots without these, but the feature they gate silently degrades** (no
 boot-time refusal — verify at first real use, not just `/api/health`):
@@ -268,12 +267,12 @@ boot-time refusal — verify at first real use, not just `/api/health`):
 | `PRIMARY_SOURCE_ALLOWLIST` | academia-de-reciclagem only | comma-separated hostnames (contract §B.5 `POST /api/sources`); empty means every host triggers the AVISO warn-path, never a hard block. |
 
 **Managed from the UI since 2026-09-16 (Agentes → Credenciais e integrações).**
-`ANTHROPIC_API_KEY` (Bia), `ACADEMIA_API_TOKEN`, `SOCIAL_WIRING_API_TOKEN`,
+`ANTHROPIC_API_KEY` (Bia), `ACADEMIA_API_TOKEN`,
 `APPROVAL_ASSERTION_SECRETS` and `ACADEMIA_AGENT_ID` now resolve DB-first
 (`agents.app_integration_config`, Fernet with the fleet `ENCRYPTION_KEY`),
 env-fallback. The `.env` values above stay as the bootstrap —
-`required_prod_config` still reads `APPROVAL_ASSERTION_SECRETS` and
-`SOCIAL_WIRING_API_TOKEN` from env at boot — but a stored value wins over
+`required_prod_config` still reads `APPROVAL_ASSERTION_SECRETS`
+from env at boot — but a stored value wins over
 them without a redeploy (≤ 30 s across workers), so never rotate them by
 hand again. One-time move, as a platform admin (`noctus_users.role = 'admin'`):
 

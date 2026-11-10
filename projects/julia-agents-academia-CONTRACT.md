@@ -1,5 +1,7 @@
 # CONTRACT — Julia: `academia-de-reciclagem` knowledge API + `agents` product (W0)
 
+> **Note (2026-11-10):** One Chat (the WhatsApp operator bot) was retired 2026-11-04; Julia is the line. References below to One Chat, its toggle or its bridge are historical.
+
 > Written by the tech-lead on 2026-09-14, BEFORE any slice is dispatched. Every slice builds to THIS document, and it is the acceptance gate for each of them.
 > Roadmap: `project-history/roadmaps/julia-agents-academia-2026-09.md`. Procedure: `KB § PATTERNS/architect/fe-be-contract-first-dispatch.md`.
 >

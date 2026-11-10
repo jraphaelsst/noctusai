@@ -23,7 +23,7 @@
 | **#1 parity gate** | ✅ **BUILT 2026-05-23** — `prod_config_parity` check + `audit_prod_config_parity` in `predeploy_check.py` (the deploy-config-contract 3rd leg). 35 tests pass. See §4. |
 | Chatbot multi-bubble delivery | ✅ **shipped to the seed** 2026-05-23 — see §6 |
 
-WhatsApp accounts: alerts **to** `5511974693365@c.us` (personal), sent **from** `5511992694172@c.us` (the "One Chat" WAHA session). **No auto-send** — outward sends require an explicit user-named target.
+WhatsApp accounts: alerts **to** `5511974693365@c.us` (personal), sent **from** `5511992694172@c.us` (Julia's line; WAHA session legacy name "One Chat"). **No auto-send** — outward sends require an explicit user-named target.
 
 ---
 
