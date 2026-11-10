@@ -1,5 +1,7 @@
 # Agents unified model: CONTRACT
 
+> **Note (2026-11-10):** One Chat (the WhatsApp operator bot) was retired 2026-11-04; Julia is the line. References below to One Chat, its toggle or its bridge are historical.
+
 **Status:** W0 contract, implemented by S1/S2/S5 on `feat/agents-unified-model` · **Date:** 2026-10-29 · **Base:** `origin/dev@90aabe170` · **Branch-pointer project:** `agents-unified`.
 **Builds on:** `products/agents/projects/julia-v2/CONTRACT.md` (the canonical agent model: `definition_scope` plataforma/instancia, `conteudo_modo='linhas'`, the 7 content areas) and roadmap `project-history/roadmaps/product-agents-platform-2026-10.md` (D31: agent internals are superadmin-only, everyone else gets 404).
 

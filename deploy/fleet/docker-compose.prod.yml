@@ -390,7 +390,7 @@ services:
       - /tmp:mode=1777,size=64m
     mem_limit: 512m
 
-  # ── agents 8016 — Bia chat, approvals, persona; lists One Chat's toggle ──
+  # ── agents 8016 — Bia chat, approvals, persona; hosts Julia ──
   # (roadmap julia-agents-academia-2026-09, M6 cutover). Bia reaches
   # academia ONLY through her own scoped product token (contract §E.6);
   # her Claude CLI subprocess is spawned per-conversation under one of 3

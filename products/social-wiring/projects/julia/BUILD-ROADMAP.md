@@ -1,5 +1,7 @@
 # Lais module — build roadmap (our own agent inside social-wiring)
 
+> **Note (2026-11-10):** One Chat (the WhatsApp operator bot) was retired 2026-11-04; Julia is the line. References below to One Chat, its toggle or its bridge are historical.
+
 Status 2026-10-14 (evening): **page 0 (Julia) is LIVE in prod** (`2ca3372b5`; agents 024–026 + SW 255/258/259 applied) — off until the owner's setup (`TEST-CHECKLIST.md`). The agent lives in the `agents` product; SW integrates via API and its pages mirror Lais (`specs/julia-agent-contract.md`, v3 §11). Pages 6–13 (Notificações, Conversas v2, Captação, Painel, Relatórios, Distribuição, Cloud-API pages, Avaliações/CAPI) and the full Lais→SW route map are in `specs/sw-reconstruction-map.md`; the authoritative Lais map is `[private study: page-map-v2]` + `[private study: mechanisms]`.
 Cadence (same as CoreStudio → Criação de Mídia): per page → contract (`specs/<page>-contract.md`) →
 BE/FE waves in worktrees → gates on merged dev → release → owner tests in prod → next page.

@@ -15,8 +15,8 @@ product's scoped API and never touches its database. Two agents in this release:
   (`app/agents/bia/`); since then it is a Studio agent (Renata) whose version switches on the
   `academia_*` tool group (`app/studio/ferramentas_registry.py`), and the key `bia` is free.
   Runbook: `projects/agents-unified/RENATA-CUTOVER.md`.
-- **One Chat** runs inside `social-wiring` (WhatsApp) and stays there. This product lists it
-  and switches its auto-reply on/off through a scoped social-wiring endpoint.
+- **Julia** (SDR) is hosted here and consumed by `social-wiring` via API; she is the WhatsApp line
+  (legacy name "One Chat", retired as a separate operator bot 2026-11-04).
 
 **Status (2026-09-14):** scaffold only. Every domain item below is PLANNED.
 
@@ -210,7 +210,7 @@ products/agents/backend/app/
 - `GET /api/channels/agents/{key}/qualificacao/estagios` (channel token) → ordered `[{chave, rotulo, ordem, conclusivo}]` only; the turn response carries `qualificacao.estagios_ordem`.
 - `GET|PUT /api/channels/agents/{key}/specs` (channel token, scope `agents:channel-specs`, bound to `{key}`) → the org's business specs, SW's editor behind `/api/julia/especificacoes`; the same service as the studio `PUT /api/studio/agents/{key}/specs` (`aplicar_org_specs`: declared keys only, `especificacoes_service.validar`, report → 200 + `invalidas`, block → 422 + `violacoes`, undeclared → 422 `spec_nao_declarada`). PUT body also carries `ator {user_id, nome?, email?}` (REQUIRED, product-attested by the channel token; absent → 422 `ator_obrigatorio`; recorded as `updated_by`/`updated_by_nome`/`updated_by_token`, migration 062, and in the audit with the token id); `valores[]` expose `updated_by`, `updated_by_nome`. Values are DATA (fenced in the compiled prompt); `routers/channel_specs_router.py`.
 - Publish pins the qualification standard version on the agent version (`qualificacao_versao_id`, inherited by new drafts, covered by `compiled_hash`); `GET|PUT /api/studio/agents/{key}/(draft/)qualificacao` (platform admin).
-- `GET /api/agents/catalogo` — tiered: org users get `{key, nome, papel, descricao_publica, runtime, capacidades}` from DB rows (`catalogo_agentes`, `catalogo_capacidades`); platform admins also tool keys + versions. One Chat is listed as `runtime=external`, papel `operador`.
+- `GET /api/agents/catalogo` — tiered: org users get `{key, nome, papel, descricao_publica, runtime, capacidades}` from DB rows (`catalogo_agentes`, `catalogo_capacidades`); platform admins also tool keys + versions.
 - Every Studio 409 reads pt-BR text keyed by its `code` (`MENSAGENS_CONFLITO` / `mensagem_conflito` / `erro_de_item` in `app/stores/_db_errors.py`); the exception's own message (raw Postgres text with constraint names, or internal English) never reaches a person. A test fails when a conflict code raised in `app/` has no text.
 - Studio support: `/capacidades` (server-provided tier + tabs), conformidade rule/violation routes (codes only), thread result + participant state on the channel conversation list, textos/ferramentas registry (structure only), `ponto_cache` in compiled outputs, mecanismo summary on versions.
 - Atomic optimistic lock: the replace-set PUTs send `expected_hash` → `replace_draft_conteudo(p_expected_hash)` locks the draft row and refuses a stale writer (409 `conflito_de_versao`). The draft-skill PATCH (`/draft/skills/{id}`) takes the same `expected_hash` → `update_draft_skill(..., p_expected_hash)` (migration 041). The content hash covers the version's own skills (name, index line, body, order, flag, files by sha256), so a skill edit moves it and breaks a stale CAS.

@@ -73,7 +73,7 @@ routes:
     note:     www alias of the .eco domain
   - hostname: agents.noctusai.com
     service:  http://agents:8016
-    note:     Bia chat, approvals, persona; lists One Chat's toggle
+    note:     Bia chat, approvals, persona; hosts Julia
 
   # ── UN-EXPOSED 2026-08-17 (owner's decision) ───────────────────────────
   # personal-finance:8002 · therapy-platform:8003 · daily-life:8005 ·
