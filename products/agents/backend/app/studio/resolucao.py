@@ -21,6 +21,7 @@ from app.stores.errors import NotFound
 from app.stores.studio_definitions import StudioAgentRecord, VersionRecord
 from app.studio.bundles import compile_version
 from app.studio.models import ClientBundle, CompiledPrompt, KnowledgeCatalog
+from app.studio.camadas import efetivo
 
 __all__ = [
     "AgenteResolvido",
@@ -80,7 +81,7 @@ def resolve_agent_for_org(
         v = store.get_version(definicao.org_id, versao)
         if v.agent_id != definicao.id:
             raise NotFound(f"version {versao} does not belong to the definition of {key!r}")
-    declaradas = tuple(store.list_spec_defs(definicao.org_id, v.id)) if v is not None else ()
+    declaradas = tuple(efetivo(store).list_spec_defs(definicao.org_id, v.id)) if v is not None else ()
     return AgenteResolvido(
         instancia=instancia, definicao=definicao, versao=v,
         specs_declaradas=declaradas, specs_org=tuple(store.list_org_specs(org_id, key)),

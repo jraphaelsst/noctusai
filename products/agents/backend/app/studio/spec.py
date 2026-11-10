@@ -28,6 +28,7 @@ from app.studio.bundles import client_bundle, compile_version
 from app.studio.especificacoes import placeholders_org_crus
 from app.studio.especificacoes_avaliacao import specs_de_avaliacao
 from app.studio.tools import studio_allowed_tools
+from app.studio.camadas import efetivo
 
 __all__ = [
     "MAX_COMPILED_PROMPT_CHARS",
@@ -128,7 +129,7 @@ def build_studio_spec(
         # A platform DEFINITION run with no org behind it (judge eval, Studio simulator): the model gets the
         # definition compiled with SYNTHETIC spec values (the ONE helper), so no ``{{org.x}}`` is ever raw in its
         # prompt. The stamped hash stays the definition's (specs are data; same as the mechanism eval).
-        declaradas = definitions.list_spec_defs(org_id, version.id)
+        declaradas = efetivo(definitions).list_spec_defs(org_id, version.id)
         if declaradas:
             valores = specs_de_avaliacao(
                 declaradas, specs_fixture, {s.chave: s.valor for s in definitions.list_org_specs(org_id, agent.key)})

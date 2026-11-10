@@ -89,3 +89,4 @@ class AgentSettingsPatch(_Strict):
     approval_timeout_seconds: int | None = None
     max_turns: int | None = None
     messages_rate_limit: str | None = None
+    numero_fallback_atendimento: str | None = None

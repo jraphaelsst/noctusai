@@ -53,6 +53,9 @@ class SeedSettings(ProductSettings):
     # slots, so the timeout also bounds how long a pending approval can
     # block a slot from returning to the pool.
     approval_timeout_seconds: int = 300
+    # 074: where an agent hand-off notifies the team (E.164). One number for every org for now (owner 2026-11-09);
+    # the DB override on 'Configurações do agente' wins. Unset => readiness refuses to publish a conversational agent.
+    numero_fallback_atendimento: str | None = None
 
     # Contract §E.10 (security review 2026-09-14): the escrita handler
     # refuses `approval_invalid` once `decided_at` is older than this —

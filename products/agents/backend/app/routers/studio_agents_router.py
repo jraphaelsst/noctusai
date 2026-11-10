@@ -102,7 +102,7 @@ from app.stores.studio_definitions import (
     VersionRecord,
 )
 from app.studio.bundles import client_bundle, compile_version
-from app.studio.prontidao import avaliar as avaliar_prontidao, juiz_aprovado, recusa_de_compilacao
+from app.studio.prontidao import avaliar as avaliar_prontidao, falta_numero_fallback, juiz_aprovado, recusa_de_compilacao
 from app.studio.eval_driver import get_eval_turn_driver
 from app.studio.eval_mecanismo import decidir_portao
 from app.studio.eval_mecanismo_service import (
@@ -115,6 +115,7 @@ from app.studio.eval_mecanismo_service import (
 from app.studio.eval_loop_service import resumo_mecanismo
 from app.studio.plataforma import ensure_instancias
 from app.studio.spend import KIND_MECANISMO_RUN, get_spend_ceiling_dep, reserve_run, settle_run
+from app.studio.camadas import EfetivoStore, resolver_pai_de
 from app.studio.models import (
     CompiledPrompt,
     EvalGate,
@@ -414,6 +415,29 @@ def resolve_client(store, org_id: UUID, agent: StudioAgentRecord, client_id: UUI
 
 
 # ── compile helpers ─────────────────────────────────────────────────────────
+
+
+def _pin_do_pai(store, catalog, org_id: UUID, agent, draft: VersionRecord, compiled: CompiledPrompt, prontidao):
+    """073 layers: the parent version a child publish pins -- the parent's CURRENT published version -- after proving
+    the child compiles to the SAME hash against it as against the parent draft it was evaluated on. A parent with
+    unpublished changes that reach the child is a refusal (publish the parent first, or re-evaluate), never a
+    silent swap of what ships. ``None`` for an agent without a parent."""
+    if agent.pai_agent_id is None:
+        return None
+    pai_ativa = store.get_active_version(org_id, agent.pai_agent_id)
+    if pai_ativa is None:
+        raise http_error(409, "pai_nao_publicado",
+                         "O modelo de origem deste agente ainda não tem versão publicada. Publique o modelo primeiro.",
+                         prontidao=prontidao(compiled))
+    base = resolver_pai_de(store)
+    fixado = EfetivoStore(store, lambda o, v: (pai_ativa.org_id, pai_ativa.id) if v == draft.id else base(o, v))
+    no_pin = compile_version(fixado, catalog, org_id, agent, draft)
+    if no_pin.hash != compiled.hash:
+        raise http_error(409, "pai_desatualizado",
+                         "O modelo de origem tem alterações ainda não publicadas que mudam este agente. "
+                         "Publique o modelo e avalie este agente de novo.",
+                         hash_atual=compiled.hash, hash_com_pai_publicado=no_pin.hash, prontidao=prontidao(compiled))
+    return pai_ativa.id
 
 
 def _refresh_draft_hash(
@@ -1096,6 +1120,12 @@ def publish_draft(
             409, "compile_blocked", "Há especificações da organização inválidas (SPEC_VALIDATION_MODE=block).",
             prontidao=itens_prontidao,
         )
+    if falta_numero_fallback(agent):  # direct, not via the items: a failed readiness read must not let it through
+        raise http_error(
+            409, "numero_fallback_ausente",
+            "Não há número de atendimento para a passagem a uma pessoa (Configurações do agente).",
+            prontidao=itens_prontidao,
+        )
     if itens_prontidao and any(i["codigo"] == "regras_seguranca_sem_parametros" for i in itens_prontidao):
         raise http_error(
             409, "compile_blocked", "As regras de segurança desta instância estão sem parâmetros (migração 063).",
@@ -1156,11 +1186,13 @@ def publish_draft(
         except EspelhoErro as exc:
             raise http_error(409, "espelho_falhou", f"O espelho Claude Code não pôde ser gerado: {exc}",
                              prontidao=prontidao(compiled)) from exc
+    pai_versao_id = _pin_do_pai(store, catalog, ctx.org_id, agent, draft, compiled, prontidao)
     with store_errors():
         # Proof of use (§A7) is stored INSIDE the publish transaction.
         published = store.publish_version(
             ctx.org_id, draft.id, actor_id(ctx), eval_run_id, override_reason,
             expected_hash=compiled.hash, texto=compiled.texto, manifest=compiled.manifest_json(),
+            pai_versao_id=pai_versao_id,
         )
     # The prompt-leak fingerprint (hashed shingles; Julia v2 IP protection) is computed AT PUBLISH so a turn only
     # reads it. A failure here is logged, never undoes the publish: the turn computes it on first use.

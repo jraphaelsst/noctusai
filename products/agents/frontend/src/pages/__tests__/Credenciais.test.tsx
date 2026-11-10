@@ -150,4 +150,19 @@ describe("ConfiguracoesAgente", () => {
     expect(timeout.disabled).toBe(false);
     expect(timeout.value).toBe("300");
   });
+
+  it("shows an unset fallback number as an empty field, not the text null", async () => {
+    mockUseAgentSettings.mockReturnValue({
+      data: [
+        { key: "numero_fallback_atendimento", value: null, default: null, source: "env", editable: true, min: null, max: null },
+      ],
+      showSkeleton: false,
+      isError: false,
+    });
+    const Page = (await import("@/pages/ConfiguracoesAgente")).default;
+    const { container } = render(React.createElement(MemoryRouter, null, React.createElement(Page)));
+    const numero = within(container).getByLabelText("Número de atendimento (passagem a uma pessoa)") as HTMLInputElement;
+    expect(numero.value).toBe("");
+    expect(numero.type).toBe("text");
+  });
 });
