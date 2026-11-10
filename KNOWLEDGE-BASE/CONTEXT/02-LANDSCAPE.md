@@ -25,6 +25,7 @@
 | **Community** | `products/community/` | Management center for one paid online women's community: back office (`admin`/`moderador`) + member portal, tiered paid access (Stripe + Asaas), semi-automatic WhatsApp group management. pt-BR. Scaffolded 2026-09-16 — domain modules planned, not built | 8017/8210 | `community` |
 | **Store** | `products/store/` | Public sales page for digital products (first: the generic "Contrato Blindado de Compra e Venda" kit). Asaas one-off checkout, webhook-confirmed fulfillment by email + thank-you page, owner-only `/login` admin for landing values and sales. Scaffolded 2026-10-02 (contract `products/store/projects/store-v1-CONTRACT.md`) | 8018/8220 | `store` |
 | **Commerce** | `products/commerce/` | Generic e-commerce + ERP reference store for the commerce vertical seed (consumes `noctusai_lib.domain.commerce`): staff back office + host-resolved public storefront. Scaffolded 2026-10-12; `deploy_scope=dev` until owner validation (contract `projects/commerce-seed-p3/CONTRACT.md` §6) | 8019/8230 | `commerce` |
+| **Assistant** | `products/assistant/` | Read-only shadow of one personal WhatsApp line (D46): QR pairing + the HMAC-signed inbound webhook ONLY (no send, mark-read, backfill or chat reads); each inbound 1:1 text becomes a pending intake row (HMAC'd chat reference, 90-day body retention, append-only events in the same transaction) classified as about scheduling or not by a registry-prompted Haiku worker on the seed jobs Worker (S3, classification only; admin replay + blind sample routes). Own WAHA instance, line policy `send: disabled`. pt-BR. Scaffolded 2026-11-10; catalog row `dev` (owner decision, plan `project-history/assistant-chatbot/`) | 8021/8250 | `assistant` |
 | **Monica** | `products/monica/` | CRM of Mônica Tangerino's psychoanalysis practice (future ERP), first product of the org "Mônica Tangerino": WhatsApp-fed leads (funnel Lead→Atendimento→Negociação→Fechado + list), WhatsApp conversations (read + reply, QR connection), her own context (org specs of the agent `monica-leads`), finance mounted for later. Every screen is a seed organ (leads, WhatsApp inbox/connections, org-specs, `SectionTabsPage`); own WAHA instance (never the shared one). pt-BR. Scaffolded 2026-10-26; catalog row `dev` until the first go-live flips it in core admin (`KB § GUIDES/production-deploy.md § 5a`) | 8020/8240 | `monica` |
 | **Orbity** | `products/orbity/` | Agency operating-system (absorbing `sistema-orbity`): CRM/funil, clients, contracts, financeiro, agenda, WhatsApp automation, Meta ads, notifications — built seed-first via the absorption capability-uplift loop (in flight on `feat/orbity-build`, roadmap `project-history/roadmaps/orbity-2026-06.md`, knowledge `KB § ABSORPTIONS/orbity/`) | 8010/8140 | `orbity` |
 
@@ -60,14 +61,15 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 40 | 7 | 8 | 64 |
 | Monica | 2 | 1 | 15 | 0 | 8 | 37 |
-| **Total** | **359** | **435** | **897** | **542** | **1611** | **22,813** |
+| Assistant | 2 | 2 | 11 | 0 | 9 | 60 |
+| **Total** | **361** | **437** | **908** | **542** | **1620** | **22,873** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
-- **Schemas DECLARED in migrations (19):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `commerce` + `community` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `monica` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `store` + `therapy`.
-- **Tables: 1172** declared across those schemas.
+- **Schemas DECLARED in migrations (20):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `assistant` + `commerce` + `community` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `monica` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `store` + `therapy`.
+- **Tables: 1179** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or
