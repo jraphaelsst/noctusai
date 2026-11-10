@@ -78,3 +78,50 @@ New gaps that D46 creates:
 - **L3:** zero WhatsApp writes, proven: the wrapper's refusal events and WAHA's outbound log for the
   line both show 0 sends, 0 seen, 0 presence over 24 h.
 - **L4:** the owner labels ≥50 messages; the report shows classifier precision/recall.
+
+---
+
+## 6 · Revision 2 — after council `a1afa844` (phase0, 6 seats, 35 objections, all accepted; ratified 2026-11-10)
+
+Ledger: `project-history/council/2026-11/a1afa844-de99-4c24-a0b4-820446b100bd.ndjson`. Legal input:
+`research/lgpd-personal-line.md`. Where this section and §3–§5 disagree, **this section wins**.
+
+**What the code showed** (the chair verified each point read-only):
+- seed `_session_config` forces `noweb.store.fullSync=True` and never sets `markOnline` (`client.py:263-266`); merge keeps existing values (`:212-235`); a prod session once ran `markOnline: true` (`:219-221`).
+- `on_message` fires for `from_me` and for the router's own sends (`ingest.py:309-323`), and `notify_message` swallows every exception (`:336-345`).
+- groups are stored (`ingest.py:68` drops only broadcast/newsletter).
+- the webhook HMAC check is skipped when no secret is passed (`whatsapp_inbox_router.py:405`).
+- a raw `WahaClient(...)` exists outside the factory (finance reminders `channel.py:142`).
+- the WAHA dashboard and Swagger are enabled (`compose.waha.yml:17-20`).
+
+**Plan revision 2:**
+1. **Zero writes, three layers:**
+   - (a) edge: a deny proxy in front of the assistant WAHA instance refuses send*/sendSeen/presence/typing/reactions; dashboard and Swagger off; API key only in the assistant env;
+   - (b) construction: the Assistant mounts no send/read/backfill routes;
+   - (c) seed choke point: `WahaClient._request` refuses writes for a `send: disabled` line (`LineWriteRefused` + event); a keeper bans raw `WahaClient(` outside the seed factory; `channel.py:142` moves to the factory.
+2. **Session config is policy:** `markOnline=false`, `store.fullSync=false`, recover/restart re-pair loops off for this line. Checked with `GET /api/sessions` before the QR scan.
+3. **Policy v1 = `send: disabled|enabled` + session flags**, keyed by WAHA instance. The fleet file is the ceiling; the receive × send state lives on the connection row next to `app_enabled`, with transition events. Pacing, allowlist, warm-up and the kill switch land with the first live-send slice, built on WAHA signals verified on a throwaway number. The send-field keeper ships in the same commit as explicit defaults for existing entries, plus a written rollback.
+4. **Input contract before S3:** inbound only (no `from_me`, no API-sourced), 1:1 chats only (groups, status, broadcast skipped at ingest, through a seed pre-store predicate seam), exclusion list, text only to the LLM (media without text → `skipped`), dedup on the WAHA message id, forward-only from `paired_at`.
+5. **Intake queue:** `on_message` only appends a pending intake row. A worker classifies and records an outcome enum (`classified|failed|skipped_budget|skipped_excluded`). P9 (cost cap) is verified before S3; if absent, S3 builds it through the seed provider seam.
+6. **S3 = classification only.** The shadow reply moves to a later slice, runs only for `is_scheduling`, records whether it lives in the Assistant or links to the agents runtime, and needs an agents-security review first. **Owner to confirm this re-order.**
+7. **Reuse seed organs:** `ai_outputs(kind=classification)`; owner labels as append-only events through the ai_feedback organ; unique on (message_id, prompt_version, model); replay job.
+8. **Evaluation:** a written definition of "scheduling", blind labels, stratified sampling, S4 = thin admin page on `AIFeedbackButtons`.
+9. **LGPD gates the QR scan** (S6 depends on S5): the legal checklist in `research/lgpd-personal-line.md`, including the owner's written acceptance of the WhatsApp ToS risk.
+10. **Webhook HMAC required** on the assistant mount; refuse to start in prod without it.
+11. **S6 does not depend on the Julia entry** (a rebase at most).
+12. **Allocation (X):** a new product, `products/assistant`. Grounds: the owner's own words (memory `project_assistant_product.md`, 2026-11-09): "a small, simple noc product called **Assistant**". Not daily-life, not a monica module.
+
+**First step (before anything touches the personal line):** a throwaway-number WAHA instance (the owner's spare number from D42) with markOnline=false, fullSync=false, the edge deny proxy and the dashboard off. Prove the session config, 24 h of zero presence/seen/sends from WAHA itself (P7), and the real session-state events (P8). The owner scans that QR.
+
+**Owner-gated (the steward does not decide these):** pairing the personal number; the WhatsApp ToS risk acceptance; signing the LGPD artefacts; the shadow-reply re-order.
+
+**Revised slices:**
+
+| Slice | Agent | Scope | Depends on |
+|---|---|---|---|
+| S1 line policy v1 (seed + fleet) | integrations-engineer | items 1(c), 2, 3, the pre-store predicate seam (item 4), the edge deny proxy + dashboard-off in the waha_instance render, the keepers | — |
+| S2 product scaffold | backend-engineer | `products/assistant` scaffold; mounts connections + webhook only, HMAC required; input-contract filters through S1's seam; intake table + events | S1 seam (consume) |
+| S3 classifier | ai-engineer | worker, prompt, ai_outputs, cost cap, outcome enum, replay | S2, P9 |
+| S4 labelling page | frontend-engineer | admin page on AIFeedbackButtons, blind, stratified | S3 |
+| S5 LGPD artefacts | legal-advisor (drafts) → owner/OAB sign | ROPA entry, privacy-notice section, retention spec, LI test, ToS-acceptance text | — |
+| S6 probe line, then personal line | devops via the dev steward | throwaway instance first; personal instance after S5 is signed | S1, S2, S5, owner |
