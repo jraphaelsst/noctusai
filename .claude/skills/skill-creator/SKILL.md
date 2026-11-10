@@ -11,13 +11,10 @@ A skill = `.claude/skills/<name>/SKILL.md`: frontmatter (`name` + `description`,
 ## Authoring conventions (noc)
 
 - **Build triad (anything enforceable):** ship construction (the correct build is the default) + backstop gate + telemetry in one change; research reliable sources first and cite them. → `KB § PATTERNS/common/gate-methodology-sync.md` (Build triad · Alignment loop)
+- **Open findings are injected by the harness hook** (`claude-inject-open-findings.py`), so a skill/agent needs no findings line; a skill that owns a loop registers its ledger with `noctus.dev.findings_ledger action=scaffold`. → `KB § PATTERNS/common/living-findings-ledgers.md`
 1. **Name = `noc-<verb-noun>`** for platform workflows (instantly spottable, clusters under `noc-`). Non-noc-specific meta-skills keep a plain name.
 2. **Description = what + when, third person, with trigger phrases** verbatim in quotes — house form: "Use when … — triggers '…', '…'." (≤1024 chars; the spec + best-practices bar is in `KB § PATTERNS/common/vendored-skills.md` §5).
-3. **Body = a thin WORKFLOW**, not a doc: numbered steps + which MCP tools to call in sequence + a `## Guardrails` + a `
-
-- **Open findings are injected by the harness hook** (`claude-inject-open-findings.py`), so a skill/agent needs no findings line; a skill that owns a loop registers its ledger with `noctus.dev.findings_ledger action=scaffold`. → `KB § PATTERNS/common/living-findings-ledgers.md`
-
-## Depth` pointer to the KB home.
+3. **Body = a thin WORKFLOW**, not a doc: numbered steps + which MCP tools to call in sequence + a `## Guardrails` + a `## Depth` pointer to the KB home.
 4. **Never restate KB.** The skill carries the *procedure*; KB carries the *depth*. A skill that copy-pastes a KB body is a new drift generator — point, don't copy (`→ KB § …`).
 5. **DRY on creation (user mandate):** when a procedure moves INTO a skill, DELETE it from its old home (CLAUDE.md §2/§3 routing rows, duplicated memory). Re-home, don't duplicate.
 6. **Register intent:** new noc skills expand the CLAUDE.md skills keep-list — note it (a methodology decision), don't silently add.

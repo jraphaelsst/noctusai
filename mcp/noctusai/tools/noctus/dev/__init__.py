@@ -53,6 +53,7 @@ def register_all(server) -> None:
     from . import ci_matrix_sync
     from . import d4sign_contract_verify
     from . import drive_pull
+    from . import google_account_auth
     from . import drive_census
     from . import dependabot_sync
     from . import deploy_image
@@ -183,6 +184,7 @@ def register_all(server) -> None:
     from . import vps
     from . import vps_exec
     from . import vps_exec_sql
+    from . import source_register
 
     absorption_tracking.register(server)
     agent_context.register(server)
@@ -218,6 +220,7 @@ def register_all(server) -> None:
     ci_matrix_sync.register(server)
     d4sign_contract_verify.register(server)
     drive_pull.register(server)
+    google_account_auth.register(server)
     drive_census.register(server)
     dependabot_sync.register(server)
     deploy_image.register(server)
@@ -355,6 +358,7 @@ def register_all(server) -> None:
     vps.register(server)
     vps_exec.register(server)
     vps_exec_sql.register(server)
+    source_register.register(server)
 
 
 __all__ = ["register_all"]
