@@ -260,6 +260,16 @@
    "class": "real-drift-catch",
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson"
   },
+  "guard:session-heartbeat": {
+   "mechanism": "none (advisory liveness refresh, not an enforcing gate: calls StewardStore.role_touch; the construction is role_touch on every release_steward action)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-10",
+   "source": "release-steward.md (honest G3 / session liveness): dead = pid gone AND heartbeat past TTL, so a quiet alive session needs a refresh path; owner decision 2026-11-10",
+   "telemetry": "_guard_failclosed.log_event error rows only (advisory hook, always exit 0)"
+  },
   "guard:test-seams": {
    "severity": "",
    "kind": "guard",
@@ -3479,6 +3489,18 @@
    "branch": "feat/guardian-tool-authorship-keeper",
    "gates": [
     "keeper:check-guardian-tool-authorship"
+   ]
+  },
+  {
+   "id": "D34",
+   "decision": "A quiet but alive session's steward-role heartbeat is refreshed from a SessionStart/UserPromptSubmit hook (advisory, own rows only)",
+   "home": "KB § PATTERNS/devops/release-steward.md",
+   "construction": "StewardStore.role_touch (heartbeat + pid) called from scripts/hooks/claude-guard-session-heartbeat.py",
+   "gate": "guard:session-heartbeat",
+   "telemetry": "guard-events.ndjson error rows",
+   "branch": "feat/guardian-owner-decisions",
+   "gates": [
+    "guard:session-heartbeat"
    ]
   }
  ]

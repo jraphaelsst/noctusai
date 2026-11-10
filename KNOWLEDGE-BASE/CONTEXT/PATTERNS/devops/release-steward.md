@@ -328,17 +328,31 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
   (`refused_branch_mismatch`) if the worktree holds a different branch. `dead` needs the recorded pid gone AND the heartbeat older than
   the TTL; every action re-records the caller's pid (`role_touch`), a stale pid alone is not dead.
 - **What is and is not protected (honest G3).** `scripts/hooks/pre-push` refuses client-side pushes to `main`/`prod` (the sanctioned
-  `release` tool sets the override). `dev` is NOT protected client-side or server-side today: there is no GitHub ruleset for it, and the
-  legacy `integrate` pushes `dev` by design (the queue-down fallback). The queue path is guarded by the attestation above, not by the
-  server. A server-side `dev` ruleset (only the queue's workflow identity may push `dev`) is **awaiting_owner**: it needs an owner
-  decision and the repo-admin setting; until then the attestation is a guard against accidents and a typed-refspec bypass, not against
-  a session that deliberately writes the attestation or pushes `dev` itself.
-- **Deferred residuals (named destinations, as in-code `NOC-REMEDIATE` markers).** `guardian-derived-check-sandbox`: items 4/5 execute
-  the delivery's own `cli.py` and tests with the guardian's HOME and filesystem (the hermetic env scrubs variables, not the
-  sandbox) - destination: a throwaway HOME, `GIT_CONFIG_NOSYSTEM=1` and no write access to `~/.noctus`, in the tooling branch steward's next
-  batch. `session-heartbeat-hook`: a session's heartbeat only refreshes when it calls `release_steward`, so a long-quiet alive session ages
-  toward `dead` (which `cleanup` treats as removable only with the pid dead too) - destination: refresh it from a
-  SessionStart/UserPromptSubmit hook.
+  `release` tool sets the override). Server-side, GitHub ruleset **#26931674 `dev-no-rewind-no-delete`** is active on `refs/heads/dev`
+  (rules: deletion + non_fast_forward; no bypass actors; created 2026-11-10 on the owner's decision): `dev` can be neither deleted nor
+  rewound, but any session with write access can still fast-forward it, and the legacy `integrate` pushes `dev` by design (the
+  queue-down fallback). The queue path is guarded by the attestation above, not by the server. **Phase 2 is awaiting_owner**: a dedicated
+  queue identity (a GitHub App) as the ONLY bypass/push actor for `dev`; it needs the owner's decision and the repo-admin setting. Until
+  then the attestation is a guard against accidents and a typed-refspec bypass, not against a session that deliberately writes the
+  attestation or fast-forwards `dev` itself.
+- **Guardian tool authorship (separation of duties; owner-approved 2026-11-10).** `check_guardian_tool_authorship` refuses a commit
+  staging protected tooling while the committing session holds the live guardian lease. The protected set is DERIVED
+  (`derive_guardian_protected_files`, AST import walk, never hand-listed): `release_steward.py` + `task_branch.py`, every
+  `tools/noctus/dev` module either imports anywhere (lazy imports included), those modules' module-level transitive imports, plus the
+  anchors `scripts/hooks/pre-push`, `scripts/hooks/claude-guard-release-steward.py`, `scripts/hooks/claude-guard-session-heartbeat.py`,
+  `.github/workflows/merge-queue.yml`, `prod_consent.py`, `ship_consent.py`. `compliance.py` (the keeper registry every gate edits) is
+  the one deliberate exemption. The set is pinned as a snapshot in `test_check_guardian_tool_authorship.py`, so a new import is a test
+  diff in review. If derivation fails the keeper fails CLOSED for the guardian (refuses) and records an `unmeasured` row.
+- **Derived/CI-parity checks are sandboxed.** Items 4/5 (`export_derived_check`, `export_ci_parity_check`) run the delivery's own
+  `cli.py`/tests with a throwaway HOME, `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL` = an empty file, and every `NOCTUS_*` state/ledger
+  dir (`SANDBOX_STATE_ENV`) pointed into that temp dir, so the guardian's real `~/.noctus` is never written; a sandbox that cannot be set up is
+  UNMEASURED (fails). Residual: this is environmental, not a kernel FS sandbox (macOS has no unprivileged one) - a delivery hard-coding an
+  absolute path can still write it; the export-from-`git archive` isolation and the branch steward's review cover that.
+- **Heartbeat from a hook.** `scripts/hooks/claude-guard-session-heartbeat.py` (SessionStart + UserPromptSubmit) calls
+  `StewardStore.role_touch(session_id, claude_pid)` so a quiet but alive session does not age toward `dead`. Advisory: always exit 0,
+  fail open, ~1s deadline, at most once per 60s per session, an error telemetry row only. It refreshes the caller's OWN role rows
+  (heartbeat + pid together, pid = nearest `claude` ancestor, else heartbeat only); it never touches the lease or other sessions' rows,
+  so it cannot make a guardian whose pid changed pass the lease check, and `dead` still needs the pid gone AND the heartbeat past the TTL.
 - Failures, takeover and prod consent (ejection -> `ejected{reason, conflict, url}` and requeue, 2 ejections -> `blocked_on_steward`;
   stale-guardian takeover that may only resume or roll back; one plan hash per deploy window) are the ratified spec and are
   tracked as follow-ups; this section records what is built.

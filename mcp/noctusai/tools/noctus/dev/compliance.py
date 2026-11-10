@@ -17559,10 +17559,72 @@ def check_primary_checkout_commit(
 # `guardian_holds_lease` below (the single "does this session hold it" reader,
 # reusing StewardStore); telemetry: `gate_alignment.record_event`.
 # KB § PATTERNS/common/gate-methodology-sync.md (Guardian tool authorship).
-GUARDIAN_PROTECTED_TOOL_FILES = (
-    "mcp/noctusai/tools/noctus/dev/release_steward.py",
-    "mcp/noctusai/tools/noctus/dev/task_branch.py",
+_GUARDIAN_DEV_PKG = "mcp/noctusai/tools/noctus/dev"
+#: the roots of the derived set: the tools that elect the guardian and move work.
+GUARDIAN_PROTECTED_ROOTS = ("release_steward", "task_branch")
+#: non-Python anchors that decide what lands or ships (verified to exist by the test).
+GUARDIAN_PROTECTED_ANCHORS = (
+    "scripts/hooks/pre-push",
+    "scripts/hooks/claude-guard-release-steward.py",
+    "scripts/hooks/claude-guard-session-heartbeat.py",
+    ".github/workflows/merge-queue.yml",
+    f"{_GUARDIAN_DEV_PKG}/prod_consent.py",
+    f"{_GUARDIAN_DEV_PKG}/ship_consent.py",
 )
+#: a module the roots import that stays OUT: the keeper registry every gate change edits (its authorship is
+#: reviewed per keeper, and fencing it would block every keeper commit from the guardian's seat).
+GUARDIAN_PROTECTED_EXEMPT = ("compliance",)
+
+
+def _dev_module_imports(path: Path, *, module_level: bool) -> set[str]:
+    """Sibling `tools.noctus.dev` modules `path` imports, by AST (never regex). `module_level=True` skips imports
+    inside function bodies (those run lazily, not at import time)."""
+    import ast
+    pkg = path.parent
+    if not path.is_file():  # a root renamed/deleted in this very commit stays protected by NAME (it is in the set already)
+        return set()
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found: set[str] = set()
+    stack: list[ast.AST] = [tree]
+    while stack:
+        node = stack.pop()
+        for child in ast.iter_child_nodes(node):
+            if module_level and isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if isinstance(child, ast.ImportFrom):
+                mod = child.module or ""
+                if child.level == 1 or mod == "tools.noctus.dev":
+                    if mod and mod != "tools.noctus.dev":
+                        found.add(mod.split(".")[0])
+                    else:
+                        found.update(a.name for a in child.names)
+                elif mod.startswith("tools.noctus.dev."):
+                    found.add(mod.split(".")[3])
+            elif isinstance(child, ast.Import):
+                found.update(a.name.split(".")[3] for a in child.names if a.name.startswith("tools.noctus.dev."))
+            stack.append(child)
+    return {m for m in found if (pkg / f"{m}.py").is_file()}
+
+
+def derive_guardian_protected_files(repo_root: Path | None = None) -> tuple[str, ...]:
+    """The protected set, DERIVED (a hand-kept list drifts): the roots + every module a root imports ANYWHERE
+    (lazy included) + the module-level transitive closure of those + the non-Python anchors, minus the exempt
+    keeper registry. Raises on any parse/read failure - the keeper then fails CLOSED for the guardian."""
+    root = repo_root or REPO_ROOT
+    pkg = root / _GUARDIAN_DEV_PKG
+    names: set[str] = set(GUARDIAN_PROTECTED_ROOTS)
+    frontier: list[str] = []
+    for r in GUARDIAN_PROTECTED_ROOTS:
+        direct = _dev_module_imports(pkg / f"{r}.py", module_level=False)
+        names |= direct
+        frontier += sorted(direct)
+    while frontier:
+        for dep in _dev_module_imports(pkg / f"{frontier.pop()}.py", module_level=True):
+            if dep not in names:
+                names.add(dep)
+                frontier.append(dep)
+    names -= set(GUARDIAN_PROTECTED_EXEMPT)
+    return tuple(sorted({f"{_GUARDIAN_DEV_PKG}/{n}.py" for n in names} | set(GUARDIAN_PROTECTED_ANCHORS)))
 
 
 def guardian_holds_lease(
@@ -17624,6 +17686,7 @@ def check_guardian_tool_authorship(
         except Exception:  # noqa: BLE001 - telemetry never changes a verdict
             pass
 
+    failure = None
     if staged is None:
         root = repo_root or REPO_ROOT
         try:
@@ -17642,7 +17705,22 @@ def check_guardian_tool_authorship(
             _telemetry("unmeasured", failure)
             print(f"[guardian-tool-authorship] UNMEASURED: {failure}; the lease-holder check did not run.", file=sys.stderr)
         staged = [p for p in out.splitlines() if p.strip()]
-    hits = sorted(p for p in staged if p in GUARDIAN_PROTECTED_TOOL_FILES)
+    derive_error = None
+    try:
+        protected = set(derive_guardian_protected_files(repo_root))
+    except Exception as exc:  # noqa: BLE001 - fail CLOSED for the guardian below, never a silent allow
+        protected, derive_error = set(), f"{type(exc).__name__}: {exc}"[:160]
+    hits = sorted(p for p in staged if p in protected)
+    if derive_error and failure:
+        return []  # the staged diff itself was UNMEASURED above; do not stack a second refusal on it
+    if derive_error:
+        holds_d, _l, _w = guardian_holds_lease(session_id, lease_root, now)
+        _telemetry("unmeasured", f"protected-set derivation failed: {derive_error}")
+        if holds_d:
+            return [{"product": "<repo>", "file": "<protected set>", "severity": "high",
+                     "issue": f"cannot derive the guardian-protected tool set ({derive_error}); refusing while this session "
+                              "holds the release-steward lease (fail closed). KB § PATTERNS/common/gate-methodology-sync.md"}]
+        return []
     if not hits:
         return []
 

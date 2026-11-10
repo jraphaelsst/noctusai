@@ -15,12 +15,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev.compliance import (  # noqa: E402
-    GUARDIAN_PROTECTED_TOOL_FILES,
+    derive_guardian_protected_files,
     check_guardian_tool_authorship,
 )
 from tools.noctus.dev.release_steward import StewardStore  # noqa: E402
 
-RS, TB = GUARDIAN_PROTECTED_TOOL_FILES
+_DEV = "mcp/noctusai/tools/noctus/dev"
+RS, TB = f"{_DEV}/release_steward.py", f"{_DEV}/task_branch.py"
 
 
 def _claim(root: Path, sid: str = "sess-guardian-1") -> None:
@@ -155,3 +156,56 @@ class TestUnmeasured:
             os.environ.pop("NOCTUS_GUARD_EVENT_LOG", None)
         assert "UNMEASURED" not in capsys.readouterr().err
         assert not [e for e in _events(tmp_path) if e.get("outcome") == "unmeasured"]
+
+
+# ── the protected set is DERIVED (AST import walk), pinned as a snapshot ──────────────────────────────────────
+
+REPO = Path(__file__).resolve().parents[3]
+#: Pinned: a new import reachable from release_steward/task_branch shows up in review as a diff HERE.
+EXPECTED_PROTECTED = sorted(f"{_DEV}/{n}.py" for n in (
+    "_benign_stash _catalog_scope_guard _ledger_push _ledger_store _pii_guard _push_verdict _transient_retry _vps_ssh "
+    "_worktree_staleness auth_false_green_predicate auto_improvement branch_pointer build build_scope cache_backend "
+    "cache_backend_postgres council_ledger decision_log deploy_pull deploy_verify dispatch_token_log doc_staleness "
+    "gate_alignment gate_budget gate_sweep gate_verdict_cache harness_signatures hw_admission ledger_checksums "
+    "merge_queue migrate_product migration_directives migration_replay noc_graph_cache orchestrator_inline_cutoff "
+    "primary_write_guard prod_consent product_scope query_key_family_predicate release_steward self_patch_predicate "
+    "ship_consent symbol_scope task_branch task_branch_train toolkit_freshness vps_exec").split()
+) + sorted((
+    ".github/workflows/merge-queue.yml", "scripts/hooks/claude-guard-release-steward.py",
+    "scripts/hooks/claude-guard-session-heartbeat.py", "scripts/hooks/pre-push"))
+
+
+class TestDerivedProtectedSet:
+    def test_snapshot_of_the_live_tree(self):
+        assert list(derive_guardian_protected_files(REPO)) == sorted(EXPECTED_PROTECTED)
+
+    def test_required_members_and_every_path_exists(self):
+        got = set(derive_guardian_protected_files(REPO))
+        for name in ("merge_queue", "task_branch_train", "_benign_stash", "branch_pointer", "primary_write_guard",
+                     "toolkit_freshness", "prod_consent", "ship_consent", "release_steward", "task_branch"):
+            assert f"{_DEV}/{name}.py" in got, name
+        assert "mcp/noctusai/tools/noctus/dev/compliance.py" not in got  # exempt keeper registry
+        assert [p for p in got if not (REPO / p).is_file()] == []
+
+    def test_a_new_import_is_picked_up(self, tmp_path):
+        repo = _repo_with_tooling(tmp_path / "w")
+        dev = repo / _DEV
+        (dev / "extra_gate.py").write_text("x = 1\n")
+        (dev / "release_steward.py").write_text("from tools.noctus.dev import extra_gate\n")
+        assert f"{_DEV}/extra_gate.py" in derive_guardian_protected_files(repo)
+
+    def test_derivation_failure_fails_closed_for_the_guardian_only(self, tmp_path):
+        repo = _repo_with_tooling(tmp_path / "w")
+        (repo / RS).write_text("def broken(:\n")
+        _claim(tmp_path)
+        issues = _check_repo(repo, tmp_path, "sess-guardian-1", ["README.md"])
+        assert len(issues) == 1 and "cannot derive" in issues[0]["issue"]
+        assert _check_repo(repo, tmp_path, "someone-else", ["README.md"]) == []
+
+
+def _check_repo(repo, root, sid, staged):
+    os.environ["NOCTUS_GUARD_EVENT_LOG"] = str(root / "ev3.ndjson")
+    try:
+        return check_guardian_tool_authorship(repo_root=repo, staged=staged, session_id=sid, lease_root=root)
+    finally:
+        os.environ.pop("NOCTUS_GUARD_EVENT_LOG", None)

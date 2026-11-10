@@ -954,9 +954,8 @@ class StewardStore:
         self.audit("role_clear", role=role, session_id=session_id, was=row.get("name"))
         return {"ok": True, "status": "role_cleared", "role": role}
 
-    # NOC-REMEDIATE[session-heartbeat-hook]: a session's heartbeat only refreshes when it calls release_steward, so a
-    # long-quiet but alive session ages toward 'dead'; refresh it from a SessionStart/UserPromptSubmit hook instead —
-    # destination: the tooling branch steward (harness hook) — 2026-11-10
+    # Refreshed between release_steward calls by scripts/hooks/claude-guard-session-heartbeat.py (SessionStart +
+    # UserPromptSubmit; advisory, throttled, own-role-only).
     def role_touch(self, session_id: str | None, claude_pid: int | None = None) -> None:
         """Best-effort liveness refresh of the roles this session holds (every action calls it): the heartbeat
         and, when the caller's pid is known, the pid (a restart changes it; a stale pid must not read as dead)."""
@@ -1740,9 +1739,39 @@ def export_cli_help_check(cwd: str | Path | None = None, *, python: str | None =
     return check
 
 
-# NOC-REMEDIATE[guardian-derived-check-sandbox]: the derived-artifact and CI-parity checks EXECUTE the delivery's own
-# cli.py / tests with the guardian's HOME and filesystem (hermetic env only scrubs variables); sandbox them (a throwaway
-# HOME, GIT_CONFIG_NOSYSTEM=1, no write access to ~/.noctus) - destination: the tooling branch steward's next batch — 2026-11-10
+#: Env overrides the toolkit honours for state/ledger/lock dirs; the sandbox points each at the throwaway HOME so a
+#: delivery's own cli.py / tests can never write the guardian's real `~/.noctus` (or the `NOCTUS_*` dirs a leaked env names).
+SANDBOX_STATE_ENV = {"NOCTUS_HOME": ".noctus", "NOCTUS_STEWARD_DIR": ".noctus/steward", "NOCTUS_LEDGER_STORE": ".noctus/ledgers",
+                     "NOCTUS_GUARD_EVENT_LOG": ".noctus/guard-events.ndjson", "NOCTUS_PRIVATE_DIR": ".noctus/private",
+                     "NOCTUS_HW_LOG": ".noctus/hw-admission.ndjson", "NOCTUS_HW_SLOT_DIR": ".noctus/hw-slots",
+                     "NOCTUS_HW_RUNS_DIR": ".noctus/hw-runs", "NOCTUS_HW_QUEUE_DIR": ".noctus/hw-queue",
+                     "NOCTUS_HW_ABORTS": ".noctus/hw-trial-aborts.json", "NOCTUS_HW_SUSPEND": ".noctus/hw-admission-suspended",
+                     "NOCTUS_AGENTS_LOCK_DIR": ".noctus/agents-locks", "NOCTUS_AGENTS_ENV_FILE": ".noctus/agents.env",
+                     "NOCTUS_AGENT_MEMORY_DIR": ".noctus/agent-memory", "NOCTUS_DEV_ADVANCE_STATE": ".noctus/dev-advance.json",
+                     "NOCTUS_BG_AGENT_STATE": ".noctus/bg-agent.json", "NOCTUS_AGENT_TASKS_DIR": ".noctus/agent-tasks"}
+
+
+def sandbox_env(env: dict[str, str], home: str | Path) -> dict[str, str]:
+    """`env` re-pointed into the throwaway `home`: HOME, no system/global git config (an EMPTY global file), and every
+    noctus state/ledger dir the toolkit honours. Raises OSError when the sandbox cannot be set up (-> UNMEASURED)."""
+    h = Path(home)
+    (h / ".noctus").mkdir(parents=True, exist_ok=True)
+    gitconfig = h / "empty.gitconfig"
+    gitconfig.write_text("", encoding="utf-8")
+    out = dict(env)
+    out["HOME"] = str(h)
+    out["GIT_CONFIG_NOSYSTEM"] = "1"
+    out["GIT_CONFIG_GLOBAL"] = str(gitconfig)
+    for key, rel in SANDBOX_STATE_ENV.items():
+        out[key] = str(h / rel)
+    for key in [k for k in out if k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_", "GIT_CONFIG_COUNT"))]:
+        out.pop(key)
+    return out
+
+
+# Residual (2026-11-10): the sandbox is environmental (HOME + state-dir overrides + no git config), not a kernel
+# sandbox - macOS has no unprivileged FS sandbox, so a delivery hard-coding an absolute path can still write it.
+# That is covered by the per-delivery review + the checks running in a `git archive` export, not by this leg.
 def export_derived_check(cwd: str | Path | None = None, *, artifacts: tuple[tuple[str, tuple[str, ...]], ...] | None = None,
                          python: str | None = None, timeout: int = 300,
                          base_env: dict[str, str] | None = None) -> Callable[[str], dict[str, Any]]:
@@ -1754,13 +1783,17 @@ def export_derived_check(cwd: str | Path | None = None, *, artifacts: tuple[tupl
 
     def check(head: str) -> dict[str, Any]:
         tree = tempfile.mkdtemp(prefix="noc-deliverable-")
+        sandbox = tempfile.mkdtemp(prefix="noc-sandbox-home-")
         results: list[dict[str, Any]] = []
         try:
             err = _export_tree(head, tree, cwd, timeout)
             if err:
                 return {"ok": False, "measured": False, "results": [], "detail": f"UNMEASURED: {err}"}
             wf = Path(tree) / CI_WORKFLOW_REL
-            env = export_env(tree, base_env, wf.read_text(encoding="utf-8") if wf.is_file() else "")
+            try:
+                env = sandbox_env(export_env(tree, base_env, wf.read_text(encoding="utf-8") if wf.is_file() else ""), sandbox)
+            except OSError as exc:
+                return {"ok": False, "measured": False, "results": [], "detail": f"UNMEASURED: sandbox setup failed: {exc}"[:240]}
             err = seed_isolation_error(py, tree, env)
             if err:
                 return {"ok": False, "measured": False, "results": [], "detail": f"UNMEASURED: {err}"}
@@ -1781,6 +1814,7 @@ def export_derived_check(cwd: str | Path | None = None, *, artifacts: tuple[tupl
                                 "detail": tail or ("up to date" if r.returncode == 0 else f"exit {r.returncode}")})
         finally:
             shutil.rmtree(tree, ignore_errors=True)
+            shutil.rmtree(sandbox, ignore_errors=True)
         stale = [x["name"] for x in results if not x["ok"]]
         return {"ok": bool(results) and not stale, "measured": all(x["measured"] for x in results), "results": results,
                 "detail": ("all derived artifacts current at the head" if results and not stale
@@ -2020,6 +2054,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
 
     def check(branch: str, head: str) -> dict[str, Any]:
         tree = tempfile.mkdtemp(prefix="noc-ci-parity-")
+        sandbox = tempfile.mkdtemp(prefix="noc-sandbox-home-")
         try:
             err = _export_tree(head, tree, cwd, timeout)
             if err:
@@ -2028,7 +2063,10 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             if not wf.is_file():
                 return {"ok": False, "detail": f"UNMEASURED: {CI_WORKFLOW_REL} missing at the head - the CI-blocking set cannot be derived"}
             text = wf.read_text(encoding="utf-8")
-            env = export_env(tree, base_env, text)
+            try:
+                env = sandbox_env(export_env(tree, base_env, text), sandbox)
+            except OSError as exc:
+                return {"ok": False, "detail": f"UNMEASURED: sandbox setup failed: {exc}"[:240]}
             iso = seed_isolation_error(py, tree, env)
             if iso:
                 return {"ok": False, "detail": f"UNMEASURED: {iso}"}
@@ -2073,6 +2111,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             return {"ok": False, "detail": f"UNMEASURED: {type(exc).__name__}: {exc}"[:240]}
         finally:
             shutil.rmtree(tree, ignore_errors=True)
+            shutil.rmtree(sandbox, ignore_errors=True)
     return check
 
 
