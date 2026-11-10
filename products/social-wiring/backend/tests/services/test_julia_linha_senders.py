@@ -44,6 +44,9 @@ def _svc(admin, resolver, **kw):
         admin_supabase=admin, smtp_host="", smtp_port=0, smtp_user="", smtp_password="", line_resolver=resolver, **kw)
 
 
+# A DECLARED kind (app/services/notification_kinds.py): `_dispatch` refuses an undeclared one (owner-notification catalog).
+KIND = "lead"
+
 RECIP = [{"id": str(uuid4()), "name": "A", "email": None, "whatsapp_number": "+5511999990000", "is_active": True}]
 
 
@@ -55,7 +58,7 @@ def test_notification_sends_with_the_org_lines_credentials():
         return FakeWahaClient()
 
     svc = _svc(_Admin(), _linha, whatsapp_client_factory=factory)
-    out = asyncio.run(svc._dispatch(kind="t", org_id=ORG, recipients=RECIP, message={"text": "oi", "subject": "s", "html": "h"}))
+    out = asyncio.run(svc._dispatch(kind=KIND,org_id=ORG, recipients=RECIP, message={"text": "oi", "subject": "s", "html": "h"}))
     assert out.succeeded == 1
     assert seen == {"base_url": "https://waha.test", "api_key": "chave", "session": "sessao-x"}
 
@@ -67,7 +70,7 @@ def test_notification_without_a_line_logs_a_sem_linha_failure_row_and_does_not_s
     admin = _Admin()
     sent = []
     svc = _svc(admin, sem, whatsapp_client_factory=lambda **kw: sent.append(kw))
-    out = asyncio.run(svc._dispatch(kind="t", org_id=ORG, recipients=RECIP, message={"text": "oi", "subject": "s", "html": "h"}))
+    out = asyncio.run(svc._dispatch(kind=KIND,org_id=ORG, recipients=RECIP, message={"text": "oi", "subject": "s", "html": "h"}))
     assert sent == [] and out.failed == 1 and out.succeeded == 0
     rows = [p for p in admin.inserted if p.get("channel") == "whatsapp"]
     assert rows and rows[0]["status"] == "failed" and rows[0]["error_message"] == "sem_linha"
@@ -76,7 +79,7 @@ def test_notification_without_a_line_logs_a_sem_linha_failure_row_and_does_not_s
 def test_notification_does_not_resolve_a_line_when_nobody_has_a_number():
     called = []
     svc = _svc(_Admin(), lambda org: called.append(org))
-    asyncio.run(svc._dispatch(kind="t", org_id=ORG, recipients=[{**RECIP[0], "whatsapp_number": None, "email": "a@b.c"}],
+    asyncio.run(svc._dispatch(kind=KIND,org_id=ORG, recipients=[{**RECIP[0], "whatsapp_number": None, "email": "a@b.c"}],
                               message={"text": "oi", "subject": "s", "html": "h"}))
     assert called == []
 
