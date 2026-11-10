@@ -1,0 +1,41 @@
+"""
+Assistant configuration.
+
+The Assistant is a READ-ONLY shadow of one personal WhatsApp line (D46). Every knob that differs between dev and
+prod and has no safe shared default is EMPTY here and fails loud when used (a 503 / a refused boot), never a silent
+Fake or an unsigned webhook in a real deploy (KB § PATTERNS/devops/deploy-config-contract.md).
+"""
+from noctusai_seed import ProductSettings
+
+
+class SeedSettings(ProductSettings):
+    """Assistant specific settings."""
+
+    cors_origins: str = "@registry:own:assistant"
+
+    # Fernet key of `assistant.whatsapp_connections` (the WAHA api key is encrypted at rest). Unset => the connection
+    # routes answer 503 instead of persisting plaintext.
+    encryption_key: str = ""
+
+    # -- WhatsApp (WAHA) -------------------------------------------------------------------------------
+    # The Assistant's OWN WAHA instance (never the shared core one). Unset => `POST /api/whatsapp/connections`
+    # answers 503 "WAHA server not configured".
+    assistant_waha_base_url: str = ""
+    assistant_waha_session: str = "default"
+    # Line policy v1 (JSON, from deploy/fleet/waha-instances.yml). The Assistant's line is `send: disabled`; without a
+    # declared policy the seed refuses every write on the line anyway (fail-closed). KB § INTEGRATIONS/whatsapp.md § 6a.
+    assistant_waha_line_policy: str = ""
+    # REQUIRED: must equal the WAHA instance's global WHATSAPP_HOOK_HMAC_KEY. No secret => the webhook answers 401 to
+    # everything and a deploy refuses to boot (plan item 10).
+    assistant_waha_webhook_hmac_secret: str = ""
+    # Server-side key that HMACs a third party's chat id into the opaque `chat_ref` (LGPD minimisation: no raw phone
+    # is stored). REQUIRED; rotating it re-keys future rows only.
+    assistant_identity_hmac_key: str = ""
+    # Comma-separated phones / chat ids that are never taken in (compared by digits).
+    assistant_excluded_numbers: str = ""
+
+    # Rate-limit for the public webhook (per-IP). Public surface -- DDOS guard.
+    webhook_rate_limit: str = "60/minute"
+
+
+settings = SeedSettings()

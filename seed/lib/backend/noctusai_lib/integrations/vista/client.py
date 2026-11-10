@@ -304,6 +304,7 @@ class VistaClient:
         rate_bucket: str = RATE_BUCKET,
         rate_per_sec: Optional[float] = None,
         rate_burst: Optional[float] = None,
+        pooled: bool = False,
     ):
         # Pacing: every call crosses `rate_limit.acquire_async(rate_bucket)`. The default bucket is the shared "vista" one
         # (5 rps / burst 10, env `NOC_RL_VISTA_RPS|BURST`). A multi-tenant product gives each org its OWN bucket
@@ -314,7 +315,8 @@ class VistaClient:
         self._base_url = (base_url or "").rstrip("/")
         self._api_key = api_key or ""
         self._timeout = timeout_seconds
-        self._http_client = http_client  # injected for tests; None → per-call client
+        self._http_client = http_client  # injected for tests; None → pooled (when `pooled`) else per-call client
+        self._pooled = pooled
 
     @property
     def configured(self) -> bool:
@@ -406,8 +408,13 @@ class VistaClient:
 
         started = time.perf_counter()
         try:
-            if self._http_client is not None:
-                resp = await self._http_client.request(
+            shared = self._http_client
+            if shared is None and self._pooled:
+                from noctusai_lib.integrations import http_pool  # one keep-alive pool per loop, not a TLS handshake per call
+
+                shared = http_pool.shared_async_client()
+            if shared is not None:
+                resp = await shared.request(
                     method, url, params=params, headers=headers, timeout=self._timeout
                 )
             else:
