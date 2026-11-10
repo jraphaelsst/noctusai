@@ -5115,6 +5115,41 @@ _AGENTS_EVAL_LOOP_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# 080: the follow-up cap. The event log is append-only (the count of consecutive follow-ups is derived from it), its outcome is
+# a closed enum, and the limit parameter is bounded.
+_RETOMADA_MIGS = (_m("033"), "080_retomada_limite.sql")
+_RETOMADA_SETUP = "\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread()))
+_AGENTS_RETOMADA_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="thread_retomada_eventos.append_only", guard_name="thread_retomada_eventos_append_only",
+        migrations=_RETOMADA_MIGS,
+        setup="\n    ".join((_RETOMADA_SETUP, (
+            f"INSERT INTO {_JV2}.thread_retomada_eventos (org_id, thread_id, agent_id, resultado) "
+            "VALUES (v_org, v_thread, v_agent, 'enviada');"))),
+        attack=f"UPDATE {_JV2}.thread_retomada_eventos SET resultado = 'ignorada' WHERE org_id = v_org;",
+        fragments=("thread_retomada_eventos is append-only",), what="an UPDATE of a follow-up event",
+        rationale="The follow-up cap counts `enviada` rows since the lead's last reply: an edited row would hand the lead "
+                  "an extra follow-up (or take one away) with no trace.",
+    ),
+    _julia_v2_probe(
+        probe_id="thread_retomada_eventos.resultado_vocab", guard_name="thread_retomada_eventos_resultado_check",
+        migrations=_RETOMADA_MIGS, setup=_RETOMADA_SETUP,
+        attack=(f"INSERT INTO {_JV2}.thread_retomada_eventos (org_id, thread_id, agent_id, resultado) "
+                "VALUES (v_org, v_thread, v_agent, 'talvez');"),
+        fragments=("thread_retomada_eventos_resultado_check",), what="a follow-up event with an unknown outcome",
+        rationale="The cap reads only `enviada`; an off-vocabulary outcome would be counted as nothing, silently.",
+    ),
+    _julia_v2_probe(
+        probe_id="qualificacao_parametros.max_retomadas_bounded", guard_name="qualificacao_parametros_max_retomadas_check",
+        migrations=(_m("032"), "080_retomada_limite.sql"), setup=_JV2_PADRAO,
+        attack=(f"INSERT INTO {_JV2}.qualificacao_parametros (versao_id, minimo_para_ofertar, max_retomadas_seguidas) "
+                "VALUES (v_pv, '{\"todos\": []}'::jsonb, 11);"),
+        fragments=("qualificacao_parametros_max_retomadas_check",), what="a follow-up cap above 10",
+        rationale="The owner's rule is a small cap (default 2); an absurd value would turn the cap into no cap.",
+    ),
+)
+
+
 _AGENTS_JULIA_V2_PROBES: tuple[GuardProbe, ...] = (
     # ── 031 · platform definition / instance / content mode ──
     _julia_v2_probe(
@@ -12269,6 +12304,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_CAMADAS_PROBES,
     *_AGENTS_FALLBACK_PROBES,
     *_AGENTS_EVAL_LOOP_PROBES,
+    *_AGENTS_RETOMADA_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
     _CLIENTE_CONFLITO_STATUS_PROBE,

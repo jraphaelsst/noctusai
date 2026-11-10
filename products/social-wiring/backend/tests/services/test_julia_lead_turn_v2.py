@@ -524,6 +524,16 @@ class TestReengajamento:
         enviou = await run_reengajamento_turn(world.deps(), world.record(CONNECTION_ID), LEAD_CHAT, contato, {"reengajamento": "horas"}, "reeng:j2")
         assert not enviou and not world.waha.sent_messages
 
+    async def test_limite_retomadas_sends_nothing_records_the_event_and_tells_the_caller_to_end_the_sequence(self, world):
+        from app.services.julia_reengajamento_service import RESULTADO_LIMITE_RETOMADAS
+
+        contato = await self._contato(world)
+        world.agents._script.append(_nao_atendeu("limite_retomadas", thread=THREAD_ID, estado="ativo"))
+        out = await run_reengajamento_turn(world.deps(), world.record(CONNECTION_ID), LEAD_CHAT, contato, {"reengajamento": "horas"}, "reeng:j3")
+        assert out == RESULTADO_LIMITE_RETOMADAS and not world.waha.sent_messages
+        ev = world.rows("julia_eventos", tipo="agente_nao_atendeu")
+        assert [e["payload"] for e in ev] == [{"status": "limite_retomadas"}]
+
     async def test_an_empty_base_text_is_not_sent(self, world):
         contato = await self._contato(world)
         world.agents._script.append(_ok("oi"))

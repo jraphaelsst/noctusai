@@ -68,10 +68,11 @@ class ParametrosIn(StrictHttpModel):
     score_max: int = Field(default=100, ge=1, le=1000)
     eixos: dict[str, Any] = Field(default_factory=dict)
     pedir_identificacao_quando: dict[str, Any] | None = None
+    max_retomadas_seguidas: int = Field(default=2, ge=0, le=10)
 
     def to_def(self) -> ParametrosDef:
         return ParametrosDef(self.minimo_para_ofertar, self.lote_ofertas, self.score_max, self.eixos,
-                             self.pedir_identificacao_quando)
+                             self.pedir_identificacao_quando, self.max_retomadas_seguidas)
 
 
 class PadraoCreate(StrictHttpModel):
@@ -132,5 +133,6 @@ def versao_out(v: VersaoPadrao) -> dict[str, Any]:
             "minimo_para_ofertar": v.parametros.minimo_para_ofertar,
             "lote_ofertas": v.parametros.lote_ofertas, "score_max": v.parametros.score_max,
             "eixos": v.parametros.eixos, "pedir_identificacao_quando": v.parametros.pedir_identificacao_quando,
+            "max_retomadas_seguidas": v.parametros.max_retomadas_seguidas,
         },
     }
