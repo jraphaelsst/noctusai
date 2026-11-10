@@ -260,6 +260,16 @@
    "class": "real-drift-catch",
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson"
   },
+  "guard:session-heartbeat": {
+   "mechanism": "none (advisory liveness refresh, not an enforcing gate: calls StewardStore.role_touch; the construction is role_touch on every release_steward action)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-10",
+   "source": "release-steward.md (honest G3 / session liveness): dead = pid gone AND heartbeat past TTL, so a quiet alive session needs a refresh path; owner decision 2026-11-10",
+   "telemetry": "_guard_failclosed.log_event error rows only (advisory hook, always exit 0)"
+  },
   "guard:test-seams": {
    "severity": "",
    "kind": "guard",
@@ -3462,18 +3472,6 @@
    ]
   },
   {
-   "id": "J",
-   "decision": "While a council session has no verdict row, direct reads of its project-history/council file are flagged (denied once promoted from shadow); the ledger tool is unaffected",
-   "home": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/council.md",
-   "construction": "mcp/noctusai/tools/noctus/dev/council_ledger.py (tool-assigned labels, seats withheld until verdict)",
-   "gate": "guard:council-read",
-   "telemetry": "guard-events.ndjson warn/deny rows via _guard_failclosed.log_event; gate_alignment walls",
-   "branch": "feat/ac-council-guard",
-   "gates": [
-    "guard:council-read"
-   ]
-  },
-  {
    "id": "D32",
    "decision": "A WhatsApp line declares its policy (send/mark_online/full_sync/auto_repair); the seed refuses writes on a send:disabled or undeclared line, an edge proxy 403s them, and a WAHA client is built only by the seed factory",
    "home": "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a",
@@ -3483,6 +3481,18 @@
    "branch": "feat/ac-line-policy",
    "gates": [
     "keeper:check-raw-waha-client-construction"
+   ]
+  },
+  {
+   "id": "J",
+   "decision": "While a council session has no verdict row, direct reads of its project-history/council file are flagged (denied once promoted from shadow); the ledger tool is unaffected",
+   "home": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/council.md",
+   "construction": "mcp/noctusai/tools/noctus/dev/council_ledger.py (tool-assigned labels, seats withheld until verdict)",
+   "gate": "guard:council-read",
+   "telemetry": "guard-events.ndjson warn/deny rows via _guard_failclosed.log_event; gate_alignment walls",
+   "branch": "feat/ac-council-guard",
+   "gates": [
+    "guard:council-read"
    ]
   },
   {
@@ -3499,6 +3509,18 @@
   },
   {
    "id": "D34",
+   "decision": "A quiet but alive session's steward-role heartbeat is refreshed from a SessionStart/UserPromptSubmit hook (advisory, own rows only)",
+   "home": "KB § PATTERNS/devops/release-steward.md",
+   "construction": "StewardStore.role_touch (heartbeat + pid) called from scripts/hooks/claude-guard-session-heartbeat.py",
+   "gate": "guard:session-heartbeat",
+   "telemetry": "guard-events.ndjson error rows",
+   "branch": "feat/guardian-owner-decisions",
+   "gates": [
+    "guard:session-heartbeat"
+   ]
+  },
+  {
+   "id": "D35",
    "decision": "The release-steward lease holder (guardian) never authors steward tooling (release_steward.py, task_branch.py); only a tooling branch steward does",
    "home": "KB § PATTERNS/common/gate-methodology-sync.md",
    "construction": "guardian_holds_lease (StewardStore.holder) shared reader + the refusal message names the remedy",

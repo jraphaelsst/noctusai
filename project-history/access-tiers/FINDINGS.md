@@ -2,7 +2,7 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile access-tier`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**1058 open / in-progress**, 278 fixed, 1 accepted (1337 total).
+**1058 open / in-progress**, 278 fixed, 2 accepted (1338 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
@@ -205,3 +205,4 @@
 ## Accepted (rationale on record)
 
 - AT-85fe7659 agents `audit P1-A: agents definition tables readable by authenticated via PostgREST` -- not-a-finding: prod verified clean 2026-11-05; 036 lockdown + default-privilege revoke
+- AT-f7eb97c8 social-wiring `products/social-wiring/backend/app/modules/leads/routers/vista_clientes.py (1 routes)` -- Conditional platform gate: PUT /config is an org-tier route (org admin sets vista_rps / writes false and must see it in docs); only writing importar_identidade=true requires platform admin (LGPD, CONTRACT ad-lead-intake s8). Detector reads the inline require_platform_admin call as route-level platform tier.

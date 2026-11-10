@@ -564,3 +564,64 @@ def test_unrelated_untracked_file_does_not_strand_the_row(
     assert stray.read_bytes() == b"user content, not ours"
     _rc, status, _ = _git("status", "--porcelain", "--", str(stray.relative_to(primary)), cwd=primary)
     assert status.startswith("??"), f"stray file was touched: {status!r}"
+
+
+COUNCIL = "project-history/council/2026-11/e05797a3.ndjson"
+
+
+def _late_writer_runner(primary: str, appends: int):
+    """A runner that plays a LIVE ledger writer: just before each of the first `appends` `git rebase` calls it
+    appends a row to a nested council ledger, i.e. after the drain's own commit and its dirty-tree pre-check."""
+    left = {"n": appends}
+
+    def runner(cmd, cwd=None):
+        if left["n"] and "rebase" in cmd and "--abort" not in cmd:  # the seam calls `git -C <root> rebase <ref>`
+            left["n"] -= 1
+            with open(os.path.join(primary, COUNCIL), "a", encoding="utf-8") as fh:
+                fh.write(f'{{"council": "late row {appends - left["n"]}"}}\n')
+        r = subprocess.run(cmd, cwd=cwd or primary, capture_output=True, text=True)
+        return r.returncode, r.stdout, r.stderr
+    return runner
+
+
+@pytest.mark.parametrize("appends", [1, 2])
+def test_a_writer_appending_between_the_drain_commit_and_the_rebase_no_longer_strands_the_rows(
+    stale_primary_with_dirty_hook_artifact, appends,
+):
+    """2026-11-10: go_live council rows kept arriving between the drain's commit and its rebase; git refused
+    ("You have unstaged changes"), the leg called it a conflict and aborted, and the primary stayed diverged."""
+    origin, primary = stale_primary_with_dirty_hook_artifact
+    pathlib.Path(primary, COUNCIL).parent.mkdir(parents=True)
+    pathlib.Path(primary, COUNCIL).write_text('{"council": "opened"}\n')
+    _git("add", COUNCIL, cwd=primary)
+    _git("commit", "-m", "council opened", "--", COUNCIL, cwd=primary)
+
+    res = commit_and_ff_push_ledger(
+        runner=_late_writer_runner(primary, appends), root=primary, rel_paths=[LEDGER],
+        commit_msg="chore(salvage): record recovery pointer", already_committed=False,
+    )
+
+    assert res.get("pushed") is True, f"rows stranded: {res!r}"
+    _rc, out, _ = _git("show", f"dev:{COUNCIL}", cwd=origin)
+    assert out.count("late row") == appends, out
+    _git("fetch", "origin", cwd=primary)
+    _rc, counts, _ = _git("rev-list", "--left-right", "--count", "origin/dev...HEAD", cwd=primary)
+    assert counts.strip() == "0\t0", counts
+
+
+def test_a_writer_that_never_stops_is_reported_as_a_refusal_not_a_conflict(stale_primary_with_dirty_hook_artifact):
+    origin, primary = stale_primary_with_dirty_hook_artifact
+    pathlib.Path(primary, COUNCIL).parent.mkdir(parents=True)
+    pathlib.Path(primary, COUNCIL).write_text('{"council": "opened"}\n')
+    _git("add", COUNCIL, cwd=primary)
+    _git("commit", "-m", "council opened", "--", COUNCIL, cwd=primary)
+
+    res = commit_and_ff_push_ledger(
+        runner=_late_writer_runner(primary, 99), root=primary, rel_paths=[LEDGER],
+        commit_msg="chore(salvage): record recovery pointer", already_committed=False,
+    )
+
+    assert res.get("pushed") is not True and res.get("retryable") is True, res
+    assert "conflict" not in res["error"] and "refused" in res["error"], res
+    _rc, stashes, _ = _git("stash", "list", cwd=primary)
+    assert not stashes.strip(), stashes

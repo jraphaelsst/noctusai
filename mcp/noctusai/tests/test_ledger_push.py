@@ -26,6 +26,7 @@ Zero real git — an injected fake runner scripts all git IO.
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -118,6 +119,11 @@ class FakeRunner:
         # correctly refuses — which is how this fake first went out of date.
         if sub == "rev-parse" and "stash@{0}" in cmd:
             return 0, self.stash_sha + "\n", ""
+        # A real conflict leaves git's rebase state dir behind (a dirty-tree REFUSAL never creates it); the
+        # late-ledger-row retry tells the two apart by it, so the fake models it: present after a failed rebase.
+        if sub == "rev-parse" and "--git-path" in cmd:
+            failed = self.rebase_rc != 0 and any(_sub(c) == "rebase" and "--abort" not in c for c in self.calls)
+            return 0, (tempfile.gettempdir() if failed else "/nonexistent/rebase-state") + "\n", ""
         if sub == "stash" and "list" in cmd:
             return 0, f"{self.stash_sha} stash@{{0}}\n", ""
         return 0, "", ""

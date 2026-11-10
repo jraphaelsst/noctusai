@@ -46,6 +46,7 @@ KB § PATTERNS/architect/branch-tree-tracking.md · KB § PATTERNS/common/self-b
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -205,6 +206,54 @@ def commit_and_ff_push_ledger(
             pop_stash(g, benign_stash_ref, log_prefix=_log_prefix)
 
 
+#: `_rebase_absorbing_late_ledger_rows` return code: git refused to START the rebase (dirty tree), nothing moved.
+_DIRTY_REFUSED = -2
+#: how many late ledger appends one drain absorbs before giving up (a writer appending in a tight loop).
+_LATE_ROW_ATTEMPTS = 3
+
+
+def _rebase_absorbing_late_ledger_rows(g: Callable[..., tuple[int, str, str]], dev_ref: str,
+                                       log_prefix: str) -> tuple[int, str]:
+    """`git rebase <dev_ref>`, absorbing ledger rows a live writer appends AFTER the drain's own commit.
+
+    2026-11-10: a council session kept appending to project-history/council/…/<id>.ndjson between the
+    drain's commit and this rebase; git refused ("cannot rebase: You have unstaged changes"), the leg
+    reported it as a CONFLICT and aborted, so every post-integrate drain failed while the council ran and the
+    primary stayed diverged (every landed FF then skipped_dirty). When the refusal's dirt is ledger rows ONLY,
+    commit them (never stash - see _benign_stash.is_ledger_ndjson) and retry, bounded. Any other dirt, or a
+    real conflict, falls through unchanged. Returns (rc, stderr); rc == _DIRTY_REFUSED when the tree never
+    got clean enough to start."""
+    # NOC-REMEDIATE[ledger-drain-rewrite-window]: while the rebase rewrites a ledger file, an append a live writer
+    # makes in that window lands on the replaced inode and is lost (pre-existing, ms-wide). Closed by moving the
+    # writers off the dev copy - destination: S4 of project-history/roadmaps/ledgers-off-dev-2026-09.md — 2026-11-10
+    err = ""
+    for _ in range(_LATE_ROW_ATTEMPTS):
+        rc, _out, err = g("rebase", dev_ref)
+        if rc == 0:
+            return 0, ""
+        benign, real = classify_dirty(g)
+        ledger, _stashable = partition_ledger(benign)
+        refused_dirty = bool(benign or real) and not _rebase_in_progress(g)
+        if not refused_dirty:
+            return rc, (err or "").strip()  # a real conflict mid-rebase: the caller aborts + surfaces
+        if real or not ledger or len(ledger) != len(benign):
+            return _DIRTY_REFUSED, f"non-ledger dirt: {(real or benign)[:5]}"
+        logger.info("%s: a writer appended to %s after the drain's commit; committing and retrying the rebase",
+                    log_prefix, ledger)
+        if commit_ledger_rows(g, ledger, log_prefix=log_prefix) is None:
+            return _DIRTY_REFUSED, f"could not commit late ledger rows {ledger[:5]}"
+    return _DIRTY_REFUSED, f"ledger rows kept arriving over {_LATE_ROW_ATTEMPTS} attempts ({(err or '').strip()[:120]})"
+
+
+def _rebase_in_progress(g: Callable[..., tuple[int, str, str]]) -> bool:
+    """True when git left a rebase mid-flight (a real conflict), False when it refused to start."""
+    for name in ("rebase-merge", "rebase-apply"):
+        rc, out, _ = g("rev-parse", "--path-format=absolute", "--git-path", name)  # absolute: never cwd-relative
+        if rc == 0 and out.strip() and os.path.isdir(out.strip()):
+            return True
+    return False
+
+
 def _push_leg(
     *,
     g: Callable[..., tuple[int, str, str]],
@@ -287,7 +336,13 @@ def _push_leg(
         # 3. Rebase the ledger-only ahead-commit(s) onto the freshly-fetched
         #    origin/<dev>. Conflict-free by construction (merge=union + append-
         #    only). A genuine conflict ⇒ abort + surface; NEVER -X/force.
-        rc_rb, _, err_rb = g("rebase", dev_ref)
+        rc_rb, err_rb = _rebase_absorbing_late_ledger_rows(g, dev_ref, _log_prefix)
+        if rc_rb == _DIRTY_REFUSED:
+            return {
+                "ok": False, "retryable": True, "committed_locally": True,
+                "error": (f"git rebase onto {dev_ref} refused: the tree stayed dirty ({err_rb}); nothing was "
+                          "rebased - the rows are committed locally and ship on the next drain"),
+            }
         if rc_rb != 0:
             g("rebase", "--abort")
             logger.warning(

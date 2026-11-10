@@ -6,6 +6,9 @@
 project-history/vector-costs.ndjson      merge=union
 project-history/auto-improvement.ndjson  merge=union
 project-history/*.ndjson                 merge=union
+# Nested ledgers too (project-history/council/<yyyy-mm>/<id>.ndjson): in a pattern containing a slash `*` never
+# crosses a directory, so the line above missed them and a council row could conflict on rebase (2026-11-10).
+project-history/**/*.ndjson              merge=union
 # merge-loss detector telemetry (one row per detector run; KB § PATTERNS/common/auto-generated-merge-drivers.md)
 project-history/merge-loss-detector.ndjson  merge=union
 

@@ -954,9 +954,8 @@ class StewardStore:
         self.audit("role_clear", role=role, session_id=session_id, was=row.get("name"))
         return {"ok": True, "status": "role_cleared", "role": role}
 
-    # NOC-REMEDIATE[session-heartbeat-hook]: a session's heartbeat only refreshes when it calls release_steward, so a
-    # long-quiet but alive session ages toward 'dead'; refresh it from a SessionStart/UserPromptSubmit hook instead —
-    # destination: the tooling branch steward (harness hook) — 2026-11-10
+    # Refreshed between release_steward calls by scripts/hooks/claude-guard-session-heartbeat.py (SessionStart +
+    # UserPromptSubmit; advisory, throttled, own-role-only).
     def role_touch(self, session_id: str | None, claude_pid: int | None = None) -> None:
         """Best-effort liveness refresh of the roles this session holds (every action calls it): the heartbeat
         and, when the caller's pid is known, the pid (a restart changes it; a stale pid must not read as dead)."""
@@ -1740,9 +1739,32 @@ def export_cli_help_check(cwd: str | Path | None = None, *, python: str | None =
     return check
 
 
-# NOC-REMEDIATE[guardian-derived-check-sandbox]: the derived-artifact and CI-parity checks EXECUTE the delivery's own
-# cli.py / tests with the guardian's HOME and filesystem (hermetic env only scrubs variables); sandbox them (a throwaway
-# HOME, GIT_CONFIG_NOSYSTEM=1, no write access to ~/.noctus) - destination: the tooling branch steward's next batch — 2026-11-10
+def sandbox_env(env: dict[str, str], home: str | Path, ci_env: dict[str, str] | None = None) -> dict[str, str]:
+    """`env` re-pointed into the throwaway `home`: HOME, no system/global git config (an EMPTY global file), and EVERY
+    inherited `NOCTUS_*` key dropped unless the CI job's own env declares it (`ci_env` = `ci_job_env(workflow)`; derived,
+    never a hand-kept list of state dirs). With HOME in the sandbox the toolkit's state defaults land there too.
+    Raises OSError when the sandbox cannot be set up (-> UNMEASURED)."""
+    h = Path(home)
+    (h / ".noctus").mkdir(parents=True, exist_ok=True)
+    gitconfig = h / "empty.gitconfig"
+    gitconfig.write_text("", encoding="utf-8")
+    out = dict(env)
+    out["HOME"] = str(h)
+    out["GIT_CONFIG_NOSYSTEM"] = "1"
+    out["GIT_CONFIG_GLOBAL"] = str(gitconfig)
+    declared = ci_env or {}
+    for key in [k for k in out if k.startswith("NOCTUS_") and k not in declared]:
+        out.pop(key)
+    for key in [k for k in out if k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_", "GIT_CONFIG_COUNT"))]:
+        out.pop(key)
+    return out
+
+
+# Residual (2026-11-10): the sandbox is environmental (HOME + state-dir overrides + no git config), not a kernel
+# sandbox - macOS has no unprivileged FS sandbox, so a delivery hard-coding an absolute path can still write it.
+# That is covered by the per-delivery review + the checks running in a `git archive` export, not by this leg.
+
+
 def _missing_regenerator_diagnostics(tree: str, regenerator: str) -> dict[str, Any]:
     """Where item 4 looked when a regenerator was not a file, so the verdict diagnoses itself.
 
@@ -1772,13 +1794,18 @@ def export_derived_check(cwd: str | Path | None = None, *, artifacts: tuple[tupl
 
     def check(head: str) -> dict[str, Any]:
         tree = tempfile.mkdtemp(prefix="noc-deliverable-")
+        sandbox = tempfile.mkdtemp(prefix="noc-sandbox-home-")
         results: list[dict[str, Any]] = []
         try:
             err = _export_tree(head, tree, cwd, timeout)
             if err:
                 return {"ok": False, "measured": False, "results": [], "detail": f"UNMEASURED: {err}"}
             wf = Path(tree) / CI_WORKFLOW_REL
-            env = export_env(tree, base_env, wf.read_text(encoding="utf-8") if wf.is_file() else "")
+            try:
+                wf_text = wf.read_text(encoding="utf-8") if wf.is_file() else ""
+                env = sandbox_env(export_env(tree, base_env, wf_text), sandbox, ci_job_env(wf_text))
+            except OSError as exc:
+                return {"ok": False, "measured": False, "results": [], "detail": f"UNMEASURED: sandbox setup failed: {exc}"[:240]}
             err = seed_isolation_error(py, tree, env)
             if err:
                 return {"ok": False, "measured": False, "results": [], "detail": f"UNMEASURED: {err}"}
@@ -1803,6 +1830,7 @@ def export_derived_check(cwd: str | Path | None = None, *, artifacts: tuple[tupl
                                 "detail": tail or ("up to date" if r.returncode == 0 else f"exit {r.returncode}")})
         finally:
             shutil.rmtree(tree, ignore_errors=True)
+            shutil.rmtree(sandbox, ignore_errors=True)
         stale = [x["name"] for x in results if not x["ok"]]
         return {"ok": bool(results) and not stale, "measured": all(x["measured"] for x in results), "results": results,
                 "detail": ("all derived artifacts current at the head" if results and not stale
@@ -2042,6 +2070,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
 
     def check(branch: str, head: str) -> dict[str, Any]:
         tree = tempfile.mkdtemp(prefix="noc-ci-parity-")
+        sandbox = tempfile.mkdtemp(prefix="noc-sandbox-home-")
         try:
             err = _export_tree(head, tree, cwd, timeout)
             if err:
@@ -2050,7 +2079,10 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             if not wf.is_file():
                 return {"ok": False, "detail": f"UNMEASURED: {CI_WORKFLOW_REL} missing at the head - the CI-blocking set cannot be derived"}
             text = wf.read_text(encoding="utf-8")
-            env = export_env(tree, base_env, text)
+            try:
+                env = sandbox_env(export_env(tree, base_env, text), sandbox, ci_job_env(text))
+            except OSError as exc:
+                return {"ok": False, "detail": f"UNMEASURED: sandbox setup failed: {exc}"[:240]}
             iso = seed_isolation_error(py, tree, env)
             if iso:
                 return {"ok": False, "detail": f"UNMEASURED: {iso}"}
@@ -2095,6 +2127,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             return {"ok": False, "detail": f"UNMEASURED: {type(exc).__name__}: {exc}"[:240]}
         finally:
             shutil.rmtree(tree, ignore_errors=True)
+            shutil.rmtree(sandbox, ignore_errors=True)
     return check
 
 
