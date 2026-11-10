@@ -478,6 +478,34 @@ class GuardContext:
         return self.branch in SHARED_BRANCHES
 
 
+#: Monotonic deadline of the CURRENT hook call (None outside a hook). The hook runner refuses at 8s; one guard
+#: call makes several git calls, each of which used to allow 10s on its own, so under machine load (swapping test
+#: runs) a few slow calls summed past 8s and a harmless command was refused (2026-11-10, a reviewer's
+#: scratchpad-only Bash). Every git probe now gets at most the time LEFT, and the best-effort legs (auto-claim,
+#: the measurement baseline) are skipped when little is left - the refuse/allow decision itself still fails closed.
+_DEADLINE: float | None = None
+_GIT_TIMEOUT_MAX_S = 10.0
+
+
+def set_deadline(seconds_from_now: float | None) -> None:
+    """Bound every git probe of this process to `seconds_from_now` (None = unbounded, the non-hook default)."""
+    global _DEADLINE
+    import time
+    _DEADLINE = None if seconds_from_now is None else time.monotonic() + seconds_from_now
+
+
+def time_left() -> float:
+    """Seconds until the hook deadline (infinite outside a hook)."""
+    import time
+    return float("inf") if _DEADLINE is None else _DEADLINE - time.monotonic()
+
+
+def _git_timeout() -> float:
+    """A git probe's timeout: never past the hook deadline. A probe that runs out reads as unanswered - which every
+    caller already treats as "unknown => refuse" - so a slow machine refuses fast instead of hitting the 8s alarm."""
+    return max(0.1, min(_GIT_TIMEOUT_MAX_S, time_left()))
+
+
 def _run_git(args: Sequence[str], cwd: str | None) -> str:
     ok, out = _run_git_checked(args, cwd)
     return out if ok else ""
@@ -498,7 +526,7 @@ def _run_git_rc(args: Sequence[str], cwd: str | None = None) -> int:
     try:
         out = subprocess.run(
             ["git", *args], cwd=cwd, capture_output=True, text=True,
-            timeout=10, check=False,
+            timeout=_git_timeout(), check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return 128
@@ -520,7 +548,7 @@ def _run_git_checked(args: Sequence[str], cwd: str | None) -> tuple[bool, str]:
     try:
         out = subprocess.run(
             ["git", *args], cwd=cwd, capture_output=True, text=True,
-            timeout=10, check=False,
+            timeout=_git_timeout(), check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return False, ""
@@ -1554,8 +1582,12 @@ def claim_problem(worktree: str, ctx: GuardContext) -> str | None:
     return None
 
 
-def write_claim(primary_root: str, session_id: str, worktree: str | None) -> dict[str, Any]:
-    """Claim `worktree` for `session_id` (None releases). Atomic (tmp + rename) under an exclusive flock."""
+def write_claim(primary_root: str, session_id: str, worktree: str | None,
+                wait_s: float | None = None) -> dict[str, Any]:
+    """Claim `worktree` for `session_id` (None releases). Atomic (tmp + rename) under an exclusive flock.
+
+    `wait_s` bounds the wait for the lock (None = block, the explicit-claim default): the auto-claim on the hook path
+    must never spend the hook's budget queueing behind another session's claim -> `{"status": "busy"}`."""
     if not session_id:
         return {"status": "error", "error": "session_id is required"}
     ctx = discover_context(primary_root)
@@ -1567,7 +1599,20 @@ def write_claim(primary_root: str, session_id: str, worktree: str | None) -> dic
     import fcntl
     lock_fh = open(path + ".lock", "a")
     try:
-        fcntl.flock(lock_fh, fcntl.LOCK_EX)
+        if wait_s is None:
+            fcntl.flock(lock_fh, fcntl.LOCK_EX)
+        else:
+            import time
+            give_up = time.monotonic() + wait_s
+            while True:
+                try:
+                    fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= give_up:
+                        return {"status": "busy", "session_id": session_id,
+                                "error": f"claims lock held by another session for >{wait_s:g}s"}
+                    time.sleep(0.02)
         return _write_claim_locked(ctx, path, session_id, worktree)
     finally:
         lock_fh.close()
@@ -1696,6 +1741,10 @@ def worktree_in_use(tool_name: str, tool_input: dict[str, Any] | None, cwd: str,
     return None
 
 
+#: the best-effort legs (auto-claim, the PostToolUse measurement baseline) run only with at least this much budget left
+BEST_EFFORT_MIN_LEFT_S = 2.0
+
+
 def auto_claim(tool_name: str, tool_input: dict[str, Any] | None, session_id: str | None,
                cwd: str, ctx: GuardContext) -> dict[str, Any] | None:
     """Claim the worktree this call works in for `session_id` when it is not
@@ -1708,10 +1757,12 @@ def auto_claim(tool_name: str, tool_input: dict[str, Any] | None, session_id: st
     current = read_claims(ctx.primary_root).get(session_id) or {}
     if os.path.normpath(str(current.get("worktree", ""))) == wt:
         return None
+    if time_left() < BEST_EFFORT_MIN_LEFT_S:
+        return None  # an optimization never spends the last of the hook's budget
     try:
         if claim_problem(wt, ctx) is not None:
             return None
-        return write_claim(ctx.primary_root, session_id, wt)
+        return write_claim(ctx.primary_root, session_id, wt, wait_s=min(1.0, max(0.0, time_left() - 1.0)))
     except Exception:  # noqa: BLE001 - claiming is an optimization, never a gate
         return None
 
