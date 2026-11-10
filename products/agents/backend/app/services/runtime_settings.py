@@ -2,7 +2,9 @@
 setting is the default (Configurações do agente page).
 
 Editable: ``approval_timeout_seconds`` (contract §E.2 "Timeout"),
-``max_turns`` (§E.5), ``messages_rate_limit`` (§E rate limit).
+``max_turns`` (§E.5), ``messages_rate_limit`` (§E rate limit),
+``numero_fallback_atendimento`` (074: the E.164 number an agent hand-off notifies;
+one for every org for now, no default: unset blocks publishing a conversational agent).
 Read-only: ``claude_cli_slots`` — structural (one uid + one tmpfs mount per
 slot in the image and compose, §E.11), so changing it needs a redeploy.
 
@@ -23,12 +25,15 @@ from uuid import UUID
 
 import yaml
 
+from noctusai_lib.primitives.phone import normalize_phone
+
 from app.stores.runtime_settings import RuntimeSettingsStore
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "EDITABLE_KEYS",
+    "NUMERO_FALLBACK",
     "RuntimeSettingsError",
     "RuntimeSettingsService",
     "SettingView",
@@ -37,7 +42,8 @@ __all__ = [
     "reset_for_testing",
 ]
 
-EDITABLE_KEYS = ("approval_timeout_seconds", "max_turns", "messages_rate_limit")
+NUMERO_FALLBACK = "numero_fallback_atendimento"
+EDITABLE_KEYS = ("approval_timeout_seconds", "max_turns", "messages_rate_limit", NUMERO_FALLBACK)
 
 _RATE_LIMIT_RE = re.compile(r"^[1-9]\d{0,4}/(second|minute|hour|day)$")
 _SPEC_PATH = Path(__file__).resolve().parent.parent / "agents" / "bia" / "spec.yaml"
@@ -92,7 +98,15 @@ class RuntimeSettingsService:
             "approval_timeout_seconds": int(getattr(self._settings, "approval_timeout_seconds", 300)),
             "max_turns": int(configured_turns) if configured_turns else _spec_max_turns(),
             "messages_rate_limit": str(getattr(self._settings, "messages_rate_limit", "20/minute")),
+            NUMERO_FALLBACK: self._numero_env(),
         }
+
+    def _numero_env(self) -> str | None:
+        raw = getattr(self._settings, NUMERO_FALLBACK, None)
+        numero = normalize_phone(raw)
+        if raw and numero is None:  # loud: a typo in env must not read as "nobody set a number"
+            logger.error("agents.runtime_setting_invalid_in_env key=%s", NUMERO_FALLBACK)
+        return numero
 
     def _max_approval_timeout(self) -> int:
         # An approval wait happens INSIDE a turn; it must end before the
@@ -136,6 +150,10 @@ class RuntimeSettingsService:
     def messages_rate_limit(self) -> str:
         return str(self._effective("messages_rate_limit"))
 
+    def numero_fallback_atendimento(self) -> str | None:
+        """The E.164 number an agent hand-off notifies, or ``None`` when nobody set one (publish refuses)."""
+        return self._effective(NUMERO_FALLBACK)
+
     # ── page ───────────────────────────────────────────────────────────
 
     def view(self) -> list[SettingView]:
@@ -145,6 +163,7 @@ class RuntimeSettingsService:
             "approval_timeout_seconds": (_MIN_APPROVAL_TIMEOUT, self._max_approval_timeout()),
             "max_turns": (1, _MAX_TURNS_LIMIT),
             "messages_rate_limit": (None, None),
+            NUMERO_FALLBACK: (None, None),
         }
         views = [
             SettingView(
@@ -163,6 +182,11 @@ class RuntimeSettingsService:
         return views
 
     def _validate(self, key: str, value: Any) -> Any:
+        if key == NUMERO_FALLBACK:
+            numero = normalize_phone(value) if isinstance(value, str) else None
+            if numero is None:
+                raise RuntimeSettingsError(key, "Informe um telefone válido com DDD, ex.: +55 11 99999-9999.")
+            return numero
         if key == "messages_rate_limit":
             if not isinstance(value, str) or not _RATE_LIMIT_RE.match(value.strip()):
                 raise RuntimeSettingsError(key, "Use o formato N/second|minute|hour|day, ex.: 20/minute.")

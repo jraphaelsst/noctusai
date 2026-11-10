@@ -225,6 +225,39 @@ def _sweep_artifacts(
     return removed_count, removed_kb, notes
 
 
+def _sweep_merge_scratch(
+    root: Path, dry_run: bool, log_lines: list[str], max_age_minutes: float = 10.0,
+) -> list[str]:
+    """Remove STALE git merge-driver scratch (`.merge_file_XXXXXX`) at the repo
+    root — left behind only when a merge was killed mid-driver. git deletes its
+    own when the merge ends, so one older than `max_age_minutes` is dead."""
+    import time
+
+    from tools.noctus.dev.primary_write_guard import is_git_merge_scratch
+
+    notes: list[str] = []
+    cutoff = time.time() - max_age_minutes * 60
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return notes
+    for f in entries:
+        if not (f.is_file() and is_git_merge_scratch(f.name)):
+            continue
+        try:
+            if f.stat().st_mtime > cutoff:
+                continue
+            if dry_run:
+                notes.append(f"[dry-run] would remove stale merge scratch: {f.name}")
+            else:
+                f.unlink()
+                notes.append(f"removed stale merge scratch: {f.name}")
+                log_lines.append(f"merge-scratch removed: {f.name}")
+        except OSError as exc:
+            notes.append(f"merge scratch {f.name}: not removed ({exc})")
+    return notes
+
+
 # ─────────────────────────── environments scope ────────────────────────
 def _scan_environments(root: Path) -> tuple[int, list[tuple[Path, int]]]:
     """Advisory-only: venv/.venv + product-level node_modules. NEVER swept."""
@@ -786,6 +819,7 @@ def run_mole(
             if do_artifacts:
                 rc, rkb, notes = _sweep_artifacts(root, dry_run, log_lines)
                 stderr_lines.extend(notes)
+                stderr_lines.extend(_sweep_merge_scratch(root, dry_run, log_lines))
                 if not dry_run:
                     stderr_lines.append(
                         f"artifacts removed: {rc} dirs / {rkb // 1024} MB"

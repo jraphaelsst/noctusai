@@ -88,7 +88,7 @@ BEGIN
 
   -- 6. a NEW draft of the agent inherits the pin (AFTER INSERT trigger), published one stays frozen
   UPDATE agents.agent_versions SET compiled_hash = 'sha256:' || repeat('a',64) WHERE id = av;
-  PERFORM agents.publish_agent_version(org, av, usr, NULL, 'override reason with more than twenty chars', 'sha256:' || repeat('a',64), 'texto', '[]'::jsonb);
+  PERFORM agents.publish_agent_version(org, av, usr, NULL, 'override reason with more than twenty chars', 'sha256:' || repeat('a',64), 'texto', '[]'::jsonb, NULL);
   av2 := agents.create_agent_draft(org, ag, av, usr);
   SELECT count(*) INTO n FROM agents.agent_version_skill_refs WHERE version_id = av2 AND skill_versao_id = v1 AND ordem = 5
      AND obrigatoria_para = ARRAY['registrar_perfil', 'handoff'];

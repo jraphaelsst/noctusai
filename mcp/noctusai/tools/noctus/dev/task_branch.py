@@ -228,6 +228,25 @@ def _is_ancestor(git, a: str, b: str) -> bool:
     return rc == 0
 
 
+def _trial_merge_tree(git, *args: str) -> tuple[int, str, str]:
+    """`git merge-tree --write-tree <args>` run with cwd INSIDE the git dir.
+
+    🔴 git runs the registered custom merge drivers (kb-counts, lgpd-warnings,
+    gate-inventory) for a trial merge and creates their `.merge_file_*` scratch
+    files in the PROCESS cwd. The MCP server's cwd is the PRIMARY checkout, so
+    every `landed`/cleanup probe flashed untracked `.merge_file_*` into the
+    primary and the primary-write guard blamed whichever session happened to
+    be running a Bash call (2026-11-09, feat/assistant-chatbot). A cwd inside
+    the git dir is a bare context: no work tree, nothing to litter. When the
+    git dir cannot be resolved the probe is SKIPPED (rc 2) — proof 2/3 then
+    refuse, the conservative answer — never run with the primary as cwd."""
+    rc, gd, _e = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    gitdir = gd.strip().splitlines()[0] if rc == 0 and gd.strip() else ""
+    if not gitdir or not os.path.isabs(gitdir):
+        return 2, "", "git dir unresolved; trial merge skipped"
+    return git("merge-tree", "--write-tree", *args, cwd=gitdir)
+
+
 def _content_on_dev(git, branch: str, dev_ref: str) -> tuple[bool, list[str]]:
     """Is `branch`'s CONTENT already on `dev_ref` even though its shas are not
     ancestors (the merge queue rebased the entry before landing it)?
@@ -243,18 +262,63 @@ def _content_on_dev(git, branch: str, dev_ref: str) -> tuple[bool, list[str]]:
     batch-mate that edits nearby lines shifts the patch-id CONTEXT of a
     byte-identical change. Any non-derived line the merge would add still
     refuses.
+    Proof 4: every missing commit has a rebased twin on dev, or is derived-only
+    (`_rebased_twins_on_dev`). Covers a branch that landed long ago, after which
+    dev edited the same files again.
     Returns (equivalent, commits_missing_from_dev)."""
     rc, out, _e = git("cherry", dev_ref, branch)
     missing = [ln[2:].strip() for ln in out.splitlines() if ln.startswith("+")] if rc == 0 else []
     if rc == 0 and not missing:
         return True, []
-    rc1, tree, _e1 = git("merge-tree", "--write-tree", dev_ref, branch)
+    rc1, tree, _e1 = _trial_merge_tree(git, dev_ref, branch)
     rc2, devtree, _e2 = git("rev-parse", f"{dev_ref}^{{tree}}")
     if rc1 == 0 and rc2 == 0 and tree.strip().splitlines()[:1] == [devtree.strip()]:
         return True, []
     if _post_images_on_dev(git, branch, dev_ref):
         return True, []
+    if missing and _rebased_twins_on_dev(git, missing, dev_ref):
+        return True, []
     return False, missing
+
+
+def _rebased_twins_on_dev(git, missing: list[str], dev_ref: str) -> bool:
+    """Proof 4 of `_content_on_dev`: every commit `cherry` calls missing is
+    either derived-only (touches nothing but the KB-count docs) or has a TWIN on
+    dev — same author email, same author timestamp, same subject, same file set.
+    A rebase or cherry-pick (the queue's replay) preserves all four and changes
+    only the sha + patch context.
+
+    Covers the shape proofs 1–3 miss (2026-11-09, 11 false refusals while
+    cleaning one session's landed worktrees): a branch that landed days ago,
+    after which dev edited the SAME files again. The patch-id context has
+    drifted and a trial merge of the stale tip conflicts on those later edits,
+    yet every commit is on dev. A commit with no twin still refuses."""
+    rc, log, _e = git("log", dev_ref, "--no-merges", "--since=60 days ago",
+                      "--format=%H%x1f%ae%x1f%at%x1f%s")
+    if rc != 0:
+        return False
+    on_dev: dict[tuple[str, str, str], list[str]] = {}
+    for ln in log.splitlines():
+        parts = ln.split("\x1f", 3)
+        if len(parts) == 4:
+            on_dev.setdefault((parts[1], parts[2], parts[3]), []).append(parts[0])
+    for sha in missing:
+        files = _commit_files(git, sha)
+        if files is None:
+            return False
+        if files and files <= _KB_COUNTS_DERIVED:
+            continue
+        rc, meta, _e = git("log", "-1", "--format=%ae%x1f%at%x1f%s", sha)
+        key = tuple(meta.strip().split("\x1f", 2)) if rc == 0 else ()
+        if len(key) != 3 or not any(_commit_files(git, t) == files for t in on_dev.get(key, [])):
+            return False
+    return True
+
+
+def _commit_files(git, sha: str) -> frozenset[str] | None:
+    """The paths one commit touches (None when git cannot answer)."""
+    rc, out, _e = git("log", "-1", "--no-renames", "--name-only", "--format=", sha)
+    return frozenset(p.strip() for p in out.splitlines() if p.strip()) if rc == 0 else None
 
 
 def _post_images_on_dev(git, branch: str, dev_ref: str) -> bool:
@@ -262,7 +326,7 @@ def _post_images_on_dev(git, branch: str, dev_ref: str) -> bool:
     changes NOTHING but the derived KB-count docs. Unlike proof 2 it tolerates
     a conflict confined to those docs (merge-tree still writes the tree, rc 1),
     and unlike a byte-compare it tolerates hot files later peers edited."""
-    rc, out, _e = git("merge-tree", "--write-tree", "--no-messages", dev_ref, branch)
+    rc, out, _e = _trial_merge_tree(git, "--no-messages", dev_ref, branch)
     lines = out.strip().splitlines()
     if rc not in (0, 1) or not lines:
         return False

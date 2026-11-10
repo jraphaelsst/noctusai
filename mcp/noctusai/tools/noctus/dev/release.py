@@ -155,8 +155,19 @@ def _default_run_local(
     # sources). Strict utf-8 crashed stage=manifest on 2026-09-23; surrogateescape
     # round-trips every byte exactly, so the text handed back to `git patch-id`
     # on stdin is byte-identical to what git produced.
+    cwd = str(REPO_ROOT)
+    if cmd[:2] == ["git", "merge-tree"]:
+        # A trial merge runs the custom merge drivers, which litter
+        # `.merge_file_*` scratch files into the process cwd — the primary
+        # checkout. Run it from inside the git dir (a bare context) instead.
+        g = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                           capture_output=True, text=True, cwd=cwd, env=env)
+        gd = (g.stdout or "").strip()
+        if g.returncode != 0 or not os.path.isabs(gd):
+            return 2, "", "git dir unresolved; trial merge skipped"
+        cwd = gd
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                       errors="surrogateescape", cwd=str(REPO_ROOT), env=env,
+                       errors="surrogateescape", cwd=cwd, env=env,
                        input=stdin)
     return r.returncode, (r.stdout or ""), (r.stderr or "")
 

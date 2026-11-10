@@ -167,8 +167,8 @@ def register(server) -> None:
             "project notes). Top-K chunks by cosine similarity."
         ),
     )
-    def _memory_search(query: str, top_k: int = 5, min_score: float = 0.0) -> list:
-        return search(query, top_k=top_k, min_score=min_score)
+    def _memory_search(query: str, top_k: int = 5, min_score: float = 0.0) -> list | dict:
+        return _ec.guarded_search(search, query, top_k=top_k, min_score=min_score)
 
 
 __all__ = ["refresh", "search", "cache_source_sha", "register",

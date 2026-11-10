@@ -734,7 +734,7 @@ class EvalRunner:
         if not textos:
             raise _CaseError("O agente não produziu resposta.")
         if any(placeholder_cru_em(t) for t in textos):  # never judged, never shown: a raw {{…}} / [dado: …] is a defect
-            logger.error("agents.eval.placeholder_cru run_id=%s case_id=%s", run.id, case_id)
+            logger.error("agents.eval.placeholder_cru run_id=%s case_id=%s", run.id, case.id)
             raise _CaseError("A resposta trouxe um placeholder cru ({{…}} ou [dado: …]).")
         if self._guardar_vazamento:
             guarda = GuardaVazamento(spec.prompt_append)

@@ -16209,6 +16209,37 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Partial UNIQUE over the open notice key WHERE status='pendente'; migration unapplied (file-only), no live index to probe; the only "
         "writer reads the open keys first. Replace with a real GuardProbe in the SAME change that applies it.",
     ),
+    # SW 338 (roteiro lifecycle + event ledger): unapplied, PGlite-proven; probes follow the apply.
+    (
+        "products/social-wiring/backend/migrations/338_roteiro_ciclo_de_vida.sql",
+        "roteiros_status_valido",
+        "Migration 338 is NOT APPLIED (file-only until the tech-lead runs migrate_product): no live constraint exists to probe in prod yet. Its behaviour is proven on a real Postgres (PGlite, applied twice) by products/social-wiring/backend/tests/test_migration_338_roteiro_ciclo.py; register a rollback-only prod probe in verify_db_guards right after the apply (NOC-REMEDIATE target: this allowlist entry is then deleted).",
+    ),
+    (
+        "products/social-wiring/backend/migrations/338_roteiro_ciclo_de_vida.sql",
+        "visitas_status_valido",
+        "Migration 338 is NOT APPLIED (file-only until the tech-lead runs migrate_product): no live constraint exists to probe in prod yet. Its behaviour is proven on a real Postgres (PGlite, applied twice) by products/social-wiring/backend/tests/test_migration_338_roteiro_ciclo.py; register a rollback-only prod probe in verify_db_guards right after the apply (NOC-REMEDIATE target: this allowlist entry is then deleted).",
+    ),
+    (
+        "products/social-wiring/backend/migrations/338_roteiro_ciclo_de_vida.sql",
+        "visitas_cancelada_por_valido",
+        "Migration 338 is NOT APPLIED (file-only until the tech-lead runs migrate_product): no live constraint exists to probe in prod yet. Its behaviour is proven on a real Postgres (PGlite, applied twice) by products/social-wiring/backend/tests/test_migration_338_roteiro_ciclo.py; register a rollback-only prod probe in verify_db_guards right after the apply (NOC-REMEDIATE target: this allowlist entry is then deleted).",
+    ),
+    (
+        "products/social-wiring/backend/migrations/338_roteiro_ciclo_de_vida.sql",
+        "visitas_cancelada_motivo_valido",
+        "Migration 338 is NOT APPLIED (file-only until the tech-lead runs migrate_product): no live constraint exists to probe in prod yet. Its behaviour is proven on a real Postgres (PGlite, applied twice) by products/social-wiring/backend/tests/test_migration_338_roteiro_ciclo.py; register a rollback-only prod probe in verify_db_guards right after the apply (NOC-REMEDIATE target: this allowlist entry is then deleted).",
+    ),
+    (
+        "products/social-wiring/backend/migrations/338_roteiro_ciclo_de_vida.sql",
+        "visitas_cancelada_completa",
+        "Migration 338 is NOT APPLIED (file-only until the tech-lead runs migrate_product): no live constraint exists to probe in prod yet. Its behaviour is proven on a real Postgres (PGlite, applied twice) by products/social-wiring/backend/tests/test_migration_338_roteiro_ciclo.py; register a rollback-only prod probe in verify_db_guards right after the apply (NOC-REMEDIATE target: this allowlist entry is then deleted).",
+    ),
+    (
+        "products/social-wiring/backend/migrations/338_roteiro_ciclo_de_vida.sql",
+        "roteiro_eventos_imutavel",
+        "Migration 338 is NOT APPLIED (file-only until the tech-lead runs migrate_product): no live constraint exists to probe in prod yet. Its behaviour is proven on a real Postgres (PGlite, applied twice) by products/social-wiring/backend/tests/test_migration_338_roteiro_ciclo.py; register a rollback-only prod probe in verify_db_guards right after the apply (NOC-REMEDIATE target: this allowlist entry is then deleted).",
+    ),
     # SW 318 DROPPED this guard (One Chat retired): its probe was deleted -- a probe for a guard that no longer exists would
     # report `permitted` forever. The 258 file still defines it (history is immutable), so the detector still sees it.
     (

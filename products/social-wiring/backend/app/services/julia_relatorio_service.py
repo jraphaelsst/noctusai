@@ -42,6 +42,7 @@ from urllib.parse import quote, urlparse
 from uuid import UUID
 
 from noctusai_lib.config.product_urls import resolve_product_url
+from noctusai_lib.domain.notification_catalog import get_notification_gate
 from noctusai_lib.domain.notifications import write_in_app
 from noctusai_lib.primitives.exceptions import AppException
 
@@ -49,6 +50,7 @@ from app.services import julia_acoes_service, julia_envio_gate, julia_envio_serv
 from app.services import julia_notificacoes_service as notificacoes
 from app.services import julia_agente_service as julia
 from app.services.identidade_mascara import ref as ref_log
+from app.services.notification_kinds import PRODUCT as _CATALOG_PRODUCT
 from app.services.whatsapp_outbound import send_paragraphs, split_for_whatsapp
 
 logger = logging.getLogger(__name__)
@@ -646,6 +648,13 @@ async def _gerar_e_entregar(
     thread_id: Optional[str], chave: str,
 ) -> Optional[dict[str, Any]]:
     client = servicos.scoped
+    # Owner switch (core admin "Notificações"): a switched-off kind is neither stored nor delivered; the send ledger says so.
+    kind = catalogo_kind(tipo, dados)
+    gate = get_notification_gate(_CATALOG_PRODUCT)
+    if not gate.allowed(kind):
+        gate.record(kind, org_id=connection.org_id, status="suppressed", recipients=1, reason="desligada em Notificações")
+        logger.info("julia: %s for org=%s suppressed (switched off in core Notificações)", kind, connection.org_id)
+        return None
     hosts, telefones = _permissoes_do_staff(client, connection.org_id, contato)
     texto = sanitizar_para_staff(texto, hosts_permitidos=hosts, telefones_permitidos=telefones)
     destino, origem, destino_uid = resolver_destino(client, servicos.core_client, connection.org_id, contato)
@@ -656,8 +665,21 @@ async def _gerar_e_entregar(
     if row is None:
         logger.info("julia: report %s already stored -- not delivered twice", chave)
         return None
-    await entregar(servicos, connection=connection, contato=contato, row=row)
+    envio = await entregar(servicos, connection=connection, contato=contato, row=row)
+    gate.record(
+        kind, org_id=connection.org_id,
+        status={"enviado": "sent", "sem_destino": "no_recipient"}.get(envio, "failed"),
+        recipients=0 if envio == "sem_destino" else 1, delivered=1 if envio == "enviado" else 0,
+        reason=None if envio == "enviado" else envio,
+    )
     return row
+
+
+def catalogo_kind(tipo: str, dados: dict[str, Any]) -> str:
+    """The core-catalog kind (`notification_kinds.py`) of a Julia staff report/alert."""
+    if tipo == TIPO_ALERTA:
+        return "julia_opt_out" if dados.get("tipo_alerta") == "opt_out" else "julia_alerta"
+    return {TIPO_HANDOFF: "julia_handoff", TIPO_CONCLUSAO: "julia_conclusao"}.get(tipo, "julia_alerta")
 
 
 def completar_links(client: Any, org_id: UUID | str, relatorio: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:

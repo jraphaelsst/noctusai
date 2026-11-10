@@ -37,6 +37,7 @@ from app.routers import platform_templates as platform_templates_router
 from app.routers import me_consents as me_consents_router
 from app.routers import fleet_control as fleet_control_router
 from app.routers import admin_operations as admin_operations_router
+from app.routers import admin_notifications as admin_notifications_router
 from app.routers import billing_admin as billing_admin_router
 from app.routers import website_public as website_public_router
 from app.routers import website_admin as website_admin_router
@@ -146,6 +147,7 @@ app = create_product_app(
         me_consents_router.router,
         fleet_control_router.router,
         admin_operations_router.router,
+        admin_notifications_router.router,
         billing_admin_router.router,
         website_public_router.router,
         website_admin_router.router,

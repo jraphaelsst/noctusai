@@ -56,6 +56,34 @@ class TestRunHooks:
         asyncio.run(lifespan.run_shutdown_hooks([mk("a"), mk("b"), mk("c")]))
         assert order == ["c", "b", "a"]
 
+    def test_shutdown_releases_the_conversation_module_it_configured(self):
+        """A module left configured after shutdown keeps its Redis buffer reachable through
+        get_conversation_module() for every later caller in the process (a later test's deletion
+        route hit a dead localhost:6379 -- merge-queue ejection 2026-11-09)."""
+        from uuid import uuid4
+
+        from noctusai_lib.integrations.redis import make_fake_redis_client
+
+        from app.services.conversation_module import (
+            _reset_for_tests,
+            configure_conversation_module,
+            get_conversation_module,
+        )
+
+        _reset_for_tests()
+        loop = asyncio.new_event_loop()
+        try:
+            configure_conversation_module(
+                admin_supabase=SimpleNamespace(), org_id=uuid4(),
+                redis_client=make_fake_redis_client(), main_loop=loop,
+            )
+            assert get_conversation_module() is not None
+            asyncio.run(lifespan.on_shutdown())
+            assert get_conversation_module() is None
+        finally:
+            _reset_for_tests()
+            loop.close()
+
 
 class TestRequirePlatformAdmin:
     def test_admin_passes_and_returns_the_auth_tuple(self):

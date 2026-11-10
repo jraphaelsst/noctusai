@@ -10,8 +10,8 @@ const AGENT_SETTINGS_KEY = ["agents", "admin", "agent-settings"] as const;
 
 export interface AgentSetting {
   key: string;
-  value: number | string;
-  default: number | string;
+  value: number | string | null;
+  default: number | string | null;
   source: "db" | "env";
   editable: boolean;
   min: number | null;
@@ -26,6 +26,7 @@ export type AgentSettingsPatch = Partial<{
   approval_timeout_seconds: number | null;
   max_turns: number | null;
   messages_rate_limit: string | null;
+  numero_fallback_atendimento: string | null;
 }>;
 
 export function useAgentSettings() {

@@ -77,16 +77,27 @@ def _seed(scoped, *, codigos=("ONE9001", "ONE9002"), atendimentos=None, mirror=T
     scoped.set_table_data("imovel_dados", [])
     scoped.set_table_data("roteiros", [])
     scoped.set_table_data("visitas", [])
+    scoped.set_table_data("cliente_imovel_interesses", [])
+    scoped.set_table_data("pipeline_stages", [])
     return cid, aid
 
 
 def _criar(client, cid, codigos, **body) -> dict:
+    """A DRAFT (R2): a roteiro is born `rascunho`."""
     resp = client.post(
         f"/api/clientes/{cid}/roteiros",
         json={"imoveis": list(codigos), "data_visita": "2026-10-10", **body},
         headers=_auth(),
     )
     assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def _criar_gerado(client, cid, codigos, **body) -> dict:
+    """A GERADO roteiro: create the draft, then `POST .../gerar` (R8) — outcomes only exist from here on."""
+    rascunho = _criar(client, cid, codigos, **body)
+    resp = client.post(f"/api/clientes/{cid}/roteiros/{rascunho['id']}/gerar", headers=_auth())
+    assert resp.status_code == 200, resp.text
     return resp.json()
 
 
@@ -135,12 +146,18 @@ class TestCriacao:
         assert resp.status_code == 400, resp.text
         assert "ONE9001" in resp.text
 
-    def test_empty_list_is_rejected_by_the_schema(self, client, scoped):
+    def test_an_empty_draft_is_allowed_and_too_many_imoveis_are_not(self, client, scoped):
+        """R2: 0-50 imóveis. The draft is created on the first meaningful edit, which is not always an imóvel."""
         cid, _ = _seed(scoped)
         resp = client.post(
             f"/api/clientes/{cid}/roteiros", json={"imoveis": []}, headers=_auth()
         )
-        assert resp.status_code == 422, resp.text
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["status"] == "rascunho" and resp.json()["visitas"] == []
+        too_many = client.post(
+            f"/api/clientes/{cid}/roteiros", json={"imoveis": [f"ONE{i}" for i in range(51)]}, headers=_auth()
+        )
+        assert too_many.status_code == 422, too_many.text
 
     def test_refuses_to_guess_between_two_open_atendimentos(self, client, scoped):
         """409, never a guess — filing a route against the wrong deal is how
@@ -171,15 +188,22 @@ class TestContabilizacao:
 
     def test_three_buckets_not_two(self, client, scoped):
         cid, _ = _seed(scoped, codigos=("ONE9001", "ONE9002", "ONE9003"))
-        roteiro = _criar(client, cid, ["ONE9001", "ONE9002", "ONE9003"])
+        roteiro = _criar_gerado(client, cid, ["ONE9001", "ONE9002", "ONE9003"])
         rid, visitas = roteiro["id"], roteiro["visitas"]
 
-        for visita, status in zip(visitas, ("realizada", "nao_realizada", "pendente")):
-            if status == "pendente":
+        for visita, corpo in zip(
+            visitas,
+            (
+                {"status": "realizada"},
+                {"status": "cancelada", "cancelada_por": "cliente", "cancelada_motivo": "cliente_desistiu"},
+                None,
+            ),
+        ):
+            if corpo is None:
                 continue
             resp = client.patch(
                 f"/api/clientes/{cid}/roteiros/{rid}/visitas/{visita['id']}",
-                json={"status": status},
+                json=corpo,
                 headers=_auth(),
             )
             assert resp.status_code == 200, resp.text
@@ -189,16 +213,22 @@ class TestContabilizacao:
         ][0]["contagem"]
         assert contagem == {
             "total": 3,
-            "realizadas": 1,
-            "nao_realizadas": 1,
             "pendentes": 1,
+            "realizadas": 1,
+            "canceladas": 1,
+            "nao_compareceu": 0,
+            "reagendadas": 0,
+            "consolidadas": 1,
+            "perdidas": 1,
+            "neutras": 1,
         }
+        assert "nao_realizadas" not in contagem
 
     def test_feedback_em_is_stamped_once_and_never_moves(self, client, scoped):
         """It is the timeline's `ocorrido_em`. Re-stamping would move a past
         event forward in the sort and lie about when it happened."""
         cid, _ = _seed(scoped, codigos=("ONE9001",))
-        roteiro = _criar(client, cid, ["ONE9001"])
+        roteiro = _criar_gerado(client, cid, ["ONE9001"])
         rid, vid = roteiro["id"], roteiro["visitas"][0]["id"]
         url = f"/api/clientes/{cid}/roteiros/{rid}/visitas/{vid}"
 
@@ -206,25 +236,25 @@ class TestContabilizacao:
             "items"
         ][0]["visitas"][0]["feedback_em"] is None
 
-        primeiro = client.patch(url, json={"status": "realizada"}, headers=_auth()).json()
+        primeiro = client.patch(url, json={"status": "realizada"}, headers=_auth()).json()["visitas"][0]
         assert primeiro["feedback_em"] is not None
 
         depois = client.patch(
-            url, json={"status": "nao_realizada", "observacao": "não atendeu"},
+            url, json={"status": "nao_compareceu", "observacao": "não atendeu"},
             headers=_auth(),
-        ).json()
+        ).json()["visitas"][0]
         assert depois["feedback_em"] == primeiro["feedback_em"]
         assert depois["observacao"] == "não atendeu"
 
     def test_pendente_carries_no_feedback_timestamp(self, client, scoped):
         cid, _ = _seed(scoped, codigos=("ONE9001",))
-        roteiro = _criar(client, cid, ["ONE9001"])
+        roteiro = _criar_gerado(client, cid, ["ONE9001"])
         rid, vid = roteiro["id"], roteiro["visitas"][0]["id"]
         out = client.patch(
             f"/api/clientes/{cid}/roteiros/{rid}/visitas/{vid}",
             json={"status": "pendente"},
             headers=_auth(),
-        ).json()
+        ).json()["visitas"][0]
         assert out["feedback_em"] is None
 
     def test_unknown_status_is_422(self, client, scoped):
@@ -402,7 +432,7 @@ class TestVisitaAvulsa:
             headers=_auth(),
         )
         assert resp.status_code == 201, resp.text
-        assert resp.json()["ordem"] == 1
+        assert [v["ordem"] for v in resp.json()["visitas"]] == [0, 1]  # R6 answers with the full Roteiro
 
     def test_a_property_already_on_the_route_is_refused(self, client, scoped):
         cid, _ = _seed(scoped, codigos=("ONE9001",))
@@ -459,7 +489,7 @@ class TestTimeline:
 
     def test_a_created_roteiro_appears_with_its_property_count(self, client, scoped):
         cid, _ = _seed(scoped, codigos=("ONE9001", "ONE9002"))
-        _criar(client, cid, ["ONE9001", "ONE9002"], titulo="Terça de manhã")
+        _criar_gerado(client, cid, ["ONE9001", "ONE9002"], titulo="Terça de manhã")
         criado = [e for e in self._entries(client, cid) if e["evento"] == "roteiro_criado"]
         assert len(criado) == 1
         assert criado[0]["kind"] == "visita"
@@ -470,11 +500,14 @@ class TestTimeline:
         """That sentence is the caution flag or the sales trigger someone reads
         back years later. It has to survive into the timeline."""
         cid, _ = _seed(scoped, codigos=("ONE9001",))
-        roteiro = _criar(client, cid, ["ONE9001"])
+        roteiro = _criar_gerado(client, cid, ["ONE9001"])
         client.patch(
             f"/api/clientes/{cid}/roteiros/{roteiro['id']}/visitas/"
             f"{roteiro['visitas'][0]['id']}",
-            json={"status": "nao_realizada", "observacao": "cliente desmarcou na porta"},
+            json={
+                "status": "cancelada", "cancelada_por": "cliente", "cancelada_motivo": "cliente_desistiu",
+                "observacao": "cliente desmarcou na porta",
+            },
             headers=_auth(),
         )
         outcomes = [
@@ -486,7 +519,7 @@ class TestTimeline:
 
     def test_a_realizada_visita_is_a_distinct_event(self, client, scoped):
         cid, _ = _seed(scoped, codigos=("ONE9001",))
-        roteiro = _criar(client, cid, ["ONE9001"])
+        roteiro = _criar_gerado(client, cid, ["ONE9001"])
         client.patch(
             f"/api/clientes/{cid}/roteiros/{roteiro['id']}/visitas/"
             f"{roteiro['visitas'][0]['id']}",
@@ -501,5 +534,10 @@ class TestTimeline:
         """`_gather_sistema`'s ruling on "restored", applied: an event with no
         honestly derivable timestamp is omitted, never stamped with now()."""
         cid, _ = _seed(scoped, codigos=("ONE9001",))
-        _criar(client, cid, ["ONE9001"])
+        _criar_gerado(client, cid, ["ONE9001"])
         assert {e["evento"] for e in self._entries(client, cid)} == {"roteiro_criado"}
+
+    def test_a_draft_is_not_an_event_yet(self, client, scoped):
+        cid, _ = _seed(scoped, codigos=("ONE9001",))
+        _criar(client, cid, ["ONE9001"])
+        assert self._entries(client, cid) == []

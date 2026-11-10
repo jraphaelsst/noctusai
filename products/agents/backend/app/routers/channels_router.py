@@ -105,6 +105,7 @@ from app.stores.channel_inbound import ChannelInboundRecord
 from app.stores.errors import Conflict, NotFound
 from app.channels.chaves_legadas import canonical_channel_agent_key
 from app.studio.resolucao import compile_for_org, resolve_agent_for_org
+from app.studio.camadas import efetivo
 from noctusai_lib.api.auth.session import AuthContext
 
 logger = logging.getLogger(__name__)
@@ -816,7 +817,7 @@ async def decide_channel_choice(
     agent = _resolve_channel_agent(studio_store, ctx, agent_key)
     r, conteudo = _conteudo_da_versao_ativa(studio_store, catalog, org_id, agent)
     active = r.versao
-    row = next((d for d in studio_store.list_decisoes(r.definicao.org_id, active.id) if d.chave == chave), None)
+    row = next((d for d in efetivo(studio_store).list_decisoes(r.definicao.org_id, active.id) if d.chave == chave), None)
     if row is None:
         raise _err(404, "decisao_nao_encontrada", "Decisão não encontrada.")
     por_valor = {o["valor"]: o for o in row.opcoes}

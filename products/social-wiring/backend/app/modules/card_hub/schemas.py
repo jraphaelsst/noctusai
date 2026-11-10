@@ -10,7 +10,7 @@ not by a second parallel schema declaration for every read shape).
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 from decimal import Decimal
 from typing import Literal, Optional
 from uuid import UUID
@@ -109,11 +109,12 @@ class AgendamentoPatchBody(StrictHttpModel):
 
 # ─── Roteiros e visitas (migration 082) ─────────────────────────────────
 
-#: Mirrors the DB CHECK in `082` and `roteiros_service.STATUS_VALIDOS`. Three
-#: values, not a boolean: "hasn't happened yet" and "didn't happen" are
-#: different facts, and merging them would file every future visit under
-#: "did not" in the count this feature exists to produce.
-_STATUS_VISITA_VALUES = {"pendente", "realizada", "nao_realizada"}
+#: Mirrors the DB CHECK (migrations 082 -> 338) and `roteiros_service.STATUS_VALIDOS`. "Hasn't happened yet" and
+#: "didn't happen" are different facts, so these are five values, not a boolean. `reagendada` is a status but is
+#: NEVER set through the visita PATCH (it needs a new roteiro: R12 `.../reagendar`); the service answers 422.
+_STATUS_VISITA_VALUES = {"pendente", "realizada", "cancelada", "nao_compareceu", "reagendada"}
+_CANCELADA_POR_VALUES = {"cliente", "proprietario", "corretor"}
+_CANCELADA_MOTIVO_VALUES = {"cliente_desistiu", "imovel_indisponivel", "outro"}
 
 
 # `RoteiroCreateBodyV2` / `RoteiroPatchBodyV2` (roteiro_schemas.py) carry the
@@ -134,6 +135,11 @@ class VisitaCreateBody(StrictHttpModel):
 class VisitaPatchBody(StrictHttpModel):
     status: Optional[str] = None
     observacao: Optional[str] = None
+    #: Required (with `cancelada_motivo`) when `status == "cancelada"` — the service answers 422 `cancelada_incompleta`.
+    cancelada_por: Optional[str] = None
+    cancelada_motivo: Optional[str] = None
+    #: The visit's own time ("HH:MM"); editable in both roteiro statuses. Explicit null clears it.
+    horario: Optional[time] = None
 
     @field_validator("status")
     @classmethod
@@ -141,6 +147,22 @@ class VisitaPatchBody(StrictHttpModel):
         if v is not None and v not in _STATUS_VISITA_VALUES:
             raise ValueError(
                 f"status must be one of {sorted(_STATUS_VISITA_VALUES)}, got {v!r}"
+            )
+        return v
+
+    @field_validator("cancelada_por")
+    @classmethod
+    def _validate_por(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _CANCELADA_POR_VALUES:
+            raise ValueError(f"cancelada_por must be one of {sorted(_CANCELADA_POR_VALUES)}, got {v!r}")
+        return v
+
+    @field_validator("cancelada_motivo")
+    @classmethod
+    def _validate_motivo(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _CANCELADA_MOTIVO_VALUES:
+            raise ValueError(
+                f"cancelada_motivo must be one of {sorted(_CANCELADA_MOTIVO_VALUES)}, got {v!r}"
             )
         return v
 

@@ -1670,7 +1670,12 @@ def main():
     elif args.memory_search:
         _ensure_llm_configured()
         from tools.noctus.dev import memory_embeddings as mee
-        hits = mee.search(args.memory_search, top_k=args.top_k)
+        from tools.noctus.dev._embedding_corpus import EmbeddingUnavailable
+        try:
+            hits = mee.search(args.memory_search, top_k=args.top_k)
+        except EmbeddingUnavailable as exc:
+            print(f"  {RED}✗ embedding_unavailable: {exc.provider_error} — fall back to grep memory/KB/project-history{RESET}")
+            sys.exit(2)
         if not hits:
             print(f"  {YELLOW}(no hits for {args.memory_search!r} — cache empty or provider unreachable){RESET}")
             sys.exit(0)
@@ -1702,7 +1707,12 @@ def main():
     elif args.corpus_search:
         _ensure_llm_configured()
         from tools.noctus.dev import corpus_embeddings as cee
-        hits = cee.search(args.corpus_search, top_k=args.top_k, source_type=getattr(args, 'source_type', None))
+        from tools.noctus.dev._embedding_corpus import EmbeddingUnavailable
+        try:
+            hits = cee.search(args.corpus_search, top_k=args.top_k, source_type=getattr(args, 'source_type', None))
+        except EmbeddingUnavailable as exc:
+            print(f"  {RED}✗ embedding_unavailable: {exc.provider_error} — fall back to grep memory/KB/project-history{RESET}")
+            sys.exit(2)
         if not hits:
             print(f"  {YELLOW}(no hits for {args.corpus_search!r}){RESET}")
             sys.exit(0)
@@ -1734,7 +1744,12 @@ def main():
     elif args.kb_search:
         _ensure_llm_configured()
         from tools.noctus.dev import kb_embeddings as kbe
-        hits = kbe.search(args.kb_search, top_k=args.top_k)
+        from tools.noctus.dev._embedding_corpus import EmbeddingUnavailable
+        try:
+            hits = kbe.search(args.kb_search, top_k=args.top_k)
+        except EmbeddingUnavailable as exc:
+            print(f"  {RED}✗ embedding_unavailable: {exc.provider_error} — fall back to grep memory/KB/project-history{RESET}")
+            sys.exit(2)
         if not hits:
             print(f"  {YELLOW}(no hits for {args.kb_search!r} — cache empty or embedding provider unreachable){RESET}")
             sys.exit(0)
@@ -1782,7 +1797,12 @@ def main():
     elif args.code_search:
         _ensure_llm_configured()
         from tools.noctus.dev import code_embeddings as ce
-        hits = ce.search(args.code_search, top_k=args.top_k)
+        from tools.noctus.dev._embedding_corpus import EmbeddingUnavailable
+        try:
+            hits = ce.search(args.code_search, top_k=args.top_k)
+        except EmbeddingUnavailable as exc:
+            print(f"  {RED}✗ embedding_unavailable: {exc.provider_error} — fall back to grep memory/KB/project-history{RESET}")
+            sys.exit(2)
         if not hits:
             print(f"  {YELLOW}(no hits for {args.code_search!r} — cache empty or embedding provider unreachable){RESET}")
             sys.exit(0)

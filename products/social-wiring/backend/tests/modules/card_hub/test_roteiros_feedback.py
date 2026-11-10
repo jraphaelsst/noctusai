@@ -6,17 +6,20 @@ from uuid import UUID, uuid4
 
 import pytest
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
+from app.modules.card_hub.roteiro_erros import RoteiroErro
 from noctusai_lib.testing.mocks import MockSupabaseClient
 
 from app.modules.card_hub import metricas_service
 from app.modules.card_hub import roteiros_feedback_service as fb
 from app.modules.card_hub import roteiros_service as svc
+from tests.modules.card_hub import roteiro_rpc
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 from tests.modules.card_hub.test_agendamentos import atendimento_row
 from tests.modules.card_hub.test_roteiros import imovel_row, registry_row
 
 ORG = UUID(ORG_ID)
 AGORA = datetime(2026, 10, 10, 12, 0, tzinfo=fb.TZ)
+USER = uuid4()
 
 
 @pytest.fixture
@@ -35,19 +38,28 @@ def db():
     mock.set_table_data("pipeline_stages", [])
     mock.set_table_data("cliente_membros", [])
     mock.set_table_data("lead_corretores", [])
+    mock.set_table_data("cliente_imovel_interesses", [])
+    roteiro_rpc.instalar(mock)
     return mock, UUID(cid), aid
 
 
-def _roteiro(mock, cid, **kw):
+def _rascunho(mock, cid, **kw):
     r = svc.criar(mock, ORG, cid, imoveis=["ONE9001", "ONE9002", "ONE9003"],
                   data_visita=kw.pop("data_visita", date(2026, 10, 9)))
     return r, UUID(r["id"]), [UUID(v["id"]) for v in r["visitas"]]
 
 
-class TestCriarFunil:
+def _roteiro(mock, cid, **kw):
+    """A GERADO roteiro — the only kind that is ever in the feedback flow."""
+    r, rid, vids = _rascunho(mock, cid, **kw)
+    return svc.gerar(mock, ORG, cid, rid), rid, vids
+
+
+class TestGerarFunil:
     def test_missing_stage_is_reported_on_the_response(self, db):
         mock, cid, _ = db
         r, _, _ = _roteiro(mock, cid)
+        assert r["status"] == "gerado"
         assert r["funil"]["moveu"] is False and r["funil"]["motivo"] == "etapa_inexistente"
         assert r["feedback_status"] == "pendente"
 
@@ -75,29 +87,86 @@ class TestPendentes:
         assert fb.pendentes(mock, ORG, agora=AGORA) == []
         assert len(fb.pendentes(mock, ORG, agora=AGORA.replace(hour=16))) == 1
 
+    def test_a_draft_is_never_due(self, db):
+        """The feedback flow starts when the roteiro is GERADO: a past-dated rascunho is not asked about."""
+        mock, cid, _ = db
+        _rascunho(mock, cid)
+        assert fb.pendentes(mock, ORG, agora=AGORA) == []
+
     def test_answered_roteiro_leaves_the_list(self, db):
         mock, cid, _ = db
         _, rid, vids = _roteiro(mock, cid)
-        fb.responder(mock, ORG, cid, rid, aconteceu=False, visitas=[])
+        fb.responder(mock, ORG, cid, rid, aconteceu=False, visitas=self._canceladas(vids))
         assert fb.pendentes(mock, ORG, agora=AGORA) == []
+
+    @staticmethod
+    def _canceladas(vids):
+        return [{"visita_id": str(v), "resultado": "nao_compareceu"} for v in vids]
 
 
 class TestResponder:
     def _todas(self, vids, **over):
         return [{"visita_id": str(v), "realizada": True, **over} for v in vids]
 
+    @staticmethod
+    def _canceladas(vids):
+        return [{"visita_id": str(v), "resultado": "nao_compareceu"} for v in vids]
+
     def test_aconteceu_true_marks_visitas_and_roteiro(self, db):
         mock, cid, _ = db
         _, rid, vids = _roteiro(mock, cid)
         itens = self._todas(vids)
-        itens[2] = {"visita_id": str(vids[2]), "realizada": False, "motivo": "imovel_indisponivel",
-                    "observacao": "vendido"}
-        out = fb.responder(mock, ORG, cid, rid, aconteceu=True, visitas=itens)
+        itens[2] = {"visita_id": str(vids[2]), "resultado": "cancelada", "cancelada_por": "proprietario",
+                    "cancelada_motivo": "imovel_indisponivel", "observacao": "vendido"}
+        out = fb.responder(mock, ORG, cid, rid, aconteceu=True, visitas=itens, usuario_id=USER)
         assert out["feedback_status"] == "respondido" and out["feedback_em"]
-        st = [(v["status"], v["nao_realizada_motivo"]) for v in out["visitas"]]
-        assert st == [("realizada", None), ("realizada", None), ("nao_realizada", "imovel_indisponivel")]
+        st = [(v["status"], v["cancelada_por"], v["cancelada_motivo"]) for v in out["visitas"]]
+        assert st == [("realizada", None, None), ("realizada", None, None),
+                      ("cancelada", "proprietario", "imovel_indisponivel")]
         assert out["visitas"][0]["realizada_em"] and out["visitas"][2]["observacao"] == "vendido"
-        assert out["contagem"]["realizadas"] == 2
+        assert all(v["resultado_em"] and v["resultado_por"] == str(USER) for v in out["visitas"])
+        assert out["contagem"]["realizadas"] == 2 and out["contagem"]["perdidas"] == 1
+        assert "nao_realizada_motivo" not in out["visitas"][0]
+
+    def test_each_resultado_maps_to_its_status_and_reagendada_is_neutral(self, db):
+        mock, cid, _ = db
+        _, rid, vids = _roteiro(mock, cid)
+        itens = [{"visita_id": str(vids[0]), "resultado": "nao_compareceu"},
+                 {"visita_id": str(vids[1]), "resultado": "reagendada"},
+                 {"visita_id": str(vids[2]), "resultado": "realizada"}]
+        out = fb.responder(mock, ORG, cid, rid, aconteceu=True, visitas=itens)
+        assert [v["status"] for v in out["visitas"]] == ["nao_compareceu", "reagendada", "realizada"]
+        assert out["contagem"]["perdidas"] == 1 and out["contagem"]["neutras"] == 1
+        assert out["contagem"]["consolidadas"] == 1
+
+    def test_the_legacy_body_is_mapped_as_the_backfill_maps_it(self, db):
+        mock, cid, _ = db
+        _, rid, vids = _roteiro(mock, cid)
+        itens = [{"visita_id": str(vids[0]), "realizada": False, "motivo": "cliente_nao_compareceu"},
+                 {"visita_id": str(vids[1]), "realizada": False, "motivo": "reagendada"},
+                 {"visita_id": str(vids[2]), "realizada": False, "motivo": "cliente_desistiu",
+                  "cancelada_por": "cliente"}]
+        out = fb.responder(mock, ORG, cid, rid, aconteceu=True, visitas=itens)
+        assert [(v["status"], v["cancelada_motivo"]) for v in out["visitas"]] == [
+            ("nao_compareceu", None), ("reagendada", None), ("cancelada", "cliente_desistiu")]
+
+    def test_a_cancelada_without_who_cancelled_is_422_and_nothing_is_written(self, db):
+        mock, cid, _ = db
+        _, rid, vids = _roteiro(mock, cid)
+        itens = self._todas(vids)
+        itens[0] = {"visita_id": str(vids[0]), "realizada": False, "motivo": "cliente_desistiu"}
+        with pytest.raises(RoteiroErro) as exc:
+            fb.responder(mock, ORG, cid, rid, aconteceu=True, visitas=itens)
+        assert exc.value.code == "cancelada_incompleta" and exc.value.status_code == 422
+        assert {v["status"] for v in svc.obter(mock, ORG, cid, rid)["visitas"]} == {"pendente"}
+        assert svc.obter(mock, ORG, cid, rid)["feedback_status"] == "pendente"
+
+    def test_a_draft_is_409_roteiro_rascunho(self, db):
+        mock, cid, _ = db
+        _, rid, vids = _rascunho(mock, cid)
+        with pytest.raises(RoteiroErro) as exc:
+            fb.responder(mock, ORG, cid, rid, aconteceu=True, visitas=self._todas(vids))
+        assert exc.value.code == "roteiro_rascunho" and exc.value.status_code == 409
 
     def test_aconteceu_true_requires_every_visita(self, db):
         mock, cid, _ = db
@@ -125,13 +194,25 @@ class TestResponder:
         with pytest.raises(ValidationError_):
             fb.responder(mock, ORG, cid, rid, aconteceu=True, visitas=itens)
 
-    def test_aconteceu_false_defaults_everything_to_outro(self, db):
+    def test_aconteceu_false_with_every_visita_answered(self, db):
         mock, cid, _ = db
         _, rid, vids = _roteiro(mock, cid)
         out = fb.responder(mock, ORG, cid, rid, aconteceu=False, visitas=[
-            {"visita_id": str(vids[0]), "realizada": False, "motivo": "cliente_desistiu"}])
-        assert [v["status"] for v in out["visitas"]] == ["nao_realizada"] * 3
-        assert [v["nao_realizada_motivo"] for v in out["visitas"]] == ["cliente_desistiu", "outro", "outro"]
+            {"visita_id": str(vids[0]), "resultado": "cancelada", "cancelada_por": "cliente",
+             "cancelada_motivo": "cliente_desistiu"},
+            {"visita_id": str(vids[1]), "resultado": "nao_compareceu"},
+            {"visita_id": str(vids[2]), "resultado": "reagendada"}])
+        assert [v["status"] for v in out["visitas"]] == ["cancelada", "nao_compareceu", "reagendada"]
+
+    def test_aconteceu_false_without_entries_cannot_invent_who_cancelled(self, db):
+        """The legacy default motivo `outro` maps to a CANCELADA, and a cancelada needs `cancelada_por` — which the
+        old body never carried: 422, nothing written."""
+        mock, cid, _ = db
+        _, rid, vids = _roteiro(mock, cid)
+        with pytest.raises(RoteiroErro) as exc:
+            fb.responder(mock, ORG, cid, rid, aconteceu=False, visitas=[])
+        assert exc.value.code == "cancelada_incompleta"
+        assert svc.obter(mock, ORG, cid, rid)["feedback_status"] == "pendente"
 
     def test_aconteceu_false_rejects_a_realizada_entry(self, db):
         mock, cid, _ = db
@@ -152,9 +233,9 @@ class TestResponder:
     def test_second_answer_is_409(self, db):
         mock, cid, _ = db
         _, rid, vids = _roteiro(mock, cid)
-        fb.responder(mock, ORG, cid, rid, aconteceu=False, visitas=[])
+        fb.responder(mock, ORG, cid, rid, aconteceu=False, visitas=self._canceladas(vids))
         with pytest.raises(fb.RoteiroJaRespondido) as exc:
-            fb.responder(mock, ORG, cid, rid, aconteceu=False, visitas=[])
+            fb.responder(mock, ORG, cid, rid, aconteceu=False, visitas=self._canceladas(vids))
         assert exc.value.status_code == 409
 
 
@@ -193,11 +274,13 @@ class TestMetricas:
         mock, cid, aid = db
         mock.table("atendimentos").update({"created_at": "2026-10-01T00:00:00+00:00"}).eq("id", aid).execute()
         _, rid, vids = _roteiro(mock, cid)
-        mock.table("roteiros").update({"created_at": "2026-10-03T00:00:00+00:00"}).eq("id", str(rid)).execute()
+        mock.table("roteiros").update(
+            {"created_at": "2026-10-03T00:00:00+00:00", "gerado_em": "2026-10-03T00:00:00+00:00"}
+        ).eq("id", str(rid)).execute()
         fb.responder(mock, ORG, cid, rid, aconteceu=True, visitas=[
             {"visita_id": str(vids[0]), "realizada": True},
             {"visita_id": str(vids[1]), "realizada": False, "motivo": "reagendada"},
-            {"visita_id": str(vids[2]), "realizada": False, "motivo": "reagendada"}])
+            {"visita_id": str(vids[2]), "realizada": False, "motivo": "cliente_nao_compareceu"}])
         mock.set_table_data("atendimento_propostas", [
             {"id": "a", "org_id": ORG_ID, "atendimento_id": aid, "visita_id": str(vids[0]),
              "status": "aceita", "created_at": "2099-01-01T00:00:00+00:00", "aceita_em": "2099-01-03T00:00:00+00:00"},
@@ -206,10 +289,20 @@ class TestMetricas:
         m = metricas_service.funil(mock, ORG, de=date(2026, 10, 1), ate=date(2026, 10, 31))
         assert m["leads"] == 1 and m["com_roteiro"] == 1
         assert m["visitas_agendadas"] == 3 and m["visitas_realizadas"] == 1
-        assert m["visitas_nao_realizadas"] == {"reagendada": 2}
+        assert "visitas_nao_realizadas" not in m and "visitas_pendentes" not in m  # amendment v1.1 §5
+        assert (m["visitas_consolidadas"], m["visitas_perdidas"], m["visitas_neutras"]) == (1, 1, 1)
+        assert (m["visitas_canceladas"], m["visitas_nao_compareceu"], m["visitas_reagendadas"]) == (0, 1, 1)
         assert (m["propostas_criadas"], m["propostas_aceitas"], m["propostas_recusadas"]) == (2, 1, 1)
         assert m["tempo_medio_dias"]["lead_a_roteiro"] == 2.0
         assert m["tempo_medio_dias"]["proposta_a_aceite"] == 2.0
+
+    def test_a_draft_is_in_no_count(self, db):
+        mock, cid, aid = db
+        mock.table("atendimentos").update({"created_at": "2026-10-01T00:00:00+00:00"}).eq("id", aid).execute()
+        _rascunho(mock, cid)
+        m = metricas_service.funil(mock, ORG, de=date(2026, 10, 1), ate=date(2026, 10, 31))
+        assert m["leads"] == 1
+        assert (m["com_roteiro"], m["visitas_agendadas"], m["visitas_neutras"]) == (0, 0, 0)
 
     def test_cohort_is_bounded_by_the_period(self, db):
         mock, cid, aid = db
@@ -245,18 +338,19 @@ class TestHoraVisita:
         mock, cid, _ = db
         r = svc.criar(mock, ORG, cid, imoveis=["ONE9001"], data_visita=date(2026, 10, 10),
                       hora_visita=time(15, 30))
-        assert r["hora_visita"] == "15:30:00"
+        assert r["hora_visita"] == "15:30"
         rid = UUID(r["id"])
-        assert svc.atualizar(mock, ORG, cid, rid, hora_visita=time(9, 0))["hora_visita"] == "09:00:00"
-        assert svc.atualizar(mock, ORG, cid, rid, titulo="x")["hora_visita"] == "09:00:00"  # unset = untouched
+        assert svc.atualizar(mock, ORG, cid, rid, hora_visita=time(9, 0))["hora_visita"] == "09:00"
+        assert svc.atualizar(mock, ORG, cid, rid, titulo="x")["hora_visita"] == "09:00"  # unset = untouched
         assert svc.atualizar(mock, ORG, cid, rid, hora_visita=None)["hora_visita"] is None  # explicit null clears
 
     def test_it_makes_the_prompt_due_only_after_that_time(self, db):
         from datetime import time
 
         mock, cid, _ = db
-        svc.criar(mock, ORG, cid, imoveis=["ONE9001"], data_visita=date(2026, 10, 10),
-                  hora_visita=time(15, 0))
+        r = svc.criar(mock, ORG, cid, imoveis=["ONE9001"], data_visita=date(2026, 10, 10),
+                      hora_visita=time(15, 0))
+        svc.gerar(mock, ORG, cid, UUID(r["id"]))
         assert fb.pendentes(mock, ORG, agora=AGORA) == []  # 12:00
         assert len(fb.pendentes(mock, ORG, agora=AGORA.replace(hour=15, minute=1))) == 1
 

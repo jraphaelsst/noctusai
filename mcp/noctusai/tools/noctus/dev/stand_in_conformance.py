@@ -101,6 +101,14 @@ _MAX_WORKERS = 4
 #: flag. Add an entry here ONLY with a reviewed reason — never to silence a
 #: finding nobody looked at.
 _KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS: dict[str, str] = {
+    # Reviewed 2026-11-09 (agents migration 074). A key-scoped JSONB shape check (`#>>` + a regex), which sql_check
+    # cannot parse; not a conditional-presence shape. Refused above the DB by
+    # `RuntimeSettingsService._validate` (normalize_phone, 422 tested in test_admin_credentials_router.py); the
+    # shape test proves every stored spelling passes the same regex; the DB refusal is proven by the
+    # `verify_db_guards` probe `runtime_settings.fallback_number_is_e164`.
+    "agents/runtime_settings/runtime_settings_numero_fallback_e164": (
+        "key-scoped JSONB regex; refused by RuntimeSettingsService (normalize_phone, 422), DB guard probed"
+    ),
     # Reviewed 2026-10-03 (migration 192). "valor OR percentual, never both"
     # has no discriminant column, so a ConditionalPresenceManifest cannot
     # express it. It is pinned three times above the DB: the request schema

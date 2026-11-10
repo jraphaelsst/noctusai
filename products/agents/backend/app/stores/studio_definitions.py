@@ -139,7 +139,11 @@ _DEFINICAO_FIELDS = (
     "rascunho_padrao", "instanciavel", "papel", "exemplar",
     # 070 (Agent Packages §M1): the Claude Code surface of a DB-source agent.
     "superficie_claude",
+    # 073 (agent layers): template flag + the template this definition inherits from.
+    "modelo", "pai_agent_id",
 )
+#: 073: deepest layer chain (BASE -> SDR -> agent + one spare), same as the DB guard and app/studio/camadas.py.
+PROFUNDIDADE_CAMADAS = 4
 #: 049/058: the one platform ROLE (the generator). "Exemplar" is its own flag (:attr:`StudioAgentRecord.exemplar`).
 PAPEIS = ("gerador",)
 _SLUG_ATTR_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,62}$")
@@ -242,6 +246,10 @@ class StudioAgentRecord:
     fonte: str = "git"
     #: 070 (§M1): ``{tools, model, owns_kb}`` of the Claude Code mirror (DB-source dev agents).
     superficie_claude: dict[str, Any] | None = None
+    #: 073 (layers): a TEMPLATE (``agente-base``, ``sdr-base``): inherited and evaluated, never instanced or on a channel.
+    modelo: bool = False
+    #: 073: the template this agent inherits from (``None`` = no parent).
+    pai_agent_id: UUID | None = None
 
     @property
     def espelhado(self) -> bool:
@@ -289,6 +297,8 @@ class VersionRecord:
     #: 032: the published qualification-standard version this agent version pins (NULL = not pinned yet;
     #: the channel turn then uses the newest published version of the agent's standard).
     qualificacao_versao_id: UUID | None = None
+    #: 073: the parent's published version a PUBLISHED child pins (set only by publish; NULL on a draft).
+    pai_versao_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -457,8 +467,39 @@ def _validate_definicao_fields(fields: dict[str, Any]) -> None:
         raise ValueError("instanciavel must be a boolean")
     if "exemplar" in fields and not isinstance(fields["exemplar"], bool):
         raise ValueError("exemplar must be a boolean")
+    if "modelo" in fields and not isinstance(fields["modelo"], bool):
+        raise ValueError("modelo must be a boolean")
+    if fields.get("pai_agent_id") is not None and not isinstance(fields["pai_agent_id"], UUID):
+        raise ValueError("pai_agent_id must be a UUID")
     if fields.get("superficie_claude") is not None:
         validar_superficie_claude(fields["superficie_claude"])
+
+
+def _check_camada(get_by_id, before: "StudioAgentRecord", fields: dict[str, Any]) -> None:
+    """073: a template is never instanced or channel-owned; a parent is a template of the same org, no cycle, the
+    chain at most :data:`PROFUNDIDADE_CAMADAS` deep. Raises ``StudioConflict('pai_invalido')`` (the DB guard's code)
+    or ``ValueError`` for the template rule."""
+    modelo = bool(fields.get("modelo", before.modelo))
+    if modelo and (bool(fields.get("instanciavel", before.instanciavel))
+                   or fields.get("owner_product", before.owner_product) is not None):
+        raise ValueError("a template (modelo) is never instanciavel nor owned by a channel product")
+    if "pai_agent_id" not in fields or fields["pai_agent_id"] is None:
+        return
+    pai_id: UUID = fields["pai_agent_id"]
+    if pai_id == before.id:
+        raise StudioConflict("pai_invalido", "an agent cannot inherit from itself")
+    try:
+        pai = get_by_id(pai_id)
+    except NotFound as exc:
+        raise StudioConflict("pai_invalido", "the parent is not an agent of this org") from exc
+    if pai.org_id != before.org_id or not pai.modelo:
+        raise StudioConflict("pai_invalido", "the parent must be a template (modelo)")
+    nivel, cursor = 1, pai.pai_agent_id
+    while cursor is not None:
+        nivel += 1
+        if cursor == before.id or nivel >= PROFUNDIDADE_CAMADAS:
+            raise StudioConflict("pai_invalido", "the layer chain loops or is too deep")
+        cursor = get_by_id(cursor).pai_agent_id
 
 
 def validar_superficie_claude(sup: Any, kind: str | None = None) -> None:
@@ -701,7 +742,7 @@ class StudioDefinitionStore(ConteudoStore, Protocol):
     def publish_version(
         self, org_id: UUID, version_id: UUID, published_by: UUID,
         eval_run_id: UUID | None, override_reason: str | None, *, expected_hash: str,
-        texto: str, manifest: list[dict[str, Any]],
+        texto: str, manifest: list[dict[str, Any]], pai_versao_id: UUID | None = None,
     ) -> VersionRecord:
         """``agents.publish_agent_version`` — ONE transaction that stores the
         proof-of-use ``compiled_prompts`` row (``texto``/``manifest`` under
@@ -710,7 +751,8 @@ class StudioDefinitionStore(ConteudoStore, Protocol):
         row. Raises ``StudioConflict('draft_changed')`` unless
         ``expected_hash`` is the draft's current ``compiled_hash``,
         ``StudioConflict('eval_required')`` when the DB-side gate re-check
-        fails."""
+        fails. 073: a child must pin its parent's CURRENT published version (``pai_nao_publicado`` /
+        ``pai_desatualizado``); an agent without a parent pins nothing (``pai_invalido``)."""
         ...
     def discard_draft(self, org_id: UUID, version_id: UUID, *, actor: UUID | None = None) -> None: ...
 
@@ -1007,6 +1049,7 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         _check_not_owned_and_open(
             fields.get("owner_product", before.owner_product), bool(fields.get("instanciavel", before.instanciavel)),
         )
+        _check_camada(self.get_agent_by_id, before, fields)
         if fields.get("papel") == "gerador" and any(
             d.papel == "gerador" and d.id != before.id for d in self.list_platform_definitions()
         ):
@@ -1179,11 +1222,21 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
     def publish_version(
         self, org_id: UUID, version_id: UUID, published_by: UUID,
         eval_run_id: UUID | None, override_reason: str | None, *, expected_hash: str,
-        texto: str, manifest: list[dict[str, Any]],
+        texto: str, manifest: list[dict[str, Any]], pai_versao_id: UUID | None = None,
     ) -> VersionRecord:
         v = self._require_draft(org_id, version_id)
         if expected_hash is None or v.compiled_hash != expected_hash:
             raise StudioConflict("draft_changed", "the draft changed since the gate was checked")
+        pai_agent = self._agent_by_id(org_id, v.agent_id).pai_agent_id
+        if pai_agent is None:
+            if pai_versao_id is not None:
+                raise StudioConflict("pai_invalido", "an agent without a parent pins nothing")
+        else:
+            pai_ativa = self.get_active_version(org_id, pai_agent)
+            if pai_ativa is None:
+                raise StudioConflict("pai_nao_publicado", "the parent template has no published version")
+            if pai_versao_id != pai_ativa.id:
+                raise StudioConflict("pai_desatualizado", "the parent's published version moved")
         limiar = self._agent_by_id(org_id, v.agent_id).publicacao_limiar
         score: float | None = None
         reason = override_reason.strip() if override_reason is not None else None
@@ -1212,7 +1265,7 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
         v = replace(
             v, status="ativa", published_by=published_by, published_at=now,
             eval_run_id=eval_run_id, publish_override_reason=reason, updated_at=now,
-            limiar_aplicado=limiar, eval_score=score,
+            limiar_aplicado=limiar, eval_score=score, pai_versao_id=pai_versao_id,
         )
         self._versions[v.id] = v
         self._audit_append(
@@ -1643,6 +1696,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             exemplar=bool(row.get("exemplar", False)),
             fonte=row.get("fonte") or "git",
             superficie_claude=dict(row["superficie_claude"]) if row.get("superficie_claude") is not None else None,
+            modelo=bool(row.get("modelo", False)), pai_agent_id=_uuid_or_none(row.get("pai_agent_id")),
         )
 
     @staticmethod
@@ -1665,6 +1719,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             limiar_aplicado=_float(row["limiar_aplicado"]) if row.get("limiar_aplicado") is not None else None,
             eval_score=_float(row["eval_score"]) if row.get("eval_score") is not None else None,
             versao_semver=row.get("versao_semver"), package_sha=row.get("package_sha"),
+            pai_versao_id=_uuid_or_none(row.get("pai_versao_id")),
         )
 
     @staticmethod
@@ -1784,13 +1839,15 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
         _check_not_owned_and_open(
             fields.get("owner_product", before.owner_product), bool(fields.get("instanciavel", before.instanciavel)),
         )
+        _check_camada(self.get_agent_by_id, before, fields)
         if fields.get("papel") == "gerador" and any(
             d.papel == "gerador" and d.id != before.id for d in self.list_platform_definitions()
         ):
             raise StudioConflict("gerador_ja_existe", "another platform definition already is the generator")
         if not fields:
             return before
-        resp = self._exec(self._t("agents").update(fields).eq("org_id", str(org_id)).eq("key", key))
+        body = {k: (str(v) if k == "pai_agent_id" and v is not None else v) for k, v in fields.items()}
+        resp = self._exec(self._t("agents").update(body).eq("org_id", str(org_id)).eq("key", key))
         return self._agent(self._one(resp, f"agent {key!r}"))
 
     def update_agent(
@@ -1926,7 +1983,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
     def publish_version(
         self, org_id: UUID, version_id: UUID, published_by: UUID,
         eval_run_id: UUID | None, override_reason: str | None, *, expected_hash: str,
-        texto: str, manifest: list[dict[str, Any]],
+        texto: str, manifest: list[dict[str, Any]], pai_versao_id: UUID | None = None,
     ) -> VersionRecord:
         self._rpc("publish_agent_version", {
             "p_org_id": str(org_id),
@@ -1937,6 +1994,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             "p_expected_hash": expected_hash,
             "p_texto": texto,
             "p_manifest": manifest,
+            "p_pai_versao_id": str(pai_versao_id) if pai_versao_id else None,
         })
         return self.get_version(org_id, version_id)
 

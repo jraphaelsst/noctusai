@@ -1905,6 +1905,44 @@ def _is_ledger_ndjson(path: str) -> bool:
     return path.endswith(".ndjson") and any(path.startswith(prefix) for prefix in LEDGER_PREFIXES)
 
 
+#: git's own scratch file for a custom merge driver (`ll_ext_merge`): created in
+#: the cwd of whichever process runs the merge, removed when it finishes. Never
+#: an agent's write — see `_is_git_merge_scratch`.
+GIT_MERGE_SCRATCH_RE = re.compile(r"^\.merge_file_[A-Za-z0-9]{6}$")
+
+
+def is_git_merge_scratch(path: str) -> bool:
+    """True for a root-level `.merge_file_XXXXXX`: git's transient scratch for
+    a custom merge driver (kb-counts / lgpd-warnings / gate-inventory).
+
+    🔴 2026-11-09: a trial merge (`git merge-tree --write-tree`, run by the
+    toolkit with the primary as cwd) or any merge a peer runs with cwd=primary
+    flashes these into the primary for the length of the driver run. The
+    post-hoc net saw them in `git status` and told an unrelated session it had
+    dirtied the primary. They are git's, not a session's: never attribute them.
+    Stale ones (a killed merge) are removed by `noctus.dev.mole` instead."""
+    return bool(GIT_MERGE_SCRATCH_RE.match(path))
+
+
+def _log_merge_scratch(paths: Sequence[str]) -> None:
+    """Telemetry: one ndjson row per observation of git merge scratch in the
+    primary. Loud on failure (stderr) — never raises, never blocks."""
+    import json
+    import sys
+    import time
+    from pathlib import Path
+
+    try:
+        d = Path(os.environ.get("NOCTUS_HOME", str(Path.home() / ".noctus")))
+        d.mkdir(parents=True, exist_ok=True)
+        row = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+               "event": "git_merge_scratch_ignored", "paths": sorted(paths)[:8]}
+        with (d / "primary-guard-events.ndjson").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+    except OSError as exc:
+        print(f"primary_write_guard: merge-scratch telemetry not written ({exc})", file=sys.stderr)
+
+
 def diff_new_primary_dirt(before: str | None, after: str | None) -> list[str]:
     """Paths dirty in `after` that were NOT dirty in `before`, minus the ledger exemption.
 
@@ -1923,11 +1961,17 @@ def diff_new_primary_dirt(before: str | None, after: str | None) -> list[str]:
         return []
     before_paths = {_porcelain_path(ln) for ln in before.splitlines() if ln}
     out: list[str] = []
+    scratch: list[str] = []
     for line in sorted({ln for ln in after.splitlines() if ln}):
         path = _porcelain_path(line)
         if not path or path in before_paths or _is_ledger_ndjson(path):
             continue
+        if is_git_merge_scratch(path):
+            scratch.append(path)
+            continue
         out.append(path)
+    if scratch:
+        _log_merge_scratch(scratch)
     return out
 
 

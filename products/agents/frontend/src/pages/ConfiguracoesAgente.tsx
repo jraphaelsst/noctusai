@@ -35,6 +35,10 @@ const LABELS: Record<string, { label: string; help: string }> = {
     label: "Limite de mensagens por usuário",
     help: "Formato N/second|minute|hour|day, ex.: 20/minute.",
   },
+  numero_fallback_atendimento: {
+    label: "Número de atendimento (passagem a uma pessoa)",
+    help: "Quando um agente passa a conversa para uma pessoa, a equipe é avisada neste número. Um número para todas as organizações. Sem ele, nenhum agente de conversa pode ser publicado.",
+  },
   claude_cli_slots: {
     label: "Conversas simultâneas (slots)",
     help: "Estrutural — definido na imagem e no compose; muda apenas com um novo deploy.",
@@ -44,7 +48,7 @@ const LABELS: Record<string, { label: string; help: string }> = {
 type FormState = Record<string, string>;
 
 function toForm(items: AgentSetting[]): FormState {
-  return Object.fromEntries(items.map((i) => [i.key, String(i.value)]));
+  return Object.fromEntries(items.map((i) => [i.key, i.value === null ? "" : String(i.value)]));
 }
 
 function OneChatToggle() {
@@ -99,12 +103,12 @@ export default function ConfiguracoesAgente() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!items) return;
-    const patch: Record<string, number | string> = {};
+    const patch: Record<string, number | string | null> = {};
     for (const item of items) {
       if (!item.editable) continue;
       const raw = (form[item.key] ?? "").trim();
-      if (raw === String(item.value)) continue;
-      patch[item.key] = typeof item.default === "number" ? Number(raw) : raw;
+      if (raw === (item.value === null ? "" : String(item.value))) continue;
+      patch[item.key] = raw === "" && item.default === null ? null : typeof item.default === "number" ? Number(raw) : raw;
     }
     if (Object.keys(patch).length === 0) {
       toast.info("Nada para salvar.");
@@ -167,7 +171,7 @@ export default function ConfiguracoesAgente() {
                         onClick={() => save({ [item.key]: null } as AgentSettingsPatch)}
                         disabled={update.isPending}
                       >
-                        Restaurar padrão ({String(item.default)})
+                        {item.default === null ? "Remover" : `Restaurar padrão (${String(item.default)})`}
                       </button>
                     )}
                   </div>

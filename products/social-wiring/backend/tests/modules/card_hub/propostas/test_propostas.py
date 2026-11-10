@@ -7,7 +7,7 @@ import pytest
 
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 from tests.modules.card_hub.test_agendamentos import atendimento_row
-from tests.modules.card_hub.test_roteiros import _criar, imovel_row, registry_row
+from tests.modules.card_hub.test_roteiros import _criar_gerado as _criar, imovel_row, registry_row
 
 
 def _auth() -> dict:
@@ -26,6 +26,8 @@ def _seed(scoped, *, valor_venda=850000, imobiliarias=1, pct_default=None, pct_n
     scoped.set_table_data("imovel_dados", [])
     scoped.set_table_data("roteiros", [])
     scoped.set_table_data("visitas", [])
+    scoped.set_table_data("cliente_imovel_interesses", [])
+    scoped.set_table_data("pipeline_stages", [])
     scoped.set_table_data("atendimento_propostas", [])
     scoped.set_table_data(
         "atendimento_negociacao",

@@ -24,16 +24,20 @@ is captured per-log-row.
 from __future__ import annotations
 
 import asyncio
+import html as _html
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
 from uuid import UUID
 
+from noctusai_lib.domain.notification_catalog import get_notification_gate, status_for
 from noctusai_lib.integrations.whatsapp import (
     chat_id_for_phone,
     get_whatsapp_client,
 )
+
+from app.services.notification_kinds import PRODUCT as _CATALOG_PRODUCT
 
 from app.services.email_service import (
     EmailNotConfigured,
@@ -248,7 +252,7 @@ class NotificationService:
                 "client, an org-wide one covers everything unattributed.",
                 lead.get("id"), org_id, marca_id or "—", tier,
             )
-            return DispatchOutcome()
+            return await self._no_recipient(kind="lead", org_id=org_id)
 
         message = self._build_lead_message(lead)
         return await self._dispatch(
@@ -322,7 +326,7 @@ class NotificationService:
                 "(notifications).",
                 conflito.get("id"), org_id,
             )
-            return DispatchOutcome()
+            return await self._no_recipient(kind="conflito", org_id=org_id)
 
         message = self._build_conflict_message(conflito, cliente_nome=cliente_nome)
         return await self._dispatch(
@@ -399,7 +403,7 @@ class NotificationService:
                 "nobody was alerted.",
                 conflito.get("id"), org_id, codigo,
             )
-            return DispatchOutcome()
+            return await self._no_recipient(kind="conflito_imovel", org_id=org_id)
         message = self._build_imovel_conflict_message(conflito, codigo=codigo)
         return await self._dispatch(
             kind="conflito_imovel", org_id=org_id, recipients=recipients, message=message
@@ -470,7 +474,7 @@ class NotificationService:
                 "nobody was alerted.",
                 conflito.get("id"), org_id,
             )
-            return DispatchOutcome()
+            return await self._no_recipient(kind="conflito_empresa", org_id=org_id)
         message = self._build_empresa_conflict_message(conflito, empresa_nome=empresa_nome)
         return await self._dispatch(
             kind="conflito_empresa", org_id=org_id, recipients=recipients, message=message
@@ -523,6 +527,113 @@ class NotificationService:
         return {"subject": subject, "html": html, "text": "\n".join(linhas)}
 
     # ─── Reusable fan-out core ──────────────────────────────────────────
+    async def notify_imoveis_delistados(
+        self, *, org_id: UUID, codigos: list[str], exclusivos: list[str], pausados: list[str] | None = None,
+        execucao_id: Any = None,
+    ) -> DispatchOutcome:
+        """Owner warning: this sync run marked properties as gone from Vista (owner, 2026-11-09: "warn me" means
+        WhatsApp). ONE message per run covers both the registry delisting and the "pause + warn" notices
+        (`imovel_ref_avisos.registrar_sumiram`): paused codes are named with the action they wait for. Nothing was
+        deleted — the text says so. Org-wide roster (the owner's line lives there)."""
+        if not codigos:
+            return DispatchOutcome()
+        recipients = self._fetch_recipients_scoped(org_id=org_id, marca_id=None)
+        if not recipients:
+            logger.warning("notify_imoveis_delistados: %d imóvel(is) left Vista (org=%s) but NO active notification "
+                           "recipient is configured — nobody was warned.", len(codigos), org_id)
+            return await self._no_recipient(kind="imoveis_delistados", org_id=org_id)
+        return await self._dispatch(
+            kind="imoveis_delistados", org_id=org_id, recipients=recipients,
+            message=self._build_delistados_message(codigos, exclusivos, pausados or []),
+        )
+
+    @staticmethod
+    def _lista_codigos(codigos: list[str], limite: int = 30) -> str:
+        mostrar = codigos[:limite]
+        resto = len(codigos) - len(mostrar)
+        return ", ".join(mostrar) + (f" … e mais {resto}." if resto else ".")
+
+    @staticmethod
+    def _html_linhas(linhas: list[str]) -> str:
+        return "<div style='font-family:sans-serif;max-width:560px'>" + "".join(
+            f"<p style='margin:0 0 8px'>{_html.escape(l)}</p>" for l in linhas) + "</div>"
+
+    @classmethod
+    def _build_delistados_message(cls, codigos: list[str], exclusivos: list[str], pausados: list[str] | None = None,
+                                  ) -> dict[str, str]:
+        n = len(codigos)
+        pausados = pausados or []
+        linhas = [f"🏠 {n} imóve{'l saiu' if n == 1 else 'is saíram'} do Vista nesta sincronização."]
+        if exclusivos:
+            linhas.append(f"⭐ Exclusivos: {', '.join(exclusivos)} — saem da vitrine de exclusividades.")
+        linhas.append("Códigos: " + cls._lista_codigos(codigos))
+        if pausados:
+            linhas.append(f"⏸️ Pausados no site até você decidir ({len(pausados)}): " + cls._lista_codigos(pausados)
+                          + " Em Imóveis › Avisos: restaurar ou confirmar que saíram.")
+        linhas.append("Nada foi apagado: todos os dados ficam guardados.")
+        return {"subject": f"{n} imóve{'l saiu' if n == 1 else 'is saíram'} do Vista", "html": cls._html_linhas(linhas),
+                "text": "\n".join(linhas)}
+
+    async def notify_imoveis_novos_vista(self, *, org_id: UUID, codigos: list[str]) -> DispatchOutcome:
+        """Owner notice: refs Vista has that we did not — created on our side and recorded (`ref_nova_no_vista`)."""
+        if not codigos:
+            return DispatchOutcome()
+        recipients = self._fetch_recipients_scoped(org_id=org_id, marca_id=None)
+        if not recipients:
+            logger.warning("notify_imoveis_novos_vista: %d new ref(s) in Vista (org=%s) but NO active notification "
+                           "recipient is configured — nobody was warned.", len(codigos), org_id)
+            return await self._no_recipient(kind="imoveis_novos_vista", org_id=org_id)
+        n = len(codigos)
+        linhas = [f"🆕 {n} imóve{'l novo' if n == 1 else 'is novos'} no Vista, já criado{'s' if n != 1 else ''} do nosso lado.",
+                  "Códigos: " + self._lista_codigos(codigos)]
+        return await self._dispatch(
+            kind="imoveis_novos_vista", org_id=org_id, recipients=recipients,
+            message={"subject": f"{n} imóve{'l novo' if n == 1 else 'is novos'} no Vista",
+                     "html": self._html_linhas(linhas), "text": "\n".join(linhas)},
+        )
+
+    async def notify_imoveis_listar_vazio(self, *, org_id: UUID, texto: str) -> DispatchOutcome:
+        """Owner warning (WhatsApp leg of the daily 'Vista não está listando' notice; the caller dedupes to 1/24h)."""
+        recipients = self._fetch_recipients_scoped(org_id=org_id, marca_id=None)
+        if not recipients:
+            logger.warning("notify_imoveis_listar_vazio: Vista listar is empty (org=%s) but NO active notification "
+                           "recipient is configured — nobody was warned.", org_id)
+            return await self._no_recipient(kind="imoveis_vista_listar_vazio", org_id=org_id)
+        html = f"<div style='font-family:sans-serif;max-width:560px'><p>{_html.escape(texto)}</p></div>"
+        return await self._dispatch(
+            kind="imoveis_vista_listar_vazio", org_id=org_id, recipients=recipients,
+            message={"subject": "Vista não está listando imóveis", "html": html, "text": f"⚠️ {texto}"},
+        )
+
+    async def notify_imoveis_sync_falhou(
+        self, *, org_id: UUID, status: str, motivo: str | None,
+    ) -> DispatchOutcome:
+        """Owner warning: a Vista imóveis sync run ended not-ok (failed, refused by the removal circuit breaker,
+        incomplete). Org-wide roster."""
+        recipients = self._fetch_recipients_scoped(org_id=org_id, marca_id=None)
+        if not recipients:
+            logger.warning("notify_imoveis_sync_falhou: sync ended %s (org=%s) but NO active notification recipient "
+                           "is configured — nobody was warned.", status, org_id)
+            return await self._no_recipient(kind="imoveis_sync_falhou", org_id=org_id)
+        texto = (f"⚠️ A sincronização de imóveis com o Vista terminou com status '{status}'."
+                 + (f"\nMotivo: {motivo}" if motivo else "")
+                 + "\nA lista de imóveis pode estar desatualizada até a próxima execução (a cada 2h).")
+        html = "<div style='font-family:sans-serif;max-width:560px'>" + "".join(
+            f"<p style='margin:0 0 8px'>{_html.escape(l)}</p>" for l in texto.split("\n")) + "</div>"
+        return await self._dispatch(
+            kind="imoveis_sync_falhou", org_id=org_id, recipients=recipients,
+            message={"subject": f"Sincronização de imóveis: {status}", "html": html, "text": texto},
+        )
+
+    async def _no_recipient(self, *, kind: str, org_id: UUID) -> DispatchOutcome:
+        """Record on core's send ledger that a notification had nobody to reach (the caller already logged it), so
+        the owner's Notificações page shows the gap instead of an innocent-looking silence."""
+        gate = get_notification_gate(_CATALOG_PRODUCT)
+        await asyncio.to_thread(
+            gate.record, kind, org_id=org_id, status="no_recipient", reason="nenhum destinatário ativo",
+        )
+        return DispatchOutcome()
+
     async def _dispatch(
         self,
         *,
@@ -544,7 +655,20 @@ class NotificationService:
         triggering row and is ``None`` for non-upload callers.
         """
         outcome = DispatchOutcome(recipients=len(recipients))
+        # Owner switch (core admin "Notificações") + send ledger. An undeclared kind raises here — declare it in
+        # notification_kinds.py. Off => nothing is sent and the ledger says so (the page shows it was suppressed).
+        gate = get_notification_gate(_CATALOG_PRODUCT)
+        if not await asyncio.to_thread(gate.allowed, kind):
+            await asyncio.to_thread(
+                gate.record, kind, org_id=org_id, status="suppressed", recipients=len(recipients),
+                reason="desligada em Notificações",
+            )
+            logger.info("notification (%s) suppressed for org=%s: switched off in core Notificações", kind, org_id)
+            return outcome
         if not recipients:
+            await asyncio.to_thread(
+                gate.record, kind, org_id=org_id, status="no_recipient", reason="nenhum destinatário ativo",
+            )
             return outcome
 
         # Build clients lazily — empty WAHA url → FakeWahaClient (logs
@@ -614,6 +738,11 @@ class NotificationService:
                 outcome.failed += 1
             else:
                 outcome.succeeded += 1
+        await asyncio.to_thread(
+            gate.record, kind, org_id=org_id,
+            status=status_for(recipients=len(recipients), delivered=outcome.succeeded, failed=outcome.failed),
+            recipients=len(recipients), delivered=outcome.succeeded, reason=linha_erro,
+        )
         return outcome
 
     # ─── Per-channel dispatch (always log; never raise) ────────────────
@@ -966,6 +1095,7 @@ class NotificationService:
                     "is configured — nobody was alerted.",
                     len(org_items), org_id,
                 )
+                await self._no_recipient(kind="visita_feedback", org_id=org_id)
                 return total
             outcome = await self._dispatch(
                 kind="visita_feedback", org_id=org_id, recipients=recipients,

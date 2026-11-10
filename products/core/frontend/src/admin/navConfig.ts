@@ -7,7 +7,7 @@
  * Code-split with the admin chunk: never import this from the main bundle.
  */
 import {
-  Activity, BarChart3, Brain, Building2, Coins, CreditCard, FileText, Filter, Gauge, Globe,
+  Activity, BarChart3, Bell, Brain, Building2, Coins, CreditCard, FileText, Filter, Gauge, Globe,
   KeyRound, Landmark, LayoutDashboard, MessageSquare, Package, PackageOpen, Palette, Plug,
   Search, Settings, ShieldCheck, Users, Wallet, Webhook, ClipboardList, Zap, GitBranch,
   Share2, Briefcase, Sparkles, FileCheck,
@@ -92,6 +92,7 @@ const PLATFORM_GROUPS: NavGroup[] = [
     icon: Activity,
     items: [
       { name: 'Rotinas e saúde', href: '/admin/operacao', icon: Activity },
+      { name: 'Notificações', href: '/admin/notificacoes', icon: Bell },
       { name: 'Fleet Control', href: '/admin/fleet', icon: Zap },
       { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
       { name: 'Digest de auditoria', href: '/admin/audit-digest', icon: FileText },

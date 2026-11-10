@@ -1592,3 +1592,19 @@ def test_detector_is_fast():
     for _ in range(2000):
         bash_is_read_only("git log --oneline -5 | head -3")
     assert time.perf_counter() - t0 < 1.0
+
+
+# ── git's own merge-driver scratch is never a session's dirt (2026-11-09) ──
+def test_git_merge_scratch_is_not_reported_and_is_logged(tmp_path, monkeypatch):
+    monkeypatch.setenv("NOCTUS_HOME", str(tmp_path))
+    after = "?? .merge_file_AaI468\n?? .merge_file_RwHgbd\n?? products/core/app/leaked.py\n"
+    assert diff_new_primary_dirt("", after) == ["products/core/app/leaked.py"]
+    rows = (tmp_path / "primary-guard-events.ndjson").read_text().splitlines()
+    assert len(rows) == 1 and "git_merge_scratch_ignored" in rows[0]
+
+
+def test_only_the_exact_scratch_shape_is_exempt():
+    from tools.noctus.dev.primary_write_guard import is_git_merge_scratch
+    assert is_git_merge_scratch(".merge_file_4i9A2x")
+    for bad in (".merge_file_", ".merge_file_x", "sub/.merge_file_4i9A2x", ".merge_file_4i9A2x.py", "merge_file_4i9A2x"):
+        assert not is_git_merge_scratch(bad)

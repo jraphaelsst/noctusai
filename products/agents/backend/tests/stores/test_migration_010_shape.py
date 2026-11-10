@@ -37,10 +37,13 @@ def test_config_value_is_stored_encrypted_only(sql):
     assert columns == {"key", "encrypted_value", "updated_at"}
 
 
-def test_runtime_setting_keys_match_the_service(sql):
+def test_runtime_setting_keys_match_the_service():
+    """The service's editable keys == the CHECK of the NEWEST migration that (re)defines it (010, then 074...)."""
     from app.services.runtime_settings import EDITABLE_KEYS
 
-    check = re.search(r"CHECK \(key IN \(([^)]*)\)\)", sql)
+    ultima = [p for p in sorted(MIGRATION_PATH.parent.glob("*.sql"))
+              if "ADD CONSTRAINT runtime_settings_key_check" in p.read_text(encoding="utf-8")][-1]
+    check = re.search(r"CHECK \(key IN \(([^)]*)\)\)", ultima.read_text(encoding="utf-8"))
     assert check
     assert tuple(k.strip().strip("'") for k in check.group(1).split(",")) == EDITABLE_KEYS
 

@@ -53,7 +53,7 @@ def _visita(codigo: str, ordem: int, **imovel) -> dict:
 def _roteiro(*visitas, titulo=None, data_visita="2026-10-15") -> dict:
     return {"id": "3f5c2d69-0000-0000-0000-000000000001", "atendimento_id": "a-1",
             "titulo": titulo, "data_visita": data_visita,
-            "created_at": "2026-08-25T12:00:00+00:00", "visitas": list(visitas)}
+            "created_at": "2026-08-25T12:00:00+00:00", "status": "gerado", "visitas": list(visitas)}
 
 
 class TestEstrutura:

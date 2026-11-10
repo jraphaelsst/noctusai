@@ -38,6 +38,7 @@ from typing import Any
 from uuid import UUID
 
 from app.stores.errors import NotFound
+from app.studio.camadas import efetivo
 
 logger = logging.getLogger(__name__)
 
@@ -199,11 +200,11 @@ def studio_tool_specs(
     raw SQL in the tool layer)."""
 
     def _active_skills() -> list[Any]:
-        return [s for s in definitions.list_skills(org_id, version_id) if s.ativo]
+        return [s for s in efetivo(definitions).list_skills(org_id, version_id) if s.ativo]
 
     def _files_of(skill_id: UUID) -> list[Any]:
         return sorted(
-            (f for f in definitions.list_version_skill_files(org_id, version_id) if f.skill_id == skill_id),
+            (f for f in efetivo(definitions).list_version_skill_files(org_id, version_id) if f.skill_id == skill_id),
             key=lambda f: f.caminho,
         )
 
