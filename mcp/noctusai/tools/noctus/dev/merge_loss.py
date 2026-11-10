@@ -47,6 +47,19 @@ _MARKER_RE = re.compile(r"^(<<<<<<<|=======|>>>>>>>)")
 _DERIVED_PREFIXES = ("project-history/",)
 _GEN_START_RE = re.compile(r"kb-counts:start:")
 _GEN_END_RE = re.compile(r"kb-counts:end:")
+# A WHOLE file rendered from a source (`> Generated from `<src>` by `<cmd>``) is re-derived on
+# every merge, and positional ids (e.g. the D-numbers of gate-alignment-inventory.md) shift when
+# a row lands upstream — every shifted row reads as "dropped" although its content is intact
+# (benign class, 2026-11-10 D2b merge). A loss there is judged at its SOURCE file, which this
+# detector checks like any other. Declared in ours, theirs AND the result, so a hand-written
+# file cannot exempt itself by adding the header in the merge. Reported under `skipped`.
+_RENDERED_HEADER_RE = re.compile(r"^>\s*Generated from `([^`]+)` by `", re.MULTILINE)
+_RENDERED_HEADER_LINES = 6
+
+
+def _rendered_source(text: str) -> str | None:
+    m = _RENDERED_HEADER_RE.search("\n".join(text.splitlines()[:_RENDERED_HEADER_LINES]))
+    return m.group(1) if m else None
 
 
 def _git(root: Path, *args: str, text: bool = True) -> subprocess.CompletedProcess:
@@ -225,6 +238,10 @@ def _result(root: Path, merge_sha: str | None) -> dict:
                 dropped.append({"path": path, "side": "both", "line": "<file absent from the merge result>",
                                 "base_region": None})
                 checked.append(path)
+                continue
+            src = _rendered_source(r)
+            if src and _rendered_source(o) == src and _rendered_source(t) == src:
+                skipped.append({"path": path, "reason": f"rendered from {src} (judged at its source)"})
                 continue
             kept = {_norm(x) for x in r.splitlines()}
             hs = {"ours": _hunks(b, o, root), "theirs": _hunks(b, t, root)}
