@@ -1,4 +1,4 @@
-# Contract — council ledger (v1.2, 2026-11-09)
+# Contract — council ledger (v1.3, 2026-11-09)
 
 > The one row schema that the ledger tool (`noctus.dev.council_ledger`) and the
 > `noc-council` skill build to. Owner decisions D6–D17 are in the live spec:
@@ -23,6 +23,7 @@ All ids are UUIDv4 strings. Every timestamp is ISO-8601 UTC. Every row carries
 | `seats` | text[] | `lens:<lens>` or `advisor:<agent-name>`, per the stage map in `noc-council` |
 | `brief_sha256` | text | hash of the brief every councillor got (without the author's recommendation) |
 | `project` † | text | e.g. `assistant-chatbot` |
+| `product` † (v1.3) | text | product slug (`^[a-z0-9][a-z0-9-]*$`), e.g. `social-wiring`; enables per-product / cross-product aggregation. Absent on pre-v1.3 rows (valid) |
 
 ### `objection` — one councillor's point (written before anyone sees the others)
 | field | type | notes |
@@ -100,3 +101,4 @@ All ids are UUIDv4 strings. Every timestamp is ISO-8601 UTC. Every row carries
 - v1.1 (2026-11-09): ledger-first (ndjson is the source of truth; DB leg, sync action and pre-push check parked on `feat/council-db-parked`), neutral recorder (tool-assigned `anon_label`, `blind_view`, seat reveal after verdict), false_alarm_rate denominator and `unique` grammar stated, as-built validation rules recorded.
 - v1 (2026-11-09): initial.
 - v1.2 (2026-11-09): `report` splits metrics per `mode` (`by_mode`), aggregates `subagents`+`api` as the independent set (top-level seats), labels `single_chat` `independent: false`, optional `mode` filter; retune proposals computed from independent modes only.
+- v1.3 (2026-11-09): optional `product` slug on `session` (validated, `report` filter `product`); `report` carries a `coverage` field (this tree only: merged work + this branch; unmerged-branch sessions unseen — ledger-store.md exception); storage stays in-tree per session, now a documented exception to the orphan-`ledgers` store; blind recorder is also enforced by the `council-read` PreToolUse guard (direct reads of an open session's file are flagged, denied once promoted from shadow, until its verdict row exists).

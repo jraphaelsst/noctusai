@@ -425,3 +425,54 @@ class TestNeutralRecorder:
                                 biggest_risk="r", first_step="f", recorded_by="t",
                                 dispositions=[{"anon_label": "Z", "disposition": "accepted", "reason": "x"}])
         assert "unknown anon_label" in bad["error"]
+
+
+def _objector(args):
+    root, sid, i = args
+    return cl.record_objection(Path(root), session_id=sid, seat="lens:a", severity="minor", claim=f"c{i}.",
+                               model="m", recorded_by="t", recorded_at=T0)
+
+
+def test_concurrent_seats_get_unique_labels_and_no_refusal(tmp_path):
+    """Live bug: parallel seats read the same used-label set, both got 'S', and validation then refused every later write."""
+    import multiprocessing as mp
+    sid = open_s(tmp_path)
+    n = 24
+    with mp.get_context("fork").Pool(8) as pool:
+        res = pool.map(_objector, [(str(tmp_path), sid, i) for i in range(n)])
+    assert all(r.get("ok") for r in res), [r for r in res if not r.get("ok")]
+    labels = [r["anon_label"] for r in cl.read_rows(cl.session_file(tmp_path, sid)) if r["record"] == "objection"]
+    assert len(labels) == n and len(set(labels)) == n
+    assert cl.run("record_objection", root=tmp_path, session_id=sid, seat="lens:b", severity="note", claim="after.",
+                  model="m")["ok"]
+
+
+class TestProductField:
+    """Council must-fix Q (contract v1.3): optional `product` slug, filterable in report."""
+
+    def _open(self, root, product, **kw):
+        return cl.run("open_session", root=root, stage="build", subject_kind="plan", subject_ref="x", trigger="stage_map",
+                      mode="subagents", seats=["lens:a"], brief_sha256=SHA, product=product, **kw)
+
+    def test_product_stored(self, tmp_path):
+        r = self._open(tmp_path, "social-wiring")
+        assert r["ok"]
+        assert cl.read_rows(cl.session_file(tmp_path, r["session_id"]))[0]["product"] == "social-wiring"
+
+    @pytest.mark.parametrize("bad", ["Social Wiring", "", "-x", "a/b"])
+    def test_bad_product_refused(self, tmp_path, bad):
+        r = self._open(tmp_path, bad)
+        assert r["ok"] is False and "product" in r["error"]
+
+    def test_old_rows_without_product_stay_valid(self, tmp_path):
+        s = open_s(tmp_path)
+        assert cl.read_rows(cl.session_file(tmp_path, s))[0].get("product") is None
+
+    def test_report_filters_by_product(self, tmp_path):
+        for prod in ("p-a", "p-b"):
+            r = self._open(tmp_path, prod, recorded_by="t", recorded_at=T0)
+            cl.run("record_verdict", root=tmp_path, session_id=r["session_id"], chair_kind="tech_lead", decision="d",
+                   biggest_risk="r", first_step="f", dispositions=[], recorded_by="t", recorded_at=T0)
+        assert cl.report(tmp_path)["sessions"] == 2
+        rep = cl.report(tmp_path, product="p-a")
+        assert rep["sessions"] == 1 and rep["filters"]["product"] == "p-a"

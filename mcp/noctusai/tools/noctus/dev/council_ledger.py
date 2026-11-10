@@ -5,7 +5,9 @@ later state changes (ratified / overruled / outcome) are append-only ``event`` r
 metric has exactly ONE derivation (``compute_metrics``) — KB § PATTERNS/architect/measurement-by-design.md.
 
 Storage (contract §4): ndjson in git is the SOURCE OF TRUTH — ``project-history/council/<YYYY-MM>/<session_id>.ndjson``,
-one file per session so parallel branches never conflict, append-only (a correction is a new ``event``). A DB mirror
+one file per session so parallel branches never conflict, append-only (a correction is a new ``event``). This is a reasoned
+exception to the orphan-``ledgers`` store (KB § PATTERNS/common/ledger-store.md "Exception — keyed, branch-local
+ledgers"): rows ride the feature commit, so ``report`` covers merged work + this tree only (see its ``coverage`` field). A DB mirror
 and any UI are deferred (owner decision pending; the parked design lives on branch ``feat/council-db-parked``).
 
 Neutral recorder (owner decision 2026-11-09): the TOOL assigns every ``anon_label`` and withholds seats until a verdict
@@ -15,6 +17,8 @@ Everything takes ``root`` (the tree), so tests need neither network nor patching
 """
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import random
@@ -51,11 +55,14 @@ COUNCIL_REL = Path("project-history/council")
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _SEAT_RE = re.compile(r"^(lens|advisor):[A-Za-z0-9][A-Za-z0-9_.-]*$")
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _LABEL_RE = re.compile(r"^[A-Z]{1,2}$")
 _TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|\+00:00)$")
 _SENTENCE_END_RE = re.compile(r"[.!?]+[\"')\]]*\s+(?=[A-Z0-9\"'(\[])")
 _UNIQUE_RE = re.compile(r"^\s*unique\s*(?:[:;,\-—].*)?$", re.IGNORECASE | re.DOTALL)
 
+REPORT_COVERAGE = ("sessions in THIS tree only (merged work + this branch); sessions on unmerged or abandoned branches "
+                   "are not seen, so read a metric as 'merged work', not 'all councils' (ledger-store.md exception)")
 RETUNE_MIN_RESOLVED = 10
 RETUNE_DEMOTE_BELOW = 0.2
 RETUNE_PROMOTE_ABOVE = 0.6
@@ -63,7 +70,7 @@ RETUNE_PROMOTE_ABOVE = 0.6
 # the fields each record may carry (anything else is refused: unknown fields are never dropped silently)
 FIELDS: dict[str, dict[str, bool]] = {  # name -> required?
     "session": {"session_id": True, "stage": True, "subject_kind": True, "subject_ref": True, "trigger": True,
-                "mode": True, "seats": True, "brief_sha256": True, "project": False},
+                "mode": True, "seats": True, "brief_sha256": True, "project": False, "product": False},
     "objection": {"objection_id": True, "session_id": True, "seat": True, "anon_label": True, "severity": True,
                   "claim": True, "model": True, "tokens": False},
     "verdict": {"session_id": True, "chair_kind": True, "decision": True, "biggest_risk": True, "first_step": True,
@@ -163,6 +170,8 @@ def validate_row(row: Any) -> list[str]:
             errs.append("session.brief_sha256 must be a 64-char lowercase hex sha256")
         if row.get("project") is not None and not _nonempty(row["project"]):
             errs.append("session.project must be a non-empty string or null")
+        if row.get("product") is not None and not (isinstance(row["product"], str) and _SLUG_RE.match(row["product"])):
+            errs.append("session.product must be a product slug (lowercase letters, digits, '-') or null")
     elif kind == "objection":
         uuid_field("objection_id")
         uuid_field("session_id")
@@ -330,11 +339,27 @@ def _stamp(row: dict, recorded_by: str | None, recorded_at: str | None) -> dict:
     return {**row, "recorded_by": by, "recorded_at": recorded_at or now_iso()}
 
 
-def _write(root: Path, row: dict, *, create_month: str | None = None) -> dict:
+@contextlib.contextmanager
+def _session_lock(path: Path):
+    """Exclusive advisory lock on the session file itself (no sidecar to commit): every read-validate-append of a
+    session runs inside it, so parallel seats serialize instead of racing on the used-label set."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _write(root: Path, row: dict, *, create_month: str | None = None, _held: bool = False) -> dict:
     sid = row["session_id"]
     path = session_file(root, sid, month=create_month)
     if path is None:
         return _err(f"unknown session {sid}: open_session first")
+    if not _held:
+        with _session_lock(path):
+            return _write(root, row, create_month=create_month, _held=True)
     existing = read_rows(path) if path.exists() else []
     errs = validate_file_rows(existing + [row])
     if errs:
@@ -346,10 +371,10 @@ def _write(root: Path, row: dict, *, create_month: str | None = None) -> dict:
 # ── actions ──────────────────────────────────────────────────────────────────
 
 def open_session(root: Path, *, stage, subject_kind, subject_ref, trigger, mode, seats, brief_sha256,
-                 project=None, session_id=None, recorded_by=None, recorded_at=None) -> dict:
+                 project=None, product=None, session_id=None, recorded_by=None, recorded_at=None) -> dict:
     row = _stamp({"record": "session", "session_id": session_id or str(uuid.uuid4()), "stage": stage,
                   "subject_kind": subject_kind, "subject_ref": subject_ref, "trigger": trigger, "mode": mode,
-                  "seats": seats, "brief_sha256": brief_sha256, "project": project}, recorded_by, recorded_at)
+                  "seats": seats, "brief_sha256": brief_sha256, "project": project, "product": product}, recorded_by, recorded_at)
     if row.get("ok") is False:
         return row
     errs = validate_row(row)
@@ -377,20 +402,23 @@ def record_objection(root: Path, *, session_id, seat, severity, claim, model, to
                      objection_id=None, recorded_by=None, recorded_at=None) -> dict:
     """Neutral recorder: the TOOL assigns ``anon_label``; the result never carries the label or the seat mapping."""
     path = session_file(root, session_id) if isinstance(session_id, str) else None
-    used = {r["anon_label"] for r in read_rows(path) if r["record"] == "objection"} if path and path.exists() else set()
-    try:
-        label = _free_label(used)
-    except ValueError as exc:
-        return _err(str(exc))
-    row = _stamp({"record": "objection", "objection_id": objection_id or str(uuid.uuid4()), "session_id": session_id,
-                  "seat": seat, "anon_label": label, "severity": severity, "claim": claim, "model": model,
-                  "tokens": tokens}, recorded_by, recorded_at)
-    if row.get("ok") is False:
-        return row
-    errs = validate_row(row)
-    if errs:
-        return _err("; ".join(errs), refused=True)
-    out = _write(root, row)
+    # an existing session is locked (never created here); an unknown one falls through to the normal refusals
+    with (_session_lock(path) if path is not None and path.exists() else contextlib.nullcontext()):  # label choice + validate + append are ONE critical section (parallel seats)
+        used = ({r["anon_label"] for r in read_rows(path) if r["record"] == "objection"}
+                if path is not None and path.exists() else set())
+        try:
+            label = _free_label(used)
+        except ValueError as exc:
+            return _err(str(exc))
+        row = _stamp({"record": "objection", "objection_id": objection_id or str(uuid.uuid4()),
+                      "session_id": session_id, "seat": seat, "anon_label": label, "severity": severity,
+                      "claim": claim, "model": model, "tokens": tokens}, recorded_by, recorded_at)
+        if row.get("ok") is False:
+            return row
+        errs = validate_row(row)
+        if errs:
+            return _err("; ".join(errs), refused=True)
+        out = _write(root, row, _held=True)
     return {"ok": True, "objection_id": row["objection_id"], "status": "submitted"} if out.get("ok") else out
 
 
@@ -490,6 +518,7 @@ INDEPENDENT_MODES = ("subagents", "api")  # single_chat = one model, one context
 
 
 def _aggregate(sessions: list[list[dict]], *, stage: str | None = None, project: str | None = None,
+               product: str | None = None,
                since: str | None = None, stage_map: dict[str, dict[str, str]] | None = None,
                modes: frozenset[str] | None = None, retune: bool = True) -> dict:
     """Per-seat metrics over the given sessions WITH a verdict (each a list of rows, file order) + retune proposals.
@@ -510,6 +539,8 @@ def _aggregate(sessions: list[list[dict]], *, stage: str | None = None, project:
         if stage and s["stage"] != stage:
             continue
         if project and s.get("project") != project:
+            continue
+        if product and s.get("product") != product:
             continue
         if since_dt and _parse_ts(s["recorded_at"]) < since_dt:
             continue
@@ -571,11 +602,12 @@ def _aggregate(sessions: list[list[dict]], *, stage: str | None = None, project:
             proposals.append({"seat": seat, "stage": stg, "proposal": "promote O->M", "hit_rate": round(hit, 4),
                               "resolved": resolved, "applies_if": None if mapped else "seat is currently O on the stage map",
                               "auto_apply": False})
-    return {"sessions": kept, "filters": {"stage": stage, "project": project, "since": since}, "seats": seats,
+    return {"sessions": kept, "filters": {"stage": stage, "project": project, "product": product, "since": since}, "seats": seats,
             "retune_proposals": proposals, "note": "the owner ratifies a retune; the skill never edits the stage map"}
 
 
 def compute_metrics(sessions: list[list[dict]], *, stage: str | None = None, project: str | None = None,
+                    product: str | None = None,
                     since: str | None = None, stage_map: dict[str, dict[str, str]] | None = None,
                     mode: str | None = None) -> dict:
     """Metrics split per mode (``by_mode``) + the ``independent`` aggregate (subagents + api only).
@@ -586,7 +618,7 @@ def compute_metrics(sessions: list[list[dict]], *, stage: str | None = None, pro
     """
     if mode is not None and mode not in ENUMS["mode"]:
         raise ValueError(f"mode must be one of {sorted(ENUMS['mode'])}; got {mode!r}")
-    kw = {"stage": stage, "project": project, "since": since}
+    kw = {"stage": stage, "project": project, "product": product, "since": since}
     by_mode = {m: {**_aggregate(sessions, modes=frozenset({m}), retune=False, **kw),
                    "independent": m in INDEPENDENT_MODES} for m in sorted(ENUMS["mode"])}
     if mode is not None and mode not in INDEPENDENT_MODES:
@@ -607,7 +639,7 @@ def compute_metrics(sessions: list[list[dict]], *, stage: str | None = None, pro
 def report(root: Path, **filters: Any) -> dict:
     try:
         sessions = load_sessions(root)
-        return {"ok": True, "action": "report", **compute_metrics(sessions, **filters)}
+        return {"ok": True, "action": "report", "coverage": REPORT_COVERAGE, **compute_metrics(sessions, **filters)}
     except ValueError as exc:
         return _err(str(exc))
 
@@ -743,7 +775,7 @@ def run(action: str, *, root: Path | None = None, **kw: Any) -> dict:
         return _err(e) if e else open_session(
             root, stage=kw["stage"], subject_kind=kw["subject_kind"], subject_ref=kw["subject_ref"],
             trigger=kw["trigger"], mode=kw["mode"], seats=kw["seats"], brief_sha256=kw["brief_sha256"],
-            project=kw.get("project"), session_id=kw.get("session_id"), **common)
+            project=kw.get("project"), product=kw.get("product"), session_id=kw.get("session_id"), **common)
     if action == "record_objection":
         if kw.get("anon_label") is not None:
             return _err("anon_label is assigned by the tool (neutral recorder); the caller cannot pass one", refused=True)
@@ -768,7 +800,7 @@ def run(action: str, *, root: Path | None = None, **kw: Any) -> dict:
         e = _req(kw, "session_id")
         return _err(e) if e else (blind_view if action == "blind_view" else full_view)(root, kw["session_id"])
     if action == "report":
-        return report(root, stage=kw.get("stage"), project=kw.get("project"), since=kw.get("since"),
+        return report(root, stage=kw.get("stage"), project=kw.get("project"), product=kw.get("product"), since=kw.get("since"),
                       stage_map=kw.get("stage_map"), mode=kw.get("mode"))
     if action == "status":
         return status(root, outcome_after_days=int(kw.get("outcome_after_days") or 14))
@@ -784,7 +816,7 @@ def register(server) -> None:  # noqa: ANN001
             "session under project-history/council/<YYYY-MM>/, append-only, every enum validated (invalid row = "
             "refused with the exact clause). The ndjson in git is the source of truth (DB mirror deferred).\n\n"
             "ACTIONS\n"
-            "  open_session     — stage, subject_kind, subject_ref, trigger, mode, seats[], brief_sha256; optional project.\n"
+            "  open_session     — stage, subject_kind, subject_ref, trigger, mode, seats[], brief_sha256; optional project, product (product slug, for per-product aggregation).\n"
             "  record_objection — session_id, seat, severity, claim (<=3 sentences), model; optional tokens. The TOOL assigns "
             "anon_label (callers cannot pass one); returns only {objection_id, status:'submitted'} (neutral recorder).\n"
             "  blind_view       — session_id: the chair's view, {anon_label, severity, claim} only (no seat/model/id).\n"
@@ -794,7 +826,7 @@ def register(server) -> None:  # noqa: ANN001
             "  record_event     — session_id, event_kind in {ratified,overruled,outcome}; outcome needs objection_id, "
             "outcome {vindicated,refuted,untested}, evidence_kind; optional evidence_ref, note.\n"
             "  report           — (sessions with a verdict only) per-seat hit/unique-hit/false-alarm/acceptance/cost_per_hit + retune proposals; "
-            "filters stage, project, since; optional stage_map {stage:{seat:M|O}}.\n"
+            "filters stage, project, product, since; optional stage_map {stage:{seat:M|O}}.\n"
             "  status           — sessions without a verdict, objections without an outcome "
             "older than outcome_after_days (default 14); seats shown only for sessions with a verdict.\n"
             "recorded_by defaults to CLAUDE_CODE_SESSION_ID; ids are generated when omitted; worktree_path pins the tree."
@@ -811,6 +843,7 @@ def register(server) -> None:  # noqa: ANN001
         seats: list[str] | None = None,
         brief_sha256: str | None = None,
         project: str | None = None,
+        product: str | None = None,
         seat: str | None = None,
         severity: str | None = None,
         claim: str | None = None,
@@ -835,7 +868,7 @@ def register(server) -> None:  # noqa: ANN001
     ) -> dict:
         return run(action, worktree_path=worktree_path, session_id=session_id, stage=stage,
                    subject_kind=subject_kind, subject_ref=subject_ref, trigger=trigger, mode=mode, seats=seats,
-                   brief_sha256=brief_sha256, project=project, seat=seat, severity=severity,
+                   brief_sha256=brief_sha256, project=project, product=product, seat=seat, severity=severity,
                    claim=claim, model=model, tokens=tokens, objection_id=objection_id, chair_kind=chair_kind,
                    decision=decision, biggest_risk=biggest_risk, first_step=first_step, dispositions=dispositions,
                    event_kind=event_kind, outcome=outcome, evidence_kind=evidence_kind, evidence_ref=evidence_ref,
