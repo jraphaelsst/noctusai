@@ -27,7 +27,7 @@ def _step(name: str, sql: str) -> dict:
 
 def _publish(n: int, run: str | None) -> str:
     r = f"'{run}'" if run else "NULL"
-    return (f"PERFORM agents.publish_agent_version('{_A}', '{_id(2, n)}', '{_U}', {r}, NULL, '{_H}', 'texto', '{{}}'::jsonb);")
+    return (f"PERFORM agents.publish_agent_version('{_A}', '{_id(2, n)}', '{_U}', {r}, NULL, '{_H}', 'texto', '{{}}'::jsonb, NULL);")
 
 
 def _refused_with(code: str, body: str) -> str:
