@@ -197,10 +197,57 @@ class TestDerivedProtectedSet:
     def test_derivation_failure_fails_closed_for_the_guardian_only(self, tmp_path):
         repo = _repo_with_tooling(tmp_path / "w")
         (repo / RS).write_text("def broken(:\n")
+        _git(repo, "add", "-A")  # the keeper judges HEAD + the INDEX, never the working tree
         _claim(tmp_path)
         issues = _check_repo(repo, tmp_path, "sess-guardian-1", ["README.md"])
         assert len(issues) == 1 and "cannot derive" in issues[0]["issue"]
         assert _check_repo(repo, tmp_path, "someone-else", ["README.md"]) == []
+
+
+class TestDerivationReadsHeadAndIndexNotTheWorkingTree:
+    """P2-1: an edge dropped in an UNSTAGED edit, or a staged deletion, must not shrink the protected set."""
+
+    def _repo_with_extra(self, tmp_path: Path) -> tuple[Path, str]:
+        repo = _repo_with_tooling(tmp_path / "w")
+        extra = f"{_DEV}/extra_gate.py"
+        repo.joinpath(extra).write_text("x = 1\n")
+        repo.joinpath(RS).write_text("from tools.noctus.dev import extra_gate\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "wire extra_gate")
+        return repo, extra
+
+    def _run(self, repo, tmp_path):
+        os.environ["NOCTUS_GUARD_EVENT_LOG"] = str(tmp_path / "ev-hi.ndjson")
+        try:
+            return check_guardian_tool_authorship(repo_root=repo, session_id="sess-guardian-1", lease_root=tmp_path)
+        finally:
+            os.environ.pop("NOCTUS_GUARD_EVENT_LOG", None)
+
+    def test_an_unstaged_edge_drop_does_not_unprotect_the_module(self, tmp_path):
+        repo, extra = self._repo_with_extra(tmp_path)
+        _claim(tmp_path)
+        repo.joinpath(RS).write_text("# import dropped, left UNSTAGED\n")
+        repo.joinpath(extra).write_text("x = 2  # the staged edit\n")
+        _git(repo, "add", extra)
+        issues = self._run(repo, tmp_path)
+        assert len(issues) == 1 and extra in issues[0]["file"]
+
+    def test_a_staged_deletion_of_a_protected_module_is_refused(self, tmp_path):
+        repo, extra = self._repo_with_extra(tmp_path)
+        _claim(tmp_path)
+        _git(repo, "rm", "-q", extra)
+        assert not repo.joinpath(extra).exists()
+        issues = self._run(repo, tmp_path)
+        assert len(issues) == 1 and extra in issues[0]["file"]
+
+    def test_a_non_guardian_is_not_blocked_by_either_shape(self, tmp_path):
+        repo, extra = self._repo_with_extra(tmp_path)
+        _git(repo, "rm", "-q", extra)
+        os.environ["NOCTUS_GUARD_EVENT_LOG"] = str(tmp_path / "ev-ng.ndjson")
+        try:
+            assert check_guardian_tool_authorship(repo_root=repo, session_id="someone-else", lease_root=tmp_path) == []
+        finally:
+            os.environ.pop("NOCTUS_GUARD_EVENT_LOG", None)
 
 
 def _check_repo(repo, root, sid, staged):

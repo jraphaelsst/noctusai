@@ -341,11 +341,13 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
   `tools/noctus/dev` module either imports anywhere (lazy imports included), those modules' module-level transitive imports, plus the
   anchors `scripts/hooks/pre-push`, `scripts/hooks/claude-guard-release-steward.py`, `scripts/hooks/claude-guard-session-heartbeat.py`,
   `.github/workflows/merge-queue.yml`, `prod_consent.py`, `ship_consent.py`. `compliance.py` (the keeper registry every gate edits) is
-  the one deliberate exemption. The set is pinned as a snapshot in `test_check_guardian_tool_authorship.py`, so a new import is a test
+  the one deliberate exemption (residual `NOC-REMEDIATE[guardian-keeper-self-edit]`: the guardian can still neuter the keeper via
+  `compliance.py`, `scripts/hooks/pre-commit` and the `cli.py` dispatch until phase 2, the queue-only GitHub App push identity plus a
+  CI-side authorship check). The keeper derives from HEAD UNION the index, never the working tree. The set is pinned as a snapshot in `test_check_guardian_tool_authorship.py`, so a new import is a test
   diff in review. If derivation fails the keeper fails CLOSED for the guardian (refuses) and records an `unmeasured` row.
 - **Derived/CI-parity checks are sandboxed.** Items 4/5 (`export_derived_check`, `export_ci_parity_check`) run the delivery's own
-  `cli.py`/tests with a throwaway HOME, `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL` = an empty file, and every `NOCTUS_*` state/ledger
-  dir (`SANDBOX_STATE_ENV`) pointed into that temp dir, so the guardian's real `~/.noctus` is never written; a sandbox that cannot be set up is
+  `cli.py`/tests with a throwaway HOME, `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL` = an empty file, and every inherited `NOCTUS_*` key the CI
+  job env does not declare DROPPED (derived via `ci_job_env`, no hand-kept list), so the guardian's real `~/.noctus` is never written; a sandbox that cannot be set up is
   UNMEASURED (fails). Residual: this is environmental, not a kernel FS sandbox (macOS has no unprivileged one) - a delivery hard-coding an
   absolute path can still write it; the export-from-`git archive` isolation and the branch steward's review cover that.
 - **Heartbeat from a hook.** `scripts/hooks/claude-guard-session-heartbeat.py` (SessionStart + UserPromptSubmit) calls

@@ -90,3 +90,37 @@ def test_exit_zero_when_the_steward_module_is_broken(tmp_path, monkeypatch):
         hb.touch({"session_id": "s"}, root=tmp_path)
     except Exception:
         pass  # main() converts this to exit 0; asserted via the subprocess garbage test
+
+
+def test_default_root_mirrors_release_steward_default_root(tmp_path, monkeypatch):
+    from tools.noctus.dev.release_steward import default_root
+    monkeypatch.delenv("NOCTUS_STEWARD_DIR", raising=False)
+    assert hb._default_root() == default_root()
+    monkeypatch.setenv("NOCTUS_STEWARD_DIR", str(tmp_path))
+    assert hb._default_root() == default_root() == tmp_path
+
+
+def test_a_throttled_prompt_does_not_load_release_steward(tmp_path, monkeypatch):
+    import _guard_failclosed
+    loads = []
+    monkeypatch.setattr(_guard_failclosed, "load_module", lambda *a, **k: loads.append(a) or (_ for _ in ()).throw(AssertionError("loaded")))
+    assert hb.throttled(tmp_path, "sess-t", 1000.0) is False  # first touch records the marker
+    assert hb.touch({"session_id": "sess-t"}, root=tmp_path, now=1001.0) == "throttled"
+    assert loads == []
+
+
+def test_hook_runs_under_the_system_python3_and_writes_no_error_row(tmp_path):
+    import pytest
+    py = Path("/usr/bin/python3")
+    if not py.exists():
+        pytest.skip("/usr/bin/python3 absent: the hook's real interpreter cannot be exercised here")
+    home = tmp_path / "home"
+    home.mkdir()
+    events = tmp_path / "events.ndjson"
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(home), "NOCTUS_GUARD_EVENT_LOG": str(events)}
+    r = subprocess.run([str(py), str(HOOK)], input=json.dumps({"session_id": "sess-sys-py"}), capture_output=True, text=True,
+                       env=env, timeout=30, cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    rows = [json.loads(x) for x in events.read_text().splitlines()] if events.exists() else []
+    assert rows == [], rows  # a release_steward import that breaks on this interpreter would be an error row, not a silent fail-open
+    assert (home / ".noctus" / "heartbeat-throttle" / "sess-sys-py").is_file()

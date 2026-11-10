@@ -17573,53 +17573,85 @@ GUARDIAN_PROTECTED_ANCHORS = (
 )
 #: a module the roots import that stays OUT: the keeper registry every gate change edits (its authorship is
 #: reviewed per keeper, and fencing it would block every keeper commit from the guardian's seat).
+# NOC-REMEDIATE[guardian-keeper-self-edit]: the guardian can still neuter this keeper through compliance.py (exempt above), scripts/hooks/pre-commit (the keeper registration step) and the cli.py dispatch - all unanchored because every gate change edits them; closes with the queue-only GitHub App push identity (owner reminder 14) plus a CI-side authorship check keyed to that identity (phase 2) — 2026-11-10
 GUARDIAN_PROTECTED_EXEMPT = ("compliance",)
 
 
-def _dev_module_imports(path: Path, *, module_level: bool) -> set[str]:
-    """Sibling `tools.noctus.dev` modules `path` imports, by AST (never regex). `module_level=True` skips imports
-    inside function bodies (those run lazily, not at import time)."""
+class _TreeSource:
+    """Where the derivation reads module text from. Default: the working tree (the snapshot test, no git context)."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def texts(self, rel: str) -> list[str]:
+        p = self.root / rel
+        return [p.read_text(encoding="utf-8")] if p.is_file() else []
+
+
+class _GitSource(_TreeSource):
+    """HEAD UNION the index, never the working tree: an edit the committer left UNSTAGED (an import dropped from a
+    protected module) must not shrink the set, and a deletion must not drop the module. Existence is judged in
+    HEAD or the index; every blob that exists is read (a git failure on an existing blob RAISES -> fail closed)."""
+
+    def _git(self, *args: str) -> bytes:
+        import subprocess
+        r = subprocess.run(["git", *args], cwd=self.root, capture_output=True, timeout=30, check=False)
+        if r.returncode != 0:
+            raise RuntimeError(f"git {' '.join(args[:2])} exited {r.returncode}: {r.stderr.decode('utf-8', 'replace').strip()[:100]}")
+        return r.stdout
+
+    def texts(self, rel: str) -> list[str]:
+        out: list[str] = []
+        if self._git("ls-tree", "--name-only", "HEAD", "--", rel).strip():
+            out.append(self._git("show", f"HEAD:{rel}").decode("utf-8"))
+        if self._git("ls-files", "--", rel).strip():
+            out.append(self._git("show", f":{rel}").decode("utf-8"))
+        return out
+
+
+def _dev_module_imports(src: _TreeSource, module: str, *, module_level: bool) -> set[str]:
+    """Sibling `tools.noctus.dev` modules `module` imports, by AST (never regex), over every text the source has for it.
+    `module_level=True` skips imports inside function bodies (those run lazily, not at import time)."""
     import ast
-    pkg = path.parent
-    if not path.is_file():  # a root renamed/deleted in this very commit stays protected by NAME (it is in the set already)
-        return set()
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    rel_pkg = _GUARDIAN_DEV_PKG
     found: set[str] = set()
-    stack: list[ast.AST] = [tree]
-    while stack:
-        node = stack.pop()
-        for child in ast.iter_child_nodes(node):
-            if module_level and isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if isinstance(child, ast.ImportFrom):
-                mod = child.module or ""
-                if child.level == 1 or mod == "tools.noctus.dev":
-                    if mod and mod != "tools.noctus.dev":
-                        found.add(mod.split(".")[0])
-                    else:
-                        found.update(a.name for a in child.names)
-                elif mod.startswith("tools.noctus.dev."):
-                    found.add(mod.split(".")[3])
-            elif isinstance(child, ast.Import):
-                found.update(a.name.split(".")[3] for a in child.names if a.name.startswith("tools.noctus.dev."))
-            stack.append(child)
-    return {m for m in found if (pkg / f"{m}.py").is_file()}
+    for text in src.texts(f"{rel_pkg}/{module}.py"):  # a root renamed/deleted in this very commit stays protected by NAME
+        stack: list[ast.AST] = [ast.parse(text)]
+        while stack:
+            node = stack.pop()
+            for child in ast.iter_child_nodes(node):
+                if module_level and isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if isinstance(child, ast.ImportFrom):
+                    mod = child.module or ""
+                    if child.level == 1 or mod == "tools.noctus.dev":
+                        if mod and mod != "tools.noctus.dev":
+                            found.add(mod.split(".")[0])
+                        else:
+                            found.update(a.name for a in child.names)
+                    elif mod.startswith("tools.noctus.dev."):
+                        found.add(mod.split(".")[3])
+                elif isinstance(child, ast.Import):
+                    found.update(a.name.split(".")[3] for a in child.names if a.name.startswith("tools.noctus.dev."))
+                stack.append(child)
+    return {m for m in found if src.texts(f"{rel_pkg}/{m}.py")}
 
 
-def derive_guardian_protected_files(repo_root: Path | None = None) -> tuple[str, ...]:
+def derive_guardian_protected_files(repo_root: Path | None = None, *, from_git: bool = False) -> tuple[str, ...]:
     """The protected set, DERIVED (a hand-kept list drifts): the roots + every module a root imports ANYWHERE
     (lazy included) + the module-level transitive closure of those + the non-Python anchors, minus the exempt
-    keeper registry. Raises on any parse/read failure - the keeper then fails CLOSED for the guardian."""
+    keeper registry. `from_git=True` (what the keeper uses) reads HEAD UNION the index instead of the working tree.
+    Raises on any parse/read/git failure - the keeper then fails CLOSED for the guardian."""
     root = repo_root or REPO_ROOT
-    pkg = root / _GUARDIAN_DEV_PKG
+    src: _TreeSource = _GitSource(root) if from_git else _TreeSource(root)
     names: set[str] = set(GUARDIAN_PROTECTED_ROOTS)
     frontier: list[str] = []
     for r in GUARDIAN_PROTECTED_ROOTS:
-        direct = _dev_module_imports(pkg / f"{r}.py", module_level=False)
+        direct = _dev_module_imports(src, r, module_level=False)
         names |= direct
         frontier += sorted(direct)
     while frontier:
-        for dep in _dev_module_imports(pkg / f"{frontier.pop()}.py", module_level=True):
+        for dep in _dev_module_imports(src, frontier.pop(), module_level=True):
             if dep not in names:
                 names.add(dep)
                 frontier.append(dep)
@@ -17707,7 +17739,7 @@ def check_guardian_tool_authorship(
         staged = [p for p in out.splitlines() if p.strip()]
     derive_error = None
     try:
-        protected = set(derive_guardian_protected_files(repo_root))
+        protected = set(derive_guardian_protected_files(repo_root, from_git=True))
     except Exception as exc:  # noqa: BLE001 - fail CLOSED for the guardian below, never a silent allow
         protected, derive_error = set(), f"{type(exc).__name__}: {exc}"[:160]
     hits = sorted(p for p in staged if p in protected)

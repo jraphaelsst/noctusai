@@ -65,6 +65,11 @@ def throttled(root: Path, session_id: str, now: float, window: float = THROTTLE_
     return False
 
 
+def _default_root() -> Path:
+    """Mirrors `release_steward.default_root` (NOCTUS_STEWARD_DIR, else ~/.noctus) WITHOUT importing it; a test pins the parity."""
+    return Path(os.environ.get("NOCTUS_STEWARD_DIR") or Path.home() / ".noctus")
+
+
 def _telemetry(reason: str, session_id: str | None) -> None:
     try:
         from _guard_failclosed import log_event
@@ -80,12 +85,12 @@ def touch(payload: dict, *, root: Path | None = None, now: float | None = None,
     session_id = payload.get("session_id")
     if not session_id or not isinstance(session_id, str):
         return "no-session"
+    base = root if root is not None else _default_root()
+    clock = now if now is not None else time.time()
+    if throttled(Path(base), session_id, clock):  # FIRST: a throttled prompt pays no release_steward module load
+        return "throttled"
     from _guard_failclosed import load_module
     mod = load_module(STEWARD)
-    base = root if root is not None else mod.default_root()
-    clock = now if now is not None else time.time()
-    if throttled(Path(base), session_id, clock):
-        return "throttled"
     pid = claude_pid
     if pid is None:
         try:

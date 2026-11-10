@@ -1739,21 +1739,11 @@ def export_cli_help_check(cwd: str | Path | None = None, *, python: str | None =
     return check
 
 
-#: Env overrides the toolkit honours for state/ledger/lock dirs; the sandbox points each at the throwaway HOME so a
-#: delivery's own cli.py / tests can never write the guardian's real `~/.noctus` (or the `NOCTUS_*` dirs a leaked env names).
-SANDBOX_STATE_ENV = {"NOCTUS_HOME": ".noctus", "NOCTUS_STEWARD_DIR": ".noctus/steward", "NOCTUS_LEDGER_STORE": ".noctus/ledgers",
-                     "NOCTUS_GUARD_EVENT_LOG": ".noctus/guard-events.ndjson", "NOCTUS_PRIVATE_DIR": ".noctus/private",
-                     "NOCTUS_HW_LOG": ".noctus/hw-admission.ndjson", "NOCTUS_HW_SLOT_DIR": ".noctus/hw-slots",
-                     "NOCTUS_HW_RUNS_DIR": ".noctus/hw-runs", "NOCTUS_HW_QUEUE_DIR": ".noctus/hw-queue",
-                     "NOCTUS_HW_ABORTS": ".noctus/hw-trial-aborts.json", "NOCTUS_HW_SUSPEND": ".noctus/hw-admission-suspended",
-                     "NOCTUS_AGENTS_LOCK_DIR": ".noctus/agents-locks", "NOCTUS_AGENTS_ENV_FILE": ".noctus/agents.env",
-                     "NOCTUS_AGENT_MEMORY_DIR": ".noctus/agent-memory", "NOCTUS_DEV_ADVANCE_STATE": ".noctus/dev-advance.json",
-                     "NOCTUS_BG_AGENT_STATE": ".noctus/bg-agent.json", "NOCTUS_AGENT_TASKS_DIR": ".noctus/agent-tasks"}
-
-
-def sandbox_env(env: dict[str, str], home: str | Path) -> dict[str, str]:
-    """`env` re-pointed into the throwaway `home`: HOME, no system/global git config (an EMPTY global file), and every
-    noctus state/ledger dir the toolkit honours. Raises OSError when the sandbox cannot be set up (-> UNMEASURED)."""
+def sandbox_env(env: dict[str, str], home: str | Path, ci_env: dict[str, str] | None = None) -> dict[str, str]:
+    """`env` re-pointed into the throwaway `home`: HOME, no system/global git config (an EMPTY global file), and EVERY
+    inherited `NOCTUS_*` key dropped unless the CI job's own env declares it (`ci_env` = `ci_job_env(workflow)`; derived,
+    never a hand-kept list of state dirs). With HOME in the sandbox the toolkit's state defaults land there too.
+    Raises OSError when the sandbox cannot be set up (-> UNMEASURED)."""
     h = Path(home)
     (h / ".noctus").mkdir(parents=True, exist_ok=True)
     gitconfig = h / "empty.gitconfig"
@@ -1762,8 +1752,9 @@ def sandbox_env(env: dict[str, str], home: str | Path) -> dict[str, str]:
     out["HOME"] = str(h)
     out["GIT_CONFIG_NOSYSTEM"] = "1"
     out["GIT_CONFIG_GLOBAL"] = str(gitconfig)
-    for key, rel in SANDBOX_STATE_ENV.items():
-        out[key] = str(h / rel)
+    declared = ci_env or {}
+    for key in [k for k in out if k.startswith("NOCTUS_") and k not in declared]:
+        out.pop(key)
     for key in [k for k in out if k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_", "GIT_CONFIG_COUNT"))]:
         out.pop(key)
     return out
@@ -1791,7 +1782,8 @@ def export_derived_check(cwd: str | Path | None = None, *, artifacts: tuple[tupl
                 return {"ok": False, "measured": False, "results": [], "detail": f"UNMEASURED: {err}"}
             wf = Path(tree) / CI_WORKFLOW_REL
             try:
-                env = sandbox_env(export_env(tree, base_env, wf.read_text(encoding="utf-8") if wf.is_file() else ""), sandbox)
+                wf_text = wf.read_text(encoding="utf-8") if wf.is_file() else ""
+                env = sandbox_env(export_env(tree, base_env, wf_text), sandbox, ci_job_env(wf_text))
             except OSError as exc:
                 return {"ok": False, "measured": False, "results": [], "detail": f"UNMEASURED: sandbox setup failed: {exc}"[:240]}
             err = seed_isolation_error(py, tree, env)
@@ -2064,7 +2056,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 return {"ok": False, "detail": f"UNMEASURED: {CI_WORKFLOW_REL} missing at the head - the CI-blocking set cannot be derived"}
             text = wf.read_text(encoding="utf-8")
             try:
-                env = sandbox_env(export_env(tree, base_env, text), sandbox)
+                env = sandbox_env(export_env(tree, base_env, text), sandbox, ci_job_env(text))
             except OSError as exc:
                 return {"ok": False, "detail": f"UNMEASURED: sandbox setup failed: {exc}"[:240]}
             iso = seed_isolation_error(py, tree, env)

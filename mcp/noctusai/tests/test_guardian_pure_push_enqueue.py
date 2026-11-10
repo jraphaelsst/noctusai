@@ -1417,8 +1417,7 @@ _WRITES_HOME_CHECK = (
     "import os, pathlib, subprocess, sys\n"
     "h = pathlib.Path(os.environ['HOME']); (h / '.noctus').mkdir(parents=True, exist_ok=True)\n"
     "(h / '.noctus' / 'x').write_text('delivery wrote me')\n"
-    "pathlib.Path(os.environ['NOCTUS_STEWARD_DIR']).mkdir(parents=True, exist_ok=True)\n"
-    "(pathlib.Path(os.environ['NOCTUS_STEWARD_DIR']) / 'lease').write_text('x')\n"
+    "assert 'NOCTUS_STEWARD_DIR' not in os.environ  # the inherited real dir was dropped\n"
     "assert os.environ['GIT_CONFIG_NOSYSTEM'] == '1'\n"
     "assert pathlib.Path(os.environ['GIT_CONFIG_GLOBAL']).read_text() == ''\n"
     "assert not any(k.startswith('GIT_CONFIG_KEY_') for k in os.environ)\n"
@@ -1442,15 +1441,15 @@ def test_a_delivery_that_writes_home_noctus_writes_the_sandbox_not_the_real_home
 def test_sandbox_setup_failure_is_unmeasured_never_skipped(world, monkeypatch):
     _wt, head = _seed_branch(world)
 
-    def boom(env, home):
+    def boom(env, home, ci_env=None):
         raise OSError("disk full")
     monkeypatch.setattr(RS, "sandbox_env", boom)
     res = RS.export_derived_check(world.repo, artifacts=_ARTIFACTS)(head)
     assert not res["ok"] and not res["measured"] and "sandbox setup failed" in res["detail"]
 
 
-def test_sandbox_env_points_every_state_dir_into_the_throwaway_home(tmp_path):
+def test_sandbox_env_points_home_into_the_throwaway_dir_and_drops_state_dirs(tmp_path):
     env = RS.sandbox_env({"PATH": "/usr/bin", "HOME": "/real"}, tmp_path)
     assert env["HOME"] == str(tmp_path) and env["GIT_CONFIG_NOSYSTEM"] == "1"
-    assert all(str(tmp_path) in v for k, v in env.items() if k in RS.SANDBOX_STATE_ENV)
+    assert not [k for k in env if k.startswith("NOCTUS_")]
     assert Path(env["GIT_CONFIG_GLOBAL"]).read_text() == ""
