@@ -346,6 +346,7 @@ class Breaker:
         self._subs: dict[str, list[Callable[[], None]]] = {}
         self.pending_alerts: list[tuple[str, str, str]] = []  # (dedupe_key, subject, body)
         self._alerted: set[str] = set()
+        self._indexed: set[str] = set()
         self._http_alerted_at: Optional[float] = None
         self.sent_alerts = 0
 
@@ -474,7 +475,8 @@ class Breaker:
         if self._store is None:
             return
         try:
-            self._store.append_audit(BREAKER_AUDIT_KEY, json.dumps(row), BREAKER_AUDIT_CAP)
+            # inside THIS product's Redis namespace (its ACL user cannot write the global ops audit list)
+            self._store.append_audit(f"{self.key_prefix}audit", json.dumps(row), BREAKER_AUDIT_CAP)
         except Exception:  # noqa: BLE001 -- the audit must not undo a trip/re-arm; loud, not silent
             logger.error("breaker: audit row not written for %s %s", op, key, exc_info=True)
 
@@ -661,6 +663,7 @@ class Breaker:
             released = [s for s, t in self._trips.items()
                         if t.persisted and t.persisted_at <= settled and per_source.get(s) is None]
             woke: list[Callable[[], None]] = []
+            to_index: list[str] = []
             for s in released:  # a human re-armed it elsewhere (MCP tool): the key is gone -> local trip released
                 del self._trips[s]
                 self._alerted = {a for a in self._alerted if not a.startswith(f"trip:{self.slug}:{s}:")}
@@ -669,11 +672,25 @@ class Breaker:
             for s, rem in self._remote_held.items():
                 if s not in self._trips:
                     woke.extend(self._subs.get(s, ()))
+                    to_index.append(s)
             if self._fleet is not None:
                 for subs in self._subs.values():
                     woke.extend(subs)
+        for src in to_index:  # network: outside the lock
+            self._index_observed(src)
         for cb in woke:
             self._call_sub(cb)
+
+    def _index_observed(self, source: str) -> None:
+        """A key an operator set by hand (ops has no SADD) is added to this product's index when first observed, so
+        `noctus.dev.supabase_breaker status` can list it. Best effort, once per source."""
+        if source in self._indexed or self._store is None or not hasattr(self._store, "index"):
+            return
+        self._indexed.add(source)
+        try:
+            self._store.index(self.key_for(source))
+        except Exception:  # noqa: BLE001 -- listing aid only; the hold itself is already honoured
+            logger.error("breaker: could not index operator-set key for %s", source, exc_info=True)
 
     def _due(self) -> bool:
         with self._lock:
@@ -705,6 +722,9 @@ class Breaker:
         """Release ``source`` (or the fleet key with ``source='fleet'``). A human, with a reason — never automatic."""
         if not (by or "").strip() or not (reason or "").strip():
             raise ValueError("re-arm needs who (by) and why (reason)")
+        if source == "fleet":
+            raise ValueError("the fleet key is re-armed by ops only (noctus.dev.supabase_breaker): a product's Redis "
+                             "identity can read it, never delete it")
         key = BREAKER_FLEET_KEY if source == "fleet" else self.key_for(source)
         with self._lock:
             local = self._trips.get(source)

@@ -53,7 +53,7 @@ keys fails OPEN (sources keep running) and alerts "breaker BLIND" once per outag
 `NoctusAI <noreply@noctusai.com>`). Missing config raises `BreakerAlertNotConfigured` naming what is missing; the alert is
 logged at CRITICAL and kept for retry (30 s doubling to 15 min). A trip with no alerter is still a trip.
 
-**Re-arm is human-only and needs a reason** (route / MCP tool / `Breaker.rearm`): deletes the key, records who+why (route and MCP both: the capped (1,000) list `noctus:breaker:audit`), the parked source resumes within ~10-15 s. A re-arm that cannot delete a persisted key
+**Re-arm is human-only and needs a reason** (route / MCP tool / `Breaker.rearm`): deletes the key, records who+why (the route writes the capped (1,000) list `noctus:breaker:<slug>:audit` inside the product's own Redis namespace; the MCP tool writes the ops-only `noctus:breaker:audit`), the parked source resumes within ~10-15 s. A re-arm that cannot delete a persisted key
 raises — it never pretends.
 
 ## Rules for code that adds a loop
@@ -67,3 +67,9 @@ raises — it never pretends.
   are covered; product-local ones are found by grep for `create_client(` outside the seed (list in the PR).
 - Sources are per process: two containers each tripping is two keys' worth of alerts (deduped per product+source+time).
 - The EOA event is a log line + sink seam; the table is `NOC-REMEDIATE[breaker-event-table]`.
+
+## Redis ACL compatibility (feat/redis-acl-lockdown)
+- **Product identity** = `%R~noctus:breaker:fleet` + `%RW~noctus:breaker:<slug>:*`. The breaker writes only per-source keys, the per-slug index `noctus:breaker:<slug>:index` (SADD/SREM) and `noctus:breaker:<slug>:audit`; it reads only the fleet key and its own keys. It can NOT delete the fleet key (`Breaker.rearm("fleet")` refuses). Pinned by a key-spy test.
+- **Enumeration without SCAN** (the ops user has no `+scan`): `status` reads the fleet key + each live product's index set (`SMEMBERS`, products from `deploy/fleet/build-scope.txt`); re-arm `SREM`s. A key set by hand with `action=trip` (ops has no `SADD`) is indexed by the product when it first observes it.
+- **MCP tool** (`VpsRedisOps`): probes once whether the `ops` password file (`ops.pass`, in the VPS fleet `redis-auth` directory that feat/redis-acl-lockdown creates) is readable on the VPS. Present -> container `noctus-redis-acl`, `REDISCLI_AUTH="$(cat ops.pass)" docker exec -e REDISCLI_AUTH ... redis-cli --no-auth-warning --user ops` (secret read on the VPS, never sent over SSH, never argv). Absent -> today's `noctus-redis`, no auth. A probe that cannot reach the host raises (never silently the unauthenticated Redis). `NOAUTH`/`WRONGPASS`/`NOPERM` fail loud. The audit cap needs `LTRIM`, which the documented ops grant lacks: a denied LTRIM is returned as a warning (the row is written, the re-arm stands) — add `+ltrim` to ops to enforce the cap.
+- `rearm`/`trip` with `confirm=True` are steward-class (in-tool refusal for non-steward sessions).

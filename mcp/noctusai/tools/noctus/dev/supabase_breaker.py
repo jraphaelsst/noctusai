@@ -21,10 +21,12 @@ import json
 import os
 import re
 import shlex
+from pathlib import Path
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
+from . import release_steward as _steward
 from . import toolkit_freshness as _toolkit_freshness
 
 PREFIX = "noctus:breaker:"
@@ -38,7 +40,9 @@ ACTIONS = ("status", "rearm", "trip")
 
 
 class RedisOps(Protocol):
-    def scan(self) -> list[str]: ...
+    def smembers(self, key: str) -> list[str]: ...
+
+    def srem(self, key: str, member: str) -> None: ...
 
     def mget(self, keys: list[str]) -> list[str | None]: ...
 
@@ -54,20 +58,31 @@ class RedisOpsError(RuntimeError):
 
 
 class FakeRedisOps:
-    """In-memory Fake of the prod Redis (tests; also the offline default when no host is reachable)."""
+    """In-memory Fake of the prod Redis (tests). The per-slug index set mirrors what the products SADD: it is derived
+    from the per-source keys present in ``data``."""
 
     def __init__(self, data: dict[str, str] | None = None) -> None:
         self.data = dict(data or {})
         self.audit: list[str] = []
+        self.removed_from_index: set[str] = set()
 
-    def scan(self) -> list[str]:
-        return sorted(k for k in self.data if k.startswith(PREFIX))
+    def smembers(self, key: str) -> list[str]:
+        prefix = key.removesuffix("index")
+        return sorted(k for k in self.data if k.startswith(prefix) and k != key and not k.endswith((":index", ":audit"))
+                      and k not in self.removed_from_index and k != FLEET_KEY)
+
+    def srem(self, key: str, member: str) -> None:
+        self.removed_from_index.add(member)
+
+    def get(self, key: str) -> str | None:
+        return self.data.get(key)
 
     def mget(self, keys: list[str]) -> list[str | None]:
         return [self.data.get(k) for k in keys]
 
     def set(self, key: str, value: str) -> None:
         self.data[key] = value
+        self.removed_from_index.discard(key)
 
     def delete(self, key: str) -> None:
         self.data.pop(key, None)
@@ -77,29 +92,66 @@ class FakeRedisOps:
         del self.audit[:-cap]
 
 
+OPS_PASS_FILE = "/opt/noctus/noctusai/deploy/fleet/redis-auth/ops.pass"
+REDIS_ACL_CONTAINER = "noctus-redis-acl"
+REDIS_PLAIN_CONTAINER = "noctus-redis"
+_AUTH_ERRORS = ("NOAUTH", "WRONGPASS", "NOPERM")
+
+
 class VpsRedisOps:
-    """`docker exec noctus-redis redis-cli ...` through the shared throttled + circuit-broken SSH chokepoint."""
+    """`redis-cli` in the Redis container over the shared throttled + circuit-broken SSH chokepoint.
 
-    def __init__(self, ssh_host: str = "noctus-vps", container: str = "noctus-redis", runner: Callable | None = None) -> None:
+    Branch (probed once per instance): when ``ops.pass`` is readable on the VPS the fleet Redis is behind ACLs
+    (feat/redis-acl-lockdown) -> container ``noctus-redis-acl`` and the ``ops`` user, the secret read ON THE VPS into
+    ``REDISCLI_AUTH`` (never sent over SSH, never on argv). Otherwise today's unauthenticated ``noctus-redis``. A probe
+    that cannot reach the host raises: an ssh failure must never silently select the unauthenticated Redis.
+    Key enumeration never SCANs (the ops ACL has no ``+scan``): per-product index sets ``noctus:breaker:<slug>:index``."""
+
+    def __init__(self, ssh_host: str = "noctus-vps", container: str | None = None, runner: Callable | None = None) -> None:
         self._host, self._container, self._runner = ssh_host, container, runner
+        self._acl: bool | None = None
+        self.warnings: list[str] = []
 
-    def _cli(self, *args: str) -> str:
+    def _run(self, cmd: str):
         from ._vps_ssh import run_remote
 
-        cmd = f"docker exec {shlex.quote(self._container)} redis-cli " + " ".join(shlex.quote(a) for a in args)
-        rc, out, err = (self._runner or run_remote)(self._host, cmd)
-        if rc != 0 or "NOAUTH" in out or "ERR" in out.split("\n", 1)[0][:4]:
-            raise RedisOpsError(f"redis-cli {args[0]} failed (rc={rc}): {(err or out).strip()[:300]}")
+        return (self._runner or run_remote)(self._host, cmd)
+
+    def _use_acl(self) -> bool:
+        if self._acl is None:
+            rc, _out, err = self._run(f"test -r {OPS_PASS_FILE}")
+            if rc not in (0, 1):
+                raise RedisOpsError(f"cannot tell whether the Redis ACL ops.pass exists (rc={rc}): {(err or '').strip()[:200]}")
+            self._acl = rc == 0
+        return self._acl
+
+    def _cli(self, *args: str) -> str:
+        acl = self._use_acl()
+        quoted = " ".join(shlex.quote(a) for a in args)
+        if acl:
+            container = self._container or REDIS_ACL_CONTAINER
+            cmd = (f'REDISCLI_AUTH="$(cat {OPS_PASS_FILE})" docker exec -e REDISCLI_AUTH {shlex.quote(container)} '
+                   f"redis-cli --no-auth-warning --user ops {quoted}")
+        else:
+            container = self._container or REDIS_PLAIN_CONTAINER
+            cmd = f"docker exec {shlex.quote(container)} redis-cli {quoted}"
+        rc, out, err = self._run(cmd)
+        text = f"{out}\n{err}"
+        denied = next((m for m in _AUTH_ERRORS if m in text), None)
+        if rc != 0 or denied or "ERR" in out.split("\n", 1)[0][:4]:
+            raise RedisOpsError(f"redis-cli {args[0]} failed (rc={rc}{', ' + denied if denied else ''}): "
+                                f"{(err or out).strip()[:300]}")
         return out
 
-    def scan(self) -> list[str]:
-        return [k for k in self._cli("--scan", "--pattern", f"{PREFIX}*").splitlines() if k.strip()]
+    def get(self, key: str) -> str | None:
+        return self._cli("get", key).rstrip("\n") or None
+
+    def smembers(self, key: str) -> list[str]:
+        return sorted(m for m in self._cli("smembers", key).splitlines() if m.strip())
 
     def mget(self, keys: list[str]) -> list[str | None]:
-        if not keys:
-            return []
         # one GET per key: redis-cli's MGET output cannot distinguish an empty line from nil with multi-line values
-        return [self._cli("get", k).rstrip("\n") or None for k in keys]
+        return [self.get(k) for k in keys]
 
     def set(self, key: str, value: str) -> None:
         self._cli("set", key, value)
@@ -107,9 +159,26 @@ class VpsRedisOps:
     def delete(self, key: str) -> None:
         self._cli("del", key)
 
+    def srem(self, key: str, member: str) -> None:
+        self._cli("srem", key, member)
+
     def append_audit(self, key: str, value: str, cap: int) -> None:
         self._cli("rpush", key, value)
-        self._cli("ltrim", key, str(-cap), "-1")  # capped audit list
+        try:
+            self._cli("ltrim", key, str(-cap), "-1")  # capped audit list
+        except RedisOpsError as exc:  # the row IS written; a denied/failed cap must be loud, never undo a re-arm
+            self.warnings.append(f"audit cap (ltrim) not applied: {exc}")
+
+
+def _live_slugs() -> list[str]:
+    """The catalog-live product slugs (deploy/fleet/build-scope.txt, derived — never a hand list) + core."""
+    root = Path(__file__).resolve().parents[5]
+    try:
+        names = [ln.strip() for ln in (root / "deploy/fleet/build-scope.txt").read_text().splitlines()
+                 if ln.strip() and not ln.startswith("#")]
+    except OSError as exc:
+        raise RedisOpsError(f"cannot list the live products (deploy/fleet/build-scope.txt): {exc}; pass product=") from exc
+    return sorted(set(names) | {"core"})
 
 
 def _key(source: str, product: str) -> str:
@@ -144,10 +213,15 @@ def _default_executor(*, action: str, source: str, product: str, reason: str, by
     who = (by or os.environ.get("USER") or "unknown").strip()
     try:
         if action == "status":
-            keys = [k for k in ops.scan() if k != AUDIT_KEY]
+            # No SCAN (the ops ACL has no +scan): the fleet key + each product's index set `noctus:breaker:<slug>:index`.
+            keys = [FLEET_KEY]
+            for slug in ([product] if product else _live_slugs()):
+                keys.extend(ops.smembers(f"{PREFIX}{slug}:index"))
             values = ops.mget(keys)
-            held = {k: (json.loads(v) if v and v.startswith("{") else v) for k, v in zip(keys, values)}
-            return {"action": "status", "held": held, "fleet_held": FLEET_KEY in held, "count": len(held)}
+            held = {k: (json.loads(v) if v and v.startswith("{") else v) for k, v in zip(keys, values) if v}
+            return {"action": "status", "held": held, "fleet_held": FLEET_KEY in held, "count": len(held),
+                    "note": "per-source keys are listed from the per-product index sets (a key set by hand with "
+                            "action=trip is indexed by the product when it observes it)"}
         key = _key(source, product)
         current = ops.mget([key])[0]
         if action == "rearm":
@@ -158,9 +232,11 @@ def _default_executor(*, action: str, source: str, product: str, reason: str, by
             if current is None:
                 return {**plan, "note": "key absent: nothing to re-arm (the source is not held)"}
             ops.delete(key)
+            if source != "fleet":
+                ops.srem(f"{PREFIX}{product}:index", key)  # keep the index honest (ops has +srem, not +scan)
             ops.append_audit(AUDIT_KEY, json.dumps({"op": "rearm", "key": key, "by": who, "reason": reason, "at": when,
                                                     "was": current}), AUDIT_CAP)
-            return {**plan, "rearmed": True}
+            return {**plan, "rearmed": True, **({"warnings": list(ops.warnings)} if getattr(ops, "warnings", None) else {})}
         state = json.dumps({"reason": reason, "rate": 0, "window": 0, "tripped_at": when, "by": f"manual:{who}"})
         plan = {"action": "trip", "key": key, "state": json.loads(state), "already_held": current is not None}
         if not confirm:
@@ -168,7 +244,7 @@ def _default_executor(*, action: str, source: str, product: str, reason: str, by
         ops.set(key, state)
         ops.append_audit(AUDIT_KEY, json.dumps({"op": "trip", "key": key, "by": who, "reason": reason, "at": when}),
                          AUDIT_CAP)
-        return {**plan, "tripped": True}
+        return {**plan, "tripped": True, **({"warnings": list(ops.warnings)} if getattr(ops, "warnings", None) else {})}
     except RedisOpsError as exc:
         return {"ok": False, "status": "error", "error": str(exc)}
 
@@ -221,6 +297,11 @@ def register(server) -> None:
         ssh_host: str = "noctus-vps",
         allow_stale_toolkit: bool = False,
     ) -> dict:
+        # Steward-class backstop (rearm|trip with confirm=True), same shape as deploy_image / migrate_product: the
+        # PreToolUse hook covers the harness; this covers a peer's MCP server. status / dry-runs are never refused.
+        refused = _steward.tool_refusal("noctus.dev.supabase_breaker", {"action": action, "confirm": confirm})
+        if refused is not None:
+            return refused
         return supabase_breaker(action, source=source, product=product, reason=reason, by=by, confirm=confirm,
                                 ssh_host=ssh_host, allow_stale_toolkit=allow_stale_toolkit)
 

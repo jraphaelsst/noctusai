@@ -48,11 +48,32 @@ class RedisBreakerStore:
     def mget(self, keys: list[str]) -> list[Optional[str]]:
         return list(self._r.mget(keys))
 
+    @staticmethod
+    def index_key(key: str) -> Optional[str]:
+        """``noctus:breaker:<slug>:<source>`` -> its per-slug index set ``noctus:breaker:<slug>:index`` (None for the
+        fleet key and anything else outside a product namespace). A product has RW only on its own namespace and the
+        ops identity has no SCAN, so enumeration goes through this index (SADD here, SMEMBERS/SREM by ops)."""
+        parts = key.split(":", 3)
+        if len(parts) < 4 or parts[0] != "noctus" or parts[1] != "breaker" or parts[3] in ("index", "audit"):
+            return None
+        return f"noctus:breaker:{parts[2]}:index"
+
     def set(self, key: str, value: str) -> None:
         self._r.set(key, value)  # no TTL by design: a trip persists across restarts until a human re-arms
+        idx = self.index_key(key)
+        if idx:
+            self._r.sadd(idx, key)
+
+    def index(self, key: str) -> None:
+        idx = self.index_key(key)
+        if idx:
+            self._r.sadd(idx, key)
 
     def delete(self, key: str) -> None:
         self._r.delete(key)
+        idx = self.index_key(key)
+        if idx:
+            self._r.srem(idx, key)
 
     def append_audit(self, key: str, value: str, cap: int) -> None:
         pipe = self._r.pipeline()

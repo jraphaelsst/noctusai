@@ -825,9 +825,40 @@ def test_every_wired_tool_name_is_a_registered_steward_class_name():
                     ("noctus.dev.deploy_pull", "deploy_pull.py"), ("noctus.dev.deploy_image", "deploy_image.py"),
                     ("noctus.dev.migrate_product", "migrate_product.py"),
                     ("noctus.dev.record_applied_migrations", "record_applied_migrations.py"),
-                    ("noctus.vps.recreate", "vps.py")):
+                    ("noctus.vps.recreate", "vps.py"),
+                    ("noctus.dev.supabase_breaker", "supabase_breaker.py")):
         assert f'_steward.tool_refusal("{key}"' in src[fn], (key, fn)
         assert key in rs._MCP_NAMES.values()
+
+
+# NOC-REMEDIATE[supabase-breaker-steward-name]: the `_MCP_NAMES` entry + classify_tool branch for noctus.dev.supabase_breaker land with feat/guard-supabase-breaker (release_steward.py is guardian-protected); until then the refused-in-tool tests skip and test_every_wired_tool_name_is_a_registered_steward_class_name fails on `_MCP_NAMES` — 2026-11-10
+_BREAKER_GATED = "noctus.dev.supabase_breaker" in rs._MCP_NAMES.values()
+
+
+class TestSupabaseBreakerBackstop:
+    """rearm|trip with confirm=True is steward-class: a non-steward session is refused INSIDE the tool; status and
+    dry-runs never are."""
+
+    @pytest.mark.skipif(not _BREAKER_GATED, reason="waits for feat/guard-supabase-breaker (the _MCP_NAMES entry)")
+    @pytest.mark.parametrize("action", ["rearm", "trip"])
+    def test_confirm_write_from_a_non_steward_is_refused_in_tool(self, store, action):
+        store.claim(STEWARD, "noctusai-51", claude_pid=100)
+        r = rs.tool_refusal("noctus.dev.supabase_breaker", {"action": action, "confirm": True}, store=store,
+                            env={rs.SESSION_ENV: PEER})
+        assert r["ok"] is False and r["status"] == "refused_not_steward"
+
+    @pytest.mark.skipif(not _BREAKER_GATED, reason="waits for feat/guard-supabase-breaker (the _MCP_NAMES entry)")
+    def test_the_steward_is_allowed(self, store):
+        store.claim(STEWARD, claude_pid=100)
+        assert rs.tool_refusal("noctus.dev.supabase_breaker", {"action": "rearm", "confirm": True}, store=store,
+                               env={rs.SESSION_ENV: STEWARD}) is None
+
+    @pytest.mark.parametrize("args", [{"action": "status", "confirm": True}, {"action": "rearm", "confirm": False},
+                                      {"action": "trip", "confirm": False}, {"action": "status"}])
+    def test_status_and_dry_runs_are_never_refused(self, store, args):
+        store.claim(STEWARD, "noctusai-51", claude_pid=100)
+        assert rs.tool_refusal("noctus.dev.supabase_breaker", args, store=store,
+                               env={rs.SESSION_ENV: PEER}) is None
 
 
 THIRD = "33333333-cccc"
