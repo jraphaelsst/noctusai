@@ -33,6 +33,7 @@ from tools.noctus.dev.verify_db_guards import (  # noqa: E402
     _AGENTS_GERACAO_PROBES,
     _AGENTS_ISOLATION_PROBES,
     _AGENTS_JULIA_V2_PROBES,
+    _AGENTS_RETOMADA_PROBES,
     DEFAULT_REGISTRY,
     REGISTERED_GUARD_NAMES,
     GuardProbe,
@@ -645,6 +646,7 @@ class TestAgentsStudioProbes:
             # 074 fallback number: own group (runtime_settings, no agent fixture), same replay file
             and p not in _AGENTS_FALLBACK_PROBES
             and p not in _AGENTS_EVAL_LOOP_PROBES  # 075: same replay file
+            and p not in _AGENTS_RETOMADA_PROBES  # 080 follow-up cap: same replay file
             and p not in _AGENTS_ISOLATION_PROBES
         ]
 

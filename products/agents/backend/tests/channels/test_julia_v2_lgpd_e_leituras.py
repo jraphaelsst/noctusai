@@ -182,5 +182,5 @@ class TestTheGeneratedContract:
         assert {"respondido", "silencio", "handoff", "encerrado", "concluido", "agente_desligado", "agente_desligado_plataforma", "restrito_avaliacao",
                 "novo_lead_recusado",
                 "conversa_pausada", "conversa_com_outro_responsavel", "conversa_com_outro_agente",
-                "reengajamento_ignorado", "lead_opt_out", "limite_atingido", "limite_taxa", "novo_lead_limitado",
+                "reengajamento_ignorado", "limite_retomadas", "lead_opt_out", "limite_atingido", "limite_taxa", "novo_lead_limitado",
                 "loop_detectado"} == statuses

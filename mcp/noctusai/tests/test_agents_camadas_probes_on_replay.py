@@ -1,4 +1,4 @@
-"""Agents 073 (agent layers BASE -> SDR -> agent), 074 (hand-off fallback number) and 076 (eval-loop gate): every GuardProbe of each
+"""Agents 073 (agent layers BASE -> SDR -> agent), 074 (hand-off fallback number), 076 (eval-loop gate) and 080 (follow-up cap): every GuardProbe of each
 migration runs on the REAL core + agents chain on PGlite and reports `refused`. Own groups, like 049's geracao
 probes: the 012-017 studio-probe class excludes them."""
 from __future__ import annotations
@@ -20,6 +20,9 @@ _GROUPS = {
                                             {"runtime_settings_key_check", "runtime_settings_numero_fallback_e164"}),
     "076_eval_loops.sql": (vdg._AGENTS_EVAL_LOOP_PROBES,
                            {"eval_loops_parada_consistente", "uq_agents_eval_loops_ativo_por_suite"}),
+    "080_retomada_limite.sql": (vdg._AGENTS_RETOMADA_PROBES,
+                                {"thread_retomada_eventos_append_only", "thread_retomada_eventos_resultado_check",
+                                 "qualificacao_parametros_max_retomadas_check"}),
 }
 
 

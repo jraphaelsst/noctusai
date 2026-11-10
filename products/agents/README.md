@@ -196,6 +196,10 @@ model only records criterion values through tools; **score and stage are compute
   (factor after N days without a lead reply). `parametros.lote_ofertas` (properties per offer run) defaults to **3**
   by the owner's rule (at most 3 per run, then Julia asks whether the lead wants more; migration 055 default, 1..5,
   shown in the Studio editor).
+  Follow-up cap (owner 2026-11-10): `parametros.max_retomadas_seguidas` (default **2**, 0..10, migration 080) is the most
+  follow-ups (`gatilho:"reengajamento"`) in a row with no reply from the lead; `controles.decidir` refuses one more with
+  status `limite_retomadas` (no model call, nothing stored; opt-out is decided first), every outcome is one append-only
+  `thread_retomada_eventos` row, and social-wiring ends that contact's sequence.
 - **Timestamps** read back from the DB go through `app.stores._util.db_ts` (PostgREST returns ISO strings,
   the Fakes hold `datetime`); a mapper that passes the string through 500s the first `.isoformat()`.
 - **Stages** are rules in a closed DSL (`todos/algum/nao`, `criterio`, `score` incl. `eixo`, `evento`,
