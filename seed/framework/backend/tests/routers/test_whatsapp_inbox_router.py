@@ -594,3 +594,52 @@ def test_read_only_unmounted_routes_are_an_explicit_pinned_list():
         ("POST", "/{connection_id}/chats/{chat_id:path}/messages"),
         ("POST", "/{connection_id}/backfill"),
     )
+
+
+def test_webhook_only_mounts_nothing_but_the_webhook():
+    r = create_whatsapp_inbox_router(
+        chat_store_factory=lambda: None, connection_store_factory=lambda: None, get_current_user_org=lambda: None,
+        realtime=build_inbox_realtime(allow_in_process=True), webhook_only=True,
+    )
+    assert {(m, route.path) for route in r.routes for m in getattr(route, "methods", ())} == {
+        ("POST", "/api/whatsapp/webhook/{token}")
+    }
+
+
+def test_require_webhook_hmac_without_a_secret_is_401_to_everything_and_refuses_a_deploy_boot(monkeypatch):
+    from noctusai_seed.whatsapp_inbox_router import WebhookHmacRequired
+
+    def build(secret):
+        app = FastAPI()
+        app.include_router(create_whatsapp_inbox_router(
+            chat_store_factory=lambda: None, connection_store_factory=lambda: None,
+            get_current_user_org=lambda: None, webhook_hmac_secret=secret, require_webhook_hmac=True,
+        ))
+        return app
+
+    assert TestClient(build(None)).post("/api/whatsapp/webhook/t", content=b"{}").status_code == 401
+    monkeypatch.setattr("noctusai_seed.whatsapp_inbox_router.is_deploy_context", lambda: True)
+    with pytest.raises(WebhookHmacRequired):
+        build(None)
+    build("a-secret")
+
+
+def test_on_session_status_fires_for_session_events_and_a_raising_hook_still_acks():
+    seen = []
+
+    def hook(record, status_value):
+        seen.append(status_value)
+        raise RuntimeError("boom")
+
+    h = _Harness()
+    _id, path = h.create_connection()
+    h.client.app.include_router(create_whatsapp_inbox_router(
+        chat_store_factory=lambda: h.chat_store, connection_store_factory=lambda: h.conn_store,
+        get_current_user_org=_auth(), on_session_status=hook, webhook_path_prefix="/api/hook2",
+    ))
+    resp = h.client.post(
+        path.replace("/api/whatsapp/webhook", "/api/hook2"),
+        content=json.dumps({"event": "session.status", "payload": {"status": "WORKING"}}).encode(),
+        headers={"content-type": "application/json"},
+    )
+    assert resp.status_code == 200 and seen == ["WORKING"]

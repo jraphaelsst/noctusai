@@ -69,6 +69,7 @@ PRODUCTS=(
   "store:Store:8018:8220"
   "commerce:Commerce:8019:8230"
   "monica:Monica:8020:8240"
+  "assistant:Assistant:8021:8250"
 )
 # END_PRODUCTS_REGISTRY
 
