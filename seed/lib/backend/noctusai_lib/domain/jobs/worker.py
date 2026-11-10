@@ -197,6 +197,7 @@ class Worker:
         # sleep (see `jobs/wake.py`); cross-process producers wait <= cap.
         self._waker = _wake.register(asyncio.get_running_loop(), self._job_types)
         try:
+            # poll-budget: claim poll, 1s base doubling to the 30s cap when idle, reset on work, cut short by an in-process enqueue wake; 1 calls/tick (rpc claim_next_job); worst 2880/day per idle worker at the 30s cap (120/h), 86400/day only while busy at the 1s base; idle=backoff
             while True:
                 if stop_event is not None and stop_event.is_set():
                     break
@@ -250,6 +251,7 @@ class Worker:
         (e.g. `complete_job` is a no-op once already COMPLETED).
         """
         try:
+            # poll-budget: lease heartbeat at lease_seconds/2 (300s at the 600s default) while a job runs; 1 calls/tick (rpc extend_lease); worst 288/day per continuously running job, 0/day when idle; idle=event
             while True:
                 await asyncio.sleep(self._heartbeat_interval)
                 try:

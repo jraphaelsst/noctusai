@@ -445,8 +445,10 @@ class FakeJobRepository:
         return _stats_of(self._jobs.values(), job_types=job_types, now=self._now())
 
 
-#: Upper bound on RUNNING rows a `queue_stats` read pulls (bounded by worker concurrency).
-STATS_ROW_CAP = 5000
+#: Upper bound on RUNNING rows a `queue_stats` read pulls. RUNNING rows are bounded by worker concurrency
+#: (a handful of workers x their claim concurrency, each holding one job), so 500 is far above the live
+#: maximum yet keeps the cached (30 s TTL) per-tick read small. Counts never use this cap (`count="exact"`).
+RUNNING_ROW_CAP = 500
 
 #: How long `RealSupabaseJobRepository.queue_stats` serves a cached answer.
 DEFAULT_STATS_TTL_SECONDS = 30.0
@@ -834,7 +836,7 @@ class RealSupabaseJobRepository:
                 self._table_builder()
                 .select("worker_id,lease_expires_at")
                 .eq("status", JobStatus.RUNNING.value)
-                .limit(STATS_ROW_CAP)
+                .limit(RUNNING_ROW_CAP)
             )
         )
         errored = await self._execute(
