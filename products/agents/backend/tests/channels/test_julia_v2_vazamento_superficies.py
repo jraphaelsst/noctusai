@@ -167,6 +167,16 @@ class TestEvalOutputs:
         assert r.result.status in ("aprovado", "reprovado")
 
 
+    @pytest.mark.asyncio
+    async def test_a_raw_placeholder_fails_the_case_with_its_own_reason(self):
+        # The placeholder_cru branch once logged an undefined `case_id`: the NameError turned the named
+        # refusal into a generic case failure. It must read as the placeholder refusal, never be judged.
+        runner, run, evals, agent = self._world(lambda spec: "Olá! Aqui é a {{org.nome_organizacao}}.", guardar=True)
+        await runner.execute(self.ORG, run.id)
+        [r] = evals.list_results_with_cases(self.ORG, agent.id, run.id)
+        assert r.result.status == "erro" and r.result.saida is None
+        assert "placeholder cru" in (r.result.notas_juiz or ""), r.result.notas_juiz
+
 def test_the_guard_helpers_agree_on_what_a_leak_is():
     assert c.GuardaVazamento(PROMPT).verificar(_vazar(PROMPT)) is not None
     assert seed_org_role is not None and wait_turn_released is not None
