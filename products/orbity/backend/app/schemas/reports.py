@@ -99,12 +99,10 @@ class PublicReportOut(StrictHttpModel):
 
     model_config = {"extra": "ignore"}
 
-    report_id: UUID
     name: str
     period_start: date
     period_end: date
     status: str
     expires_at: Optional[datetime] = None
-    snapshot_id: Optional[UUID] = None
     generated_at: Optional[datetime] = None
     payload: dict[str, Any] = Field(default_factory=dict)
