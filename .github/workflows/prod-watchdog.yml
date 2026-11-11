@@ -18,7 +18,7 @@ name: Prod Watchdog (off-host)
 # WhatsApp. Schedules fire only from the default branch (main), and GitHub may
 # delay or skip a cron tick under load.
 #
-# Secrets (names only): NOCTUS_VPS_HOST, NOCTUS_VPS_WATCHDOG_KEY, RESEND_API_KEY,
+# Secrets (names only): NOCTUS_VPS_HOST, NOCTUS_VPS_WATCHDOG_KEY, SUPABASE_ACCESS_TOKEN (scoped PAT), NOCTUS_VPS_BREAKER_KEY, NOCTUS_VPS_KNOWN_HOSTS, RESEND_API_KEY,
 # WAHA_BASE_URL, WAHA_API_KEY, WAHA_SESSION, WATCHDOG_ALERT_WHATSAPP.
 # Variable: WATCHDOG_ALERT_EMAIL. Runbook: KB § PATTERNS/devops/prod-watchdog.md.
 
@@ -29,6 +29,10 @@ on:
     inputs:
       send_test_alert:
         description: "Also push a TEST message through every configured alert channel"
+        type: boolean
+        default: false
+      breaker_rearmed:
+        description: "A human re-armed the Supabase fleet breaker (noctus.dev.supabase_breaker): clear the sticky alert"
         type: boolean
         default: false
 
@@ -45,18 +49,17 @@ jobs:
     name: Probe prod + alert on change
     runs-on: ubuntu-latest
     timeout-minutes: 8
-    # Map secrets to job env — the `secrets` context is FORBIDDEN in step `if:`
-    # (it fails the workflow at STARTUP, 0s, no logs). Gate on a STEP OUTPUT
-    # derived from these env vars instead. (memory feedback_ci_secrets_in_if_startup_failure)
+    # SECRETS ARE STEP-SCOPED, never job env: this is a PUBLIC repo and job env is visible to every step and
+    # action (checkout, cache, ...). Each secret is mapped only into the step that needs it. A step `if:` may
+    # not use the `secrets` context (it fails the workflow at STARTUP, 0s, no logs), so the SSH gate is a
+    # STEP OUTPUT derived inside the guard step. (memory feedback_ci_secrets_in_if_startup_failure)
+    #
+    # `environment:` lets the owner put NOCTUS_VPS_BREAKER_KEY + SUPABASE_ACCESS_TOKEN (and the rest) in a
+    # GitHub Environment restricted to `main`; with no such environment configured the secrets simply
+    # resolve from the repository (the environment is auto-created with no protection), so it stays optional.
+    # See KB § PATTERNS/devops/prod-watchdog.md § 7b.
+    environment: prod-watchdog
     env:
-      NOCTUS_VPS_HOST: ${{ secrets.NOCTUS_VPS_HOST }}
-      VPS_WATCHDOG_KEY: ${{ secrets.NOCTUS_VPS_WATCHDOG_KEY }}
-      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-      WAHA_BASE_URL: ${{ secrets.WAHA_BASE_URL }}
-      WAHA_API_KEY: ${{ secrets.WAHA_API_KEY }}
-      WAHA_SESSION: ${{ secrets.WAHA_SESSION }}
-      WATCHDOG_ALERT_WHATSAPP: ${{ secrets.WATCHDOG_ALERT_WHATSAPP }}
-      WATCHDOG_ALERT_EMAIL: ${{ vars.WATCHDOG_ALERT_EMAIL || 'joaoraphaelsst@gmail.com' }}
       STATE_FILE: .prod-watchdog/state.json
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -75,6 +78,9 @@ jobs:
 
       - name: Guard — SSH leg needs host + restricted key
         id: guard
+        env:
+          NOCTUS_VPS_HOST: ${{ secrets.NOCTUS_VPS_HOST }}
+          VPS_WATCHDOG_KEY: ${{ secrets.NOCTUS_VPS_WATCHDOG_KEY }}
         run: |
           if [[ -z "${NOCTUS_VPS_HOST:-}" || -z "${VPS_WATCHDOG_KEY:-}" ]]; then
             echo "::warning::SSH leg skipped: NOCTUS_VPS_HOST / NOCTUS_VPS_WATCHDOG_KEY not set. HTTP checks and alerting still run. See KB § PATTERNS/devops/prod-watchdog.md."
@@ -85,11 +91,27 @@ jobs:
 
       - name: Write the restricted key
         if: ${{ steps.guard.outputs.ready == '1' }}
+        env:
+          VPS_WATCHDOG_KEY: ${{ secrets.NOCTUS_VPS_WATCHDOG_KEY }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$VPS_WATCHDOG_KEY" > ~/.ssh/watchdog-key
           chmod 600 ~/.ssh/watchdog-key
           echo "WATCHDOG_SSH_KEY_FILE=$HOME/.ssh/watchdog-key" >> "$GITHUB_ENV"
+
+      - name: Write the breaker key (a SEPARATE forced-command key that can only SET the breaker)
+        env:
+          NOCTUS_VPS_HOST: ${{ secrets.NOCTUS_VPS_HOST }}
+          BREAKER_KEY: ${{ secrets.NOCTUS_VPS_BREAKER_KEY }}
+        run: |
+          if [[ -n "${NOCTUS_VPS_HOST:-}" && -n "${BREAKER_KEY:-}" ]]; then
+            mkdir -p ~/.ssh && chmod 700 ~/.ssh
+            printf '%s\n' "$BREAKER_KEY" > ~/.ssh/breaker-key
+            chmod 600 ~/.ssh/breaker-key
+            echo "WATCHDOG_BREAKER_KEY_FILE=$HOME/.ssh/breaker-key" >> "$GITHUB_ENV"
+          else
+            echo "::warning::breaker key not set (NOCTUS_VPS_BREAKER_KEY): a CRITICAL Supabase budget will alert but cannot trip the fleet breaker."
+          fi
 
       # Stdlib only, no pip: the module imports nothing outside the standard
       # library. It does its own ssh-keyscan (3 tries) + ONE ssh call with
@@ -99,9 +121,33 @@ jobs:
         working-directory: mcp/noctusai
         env:
           NOCTUSAI_HOME: ${{ github.workspace }}
+          NOCTUS_VPS_HOST: ${{ secrets.NOCTUS_VPS_HOST }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          WAHA_BASE_URL: ${{ secrets.WAHA_BASE_URL }}
+          WAHA_API_KEY: ${{ secrets.WAHA_API_KEY }}
+          WAHA_SESSION: ${{ secrets.WAHA_SESSION }}
+          WATCHDOG_ALERT_WHATSAPP: ${{ secrets.WATCHDOG_ALERT_WHATSAPP }}
+          WATCHDOG_ALERT_EMAIL: ${{ vars.WATCHDOG_ALERT_EMAIL || 'joaoraphaelsst@gmail.com' }}
+          # Login user of the READ-ONLY probe key: unset = legacy root; set to `probe` after the unprivileged
+          # user + sudoers entry exist (§ 7b).
+          WATCHDOG_PROBE_USER: ${{ vars.WATCHDOG_PROBE_USER }}
+          # Supabase request-budget leg: a SCOPED PAT (this project only; Logs read + Usage read), see § 7b.
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          # Optional: the logged signature prefix of OUR service_role key. With it, a forged role claim cannot trip.
+          SUPABASE_SERVICE_SIG_PREFIX: ${{ secrets.SUPABASE_SERVICE_SIG_PREFIX }}
+          # Optional: lets the report confirm the environment's branch restriction (never fatal).
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          WATCHDOG_GH_TOKEN: ${{ secrets.WATCHDOG_GH_TOKEN }}
+          # Pinned ssh host key (`ssh-keyscan -H <host>` output, captured once): no keyscan-per-run trust.
+          NOCTUS_VPS_KNOWN_HOSTS: ${{ secrets.NOCTUS_VPS_KNOWN_HOSTS }}
           TEST_ALERT: ${{ inputs.send_test_alert }}
+          BREAKER_REARMED: ${{ inputs.breaker_rearmed }}
         run: |
           args=(--state "$GITHUB_WORKSPACE/$STATE_FILE" --send)
+          if [[ "${BREAKER_REARMED:-false}" == "true" ]]; then
+            args+=(--breaker-rearmed)
+          fi
           if [[ "${TEST_ALERT:-false}" == "true" ]]; then
             args+=(--test-alert)
           fi
@@ -109,7 +155,7 @@ jobs:
 
       - name: Remove key
         if: always()
-        run: rm -f ~/.ssh/watchdog-key
+        run: rm -f ~/.ssh/watchdog-key ~/.ssh/breaker-key
 
       - name: Save watchdog state
         id: save

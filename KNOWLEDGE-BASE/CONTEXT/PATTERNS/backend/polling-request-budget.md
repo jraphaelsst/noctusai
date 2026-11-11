@@ -64,6 +64,24 @@ audit its hot paths (loops, schedulers, per-request reads) against this rule.
 - **Telemetry (to build):** Supabase calls per product per minute + org egress in the daily ops
   check (`noc-daily-ops`), with an alert well before quota.
 
+## The shape of the fix (2026-11-10 sweep: every other poller, platform-wide)
+
+Seed helpers — grep before inventing another (`noctusai_lib.primitives.ttl_cache`; plus `domain/jobs/wake.py`, the in-process wake registry the seed `Worker` uses, and `JobRepository.queue_stats`' TTL cache, now a `TTLCache`). Hand-rolled TTL caches still to adopt it (`NOC-REMEDIATE[ttl-cache-adopt]`): `api/auth/token_cache.py`, `domain/module_enablement/store.py`, `domain/licensing.py`, `api/auth/org_selection.py`. Invalidation is epoch-fenced: an `invalidate()` / `wake()` during an in-flight read is never undone by it.
+- `TTLCache` — read-through, thread-safe, bounded; a loader that raises caches nothing; `invalidate()` on the write
+  path of the same process. Used by `resolve_credential` (30 s), `fetch_budget_brl` (30 s), the photo-editing
+  platform-settings row (10 s), the agents qualification standard (published version = immutable; "which is published
+  now" 30 s). Credentials are cached in-process only, never logged.
+- `IdleGate` — a periodic job asks `due()` first; an empty tick calls `idle(next_due_in_s=…)`; the producer in the same
+  process calls `wake()`. The mailing send loop and scheduled-campaigns check use it (a campaign start / schedule wakes
+  them, so nothing a user waits for is delayed).
+- The seed scheduler samples CLEAN runs of jobs on an interval < 10 min to one `scheduler_runs` row per 5 min
+  (errors always land): `POST scheduler_runs` was ~10k/22 h, almost all idle ticks.
+- Skip-unchanged upserts: read the stored rows in one batched read, compare, write only what differs (Meta lead sync).
+
+Declaration (blocking keeper, other slice): every forever-loop / periodic registration carries, on its line or up to 3
+lines above, `# poll-budget: <cadence>; <k> calls/tick; worst <N>/day; idle=<backoff|event|fixed>` with a real number
+(cadence x calls x instances). No `.select("*")` and no `.limit(>1000)` inside such loops or gate/tick functions.
+
 ## Depth
 `KB § PATTERNS/backend/postgrest-row-cap.md` (the sibling: what a fake hides) ·
 `KB § PATTERNS/backend/request-path-latency.md` · skill `noc-fast-responses` (round-trip counting).

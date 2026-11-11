@@ -31,6 +31,13 @@ S3 classifies it as about scheduling or not (classification only, D48: no reply,
   `assistant.ai_feedback_events` events (seed template `ai_feedback_events_table_sql`; relabel = next `rodada`);
   `shadow/avaliacao.py` turns `resumo_rotulos` into agreement (`nao_sei` outside the denominator). Contract:
   `project-history/assistant-chatbot/s4-contrato-avaliacao.md`. The page shows third-party text: keep the notice, never log it.
+- **Google connection (S7, D50):** the org admin connects Google in `/configuracoes/google`. `connect/start` mints a
+  server-bound single-use `state` (SHA-256 stored, 10 min, bound to org/user AND to the starting browser via the host-only
+  cookie `__Host-ast_goauth`, carries the PKCE verifier Fernet-encrypted in `oauth_states`); the signed `GET /api/google/oauth/callback` consumes it (unknown/replayed/expired => 400), exchanges
+  the code and writes the grant to `oauth_credentials` (seed CredentialStore, one row per org). No route returns a token.
+  Scopes are least privilege: openid, userinfo.email, calendar.events, drive.readonly, drive.file (no Gmail, no full
+  calendar/drive); incremental auth is off. `disconnect` revokes at Google then deletes; a dead refresh token is the
+  state `needs_reconnection`, not a 500. `prova` lists 5 events + 5 Drive file names; no live Google call in tests.
 - **Access tiers:** every table `tier:org`, service-role only, no browser grant; every route admin-gated or the signed
   webhook.
 
@@ -42,13 +49,15 @@ backend/app/
   config.py               ASSISTANT_* settings (all empty by default, fail loud)
   routers/whatsapp_router.py   connections (admin) + webhook-only inbox
   routers/classificacao_router.py   admin replay + blind stratified sample
+  routers/google_router.py   Conectar Google (admin) + the signed OAuth callback
+  services/google_connection.py   scopes, stores, provider, status, Google clients (seed factories)
   shadow/classificador.py  registry call + strict parse
   shadow/avaliacao.py     agreement math (verdict x owner label)
   shadow/worker.py        seed jobs Worker handlers, replay enqueue, start/stop
   services/intake.py      IntakeChatStore (the seam the seed ingest writes into) + chat_ref HMAC
   services/pairing.py     paired_at stamp/clear from WAHA session.status
-backend/migrations/       001-011 seed spine · 014/016 nav rows · 015 intake (connections, intake, events, writers) · 017 classifier (jobs, ai_outputs, enqueue trigger, record/sample RPCs)
-frontend/src/pages/       Conexao (seed WhatsAppConnectionsPage organ), Dashboard, Equipe, Configuracoes
+backend/migrations/       001-011 seed spine · 014/016 nav rows · 015 intake (connections, intake, events, writers) · 017 classifier (jobs, ai_outputs, enqueue trigger, record/sample RPCs) · 019 Google connection (oauth_credentials, oauth_states)
+frontend/src/pages/       Conexao (seed WhatsAppConnectionsPage organ), Dashboard, Equipe, Configuracoes (+ the Google tab)
 ```
 
 ## Not here (later slices)

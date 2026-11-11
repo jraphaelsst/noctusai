@@ -103,6 +103,7 @@ export function useChat() {
   // While an upload is in flight, follow the server's messages.
   useEffect(() => {
     if (!pending || !sessionId) return;
+    // poll-budget: 4s only while an upload is pending, cleared when it settles; ~5 calls/tick; worst 108000/day per open tab (stuck upload); hidden=runs
     const timer = window.setInterval(() => {
       void fetchHistory(sessionId);
     }, PENDING_POLL_MS);

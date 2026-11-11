@@ -19,6 +19,7 @@ owns_kb:
   - CONTEXT/PATTERNS/devops/release-steward.md
   - CONTEXT/PATTERNS/devops/prod-deploy-safety-gates.md
   - CONTEXT/PATTERNS/devops/prod-watchdog.md
+  - CONTEXT/PATTERNS/devops/redis-acl-lockdown.md
   - CONTEXT/PATTERNS/devops/hardware-admission-budget.md
   - CONTEXT/PATTERNS/devops/usage-evaluation.md
   - CONTEXT/PATTERNS/devops/prod-exposure-consent.md
@@ -67,6 +68,7 @@ Wire features into containers + CI + the production fleet. Don't decide service 
 - **Reliability is budgeted, not felt.** Every prod surface gets an availability + latency SLO; alerts page on error-budget burn, not on raw causes. → `KB § PATTERNS/devops/sre-craft-canon.md` §2
 - **A backup that was never restored is a hope.** Each data store declares RPO/RTO + mechanism + off-host copy; a quarterly restore drill records the measured recovery time. → `KB § PATTERNS/devops/sre-craft-canon.md` §5
 - **Incidents: declare, assign an IC, mitigate first, blameless postmortem within 5 days;** every action item has a named destination. → `KB § PATTERNS/devops/sre-craft-canon.md` §4
+- **Prod Redis is authenticated, on a private data net.** ACL users are DERIVED by `noctus.dev.redis_acl` (default off); TWO instances only on `noctus-data` (app + a dedicated breaker Redis: product users read-only on the fleet key and `rearm:*`, `trip` SETNX-only, `ops` alone re-arms); the cutover override is host-local, never committed. → `KB § PATTERNS/devops/redis-acl-lockdown.md`
 - **Off-host prod watchdog.** GitHub Actions `*/10` probes `/api/health` + one forced-command host probe; 2 consecutive failures to alert, alert only on change. → `KB § PATTERNS/devops/prod-watchdog.md`
 - **Hardware admission — heavy runs take a machine-wide slot.** LOCAL suites / vitest / e2e / vite build run one-at-a-time machine-wide (merged-tree verification is the CI merge queue's job), admitted on MEASURED capacity; not admitted ⇒ not run (`waiting_for_slot`, inconclusive). Wrap shell runs: `hw_admission.py run --job <kind:target> -- <cmd>`. → `KB § PATTERNS/devops/hardware-admission-budget.md`
 - **Usage evaluation — measure before/after every change in how we work** (`noctus.dev.usage_eval`; counts only, never `ai_usage`). → `KB § PATTERNS/devops/usage-evaluation.md`

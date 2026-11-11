@@ -428,6 +428,8 @@ def _classify_set(product: str, files: list[Path], root: Path, reg) -> list[Rout
                     tier, why = None, "no auth dependency, no @access_tier"
                 body_src = ast.unparse(fn).lower()
                 oauth_cb = bool(re.search(r"oauth.*callback|/callback\b|/authorize\b", path)) and tier != "platform"
+                state_calls = [n for n in ast.walk(fn) if isinstance(n, ast.Call) and _call_name(n) in reg.OAUTH_STATE_CALLS]
+                oauth_bound = any(k.arg == reg.OAUTH_STATE_BINDING_KWARG for c in state_calls for k in c.keywords)
                 if oauth_cb and any(c in body_src for c in reg.OAUTH_STATE_CALLS):
                     tier, category = ("service" if tier in (None, "public") else tier), "signed:oauth-callback"
                 ip_hit = [r.pattern for r in ip_re if r.search(path)]
@@ -439,6 +441,10 @@ def _classify_set(product: str, files: list[Path], root: Path, reg) -> list[Rout
                     verdict, note = verdict_override
                 elif oauth_cb and category != "signed:oauth-callback":
                     verdict, note = "unclear", "OAuth callback without a state verification call (one of " + ", ".join(sorted(reg.OAUTH_STATE_CALLS)) + ")"
+                elif oauth_cb and not oauth_bound and re.search(r"oauth.*callback|/callback\b", path):  # the CALLBACK is bound; /authorize is the start
+                    verdict, note = "unclear", (
+                        f"OAuth callback verifies state but does not bind it to the browser: pass `{reg.OAUTH_STATE_BINDING_KWARG}=<browser cookie>` "
+                        "on the state call (login-CSRF / account-linking; KB § PATTERNS/security/access-tiers.md)")
                 elif tier is None:
                     verdict, note = "unclear", why
                 elif platform_ip and tier != "platform":

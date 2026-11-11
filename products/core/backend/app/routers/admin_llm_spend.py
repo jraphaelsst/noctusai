@@ -20,6 +20,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
 from noctusai_lib.api.access_tiers import access_tier
+from noctusai_lib.integrations.llm.budget import invalidate_budget_cache
 from noctusai_lib.api.auth._blocking import run_blocking, run_parallel
 from noctusai_lib.api.auth.mfa.gate import require_admin_assurance
 from noctusai_lib.api.auth.platform import resolve_platform_admin_role
@@ -139,4 +140,5 @@ async def update_budget(
     except Exception as e:
         logger.error("admin_llm_spend.update_budget failed for org=%s: %s", org_id, e)
         raise HTTPException(status_code=500, detail="Erro ao atualizar orçamento")
+    invalidate_budget_cache(org_id)
     return {"data": {"org_id": org_id, "monthly_brl": body.monthly_brl, "ok": True}}
