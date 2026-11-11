@@ -676,7 +676,13 @@ class TestOwnerAskPhase:
 
     ASKS = ["and then deploy to prod", "i allow deploy to production", "just ship it already",
             "please release everything", "go to prod", "push it to production"]
-    NOT_ASKS = ["dont deploy igig to prod yet", "should we deploy igig to prod?",
+    NOT_ASKS = [
+                # 2026-11-11 (8a): a release-CADENCE description, apostrophe-less negation - was cited as consent.
+                "actually, we need both environments i cant keep on deploy to prod and validating while users "
+                "are using on their daily routines of work",
+                "i can not deploy to prod now", "we shouldnt ship it", "you couldn\u2019t release that",
+                "i can\u2019t go to prod with this", "we keep on deploy to prod by hand",
+                "dont deploy igig to prod yet", "should we deploy igig to prod?",
                 "before we deploy igig to prod, run the tests", "hold off on the igig prod deploy",
                 "it was deployed yesterday", "the deployment failed", "igig is looking good",
                 "do not ship it"]
@@ -689,6 +695,13 @@ class TestOwnerAskPhase:
     @pytest.mark.parametrize("text", NOT_ASKS)
     def test_negations_questions_and_descriptions_are_not_asks(self, text):
         assert _authorization_tier("igig", text) is None
+
+    def test_a_curly_apostrophe_negation_blocks_the_slug_bound_tiers_too(self):
+        assert _authorization_tier("igig", "i can\u2019t deploy igig to prod") is None
+        assert _authorization_tier("igig", "keep it simple and deploy igig to prod") == "directive"
+
+    def test_the_real_ask_still_counts(self):
+        assert _authorization_tier("x", "i allow all migrations to be applied, also all to go to prod and deploy live.") == "owner-ask"
 
     def test_a_slug_bound_statement_keeps_its_stronger_tier(self):
         assert _authorization_tier("igig", "please deploy igig to prod") == "directive"

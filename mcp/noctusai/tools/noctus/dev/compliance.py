@@ -25526,11 +25526,19 @@ _PERFORMATIVE_VERBS = r"authoriz\w*|authoris\w*|approv\w*|allow\w*|permit\w*|con
 #: Verbs that DIRECT the action — the user is naming this product for prod.
 _DIRECTIVE_VERBS = r"deploy\w*|publish\w*|ship\w*|launch\w*|promot\w*|releas\w*|go[- ]live"
 #: Markers that make a sentence hypothetical, negated, or deferred.
+#: Matched on text with curly apostrophes folded to "'" (`_fold_apostrophes`). 2026-11-11 (found by 8a):
+#: "i cant keep on deploy to prod and validating while users are using ..." - the owner describing a
+#: release CADENCE, negated without an apostrophe - was cited as the deploy ask over the real one.
 _NON_COMMITTAL = (
-    r"\b(not|never|dont|don't|do not|isn't|isnt|cannot|can't|won't|wont|without|"
+    r"\b(not|never|dont|don't|do not|isn't|isnt|cannot|can't|cant|can not|won't|wont|"
+    r"shouldn't|shouldnt|couldn't|couldnt|wouldn't|wouldnt|mustn't|mustnt|without|"
     r"stop|avoid|hold off|not yet|before|until|unless|if|whether|should we|"
-    r"can we|could we|would we|do we|are we|when do|how do|what if)\b"
+    r"can we|could we|would we|do we|are we|when do|how do|what if|keep on)\b"
 )
+
+
+def _fold_apostrophes(text: str) -> str:
+    return text.replace("\u2019", "'").replace("\u2018", "'")
 
 
 #: CONSENT PHASE (owner decision 2026-11-11, typed live in the steward's terminal and confirmed in e1's):
@@ -25557,7 +25565,7 @@ def _owner_deploy_ask(text: str, phase: str | None = None) -> bool:
 
     if (phase or CONSENT_PHASE) != "pre-third-users" or not text:
         return False
-    t = " ".join(text.split()).casefold()
+    t = _fold_apostrophes(" ".join(text.split()).casefold())
     for m in re.finditer(rf"\b(?:{_OWNER_ASK_VERBS})\b(?!-)|{_OWNER_ASK_TO_PROD}", t):
         clause = t[max(0, m.start() - 60):m.start()].rsplit(".", 1)[-1].rsplit(",", 1)[-1]
         if re.search(_NON_COMMITTAL, clause) or t[m.end():m.end() + 1] == "?":
@@ -25600,7 +25608,7 @@ def _authorization_tier(slug: str, text: str, phase: str | None = None) -> str |
 
     if not text or not slug:
         return None
-    t = " ".join(text.split()).casefold()
+    t = _fold_apostrophes(" ".join(text.split()).casefold())
     if re.search(r"\bun(authoriz|authoris|approv)\w*", t):
         return None
     if slug.casefold() in t and re.search(r"\b(prod|production)\b", t):
