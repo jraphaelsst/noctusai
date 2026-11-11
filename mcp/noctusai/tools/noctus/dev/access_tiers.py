@@ -64,6 +64,25 @@ def _call_name(call: ast.Call) -> str | None:
     return _tail(call.func)
 
 
+_PATH_PARAM_RE = re.compile(r"\{(\w+)(?::[^}]*)?\}")
+
+
+def _token_link_problem(fn: ast.AST, path: str, helpers: tuple[str, ...]) -> str:
+    """Why a ``token-link`` route is not compliant, or "" when it is. Walks the AST (a docstring / string / comment that
+    merely names the helper must not pass): (1) a decorator CALL ``limit`` / ``shared_limit`` (the rate limit), and (2) an
+    ``ast.Call`` to one of ``helpers`` whose token argument is one of the route's PATH parameters."""
+    if not any(isinstance(d, ast.Call) and _call_name(d) in ("limit", "shared_limit") for d in getattr(fn, "decorator_list", [])):
+        return "token-link route needs a rate limit decorator (`limiter.limit(...)` / `limiter.shared_limit(...)`)"
+    params = set(_PATH_PARAM_RE.findall(path))
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Call) and _call_name(n) in helpers:
+            token_args = list(n.args[:1]) + [k.value for k in n.keywords if k.arg == "token"]
+            if any(isinstance(a, ast.Name) and a.id in params for a in token_args):
+                return ""
+    return (f"token-link route must CALL {list(helpers)} with its path parameter as the token "
+            "(expiry fails closed, malformed = 404, no token in logs); naming it in a docstring does not count")
+
+
 def _const_str(node: ast.AST | None) -> str | None:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
@@ -457,10 +476,11 @@ def _classify_set(product: str, files: list[Path], root: Path, reg) -> list[Rout
                         or "limiter" in body_src or "rate_limit" in body_src or "ratelimit" in body_src
                     if category not in reg.PUBLIC_CATEGORIES:
                         verdict, note = "unclear", f"public route outside the closed allowlist {list(reg.PUBLIC_CATEGORIES)} (category={category or 'none'}): every other route is access-level"
-                    elif not limited:
+                    elif category == "token-link" and (tl_problem := _token_link_problem(fn, path, reg.TOKEN_LINK_HELPERS)):
+                        # AST, not text: a docstring or a string naming the helper proves nothing
+                        verdict, note = "unclear", tl_problem
+                    elif category != "token-link" and not limited:
                         verdict, note = "unclear", "public route without a rate limit"
-                    elif category == "token-link" and not any(h in body_src for h in reg.TOKEN_LINK_HELPERS):
-                        verdict, note = "unclear", f"token-link route must resolve its token through {list(reg.TOKEN_LINK_HELPERS)} (expiry fails closed, malformed = 404, no token in logs)"
                     elif category != "token-link" and deco.func.attr.upper() != "GET" and not any(a in body_src for a in reg.ABUSE_PROTECTION_NAMES):
                         verdict, note = "unclear", f"public write without abuse protection (one of {sorted(reg.ABUSE_PROTECTION_NAMES)})"
                 routes.append(Route(
