@@ -133,3 +133,31 @@ def _isolate_license_gate():
     before = get_license_gate()
     yield
     restore_license_gate(before)
+
+
+def hermetic_waha_dns(host: str):
+    """The test DNS view: a host the fleet declares read-only (an alias in the generated set or one registered at runtime)
+    does NOT resolve here (as a down edge would not); every other name resolves to its OWN unrelated documentation
+    address. A fake test host (``waha.test``) therefore behaves like a real send-enabled shared host: it resolves, matches
+    no read-only machine, and is covered by whatever policy the test registered."""
+    import zlib
+
+    from noctusai_lib.integrations.whatsapp import line_policy as lp
+
+    name = host.lower()
+    if any(name == alias.rsplit(":", 1)[0] for alias in lp._all_read_only()):
+        return None
+    return [f"198.51.100.{1 + zlib.crc32(name.encode()) % 250}"]
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_waha_dns_view():
+    """Give every test a deterministic, offline DNS view for line-policy address matching (public seam
+    ``set_host_resolver``). Once the fleet declares a read-only line the seed compares resolved addresses, and a fake host
+    that cannot resolve fails CLOSED -- correct in prod, a false red for every suite that builds a WAHA client against
+    ``https://waha.test``. A test that needs its own view calls ``set_host_resolver`` itself (it replaces this one)."""
+    from noctusai_lib.integrations.whatsapp.line_policy import set_host_resolver
+
+    set_host_resolver(hermetic_waha_dns)
+    yield
+    set_host_resolver(None)

@@ -14,12 +14,13 @@ The line is read-only shadow: its policy is `send: disabled` (`ASSISTANT_WAHA_LI
 """
 from __future__ import annotations
 
+from typing import Callable
 from uuid import UUID
 
 from fastapi import APIRouter
 
 from noctusai_lib.config.product_urls import resolve_product_url
-from noctusai_lib.integrations.whatsapp import build_whatsapp_connection_store
+from noctusai_lib.integrations.whatsapp import build_whatsapp_connection_store, parse_line_policy
 from noctusai_lib.integrations.whatsapp.inbox.predicates import inbound_one_to_one_only
 from noctusai_lib.integrations.whatsapp.lid_auth import InMemoryLidPhoneCache
 from noctusai_seed.organ_auth import make_organ_auth
@@ -44,8 +45,22 @@ def _intake_store() -> IntakeChatStore:
     return IntakeChatStore(get_admin_client, lambda: settings.assistant_identity_hmac_key)
 
 
+def webhook_base_url(line_policy_json: str, product_url: Callable[[], str]) -> str:
+    """Where WAHA posts inbound events.
+
+    On the Assistant's `send: disabled` line the WAHA core sits on a private network behind the edge deny proxy and
+    cannot reach the product; the edge's port 3001 is the WEBHOOK RELAY, and the seed client accepts `set_webhook`
+    ONLY under the policy's `webhook_relay` (KB § INTEGRATIONS/whatsapp.md §6a). So the relay IS the base when the
+    line declares one; the public product URL is used only for a line without a relay (local dev, a Fake)."""
+    if line_policy_json:
+        relay = parse_line_policy(line_policy_json).webhook_relay
+        if relay:
+            return relay.rstrip("/")
+    return product_url()
+
+
 def _webhook_base_url() -> str:
-    return resolve_product_url("assistant")
+    return webhook_base_url(settings.assistant_waha_line_policy, lambda: resolve_product_url("assistant"))
 
 
 def _resolve_user_id(user) -> UUID:
