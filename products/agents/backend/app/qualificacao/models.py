@@ -84,6 +84,16 @@ class ParametrosDef:
     eixos: dict[str, Any] = field(default_factory=dict)
     #: Rule: ask for the identity fields only when it is true (e.g. visit intent recorded). None = any time.
     pedir_identificacao_quando: dict[str, Any] | None = None
+    #: Identity fields this standard DESIRES (asked once, never a blocker), from ``identificacao.CAMPOS``.
+    #: ``None`` = the key predates the standard (a published legacy version): the engine falls back to
+    #: ``DESEJADOS_PADRAO`` on an explicit, logged branch. ``()`` = declared, wants none. Anything else is
+    #: exactly what is asked -- no silent default for a standard that declares.
+    identificacao_desejada: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        from app.qualificacao.identificacao import validar_desejados  # lazy: identificacao imports the matcher
+        if self.identificacao_desejada is not None:
+            object.__setattr__(self, "identificacao_desejada", validar_desejados(self.identificacao_desejada))
 
 
 @dataclass(frozen=True)

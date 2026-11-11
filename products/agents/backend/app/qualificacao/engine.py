@@ -7,6 +7,7 @@ events into the lead's state. Stage and score are NEVER judged by the model.
 from __future__ import annotations
 
 import hashlib
+import logging
 import json
 import math
 import re
@@ -41,6 +42,8 @@ from app.qualificacao.regras import (
     usa_identificacao,
     validar_regra,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "EngineError",
@@ -389,7 +392,15 @@ def calcular(
     if versao.parametros.pedir_identificacao_quando is not None:
         pedir = avaliar_regra(versao.parametros.pedir_identificacao_quando, ctx)
     ident_faltando = [k for k in ident_chaves if k not in sinais.identificacao]
-    ident_desejada = [k for k in dict.fromkeys([*DESEJADOS_PADRAO, *ident_todas])
+    declaradas = versao.parametros.identificacao_desejada
+    if declaradas is None:
+        # Legacy branch (explicit, logged): a version published before the standard could declare its desired
+        # identity fields has no key at all (NULL), as opposed to a declared empty list. Only that absence keeps
+        # today's rg/email/nome -- Julia's published standard; precedent ``desfechos_oferecidos`` (extracao.py).
+        logger.info("agents.qualificacao.identificacao_desejada.legado padrao=%s versao=%s offered=%s",
+                    versao.padrao_chave, versao.versao, ",".join(DESEJADOS_PADRAO))
+        declaradas = DESEJADOS_PADRAO
+    ident_desejada = [k for k in dict.fromkeys([*declaradas, *ident_todas])
                       if k not in obrig and k not in sinais.identificacao]
 
     proximo = None if atual.terminal else next(

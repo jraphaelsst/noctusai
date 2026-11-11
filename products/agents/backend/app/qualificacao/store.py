@@ -354,7 +354,8 @@ class SupabasePadraoStore:
         prow = (par.data or [None])[0]
         parametros = (
             ParametrosDef(prow["minimo_para_ofertar"], prow.get("lote_ofertas", 3), prow.get("score_max", 100),
-                          prow.get("eixos") or {}, prow.get("pedir_identificacao_quando"))
+                          prow.get("eixos") or {}, prow.get("pedir_identificacao_quando"),
+                          None if prow.get("identificacao_desejada") is None else tuple(prow["identificacao_desejada"]))
             if prow else ParametrosDef(minimo_para_ofertar={"todos": []})
         )
         return VersaoPadrao(
@@ -427,7 +428,9 @@ class SupabasePadraoStore:
         row = {
             "versao_id": str(versao_id), "minimo_para_ofertar": p.minimo_para_ofertar,
             "lote_ofertas": p.lote_ofertas, "score_max": p.score_max, "eixos": p.eixos,
-            "pedir_identificacao_quando": p.pedir_identificacao_quando, "updated_at": utcnow_iso(),
+            "pedir_identificacao_quando": p.pedir_identificacao_quando,
+            "identificacao_desejada": None if p.identificacao_desejada is None else list(p.identificacao_desejada),
+            "updated_at": utcnow_iso(),
         }
         exec_query(self._t("qualificacao_parametros").upsert(row, on_conflict="versao_id"))
 
