@@ -288,7 +288,11 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
   awake product on a shared-root change) measured **2h04m** on one heavy slot versus ~15-25 min in CI's parallel jobs, so
   the toolkit split and the shared-root fan-out are judged by the merge queue only. Stated trade-off: a toolkit-only red
   (the `test_all_products_compliant[core]` shape) can still eject in the queue. The run holds ONE machine-wide heavy slot
-  (`hw_admission.heavy_slot`; not admitted = `UNMEASURED`, never green). **Gap, `NOC-REMEDIATE[scoped-green-fe-and-tooling]`:**
+  (`hw_admission.heavy_slot`; not admitted = `UNMEASURED`, never green). **Migration → DB-guard edge (owner, 2026-11-11):** a
+  diff touching `products/<p>/backend/migrations/*.sql` also runs `test_verify_db_guards.py` + that product's PGlite
+  `*replay*` tests + the generic `test_migration_*` ones (`migration_guard_suite`) - the toolkit-only red that stalled the
+  queue 2h (agents 079 → `TestAgentsStudioProbes`). PGlite is linked from the source checkout only when
+  `mcp/noctusai/node/package-lock.json` is byte-identical (`link_pglite`); otherwise `UNMEASURED`. **Gap, `NOC-REMEDIATE[scoped-green-fe-and-tooling]`:**
   FE vitest and the bespoke `tooling-tests` job stay CI-judged only (no `node_modules` in the export; tooling-tests renders
   a template in bash) - a branch steward touching a product FE or an MCP connector server (`mcp/<connector>/tests`) runs that suite itself before filing.
   CI's "Prime hermetic state" step is replayed first (`ci_prime_flags`).

@@ -1615,3 +1615,58 @@ def test_the_split_matches_the_real_workflow():
     assert "working-directory: products/${{ matrix.product }}/backend\n        run: pytest --tb=short -q" in wf
     assert "working-directory: ${{ matrix.root }}\n        run: pytest --tb=short -q" in wf
     assert "mcp/noctusai/tools/noctus/dev/ci_scope.py" in wf
+
+
+# ── migration -> DB-guard edge (owner-approved speedup 1, 2026-11-11) ───────────────────────────────────
+def _guard_tree(tmp_path):
+    t = tmp_path / "mcp" / "noctusai" / "tests"
+    t.mkdir(parents=True)
+    for n in ("test_verify_db_guards.py", "test_agents_camadas_probes_on_replay.py",
+              "test_sw_vitrine_probes_on_replay.py", "test_migration_chain_replay.py", "test_other.py"):
+        (t / n).write_text("")
+    return tmp_path
+
+
+def test_a_migration_diff_runs_db_guards_and_only_that_products_replays(tmp_path):
+    tree = _guard_tree(tmp_path)
+    s = RS.migration_guard_suite(tree, ["products/agents/backend/migrations/079_x.sql", "products/agents/backend/a.py"])
+    assert s.label == "db-guards:agents" and s.cwd == "."
+    assert s.argv[-3:] == ("mcp/noctusai/tests/test_verify_db_guards.py",
+                           "mcp/noctusai/tests/test_agents_camadas_probes_on_replay.py",
+                           "mcp/noctusai/tests/test_migration_chain_replay.py")
+    sw = RS.migration_guard_suite(tree, ["products/social-wiring/backend/migrations/339_y.sql"])
+    assert "mcp/noctusai/tests/test_sw_vitrine_probes_on_replay.py" in sw.argv
+    assert "mcp/noctusai/tests/test_agents_camadas_probes_on_replay.py" not in sw.argv
+
+
+def test_no_migration_no_db_guard_suite(tmp_path):
+    tree = _guard_tree(tmp_path)
+    assert RS.migration_guard_suite(tree, ["products/agents/backend/app/x.py", "mcp/y.py"]) is None
+
+
+def _node(root, lock: str, pglite: bool):
+    d = root / "mcp" / "noctusai" / "node"
+    d.mkdir(parents=True)
+    (d / "package-lock.json").write_text(lock)
+    if pglite:
+        (d / "node_modules" / "@electric-sql" / "pglite").mkdir(parents=True)
+    return d
+
+
+def test_pglite_is_linked_only_when_the_lockfile_matches(tmp_path):
+    src, export = tmp_path / "src", tmp_path / "export"
+    _node(src, "lock-a", True)
+    _node(export, "lock-a", False)
+    assert RS.link_pglite(export, src) == ""
+    assert (export / "mcp/noctusai/node/node_modules/@electric-sql/pglite").is_dir()
+
+
+def test_a_lockfile_mismatch_or_missing_pglite_is_unmeasured_never_linked(tmp_path):
+    src, export = tmp_path / "src", tmp_path / "export"
+    _node(src, "lock-a", True)
+    _node(export, "lock-b", False)
+    assert "differs" in RS.link_pglite(export, src)
+    assert not (export / "mcp/noctusai/node/node_modules").exists()
+    src2 = tmp_path / "src2"
+    _node(src2, "lock-b", False)
+    assert "not installed" in RS.link_pglite(export, src2)

@@ -2070,6 +2070,53 @@ def local_suites(tree: str | Path, scope: Any, workflow_text: str, changed: list
     return out
 
 
+#: Migration -> DB-guard edge (owner-approved speedup 1, 2026-11-11): a toolkit-only red stalled the queue 2h
+#: (agents 079 added DB guards; mcp test_verify_db_guards::TestAgentsStudioProbes failed). A diff that adds or edits
+#: `products/<p>/backend/migrations/*.sql` also runs the DB-guard suite + that product's PGlite replay tests.
+_MIGRATION_RE = re.compile(r"^products/([^/]+)/backend/migrations/[^/]+\.sql$")
+DB_GUARDS_TEST = "mcp/noctusai/tests/test_verify_db_guards.py"
+#: replay-test filename prefix per product slug, where it is not the slug itself (`test_<prefix>_..._on_replay.py`)
+_REPLAY_PREFIX = {"social-wiring": "sw", "erp-imobiliario": "erp"}
+PGLITE_NODE_DIR = "mcp/noctusai/node"
+
+
+def migration_guard_suite(tree: str | Path, changed: list[str]) -> CiSuite | None:
+    """The DB-guard suite for a diff that touches product migrations: `test_verify_db_guards.py` + the replay tests
+    of each touched product (`test_<prefix>_*on_replay*.py`) + the generic `test_migration_*replay*` ones. None when
+    no migration is touched. Run from the repo root, like CI's toolkit job. Needs PGlite (`needs_pglite`)."""
+    root = Path(tree)
+    products = sorted({m.group(1) for c in changed if (m := _MIGRATION_RE.match(c))})
+    if not products:
+        return None
+    tests_dir = root / "mcp" / "noctusai" / "tests"
+    replay = sorted(p.name for p in tests_dir.glob("test_*replay*.py"))
+    prefixes = {_REPLAY_PREFIX.get(p, p.replace("-", "_")) for p in products} | {"migration"}
+    mine = [f"mcp/noctusai/tests/{n}" for n in replay if any(n.startswith(f"test_{x}_") for x in prefixes)]
+    files = ([DB_GUARDS_TEST] if (root / DB_GUARDS_TEST).is_file() else []) + mine
+    if not files:
+        return None
+    return CiSuite(f"db-guards:{','.join(products)}", ".", ("-m", "pytest", "-q", "-p", "no:cacheprovider", *files))
+
+
+def link_pglite(tree: str | Path, source_repo: str | Path) -> str:
+    """Give the export the SAME PGlite CI installs (`npm ci` in mcp/noctusai/node): symlink the source checkout's
+    node_modules ONLY when its package-lock.json is byte-identical to the export's. Returns "" on success, else why.
+    In the export CI=true, so a missing PGlite FAILS the replay tests - a false red; mismatch = UNMEASURED instead."""
+    dst, src = Path(tree) / PGLITE_NODE_DIR, Path(source_repo) / PGLITE_NODE_DIR
+    lock_d, lock_s = dst / "package-lock.json", src / "package-lock.json"
+    mods = (src / "node_modules").resolve()
+    if not (mods / "@electric-sql" / "pglite").is_dir():
+        return f"PGlite is not installed in {src} (run `npm ci` there)"
+    try:
+        if lock_d.read_bytes() != lock_s.read_bytes():
+            return f"{PGLITE_NODE_DIR}/package-lock.json differs between the head and {src} - its node_modules is not what CI installs"
+    except OSError as exc:
+        return f"cannot compare {PGLITE_NODE_DIR}/package-lock.json: {exc}"
+    if not (dst / "node_modules").exists():
+        (dst / "node_modules").symlink_to(mods, target_is_directory=True)
+    return ""
+
+
 VERDICT_STORE_NAME = "deliverable-verdicts.ndjson"
 _VERDICT_REF_RE = re.compile(r"^ci-parity:([0-9a-f]{32})$")
 _FULL_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -2259,13 +2306,21 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 if r.returncode != 0:
                     failed += pytest_failures(r, "test")
             suites = local_suites(tree, scope, text, changed)
+            guard = migration_guard_suite(tree, changed)
+            if guard is not None:
+                why = link_pglite(tree, cwd or Path.cwd())
+                if why:
+                    return {"ok": False, "detail": f"UNMEASURED: the diff touches migrations, so {guard.label} must run, "
+                                                   f"but {why}"}
+                suites = suites + [guard]
             for s in suites:
                 r = run([py, *s.argv], Path(tree) / s.cwd, s.env)
                 if r.returncode != 0:
                     failed += pytest_failures(r, s.label)
             tests = tests + [s.label for s in suites]
             ran = (f"{len(flags)} CI-blocking keeper flag(s) + real-tree keeper tests + {len(suites)} directly-touched "
-                   f"suite(s) ({cs.describe(scope)}; toolkit split + shared fan-out left to CI), env-scrubbed")
+                   f"suite(s){' incl. ' + guard.label if guard is not None else ''} "
+                   f"({cs.describe(scope)}; toolkit split + shared fan-out left to CI), env-scrubbed")
             git = _subprocess_git(cwd)
             rc_t, head_tree, _e = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
             rc_b, wf_blob, _e = git("rev-parse", "--verify", "--quiet", f"{head}:{CI_WORKFLOW_REL}")
