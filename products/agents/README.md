@@ -207,6 +207,13 @@ model only records criterion values through tools; **score and stage are compute
   with the fleet `ENCRYPTION_KEY`, masked by default, clear text only for org owner/admin via an audited
   endpoint; 180-day retention and delete-by-lead cover it.
 
+## Offer catalogues (migration 081)
+
+`app/catalogos/` holds the seam the generic offer tools read: `CatalogoOpcoes` (Protocol), `ImoveisSwCatalogo` (social-wiring),
+`FixtureCatalogo` (the eval world and templates with no business: "Opção A/B/C") and `catalogo_para(chave)`. A standard names
+its catalogue in `parametros.catalogo`; an agent with `oferecer_opcoes` active and no catalogue fails readiness
+(`catalogo_ausente`). Julia keeps `oferecer_imoveis` & co.
+
 ## Tests
 
 ```bash

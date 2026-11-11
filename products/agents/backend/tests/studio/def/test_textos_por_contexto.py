@@ -140,11 +140,12 @@ def _codigos_literais(call: ast.Call) -> set[str]:
     if len(call.args) < 2:
         return set()
     a = call.args[1]
-    if isinstance(a, ast.Constant):
-        return {a.value}
-    if isinstance(a, ast.BoolOp):
-        return {v.value for v in a.values if isinstance(v, ast.Constant)}
-    return set()
+    nos = a.values if isinstance(a, ast.BoolOp) else [a.body, a.orelse] if isinstance(a, ast.IfExp) else [a]
+    return {v.value for v in nos if isinstance(v, ast.Constant)}
+
+
+def _chamados(h: ast.AsyncFunctionDef) -> set[str]:
+    return {n.func.id for n in ast.walk(h) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
 
 
 class TestRecusasCallSitesMatchTheMap:
@@ -157,16 +158,26 @@ class TestRecusasCallSitesMatchTheMap:
             if isinstance(v, ast.Lambda):  # ``lambda a: _concluir()``
                 v = v.body.func
             handler_de_ferramenta[v.id] = k.value
+        # a nested helper (a shared core) answers for every tool whose handler reaches it, directly or through another
+        # helper: its refusal literals need to be tied to AT LEAST ONE of those tools
+        funcoes = {n.name: n for n in ast.walk(fn) if isinstance(n, ast.AsyncFunctionDef)}
+        ferramentas_de: dict[str, set[str]] = {h: {t} for h, t in handler_de_ferramenta.items()}
+        mudou = True
+        while mudou:
+            mudou = False
+            for nome, tools in list(ferramentas_de.items()):
+                for chamado in (_chamados(funcoes[nome]) & funcoes.keys()) - {nome}:
+                    antes = len(ferramentas_de.setdefault(chamado, set()))
+                    ferramentas_de[chamado] |= tools
+                    mudou |= len(ferramentas_de[chamado]) != antes
         achados = 0
-        for h in (n for n in ast.walk(fn) if isinstance(n, ast.AsyncFunctionDef) and n.name in handler_de_ferramenta):
-            ferramenta = handler_de_ferramenta[h.name]
+        for nome, h in funcoes.items():
             for c in (n for n in ast.walk(h) if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "_recusa"):
                 for codigo in _codigos_literais(c):
+                    if nome not in ferramentas_de:  # the shared dispatcher: GENERIC codes only
+                        assert codigo in GENERICOS, (nome, codigo)
+                        continue
                     achados += 1
-                    assert ferramenta in RECUSAS_POR_FERRAMENTA.get(codigo, frozenset()), (
-                        f"{h.name} ({ferramenta}) refuses with {codigo!r} but the registry does not tie that text to the tool")
+                    assert ferramentas_de[nome] & RECUSAS_POR_FERRAMENTA.get(codigo, frozenset()), (
+                        f"{nome} ({sorted(ferramentas_de[nome])}) refuses with {codigo!r} but the registry ties that text to none of its tools")
         assert achados >= 20
-        # any other call site (the shared dispatcher) may only use a GENERIC code
-        for h in (n for n in ast.walk(fn) if isinstance(n, ast.AsyncFunctionDef) and n.name not in handler_de_ferramenta):
-            for c in (n for n in ast.walk(h) if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "_recusa"):
-                assert _codigos_literais(c) <= GENERICOS, (h.name, _codigos_literais(c))

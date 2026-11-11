@@ -331,7 +331,7 @@ class TestToolArgumentsThatReachHumans:
     def test_the_other_lead_influenced_fields_are_covered(self):
         assert c.CAMPOS_PROTEGIDOS == {
             "handoff": ("motivo",), "captacao": ("descricao", "endereco"), "encerrar": ("motivo_texto",),
-            "registrar_reacao_imovel": ("motivo",), "registrar_intencao_visita": ("preferencia_horario",),
+            "registrar_reacao_imovel": ("motivo",), "registrar_reacao_opcao": ("motivo",), "registrar_intencao_visita": ("preferencia_horario",),
             "sinalizar_alerta": ("descricao", "trecho"),
         }
         for tool, campos in c.CAMPOS_PROTEGIDOS.items():

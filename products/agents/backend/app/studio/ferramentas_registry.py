@@ -80,6 +80,8 @@ FERRAMENTAS_CONHECIDAS: frozenset[str] = frozenset({
     "abrir_skill", "ler_arquivo_skill",
     "avaliar_lead", "registrar_perfil", "oferecer_imoveis", "detalhes_imovel", "consultar_empreendimento",
     "registrar_reacao_imovel", "registrar_intencao_visita", "registrar_identificacao", "concluir_qualificacao",
+    # the catalogue-neutral counterparts of the three real-estate tools (migration 081)
+    "oferecer_opcoes", "detalhes_opcao", "registrar_reacao_opcao",
     "handoff", "encerrar", "captacao", "consentimento_credito", "registrar_solicitacao_titular",
     # Julia v3 (CONTRACT §12.3 / §12.8)
     "sinalizar_alerta", "registrar_documento",

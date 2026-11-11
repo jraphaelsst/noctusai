@@ -84,6 +84,9 @@ class ParametrosDef:
     eixos: dict[str, Any] = field(default_factory=dict)
     #: Rule: ask for the identity fields only when it is true (e.g. visit intent recorded). None = any time.
     pedir_identificacao_quando: dict[str, Any] | None = None
+    #: The catalogue the agent's generic offer tools read (``app.catalogos.CATALOGOS``); ``None`` = the standard names
+    #: none (an agent with ``oferecer_opcoes`` active then fails readiness: ``catalogo_ausente``).
+    catalogo: str | None = None
 
 
 @dataclass(frozen=True)
@@ -144,6 +147,9 @@ class EventoImovel:
     id: UUID | None = None
     agent_id: UUID | None = None
     thread_id: UUID | None = None
+    #: The catalogue ``codigo_imovel`` belongs to (migration 081). NOC-REMEDIATE[codigo-opcao-rename]: the column and
+    #: this field keep the real-estate name ``codigo_imovel`` until the imóvel tools retire -- 2026-11-11
+    catalogo: str = "imoveis_sw"
 
 
 @dataclass(frozen=True)
