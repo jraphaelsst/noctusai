@@ -358,6 +358,10 @@ export * from './finance';
 // noctusai_lib.domain.inventory. Product-agnostic; the host passes its authenticated api client.
 export * from './inventory';
 
+// Activities organ (tasks / calls / meetings / visits on any entity: the card-hub ActivitiesPanel tab + the MyTasksPage page).
+// Backend: noctusai_lib.domain.activities. Product-agnostic; the host passes its authenticated api client.
+export * from './activities';
+
 // Assignment organ (who owns a lead: teams, members, strategies, capacity, out-of-office; writes the funnel's `responsavel_field`).
 // Backend: noctusai_lib.domain.assignment. Product-agnostic; the host passes its authenticated api client.
 export * from './assignment';

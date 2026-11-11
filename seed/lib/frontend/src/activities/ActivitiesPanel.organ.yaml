@@ -1,0 +1,34 @@
+name: ActivitiesPanel
+kind: component
+path: seed/lib/frontend/src/activities/ActivitiesPanel.tsx
+phase: pilot-seed
+registered_at: "2026-11-11"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "ActivitiesPanel: the card-hub TAB listing the tasks / calls / meetings / visits of one (entityKind, entityId), with quick-add, done/undone, reschedule, reassign and cancel."
+  - "Part of the activities organ (project-history/roadmaps/crm-cms-erp-vertical-seeds-2026-11.plan.md §2.1 row activities, slice W1-5; frozen contract: crm-cms-erp-vertical-seeds-2026-11.activities-contract.md); backend noctusai_lib.domain.activities. Every lifecycle write is one RPC that also appends an immutable intent-named event; the assignee is a plain user id the host maps to a name (assigneeLabel / assigneeOptions)."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); components never use isLoading. Writes go through useCacheWriteMutation: drawn on the click, the server row written on the answer, settled in the background; a refusal is shown in pt-BR and rolls the row back."
+  - "Seed-portable: no product coupling and no market nouns; the activity types (visits, key custody, maintenance, field work ...) are market DATA from CrmPreset.activity_types."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "controls.tsx re-exports the same primitives as inventory/controls.tsx (N=2); formalize into design-system at the third organ that needs them."
+
+alternatives_considered:
+  - "Per-product copies (erp-imobiliario atividades.py, orbity tasks_router.py, SW card_hub lembretes) were rejected: replication-to-seed symmetry; those products migrate onto the organ in their own slices."
+  - "A generic transition-log primitive for the events was preferred but is not on dev yet (NOC-REMEDIATE[transition-log-primitive] in activities/sql.py)."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

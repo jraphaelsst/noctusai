@@ -255,6 +255,25 @@ def test_clients_organ_is_registered_and_mounts_with_strict_401():
                       config=ClientsConfig(), finance_cfg=FinanceConfig(schema="other"))
 
 
+def test_activities_organ_is_registered_mounts_with_strict_401_and_needs_no_other_organ():
+    from noctusai_lib.domain.pipeline.market_presets import REAL_ESTATE_PRESET
+    from noctusai_seed.organs import mount_activities
+
+    spec = ORGAN_REGISTRY["activities"]
+    assert spec.requires == () and spec.optional_requires == ()  # the assignee is a plain user id: no assignment-organ dependency
+    assert organ_migration_sql("activities", "crm").startswith(spec.migration_header)
+    organ = mount_activities(
+        schema="crm", auth_dependency=_auth, get_admin_client=lambda: object(), get_core_client=lambda: object(), preset=REAL_ESTATE_PRESET,
+    )
+    assert organ.max_body_path_overrides == {}
+    client = TestClient(_app_of(organ))
+    for method, path in (
+        ("GET", "/api/activities"), ("GET", "/api/activities/mine"), ("GET", "/api/activities/types"), ("POST", "/api/activities"),
+        ("POST", "/api/activities/types"), ("POST", "/api/activities/00000000-0000-4000-8000-000000000000/complete"),
+    ):
+        assert client.request(method, path, json={} if method == "POST" else None).status_code == 401, path
+
+
 def test_mount_inventory_routes_and_strict_401():
     from noctusai_seed.organs import mount_inventory
 
