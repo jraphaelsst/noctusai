@@ -121,6 +121,7 @@ class SectionOut(BaseModel):
     ordem: int
     conteudo: str
     ativo: bool
+    regras: list[str] = Field(default_factory=list)
 
 
 class SkillFileMetaOut(BaseModel):
@@ -206,6 +207,8 @@ class SectionIn(StrictHttpModel):
     ordem: int
     conteudo: str = Field(..., max_length=LIMITS["section.conteudo"])
     ativo: bool
+    #: Rules the section declares (closed list, ``app.studio.regras_secao``); an unknown rule is a 422.
+    regras: list[str] = Field(default_factory=list, max_length=8)
 
 
 class SectionsReplaceRequest(StrictHttpModel):

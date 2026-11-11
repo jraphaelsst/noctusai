@@ -15,6 +15,9 @@ S3 classifies it as about scheduling or not (classification only, D48: no reply,
   `send: disabled` line. Never add a code path that sends; never construct a raw `WahaClient(`.
 - **Webhook HMAC is required.** `create_whatsapp_inbox_router(webhook_only=True, require_webhook_hmac=True)`; no secret
   => 401 to everything and a deploy refuses to boot (`required_prod_config`).
+- **Webhook base = the line's edge relay.** The WAHA core is on a private network; the seed client accepts `set_webhook`
+  only under the policy's `webhook_relay`. `webhook_base_url()` returns that relay when the policy declares one, the
+  public product URL otherwise (dev/Fake). Never register the public URL on the shadow line.
 - **Input contract before storage:** `inbound_one_to_one_only(excluded)` then `assistant.append_intake`: dedup on the
   WAHA message id, forward-only from `paired_at`, text only. Third parties are an HMAC'd `chat_ref`, never a phone.
   Never log a phone, chat id or body.
@@ -27,6 +30,10 @@ S3 classifies it as about scheduling or not (classification only, D48: no reply,
   the message TEXT and nothing else; strict parse, never a guess; budget refused/unverifiable => `skipped_budget`;
   one `ai_outputs` row per (message, prompt_version, model); runs on the seed jobs Worker only (poll-budget line in
   `shadow/worker.py`); no live LLM call in tests.
+- **Evaluation (S4):** the owner labels BLIND on `/avaliacao` (text only, never the verdict); labels are append-only
+  `assistant.ai_feedback_events` events (seed template `ai_feedback_events_table_sql`; relabel = next `rodada`);
+  `shadow/avaliacao.py` turns `resumo_rotulos` into agreement (`nao_sei` outside the denominator). Contract:
+  `project-history/assistant-chatbot/s4-contrato-avaliacao.md`. The page shows third-party text: keep the notice, never log it.
 - **Google connection (S7, D50):** the org admin connects Google in `/configuracoes/google`. `connect/start` mints a
   server-bound single-use `state` (SHA-256 stored, 10 min, bound to org/user AND to the starting browser via the host-only
   cookie `__Host-ast_goauth`, carries the PKCE verifier Fernet-encrypted in `oauth_states`); the signed `GET /api/google/oauth/callback` consumes it (unknown/replayed/expired => 400), exchanges
@@ -48,6 +55,7 @@ backend/app/
   routers/google_router.py   Conectar Google (admin) + the signed OAuth callback
   services/google_connection.py   scopes, stores, provider, status, Google clients (seed factories)
   shadow/classificador.py  registry call + strict parse
+  shadow/avaliacao.py     agreement math (verdict x owner label)
   shadow/worker.py        seed jobs Worker handlers, replay enqueue, start/stop
   services/intake.py      IntakeChatStore (the seam the seed ingest writes into) + chat_ref HMAC
   services/pairing.py     paired_at stamp/clear from WAHA session.status

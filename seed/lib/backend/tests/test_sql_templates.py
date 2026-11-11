@@ -309,6 +309,31 @@ class TestAiTablesTemplates:
             assert "REVOKE ALL ON" in sql and "FROM anon" in sql
         assert "UNIQUE (user_id, output_ref)" in fb  # the seed router upserts on it
 
+    def test_feedback_events_are_append_only_one_per_round_and_service_role_only(self):
+        from noctusai_lib.domain.sql_templates import ai_feedback_events_table_sql
+
+        sql = ai_feedback_events_table_sql("demo", ("sim", "nao", "nao_sei"))
+        assert "CREATE TABLE IF NOT EXISTS demo.ai_feedback_events" in sql
+        assert "CHECK (label IN ('sim', 'nao', 'nao_sei'))" in sql
+        assert "UNIQUE (labeler_id, subject_id, round)" in sql
+        assert "BEFORE UPDATE OR DELETE ON demo.ai_feedback_events" in sql  # no update path, no delete path
+        assert "REVOKE ALL ON demo.ai_feedback_events FROM PUBLIC, anon, authenticated" in sql
+        assert "GRANT ALL ON demo.ai_feedback_events TO service_role" in sql
+        assert "TO authenticated" not in sql
+        assert sql == ai_feedback_events_table_sql("demo", ("sim", "nao", "nao_sei"))  # deterministic -> migration can pin it
+
+    def test_feedback_events_refuse_unsafe_input(self):
+        import pytest
+
+        from noctusai_lib.domain.sql_templates import ai_feedback_events_table_sql
+
+        with pytest.raises(ValueError):
+            ai_feedback_events_table_sql("x; DROP SCHEMA public", ("a",))
+        with pytest.raises(ValueError):
+            ai_feedback_events_table_sql("demo", ())
+        with pytest.raises(ValueError):
+            ai_feedback_events_table_sql("demo", ("a'); DROP TABLE x;--",))
+
     def test_refuse_an_unsafe_schema_name(self):
         import pytest
 

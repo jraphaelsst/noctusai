@@ -771,6 +771,8 @@ def build_parser() -> argparse.ArgumentParser:
         parser.add_argument(f"--supabase-breaker-{_sb}", default="status" if _sb == "action" else ("noctus-vps" if _sb == "ssh-host" else ""), dest=f"supabase_breaker_{_sb.replace('-', '_')}", help=f"With --supabase-breaker: the {_sb} argument.")
     parser.add_argument("--supabase-breaker-confirm", action="store_true", help="With --supabase-breaker: apply (a write). Without it, dry-run only.")
     parser.add_argument("--supabase-breaker-allow-stale-toolkit", action="store_true", help="With --supabase-breaker: bypass the toolkit-staleness fresh-subprocess hop (escape hatch).")
+    parser.add_argument("--waha-instance-owner-hand", nargs=2, metavar=("ACTION", "LINE"), dest="waha_instance_owner_hand", help="OWNER ONLY, by hand, in a Terminal.app window (D49): run as `PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH mcp/noctusai/.venv/bin/python mcp/noctusai/cli.py --waha-instance-owner-hand apply <line>`. provision|apply ONE `personal: true` WAHA line that noctus.dev.waha_instance refuses for every agent. Refuses without an interactive TTY, inside an agent harness (CLAUDECODE / CLAUDE_CODE_*), unless the shell's parent is macOS Terminal.app ONLY, judged on its real image + code signature read from the kernel (only system shells/login in between, the app started by launchd, every process started after its parent), with PYTHON*/DYLD_* unset, PATH starting /usr/bin:/bin and no other process on the tty, on any policy other than the strict read-only shadow shape or one the VPS checkout does not declare identically; you TYPE the line name and CONFIRMO on /dev/tty. Every attempt is audited (waha-owner-hand.ndjson). Deliberately NOT an MCP tool. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a.")
+    parser.add_argument("--waha-owner-hand-host", default="noctus-vps", dest="waha_owner_hand_host", help="With --waha-instance-owner-hand: the SSH host alias of the VPS (default noctus-vps).")
     parser.add_argument("--supabase-request-budget", action="store_true", help="Measure Supabase request volume from the project's edge logs (ok|warn|critical|unknown; needs SUPABASE_ACCESS_TOKEN). MCP: noctus.dev.supabase_request_budget.")
     parser.add_argument("--srb-window-hours", type=float, default=1.0, help="With --supabase-request-budget: window in hours (max 24).")
     parser.add_argument("--srb-start", default=None, help="With --supabase-request-budget: ISO start (use with --srb-end).")
@@ -4900,6 +4902,14 @@ def main():
         else:
             print("[branch-pointer] non-exempt paths present — cache refresh applies")
             sys.exit(1)
+
+    elif args.waha_instance_owner_hand:
+        from settings import REPO_ROOT as _oh_root
+        from tools.noctus.dev.waha_owner_hand import owner_hand as _owner_hand
+        _oh_action, _oh_line = args.waha_instance_owner_hand
+        r = _owner_hand(_oh_action, _oh_line, ssh_host=args.waha_owner_hand_host, repo_root=str(_oh_root))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
 
     elif args.source_register:
         from tools.noctus.dev.source_register import source_register as _source_register

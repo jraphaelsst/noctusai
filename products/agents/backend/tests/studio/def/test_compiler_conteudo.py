@@ -121,7 +121,7 @@ class TestContentModeStrings:
         with_skill = compile_prompt(_inp(skills=(SkillData(None, "s", "d", "corpo"),)))
         assert "texto_ausente" in _codes(with_skill)
         assert "compilador.titulo_skills" in chaves_exigidas(
-            tool_policy={}, tem_skills=True, com_cliente=False, canal=False)
+            tool_policy={}, tem_skills=True, com_cliente=False, canal=False, ferramentas_ativas=frozenset())
         with_client = compile_prompt(_inp(client=ClientBundle(nome="Cli", resumo="")))
         assert "texto_ausente" in _codes(with_client)
 

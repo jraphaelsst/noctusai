@@ -82,6 +82,7 @@ MOVED_LEDGERS: tuple[str, ...] = (
     "ship-consent.ndjson",
     "slice-scores.ndjson",
     "source-register.ndjson",
+    "waha-owner-hand.ndjson",
 )
 
 Transform = Callable[[str], str]
@@ -220,7 +221,7 @@ class GitLedgerStore:
     def _git(self, *args: str, input: str | None = None, timeout: int = GIT_TIMEOUT_S
              ) -> "subprocess.CompletedProcess[str]":
         try:
-            return self.runner(["git", *args], cwd=str(self.repo_root), input=input, timeout=timeout)
+            return self.runner([_git_program(), *args], cwd=str(self.repo_root), input=input, timeout=timeout)
         except subprocess.TimeoutExpired as exc:
             return subprocess.CompletedProcess(exc.cmd, 124, "", f"timed out after {timeout}s")
 
@@ -468,6 +469,13 @@ class GitLedger:
 
     def update(self, transform: Transform, *, message: str) -> dict:
         return self.store.update(self.name, transform, message=message)
+
+
+def _git_program() -> str:
+    """`git` through PATH for every other caller (unchanged); inside an owner-hand call the system git by absolute path,
+    so a PATH-planted git cannot rewrite where the audit row goes."""
+    from ._vps_ssh import SYSTEM_GIT, in_owner_hand_scope
+    return SYSTEM_GIT if in_owner_hand_scope() else "git"
 
 
 # ── factory ───────────────────────────────────────────────────────────────────

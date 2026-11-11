@@ -23,3 +23,13 @@ instances:
     product: monica
     session: default               # CORE: always `default`
     line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}   # monica's CURRENT behaviour, made explicit
+  - name: assistant                # -> edge waha-assistant (nginx deny proxy) -> core waha-assistant-core; volume noctus-waha-assistant
+    product: assistant
+    session: default
+    # The owner's PERSONAL number, READ-ONLY shadow (D46/D49): zero writes to WhatsApp, ever. Declared at the platform
+    # ceiling; the owner pairs it by hand (a personal line is refused by `provision` / `apply` -- KB § INTEGRATIONS/whatsapp.md § 6a).
+    personal: true
+    line_policy: {send: disabled, mark_online: false, full_sync: false, auto_repair: false}
+    edge_deny_writes: true
+    dashboard: false               # the dashboard + Swagger can send: off
+    webhook_upstream: http://assistant:8021   # the edge relays the core's webhooks (port 3001) to the product

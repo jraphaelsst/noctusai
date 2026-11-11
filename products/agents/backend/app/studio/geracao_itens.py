@@ -147,13 +147,16 @@ def escrever_area(
         manter = [s for s in atuais if s.chave not in anteriores and s.chave not in novas]
         topo = max((s.ordem for s in manter), default=0)
         itens = [
-            SectionInput(id=s.id, chave=s.chave, titulo=s.titulo, ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo)
+            SectionInput(
+                id=s.id, chave=s.chave, titulo=s.titulo, ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo,
+                regras=tuple(s.regras),
+            )
             for s in manter
         ]
         for i, s in enumerate(saida.secoes, 1):
             itens.append(SectionInput(
                 chave=s.chave, titulo=s.titulo, ordem=s.ordem if s.ordem is not None else topo + 10 * i,
-                conteudo=s.conteudo, ativo=s.ativo,
+                conteudo=s.conteudo, ativo=s.ativo, regras=tuple(s.regras),
             ))
         _guard(lambda: store.replace_sections(org_id, draft.id, itens))
         escritas = list(novas)

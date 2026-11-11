@@ -382,9 +382,25 @@ _runtime_read_only: dict[str, LinePolicy] = {}
 _GENERATED_MODULE = "noctusai_lib.integrations.whatsapp.read_only_lines"
 
 
+#: TEST SEAM (like :func:`set_host_resolver`): a suite that is not about the fleet's declared lines swaps the generated
+#: read-only set for its own table (rows, resolvable). Production never calls it; :func:`clear_line_policies` restores
+#: the generated module.
+_generated_override: "tuple[dict[str, Any], tuple[str, ...] | None] | None" = None
+
+
+def set_generated_read_only(rows: "Mapping[str, Any] | None", resolvable: "tuple[str, ...] | None" = None) -> None:
+    """Replace (``rows`` = {host:port: policy-spec}) or, with ``None``, restore the generated read-only set."""
+    global _generated_override
+    with _lock:
+        _generated_override = None if rows is None else (dict(rows), resolvable)
+        _addr_cache.clear()
+
+
 def _generated_read_only(module: str = _GENERATED_MODULE) -> dict[str, LinePolicy]:
     import importlib
 
+    if _generated_override is not None and module == _GENERATED_MODULE:
+        return {h: parse_line_policy(spec) for h, spec in _generated_override[0].items()}
     try:
         rows = importlib.import_module(module).READ_ONLY_LINES
     except (ImportError, AttributeError) as exc:  # absent ceiling = we cannot know which lines are read-only: refuse
@@ -408,6 +424,9 @@ def _resolvable_hosts(module: str = _GENERATED_MODULE) -> "frozenset[str] | None
     them as "unresolvable aliases" would fail every unrelated host closed. None = the module does not say (all count)."""
     import importlib
 
+    if _generated_override is not None and module == _GENERATED_MODULE:
+        res = _generated_override[1]
+        return frozenset(res) if res is not None else None
     try:
         rows = getattr(importlib.import_module(module), "RESOLVABLE_FROM_PRODUCT_NETWORK", None)
     except ImportError:
@@ -503,8 +522,9 @@ def register_line_policy(
 
 
 def clear_line_policies() -> None:
-    global _env_loaded
+    global _env_loaded, _generated_override
     with _lock:
+        _generated_override = None
         _registry.clear()
         _runtime_read_only.clear()
         _addr_cache.clear()
@@ -569,7 +589,7 @@ def resolve_line_policy(
         positively_enabled = explicit_reg is not None and explicit_reg.send_enabled
         if mine is None:
             if not positively_enabled:
-                return replace(UNDECLARED, webhook_relay=None)
+                return UNDECLARED
         else:
             unresolved_alias = False
             gen_rows = _generated_read_only()
@@ -580,10 +600,13 @@ def resolve_line_policy(
                 elif theirs & mine:
                     ro = pol
                     break
-            # a read-only alias we cannot resolve might be exactly this host (an IP literal, or anything not positively
-            # known to be send-enabled): fail CLOSED rather than let it fall through to "*"
-            if ro is None and unresolved_alias and not positively_enabled and (_is_ip_literal(host) or explicit_reg is None):
-                return replace(UNDECLARED, webhook_relay=None)
+            # an IP literal could be the address of a read-only alias we cannot resolve right now: fail CLOSED. A NAME that
+            # resolves cannot be a down alias of the same machine (an up container answers to every one of its names on the
+            # network; a down one answers to none), so a down read-only edge must not refuse every other sender
+            # (2026-11-10: waha-assistant down == a fleet-wide WhatsApp outage). The edge's own nginx deny + the private
+            # core network stay as the second layer.
+            if ro is None and unresolved_alias and not positively_enabled and _is_ip_literal(host):
+                return UNDECLARED
     if reg is None and ro is None:
         with _lock:
             reg = _registry.get("*")
