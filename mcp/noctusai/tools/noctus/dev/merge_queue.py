@@ -64,6 +64,7 @@ POST_LAND_DISPATCH: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 # A queue ref is `mq/<slug>--<sha7>`; the slug is everything before the last `--`.
 WORKFLOW_PREFIX = ".github/workflows/"
+EXTRAHEADER_KEY = "http.https://github.com/.extraheader"  # actions/checkout's persisted github.token header
 PUSH_TOKEN_ENV = "MQ_PUSH_TOKEN"  # fine-grained PAT (contents+workflows write); env secret of the dev-only `merge-queue` environment
 # GitHub's wording when a token without the `workflows` permission pushes a new commit touching workflow files.
 WORKFLOW_REJECT_RE = re.compile(r"without\s+`?workflows`?\s+permission", re.I)
@@ -328,6 +329,18 @@ class Queue:
         if workflow_batch and self.push_token and self.repo:
             return f"https://x-access-token:{self.push_token}@github.com/{self.repo}.git"
         return self.remote
+
+    def push_cmd(self, remote: str, refspec: str) -> list[str]:
+        """The git push argv. A push to the authenticated PAT URL first CLEARS the checkout's persisted
+        `http.https://github.com/.extraheader` (actions/checkout writes `AUTHORIZATION: basic <github.token>`
+        there, and git sends it on EVERY github.com URL - including `x-access-token:<PAT>@github.com`). Left in
+        place, a "PAT" push can authenticate as github.token, which has no `workflows` permission (b5's
+        hypothesis, 2026-11-11; the eject reason now quotes GitHub's own sentence, which says whether the
+        refused actor was a "GitHub App" or a "Personal Access Token"). The plain remote keeps the header:
+        that is its only credential."""
+        if remote != self.remote and remote.startswith("https://x-access-token:"):
+            return ["git", "-c", f"{EXTRAHEADER_KEY}=", "push", remote, refspec]
+        return ["git", "push", remote, refspec]
 
     def batch_needs_workflows(self, base: str, sha: str) -> bool:
         return bool(self.push_token) and touches_workflows(self.changed_paths(base, sha))
@@ -647,7 +660,7 @@ class Queue:
         """FF dev to the candidate. Returns (landed, sha_on_dev)."""
         for _ in range(5):
             remote = self.push_remote(self.batch_needs_workflows(tested_base, cand_sha))
-            rc, _, err = self.run(["git", "push", remote, f"{cand_sha}:refs/heads/{self.dev}"], cwd=wt)
+            rc, _, err = self.run(self.push_cmd(remote, f"{cand_sha}:refs/heads/{self.dev}"), cwd=wt)
             if rc == 0:
                 return True, cand_sha
             self.fetch()
@@ -705,7 +718,7 @@ class Queue:
                     continue
                 cand_ref = f"{CANDIDATE_PREFIX}{self.run_id}-{n}"
                 remote = self.push_remote(self.batch_needs_workflows(base, cand))
-                rc, _, perr = self.run(["git", "push", remote, f"{cand}:refs/heads/{cand_ref}"], cwd=self.workdir)
+                rc, _, perr = self.run(self.push_cmd(remote, f"{cand}:refs/heads/{cand_ref}"), cwd=self.workdir)
                 if rc != 0:
                     # Never crash the drain on a rejected push (2026-11-05: it wedged the queue ~1.5h).
                     if self._handle_push_rejection(applied, base, perr, res, via_pat=remote != self.remote):

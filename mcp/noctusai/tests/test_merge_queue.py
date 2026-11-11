@@ -500,8 +500,8 @@ def test_a_refused_pat_push_says_the_pat_was_refused(world):
     logs: list[str] = []
 
     def rejecting(cmd, cwd=None):
-        if cmd[:2] == ["git", "push"] and str(cmd[2]).startswith("https://x-access-token:"):
-            return 1, "", (f"remote: error: GH013 {cmd[2]}\n ! [remote rejected] (refusing to allow a Personal "
+        if cmd[:4] == ["git", "-c", f"{mq.EXTRAHEADER_KEY}=", "push"]:
+            return 1, "", (f"remote: error: GH013 {cmd[4]}\n ! [remote rejected] (refusing to allow a Personal "
                            "Access Token to create or update workflow `x.yml` without `workflows` permission)")
         return ci(cmd, cwd=cwd)
 
@@ -528,9 +528,14 @@ def test_the_default_drain_log_flushes_every_line(capsys, monkeypatch):
 TOK = "github_pat_SECRET123"
 
 
-def _token_runner(world, ci, pushes):
-    """Record every push remote; route the authenticated URL to the local bare origin."""
+def _token_runner(world, ci, pushes, cleared=None):
+    """Record every push remote; route the authenticated URL to the local bare origin. A PAT push must arrive as
+    `git -c <extraheader>= push <url>` - recorded in `cleared` - and is replayed as a plain local push."""
     def run(cmd, cwd=None):
+        if cmd[:4] == ["git", "-c", f"{mq.EXTRAHEADER_KEY}=", "push"]:
+            if cleared is not None:
+                cleared.append(cmd[4])
+            cmd = ["git", *cmd[3:]]
         if cmd[:2] == ["git", "push"]:
             pushes.append(cmd[2])
             if cmd[2].startswith("https://x-access-token:"):
@@ -549,6 +554,20 @@ def test_workflow_batch_pushes_candidate_and_dev_via_the_token_url_and_lands(wor
     assert WF in sh(world["origin"], "git", "ls-tree", "-r", "--name-only", "refs/heads/dev").splitlines()
     assert pushes[:2] == [f"https://x-access-token:{TOK}@github.com/o/r.git"] * 2  # candidate, then dev FF
     assert wf  # enqueued
+
+
+def test_a_pat_push_clears_the_checkout_github_token_header_and_a_plain_push_keeps_it(world):
+    """actions/checkout persists `AUTHORIZATION: basic <github.token>` as http.https://github.com/.extraheader; git
+    sends it on the PAT URL too, so an uncleared "PAT" push can authenticate as github.token (no workflows)."""
+    wf = _stale_enqueue(world, "wf", [(WF, "name: x\n")], 2100)
+    _diverge_dev(world)
+    pushes: list[str] = []
+    cleared: list[str] = []
+    res = _token_runner(world, FakeCI(world["origin"]), pushes, cleared).drain()
+    assert [x["slug"] for x in res.landed] == ["wf"] and wf
+    assert len(cleared) == 2 and all(u.startswith("https://x-access-token:") for u in cleared)
+    q = mq.Queue("o/r", push_token=TOK)
+    assert q.push_cmd("origin", "a:b") == ["git", "push", "origin", "a:b"]
 
 
 def test_non_workflow_batch_with_token_still_pushes_via_the_plain_remote(world):
