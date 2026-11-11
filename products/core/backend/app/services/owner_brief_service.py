@@ -151,7 +151,7 @@ def _brl(value: float) -> str:
 def render_lines(payload: dict) -> list[tuple[str, list[str]]]:
     """(section title, lines) pairs — the single rendering both bodies use."""
     sched = payload["scheduler"]
-    rot = [f"{sched['runs_24h']} execuções de {sched['jobs']} rotinas nas últimas 24h."]
+    rot = [f"{sched['runs_24h']} execuções registradas (amostradas) de {sched['jobs']} rotinas nas últimas 24h."]
     if not sched["failed"] and not sched["missing"]:
         rot.append("Nenhuma falha e nenhuma execução faltando.")
     for f in sched["failed"]:
