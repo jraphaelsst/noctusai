@@ -4843,7 +4843,13 @@ _AGENTS_DB_SOURCE_PROBES: tuple[GuardProbe, ...] = (
     _agents_studio_probe(
         probe_id="agents.fonte_check",
         guard_name="agents_fonte_check",
-        attack_sql=f"    UPDATE {_AGENTS_SCHEMA}.agents SET fonte = 'svn' WHERE id = v_agent;",
+        # An INSERT, never an UPDATE: 070's BEFORE UPDATE trigger guard_agent_fonte_immutable raises
+        # 'fonte_immutable' before any CHECK is evaluated, so an UPDATE attack never reaches this guard
+        # (predeploy read `ambiguous` and BLOCKED agents W2, 2026-11-10).
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agents (org_id, key, nome, runtime, definition_mode, fonte) "
+            "VALUES (v_org, 'noc-probe-fonte', 'NOC probe', 'claude_sdk', 'studio', 'svn');"
+        ),
         guard_fragment="agents_fonte_check",
         what="an agent source other than git|db",
         rationale="A11: the mirror rules key on fonte; an unknown source would match neither the git build nor the DB export.",
