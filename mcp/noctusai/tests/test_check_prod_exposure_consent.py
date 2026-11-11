@@ -680,6 +680,9 @@ class TestOwnerAskPhase:
                 # 2026-11-11 (8a): a release-CADENCE description, apostrophe-less negation - was cited as consent.
                 "actually, we need both environments i cant keep on deploy to prod and validating while users "
                 "are using on their daily routines of work",
+                "so we can deploy to prod once on a schedulein the middle of the night, for example, and users "
+                "wake up with changes already made.",
+                "we could release it at night",
                 "i can not deploy to prod now", "we shouldnt ship it", "you couldn\u2019t release that",
                 "i can\u2019t go to prod with this", "we keep on deploy to prod by hand",
                 "dont deploy igig to prod yet", "should we deploy igig to prod?",
