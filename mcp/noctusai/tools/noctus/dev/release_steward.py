@@ -2010,58 +2010,70 @@ def ci_keeper_test_ids(tests_dir: str | Path) -> list[str]:
     return ids
 
 
-#: a diff touching any of these runs the product-scoped tests (a new product lands here too)
-#: NOC-REMEDIATE[scoped-green-diff-scope]: item 5 is a keeper PROXY, not CI's scoped jobs. Three escapes on
-#: 2026-11-10 share one shape - CI ran a suite the diff selected and item 5 did not: (1) fleet-parametrized
-#: tests (closed here); (2) the touched products' FE vitest (core src/lib/product-icon.test.tsx); (3) the seed
-#: backend suite + toolkit tests a seed change affects (ac-s6-deploy-wiring: test_vps_exec.py, seed whatsapp).
-#: The fix is to replay CI's own `changes` classification (shared_changed / changed_products / harness_changed)
-#: and run the python jobs it selects - not more per-case rules. Not done here: the full seed + sharded toolkit
-#: suite per filing is a filing-latency and memory cost on the 8 GB machine that needs its own design (the
-#: classifier is inline bash in test.yml - extract it so CI and item 5 share one source, never port it).
-#: Destination: the item-5 section of KB § PATTERNS/devops/release-steward.md (tooling steward e1).
-PRODUCT_PATH_PREFIX = "products/"
+# ─── item 5 runs the Python suites CI would run for this diff (owner decision 2026-11-11) ──────────────
+# Three deliveries went 5/5 and were ejected by the merge queue on suites the DIFF selected in CI but item 5
+# never ran: test_all_products_compliant[core] (a seeded product icon), the seed backend suite + test_vps_exec
+# (a seed read_only_lines change), a product's FE vitest. The owner chose "run CI's suites" over a fast proxy.
+# So the scope is CI's own classifier (`ci_scope`, which the workflow's `changes` job also calls), the suite
+# lists come from the head's workflow matrices, and the toolkit suite is split exactly as CI shards it.
+# NOC-REMEDIATE[scoped-green-fe-and-tooling]: FE vitest (product-frontend-tests / seed-frontend-tests) and the
+# bespoke tooling-tests job are still CI-judged only - the export has no node_modules and tooling-tests renders
+# a template in bash. Destination: the item-5 section of KB § PATTERNS/devops/release-steward.md (tooling steward).
+
+CI_ISOLATED_TOOLKIT_FILE = "mcp/noctusai/tests/test_compliance.py"
 
 
-def ci_product_test_ids(tests_dir: str | Path) -> list[str]:
-    """Pytest node ids of the tests CI runs ACROSS the product fleet: every test parametrized over `product`
-    (`test_all_products_compliant[<slug>]`) and every `test_real_products_*`. A diff touching `products/`
-    must pass them: ac-s2-assistant-scaffold went 5/5 while CI ejected it on exactly these (a seeded
-    product icon failed check_product_icon_registered, 2026-11-10) - they are not `check_x() == []` shaped,
-    so ci_keeper_test_ids never saw them. Derived by AST, never hand-listed; the whole function runs (every
-    product), which is what CI judges."""
-    import ast
-    root = Path(tests_dir)
-    ids: list[str] = []
-
-    def over_products(fn: ast.AST) -> bool:
-        if fn.name.startswith("test_real_products"):
-            return True
-        for d in fn.decorator_list:
-            if isinstance(d, ast.Call) and getattr(d.func, "attr", "") == "parametrize" and d.args \
-                    and isinstance(d.args[0], ast.Constant) and d.args[0].value == "product":
-                return True
-        return False
-
-    for path in sorted(root.glob("test_*.py")):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (OSError, SyntaxError, UnicodeDecodeError):
-            continue
-        rel = f"{root.name}/{path.name}"
-        for node in tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test") \
-                    and over_products(node):
-                ids.append(f"{rel}::{node.name}")
-            elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
-                ids += [f"{rel}::{node.name}::{m.name}" for m in node.body
-                        if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name.startswith("test")
-                        and over_products(m)]
-    return ids
+@dataclass(frozen=True)
+class CiSuite:
+    label: str
+    cwd: str            # relative to the export root
+    argv: tuple[str, ...]  # after the interpreter: `python <argv...>`
+    env: tuple[tuple[str, str], ...] = ()
 
 
-def touches_products(changed_paths: list[str]) -> bool:
-    return any(p.startswith(PRODUCT_PATH_PREFIX) for p in changed_paths)
+def _matrix(workflow_text: str, job: str, key: str) -> list[str]:
+    import yaml  # the toolkit venv carries PyYAML; only item 5's runner needs it
+    doc = yaml.safe_load(workflow_text) or {}
+    vals = (((doc.get("jobs") or {}).get(job) or {}).get("strategy") or {}).get("matrix", {}).get(key) or []
+    return [str(v) for v in vals]
+
+
+def _active_products(tree: Path) -> set[str] | None:
+    """`deploy/fleet/active-scope.txt` at the head; None = missing = every product (CI fails toward coverage)."""
+    f = tree / "deploy" / "fleet" / "active-scope.txt"
+    if not f.is_file():
+        return None
+    return {ln.strip() for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip() and not ln.lstrip().startswith("#")}
+
+
+def ci_python_suites(tree: str | Path, scope: Any, workflow_text: str,
+                     toolkit_files: list[str], total_shards: int = 4) -> list[CiSuite]:
+    """The Python suites CI runs for `scope` (a `ci_scope.Scope`), in CI's own split:
+    toolkit (test_compliance isolated + `total_shards` round-robin shards over `toolkit_files`, from the repo
+    root) · seed backend roots (seed-backend-tests matrix) · product backends (product-backend-tests matrix,
+    awake per active-scope.txt, selected by the scope). Nothing when the scope is not heavy."""
+    root = Path(tree)
+    if not scope.run_heavy:
+        return []
+    embed = (("NOCTUS_EMBED_MIN_INTERVAL_MS", "0"), ("NOCTUS_DISABLE_AUTO_CACHE_PULL", "1"))
+    out: list[CiSuite] = []
+    files = sorted(f for f in toolkit_files if f != CI_ISOLATED_TOOLKIT_FILE)
+    if CI_ISOLATED_TOOLKIT_FILE in toolkit_files:
+        out.append(CiSuite("toolkit:compliance", ".", ("-m", "pytest", "-q", "-p", "no:cacheprovider",
+                                                       CI_ISOLATED_TOOLKIT_FILE), embed))
+    for n in range(total_shards):
+        mine = files[n::total_shards]
+        if mine:
+            out.append(CiSuite(f"toolkit:shard-{n}", ".", ("-m", "pytest", "-q", "-p", "no:cacheprovider", *mine), embed))
+    for r in _matrix(workflow_text, "seed-backend-tests", "root"):
+        if (root / r).is_dir():
+            out.append(CiSuite(f"seed:{r}", r, ("-m", "pytest", "--tb=short", "-q")))
+    awake = _active_products(root)
+    for slug in _matrix(workflow_text, "product-backend-tests", "product"):
+        d = f"products/{slug}/backend"
+        if (awake is None or slug in awake) and scope.product_selected(slug) and (root / d).is_dir():
+            out.append(CiSuite(f"product:{slug}", d, ("-m", "pytest", "--tb=short", "-q")))
+    return out
 
 
 VERDICT_STORE_NAME = "deliverable-verdicts.ndjson"
@@ -2169,19 +2181,42 @@ def _git_init_export(tree: str | Path, head: str, timeout: int = 300) -> str | N
     return None
 
 
-def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None = None, timeout: int = 1500,
+def _hw_slot(job: str):
+    return _sibling("hw_admission").heavy_slot(job)
+
+
+def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None = None, timeout: int = 2700,
                            base_env: dict[str, str] | None = None,
-                           verdict_store: str | Path | None = None) -> Callable[[str, str], dict[str, Any]]:
+                           verdict_store: str | Path | None = None,
+                           admit: Callable[[str], Any] | None = None) -> Callable[[str, str], dict[str, Any]]:
     """Real default for `deliverable(scoped_check=)`: judge the head the way CI does. Export it, prime the
     hermetic state CI primes, then - in a SCRUBBED environment - run (1) every `cli.py --check-*` keeper CI
-    runs as a blocking step and (2) every test that asserts a keeper clean on the live tree. Both sets are
-    derived from the head's own workflow + tests. Slow (minutes): the branch steward runs it once and files
-    the `ci-parity:<id>` ref it returns; the run APPENDS a verdict record to the store (full head sha, head tree,
-    test.yml blob, interpreter, flags, test ids, result) and the guardian only resolves the ref
-    (`validate_verdict_ref`)."""
+    runs as a blocking step and (2) the Python suites CI runs for THIS diff (`ci_scope` - the classifier the
+    workflow's `changes` job calls - over `origin/dev...head`): the toolkit suite split the way CI shards it,
+    the seed backend roots and the selected awake product backends (`ci_python_suites`). A ledger-only diff
+    runs no suite, only the keeper flags + the real-tree keeper tests (`ci_keeper_test_ids`). Everything is
+    derived from the head's own workflow + tests. Runs inside ONE machine-wide heavy slot (`admit`, default
+    hw_admission.heavy_slot); not admitted = UNMEASURED, never green. Slow (minutes to tens of minutes): the
+    branch steward runs it once and files the `ci-parity:<id>` ref it returns; the run APPENDS a verdict record
+    to the store (full head sha, head tree, test.yml blob, interpreter, flags, tests/suites, result) and the
+    guardian only resolves the ref (`validate_verdict_ref`)."""
     py = python or sys.executable
+    slot = admit or _hw_slot
+    cs = _sibling("ci_scope")
 
     def check(branch: str, head: str) -> dict[str, Any]:
+        rc_d, diff_out, diff_err = _subprocess_git(cwd)("diff", "--name-only", f"origin/dev...{head}")
+        if rc_d != 0:
+            return {"ok": False, "detail": f"UNMEASURED: cannot list the paths the head changes vs origin/dev "
+                                           f"(CI's suite selection depends on it): {_last_line(diff_err or '')}"}
+        scope = cs.classify(diff_out.splitlines())
+        with slot(f"deliverable:{branch}") as adm:
+            if adm is not None and not getattr(adm, "admitted", True):
+                return {"ok": False, "detail": f"UNMEASURED: no machine-wide heavy slot ({getattr(adm, 'verdict', '?')}) - "
+                                               "item 5 runs CI's suites and is never judged green unrun"}
+            return _parity_run(head, scope)
+
+    def _parity_run(head: str, scope: Any) -> dict[str, Any]:
         tree = tempfile.mkdtemp(prefix="noc-ci-parity-")
         sandbox = tempfile.mkdtemp(prefix="noc-sandbox-home-")
         try:
@@ -2204,17 +2239,15 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 return {"ok": False, "detail": f"UNMEASURED: {gerr}"}
             flags, prime = ci_blocking_flags(text), ci_prime_flags(text)
             tool_dir = Path(tree) / "mcp" / "noctusai"
-            ids = ci_keeper_test_ids(tool_dir / "tests")
-            rc_d, diff_out, diff_err = _subprocess_git(cwd)("diff", "--name-only", f"origin/dev...{head}")
-            if rc_d != 0:
-                return {"ok": False, "detail": f"UNMEASURED: cannot list the paths the head changes vs origin/dev "
-                                               f"(the product-scoped set depends on it): {_last_line(diff_err or '')}"}
-            if touches_products(diff_out.split()):
-                ids += [i for i in ci_product_test_ids(tool_dir / "tests") if i not in ids]
             failed: list[str] = []
 
-            def run(argv: list[str], where: Path) -> subprocess.CompletedProcess:
-                return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, cwd=str(where), env=env)
+            def run(argv: list[str], where: Path, extra: tuple[tuple[str, str], ...] = ()) -> subprocess.CompletedProcess:
+                return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, cwd=str(where),
+                                      env={**env, **dict(extra)})
+
+            def pytest_failures(r: subprocess.CompletedProcess, label: str) -> list[str]:
+                names = re.findall(r"^FAILED (\S+)", r.stdout or "", flags=re.M)
+                return [f"{label} {n}" for n in names] or [f"{label} pytest exit {r.returncode}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}"]
 
             for f in prime:
                 r = run([py, "cli.py", f], tool_dir)
@@ -2225,23 +2258,37 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 r = run([py, "mcp/noctusai/cli.py", f], Path(tree))
                 if r.returncode != 0:
                     failed.append(f"keeper {f}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}")
-            if ids:
-                r = run([py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *ids], tool_dir)
-                if r.returncode != 0:
-                    names = re.findall(r"^FAILED (\S+)", r.stdout or "", flags=re.M)
-                    failed += [f"test {n}" for n in names] or [f"pytest exit {r.returncode}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}"]
-            ran = f"{len(flags)} CI-blocking keeper flag(s) + {len(ids)} real-tree keeper test(s), env-scrubbed"
+            if scope.run_heavy:
+                rc_l, ls_out, ls_err = _subprocess_git(tree)("ls-files", "mcp/noctusai/tests/*test_*.py",
+                                                            "mcp/noctusai/tests/**/test_*.py")
+                if rc_l != 0:
+                    return {"ok": False, "detail": f"UNMEASURED: cannot list the toolkit test files: {_last_line(ls_err or '')}"}
+                shards = int(ci_job_env(text).get("MCP_TEST_TOTAL_SHARDS") or 4)
+                suites = ci_python_suites(tree, scope, text, sorted(set(ls_out.split())), shards)
+                for s in suites:
+                    r = run([py, *s.argv], Path(tree) / s.cwd, s.env)
+                    if r.returncode != 0:
+                        failed += pytest_failures(r, s.label)
+                tests = [s.label for s in suites]
+                ran = f"{len(flags)} CI-blocking keeper flag(s) + {len(suites)} CI suite(s) for this diff ({cs.describe(scope)}), env-scrubbed"
+            else:
+                tests = ci_keeper_test_ids(tool_dir / "tests")
+                if tests:
+                    r = run([py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *tests], tool_dir)
+                    if r.returncode != 0:
+                        failed += pytest_failures(r, "test")
+                ran = f"{len(flags)} CI-blocking keeper flag(s) + {len(tests)} real-tree keeper test(s) (ledger-only diff), env-scrubbed"
             git = _subprocess_git(cwd)
             rc_t, head_tree, _e = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
             rc_b, wf_blob, _e = git("rev-parse", "--verify", "--quiet", f"{head}:{CI_WORKFLOW_REL}")
             if rc_t != 0 or rc_b != 0:
                 return {"ok": False, "detail": "UNMEASURED: cannot resolve the head tree / test.yml blob to record the verdict"}
             ref = record_verdict(verdict_store, head=head, tree=head_tree.strip(), workflow_blob=wf_blob.strip(),
-                                 interpreter=f"{py} {sys.version.split()[0]}", flags=flags, tests=ids, ok=not failed)
+                                 interpreter=f"{py} {sys.version.split()[0]}", flags=flags, tests=tests, ok=not failed)
             if failed:
                 return {"ok": False, "detail": f"{ran}; RED: {', '.join(failed[:8])}", "failed": failed,
-                        "ran": {"flags": flags, "tests": ids}, "verdict_ref": ref}
-            return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": ids}, "verdict_ref": ref}
+                        "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref}
+            return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref}
         except (OSError, subprocess.SubprocessError) as exc:
             return {"ok": False, "detail": f"UNMEASURED: {type(exc).__name__}: {exc}"[:240]}
         finally:

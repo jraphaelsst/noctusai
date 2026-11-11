@@ -277,17 +277,20 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
 - *The CI-blocking set is derived, never listed.* From the head's own CI definition: (a) every `cli.py --check-*` step of
   `.github/workflows/test.yml` that is not `continue-on-error` and needs no CI-resolved argument (`ci_blocking_flags`);
   (b) every test in `mcp/noctusai/tests/` that asserts a `check_*` keeper returns `[]` on the live tree, found by AST
-  (`ci_keeper_test_ids`: the "real tree is clean" tests that make a pre-commit warning a CI block); (c) when the diff vs
-  `origin/dev` touches `products/` (a new product included), every fleet-parametrized test - `@parametrize("product", ...)`
-  and `test_real_products_*`, whole function, found by AST (`ci_product_test_ids`). Why (c): ac-s2-assistant-scaffold went 5/5
-  and CI ejected it on `test_all_products_compliant[core]` (a seeded product icon failed `check_product_icon_registered`,
-  2026-11-10); those tests are not `check_x() == []` shaped. **Gap, `NOC-REMEDIATE[scoped-green-diff-scope]`:** item 5 is
-  still a keeper proxy, not CI's diff-scoped jobs. Open escapes of the same shape: the touched products' FE vitest, and the
-  seed backend suite + the toolkit tests a seed change affects (ac-s6-deploy-wiring went 5/5, then red on `test_vps_exec.py`
-  and the seed whatsapp tests, 2026-11-10). Target: replay CI's own `changes` classification (extracted from `test.yml` so
-  both share one source) and run the Python jobs it selects; pending a filing-latency/memory design for the 8 GB machine.
-  Until then, a branch steward whose diff touches `products/seed/`, `products/<slug>/frontend/` or an integration runs that
-  suite itself before filing.
+  (`ci_keeper_test_ids`: the "real tree is clean" tests that make a pre-commit warning a CI block) - (b) alone only for
+  a ledger-only diff; (c) for any code diff, **the Python suites CI runs for THIS diff** (owner decision 2026-11-11, "run
+  CI's suites" over a fast proxy). The scope is `ci_scope.classify` over `origin/dev...head` - the SAME module the
+  workflow's `changes` job calls (the classifier left the inline bash so the two can never disagree; base selection,
+  which depends on the GitHub event, stays in the workflow). `ci_python_suites` then derives, from the head's workflow:
+  the toolkit suite split exactly as CI shards it (`test_compliance.py` isolated + `MCP_TEST_TOTAL_SHARDS` round-robin
+  shards, each its own process), every `seed-backend-tests` matrix root, and every `product-backend-tests` matrix product
+  that is awake (`deploy/fleet/active-scope.txt`) and selected by the scope (all of them on a shared-root change). A test
+  pins the split against the real `test.yml`. Why: three deliveries went 5/5 and were ejected on suites the diff selected
+  in CI (`test_all_products_compliant[core]` - a seeded icon; the seed suite + `test_vps_exec.py` - a seed change; a
+  product FE test), 2026-11-10. The run holds ONE machine-wide heavy slot (`hw_admission.heavy_slot`; not admitted =
+  `UNMEASURED`, never green) and takes minutes to tens of minutes. **Gap, `NOC-REMEDIATE[scoped-green-fe-and-tooling]`:**
+  FE vitest and the bespoke `tooling-tests` job stay CI-judged only (no `node_modules` in the export; tooling-tests renders
+  a template in bash) - a branch steward touching a product FE or an MCP connector server (`mcp/<connector>/tests`) runs that suite itself before filing.
   CI's "Prime hermetic state" step is replayed first (`ci_prime_flags`).
 - *The env is scrubbed the way CI's is.* `hermetic_env`: OS basics only (`HERMETIC_BASE_ENV`) plus the toolkit job's own
   `env:` plus `CI=true`. Everything else (`CLAUDE_*`, `ANTHROPIC_*`, `OPENAI_*`, `SUPABASE_*`, `NOC*` ...) is absent, because it is
