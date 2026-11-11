@@ -484,6 +484,39 @@ def test_workflow_permission_rejection_maps_to_the_workflow_reason(world):
     assert res.ejected[0]["kind"] == "needs_workflow_token"
     assert {x["slug"] for x in res.landed} == {"ok"} and ci.last(ok)[0] == "success"
     assert ci.last(wf)[0] == "failure"
+    why = res.ejected[0]["why"]
+    assert "github.token" in why and "refusing to allow a GitHub App" in why  # names the refused credential
+
+
+def test_a_refused_pat_push_says_the_pat_was_refused(world):
+    """2026-11-11: the PAT pushed a workflow batch at 16:19 and five entries were ejected at 16:41 with a
+    reason that could not say whether the PAT or github.token was refused. The reason now says."""
+    enqueue(world, "wf", [(WF, "name: x\n")], 2100)
+    ci = FakeCI(world["origin"])
+    logs: list[str] = []
+
+    def rejecting(cmd, cwd=None):
+        if cmd[:2] == ["git", "push"] and str(cmd[2]).startswith("https://x-access-token:"):
+            return 1, "", (f"remote: error: GH013 {cmd[2]}\n ! [remote rejected] (refusing to allow a Personal "
+                           "Access Token to create or update workflow `x.yml` without `workflows` permission)")
+        return ci(cmd, cwd=cwd)
+
+    q = mq.Queue("o/r", regen=_NOREGEN, run=rejecting, run_id="7", poll_s=0, sleep=lambda s: None,
+                 workdir=world["runner"], log=logs.append, push_token=TOK)
+    res = q.drain()
+    x = res.ejected[0]
+    assert x["kind"] == "needs_workflow_token"
+    assert "MQ_PUSH_TOKEN (PAT)" in x["why"] and "Personal Access Token" in x["why"] and "re-mint" in x["why"]
+    assert TOK not in x["why"] and not any(TOK in m for m in logs)  # the stderr quote is redacted
+    assert any("rejected" in m and "Personal Access Token" in m for m in logs)
+
+
+def test_the_default_drain_log_flushes_every_line(capsys, monkeypatch):
+    seen = {}
+    monkeypatch.setattr("builtins.print", lambda *a, **k: seen.update(k))
+    mq._flush_print("x")
+    assert seen.get("flush") is True
+    assert mq.Queue("o/r").log is mq._flush_print
 
 
 # ── MQ_PUSH_TOKEN: the PAT is used ONLY for workflow batches ───────────────
