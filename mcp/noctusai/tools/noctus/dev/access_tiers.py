@@ -64,6 +64,25 @@ def _call_name(call: ast.Call) -> str | None:
     return _tail(call.func)
 
 
+_PATH_PARAM_RE = re.compile(r"\{(\w+)(?::[^}]*)?\}")
+
+
+def _token_link_problem(fn: ast.AST, path: str, helpers: tuple[str, ...]) -> str:
+    """Why a ``token-link`` route is not compliant, or "" when it is. Walks the AST (a docstring / string / comment that
+    merely names the helper must not pass): (1) a decorator CALL ``limit`` / ``shared_limit`` (the rate limit), and (2) an
+    ``ast.Call`` to one of ``helpers`` whose token argument is one of the route's PATH parameters."""
+    if not any(isinstance(d, ast.Call) and _call_name(d) in ("limit", "shared_limit") for d in getattr(fn, "decorator_list", [])):
+        return "token-link route needs a rate limit decorator (`limiter.limit(...)` / `limiter.shared_limit(...)`)"
+    params = set(_PATH_PARAM_RE.findall(path))
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Call) and _call_name(n) in helpers:
+            token_args = list(n.args[:1]) + [k.value for k in n.keywords if k.arg == "token"]
+            if any(isinstance(a, ast.Name) and a.id in params for a in token_args):
+                return ""
+    return (f"token-link route must CALL {list(helpers)} with its path parameter as the token "
+            "(expiry fails closed, malformed = 404, no token in logs); naming it in a docstring does not count")
+
+
 def _const_str(node: ast.AST | None) -> str | None:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
@@ -452,14 +471,17 @@ def _classify_set(product: str, files: list[Path], root: Path, reg) -> list[Rout
                 elif "/admin" in path and tier in ("org", "public") and not decl:
                     verdict, note = "unclear", f"admin-looking path behind tier {tier}; confirm it is customer-owned"
                 elif tier == "public":
-                    # the closed public allowlist: landing | auth | pricing-checkout | legal-consent | lead-capture
+                    # the closed public allowlist: landing | auth | pricing-checkout | legal-consent | lead-capture | token-link
                     limited = any("limit" in ast.unparse(d).lower() or "rate" in ast.unparse(d).lower() for d in fn.decorator_list) \
                         or "limiter" in body_src or "rate_limit" in body_src or "ratelimit" in body_src
                     if category not in reg.PUBLIC_CATEGORIES:
                         verdict, note = "unclear", f"public route outside the closed allowlist {list(reg.PUBLIC_CATEGORIES)} (category={category or 'none'}): every other route is access-level"
-                    elif not limited:
+                    elif category == "token-link" and (tl_problem := _token_link_problem(fn, path, reg.TOKEN_LINK_HELPERS)):
+                        # AST, not text: a docstring or a string naming the helper proves nothing
+                        verdict, note = "unclear", tl_problem
+                    elif category != "token-link" and not limited:
                         verdict, note = "unclear", "public route without a rate limit"
-                    elif deco.func.attr.upper() != "GET" and not any(a in body_src for a in reg.ABUSE_PROTECTION_NAMES):
+                    elif category != "token-link" and deco.func.attr.upper() != "GET" and not any(a in body_src for a in reg.ABUSE_PROTECTION_NAMES):
                         verdict, note = "unclear", f"public write without abuse protection (one of {sorted(reg.ABUSE_PROTECTION_NAMES)})"
                 routes.append(Route(
                     product, rel, fn.name, fn.lineno, deco.func.attr.upper(), path,  # type: ignore[attr-defined]
@@ -604,6 +626,21 @@ def _apply_do_block(stmt: str, tables: dict[str, "_Tbl"], pschema: str | None) -
                         t.policies.pop(pn)
 
 
+_RENAME_RE = re.compile(r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?" + _Q + r"\s+RENAME\s+TO\s+\"?(?P<new>[\w-]+)\"?", re.I)
+
+
+def _apply_renames(stmt: str, tables: dict[str, "_Tbl"], pschema: str | None) -> None:
+    """``ALTER TABLE s.a RENAME TO b`` -- top-level or inside a ``DO`` block (orbity 023 retires its tables this way): the
+    table keeps its grants and policies under the NEW name. Without it the scanner keeps a phantom `a` and never sees `b`."""
+    for m in _RENAME_RE.finditer(stmt):
+        old = _tbl_key(m.group("schema"), m.group("table"), pschema)
+        t = tables.pop(old, None)
+        if t is None:
+            continue
+        t.name = m.group("new")
+        tables[_tbl_key(m.group("schema"), m.group("new"), pschema)] = t
+
+
 def _tbl_key(schema: str | None, name: str, product_schema: str | None) -> str:
     return f"{(schema or product_schema or '').lower()}.{name.lower()}".lstrip(".")
 
@@ -656,6 +693,8 @@ def analyze_tables(root: Path | None = None) -> dict[str, Any]:
                 head = st.lstrip()
                 line = cleaned[: cleaned.find(st)].count("\n") + 1 if st in cleaned else 1
                 where = f"{rel}:{line}"
+                if re.search(r"\bRENAME\s+TO\b", head, re.I):
+                    _apply_renames(head, tables, pschema)
                 if m := _CREATE_TABLE_RE.match(head):
                     k = _tbl_key(m.group("schema"), m.group("table"), pschema)
                     t = tables.setdefault(k, _Tbl(m.group("schema"), m.group("table"), prod, rel))
@@ -1153,7 +1192,7 @@ def render_catalog(root: Path | None = None) -> str:
     L += ["", "## API docs exposure (owner decision: `/docs` + `/openapi.json` stay PUBLIC; every documented route is gated by its tier -- proven by the schema-driven 401/403 contract test -- and Platform IP is left out of the public schema)", ""]
     L += [f"- {p}: {state}" for p, state in docs.items()]
     pub = [r for r in routes if r.tier == "public"]
-    L += ["", "## Public routes by category (closed allowlist: landing, auth, pricing-checkout, legal-consent, lead-capture)", ""]
+    L += ["", "## Public routes by category (closed allowlist: landing, auth, pricing-checkout, legal-consent, lead-capture, token-link)", ""]
     if not pub:
         L.append("_No route currently declares `@access_tier(\"public\", category=...)`; every anonymous-reachable route is in the baseline as unclear._")
     for cat in load_registry(root).PUBLIC_CATEGORIES:

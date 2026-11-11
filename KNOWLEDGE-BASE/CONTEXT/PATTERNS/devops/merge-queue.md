@@ -323,6 +323,27 @@ The message reports:
 - **Bisection is "first half", not speculative.** A red batch of N retries its
   first ⌈N/2⌉. That is enough at our volume; Uber-style speculation is not
   warranted.
+- **A red batch is attributed before it is bisected (2026-11-11).** Each
+  bisect step is a ~50-minute CI run, and a 2-hour stall happened. So on a red
+  batch the drain first reads the failing tests (`gh run view --log-failed`,
+  `FAILED path::Class::test`), maps each to an area, and compares that with each
+  entry's diff against the batch base (`attribute_culprit`, a pure function):
+  - `products/<p>/...` test -> that product + `seed/`; `seed/...` -> `seed/`;
+    `mcp/...` -> `mcp/`; no readable test id -> only a scoped job name
+    (`Product Backend Tests (pytest) (<p>)`, `Seed ...`, `MCP Toolkit Tests`);
+  - the migration edge: `verify_db_guards`, `*_on_replay*` and migration-replay
+    tests map to entries whose diff adds `products/<p>/.../migrations/*.sql`
+    (the product `<p>` when the test names it, e.g. `TestAgentsStudioProbes` ->
+    agents; otherwise any migration).
+  EXACTLY ONE matching entry is ejected as `ci_red_attributed`, the reason
+  naming the failing test and the matching path (it rides the `merge-queue`
+  status, so the `MQ-LEFT` line carries it), and the rest go to a fresh
+  candidate. Zero or several matches, or an unreadable failure, bisect exactly as
+  before; the log line says `ATTRIBUTED` or `bisecting (<reason>)` and each
+  round record carries `attribution: {path: attributed|bisect, reason}`. It
+  never guesses. Covered by the `culprit attribution` tests in
+  `test_merge_queue.py`.
+
 - **The suspects stay isolated until the culprit is out (2026-11-05).** The
   entries of a red batch are *suspects*. While any of them are still queued,
   batches are drawn only from them:

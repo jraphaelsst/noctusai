@@ -47,7 +47,7 @@ from app import billing
 from app.dependencies import get_admin_client
 from app.services import billing_charges
 from app.services.content_plans_service import release_stale_claims
-from app.services.automation_engine import orgs_with_due_work
+from app.services.automation_engine import has_due_work, orgs_with_due_work
 from app.services.automation_service import AutomationService
 from app.services.tasks_service import TasksService, orgs_with_due_routines
 
@@ -72,9 +72,12 @@ def _drain_org(admin, org_id: str) -> dict[str, int]:
     return AutomationService(admin, org_id=UUID(org_id)).run_due()
 
 
+# poll-budget: every 1 min; idle 1 call/tick (has_due_work, limit 1); worst 1440 idle calls/day (was 2/tick = 2880); idle=fixed (a gate query, nothing fetched)
 async def job_automacao_run_due() -> None:
     try:
         admin = get_admin_client()
+        if not await anyio.to_thread.run_sync(lambda: has_due_work(admin)):
+            return  # idle: one existence query, not two paged scans
         orgs = await anyio.to_thread.run_sync(lambda: orgs_with_due_work(admin))
         for org_id in orgs:
             try:
@@ -87,6 +90,7 @@ async def job_automacao_run_due() -> None:
         logger.exception("job orbity_automacao_run_due falhou")
 
 
+# poll-budget: every 15 min; idle 1 call/tick (paged due-routines scan, 0 rows); worst 96 idle calls/day; idle=fixed
 async def job_rotinas_run_due() -> None:
     try:
         admin = get_admin_client()
@@ -104,6 +108,7 @@ async def job_rotinas_run_due() -> None:
         logger.exception("job orbity_rotinas_run_due falhou")
 
 
+# poll-budget: every 2 min; idle 1 call/tick (has_billing_work, limit 1); worst 720 idle calls/day (was 3/tick = 2160); idle=fixed (a gate query)
 async def job_billing_process() -> None:
     try:
         admin = get_admin_client()
@@ -116,6 +121,7 @@ async def job_billing_process() -> None:
         logger.exception("job %s falhou", BILLING_PROCESS_JOB)
 
 
+# poll-budget: daily 03:10; 1+ calls/tick; worst bounded by the due recurrences (a few calls/day); idle=event (cron, not a loop)
 async def job_finance_recurrences() -> None:
     try:
         admin = get_admin_client()
@@ -125,6 +131,7 @@ async def job_finance_recurrences() -> None:
         logger.exception("job %s falhou", RECURRENCES_JOB)
 
 
+# poll-budget: every 5 min; 1 UPDATE call/tick, no rows fetched when idle; worst 288 calls/day; idle=fixed
 async def job_content_claims_sweep() -> None:
     try:
         admin = get_admin_client()
@@ -144,5 +151,6 @@ def configure() -> None:
     # The seed contracts organ's own daily job (registered through its mounted organ so it books through the host's billing).
     from app.routers.organs import contracts_organ, reminders_organ
 
+    # poll-budget: contracts organ daily + reminders organ daily 12:00; a handful of calls/day per org with the feature on; idle=event (cron)
     contracts_organ.register_jobs()
     reminders_organ.register_jobs()  # `finance_billing_reminders`, daily 12:00 America/Sao_Paulo, reminders ON per org only

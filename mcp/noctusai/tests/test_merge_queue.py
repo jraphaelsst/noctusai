@@ -39,8 +39,10 @@ def commit(repo, path, text, msg, when):
 class FakeCI:
     """Stands in for `gh`: dispatch, run list/view, rerun, statuses."""
 
-    def __init__(self, origin: str, red_if=lambda tree: "BREAK" in tree, flaky_once=False):
+    def __init__(self, origin: str, red_if=lambda tree: "BREAK" in tree, flaky_once=False,
+                 failed_log: str = "", failed_job: str = "Product Backend Tests (x)"):
         self.origin, self.red_if, self.flaky_once = origin, red_if, flaky_once
+        self.failed_log, self.failed_job = failed_log, failed_job
         self.statuses: dict[str, list[tuple[str, str]]] = {}
         self.dispatched: list[tuple[str, str]] = []
         self.bases: list[str] = []
@@ -64,6 +66,8 @@ class FakeCI:
             sha = sh(self.origin, "git", "rev-parse", f"refs/heads/{ref}")
             rid = [k for k, v in self._runs.items() if v == sha][-1]
             return 0, json.dumps([{"databaseId": int(rid), "headSha": sha}]), ""
+        if args[:2] == ["run", "view"] and "--log-failed" in args:
+            return 0, self.failed_log, ""
         if args[:2] == ["run", "view"]:
             sha = self._runs[args[2]]
             tree = sh(self.origin, "git", "ls-tree", "-r", "--name-only", sha)
@@ -71,7 +75,7 @@ class FakeCI:
             if self.flaky_once and self.reruns == 0:
                 red = True
             concl = "failure" if red else "success"
-            jobs = [{"name": "Product Backend Tests (x)", "conclusion": concl}]
+            jobs = [{"name": self.failed_job, "conclusion": concl}]
             return 0, json.dumps({"status": "completed", "conclusion": concl, "url": "u", "jobs": jobs}), ""
         if args[:2] == ["run", "rerun"]:
             self.reruns += 1
@@ -713,3 +717,76 @@ def test_derived_only_commit_empties_after_resolve_is_skipped_not_ejected(world)
     assert calls == ["access-tiers"]
     assert sh(wt, "git", "show", f"{head}:b.txt") == "b"
     assert sh(wt, "git", "show", f"{head}:{DERIVED}") == "derived-from-merged-tree"
+
+
+# ── culprit attribution (2026-11-11): a red batch ejects the one entry whose diff covers the failure ──
+
+def _fail_line(test_id, job="Tooling Tests (pytest)"):
+    return f"{job}\tRun pytest\t2026-11-11T10:00:00Z FAILED {test_id} - AssertionError\n"
+
+
+def _attr_rounds(res):
+    return [r.get("attribution", {}).get("path") for r in res.rounds if "attribution" in r]
+
+
+def test_attribute_culprit_is_pure_and_never_guesses():
+    paths = {"mq/a--1": ["mcp/noctusai/tools/x.py"], "mq/b--2": ["products/sw/backend/app/y.py"]}
+    ref, why = mq.attribute_culprit(["mcp/noctusai/tests/test_x.py::test_a"], [], paths)
+    assert ref == "mq/a--1" and "test_x.py" in why and "mcp/noctusai/tools/x.py" in why
+    ref, why = mq.attribute_culprit([], ["Some Unknown Job"], paths)
+    assert ref is None and "unreadable" in why
+
+
+def test_single_attributable_culprit_is_ejected_without_bisect(world):
+    good = enqueue(world, "good", [("products/sw/backend/app/g.py", "g\n")], 2000)
+    bad = enqueue(world, "bad", [("mcp/noctusai/tools/BREAK.py", "boom\n")], 2100)
+    ci = FakeCI(world["origin"], red_if=lambda t: any("BREAK" in p for p in t),
+                failed_log=_fail_line("mcp/noctusai/tests/test_thing.py::test_it"), failed_job="MCP Toolkit Tests")
+    res = make_queue(world, ci).drain()
+    assert [x["slug"] for x in res.ejected] == ["bad"]
+    assert res.ejected[0]["kind"] == "ci_red_attributed"
+    assert "test_thing.py::test_it" in res.ejected[0]["why"] and "BREAK.py" in res.ejected[0]["why"]
+    assert {x["slug"] for x in res.landed} == {"good"}
+    assert "attributed" in _attr_rounds(res)
+    assert ci.last(bad)[0] == "failure" and "ci_red_attributed" in ci.last(bad)[1]
+    assert len(ci.dispatched) == 2  # the red batch + ONE rerun of the rest; a bisect would need more
+
+
+def test_ambiguous_match_falls_back_to_bisect(world):
+    a = enqueue(world, "a", [("mcp/noctusai/tools/a.py", "a\n")], 2000)
+    b = enqueue(world, "b", [("mcp/noctusai/tools/BREAK.py", "boom\n")], 2100)
+    ci = FakeCI(world["origin"], red_if=lambda t: any("BREAK" in p for p in t),
+                failed_log=_fail_line("mcp/noctusai/tests/test_thing.py::test_it"), failed_job="MCP Toolkit Tests")
+    logs = []
+    q = make_queue(world, ci)
+    q.log = logs.append
+    res = q.drain()
+    assert [x["slug"] for x in res.ejected] == ["b"] and res.ejected[0]["kind"] == "ci_red"
+    assert "bisect" in _attr_rounds(res)
+    assert any("bisect" in m and "2 entries" in m for m in logs)
+
+
+def test_unreadable_failure_falls_back_to_bisect(world):
+    enqueue(world, "a", [("products/sw/backend/app/a.py", "a\n")], 2000)
+    enqueue(world, "b", [("BREAK", "boom\n")], 2100)
+    ci = FakeCI(world["origin"], failed_log="garbage with no failures\n", failed_job="Mystery Job")
+    logs = []
+    q = make_queue(world, ci)
+    q.log = logs.append
+    res = q.drain()
+    assert res.ejected[0]["kind"] == "ci_red" and "bisect" in _attr_rounds(res)
+    assert any("unreadable" in m for m in logs)
+
+
+def test_verify_db_guards_failure_attributes_to_the_migration_entry_of_that_product(world):
+    enqueue(world, "code", [("products/agents/backend/app/x.py", "x\n")], 2000)
+    enqueue(world, "mig-sw", [("products/sw/backend/migrations/006_s.sql", "-- s\n")], 2050)
+    bad = enqueue(world, "mig-agents", [("products/agents/backend/migrations/001_a.sql", "-- BREAK\n"),
+                                        ("BREAK", "x\n")], 2100)
+    ci = FakeCI(world["origin"], failed_job="MCP Toolkit Tests",
+                failed_log=_fail_line("mcp/noctusai/tests/test_verify_db_guards.py::TestAgentsStudioProbes::test_p",
+                                      "MCP Toolkit Tests"))
+    res = make_queue(world, ci).drain()
+    assert res.ejected[0]["slug"] == "mig-agents" and res.ejected[0]["kind"] == "ci_red_attributed"
+    assert "001_a.sql" in res.ejected[0]["why"] and "test_verify_db_guards" in res.ejected[0]["why"]
+    assert ci.last(bad)[0] == "failure"

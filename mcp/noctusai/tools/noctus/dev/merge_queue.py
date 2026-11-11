@@ -201,6 +201,93 @@ def status_description(text: str) -> str:
     return text if len(text) <= 140 else text[:137] + "..."
 
 
+# ── culprit attribution (2026-11-11) ─────────────────────────────────────────
+# A red batch used to be binary-bisected, ~50 min of CI per step. Most reds name the failing
+# test, and the test's area (product / seed / mcp toolkit / migration replay) says which
+# entry's diff could have caused it. When EXACTLY ONE entry covers the failure it is ejected
+# directly; zero / several / unreadable falls back to the bisect, with the reason logged.
+FAILED_TEST_RE = re.compile(r"\b(?:FAILED|ERROR)\s+(?P<path>[\w./-]+\.py)(?P<rest>::\S+)?")
+JOB_PRODUCT_RE = re.compile(r"\(([a-z0-9][a-z0-9-]*)\)\s*$")
+MIGRATION_PATH_RE = re.compile(r"^(?:products/(?P<p>[^/]+)|seed)/.*?migrations/[^/]+\.sql$")
+# Failures whose cause is a MIGRATION an entry added (the replay + live-guard probes).
+MIGRATION_TEST_RE = re.compile(r"verify_db_guards|_on_replay|migration_replay", re.I)
+
+
+def failed_test_ids(log_text: str) -> list[str]:
+    """`path::Class::test` ids from a pytest `-rf`/`-rfE` summary inside `gh run view --log-failed`."""
+    seen: list[str] = []
+    for m in FAILED_TEST_RE.finditer(log_text or ""):
+        tid = m.group("path") + (m.group("rest") or "")
+        if tid not in seen:
+            seen.append(tid)
+    return seen
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+# NOC-REMEDIATE[mq-area-map-dedup]: this path->area map duplicates `ci_scope.classify` (on
+# feat/scoped-green-product-tests, not yet on dev when this landed). Destination: once both are on dev, derive
+# these areas from ci_scope so the queue, CI's `changes` job and item 5 share ONE classifier (tooling steward e1).
+def failure_areas(test_ids: list[str], failed_jobs: list[str], known_products: list[str],
+                  ) -> list[dict[str, Any]]:
+    """Each failure -> {name, prefixes, migrations_of}: source areas whose change can break it.
+    `migrations_of` set (a product slug or "*") = only an entry ADDING a migration (of that product) matches."""
+    areas: list[dict[str, Any]] = []
+    for tid in test_ids:
+        path = tid.split("::", 1)[0]
+        m = re.match(r"^products/([^/]+)/", path)
+        if MIGRATION_TEST_RE.search(tid):
+            named = [p for p in known_products if len(p) > 2 and _norm(p) in _norm(tid.split("::", 1)[-1])]
+            areas.append({"name": tid, "prefixes": (), "migrations_of": named[0] if len(named) == 1 else "*"})
+        elif m:
+            areas.append({"name": tid, "prefixes": (f"products/{m.group(1)}/", "seed/"), "migrations_of": None})
+        elif path.startswith("seed/") or path.startswith("templates/product-seed/"):
+            areas.append({"name": tid, "prefixes": ("seed/",), "migrations_of": None})
+        elif path.startswith("mcp/"):
+            areas.append({"name": tid, "prefixes": ("mcp/",), "migrations_of": None})
+    if areas:
+        return areas
+    for job in failed_jobs:  # no readable test id: only a job whose scope is unambiguous counts
+        pm = JOB_PRODUCT_RE.search(job)
+        if job.startswith("Product Backend Tests") and pm and pm.group(1) in known_products:
+            areas.append({"name": job, "prefixes": (f"products/{pm.group(1)}/", "seed/"), "migrations_of": None})
+        elif job.startswith("Seed "):
+            areas.append({"name": job, "prefixes": ("seed/",), "migrations_of": None})
+        elif job.startswith("MCP Toolkit Tests"):
+            areas.append({"name": job, "prefixes": ("mcp/",), "migrations_of": None})
+    return areas
+
+
+def attribute_culprit(test_ids: list[str], failed_jobs: list[str],
+                      entry_paths: dict[str, list[str]]) -> tuple[str | None, str]:
+    """(culprit_ref, why). culprit_ref is None - with the reason the caller logs - unless EXACTLY ONE entry's
+    diff touches the failing areas. Pure: never guesses; every None is a documented fallback to bisect."""
+    known = sorted({m.group("p") for ps in entry_paths.values() for p in ps
+                    if (m := re.match(r"^products/(?P<p>[^/]+)/", p))})
+    areas = failure_areas(test_ids, failed_jobs, known)
+    if not areas:
+        return None, f"failure unreadable (no test id or scoped job in {failed_jobs[:3] or 'the log'})"
+    hits: dict[str, str] = {}
+    for ref, paths in entry_paths.items():
+        for a in areas:
+            mig = a["migrations_of"]
+            if mig is not None:
+                match = next((p for p in paths if (m := MIGRATION_PATH_RE.match(p))
+                              and (mig == "*" or m.group("p") == mig)), None)
+            else:
+                match = next((p for p in paths if p.startswith(a["prefixes"])), None)
+            if match:
+                hits[ref] = f"{a['name']} <- {match}"
+                break
+    if len(hits) == 1:
+        ref, why = next(iter(hits.items()))
+        return ref, why
+    return None, (f"{len(hits)} entries match the failing areas" if hits else
+                  "no entry touches the failing areas")
+
+
 # ── the queue against a real git/gh ──────────────────────────────────────────
 
 class Queue:
@@ -537,6 +624,16 @@ class Queue:
             self.sleep(self.poll_s)
         return {"verdict": "timeout", "run_id": run_id}
 
+    def red_attribution(self, ci: dict[str, Any], applied: list[Entry], base: str) -> tuple[Entry | None, str]:
+        """Read the red run's failing tests and try to name the one entry that caused it (see attribute_culprit)."""
+        try:
+            log = self.gh("run", "view", str(ci.get("run_id", "")), "-R", self.repo, "--log-failed", check=False)
+            paths = {e.ref: self.changed_paths(base, e.sha) for e in applied}
+        except RuntimeError as exc:
+            return None, f"failure unreadable ({exc})"
+        ref, why = attribute_culprit(failed_test_ids(log), list(ci.get("failed_jobs", [])), paths)
+        return next((e for e in applied if e.ref == ref), None), why
+
     # land --------------------------------------------------------------------
     def land(self, cand_sha: str, tested_base: str, wt: str) -> tuple[bool, str]:
         """FF dev to the candidate. Returns (landed, sha_on_dev)."""
@@ -634,9 +731,19 @@ class Queue:
                     suspects = [r for r in suspects if r != e.ref]
                     limit = len(suspects) if suspects else batch_limit
                 elif ci["verdict"] == "red":
-                    suspects = [e.ref for e in applied]
-                    limit = next_batch_limit(limit, len(applied), green=False)
-                    self.log(f"  batch red - bisecting: next batch limit {limit}")
+                    culprit, why = self.red_attribution(ci, applied, base)
+                    if culprit is not None:
+                        self.log(f"  batch red - ATTRIBUTED to {culprit.slug}: {why}; ejecting without bisect")
+                        x = self._eject_info(culprit, "ci_red_attributed", why)
+                        self._finish_eject(x)
+                        res.ejected.append(x)
+                        rnd["attribution"] = {"path": "attributed", "reason": why}
+                        suspects, limit = [], batch_limit  # the rest were never proven bad: fresh candidate
+                    else:
+                        suspects = [e.ref for e in applied]
+                        limit = next_batch_limit(limit, len(applied), green=False)
+                        rnd["attribution"] = {"path": "bisect", "reason": why}
+                        self.log(f"  batch red - bisecting ({why}; {len(applied)} entries): next batch limit {limit}")
                 else:
                     # timeout/unavailable: leave the entries queued; the next drain retries.
                     for e in applied:
