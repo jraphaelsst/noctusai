@@ -32,7 +32,8 @@ class TestUuidPayloadsSerialize:
     def test_update_lead_with_stage_id(self, client):
         resp = client.patch(f"/api/crm/leads/{uuid4()}", json={"stage_id": str(uuid4())})
         assert resp.status_code != 502 or "UUID" not in resp.text, resp.text
-        assert resp.status_code in (200, 404), resp.text
+        # 422 = the stage is not in the caller's org (the org-scoped client proves every foreign key): still a clean answer.
+        assert resp.status_code in (200, 404, 422), resp.text
 
     def test_create_client_with_legal_name_and_document(self, client):
         resp = client.post("/api/clients", json={"legal_name": "Acme Comércio LTDA", "document": "11.222.333/0001-81"})

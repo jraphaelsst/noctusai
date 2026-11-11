@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.dependencies import (
     coerce_org_uuid,
     get_current_user_org,
-    get_user_client,
+    get_org_client,
 )
 from app.schemas.agenda import (
     AgendaEventCreate,
@@ -50,7 +50,7 @@ router = APIRouter(tags=["Agenda"])
 def _svc(token: str, org_id: UUID) -> AgendaService:
     # Wires the FakeCalendarAdapter by default.
     # NOC-REMEDIATE[orbity-agenda-gcal]: pass calendar_adapter=get_calendar_adapter(resolver, ...) — 2026-06-03
-    return AgendaService(get_user_client(token), org_id=org_id)
+    return AgendaService(get_org_client(org_id), org_id=org_id)
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +80,8 @@ def list_events(
             page=page,
             page_size=page_size,
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("agenda.list_events failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar eventos")
@@ -98,6 +100,8 @@ async def create_event(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).create_event(payload.model_dump(mode="json", exclude_none=True))
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("agenda.create_event failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar evento")
@@ -119,6 +123,8 @@ def get_event(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_event(event_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("agenda.get_event failed org=%s id=%s", org_id, event_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar evento")
@@ -144,6 +150,8 @@ def update_event(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
         row = _svc(token, org_id).update_event(event_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("agenda.update_event failed org=%s id=%s", org_id, event_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar evento")
@@ -161,6 +169,8 @@ def delete_event(
     org_id = coerce_org_uuid(raw_org)
     try:
         ok = _svc(token, org_id).delete_event(event_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("agenda.delete_event failed org=%s id=%s", org_id, event_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar evento")
@@ -196,6 +206,8 @@ def sync_gcal(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).sync_to_gcal(event_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("agenda.sync_gcal failed org=%s id=%s", org_id, event_id)
         raise HTTPException(status_code=502, detail="Falha ao sincronizar com Google Calendar")
