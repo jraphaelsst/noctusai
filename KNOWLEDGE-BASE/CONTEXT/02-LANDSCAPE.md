@@ -61,15 +61,15 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 40 | 7 | 8 | 64 |
 | Monica | 2 | 1 | 15 | 0 | 8 | 37 |
-| Assistant | 3 | 3 | 13 | 0 | 10 | 96 |
-| **Total** | **362** | **438** | **910** | **542** | **1629** | **22,965** |
+| Assistant | 3 | 3 | 16 | 0 | 12 | 110 |
+| **Total** | **362** | **438** | **913** | **542** | **1631** | **22,979** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas DECLARED in migrations (20):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `assistant` + `commerce` + `community` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `monica` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `store` + `therapy`.
-- **Tables: 1182** declared across those schemas.
+- **Tables: 1183** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or
