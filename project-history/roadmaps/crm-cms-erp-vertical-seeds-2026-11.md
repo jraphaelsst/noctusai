@@ -92,6 +92,7 @@ _(empty)_
   - **orbity:** the complete system for digital-marketing agencies;
   - **Mônica / Nós no Limiar:** the complete system for psychoanalysis clinics;
   - **agents:** agents for managing agents.
+  - **Which products are white-labels:** only the three market canons, SW, orbity and Mônica, are white-labels to sell. **agents is NOT a white-label.** Owner: "except for the agents, the 3 others are white-labels we're gonna sell". All three get the full sidebar restructure (SW's is W3-S1, filed).
 - **Same structure in every market canon.** "mind that orbity and monica(nosnolimiar) also should have that same structure". New slices:
   - **W3-O1:** orbity nav onto the canonical module groups;
   - **W3-M0:** Mônica nav onto the canonical module groups, after the nosnolimiar rename lands.
