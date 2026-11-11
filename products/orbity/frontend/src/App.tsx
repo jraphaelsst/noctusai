@@ -3,14 +3,13 @@
  *
  * Infrastructure comes from @/infra (one file, one createProductInfra call).
  * Structure comes from createProductApp + createProductLayout.
- * This file only defines pages and nav — zero boilerplate.
+ * This file only defines pages — nav lives in `nav/navGroups.ts` (seed module groups).
  */
 import { lazy } from "react";
 import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
-import type { NavGroupWithRoute } from "@noctusai/lib";
-import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Box, DollarSign, UserCheck, Kanban, ClipboardList, CalendarDays, RefreshCw, FileBarChart2, Target, Zap, Megaphone, MessageCircle } from "lucide-react";
+import { Box } from "lucide-react";
+import { NAV_GROUPS, NAV_FALLBACK, STANDALONE_ITEMS, STANDALONE_FALLBACK } from "@/nav/navGroups";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -39,60 +38,13 @@ const Whatsapp = lazy(() => import("@/pages/Whatsapp"));
 // Content / Social Studio module
 const Conteudo = lazy(() => import("@/pages/Conteudo"));
 
-// Nav
-const NAV_GROUPS: NavGroupWithRoute[] = [
-  {
-    key: "principal",
-    label: "Principal",
-    icon: Home,
-    items: [
-      { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
-      { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
-      { name: "Financeiro", href: "/financeiro", icon: DollarSign, route: "financeiro" },
-    ],
-  },
-  {
-    key: "crm",
-    label: "CRM",
-    icon: UserCheck,
-    items: [
-      { name: "Clientes", href: "/clientes", icon: UserCheck, route: "clientes" },
-      { name: "Funil", href: "/funil", icon: Kanban, route: "funil" },
-    ],
-  },
-  {
-    key: "operacoes",
-    label: "Operações",
-    icon: ClipboardList,
-    items: [
-      { name: "Tarefas", href: "/tarefas", icon: ClipboardList, route: "tarefas" },
-      { name: "Agenda", href: "/agenda", icon: CalendarDays, route: "agenda" },
-      { name: "Rotinas", href: "/rotinas", icon: RefreshCw, route: "rotinas" },
-    ],
-  },
-  {
-    key: "marketing",
-    label: "Marketing",
-    icon: Megaphone,
-    items: [
-      { name: "Conteúdo", href: "/conteudo", icon: Megaphone, route: "conteudo" },
-      { name: "Tráfego", href: "/trafego", icon: Target, route: "trafego" },
-      { name: "Automação", href: "/automacao", icon: Zap, route: "automacao" },
-      { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle, route: "whatsapp" },
-      { name: "Relatórios", href: "/relatorios", icon: FileBarChart2, route: "relatorios" },
-    ],
-  },
-];
-
-// Fallback nav (used before status_pagina resolves) derives from the single
-// NAV_GROUPS source — the `route` key is the only extra field.
-const NAV_FALLBACK: NavGroup[] = NAV_GROUPS as NavGroup[]; // every group/item above sets `icon`; `route` is the only extra field
-
 const Layout = createProductLayout({
   brandIcon: Box,
   brandTitle: "Orbity",
   navGroups: NAV_GROUPS,
   navGroupsFallback: NAV_FALLBACK,
+  standaloneItems: STANDALONE_ITEMS,
+  standaloneItemsFallback: STANDALONE_FALLBACK,
   ...infra.appConfig,
   NotificationBell: infra.NotificationBell,
 });
