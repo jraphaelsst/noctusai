@@ -16223,19 +16223,20 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
     # orbity 035: composite (org_id, ...) unique indexes that exist ONLY as ON CONFLICT arbiters for the org-bound client (it
     # refuses an upsert whose conflict target lacks org_id). The old, stricter global keys (campaign_metrics_campaign_date_ux,
     # lead_scoring_results_lead_id_key) stay and fire first on any duplicate (same error class), so a duplicate-insert probe
-    # could never attribute the refusal to the new index; their behaviour is proven by the upsert tests (the arbiter resolves)
-    # and the replay applying them twice. The tables are empty-or-small and not a business invariant of their own.
+    # could never attribute the refusal to the new index. Not a refusal guard of its own: what must hold is that the conflict
+    # target RESOLVES, and that is asserted on the real chain by mcp/noctusai/tests/test_orbity_service_role_hardening_on_replay.py
+    # (a zero-row INSERT ... ON CONFLICT (org_id, ...) fails with 42P10 if the index is missing).
     (
         "products/orbity/backend/migrations/035_orbity_function_and_grant_hardening.sql",
         "campaign_metrics_org_campaign_date_ux",
         "ON CONFLICT arbiter shadowed by the stricter pre-existing (campaign_id, date) key, which refuses the same duplicate first; "
-        "the arbiter's behaviour is covered by tests/routers/test_org_isolation.py (upsert) and migration_replay.",
+        "resolution of the arbiter is asserted on the replayed chain (42P10 if missing), not by a refusal probe.",
     ),
     (
         "products/orbity/backend/migrations/035_orbity_function_and_grant_hardening.sql",
         "lead_scoring_results_org_lead_ux",
         "ON CONFLICT arbiter shadowed by the stricter pre-existing UNIQUE (lead_id), which refuses the same duplicate first; "
-        "the arbiter's behaviour is covered by the crm scoring tests and migration_replay.",
+        "resolution of the arbiter is asserted on the replayed chain (42P10 if missing), not by a refusal probe.",
     ),
     # assistant 015: the seed connection table's UNIQUE index on the random per-line webhook routing token (a lookup key,
     # not a business invariant; same shape as the erp portal token below). The table is empty until the owner pairs the

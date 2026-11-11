@@ -314,3 +314,25 @@ def test_the_manual_metric_entry_route_refuses_another_orgs_campaign(client):
     resp = client.put(f"/api/meta-ads/campaigns/{FOREIGN}/metrics", json={"date": "2026-11-01", "spend": 5})
     assert resp.status_code in (404, 422), resp.text  # not-found, or the foreign-reference refusal: never a write
     assert client.mock_supabase.table("campaign_metrics").select("*").execute().data == []
+
+
+# -- round 3, R8: a malformed user id is a refusal, never a 500 --------------------------------------------------------
+def test_a_malformed_user_id_is_refused_422_not_a_500():
+    core = MockSupabaseClient(validate_schema=False, schema="public")
+    core.set_table_data("noctus_users", [{"id": INSIDER, "org_id": ORG_A}])
+    core.set_table_data("org_memberships", [])
+    scoped = make_org_client(MockSupabaseClient(validate_schema=False, schema="orbity"), ORG_A, core)
+    for bad in ("not-a-uuid", "", "1; drop table x", "c0000000-0000-4000-8000-00000000000"):
+        with pytest.raises(ForeignReferenceError) as err:
+            scoped.table("tasks").insert({"id": "d0000000-0000-4000-8000-000000000009", "assignee_user_id": bad}).execute()
+        assert err.value.status_code == 422
+
+
+def test_org_member_ids_never_queries_with_a_malformed_id():
+    from app.org_scope import org_member_ids
+
+    class Boom:
+        def table(self, name):
+            raise AssertionError("a malformed id reached the database")
+
+    assert org_member_ids(Boom(), ORG_A, {"not-a-uuid", "x"}) == set()

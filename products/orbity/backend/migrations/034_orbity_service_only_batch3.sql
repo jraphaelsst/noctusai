@@ -11,6 +11,8 @@
 -- BEFORE APPLYING (prod): run products/orbity/backend/audits/cross_org_references.sql (read-only, as postgres/service_role).
 -- It MUST return 0 rows: any row is a reference whose target lives in another org (or a user outside the org), which the
 -- org-bound client would refuse from now on. Fix or null those rows first.
+-- AFTER APPLYING 034 + 035: verify the privileges (see the POST-APPLY block in 035: `pg_default_acl` for
+-- `defaclnamespace = 'orbity'::regnamespace`, because a default-privilege revoke only applies to the role that granted it).
 SET search_path = orbity, public;
 
 -- member (org-scoped) policies of any name go; only the service_role policy remains.

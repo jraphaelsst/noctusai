@@ -9,6 +9,7 @@ tenant's ``stage_id`` / ``client_id`` / ``post_id`` is refused 422). KB § PATTE
 from __future__ import annotations
 
 from typing import Any, Callable
+from uuid import UUID
 
 from noctusai_lib.api.org_scoped import OrgScopedClient
 from noctusai_lib.domain.org_memberships import active_member_user_ids
@@ -54,10 +55,19 @@ USER_REFERENCES: dict[str, tuple[str, ...]] = {
 }
 
 
+def _as_uuid(value: Any) -> str | None:
+    try:
+        return str(UUID(str(value)))
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
 def org_member_ids(core_client: Any, org_id: str, candidates: set[str]) -> set[str]:
     """Of ``candidates``, the user ids that belong to ``org_id``: the home org on the trusted ``noctus_users`` row, or an ACTIVE
     ``org_memberships`` row (multi-org). ``user_metadata`` is never consulted."""
-    wanted = sorted({str(c) for c in candidates})
+    wanted = sorted({u for u in (_as_uuid(c) for c in candidates) if u})  # a malformed id is not a member: never reaches the query (no 500)
+    if not wanted:
+        return set()
     home = core_client.table("noctus_users").select("id").eq("org_id", str(org_id)).in_("id", wanted).execute().data or []
     found = {str(r["id"]) for r in home if r.get("id")}
     rest = set(wanted) - found

@@ -67,17 +67,18 @@ class OrgScopedTable:
     def __init__(self, scoped: "OrgScopedClient", name: str):
         self._s = scoped
         self._name = name
-        self._inner = _raw(scoped, name)
+        self.__builder = _raw(scoped, name)
 
     # -- reads / deletes -------------------------------------------------------------------------------------
     def select(self, *args: Any, **kwargs: Any):
-        cols = args[0] if args else kwargs.get("columns", "*")
-        if isinstance(cols, str) and any(ch in cols for ch in _EMBED_CHARS):
+        # postgrest-py joins EVERY positional column argument: judge them all (and the keyword form), not just the first.
+        cols = ",".join(str(c) for c in (*args, *([kwargs["columns"]] if "columns" in kwargs else []))) or "*"
+        if any(ch in cols for ch in _EMBED_CHARS):
             raise OrgScopeViolation(f"{self._name}: select(...) may not embed, alias or cast ({cols!r}): embeds are not org-filtered")
-        return self._inner.select(*args, **kwargs).eq(self._s._col, self._s.org_id)
+        return self.__builder.select(*args, **kwargs).eq(self._s._col, self._s.org_id)
 
     def delete(self, *args: Any, **kwargs: Any):
-        return self._inner.delete(*args, **kwargs).eq(self._s._col, self._s.org_id)
+        return self.__builder.delete(*args, **kwargs).eq(self._s._col, self._s.org_id)
 
     # -- writes ----------------------------------------------------------------------------------------------
     def insert(self, values: Any, *args: Any, **kwargs: Any):
@@ -85,18 +86,21 @@ class OrgScopedTable:
             raise OrgScopeViolation(f"{self._name}: insert(upsert=True) is refused; use upsert(on_conflict='{self._s._col},...')")
         rows = self._stamp(values)
         self._check_refs(rows)
-        return self._inner.insert(rows, *args, **kwargs)
+        return self.__builder.insert(rows, *args, **kwargs)
 
     def upsert(self, values: Any, *args: Any, **kwargs: Any):
         conflict = kwargs.get("on_conflict") or (args[0] if args and isinstance(args[0], str) else "")
         keys = {k.strip() for k in str(conflict).split(",") if k.strip()}
-        if not kwargs.get("ignore_duplicates") and self._s._col not in keys:
+        # `ignore_duplicates=True` is no way round it: DO NOTHING on a global key is an existence oracle (the row count tells
+        # whether another tenant holds the key) and lets one tenant block another's insert. An EXPLICIT on_conflict must name the
+        # org; with neither given, ignore_duplicates alone (the default arbiter is the primary key) is refused the same way.
+        if self._s._col not in keys:
             raise OrgScopeViolation(
-                f"{self._name}: upsert needs on_conflict naming '{self._s._col}' (a composite unique key) or ignore_duplicates=True: "
-                "a conflict on the id alone would move another tenant's row into this org")
+                f"{self._name}: upsert needs on_conflict naming '{self._s._col}' (a composite unique key), also with "
+                "ignore_duplicates=True: a conflict on a global key would move, block or reveal another tenant's row")
         rows = self._stamp(values)
         self._check_refs(rows)
-        return self._inner.upsert(rows, *args, **kwargs)
+        return self.__builder.upsert(rows, *args, **kwargs)
 
     def update(self, values: Mapping[str, Any], *args: Any, **kwargs: Any):
         payload = dict(values)
@@ -104,7 +108,7 @@ class OrgScopedTable:
             raise OrgScopeViolation(f"{self._name}: update names another org")
         payload.pop(self._s._col, None)
         self._check_refs([payload])
-        return self._inner.update(payload, *args, **kwargs).eq(self._s._col, self._s.org_id)
+        return self.__builder.update(payload, *args, **kwargs).eq(self._s._col, self._s.org_id)
 
     # -- internals -------------------------------------------------------------------------------------------
     def _stamp(self, values: Any):

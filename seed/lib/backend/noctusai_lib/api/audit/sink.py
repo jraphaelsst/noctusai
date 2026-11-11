@@ -49,7 +49,7 @@ import sys
 from dataclasses import asdict
 from typing import Any, Callable, Mapping, Optional, Protocol
 
-from .types import AuditActor, AuditEntry
+from .types import AuditActor, AuditEntry, redact_path_params
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +173,8 @@ def _to_row(entry: AuditEntry) -> dict[str, Any]:
     columns (053) written directly, original columns (001/002) derived
     — see the module docstring's "Target table" section."""
     actor: AuditActor = entry.actor
-    resource_type, resource_id = _derive_resource(entry.route_template, entry.path_params)
+    safe_params = redact_path_params(entry.path_params)  # a bearer token never reaches the table (belt: the middleware already did)
+    resource_type, resource_id = _derive_resource(entry.route_template, safe_params)
     row = {
         # Original columns (001/002) — `action`/`resource_type` are
         # NOT NULL; `resource_type` falls back to `product_slug` when
@@ -188,7 +189,7 @@ def _to_row(entry: AuditEntry) -> dict[str, Any]:
         "product_slug": entry.product_slug,
         "method": entry.method,
         "route_template": entry.route_template,
-        "path_params": dict(entry.path_params),
+        "path_params": safe_params,
         "status_code": entry.status,
         "correlation_id": entry.correlation_id,
         "role": actor.role,

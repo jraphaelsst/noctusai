@@ -103,7 +103,7 @@ def test_upsert_with_a_composite_org_key_or_ignore_duplicates_passes():
     c = _client(m)
     c.table("things").upsert({"id": "9", "k": 1}, on_conflict="org_id,k").execute()
     c.table("things").upsert({"id": "10"}, on_conflict=" org_id , id ").execute()
-    c.table("things").upsert({"id": "11"}, ignore_duplicates=True).execute()
+    c.table("things").upsert({"id": "11"}, on_conflict="org_id,id", ignore_duplicates=True).execute()
     assert [r["org_id"] for r in m.table("things").select("*").eq("id", "9").execute().data] == [ORG_A]
 
 
@@ -157,3 +157,32 @@ def test_reference_validator_refuses_ids_it_does_not_vouch_for():
     with pytest.raises(ForeignReferenceError):
         c.table("things").update({"owner_id": "u-other-org"}).eq("id", "1").execute()
     assert seen[0] == {"u-mine"}
+
+
+# -- round 3 ---------------------------------------------------------------------------------------------------------
+def test_select_judges_every_positional_column_argument():
+    """postgrest-py joins all positional columns: an embed in the SECOND argument is still an embed."""
+    c = _client()
+    for args in (("id", "x(*)"), ("id", "p:parents(id)"), ("id", "name", "parents!inner(id)")):
+        with pytest.raises(OrgScopeViolation):
+            c.table("things").select(*args)
+    with pytest.raises(OrgScopeViolation):
+        c.table("things").select(columns="id, x(*)")
+    c.table("things").select("id", "name").execute()  # plain columns still pass
+
+
+def test_the_table_builder_is_not_reachable():
+    t = _client().table("things")
+    for name in ("_inner", "inner", "builder", "_builder"):
+        with pytest.raises(AttributeError):
+            getattr(t, name)
+
+
+def test_ignore_duplicates_does_not_waive_the_org_in_on_conflict():
+    """DO NOTHING on a global key is an existence oracle and lets one tenant block another's insert."""
+    c = _client()
+    with pytest.raises(OrgScopeViolation):
+        c.table("things").upsert({"id": "2"}, ignore_duplicates=True).execute()
+    with pytest.raises(OrgScopeViolation):
+        c.table("things").upsert({"id": "2"}, on_conflict="id", ignore_duplicates=True).execute()
+    c.table("things").upsert({"id": "12"}, on_conflict="org_id,id", ignore_duplicates=True).execute()

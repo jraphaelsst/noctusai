@@ -8,7 +8,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import re
 from typing import Any, Literal, Mapping, Optional
+
+from noctusai_lib.api.token_link import token_fingerprint
+
+#: Path-parameter names that carry a bearer credential (an approval / report link token, a webhook routing token, a signature):
+#: the audit row stores their FINGERPRINT, never the value (owner mandate: a token must never land in a table or a log).
+SECRET_PARAM_NAME = re.compile(r"token|secret|key|signature|sig|password|hmac|credential", re.IGNORECASE)
+
+
+def redact_path_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    """``params`` with every secret-named value replaced by ``token_fingerprint(value)`` (idempotent: a fingerprint stays)."""
+    out: dict[str, Any] = {}
+    for name, value in dict(params or {}).items():
+        if value is not None and SECRET_PARAM_NAME.search(str(name)) and not str(value).startswith("tok:"):
+            out[name] = token_fingerprint(str(value))
+        else:
+            out[name] = value
+    return out
 
 #: Who/what issued the request. Detected by
 #: :func:`noctusai_lib.api.audit.detect.detect_actor_kind` from the

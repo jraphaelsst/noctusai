@@ -59,13 +59,30 @@ def test_routers_and_services_reach_the_database_through_the_org_bound_client():
         assert "get_org_client" in (APP / "routers" / f"{name}_router.py").read_text(encoding="utf-8"), name
 
 
+def _reaches_around(src: str) -> list[int]:
+    """Lines that read the wrapped client / builder behind an org-bound result: ``_OrgScopedClient__inner``, ``_raw(``, or an
+    ``._inner`` read off ``get_org_client(...)`` / a ``.table(...)`` call (an unrelated class's own ``_inner`` is not this)."""
+    hits = []
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Attribute) and node.attr in {"_OrgScopedClient__inner", "_inner"} or (
+                isinstance(node, ast.Attribute) and node.attr.startswith("_OrgScopedTable__")):
+            base = ast.unparse(node.value)
+            if node.attr != "_inner" or "get_org_client(" in base or ".table(" in base or base.endswith("org_client"):
+                hits.append(node.lineno)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_raw":
+            hits.append(node.lineno)
+    return hits
+
+
+def test_the_reach_around_detector_sees_inner_on_org_client_results():
+    assert _reaches_around("x = get_org_client(o).table('t')._inner.select()") == [1]
+    assert _reaches_around("c = get_org_client(o)\nc._OrgScopedClient__inner.table('t')") == [2]
+    assert _reaches_around("class A:\n    def f(self):\n        return self._inner.go()") == []
+
+
 def test_nothing_reaches_the_wrapped_client_behind_the_scoped_one():
-    """The org-bound client hides its inner client (name-mangled); the only reader is the seed module itself."""
-    offenders = []
-    for path in APP.rglob("*.py"):
-        src = path.read_text(encoding="utf-8")
-        if "_OrgScopedClient__inner" in src or re.search(r"\b_raw\(", src):
-            offenders.append(str(path.relative_to(APP)))
+    """The org-bound client and its table builder hide what they wrap (name-mangled); the only reader is the seed module."""
+    offenders = [f"{p.relative_to(APP)}:{ln}" for p in APP.rglob("*.py") for ln in _reaches_around(p.read_text(encoding="utf-8"))]
     assert not offenders, f"reaches around the org scope: {offenders}"
 
 
@@ -155,31 +172,94 @@ def _all_sql() -> dict[str, str]:
     return {p.name: _COMMENT.sub("", p.read_text(encoding="utf-8")) for p in sorted(MIGRATIONS.glob("0*.sql"))}
 
 
+def _arg_types(arglist: str) -> tuple[str, ...]:
+    """``p_org_id UUID, p_n INTEGER DEFAULT 5`` -> ``('uuid', 'integer')`` (names and defaults dropped, case folded)."""
+    out, depth, cur = [], 0, ""
+    for ch in arglist + ",":
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            if cur.strip():
+                tokens = re.split(r"\s+DEFAULT\s+|\s*=\s*", cur.strip(), flags=re.I)[0].split()
+                out.append(" ".join(tokens[1:] if len(tokens) > 1 else tokens).lower())
+            cur = ""
+        else:
+            cur += ch
+    return tuple(out)
+
+
+_FN = r"(?:orbity\.)?(\w+)\s*\(([^)]*)\)"
+
+
+def _function_states(sqls: dict[str, str]) -> dict[tuple[str, tuple[str, ...]], dict]:
+    """Per (name, arg types): the LATEST create (file + header) and every revoke / grant / search_path pin, in migration order. A
+    DROP FUNCTION forgets the privileges (a re-CREATE starts again from the default PUBLIC execute); an overload is its own key."""
+    states: dict[tuple[str, tuple[str, ...]], dict] = {}
+    for fname, sql in sqls.items():
+        events = []
+        for m in re.finditer(rf"CREATE (?:OR REPLACE )?FUNCTION\s+{_FN}\s*(.*?)(?:AS\s+\$)", sql, re.S | re.I):
+            events.append((m.start(), "create", m.group(1), _arg_types(m.group(2)), m.group(3)))
+        for m in re.finditer(rf"DROP FUNCTION\s+(?:IF EXISTS\s+)?{_FN}", sql, re.I):
+            events.append((m.start(), "drop", m.group(1), _arg_types(m.group(2)), ""))
+        for m in re.finditer(rf"REVOKE\s+ALL\s+ON\s+FUNCTION\s+{_FN}\s+FROM\s+([^;]*);", sql, re.I):
+            events.append((m.start(), "revoke", m.group(1), _arg_types(m.group(2)), m.group(3)))
+        for m in re.finditer(rf"GRANT\s+EXECUTE\s+ON\s+FUNCTION\s+{_FN}\s+TO\s+service_role", sql, re.I):
+            events.append((m.start(), "grant", m.group(1), _arg_types(m.group(2)), ""))
+        for m in re.finditer(rf"ALTER FUNCTION\s+{_FN}\s+SET\s+search_path", sql, re.I):
+            events.append((m.start(), "pin", m.group(1), _arg_types(m.group(2)), ""))
+        for _pos, kind, name, types, extra in sorted(events):
+            st = states.setdefault((name, types), {})
+            if kind in ("create", "drop"):
+                st.clear()
+                if kind == "create":
+                    st.update(file=fname, header=extra, revoked=False, granted=False, pinned=bool(re.search(r"SET\s+search_path", extra, re.I)))
+            elif st:
+                if kind == "revoke":
+                    st["revoked"] = "public" in extra.lower()
+                elif kind == "grant":
+                    st["granted"] = True
+                elif kind == "pin":
+                    st["pinned"] = True
+    return {k: v for k, v in states.items() if v}
+
+
+def test_the_function_checker_keys_on_signature_and_latest_create():
+    """Unqualified names, overloads and a DROP+CREATE must not pass on an earlier REVOKE."""
+    sqls = {
+        "001.sql": "CREATE FUNCTION f(p_a UUID) RETURNS void LANGUAGE sql SET search_path = '' AS $$ SELECT 1 $$;\n"
+                   "REVOKE ALL ON FUNCTION f(UUID) FROM PUBLIC;\nGRANT EXECUTE ON FUNCTION f(UUID) TO service_role;",
+        "002.sql": "CREATE FUNCTION orbity.f(p_a UUID, p_b INTEGER DEFAULT 1) RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;",
+        "003.sql": "DROP FUNCTION orbity.f(UUID);\nCREATE FUNCTION orbity.f(p_a UUID) RETURNS void LANGUAGE sql AS $$ SELECT 1 $$;",
+    }
+    st = _function_states(sqls)
+    assert st[("f", ("uuid",))]["revoked"] is False and st[("f", ("uuid",))]["pinned"] is False  # re-created after the DROP
+    assert st[("f", ("uuid", "integer"))]["revoked"] is False  # the overload never inherits f(uuid)'s REVOKE
+
+
 def test_every_orbity_function_is_locked_down():
     """Pinned search_path on every function (a SECURITY DEFINER with a mutable path is an injection seam) and no EXECUTE for the
-    browser roles: a REVOKE ... FROM PUBLIC on every function that is not a trigger function (nobody calls those directly)."""
-    sqls = _all_sql()
-    everything = "\n".join(sqls.values())
-    funcs = {}
-    for name, sql in sqls.items():
-        for m in re.finditer(r"CREATE (?:OR REPLACE )?FUNCTION\s+orbity\.(\w+)\s*\((.*?)\)\s*(.*?)(?:AS\s+\$)", sql, re.S | re.I):
-            funcs[m.group(1)] = m.group(3)
-    assert {"seed_default_lead_stages", "set_updated_at", "offboard_client"} <= set(funcs)
+    browser roles: a REVOKE ... FROM PUBLIC (+ GRANT to service_role) on every function that is not a trigger function. Keyed on
+    name + argument types, qualified or not (search_path is orbity), judged from the LATEST create."""
+    states = _function_states(_all_sql())
+    assert {"seed_default_lead_stages", "set_updated_at", "offboard_client"} <= {n for n, _t in states}
     bad = []
-    for fn, header in funcs.items():
-        pinned = re.search(r"SET\s+search_path", header, re.I) or re.search(rf"ALTER FUNCTION\s+orbity\.{fn}\s*\([^)]*\)\s+SET\s+search_path", everything, re.I)
-        if not pinned:
-            bad.append(f"{fn}: search_path not pinned")
-        if not re.search(r"RETURNS\s+trigger", header, re.I) and not re.search(rf"REVOKE\s+ALL\s+ON\s+FUNCTION\s+orbity\.{fn}\s*\([^)]*\)\s+FROM\s+PUBLIC", everything, re.I):
-            bad.append(f"{fn}: EXECUTE not revoked from PUBLIC")
-        if not re.search(r"RETURNS\s+trigger", header, re.I) and not re.search(rf"GRANT\s+EXECUTE\s+ON\s+FUNCTION\s+orbity\.{fn}\s*\([^)]*\)\s+TO\s+service_role", everything, re.I):
-            bad.append(f"{fn}: not granted to service_role")
+    for (fn, types), st in states.items():
+        trigger = bool(re.search(r"RETURNS\s+trigger", st["header"], re.I))
+        if not st["pinned"]:
+            bad.append(f"{fn}{types}: search_path not pinned")
+        if not trigger and not st["revoked"]:
+            bad.append(f"{fn}{types}: EXECUTE not revoked from PUBLIC")
+        if not trigger and not st["granted"]:
+            bad.append(f"{fn}{types}: not granted to service_role")
     assert not bad, bad
 
 
-def test_the_browser_roles_hold_nothing_but_status_pagina():
+def test_the_browser_roles_hold_nothing_but_status_pagina_select():
     """001 granted ALL on every FUTURE table to `authenticated`; 035 revokes the defaults AND sweeps what exists. After the last
-    sweep no migration may GRANT a table/sequence/function to a browser role (the one deliberate surface is status_pagina)."""
+    sweep no migration may GRANT a table/sequence/function to a browser role; the one deliberate surface is SELECT on
+    status_pagina (writes go through the seed admin router with the service role)."""
     sqls = _all_sql()
     sweep = max(n for n, s in sqls.items() if re.search(r"REVOKE ALL ON ALL TABLES IN SCHEMA orbity FROM PUBLIC, anon, authenticated", s))
     s = sqls[sweep]
@@ -194,7 +274,8 @@ def test_the_browser_roles_hold_nothing_but_status_pagina():
             continue
         for m in grant.finditer(sql):
             roles = {r.strip().lower() for r in m.group("to").split(",")}
-            if roles & {"anon", "authenticated", "public"} and "status_pagina" not in m.group("on"):
+            what = m.group("what").strip().upper()
+            if roles & {"anon", "authenticated", "public"} and not ("status_pagina" in m.group("on") and what == "SELECT"):
                 leaks.append(f"{name}: {m.group(0)[:100]}")
     assert not leaks, leaks
 
