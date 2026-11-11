@@ -907,7 +907,7 @@ class Queue:
                     continue
                 ref = f"{CANDIDATE_PREFIX}{self.run_id}-{n}p{i}"
                 remote = self.push_remote(self.batch_needs_workflows(base, cand))
-                rc, _, perr = self.run(["git", "push", remote, f"{cand}:refs/heads/{ref}"], cwd=self.workdir)
+                rc, _, perr = self.run(self.push_cmd(remote, f"{cand}:refs/heads/{ref}"), cwd=self.workdir)
                 if rc != 0:
                     if self._handle_push_rejection(applied, base, perr, res, via_pat=remote != self.remote):
                         suspects += [e.ref for e in applied if not any(x["ref"] == e.ref for x in res.ejected)]
