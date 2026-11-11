@@ -678,7 +678,7 @@ RECUSAS_CONTADAS: frozenset[str] = frozenset({
     "nao_pode_ofertar", "limite_ofertas", "identificacao_nao_devida", "campo_desconhecido", "valor_nao_confere",
     "identificacao_indisponivel", "credito_inativo", "limite_recusas", "indisponivel", "motivo_texto_ausente",
     "consentimento_sem_evidencia", "opt_out_sem_evidencia", "limite_ferramentas", "argumentos_invalidos",
-    "documento_nao_encontrado", "documento_sem_midia",
+    "documento_nao_encontrado", "documento_sem_midia", "emergencia_aberta",
 })
 
 
