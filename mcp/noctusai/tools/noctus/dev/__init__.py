@@ -114,6 +114,7 @@ def register_all(server) -> None:
     from . import finance_import_igig
     from . import cloudflare_dns
     from . import tunnel_config
+    from . import redis_acl
     from . import waha_instance
     from . import products
     from . import promotion
@@ -291,6 +292,7 @@ def register_all(server) -> None:
     finance_import_igig.register(server)
     cloudflare_dns.register(server)
     tunnel_config.register(server)
+    redis_acl.register(server)
     waha_instance.register(server)
     products.register(server)
     promotion.register(server)

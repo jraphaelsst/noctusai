@@ -12031,9 +12031,120 @@ END;
 )
 
 
+
+_ASSISTANT_GOOGLE_EVENTOS_APPEND_ONLY_PROBE = GuardProbe(
+    id="assistant.google_conexao_eventos.append_only",
+    product="assistant",
+    schema="assistant",
+    guard_name="guard_google_conexao_eventos_append_only",
+    kind="write_refusal",
+    migrations=("019_google_connection.sql",),
+    rationale=(
+        "The Google connection event log (connect / disconnect / reconnect_needed, who and when) is the measurable record of "
+        "a credential lifecycle: an UPDATE or DELETE would rewrite it. Self-provisioning: the probe stores a throwaway grant "
+        "row (the trigger writes the `connect` event, so this also proves the trigger fires) and tries to rewrite that "
+        "event, all inside the rolled-back transaction; no organization row is borrowed."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_org text := 'noc-probe-' || gen_random_uuid()::text;
+  v_ev uuid;
+BEGIN
+  INSERT INTO assistant.oauth_credentials (org_id, provider, encrypted_tokens, metadata)
+  VALUES (v_org, 'google_calendar', 'x', '{"account_email": "probe@invalid", "scopes": []}'::jsonb);
+  SELECT e.id INTO v_ev FROM assistant.google_conexao_eventos e WHERE e.org_id = v_org LIMIT 1;
+  IF v_ev IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: storing a grant produced no connect event (the event trigger did not fire)';
+  END IF;
+  BEGIN
+    UPDATE assistant.google_conexao_eventos SET event_type = 'disconnect' WHERE id = v_ev;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: UPDATE on the append-only event log succeeded - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%append_only%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
+def _assistant_ai_outputs_probe(probe_id: str, guard_name: str, attempt_sql: str, rationale: str) -> GuardProbe:
+    """Self-provisioning (same shape as the 015 eventos probe): connection + intake row through
+    `assistant.append_intake`, then the write that must be refused, all inside the rolled-back transaction."""
+    return GuardProbe(
+        id=probe_id,
+        product="assistant",
+        schema="assistant",
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=("017_classificador.sql",),
+        rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_conn uuid;
+  v_intake uuid;
+BEGIN
+  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to borrow an org_id from (a genuinely org-less database)';
+  END IF;
+  INSERT INTO assistant.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token, paired_at)
+  VALUES (v_org_id, gen_random_uuid(), 'noc-probe', 'http://probe.invalid', 'x', 'noc-probe-' || gen_random_uuid()::text, now() - interval '1 day')
+  RETURNING id INTO v_conn;
+  SELECT a.id INTO v_intake FROM assistant.append_intake(v_org_id, v_conn, 'noc-probe-msg', 'noc-probe-ref', 'chat', 'oi', now()) a;
+  IF v_intake IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: append_intake produced no intake row';
+  END IF;
+  BEGIN
+{attempt_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: the write succeeded - {guard_name} did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_name}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_ASSISTANT_AI_OUTPUTS_PROBES: tuple[GuardProbe, ...] = (
+    _assistant_ai_outputs_probe(
+        "assistant.ai_outputs.classificacao.unique",
+        "ai_outputs_classificacao_unica",
+        """    INSERT INTO assistant.ai_outputs (org_id, ref_type, ref_id, kind, label, prompt_version, model_version)
+    VALUES (v_org_id, 'intake_message', v_intake, 'classification', 'outro', 'noc-probe@v', 'noc-probe-model');
+    INSERT INTO assistant.ai_outputs (org_id, ref_type, ref_id, kind, label, prompt_version, model_version)
+    VALUES (v_org_id, 'intake_message', v_intake, 'classification', 'agendamento', 'noc-probe@v', 'noc-probe-model');""",
+        "One verdict per (message, prompt_version, model): the worker's re-run idempotency and the replay's "
+        "'new version = new row, old rows untouched' both rest on this key.",
+    ),
+    _assistant_ai_outputs_probe(
+        "assistant.ai_outputs.intake_label.allowed_values",
+        "ai_outputs_intake_label_check",
+        """    INSERT INTO assistant.ai_outputs (org_id, ref_type, ref_id, kind, label, prompt_version, model_version)
+    VALUES (v_org_id, 'intake_message', v_intake, 'classification', 'talvez', 'noc-probe@v', 'noc-probe-model');""",
+        "A classification of an intake message is `agendamento` or `outro` only; a third label would silently "
+        "fall out of the stratified sample and of every precision/recall the S4 labels are compared against.",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
+    _ASSISTANT_GOOGLE_EVENTOS_APPEND_ONLY_PROBE,
+    *_ASSISTANT_AI_OUTPUTS_PROBES,
     _AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE,
     _RUIDO_SHAPE_PROBE,
     _TITULO_PAREADO_PROBE,

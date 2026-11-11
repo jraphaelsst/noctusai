@@ -23,10 +23,14 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID
 
+from noctusai_lib.domain.jobs.wake import notify_enqueued
 from noctusai_lib.integrations.whatsapp.inbox import ChatState, InboxChat, InboxMessage
 from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 logger = logging.getLogger(__name__)
+
+#: Job type the intake trigger enqueues (migration 017); `app.shadow.worker.JOB_CLASSIFICAR` is the same string.
+CLASSIFY_JOB_TYPE = "assistant.classificar_intake"
 
 
 class IdentityKeyNotConfigured(RuntimeError, IntegrationNotConfigured):
@@ -84,7 +88,12 @@ class IntakeChatStore:
         ).execute()
         rows = getattr(resp, "data", None) or []
         if rows:
-            logger.info("intake appended connection=%s outcome=%s", connection_id, rows[0].get("outcome"))
+            outcome = rows[0].get("outcome")
+            logger.info("intake appended connection=%s outcome=%s", connection_id, outcome)
+            if outcome == "pending":
+                # The classification job was enqueued by the database in this same transaction (trigger, migration
+                # 017); wake the in-process classifier worker instead of letting it find the job on its next poll.
+                notify_enqueued(CLASSIFY_JOB_TYPE)
         return bool(rows)
 
     def refresh_chat_after_message(self, *, org_id, connection_id, chat_id, message, name=None, phone=None) -> InboxChat:
