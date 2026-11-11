@@ -463,7 +463,8 @@ def sync_campaigns(
     try:
         result = _svc(token, org_id).sync_campaigns(str(payload.ad_account_id))
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("meta_ads.sync refused org=%s: %s", org_id, type(exc).__name__)
+        raise HTTPException(status_code=404, detail="ad_account_not_found")
     except HTTPException:
         raise
     except Exception:

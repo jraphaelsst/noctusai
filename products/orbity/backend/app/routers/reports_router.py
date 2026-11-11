@@ -220,7 +220,8 @@ def generate_snapshot(
     try:
         row = _svc(token, org_id).generate_snapshot(report_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("reports.generate refused org=%s report=%s: %s", org_id, report_id, type(exc).__name__)
+        raise HTTPException(status_code=404, detail="report_not_found")
     except HTTPException:
         raise
     except Exception:

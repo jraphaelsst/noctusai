@@ -163,7 +163,7 @@ def test_a_foreign_id_named_in_the_body_is_refused_422(client, path, body, table
     resp = client.post(path, json=body)
     assert resp.status_code == 422, f"POST {path} -> {resp.status_code} {resp.text[:200]}"
     # THE refusal (the wrapper's, or the service's own parent check), not an unrelated validation 422
-    assert "Referência inválida" in resp.text or "não encontrad" in resp.text, resp.text[:300]
+    assert "Referência inválida" in resp.text or "não encontrad" in resp.text or "plan_reference_invalid" in resp.text, resp.text[:300]
     assert LEAK not in resp.text
 
 

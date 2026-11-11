@@ -72,7 +72,8 @@ def _guard(op: str, org_id: UUID, failure: str) -> Iterator[None]:
     except HTTPException:
         raise
     except PlanReferenceError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        logger.warning("content_plans.%s refused org=%s: %s", op, org_id, type(exc).__name__)
+        raise HTTPException(status_code=422, detail="plan_reference_invalid")
     except Exception:
         logger.exception("content_plans.%s failed org=%s", op, org_id)
         raise HTTPException(status_code=502, detail=failure)
@@ -246,7 +247,8 @@ def promote_item_to_post(
         try:
             result = svc.promote_to_post(plan, item_id)
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
+            logger.warning("content_plans.promote_item refused org=%s: %s", org_id, type(exc).__name__)
+            raise HTTPException(status_code=409, detail="post_not_promotable")
     if result is None:
         raise HTTPException(status_code=404, detail="Conteúdo não encontrado")
     return PostOut(**result["post"])

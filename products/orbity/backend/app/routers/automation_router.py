@@ -287,7 +287,8 @@ def trigger_flow(
             lead_id=str(payload.lead_id),
         )
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("automation.start_execution refused org=%s: %s", org_id, type(exc).__name__)
+        raise HTTPException(status_code=404, detail="flow_or_lead_not_found")
     except HTTPException:
         raise
     except Exception:

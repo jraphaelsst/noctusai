@@ -326,7 +326,8 @@ async def move_stage(
             user_id=str(user.id) if hasattr(user, "id") else None,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        logger.warning("crm.move_stage refused org=%s lead=%s: %s", org_id, lead_id, type(exc).__name__)
+        raise HTTPException(status_code=400, detail="invalid_stage")
     except HTTPException:
         raise
     except Exception:
@@ -384,7 +385,8 @@ def add_activity(
             created_by=str(user.id) if hasattr(user, "id") else None,
         )
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("crm.add_activity refused org=%s lead=%s: %s", org_id, lead_id, type(exc).__name__)
+        raise HTTPException(status_code=404, detail="lead_not_found")
     except HTTPException:
         raise
     except Exception:
@@ -412,7 +414,8 @@ def score_lead(
     try:
         row = _crm(token, org_id).score_lead(lead_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("crm.score_lead refused org=%s lead=%s: %s", org_id, lead_id, type(exc).__name__)
+        raise HTTPException(status_code=404, detail="lead_not_found")
     except HTTPException:
         raise
     except Exception:
@@ -616,7 +619,8 @@ async def capture_lead(
         svc = _admin_crm(org_id)
         row = svc.capture_lead(raw)
     except CaptureStageInvalid as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        logger.warning("capture_lead refused org=%s: %s", org_id, type(exc).__name__)
+        raise HTTPException(status_code=422, detail="capture_stage_invalid") from exc
     except HTTPException:
         raise
     except Exception:
