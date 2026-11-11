@@ -7,7 +7,7 @@ export { useAIOutputFor } from './useAIOutputFor';
 export type { UseAIOutputForOptions } from './useAIOutputFor';
 export type { AIOutput, AIOutputKind } from './types';
 export { AIFeedbackButtons } from './AIFeedbackButtons';
-export type { AIFeedbackButtonsProps } from './AIFeedbackButtons';
+export type { AIFeedbackButtonsProps, AIFeedbackChoice } from './AIFeedbackButtons';
 export {
   useAIFeedback,
   useSubmitAIFeedback,
