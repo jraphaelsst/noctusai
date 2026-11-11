@@ -127,7 +127,9 @@ SAFE_PATH = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
 
 class FakeIO:
     def __init__(self, *, env=None, tty=(True, True), devtty=True, chain=TERMINAL, sigs=None, bundles=None,
-                 answers=("shadow", "CONFIRMO"), sh="default", on_read=None, starts=None, tty_extra=(), tdev=TDEV):
+                 answers=("shadow", "CONFIRMO"), sh="default", on_read=None, starts=None, tty_extra=(), tdev=TDEV,
+                 platform="darwin"):
+        self._platform = platform
         self._env = env if env is not None else {"HOME": "/Users/owner", "TERM": "xterm", "PATH": SAFE_PATH}
         self._starts, self._tty_extra, self._tdev = dict(starts or {}), list(tty_extra), tdev
         self._tty, self._devtty = tty, devtty
@@ -140,6 +142,9 @@ class FakeIO:
 
     def observe_grant(self, grant):
         self.grants.append(grant)
+
+    def platform(self):
+        return self._platform
 
     def env(self):
         return dict(self._env)
@@ -355,6 +360,23 @@ def _truth_chain():
     return out
 
 
+_DARWIN_ONLY = pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="reads the real macOS kernel (sysctl KERN_PROC / libproc); off darwin the gate refuses outright, which "
+           "test_a_non_macos_host_is_refused_before_any_kernel_read pins",
+)
+
+
+def test_a_non_macos_host_is_refused_before_any_kernel_read():
+    why = oh.human_gate(FakeIO(platform="linux"))
+    assert why and "only on the owner's Mac" in why
+
+
+def test_the_real_io_reports_this_hosts_platform():
+    assert oh._RealIO().platform() == sys.platform
+
+
+@_DARWIN_ONLY
 def test_a_fake_ps_first_on_path_cannot_rewrite_the_parent_chain(tmp_path, monkeypatch):
     fakebin = tmp_path / "fakebin"
     fakebin.mkdir()
@@ -370,6 +392,7 @@ def test_a_fake_ps_first_on_path_cannot_rewrite_the_parent_chain(tmp_path, monke
     assert all(c[1] for c in seen) and all(isinstance(c[2], float) for c in seen)
 
 
+@_DARWIN_ONLY
 def test_the_real_io_reads_start_times_that_never_precede_the_parent():
     io = oh._RealIO()
     me, chain = io.self_proc(), io.ancestors()

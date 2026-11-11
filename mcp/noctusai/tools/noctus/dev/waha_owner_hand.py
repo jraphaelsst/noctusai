@@ -69,6 +69,7 @@ import re
 import secrets
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -339,6 +340,9 @@ def _proc_image(pid: int) -> "str | None":
 class _RealIO:
     """The process's real terminal, environment, parent chain, identity and remote runner."""
 
+    def platform(self) -> str:
+        return sys.platform
+
     def env(self) -> dict:
         return dict(os.environ)
 
@@ -489,6 +493,9 @@ def tty_problem(io) -> "str | None":
 
 def human_gate(io) -> "str | None":
     """None when an interactive human (not an agent harness) is at a real Terminal.app window; else why not. Fail closed."""
+    if io.platform() != "darwin":
+        # the chain/tty checks read the macOS kernel (sysctl KERN_PROC, libproc, codesign): elsewhere they cannot run
+        return _refused(f"this command runs only on the owner's Mac (platform is {io.platform()!r}, not 'darwin')")
     env = io.env()
     hits = sorted(k for k in env if k in _HARNESS_ENV_EXACT or k.startswith(_HARNESS_ENV_PREFIX))
     if hits:
