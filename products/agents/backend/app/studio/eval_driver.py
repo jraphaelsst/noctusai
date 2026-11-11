@@ -30,11 +30,44 @@ __all__ = [
     "EvalTurnDriver",
     "FakeEvalTurnDriver",
     "ScriptExhausted",
+    "Retomada",
+    "RetomadaCapIndisponivel",
+    "RETOMADA_TIERS",
+    "RETOMADA_STATUS",
     "reiniciar",
     "com_custo",
     "configure_eval_turn_driver",
     "get_eval_turn_driver",
 ]
+
+
+#: the re-engagement flavours (``ContextoEstado.reengajamento``) a follow-up turn may run as.
+RETOMADA_TIERS = ("minutos", "horas", "regua")
+#: what the controls decided for a follow-up turn: it ran, the per-lead cap stopped it, or nobody follows up (no active
+#: participant / opt-out / off). ``limite_retomadas`` needs the cap store of ``feat/agents-retomada-limite``.
+RETOMADA_STATUS = ("normal", "limite_retomadas", "reengajamento_ignorado")
+
+
+@dataclass(frozen=True)
+class Retomada:
+    """A follow-up (re-engagement) turn the roteiro asks the driver to run: no lead message, the trigger is time."""
+
+    tier: str = "horas"
+    texto_base: str | None = None
+    #: follow-ups already sent in a row before this turn (the cap's counter). NOC-REMEDIATE[retomada-cap-assert]:
+    #: seeding it needs the cap store of ``feat/agents-retomada-limite``; until then a value > 0 is REFUSED.
+    seguidas_previas: int = 0
+
+
+class RetomadaCapIndisponivel(NotImplementedError):
+    """A case asked for the follow-up cap (``seguidas_previas`` > 0) before its store exists: refused, never passed."""
+
+
+def exigir_cap_semeavel(retomada: Retomada) -> None:
+    # NOC-REMEDIATE[retomada-cap-assert]: seed ``seguidas_previas`` into the per-lead cap store and assert
+    # ``retomada_status: limite_retomadas`` once ``feat/agents-retomada-limite`` lands — 2026-11-10
+    if retomada.seguidas_previas:
+        raise RetomadaCapIndisponivel("seguidas_previas > 0 depende do limite de retomadas (retomada-cap-assert)")
 
 
 @dataclass(frozen=True)
@@ -113,6 +146,9 @@ class TurnOutcome:
     participante_estado: str | None = None
     #: synthetic third-party values (``[[cpf_sintetico_terceiro]]``) this execution generated; ``sem_pii`` forbids them
     valores_terceiros: tuple[str, ...] = ()
+    #: a follow-up turn only: what the controls decided (``RETOMADA_STATUS``) and the flavour it ran as
+    retomada_status: str | None = None
+    retomada_tier: str | None = None
 
 
 @runtime_checkable
@@ -124,6 +160,10 @@ class EvalTurnDriver(Protocol):
 
     async def executar_turno(self, thread: ThreadState, mensagem_lead: str) -> TurnOutcome:
         """Run ONE inbound lead message through the real turn path and report what happened."""
+        ...
+
+    async def executar_retomada(self, thread: ThreadState, retomada: Retomada) -> TurnOutcome:
+        """Run ONE follow-up (re-engagement) turn: ``gatilho=reengajamento``, no lead message."""
         ...
 
 
@@ -154,6 +194,7 @@ class FakeEvalTurnDriver:
         self._erros = erro_no_turno or {}
         self.mensagens_recebidas: list[list[str]] = []
         self.threads_recebidas: list[ThreadState] = []
+        self.retomadas_recebidas: list[Retomada] = []
 
     def nova_execucao(self) -> None:
         self._execucao += 1
@@ -175,6 +216,17 @@ class FakeEvalTurnDriver:
             raise ScriptExhausted(f"execucao {exec_i} turno {turno_i}")
         item = script[turno_i]
         return item(thread, mensagem_lead) if callable(item) else item
+
+
+    async def executar_retomada(self, thread: ThreadState, retomada: Retomada) -> TurnOutcome:
+        """A follow-up turn consumes the next script entry like a lead turn (a callable gets ``(thread, tier)``);
+        the outcome is stamped with the tier it ran as and ``normal`` unless the script says otherwise."""
+        exigir_cap_semeavel(retomada)
+        outcome = await self.executar_turno(thread, retomada.tier)
+        self.retomadas_recebidas.append(retomada)
+        return replace(
+            outcome, retomada_tier=outcome.retomada_tier or retomada.tier,
+            retomada_status=outcome.retomada_status or "normal")
 
 
 def reiniciar(driver: Any) -> None:
