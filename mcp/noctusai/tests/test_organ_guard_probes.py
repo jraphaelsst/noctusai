@@ -29,7 +29,7 @@ _SENT = re.compile(r"NOC_PROBE:(\w+):")
 _TABLE_RE = re.compile(r"CREATE TABLE IF NOT EXISTS\s+\w+\.(\w+)", re.IGNORECASE)
 
 #: Install order on a fresh schema (organs depend on parties/items/inventory/commerce base).
-_INSTALL_ORDER = ["commerce_money", "commerce_fiscal", "jobs", "parties", "items", "inventory", "finance", "quotes", "purchasing", "contracts", "metas", "engagement"]
+_INSTALL_ORDER = ["commerce_money", "commerce_fiscal", "jobs", "parties", "items", "inventory", "finance", "quotes", "purchasing", "contracts", "metas", "engagement", "activities"]
 
 
 def _commerce_base_sql() -> str:

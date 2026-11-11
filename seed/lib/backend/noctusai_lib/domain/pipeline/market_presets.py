@@ -23,6 +23,9 @@ Deltas vs today (deliberate, listed so the migration slice can act on them):
 """
 from __future__ import annotations
 
+from noctusai_lib.domain.activities.types import KIND_CALL, KIND_MEETING, KIND_TASK, KIND_VISIT
+from noctusai_lib.domain.activities.types import ActivityTypeSpec as A
+
 from .defaults import StageDefault as S
 from .presets import (
     ROLE_ENTRADA,
@@ -85,6 +88,18 @@ REAL_ESTATE_PRESET = CrmPreset(
         O("site", "Site"),
         O("placa", "Placa"),
         O("indicacao", "Indicação"),
+    ),
+    # erp-imobiliario `atividades.py` kinds + the L2 consumers the plan unfreezes after the activities organ:
+    # chaves (custody log), manutenção, campo (§4 rows Chaves / Manutenção / Campo).
+    activity_types=(
+        A("tarefa", "Tarefa", KIND_TASK),
+        A("ligacao", "Ligação", KIND_CALL),
+        A("reuniao", "Reunião", KIND_MEETING),
+        A("visita", "Visita", KIND_VISIT),
+        A("chave_retirada", "Retirada de chave", KIND_TASK),
+        A("chave_devolucao", "Devolução de chave", KIND_TASK),
+        A("manutencao", "Manutenção", KIND_TASK),
+        A("campo", "Trabalho de campo", KIND_VISIT),
     ),
 )
 
