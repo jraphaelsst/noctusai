@@ -215,6 +215,7 @@ export function useAudioRecorder(options: UseAudioRecorderOptions = {}): UseAudi
     rec.start(1000);
     setState('recording');
     startLevelMeter(stream);
+    // poll-budget: 250ms; 0 calls/tick (recording timer, only while recording); worst 0/day per open tab; hidden=runs
     timerRef.current = setInterval(() => {
       const s = Math.floor((Date.now() - startedAtRef.current) / 1000);
       if (mountedRef.current) setSeconds(s);

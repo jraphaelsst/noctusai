@@ -48,7 +48,7 @@ afterEach(cleanup);
 describe("limites", () => {
   it("says testing lives in agents' evaluation mode and offers no allowlist", async () => {
     setup();
-    expect((await screen.findByTestId("protecao-fase-testes")).textContent).toContain("modo de avaliação");
+    expect((await screen.findByTestId("protecao-avaliacao")).textContent).toContain("Modo de avaliação");
     expect(screen.queryByTestId("permitidos-card")).toBeNull();
   });
 

@@ -32,6 +32,7 @@ does not need a place on the integration branch.
 | `worktree-salvage.ndjson` | `salvage_before_delete` · `session_end_sweep` · `_worktree_salvage` (mole / cleanup sweeps) | **flipped** (S3 #3). A record whose SHA is already on `origin/dev` is not written; `task_branch` cleanup writes none (it only deletes merged branches) and its dev-push leg is gone |
 | `branch-tree.ndjson` | `noctus.dev.branch_pointer` (`task_branch` pointer ops, `session_end_sweep` auto-heal) | **flipped** (S3 #4). `push_dev=True` publishes to origin/ledgers; `push_dev=False` spools. Keepers `check_branch_tree_mirror` + `check_stale_branch_pointers` and `release` dual-read |
 | `ship-consent.ndjson` | `noctus.dev.ship_consent` | **flipped** (S3 #5, last). `release` counts an approval once it is PUBLISHED; it reads remote refs only, never a local spool |
+| `waha-owner-hand.ndjson` | `waha_owner_hand.owner_hand` (CLI `--waha-instance-owner-hand`, never MCP) | **born on the store** (2026-11-10). One row per attempt on a personal WAHA line: refused, confirmed, outcome; no phone numbers (the PII guard refuses them) |
 | `ledger.ndjson` | `noctus.dev.history_record` | **never. It stays on `dev`** |
 | `branch-tree.mirror.ndjson` | — | **deleted** (S3 #4), along with the keeper's parity check |
 

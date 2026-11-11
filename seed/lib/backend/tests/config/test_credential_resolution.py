@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from noctusai_lib.config import credentials as cred
+from noctusai_lib.testing.credentials import patch_credentials_to_mock
 
 
 @pytest.fixture(autouse=True)
@@ -172,3 +173,75 @@ class TestResolveOrgCredential:
     def test_no_org_is_a_miss(self):
         self._install([{"org_id": "org-a", "key": "k", "value": "v"}])
         assert cred.resolve_org_credential("k", None) is None
+
+
+class _CountingDb:
+    """A public-schema client that serves `org_settings` / `platform_settings` rows and COUNTS reads: a fake
+    that makes calls free is exactly why the per-call read was invisible (KB § polling-request-budget.md)."""
+
+    def __init__(self, org=None, platform=None):
+        self.org = org or {}
+        self.platform = platform or {}
+        self.reads = 0
+
+    def table(self, name):
+        db = self
+        data = db.org if name == "org_settings" else db.platform
+
+        class _Q:
+            def __init__(self):
+                self._f = {}
+
+            def select(self, *_a, **_k):
+                return self
+
+            def eq(self, col, val):
+                self._f[col] = val
+                return self
+
+            def execute(self):
+                db.reads += 1
+                row = data.get((self._f.get("org_id"), self._f.get("key")) if name == "org_settings" else self._f.get("key"))
+                return type("R", (), {"data": [{"value": row}] if row else []})()
+
+        return _Q()
+
+
+class TestResolutionIsCached:
+    @pytest.fixture
+    def db(self):
+        db = _CountingDb(platform={"resend_api_key": "re-platform"})
+        with patch_credentials_to_mock(db):  # the seed's sanctioned external-boundary seam
+            yield db
+
+    def test_a_hot_key_costs_one_read_per_tier_per_ttl_not_one_per_call(self, db):
+        for _ in range(500):
+            assert cred.resolve_credential("resend_api_key", "org-1") == "re-platform"
+        assert db.reads == 2  # org_settings (miss) + platform_settings (hit): once, not 1,000
+
+    def test_a_write_through_this_process_is_live_at_once(self, db):
+        assert cred.resolve_credential("resend_api_key", "org-1") == "re-platform"
+        db.org[("org-1", "resend_api_key")] = "re-org"
+        cred.invalidate_credential_cache()
+        assert cred.resolve_credential("resend_api_key", "org-1") == "re-org"
+
+    def test_a_failed_read_is_not_remembered_as_unset(self, monkeypatch):
+        class _Boom:
+            reads = 0
+
+            def table(self, _n):
+                self.reads += 1
+                raise RuntimeError("PostgREST 502")
+
+        boom = _Boom()
+        monkeypatch.delenv("RESEND_API_KEY", raising=False)
+        with patch_credentials_to_mock(boom):
+            assert cred.resolve_credential("resend_api_key", "org-1") is None
+            assert cred.resolve_credential("resend_api_key", "org-1") is None
+        assert boom.reads == 4  # retried both times (2 tiers x 2 calls)
+
+    def test_env_is_read_live_never_cached(self, db, monkeypatch):
+        monkeypatch.delenv("OTHER_KEY", raising=False)
+        assert cred.resolve_credential("other_key", "org-1") is None
+        monkeypatch.setenv("OTHER_KEY", "from-env")
+        assert cred.resolve_credential("other_key", "org-1") == "from-env"

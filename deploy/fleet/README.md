@@ -147,6 +147,8 @@ docker compose -f deploy/fleet/compose.infra.prod.yml up -d
 # docker compose -f deploy/fleet/compose.infra.prod.yml --profile waha up -d
 
 # product fleet — NAME THE SERVICES (see the warning below)
+# Redis lockdown cutover: once deploy/fleet/compose.redis-auth.prod.yml exists, EVERY compose call below also takes
+# `-f deploy/fleet/compose.redis-auth.prod.yml` (a bare one silently returns a service to the old Redis).
 docker compose -f deploy/fleet/docker-compose.prod.yml pull
 docker compose -f deploy/fleet/docker-compose.prod.yml up -d \
   core erp-imobiliario igig orbity p-studio seed social-wiring
@@ -182,6 +184,7 @@ watch 'docker ps --format "table {{.Names}}\t{{.Status}}"'
 > `vite build`, unlike the dev `runtime-watch` shape). They start in seconds.
 > If the VPS is small and you still see CPU contention, bring them up in waves:
 > `docker compose -f docker-compose.prod.yml up -d core erp-imobiliario ...`.
+> (After the Redis lockdown cutover add `-f compose.redis-auth.prod.yml` to that command too.)
 > `restart: unless-stopped` keeps them up across reboots/crashes.
 
 ## Step 4 — wire the tunnel + legacy (separate layers)
@@ -313,5 +316,6 @@ specific to add here.
 | service | when | notes |
 |---|---|---|
 | redis | always | chatbot buffer/worker + rate-limiter |
+| redis-acl | profile `redis-acl` | the authenticated, private-net (`noctus-data`) Redis that replaces `redis`: ACL users derived by `noctus.dev.redis_acl`; runbook + rollback in `KB § PATTERNS/devops/redis-acl-lockdown.md` |
 | waha | profile `waha` | WhatsApp HTTP API; absent ⇒ FakeWahaClient fallback |
 | postgres | n/a in prod | remote Supabase is used |

@@ -91,8 +91,19 @@ class TestAccessTierRoutes:
     def test_oauth_callback_must_verify_state(self, tmp_path):
         bad = _HEAD + "@router.get('/oauth/callback')\ndef cb(code: str): ...\n"
         assert "state" in check_access_tier_routes(_tree(tmp_path, bad))[0]["issue"]
-        good = bad.replace("def cb(code: str): ...", "def cb(code: str):\n    verify_state(code)")
+        good = bad.replace("def cb(code: str): ...", "def cb(code: str):\n    verify_state(code, binding=cookie)")
         assert check_access_tier_routes(_tree(tmp_path / "g", good)) == []
+
+    def test_oauth_callback_state_must_be_bound_to_the_browser(self, tmp_path):
+        # verifying that "this server issued the state" is not enough: it does not stop login-CSRF / account-linking
+        unbound = _HEAD + "@router.get('/oauth/callback')\ndef cb(code: str):\n    consume_state(code)\n"
+        issues = check_access_tier_routes(_tree(tmp_path, unbound))
+        assert len(issues) == 1 and "does not bind it to the browser" in issues[0]["issue"]
+        # the keyword must be on the STATE call itself, not merely present somewhere in the handler
+        elsewhere = _HEAD + "@router.get('/oauth/callback')\ndef cb(code: str):\n    binding = 1\n    consume_state(code)\n"
+        assert "does not bind" in check_access_tier_routes(_tree(tmp_path / "e", elsewhere))[0]["issue"]
+        bound = _HEAD + "@router.get('/oauth/callback')\ndef cb(code: str):\n    consume_state(code, binding=cookie)\n"
+        assert check_access_tier_routes(_tree(tmp_path / "b", bound)) == []
 
     def test_org_route_off_platform_path_is_clean(self, tmp_path):
         src = _HEAD + "@router.get('/modelo')\ndef modelo(ctx=Depends(require_member)): ...\n"

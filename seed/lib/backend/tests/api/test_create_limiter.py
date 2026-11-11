@@ -57,3 +57,40 @@ def test_unreachable_redis_falls_back_to_in_memory_and_still_uses_client_ip_key(
     reachable Redis is not available in this suite."""
     limiter = create_limiter(redis_url="redis://noctus-nonexistent-host:6379")
     assert limiter._key_func is client_ip_key
+
+
+# ── P2-3 (security review r2): with REDIS_REQUIRE_AUTH on, a failed probe must fail the BOOT ─────
+
+import pytest  # noqa: E402
+
+from noctusai_lib.api.rate_limit import resolve_limiter_storage_uri  # noqa: E402
+
+
+class _BadProbe:
+    def __init__(self, exc):
+        self._exc = exc
+
+    def ping(self):
+        raise self._exc
+
+
+@pytest.mark.parametrize("exc_name", ["AuthenticationError", "NoPermissionError", "ConnectionError", "TimeoutError"])
+def test_require_auth_makes_any_probe_failure_fatal(monkeypatch, exc_name):
+    """WRONGPASS / NOPERM / unreachable must NOT degrade to a per-process in-memory limiter when auth is
+    declared mandatory: a wrong password was a one-line warning and a fleet of unlimited login endpoints."""
+    import redis.exceptions as rx
+
+    monkeypatch.setenv("REDIS_REQUIRE_AUTH", "true")
+    monkeypatch.setenv("REDIS_USERNAME", "core")
+    monkeypatch.setenv("REDIS_PASSWORD", "x")
+    monkeypatch.delenv("NOCTUS_RATE_LIMIT_MEMORY_ONLY", raising=False)
+    with pytest.raises(rx.RedisError):
+        resolve_limiter_storage_uri("redis://h:6379/0", probe_client=_BadProbe(getattr(rx, exc_name)("boom")))
+
+
+def test_without_require_auth_a_failed_probe_still_degrades_loudly(monkeypatch, caplog):
+    import redis.exceptions as rx
+
+    monkeypatch.delenv("REDIS_REQUIRE_AUTH", raising=False)
+    monkeypatch.delenv("NOCTUS_RATE_LIMIT_MEMORY_ONLY", raising=False)
+    assert resolve_limiter_storage_uri("redis://h:6379/0", probe_client=_BadProbe(rx.ConnectionError("x"))) is None

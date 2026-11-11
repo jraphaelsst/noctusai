@@ -263,11 +263,13 @@ def configure() -> None:
         (one DB read; Graph only for rows that actually failed), so it can
         run often enough that a transient blip costs minutes, not a day.
     """
+    # poll-budget: twice daily; ~70 Graph calls + 1 forms read + 2 batched reads per form with leads (unchanged rows are NOT rewritten); worst ~250 DB calls/day at ~60 forms with leads; max added delay 0 (cadence unchanged); idle=fixed
     seed_scheduler.register(
         "meta_ads_daily_sync",
         meta_ads_daily_sync_job,
         cron="10 6,18 * * *",
     )
+    # poll-budget: 15min; 1 call/tick (webhook inbox read); worst 96/day; max added delay 0 (cadence unchanged); idle=fixed
     seed_scheduler.register(
         "meta_leadgen_retry",
         meta_leadgen_retry_job,

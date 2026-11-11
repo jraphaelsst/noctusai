@@ -363,7 +363,8 @@ class TextoRegistroOut(BaseModel):
     aplica_a: str
     condicao: str | None
     fixo_plataforma: bool
-    #: ``<aplica_a>`` or ``<aplica_a>:<condicao>`` -- when the key is needed (a code, not a sentence).
+    #: ``<aplica_a>`` / ``<aplica_a>:<condicao>`` [+ ``ferramenta:a|b`` = any of those tools active] -- when the key
+    #: is needed (a code, not a sentence).
     aparece_quando: str
 
 
@@ -374,7 +375,8 @@ def registro_textos(ctx: AuthContext = Depends(require_platform_admin)) -> list[
             chave=k, categoria=s.categoria, obrigatoria=s.obrigatoria,
             placeholders_permitidos=list(s.placeholders_permitidos), aplica_a=s.aplica_a, condicao=s.condicao,
             fixo_plataforma=s.fixo_plataforma,
-            aparece_quando=s.aplica_a + (f":{s.condicao}" if s.condicao else ""),
+            aparece_quando=s.aplica_a + (f":{s.condicao}" if s.condicao else "")
+            + (f" + ferramenta:{'|'.join(sorted(s.ferramentas))}" if s.ferramentas else ""),
         )
         for k, s in sorted(TEXTOS.items())
     ]

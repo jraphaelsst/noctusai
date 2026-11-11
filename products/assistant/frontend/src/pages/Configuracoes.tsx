@@ -6,7 +6,9 @@
 import { SectionTabsPage, type SectionTab } from "@noctusai/lib/components";
 import { useEffectiveSSOContext } from "@noctusai/lib/design-system";
 import { useAuthStore } from "@noctusai/seed/infra";
-import { UserCircle } from "lucide-react";
+import { Link2, UserCircle } from "lucide-react";
+
+import GoogleTab from "@/pages/GoogleTab";
 
 function Item({ label, value }: { label: string; value: string }) {
   return (
@@ -31,6 +33,7 @@ function Conta() {
 
 const SECTIONS: SectionTab[] = [
   { key: "conta", label: "Conta", icon: <UserCircle className="h-4 w-4" />, render: () => <Conta /> },
+  { key: "google", label: "Google", icon: <Link2 className="h-4 w-4" />, render: () => <GoogleTab /> },
 ];
 
 export default function Configuracoes() {

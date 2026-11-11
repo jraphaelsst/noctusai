@@ -420,6 +420,7 @@ export function useDitadoChat(marcaId: string | null, onTexto: (texto: string) =
       unwrapTranscricao(
         await api.get<TranscricaoResp | Envelope<TranscricaoResp>>(`/api/transcricoes/${enc(id as string)}`),
       ),
+    // poll-budget: 3s for 30s then 10s until concluida|falhou|cancelada; ~5 calls/tick; worst 43200/day per open tab (never-terminal job); hidden=paused
     refetchInterval: (q) => {
       const s = q.state.data?.status;
       if (s === "concluida" || s === "falhou" || s === "cancelada") return false;

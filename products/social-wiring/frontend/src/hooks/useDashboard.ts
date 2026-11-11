@@ -57,21 +57,6 @@ export interface RecentUpload {
   notification_failed: number;
 }
 
-export interface QueueEntry {
-  position: number;
-  job_id: string;
-  enqueued_at: number;
-  title: string | null;
-  product_code: string | null;
-  status: string | null;
-}
-
-export interface QueueState {
-  max_concurrent: number;
-  entries: QueueEntry[];
-  total: number;
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function withAccountId(base: string, accountId?: string | null): string {
@@ -169,34 +154,6 @@ export function useRecentUploads(limit = 10, accountId?: string | null) {
 // updated job row so the dashboard can flip its badge optimistically.
 export async function retryUpload(jobId: string): Promise<void> {
   await api.post(`/api/videos/upload/${jobId}/retry`, {});
-}
-
-// ─── Queue state — live "what's in the pipeline" panel ───────────────
-// Polls the dashboard's queue-state endpoint every N seconds (caller
-// controls the cadence). Each entry has the upload's queue position +
-// job metadata so the operator can see who's running and who's
-// waiting.
-export function useQueueState(intervalMs = 5000) {
-  const [data, setData] = useState<QueueState | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      const state = await api.get<QueueState>("/api/dashboard/queue-state");
-      setData(state);
-    } catch (err) {
-      // Empty queue + Redis errors degrade silently — the panel just
-      // hides itself rather than showing an alarming red error.
-      setData({ max_concurrent: 1, entries: [], total: 0 });
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-    const id = window.setInterval(() => void refresh(), intervalMs);
-    return () => window.clearInterval(id);
-  }, [refresh, intervalMs]);
-
-  return { data, refresh };
 }
 
 // ─── Helpers exposed to consumers ──────────────────────────────────────

@@ -16,6 +16,7 @@ class Sec:
     ordem: int
     conteudo: str
     ativo: bool = True
+    regras: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

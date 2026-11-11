@@ -83,6 +83,7 @@ export function useLLMSpend(orgId: string | null | undefined, isAdmin: boolean) 
       }
     },
     enabled: Boolean(orgId && isAdmin),
+    // poll-budget: 5min; ~6 calls/tick (spend read + auth lookups), admins only; worst 1728/day per open tab; hidden=paused
     refetchInterval: LLM_SPEND_REFETCH_INTERVAL_MS,
     staleTime: 60_000,
     // Spend is operational telemetry; transient errors should not page

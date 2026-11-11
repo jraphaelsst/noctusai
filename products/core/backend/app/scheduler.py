@@ -209,6 +209,7 @@ def configure() -> None:
     register(BILLING_AUTOMATIONS_JOB, billing_automations_job, cron="15 * * * *", misfire_grace_time=1800)
     register(PTAX_JOB, ptax_job, cron="30 13,18 * * 1-5", misfire_grace_time=3600)
     register(STORAGE_SNAPSHOT_JOB, storage_cost_snapshot_job, cron="30 2 * * *", misfire_grace_time=3600)
+    # poll-budget: 1min; 2 calls/tick idle (credit_wallets + pricing; +1 pending-usage read per wallet org); worst ~2,880/day + orgs x 1,440; max added delay 0 (cadence unchanged); idle=fixed (balance freshness: owner decision to back off)
     register(CREDITS_DEBIT_JOB, credits_debit_job, minutes=1, misfire_grace_time=30)
     register(OWNER_BRIEF_JOB, owner_brief_job, cron="0 7 * * *", misfire_grace_time=3 * 3600)
     register(ANTHROPIC_USAGE_JOB, anthropic_usage_snapshot_job, cron="20 */6 * * *", misfire_grace_time=3 * 3600)

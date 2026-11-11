@@ -37,7 +37,7 @@ const nextUid = () => `nova-${++uidSeq}`;
 function toRows(secoes: Section[]): Row[] {
   return [...secoes]
     .sort((a, b) => a.ordem - b.ordem)
-    .map((s) => ({ uid: s.id, id: s.id, chave: s.chave, titulo: s.titulo, ordem: s.ordem, conteudo: s.conteudo, ativo: s.ativo }));
+    .map((s) => ({ uid: s.id, id: s.id, chave: s.chave, titulo: s.titulo, ordem: s.ordem, conteudo: s.conteudo, ativo: s.ativo, regras: s.regras ?? [] }));
 }
 
 /** Renumbers `ordem` by position (10, 20, …) — the list order IS the order. */
@@ -49,6 +49,7 @@ function rowsToPayload(rows: Row[]): SectionInput[] {
       ordem: (i + 1) * 10,
       conteudo: r.conteudo,
       ativo: r.ativo,
+      regras: r.regras ?? [],
     };
     if (r.id) out.id = r.id;
     return out;
@@ -251,6 +252,11 @@ export default function PromptTab({ agentKey }: { agentKey: string }) {
                   <span className="font-mono text-[11px] text-muted-foreground">{r.chave}</span>
                   {editable && <GeradoBadge estado={gerados.secoes?.[r.chave]} />}
                   {!r.ativo && <Badge variant="muted">Inativa</Badge>}
+                  {(r.regras ?? []).map((regra) => (
+                    <Badge key={regra} variant="outline" title="Regra que esta seção declara">
+                      Regra: {regra}
+                    </Badge>
+                  ))}
                   {r.ativo && !r.conteudo.trim() && <Badge variant="destructive">Vazia — bloqueia publicação</Badge>}
                   <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">~{estimateTokens(r.conteudo)} tokens</span>
                   {editable && (

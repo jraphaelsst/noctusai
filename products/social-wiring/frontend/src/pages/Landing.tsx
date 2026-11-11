@@ -41,7 +41,7 @@ const JULIA: FeatureItem[] = [
   {
     icon: <LandingIcon name="Bot" />,
     title: "Você controla quando ela atende",
-    description: "Ligar, pausar, desligar e a fase de testes ficam no produto Agentes.",
+    description: "Ligar, pausar, desligar e o modo de avaliação ficam no produto Agentes.",
     link: { label: "Ver os controles em Agentes", href: AGENTS_URL, brand: AGENTS_BRAND },
   },
 ];
@@ -49,7 +49,7 @@ const JULIA: FeatureItem[] = [
 const STEPS = [
   { title: "Conecte o WhatsApp", description: "Ligue o número da imobiliária ao Social Wiring lendo um QR code." },
   { title: "Cadastre os imóveis", description: "A Julia só fala do que está no cadastro, com os dados que você informou." },
-  { title: "Teste com a sua equipe", description: "Na fase de testes, a Julia só responde às pessoas que você liberar." },
+  { title: "Teste com a sua equipe", description: "No modo de avaliação, a Julia só responde às pessoas que você liberar." },
   { title: "Abra para os leads", description: "Acompanhe tudo no funil e assuma qualquer conversa quando quiser." },
 ];
 

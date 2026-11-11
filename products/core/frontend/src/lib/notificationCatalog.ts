@@ -93,7 +93,8 @@ export const notificationKeys = {
 
 export function useNotificationCatalog() {
   const a = useNotificationCatalogApi();
-  return useQuery({ queryKey: notificationKeys.catalog, queryFn: a.catalog, refetchInterval: 60_000 });
+  // poll-budget: 120s (admin catalog page); ~5 calls/tick; worst 3600/day per open tab; hidden=paused
+  return useQuery({ queryKey: notificationKeys.catalog, queryFn: a.catalog, refetchInterval: 120_000 });
 }
 
 export function useNotificationSends(product: string, kind: string, enabled: boolean) {

@@ -266,14 +266,12 @@ export interface Controle {
   dreno_inatividade_dias: number;
   threads_abertas: number;
   drenagem: Drenagem;
-  /** Julia v3 §12.2: while on, the agent says it is in a testing phase when apologising. */
-  fase_testes?: boolean;
   /** Evaluation mode: with the agent on, it answers ONLY the WhatsApp of `avaliacao_usuarios`. */
   modo_avaliacao?: boolean;
   /** Noc (core) user ids allowed to get answers; their WhatsApp is read from noc, never typed here. */
   avaliacao_usuarios?: string[];
   avaliacao_resolvidos?: AvaliacaoResolvido[];
-  /** True on a company INSTANCE: the evaluation state is Julia's CORE's (one testing switch for every company), read-only here. */
+  /** True on a company INSTANCE: the evaluation state is Julia's CORE's (one evaluation switch for every company), read-only here. */
   avaliacao_herdada?: boolean;
 }
 export interface AvaliacaoResolvido {
@@ -289,7 +287,6 @@ export interface OrgMember {
 }
 export interface ControleUpdate {
   modo: ModoOperacao;
-  fase_testes?: boolean;
   modo_avaliacao?: boolean;
   avaliacao_usuarios?: string[];
   dreno_inatividade_dias?: number;

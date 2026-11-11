@@ -24,8 +24,10 @@ from app.qualificacao.models import (
 from app.stores._db_errors import StudioConflict, VersionImmutable, exec_query, exec_rpc
 from app.stores._util import db_ts, utcnow, utcnow_iso
 from app.stores.errors import NotFound
+from noctusai_lib.primitives.ttl_cache import TTLCache
 
 __all__ = [
+    "invalidate_padrao_cache",
     "PadraoRecord",
     "VersaoMeta",
     "PadraoStore",
@@ -35,6 +37,26 @@ __all__ = [
 ]
 
 _SCHEMA = "agents"
+
+#: A channel turn resolves the agent's qualification standard before it can even look up its compile cache
+#: (`channels.turno.padrao_do_turno`): 6 REST reads per turn / status poll (2026-11-09: ~2.8k reads of each
+#: `qualificacao_*` table in 22 h, KB § PATTERNS/backend/polling-request-budget.md). A PUBLISHED (or archived) version
+#: is immutable (migration 032 trigger), so it is cached whole; "which version is published NOW" is cached for a short
+#: TTL and dropped by `publicar` in this process. A DRAFT is never cached (it changes under the key). The client is part
+#: of the key and held by the entry, so a test that swaps the client never reads another test's answer.
+#: CAVEAT: a cached version's `status` may read `publicada` for up to `_VERSAO_CACHE_TTL_S` after a newer publish
+#: archived it (the content is immutable, the status label is not). No consumer decides anything on that label
+#: today -- the "which version is published" question goes through `obter_versao_publicada` (30 s, dropped by `publicar`).
+_VERSAO_CACHE_TTL_S = 60.0
+_PUBLICADA_CACHE_TTL_S = 30.0
+_versao_cache: TTLCache[tuple, tuple] = TTLCache(_VERSAO_CACHE_TTL_S, max_entries=64)
+_publicada_cache: TTLCache[tuple, tuple] = TTLCache(_PUBLICADA_CACHE_TTL_S, max_entries=64)
+
+
+def invalidate_padrao_cache() -> None:
+    """Drop every cached standard version (a publish / discard in this process; tests)."""
+    _versao_cache.invalidate()
+    _publicada_cache.invalidate()
 
 
 @dataclass(frozen=True)
@@ -310,6 +332,17 @@ class SupabasePadraoStore:
         return [self._meta_row(r) for r in resp.data or []]
 
     def obter_versao(self, versao_id):
+        key = (id(self._client), str(versao_id))
+        hit = _versao_cache.peek(key)
+        if hit is not None:
+            return hit[1]
+        epoch = _versao_cache.epoch  # a publish that invalidates during this read must not be undone by it
+        versao = self._ler_versao(versao_id)
+        if versao.status != "rascunho":
+            _versao_cache.put(key, (self._client, versao), epoch=epoch)
+        return versao
+
+    def _ler_versao(self, versao_id):
         vr = self._t("qualificacao_versoes").select("*").eq("id", str(versao_id)).limit(1).execute()
         if not vr.data:
             raise NotFound(f"versao {versao_id}")
@@ -338,14 +371,21 @@ class SupabasePadraoStore:
         return bool(resp.data)
 
     def obter_versao_publicada(self, chave):
+        key = (id(self._client), chave)
+        hit = _publicada_cache.peek(key)
+        if hit is not None:
+            return self.obter_versao(hit[1])
+        epoch = _publicada_cache.epoch
         padrao = self.obter_padrao(chave)
         resp = (
             self._t("qualificacao_versoes").select("id").eq("padrao_id", str(padrao.id))
             .eq("status", "publicada").limit(1).execute()
         )
         if not resp.data:
-            raise NotFound(f"padrao {chave!r} sem versao publicada")
-        return self.obter_versao(UUID(str(resp.data[0]["id"])))
+            raise NotFound(f"padrao {chave!r} sem versao publicada")  # never cached: a publish is awaited
+        versao_id = UUID(str(resp.data[0]["id"]))
+        _publicada_cache.put(key, (self._client, versao_id), epoch=epoch)
+        return self.obter_versao(versao_id)
 
     def criar_rascunho(self, padrao_id, notas, copiar_de):
         resp = self._rpc("criar_rascunho_qualificacao", {
@@ -398,6 +438,7 @@ class SupabasePadraoStore:
 
     def publicar(self, versao_id, user_id):
         self._rpc("publicar_qualificacao_versao", {"p_versao_id": str(versao_id), "p_user_id": str(user_id)})
+        invalidate_padrao_cache()  # the new published version is live in this process at once
 
     def descartar_rascunho(self, versao_id):
         exec_query(self._t("qualificacao_versoes").delete().eq("id", str(versao_id)))

@@ -188,16 +188,6 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
     }
   }
 
-  async function alternarFaseTestes(v: boolean) {
-    setErro(null);
-    try {
-      await set.mutateAsync({ modo: c!.modo, fase_testes: v });
-      toast.success(v ? "Fase de testes ligada." : "Fase de testes desligada.");
-    } catch (err) {
-      setErro(errorMessage(err));
-    }
-  }
-
   const usuarios = c.avaliacao_usuarios ?? [];
   const resolvidos = c.avaliacao_resolvidos ?? [];
   const resolvidoPor = new Map(resolvidos.map((r) => [r.usuario_id, r]));
@@ -244,7 +234,7 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
         </Badge>
         {emAvaliacao && (
           <span className="rounded-md border border-amber-500 bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900" data-testid="controle-avaliacao-badge">
-            {c.avaliacao_herdada ? "Julia em fase de testes" : `Em avaliação — responde só a ${comTelefone.length} número(s)`}
+            {c.avaliacao_herdada ? "Julia em modo de avaliação" : `Em avaliação — responde só a ${comTelefone.length} número(s)`}
           </span>
         )}
         <span className="text-xs text-muted-foreground">{c.aceita_novos_leads ? "Aceita novos leads" : "Não aceita novos leads"}</span>
@@ -278,25 +268,11 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
 
       <Drenagem c={c} />
 
-      <div className="space-y-1">
-        <div className="flex items-center gap-2 text-sm">
-          <Switch
-            checked={!!c.fase_testes}
-            disabled={!isAdmin || set.isPending}
-            aria-label="Fase de testes"
-            data-testid="controle-fase-testes"
-            onCheckedChange={alternarFaseTestes}
-          />
-          Fase de testes
-        </div>
-        <p className="text-xs text-muted-foreground">Quando ligada, a Julia avisa que está em fase de testes ao se desculpar por um erro ou insatisfação.</p>
-      </div>
-
       {c.avaliacao_herdada ? (
         <div className="space-y-1" data-testid="controle-avaliacao-herdada">
-          <p className="text-sm font-medium">{emAvaliacao ? "Julia em fase de testes" : "Julia fora da fase de testes"}</p>
+          <p className="text-sm font-medium">{emAvaliacao ? "Julia em modo de avaliação" : "Julia fora do modo de avaliação"}</p>
           <p className="text-xs text-muted-foreground">
-            A fase de testes é uma só, definida no núcleo da Julia pela NoctusAI, e vale para todas as empresas. Não é configurada por instância.
+            O modo de avaliação é um só, definido no núcleo da Julia pela NoctusAI, e vale para todas as empresas. Não é configurada por instância.
           </p>
         </div>
       ) : (

@@ -52,7 +52,7 @@ from noctusai_lib.api.auth._token_prefixes import has_api_token_prefix
 from noctusai_lib.api.auth.session.cookie import session_cookie_clear_header
 
 from noctusai_lib.api.auth.session.api_tokens import ApiTokenResolver
-from noctusai_lib.api.auth.session.store import SessionStore
+from noctusai_lib.api.auth.session.store import SessionStore, is_valid_session_id
 from noctusai_lib.api.auth.session.types import AuthContext
 
 logger = logging.getLogger(__name__)
@@ -144,7 +144,9 @@ def make_get_auth_context(
     ) -> AuthContext:
         # ── Priority 1: session cookie (human-user UI session) ──
         if session_cookie:
-            ctx = await session_store.lookup(session_cookie)
+            # A cookie that is not a token_urlsafe(32) id cannot be a session (a leaked 64-hex key hash, junk):
+            # 401 before any store call, same response as an unknown session.
+            ctx = await session_store.lookup(session_cookie) if is_valid_session_id(session_cookie) else None
             if ctx is not None:
                 await _refuse_identity_mismatch(request, authorization, ctx)
                 request.state.auth_context = ctx

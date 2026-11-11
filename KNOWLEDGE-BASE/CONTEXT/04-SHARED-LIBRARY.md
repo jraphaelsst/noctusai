@@ -814,7 +814,7 @@ Import: `import { ... } from '@noctusai/lib'`
 
 ### `job-polling.ts` — Job-progress polling
 
-`jobPolling(isActive, intervalMs)` → TanStack query options to spread into `useQuery`/`useInfiniteQuery`: polls every `intervalMs` while `isActive(data)` — **including in a hidden tab** — and refetches immediately when the tab becomes visible; idle ⇒ no polling at all. The canonical way to poll an async job's progress (a bare `refetchInterval` freezes in a background tab). → `KB § PATTERNS/frontend/frontend.md` ("Job-progress polling")
+`jobPolling(isActive, intervalMs)` → TanStack query options to spread into `useQuery`/`useInfiniteQuery`: polls every `intervalMs` while `isActive(data)` **and the tab is visible** (hidden ⇒ paused), refetches immediately when the tab becomes visible, slows to 15 s after 2 min and stops at 30 min of visible polling — then `useJobPollingStalled()` is true and the shell's `JobPollingPausedNotice` ("Atualização automática pausada" + Atualizar → `resumeJobPolling`) says so; idle ⇒ no polling at all. The canonical way to poll an async job's progress (a bare `refetchInterval` freezes in a background tab). → `KB § PATTERNS/frontend/frontend.md` ("Job-progress polling")
 
 ### `notifications.ts`
 

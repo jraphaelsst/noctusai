@@ -53,7 +53,7 @@ import {
   useOrgScopeEpoch, useOrgSwapInFlight,
 } from "@noctusai/lib";
 import type { NavGroupWithRoute, NavItemWithRoute, StatusPagina } from "@noctusai/lib";
-import { HelpChatBubble } from "@noctusai/lib/components";
+import { HelpChatBubble, JobPollingPausedNotice } from "@noctusai/lib/components";
 import type { HelpChatBubbleProps } from "@noctusai/lib/components";
 import { toast } from "sonner";
 import { BackToCore } from "./components/BackToCore";
@@ -578,6 +578,8 @@ export function createProductLayout(config: ProductLayoutConfig) {
               data-testid="org-scope-content"
               className="motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-300"
             >
+              {/* A job whose auto-refresh gave up (jobPolling's ceiling) says so — never a silently stale screen. */}
+              <JobPollingPausedNotice />
               <OrgContentGate>{children}</OrgContentGate>
             </div>
           )}

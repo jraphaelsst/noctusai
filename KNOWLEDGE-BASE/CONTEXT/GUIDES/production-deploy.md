@@ -266,6 +266,7 @@ Until the cutover lands the VPS continues to track `origin/main` (the doc delibe
 docker network create noctus-net 2>/dev/null || true     # one-time
 docker compose -f deploy/fleet/compose.infra.prod.yml up -d        # redis (+ --profile waha if WhatsApp)
 docker compose -f deploy/fleet/docker-compose.prod.yml up -d core <slug>...   # subset = a wave
+# Redis lockdown cutover: once deploy/fleet/compose.redis-auth.prod.yml exists, add `-f deploy/fleet/compose.redis-auth.prod.yml` to this and every other compose call (KB § PATTERNS/devops/redis-acl-lockdown.md)
 # verify (ports are internal — exec curl, no host publish)
 docker exec noctus-<slug> curl -fsS http://localhost:<port>/api/health
 ```

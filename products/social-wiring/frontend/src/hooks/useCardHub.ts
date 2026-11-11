@@ -850,6 +850,7 @@ export function useExtracaoPollingInvalidation(clienteId: string | null): void {
       return res?.items ?? [];
     },
     enabled: !!clienteId,
+    // poll-budget: 2.5s while an extraction runs, hard stop after 30s; ~5 calls/tick; worst 60/day per open tab per upload; hidden=paused
     refetchInterval: (q) => {
       const docs = (q.state.data as Documento[] | undefined) ?? [];
       if (!docs.some((d) => extracaoEmAndamento(d.extracao_status))) {

@@ -27,7 +27,14 @@ from pathlib import Path
 from settings import REPO_ROOT
 from workspace import resolve_caller_root
 
-from ._vps_ssh import run_remote
+from ._vps_ssh import (  # noqa: F401 - re-exported for the owner-hand path
+    _OWNER_HAND_SCOPE,
+    OWNER_HAND_RUNNER_REFUSAL,
+    OWNER_HAND_LIVE_SCOPE,
+    OWNER_HAND_TEST_SCOPE,
+    _owner_scope_problem,
+    run_remote,
+)
 
 DATA_REL = "deploy/fleet/waha-instances.yml"
 COMPOSE_REL = "deploy/fleet/compose.waha.yml"
@@ -361,8 +368,31 @@ def _inst(spec: dict, name: str | None) -> dict:
     raise ValueError(f"instance {name!r} is not declared in {DATA_REL}")
 
 
+# The owner-hand scope + its runner refusal live in _vps_ssh (the ssh chokepoint itself); re-exported here.
+
+
 def _sh(host: str, cmd: str, timeout: float = 90):
+    why = _owner_scope_problem()
+    if why:
+        return 1, "", why  # refused before any subprocess
     return run_remote(host, cmd, timeout=timeout)
+
+
+class _GrantScope:
+    """Enter the owner-hand scope of a grant for one `_apply`/`_provision` call (a TEST scope already set is kept)."""
+
+    def __init__(self, grant):
+        self.grant, self.token = grant, None
+
+    def __enter__(self):
+        if self.grant is not None and _OWNER_HAND_SCOPE.get() is not OWNER_HAND_TEST_SCOPE:  # LIVE -> the grant
+            self.token = _OWNER_HAND_SCOPE.set(self.grant)
+        return self
+
+    def __exit__(self, *exc):
+        if self.token is not None:
+            _OWNER_HAND_SCOPE.reset(self.token)
+        return False
 
 
 def _list(spec: dict, host: str) -> dict:
@@ -469,13 +499,24 @@ def _noweb_matches(got, want: dict) -> bool:
             and got["store"].get("fullSync") is want["store"]["fullSync"])
 
 
-PERSONAL_REFUSAL = ("personal line: provisioning requires an out-of-band owner confirmation that does not exist yet; "
-                    "the owner performs this step by hand")
-# NOC-REMEDIATE[personal-line-consent-oob]: provisioning a PERSONAL line is refused outright. Transcript-sentence consent
-# (prod_consent style) is forgeable -- transcripts are user-writable files, any session id on the machine is accepted, and
-# there is no time window, nonce or caller binding -- so there is deliberately NO weaker fallback here. The owner's design
-# decision (not an agent's): a one-time code delivered through the owner's own channel (WhatsApp/e-mail to the number on
-# file in core), bound to line name + policy hash + expiry + nonce, single use, checked server-side. — 2026-11-10
+PERSONAL_REFUSAL = ("personal line: refused for every agent and tool caller; the owner performs this step by hand, in a "
+                    "Terminal.app window: PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH mcp/noctusai/.venv/bin/python "
+                    "mcp/noctusai/cli.py --waha-instance-owner-hand <provision|apply> <line>")
+# Consent for a PERSONAL line is RESOLVED by the owner-hand path (owner decision D49, 2026-11-10; no second factor, no
+# OTP, ever): `waha_owner_hand.owner_hand`, CLI-only (never an MCP tool), refuses without an interactive TTY, inside an
+# agent harness, unless the shell's parent is the pinned Terminal.app judged on its real image + code signature read from
+# the kernel in-process (only system shells / login in between, the app started by launchd), and until the human TYPES the line name and CONFIRMO on /dev/tty; every attempt is audited in the
+# `waha-owner-hand.ndjson` ledger. Only the grant it mints after that gate lifts this refusal: bound to line + policy
+# hash + host + a secret nonce whose digest is in a fresh `confirmed` audit row, single use. Transcript-sentence consent stays removed (forgeable).
+# The host precondition stays OPEN: NOC-REMEDIATE[personal-core-host-exec-authz] (see vps_exec).
+
+
+def _owner_allows(grant, inst: dict, host: str, vps_inst: "dict | None" = None) -> bool:
+    """True only for the owner-hand grant covering this line, host and policy (this checkout's AND the VPS's)."""
+    if grant is None:
+        return False
+    from .waha_owner_hand import grant_covers
+    return grant_covers(grant, inst, host, vps_inst)
 
 
 def _vps_instance(name: str, host: str, sh) -> "tuple[dict | None, str]":
@@ -489,15 +530,22 @@ def _vps_instance(name: str, host: str, sh) -> "tuple[dict | None, str]":
         return None, f"the VPS checkout does not declare line {name!r} ({exc}): deploy_pull first"
 
 
-def _provision(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None) -> dict:
+def _provision(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None) -> dict:
     """Create/align the session config from the policy against the CORE, then READ IT BACK (explicit, idempotent).
 
     The caller's checkout is NOT trusted: provisioning may only TIGHTEN, compared with BOTH the running config and the
     VPS's own checkout of waha-instances.yml (a branch with `mark_online: true` cannot write itself onto the live core).
-    A `personal: true` line is REFUSED outright (see PERSONAL_REFUSAL).
+    A `personal: true` line is REFUSED (see PERSONAL_REFUSAL) unless `_owner_grant` -- minted only by the CLI-only
+    owner-hand path after its human gate -- covers this line, host and policy hash on BOTH checkouts.
 
     `_test_sh` is a TEST-ONLY injection point for the remote runner: it is absent from the public function and the MCP
-    schema, and must never be passed by production code."""
+    schema, and must never be passed by production code. `_owner_grant` is absent from both as well."""
+    with _GrantScope(_owner_grant):
+        return _provision_in_scope(spec, name, host, confirm, _test_sh=_test_sh, _owner_grant=_owner_grant)
+
+
+def _provision_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None) -> dict:
+    """The body of `_provision`, inside the owner-hand scope of its grant."""
     sh = _test_sh or _sh
     inst = _inst(spec, name)
     want = policy_noweb(inst)
@@ -505,7 +553,7 @@ def _provision(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None
     refuse = lambda why, **kw: {"ok": False, "action": "provision", "status": "refused", "name": name,  # noqa: E731
                                 "error": why, **kw}
 
-    if inst.get("personal"):
+    if inst.get("personal") and not _owner_allows(_owner_grant, inst, host):
         return refuse(PERSONAL_REFUSAL, needs_owner_by_hand=True)
     vps_inst, why = _vps_instance(name, host, sh)
     if vps_inst is None:
@@ -515,7 +563,7 @@ def _provision(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None
     if bad:
         return refuse("REFUSED, loosening vs the VPS's own waha-instances.yml: " + "; ".join(bad))
 
-    if vps_inst.get("personal"):
+    if (inst.get("personal") or vps_inst.get("personal")) and not _owner_allows(_owner_grant, inst, host, vps_inst):
         return refuse(PERSONAL_REFUSAL, needs_owner_by_hand=True)
 
     probe = f"docker exec -e POLICY_SESSION={shlex.quote(inst['session'])} {core} node -e '{_READ_JS}'"
@@ -557,19 +605,21 @@ def _provision(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None
             "expect_noweb": want, "read_back": got.get("noweb"), "webhooks": hooks, "foreign_webhooks": foreign}
 
 
-def _personal_refusal(inst: dict, name: str, host: str, sh, action: str) -> "dict | None":
+def _personal_refusal(inst: dict, name: str, host: str, sh, action: str, owner_grant=None) -> "dict | None":
     """Refusal payload when the line is personal in ANY of the three sources (this checkout's yml, the VPS's own yml, the
     LIVE container label `noctus.line.personal=true`), or when a source cannot be read (fail closed); None = not personal.
-    Nothing is started, stopped or copied before this runs (not the core, not a volume tar), `force` does not bypass it."""
+    Nothing is started, stopped or copied before this runs (not the core, not a volume tar), `force` does not bypass it.
+    Only the owner-hand grant (CLI-only, human-gated) lifts it, and only for the line/host/policy hash it names."""
     out = lambda why, **kw: {"ok": False, "action": action, "status": "refused", "name": name,  # noqa: E731
                              "error": why, **kw}
-    if inst.get("personal"):  # nothing at all is touched for a personal line: not even the core
+    if inst.get("personal") and not _owner_allows(owner_grant, inst, host):  # nothing at all is touched: not even the core
         return out(PERSONAL_REFUSAL, needs_owner_by_hand=True)
     # the VPS's own checkout is read first: the strictest of local and VPS wins, unreadable refuses
     vps_inst, why = _vps_instance(name, host, sh)
     if vps_inst is None:
         return out(why)
-    if vps_inst.get("personal"):
+    personal_ok = _owner_allows(owner_grant, inst, host, vps_inst)
+    if vps_inst.get("personal") and not personal_ok:
         return out(PERSONAL_REFUSAL, needs_owner_by_hand=True)
     # the LIVE label is the third source (a core created before the render change / by hand may be personal while both
     # ymls say otherwise): any labelled container of this line refuses; an unreadable lookup fails closed
@@ -577,12 +627,17 @@ def _personal_refusal(inst: dict, name: str, host: str, sh, action: str) -> "dic
     if rc != 0:
         return out(f"cannot read the live `noctus.line.personal` labels ({lerr.strip()[-120:]}): refused (fail closed)")
     mine = {f"noctus-{core_service(inst)}", core_service(inst), f"noctus-waha-{name}", f"waha-{name}"}
-    if mine & {n.strip().lstrip("/") for n in lab.splitlines() if n.strip()}:
+    if mine & {n.strip().lstrip("/") for n in lab.splitlines() if n.strip()} and not personal_ok:
         return out(PERSONAL_REFUSAL, needs_owner_by_hand=True)
     return None
 
 
-def _apply(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None) -> dict:
+def _apply(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None) -> dict:
+    with _GrantScope(_owner_grant):
+        return _apply_in_scope(spec, name, host, confirm, _test_sh=_test_sh, _owner_grant=_owner_grant)
+
+
+def _apply_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None) -> dict:
     sh = _test_sh or _sh
     p = _plan(spec, name)
     if not confirm:
@@ -590,7 +645,7 @@ def _apply(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None) ->
                                       "(an edge line: core -> provision -> edge, in that order)")
         return p
     inst = _inst(spec, name)
-    refused = _personal_refusal(inst, name, host, sh, "apply")
+    refused = _personal_refusal(inst, name, host, sh, "apply", _owner_grant)
     if refused is not None:
         return refused
     rc, _o, err = sh(host, f"cd {VPS_FLEET} && for k in {' '.join(inst_keys(inst).values())}; do "
@@ -604,7 +659,7 @@ def _apply(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None) ->
         rc, out, err = sh(host, up + core_service(inst), timeout=300)
         if rc != 0:
             return {"ok": False, "action": "apply", "status": "error", "name": name, "error": err.strip()[-600:]}
-        prov = _provision(spec, name, host, True, _test_sh=_test_sh)
+        prov = _provision(spec, name, host, True, _test_sh=_test_sh, _owner_grant=_owner_grant)
         if not prov["ok"]:
             return {"ok": False, "action": "apply", "status": "provision_failed", "name": name, "provision": prov}
         rc, out, err = sh(host, up + f"waha-{name}", timeout=300)
@@ -677,7 +732,7 @@ def register(server) -> None:
             "vs RSS vs session status) | plan/add (the service + the .env.fleet key NAMES to generate on the VPS -- values never "
             "cross the wire) | apply (confirm=True: compose up -d --no-deps for ONE instance; refuses when keys are missing) | "
             "provision (creates/aligns the session config FROM the policy on the core; TIGHTEN-ONLY vs the VPS's own yml and the running "
-            "config; a PERSONAL line is refused: the owner does it by hand) | "
+            "config; a PERSONAL line is refused here: the owner runs the CLI-only `--waha-instance-owner-hand` path by hand) | "
             "remove (confirm=True; refuses a WORKING session unless force; snapshots the volume first, never deletes it). "
             "DRY-RUN default. KB § CONTEXT/INTEGRATIONS/whatsapp.md § One WAHA per number."
         ),

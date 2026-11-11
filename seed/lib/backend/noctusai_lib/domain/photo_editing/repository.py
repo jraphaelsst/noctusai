@@ -64,6 +64,7 @@ from noctusai_lib.domain.photo_editing.types import (
 )
 from noctusai_lib.domain.photo_editing.prompts.note_writer import ModelMetrics
 from noctusai_lib.primitives.postgrest_errors import is_unique_violation
+from noctusai_lib.primitives.ttl_cache import TTLCache
 
 _BATCH_MUTABLE = frozenset(
     {
@@ -1254,11 +1255,19 @@ class SupabasePhotoEditingRepository:
         schema: str = "social_wiring",
         cost_schema: str = "public",
         now: Callable[[], datetime] | None = None,
+        platform_settings_ttl_s: float = 10.0,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         self._client = client
         self._schema = schema
         self._cost_schema = cost_schema
         self._now = now or _utcnow
+        # The singleton platform row is read by EVERY job step, gate and admin request (2026-11-09: ~7.7k
+        # `fotos_platform_settings` reads in 22 h, KB § PATTERNS/backend/polling-request-budget.md). A write through
+        # this repository is live at once; another worker sees it within the TTL.
+        self._platform_cache: TTLCache[int, PlatformSettings] = TTLCache(
+            platform_settings_ttl_s, max_entries=1, **({"clock": monotonic} if monotonic else {})
+        )
 
     # --- plumbing -----------------------------------------------------
     def _t(self, table: str, *, schema: str | None = None) -> Any:
@@ -1309,15 +1318,21 @@ class SupabasePhotoEditingRepository:
         )
 
     async def get_platform_settings(self) -> PlatformSettings:
+        cached = self._platform_cache.peek(1)
+        if cached is not None:
+            return cached
+        epoch = self._platform_cache.epoch  # an update_platform_settings during this read must win
         row = await self._one(self._t("fotos_platform_settings").select("*").eq("id", 1).limit(1))
         if row is None:
             raise RepositoryError("fotos_platform_settings singleton row is missing")
-        return _decode(
+        settings = _decode(
             PlatformSettings,
             row,
             enums={"velocidade_default": Speed},
             decimals=("preco_storage_gb_mes_usd",),
         )
+        self._platform_cache.put(1, settings, epoch=epoch)
+        return settings
 
     async def save_org_settings(self, settings: OrgSettings) -> OrgSettings:
         row = _row_of(settings)
@@ -1338,6 +1353,7 @@ class SupabasePhotoEditingRepository:
         _check_fields("update_platform_settings", changes, _PLATFORM_MUTABLE)
         changes["updated_at"] = self._now()
         row = await self._update("fotos_platform_settings", 1, changes)
+        self._platform_cache.invalidate()
         return _decode(
             PlatformSettings,
             row,

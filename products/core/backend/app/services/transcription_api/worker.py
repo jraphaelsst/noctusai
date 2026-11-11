@@ -246,6 +246,7 @@ class TranscricaoBackground:
     async def _run_worker(self) -> None:
         await self.worker.run_forever(stop_event=self._stop)
 
+    # poll-budget: 15min (SWEEP_INTERVAL_S); 3 sweep reads/tick; worst 288/day; max added delay 0 (cadence unchanged); idle=fixed
     async def _run_sweeps(self) -> None:
         while not self._stop.is_set():
             counts = await run_sweeps(self.service)

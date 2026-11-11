@@ -266,3 +266,4 @@ export type {
   EditorialItemDetail,
   EditorialDataSource,
 } from './editorial';
+export { JobPollingPausedNotice } from './JobPollingPausedNotice';

@@ -31,6 +31,9 @@
 #   echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 #   docker compose -f docker-compose.prod.yml pull
 #   docker compose -f docker-compose.prod.yml up -d
+#   (Redis lockdown cutover: once compose.redis-auth.prod.yml exists beside this file, add
+#    `-f compose.redis-auth.prod.yml` as a SECOND -f to every call; a bare recreate returns a service to the old Redis.
+#    KB § PATTERNS/devops/redis-acl-lockdown.md)
 #
 # Image tag defaults to :latest in prod. CI moves :latest ONLY on a
 # prod-ref build (KB § GUIDES/production-deploy.md § 2b PROD-PIN fix,

@@ -283,8 +283,6 @@ class ControleOut(BaseModel):
     modo: Literal["ligado", "drenando", "desligado"]
     aceita_novos_leads: bool
     dreno_inatividade_dias: int
-    #: Julia v3 §12.2: the org's testing-phase switch (rendered into the turn state as ``controle.fase_testes``).
-    fase_testes: bool = True
     #: Julia v3 §12.12 evaluation mode + its allow-list of noctus USER ids (never phones; Studio routes only, the
     #: channel token read returns the IDS only -- no phones, no names -- so SW can tell a listed member from other staff).
     modo_avaliacao: bool = False
@@ -304,12 +302,9 @@ class ControleUpdateRequest(StrictHttpModel):
 
     modo: Literal["ligado", "drenando", "desligado"]
     dreno_inatividade_dias: int | None = Field(default=None, ge=1, le=365)
-    #: Optional: set the testing-phase switch alongside the (required) ``modo``. Changing only this field, with
-    #: ``modo`` equal to the current one, applies no mode transition and none of its 409 preconditions.
-    fase_testes: bool | None = None
     #: Evaluation mode switch and its allow-list of noctus user ids (at most 20, each of this org; their phones come
-    #: from noc at gate time). ``modo_avaliacao=true`` needs at least one listed user with a phone. Like
-    #: ``fase_testes``, changing only these applies no mode transition.
+    #: from noc at gate time). ``modo_avaliacao=true`` needs at least one listed user with a phone. Changing
+    #: only these (``modo`` equal to the current one) applies no mode transition and none of its 409 preconditions.
     modo_avaliacao: bool | None = None
     avaliacao_usuarios: list[UUID] | None = Field(default=None, max_length=20)
 

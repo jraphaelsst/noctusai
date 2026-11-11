@@ -42,6 +42,7 @@ export function useMecanismoRun(key: string, runId: string | null) {
     enabled: !!key && !!runId,
     retry: false,
     refetchInterval: (query) => {
+      if (query.state.status === "error") return false;
       const s = (query.state.data as MecanismoRun | undefined)?.status;
       return s === undefined || s === "executando" ? 3000 : false;
     },

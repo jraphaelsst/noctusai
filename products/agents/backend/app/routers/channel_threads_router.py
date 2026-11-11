@@ -485,7 +485,6 @@ def _controle_out(
         modo=controle.modo,
         aceita_novos_leads=controle.aceita_novos_leads,
         dreno_inatividade_dias=controle.dreno_inatividade_dias,
-        fase_testes=controle.fase_testes,
         modo_avaliacao=controle.modo_avaliacao,
         avaliacao_usuarios=ids,
         avaliacao_herdada=controle.avaliacao_herdada,
@@ -545,9 +544,7 @@ def _e_admin_da_org(ctx: AuthContext, request: Request) -> bool:
 
 
 def _aplicar_flags(controles: Any, ctx: AuthContext, agent: Any, payload: ControleUpdateRequest) -> None:
-    """The non-mode switches of the controle PUT: ``fase_testes`` and the evaluation mode + allow-list (each audited)."""
-    if payload.fase_testes is not None:
-        controles.set_fase_testes(ctx.org_id, agent.id, payload.fase_testes, actor=ctx.user_id)
+    """The non-mode switches of the controle PUT: the evaluation mode + allow-list (audited)."""
     if payload.modo_avaliacao is not None or payload.avaliacao_usuarios is not None:
         controles.set_avaliacao(
             ctx.org_id, agent.id, modo_avaliacao=payload.modo_avaliacao, usuarios=payload.avaliacao_usuarios,
@@ -612,18 +609,18 @@ def studio_set_agent_controle(
     except NotFound as exc:
         raise _err(404, "agent_not_found", "Agente não encontrado.") from exc
     # Only the flags change (modo equal to the current one, no new drain days): no mode transition, so none of its
-    # preconditions apply either. Covers the testing-phase switch and the evaluation mode + allow-list.
-    # The testing switch is ONE switch on Julia's core (owner 2026-11-05), editable only by NoctusAI platform admins (never by a
+    # preconditions apply either. Covers the evaluation mode + allow-list.
+    # The evaluation switch is ONE switch on Julia's core (owner 2026-11-05), editable only by NoctusAI platform admins (never by a
     # content token) and only on the core's own page: an instance refuses it.
     if payload.modo_avaliacao is not None or payload.avaliacao_usuarios is not None:
         if ctx.caller_kind == "product":
-            raise _err(403, "platform_admin_required", "Somente um administrador da plataforma NoctusAI altera a fase de testes.")
+            raise _err(403, "platform_admin_required", "Somente um administrador da plataforma NoctusAI altera o modo de avaliação.")
         if atual.avaliacao_herdada:
             raise _err(409, "avaliacao_somente_no_nucleo",
-                       "A fase de testes é uma só, no núcleo da Julia (organização NoctusAI); ela vale para todas as empresas.")
+                       "O modo de avaliação é um só, no núcleo da Julia (organização NoctusAI); ela vale para todas as empresas.")
     # validate the evaluation allow-list BEFORE any change lands (a bad list must not half-apply)
     _validar_avaliacao(ctx.org_id, atual, payload, usuarios)
-    tem_flags = any(v is not None for v in (payload.fase_testes, payload.modo_avaliacao, payload.avaliacao_usuarios))
+    tem_flags = any(v is not None for v in (payload.modo_avaliacao, payload.avaliacao_usuarios))
     so_flags = (
         tem_flags and payload.modo == atual.modo
         and payload.dreno_inatividade_dias in (None, atual.dreno_inatividade_dias)

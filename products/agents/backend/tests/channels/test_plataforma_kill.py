@@ -1,6 +1,5 @@
-"""The platform kill switch (Julia v3 contract section 12.1) and the org testing-phase switch (section 12.2):
-every row of the decision, the turn endpoint, the status endpoint, the Studio API auth (strict 401 / 403), the audit
-and the prompt line. Fake stores bound through ``dependency_overrides`` -- nothing of ours is patched."""
+"""The platform kill switch (Julia v3 contract section 12.1) 
+every row of the decision, the turn endpoint, the status endpoint, the Studio API auth (strict 401 / 403) and the audit. Fake stores bound through ``dependency_overrides`` -- nothing of ours is patched."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -8,7 +7,6 @@ from uuid import UUID
 
 import pytest
 
-from app.channels.contexto import Dossie, render_contexto_system
 from app.channels.controles import (
     STATUS_AGENTE_DESLIGADO_PLATAFORMA,
     STATUS_CONTROLE_INDISPONIVEL,
@@ -20,13 +18,9 @@ from app.channels.controles import (
 from app.dependencies import get_auth_context
 from app.routers.channel_threads_router import get_plataforma_controle_store_dep
 from app.stores.errors import NotFound
-from app.stores.studio_definitions_conteudo import TextoInput
 from app.stores.plataforma_controles import FakePlataformaControleStore
-from app.studio.models import ConteudoBundle, TextoData
-from app.studio.textos_registry import TEXTOS
 from noctusai_lib.api.auth.session import AuthContext
 from tests.channels.conftest import chan, turn_body  # noqa: F401 — fixture
-from tests.channels.julia_v2 import texto_de
 from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID
 
 AGORA = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
@@ -197,63 +191,3 @@ def test_the_write_validates_its_body_and_the_agent(plat):
 def test_the_fake_refuses_an_unknown_key():
     with pytest.raises(NotFound):
         FakePlataformaControleStore(conhecidos={"julia"}).set("outra", desligado=True)
-
-
-# ── fase_testes on the org controle endpoint ────────────────────────────────
-
-CTL = "/api/studio/agents/julia/controle"
-
-
-def test_fase_testes_defaults_on_and_is_readable(chan):
-    chan.seed_agent()
-    assert chan.rt.client.get(CTL).json()["fase_testes"] is True
-
-
-def test_changing_only_fase_testes_applies_no_mode_transition_and_no_preconditions(chan):
-    chan.seed_agent()
-    chan.controles.set(chan.org_id, chan.agent.id, modo="ligado")
-    chan.keys.clear()  # turning ON would be a 409 llm_nao_configurado; an unchanged modo must not care
-    antes = len(chan.controles.auditoria)
-    resp = chan.rt.client.put(CTL, json={"modo": "ligado", "fase_testes": False})
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["fase_testes"] is False and resp.json()["modo"] == "ligado"
-    assert len(chan.controles.auditoria) == antes  # no modo audit
-    assert [(a[1], a[2], a[3]) for a in chan.controles.auditoria_fase_testes] == [(DEFAULT_USER_ID, True, False)]
-    # unchanged value: no new audit row
-    chan.rt.client.put(CTL, json={"modo": "ligado", "fase_testes": False})
-    assert len(chan.controles.auditoria_fase_testes) == 1
-
-
-def test_a_mode_change_may_carry_fase_testes_too(chan):
-    chan.seed_agent()
-    resp = chan.rt.client.put(CTL, json={"modo": "ligado", "fase_testes": False})
-    assert resp.status_code == 200 and (resp.json()["modo"], resp.json()["fase_testes"]) == ("ligado", False)
-
-
-def test_the_flag_reaches_the_rendered_turn_state(chan):
-    chan.seed_agent(textos_extra=[TextoInput("contexto.rotulo_fase_testes", texto_de("contexto.rotulo_fase_testes"))])
-    chan.controles.set(chan.org_id, chan.agent.id, modo="ligado")
-    chan.controles.set_fase_testes(chan.org_id, chan.agent.id, False)
-    assert chan.turn(turn_body("Oi")).json()["status"] == "respondido"
-    sistema = [m.content for c in chan.provider.calls if c["method"] == "chat_with_tools" for m in c["messages"]
-               if m.role == "system"]
-    assert any("txt:contexto.rotulo_fase_testes: txt:contexto.nao" in t for t in sistema), sistema
-
-
-def _conteudo(com_rotulo: bool) -> ConteudoBundle:
-    return ConteudoBundle(textos=tuple(
-        TextoData(c, texto_de(c)) for c in TEXTOS
-        if TEXTOS[c].aplica_a != "runtime" and (com_rotulo or c != "contexto.rotulo_fase_testes")))
-
-
-@pytest.mark.parametrize(("valor", "esperado"), [(True, "txt:contexto.sim"), (False, "txt:contexto.nao")])
-def test_render_line_follows_the_flag(valor, esperado):
-    out = render_contexto_system(
-        _conteudo(True), agora=AGORA, fuso="America/Sao_Paulo", estado=None, dossie=Dossie(), fase_testes=valor)
-    assert f"txt:contexto.rotulo_fase_testes: {esperado}" in out
-
-
-def test_render_has_no_line_when_not_given_or_when_the_label_is_blank():
-    kw = dict(agora=AGORA, fuso="America/Sao_Paulo", estado=None, dossie=Dossie())
-    assert "rotulo_fase_testes" not in render_contexto_system(_conteudo(True), **kw)
-    assert "rotulo_fase_testes" not in render_contexto_system(_conteudo(False), fase_testes=True, **kw)

@@ -52,6 +52,10 @@ SIGNED_KINDS: tuple[str, ...] = ("webhook", "oauth-callback", "health")
 ABUSE_PROTECTION_NAMES: frozenset[str] = frozenset({"turnstile", "recaptcha", "hcaptcha", "captcha", "honeypot", "abuse", "verify_human"})
 #: An OAuth callback must verify the ``state`` parameter with one of these.
 OAUTH_STATE_CALLS: frozenset[str] = frozenset({"verify_state", "validate_state", "verify_oauth_state", "decode_state", "check_state", "consume_state"})
+#: ...AND that call must pass the browser binding as this keyword (`consume_state(state, binding=<cookie>)`). A state that
+#: only proves "this server issued it" does not stop login-CSRF / account-linking: an attacker starts a flow and hands the
+#: consent URL to a victim. The binding ties the callback to the BROWSER that started the flow.
+OAUTH_STATE_BINDING_KWARG: str = "binding"
 
 
 def access_tier(tier: str, *, reason: str = "", category: str = "") -> Callable[[F], F]:

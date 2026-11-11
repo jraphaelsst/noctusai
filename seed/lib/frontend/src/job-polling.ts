@@ -26,18 +26,14 @@
  * narrows `data` for every consumer of the hook.
  *
  * While `isActive(data)` is true:
- *   - `refetchInterval` = `intervalMs`;
- *   - the interval keeps running in a background tab (`refetchIntervalInBackground`);
- *   - returning to the tab (`visibilitychange` → visible, which is TanStack's
- *     focus signal) refetches IMMEDIATELY (`refetchOnWindowFocus: 'always'`),
- *     because browsers throttle hidden-tab timers (Chrome: ≥1 min after 5 min
- *     hidden), so the last background tick can be far behind.
- * While it is false, the query does not poll at all — foreground or background —
- * and does not refetch on focus (the seed `createQueryClient` default). `refetchIntervalInBackground`
- * is a plain boolean in TanStack v5 (no per-state callback), so it is set to
- * `true` unconditionally; it has no effect when `refetchInterval` resolves to
- * `false`, which is what makes "background polling only while active" hold by
- * construction. An idle query never touches the network in the background.
+ *   - `refetchInterval` = `intervalMs` while the tab is visible; a HIDDEN tab pauses (nobody is
+ *     watching — request budget, 2026-11-10; `refetchIntervalInBackground` is false);
+ *   - returning to the tab (`visibilitychange` → visible, TanStack's focus signal) refetches
+ *     IMMEDIATELY (`refetchOnWindowFocus: 'always'`) — that catch-up is what fixes the 2026-10-13 freeze;
+ *   - after 2 min the cadence slows to 15 s; after 30 min of VISIBLE polling it STOPS and
+ *     `useJobPollingStalled()` turns true — the shell's `JobPollingPausedNotice` says so in pt-BR with an
+ *     "Atualizar" button (`resumeJobPolling`). Never a silently stale screen.
+ * While it is false, the query does not poll at all and does not refetch on focus.
  *
  * Not for "live" data with no terminal state (an inbox, a feed): that is a
  * realtime stream (`useRealtimeStream`), never a background poll.
@@ -60,7 +56,8 @@
  * → KB § PATTERNS/frontend/frontend.md ("Job-progress polling")
  * → KB § PATTERNS/frontend/mutation-cache-writes.md ("Async jobs hand off")
  */
-import { hashKey, partialMatchKey, type QueryKey } from '@tanstack/react-query';
+import { useSyncExternalStore } from 'react';
+import { hashKey, partialMatchKey, type QueryClient, type QueryKey } from '@tanstack/react-query';
 
 /** The slice of a TanStack `Query` the callbacks read — kept structural so it fits any query type. */
 export interface JobPollingQuery<TData> {
@@ -68,17 +65,18 @@ export interface JobPollingQuery<TData> {
   /** Present on a real `Query`; what a pending `handOffToPolling` is matched against. */
   queryKey?: QueryKey;
   queryHash?: string;
+  getObserversCount?: () => number;
 }
 
 export interface JobPollingOptions<TData> {
   refetchInterval: (query: JobPollingQuery<TData>) => number | false;
-  refetchIntervalInBackground: true;
+  refetchIntervalInBackground: false;
   refetchOnWindowFocus: (query: JobPollingQuery<TData>) => 'always' | false;
 }
 
 /**
- * Query options that poll every `intervalMs` while `isActive(data)` is true —
- * including while the tab is hidden — and refetch at once when the tab becomes
+ * Query options that poll every `intervalMs` while `isActive(data)` is true and the tab is
+ * visible (a hidden tab pauses; there is no `refetchIntervalInBackground`), and refetch at once when the tab becomes
  * visible again. Idle (`isActive` false) ⇒ no polling at all.
  */
 export function jobPolling<TData>(
@@ -92,14 +90,106 @@ export function jobPolling<TData>(
     const active = isActive(query.state.data);
     return handOffPending(query, active) || active;
   };
+  // Request budget (2026-11-10): "active" is the SERVER's claim; a job stuck active is an endless per-tick
+  // Supabase spend. Back off after the fast window, stop at the ceiling — and SAY so (stalled notice).
+  const cadence = (query: JobPollingQuery<TData>): number | false => {
+    if (!polling(query)) {
+      clearBudget(query);
+      return false;
+    }
+    const elapsed = visibleActiveMs(query);
+    if (elapsed >= JOB_POLL_CEILING_MS) {
+      markStalled(query);
+      return false;
+    }
+    return elapsed >= JOB_POLL_FAST_WINDOW_MS ? Math.max(intervalMs, JOB_POLL_SLOW_MS) : intervalMs;
+  };
   return {
-    refetchInterval: (query) => (polling(query) ? intervalMs : false),
-    refetchIntervalInBackground: true,
+    // poll-budget: caller-set 2-5s while a job is active, 15s after 2 min, stops at 30 min visible; ~5 calls/tick (handler + auth lookups); worst 760/day per open tab per stuck job (then stops and shows the notice); hidden=paused
+    refetchInterval: (query) => cadence(query),
+    // A hidden tab has nobody watching; `refetchOnWindowFocus: 'always'` catches up the moment it is visible.
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: (query) => (polling(query) ? 'always' : false),
   };
 }
 
+// ─── request budget: visible-active time + the "stalled" signal ───────────
+
+/** A gap between two callbacks longer than this means the tab was hidden/asleep: not counted as watching time. */
+const WATCH_GAP_MS = 60_000;
+const budgets = new WeakMap<object, { last: number; visibleMs: number }>();
+const stalled = new Set<JobPollingQuery<any>>();
+const stalledListeners = new Set<() => void>();
+
+function visibleActiveMs(query: JobPollingQuery<any>): number {
+  const now = Date.now();
+  const b = budgets.get(query) ?? { last: now, visibleMs: 0 };
+  const delta = now - b.last;
+  if (delta <= WATCH_GAP_MS) b.visibleMs += delta;
+  b.last = now;
+  budgets.set(query, b);
+  return b.visibleMs;
+}
+
+function notifyStalled() {
+  stalledListeners.forEach((l) => l());
+}
+
+function markStalled(query: JobPollingQuery<any>) {
+  if (stalled.has(query)) return;
+  stalled.add(query);
+  notifyStalled();
+}
+
+function clearBudget(query: JobPollingQuery<any>) {
+  budgets.delete(query);
+  if (stalled.delete(query)) notifyStalled();
+}
+
+/** True while a watched job is still active on the server but its automatic refresh gave up (30 min). */
+export function isJobPollingStalled(): boolean {
+  for (const query of stalled) {
+    if (query.getObserversCount && query.getObserversCount() === 0) stalled.delete(query);
+  }
+  return stalled.size > 0;
+}
+
+/** Subscribe to the stalled flag changing (what `useJobPollingStalled` is built on). */
+export function subscribeJobPollingStalled(listener: () => void): () => void {
+  stalledListeners.add(listener);
+  return () => stalledListeners.delete(listener);
+}
+
+/** React hook: `true` while any watched job's automatic refresh is paused at the ceiling. */
+export function useJobPollingStalled(): boolean {
+  return useSyncExternalStore(subscribeJobPollingStalled, isJobPollingStalled, () => false);
+}
+
+/** "Atualizar": reset the stalled jobs' budget and refetch them, which starts polling again. */
+export function resumeJobPolling(qc: Pick<QueryClient, 'invalidateQueries'>): void {
+  const queries = [...stalled];
+  queries.forEach((query) => {
+    budgets.delete(query);
+    stalled.delete(query);
+  });
+  notifyStalled();
+  queries.forEach((query) => {
+    if (query.queryKey) void qc.invalidateQueries({ queryKey: query.queryKey, exact: true });
+  });
+}
+
+/** Test seam. */
+export function resetJobPollingStalled(): void {
+  stalled.clear();
+  notifyStalled();
+}
+
 // ─── hand-off: a job-starting write → the polled read ──────────────────────
+
+/** Fast cadence lasts this long, then `JOB_POLL_SLOW_MS`; polling stops at `JOB_POLL_CEILING_MS` of continuous "active". */
+export const JOB_POLL_FAST_WINDOW_MS = 2 * 60_000;
+export const JOB_POLL_SLOW_MS = 15_000;
+export const JOB_POLL_CEILING_MS = 30 * 60_000;
 
 /** How long a hand-off keeps a read polling when it never sees the job (the safety net). */
 export const JOB_HANDOFF_GRACE_MS = 90_000;

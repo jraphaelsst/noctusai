@@ -410,7 +410,7 @@ spend, and compare against `mec-injecao-*`, `mec-skill-dump-*` and the leak rule
 
 ## 13 · A judge case needs the WORLD its contexto narrates (2026-11-08)
 
-A narrative `contexto` is only a note appended to the state block; the engine's own state (dossier, offered imoveis, controls such as `fase_testes`) is what the model trusts. A judge case that presumes state ("the imovel was already shown", "Fase de testes: nao") must carry it as `roteiro` (`estado_inicial` / `catalogo` / `fixture`, no `turnos`; validated by `validar_mundo_juiz`, synthetic data only). Without it the case grades the contradiction, not the agent: Julia's behaviour suite fell 0.979 -> 0.778 with no content regression. A run whose every execution crashed in the driver is a harness error (`falhou`, `erro_de_harness`), never a 0/N score.
+A narrative `contexto` is only a note appended to the state block; the engine's own state (dossier, offered imoveis, controls such as the mode) is what the model trusts. A judge case that presumes state ("the imovel was already shown", "Modo: desligado") must carry it as `roteiro` (`estado_inicial` / `catalogo` / `fixture`, no `turnos`; validated by `validar_mundo_juiz`, synthetic data only). Without it the case grades the contradiction, not the agent: Julia's behaviour suite fell 0.979 -> 0.778 with no content regression. A run whose every execution crashed in the driver is a harness error (`falhou`, `erro_de_harness`), never a 0/N score.
 
 ## 14 · Case consolidation: do not re-run what is proven and untouched (2026-11-09)
 

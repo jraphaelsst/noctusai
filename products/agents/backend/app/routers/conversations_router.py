@@ -27,6 +27,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from noctusai_lib.api.auth.session.store import session_id_digest
 from slowapi.util import get_remote_address
 
 from app.dependencies import (
@@ -279,15 +280,20 @@ def _message_payload_base(record: MessageRecord) -> dict[str, Any]:
 
 def _caller_key(request: Request) -> str:
     """Rate-limit key for ``POST .../messages`` — "per user" (contract
-    §E.2). Keyed off the raw credential (session cookie / bearer secret)
+    §E.2). Keyed off the credential (session cookie / bearer secret)
     rather than a resolved user id, so the limiter never needs its own DB
-    round-trip; same caller always yields the same key."""
+    round-trip; same caller always yields the same key.
+
+    The credential is a bearer secret: it must never be a Redis key NAME
+    (SCAN, ACL LOG and dumps expose key names), so the key carries only its
+    sha256 digest (`session_id_digest`, the helper `RedisSessionStore._key`
+    uses)."""
     cookie = request.cookies.get("nai_session")
     if cookie:
-        return f"session:{cookie}"
+        return f"session:{session_id_digest(cookie)}"
     authorization = request.headers.get("authorization", "")
     if authorization.startswith("Bearer "):
-        return f"bearer:{authorization[7:]}"
+        return f"bearer:{session_id_digest(authorization[7:])}"
     return get_remote_address(request)
 
 

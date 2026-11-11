@@ -1,7 +1,7 @@
 /**
  * Live notifications: turn a NEW backend notice into a neutral operational pop-up.
  *
- * Reads the SAME list the bell shows (`hooks.useNotificacoes(1, 10)`, which polls ~15 s while the tab is
+ * Reads the SAME list the bell shows (`hooks.useNotificacoes(1, 10)`, which refetches when the unread count moves (the bell polls ONE count every 60 s) while the tab is
  * visible and on focus), so there is one request, not two. Pure selection lives in
  * {@link selectFreshNotifications} so the rules are testable without React:
  *   - the first successful load of a session NEVER toasts (it only sets the high-water mark);

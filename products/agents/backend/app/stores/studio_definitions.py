@@ -54,6 +54,7 @@ from app.stores._db_errors import StudioConflict, VersionImmutable, exec_query, 
 from app.stores._util import utcnow
 from app.stores.errors import NotFound
 from app.stores.studio_definitions_conteudo import ConteudoStore, FakeConteudoMixin, SupabaseConteudoMixin
+from app.studio.regras_secao import validar_regras
 from app.studio.models import LIMITS, PUBLICACAO_LIMIAR_MIN, override_reason_ok
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
@@ -184,7 +185,8 @@ AUDIT_ACOES = (
     "modo_alterado", "conversa_pausada", "conversa_retomada", "padrao_publicado",
     "agente_excluido", "agente_criado", "agente_gerado",
     "historico_transferido", "agente_arquivado",
-    "plataforma_desligada", "plataforma_religada", "fase_testes_alterada", "modo_avaliacao_alterado",
+    "plataforma_desligada", "plataforma_religada", "fase_testes_alterada",  # fase_testes_alterada: legacy, kept so old audit rows stay valid
+    "modo_avaliacao_alterado",
 )
 #: 048 ``agents.excluir_agente`` guard codes (the 409 ``code`` of ``DELETE /api/studio/agents/{key}``).
 EXCLUSAO_CODIGOS = ("publicado", "tem_instancias", "tem_conversas", "tem_canal", "ativo")
@@ -310,6 +312,8 @@ class SectionInput:
     conteudo: str = ""
     ativo: bool = True
     id: UUID | None = None
+    #: Rules the section declares (``app.studio.regras_secao``); readiness checks these, never the key.
+    regras: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -324,6 +328,7 @@ class SectionRecord:
     ativo: bool
     created_at: datetime
     updated_at: datetime
+    regras: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -561,6 +566,7 @@ def validar_rascunho_padrao(settings: Any) -> None:
 
 def _validate_section(s: "SectionInput") -> None:
     _check_cap(s.conteudo, "section.conteudo", "section conteudo")
+    validar_regras(s.regras)
 
 
 def _validate_skill_fields(fields: dict[str, Any]) -> None:
@@ -583,6 +589,7 @@ def _as_section_input(item: Any) -> "SectionInput":
     return SectionInput(
         chave=d["chave"], titulo=d["titulo"], ordem=int(d.get("ordem", 0)),
         conteudo=d.get("conteudo") or "", ativo=bool(d.get("ativo", True)),
+        regras=tuple(d.get("regras") or ()),
     )
 
 
@@ -1347,6 +1354,7 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
             self._sections[sid] = SectionRecord(
                 id=sid, org_id=org_id, version_id=version_id, chave=s.chave, titulo=s.titulo,
                 ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo, created_at=created, updated_at=now,
+                regras=validar_regras(s.regras),
             )
         self._touch_draft(version_id)
         return self._sections_of(version_id)
@@ -1373,6 +1381,7 @@ class FakeStudioDefinitionStore(FakeConteudoMixin):
             self._sections[sid] = SectionRecord(
                 id=sid, org_id=org_id, version_id=version_id, chave=sec.chave, titulo=sec.titulo,
                 ordem=sec.ordem, conteudo=sec.conteudo, ativo=sec.ativo, created_at=now, updated_at=now,
+                regras=validar_regras(sec.regras),
             )
         for sk in sk_in:
             skid = uuid4()
@@ -1739,6 +1748,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             version_id=UUID(str(row["version_id"])), chave=row["chave"], titulo=row["titulo"],
             ordem=int(row["ordem"]), conteudo=row.get("conteudo") or "",
             ativo=bool(row.get("ativo", True)), created_at=row["created_at"], updated_at=row["updated_at"],
+            regras=tuple(row.get("regras") or ()),
         )
 
     @staticmethod
@@ -2040,7 +2050,7 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             "p_secoes": [
                 {
                     "id": str(sec.id) if sec.id else None, "chave": sec.chave, "titulo": sec.titulo,
-                    "ordem": sec.ordem, "conteudo": sec.conteudo, "ativo": sec.ativo,
+                    "ordem": sec.ordem, "conteudo": sec.conteudo, "ativo": sec.ativo, "regras": list(sec.regras),
                 }
                 for sec in secoes
             ],
@@ -2057,7 +2067,10 @@ class SupabaseStudioDefinitionStore(SupabaseConteudoMixin):
             "p_org_id": str(org_id),
             "p_version_id": str(version_id),
             "p_secoes": [
-                {"chave": x.chave, "titulo": x.titulo, "ordem": x.ordem, "conteudo": x.conteudo, "ativo": x.ativo}
+                {
+                    "chave": x.chave, "titulo": x.titulo, "ordem": x.ordem, "conteudo": x.conteudo,
+                    "ativo": x.ativo, "regras": list(x.regras),
+                }
                 for x in sec_in
             ],
             "p_skills": [

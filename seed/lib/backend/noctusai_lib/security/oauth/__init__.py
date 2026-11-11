@@ -52,6 +52,14 @@ from noctusai_lib.security.oauth.types import (
     OAuthCallbackResult,
     TokenSet,
 )
+from noctusai_lib.security.oauth.state_store import (
+    FakeOAuthStateStore,
+    IssuedState,
+    OAuthStateRecord,
+    OAuthStateStore,
+    SupabaseOAuthStateStore,
+    make_oauth_state_store,
+)
 from noctusai_lib.security.oauth.scopes import (
     FakeScopeResolver,
     GoogleScopeResolver,
@@ -65,15 +73,21 @@ __all__ = [
     "AuthorizationURL",
     "CallbackHook",
     "FakeOAuthProvider",
+    "FakeOAuthStateStore",
     "FakeScopeResolver",
     "GoogleProvider",
     "GoogleScopeResolver",
+    "IssuedState",
     "MetaScopeResolver",
     "OAuthCallbackResult",
     "OAuthProvider",
+    "OAuthStateRecord",
+    "OAuthStateStore",
     "ScopeResolver",
+    "SupabaseOAuthStateStore",
     "TokenSet",
     "make_oauth_provider",
+    "make_oauth_state_store",
     "make_scope_resolver",
     "oauth_router",
 ]

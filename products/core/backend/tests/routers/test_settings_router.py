@@ -205,3 +205,34 @@ class TestResolveSettings:
     def test_resolve_unauthenticated(self, unauth_client):
         resp = unauth_client.get("/api/settings/resolve/openai_api_key")
         assert resp.status_code == 401
+
+
+class TestDeleteDropsTheCachedCredential:
+    """`resolve_credential` caches 30 s: a deleted key must stop resolving immediately in this process."""
+
+    def test_platform_delete(self, admin_client, monkeypatch):
+        from noctusai_lib.config import credentials as cred
+        from noctusai_lib.testing.credentials import patch_credentials_to_mock
+
+        monkeypatch.delenv("CACHED_KEY", raising=False)
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_data("platform_settings", [{"key": "cached_key", "value": "v1"}])
+        with patch_credentials_to_mock(mock_sb):
+            cred.invalidate_credential_cache()
+            assert cred.resolve_credential("cached_key") == "v1"  # now cached
+            assert admin_client.delete("/api/settings/platform/cached_key").status_code == 200
+            assert cred.resolve_credential("cached_key") is None
+
+    def test_org_delete(self, admin_client, monkeypatch):
+        from noctusai_lib.config import credentials as cred
+        from noctusai_lib.testing.credentials import patch_credentials_to_mock
+
+        monkeypatch.delenv("CACHED_KEY", raising=False)
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_responses("noctus_users", [{"org_id": "org-1"}])
+        mock_sb.set_table_data("org_settings", [{"id": "s1", "org_id": "org-1", "key": "cached_key", "value": "v1"}])
+        with patch_credentials_to_mock(mock_sb):
+            cred.invalidate_credential_cache()
+            assert cred.resolve_credential("cached_key", "org-1") == "v1"
+            assert admin_client.delete("/api/settings/org/cached_key").status_code == 200
+            assert cred.resolve_credential("cached_key", "org-1") is None

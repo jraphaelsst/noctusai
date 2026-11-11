@@ -71,7 +71,7 @@ function AgentsPanel() {
         <Segmented />
         <p className="mt-3 flex items-center gap-2 rounded-md border border-warning bg-warning-light p-2 text-xs text-foreground">
           <FlaskConical className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span><b>Fase de testes</b>: responde só a pessoas liberadas</span>
+          <span><b>Modo de avaliação</b>: responde só a pessoas liberadas</span>
         </p>
       </div>
     </div>
@@ -79,7 +79,7 @@ function AgentsPanel() {
 }
 
 const HERO_MEDIA_LABEL =
-  "Exemplo ilustrativo do painel de agentes: a Julia está ligada no WhatsApp; a Bia está em fase de testes, respondendo só a pessoas liberadas. Dados de amostra.";
+  "Exemplo ilustrativo do painel de agentes: a Julia está ligada no WhatsApp; a Bia está em modo de avaliação, respondendo só a pessoas liberadas. Dados de amostra.";
 
 const icon = (name: string) => <LandingIcon name={name} className="h-5 w-5" />;
 
@@ -170,7 +170,7 @@ export default function Landing() {
                 title="Você decide quando e com quem cada agente fala"
                 items={[
                   { icon: icon("Power"), title: "Ligado, drenando ou desligado", description: "Drenando: o agente termina as conversas em andamento e não começa novas." },
-                  { icon: icon("FlaskConical"), title: "Fase de testes", description: "Antes de abrir para todos, o agente só responde às pessoas que você liberou." },
+                  { icon: icon("FlaskConical"), title: "Modo de avaliação", description: "Antes de abrir para todos, o agente só responde às pessoas que você liberou." },
                   { icon: icon("GitMerge"), title: "Uma conversa por lead", description: "Quando o lead passa de um agente para outro, ou para a equipe, a conversa continua no mesmo histórico." },
                   { icon: icon("Target"), title: "Regras que não mudam no meio do caminho", description: "Cada agente segue uma versão definida das regras, e cada resposta é conferida antes de sair." },
                   { icon: icon("Lock"), title: "Dados do lead protegidos", description: "Nome e contato do lead ficam criptografados no banco. O consentimento fica registrado na conversa." },
@@ -184,7 +184,7 @@ export default function Landing() {
                 title="Do primeiro teste ao atendimento de verdade"
                 steps={[
                   { title: "Escolha o agente", description: "Defina qual trabalho ele vai fazer e em qual canal." },
-                  { title: "Ligue em fase de testes", description: "Só a sua equipe conversa com ele no começo." },
+                  { title: "Ligue em modo de avaliação", description: "Só a sua equipe conversa com ele no começo." },
                   { title: "Acompanhe as conversas", description: "Leia o que ele respondeu e ajuste antes de abrir." },
                   { title: "Abra para todos", description: "E pause ou desligue quando quiser, na hora." },
                 ]}

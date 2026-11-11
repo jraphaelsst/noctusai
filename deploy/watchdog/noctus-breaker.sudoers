@@ -1,0 +1,15 @@
+# /etc/sudoers.d/noctus-watchdog   (install: sudo install -m 0440 -o root -g root noctus-breaker.sudoers /etc/sudoers.d/noctus-watchdog; validate: visudo -cf)
+#
+# The off-host watchdog logs in as UNPRIVILEGED users, never root. Each user's only power is ONE command,
+# with NO arguments (the trailing "" forbids any), as root:
+#   breaker  -> breaker-trip.sh  (SET noctus:breaker:fleet NX, or a read-only {"verify":true} EXISTS)
+#   probe    -> host-probe.sh    (read-only host metrics; needs root for journald, docker and authorized_keys)
+breaker ALL=(root) NOPASSWD: /opt/noctus/noctusai/deploy/watchdog/breaker-trip.sh ""
+probe ALL=(root) NOPASSWD: /opt/noctus/noctusai/deploy/watchdog/host-probe.sh ""
+# Start each from a clean environment: nothing the ssh session set reaches the root script.
+Defaults!/opt/noctus/noctusai/deploy/watchdog/breaker-trip.sh env_reset
+Defaults!/opt/noctus/noctusai/deploy/watchdog/host-probe.sh env_reset
+#
+# Requirements (verify on the VPS): the scripts and their parent directories are owned by root and not
+# writable by `breaker`/`probe`; neither user is in the `docker` group (docker-group membership is
+# root-equivalent, which is why sudo on one script is used instead).

@@ -40,8 +40,23 @@ import os
 from typing import Callable, Optional
 
 from noctusai_lib.integrations.database import make_supabase_client
+from noctusai_lib.primitives.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
+
+#: How long a resolved (org, key) answer is reused before the DB tiers are read again. A credential is read per
+#: LLM / vendor call, so an uncached chain cost up to 2 REST reads per call (2026-11-09: ~30k platform_settings /
+#: org_settings reads in 22 h, KB § PATTERNS/backend/polling-request-budget.md). <= 60 s by that rule; a write
+#: through THIS process calls `invalidate_credential_cache()` and is live at once, another process within the TTL.
+CREDENTIAL_CACHE_TTL_S = 30.0
+#: key -> (the client that answered, tier-0..2 value). The client identity is part of the entry so a test that
+#: swaps the public client (every product suite does) can never read another test's answer.
+_cache: TTLCache[tuple, tuple] = TTLCache(CREDENTIAL_CACHE_TTL_S, max_entries=512)
+
+
+def invalidate_credential_cache() -> None:
+    """Drop every cached answer. Call after writing `org_settings` / `platform_settings` in this process."""
+    _cache.invalidate()
 
 _config: Optional[dict] = None
 _public_client = None
@@ -68,6 +83,7 @@ def configure_credentials(
         "service_role_key": supabase_service_role_key,
     }
     _public_client = None
+    invalidate_credential_cache()
     logger.info("Credential resolution configured (url=%s)", supabase_url)
 
 
@@ -141,6 +157,7 @@ def register_credential_override(
     """
     global _override
     _override = fn
+    invalidate_credential_cache()
 
 
 def resolve_credential(key: str, org_id: Optional[str] = None) -> Optional[str]:
@@ -155,14 +172,42 @@ def resolve_credential(key: str, org_id: Optional[str] = None) -> Optional[str]:
 
     Returns:
         The resolved value (first non-empty match), or None if no tier has it.
+
+    Tiers 0-2 (override / `org_settings` / `platform_settings`) are cached for `CREDENTIAL_CACHE_TTL_S`; the
+    env tier is always read live (it is free, and a cached env value would outlive a changed environment).
+    A tier that FAILED to read is never cached — "unknown" must not be remembered as "unset".
     """
+    db = _get_public_client()
+    override = _override
+    # The client and the override are part of the key (and held by the entry, so their ids cannot be reused while
+    # it lives): a test that swaps either can never read another test's answer.
+    cache_key = (key, org_id, id(db), id(override))
+
+    def _load() -> tuple:
+        value, cacheable = _resolve_stored(key, org_id, db, override)
+        return (db, override, value, cacheable)
+
+    entry = _cache.get(cache_key, _load)
+    if not entry[3]:
+        _cache.invalidate(cache_key)  # a tier failed to read: retried on the next call, never remembered
+    value = entry[2]
+    if value:
+        return value
+    # Tier 3 — environment variable
+    return os.environ.get(key.upper()) or None
+
+
+def _resolve_stored(key: str, org_id: Optional[str], db, override) -> tuple[Optional[str], bool]:
+    """Tiers 0-2. Returns ``(value, cacheable)``; ``cacheable`` is False when any tier raised."""
+    cacheable = True
     # Tier 0 — product-local store, when one is registered. See
     # `register_credential_override`. Absent an override this is a single
     # `is None` test and the chain below is unchanged.
-    if _override is not None:
+    if override is not None:
         try:
-            value = _override(key, org_id)
+            value = override(key, org_id)
         except Exception as exc:
+            cacheable = False
             logger.warning(
                 "credential override failed for %s (org=%s): %s — falling "
                 "through to org_settings. This is NOT the same as 'no key "
@@ -171,9 +216,7 @@ def resolve_credential(key: str, org_id: Optional[str] = None) -> Optional[str]:
             )
         else:
             if value:
-                return value
-
-    db = _get_public_client()
+                return value, True
 
     # Tier 1 — org_settings (per-org override)
     if org_id and db is not None:
@@ -186,8 +229,9 @@ def resolve_credential(key: str, org_id: Optional[str] = None) -> Optional[str]:
                 .execute()
             )
             if result.data and result.data[0].get("value"):
-                return result.data[0]["value"]
+                return result.data[0]["value"], cacheable
         except Exception as exc:
+            cacheable = False
             logger.debug("org_settings lookup failed for %s: %s", key, exc)
 
     # Tier 2 — platform_settings (NoctusAI global default)
@@ -200,12 +244,11 @@ def resolve_credential(key: str, org_id: Optional[str] = None) -> Optional[str]:
                 .execute()
             )
             if result.data and result.data[0].get("value"):
-                return result.data[0]["value"]
+                return result.data[0]["value"], cacheable
         except Exception as exc:
+            cacheable = False
             logger.debug("platform_settings lookup failed for %s: %s", key, exc)
-
-    # Tier 3 — environment variable
-    return os.environ.get(key.upper()) or None
+    return None, cacheable
 
 
 def resolve_org_credential(key: str, org_id: Optional[str]) -> Optional[str]:
@@ -245,3 +288,4 @@ def _reset_for_testing() -> None:
     _config = None
     _public_client = None
     _override = None
+    invalidate_credential_cache()

@@ -40,6 +40,7 @@ from typing import Any, Optional
 from noctusai_lib.domain.jobs import DeadLetterError, Job, JobRepository
 from noctusai_lib.domain.jobs.repo import RescheduleLater
 
+from ..wake import wake_send_loop
 from .email_optin import CONFIRM_TTL_SECONDS, OPTIN_PENDING, receives_marketing_email
 
 logger = logging.getLogger(__name__)
@@ -73,17 +74,22 @@ def _now() -> datetime:
 # ---------------------------------------------------------------- enqueue (scheduler side)
 
 
+#: What the scheduler-side scan (and `enqueue_enrollment`) reads of an enrollment: named columns, because this runs
+#: every tick (KB § PATTERNS/backend/polling-request-budget.md).
+_SCAN_COLUMNS = "id, automation_id, current_step_id"
+
+
 def scan_due_enrollments(db: Any, now: Optional[datetime] = None) -> list[dict]:
     """Active enrollments of ACTIVE (``ativa``) automations whose step is due, each carrying the
     automation's ``org_id``. A never-scheduled enrollment (``next_action_at`` NULL, as
     ``enroll_contacts`` creates it) is due immediately."""
     now_iso = (now or _now()).isoformat()
     due = (
-        db.table("automation_enrollments").select("*")
+        db.table("automation_enrollments").select(_SCAN_COLUMNS)
         .eq("status", "active").lte("next_action_at", now_iso).limit(SCAN_LIMIT).execute().data or []
     )
     fresh = (
-        db.table("automation_enrollments").select("*")
+        db.table("automation_enrollments").select(_SCAN_COLUMNS)
         .eq("status", "active").is_("next_action_at", "null").limit(SCAN_LIMIT).execute().data or []
     )
     enrollments = (due + fresh)[:SCAN_LIMIT]
@@ -227,6 +233,7 @@ def _queue_send(db: Any, org_id: str, automation_id: str, step: dict, contact: d
         "automation_step_id": step["id"],
         "status": "queued",
     }).execute()
+    wake_send_loop()  # the send loop backs off when idle; this is the work it must not sleep through
 
 
 def _apply_side_effect(db: Any, org_id: str, automation_id: str, step: dict, contact: dict) -> None:

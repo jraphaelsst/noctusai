@@ -286,3 +286,55 @@ def test_db_ts_is_strict_and_keeps_none():
     assert db_ts("2026-11-03T21:32:06Z").tzinfo is not None
     with pytest.raises(ValueError):
         db_ts("not a timestamp")
+
+
+# ── Real half: a turn must not re-read the standard per message (2026-11-09 egress incident) ──────────────
+
+def _versao_answers(vid, pid, status="publicada"):
+    return [
+        _ans([{"id": str(vid), "padrao_id": str(pid), "versao": 1, "status": status, "notas": None,
+               "publicada_em": _PG_TS, "publicada_por": str(ADMIN)}]),
+        _ans([{"chave": "imob-lead"}]), _ans([]), _ans([]), _ans([]),
+    ]
+
+
+def test_real_published_version_is_read_once_not_once_per_turn():
+    from app.qualificacao.store import invalidate_padrao_cache
+
+    invalidate_padrao_cache()
+    vid, pid = uuid4(), uuid4()
+    c = Scripted(*_versao_answers(vid, pid))
+    s = SupabasePadraoStore(c)
+    for _ in range(50):  # 50 turns / status polls
+        assert s.obter_versao(vid).padrao_chave == "imob-lead"
+    assert len(c.log) == 5  # 5 reads once, not 250
+
+
+def test_real_a_draft_is_never_cached():
+    from app.qualificacao.store import invalidate_padrao_cache
+
+    invalidate_padrao_cache()
+    vid, pid = uuid4(), uuid4()
+    c = Scripted(*_versao_answers(vid, pid, "rascunho"), *_versao_answers(vid, pid, "rascunho"))
+    s = SupabasePadraoStore(c)
+    s.obter_versao(vid)
+    s.obter_versao(vid)
+    assert len(c.log) == 10
+
+
+def test_real_newest_published_is_resolved_once_and_a_publish_makes_the_next_read_fresh():
+    from app.qualificacao.store import invalidate_padrao_cache
+
+    invalidate_padrao_cache()
+    vid, pid = uuid4(), uuid4()
+    padrao_row = {"id": str(pid), "chave": "imob-lead", "nome": "n", "descricao": None, "created_at": _PG_TS}
+    c = Scripted(_ans([padrao_row]), _ans([{"id": str(vid)}]), *_versao_answers(vid, pid))
+    s = SupabasePadraoStore(c)
+    for _ in range(30):
+        s.obter_versao_publicada("imob-lead")
+    assert len(c.log) == 7  # padrao + published id + the 5 version reads, once
+    s.publicar(vid, ADMIN)  # one more rpc call; then the cache is dropped
+    reads_before = len(c.log)
+    c.script.extend([_ans([padrao_row]), _ans([{"id": str(vid)}]), *_versao_answers(vid, pid)])
+    s.obter_versao_publicada("imob-lead")
+    assert len(c.log) == reads_before + 7

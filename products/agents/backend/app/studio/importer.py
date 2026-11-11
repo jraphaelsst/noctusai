@@ -116,6 +116,7 @@ class BundleSecao(StrictHttpModel):
     ordem: int
     conteudo: str = Field(default="", max_length=100_000)
     ativo: StrictBool = True
+    regras: list[str] = Field(default_factory=list, max_length=8)
 
 
 class BundleArquivo(StrictHttpModel):
@@ -408,7 +409,10 @@ def import_bundle(
         org_id,
         draft.id,
         [
-            SectionInput(chave=s.chave, titulo=s.titulo, ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo)
+            SectionInput(
+                chave=s.chave, titulo=s.titulo, ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo,
+                regras=tuple(s.regras),
+            )
             for s in bundle.secoes
         ],
         [_skill_payload(s) for s in bundle.skills],

@@ -97,7 +97,7 @@ export function RoteamentoCard({ data, isAdmin }: { data: Roteamento; isAdmin: b
         <CardTitle className="text-base">Linhas de WhatsApp</CardTitle>
         <CardDescription>
           Escolha quais números do WhatsApp da sua organização alimentam a Julia. Depois que você a liga, a Julia responde a qualquer pessoa que escrever, mesmo quem já tinha conversa
-          antes; ela não manda mensagem para contatos antigos e ignora mensagens anteriores à ativação. Na fase de testes (modo de avaliação, só na página da
+          antes; ela não manda mensagem para contatos antigos e ignora mensagens anteriores à ativação. No modo de avaliação (só na página da
           Julia no agents) ela responde apenas aos números de teste.
         </CardDescription>
       </CardHeader>

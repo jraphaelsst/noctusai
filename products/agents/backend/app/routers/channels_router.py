@@ -720,7 +720,7 @@ async def _resumir(
                     system=system, user=user, tool=tool,
                     agent_key=agent.key, conversation_id=conversation_id, purpose="summarize",
                 )
-            shaped = extracao.shape_resumo(raw)
+            shaped = extracao.shape_resumo(raw, extracao.desfechos_oferecidos(conteudo))
         except LlmRuntimeError as exc:
             logger.warning(
                 "agents.channel.resumo.refused org_id=%s conversation_id=%s code=%s cause=%s",

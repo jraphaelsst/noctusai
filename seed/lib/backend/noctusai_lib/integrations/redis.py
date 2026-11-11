@@ -26,6 +26,7 @@ __all__ = [
     "make_fake_redis_client",
     "make_redis_client",
     "redact_redis_url",
+    "redis_require_auth_enabled",
     "redis_connection_url",
 ]
 
@@ -59,14 +60,29 @@ def _resolve_split_credentials(
 ) -> tuple[Optional[str], Optional[str]]:
     """Explicit args win, then REDIS_USERNAME / REDIS_PASSWORD env."""
     user = username if username is not None else (os.environ.get("REDIS_USERNAME") or None)
-    pw = password if password is not None else (os.environ.get("REDIS_PASSWORD") or None)
+    pw = password if password is not None else (os.environ.get("REDIS_PASSWORD") or _password_from_file())
     return user or None, pw or None
+
+
+def _password_from_file() -> Optional[str]:
+    """``REDIS_PASSWORD_FILE`` (Docker/K8s secret style): keeps the password out of ``docker inspect`` env.
+    An unreadable file raises (never a silent fall back to an unauthenticated connection)."""
+    path = os.environ.get("REDIS_PASSWORD_FILE", "").strip()
+    if not path:
+        return None
+    with open(path, encoding="utf-8") as fh:
+        return fh.read().rstrip("\r\n") or None
 
 
 def _require_auth(flag: Optional[bool]) -> bool:
     if flag is not None:
         return flag
     return os.environ.get("REDIS_REQUIRE_AUTH", "").strip().lower() in _TRUTHY
+
+
+def redis_require_auth_enabled() -> bool:
+    """Public read of REDIS_REQUIRE_AUTH (consumers that must fail closed on a failed probe)."""
+    return _require_auth(None)
 
 
 def _resolve(

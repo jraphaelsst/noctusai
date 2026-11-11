@@ -35,6 +35,17 @@ import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/
 import { listOps, useCacheWriteMutation } from './cache-writes';
 import type { ApiClient } from './api';
 
+/**
+ * Pairing polls (status / QR) are fast for the first 2 minutes of a screen's life, then slow to 30 s:
+ * a line nobody pairs must not poll at 3-5 s forever (request budget, 2026-11-10). `updateCount` is the
+ * query's own `state.dataUpdateCount`, so no clock or ref is needed.
+ */
+export const PAIRING_FAST_WINDOW_MS = 2 * 60_000;
+export const PAIRING_SLOW_POLL_MS = 30_000;
+export function pairingPollMs(updateCount: number, fastMs: number): number {
+  return updateCount * fastMs < PAIRING_FAST_WINDOW_MS ? fastMs : Math.max(fastMs, PAIRING_SLOW_POLL_MS);
+}
+
 // ---------------------------------------------------------------------------
 // Multi-connection types — mirror the backend DTOs
 // (app/schemas/whatsapp_connection.py). Deliberately excludes the
@@ -274,10 +285,11 @@ export function createWhatsAppConnectionsHooks(
           `${basePath}/${encodeURIComponent(connectionId ?? '')}/status`,
         ),
       enabled: enabled && !!connectionId,
+      // poll-budget: 5s for the first 2 min then 30s until paired; ~6 calls/tick (status + auth lookups); worst 17280/day per open tab; hidden=paused
       refetchInterval: (query) => {
         const data = query.state.data as WhatsAppConnectionStatus | undefined;
         if (data?.paired) return false;
-        return options?.pollMs ?? 5000;
+        return pairingPollMs(query.state.dataUpdateCount, options?.pollMs ?? 5000);
       },
     });
   }
@@ -300,10 +312,11 @@ export function createWhatsAppConnectionsHooks(
           `${basePath}/${encodeURIComponent(connectionId ?? '')}/qr`,
         ),
       enabled: enabled && !!connectionId,
+      // poll-budget: 3s for the first 2 min then 30s until WORKING; ~6 calls/tick (qr + auth lookups); worst 28800/day per open tab; hidden=paused
       refetchInterval: (query) => {
         const data = query.state.data as WhatsAppConnectionQr | undefined;
         if (data?.status === 'WORKING') return false;
-        return options?.pollMs ?? 3000;
+        return pairingPollMs(query.state.dataUpdateCount, options?.pollMs ?? 3000);
       },
     });
   }
@@ -444,7 +457,8 @@ export function createWhatsAppIntakeHooks(api: ApiClient) {
     return useQuery<IntakeConversation[]>({
       queryKey: [...KEY, 'conversations'],
       queryFn: () => api.get('/api/whatsapp/intake/conversations'),
-      refetchInterval: options?.pollMs ?? 5000,
+      // poll-budget: 15s (live monitor the user is watching); ~6 calls/tick (list + auth lookups); worst 34560/day per open tab; hidden=paused
+      refetchInterval: options?.pollMs ?? 15_000,
     });
   }
 
@@ -465,7 +479,8 @@ export function createWhatsAppIntakeHooks(api: ApiClient) {
           )}`,
         ),
       enabled: !!sessionId,
-      refetchInterval: options?.pollMs ?? 5000,
+      // poll-budget: 15s (live monitor the user is watching); ~6 calls/tick (list + auth lookups); worst 34560/day per open tab; hidden=paused
+      refetchInterval: options?.pollMs ?? 15_000,
     });
   }
 

@@ -124,6 +124,7 @@ export function useActivityRefresh({
     window.addEventListener("storage", handleStorage);
 
     // Refresh interval
+    // poll-budget: 5min; 1 call/tick (token refresh, skipped when the user was inactive); worst 288/day per open tab; hidden=runs
     const intervalId = setInterval(async () => {
       const now = Date.now();
       const sinceActivity = now - lastActivityRef.current;

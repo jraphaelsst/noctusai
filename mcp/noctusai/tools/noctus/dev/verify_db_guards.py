@@ -4843,7 +4843,13 @@ _AGENTS_DB_SOURCE_PROBES: tuple[GuardProbe, ...] = (
     _agents_studio_probe(
         probe_id="agents.fonte_check",
         guard_name="agents_fonte_check",
-        attack_sql=f"    UPDATE {_AGENTS_SCHEMA}.agents SET fonte = 'svn' WHERE id = v_agent;",
+        # An INSERT, never an UPDATE: 070's BEFORE UPDATE trigger guard_agent_fonte_immutable raises
+        # 'fonte_immutable' before any CHECK is evaluated, so an UPDATE attack never reaches this guard
+        # (predeploy read `ambiguous` and BLOCKED agents W2, 2026-11-10).
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agents (org_id, key, nome, runtime, definition_mode, fonte) "
+            "VALUES (v_org, 'noc-probe-fonte', 'NOC probe', 'claude_sdk', 'studio', 'svn');"
+        ),
         guard_fragment="agents_fonte_check",
         what="an agent source other than git|db",
         rationale="A11: the mirror rules key on fonte; an unknown source would match neither the git build nor the DB export.",
@@ -5088,6 +5094,34 @@ def _loop_insert(status: str, motivo: str, stopped: str) -> str:
     return (f"INSERT INTO {_JV2}.eval_loops (org_id, agent_id, agente_chave, suite, rodadas_planejadas, piso, "
             "orcamento_usd, status, motivo_parada, stopped_at, started_by) "
             f"VALUES (v_org, v_agent, 'noc-probe', 'comportamento', 5, 0.8, 20, '{status}', {motivo}, {stopped}, v_org);")
+
+
+# 079: an emergency stays open and closes by inactivity (window column + the emergency alert tipo).
+_EMERGENCIA_MIGS = (_m("033"), _m("035"), "057_julia_v3_alertas_documentos.sql", "079_emergencia_inatividade.sql")
+_JV2_PARTICIPANTE = (
+    f"INSERT INTO {_JV2}.thread_participantes (thread_id, agent_id, org_id, estado) "
+    "VALUES (v_thread, v_agent, v_org, 'ativo');"
+)
+_AGENTS_EMERGENCIA_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="thread_alertas.tipo_is_a_closed_set", guard_name="thread_alertas_tipo_check",
+        migrations=_EMERGENCIA_MIGS, setup="\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread())),
+        attack=(f"INSERT INTO {_JV2}.thread_alertas (org_id, thread_id, agent_id, tipo, descricao) "
+                "VALUES (v_org, v_thread, v_agent, 'tipo_inventado', 'x');"),
+        fragments=("thread_alertas_tipo_check",), what="an alert of a tipo the app does not know",
+        rationale="SW turns each alert tipo into a notice to the owner; an unknown tipo would be stored and "
+                  "never routed.",
+    ),
+    _julia_v2_probe(
+        probe_id="thread_participantes.inactivity_window_is_positive_and_bounded",
+        guard_name="ck_thread_participantes_fecha_inativo_min",
+        migrations=_EMERGENCIA_MIGS,
+        setup="\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread(), _JV2_PARTICIPANTE)),
+        attack=f"UPDATE {_JV2}.thread_participantes SET fecha_inativo_min = 0 WHERE thread_id = v_thread;",
+        fragments=("ck_thread_participantes_fecha_inativo_min",), what="an inactivity window of zero minutes",
+        rationale="A zero window would close the participant on the next minute tick regardless of activity.",
+    ),
+)
 
 
 _AGENTS_EVAL_LOOP_PROBES: tuple[GuardProbe, ...] = (
@@ -12066,9 +12100,185 @@ END;
 )
 
 
+
+_ASSISTANT_GOOGLE_EVENTOS_APPEND_ONLY_PROBE = GuardProbe(
+    id="assistant.google_conexao_eventos.append_only",
+    product="assistant",
+    schema="assistant",
+    guard_name="guard_google_conexao_eventos_append_only",
+    kind="write_refusal",
+    migrations=("019_google_connection.sql",),
+    rationale=(
+        "The Google connection event log (connect / disconnect / reconnect_needed, who and when) is the measurable record of "
+        "a credential lifecycle: an UPDATE or DELETE would rewrite it. Self-provisioning: the probe stores a throwaway grant "
+        "row (the trigger writes the `connect` event, so this also proves the trigger fires) and tries to rewrite that "
+        "event, all inside the rolled-back transaction; no organization row is borrowed."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_org text := 'noc-probe-' || gen_random_uuid()::text;
+  v_ev uuid;
+BEGIN
+  INSERT INTO assistant.oauth_credentials (org_id, provider, encrypted_tokens, metadata)
+  VALUES (v_org, 'google_calendar', 'x', '{"account_email": "probe@invalid", "scopes": []}'::jsonb);
+  SELECT e.id INTO v_ev FROM assistant.google_conexao_eventos e WHERE e.org_id = v_org LIMIT 1;
+  IF v_ev IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: storing a grant produced no connect event (the event trigger did not fire)';
+  END IF;
+  BEGIN
+    UPDATE assistant.google_conexao_eventos SET event_type = 'disconnect' WHERE id = v_ev;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: UPDATE on the append-only event log succeeded - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%append_only%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
+def _assistant_ai_outputs_probe(probe_id: str, guard_name: str, attempt_sql: str, rationale: str) -> GuardProbe:
+    """Self-provisioning (same shape as the 015 eventos probe): connection + intake row through
+    `assistant.append_intake`, then the write that must be refused, all inside the rolled-back transaction."""
+    return GuardProbe(
+        id=probe_id,
+        product="assistant",
+        schema="assistant",
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=("017_classificador.sql",),
+        rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_conn uuid;
+  v_intake uuid;
+BEGIN
+  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to borrow an org_id from (a genuinely org-less database)';
+  END IF;
+  INSERT INTO assistant.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token, paired_at)
+  VALUES (v_org_id, gen_random_uuid(), 'noc-probe', 'http://probe.invalid', 'x', 'noc-probe-' || gen_random_uuid()::text, now() - interval '1 day')
+  RETURNING id INTO v_conn;
+  SELECT a.id INTO v_intake FROM assistant.append_intake(v_org_id, v_conn, 'noc-probe-msg', 'noc-probe-ref', 'chat', 'oi', now()) a;
+  IF v_intake IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: append_intake produced no intake row';
+  END IF;
+  BEGIN
+{attempt_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: the write succeeded - {guard_name} did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_name}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_ASSISTANT_AI_OUTPUTS_PROBES: tuple[GuardProbe, ...] = (
+    _assistant_ai_outputs_probe(
+        "assistant.ai_outputs.classificacao.unique",
+        "ai_outputs_classificacao_unica",
+        """    INSERT INTO assistant.ai_outputs (org_id, ref_type, ref_id, kind, label, prompt_version, model_version)
+    VALUES (v_org_id, 'intake_message', v_intake, 'classification', 'outro', 'noc-probe@v', 'noc-probe-model');
+    INSERT INTO assistant.ai_outputs (org_id, ref_type, ref_id, kind, label, prompt_version, model_version)
+    VALUES (v_org_id, 'intake_message', v_intake, 'classification', 'agendamento', 'noc-probe@v', 'noc-probe-model');""",
+        "One verdict per (message, prompt_version, model): the worker's re-run idempotency and the replay's "
+        "'new version = new row, old rows untouched' both rest on this key.",
+    ),
+    _assistant_ai_outputs_probe(
+        "assistant.ai_outputs.intake_label.allowed_values",
+        "ai_outputs_intake_label_check",
+        """    INSERT INTO assistant.ai_outputs (org_id, ref_type, ref_id, kind, label, prompt_version, model_version)
+    VALUES (v_org_id, 'intake_message', v_intake, 'classification', 'talvez', 'noc-probe@v', 'noc-probe-model');""",
+        "A classification of an intake message is `agendamento` or `outro` only; a third label would silently "
+        "fall out of the stratified sample and of every precision/recall the S4 labels are compared against.",
+    ),
+)
+
+
+def _assistant_feedback_events_probe(probe_id: str, guard_name: str, attempt_sql: str, rationale: str,
+                                     *, fragment: str | None = None) -> GuardProbe:
+    """Self-provisioning probe on `assistant.ai_feedback_events` (migration 018): no FK on labeler/subject, so the
+    probe only borrows an existing org id; `attempt_sql` is the write that must be refused."""
+    fragment_lit = _sql_lit(fragment or guard_name)
+    return GuardProbe(
+        id=probe_id, product="assistant", schema="assistant", guard_name=guard_name, kind="write_refusal",
+        migrations=("018_rotulos_avaliacao.sql",), rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_ev uuid;
+BEGIN
+  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to borrow an org_id from (a genuinely org-less database)';
+  END IF;
+  INSERT INTO assistant.ai_feedback_events (org_id, labeler_id, subject_id, label, round)
+  VALUES (v_org_id, gen_random_uuid(), gen_random_uuid(), 'nao_sei', 1)
+  RETURNING id INTO v_ev;
+  BEGIN
+{attempt_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: the write succeeded - {guard_name} did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_ASSISTANT_FEEDBACK_EVENTS_PROBES: tuple[GuardProbe, ...] = (
+    _assistant_feedback_events_probe(
+        "assistant.ai_feedback_events.update_refused", "guard_ai_feedback_events_append_only",
+        "    UPDATE assistant.ai_feedback_events SET label = 'agendamento' WHERE id = v_ev;",
+        "The owner's labels are the ground truth the classifier is scored against: a relabel is a NEW event with the "
+        "next round, never an UPDATE. A trigger refuses UPDATE and DELETE.", fragment="append_only",
+    ),
+    _assistant_feedback_events_probe(
+        "assistant.ai_feedback_events.delete_refused", "guard_ai_feedback_events_append_only",
+        "    DELETE FROM assistant.ai_feedback_events WHERE id = v_ev;",
+        "A deleted label would silently change the agreement read; the table is append-only.", fragment="append_only",
+    ),
+    _assistant_feedback_events_probe(
+        "assistant.ai_feedback_events.label_allowed_values", "ai_feedback_events_label_check",
+        """    INSERT INTO assistant.ai_feedback_events (org_id, labeler_id, subject_id, label, round)
+    VALUES (v_org_id, gen_random_uuid(), gen_random_uuid(), 'talvez', 1);""",
+        "A label is agendamento | nao_agendamento | nao_sei; any other value would fall outside the agreement matrix.",
+    ),
+    _assistant_feedback_events_probe(
+        "assistant.ai_feedback_events.round_positive", "ai_feedback_events_round_check",
+        """    INSERT INTO assistant.ai_feedback_events (org_id, labeler_id, subject_id, label, round)
+    VALUES (v_org_id, gen_random_uuid(), gen_random_uuid(), 'nao_sei', 0);""",
+        "Rounds start at 1; the highest round is the effective label.",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
+    _ASSISTANT_GOOGLE_EVENTOS_APPEND_ONLY_PROBE,
+    *_ASSISTANT_AI_OUTPUTS_PROBES,
+    *_ASSISTANT_FEEDBACK_EVENTS_PROBES,
     _AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE,
     _RUIDO_SHAPE_PROBE,
     _TITULO_PAREADO_PROBE,
@@ -12122,6 +12332,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_CAMADAS_PROBES,
     *_AGENTS_FALLBACK_PROBES,
     *_AGENTS_EVAL_LOOP_PROBES,
+    *_AGENTS_EMERGENCIA_PROBES,
     *_AGENTS_RETOMADA_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,

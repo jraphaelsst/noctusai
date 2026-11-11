@@ -16,6 +16,7 @@ from slowapi.util import get_remote_address
 
 from noctusai_lib.integrations.redis import (
     RedisAuthRequired,
+    redis_require_auth_enabled,
     make_redis_client,
     redact_redis_url,
     redis_connection_url,
@@ -80,6 +81,15 @@ def resolve_limiter_storage_uri(
         # a silent in-memory fallback would hide the misconfiguration.
         raise
     except Exception as exc:
+        if redis_require_auth_enabled():
+            # Auth declared mandatory: WRONGPASS / NOPERM / unreachable are deploy defects, not a reason to
+            # silently run a per-process (unlimited-across-workers) limiter. Fail the boot, loudly.
+            logger.error(
+                "Rate limiter: Redis probe failed with REDIS_REQUIRE_AUTH on (%s): %s",
+                redact_redis_url(redis_url),
+                exc,
+            )
+            raise
         logger.warning(
             "Redis not reachable for rate limiting (%s), falling back to in-memory: %s",
             redact_redis_url(redis_url),

@@ -200,6 +200,7 @@ export function useUploadStatus(jobId: string | null, intervalMs = 2000) {
         }
       }
       if (!cancelled) {
+        // poll-budget: 2s until the job is terminal or 3 consecutive errors; ~5 calls/tick; worst 216000/day per open tab (stuck job); hidden=runs
         setTimeout(tick, intervalMs);
       }
     };

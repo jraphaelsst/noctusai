@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
@@ -198,6 +198,10 @@ class ParticipanteRecord:
     ultimo_turno_em: datetime | None
     #: A timed pause: past this instant the participant counts as active again.
     pausado_ate: datetime | None = None
+    #: Inactivity window in minutes (migration 079): the participant closes once ``conversations.last_message_at``
+    #: is older than this. ``None`` = no window. NOC-REMEDIATE[inatividade-por-agente]: only the emergency alert sets
+    #: it today (10 min); a per-agent configured window is the destination -- 2026-11-10
+    fecha_inativo_min: int | None = None
 
 
 @dataclass(frozen=True)
@@ -403,6 +407,18 @@ class ThreadStore(Protocol):
 
     def marcar_turno(self, org_id: UUID, thread_id: UUID, agent_id: UUID) -> None:
         """Stamp ``ultimo_turno_em = now`` (the agent just answered in the thread)."""
+        ...
+
+    def definir_janela_inatividade(
+        self, org_id: UUID, thread_id: UUID, agent_id: UUID, minutos: int | None
+    ) -> None:
+        """Set (or clear, ``None``) the participant's inactivity window in minutes. The deadline is never stored:
+        it is ``conversations.last_message_at + window``, so any message moves it."""
+        ...
+
+    def list_inativos_vencidos(self, agora: datetime) -> list[ParticipanteRecord]:
+        """Active participants WITH a window whose deadline (``last_message_at`` -- ``created_at`` when the thread has
+        no message yet -- plus the window) is at or before ``agora``. Platform-wide (the scheduler's read)."""
         ...
 
     def list_eventos(self, org_id: UUID, thread_id: UUID) -> list[ParticipanteEvento]:
@@ -669,7 +685,8 @@ class FakeThreadStore:
         now = utcnow()
         saiu = None if para == "ativo" else (rec.saiu_em if para == "pausado" else now)
         self._participantes[(thread_id, agent_id)] = replace(
-            rec, estado=para, motivo=motivo, saiu_em=saiu, pausado_ate=ate if para == "pausado" else None
+            rec, estado=para, motivo=motivo, saiu_em=saiu, pausado_ate=ate if para == "pausado" else None,
+            fecha_inativo_min=None,  # a window belongs to the stretch it was set in: any move ends it
         )
         self._evento(org_id, thread_id, agent_id, rec.estado, para, ator_tipo, ator_id, motivo, ate)
         return True
@@ -749,6 +766,26 @@ class FakeThreadStore:
         rec = self.get_participante(org_id, thread_id, agent_id)
         if rec is not None:
             self._participantes[(thread_id, agent_id)] = replace(rec, ultimo_turno_em=utcnow())
+
+    def definir_janela_inatividade(self, org_id, thread_id, agent_id, minutos):
+        rec = self.get_participante(org_id, thread_id, agent_id)
+        if rec is None:
+            raise NotFound(f"participante {agent_id} not found in thread {thread_id}")
+        self._participantes[(thread_id, agent_id)] = replace(rec, fecha_inativo_min=minutos)
+
+    def list_inativos_vencidos(self, agora: datetime) -> list[ParticipanteRecord]:
+        out = []
+        for p in self._participantes.values():
+            if p.estado != "ativo" or p.fecha_inativo_min is None or self._conversations is None:
+                continue
+            try:
+                conv = self._conversations.get(p.org_id, p.thread_id)
+            except NotFound:
+                continue
+            ultima = conv.last_message_at or conv.created_at
+            if ultima + timedelta(minutes=p.fecha_inativo_min) <= agora:
+                out.append(p)
+        return out
 
     def list_eventos(self, org_id: UUID, thread_id: UUID) -> list[ParticipanteEvento]:
         return [e for e in self._eventos if e.org_id == org_id and e.thread_id == thread_id]
@@ -1040,7 +1077,16 @@ class SupabaseThreadStore:
             }, unique_code="outro_agente_ativo")
         except Conflict as exc:
             raise OutroAgenteAtivo("another agent is the active participant of this thread") from exc
-        return bool(resp.data)
+        moved = bool(resp.data)
+        if moved:
+            # a window belongs to the stretch it was set in: any move ends it (a re-activated agent must not be
+            # closed at once by a stale deadline). Idempotent, so a lost write is only a stale NULL-able column.
+            (
+                self._t("thread_participantes").update({"fecha_inativo_min": None})
+                .eq("org_id", str(org_id)).eq("thread_id", str(thread_id)).eq("agent_id", str(agent_id))
+                .not_.is_("fecha_inativo_min", "null").execute()
+            )
+        return moved
 
     def registrar_handoff(
         self, org_id: UUID, thread_id: UUID, de_agent_id: UUID, *, para: HandoffDestino, motivo_codigo: str,
@@ -1118,6 +1164,27 @@ class SupabaseThreadStore:
             .eq("org_id", str(org_id)).eq("thread_id", str(thread_id)).eq("agent_id", str(agent_id))
             .execute()
         )
+
+    def definir_janela_inatividade(self, org_id, thread_id, agent_id, minutos):
+        (
+            self._t("thread_participantes").update({"fecha_inativo_min": minutos})
+            .eq("org_id", str(org_id)).eq("thread_id", str(thread_id)).eq("agent_id", str(agent_id))
+            .execute()
+        )
+
+    def list_inativos_vencidos(self, agora: datetime) -> list[ParticipanteRecord]:
+        # Only windowed ACTIVE rows (partial index idx_agents_thread_participantes_inatividade): a handful at any time.
+        rows = (
+            self._t("thread_participantes").select("*, conversations!inner(last_message_at, created_at)")
+            .eq("estado", "ativo").not_.is_("fecha_inativo_min", "null").limit(1000).execute().data or []
+        )
+        out = []
+        for r in rows:
+            conv = r.get("conversations") or {}
+            ultima = db_ts(conv.get("last_message_at") or conv["created_at"])
+            if ultima + timedelta(minutes=int(r["fecha_inativo_min"])) <= agora:
+                out.append(self._participante(r))
+        return out
 
     def list_eventos(self, org_id: UUID, thread_id: UUID) -> list[ParticipanteEvento]:
         rows = (
@@ -1219,7 +1286,7 @@ class SupabaseThreadStore:
             org_id=UUID(str(row["org_id"])), estado=row.get("estado", "ativo"),
             entrou_em=row.get("entrou_em") or utcnow_iso(), saiu_em=row.get("saiu_em"),
             motivo=row.get("motivo"), ultimo_turno_em=row.get("ultimo_turno_em"),
-            pausado_ate=row.get("pausado_ate"),
+            pausado_ate=row.get("pausado_ate"), fecha_inativo_min=row.get("fecha_inativo_min"),
         )
 
     @staticmethod

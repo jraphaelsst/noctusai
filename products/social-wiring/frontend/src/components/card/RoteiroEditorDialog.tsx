@@ -498,6 +498,7 @@ function IndicadorSalvamento({
   useEffect(() => {
     if (em === null) return;
     setAgora(Date.now());
+    // poll-budget: 5s; 0 calls/tick (relative "salvo há" clock); worst 0/day per open tab; hidden=runs
     const t = setInterval(() => setAgora(Date.now()), 5000);
     return () => clearInterval(t);
   }, [em]);

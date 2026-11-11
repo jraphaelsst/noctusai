@@ -2,7 +2,7 @@
 import React from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockGet, mockPost } = vi.hoisted(() => ({ mockGet: vi.fn(), mockPost: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api: { get: mockGet, post: mockPost, put: vi.fn(), patch: vi.fn(), delete: vi.fn() } }));
@@ -53,5 +53,20 @@ describe("useMecanismoRun", () => {
     const { result } = renderHook(() => useMecanismoRun("julia", "r1"), { wrapper: wrapper(qc) });
     await waitFor(() => expect(result.current.data?.status).toBe("executando"));
     expect(spy).not.toHaveBeenCalledWith({ queryKey: studioKeys.prontidao("julia") });
+  });
+});
+
+describe("useMecanismoRun request budget", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("stops polling when the run read fails (a 404 must not poll every 3 s forever)", async () => {
+    mockGet.mockRejectedValue(new Error("404"));
+    const { result } = renderHook(() => useMecanismoRun("julia", "r1"), { wrapper: wrapper(newClient()) });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+    expect(result.current.isError).toBe(true);
+    const before = mockGet.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(mockGet.mock.calls.length).toBe(before);
   });
 });

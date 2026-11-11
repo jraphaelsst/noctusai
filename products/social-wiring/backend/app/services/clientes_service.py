@@ -85,6 +85,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.primitives.exceptions import ValidationError_
 from noctusai_lib.primitives.phone import normalize_phone
 from noctusai_lib.primitives.postgrest_errors import is_unique_violation
@@ -298,6 +299,10 @@ def _select_all_where(
         start += _PAGE
 
 
+# NOC-REMEDIATE[unordered-paging]: `_select_all` pages WITHOUT an order (offset paging over an unordered set can repeat and
+# skip rows across pages). Call sites (this file): ~354 (leads), ~355 (meta_ads_leads), ~600, ~606 (cliente_membros: no `id`),
+# ~654, ~660, ~1230, ~1237, ~1298, ~2677, ~2794. Destination: move each to `_select_all_by_id` (add `id` to its columns)
+# or order inside `_select_all` where the table has one — 2026-11-10.
 def _select_all(
     client: Any, table: str, org_id: UUID, columns: str = "*"
 ) -> list[dict]:
@@ -319,6 +324,19 @@ def _select_all(
         if len(rows) < _PAGE:
             return out
         start += _PAGE
+
+
+def _select_all_by_id(client: Any, table: str, org_id: UUID, columns: str) -> list[dict]:
+    """Every row of `table` for `org_id`, paged in a STABLE order (`id`) by the seed pager: offset paging over an
+    unordered result set can repeat and skip rows across pages. `columns` MUST include `id` (the pager dedupes on it).
+    For tables that have an `id`; `_select_all` stays for the rest."""
+
+    def fetch_page(start: int, end: int):
+        return (
+            _t(client, table).select(columns).eq("org_id", str(org_id)).order("id").range(start, end).execute().data
+        )
+
+    return list(iter_paged_rows(fetch_page, page_size=_PAGE, label=f"{table} for org_id={org_id}"))
 
 
 def _now() -> str:
@@ -774,7 +792,10 @@ def _reconcile_against_existing(
             # An already-resolved person picks up contact data that only
             # arrived on this later touch — fill-if-empty, so nothing an
             # operator typed is overwritten.
-            _enrich_cliente(client, target["id"], members, dry_run=dry_run)
+            _enrich_cliente(
+                client, target["id"], members, dry_run=dry_run,
+                linha=target if {"nome", "celular", "email"} <= target.keys() else None,  # `*` rows already carry them
+            )
             continue
 
         report.stragglers_parked_for_review += 1
@@ -802,8 +823,8 @@ def _refresh_contato_from_sources(
     for clientes that actually have a blank to fill. A steady-state pass finds
     nothing and writes nothing.
     """
-    touches = _select_all(
-        client, "cliente_touches", org_id, columns="cliente_id,origem_tabela,origem_id"
+    touches = _select_all_by_id(
+        client, "cliente_touches", org_id, columns="id,cliente_id,origem_tabela,origem_id"
     )
     if not touches:
         return
@@ -815,8 +836,17 @@ def _refresh_contato_from_sources(
         if origem is not None:
             membros_por_cliente.setdefault(t["cliente_id"], []).append(origem)
 
+    # ONE paged read of the org's contact columns, not one read per cliente (the N+1 that issued ~10k reads per
+    # pass, every 6 h and on every startup catch-up: KB § PATTERNS/backend/polling-request-budget.md).
+    linhas = {
+        str(r["id"]): r
+        for r in _select_all_by_id(client, "clientes", org_id, columns="id,nome,celular,email")
+    }
     for cliente_id, members in membros_por_cliente.items():
-        _enrich_cliente(client, cliente_id, members, dry_run=False)
+        linha = linhas.get(str(cliente_id))
+        if linha is None:
+            continue  # the cliente is gone: nothing to fill (what the per-row read concluded too)
+        _enrich_cliente(client, cliente_id, members, dry_run=False, linha=linha)
 
 
 def _contato_dos_membros(members: list[SourceRow]) -> dict[str, str]:
@@ -838,7 +868,7 @@ def _contato_dos_membros(members: list[SourceRow]) -> dict[str, str]:
 
 
 def _enrich_cliente(
-    client: Any, cliente_id: str, members: list[SourceRow], *, dry_run: bool
+    client: Any, cliente_id: str, members: list[SourceRow], *, dry_run: bool, linha: Optional[dict] = None
 ) -> None:
     """Fill a cliente's blank `nome` / `celular` / `email` from new touches.
 
@@ -860,18 +890,25 @@ def _enrich_cliente(
     if not candidatos:
         return
 
-    atual = _t(client, "clientes").select("nome, celular, email").eq("id", cliente_id).execute()
-    linha = (atual.data or [None])[0]
+    if linha is None:  # a caller that already holds the row (batch read) passes it: no read per cliente
+        atual = _t(client, "clientes").select("nome, celular, email").eq("id", cliente_id).execute()
+        linha = (atual.data or [None])[0]
     if not linha:
         return
 
     patch = {
         campo: valor
         for campo, valor in candidatos.items()
-        if not (linha.get(campo) or "").strip()
+        if linha.get(campo) in (None, "")  # the SAME blank the write-time guard (`is.null,eq.`) accepts: no no-op PATCH
     }
-    if patch:
-        _t(client, "clientes").update(patch).eq("id", cliente_id).execute()
+    # Guarded AT WRITE TIME, one column per update: the row above may be seconds (a whole pass) old, and an operator can
+    # type a value in between. `col IS NULL OR col = ''` makes the database re-check the blank, so a value typed
+    # after our read is never overwritten (fill-if-empty held only against the read, not the write).
+    for campo, valor in patch.items():
+        (
+            _t(client, "clientes").update({campo: valor}).eq("id", cliente_id)
+            .or_(f"{campo}.is.null,{campo}.eq.").execute()
+        )
 
 
 def _chave_do_celular(

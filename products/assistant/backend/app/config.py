@@ -34,6 +34,21 @@ class SeedSettings(ProductSettings):
     # Comma-separated phones / chat ids that are never taken in (compared by digits).
     assistant_excluded_numbers: str = ""
 
+    # -- Classifier (S3, classification only) -----------------------------------------------------------
+    # Kill switch of the classification worker. It also needs NOCTUS_SCHEDULERS_ENABLED (deployed container only) and
+    # an ENFORCED LLM_SPEND_LIMITS entry covering it; missing either => not started, intake rows stay pending.
+    assistant_classifier_enabled: bool = True
+    # Message text sent to the model is cut at this many characters (per-call cost cap; the cut is recorded).
+    assistant_classifier_max_chars: int = 4000
+
+    # -- Google connection (S7, D50) --------------------------------------------------------------------
+    # The NoctusAI GCP project's OAuth client (D39): the APP identity, shared by every org. The per-org tokens live
+    # encrypted in `assistant.oauth_credentials` (never here). Unset => "Conectar Google" answers 503.
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    # Optional override of the redirect URI (local dev only); default = <assistant product url>/api/google/oauth/callback.
+    google_oauth_redirect_uri: str = ""
+
     # Rate-limit for the public webhook (per-IP). Public surface -- DDOS guard.
     webhook_rate_limit: str = "60/minute"
 

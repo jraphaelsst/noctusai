@@ -208,6 +208,7 @@ export function SSOCallback({
       let remaining = seconds;
       setState({ status: 'rate_limited', retryIn: remaining });
 
+      // poll-budget: 1s; 0 calls/tick (countdown, one retry call when it ends); worst 1/day per open tab; hidden=runs
       timerRef.current = setInterval(() => {
         remaining -= 1;
         if (remaining <= 0) {

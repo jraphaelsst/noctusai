@@ -264,7 +264,8 @@ export { lazyWithReload } from "./lazyWithReload";
 // Poll an async job while it runs — and keep polling in a hidden tab, refetching
 // at once on return — so a progress UI never freezes in the background.
 // → KB § PATTERNS/frontend/frontend.md ("Job-progress polling")
-export { jobPolling, handOffToPolling, resetJobHandOffs, JOB_HANDOFF_GRACE_MS } from './job-polling';
+export { jobPolling, handOffToPolling, resetJobHandOffs, JOB_HANDOFF_GRACE_MS, useJobPollingStalled, resumeJobPolling } from './job-polling';
+export { JobPollingPausedNotice } from './components/JobPollingPausedNotice';
 export type { JobPollingOptions, JobPollingQuery, HandOffToPollingOptions, HandOffUntil, HandOffQueryClient } from './job-polling';
 
 // ─── Edição de Fotos (seed feature) ──────────────────────────────────────────

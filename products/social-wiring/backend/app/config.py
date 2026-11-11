@@ -315,8 +315,10 @@ class SocialWiringSettings(ProductSettings):
     # (a toggle reaches other processes within this many seconds).
     edicao_fotos_gate_ttl_seconds: float = 30.0
     # How often each process reloads the model-catalog overrides the platform
-    # admin edits in the UI (a save refreshes its own process immediately).
-    edicao_fotos_catalog_refresh_seconds: float = 60.0
+    # admin edits in the UI (a save refreshes its own process immediately). 600 s, not 60: the loop reads
+    # `llm_model_overrides` forever, ~1.4k reads/day at 60 s (egress incident 2026-11-09,
+    # KB § PATTERNS/backend/polling-request-budget.md); only a SECOND process would wait for it.
+    edicao_fotos_catalog_refresh_seconds: float = 600.0
     # Per-org cap on AI edits in a rolling 24h window (C6 — cost exposure).
     # A finite default, never "unlimited by omission"; 0 blocks every edit.
     edicao_fotos_edicoes_por_dia: int = 300

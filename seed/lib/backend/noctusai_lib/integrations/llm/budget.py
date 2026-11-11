@@ -73,6 +73,7 @@ from typing import Any, Awaitable, Callable, Optional
 import anyio.to_thread
 
 from noctusai_lib.integrations.persistence import iter_paged_rows
+from noctusai_lib.primitives.ttl_cache import TTLCache
 
 from .exceptions import (
     LLMBudgetExceeded,
@@ -131,6 +132,7 @@ def configure_budget_module(
     global _admin_client_factory
     _admin_client_factory = admin_client_factory
     # A new client means a new source of truth: drop what the old one told us.
+    invalidate_budget_cache()
     with _credit_lock:
         _credit_cache.clear()
         _credit_last_mode.clear()
@@ -209,15 +211,40 @@ def _raise_not_configured(exc: Exception) -> None:
     raise LLMBudgetNotConfigured(str(exc)) from exc
 
 
+#: How long an org's configured budget (a setting an admin edits, not a spend figure) is reused. It was read per
+#: LLM call (2026-11-09: ~1.9k `org_settings` reads in 22 h, KB § PATTERNS/backend/polling-request-budget.md). The
+#: spend side (`_ledger_spend`) is NOT cached here: it is the enforcement figure.
+BUDGET_CACHE_TTL_S = 30.0
+_budget_cache: TTLCache[str, Optional[float]] = TTLCache(BUDGET_CACHE_TTL_S, max_entries=1024)
+_NO_BUDGET = object()
+
+
+def invalidate_budget_cache(org_id: Optional[str] = None) -> None:
+    """Drop the cached budget of one org (or all). Call after writing `monthly_llm_budget_brl` in this process."""
+    _budget_cache.invalidate(org_id)
+
+
 async def fetch_budget_brl(org_id: str) -> Optional[float]:
     """Return the org's monthly budget in BRL, or `None` when unset (a SUCCESSFUL read of no row / no value).
+
+    A successful answer (including "unset") is reused for `BUDGET_CACHE_TTL_S`; a FAILED read is never cached.
 
     Raises on a failed read (`LLMBudgetNotConfigured` for a missing table, otherwise the original error) --
     "unknown" is never reported as "unset"; `enforce_budget` owns the retry / last-known / refuse policy."""
     if not _admin_client_factory or not org_id:
         return None
+    cached = _budget_cache.peek(org_id, _NO_BUDGET)  # type: ignore[arg-type]
+    if cached is not _NO_BUDGET:
+        return cached  # type: ignore[return-value]
+    epoch = _budget_cache.epoch  # a write that invalidates while this read is in flight must not be undone by it
+    value = await _read_budget_brl(org_id)
+    _budget_cache.put(org_id, value, epoch=epoch)
+    return value
+
+
+async def _read_budget_brl(org_id: str) -> Optional[float]:
     try:
-        db = _admin_client_factory()
+        db = _admin_client_factory()  # type: ignore[misc]
         # Off the event loop. The cross-schema `.schema()` call stays inside ONE thunk so the
         # re-pin and the query happen back to back on the same worker.
         def _read():

@@ -7,6 +7,7 @@ export function useCountdown() {
 
   useEffect(() => {
     if (deadline === null) return;
+    // poll-budget: 1s; 0 calls/tick (local countdown); worst 0/day per open tab; hidden=runs
     const id = setInterval(() => {
       const t = Date.now();
       setNow(t);

@@ -17,6 +17,7 @@ import {
 } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { pairingPollMs } from "@noctusai/lib/whatsapp";
 
 // ─── Types (mirror app/schemas/whatsapp_connection.py) ──────────────────────
 export interface WhatsAppConnectionLine {
@@ -168,10 +169,11 @@ export function useWhatsAppConnectionStatus(
     queryFn: () =>
       api.get<WhatsAppConnectionStatus>(`${BASE}/${connectionId}/status`),
     enabled: enabled && !!connectionId,
+    // poll-budget: 5s for the first 2 min then 30s until paired; ~6 calls/tick (status + auth lookups); worst 17280/day per open tab; hidden=paused
     refetchInterval: (query) => {
       const data = query.state.data as WhatsAppConnectionStatus | undefined;
       if (data?.paired) return false;
-      return options?.pollMs ?? 5000;
+      return pairingPollMs(query.state.dataUpdateCount, options?.pollMs ?? 5000);
     },
   });
 }
@@ -190,6 +192,7 @@ export function useWhatsAppConnectionQr(
     queryFn: () =>
       api.get<WhatsAppConnectionQr>(`${BASE}/${connectionId}/qr`),
     enabled: enabled && !!connectionId,
+    // poll-budget: 3s for the first 2 min then 30s until WORKING; ~6 calls/tick (qr + auth lookups); worst 28800/day per open tab; hidden=paused
     refetchInterval: (query) => {
       const data = query.state.data as WhatsAppConnectionQr | undefined;
       // 🔴 Only a session that is actually PAIRED has nothing left to scan.
@@ -204,7 +207,7 @@ export function useWhatsAppConnectionQr(
       //
       // WORKING is the only terminal state here. Everything else keeps polling.
       if (data?.status === "WORKING") return false;
-      return options?.pollMs ?? 3000;
+      return pairingPollMs(query.state.dataUpdateCount, options?.pollMs ?? 3000);
     },
   });
 }

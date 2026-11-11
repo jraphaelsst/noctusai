@@ -518,3 +518,21 @@ class _patched_monotonic:
         assert self._patcher is not None
         self._patcher.stop()
         return False
+
+
+def test_dep_rejects_a_malformed_cookie_without_touching_the_store():
+    """P1-A: a cookie that is not a token_urlsafe(32) id (e.g. a leaked 64-hex key hash) is 401 before any lookup."""
+    app, store, _resolver = _build_app()
+    calls = []
+    real = store.lookup
+
+    async def _spy(sid):
+        calls.append(sid)
+        return await real(sid)
+
+    store.lookup = _spy
+    client = TestClient(app)
+    for bad in ("a" * 64, "never-existed-session-id", "x" * 44):
+        resp = client.get("/whoami", cookies={"nai_session": bad})
+        assert resp.status_code == 401
+    assert calls == []

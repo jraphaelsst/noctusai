@@ -30,15 +30,41 @@ ORG = uuid4()
 
 # ─── recording admin client (captures upserted rows per table) ──────────
 class _RecTable:
-    def __init__(self, sink: list[dict]) -> None:
+    """Records upserts; answers the sync's batched reads from `stored` (rows already in the table)."""
+
+    def __init__(self, sink: list[dict], stored: list[dict], reads: list[str]) -> None:
         self._sink = sink
+        self._stored = stored
+        self._reads = reads
         self._payload: dict | None = None
+        self._read = False
 
     def upsert(self, payload, *, on_conflict="", **_k):
         self._payload = dict(payload)
         return self
 
+    def select(self, *_a, **_k):
+        self._read = True
+        return self
+
+    def eq(self, *_a, **_k):
+        return self
+
+    def in_(self, *_a, **_k):
+        return self
+
+    def order(self, *_a, **_k):
+        return self
+
+    def range(self, start, end):
+        self._range = (start, end)
+        return self
+
     def execute(self):
+        if self._read:
+            self._reads.append("read")
+            lo, hi = getattr(self, "_range", (0, len(self._stored)))
+            return SimpleNamespace(data=list(self._stored)[lo:hi + 1])
         self._sink.append(self._payload)
         return SimpleNamespace(data=[self._payload])
 
@@ -46,12 +72,14 @@ class _RecTable:
 class _RecAdmin:
     def __init__(self) -> None:
         self.rows: dict[str, list[dict]] = {}
+        self.stored: dict[str, list[dict]] = {}  # rows that already exist per table (what a re-sync finds)
+        self.reads: list[str] = []
 
     def schema(self, _name: str) -> "_RecAdmin":
         return self
 
     def table(self, name: str) -> _RecTable:
-        return _RecTable(self.rows.setdefault(name, []))
+        return _RecTable(self.rows.setdefault(name, []), self.stored.get(name, []), self.reads)
 
 
 class _RecIngest:
@@ -115,7 +143,7 @@ def test_sync_all_promotes_contacts_and_keeps_full_answers():
     res = svc.sync_all(org_id=ORG, adapter=_adapter())
 
     assert res == {
-        "forms_upserted": 1, "leads_upserted": 1, "leads_ingested": 1,
+        "forms_upserted": 1, "leads_upserted": 1, "leads_unchanged": 0, "leads_ingested": 1,
         "ingest_errors": 0, "records_gated": False,
     }
 
@@ -222,3 +250,39 @@ def test_a_simulated_row_is_stamped_and_a_real_one_is_not():
     real = svc.upsert_lead(lead, org_id=ORG, form=form, key_types={})
     assert sim["simulado"] is True
     assert "simulado" not in real
+
+
+def test_a_resync_of_unchanged_records_writes_and_ingests_nothing():
+    """The 06:10 / 18:10 sync re-fetches the same immutable Meta records: it used to upsert every one of them and
+    re-run the ingest lookup (~2.6k `meta_ads_leads` upserts + ~2.8k `leads` reads in 22 h, 2026-11-09 egress
+    incident). A re-sync over rows already stored (and already in `leads`) costs the batched reads only."""
+    first = _RecAdmin()
+    LeadsSyncService(admin_supabase=first, ingest_fn=_RecIngest()).sync_all(org_id=ORG, adapter=_adapter())
+    assert len(first.rows["meta_ads_leads"]) == 1 and len(first.rows["meta_ads_lead_forms"]) == 1
+
+    again = _RecAdmin()
+    again.stored = {
+        "meta_ads_leads": first.rows["meta_ads_leads"],
+        "meta_ads_lead_forms": first.rows["meta_ads_lead_forms"],
+        "leads": [{"id": "x", "meta_lead_id": "l1"}],
+    }
+    ingest = _RecIngest()
+    res = LeadsSyncService(admin_supabase=again, ingest_fn=ingest).sync_all(org_id=ORG, adapter=_adapter())
+
+    assert res["leads_upserted"] == 0 and res["leads_unchanged"] == 1
+    assert again.rows.get("meta_ads_leads", []) == []        # no upsert
+    assert again.rows.get("meta_ads_lead_forms", []) == []   # no upsert
+    assert ingest.calls == []                                # already in `leads`: no per-lead lookup
+    assert len(again.reads) == 3                             # forms + stored leads + ingested ids: per form, not per lead
+
+
+def test_a_changed_record_is_rewritten_and_a_missing_lead_is_still_ingested():
+    first = _RecAdmin()
+    LeadsSyncService(admin_supabase=first, ingest_fn=_RecIngest()).sync_all(org_id=ORG, adapter=_adapter())
+    stale = dict(first.rows["meta_ads_leads"][0], full_name="Old Name")
+    again = _RecAdmin()
+    again.stored = {"meta_ads_leads": [stale], "meta_ads_lead_forms": first.rows["meta_ads_lead_forms"]}
+    ingest = _RecIngest()
+    res = LeadsSyncService(admin_supabase=again, ingest_fn=ingest).sync_all(org_id=ORG, adapter=_adapter())
+    assert res["leads_upserted"] == 1 and again.rows["meta_ads_leads"][0]["full_name"] == "Maria Silva"
+    assert len(ingest.calls) == 1  # not in `leads` yet: the ingest gap-closer still runs

@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 
 from noctusai_lib.api.crud_safety import delete_or_404
 
+from ..wake import wake_campaigns_check
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,6 +39,8 @@ class CampaignService:
         data["updated_at"] = "now()"
         result = (self.db.table("campaigns").update(data)
                   .eq("id", campaign_id).eq("org_id", self.org_id).execute())
+        if "scheduled_at" in data:
+            wake_campaigns_check()
         return result.data[0] if result.data else None
 
     def delete_campaign(self, campaign_id: str):
@@ -55,7 +59,9 @@ class CampaignService:
     def schedule_campaign(self, campaign_id: str, scheduled_at: datetime):
         # ISO string, never the datetime: PostgREST's JSON body cannot encode it
         # (POST /campaigns/{id}/schedule 500'd — found by the legacy-test port).
-        return self._set_status(campaign_id, "agendada", scheduled_at=scheduled_at.isoformat())
+        scheduled = self._set_status(campaign_id, "agendada", scheduled_at=scheduled_at.isoformat())
+        wake_campaigns_check()  # the scheduled-campaigns check sleeps until the next known `scheduled_at`
+        return scheduled
 
     def start_send(self, campaign_id: str):
         return self._set_status(campaign_id, "enviando",

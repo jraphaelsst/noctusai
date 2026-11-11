@@ -254,8 +254,15 @@ def estrutura_exemplar(
     return saida, "\n".join(fonte), versoes
 
 
+def _ferramentas_ativas(deps_studio: Any, agent: StudioAgentRecord, version_id: Any) -> frozenset[str]:
+    """The active tool rows of the version's EFFECTIVE tool set (its parent chain merged in)."""
+    from app.studio.camadas import efetivo
+
+    return frozenset(f.ferramenta for f in efetivo(deps_studio).list_ferramentas(agent.org_id, version_id) if f.ativo)
+
+
 def textos_aplicaveis(
-    agent: StudioAgentRecord, draft: Any, briefing: Briefing, *, tem_skills: bool,
+    agent: StudioAgentRecord, draft: Any, briefing: Briefing, *, tem_skills: bool, ferramentas_ativas: frozenset[str],
 ) -> dict[str, bool]:
     """``{chave: obrigatoria}`` of the registry slots that apply to the agent: channel texts when the briefing says
     WhatsApp or the agent has a transport owner (the compiler's own ``canal`` rule), in-app texts otherwise."""
@@ -263,7 +270,7 @@ def textos_aplicaveis(
     todos = {k: replace(s, obrigatoria=True) for k, s in TEXTOS.items()}
     aplicaveis = chaves_exigidas(
         tool_policy=dict(draft.tool_policy), tem_skills=tem_skills, com_cliente=False, canal=canal,
-        com_qualificacao=agent.padrao_qualificacao is not None, registro=todos,
+        com_qualificacao=agent.padrao_qualificacao is not None, registro=todos, ferramentas_ativas=ferramentas_ativas,
     )
     return {k: TEXTOS[k].obrigatoria for k in sorted(aplicaveis)}
 
@@ -665,7 +672,9 @@ async def _executar(deps: Dependencias, *, org_id: UUID, geracao_id: UUID, agent
         if area == "textos":
             tem_skills = bool(await _t(deps.skills.listar_refs, draft_atual.id)) or bool(
                 [s for s in await _t(deps.studio.list_skills, agent.org_id, draft_atual.id) if s.ativo])
-            aplicaveis = await _t(textos_aplicaveis, agent, draft_atual, briefing, tem_skills=tem_skills)
+            ativas = await _t(_ferramentas_ativas, deps.studio, agent, draft_atual.id)
+            aplicaveis = await _t(
+                textos_aplicaveis, agent, draft_atual, briefing, tem_skills=tem_skills, ferramentas_ativas=ativas)
             aplicaveis_cache.update(aplicaveis)
         contexto = await _t(_contexto_da_area, area, deps=deps, agent=agent, draft=draft_atual, aplicaveis=aplicaveis)
         entrada = {
@@ -837,6 +846,7 @@ def conteudo_status(deps_studio: Any, skills: Any, agent: StudioAgentRecord) -> 
     kw = dict(
         tool_policy=dict(version.tool_policy), tem_skills=tem_skills, com_cliente=False, canal=canal,
         com_qualificacao=agent.padrao_qualificacao is not None,
+        ferramentas_ativas=_ferramentas_ativas(deps_studio, agent, version.id),
     )
     aplicaveis = chaves_exigidas(registro=todos, **kw)
     exigidos = chaves_exigidas(**kw)

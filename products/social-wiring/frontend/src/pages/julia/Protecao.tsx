@@ -68,8 +68,8 @@ export default function JuliaProtecao() {
         <p className="text-sm text-muted-foreground">
           Limites e bloqueios que protegem a operação de quem tenta sobrecarregar ou abusar da Julia. Valem para toda a organização.
         </p>
-        <p className="text-sm text-muted-foreground" data-testid="protecao-fase-testes">
-          Fase de testes: o modo de avaliação (só os números de teste recebem resposta) é ligado apenas na página da Julia no agents. Aqui não há lista de permitidos.
+        <p className="text-sm text-muted-foreground" data-testid="protecao-avaliacao">
+          Modo de avaliação (só os números de teste recebem resposta) é ligado apenas na página da Julia no agents. Aqui não há lista de permitidos.
         </p>
       </header>
 

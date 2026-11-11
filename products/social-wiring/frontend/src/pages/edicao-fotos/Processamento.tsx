@@ -34,7 +34,7 @@ import {
   type SondaStatus,
 } from "@/hooks/useEdicaoFotos";
 
-const REFRESH_MS = 15_000;
+const REFRESH_MS = 60_000;
 
 const SONDA_ROTULO: Record<SondaStatus, string> = {
   ok: "Chave válida e com créditos",
@@ -57,6 +57,7 @@ export default function Processamento() {
 }
 
 function ProcessamentoView() {
+  // poll-budget: 60s (platform-admin health panel); ~5 calls/tick (painel + auth lookups); worst 7200/day per open tab; hidden=paused
   const { painel, showSkeleton, isRefreshing, error, refetch } = useProcessamento({ refetchInterval: REFRESH_MS });
   const atualizar = useAtualizarProcessamento();
   const sondar = useSondarOpenAI();

@@ -75,6 +75,7 @@ import uuid
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from settings import REPO_ROOT
+from . import _redis_auth_compose as _redis_auth
 from ._vps_ssh import run_remote as _throttled_ssh
 
 from noctusai_lib.config.cors_registry import parse_products_registry
@@ -408,9 +409,18 @@ class SubprocessSshTransport:
         # The compose file path is relative to the project root on the VPS; SSH's
         # default CWD is the login home (/root), so cd into project_dir first or
         # docker compose can't find deploy/fleet/docker-compose.prod.yml.
+        # The Redis-auth override rides this recreate too (a bare one would put core back on the
+        # unauthenticated Redis); a listed core without its generated env refuses.
+        def _probe(argv: list[str]) -> tuple[int, str, str]:
+            return self._run(f"cd {shlex.quote(project_dir)} && {shlex.join(argv)}")
+
+        ra = _redis_auth.plan(_probe, compose_file, "core")
+        if ra["error"]:
+            return False, ra["error"]
+        files = "".join(f" -f {shlex.quote(f)}" for f in ra["files"])
         cmd = (
             f"cd {shlex.quote(project_dir)} && "
-            f"docker compose -f {shlex.quote(compose_file)} "
+            f"docker compose -f {shlex.quote(compose_file)}{files} "
             f"up -d --force-recreate --no-deps core"
         )
         rc, _out, err = self._run(cmd)

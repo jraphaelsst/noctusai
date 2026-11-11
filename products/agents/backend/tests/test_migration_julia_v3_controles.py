@@ -20,10 +20,6 @@ def test_the_platform_table_is_service_role_only_and_platform_wide():
     assert "TO service_role USING (true) WITH CHECK (true)" in SQL
 
 
-def test_fase_testes_defaults_on():
-    assert "ADD COLUMN IF NOT EXISTS fase_testes BOOLEAN NOT NULL DEFAULT true" in SQL
-
-
 def test_the_evaluation_mode_columns_and_writer():
     assert "ADD COLUMN IF NOT EXISTS modo_avaliacao BOOLEAN NOT NULL DEFAULT false" in SQL
     assert "ADD COLUMN IF NOT EXISTS avaliacao_usuarios UUID[] NOT NULL DEFAULT '{}'" in SQL

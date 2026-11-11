@@ -457,7 +457,7 @@ class AlertaActionOut(_ActionOut):
     the report destination. One per ``tipo`` per turn."""
 
     type: Literal["alerta"]
-    tipo: Literal["lead_insatisfeito", "erro_agente", "desvio", "outro"]
+    tipo: Literal["lead_insatisfeito", "erro_agente", "desvio", "outro", "emergencia"]
     descricao: str
     alerta_id: str
 
@@ -613,6 +613,12 @@ class ChannelResumoRequest(StrictHttpModel):
     desde: datetime | None = None
 
 
+#: Generic outcomes every agent can report; the sales ones are an extension a layer adds by LABELLING them.
+DESFECHOS_BASE = ("em_andamento", "resolvido", "encaminhado", "sem_resposta", "invalido")
+DESFECHOS_VENDAS = ("qualificado", "frio", "captacao")
+DESFECHOS = DESFECHOS_BASE + DESFECHOS_VENDAS
+
+
 class ChannelResumoUsageOut(BaseModel):
     custo_usd: float | None = None
     tokens_entrada: int | None = None
@@ -622,7 +628,7 @@ class ChannelResumoUsageOut(BaseModel):
 class ChannelResumoResponse(BaseModel):
     resumo: str
     #: Display only -- SW never acts on it (the computed stage does).
-    desfecho_sugerido: Literal["qualificado", "frio", "captacao", "invalido", "em_andamento"]
+    desfecho_sugerido: Literal[DESFECHOS]  # type: ignore[valid-type]  # the union of the base + sales outcomes
     usage: ChannelResumoUsageOut
 
 

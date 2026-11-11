@@ -124,7 +124,7 @@ _KNOWLEDGE_INTRO = (
 CONTEUDO_CODIGOS = frozenset({
     "texto_ausente", "placeholder_desconhecido", "ferramenta_desconhecida",
     "skill_exigida_inexistente", "decisao_sem_opcao_padrao", "decisao_em_secao",
-    "spec_nao_declarada", "spec_org_faltando", "spec_org_invalida",
+    "spec_nao_declarada", "spec_org_faltando", "spec_org_invalida", "desfecho_rotulo_invalido",
 })
 
 
@@ -349,6 +349,30 @@ def _textos_de_conteudo(v: VersionBundle, cont: ConteudoBundle):
             yield f"decisão '{d.chave}'", o.rotulo
 
 
+def _avisos_desfecho(parametros: dict[str, Any]) -> list[CompileWarning]:
+    """Labelled ``registrar_resumo`` outcomes: every base value labelled, no label outside the known set.
+    A row with no label at all is a legacy version (the runtime serves it the 5 legacy values, logged)."""
+    from app.channels.extracao import DESFECHOS, DESFECHOS_BASE, rotulos_desfecho  # lazy: extracao imports the tool registry
+
+    rotulos = rotulos_desfecho(parametros)
+    if not rotulos:
+        return []
+    out: list[CompileWarning] = []
+    sem = [v for v in DESFECHOS_BASE if v not in rotulos]
+    if sem:
+        out.append(CompileWarning(
+            "desfecho_rotulo_invalido",
+            "A ferramenta 'registrar_resumo' tem desfechos rotulados mas faltam os rótulos base: " + ", ".join(sem) + ".", True,
+        ))
+    fora = sorted(v for v in rotulos if v not in DESFECHOS)
+    if fora:
+        out.append(CompileWarning(
+            "desfecho_rotulo_invalido",
+            "A ferramenta 'registrar_resumo' rotula desfechos desconhecidos: " + ", ".join(fora) + ".", True,
+        ))
+    return out
+
+
 def _avisos_conteudo(
     inp: CompileInput, cont: ConteudoBundle, S: _Strings, skills: list[SkillData], com_cliente: bool,
     refs: list[SkillRef] = (), autorada: VersionBundle | None = None, com_dados_org: bool = False,
@@ -360,6 +384,7 @@ def _avisos_conteudo(
     exigidas = chaves_exigidas(
         tool_policy=inp.tool_policy, tem_skills=bool(skills) or bool(refs), com_cliente=com_cliente, canal=inp.canal,
         com_qualificacao=inp.qualificacao is not None, com_dados_org=com_dados_org,
+        ferramentas_ativas={f.ferramenta for f in cont.ferramentas if f.ativo},
     )
     preenchidas = {t.chave for t in cont.textos if t.conteudo.strip()}
     faltam = sorted((exigidas - preenchidas) | S.ausentes)
@@ -406,6 +431,10 @@ def _avisos_conteudo(
                 f"A ferramenta '{f.ferramenta}' exige a skill '{f.obrigatoria_skill}', que não está ativa na versão.",
                 True,
             ))
+
+    for f in cont.ferramentas:
+        if f.ferramenta == "registrar_resumo" and f.ativo:
+            out += _avisos_desfecho(f.parametros)
 
     for d in cont.decisoes:
         padroes = [o for o in d.opcoes if o.padrao]

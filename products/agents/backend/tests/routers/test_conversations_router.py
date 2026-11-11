@@ -669,3 +669,43 @@ class TestSSEStreamAuth:
             headers={"Authorization": "Bearer test-token-valid"},
         )
         assert resp.status_code == 404
+
+
+class TestCallerKeyNeverContainsTheCredential:
+    """P3-3 (security re-check r3): the limiter key becomes a Redis key NAME (SCAN, ACL LOG, dumps expose it), so
+    it must carry a digest of the session cookie / bearer secret, never the credential itself."""
+
+    @staticmethod
+    def _req(headers=None, cookies=None):
+        from starlette.requests import Request
+
+        hdrs = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
+        if cookies:
+            hdrs.append((b"cookie", "; ".join(f"{k}={v}" for k, v in cookies.items()).encode()))
+        return Request({"type": "http", "method": "POST", "path": "/", "headers": hdrs, "client": ("1.2.3.4", 1)})
+
+    def test_session_cookie_is_hashed_not_embedded(self):
+        import hashlib
+
+        from app.routers.conversations_router import _caller_key
+
+        cookie = "C" * 43
+        key = _caller_key(self._req(cookies={"nai_session": cookie}))
+        assert cookie not in key and key == f"session:{hashlib.sha256(cookie.encode()).hexdigest()}"
+        assert key == _caller_key(self._req(cookies={"nai_session": cookie}))  # stable per caller
+        assert key != _caller_key(self._req(cookies={"nai_session": "D" * 43}))
+
+    def test_bearer_secret_is_hashed_not_embedded(self):
+        from app.routers.conversations_router import _caller_key
+
+        secret = "noc_supersecretbearer"
+        key = _caller_key(self._req(headers={"authorization": f"Bearer {secret}"}))
+        assert secret not in key and key.startswith("bearer:")
+
+    def test_key_matches_the_session_store_digest(self):
+        from noctusai_lib.api.auth.session import RedisSessionStore
+
+        from app.routers.conversations_router import _caller_key
+
+        cookie = "E" * 43
+        assert _caller_key(self._req(cookies={"nai_session": cookie})).split(":", 1)[1] == RedisSessionStore._key(cookie).split(":", 1)[1]
