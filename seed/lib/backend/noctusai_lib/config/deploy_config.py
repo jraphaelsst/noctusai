@@ -98,7 +98,7 @@ class MissingProdConfigError(RuntimeError):
         )
 
 
-def is_deploy_context(environ: Optional[Mapping[str, str]] = None) -> bool:
+def is_deploy_context() -> bool:
     """Return ``True`` iff the process is running in a deploy context.
 
     The signal is environment-derived, mirroring the deploy markers the rest of
@@ -112,7 +112,12 @@ def is_deploy_context(environ: Optional[Mapping[str, str]] = None) -> bool:
     A plain dev shell sets neither, so this returns ``False`` there — and the
     ``required_in_prod`` config arms become no-ops, preserving dev defaults.
     """
-    env = os.environ if environ is None else environ  # `environ=` lets a caller judge an EXPLICIT env (tests, config parsing)
+    return is_deploy_context_in(os.environ)
+
+
+def is_deploy_context_in(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """:func:`is_deploy_context` judged against an EXPLICIT env mapping (tests, config parsing); ``None`` = ``os.environ``."""
+    env = os.environ if environ is None else environ
     if env.get("APP_ENV", "").strip().lower() in _DEPLOY_APP_ENVS:
         return True
 

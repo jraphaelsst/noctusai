@@ -240,9 +240,9 @@ class BreakerConfig:
                     if floor > MAX_MIN_IDLE_POLL_S:
                         warnings.append(f"NOCTUS_MIN_IDLE_POLL_S={floor:g} is above {MAX_MIN_IDLE_POLL_S:g} s; clamped")
                     if floor < DEFAULT_MIN_IDLE_POLL_S:
-                        from noctusai_lib.config.deploy_config import is_deploy_context
+                        from noctusai_lib.config.deploy_config import is_deploy_context_in
 
-                        deploy = is_deploy_context(env)
+                        deploy = is_deploy_context_in(env)
                         warnings.append(f"NOCTUS_MIN_IDLE_POLL_S={floor:g} is below the default {DEFAULT_MIN_IDLE_POLL_S:g} s"
                                         + ("; clamped to the default in a deploy context" if deploy else ""))
                         floor = DEFAULT_MIN_IDLE_POLL_S if deploy else max(1.0, floor)
