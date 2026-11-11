@@ -528,9 +528,8 @@ class _SkillRef:
 
 _CRITERIO_FIELDS = ("grupo", "rotulo", "descricao_modelo", "tipo", "opcoes", "unidade", "sensivel", "pontuacao", "ordem", "ativo", "eixo", "escopo", "validade_dias")
 _ESTAGIO_FIELDS = ("rotulo", "descricao", "ordem", "regra", "conclusivo", "terminal")
-# NOC-REMEDIATE[content-tool-parametros-081-082]: add ``catalogo`` and ``identificacao_desejada`` here once migrations 081/082
-# deploy and the ParametrosIn schema on origin/dev carries them (queued 2026-11-11; the server refuses unknown fields today).
-_PARAM_FIELDS = ("minimo_para_ofertar", "lote_ofertas", "score_max", "eixos", "pedir_identificacao_quando")
+_PARAM_FIELDS = ("minimo_para_ofertar", "lote_ofertas", "score_max", "eixos", "pedir_identificacao_quando",
+                 "max_retomadas_seguidas", "catalogo", "identificacao_desejada")
 
 
 def _norm_opcoes(opcoes: Any) -> Any:

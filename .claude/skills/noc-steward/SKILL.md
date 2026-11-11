@@ -53,7 +53,7 @@ Rule: `KB § PATTERNS/devops/release-steward.md` § 7a (guardian spec, council 0
 ## 5 · Consent — what the steward may decide
 
 - The owner's ask to ship IS the permission for bless/promote/deploy (`noc-ship` 1b). Do not invent approval phrases.
-- **Prod migrations need the owner's go typed in YOUR transcript**, per migration. An owner answer relayed by a peer is recorded as RELAYED and confirmed directly before acting.
+- **Prod migrations need the owner's go typed in YOUR transcript.** Consent phase `pre-third-users` (owner decision 2026-11-11; revisit when a 3rd user onboards): the owner's plain deploy / go-to-prod ask IS that go - no exact wording, no per-slice sha or filenames. An owner answer relayed by a peer is recorded as RELAYED and confirmed directly before acting. `KB § PATTERNS/devops/prod-exposure-consent.md` § Consent phase.
 - Deleting remote branches and closing PRs needs the owner, always.
 - A deploy hold (missing secret, migration-before-image) is written into the memory file the moment it is known, with the dev SHA to cut at.
 

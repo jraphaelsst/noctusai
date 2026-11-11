@@ -31,6 +31,19 @@ CAMPOS_TODOS = (*CAMPOS, "telefone")
 #: blocker. A standard's ``tipo=identificacao`` criterion can override (see :func:`obrigatorios_do_padrao`).
 OBRIGATORIOS_PADRAO = ("cpf",)
 DESEJADOS_PADRAO = ("rg", "email", "nome")
+
+
+def validar_desejados(chaves: Sequence[str]) -> tuple[str, ...]:
+    """The desired identity fields a standard declares: each must be a known field (``CAMPOS``); an unknown
+    key is refused loudly (never dropped), duplicates collapse, order is kept."""
+    if isinstance(chaves, str):
+        raise ValueError("identificacao_desejada deve ser uma lista")
+    desconhecidos = [k for k in chaves if k not in CAMPOS]
+    if desconhecidos:
+        raise ValueError(f"identificacao_desejada: campo(s) desconhecido(s) {desconhecidos}; validos: {list(CAMPOS)}")
+    return tuple(dict.fromkeys(chaves))
+
+
 #: What the lead may send as a photo / scan instead of typing it (``registrar_documento``).
 TIPOS_DOCUMENTO = ("rg", "cpf", "cin", "cnh", "outro")
 

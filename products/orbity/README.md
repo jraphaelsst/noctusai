@@ -30,6 +30,18 @@ NoctusAI seed framework (`noctusai_lib` + `noctusai_seed` backend,
 - **Relatórios** — report definitions, snapshot generation, public token-gated read
 - **Equipe** — team management (invite, accept, list, cancel, remove — from the framework)
 
+## Embedding the lead-capture form
+
+`POST /api/capture/{org_id}` takes JSON (`name`, `email`, `phone`, `company`, `source`, `value`, `stage_id`; any other key is stored in the lead's custom fields, at most 20 keys / 8 KiB). The form MUST include the hidden honeypot input, copied from `noctusai_lib.api.honeypot.honeypot_input_html()`:
+
+```html
+<div style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden" aria-hidden="true">
+  <input type="text" name="hp_website" id="hp_website" value="" autocomplete="off" tabindex="-1" aria-hidden="true">
+</div>
+```
+
+It is off-screen (not `type="hidden"`, which bots skip), keyboard-unreachable and invisible to assistive tech. A bot that fills it gets the normal success answer, but nothing is stored, no automation fires, and one no-PII row lands in `orbity.capture_events` so the bot rate can be measured. The org must hold an orbity license (404 otherwise).
+
 ## Running
 
 ```bash

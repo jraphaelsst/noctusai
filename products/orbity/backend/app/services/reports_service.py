@@ -26,10 +26,11 @@ No mock-data fallbacks. No silent errors.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
+from noctusai_lib.api.token_link import token_fingerprint
 from noctusai_lib.integrations.persistence import iter_paged_rows
 
 _IN_BATCH = 100  # ids per `.in_()` — values ride in the URL query string
@@ -45,12 +46,20 @@ def _batched(values: list, size: int = _IN_BATCH):
 class ReportsService:
     """Authenticated CRUD + generate. Uses a user-scoped (RLS-enforced) client."""
 
-    def __init__(self, db: Any, org_id: UUID) -> None:
+    def __init__(self, db: Any, org_id: UUID, *, admin_db: Any = None) -> None:
         self._db = db
+        # `revenues` / `expenses` are security-invoker views over the finance organ's tables (fin_entries,
+        # billing_charges), which are service-role only: reading them with the user's JWT is a 502. The router passes the
+        # admin client; every read through it is explicitly scoped by org_id. (No admin client => the user client, which
+        # only works for a host whose views are still readable -- tests.)
+        self._admin = admin_db if admin_db is not None else db
         self._org_id = str(org_id)
 
     def _t(self, table: str):
         return self._db.table(table)
+
+    def _finance(self, table: str):
+        return self._admin.table(table)
 
     # ------------------------------------------------------------------
     # Reports CRUD
@@ -95,7 +104,7 @@ class ReportsService:
         return rows[0] if rows else None
 
     def create_report(self, payload: dict[str, Any]) -> dict[str, Any]:
-        row = {**payload, "org_id": self._org_id}
+        row = _with_default_expiry({**payload, "org_id": self._org_id})
         try:
             result = self._t("reports").insert(row).execute()
         except Exception:
@@ -110,6 +119,13 @@ class ReportsService:
     def update_report(self, report_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         payload.pop("org_id", None)        # prevent escalation
         payload.pop("public_token", None)  # immutable — generated at insert
+        if payload.get("expires_at"):
+            payload = _with_default_expiry(payload)  # a caller-set expiry is clamped to the 90-day ceiling
+        if payload.get("status") == "published" and not payload.get("expires_at"):
+            # publishing is what makes the link live: it never goes live without an end date
+            existing = self.get_report(report_id)
+            if existing is not None and not existing.get("expires_at"):
+                payload = _with_default_expiry(payload)
         try:
             result = (
                 self._t("reports")
@@ -278,7 +294,7 @@ class ReportsService:
 
         def build():
             q = (
-                self._t("revenues")
+                self._finance("revenues")
                 .select("id, amount")
                 .eq("org_id", self._org_id)
                 .eq("status", "paid")
@@ -296,7 +312,7 @@ class ReportsService:
 
         def build():
             return (
-                self._t("expenses")
+                self._finance("expenses")
                 .select("id, amount")
                 .eq("org_id", self._org_id)
                 .gte("due_date", period_start)
@@ -377,20 +393,13 @@ class ReportsService:
 # ---------------------------------------------------------------------------
 
 class ReportsPublicService:
-    """Unauthenticated public token read. Uses the admin (service_role) client.
+    """Unauthenticated public token read (``token-link`` tier). Uses the admin (service_role) client.
 
-    RLS safety design:
-    - The admin client bypasses RLS for the SELECT. This is intentional and
-      safe because the server-side validation chain is strict:
-        1. Fetch report by public_token only (no client-supplied org_id).
-        2. Verify status == "published".
-        3. Verify expires_at is NULL or in the future.
-        4. Fetch the latest report_snapshot by report_id (from the trusted row).
-        5. Return the snapshot payload.
-    - At no point is a client-supplied org_id used. Cross-org contamination
-      is impossible: the token uniquely identifies one report, and the admin
-      client's full-table read is gated by the server's validation chain.
-    - The public_token is a UUID (128-bit random) — not guessable by brute-force.
+    The route resolves the token through ``noctusai_lib.api.token_link.resolve_token_link`` (UUID shape, expiry that FAILS
+    CLOSED -- a missing or unparsable ``expires_at`` is expired) with :meth:`fetch_published_report` as the read; the latest
+    snapshot is then read INSIDE the report's own org (``report["org_id"]``), so a snapshot row of another org that points at
+    this report never shows on this link. At no point is a client-supplied org_id used. The token is a UUIDv4 (122 random
+    bits) and is never logged (``token_fingerprint``).
     """
 
     def __init__(self, admin_db: Any) -> None:
@@ -399,78 +408,38 @@ class ReportsPublicService:
     def _t(self, table: str):
         return self._db.table(table)
 
-    def get_published_report_by_token(self, token: str) -> dict[str, Any] | None:
-        """Validate token → return (report, latest_snapshot) or None.
-
-        Returns None when:
-          - Token not found
-          - status != "published"
-          - expires_at is in the past
-
-        Callers MUST validate that `token` parses as a UUID before calling
-        this method — the router does this (a malformed token is a 404,
-        not a DB round-trip; see reports_router.get_public_report). A
-        non-UUID token handed to this method would otherwise reach postgres
-        as a raw string comparison against a UUID column and raise 22P02.
-
-        Raises:
-          Exception: DB errors propagate (caller raises 502)
-        """
+    def fetch_published_report(self, token: str) -> dict[str, Any] | None:
+        """The report ``token`` opens, or None (unknown token, or not published). ``token`` must already be a canonical UUID
+        (``resolve_token_link`` guarantees it). DB errors propagate (the caller answers 502)."""
         try:
-            result = (
-                self._t("reports")
-                .select("*")
-                .eq("public_token", token)
-                .execute()
-            )
+            result = self._t("reports").select("*").eq("public_token", token).execute()
         except Exception:
-            logger.exception("reports.public_read token=%s — DB error", token)
+            logger.exception("reports.public_read %s — DB error", token_fingerprint(token))
             raise
-
         rows = result.data or []
         if not rows:
             return None
-
         report = rows[0]
-
-        # Validate published
         if report.get("status") != "published":
-            logger.debug("reports.public_read token=%s — not published", token)
+            logger.debug("reports.public_read %s — not published", token_fingerprint(token))
             return None
+        return report
 
-        # Validate expiry
-        expires_at = report.get("expires_at")
-        if expires_at:
-            try:
-                exp = _parse_dt(expires_at)
-                if exp < datetime.now(tz=timezone.utc):
-                    logger.debug("reports.public_read token=%s — expired", token)
-                    return None
-            except Exception:
-                logger.warning(
-                    "reports.public_read token=%s — could not parse expires_at=%r",
-                    token, expires_at,
-                )
-
-        # Fetch latest snapshot
-        snapshot = self._get_latest_snapshot(report["id"])
-
-        return {"report": report, "snapshot": snapshot}
-
-    def _get_latest_snapshot(self, report_id: str) -> dict[str, Any] | None:
+    def latest_snapshot(self, report: dict[str, Any]) -> dict[str, Any] | None:
+        """The report's latest snapshot, read ONLY within the report's own org."""
+        report_id, org_id = report["id"], report["org_id"]
         try:
             result = (
                 self._t("report_snapshots")
                 .select("*")
+                .eq("org_id", org_id)
                 .eq("report_id", report_id)
                 .order("generated_at", desc=True)
                 .limit(1)
                 .execute()
             )
         except Exception:
-            logger.exception(
-                "reports._get_latest_snapshot report=%s — DB error", report_id
-            )
+            logger.exception("reports.latest_snapshot report=%s — DB error", report_id)
             raise
         rows = result.data or []
         return rows[0] if rows else None
@@ -479,6 +448,25 @@ class ReportsPublicService:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+REPORT_LINK_TTL_DAYS = 30
+REPORT_LINK_MAX_DAYS = 90
+
+
+def _with_default_expiry(row: dict[str, Any]) -> dict[str, Any]:
+    """A published report link always ends (no ``expires_at`` given => now + :data:`REPORT_LINK_TTL_DAYS`), and NO link outlives
+    :data:`REPORT_LINK_MAX_DAYS`: a caller-set ``expires_at`` further out is clamped to now + 90 days (a link is a bearer
+    credential, not a permanent address). Applied on create and on update; an unparsable value is a ValueError (422)."""
+    now = datetime.now(tz=timezone.utc)
+    ceiling = now + timedelta(days=REPORT_LINK_MAX_DAYS)
+    if row.get("expires_at"):
+        asked = _parse_dt(row["expires_at"])
+        if asked > ceiling:
+            row = {**row, "expires_at": ceiling.isoformat()}
+    elif row.get("status") == "published":
+        row = {**row, "expires_at": (now + timedelta(days=REPORT_LINK_TTL_DAYS)).isoformat()}
+    return row
+
 
 def _to_iso_date(value: Any) -> str:
     """Coerce a date/datetime/string to ISO date string (YYYY-MM-DD)."""

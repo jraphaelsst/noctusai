@@ -5,8 +5,9 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
+from app.qualificacao.identificacao import validar_desejados
 from app.qualificacao.models import CriterioDef, EstagioDef, Opcao, ParametrosDef, VersaoPadrao
 from noctusai_lib.api import StrictHttpModel
 
@@ -68,10 +69,23 @@ class ParametrosIn(StrictHttpModel):
     score_max: int = Field(default=100, ge=1, le=1000)
     eixos: dict[str, Any] = Field(default_factory=dict)
     pedir_identificacao_quando: dict[str, Any] | None = None
+    max_retomadas_seguidas: int = Field(default=2, ge=0, le=10)
+    #: The offer catalogue (``app.catalogos.CATALOGOS``); validated by ``engine.validar_versao`` (a closed set).
+    catalogo: str | None = Field(default=None, max_length=64)
+    #: None = not declared (legacy); a list = the desired identity fields (unknown key -> 422).
+    identificacao_desejada: list[str] | None = None
+
+    @field_validator("identificacao_desejada")
+    @classmethod
+    def _desejados_validos(cls, v: list[str] | None) -> list[str] | None:
+        return None if v is None else list(validar_desejados(v))
 
     def to_def(self) -> ParametrosDef:
         return ParametrosDef(self.minimo_para_ofertar, self.lote_ofertas, self.score_max, self.eixos,
-                             self.pedir_identificacao_quando)
+                             self.pedir_identificacao_quando,
+                             max_retomadas_seguidas=self.max_retomadas_seguidas, catalogo=self.catalogo,
+                             identificacao_desejada=(None if self.identificacao_desejada is None
+                                                     else tuple(self.identificacao_desejada)))
 
 
 class PadraoCreate(StrictHttpModel):
@@ -132,5 +146,9 @@ def versao_out(v: VersaoPadrao) -> dict[str, Any]:
             "minimo_para_ofertar": v.parametros.minimo_para_ofertar,
             "lote_ofertas": v.parametros.lote_ofertas, "score_max": v.parametros.score_max,
             "eixos": v.parametros.eixos, "pedir_identificacao_quando": v.parametros.pedir_identificacao_quando,
+            "max_retomadas_seguidas": v.parametros.max_retomadas_seguidas,
+            "catalogo": v.parametros.catalogo,
+            "identificacao_desejada": (None if v.parametros.identificacao_desejada is None
+                                       else list(v.parametros.identificacao_desejada)),
         },
     }

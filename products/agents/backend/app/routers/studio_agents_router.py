@@ -1127,6 +1127,14 @@ def publish_draft(
             "Não há número de atendimento para a passagem a uma pessoa (Configurações do agente).",
             prontidao=itens_prontidao,
         )
+    if itens_prontidao and any(
+        i["codigo"] == "catalogo_ausente" and i["severidade"] == "bloqueante" for i in itens_prontidao
+    ):
+        raise http_error(
+            409, "catalogo_ausente",
+            "A ferramenta 'oferecer_opcoes' está ativa e o padrão de qualificação não indica o catálogo de opções.",
+            prontidao=itens_prontidao,
+        )
     if itens_prontidao and any(i["codigo"] == "regras_seguranca_sem_parametros" for i in itens_prontidao):
         raise http_error(
             409, "compile_blocked", "As regras de segurança desta instância estão sem parâmetros (migração 063).",
