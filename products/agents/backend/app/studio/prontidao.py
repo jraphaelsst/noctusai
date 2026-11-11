@@ -34,12 +34,12 @@ from app.studio.eval_mecanismo import MecanismoRequisito, PortaoMecanismo, decid
 from app.studio.especificacoes_service import config_atual, violacoes_armazenadas
 from app.studio.models import CompiledPrompt, ConfigValidacao, GateRun
 from app.studio.camadas import efetivo
+from app.studio.regras_secao import REGRA_DISCORDAR
 
 logger = logging.getLogger(__name__)
 
 #: The canonical agent template's must-haves (owner 2026-11-08, ``KB § PATTERNS/backend/canonical-agent-template.md``):
-#: a section that tells the agent to disagree respectfully, and behaviour eval cases that try to make it flatter.
-CHAVE_SECAO_DISCORDAR = "discordar-com-respeito"
+#: a section RULE (not a key: the rule lives inside ``honestidade``) that tells the agent to disagree respectfully, and behaviour eval cases that try to make it flatter.
 TAG_BAJULACAO = "bajulacao"
 
 #: The closed set of item groups. The frontend's ``ProntidaoGrupo`` / ``PRONTIDAO_GRUPO_LABEL``
@@ -55,7 +55,7 @@ __all__ = [
     "GRUPOS",
     "Item",
     "Prontidao",
-    "CHAVE_SECAO_DISCORDAR",
+    "REGRA_DISCORDAR",
     "RECUSAS_PUBLICACAO",
     "TAG_BAJULACAO",
     "coletar",
@@ -185,8 +185,9 @@ class Entrada:
     #: The canonical template applies (every conversational agent; ``False`` for the internal generator, which only
     #: emits JSON, and for snapshots built by older callers).
     canonico_exigido: bool = False
-    #: Keys of the draft's ACTIVE sections, and the tags of the agent's ACTIVE behaviour cases.
-    secoes_ativas: tuple[str, ...] = ()
+    #: Rules declared by the agent's ACTIVE, non-blank EFFECTIVE sections (``app.studio.regras_secao``), and the tags of
+    #: its ACTIVE behaviour cases.
+    regras_secoes: tuple[str, ...] = ()
     tags_comportamento: tuple[str, ...] = ()
     #: 074: the hand-off fallback number is set (one for every org for now). ``True`` for snapshots built by older
     #: callers; :func:`coletar` always reads it.
@@ -558,11 +559,12 @@ def _canonico(e: Entrada) -> list[Item]:
     if not e.canonico_exigido:
         return []
     itens: list[Item] = []
-    if CHAVE_SECAO_DISCORDAR not in e.secoes_ativas:
+    if REGRA_DISCORDAR not in e.regras_secoes:
         itens.append(Item(
             "sem_secao_discordar", "modelo", "aviso",
-            "O rascunho não tem a seção 'Discordar com respeito': sem ela o agente tende a concordar para agradar.",
-            f"Crie a seção com a chave '{CHAVE_SECAO_DISCORDAR}' (o Criador de Agentes já a escreve).",
+            "Nenhuma seção ativa do agente traz a regra de discordar com respeito: sem ela o agente tende a concordar para agradar.",
+            f"Marque com a regra '{REGRA_DISCORDAR}' a seção que diz ao agente para discordar com respeito "
+            "(no modelo canônico é a seção 'Honestidade'; o Criador de Agentes já a marca).",
         ))
     if TAG_BAJULACAO not in e.tags_comportamento:
         itens.append(Item(
@@ -686,7 +688,7 @@ def coletar(
         geracao_areas=areas,
         controle_modo=modo,
         canonico_exigido=canonico_exigido(agent),
-        secoes_ativas=tuple(sorted({s.chave for s in ef.list_sections(org_id, draft.id) if s.ativo})),
+        regras_secoes=tuple(sorted({r for s in ef.list_sections(org_id, draft.id) if s.ativo and s.conteudo.strip() for r in s.regras})),
         tags_comportamento=tuple(sorted({t for c in ativos if c.suite == "comportamento" for t in c.tags})),
         numero_fallback_definido=_numero_fallback() is not None,
         padrao_catalogo=padrao_catalogo,

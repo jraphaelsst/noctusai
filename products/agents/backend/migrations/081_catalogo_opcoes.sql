@@ -13,7 +13,8 @@
 --    real-estate catalogue ('imoveis_sw'). There is no duplicate-offer UNIQUE index to extend: the rule lives in
 --    QualificacaoService.registrar_evento_imovel (a unique index over history we never audited could fail the apply).
 --
--- 3. agents.criar_rascunho_qualificacao copies the new column when it clones a version.
+-- 3. agents.criar_rascunho_qualificacao copies the new column when it clones a version (and keeps 080's
+--    max_retomadas_seguidas: this re-declaration replaces 080's, so it must carry every column 080 copies).
 --
 -- NOC-REMEDIATE[codigo-opcao-rename]: `lead_imovel_eventos` / `codigo_imovel` keep their real-estate names until the
 -- imovel tools retire (expand -> migrate -> contract); the rename is the contract step -- 2026-11-11
@@ -74,8 +75,10 @@ BEGIN
         SELECT v_novo, chave, rotulo, descricao, ordem, regra, conclusivo, terminal
           FROM agents.qualificacao_estagios WHERE versao_id = p_copiar_de;
         INSERT INTO agents.qualificacao_parametros
-            (versao_id, minimo_para_ofertar, lote_ofertas, score_max, eixos, pedir_identificacao_quando, catalogo)
-        SELECT v_novo, minimo_para_ofertar, lote_ofertas, score_max, eixos, pedir_identificacao_quando, catalogo
+            (versao_id, minimo_para_ofertar, lote_ofertas, score_max, eixos, pedir_identificacao_quando,
+             max_retomadas_seguidas, catalogo)
+        SELECT v_novo, minimo_para_ofertar, lote_ofertas, score_max, eixos, pedir_identificacao_quando,
+               max_retomadas_seguidas, catalogo
           FROM agents.qualificacao_parametros WHERE versao_id = p_copiar_de;
     END IF;
     RETURN v_novo;

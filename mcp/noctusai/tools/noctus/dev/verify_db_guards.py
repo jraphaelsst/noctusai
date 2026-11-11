@@ -5120,6 +5120,34 @@ def _loop_insert(status: str, motivo: str, stopped: str) -> str:
             f"VALUES (v_org, v_agent, 'noc-probe', 'comportamento', 5, 0.8, 20, '{status}', {motivo}, {stopped}, v_org);")
 
 
+# 079: an emergency stays open and closes by inactivity (window column + the emergency alert tipo).
+_EMERGENCIA_MIGS = (_m("033"), _m("035"), "057_julia_v3_alertas_documentos.sql", "079_emergencia_inatividade.sql")
+_JV2_PARTICIPANTE = (
+    f"INSERT INTO {_JV2}.thread_participantes (thread_id, agent_id, org_id, estado) "
+    "VALUES (v_thread, v_agent, v_org, 'ativo');"
+)
+_AGENTS_EMERGENCIA_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="thread_alertas.tipo_is_a_closed_set", guard_name="thread_alertas_tipo_check",
+        migrations=_EMERGENCIA_MIGS, setup="\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread())),
+        attack=(f"INSERT INTO {_JV2}.thread_alertas (org_id, thread_id, agent_id, tipo, descricao) "
+                "VALUES (v_org, v_thread, v_agent, 'tipo_inventado', 'x');"),
+        fragments=("thread_alertas_tipo_check",), what="an alert of a tipo the app does not know",
+        rationale="SW turns each alert tipo into a notice to the owner; an unknown tipo would be stored and "
+                  "never routed.",
+    ),
+    _julia_v2_probe(
+        probe_id="thread_participantes.inactivity_window_is_positive_and_bounded",
+        guard_name="ck_thread_participantes_fecha_inativo_min",
+        migrations=_EMERGENCIA_MIGS,
+        setup="\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread(), _JV2_PARTICIPANTE)),
+        attack=f"UPDATE {_JV2}.thread_participantes SET fecha_inativo_min = 0 WHERE thread_id = v_thread;",
+        fragments=("ck_thread_participantes_fecha_inativo_min",), what="an inactivity window of zero minutes",
+        rationale="A zero window would close the participant on the next minute tick regardless of activity.",
+    ),
+)
+
+
 _AGENTS_EVAL_LOOP_PROBES: tuple[GuardProbe, ...] = (
     _julia_v2_probe(
         probe_id="eval_loops.stopped_loop_says_why_and_when", guard_name="eval_loops_parada_consistente",
@@ -5135,6 +5163,41 @@ _AGENTS_EVAL_LOOP_PROBES: tuple[GuardProbe, ...] = (
         fragments=("uq_agents_eval_loops_ativo_por_suite",), what="a second ACTIVE loop on the same agent and suite",
         rationale="Two loops racing one suite would each read the other's rounds as score noise, so G4 would stop "
                   "(or not) on someone else's run.",
+    ),
+)
+
+
+# 080: the follow-up cap. The event log is append-only (the count of consecutive follow-ups is derived from it), its outcome is
+# a closed enum, and the limit parameter is bounded.
+_RETOMADA_MIGS = (_m("033"), "080_retomada_limite.sql")
+_RETOMADA_SETUP = "\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread()))
+_AGENTS_RETOMADA_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="thread_retomada_eventos.append_only", guard_name="thread_retomada_eventos_append_only",
+        migrations=_RETOMADA_MIGS,
+        setup="\n    ".join((_RETOMADA_SETUP, (
+            f"INSERT INTO {_JV2}.thread_retomada_eventos (org_id, thread_id, agent_id, resultado) "
+            "VALUES (v_org, v_thread, v_agent, 'enviada');"))),
+        attack=f"UPDATE {_JV2}.thread_retomada_eventos SET resultado = 'ignorada' WHERE org_id = v_org;",
+        fragments=("thread_retomada_eventos is append-only",), what="an UPDATE of a follow-up event",
+        rationale="The follow-up cap counts `enviada` rows since the lead's last reply: an edited row would hand the lead "
+                  "an extra follow-up (or take one away) with no trace.",
+    ),
+    _julia_v2_probe(
+        probe_id="thread_retomada_eventos.resultado_vocab", guard_name="thread_retomada_eventos_resultado_check",
+        migrations=_RETOMADA_MIGS, setup=_RETOMADA_SETUP,
+        attack=(f"INSERT INTO {_JV2}.thread_retomada_eventos (org_id, thread_id, agent_id, resultado) "
+                "VALUES (v_org, v_thread, v_agent, 'talvez');"),
+        fragments=("thread_retomada_eventos_resultado_check",), what="a follow-up event with an unknown outcome",
+        rationale="The cap reads only `enviada`; an off-vocabulary outcome would be counted as nothing, silently.",
+    ),
+    _julia_v2_probe(
+        probe_id="qualificacao_parametros.max_retomadas_bounded", guard_name="qualificacao_parametros_max_retomadas_check",
+        migrations=(_m("032"), "080_retomada_limite.sql"), setup=_JV2_PADRAO,
+        attack=(f"INSERT INTO {_JV2}.qualificacao_parametros (versao_id, minimo_para_ofertar, max_retomadas_seguidas) "
+                "VALUES (v_pv, '{\"todos\": []}'::jsonb, 11);"),
+        fragments=("qualificacao_parametros_max_retomadas_check",), what="a follow-up cap above 10",
+        rationale="The owner's rule is a small cap (default 2); an absurd value would turn the cap into no cap.",
     ),
 )
 
@@ -12293,6 +12356,8 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_CAMADAS_PROBES,
     *_AGENTS_FALLBACK_PROBES,
     *_AGENTS_EVAL_LOOP_PROBES,
+    *_AGENTS_EMERGENCIA_PROBES,
+    *_AGENTS_RETOMADA_PROBES,
     *_AGENTS_CATALOGO_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,

@@ -2,7 +2,7 @@
 -- 082_qualificacao_identificacao_desejada.sql -- a standard DECLARES which identity fields it desires
 -- (owner decision 2026-11-10: derive them from the standard, in code). NULL = the version predates the key
 -- (legacy: the engine keeps rg/email/nome on a logged branch); '[]' = declared, wants none.
--- Additive + idempotent. The draft-copy function carries the new column over, and keeps 081's `catalogo` (081 redefined it first; this redefinition must copy both). Requires 081.
+-- Additive + idempotent. The draft-copy function carries the new column over, and keeps 080's `max_retomadas_seguidas` and 081's `catalogo` (each redefined it first; this redefinition must copy all three). Requires 080 and 081.
 -- ============================================================================
 SET search_path = agents, public;
 
@@ -51,8 +51,10 @@ BEGIN
         SELECT v_novo, chave, rotulo, descricao, ordem, regra, conclusivo, terminal
           FROM agents.qualificacao_estagios WHERE versao_id = p_copiar_de;
         INSERT INTO agents.qualificacao_parametros
-            (versao_id, minimo_para_ofertar, lote_ofertas, score_max, eixos, pedir_identificacao_quando, catalogo, identificacao_desejada)
-        SELECT v_novo, minimo_para_ofertar, lote_ofertas, score_max, eixos, pedir_identificacao_quando, catalogo, identificacao_desejada
+            (versao_id, minimo_para_ofertar, lote_ofertas, score_max, eixos, pedir_identificacao_quando,
+             max_retomadas_seguidas, catalogo, identificacao_desejada)
+        SELECT v_novo, minimo_para_ofertar, lote_ofertas, score_max, eixos, pedir_identificacao_quando,
+               max_retomadas_seguidas, catalogo, identificacao_desejada
           FROM agents.qualificacao_parametros WHERE versao_id = p_copiar_de;
     END IF;
     RETURN v_novo;

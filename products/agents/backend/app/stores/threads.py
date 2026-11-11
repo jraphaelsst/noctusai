@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Protocol
 from uuid import UUID, uuid4
 
@@ -39,6 +39,7 @@ __all__ = [
     "OPT_OUT_ORIGENS",
     "NOTIFICACAO_STATUS",
     "PAPEL_DONO_ORG",
+    "RETOMADA_RESULTADOS",
     "ContextoThread",
     "FakeThreadStore",
     "HandoffDestino",
@@ -71,6 +72,8 @@ ATOR_TIPOS = ("agente", "usuario", "token", "sistema")
 #: The states a hand-off may leave the giver in (``concluido``: the qualification finished -- 037).
 HANDOFF_ESTADOS = ("transferido", "pausado", "concluido")
 #: ``lead_refs.opt_in_origem`` CHECK (033): how the lead consented to be contacted.
+#: ``thread_retomada_eventos.resultado`` (migration 080).
+RETOMADA_RESULTADOS = ("enviada", "recusada_limite", "ignorada")
 OPT_IN_ORIGENS = ("lead_iniciou", "formulario_meta", "campanha_ctwa", "importado")
 #: ``lead_opt_out_eventos.origem`` CHECK (042): who recorded the opt-out.
 OPT_OUT_ORIGENS = ("agente", "operador", "integracao")
@@ -195,6 +198,10 @@ class ParticipanteRecord:
     ultimo_turno_em: datetime | None
     #: A timed pause: past this instant the participant counts as active again.
     pausado_ate: datetime | None = None
+    #: Inactivity window in minutes (migration 079): the participant closes once ``conversations.last_message_at``
+    #: is older than this. ``None`` = no window. NOC-REMEDIATE[inatividade-por-agente]: only the emergency alert sets
+    #: it today (10 min); a per-agent configured window is the destination -- 2026-11-10
+    fecha_inativo_min: int | None = None
 
 
 @dataclass(frozen=True)
@@ -402,12 +409,38 @@ class ThreadStore(Protocol):
         """Stamp ``ultimo_turno_em = now`` (the agent just answered in the thread)."""
         ...
 
+    def definir_janela_inatividade(
+        self, org_id: UUID, thread_id: UUID, agent_id: UUID, minutos: int | None
+    ) -> None:
+        """Set (or clear, ``None``) the participant's inactivity window in minutes. The deadline is never stored:
+        it is ``conversations.last_message_at + window``, so any message moves it."""
+        ...
+
+    def list_inativos_vencidos(self, agora: datetime) -> list[ParticipanteRecord]:
+        """Active participants WITH a window whose deadline (``last_message_at`` -- ``created_at`` when the thread has
+        no message yet -- plus the window) is at or before ``agora``. Platform-wide (the scheduler's read)."""
+        ...
+
     def list_eventos(self, org_id: UUID, thread_id: UUID) -> list[ParticipanteEvento]:
         """The thread's transition audit, oldest first."""
         ...
 
     def list_abertos(self, org_id: UUID, agent_id: UUID) -> list[ThreadAberto]:
         """Every thread where ``agent_id`` is the ACTIVE participant (drain progress)."""
+        ...
+
+    # ── the follow-up cap (migration 080) ────────────────────────────────
+    def registrar_retomada(
+        self, org_id: UUID, thread_id: UUID, agent_id: UUID, resultado: str, tier: str | None = None
+    ) -> None:
+        """Append ONE re-engagement outcome (``enviada`` | ``recusada_limite`` | ``ignorada``). Append-only."""
+        ...
+
+    def contar_retomadas_seguidas(
+        self, org_id: UUID, thread_id: UUID, agent_id: UUID, desde: datetime | None
+    ) -> int:
+        """``enviada`` rows of this agent in the thread AFTER ``desde`` (the lead's last message; ``None`` = all):
+        the follow-ups in a row with no reply. A lead reply moves ``desde`` forward, resetting the count with no write."""
         ...
 
     # ── mandatory skills (D7) ────────────────────────────────────────────
@@ -435,6 +468,7 @@ class FakeThreadStore:
         self._skills: set[tuple[UUID, str, str]] = set()
         self._handoffs: dict[UUID, HandoffRecord] = {}
         self._opt_out_eventos: list[OptOutEventoRecord] = []
+        self._retomadas: list[dict[str, Any]] = []
 
     # lead identity
     def upsert_lead_ref(
@@ -651,7 +685,8 @@ class FakeThreadStore:
         now = utcnow()
         saiu = None if para == "ativo" else (rec.saiu_em if para == "pausado" else now)
         self._participantes[(thread_id, agent_id)] = replace(
-            rec, estado=para, motivo=motivo, saiu_em=saiu, pausado_ate=ate if para == "pausado" else None
+            rec, estado=para, motivo=motivo, saiu_em=saiu, pausado_ate=ate if para == "pausado" else None,
+            fecha_inativo_min=None,  # a window belongs to the stretch it was set in: any move ends it
         )
         self._evento(org_id, thread_id, agent_id, rec.estado, para, ator_tipo, ator_id, motivo, ate)
         return True
@@ -732,6 +767,26 @@ class FakeThreadStore:
         if rec is not None:
             self._participantes[(thread_id, agent_id)] = replace(rec, ultimo_turno_em=utcnow())
 
+    def definir_janela_inatividade(self, org_id, thread_id, agent_id, minutos):
+        rec = self.get_participante(org_id, thread_id, agent_id)
+        if rec is None:
+            raise NotFound(f"participante {agent_id} not found in thread {thread_id}")
+        self._participantes[(thread_id, agent_id)] = replace(rec, fecha_inativo_min=minutos)
+
+    def list_inativos_vencidos(self, agora: datetime) -> list[ParticipanteRecord]:
+        out = []
+        for p in self._participantes.values():
+            if p.estado != "ativo" or p.fecha_inativo_min is None or self._conversations is None:
+                continue
+            try:
+                conv = self._conversations.get(p.org_id, p.thread_id)
+            except NotFound:
+                continue
+            ultima = conv.last_message_at or conv.created_at
+            if ultima + timedelta(minutes=p.fecha_inativo_min) <= agora:
+                out.append(p)
+        return out
+
     def list_eventos(self, org_id: UUID, thread_id: UUID) -> list[ParticipanteEvento]:
         return [e for e in self._eventos if e.org_id == org_id and e.thread_id == thread_id]
 
@@ -749,6 +804,26 @@ class FakeThreadStore:
             out.append(ThreadAberto(p.thread_id, p.agent_id, p.entrou_em, ultima))
         return out
 
+    # the follow-up cap
+    def registrar_retomada(
+        self, org_id: UUID, thread_id: UUID, agent_id: UUID, resultado: str, tier: str | None = None
+    ) -> None:
+        if resultado not in RETOMADA_RESULTADOS:
+            raise ValueError(f"resultado must be one of {RETOMADA_RESULTADOS}; got {resultado!r}")
+        self._retomadas.append({
+            "org_id": org_id, "thread_id": thread_id, "agent_id": agent_id, "resultado": resultado, "tier": tier,
+            "created_at": utcnow(),
+        })
+
+    def contar_retomadas_seguidas(
+        self, org_id: UUID, thread_id: UUID, agent_id: UUID, desde: datetime | None
+    ) -> int:
+        return sum(
+            1 for r in self._retomadas
+            if r["org_id"] == org_id and r["thread_id"] == thread_id and r["agent_id"] == agent_id
+            and r["resultado"] == "enviada" and (desde is None or r["created_at"] > _dt(desde))
+        )
+
     # skills
     def registrar_abertura_skill(self, org_id: UUID, thread_id: UUID, skill: str, compiled_hash: str) -> None:
         self._skills.add((thread_id, skill, compiled_hash))
@@ -763,6 +838,7 @@ class FakeThreadStore:
             del self._participantes[key]
         self._eventos = [e for e in self._eventos if not (e.org_id == org_id and e.thread_id == thread_id)]
         self._skills = {s for s in self._skills if s[0] != thread_id}
+        self._retomadas = [r for r in self._retomadas if not (r["org_id"] == org_id and r["thread_id"] == thread_id)]
         self._handoffs = {k: h for k, h in self._handoffs.items() if not (h.org_id == org_id and h.thread_id == thread_id)}
 
     def purge_lead_ref(self, org_id: UUID, lead_ref_id: UUID) -> None:
@@ -1001,7 +1077,16 @@ class SupabaseThreadStore:
             }, unique_code="outro_agente_ativo")
         except Conflict as exc:
             raise OutroAgenteAtivo("another agent is the active participant of this thread") from exc
-        return bool(resp.data)
+        moved = bool(resp.data)
+        if moved:
+            # a window belongs to the stretch it was set in: any move ends it (a re-activated agent must not be
+            # closed at once by a stale deadline). Idempotent, so a lost write is only a stale NULL-able column.
+            (
+                self._t("thread_participantes").update({"fecha_inativo_min": None})
+                .eq("org_id", str(org_id)).eq("thread_id", str(thread_id)).eq("agent_id", str(agent_id))
+                .not_.is_("fecha_inativo_min", "null").execute()
+            )
+        return moved
 
     def registrar_handoff(
         self, org_id: UUID, thread_id: UUID, de_agent_id: UUID, *, para: HandoffDestino, motivo_codigo: str,
@@ -1080,6 +1165,27 @@ class SupabaseThreadStore:
             .execute()
         )
 
+    def definir_janela_inatividade(self, org_id, thread_id, agent_id, minutos):
+        (
+            self._t("thread_participantes").update({"fecha_inativo_min": minutos})
+            .eq("org_id", str(org_id)).eq("thread_id", str(thread_id)).eq("agent_id", str(agent_id))
+            .execute()
+        )
+
+    def list_inativos_vencidos(self, agora: datetime) -> list[ParticipanteRecord]:
+        # Only windowed ACTIVE rows (partial index idx_agents_thread_participantes_inatividade): a handful at any time.
+        rows = (
+            self._t("thread_participantes").select("*, conversations!inner(last_message_at, created_at)")
+            .eq("estado", "ativo").not_.is_("fecha_inativo_min", "null").limit(1000).execute().data or []
+        )
+        out = []
+        for r in rows:
+            conv = r.get("conversations") or {}
+            ultima = db_ts(conv.get("last_message_at") or conv["created_at"])
+            if ultima + timedelta(minutes=int(r["fecha_inativo_min"])) <= agora:
+                out.append(self._participante(r))
+        return out
+
     def list_eventos(self, org_id: UUID, thread_id: UUID) -> list[ParticipanteEvento]:
         rows = (
             self._t("thread_participante_eventos").select("*")
@@ -1108,6 +1214,28 @@ class SupabaseThreadStore:
                 entrou_em=r["entrou_em"], ultima_mensagem_lead_em=conv.get("ultima_mensagem_lead_em"),
             ))
         return out
+
+    # the follow-up cap
+    def registrar_retomada(
+        self, org_id: UUID, thread_id: UUID, agent_id: UUID, resultado: str, tier: str | None = None
+    ) -> None:
+        exec_query(self._t("thread_retomada_eventos").insert({
+            "org_id": str(org_id), "thread_id": str(thread_id), "agent_id": str(agent_id),
+            "resultado": resultado, "tier": tier,
+        }))
+
+    def contar_retomadas_seguidas(
+        self, org_id: UUID, thread_id: UUID, agent_id: UUID, desde: datetime | None
+    ) -> int:
+        q = (
+            self._t("thread_retomada_eventos").select("id", count="exact")
+            .eq("org_id", str(org_id)).eq("thread_id", str(thread_id)).eq("agent_id", str(agent_id))
+            .eq("resultado", "enviada")
+        )
+        if desde is not None:
+            q = q.gt("created_at", _dt(desde).isoformat())
+        resp = exec_query(q.limit(1))
+        return int(resp.count or 0)
 
     # skills
     def registrar_abertura_skill(self, org_id: UUID, thread_id: UUID, skill: str, compiled_hash: str) -> None:
@@ -1158,7 +1286,7 @@ class SupabaseThreadStore:
             org_id=UUID(str(row["org_id"])), estado=row.get("estado", "ativo"),
             entrou_em=row.get("entrou_em") or utcnow_iso(), saiu_em=row.get("saiu_em"),
             motivo=row.get("motivo"), ultimo_turno_em=row.get("ultimo_turno_em"),
-            pausado_ate=row.get("pausado_ate"),
+            pausado_ate=row.get("pausado_ate"), fecha_inativo_min=row.get("fecha_inativo_min"),
         )
 
     @staticmethod

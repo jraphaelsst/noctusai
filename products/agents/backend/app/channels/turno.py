@@ -829,6 +829,11 @@ async def _executar(
     actions = _numerar(turno.actions)
     if texto_final.strip():
         svc.threads.marcar_turno(org_id, thread.id, agent.id)
+        # the agent's own reply is an interaction too: it refreshes the inactivity deadline (last_message_at), so a
+        # thread never closes between a long turn's start and its reply
+        svc.conversations.touch_activity(org_id, thread.id)
+        if gatilho == "reengajamento":
+            await _registrar_retomada_enviada(svc, org_id, thread.id, agent.id, getattr(estado_sw, "reengajamento", None))
     status = (
         "handoff" if any(a["type"] == "handoff" for a in actions)
         else "concluido" if any(a["type"] == "lead_pronto" for a in actions)
@@ -846,6 +851,18 @@ async def _executar(
         },
         violacoes=violacoes, message_id=final, identificacao_registrada=identificacao_registrada,
     )
+
+
+async def _registrar_retomada_enviada(
+    svc: ServicosCanal, org_id: UUID, thread_id: UUID, agent_id: UUID, tier: str | None,
+) -> None:
+    """The follow-up went out: book ONE ``enviada`` event (it feeds the follow-up cap). A lost row only weakens the cap
+    by one follow-up and must not undo a message already stored, so a failure is LOGGED loudly, never swallowed."""
+    try:
+        await asyncio.to_thread(svc.threads.registrar_retomada, org_id, thread_id, agent_id, "enviada", tier)
+    except Exception as exc:  # noqa: BLE001 -- see the docstring: the reply is already stored; the loss is seen
+        logger.error(
+            "agents.channel.retomada_enviada_nao_gravada org_id=%s thread_id=%s erro=%s", org_id, thread_id, type(exc).__name__)
 
 
 #: Code (migration 046 CHECK shape ``area:codigo``) of the thread ``evento`` row left when the stored copy of a registered CPF / RG could not be masked.

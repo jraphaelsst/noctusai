@@ -15,6 +15,9 @@ about scheduling or not (S3, classification only - D48). It never sends, drafts,
 - `/api/whatsapp/connections*` (admin) - QR pairing, status, start/restart/logout/recover.
 - `POST /api/whatsapp/webhook/{token}` - the inbound webhook. **HMAC required**: no `ASSISTANT_WAHA_WEBHOOK_HMAC_SECRET`
   means every call is a 401 and a deploy refuses to boot.
+  WAHA reaches it only through the edge's webhook relay: on the `send: disabled` line the webhook is registered as
+  `<ASSISTANT_WAHA_LINE_POLICY.webhook_relay>/api/whatsapp/webhook/{token}` (`http://waha-assistant:3001/...` in prod),
+  never the public URL (`webhook_base_url`, pinned by `test_webhook_relay_base.py`).
 - `POST /api/classificacao/replay` (admin) - re-classify chosen rows under the registry's current prompt/model
   (new `ai_outputs` rows only).
 - `GET /api/classificacao/amostra` (admin) - stratified sample for labelling; `modo=cego` (default) hides the

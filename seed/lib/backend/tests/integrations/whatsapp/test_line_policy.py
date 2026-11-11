@@ -23,7 +23,7 @@ from noctusai_lib.integrations.whatsapp import (
     register_line_policy,
     resolve_line_policy,
 )
-from noctusai_lib.integrations.whatsapp.line_policy import set_host_resolver
+from noctusai_lib.integrations.whatsapp.line_policy import set_generated_read_only, set_host_resolver
 from noctusai_lib.integrations.whatsapp.client import WahaClient, _merged_session_config, _session_config
 
 SHADOW = LinePolicy("disabled", False, False, False)
@@ -37,6 +37,8 @@ LEGACY = LinePolicy("enabled", True, True, True)
 @pytest.fixture(autouse=True)
 def _no_legacy_wildcard():
     clear_line_policies()  # overrides the package autouse: these tests start from an EMPTY registry (fail-closed)
+    set_host_resolver(None)  # ... and from the real DNS view, not the hermetic one the pytest plugin installs
+    set_generated_read_only({})  # ... and an EMPTY generated set: they declare their own read-only lines at runtime
     yield
     clear_line_policies()
     set_host_resolver(None)
@@ -759,6 +761,20 @@ def test_an_unresolvable_read_only_alias_fails_closed_for_ip_literals_and_unknow
     assert not resolve_line_policy("http://who-knows:3000").send_enabled  # unresolvable host: closed (N2)
     register_line_policy("http://social:3000", LEGACY)                    # positively known send-enabled
     assert resolve_line_policy("http://social:3000").send_enabled
+
+
+def test_a_down_read_only_edge_does_not_take_every_resolvable_sender_down_with_it():
+    """The edge container being down/restarting makes its alias unresolvable. A product whose host RESOLVES (a different
+    machine) and is covered by "*" must keep sending: the read-only alias cannot be that host (if the edge were up, its
+    name would resolve; if it is down, nothing answers there). IP literals stay closed (previous test)."""
+    set_host_resolver(lambda h: {"social": ["10.0.0.20"], "waha": ["10.0.0.30"]}.get(h))   # waha-x is DOWN
+    register_line_policy("http://waha-x:3000", SHADOW_R, allow_memory_sink=True)
+    register_line_policy("*", LEGACY)                                    # the only entry a shared-host sender has
+    assert resolve_line_policy("http://social:3000").send_enabled
+    assert resolve_line_policy("http://waha:3000", "default").send_enabled
+    assert not resolve_line_policy("http://waha-x:3000").send_enabled    # the read-only line itself: still closed, by name
+    assert not resolve_line_policy("http://10.0.0.5:3000").send_enabled  # an IP literal could be it: still closed
+    assert not resolve_line_policy("http://who-knows:3000").send_enabled # unresolvable request host: still closed
 
 
 def test_ipv4_mapped_ipv6_is_the_ipv4_address():

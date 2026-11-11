@@ -488,7 +488,7 @@ class TestModeloCanonico:
         assert p.pronto_para_publicar
 
     def test_both_present_is_ok(self):
-        p = pr.compor(_entrada(canonico_exigido=True, secoes_ativas=(pr.CHAVE_SECAO_DISCORDAR, "persona"),
+        p = pr.compor(_entrada(canonico_exigido=True, regras_secoes=(pr.REGRA_DISCORDAR,),
                                tags_comportamento=(pr.TAG_BAJULACAO,), casos_comportamento=3, juiz=_juiz()))
         assert "modelo_canonico" in _codigos(p, "ok") and not {"sem_secao_discordar", "sem_evals_bajulacao"} & set(_codigos(p))
 
@@ -496,14 +496,39 @@ class TestModeloCanonico:
         p = pr.compor(_entrada(casos_comportamento=3, juiz=_juiz()))
         assert not [i for i in p.itens if i.grupo == "modelo"]
 
-    def test_the_route_reads_sections_and_case_tags(self, plat):
+    def test_the_route_reads_section_rules_and_case_tags(self, plat):
         assert {"sem_secao_discordar", "sem_evals_bajulacao"} <= {i["codigo"] for i in _get(plat).json()["itens"]}
-        secao = {"chave": pr.CHAVE_SECAO_DISCORDAR, "titulo": "Discordar com respeito", "ordem": 10,
-                 "conteudo": "Você discorda com respeito.", "ativo": True}
+        # The rule lives inside `honestidade`, not in a section named after it.
+        secao = {"chave": "honestidade", "titulo": "Honestidade", "ordem": 10,
+                 "conteudo": "Você discorda com respeito.", "ativo": True, "regras": [pr.REGRA_DISCORDAR]}
         assert plat.put(f"{BASE}/novo/draft/sections", json={"secoes": [secao]}).status_code == 200
         _caso(plat, slug="b1", tags=["bajulacao"])
         codigos = {i["codigo"] for i in _get(plat).json()["itens"]}
         assert "modelo_canonico" in codigos and "sem_secao_discordar" not in codigos
+
+    def test_untagged_honestidade_and_the_old_key_do_not_pass(self, plat):
+        """No fallback to the key: a section NAMED ``discordar-com-respeito`` without the rule fails; so does an
+        untagged ``honestidade``."""
+        secoes = [
+            {"chave": "honestidade", "titulo": "Honestidade", "ordem": 10, "conteudo": "Você discorda com respeito.",
+             "ativo": True},
+            {"chave": "discordar-com-respeito", "titulo": "Discordar", "ordem": 20, "conteudo": "x", "ativo": True},
+        ]
+        assert plat.put(f"{BASE}/novo/draft/sections", json={"secoes": secoes}).status_code == 200
+        assert "sem_secao_discordar" in {i["codigo"] for i in _get(plat).json()["itens"]}
+
+    def test_a_blank_or_inactive_tagged_section_does_not_count(self, plat):
+        base = {"chave": "honestidade", "titulo": "Honestidade", "ordem": 10, "regras": [pr.REGRA_DISCORDAR]}
+        for extra in ({"conteudo": "   ", "ativo": True}, {"conteudo": "texto", "ativo": False}):
+            assert plat.put(f"{BASE}/novo/draft/sections", json={"secoes": [{**base, **extra}]}).status_code == 200
+            assert "sem_secao_discordar" in {i["codigo"] for i in _get(plat).json()["itens"]}
+
+    def test_an_unknown_rule_is_refused_with_a_portuguese_422(self, plat):
+        secao = {"chave": "honestidade", "titulo": "Honestidade", "ordem": 10, "conteudo": "x", "ativo": True,
+                 "regras": ["inventada"]}
+        r = plat.put(f"{BASE}/novo/draft/sections", json={"secoes": [secao]})
+        assert r.status_code == 422
+        assert "Regra de seção desconhecida" in str(r.json()) and "inventada" in str(r.json())
 
 
 class TestGrupos:

@@ -22,6 +22,8 @@ from dataclasses import dataclass, replace
 from typing import Any, TypeVar
 from uuid import UUID
 
+from app.studio.regras_secao import uniao
+
 __all__ = [
     "CadeiaInvalida",
     "EfetivoStore",
@@ -65,7 +67,11 @@ def apensar_secoes(pai: Sequence[T], filho: Sequence[T]) -> list[T]:
             out.append(p)
             continue
         base = p.conteudo.rstrip()
-        out.append(replace(p, conteudo=(base + SEPARADOR_APENSO + f.conteudo.strip()) if base else f.conteudo.strip()))
+        # The merged section keeps the parent's rules and gains the child's (an inherited rule is not lost).
+        out.append(replace(
+            p, conteudo=(base + SEPARADOR_APENSO + f.conteudo.strip()) if base else f.conteudo.strip(),
+            regras=uniao(p.regras, f.regras),
+        ))
     out.extend(filho_por_chave.values())  # the child's own new sections keep their position in its order
     return out
 
