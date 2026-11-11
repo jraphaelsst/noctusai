@@ -469,7 +469,7 @@ class TestRealStore:
         ])
         fn, params = client.executed[0][1]
         assert fn == "replace_draft_sections"
-        assert params["p_secoes"] == [{"id": None, "chave": "a", "titulo": "A", "ordem": 1, "conteudo": "x", "ativo": True}]
+        assert params["p_secoes"] == [{"id": None, "chave": "a", "titulo": "A", "ordem": 1, "conteudo": "x", "ativo": True, "regras": []}]
         # No table-level delete/upsert anymore — the only write is the RPC.
         writes = [c for t, rpc, calls in client.executed for c in calls if c[0] in ("delete", "upsert", "insert")]
         assert writes == []
