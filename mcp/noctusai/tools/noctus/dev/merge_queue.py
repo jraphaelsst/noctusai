@@ -227,6 +227,9 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
+# NOC-REMEDIATE[mq-area-map-dedup]: this path->area map duplicates `ci_scope.classify` (on
+# feat/scoped-green-product-tests, not yet on dev when this landed). Destination: once both are on dev, derive
+# these areas from ci_scope so the queue, CI's `changes` job and item 5 share ONE classifier (tooling steward e1).
 def failure_areas(test_ids: list[str], failed_jobs: list[str], known_products: list[str],
                   ) -> list[dict[str, Any]]:
     """Each failure -> {name, prefixes, migrations_of}: source areas whose change can break it.
