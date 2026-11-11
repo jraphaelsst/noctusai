@@ -114,6 +114,7 @@ def register_all(server) -> None:
     from . import finance_import_igig
     from . import cloudflare_dns
     from . import tunnel_config
+    from . import redis_acl
     from . import waha_instance
     from . import products
     from . import promotion
@@ -186,6 +187,7 @@ def register_all(server) -> None:
     from . import vps_exec
     from . import vps_exec_sql
     from . import source_register
+    from . import supabase_request_budget
 
     absorption_tracking.register(server)
     agent_context.register(server)
@@ -289,6 +291,7 @@ def register_all(server) -> None:
     finance_import_igig.register(server)
     cloudflare_dns.register(server)
     tunnel_config.register(server)
+    redis_acl.register(server)
     waha_instance.register(server)
     products.register(server)
     promotion.register(server)
@@ -361,6 +364,7 @@ def register_all(server) -> None:
     vps_exec.register(server)
     vps_exec_sql.register(server)
     source_register.register(server)
+    supabase_request_budget.register(server)
 
 
 __all__ = ["register_all"]

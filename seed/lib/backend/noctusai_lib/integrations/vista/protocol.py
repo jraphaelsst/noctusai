@@ -23,6 +23,7 @@ calibration, MCP server).
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Optional, Protocol
 
 from noctusai_lib.domain.real_estate import Imovel, ImovelFoto, ImovelPage, PropertyData
@@ -79,6 +80,14 @@ class VistaCRMAdapter(Protocol):
         has. Raises `VistaNotFound` when the code does not exist and `VistaRecordUnpublished` when it exists but is
         not visible to this key (ExibirNoSite=Nao); any other `VistaError` is a transport / auth failure.
         """
+        ...
+
+    async def list_changed_since(self, since: date, *, page_size: int = 50) -> ImovelPage:
+        """THE cheap change signal: `/imoveis/listar` ordered `DataAtualizacao desc`, paged only until an item is older
+        than `since` (so a run where nothing changed costs ONE call). `items` are the listar rows (no detalhes) with
+        `data_atualizacao >= since`; `total` is the whole catalog's size on the first page (0 ⇒ listar is silent --
+        the caller must not read an empty page as "nothing changed"); `page` is the number of pages actually read.
+        A transport / auth failure raises."""
         ...
 
     async def list_corretores(

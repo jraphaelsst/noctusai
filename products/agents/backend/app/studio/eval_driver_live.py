@@ -53,10 +53,12 @@ from app.studio.especificacoes_avaliacao import specs_de_avaliacao
 from app.studio.eval_driver import (
     Estado,
     Handoff,
+    Retomada,
     ThreadState,
     ToolCall,
     TurnOutcome,
     Violation,
+    exigir_cap_semeavel,
 )
 from app.studio.eval_sinteticos import Sinteticos
 from app.studio.camadas import efetivo
@@ -151,6 +153,20 @@ def contexto_de_avaliacao(fixture: Mapping[str, Any]) -> ChannelContexto | None:
         "hash": "0" * 64, "agora": datetime.now(timezone.utc).isoformat(), "fuso": "America/Sao_Paulo",
         "estado": {"interacao_id": str(uuid4()), "encerrado": False, "origem": origem},
     })
+
+
+def contexto_de_retomada(fixture: Mapping[str, Any], retomada: Retomada) -> ChannelContexto:
+    """The SW-rendered context of a follow-up turn: the world's own context (``fixture.origem``) plus the flavour that
+    triggered it (``estado.reengajamento``) and SW's template text (``texto_base``, rewritten in the agent's voice)."""
+    estado: dict[str, Any] = {
+        "interacao_id": str(uuid4()), "encerrado": False, "reengajamento": retomada.tier,
+        "reescrever": retomada.texto_base is not None}
+    if retomada.texto_base is not None:
+        estado["texto_base"] = retomada.texto_base
+    if fixture.get("origem") is not None:
+        estado["origem"] = fixture["origem"]
+    return ChannelContexto.model_validate({
+        "hash": "0" * 64, "agora": datetime.now(timezone.utc).isoformat(), "fuso": "America/Sao_Paulo", "estado": estado})
 
 
 class _Diario:
@@ -325,8 +341,6 @@ class LiveEvalTurnDriver:
             alertas=FakeThreadAlertaStore(), metricas=self._metricas,
         )
         controles.set(org_id, definicao.id, modo=str(thread.fixture.get("modo") or "ligado"))
-        if "fase_testes" in thread.fixture:  # the org's testing-phase switch (default ON); a case narrating "not testing" sets it
-            controles.set_fase_testes(org_id, definicao.id, bool(thread.fixture["fase_testes"]))
         externo = f"eval-{uuid4()}"
         return _Mundo(
             contexto=contexto_de_avaliacao(thread.fixture),
@@ -418,6 +432,9 @@ class LiveEvalTurnDriver:
                 agora=agora, nota_caso=thread.contexto_caso, origem="eval")
         finally:
             await slot.release()
+        return self._outcome(m, th, res)
+
+    def _outcome(self, m: _Mundo, th: Any, res: Any, **extra: Any) -> TurnOutcome:
         m.turnos += 1
         m.concluido = m.concluido or any(a["type"] == "lead_pronto" for a in res.actions)
         handoffs = m.threads.list_handoffs(m.org_id, th.id)
@@ -437,7 +454,47 @@ class LiveEvalTurnDriver:
                 if h is not None else None),
             violacoes=tuple(Violation(v.regra, "bloqueada" if v.bloqueada else v.politica) for v in res.violacoes),
             custo_usd=res.usage.get("custo_usd"),
+            **extra,
         )
+
+    async def executar_retomada(self, thread: ThreadState, retomada: Retomada) -> TurnOutcome:
+        """ONE follow-up turn through the real path: ``gatilho=reengajamento``, no lead message, no abuse-limit check
+        (the channel route skips it for this trigger too), the flavour in ``estado.reengajamento``. The controls decide
+        whether it runs; a refusal is reported as ``retomada_status`` (``reengajamento_ignorado``), never as a pass."""
+        exigir_cap_semeavel(retomada)
+        if self._mundo is None:
+            self._mundo = self._montar(thread)
+        m = self._mundo
+        agora = datetime.now(timezone.utc)
+        m.diario.limpar()
+        ctl = aplicar_controles(
+            org_id=m.org_id, agent_id=m.agent.id, gatilho="reengajamento", channel=_CANAL, channel_ref=m.channel_ref,
+            controles=m.controles, conversations=m.conversations, threads=m.threads,
+            lead=LeadIdentidade(ref=m.lead_externo), contact={"display_name": "Lead de teste"},
+            version_id=m.version_id, messages=m.messages, agora=agora)
+        th = ctl.thread
+        if not ctl.prosseguir or th is None:
+            return TurnOutcome(
+                estado=self._estado(m), participante_estado=self._participante_estado(m, th),
+                valores_terceiros=m.sinteticos.terceiros(), retomada_status=ctl.status, retomada_tier=retomada.tier)
+        contexto = contexto_de_retomada(thread.fixture, retomada)
+        prep = turno_mod.preparar(m.svc, m.org_id, m.agent, versao=m.version_id, specs=m.specs)
+        if self._modelo or self._temperatura is not None:
+            prep = replace(prep, spec=replace(
+                prep.spec, model=self._modelo or prep.spec.model,
+                temperature=prep.spec.temperature if self._temperatura is None else self._temperatura))
+        await m.runtime.preflight(prep.spec.provider, m.org_id)
+        slot = m.runtime.try_reserve()
+        if slot is None:
+            raise turno_mod.TurnoRecusado(429, "capacidade", "Capacidade esgotada.")
+        try:
+            res = await turno_mod.executar(
+                svc=m.svc, prep=prep, agent=m.agent, org_id=m.org_id, thread=th, runtime=m.runtime, slot=slot,
+                bus=m.bus, contexto=contexto, gatilho="reengajamento", lote_lead=[], ultima_resposta_em=agora,
+                agora=agora, nota_caso=thread.contexto_caso, origem="eval")
+        finally:
+            await slot.release()
+        return self._outcome(m, th, res, retomada_status=ctl.status, retomada_tier=retomada.tier)
 
     @staticmethod
     def _participante_estado(m: _Mundo, th: Any) -> str | None:

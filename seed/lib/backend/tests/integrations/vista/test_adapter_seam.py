@@ -45,6 +45,7 @@ def test_protocol_declares_the_expected_surface():
         "list_corretores",
         "list_clientes",
         "list_imovel_fotos",
+        "list_changed_since",
     }
 
 

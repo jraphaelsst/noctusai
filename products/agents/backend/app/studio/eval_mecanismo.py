@@ -28,6 +28,9 @@ from typing import Any
 from uuid import UUID
 
 from app.studio.eval_driver import (
+    RETOMADA_STATUS,
+    RETOMADA_TIERS,
+    Retomada,
     Estado,
     EvalTurnDriver,
     Handoff,
@@ -97,6 +100,8 @@ ASSERT_NAMES = (
     "sem_resposta",
     "participante_estado",
     "solicitacao_titular",
+    "retomada_status",
+    "retomada_tier_usado",
 )
 #: the participant states ``participante_estado`` may name (``thread_participantes.estado`` CHECK).
 PARTICIPANTE_ESTADOS = ("ativo", "pausado", "concluido", "encerrado", "transferido")
@@ -203,6 +208,15 @@ def validar_asserts(asserts: Any, *, onde: str = "asserts") -> None:
         elif nome == "solicitacao_titular":
             if not isinstance(valor, str) or not valor:
                 raise AssertInvalido("solicitacao_titular: texto (tipo da solicitação)")
+        elif nome == "retomada_status":
+            if valor == "limite_retomadas":
+                # NOC-REMEDIATE[retomada-cap-assert]: needs the cap store of feat/agents-retomada-limite — 2026-11-10
+                raise AssertInvalido("retomada_status: limite_retomadas ainda não disponível (retomada-cap-assert)")
+            if valor not in RETOMADA_STATUS:
+                raise AssertInvalido(f"retomada_status: um de {', '.join(RETOMADA_STATUS)}")
+        elif nome == "retomada_tier_usado":
+            if valor not in RETOMADA_TIERS:
+                raise AssertInvalido(f"retomada_tier_usado: um de {', '.join(RETOMADA_TIERS)}")
         elif nome == "skill_aberta_antes_de":
             itens = valor if isinstance(valor, list) else [valor]
             if not itens or not all(
@@ -220,12 +234,20 @@ def validar_roteiro(roteiro: Any) -> None:
     if not isinstance(turnos, list) or not turnos:
         raise RoteiroInvalido("roteiro.turnos: lista não vazia")
     for i, t in enumerate(turnos):
-        if not isinstance(t, dict) or not isinstance(t.get("lead"), str) or not t["lead"].strip():
+        if isinstance(t, dict) and "retomada" in t:
+            if "lead" in t:
+                raise RoteiroInvalido(f"roteiro.turnos[{i}]: um turno é mensagem do lead OU retomada, nunca os dois")
+            _validar_retomada(t["retomada"], onde=f"roteiro.turnos[{i}].retomada", fixture=False)
+            extra = set(t) - {"retomada", "esperar"}
+            if extra:
+                raise RoteiroInvalido(f"roteiro.turnos[{i}]: campos desconhecidos {sorted(extra)}")
+        elif not isinstance(t, dict) or not isinstance(t.get("lead"), str) or not t["lead"].strip():
             raise RoteiroInvalido(f"roteiro.turnos[{i}].lead: texto")
-        try:
-            validar_tokens([(f"roteiro.turnos[{i}].lead", t["lead"])])
-        except TokenSinteticoDesconhecido as exc:
-            raise RoteiroInvalido(str(exc)) from exc
+        else:
+            try:
+                validar_tokens([(f"roteiro.turnos[{i}].lead", t["lead"])])
+            except TokenSinteticoDesconhecido as exc:
+                raise RoteiroInvalido(str(exc)) from exc
         if "esperar" in t:
             try:
                 validar_asserts(t["esperar"], onde=f"roteiro.turnos[{i}].esperar")
@@ -244,6 +266,48 @@ def validar_roteiro(roteiro: Any) -> None:
     if extra:
         raise RoteiroInvalido(f"roteiro.estado_inicial: campos desconhecidos {sorted(extra)}")
     _validar_origem_da_fixture((roteiro.get("fixture") or {}).get("origem"))
+    fixture_retomada = (roteiro.get("fixture") or {}).get("retomada")
+    if fixture_retomada is not None:
+        _validar_retomada(fixture_retomada, onde="roteiro.fixture.retomada", fixture=True)
+
+
+#: ``texto_base`` ceiling of an eval follow-up (a template line, not an essay).
+RETOMADA_TEXTO_MAX = 500
+RETOMADA_SEGUIDAS_MAX = 5
+
+
+def _validar_retomada(valor: Any, *, onde: str, fixture: bool) -> None:
+    """``fixture.retomada`` = the world's follow-up defaults ``{tier, texto_base, seguidas_previas}``; a roteiro turn
+    ``retomada`` = ``true`` (use the defaults) or ``{tier?, texto_base?}`` overriding them. Closed shape: an unknown
+    key / tier is refused (never a silent default)."""
+    if not fixture and valor is True:
+        return
+    permitidas = {"tier", "texto_base", "seguidas_previas"} if fixture else {"tier", "texto_base"}
+    if not isinstance(valor, dict) or (not fixture and not valor):
+        raise RoteiroInvalido(f"{onde}: {'objeto' if fixture else 'true ou objeto'}")
+    extra = set(valor) - permitidas
+    if extra:
+        raise RoteiroInvalido(f"{onde}: campos desconhecidos {sorted(extra)}; aceitos: {sorted(permitidas)}")
+    if "tier" in valor and valor["tier"] not in RETOMADA_TIERS:
+        raise RoteiroInvalido(f"{onde}.tier: um de {', '.join(RETOMADA_TIERS)}")
+    if "texto_base" in valor:
+        tb = valor["texto_base"]
+        if not isinstance(tb, str) or not tb.strip() or len(tb) > RETOMADA_TEXTO_MAX:
+            raise RoteiroInvalido(f"{onde}.texto_base: texto de 1 a {RETOMADA_TEXTO_MAX} caracteres")
+    if "seguidas_previas" in valor:
+        n = valor["seguidas_previas"]
+        if isinstance(n, bool) or not isinstance(n, int) or not (0 <= n <= RETOMADA_SEGUIDAS_MAX):
+            raise RoteiroInvalido(f"{onde}.seguidas_previas: inteiro de 0 a {RETOMADA_SEGUIDAS_MAX}")
+
+
+def retomada_do_turno(roteiro: dict[str, Any], turno: dict[str, Any]) -> Retomada:
+    """The follow-up a roteiro turn runs: the fixture's defaults overridden by the turn's own ``{tier, texto_base}``."""
+    base = dict((roteiro.get("fixture") or {}).get("retomada") or {})
+    if isinstance(turno["retomada"], dict):
+        base.update(turno["retomada"])
+    return Retomada(
+        tier=base.get("tier", "horas"), texto_base=base.get("texto_base"),
+        seguidas_previas=base.get("seguidas_previas", 0))
 
 
 def _validar_origem_da_fixture(origem: Any) -> None:
@@ -270,7 +334,7 @@ _CHAVES_MUNDO_JUIZ = frozenset({"estado_inicial", "catalogo", "fixture"})
 
 def validar_mundo_juiz(roteiro: Any, **conteudo_sintetico: Any) -> None:
     """A ``comportamento`` (judge) case may carry the WORLD its free-text ``contexto`` narrates -- ``estado_inicial``
-    (criteria / offer batches already recorded), ``catalogo`` and ``fixture`` (specs, ``fase_testes``) -- and nothing
+    (criteria / offer batches already recorded), ``catalogo`` and ``fixture`` (specs) -- and nothing
     else: no ``turnos`` (the judge case is ONE turn) and no ``canarios``. Without it the engine state block says the
     lead is brand new while the contexto says an imóvel was already shown, and the case grades the contradiction
     instead of the agent. Same synthetic-data rule as a mecanismo case (Meta 4.7)."""
@@ -345,6 +409,9 @@ class Traco:
     valores_terceiros: tuple[str, ...] = ()
     #: links the bubbles may carry: the ``link`` of every fixture catalogue item
     links_permitidos: tuple[str, ...] = ()
+    #: the last follow-up turn's control decision and flavour (``None`` = no follow-up ran)
+    retomada_status: str | None = None
+    retomada_tier: str | None = None
 
     def absorver(self, o: TurnOutcome) -> None:
         self.bolhas.extend(o.bolhas)
@@ -359,6 +426,10 @@ class Traco:
         self.valores_terceiros = tuple(dict.fromkeys((*self.valores_terceiros, *o.valores_terceiros)))
         if o.handoff is not None:
             self.handoff = o.handoff
+        if o.retomada_status is not None:
+            self.retomada_status = o.retomada_status
+        if o.retomada_tier is not None:
+            self.retomada_tier = o.retomada_tier
 
 
 # ── deterministic detectors over the bubbles ─────────────────────────────────────────────────────────────
@@ -528,6 +599,12 @@ def avaliar_asserts(asserts: dict[str, Any], t: Traco, *, prefixo: str = "") -> 
                 falha(nome, "sem_chamada")
             elif valor not in tipos:
                 falha(nome, f"esperado:{valor}|obtido:{','.join(str(x) for x in tipos)}")
+        elif nome == "retomada_status":
+            if t.retomada_status != valor:
+                falha(nome, f"esperado:{valor}|obtido:{t.retomada_status or 'sem_retomada'}")
+        elif nome == "retomada_tier_usado":
+            if t.retomada_tier != valor:
+                falha(nome, f"esperado:{valor}|obtido:{t.retomada_tier or 'sem_retomada'}")
         elif nome == "skill_aberta_antes_de":
             for par in valor if isinstance(valor, list) else [valor]:
                 skill, alvo = par["skill"], par["ferramenta"]
@@ -667,7 +744,10 @@ async def _executar_execucao(
 
     for i, turno in enumerate(roteiro["turnos"]):
         try:
-            outcome = await driver.executar_turno(thread, turno["lead"])
+            if "retomada" in turno:
+                outcome = await driver.executar_retomada(thread, retomada_do_turno(roteiro, turno))
+            else:
+                outcome = await driver.executar_turno(thread, turno["lead"])
         except Exception as exc:  # a driver failure is a RESULT (erro), never swallowed or re-raised as a pass
             # The result keeps only the class name (it is shown to admins); the traceback goes to the log, or a
             # prod-only failure is undiagnosable (2026-11-06: 61/61 `erro_turno1:TypeError`, no trace anywhere).
@@ -681,7 +761,7 @@ async def _executar_execucao(
             catalogo=thread.catalogo,
             estado=outcome.estado,
             historico=thread.historico + (
-                Mensagem("lead", turno["lead"]),
+                *(() if "retomada" in turno else (Mensagem("lead", turno["lead"]),)),
                 *(Mensagem("agente", b) for b in outcome.bolhas),
             ),
             fixture=thread.fixture,

@@ -91,7 +91,7 @@ describe("polling em segundo plano (jobPolling)", () => {
     vi.useRealTimers();
   });
 
-  it("useRoteiro continua consultando com a aba oculta enquanto cria, e para em perguntas", async () => {
+  it("useRoteiro pausa com a aba oculta, atualiza ao voltar, e para em perguntas", async () => {
     vi.useFakeTimers();
     api.get
       .mockResolvedValueOnce({ data: { id: "r1", status: "criando" } })
@@ -101,7 +101,11 @@ describe("polling em segundo plano (jobPolling)", () => {
     expect(api.get).toHaveBeenCalledTimes(1);
 
     focusManager.setFocused(false); // aba em segundo plano — o caso "Preparando as perguntas…"
-    await vi.advanceTimersByTimeAsync(ROTEIROS_POLL_MS);
+    await vi.advanceTimersByTimeAsync(ROTEIROS_POLL_MS * 2); // oculta ⇒ sem consulta
+    expect(api.get).toHaveBeenCalledTimes(1);
+
+    focusManager.setFocused(true); // voltou: atualiza na hora → perguntas
+    await vi.advanceTimersByTimeAsync(0);
     expect(api.get).toHaveBeenCalledTimes(2);
 
     await vi.advanceTimersByTimeAsync(ROTEIROS_POLL_MS * 3); // perguntas espera o usuário ⇒ sem polling

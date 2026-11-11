@@ -43,6 +43,7 @@ matching the Protocol contract.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any, Optional, Sequence
@@ -50,6 +51,7 @@ from uuid import UUID
 
 import secrets
 
+from noctusai_lib.api.auth.session.store import is_valid_session_id, session_id_digest
 from noctusai_lib.api.auth.session.types import AuthContext, SessionTokens
 from noctusai_lib.security.encrypted_tokens import (
     MultiKeyDecryptor,
@@ -61,6 +63,13 @@ logger = logging.getLogger(__name__)
 # Namespaced so session keys never collide with the LLM cache or rate-limiter
 # in a shared Redis db.
 _KEY_PREFIX = "nai_session:"
+# NOC-REMEDIATE[session-dual-read-sunset]: drop `_adopt_legacy` / `_legacy_key` and the legacy-key delete once
+# every pre-hash record has expired (max session TTL is 24h; remove after one full TTL past the hash deploy,
+# verify with `noctus.vps.exec redis-cli --scan --pattern 'nai_session:*'` showing only 64-hex names). — 2026-11-10
+# NOC-REMEDIATE[redis-session-mac]: session records carry no MAC and the `nai_session:` family is a shared
+# name across products, so a compromised product's Redis user can WRITE a record another product will honour
+# (cross-product session forging). Fix at this seam: a per-product key prefix or an HMAC over the record keyed
+# per deployment. KB § PATTERNS/devops/redis-acl-lockdown.md — 2026-11-10
 
 
 class RedisSessionStore:
@@ -124,7 +133,28 @@ class RedisSessionStore:
 
     @staticmethod
     def _key(session_id: str) -> str:
+        """Redis key = ``nai_session:`` + sha256(session_id). The session id IS the cookie value (a bearer
+        secret): keying by it would make every key name (SCAN, ACL LOG, MONITOR, a Redis dump) a usable
+        credential. The hash makes names inert; `_legacy_key` keeps pre-hash records readable."""
+        return f"{_KEY_PREFIX}{session_id_digest(session_id)}"
+
+    @staticmethod
+    def _legacy_key(session_id: str) -> str:
         return f"{_KEY_PREFIX}{session_id}"
+
+    async def _adopt_legacy(self, client, session_id: str) -> None:
+        """DUAL READ: move a pre-hash record (raw-id key) onto the hashed key. RENAME is atomic and keeps the
+        TTL, so deploying the hash logs nobody out. No-op (ResponseError 'no such key') when there is none."""
+        from redis.exceptions import ResponseError
+
+        # ONLY a legacy-shaped id may adopt. Without this, presenting a key HASH `H` as a cookie RENAMEd the
+        # victim's `nai_session:H` onto sha256(H): the attacker got the session and the victim was logged out.
+        if not is_valid_session_id(session_id):
+            return
+        try:
+            await client.rename(self._legacy_key(session_id), self._key(session_id))
+        except ResponseError:
+            return
 
     # ── at-rest crypto (SEC-3) ────────────────────────────────────────
 
@@ -197,11 +227,18 @@ class RedisSessionStore:
         client = self._get_client()
         # EXPIRE is a no-op (returns 0) when the key is absent — matches the
         # Protocol's "no-op when the session is already absent".
-        await client.expire(self._key(session_id), ttl_seconds)
+        if not await client.expire(self._key(session_id), ttl_seconds):
+            await self._adopt_legacy(client, session_id)
+            await client.expire(self._key(session_id), ttl_seconds)
 
     async def delete(self, session_id: str) -> None:
         client = self._get_client()
-        await client.delete(self._key(session_id))
+        # Both forms: a not-yet-migrated legacy record must not outlive its logout.
+        # (Only a legacy-shaped id owns a legacy key: `delete(<a key hash>)` must not log the victim out.)
+        keys = [self._key(session_id)]
+        if is_valid_session_id(session_id):
+            keys.append(self._legacy_key(session_id))
+        await client.delete(*keys)
 
     async def read_tokens(self, session_id: str) -> SessionTokens | None:
         record = await self._read_record(session_id)
@@ -224,7 +261,7 @@ class RedisSessionStore:
         aal: str | None = None,
     ) -> None:
         client = self._get_client()
-        raw = await client.get(self._key(session_id))
+        raw = await self._get_raw(client, session_id)
         if raw is None:
             # Raced with logout/expiry — no session to update. No-op (the
             # caller re-resolves and 401s); do NOT recreate the key (that
@@ -245,10 +282,17 @@ class RedisSessionStore:
         # absolute expiry must not move here.
         await client.set(self._key(session_id), json.dumps(record), keepttl=True)
 
+    async def _get_raw(self, client, session_id: str):
+        raw = await client.get(self._key(session_id))
+        if raw is None:
+            await self._adopt_legacy(client, session_id)
+            raw = await client.get(self._key(session_id))
+        return raw
+
     async def _read_record(self, session_id: str) -> Optional[dict]:
         """GET + JSON-decode the raw record; ``None`` if absent/expired/corrupt."""
         client = self._get_client()
-        raw = await client.get(self._key(session_id))
+        raw = await self._get_raw(client, session_id)
         if raw is None:
             # Absent OR expired (Redis evicted the key) — both are "no session".
             return None

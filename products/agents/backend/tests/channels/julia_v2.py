@@ -15,6 +15,7 @@ from app.channels.tool_registry import TOOLS
 from app.qualificacao.models import CriterioDef
 from app.stores.studio_definitions import SectionInput
 from app.stores.studio_definitions_conteudo import DecisaoInput, FerramentaInput, SpecDefInput, TextoInput
+from app.studio.ferramentas_registry import FERRAMENTAS_CONHECIDAS
 from app.studio.textos_registry import TEXTOS, chaves_exigidas
 from tests.qualificacao.fixture_v1 import versao_v1
 from tests.qualificacao.harness import ADMIN
@@ -49,6 +50,7 @@ def textos_completos() -> list[TextoInput]:
     chaves = chaves_exigidas(
         tool_policy={"web_search": False, "knowledge": False}, tem_skills=True, com_cliente=False, canal=True,
         com_qualificacao=True, com_dados_org=True,  # a Julia with free-text org specs fences them (E3)
+        ferramentas_ativas=frozenset(FERRAMENTAS_CONHECIDAS),  # Julia offers every channel tool
     )
     return [TextoInput(c, texto_de(c)) for c in sorted(chaves)]
 

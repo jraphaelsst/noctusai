@@ -164,6 +164,12 @@ scripts/archive-clean-last-sweep.log
 # NOCTUS_CACHE_PG_PASSWORD + the Postgres DSN. Lives in the TRACKED
 # deploy/fleet/ directory, so it needs a rule the same way tunnel/ does.
 .env.fleet
+# Redis ACL lockdown outputs (noctus.dev.redis_acl render --write): users.acl, per-service env,
+# ops.pass/trip.pass/probe.pass, cutover.services. Written on the VPS only; nothing generated is committed.
+deploy/fleet/redis-auth/
+# The cut-over override is host-local, gitignored, written by render --services: committing it made a routine promote
+# arm a guard before the rollout steps ran. KB § PATTERNS/devops/redis-acl-lockdown.md
+deploy/fleet/compose.redis-auth.prod.yml
 
 # Lead-control spreadsheet — 12k client names + phone numbers (LGPD). Imported to
 # Supabase locally, never committed. See products/social-wiring/projects/leads-module-PROJECT.md D6.

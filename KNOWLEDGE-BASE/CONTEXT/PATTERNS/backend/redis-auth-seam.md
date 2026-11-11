@@ -10,6 +10,10 @@
 - **`REDIS_REQUIRE_AUTH=true`** (settings: `redis_require_auth`) makes the seam raise `RedisAuthRequired` at construction when no credentials resolve — fail-closed, loud, never an unauthenticated connection and never a silent in-memory fallback (the rate limiter re-raises it). Default false so nothing breaks before the rollout; turn it on in prod once Redis has the password.
 - Settings fields (`BaseAppSettings`): `redis_username`, `redis_password` (SecretStr), `redis_require_auth`. The seam reads the process env, so they must be exported (compose `environment:`/`env_file:`), same as `REDIS_URL`.
 
+## Server side
+
+Prod Redis's ACL users, aclfile and per-service credentials are derived, not hand-kept: `KB § PATTERNS/devops/redis-acl-lockdown.md` (`noctus.dev.redis_acl`). Products receive `REDIS_USERNAME`/`REDIS_PASSWORD`/`REDIS_REQUIRE_AUTH=true` from a per-service env file; the seam needs no code change.
+
 ## Gate
 
 Keeper `check_redis_client_via_seam` (`--check-redis-client-via-seam`): AST scan of `seed/**/backend` + ACTIVE products' backend (`deploy/fleet/active-scope.txt`). Pre-commit runs it with `--paths` = the staged backend `.py` files only, so a commit is judged on what it touches. Full audit: run the flag with no `--paths`; also part of the aggregate compliance sweep.
