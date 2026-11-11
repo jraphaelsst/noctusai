@@ -25551,7 +25551,11 @@ _NON_COMMITTAL = (
     r"\b(not|never|dont|don't|do not|isn't|isnt|cannot|can't|cant|can not|won't|wont|"
     r"shouldn't|shouldnt|couldn't|couldnt|wouldn't|wouldnt|mustn't|mustnt|without|"
     r"stop|avoid|hold off|not yet|before|until|unless|if|whether|should we|"
-    r"can we|could we|would we|do we|are we|when do|how do|what if|keep on)\b"
+    r"can we|could we|would we|do we|are we|when do|how do|what if|keep on|"
+    # purpose / possibility / example framing (8a, same 2026-11-11 turn): "so we can deploy to prod once on a
+    # schedule ... for example" describes a FUTURE cadence, it does not ask.
+    r"so we can|so that|we can|we could|we'd|we would|would|could|might|able to|for example|"
+    r"for instance|someday|eventually|one day|in the future)\b"
 )
 
 
