@@ -115,7 +115,7 @@ function LeadCard({ lead, stages, onEdit, onDelete, onMoveStage, isDragging = fa
   const [showMoveMenu, setShowMoveMenu] = useState(false);
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm hover:shadow-md transition-shadow cursor-default group">
+    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-xs hover:shadow-md transition-shadow cursor-default group">
       {/* Name + actions */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <span className="font-medium text-sm text-gray-900 leading-tight line-clamp-2">
@@ -374,7 +374,7 @@ function LeadFormDialog({
                 value={form.stage_id}
                 required
                 onChange={(e) => set("stage_id", e.target.value)}
-                className="w-full h-10 rounded-md border border-gray-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                className="w-full h-10 rounded-md border border-gray-300 bg-white px-3 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500/50"
               >
                 <option value="" disabled>Selecione uma etapa</option>
                 {stages.map((s) => (
@@ -545,7 +545,7 @@ function LeadDetailPanel({ lead, stages, onClose, onEdit }: LeadDetailPanelProps
               <select
                 value={actType}
                 onChange={(e) => setActType(e.target.value)}
-                className="h-8 rounded border border-gray-300 bg-white px-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="h-8 rounded border border-gray-300 bg-white px-2 text-xs focus:outline-hidden focus:ring-1 focus:ring-blue-500"
               >
                 <option value="nota">Nota</option>
                 <option value="ligacao">Ligação</option>

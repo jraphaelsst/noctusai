@@ -21,6 +21,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from noctusai_lib.api.access_tiers import access_tier
 from noctusai_seed.organ_auth import make_organ_auth
 
 from app import billing
@@ -84,6 +85,7 @@ async def list_charges(
 
 
 @router.post("/charges", response_model=ChargeOut, status_code=status.HTTP_201_CREATED)
+@access_tier("org", reason="org ADMIN of the selected org (make_organ_auth.admin)")
 async def create_extra_charge(payload: ExtraChargeCreate, auth: tuple = Depends(admin_dependency)) -> ChargeOut:
     org_id = _org(auth)
     try:
@@ -100,6 +102,7 @@ async def create_extra_charge(payload: ExtraChargeCreate, auth: tuple = Depends(
 
 
 @router.post("/charges/{entry_id}/generate", response_model=ChargeOut, status_code=status.HTTP_200_OK)
+@access_tier("org", reason="org ADMIN of the selected org (make_organ_auth.admin)")
 async def generate_charge(entry_id: str, auth: tuple = Depends(admin_dependency)) -> ChargeOut:
     org_id = _org(auth)
     try:

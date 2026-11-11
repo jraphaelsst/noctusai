@@ -390,6 +390,10 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append("--migrate-product-confirm")
         if kwargs.get("target"):
             argv.append(f"--migrate-product-target={kwargs['target']}")
+        if kwargs.get("upto"):
+            argv.append(f"--migrate-product-upto={kwargs['upto']}")
+        if kwargs.get("allow_out_of_order"):
+            argv.append("--migrate-product-allow-out-of-order")
         if kwargs.get("sha"):
             argv.append(f"--migrate-product-sha={kwargs['sha']}")
         if kwargs.get("project_ref"):
@@ -522,7 +526,7 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
 _MAPPED_PARAMS: dict[str, frozenset[str]] = {
     "release": frozenset({"stage", "confirm", "sha", "mode", "release_branch"}),
     "migrate_product": frozenset({
-        "product", "confirm", "target", "sha", "project_ref", "schema",
+        "product", "confirm", "target", "upto", "allow_out_of_order", "sha", "project_ref", "schema",
         "worktree_path", "allow_stale_tree", "allow_inactive",
     }),
     "deploy_image": frozenset({

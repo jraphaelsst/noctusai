@@ -115,13 +115,11 @@ const SNAPSHOT_ITEM = {
 };
 
 const PUBLIC_REPORT = {
-  report_id: "rep-2",
   name: "Relatório Q2 Publicado",
   period_start: "2026-04-01",
   period_end: "2026-06-30",
   status: "published",
   expires_at: null,
-  snapshot_id: "snap-2",
   generated_at: "2026-06-01T12:00:00Z",
   payload: { leads: 18, revenues: 8500 },
 };
@@ -316,7 +314,7 @@ describe("usePublicReport", () => {
     expect(pub.name).toBe("Relatório Q2 Publicado");
     expect(pub.status).toBe("published");
     expect(pub.payload.leads).toBe(18);
-    expect(pub.snapshot_id).toBe("snap-2");
+    expect(pub.generated_at).toBe("2026-06-01T12:00:00Z");
   });
 
   it("error state — not found or expired (404)", async () => {

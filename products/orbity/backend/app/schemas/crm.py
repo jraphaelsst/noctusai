@@ -7,10 +7,11 @@ Outbound models use extra="ignore" (DB may return extra columns).
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Literal, Optional
 from uuid import UUID
 
-from pydantic import EmailStr, Field
+from pydantic import EmailStr, Field, model_validator
 
 from noctusai_lib.api import StrictHttpModel
 
@@ -70,6 +71,10 @@ class ActivityCreate(StrictHttpModel):
 # Public capture inbound — less strict (unknown keys → custom_fields)
 # ---------------------------------------------------------------------------
 
+CAPTURE_MAX_CUSTOM_FIELDS = 20
+CAPTURE_MAX_CUSTOM_BYTES = 8 * 1024
+
+
 class LeadCaptureRequest(StrictHttpModel):
     """Public lead capture: known keys mapped to columns; rest → custom_fields.
 
@@ -86,6 +91,17 @@ class LeadCaptureRequest(StrictHttpModel):
     stage_id: Optional[UUID] = None
 
     model_config = {"extra": "allow"}  # unknown fields forwarded to custom_fields
+
+    @model_validator(mode="after")
+    def _cap_custom_fields(self) -> "LeadCaptureRequest":
+        """The extras land in ``leads.custom_fields`` (JSONB) from an UNAUTHENTICATED call: bound their key count and size
+        so one POST cannot store an arbitrarily large document (security review F7)."""
+        extra = self.model_extra or {}
+        if len(extra) > CAPTURE_MAX_CUSTOM_FIELDS:
+            raise ValueError(f"too many custom fields (max {CAPTURE_MAX_CUSTOM_FIELDS})")
+        if len(json.dumps(extra, default=str, ensure_ascii=False).encode("utf-8")) > CAPTURE_MAX_CUSTOM_BYTES:
+            raise ValueError(f"custom fields too large (max {CAPTURE_MAX_CUSTOM_BYTES} bytes)")
+        return self
 
 
 # ---------------------------------------------------------------------------

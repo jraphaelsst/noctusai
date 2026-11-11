@@ -98,6 +98,21 @@ class MissingProdConfigError(RuntimeError):
         )
 
 
+# Env values that EXPLICITLY say "this is a developer / test process". The inverse of the deploy signal above, and NOT
+# its complement: an unset or unknown APP_ENV is neither "deploy" nor "local" -- a fail-closed caller (a webhook that may
+# skip signature verification only on a laptop) must treat it as production.
+_LOCAL_APP_ENVS: frozenset[str] = frozenset({"local", "dev", "development", "test", "testing"})
+
+
+def is_explicit_local_env() -> bool:
+    """``True`` ONLY when ``APP_ENV`` is explicitly ``local`` / ``dev`` / ``development`` / ``test`` / ``testing``.
+
+    Unset, empty, unknown (``prod``, ``staging``, a typo...) all mean ``False``. Use it to gate a SECURITY RELAXATION
+    (e.g. accepting an unsigned webhook) so that forgetting to pin the environment fails CLOSED -- unlike
+    ``not is_deploy_context()``, which treats an unpinned production container as a dev shell."""
+    return os.environ.get("APP_ENV", "").strip().lower() in _LOCAL_APP_ENVS
+
+
 def is_deploy_context() -> bool:
     """Return ``True`` iff the process is running in a deploy context.
 
