@@ -9,6 +9,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "mcp" / "noctusai"))
 
@@ -25,6 +27,16 @@ instances:
     product: monica
     line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}
 """
+@pytest.fixture
+def plain_root(tmp_path):
+    """A checkout whose fleet file declares NO personal line: these tests are about the confirm gate, and must not change
+    verdict when the real fleet declares one (the real file has its own pin at the bottom)."""
+    d = tmp_path / "deploy" / "fleet"
+    d.mkdir(parents=True)
+    (d / "waha-instances.yml").write_text(PLAIN_VPS_YML)
+    return str(tmp_path)
+
+
 def _fake_run(captured):
     def _run(cmd):
         if cmd.startswith("cat ") and "waha-instances.yml" in cmd:   # the VPS's own declaration (readable, no personal line)
@@ -144,10 +156,10 @@ from tools.noctus.dev.vps_exec import touches_waha_core  # noqa: E402
     "curl --data-binary @f http://localhost:3000/",
     "wget --post-data=a http://localhost:3000/",
 ])
-def test_metacharacters_and_non_get_http_leave_the_read_only_path(cmd):
+def test_metacharacters_and_non_get_http_leave_the_read_only_path(cmd, plain_root):
     assert _is_read_only(cmd) is False
     cap = {}
-    out = exec_cmd(cmd, run_remote=_fake_run(cap))
+    out = exec_cmd(cmd, run_remote=_fake_run(cap), repo_root=plain_root)
     assert out["status"] == "needs_confirm" and "docker exec" not in cap.get("cmd", "")  # the command never reached the VPS
 
 
@@ -157,9 +169,9 @@ def test_plain_reads_still_run_free(cmd):
 
 
 @pytest.mark.parametrize("cmd,container", [
-    ("cat /app/.sessions/x", "noctus-waha-assistant-core"),
-    ("docker exec noctus-waha-assistant-core cat /x", None),
-    ("docker logs waha-assistant-core", None),
+    ("cat /app/.sessions/x", "noctus-waha-x-core"),
+    ("docker exec noctus-waha-x-core cat /x", None),
+    ("docker logs waha-x-core", None),
     ("docker exec noctus-waha-monica ls", None),
 ])
 def test_any_waha_core_target_needs_the_confirm_flow_even_when_the_binary_is_a_read(cmd, container):
@@ -207,7 +219,7 @@ class Inventory:
         if cmd.startswith("cat ") and "waha-instances.yml" in cmd:
             return 0, PLAIN_VPS_YML, ""
         if "--filter name=waha" in cmd:
-            return self.rc, "abc123def4567890 /noctus-waha-assistant-core waha-assistant-core 172.18.0.7 \n", ""
+            return self.rc, "abc123def4567890 /noctus-waha-x-core waha-x-core 172.18.0.7 \n", ""
         return 0, "OUT", ""
 
 
@@ -475,3 +487,20 @@ def test_host_level_access_stays_allowed_when_no_personal_line_exists_anywhere(r
 def test_ordinary_reads_stay_allowed_beside_a_personal_line(personal_root):
     for cmd in ("cat /etc/hostname", "ls /opt/noctus", "grep -r foo /app"):
         assert exec_cmd(cmd, run_remote=PersonalInventory(), repo_root=personal_root)["status"] != "refused", cmd
+
+
+# ── the REAL fleet file: the Assistant's number is personal, so its core is refused (S6) ──────────────────────────────
+
+
+@pytest.mark.parametrize("cmd,container", [
+    ("cat /app/.sessions/x", "noctus-waha-assistant-core"),
+    ("docker exec noctus-waha-assistant-core cat /x", None),
+    ("docker logs waha-assistant-core", None),
+    ("docker logs waha-assistant", None),
+])
+@pytest.mark.parametrize("confirm", [False, True])
+def test_the_real_assistant_line_is_personal_and_refused_with_or_without_confirm(cmd, container, confirm):
+    cap = {}
+    out = exec_cmd(cmd, container=container, confirm=confirm, run_remote=_fake_run(cap))   # reads THIS checkout's fleet file
+    assert out["status"] == "refused" and "personal" in out["error"], (cmd, out)
+    assert "docker" not in cap.get("cmd", "") and "cat /app" not in cap.get("cmd", "")  # the command never reached the VPS
