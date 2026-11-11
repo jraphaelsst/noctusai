@@ -270,6 +270,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-slip-shield", action="store_true", help="Pre-deploy SLIP-SHIELD: surface s2-memory codification slip candidates touching files in this deploy. Severity warning. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-pre-deploy-gate", action="store_true", help="Composite pre-deploy gate: runs reachable + backend-env + drift-shield + slip-shield in sequence. Use in CI / pre-deploy automation. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
     parser.add_argument("--check-waha-instances-render-sync", action="store_true", help="deploy/fleet/compose.waha.yml must equal the render of deploy/fleet/waha-instances.yml (one WAHA Core container per number, declared as data). Severity high. KB § CONTEXT/INTEGRATIONS/whatsapp.md.")
+    parser.add_argument("--check-http-detail-echoes-exception", action="store_true", help="BLOCKING keeper (owner rule 'no-leaking' 2026-11-11): an HTTPException detail / error JSONResponse body never carries exception text (str(exc), f'{exc}', repr(exc), exc.args). Seed = zero tolerance; products ratcheted by deploy/security/http-detail-echo-baseline.json. Construction: noctusai_lib.api.integration_errors.integration_error. KB § PATTERNS/security/appsec-craft-canon.md.")
+    parser.add_argument("--update-http-detail-echo-baseline", action="store_true", help="Shrink deploy/security/http-detail-echo-baseline.json to the echoes still present (never grows); add --grow only to seed it the first time.")
+    parser.add_argument("--grow", action="store_true", help="With --update-http-detail-echo-baseline: allow adding entries (first seeding only).")
     parser.add_argument("--check-access-tier-routes", action="store_true", help="BLOCKING keeper (access tiers, owner directive 2026-11-05): every route of every ACTIVE product resolves to a tier (platform|service|org|public) and Platform IP (studio/agents definitions, evals, prompts, admin) never sits behind a weaker dependency. Ratcheted by deploy/security/access-tier-baseline.json. KB § PATTERNS/security/access-tiers.md.")
     parser.add_argument("--check-access-tier-tables", action="store_true", help="BLOCKING keeper: a Platform-IP table has no authenticated/anon grant and no non-admin TO authenticated policy in the migration chain (PostgREST exposure counts); with --paths (staged ADDED migrations) every new table must declare COMMENT ON TABLE ... IS 'tier:x'. Ratcheted. KB § PATTERNS/security/access-tiers.md.")
     parser.add_argument("--check-access-tier-streams", action="store_true", help="BLOCKING keeper: a route publishing message.delta-style partial LLM output to a browser must pass it through the leak filter (FiltroDeltas). Ratcheted. KB § PATTERNS/security/access-tiers.md.")
@@ -1321,6 +1324,29 @@ def main():
             print(f"  {GREEN}✓ new-org-table-rls: every new org_id table enables RLS and is org-scoped or service-role-only.{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} new-org-table-rls finding(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i.get('line', 0)} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_http_detail_echoes_exception or args.update_http_detail_echo_baseline:
+        from settings import REPO_ROOT
+        from tools.noctus.dev import http_detail_echo
+        from tools.noctus.dev.compliance import check_http_detail_echoes_exception
+        from tools.noctus.dev.gate_alignment import record_event
+        if args.update_http_detail_echo_baseline:
+            counts = http_detail_echo.write_baseline(REPO_ROOT, grow=args.grow)
+            print(f"  baseline written: {counts} ({sum(counts.values())} total)")
+            sys.exit(0)
+        issues = check_http_detail_echoes_exception(repo_root=REPO_ROOT)
+        stale = http_detail_echo.stale_entries(REPO_ROOT)
+        if stale:  # telemetry: the backlog is draining; the baseline shrinks with --update-http-detail-echo-baseline
+            print(f"  {YELLOW}note: {len(stale)} baseline entr(ies) already fixed; run --update-http-detail-echo-baseline to shrink.{RESET}")
+        record_event("keeper:check-http-detail-echoes-exception", "deny" if issues else "pass", kind="keeper",
+                     target="http-detail-echo",
+                     reason=f"new_findings={len(issues)} baseline_size={len(http_detail_echo.load_baseline(REPO_ROOT))}")
+        if not issues:
+            print(f"  {GREEN}✓ no new HTTP error body echoes exception text (seed clean; product baseline respected).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} http-detail-echo finding(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i.get('line', 0)} — {i['issue']}")
         sys.exit(1)
