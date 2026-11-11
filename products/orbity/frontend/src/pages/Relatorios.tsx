@@ -270,7 +270,7 @@ function ReportDialogInner({ open, editing, onClose }: ReportDialogProps) {
               required
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               placeholder="Ex: Relatório Q2 2026 – Cliente ACME"
             />
           </div>
@@ -283,7 +283,7 @@ function ReportDialogInner({ open, editing, onClose }: ReportDialogProps) {
                 required
                 value={form.period_start}
                 onChange={(e) => setForm((f) => ({ ...f, period_start: e.target.value }))}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
             <div>
@@ -293,7 +293,7 @@ function ReportDialogInner({ open, editing, onClose }: ReportDialogProps) {
                 required
                 value={form.period_end}
                 onChange={(e) => setForm((f) => ({ ...f, period_end: e.target.value }))}
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
           </div>
@@ -306,7 +306,7 @@ function ReportDialogInner({ open, editing, onClose }: ReportDialogProps) {
                 onChange={(e) =>
                   setForm((f) => ({ ...f, status: e.target.value as ReportStatus }))
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <option value="draft">Rascunho</option>
                 <option value="published">Publicado</option>
@@ -323,7 +323,7 @@ function ReportDialogInner({ open, editing, onClose }: ReportDialogProps) {
                     expires_at: e.target.value ? e.target.value + ":00Z" : undefined,
                   }))
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
           </div>

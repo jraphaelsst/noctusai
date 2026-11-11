@@ -89,3 +89,86 @@ def test_content_claims_sweep_never_raises_when_the_database_is_down(client):
     mock = client.mock_supabase
     mock.table = lambda name: (_ for _ in ()).throw(RuntimeError("db down"))  # test double, not SUT
     asyncio.run(scheduler.job_content_claims_sweep())
+
+
+# ── polling budget: an idle tick costs ONE call (KB § PATTERNS/backend/polling-request-budget.md) ──────────────
+# A fake client makes every call free, so these count the calls an idle tick makes through a delegating proxy
+# (a wrapper handed in through the db argument -- the seam -- not a patch of our own code).
+
+class _CountingDb:
+    def __init__(self, inner):
+        self._inner, self.calls = inner, []
+
+    def table(self, name):
+        self.calls.append(("table", name))
+        return self._inner.table(name)
+
+    def rpc(self, name, params=None):
+        self.calls.append(("rpc", name))
+        return self._inner.rpc(name, params)
+
+
+def test_automation_idle_gate_is_one_call(client):
+    from app.services.automation_engine import has_due_work
+
+    mock = client.mock_supabase
+    mock.set_table_data("automation_pending_actions", [])
+    db = _CountingDb(mock)
+    assert has_due_work(db) is False
+    assert db.calls == [("table", "automation_pending_actions")]
+
+
+def test_billing_idle_gate_is_one_call(client):
+    from app.services import billing_charges
+
+    mock = client.mock_supabase
+    mock.set_table_data("billing_charges", [])
+    db = _CountingDb(mock)
+    assert billing_charges.has_billing_work(db) is False
+    assert db.calls == [("table", "billing_charges")]
+
+
+def test_idle_jobs_do_nothing_beyond_the_gate(client):
+    mock = client.mock_supabase
+    mock.set_table_data("automation_pending_actions", [])
+    mock.set_table_data("billing_charges", [])
+    asyncio.run(scheduler.job_automacao_run_due())
+    asyncio.run(scheduler.job_billing_process())
+    assert mock.table("automation_pending_actions").select("*").execute().data == []
+
+
+class _RecordingDb:
+    """Records the PostgREST ``or=`` expression an idle gate sends (the seed mock treats ``or_`` as match-all)."""
+
+    def __init__(self):
+        self.expr = None
+
+    def table(self, _name):
+        return self
+
+    def select(self, *_a, **_k):
+        return self
+
+    def or_(self, expr, *_a, **_k):
+        self.expr = expr
+        return self
+
+    def limit(self, *_a, **_k):
+        return self
+
+    def execute(self):
+        return type("R", (), {"data": []})()
+
+
+def test_idle_gates_quote_every_or_value():
+    """An unquoted ISO timestamp (`:`, `+`) or value inside `or=(...)` is the classic PostgREST parse trap: quote them."""
+    import re
+
+    from app.services import billing_charges
+    from app.services.automation_engine import has_due_work
+
+    a, b = _RecordingDb(), _RecordingDb()
+    has_due_work(a)
+    billing_charges.has_billing_work(b)
+    assert re.search(r'scheduled_for\.lte\."[^"]+\+00:00"', a.expr) and re.search(r'claimed_at\.lt\."[^"]+\+00:00"', a.expr)
+    assert 'generation_status.in.("queued","retrying","generating")' in b.expr

@@ -90,8 +90,8 @@ def _py_findings(added: str, whole: str, reg) -> list[str]:
         head = added[max(0, st - 200):st]
         if module_declared or router_gated or _ESCAPE_PY.search(head + window[:200]):
             continue
-        if re.search(r"access_tier\(\s*[\"']public[\"']", window) and not re.search(r"category\s*=\s*[\"'](?:landing|auth|pricing-checkout|legal-consent|lead-capture)[\"']", window):
-            out.append("public route without a category from the closed allowlist (landing|auth|pricing-checkout|legal-consent|lead-capture): " + window.strip().splitlines()[0][:80])
+        if re.search(r"access_tier\(\s*[\"']public[\"']", window) and not re.search(r"category\s*=\s*[\"'](?:landing|auth|pricing-checkout|legal-consent|lead-capture|token-link)[\"']", window):
+            out.append("public route without a category from the closed allowlist (landing|auth|pricing-checkout|legal-consent|lead-capture|token-link): " + window.strip().splitlines()[0][:80])
             continue
         if name_re.search(window) or "access_tier(" in window or _GATE_SHAPE.search(window):
             continue
