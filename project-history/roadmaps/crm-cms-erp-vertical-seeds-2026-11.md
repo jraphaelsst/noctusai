@@ -70,7 +70,11 @@ _(empty)_
 `KB § PATTERNS/architect/vertical-seed.md` · `seed-canonical-defaults.md` · `products-consume-canonical-organs.md` · `architecture-craft-canon.md` (§3 records, §10 expand-contract) · `product-working-scope.md` · `KB § GUIDES/absorb-seed-workspace.md` · skills `noc-absorb-product`, `noc-archive-absorb` · roadmaps `erp-seed-2026-10.md`, `commerce-seed-2026-10.md`, `monica-v1-2026-10.md`, `community-modules-1-3-2026-09.md`.
 
 ## File trail
-_(filled as slices land)_
+- 2026-11-08 · W0-2 seed Sidebar disabled/badged nav + canonical `MODULE_GROUP_ORDER` (d08fc5702); collapsed-rail badge fix (5a03132f9); core admin sidebar grouped by module (c51e9ac8c).
+- 2026-11-08 · W1-1 + W1-2 generic half: `ModuleSpec` + `defineModule`/`extendModule`/`composeModules` with per-org module enablement (a14bb9c06). Concrete `crmModule`/`erpModule`/`cmsModule` base modules are still W2-6.
+- 2026-11-08 · W1-3 `CrmPreset`, canonical stage roles, role-keyed declared no-op, four market presets (cadc95604).
+- 2026-11-11 · W3-S1 SW sidebar onto the canonical groups: feat/sw-nav-modules 81e895be6, filed to the merge queue. The approved page→group map is the owner's **SW Sidebar Mockup** artifact https://claude.ai/artifact/Vi5mP5EBhW5c1auHawP7Cs (the `nav-map.md` the plan cites was never committed; the artifact is the record). Declared deviations: `NOC-REMEDIATE[sw-nav-extend-seed-modules]` (→ W2-6) and `[sw-modules-enablement-endpoint]` (→ W1-1 follow-up).
+- 2026-11-11 · In flight: W1-4 assignment (feat/crm-assignment-organ), W1-5 activities (feat/crm-activities-organ), W1-6 keepers (feat/crm-module-keepers), and the nosnolimiar rename re-cut on current dev (feat/nosnolimiar-rename-v3; v2 was 703 behind).
 
 ## Owner answers to the plan's questions (2026-11-08)
 
@@ -79,3 +83,20 @@ _(filled as slices land)_
 - **Q3, module switches:** per COMPANY (org), **all modules on by default**, manageable from the admin dashboard. This supersedes ADR-1's "per product for now": `ModuleSpec.license_key` is live from W1-1. There is an org-level module enablement record, which noc admins toggle in core admin and which the FE nav and BE routes both honour.
 - **Q4, Mônica slug:** finish the `nosnolimiar` rename BEFORE any Mônica absorption slice. It is still gated by the standing rule that the rename runs only after "Julia prod-verified".
 - **UX fix (seed Sidebar):** in the collapsed icon rail, item badges (DEV, Em breve) must not push the icon sideways. Hide the badge when collapsed and show it when expanded, or use a better non-shifting indicator.
+
+## Owner direction 2026-11-11
+
+- **White-label complete systems, as whole products.** "we're building white-label products as a whole. sw is meant to be a complete management system, that's why this is the structure... the erp, cms crm redes sociais integration and configs structure." Each canon is a white-label complete management system for its market. White-label is a property of the whole product, not of one module.
+- **The focused products:**
+  - **SW:** the complete system for the real-estate market;
+  - **orbity:** the complete system for digital-marketing agencies;
+  - **Mônica / Nós no Limiar:** the complete system for psychoanalysis clinics;
+  - **agents:** agents for managing agents.
+- **Same structure in every market canon.** "mind that orbity and monica(nosnolimiar) also should have that same structure". New slices:
+  - **W3-O1:** orbity nav onto the canonical module groups;
+  - **W3-M0:** Mônica nav onto the canonical module groups, after the nosnolimiar rename lands.
+  - Each starts from a product-designer page→group mockup that the owner approves, as SW's did.
+  - Sequenced by the owner: "do that only after you're done with what u were doing". They start when the in-flight W1-4/W1-5/W1-6 and rename lanes are done.
+- **White-label CRM (owner idea, 2026-10-19, recovered by the 30-day sweep):** "white-label the CRM to sell it", for orbity. Now subsumed by the whole-product white-label direction above.
+  - Open question **Q5**, to answer at W7-O / before orbity's first resale: what white-label must cover per org (brand/logo/theme already exist as `marcas`; custom domain; e-mail sender name; WhatsApp line; product name in copy; the public pages under SW's security canon).
+- **Rename gate dropped.** "drop the julia hold". The nosnolimiar rename no longer waits for "Julia prod-verified". It still needs the cutover window, and the owner's own GO on C4 option B (Mônica Tangerino org + brand delete).
