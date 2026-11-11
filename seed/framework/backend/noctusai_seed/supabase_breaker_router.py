@@ -8,7 +8,7 @@ Auto-mounted on EVERY product by ``create_product_app`` (registry key ``"supabas
 
 ``fleet`` and ``http`` are NOT accepted anywhere here (the fleet kill switch is ops-only: ``noctus.dev.supabase_breaker``;
 ``http`` is never held). Auth is the canonical ``require_platform_admin`` (strict 401 / 403, the admin-MFA AAL2 assurance
-gate included): the product's session/API-token ``get_auth_context`` + the trusted ``noctus_users.role`` read. That read
+gate included): a session-cookie-only ``get_auth_context`` (``NoApiTokensResolver``: a ``noc_``/``pk_`` bearer is a strict 401 — a standard router cannot know each product's token storage) + the trusted ``noctus_users.role`` read. That read
 needs core Supabase, so when Supabase itself is the thing that is down use the independent MCP tool.
 
 KB § PATTERNS/backend/supabase-request-breaker.md
@@ -24,7 +24,7 @@ from pydantic import Field
 from noctusai_lib.api.access_tiers import access_tier, make_router
 from noctusai_lib.api.auth._blocking import run_blocking
 from noctusai_lib.api.auth.platform import require_platform_admin
-from noctusai_lib.api.auth.session import make_api_token_resolver, make_get_auth_context
+from noctusai_lib.api.auth.session import NoApiTokensResolver, make_get_auth_context
 from noctusai_lib.api.schemas import StrictHttpModel
 from noctusai_lib.primitives.supabase_breaker import BREAKER_REASON_RE, BREAKER_SOURCE_RE, get_breaker
 
@@ -64,7 +64,7 @@ def create_supabase_breaker_router(deps, settings) -> APIRouter:
 
     get_auth_context = make_get_auth_context(
         session_store=get_session_store(settings),
-        api_token_resolver=make_api_token_resolver(),
+        api_token_resolver=NoApiTokensResolver(),  # declared policy: session cookie only, no machine tokens
         session_cookie_name=_SESSION_COOKIE,
     )
     platform_admin = require_platform_admin(get_auth_context=get_auth_context, get_core_client=deps.get_core_client)

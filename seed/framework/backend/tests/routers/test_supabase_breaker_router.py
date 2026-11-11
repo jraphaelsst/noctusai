@@ -136,3 +136,16 @@ def test_P3_5_control_characters_and_overlong_reasons_are_422(reason, path):
     resp = c.post(BASE + path, json={"source": "worker:a", "reason": reason}, cookies=cookie(u.padmin, "aal2"))
     assert resp.status_code == 422
     assert get_breaker().hold_reason("worker:a") is None
+
+
+def test_builds_in_a_deploy_context_without_a_fake_token_resolver(monkeypatch):
+    """P0 regression: the auto-mounted router must not need a real API-token resolver to build in production."""
+    monkeypatch.setenv("APP_ENV", "production")
+    _build()
+
+
+@pytest.mark.parametrize("token", ["pk_abc", "noc_abc"])
+def test_api_token_bearer_is_a_strict_401(token):
+    client, _cookie, _ = _build()
+    r = client.get(BASE, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 401
