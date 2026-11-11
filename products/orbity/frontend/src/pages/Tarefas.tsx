@@ -89,7 +89,7 @@ function TaskCard({ task, onEdit, onDelete, onStatusChange, clientName }: TaskCa
   const canMoveForward = currentIdx < STATUS_COLUMNS.length - 1;
 
   return (
-    <div className="rounded-lg border border-border bg-card p-3 space-y-2 shadow-sm hover:shadow-md transition-shadow">
+    <div className="rounded-lg border border-border bg-card p-3 space-y-2 shadow-xs hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between gap-2">
         <p className="text-sm font-medium text-foreground leading-snug flex-1">{task.title}</p>
         <div className="flex gap-1 shrink-0">
