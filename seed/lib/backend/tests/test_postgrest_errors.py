@@ -36,3 +36,25 @@ def test_rls_refusal_is_a_403_not_a_500():
     body = resp.body.decode()
     assert "matricula_extracoes" not in body
     assert "permissão" in json.loads(body)["error"]["message"]
+
+
+def test_unmapped_postgrest_error_is_a_500_that_does_not_echo_driver_text(caplog):
+    """CWE-209: an unmapped pg_code returns a FIXED message; the raw text is logged only."""
+    import asyncio
+    import json
+    import logging
+
+    from noctusai_lib.primitives.exceptions import postgrest_exception_handler
+
+    sentinel = 'relation "spn_secret_table" constraint spn_secret_ck value=SPN-SENTINEL-42'
+    exc = _Coded("XX000", sentinel)
+    exc.message = sentinel
+    with caplog.at_level(logging.ERROR):
+        resp = asyncio.run(postgrest_exception_handler(None, exc))
+    assert resp.status_code == 500
+    body = resp.body.decode()
+    assert "SPN-SENTINEL-42" not in body and "spn_secret_table" not in body
+    err = json.loads(body)["error"]
+    assert err["code"] == "INTERNAL_ERROR"
+    assert err["message"] == "Erro interno do servidor"
+    assert "SPN-SENTINEL-42" in caplog.text

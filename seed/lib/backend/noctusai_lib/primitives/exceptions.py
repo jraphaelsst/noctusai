@@ -476,11 +476,12 @@ async def postgrest_exception_handler(request: Request, exc: Exception) -> JSONR
             content=format_error_response("BAD_REQUEST", "Campo obrigatório não preenchido"),
         )
 
-    # All other PostgREST errors — log and surface the message
+    # All other PostgREST errors — log the full text server-side; the body carries a
+    # FIXED message (the raw text names tables/constraints/values: CWE-209).
     logger.exception(f"PostgREST error [{pg_code}]: {message}")
     return JSONResponse(
         status_code=500,
-        content=format_error_response("INTERNAL_ERROR", message or "Erro interno do servidor"),
+        content=format_error_response("INTERNAL_ERROR", "Erro interno do servidor"),
     )
 
 
