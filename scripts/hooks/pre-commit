@@ -1219,6 +1219,15 @@ if [[ -n "$STAGED_MIO" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies-quater-bis. CRM vertical-seeds keepers (WARN-first SHADOW; W9 flips to blocking) ──
+# `check_module_page_status_rows` (every module page key has a status_pagina row) and
+# `check_stage_list_not_in_code` (funnel stages are a market CrmPreset, not code). Baselined; only NEW hits warn.
+STAGED_CRMK=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/(backend/(app/.*\.py|migrations/.*\.sql)|frontend/src/.*\.tsx?)|seed/(lib|framework)/(backend|frontend)/.*|mcp/noctusai/tests/(module_page_status_rows|stage_list_not_in_code)_baseline\.json)$' || true)
+if [[ -n "$STAGED_CRMK" ]] && have_py; then
+    "$PY" "$CLI" --check-module-page-status-rows --worktree-path "$REPO_ROOT" || echo "[pre-commit] WARNING (shadow): MODULE-PAGE-STATUS-ROWS — seed the status_pagina row for the module page key (see the finding)." >&2
+    "$PY" "$CLI" --check-stage-list-not-in-code --worktree-path "$REPO_ROOT" || echo "[pre-commit] WARNING (shadow): STAGE-LIST-NOT-IN-CODE — funnel stages belong in the market crm_preset.py (CrmPreset), not a literal." >&2
+fi
+
 # ─── 6e-quinquies-quater-ter. Silent-refusal gate (blocking) ──
 # Keeper `check_silent_refusal` (2026-10-24, N=4: F75b F76 F78 F86): a query's empty branch reachable
 # while it is in error, or an upload whose refusal nobody sees. ts-morph AST scan; no baseline (every

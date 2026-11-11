@@ -2,7 +2,7 @@
 
 > Generated from `gate-alignment-inventory.json` by `python mcp/noctusai/cli.py --gate-alignment render`. Method and rules: `KB § PATTERNS/common/gate-methodology-sync.md`. Firing counts are measured from 943 Claude Code session transcripts (~/.claude/projects, 2026-08..2026-11-05), tool results only, one count per tool call; guard-events.ndjson for live events (upper-bound-free: tool results only, one count per tool call).
 
-Totals by class: **?** 27, **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 183 gates). Mechanism burn-down: {'gates': 183, 'declared': 66, 'declared_none_justified': 12, 'undeclared_baseline': 117}.
+Totals by class: **?** 29, **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 185 gates). Mechanism burn-down: {'gates': 185, 'declared': 68, 'declared_none_justified': 12, 'undeclared_baseline': 117}.
 
 | Gate | Standard | Construction mechanism | Owner | Firings (sessions) | Class |
 |---|---|---|---|---:|---|
@@ -136,6 +136,7 @@ Totals by class: **?** 27, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | `keeper:check-methodology-doc-refs` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-migration-applied-ledger-drift` | Keeper (pre-push, DB round-trip, warning-only): per product, migration files on disk MINUS rows recorded in <r | **NONE** | backend-engineer | 0 (0) | never-fires |
 | `keeper:check-mock-schema-validation` |  | **NONE** | backend-engineer | 0 (0) | unmeasured |
+| `keeper:check-module-page-status-rows` |  | api: noctusai_seed.modules.ModuleSpec/PageSpec (seed/framework/backend/noctusai_seed/modul | tooling-engineer | 0 (0) | ? |
 | `keeper:check-motion-import-boundary` | Keeper: Motion (`motion`/`framer-motion`) may be imported ONLY via `@noctusai/lib/marketing` (provider carries | KB § PATTERNS/frontend/marketing-organs-and-motion.md (api: @noctusai/lib/marketing Motion | tooling-engineer | 0 (0) | ? |
 | `keeper:check-mutation-family-write` |  | **NONE** | frontend-engineer | 0 (0) | unmeasured |
 | `keeper:check-name-on-nome-select` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
@@ -174,6 +175,7 @@ Totals by class: **?** 27, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | `keeper:check-skill-format` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-skills-listed-in-router` | Keeper sub-leg of check_eight_way_sync: every .claude/skills/<name>/ MUST be referenced in CLAUDE.md §2 'Proce | **NONE** | tooling-engineer | 0 (0) | never-fires |
 | `keeper:check-slowapi-with-pep563` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
+| `keeper:check-stage-list-not-in-code` |  | api: noctusai_lib.domain.pipeline.presets CrmPreset + ensure_preset_stages (seed/lib/backe | tooling-engineer | 0 (0) | ? |
 | `keeper:check-stale-branch-pointers` | Safety net (pre-push) behind the task_branch pointer lifecycle: on_going/integrated-worktree-live pointers who | write-path: task_branch start/integrate/cleanup write the transitions | tooling-engineer | 0 (0) | never-fires |
 | `keeper:check-stand-in-conformance` | Keeper: a test double (mock/wrapper) must satisfy the same CONTRACT as the real thing it replaces. Built again | **NONE** | backend-engineer | 0 (0) | never-fires |
 | `keeper:check-standard-routers-audit` | standard routers mounted per product | api:create_product_app standard_routers opt-in (seed) | backend-engineer | 0 (0) | unmeasured |
@@ -250,3 +252,4 @@ Totals by class: **?** 27, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | D33 | A spec-writing advisor (product-manager, product-architect, product-designer) may Write only spec/notes files (scratchpad dir or projects/<slug>/spec/mockups); the agent files state it and a PreToolUse guard keeps it, warn-first shadow | KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/gate-methodology-sync.md | .claude/agents/product-manager.md (the Write-scope rule; the guard derives the writer set from the agent frontmatter) | guard:advisor-write | guard-events.ndjson warn/deny rows via _guard_failclosed.log_event; gate_alignment walls | feat/assistant-owner-d31-d34 |
 | D34 | A quiet but alive session's steward-role heartbeat is refreshed from a SessionStart/UserPromptSubmit hook (advisory, own rows only) | KB § PATTERNS/devops/release-steward.md | StewardStore.role_touch (heartbeat + pid) called from scripts/hooks/claude-guard-session-heartbeat.py | guard:session-heartbeat | guard-events.ndjson error rows | feat/guardian-owner-decisions |
 | D35 | The release-steward lease holder (guardian) never authors steward tooling (release_steward.py, task_branch.py); only a tooling branch steward does | KB § PATTERNS/common/gate-methodology-sync.md | guardian_holds_lease (StewardStore.holder) shared reader + the refusal message names the remedy | keeper:check-guardian-tool-authorship | gate events (deny) and allow rows with the pass-through reason | feat/guardian-tool-authorship-keeper |
+| D-CRM-1 | CRM/CMS/ERP vertical seeds: a module's page keys each have a seeded status_pagina row, and a funnel stage list is a market CrmPreset (data), never a literal in product code; both warn-first against shrink-only baselines, W9 flips them to blocking | KB § PATTERNS/frontend/status-pagina-dev-visibility.md | noctusai_seed.modules.ModuleSpec/PageSpec + noctusai_lib.domain.pipeline.presets.CrmPreset/ensure_preset_stages | keeper:check-module-page-status-rows | gate events (cli wrapper) via --check-module-page-status-rows / --check-stage-list-not-in-code; walls via --gate-alignment walls | feat/crm-module-keepers |

@@ -1,0 +1,9 @@
+{
+  "_doc": "Per-file count of literal funnel stage lists in code (check_stage_list_not_in_code). Ratchet: may only go down; W9 flips the keeper to blocking. Roadmap crm-cms-erp-vertical-seeds ADR-2.",
+  "arquivos": {
+    "products/core/backend/app/noc_funnel.py": 1,
+    "products/core/backend/app/schemas/website.py": 1,
+    "products/monica/backend/app/crm.py": 3,
+    "products/social-wiring/backend/app/modules/media_creation/esteira_config.py": 7
+  }
+}
