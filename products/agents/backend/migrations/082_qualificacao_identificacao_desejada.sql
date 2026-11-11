@@ -1,5 +1,5 @@
 -- ============================================================================
--- 078_qualificacao_identificacao_desejada.sql -- a standard DECLARES which identity fields it desires
+-- 082_qualificacao_identificacao_desejada.sql -- a standard DECLARES which identity fields it desires
 -- (owner decision 2026-11-10: derive them from the standard, in code). NULL = the version predates the key
 -- (legacy: the engine keeps rg/email/nome on a logged branch); '[]' = declared, wants none.
 -- Additive + idempotent. The draft-copy function carries the new column over.
