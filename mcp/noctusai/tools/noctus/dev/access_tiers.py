@@ -17,10 +17,13 @@ The ratchet is the living findings ledger (``access_tier_findings``): a violatio
 from __future__ import annotations
 
 import ast
+import copy
 import fnmatch
 import importlib.util
 import json
+import os
 import re
+import threading
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +35,76 @@ REGISTRY_REL = Path("seed/lib/backend/noctusai_lib/api/access_tiers.py")
 CATALOG_REL = Path("project-history/access-tiers/endpoint-catalog.md")
 _METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "websocket"}
 _SKIP_DIRS = {"tests", "test", "migrations", "node_modules", "__pycache__", "venv", ".venv", "scripts", "templates"}
+
+
+# ---------------------------------------------------------------------------
+# Per-process scan memo
+# ---------------------------------------------------------------------------
+# The four whole-tree scans (routes ~70 s, streams ~35 s, tables ~7 s on a loaded laptop) are pure functions of the
+# backend sources, the migrations and the registry. Every keeper, every ledger check and every real-tree test used to
+# redo them (a CI-parity pytest run scanned the same unchanged tree ~10x = 570 s of a 1500 s budget, 2026-11-11), so a
+# result is reused while a stat signature (path, mtime_ns, size) of EVERY input is unchanged. Any edit, add or delete
+# of an input changes the signature, so a stale answer is impossible; callers get a deep copy, never the cached object.
+_MEMO_PRUNE = _SKIP_DIRS - {"migrations"} | {"build", "dist", ".git"}
+_MEMO_SUFFIXES = (".py", ".sql")
+_MEMO_MAX = 64  # tmp-tree fixtures must not evict the real-tree entries (a size of 8 let them: 142 s re-scan)
+_memo: dict[tuple, Any] = {}
+_memo_stats = {"hits": 0, "misses": 0}
+_memo_lock = threading.Lock()
+
+
+def _inputs_signature(root: Path) -> tuple:
+    """Stat signature of everything a scan reads: every .py/.sql under products/*/backend and seed/{framework,lib}/backend
+    (pruning the dirs `_py_files` skips; `migrations` kept for the .sql), plus the product dir listing."""
+    sig: list[tuple] = []
+    prods = root / "products"
+    names = sorted(p.name for p in prods.iterdir() if p.is_dir()) if prods.is_dir() else []  # product-scope: all — signature of every input
+    sig.append(("products", tuple(names)))
+    bases = [prods / n / "backend" for n in names] + [root / "seed/framework/backend", root / "seed/lib/backend"]
+    for base in bases:
+        if not base.is_dir():
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = sorted(d for d in dirnames if d not in _MEMO_PRUNE)
+            for fn in sorted(filenames):
+                if fn.endswith(_MEMO_SUFFIXES):
+                    fp = os.path.join(dirpath, fn)
+                    try:
+                        st = os.stat(fp)
+                    except OSError:
+                        continue
+                    sig.append((fp, st.st_mtime_ns, st.st_size))
+    return tuple(sig)
+
+
+def _memoised_scan(fn):
+    """Memoise `fn(root)` on (scan name, resolved root, input signature)."""
+    name = fn.__name__
+
+    def wrapper(root: Path | None = None):
+        r = Path(root or REPO_ROOT)
+        key = (name, str(r.resolve()), _inputs_signature(r))
+        with _memo_lock:
+            if key in _memo:
+                _memo_stats["hits"] += 1
+                _memo[key] = _memo.pop(key)  # LRU touch
+                return copy.deepcopy(_memo[key])
+        value = fn(r)
+        with _memo_lock:
+            _memo_stats["misses"] += 1
+            _memo[key] = copy.deepcopy(value)
+            while len(_memo) > _MEMO_MAX:
+                _memo.pop(next(iter(_memo)))
+        return value
+
+    wrapper.__name__, wrapper.__doc__, wrapper.__wrapped__ = name, fn.__doc__, fn  # type: ignore[attr-defined]
+    return wrapper
+
+
+def scan_cache_info() -> dict[str, int]:
+    """Hit / miss / size counters of the scan memo (tests and diagnostics)."""
+    with _memo_lock:
+        return {**_memo_stats, "size": len(_memo)}
 
 
 def load_registry(root: Path | None = None):
@@ -522,6 +595,7 @@ def active_products(root: Path) -> list[str]:
     return [o for o in out if o != "seed"] + (["seed"] if (root / "seed").is_dir() else [])
 
 
+@_memoised_scan
 def classify_routes(root: Path | None = None) -> list[Route]:
     root = root or REPO_ROOT
     reg = load_registry(root)
@@ -661,6 +735,7 @@ def _migration_files(root: Path, prod: str) -> list[Path]:
     return sorted(d.glob("*.sql")) if d.is_dir() else []
 
 
+@_memoised_scan
 def analyze_tables(root: Path | None = None) -> dict[str, Any]:
     """Replay each active product's migration chain statically; return its Platform-IP tables with the grants
     and policies that expose them to ``authenticated`` / ``anon``."""
@@ -890,6 +965,7 @@ def _table_violations(root: Path) -> dict[str, dict]:
 
 
 # --- LLM streaming: delta events reach a browser only through the leak filter ---------------------------------
+@_memoised_scan
 def analyze_streams(root: Path | None = None) -> list[dict]:
     root = root or REPO_ROOT
     reg = load_registry(root)
@@ -926,6 +1002,7 @@ def analyze_streams(root: Path | None = None) -> list[dict]:
 
 
 # --- leak fingerprint: every prompt-derived source is registered at the one seam -------------------------------
+@_memoised_scan
 def analyze_fingerprint(root: Path | None = None) -> list[dict]:
     root = root or REPO_ROOT
     reg = load_registry(root)
