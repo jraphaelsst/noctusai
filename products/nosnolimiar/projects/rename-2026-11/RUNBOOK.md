@@ -10,6 +10,12 @@ Names: schema `monica` -> `nosnolimiar` · host `monica.noctusai.com` (retired, 
 · service/container/image `monica` -> `nosnolimiar` (`noctus-nosnolimiar`, `ghcr.io/jraphaelsst/noctus-nosnolimiar`)
 · WAHA `waha-monica` -> `waha-nosnolimiar` · port 8020/8240 unchanged.
 
+## Gates and decisions
+
+- **Julia prod-verified hold — DROPPED 2026-11-11.** Owner, 2026-11-11: "drop the julia hold". The window no longer waits for the Julia prod verification (it was the only external gate on scheduling it). Nothing in this branch (runbook, scripts, tests) encodes that hold.
+- **Still required at the GO:** the owner's own confirmation of C4 option B (delete MT's marca + Studio chat, delete the org "Mônica Tangerino") in the session, AFTER reading the regenerated `cutover-dry-run.sql` NOTICEs. Relayed statements are not that confirmation.
+- **Still true:** this branch is not filed/enqueued; it reaches `dev` only at the start of the owner-scheduled window (see Phase B sequencing).
+
 ## Phase B — before the window (no prod change)
 
 > **🔴 Sequencing: this branch lands on `dev` ONLY at the start of the window.** Once it is on `dev`, the next prod ship by *any* session blesses it, and `migrate_product core sha=<blessed>` applies **core 120**. That renames the catalog slug in place while the old `monica` container is still serving, which effectively opens the cutover window early. File/enqueue it (`release_steward request` / `task_branch action=enqueue slug=nosnolimiar-rename-v3`) immediately before B2, and only once the owner has scheduled the window. It was enqueued and then withdrawn on 2026-11-05 for exactly this reason (v1/v2). v3 has NOT been filed or enqueued; it is pushed only. Re-run `migration_replay` + the rename replay test on the merged tip first (a core 119+ migration landing meanwhile would not collide, but verify the number: `noctus.dev.next_migration_number product=core`).

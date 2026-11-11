@@ -52,6 +52,8 @@ See `products/nosnolimiar/projects/rename-2026-11/RUNBOOK.md` (ordered, with rol
 
 ## Decision log
 
+- 2026-11-11: owner dropped the "Julia prod-verified" hold ("drop the julia hold"). The C4 option-B confirmation at the GO still stands.
+
 - 2026-11-11: v2 retired, rename re-applied on current dev (v3). Renumbered: core 098 -> **120**, product 020 -> **022** (monica 020 `finance_rev2` / 021 `finance_service_only` landed on dev since v2 and are applied in prod under the old schema name, so they stay frozen and run BEFORE the rename). Owner 2026-11-08: finish the rename before any absorption (therapy-platform, community) into the product.
 - 2026-11-05: C4 re-cut to option B (one branding per org): MT's marca + Studio chat are deleted, never moved to NnL.
 
