@@ -13,6 +13,7 @@ from typing import Optional
 import httpx
 
 from .click_tracking import rewrite_links
+from ..wake import wake_send_loop
 from .email_optin import receives_marketing_email
 from .unsubscribe_links import (
     UNSUBSCRIBE_VARIABLE,
@@ -24,6 +25,9 @@ from .unsubscribe_links import (
 logger = logging.getLogger(__name__)
 
 VARIABLE_PATTERN = re.compile(r"\{\{(\w+)\}\}")
+
+#: The columns a queued send needs (named, never `select=*` in a tick path: KB § PATTERNS/backend/polling-request-budget.md).
+_QUEUED_COLUMNS = "id, org_id, contact_id, email, campaign_id, automation_step_id, contacts(nome, empresa, email)"
 
 DRY_RUN_REASON = "dry-run: RESEND_API_KEY not configured — email NOT delivered"
 UNSUBSCRIBE_REFUSAL = (
@@ -58,6 +62,8 @@ class SendService:
         self.settings = settings
         # Seam for tests (the Resend HTTP boundary), never for production code.
         self._http_client_factory = http_client_factory
+        #: Rows the last `process_queued_sends` picked up (0 = the queue was empty): the loop's idle signal.
+        self.last_picked = 0
 
     def queue_campaign_sends(self, campaign_id: str, org_id: str):
         """Resolve campaign recipients and create queued send_logs.
@@ -105,6 +111,7 @@ class SendService:
         } for c in contacts]
 
         self.db.table("send_logs").insert(rows).execute()
+        wake_send_loop()  # the send loop backs off when idle; this is the work it must not sleep through
 
         # Update campaign total
         self.db.table("campaigns").update({
@@ -120,13 +127,14 @@ class SendService:
         Called by the scheduler every 30 seconds.
         """
         result = await _aexec(
-            self.db.table("send_logs").select("*, contacts(nome, empresa, email)")
+            self.db.table("send_logs").select(_QUEUED_COLUMNS)
             .eq("status", "queued")
             .order("created_at")
             .limit(batch_size)
         )
 
         logs = result.data or []
+        self.last_picked = len(logs)
         if not logs:
             return 0
 

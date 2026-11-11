@@ -58,7 +58,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Literal, Optional
 
-from noctusai_lib.config.credentials import resolve_credential
+from noctusai_lib.config.credentials import invalidate_credential_cache, resolve_credential
 from noctusai_lib.integrations.documents.providers import (
     DEFAULT_DOCUMENT_PROVIDER,
     DOCUMENT_ANALYSIS_MODELS,
@@ -539,7 +539,9 @@ def put_api_key(
 ) -> StoredCredential:
     """Encrypt + UPSERT ``value`` for this org. Write-only by design —
     the returned bundle is for timestamps, never echoed to a client."""
-    return store.put(str(org_id), provider_for(name), {"value": value})
+    saved = store.put(str(org_id), provider_for(name), {"value": value})
+    invalidate_credential_cache()  # `resolve_credential` caches per org+key for 30 s: the new key is live at once
+    return saved
 
 
 def delete_api_key(store: CredentialStore, org_id: str, name: str) -> bool:
@@ -549,7 +551,9 @@ def delete_api_key(store: CredentialStore, org_id: str, name: str) -> bool:
     callers must re-resolve and tell the operator so, rather than
     reporting "removida" over a key that is still live.
     """
-    return store.delete(str(org_id), provider_for(name))
+    removed = store.delete(str(org_id), provider_for(name))
+    invalidate_credential_cache()
+    return removed
 
 
 @dataclass(frozen=True)

@@ -9,7 +9,10 @@ which ``{placeholder}`` names the runtime may fill into each, and when a key app
   ``agents.owner_product`` set) · ``runtime`` (the in-app chat runtime);
 * ``condicao`` — a compile-time condition under which the key is needed: ``web_search`` /
   ``!web_search`` / ``knowledge`` / ``!knowledge`` (the version's ``tool_policy`` flags),
-  ``skills`` (the version has ≥ 1 active skill), ``cliente`` (a client is in focus).
+  ``skills`` (the version has ≥ 1 active skill), ``cliente`` (a client is in focus);
+* ``ferramentas`` — the key is needed only when ANY of these tools is ACTIVE in the agent's EFFECTIVE tool rows (the text
+  is shown only by what that tool does). This is how a text belongs to a context without a layer name in code: an agent
+  whose effective tool set lacks the tool owes no such text. Combined with ``condicao``, both must hold.
 
 A required, applicable key that is missing or blank makes the compile carry a BLOCKING
 ``texto_ausente`` warning and publish answers 409 ``conteudo_incompleto``. There is NO default
@@ -24,11 +27,13 @@ or stops on its safety budget, answers with SILENCE unless the owner wrote a tex
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 
 __all__ = [
     "CODIGOS_RECUSA",
     "CODIGOS_RECUSA_OPCIONAIS",
+    "RECUSAS_POR_FERRAMENTA",
     "MOTIVOS_HANDOFF",
     "MOTIVO_INFO_INDISPONIVEL",
     "MOTIVOS_HANDOFF_SERVIDOR",
@@ -59,6 +64,8 @@ class TextoSpec:
     placeholders_permitidos: tuple[str, ...] = ()
     aplica_a: str = "todas"
     condicao: str | None = None
+    #: Tool names: the key is required only when any of them is active in the agent's effective tool rows.
+    ferramentas: frozenset[str] = frozenset()
     #: Platform-locked (``fixo_plataforma``): shown READ-ONLY to org admins; org specs may not
     #: contradict it (AI disclosure, opt-out, human escalation, real-estate-only scope).
     fixo_plataforma: bool = False
@@ -132,7 +139,48 @@ CODIGOS_RECUSA: tuple[str, ...] = (
 #: (the tool answers with the bare code -- never prose from code) until its content gains the row.
 #: ``skill_nao_aberta`` is RETIRED (the server auto-loads a tool's skill, ``DECISAO-SKILL-AUTOLOAD.md``): never emitted; the row
 #: stays accepted so a draft that still carries it keeps validating.
-CODIGOS_RECUSA_OPCIONAIS: tuple[str, ...] = ("documento_nao_encontrado", "documento_sem_midia", "skill_nao_aberta")
+CODIGOS_RECUSA_OPCIONAIS: tuple[str, ...] = (
+    "documento_nao_encontrado", "documento_sem_midia", "skill_nao_aberta", "emergencia_aberta",
+)
+
+_PERFIL = "registrar_perfil"
+_EVENTO_IMOVEL = ("registrar_reacao_imovel", "registrar_intencao_visita", "oferecer_imoveis", "detalhes_imovel")
+#: The tools that can answer with each refusal code (a code absent here is generic: any tool may return it, so its
+#: row is required of every channel agent -- ``argumentos_invalidos`` / ``indisponivel`` / ``limite_*``). The row of a
+#: code is required only when one of its tools is active: an agent that cannot call the tool cannot be refused by it
+#: (tested against the ``_recusa`` call sites of ``app.channels.tool_registry``).
+RECUSAS_POR_FERRAMENTA: dict[str, frozenset[str]] = {
+    c: frozenset(t) for c, t in {
+        "skill_inexistente": ("abrir_skill",),
+        "arquivo_inexistente": ("ler_arquivo_skill",),
+        **{c: (_PERFIL,) for c in (
+            "sem_itens", "itens_demais", "fonte_invalida", "criterio_repetido", "criterio_derivado",
+            "criterio_desconhecido", "nao_coletar", "fora_do_escopo", "opcao_invalida", "usar_identificacao",
+            "trecho_ausente", "trecho_longo", "trecho_curto",
+        )},
+        "versao_nao_publicada": (_PERFIL, *_EVENTO_IMOVEL),
+        "valor_invalido": (_PERFIL, "registrar_identificacao", "sinalizar_alerta"),
+        "trecho_nao_confere": (_PERFIL, "registrar_solicitacao_titular"),
+        **{c: _EVENTO_IMOVEL for c in (
+            "evento_invalido", "origem_invalida", "codigo_invalido", "motivo_longo", "lote_invalido",
+            "imovel_ja_oferecido",
+        )},
+        "imovel_nao_oferecido": ("registrar_reacao_imovel", "registrar_intencao_visita"),
+        "estagio_nao_conclusivo": ("concluir_qualificacao",),
+        "nao_pode_ofertar": ("oferecer_imoveis",),
+        "sem_codigo_campanha": ("oferecer_imoveis",),
+        "limite_ofertas": ("oferecer_imoveis", "detalhes_imovel"),
+        "identificacao_nao_devida": ("registrar_identificacao", "registrar_documento"),
+        **{c: ("registrar_identificacao",) for c in ("campo_desconhecido", "valor_nao_confere", "identificacao_indisponivel")},
+        "credito_inativo": ("consentimento_credito",),
+        "consentimento_sem_evidencia": ("consentimento_credito",),
+        "motivo_texto_ausente": ("encerrar",),
+        "opt_out_sem_evidencia": ("encerrar",),
+        "documento_nao_encontrado": ("registrar_documento",),
+        "documento_sem_midia": ("registrar_documento",),
+        "emergencia_aberta": ("encerrar",),
+    }.items()
+}
 #: ``motivo_codigo`` values the MODEL may pass to ``handoff`` (labels live in the tool row's ``parametros``).
 MOTIVOS_HANDOFF: tuple[str, ...] = (
     "pedido_humano", "reclamacao", "assunto_sensivel", "parceria", "fora_do_escopo", "outro",
@@ -146,30 +194,44 @@ MOTIVOS_HANDOFF_SERVIDOR: tuple[str, ...] = (
 )
 
 
-def _canal(categoria: str, *placeholders: str, obrigatoria: bool = True) -> TextoSpec:
+def _canal(
+    categoria: str, *placeholders: str, obrigatoria: bool = True, condicao: str | None = None,
+    ferramentas: frozenset[str] = frozenset(),
+) -> TextoSpec:
     return TextoSpec(
         categoria=categoria, obrigatoria=obrigatoria, placeholders_permitidos=tuple(placeholders),
-        aplica_a="canal",
+        aplica_a="canal", condicao=condicao, ferramentas=ferramentas,
     )
 
+
+_CREDITO = frozenset({"consentimento_credito"})
+_CONCLUIR = frozenset({"concluir_qualificacao"})
+_REENGAJAMENTO = frozenset({"avaliar_lead", "registrar_perfil"})
 
 TEXTOS.update({
     # the second system message (state + dossier) ------------------------------------------
     **{f"contexto.{k}": _canal("contexto") for k in (
         "titulo_estado", "rotulo_data_hora", "rotulo_encerrado", "sim", "nao", "rotulo_atendente",
         "rotulo_origem", "rotulo_campanha", "titulo_dossie", "dossie_vazio", "aviso_valores_cliente",
-        "rotulo_estagio", "rotulo_score", "rotulo_faltando", "rotulo_oferecidos", "rotulo_gostou",
-        "titulo_handoff", "titulo_credito", "titulo_reengajamento",
+        "titulo_handoff",
     )},
-    # Julia v3 §12.2: optional label of the "testing phase" state line (no line is rendered while it is blank)
-    "contexto.rotulo_fase_testes": _canal("contexto", obrigatoria=False),
+    # the dossier lines that read the qualification records: owed only by an agent with a qualification standard
+    **{f"contexto.{k}": _canal("contexto", condicao="qualificacao") for k in (
+        "rotulo_estagio", "rotulo_score", "rotulo_faltando", "rotulo_oferecidos", "rotulo_gostou",
+    )},
+    # the credit-consent block: shown only by an agent that can record the consent
+    "contexto.titulo_credito": _canal("contexto", ferramentas=_CREDITO),
+    # re-engagement turns are driven by the channel owner (social-wiring), which stores the schedule; the agent's
+    # definition carries no such field. Until it does, the texts follow the tools of the qualification follow-up they
+    # serve (NOC-REMEDIATE[reengajamento-sinal]: replace by a declared agent-side signal when one exists -- 2026-11-10)
+    "contexto.titulo_reengajamento": _canal("contexto", ferramentas=_REENGAJAMENTO),
     # a SIGNAL to the model when the lead's message is one of the stop words: Julia decides the opt-out (owner, 2026-11-08)
     "contexto.sinal_opt_out": _canal("contexto", obrigatoria=False),
-    **{f"credito.{k}": _canal("credito") for k in ("pedir", "consentiu", "recusou")},
-    "reengajamento.minutos": _canal("reengajamento"),
-    "reengajamento.horas": _canal("reengajamento"),
-    "reengajamento.regua": _canal("reengajamento"),
-    "reengajamento.texto_base": _canal("reengajamento", "texto_base"),
+    **{f"credito.{k}": _canal("credito", ferramentas=_CREDITO) for k in ("pedir", "consentiu", "recusou")},
+    "reengajamento.minutos": _canal("reengajamento", ferramentas=_REENGAJAMENTO),
+    "reengajamento.horas": _canal("reengajamento", ferramentas=_REENGAJAMENTO),
+    "reengajamento.regua": _canal("reengajamento", ferramentas=_REENGAJAMENTO),
+    "reengajamento.texto_base": _canal("reengajamento", "texto_base", ferramentas=_REENGAJAMENTO),
     # history of a shared thread: other agents / humans / events travel as platform ENVELOPES (no label text);
     # only the media object a lead message carried needs a label (guardrails B2) -----------------
     "historico.rotulo_midia": _canal("historico"),
@@ -188,7 +250,7 @@ TEXTOS.update({
     "ferramenta.resultado.handoff": _canal("ferramenta"),
     "ferramenta.resultado.encerrado": _canal("ferramenta"),
     "ferramenta.resultado.encerrado_opt_out": _canal("ferramenta"),
-    "ferramenta.resultado.concluido": _canal("ferramenta"),
+    "ferramenta.resultado.concluido": _canal("ferramenta", ferramentas=_CONCLUIR),
     "ferramenta.resultado.solicitacao_registrada": _canal("ferramenta"),
     # optional (a missing row = the bare ``esgotado`` flag): tells the model what to do when the catalogue has no more listings
     "ferramenta.resultado.esgotado": _canal("ferramenta", obrigatoria=False),
@@ -196,14 +258,15 @@ TEXTOS.update({
     "ferramenta.handoff.motivo_padrao": _canal("ferramenta"),
     #: replaces a lead-influenced tool argument that reproduced the prompt (spec B3.6)
     "ferramenta.campo_removido": _canal("ferramenta"),
-    "ferramenta.handoff.resumo_conclusao": _canal("ferramenta", "estagio", "score"),
+    "ferramenta.handoff.resumo_conclusao": _canal("ferramenta", "estagio", "score", ferramentas=_CONCLUIR),
     **{
-        f"ferramenta.resultado.recusa.{c}": _canal("ferramenta")
+        f"ferramenta.resultado.recusa.{c}": _canal("ferramenta", ferramentas=RECUSAS_POR_FERRAMENTA.get(c, frozenset()))
         for c in CODIGOS_RECUSA
     },
     **{
         f"ferramenta.resultado.recusa.{c}": _canal(
-            "ferramenta", *(("skill",) if c == "skill_nao_aberta" else ()), obrigatoria=False)
+            "ferramenta", *(("skill",) if c == "skill_nao_aberta" else ()), obrigatoria=False,
+            ferramentas=RECUSAS_POR_FERRAMENTA.get(c, frozenset()))
         for c in CODIGOS_RECUSA_OPCIONAIS
     },
     # runtime ----------------------------------------------------------------------------------
@@ -242,11 +305,13 @@ TEXTOS.update({
 
 
 def chaves_exigidas(
-    *, tool_policy: dict, tem_skills: bool, com_cliente: bool, canal: bool, com_qualificacao: bool = False, com_dados_org: bool = False,
-    registro: dict[str, TextoSpec] | None = None,
+    *, tool_policy: dict, tem_skills: bool, com_cliente: bool, canal: bool, ferramentas_ativas: Collection[str],
+    com_qualificacao: bool = False, com_dados_org: bool = False, registro: dict[str, TextoSpec] | None = None,
 ) -> set[str]:
     """The registry keys that are REQUIRED for this compile: ``obrigatoria``, applicable to the
-    agent's kind (``canal`` vs in-app) and whose ``condicao`` holds."""
+    agent's kind (``canal`` vs in-app), whose ``condicao`` holds and, when the key names ``ferramentas``, with at
+    least one of them in ``ferramentas_ativas`` (the active rows of the agent's EFFECTIVE tool set -- required, no
+    default: a caller that forgets it would silently under-require)."""
     registro = TEXTOS if registro is None else registro
     web = bool(tool_policy.get("web_search", False))
     kb = bool(tool_policy.get("knowledge", False))
@@ -255,6 +320,7 @@ def chaves_exigidas(
         "knowledge": kb, "!knowledge": not kb,
         "skills": tem_skills, "cliente": com_cliente, "qualificacao": com_qualificacao, "dados_org": com_dados_org,
     }
+    ativas_f = frozenset(ferramentas_ativas)
     out: set[str] = set()
     for chave, spec in registro.items():
         if not spec.obrigatoria:
@@ -264,6 +330,8 @@ def chaves_exigidas(
         if spec.aplica_a == "runtime" and canal:
             continue
         if spec.condicao is not None and not ativas[spec.condicao]:
+            continue
+        if spec.ferramentas and not (spec.ferramentas & ativas_f):
             continue
         out.add(chave)
     return out
