@@ -15,6 +15,7 @@
 #      pushed sha), nothing else in the push - is allowed from any checkout; an mq ref that
 #      does not name its sha, rides with another ref, or lacks the fresh `task_branch enqueue`
 #      attestation (<git-common-dir>/noc-enqueue/<sha>.json, ok, < 10 min) is refused (see _mq_push_guard).
+#      DELETING an mq ref (a withdrawal; riding alone) is allowed - the steward PreToolUse gate owns who.
 #
 # It ALSO change-gates the embedding-cache refresh (below). Those refreshes log
 # cost rows to an UNTRACKED spool, so this hook dirties nothing tracked and makes
@@ -84,7 +85,14 @@ _mq_push_guard() {  # reads PUSH_LINES; prints why + returns non-zero when an mq
         [[ -z "${rref:-}" ]] && continue
         if [[ "$rref" == refs/heads/mq/* ]]; then
             n_mq=$((n_mq + 1))
-            if ! [[ "$lref" =~ ^[0-9a-f]{40,64}$ && "$lref" == "$loid" ]]; then
+            if [[ "$loid" =~ $ZERO_RE ]]; then
+                # A WITHDRAWAL: deleting a queue ref drops a culprit from the drain and lands no code, so
+                # there is no sha to attest. Who may do it is judged BEFORE the push: the release-steward
+                # PreToolUse gate classifies `git push … mq/*` (incl. --delete / :mq/…) as steward-only
+                # (_git_push_gate). It still rides alone (below). 2026-11-10: refusing it left withdrawn
+                # culprits in the drain, bisected (~50 min) instead of dropped.
+                MQ_DELETE_ONLY=1
+            elif ! [[ "$lref" =~ ^[0-9a-f]{40,64}$ && "$lref" == "$loid" ]]; then
                 echo "🔴 pre-push: a merge-queue push names its commit by sha (<sha>:refs/heads/mq/...), not by a ref like '$lref'." >&2
                 bad=1
             elif ! _mq_exact "$rref" "$loid"; then
@@ -110,10 +118,15 @@ _mq_push_guard() {  # reads PUSH_LINES; prints why + returns non-zero when an mq
     fi
     return $bad
 }
+MQ_DELETE_ONLY=0
 if ! _mq_push_guard; then
     echo "" >&2
     echo "pre-push BLOCKED (merge-queue ref misuse). KB § PATTERNS/devops/merge-queue.md." >&2
     exit 1
+fi
+if [[ "$MQ_DELETE_ONLY" == 1 ]]; then  # the guard proved it rides alone: no code moves, nothing below applies
+    echo "[pre-push] merge-queue withdrawal: deleting the queue ref, no code moves."
+    exit 0
 fi
 
 # ─── origin/ledgers (2026-09-24) ─────────────────────────────────────────────
