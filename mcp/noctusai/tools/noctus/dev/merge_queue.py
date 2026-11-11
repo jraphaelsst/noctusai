@@ -177,6 +177,8 @@ def partition_wave(pool: list[Entry], paths_by_ref: dict[str, list[str]], limit:
     """Groups of area-disjoint entries that may run as concurrent candidates; [] = no wave (the caller runs ONE batch).
     Only the leading non-shared prefix of the next `limit` entries is eligible (FIFO: a shared entry waits for its turn
     and never overlaps another candidate); entries that share a product merge into one group; at most `k` groups."""
+    if k < 2:
+        return []
     prefix: list[Entry] = []
     for e in pool[:limit]:
         if SHARED_AREA in entry_areas(paths_by_ref.get(e.ref, [])):

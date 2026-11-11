@@ -827,8 +827,8 @@ def test_verify_db_guards_failure_attributes_to_the_migration_entry_of_that_prod
     enqueue(world, "code", [("products/agents/backend/app/x.py", "x\n")], 2000)
     enqueue(world, "mig-sw", [("products/sw/backend/migrations/006_s.sql", "-- s\n")], 2050)
     bad = enqueue(world, "mig-agents", [("products/agents/backend/migrations/001_a.sql", "-- BREAK\n"),
-                                        ("BREAK", "x\n")], 2100)
-    ci = FakeCI(world["origin"], failed_job="MCP Toolkit Tests",
+                                        ("products/agents/backend/BREAK", "x\n")], 2100)
+    ci = FakeCI(world["origin"], failed_job="MCP Toolkit Tests", red_if=lambda t: any("BREAK" in p for p in t),
                 failed_log=_fail_line("mcp/noctusai/tests/test_verify_db_guards.py::TestAgentsStudioProbes::test_p",
                                       "MCP Toolkit Tests"))
     res = make_queue(world, ci).drain()
@@ -839,8 +839,8 @@ def test_verify_db_guards_failure_attributes_to_the_migration_entry_of_that_prod
 
 # ── priority lane + parallel product-disjoint candidates (2026-11-11) ─────────
 
-def _paths(*names):
-    return {n: [n] for n in names}
+def _ci_runs(ci):
+    return [d for d in ci.dispatched if d[0] == mq.CI_WORKFLOW]  # post-land workflow dispatches are not CI runs
 
 
 def test_areas_and_partition_are_pure_and_conservative():
@@ -886,7 +886,7 @@ def test_two_product_disjoint_entries_run_concurrently_and_both_land_without_a_r
     ci = FakeCI(world["origin"], barrier=threading.Barrier(2))  # both runs must be in flight at once
     res = make_queue(world, ci).drain()
     assert {x["slug"] for x in res.landed} == {"a", "b"} and not res.ejected
-    assert len(ci.dispatched) == 2  # two candidates, and NO third run to re-test the second on the new tip
+    assert len(_ci_runs(ci)) == 2  # two candidates, and NO third run to re-test the second on the new tip
     assert all(r.get("parallel") for r in res.rounds)
     tree = sh(world["origin"], "git", "ls-tree", "-r", "--name-only", "dev")
     assert "products/sw/a.txt" in tree and "products/agents/b.txt" in tree
@@ -913,7 +913,7 @@ def test_shared_entry_in_front_keeps_the_single_batch(world):
     enqueue(world, "p2", [("products/agents/b.txt", "b\n")], 2200)
     ci = FakeCI(world["origin"])
     res = make_queue(world, ci).drain()
-    assert len(ci.dispatched) == 1 and not any(r.get("parallel") for r in res.rounds)
+    assert len(_ci_runs(ci)) == 1 and not any(r.get("parallel") for r in res.rounds)
     assert len(res.landed) == 3
 
 
@@ -942,7 +942,7 @@ def test_second_green_whose_derived_files_move_on_the_combined_tree_is_retested(
     ci = FakeCI(world["origin"], barrier=threading.Barrier(2))
     res = make_queue(world, ci, regen=regen).drain()
     assert {x["slug"] for x in res.landed} == {"a", "b"}
-    assert len(ci.dispatched) == 3  # a, b in parallel; b re-tested on a's tip
+    assert len(_ci_runs(ci)) == 3  # a, b in parallel; b re-tested on a's tip
     assert sh(world["origin"], "git", "show", "dev:KNOWLEDGE-BASE/counts.md") == "n=2"
 
 
