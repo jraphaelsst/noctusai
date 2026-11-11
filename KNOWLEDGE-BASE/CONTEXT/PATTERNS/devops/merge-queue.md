@@ -301,6 +301,15 @@ The message reports:
 
 **In-session feed reports batches too (2026-11-09).** `cli.py --merge-queue watch` also prints `MQ-BATCH <candidate> -> success|failure|cancelled <url>` once per finished candidate batch (the first poll is a silent baseline; a failed read prints `MQ-WATCH-ERROR batches …`). Before this an entry-only watch stayed silent through a whole bisect, because nothing leaves the list while suspects are retried. One Monitor on `^MQ-LEFT|^MQ-BATCH|^MQ-WATCH-ERROR` is the whole live loop; the procedure is skill `noc-steward`.
 
+## 6c · Toolkit shards are balanced by measured time (2026-11-11)
+
+The slowest `MCP Toolkit Tests` shard gates every batch. Round-robin by file count gave 933s / 206s / 357s / 665s
+(run `43029073315`). The split is now longest-processing-time bin packing over per-file seconds
+(`mcp/noctusai/tools/noctus/dev/ci_shards.py`, table `scripts/ci/mcp-test-durations.json`; an unknown file weighs
+the median). Predicted 540s per shard. `test_compliance.py` stays isolated. Refresh the table from a run's shard
+logs (recipe in the module docstring) when a shard drifts more than ~2x from the others. The coverage-proof job
+uses the same splitter, so a file can never be dropped or run twice. Owner-approved speedup 5.
+
 ## 7 · Limits and options
 
 - **Why not GitHub's native merge queue?** It needs an organization-owned
