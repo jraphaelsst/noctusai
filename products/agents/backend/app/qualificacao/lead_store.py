@@ -178,6 +178,7 @@ class SupabaseLeadQualificacaoStore:
             lote=r.get("lote"), motivo=r.get("motivo"), created_at=db_ts(r.get("created_at")),
             agent_id=UUID(str(r["agent_id"])) if r.get("agent_id") else None,
             thread_id=UUID(str(r["thread_id"])) if r.get("thread_id") else None,
+            catalogo=r.get("catalogo") or "imoveis_sw",
         )
 
     def listar_registros(self, org_id, lead_ref_id):
@@ -221,6 +222,8 @@ class SupabaseLeadQualificacaoStore:
             "thread_id": str(thread_id) if thread_id else None, "codigo_imovel": evento.codigo_imovel,
             "evento": evento.evento, "lote": evento.lote, "motivo": evento.motivo, "origem": evento.origem,
         }
+        if evento.catalogo != "imoveis_sw":  # the column defaults to it: a real-estate row is written exactly as before 081
+            row["catalogo"] = evento.catalogo
         resp = exec_query(self._t("lead_imovel_eventos").insert(row))
         return self._evento(resp.data[0])
 

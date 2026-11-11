@@ -124,6 +124,9 @@ class ServicosCanal:
     resumo_factory: Any | None = None
     #: ``agents.turn_metrics`` store (migration 066): one row per turn, written at its end; ``None`` = not recorded.
     metricas: Any | None = None
+    #: A catalogue that REPLACES whatever the qualification standard names (``parametros.catalogo``): the eval world's
+    #: synthetic one. ``None`` = the standard's own catalogue, built by ``catalogo_para``.
+    catalogo_fixo: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -609,7 +612,7 @@ async def _executar(
         conteudo=conteudo, compiled_hash=prep.carimbo.compiled_hash, padrao=padrao, qual=svc.qual,
         threads=svc.threads, skills=skills, sw=sw, ident=svc.ident, handoff_destino=HandoffDestino.dono_da_org(),
         marcador=prep.marcador, limites=limites, mensagens_lead=mensagens_lead, sinais=sinais, escopo=prep.escopo, estado_sw=estado_sw,
-        ferramentas_sw=ferramentas_sw, lote_lead=list(lote_lead),
+        ferramentas_sw=ferramentas_sw, lote_lead=list(lote_lead), catalogo_fixo=svc.catalogo_fixo,
         chat_id=(getattr(thread, "channel_ref", None) or {}).get("chat_id"),
         opt_out=OptOutService(
             svc.threads, svc.notificacoes, agentes=lambda oid: mapa_agentes(svc.studio_store, oid)),

@@ -20,6 +20,8 @@ _GROUPS = {
                                             {"runtime_settings_key_check", "runtime_settings_numero_fallback_e164"}),
     "076_eval_loops.sql": (vdg._AGENTS_EVAL_LOOP_PROBES,
                            {"eval_loops_parada_consistente", "uq_agents_eval_loops_ativo_por_suite"}),
+    "081_catalogo_opcoes.sql": (vdg._AGENTS_CATALOGO_PROBES,
+                                {"qualificacao_parametros_catalogo_check", "lead_imovel_eventos_catalogo_check"}),
 }
 
 

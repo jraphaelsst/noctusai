@@ -5080,6 +5080,30 @@ _AGENTS_FALLBACK_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# 081: the offer catalogue (a key on the standard's parameters, a tag on each lead event).
+_CATALOGO_MIGS = (_m("031"), _m("032"), "081_catalogo_opcoes.sql")
+_AGENTS_CATALOGO_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="qualificacao_parametros.catalogo_shape", guard_name="qualificacao_parametros_catalogo_check",
+        migrations=_CATALOGO_MIGS, setup=_JV2_PADRAO,
+        attack=(f"INSERT INTO {_JV2}.qualificacao_parametros (versao_id, minimo_para_ofertar, catalogo) "
+                "VALUES (v_pv, '{\"todos\": []}'::jsonb, '  ');"),
+        fragments=("qualificacao_parametros_catalogo_check",), what="a standard naming a blank catalogue key",
+        rationale="The key picks the adapter that serves the agent's offers; a blank one is not 'none' (NULL is), "
+                  "it is a typo the factory would refuse at the lead's first offer.",
+    ),
+    _julia_v2_probe(
+        probe_id="lead_imovel_eventos.catalogo_shape", guard_name="lead_imovel_eventos_catalogo_check",
+        migrations=_CATALOGO_MIGS, setup="\n    ".join((_JV2_AGENT, _JV2_LEAD)),
+        attack=(f"INSERT INTO {_JV2}.lead_imovel_eventos (org_id, lead_ref_id, agent_id, codigo_imovel, evento, origem, catalogo) "
+                "VALUES (v_org, v_lead, v_agent, 'noc-probe', 'oferecido', 'similar', '');"),
+        fragments=("lead_imovel_eventos_catalogo_check",), what="an offer event tagged with an empty catalogue",
+        rationale="The tag scopes the duplicate-offer rule: an empty one would make the same option offered twice "
+                  "look like two different options.",
+    ),
+)
+
+
 # 076: the eval-loop gate (G1-G7). Self-provisioning like every agents probe: a probe agent, then the loop rows.
 _LOOPS_MIGS = (_m("031"), "076_eval_loops.sql")
 
@@ -12263,6 +12287,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_CAMADAS_PROBES,
     *_AGENTS_FALLBACK_PROBES,
     *_AGENTS_EVAL_LOOP_PROBES,
+    *_AGENTS_CATALOGO_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,
     _CLIENTE_CONFLITO_STATUS_PROBE,

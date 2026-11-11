@@ -14,6 +14,7 @@ import re
 from datetime import datetime
 from typing import Any, Iterable, Sequence
 
+from app.catalogos.factory import CATALOGOS
 from app.qualificacao.identificacao import DESEJADOS_PADRAO, obrigatorios_do_padrao
 from app.qualificacao.models import (
     DERIVADOS,
@@ -518,6 +519,8 @@ def validar_versao(versao: VersaoPadrao) -> list[dict[str, str]]:
         err("parametro_invalido", "parametros.lote_ofertas", "1..5")
     if versao.parametros.score_max < 1:
         err("parametro_invalido", "parametros.score_max", ">= 1")
+    if versao.parametros.catalogo is not None and versao.parametros.catalogo not in CATALOGOS:
+        err("parametro_invalido", "parametros.catalogo", f"one of {', '.join(CATALOGOS)}")
     return erros
 
 

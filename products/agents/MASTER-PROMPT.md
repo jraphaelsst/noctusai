@@ -168,7 +168,12 @@ products/agents/backend/app/
   `itens_essenciais` (SW hard filters), nice-to-haves as `caracteristicas`; the answer's `restantes_estimados`,
   `relaxado` (axes SW widened), `similar_a_encontrado` and `itens_nao_verificaveis` (asked items SW's catalogue cannot
   verify — pets, proximidades — which did not filter; Julia confirms them) reach the model next to the listings
-  (explicit allowlist `_BUSCA_META`).
+  (explicit allowlist `BUSCA_META`, now in `app/catalogos/imoveis_sw.py`).
+  **Offer catalogue seam (migration 081).** `oferecer_opcoes` / `detalhes_opcao` / `registrar_reacao_opcao` are the
+  catalogue-neutral twins of the three imóvel tools and share ONE core with them (`app/channels/tool_registry.py`); the
+  catalogue is an adapter behind `app.catalogos.CatalogoOpcoes` (`imoveis_sw`, `fixture`; `catalogo_para` refuses an
+  unknown key). The agent's catalogue is `qualificacao_parametros.catalogo`; readiness blocks `oferecer_opcoes` active
+  without one (`catalogo_ausente`); lead events carry `lead_imovel_eventos.catalogo` (duplicate-offer is per catalogue).
   `encerrar` ends the participation: a later re-engagement is ignored (no model call) and the thread reports
   `reengajamento_suprimido`; the lead-level opt-out (`POST /leads/{ref}/opt-out`) does the same for every agent.
   `encerrar` with motive `lead_pediu_parar` (+ a required `motivo_texto`) IS that lead-level opt-out: a lead who

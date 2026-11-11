@@ -130,6 +130,9 @@ CODIGOS_RECUSA: tuple[str, ...] = (
     "evento_invalido", "origem_invalida", "codigo_invalido", "motivo_longo", "lote_invalido",
     "imovel_ja_oferecido", "imovel_nao_oferecido",
     "estagio_nao_conclusivo", "nao_pode_ofertar", "limite_ofertas", "sem_codigo_campanha",
+    # the generic offer tools (081): ``sem_origem`` / ``opcao_ja_oferecida`` / ``opcao_nao_oferecida`` are the catalogue-neutral
+    # counterparts of ``sem_codigo_campanha`` / ``imovel_ja_oferecido`` / ``imovel_nao_oferecido``
+    "sem_origem", "opcao_ja_oferecida", "opcao_nao_oferecida",
     "identificacao_nao_devida", "campo_desconhecido", "valor_nao_confere", "identificacao_indisponivel",
     "credito_inativo", "limite_recusas", "indisponivel", "motivo_texto_ausente",
     # guardrails B6: consent / opt-out need the lead's words from THIS batch; per-turn tool-call caps
@@ -145,6 +148,9 @@ CODIGOS_RECUSA_OPCIONAIS: tuple[str, ...] = (
 
 _PERFIL = "registrar_perfil"
 _EVENTO_IMOVEL = ("registrar_reacao_imovel", "registrar_intencao_visita", "oferecer_imoveis", "detalhes_imovel")
+#: The generic (catalogue-neutral) offer tools and the event-writing subset of them.
+_OPCOES = ("oferecer_opcoes", "detalhes_opcao", "registrar_reacao_opcao")
+_EVENTO_OPCAO = _OPCOES
 #: The tools that can answer with each refusal code (a code absent here is generic: any tool may return it, so its
 #: row is required of every channel agent -- ``argumentos_invalidos`` / ``indisponivel`` / ``limite_*``). The row of a
 #: code is required only when one of its tools is active: an agent that cannot call the tool cannot be refused by it
@@ -158,18 +164,21 @@ RECUSAS_POR_FERRAMENTA: dict[str, frozenset[str]] = {
             "criterio_desconhecido", "nao_coletar", "fora_do_escopo", "opcao_invalida", "usar_identificacao",
             "trecho_ausente", "trecho_longo", "trecho_curto",
         )},
-        "versao_nao_publicada": (_PERFIL, *_EVENTO_IMOVEL),
+        "versao_nao_publicada": (_PERFIL, *_EVENTO_IMOVEL, *_EVENTO_OPCAO),
         "valor_invalido": (_PERFIL, "registrar_identificacao", "sinalizar_alerta"),
         "trecho_nao_confere": (_PERFIL, "registrar_solicitacao_titular"),
-        **{c: _EVENTO_IMOVEL for c in (
+        **{c: (*_EVENTO_IMOVEL, *_EVENTO_OPCAO) for c in (
             "evento_invalido", "origem_invalida", "codigo_invalido", "motivo_longo", "lote_invalido",
-            "imovel_ja_oferecido",
         )},
+        "imovel_ja_oferecido": _EVENTO_IMOVEL,
         "imovel_nao_oferecido": ("registrar_reacao_imovel", "registrar_intencao_visita"),
+        "opcao_ja_oferecida": _EVENTO_OPCAO,
+        "opcao_nao_oferecida": ("registrar_reacao_opcao",),
         "estagio_nao_conclusivo": ("concluir_qualificacao",),
-        "nao_pode_ofertar": ("oferecer_imoveis",),
+        "nao_pode_ofertar": ("oferecer_imoveis", "oferecer_opcoes"),
         "sem_codigo_campanha": ("oferecer_imoveis",),
-        "limite_ofertas": ("oferecer_imoveis", "detalhes_imovel"),
+        "sem_origem": ("oferecer_opcoes",),
+        "limite_ofertas": ("oferecer_imoveis", "detalhes_imovel", "oferecer_opcoes", "detalhes_opcao"),
         "identificacao_nao_devida": ("registrar_identificacao", "registrar_documento"),
         **{c: ("registrar_identificacao",) for c in ("campo_desconhecido", "valor_nao_confere", "identificacao_indisponivel")},
         "credito_inativo": ("consentimento_credito",),
