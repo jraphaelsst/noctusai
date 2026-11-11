@@ -49,6 +49,7 @@
     "069_status_pagina_agentes_plataforma.sql": "0ccf4ab25f6b471027fdfd98d640e68a7e2e21df4ca353db14f6f3df6b7736e0",
     "070_agent_db_source.sql": "49d977d5a408fd2fc11e8888dfba3ac8dcdf5989241c2a991deb8ec71f144aaf",
     "071_eval_runs_paralelos.sql": "a119a27f7680c6ae4b067b7dccb4ad0e614f4d44b27ced6dadfb558a48c10916",
+    "072_eval_consolidacao.sql": "ebf7fcb106a0efd4bc3bbab90046cab38ae937843830f7e375019e5cc653985f",
     "074_numero_fallback_atendimento.sql": "df5e5c12b80f3fcec84b062a788468a24aa209b83763af7b3e852f0830368eb5"
   }
 }
