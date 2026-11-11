@@ -1,0 +1,82 @@
+name: Install apt packages (mirror-resilient)
+description: >
+  ONE apt path for every job (DRY; it was the same hand-copied block in 6 jobs).
+  2026-11-11 ~14:16Z: azure.archive.ubuntu.com answered "Ign:" for every package
+  and every apt step hung to its 10-min timeout - ~12 red jobs per merge-queue
+  batch, and the drain bisects an infra red, ejecting innocent entries.
+  So: (1) drop the third-party Google source (2026-09-09 corrupt index);
+  (2) set apt-wide retries + timeouts in apt.conf.d, so tools that shell out to
+  apt (playwright --with-deps / install-deps) inherit them; (3) PROBE the
+  current mirror with a hard cap and switch to archive.ubuntu.com, then to the
+  mirrors.txt list, when it hangs, errors or answers "Ign:"/"Err:"; (4) install
+  `packages` with a capped attempt per mirror, failing LOUDLY with the mirror
+  name. With `packages` empty it only prepares the sources (for playwright).
+  KB § PATTERNS/devops/merge-queue.md § 6a.
+
+inputs:
+  packages:
+    description: Space-separated apt packages to install; empty = prepare sources only.
+    required: false
+    default: ""
+  attempt-seconds:
+    description: Hard cap per apt attempt (update or install), in seconds.
+    required: false
+    default: "90"  # probe + 2 fallback updates + 3 installs = 540s < the 10-min step timeout
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare apt sources (fallback mirror) and install
+      shell: bash
+      env:
+        PKGS: ${{ inputs.packages }}
+        CAP: ${{ inputs.attempt-seconds }}
+      run: |
+        set -uo pipefail
+        # (1) a third-party source must not be able to fail the build (2026-09-09)
+        sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f
+        sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list 2>/dev/null || true
+        # (2) apt-wide retries/timeouts - inherited by playwright's own apt-get calls
+        printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\n' \
+          | sudo tee /etc/apt/apt.conf.d/99noc-resilient >/dev/null
+
+        SRC_FILES="$(ls /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true)"
+        current_mirror() { grep -hoE 'https?://[a-z0-9.-]+/ubuntu|mirror\+[^ ]+' $SRC_FILES 2>/dev/null | head -1; }
+        switch_mirror() {  # $1 = replacement URI exactly as written into the sources (incl. trailing slash for http)
+          for f in $SRC_FILES; do
+            sudo sed -i -E "s#https?://(azure\.)?archive\.ubuntu\.com/ubuntu/?#$1#g" "$f"
+          done
+          echo "::warning::apt mirror switched to $1 (was failing: $MIRROR)"
+          MIRROR="$(current_mirror)"
+        }
+        apt_update_ok() {  # healthy = exits 0 within the cap AND no Ign:/Err: on the ubuntu mirror
+          local out rc
+          out="$(sudo timeout "$CAP" apt-get update 2>&1)"; rc=$?
+          echo "$out" | tail -5
+          if [ "$rc" -ne 0 ]; then echo "apt-get update rc=$rc on $MIRROR"; return 1; fi
+          if echo "$out" | grep -E '^(Ign|Err):' | grep -q 'ubuntu'; then echo "apt-get update saw Ign:/Err: on $MIRROR"; return 1; fi
+          return 0
+        }
+        MIRROR="$(current_mirror)"
+        FALLBACKS="http://archive.ubuntu.com/ubuntu/ mirror+http://mirrors.ubuntu.com/mirrors.txt"
+        # (3) probe; walk the fallback list until a mirror answers cleanly
+        if ! apt_update_ok; then
+          healthy=0
+          for m in $FALLBACKS; do
+            switch_mirror "$m"
+            if apt_update_ok; then healthy=1; break; fi
+          done
+          [ "$healthy" = 1 ] || echo "::warning::no apt mirror answered cleanly; trying install on $MIRROR anyway"
+        fi
+        # (4) install with a capped attempt; one more mirror switch on failure; loud failure naming the mirror
+        [ -z "$PKGS" ] && { echo "apt sources ready on $MIRROR"; exit 0; }
+        install() { sudo timeout "$CAP" apt-get install -y --no-install-recommends $PKGS; }
+        if install; then echo "apt install OK on $MIRROR"; exit 0; fi
+        for m in $FALLBACKS; do
+          case "$m" in "$MIRROR"*) continue;; esac  # already on it
+          switch_mirror "$m"
+          sudo timeout "$CAP" apt-get update >/dev/null 2>&1 || true
+          if install; then echo "apt install OK on $MIRROR"; exit 0; fi
+        done
+        echo "::error::apt install of [$PKGS] FAILED on every mirror (last: $MIRROR) - CI infra, not the code under test"
+        exit 1

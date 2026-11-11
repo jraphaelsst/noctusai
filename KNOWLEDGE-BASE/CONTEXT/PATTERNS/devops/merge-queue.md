@@ -266,6 +266,15 @@ fast-forwards, and cancelling mid-FF is the one unsafe cut, so the budget is
 ~150x the observed runtime. Re-measure when a job's p95 drifts toward half its
 timeout.
 
+**Mirror outage (2026-11-11 ~14:16Z).** `azure.archive.ubuntu.com` answered `Ign:` for every package and every
+apt step hung to its 10-min timeout. About 12 red jobs per batch (candidates -9/-10, runs `43036758510`/`43043398036`), and
+the drain bisected an infra red. **Rule:** every apt use goes through `.github/actions/apt-install`. It drops the Google
+source, sets apt-wide retries and timeouts (`/etc/apt/apt.conf.d/99noc-resilient`, inherited by playwright's own
+`apt-get`), probes the mirror under a hard cap, and walks `archive.ubuntu.com` → `mirrors.ubuntu.com/mirrors.txt` on a
+hang, `Ign:` or `Err:`. It fails loudly naming the mirror. Playwright jobs run it with no `packages` before
+`--with-deps` / `install-deps`. The fix rides in the candidate's own `test.yml`, so the batch that carries it already
+gets past the broken mirror.
+
 ## 6b · Watchdog — the queue tells the owner, with or without a steward
 
 **Rule.** The queue reports itself off-host. A watcher that lives in a session
