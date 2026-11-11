@@ -11,6 +11,8 @@ known_facts:
   - "Optimistic UI: local optimisticRating state gives instant visual feedback before the mutation resolves. 'obrigado' toast on success (hideThankYou=true suppresses for tight surfaces)."
   - "1 explicit consumer via @noctusai/lib/design-system — but consumed by DigestCard (which has 3 consumers) and AIIndicator (3 consumers) as a sub-component, giving it indirect wide reach."
 
+  - "NAMED SEAM `choices` (2026-11-10, Assistant S4): a closed set of labelled verdicts for an owner EVALUATING a model. Switches to a CONTROLLED component (choices/selected/onChoose/disabled + optional per-choice keyboard shortcut); the product owns the write (useCacheWriteMutation -> its own admin route over the seed `ai_feedback_events` append-only table, noctusai_lib.domain.sql_templates.ai_feedback_events_table_sql). It never touches /api/ai/feedback. The thumbs path is a separate inner component, so its hook order is unchanged."
+
 errors_encountered: []
 
 drifts_surfaced: []

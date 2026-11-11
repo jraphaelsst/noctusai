@@ -177,7 +177,7 @@ export type { AIIndicatorProps, UseAIOutputForOptions, AIOutput, AIOutputKind } 
 // AI feedback — ai-expansion Phase 17 (X3 cross-cutting). Backed by
 // `/api/ai/feedback` standard router + `<schema>.ai_feedback` per-product table.
 export { AIFeedbackButtons, useAIFeedback, useSubmitAIFeedback } from "./ai";
-export type { AIFeedbackButtonsProps, AIFeedbackRating } from "./ai";
+export type { AIFeedbackButtonsProps, AIFeedbackChoice, AIFeedbackRating } from "./ai";
 
 // AI consent UI — Wave 4 (X6 / LGPD). Backed by `/api/me/consents` (Core).
 // Auto-mounted by the seed framework: `<AIConsentToggles/>` lives at
