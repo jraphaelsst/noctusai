@@ -587,7 +587,8 @@
       "lead_insatisfeito",
       "erro_agente",
       "desvio",
-      "outro"
+      "outro",
+      "emergencia"
      ],
      "title": "Tipo",
      "type": "string"

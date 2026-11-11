@@ -40,7 +40,13 @@ class TestMigration:
 
     def test_cloning_a_version_copies_the_catalogue(self):
         corpo = SQL[SQL.index("CREATE OR REPLACE FUNCTION agents.criar_rascunho_qualificacao"):]
-        assert "pedir_identificacao_quando, catalogo)" in corpo and "pedir_identificacao_quando, catalogo\n" in corpo
+        alvo = re.search(r"INSERT INTO agents\.qualificacao_parametros\s*\(([^)]*)\)\s*SELECT([^;]*?)FROM", corpo)
+        assert alvo is not None
+        colunas = [c.strip() for c in alvo.group(1).split(",")]
+        copiadas = [c.strip() for c in alvo.group(2).split(",")]
+        assert "catalogo" in colunas and "catalogo" in copiadas
+        # 080 re-declared it first: this re-declaration keeps its column (chain-wide: test_criar_rascunho_copia_parametros)
+        assert "max_retomadas_seguidas" in colunas and "max_retomadas_seguidas" in copiadas
 
     def test_the_renames_are_left_as_a_named_destination(self):
         assert "NOC-REMEDIATE[codigo-opcao-rename]" in SQL
