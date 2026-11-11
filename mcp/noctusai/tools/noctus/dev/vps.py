@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from . import _redis_auth_compose as _redis_auth
 from . import release_steward as _steward
 from ._vps_ssh import run_remote as _throttled_ssh
 
@@ -212,8 +213,13 @@ def recreate(product: str, confirm: bool = False, ssh_host: str = DEFAULT_HOST,
     if not confirm:
         return _need_confirm("recreate", product)
     run = _runner(run_remote, ssh_host)
-    rc, out, err = run(["docker", "compose", "-f", f"{repo_dir}/{compose_file}",
-                        "up", "-d", "--force-recreate", product])
+    cf = f"{repo_dir}/{compose_file}"
+    # The Redis-auth override rides every recreate; a listed service without its generated env refuses
+    # (a bare recreate would silently put it back on the unauthenticated Redis).
+    ra = _redis_auth.plan(run, cf, product)
+    if ra["error"]:
+        return _err(ra["error"])
+    rc, out, err = run(_redis_auth.compose_cmd(cf, ra["files"], "up", "-d", "--force-recreate", product))
     if rc != 0:
         return _err(f"compose up -d --force-recreate {product} failed: {err.strip() or out.strip()}")
     return {"ok": True, "status": "recreated", "exit_code": 0, "product": product}
