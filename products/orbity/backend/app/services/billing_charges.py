@@ -406,12 +406,15 @@ def process_charges(db: Any, gateway: Any, *, limit: int = 5, worker_id: Optiona
 
 
 def has_billing_work(db: Any) -> bool:
-    """Cheap pre-check for the job: anything queued / retrying / stuck / awaiting a gateway cancel?"""
-    for status_filter in ((QUEUED, RETRYING), (GENERATING,)):
-        rows = db.table(CHARGES).select("id").in_("generation_status", list(status_filter)).limit(1).execute().data
-        if rows:
-            return True
-    return bool(db.table(CHARGES).select("id").eq("gateway_cancel_status", "pending").limit(1).execute().data)
+    """O(1) idle gate for the job: ONE ``limit 1`` query for "anything queued / retrying / stuck mid-generation / awaiting a
+    gateway cancel?" (was three sequential queries per tick) -- KB § PATTERNS/backend/polling-request-budget.md."""
+    wanted = ",".join(f'"{v}"' for v in (QUEUED, RETRYING, GENERATING))
+    rows = (
+        db.table(CHARGES).select("id")
+        .or_(f"generation_status.in.({wanted}),gateway_cancel_status.eq.pending")
+        .limit(1).execute().data
+    )
+    return bool(rows)
 
 
 __all__ = [

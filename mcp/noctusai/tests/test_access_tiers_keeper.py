@@ -82,6 +82,18 @@ class TestAccessTierRoutes:
         good = bad.replace("def lead(): ...", "def lead():\n    verify_turnstile()")
         assert check_access_tier_routes(_tree(tmp_path / "g", good)) == []
 
+    def test_token_link_must_use_the_helper_and_a_rate_limit(self, tmp_path):
+        bad = _HEAD + "@router.get('/approve/{t}')\n@limiter.limit('5/minute')\n@access_tier('public', reason='x', category='token-link')\ndef approve(t): ...\n"
+        assert "resolve_token_link" in check_access_tier_routes(_tree(tmp_path, bad))[0]["issue"]
+        good = bad.replace("def approve(t): ...", "def approve(t):\n    resolve_token_link(t, fetch)")
+        assert check_access_tier_routes(_tree(tmp_path / "g", good)) == []
+        unlimited = good.replace("@limiter.limit('5/minute')\n", "")
+        assert "rate limit" in check_access_tier_routes(_tree(tmp_path / "u", unlimited))[0]["issue"]
+
+    def test_token_link_write_needs_no_captcha(self, tmp_path):
+        src = _HEAD + "@router.post('/approve/{t}')\n@limiter.limit('5/minute')\n@access_tier('public', reason='x', category='token-link')\ndef approve(t):\n    resolve_token_link(t, fetch)\n"
+        assert check_access_tier_routes(_tree(tmp_path, src)) == []
+
     def test_signed_webhook_is_service_not_public(self, tmp_path):
         src = _HEAD + "@router.post('/hook')\ndef hook():\n    verify_hmac_sha256(b'', '', '')\n"
         assert check_access_tier_routes(_tree(tmp_path, src)) == []
@@ -169,6 +181,20 @@ class TestAccessTierTables:
         sql2 = "REVOKE ALL ON public.fin_accounts FROM anon, authenticated;\n"
         root = _tree(tmp_path, "", {"001.sql": sql1, "002.sql": sql2})
         assert at.analyze_tables(root)["grant_findings"] == []
+
+    def test_rename_moves_the_table_and_its_grants_to_the_new_name(self, tmp_path):
+        """orbity 023 retires tables with `ALTER TABLE ... RENAME TO` inside a DO block: the renamed table is the one
+        that still holds the browser grant -- the scanner must see `contracts_legacy`, not a phantom `contracts`."""
+        sql1 = "CREATE TABLE public.contracts (id int);\n"
+        sql2 = ("DO $retire$\nBEGIN\n    ALTER TABLE public.contracts RENAME TO contracts_legacy;\nEND\n$retire$;\n")
+        keys = {f["key"] for f in at.analyze_tables(_tree(tmp_path, "", {"001.sql": sql1, "002.sql": sql2}))["grant_findings"]}
+        assert "grant:public.contracts_legacy:authenticated" in keys
+        assert not any(k.startswith("grant:public.contracts:") for k in keys)
+
+    def test_plain_rename_statement_is_followed(self, tmp_path):
+        sql = "CREATE TABLE public.a (id int);\nALTER TABLE public.a RENAME TO b;\n"
+        keys = {f["key"] for f in at.analyze_tables(_tree(tmp_path, "", {"001.sql": sql}))["grant_findings"]}
+        assert "grant:public.b:authenticated" in keys and "grant:public.a:authenticated" not in keys
 
     def test_explicit_revoke_in_same_migration_is_clean(self, tmp_path):
         sql = "CREATE TABLE public.fin_x (id int);\nREVOKE ALL ON public.fin_x FROM anon, authenticated;\n"

@@ -30,6 +30,8 @@ _mod = _ilu.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 _mod.purge_shadowing_editable_finders(_LIB)
 
+import os
+
 import pytest
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
@@ -49,8 +51,25 @@ from noctusai_lib.testing import (  # noqa: F401 — re-exported for test import
 from noctusai_lib.testing.fixtures import reset_rate_limiter  # noqa: F401
 
 
+# The suite is a local/test process: say so explicitly (the webhook accepts an unsigned call ONLY in an explicit local env).
+os.environ.setdefault("APP_ENV", "test")
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
+
+
+@pytest.fixture(autouse=True)
+def _legacy_enabled_line_policy():
+    """Tests drive the sender through the Fake WAHA, so they declare a send-enabled process default through the PUBLIC
+    registry. Prod declares NONE for orbity (WhatsApp OFF, `NOC-REMEDIATE[orbity-waha-own-instance]`), so the seed fails
+    closed there; the fail-closed behaviour itself is covered in the seed lib suite."""
+    from noctusai_lib.integrations.whatsapp import LinePolicy, clear_line_policies, register_line_policy
+
+    clear_line_policies()
+    register_line_policy("*", LinePolicy("enabled", True, True, True))
+    yield
+    clear_line_policies()
 
 
 @pytest.fixture

@@ -366,7 +366,10 @@ export function useExecutions(leadId?: string) {
     },
     enabled: !!user,
     staleTime: 60 * 1000,
-    refetchInterval: 30 * 1000, // poll every 30s for running executions
+    // poll-budget: 30s while this list holds an execution still in flight, otherwise never; hidden=paused (TanStack default
+    // refetchIntervalInBackground=false); one GET per tick, org-scoped. Was an unconditional 30s poll even with nothing running.
+    refetchInterval: (query) =>
+      query.state.data?.some((e) => e.status === "running") ? 30 * 1000 : false,
   });
 }
 
