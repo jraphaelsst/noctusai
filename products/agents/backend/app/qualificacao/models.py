@@ -84,6 +84,9 @@ class ParametrosDef:
     eixos: dict[str, Any] = field(default_factory=dict)
     #: Rule: ask for the identity fields only when it is true (e.g. visit intent recorded). None = any time.
     pedir_identificacao_quando: dict[str, Any] | None = None
+    #: Follow-ups (retomadas) in a row with no reply from the lead (owner rule 2026-11-10: 2). The channel turn refuses
+    #: one more with ``limite_retomadas``; 0 = never follow up.
+    max_retomadas_seguidas: int = 2
     #: The catalogue the agent's generic offer tools read (``app.catalogos.CATALOGOS``); ``None`` = the standard names
     #: none (an agent with ``oferecer_opcoes`` active then fails readiness: ``catalogo_ausente``).
     catalogo: str | None = None

@@ -99,6 +99,7 @@ products/agents/backend/app/
   it also refunds the per-tool call count, the global `max_chamadas_ferramenta_turno` still bounds a loop); every other code counts. The refusal log line carries `classe=`.
   Past `max_recusas_por_turno` / `max_erros_ferramenta_por_turno` the toolset stops the turn (`should_stop`) and the turn
   ends in a hand-off to the org owner + a flagged event (silence, or the DB text `runtime.parada_segura`).
+- Emergency (migration 079): `sinalizar_alerta tipo=emergencia` sets `thread_participantes.fecha_inativo_min=10`; the thread stays open, the `agents_thread_inatividade` job (every minute) closes the participant via `transicionar` (motivo `inatividade`) once `conversations.last_message_at` + window passed (every message, including the agent's reply, refreshes it); `encerrar` is refused with `emergencia_aberta` meanwhile (a lead's stop request is exempt).
 - Julia v3 (CONTRACT §12): `sinalizar_alerta` (-> `agents.thread_alertas`, action `alerta`, one per tipo per turn),
   `registrar_documento` (an ID photo/scan -> flag on `lead_identificacao`, CPF satisfied pending extraction, action
   `documento_identificacao`; the id is checked against the inbound lead message, whose `provider_message_id` is stored
@@ -446,6 +447,10 @@ model only records criterion values through tools; **score and stage are compute
   `identificacao`. Axis config (`parametros.eixos`): `max`, `multiplicadores` (rule x factor), `decaimento`
   (factor after N days without a lead reply). `parametros.lote_ofertas` = up to 3 properties per offer run (owner's
   rule 2026-11-03; migration 055 column default; 1..5, shown in the editor).
+  Follow-up cap (owner 2026-11-10): `parametros.max_retomadas_seguidas` (default **2**, 0..10, migration 080) is the most
+  follow-ups (`gatilho:"reengajamento"`) in a row with no reply from the lead; `controles.decidir` refuses one more with
+  status `limite_retomadas` (no model call, nothing stored; opt-out is decided first), every outcome is one append-only
+  `thread_retomada_eventos` row, and social-wiring ends that contact's sequence.
 - **Store timestamps**: every Real-store row mapper parses `timestamptz` through `app.stores._util.db_ts`
   (PostgREST returns ISO strings, the Fakes hold `datetime`; a passthrough 500'd every published-version read).
 - **Stages** are rules in a closed DSL (`todos/algum/nao`, `criterio`, `score` incl. `eixo`, `evento`,

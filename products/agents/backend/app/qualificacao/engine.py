@@ -506,6 +506,8 @@ def validar_versao(versao: VersaoPadrao) -> list[dict[str, str]]:
             "o estagio de menor ordem precisa casar sempre")
     if not 1 <= versao.parametros.lote_ofertas <= 5:
         err("parametro_invalido", "parametros.lote_ofertas", "1..5")
+    if not 0 <= versao.parametros.max_retomadas_seguidas <= 10:
+        err("parametro_invalido", "parametros.max_retomadas_seguidas", "0..10")
     if versao.parametros.score_max < 1:
         err("parametro_invalido", "parametros.score_max", ">= 1")
     if versao.parametros.catalogo is not None and versao.parametros.catalogo not in CATALOGOS:

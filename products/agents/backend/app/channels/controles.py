@@ -35,7 +35,10 @@ What the decision table does with the owner's rules:
   ended minutes ago) and the decision says which case it is (``novo_ciclo``).
 * re-engagement turns run only for an ``ativo`` participant while ``ligado`` /
   ``drenando`` (and, draining, only while the thread is not already idle past the
-  drain window); anything else is ``reengajamento_ignorado`` — nothing is persisted.
+  drain window); anything else is ``reengajamento_ignorado`` — nothing is persisted;
+* the follow-up cap (owner 2026-11-10): an eligible re-engagement turn is refused with ``limite_retomadas`` (no model,
+  nothing persisted) once ``max_retomadas_seguidas`` follow-ups went out in a row with no reply from the lead. The
+  opt-out check runs first and always wins; the limit is data of the qualification standard.
 """
 from __future__ import annotations
 
@@ -54,6 +57,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "CICLO_NOVO_APOS",
+    "MAX_RETOMADAS_PADRAO",
     "GATILHOS",
     "STATUS_AGENTE_DESLIGADO",
     "STATUS_AGENTE_DESLIGADO_PLATAFORMA",
@@ -63,6 +67,7 @@ __all__ = [
     "STATUS_CONVERSA_COM_OUTRO_RESPONSAVEL",
     "STATUS_CONVERSA_PAUSADA",
     "STATUS_LEAD_OPT_OUT",
+    "STATUS_LIMITE_RETOMADAS",
     "STATUS_NORMAL",
     "STATUS_NOVO_LEAD_LIMITADO",
     "STATUS_NOVO_LEAD_RECUSADO",
@@ -98,6 +103,11 @@ STATUS_CONVERSA_COM_OUTRO_RESPONSAVEL = "conversa_com_outro_responsavel"
 STATUS_CONVERSA_COM_OUTRO_AGENTE = "conversa_com_outro_agente"
 STATUS_REENGAJAMENTO_IGNORADO = "reengajamento_ignorado"
 STATUS_LEAD_OPT_OUT = "lead_opt_out"
+#: The follow-up cap: this re-engagement would be one more in a row with no reply from the lead. SW ends that
+#: contact's follow-up sequence (the lead is not opted out: a later reply starts over).
+STATUS_LIMITE_RETOMADAS = "limite_retomadas"
+#: Follow-ups in a row, with no lead reply, an agent may send (owner rule); the standard's ``max_retomadas_seguidas`` overrides.
+MAX_RETOMADAS_PADRAO = 2
 STATUS_CONTROLE_INDISPONIVEL = "controle_indisponivel"
 
 #: An ``encerrado`` participant whose lead writes again after this long starts a NEW cycle.
@@ -145,6 +155,8 @@ class ThreadView:
     outro_agente_ativo: bool = False
     #: The lead asked to stop (``parar``) and has not opted in again: no agent talks to them.
     lead_opt_out: bool = False
+    #: Follow-ups this agent sent in this thread after the lead's last message (``enviada`` events).
+    retomadas_seguidas: int = 0
 
 
 @dataclass(frozen=True)
@@ -199,6 +211,7 @@ def decidir(
     modo_avaliacao: bool | None = False,
     avaliacao_numeros: Sequence[str] = (),
     telefone_e164: str | None = None,
+    max_retomadas_seguidas: int = MAX_RETOMADAS_PADRAO,
 ) -> Decisao:
     """The §5.2 decision table (see the module docstring). Pure.
 
@@ -250,6 +263,7 @@ def decidir(
         d = decidir(
             modo, thread, ParticipanteView("ativo", participante.entrou_em, participante.saiu_em),
             gatilho, agora, dreno_inatividade_dias=dreno_inatividade_dias,
+            max_retomadas_seguidas=max_retomadas_seguidas,
         )
         if d.transicao is not None:  # e.g. the drain closes it: the row is still `pausado` in the database
             return replace(d, transicao=replace(d.transicao, de=("pausado",)))
@@ -263,6 +277,8 @@ def decidir(
             return _recusa(STATUS_REENGAJAMENTO_IGNORADO, persistir=False)
         if modo == "drenando" and _ociosa(thread, participante, agora, dreno_inatividade_dias):
             return _recusa(STATUS_REENGAJAMENTO_IGNORADO, persistir=False)
+        if thread.retomadas_seguidas >= max_retomadas_seguidas:
+            return _recusa(STATUS_LIMITE_RETOMADAS, persistir=False)
         return Decisao(status=STATUS_NORMAL, persistir_inbound=False, executar_llm=True)
 
     # ── a lead message ──
@@ -366,6 +382,8 @@ def numeros_de_avaliacao(org_id: UUID, usuarios: Any, resolvedor: Any) -> tuple[
 
 
 _MAX_TENTATIVAS = 3
+#: decision status -> ``thread_retomada_eventos.resultado`` for a re-engagement that did not run.
+_RESULTADO_RETOMADA = {STATUS_LIMITE_RETOMADAS: "recusada_limite", STATUS_REENGAJAMENTO_IGNORADO: "ignorada"}
 
 
 def aplicar_controles(
@@ -387,6 +405,8 @@ def aplicar_controles(
     plataforma: Any = None,
     agent_key: str | None = None,
     usuarios_avaliacao: Any = None,
+    max_retomadas_seguidas: int = MAX_RETOMADAS_PADRAO,
+    tier_retomada: str | None = None,
 ) -> ControleResultado:
     """Read the controls, decide, and apply what the decision implies.
 
@@ -409,6 +429,11 @@ def aplicar_controles(
     lead never served; ``False`` -> ``novo_lead_limitado``, nothing stored. A gate that raises fails closed
     (:class:`ControleIndisponivel`). ``lead`` is the turn's ``lead``
     block: it creates / refreshes the ``lead_refs`` row and links a thread that has none yet.
+
+    Re-engagement only: ``max_retomadas_seguidas`` (the standard's limit) caps the follow-ups in a row; the count is read
+    from ``threads`` (fail closed, like every control read) and a refusal / ignore is booked as ONE ``thread_retomada_eventos``
+    row (``recusada_limite`` / ``ignorada``) tagged with ``tier_retomada``. The ``enviada`` row is written by the turn
+    itself, right after the follow-up is stored.
     """
     agora = agora or utcnow()
     for _ in range(_MAX_TENTATIVAS):
@@ -423,6 +448,10 @@ def aplicar_controles(
             lead_atual = (
                 threads.get_lead_ref(org_id, thread.lead_ref_id)
                 if thread is not None and thread.lead_ref_id is not None else None
+            )
+            seguidas = (
+                threads.contar_retomadas_seguidas(org_id, thread.id, agent_id, thread.ultima_mensagem_lead_em)
+                if thread is not None and gatilho == "reengajamento" else 0
             )
         except Exception as exc:
             logger.exception(
@@ -443,6 +472,7 @@ def aplicar_controles(
                 ultima_mensagem_lead_em=thread.ultima_mensagem_lead_em,
                 outro_agente_ativo=any(p.agent_id != agent_id and p.estado == "ativo" for p in participantes),
                 lead_opt_out=bool(lead_atual is not None and lead_atual.opt_out_ativo),
+                retomadas_seguidas=seguidas,
             ) if thread is not None else None,
             ParticipanteView(propria.estado, propria.entrou_em, propria.saiu_em, propria.pausado_ate)
             if propria is not None else None,
@@ -453,9 +483,20 @@ def aplicar_controles(
             modo_avaliacao=controle.modo_avaliacao,
             avaliacao_numeros=numeros_avaliacao,
             telefone_e164=(contact or {}).get("phone_e164"),
+            max_retomadas_seguidas=max_retomadas_seguidas,
         )
         if decisao.http_status == 503:
             raise ControleIndisponivel()
+        if gatilho == "reengajamento" and thread is not None and decisao.status in _RESULTADO_RETOMADA:
+            # One event per outcome (EOA). A refusal is not a turn: it is booked here, with the decision that made it.
+            try:
+                threads.registrar_retomada(
+                    org_id, thread.id, agent_id, _RESULTADO_RETOMADA[decisao.status], tier_retomada)
+            except Exception as exc:
+                logger.exception(
+                    "agents.controles.retomada_evento_nao_gravado org_id=%s status=%s cause=%s",
+                    org_id, decisao.status, type(exc).__name__)
+                raise ControleIndisponivel() from exc
         if decisao.criar_thread and admitir_novo_lead is not None:
             try:
                 admitido = admitir_novo_lead()

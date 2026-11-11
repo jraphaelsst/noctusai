@@ -3,6 +3,7 @@ carrying the model's verdict."""
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -38,7 +39,7 @@ def test_a_member_who_is_not_an_org_admin_is_403(client, metodo, rota):
 def admin(client, registro):
     from app.main import app
 
-    app.dependency_overrides[cr.require_org_admin] = lambda: (object(), "t", "test-org-123")
+    app.dependency_overrides[cr.require_org_admin] = lambda: (SimpleNamespace(id="user-1"), "t", "test-org-123")
     configure_prompt_registry(registro)
     client.mock_supabase.set_rpc_data("amostra_classificacoes", LINHAS)
     yield client

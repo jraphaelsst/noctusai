@@ -88,6 +88,11 @@ __all__ = [
 ]
 
 MOTIVO_MAX_CHARS = 280
+#: An emergency alert keeps the thread open and closes it after this many minutes without a message (the owner's rule:
+#: "stay open, point to the numbers and close after 10 min of inactivity; every interaction refreshes the timer").
+#: NOC-REMEDIATE[inatividade-por-agente]: a per-agent window (agent/definition setting) replaces this constant -- 2026-11-10
+EMERGENCIA_JANELA_MIN = 10
+TIPO_ALERTA_EMERGENCIA = "emergencia"
 #: ``sinalizar_alerta`` caps (migration 057 CHECKs).
 ALERTA_DESCRICAO_MAX = 500
 ALERTA_TRECHO_MAX = 500
@@ -933,6 +938,10 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         """Julia flags an unhappy lead / her own mistake / a drift. One alert per tipo per turn (a repeat is a
         no-op answered ok); SW turns the ``alerta`` action into a message to the report destination."""
         assert t.alertas is not None
+        if a.tipo == TIPO_ALERTA_EMERGENCIA:
+            # idempotent (also on a repeat / re-run): the thread stays open and the inactivity job closes it
+            await asyncio.to_thread(
+                t.threads.definir_janela_inatividade, t.org_id, t.thread_id, t.agent_id, EMERGENCIA_JANELA_MIN)
         if a.tipo in t.alertas_tipos:
             return _ok(inalterado=True, mensagem=t.texto("ferramenta.resultado.registrado"))
         previos = await asyncio.to_thread(t.alertas.listar, t.org_id, t.thread_id)
@@ -1158,6 +1167,12 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
 
     async def _encerrar(a: EncerrarArgs) -> _Resultado:
         opt_out = a.motivo == MOTIVO_LEAD_PEDIU_PARAR
+        if not opt_out:
+            # an open emergency is closed by inactivity or by a person -- never by the agent. The lead's own stop request
+            # is the exception: it is a right, not a conversation choice.
+            part = await asyncio.to_thread(t.threads.get_participante, t.org_id, t.thread_id, t.agent_id)
+            if part is not None and part.fecha_inativo_min is not None:
+                return _recusa(t, "emergencia_aberta")
         motivo_texto = _limpo(a.motivo_texto, MOTIVO_MAX_CHARS)
         if opt_out and motivo_texto is None:
             return _recusa(t, "motivo_texto_ausente")

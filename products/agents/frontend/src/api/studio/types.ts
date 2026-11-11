@@ -157,6 +157,8 @@ export interface Section {
   ordem: number;
   conteudo: string;
   ativo: boolean;
+  /** Rules the section declares (closed list; e.g. `discordar-com-respeito`). Readiness checks the rule, not the key. */
+  regras: string[];
 }
 
 export interface SkillFileSummary {
@@ -216,6 +218,8 @@ export interface SectionInput {
   ordem: number;
   conteudo: string;
   ativo: boolean;
+  /** Sent back unchanged by the editor (read-only chips): omitting it would clear the section's rules. */
+  regras?: string[];
 }
 
 export interface SectionsReplaceInput {

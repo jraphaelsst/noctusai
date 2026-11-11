@@ -4843,7 +4843,13 @@ _AGENTS_DB_SOURCE_PROBES: tuple[GuardProbe, ...] = (
     _agents_studio_probe(
         probe_id="agents.fonte_check",
         guard_name="agents_fonte_check",
-        attack_sql=f"    UPDATE {_AGENTS_SCHEMA}.agents SET fonte = 'svn' WHERE id = v_agent;",
+        # An INSERT, never an UPDATE: 070's BEFORE UPDATE trigger guard_agent_fonte_immutable raises
+        # 'fonte_immutable' before any CHECK is evaluated, so an UPDATE attack never reaches this guard
+        # (predeploy read `ambiguous` and BLOCKED agents W2, 2026-11-10).
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agents (org_id, key, nome, runtime, definition_mode, fonte) "
+            "VALUES (v_org, 'noc-probe-fonte', 'NOC probe', 'claude_sdk', 'studio', 'svn');"
+        ),
         guard_fragment="agents_fonte_check",
         what="an agent source other than git|db",
         rationale="A11: the mirror rules key on fonte; an unknown source would match neither the git build nor the DB export.",
@@ -5114,6 +5120,34 @@ def _loop_insert(status: str, motivo: str, stopped: str) -> str:
             f"VALUES (v_org, v_agent, 'noc-probe', 'comportamento', 5, 0.8, 20, '{status}', {motivo}, {stopped}, v_org);")
 
 
+# 079: an emergency stays open and closes by inactivity (window column + the emergency alert tipo).
+_EMERGENCIA_MIGS = (_m("033"), _m("035"), "057_julia_v3_alertas_documentos.sql", "079_emergencia_inatividade.sql")
+_JV2_PARTICIPANTE = (
+    f"INSERT INTO {_JV2}.thread_participantes (thread_id, agent_id, org_id, estado) "
+    "VALUES (v_thread, v_agent, v_org, 'ativo');"
+)
+_AGENTS_EMERGENCIA_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="thread_alertas.tipo_is_a_closed_set", guard_name="thread_alertas_tipo_check",
+        migrations=_EMERGENCIA_MIGS, setup="\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread())),
+        attack=(f"INSERT INTO {_JV2}.thread_alertas (org_id, thread_id, agent_id, tipo, descricao) "
+                "VALUES (v_org, v_thread, v_agent, 'tipo_inventado', 'x');"),
+        fragments=("thread_alertas_tipo_check",), what="an alert of a tipo the app does not know",
+        rationale="SW turns each alert tipo into a notice to the owner; an unknown tipo would be stored and "
+                  "never routed.",
+    ),
+    _julia_v2_probe(
+        probe_id="thread_participantes.inactivity_window_is_positive_and_bounded",
+        guard_name="ck_thread_participantes_fecha_inativo_min",
+        migrations=_EMERGENCIA_MIGS,
+        setup="\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread(), _JV2_PARTICIPANTE)),
+        attack=f"UPDATE {_JV2}.thread_participantes SET fecha_inativo_min = 0 WHERE thread_id = v_thread;",
+        fragments=("ck_thread_participantes_fecha_inativo_min",), what="an inactivity window of zero minutes",
+        rationale="A zero window would close the participant on the next minute tick regardless of activity.",
+    ),
+)
+
+
 _AGENTS_EVAL_LOOP_PROBES: tuple[GuardProbe, ...] = (
     _julia_v2_probe(
         probe_id="eval_loops.stopped_loop_says_why_and_when", guard_name="eval_loops_parada_consistente",
@@ -5129,6 +5163,41 @@ _AGENTS_EVAL_LOOP_PROBES: tuple[GuardProbe, ...] = (
         fragments=("uq_agents_eval_loops_ativo_por_suite",), what="a second ACTIVE loop on the same agent and suite",
         rationale="Two loops racing one suite would each read the other's rounds as score noise, so G4 would stop "
                   "(or not) on someone else's run.",
+    ),
+)
+
+
+# 080: the follow-up cap. The event log is append-only (the count of consecutive follow-ups is derived from it), its outcome is
+# a closed enum, and the limit parameter is bounded.
+_RETOMADA_MIGS = (_m("033"), "080_retomada_limite.sql")
+_RETOMADA_SETUP = "\n    ".join((_JV2_AGENT, _JV2_LEAD, _jv2_thread()))
+_AGENTS_RETOMADA_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="thread_retomada_eventos.append_only", guard_name="thread_retomada_eventos_append_only",
+        migrations=_RETOMADA_MIGS,
+        setup="\n    ".join((_RETOMADA_SETUP, (
+            f"INSERT INTO {_JV2}.thread_retomada_eventos (org_id, thread_id, agent_id, resultado) "
+            "VALUES (v_org, v_thread, v_agent, 'enviada');"))),
+        attack=f"UPDATE {_JV2}.thread_retomada_eventos SET resultado = 'ignorada' WHERE org_id = v_org;",
+        fragments=("thread_retomada_eventos is append-only",), what="an UPDATE of a follow-up event",
+        rationale="The follow-up cap counts `enviada` rows since the lead's last reply: an edited row would hand the lead "
+                  "an extra follow-up (or take one away) with no trace.",
+    ),
+    _julia_v2_probe(
+        probe_id="thread_retomada_eventos.resultado_vocab", guard_name="thread_retomada_eventos_resultado_check",
+        migrations=_RETOMADA_MIGS, setup=_RETOMADA_SETUP,
+        attack=(f"INSERT INTO {_JV2}.thread_retomada_eventos (org_id, thread_id, agent_id, resultado) "
+                "VALUES (v_org, v_thread, v_agent, 'talvez');"),
+        fragments=("thread_retomada_eventos_resultado_check",), what="a follow-up event with an unknown outcome",
+        rationale="The cap reads only `enviada`; an off-vocabulary outcome would be counted as nothing, silently.",
+    ),
+    _julia_v2_probe(
+        probe_id="qualificacao_parametros.max_retomadas_bounded", guard_name="qualificacao_parametros_max_retomadas_check",
+        migrations=(_m("032"), "080_retomada_limite.sql"), setup=_JV2_PADRAO,
+        attack=(f"INSERT INTO {_JV2}.qualificacao_parametros (versao_id, minimo_para_ofertar, max_retomadas_seguidas) "
+                "VALUES (v_pv, '{\"todos\": []}'::jsonb, 11);"),
+        fragments=("qualificacao_parametros_max_retomadas_check",), what="a follow-up cap above 10",
+        rationale="The owner's rule is a small cap (default 2); an absurd value would turn the cap into no cap.",
     ),
 )
 
@@ -12164,11 +12233,76 @@ _ASSISTANT_AI_OUTPUTS_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+def _assistant_feedback_events_probe(probe_id: str, guard_name: str, attempt_sql: str, rationale: str,
+                                     *, fragment: str | None = None) -> GuardProbe:
+    """Self-provisioning probe on `assistant.ai_feedback_events` (migration 018): no FK on labeler/subject, so the
+    probe only borrows an existing org id; `attempt_sql` is the write that must be refused."""
+    fragment_lit = _sql_lit(fragment or guard_name)
+    return GuardProbe(
+        id=probe_id, product="assistant", schema="assistant", guard_name=guard_name, kind="write_refusal",
+        migrations=("018_rotulos_avaliacao.sql",), rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_ev uuid;
+BEGIN
+  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to borrow an org_id from (a genuinely org-less database)';
+  END IF;
+  INSERT INTO assistant.ai_feedback_events (org_id, labeler_id, subject_id, label, round)
+  VALUES (v_org_id, gen_random_uuid(), gen_random_uuid(), 'nao_sei', 1)
+  RETURNING id INTO v_ev;
+  BEGIN
+{attempt_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: the write succeeded - {guard_name} did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_ASSISTANT_FEEDBACK_EVENTS_PROBES: tuple[GuardProbe, ...] = (
+    _assistant_feedback_events_probe(
+        "assistant.ai_feedback_events.update_refused", "guard_ai_feedback_events_append_only",
+        "    UPDATE assistant.ai_feedback_events SET label = 'agendamento' WHERE id = v_ev;",
+        "The owner's labels are the ground truth the classifier is scored against: a relabel is a NEW event with the "
+        "next round, never an UPDATE. A trigger refuses UPDATE and DELETE.", fragment="append_only",
+    ),
+    _assistant_feedback_events_probe(
+        "assistant.ai_feedback_events.delete_refused", "guard_ai_feedback_events_append_only",
+        "    DELETE FROM assistant.ai_feedback_events WHERE id = v_ev;",
+        "A deleted label would silently change the agreement read; the table is append-only.", fragment="append_only",
+    ),
+    _assistant_feedback_events_probe(
+        "assistant.ai_feedback_events.label_allowed_values", "ai_feedback_events_label_check",
+        """    INSERT INTO assistant.ai_feedback_events (org_id, labeler_id, subject_id, label, round)
+    VALUES (v_org_id, gen_random_uuid(), gen_random_uuid(), 'talvez', 1);""",
+        "A label is agendamento | nao_agendamento | nao_sei; any other value would fall outside the agreement matrix.",
+    ),
+    _assistant_feedback_events_probe(
+        "assistant.ai_feedback_events.round_positive", "ai_feedback_events_round_check",
+        """    INSERT INTO assistant.ai_feedback_events (org_id, labeler_id, subject_id, label, round)
+    VALUES (v_org_id, gen_random_uuid(), gen_random_uuid(), 'nao_sei', 0);""",
+        "Rounds start at 1; the highest round is the effective label.",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
     _ASSISTANT_GOOGLE_EVENTOS_APPEND_ONLY_PROBE,
     *_ASSISTANT_AI_OUTPUTS_PROBES,
+    *_ASSISTANT_FEEDBACK_EVENTS_PROBES,
     _AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE,
     _RUIDO_SHAPE_PROBE,
     _TITULO_PAREADO_PROBE,
@@ -12222,6 +12356,8 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_CAMADAS_PROBES,
     *_AGENTS_FALLBACK_PROBES,
     *_AGENTS_EVAL_LOOP_PROBES,
+    *_AGENTS_EMERGENCIA_PROBES,
+    *_AGENTS_RETOMADA_PROBES,
     *_AGENTS_CATALOGO_PROBES,
     _ESTRUTURA_STATUS_PROBE,
     _IMOVEL_CONFLITO_ABERTO_PROBE,

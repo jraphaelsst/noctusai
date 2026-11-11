@@ -457,7 +457,7 @@ class AlertaActionOut(_ActionOut):
     the report destination. One per ``tipo`` per turn."""
 
     type: Literal["alerta"]
-    tipo: Literal["lead_insatisfeito", "erro_agente", "desvio", "outro"]
+    tipo: Literal["lead_insatisfeito", "erro_agente", "desvio", "outro", "emergencia"]
     descricao: str
     alerta_id: str
 
@@ -545,7 +545,7 @@ class ConformidadeOut(BaseModel):
 TurnStatus = Literal[
     "respondido", "silencio", "handoff", "encerrado", "concluido",
     "agente_desligado", "agente_desligado_plataforma", "restrito_avaliacao", "novo_lead_recusado", "conversa_pausada", "conversa_com_outro_responsavel",
-    "conversa_com_outro_agente", "reengajamento_ignorado", "lead_opt_out", "limite_atingido",
+    "conversa_com_outro_agente", "reengajamento_ignorado", "limite_retomadas", "lead_opt_out", "limite_atingido",
     # abuse protection (guardrails B5): SW routes each to a human, never to silence
     "limite_taxa", "novo_lead_limitado", "loop_detectado",
 ]
