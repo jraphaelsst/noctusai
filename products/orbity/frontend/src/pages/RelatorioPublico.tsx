@@ -40,7 +40,7 @@ function ReportHeader({ name, periodStart, periodEnd }: { name: string; periodSt
     });
 
   return (
-    <div className="rounded-xl bg-white border border-gray-200 p-6 shadow-sm">
+    <div className="rounded-xl bg-white border border-gray-200 p-6 shadow-xs">
       <div className="flex items-center gap-3 mb-2">
         <div className="rounded-lg bg-indigo-50 p-2">
           <FileBarChart2 className="h-5 w-5 text-indigo-600" />
@@ -69,7 +69,7 @@ function StatCard({
   color: string;
 }) {
   return (
-    <div className="rounded-xl bg-white border border-gray-200 p-5 shadow-sm flex items-start gap-4">
+    <div className="rounded-xl bg-white border border-gray-200 p-5 shadow-xs flex items-start gap-4">
       <div className={`rounded-lg p-2 ${color}`}>
         <Icon className="h-5 w-5" />
       </div>
@@ -121,7 +121,7 @@ function SnapshotCards({ payload }: { payload: Record<string, unknown> }) {
 function LoadingState() {
   return (
     <PageShell>
-      <div className="rounded-xl bg-white border border-gray-200 p-6 shadow-sm animate-pulse space-y-4">
+      <div className="rounded-xl bg-white border border-gray-200 p-6 shadow-xs animate-pulse space-y-4">
         <div className="h-4 bg-gray-200 rounded w-1/3" />
         <div className="h-8 bg-gray-200 rounded w-2/3" />
         <div className="h-4 bg-gray-200 rounded w-1/2" />
@@ -143,7 +143,7 @@ function ErrorState({ message }: { message: string }) {
 
   return (
     <PageShell>
-      <div className="rounded-xl bg-white border border-red-200 p-8 text-center shadow-sm">
+      <div className="rounded-xl bg-white border border-red-200 p-8 text-center shadow-xs">
         <div className="flex justify-center mb-4">
           {isExpired ? (
             <Clock className="h-10 w-10 text-amber-400" />
@@ -172,7 +172,7 @@ function EmptyState({ report }: { report: PublicReport }) {
         periodStart={report.period_start}
         periodEnd={report.period_end}
       />
-      <div className="rounded-xl bg-white border border-gray-200 p-8 text-center shadow-sm">
+      <div className="rounded-xl bg-white border border-gray-200 p-8 text-center shadow-xs">
         <FileBarChart2 className="h-8 w-8 text-gray-300 mx-auto mb-3" />
         <p className="text-sm text-gray-400">
           Nenhum snapshot gerado ainda para este relatório.
@@ -199,7 +199,7 @@ export default function RelatorioPublico() {
   if (!data) return null;
 
   // No snapshot yet
-  if (!data.snapshot_id) return <EmptyState report={data} />;
+  if (!data.generated_at) return <EmptyState report={data} />;
 
   return (
     <PageShell>

@@ -130,6 +130,8 @@ export function useCharges(filters?: ChargeFilters) {
     placeholderData: (prev) => prev,
     enabled: !!user,
     staleTime: 30 * 1000,
+    // poll-budget: 15s only while a charge is queued/generating/retrying, otherwise never; hidden=paused (TanStack default
+    // refetchIntervalInBackground=false); one paged GET per tick.
     refetchInterval: (query) =>
       query.state.data?.items.some((c) => ["queued", "generating", "retrying"].includes(c.generation_status)) ? 15_000 : false,
   });

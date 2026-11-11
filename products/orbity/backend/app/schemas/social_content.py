@@ -152,8 +152,6 @@ class ApprovalOut(StrictHttpModel):
 class PublicApprovalView(StrictHttpModel):
     model_config = {"extra": "ignore"}
 
-    approval_id: UUID
-    post_id: UUID
     platform: str
     caption: Optional[str] = None
     hashtags: Optional[str] = None

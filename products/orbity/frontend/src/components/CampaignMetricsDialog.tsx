@@ -25,7 +25,7 @@ function fmtDay(iso: string): string {
 }
 
 const INPUT =
-  'flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+  'flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring';
 
 export function CampaignMetricsDialog({
   campaign,

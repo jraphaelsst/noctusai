@@ -2,7 +2,7 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile access-tier`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**1066 open / in-progress**, 271 fixed, 2 accepted (1339 total).
+**1035 open / in-progress**, 304 fixed, 2 accepted (1341 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
@@ -17,12 +17,12 @@
 | erp-imobiliario | 186 | 0 | 1 | 185 | 0 | 15 |
 | igig | 58 | 0 | 0 | 58 | 0 | 13 |
 | monica | 9 | 0 | 0 | 9 | 0 | 13 |
-| orbity | 46 | 0 | 0 | 46 | 0 | 16 |
+| orbity | 23 | 0 | 0 | 23 | 0 | 39 |
 | p-studio | 20 | 0 | 0 | 20 | 0 | 0 |
 | personal-finance | 41 | 0 | 0 | 41 | 0 | 0 |
 | pilates | 1 | 0 | 0 | 1 | 0 | 0 |
-| seed | 5 | 0 | 0 | 5 | 0 | 25 |
-| social-wiring | 276 | 0 | 0 | 276 | 0 | 68 |
+| seed | 4 | 0 | 0 | 4 | 0 | 26 |
+| social-wiring | 269 | 0 | 0 | 269 | 0 | 77 |
 | store | 14 | 0 | 0 | 14 | 0 | 0 |
 | therapy-platform | 162 | 0 | 0 | 162 | 0 | 0 |
 
@@ -99,16 +99,6 @@
 | AT-8a30e145 | igig | `GET /api/webhooks/meta/leadgen` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-e966f014 | igig | `POST /api/comercial/leads/publico` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-91dd4cc4 | igig | `POST /api/esteira/aprovar/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-b809bb56 | orbity | `DELETE /api/clients/{client_id}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-c9f75791 | orbity | `GET /api/clients/{client_id}/offboarding-preview` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-750c4cd6 | orbity | `GET /api/content/approve/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-445ac983 | orbity | `GET /api/reports/public/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-78ccdedd | orbity | `POST /api/billing/webhook/asaas/{org_id}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-cec6b842 | orbity | `POST /api/capture/{org_id}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-eef49b94 | orbity | `POST /api/clients/{client_id}/archive` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-021a038a | orbity | `POST /api/content/approve/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-dd29ab42 | orbity | `POST /api/financial/charges` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-196bf740 | orbity | `POST /api/financial/charges/{entry_id}/generate` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-9b37a4ca | p-studio | `GET /api/financeiro/status` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-45da28e3 | p-studio | `GET /api/negocios/etapas` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-0e0dc110 | p-studio | `GET /api/producoes/etapas` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
@@ -117,15 +107,7 @@
 | AT-3a8de25b | personal-finance | `schema personal-finance: browser-role SELECT on 19 of 20` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-fe44eb6e | pilates | `schema pilates: browser-role SELECT on 7` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-2df307df | seed | `GET /api/team/accept/validate` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-4d4cca79 | seed | `GET {}/{provider}/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-b2345dca | seed | `POST /api/auth/login` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-63775129 | social-wiring | `GET /api/calendar/oauth/callback` | service | unclear | medium | open | keeper 2026-11-10 |
-| AT-a9cb4232 | social-wiring | `GET /api/integrations/accounts/gmail/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-7134a2a2 | social-wiring | `GET /api/integrations/accounts/google_drive/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-33aa2b06 | social-wiring | `GET /api/integrations/accounts/instagram/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-603c0e74 | social-wiring | `GET /api/integrations/accounts/meta/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-a5ea1821 | social-wiring | `GET /api/integrations/accounts/youtube/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-1bcc8a18 | social-wiring | `GET /api/youtube/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-971a905f | social-wiring | `schema imobi_scheduling: browser-role SELECT on 16 tables` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-8f3316f0 | social-wiring | `schema media_scheduling: browser-role SELECT on 14` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-d56ff6ea | store | `GET /api/admin/pedidos` | org | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
@@ -199,8 +181,8 @@
 - igig: 53
 - commerce: 48
 - personal-finance: 40
-- orbity: 36
 - community: 27
+- orbity: 23
 - academia-de-reciclagem: 16
 - adconnect: 16
 - daily-life: 16

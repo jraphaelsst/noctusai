@@ -1,6 +1,8 @@
 """Lead soft delete + captured-lead first-stage (O80). No monkeypatching of our own code."""
 from uuid import UUID
 
+import pytest
+
 from noctusai_lib.testing import MockSupabaseClient
 
 from app.services.automation_service import AutomationService
@@ -86,10 +88,18 @@ class TestCaptureFirstStage:
         svc.capture_lead({"name": "Cap"})
         assert db.table("leads").inserted_payloads[-1]["stage_id"] == "s-1"
 
-    def test_explicit_stage_is_respected(self):
-        db, svc = _crm([], lead_stages=[_stage("s-1")])
+    def test_explicit_stage_of_the_org_is_respected(self):
+        db, svc = _crm([], lead_stages=[_stage("s-1"), _stage("s-9")])
         svc.capture_lead({"name": "Cap", "stage_id": "s-9"})
         assert db.table("leads").inserted_payloads[-1]["stage_id"] == "s-9"
+
+    def test_explicit_stage_outside_the_org_is_refused(self):
+        from app.services.crm_service import CaptureStageInvalid
+
+        db, svc = _crm([], lead_stages=[_stage("s-1")])
+        with pytest.raises(CaptureStageInvalid):
+            svc.capture_lead({"name": "Cap", "stage_id": "s-9"})
+        assert db.table("leads").inserted_payloads == []
 
     def test_org_without_stages_warns_and_keeps_null_stage(self, caplog):
         db, svc = _crm([], lead_stages=[])

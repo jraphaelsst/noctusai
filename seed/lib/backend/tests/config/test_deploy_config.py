@@ -226,3 +226,24 @@ def test_baseline_key_enforced_in_deploy_context(
     with pytest.raises(MissingProdConfigError) as excinfo:
         require_prod_config(baseline_required_prod_env())
     assert "REDIS_SESSION_ENCRYPTION_KEY" in excinfo.value.missing_keys
+
+
+class TestIsExplicitLocalEnv:
+    """The fail-closed inverse of the deploy signal: only an EXPLICIT local/dev/test APP_ENV counts."""
+
+    @pytest.mark.parametrize("value", ["local", "dev", "development", "test", "testing", " TEST ", "Local"])
+    def test_explicit_local_values(self, monkeypatch, value):
+        from noctusai_lib.config.deploy_config import is_explicit_local_env
+
+        monkeypatch.setenv("APP_ENV", value)
+        assert is_explicit_local_env() is True
+
+    @pytest.mark.parametrize("value", [None, "", "production", "prod", "staging", "locall", "develop"])
+    def test_everything_else_is_not_local(self, monkeypatch, value):
+        from noctusai_lib.config.deploy_config import is_explicit_local_env
+
+        if value is None:
+            monkeypatch.delenv("APP_ENV", raising=False)
+        else:
+            monkeypatch.setenv("APP_ENV", value)
+        assert is_explicit_local_env() is False

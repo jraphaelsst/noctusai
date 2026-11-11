@@ -23,8 +23,6 @@ vi.mock("@/hooks/useConteudo", () => ({
 import AprovacaoPublica from "../AprovacaoPublica";
 
 const pendingPayload = {
-  approval_id: "apv-1",
-  post_id: "post-1",
   platform: "instagram",
   caption: "Legenda para aprovar",
   hashtags: null,

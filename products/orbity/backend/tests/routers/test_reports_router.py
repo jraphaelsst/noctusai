@@ -15,6 +15,8 @@ Row fixtures must use this coerced value so MockSelectBuilder eq-filters match.
 from __future__ import annotations
 
 import uuid
+
+import pytest
 from datetime import datetime, timezone
 from unittest.mock import patch
 from noctusai_lib.testing import handler_status
@@ -111,7 +113,7 @@ class TestPublicReportEndpoint:
         assert resp.status_code != 401
 
     def test_published_report_with_snapshot_returns_200(self, client):
-        row = {**_report_row(), "status": "published"}
+        row = {**_report_row(), "status": "published", "expires_at": "2099-01-01T00:00:00+00:00"}
         snap = _snapshot_row(row["id"])
         # Seed reports table → published row; report_snapshots → snapshot
         client.mock_supabase.set_table_data("reports", [row])
@@ -143,14 +145,27 @@ class TestPublicReportEndpoint:
         assert resp.status_code == 404
 
     def test_published_with_no_snapshot_returns_200_empty_payload(self, client):
-        row = {**_report_row(), "status": "published"}
+        row = {**_report_row(), "status": "published", "expires_at": "2099-01-01T00:00:00+00:00"}
         client.mock_supabase.set_table_data("reports", [row])
         client.mock_supabase.set_table_data("report_snapshots", [])
         resp = client.raw().get(f"/api/reports/public/{row['public_token']}")
         assert resp.status_code == 200
         body = resp.json()
         assert body["payload"] == {}
-        assert body["snapshot_id"] is None
+        assert body["generated_at"] is None
+
+    def test_public_response_carries_no_internal_ids(self, client):
+        row = {**_report_row(), "status": "published", "expires_at": "2099-01-01T00:00:00+00:00"}
+        client.mock_supabase.set_table_data("reports", [row])
+        client.mock_supabase.set_table_data("report_snapshots", [_snapshot_row(row["id"])])
+        body = client.raw().get(f"/api/reports/public/{row['public_token']}").json()
+        assert not {"report_id", "snapshot_id", "id", "org_id", "public_token"} & set(body)
+
+    @pytest.mark.parametrize("expires", [None, "not-a-date"])
+    def test_published_link_without_a_usable_expiry_fails_closed(self, client, expires):
+        row = {**_report_row(), "status": "published", "expires_at": expires}
+        client.mock_supabase.set_table_data("reports", [row])
+        assert client.raw().get(f"/api/reports/public/{row['public_token']}").status_code == 404
 
     # -----------------------------------------------------------------
     # Malformed public token — must read as 404, never 502

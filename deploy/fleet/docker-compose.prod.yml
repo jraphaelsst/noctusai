@@ -310,6 +310,11 @@ services:
     <<: *prod-defaults
     image: ghcr.io/jraphaelsst/noctus-orbity:${NOCTUS_IMAGE_TAG:-latest}
     container_name: noctus-orbity
+    # WhatsApp is OFF for orbity: NO `WAHA_LINE_POLICIES` is declared, so the seed's line policy fails CLOSED and every
+    # write to WhatsApp is refused (KB § INTEGRATIONS/whatsapp.md § 6a). Orbity's lines are DB-sourced on the shared `waha`
+    # host, which no tenant may send through unreviewed.
+    # NOC-REMEDIATE[orbity-waha-own-instance]: owner decision pending -- either orbity gets its own `waha-orbity` instance
+    # (deploy/fleet/waha-instances.yml, a declared send-enabled line policy) or WhatsApp stays off. — 2026-11-10
     expose:
       - "8010"
     healthcheck:
