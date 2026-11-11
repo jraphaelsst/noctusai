@@ -25,6 +25,7 @@ def test_every_table_has_org_id_and_rls(table):
     assert f"ALTER TABLE finx.{name} ENABLE ROW LEVEL SECURITY;" in SQL
     assert f'CREATE POLICY "{name}_select_own_org"' not in SQL and "service_role_bypass" in SQL
     assert f"REVOKE ALL ON finx.{name} FROM PUBLIC, anon, authenticated;" in SQL
+    assert f"COMMENT ON TABLE finx.{name} IS 'tier:org';" in SQL  # the access-tier keeper refuses an undeclared table
 
 
 def test_dedup_unique_covers_org_entry_rule_cycle():

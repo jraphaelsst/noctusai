@@ -287,6 +287,33 @@ describe("useExecutions", () => {
     expect(result.current.data).toHaveLength(0);
   });
 
+  // poll-budget: the 30s poll runs ONLY while an execution is in flight (an idle screen costs zero background calls).
+  it("does not poll in the background when nothing is running", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mockGet.mockResolvedValue([{ ...EXECUTION_ITEM, status: "done" }]);
+      const { result } = renderHook(() => useExecutions(), { wrapper: makeWrapper() });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      await vi.advanceTimersByTimeAsync(95_000);
+      expect(mockGet).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("polls every 30s while an execution is running", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      mockGet.mockResolvedValue([EXECUTION_ITEM]); // status: running
+      const { result } = renderHook(() => useExecutions(), { wrapper: makeWrapper() });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      await vi.advanceTimersByTimeAsync(95_000);
+      expect(mockGet.mock.calls.length).toBeGreaterThanOrEqual(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("error state — surfaces error", async () => {
     mockGet.mockRejectedValue(new Error("Falha ao listar execucoes"));
     const { result } = renderHook(() => useExecutions(), {

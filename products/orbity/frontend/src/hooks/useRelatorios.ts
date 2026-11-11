@@ -52,13 +52,11 @@ export interface ReportSnapshot {
 }
 
 export interface PublicReport {
-  report_id: string;
   name: string;
   period_start: string;
   period_end: string;
   status: string;
   expires_at: string | null;
-  snapshot_id: string | null;
   generated_at: string | null;
   payload: Record<string, unknown>;
 }

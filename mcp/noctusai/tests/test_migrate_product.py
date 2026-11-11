@@ -520,6 +520,71 @@ class TestTargetFilter:
 
 
 # ---------------------------------------------------------------------------
+# upto= and the target= out-of-order refusal (b5 finding 2026-11-11: target=074 applied 074
+# alone, before 072/073, when "up to 074" was meant)
+# ---------------------------------------------------------------------------
+
+_CHAIN = [
+    ("071_a.sql", "SELECT 71;"),
+    ("072_b.sql", "SELECT 72;"),
+    ("073_c.sql", "SELECT 73;"),
+    ("074_d.sql", "SELECT 74;"),
+    ("075_e.sql", "SELECT 75;"),
+]
+
+
+def _chain_call(tmp_path, *, applied=("071_a.sql",), **kw):
+    products = _make_products_dir(tmp_path)
+    _make_migration_files(products, "orbity", _CHAIN)
+    fake = FakeSqlExecutor(preset_rows={"SELECT filename": [{"filename": f} for f in applied]})
+    result = migrate_product("orbity", executor=fake, products_dir=products,
+                             git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"), **kw)
+    return result, fake
+
+
+class TestUptoAndOutOfOrder:
+    def test_upto_applies_every_pending_file_through_it_in_order(self, tmp_path):
+        result, fake = _chain_call(tmp_path, confirm=True, upto="074_d.sql")
+        assert result["status"] == "applied", result
+        assert result["applied"] == ["072_b.sql", "073_c.sql", "074_d.sql"]
+        assert not any("SELECT 75;" in q for q in fake.executed), "upto must stop at the named file"
+
+    def test_upto_dry_run_lists_the_same_set(self, tmp_path):
+        result, _ = _chain_call(tmp_path, confirm=False, upto="074_d.sql")
+        assert result["pending"] == ["072_b.sql", "073_c.sql", "074_d.sql"]
+
+    def test_upto_unknown_file_is_an_error(self, tmp_path):
+        result, _ = _chain_call(tmp_path, confirm=False, upto="999_x.sql")
+        assert result["status"] == "error" and "999_x.sql" in result["error"]
+
+    def test_target_with_earlier_pending_is_refused_on_write(self, tmp_path):
+        result, fake = _chain_call(tmp_path, confirm=True, target="074_d.sql")
+        assert result["status"] == "refused_out_of_order" and result["exit_code"] == 1
+        assert result["applied"] == []
+        assert "072_b.sql" in result["error"] and "upto=" in result["error"]
+        assert not any(q.strip().startswith("SELECT 7") for q in fake.executed), "no DDL may run"
+
+    def test_target_dry_run_answers_and_names_the_earlier_pending(self, tmp_path):
+        result, _ = _chain_call(tmp_path, confirm=False, target="074_d.sql")
+        assert result["status"] == "dry_run"
+        assert result["pending"] == ["074_d.sql"]
+        assert result["earlier_pending"] == ["072_b.sql", "073_c.sql"]
+
+    def test_allow_out_of_order_applies_the_one_file(self, tmp_path):
+        result, _ = _chain_call(tmp_path, confirm=True, target="074_d.sql", allow_out_of_order=True)
+        assert result["status"] == "applied" and result["applied"] == ["074_d.sql"]
+
+    def test_target_is_fine_when_everything_before_it_is_applied(self, tmp_path):
+        result, _ = _chain_call(tmp_path, confirm=True, target="073_c.sql",
+                                applied=("071_a.sql", "072_b.sql"))
+        assert result["status"] == "applied" and result["applied"] == ["073_c.sql"]
+
+    def test_target_and_upto_are_mutually_exclusive(self, tmp_path):
+        result, _ = _chain_call(tmp_path, confirm=False, target="073_c.sql", upto="074_d.sql")
+        assert result["status"] == "error" and "mutually exclusive" in result["error"]
+
+
+# ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
 
