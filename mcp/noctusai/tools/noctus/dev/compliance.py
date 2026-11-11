@@ -27592,6 +27592,10 @@ _MPSR_SCRIPT_REL = ("mcp", "noctusai", "node", "module_page_keys_scan.mjs")
 _MPSR_ALLOW_PY = re.compile(r"#\s*noc-allow:\s*module-page-status-row\s*(?:—|–|-|:)\s*\S")
 _MPSR_SKIP_PARTS = {"node_modules", "dist", "build", ".git", "coverage", "tests", "__tests__", "__pycache__"}
 _MPSR_SEED_BE_ROOTS = ("seed/framework/backend/noctusai_seed", "seed/lib/backend/noctusai_lib")
+#: Synthetic sub-group headers (`defineModule` has no sub-group-without-a-page concept yet): never rendered as pages,
+#: so they need no `status_pagina` row. NOC-REMEDIATE[module-subgroup-concept]: seed `defineModule` gains a real
+#: sub-group (roadmap slice W2-6) and this exemption is deleted — 2026-11-11.
+_MPSR_EXEMPT_PREFIX = "__grupo:"
 _MPSR_INSERT = re.compile(r"insert\s+into\s+[\w.\"]*status_pagina\b", re.IGNORECASE)
 _MPSR_SQL_LITERAL = re.compile(r"'([^']+)'")
 
@@ -27724,7 +27728,7 @@ def module_page_status_row_gaps(root: Path) -> tuple[dict[str, dict[str, str]], 
         if not declared:
             continue
         seeded = _mpsr_seeded_keys(product)
-        missing = {k: where for k, where in sorted(declared.items()) if k not in seeded}
+        missing = {k: where for k, where in sorted(declared.items()) if k not in seeded and not k.startswith(_MPSR_EXEMPT_PREFIX)}
         if missing:
             gaps[product.name] = missing
     return gaps, errors

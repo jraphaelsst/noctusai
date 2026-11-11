@@ -72,3 +72,12 @@ class TestModulePageStatusRows:
     def test_fe_define_module_page_key_is_checked(self, tmp_path):
         root = _tree(tmp_path, {"products/demo/frontend/src/modules.ts": _FE})
         assert "crm_leads" in check_module_page_status_rows(repo_root=root)[0]["issue"]
+
+    @pytest.mark.skipif(shutil.which("node") is None, reason="needs node + ts-morph")
+    def test_synthetic_grupo_header_keys_are_exempt(self, tmp_path):
+        fe = "defineModule({ key: 'crm', items: [{ label: 'G', path: '/__grupo/x', pageKey: '__grupo:x' }] });\n"
+        assert check_module_page_status_rows(repo_root=_tree(tmp_path, {"products/demo/frontend/src/modules.ts": fe})) == []
+
+    def test_grupo_exemption_is_prefix_only_for_be_keys_too(self, tmp_path):
+        src = _SPEC.replace("crm_leads", "__grupo:vendas")
+        assert check_module_page_status_rows(repo_root=_tree(tmp_path, {_MAIN: src})) == []
