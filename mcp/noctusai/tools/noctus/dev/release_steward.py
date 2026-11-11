@@ -1982,6 +1982,60 @@ def ci_keeper_test_ids(tests_dir: str | Path) -> list[str]:
     return ids
 
 
+#: a diff touching any of these runs the product-scoped tests (a new product lands here too)
+#: NOC-REMEDIATE[scoped-green-diff-scope]: item 5 is a keeper PROXY, not CI's scoped jobs. Three escapes on
+#: 2026-11-10 share one shape - CI ran a suite the diff selected and item 5 did not: (1) fleet-parametrized
+#: tests (closed here); (2) the touched products' FE vitest (core src/lib/product-icon.test.tsx); (3) the seed
+#: backend suite + toolkit tests a seed change affects (ac-s6-deploy-wiring: test_vps_exec.py, seed whatsapp).
+#: The fix is to replay CI's own `changes` classification (shared_changed / changed_products / harness_changed)
+#: and run the python jobs it selects - not more per-case rules. Not done here: the full seed + sharded toolkit
+#: suite per filing is a filing-latency and memory cost on the 8 GB machine that needs its own design (the
+#: classifier is inline bash in test.yml - extract it so CI and item 5 share one source, never port it).
+#: Destination: the item-5 section of KB § PATTERNS/devops/release-steward.md (tooling steward e1).
+PRODUCT_PATH_PREFIX = "products/"
+
+
+def ci_product_test_ids(tests_dir: str | Path) -> list[str]:
+    """Pytest node ids of the tests CI runs ACROSS the product fleet: every test parametrized over `product`
+    (`test_all_products_compliant[<slug>]`) and every `test_real_products_*`. A diff touching `products/`
+    must pass them: ac-s2-assistant-scaffold went 5/5 while CI ejected it on exactly these (a seeded
+    product icon failed check_product_icon_registered, 2026-11-10) - they are not `check_x() == []` shaped,
+    so ci_keeper_test_ids never saw them. Derived by AST, never hand-listed; the whole function runs (every
+    product), which is what CI judges."""
+    import ast
+    root = Path(tests_dir)
+    ids: list[str] = []
+
+    def over_products(fn: ast.AST) -> bool:
+        if fn.name.startswith("test_real_products"):
+            return True
+        for d in fn.decorator_list:
+            if isinstance(d, ast.Call) and getattr(d.func, "attr", "") == "parametrize" and d.args \
+                    and isinstance(d.args[0], ast.Constant) and d.args[0].value == "product":
+                return True
+        return False
+
+    for path in sorted(root.glob("test_*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        rel = f"{root.name}/{path.name}"
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test") \
+                    and over_products(node):
+                ids.append(f"{rel}::{node.name}")
+            elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+                ids += [f"{rel}::{node.name}::{m.name}" for m in node.body
+                        if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name.startswith("test")
+                        and over_products(m)]
+    return ids
+
+
+def touches_products(changed_paths: list[str]) -> bool:
+    return any(p.startswith(PRODUCT_PATH_PREFIX) for p in changed_paths)
+
+
 VERDICT_STORE_NAME = "deliverable-verdicts.ndjson"
 _VERDICT_REF_RE = re.compile(r"^ci-parity:([0-9a-f]{32})$")
 _FULL_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -2123,6 +2177,12 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             flags, prime = ci_blocking_flags(text), ci_prime_flags(text)
             tool_dir = Path(tree) / "mcp" / "noctusai"
             ids = ci_keeper_test_ids(tool_dir / "tests")
+            rc_d, diff_out, diff_err = _subprocess_git(cwd)("diff", "--name-only", f"origin/dev...{head}")
+            if rc_d != 0:
+                return {"ok": False, "detail": f"UNMEASURED: cannot list the paths the head changes vs origin/dev "
+                                               f"(the product-scoped set depends on it): {_last_line(diff_err or '')}"}
+            if touches_products(diff_out.split()):
+                ids += [i for i in ci_product_test_ids(tool_dir / "tests") if i not in ids]
             failed: list[str] = []
 
             def run(argv: list[str], where: Path) -> subprocess.CompletedProcess:

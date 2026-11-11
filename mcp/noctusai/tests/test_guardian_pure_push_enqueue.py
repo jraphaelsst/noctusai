@@ -745,12 +745,28 @@ def test_real_tree_session_keeper():
 _SCRUBBED_ENV = {"CLAUDE_CODE_SESSION_ID": "sess-123", "CLAUDE_PROJECT_DIR": "/somewhere", "OPENAI_API_KEY": "k"}
 
 
-def _ci_branch(world, *, rogue_script=False, session_test=False):
+_PRODUCT_TESTS = """\
+import pathlib
+
+import pytest
+
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+
+
+@pytest.mark.parametrize("product", ["core"])
+def test_all_products_compliant(product):
+    assert not (ROOT / "products" / product / "unregistered-icon").exists()
+"""
+
+
+def _ci_branch(world, *, rogue_script=False, session_test=False, product_tests=False, product_red=False):
     """A pushed branch whose head carries a tiny CI definition + the keepers it blocks on."""
     wt = world.worktree()
+    extra = ((("mcp/noctusai/tests/test_products.py", _PRODUCT_TESTS),) if product_tests else ()) \
+        + ((("products/core/unregistered-icon", "MessageCircle\n"),) if product_red else ())
     for rel, text in ((".github/workflows/test.yml", _WORKFLOW), ("mcp/noctusai/cli.py", _CLI),
                       ("mcp/noctusai/tests/test_keepers.py", _KEEPER_TESTS + (_SESSION_TEST if session_test else "")),
-                      ("scripts/MANIFEST", "tool.sh\n"), ("scripts/tool.sh", "#!/bin/sh\n")):
+                      ("scripts/MANIFEST", "tool.sh\n"), ("scripts/tool.sh", "#!/bin/sh\n"), *extra):
         (wt / rel).parent.mkdir(parents=True, exist_ok=True)
         (wt / rel).write_text(text)
     if rogue_script:
@@ -1521,3 +1537,35 @@ def test_the_deliverable_git_seam_resolves_path_arguments_from_the_toplevel(tmp_
     git = RS._subprocess_git(repo / "mcp" / "noctusai")
     rc, out, _ = git("ls-tree", "--name-only", "HEAD", "products/p/backend/migrations/")
     assert rc == 0 and out.strip() == "products/p/backend/migrations/001_a.sql"
+
+
+# ─── product-scoped tests (2026-11-10, reported by 8a) ───────────────────────────────────────────
+# ac-s2-assistant-scaffold went 5/5 and CI ejected it on test_all_products_compliant[core]: a seeded
+# product icon failed check_product_icon_registered. Fleet-parametrized tests are not `check_x() == []`
+# shaped, so item 5 never ran them. A diff touching products/ now does.
+
+def test_product_scoped_tests_are_derived_by_ast(tmp_path):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_c.py").write_text(
+        _PRODUCT_TESTS + "\n\nclass TestC:\n    def test_real_products_pass_validate(self):\n        pass\n"
+        "\n    @pytest.mark.parametrize('other', [1])\n    def test_not_fleet(self, other):\n        pass\n")
+    assert RS.ci_product_test_ids(tests) == [
+        "tests/test_c.py::test_all_products_compliant", "tests/test_c.py::TestC::test_real_products_pass_validate"]
+    assert RS.touches_products(["products/core/backend/migrations/119_x.sql"])
+    assert not RS.touches_products(["mcp/noctusai/cli.py", "KNOWLEDGE-BASE/products/x.md"])
+
+
+def test_a_diff_touching_products_runs_the_fleet_tests_and_a_red_one_blocks(world):
+    _ci_branch(world, product_tests=True, product_red=True)
+    res = _parity(world, **_SCRUBBED_ENV)
+    assert not res["ok"], res
+    assert "tests/test_products.py::test_all_products_compliant" in res["ran"]["tests"]
+    assert any("test_all_products_compliant" in f for f in res["failed"]), res["failed"]
+
+
+def test_a_diff_not_touching_products_does_not_pay_for_the_fleet_tests(world):
+    _ci_branch(world, product_tests=True)
+    res = _parity(world, **_SCRUBBED_ENV)
+    assert res["ok"], res
+    assert not any("test_products.py" in t for t in res["ran"]["tests"])

@@ -277,8 +277,18 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
 - *The CI-blocking set is derived, never listed.* From the head's own CI definition: (a) every `cli.py --check-*` step of
   `.github/workflows/test.yml` that is not `continue-on-error` and needs no CI-resolved argument (`ci_blocking_flags`);
   (b) every test in `mcp/noctusai/tests/` that asserts a `check_*` keeper returns `[]` on the live tree, found by AST
-  (`ci_keeper_test_ids`: the "real tree is clean" tests that make a pre-commit warning a CI block). CI's "Prime hermetic state"
-  step is replayed first (`ci_prime_flags`).
+  (`ci_keeper_test_ids`: the "real tree is clean" tests that make a pre-commit warning a CI block); (c) when the diff vs
+  `origin/dev` touches `products/` (a new product included), every fleet-parametrized test - `@parametrize("product", ...)`
+  and `test_real_products_*`, whole function, found by AST (`ci_product_test_ids`). Why (c): ac-s2-assistant-scaffold went 5/5
+  and CI ejected it on `test_all_products_compliant[core]` (a seeded product icon failed `check_product_icon_registered`,
+  2026-11-10); those tests are not `check_x() == []` shaped. **Gap, `NOC-REMEDIATE[scoped-green-diff-scope]`:** item 5 is
+  still a keeper proxy, not CI's diff-scoped jobs. Open escapes of the same shape: the touched products' FE vitest, and the
+  seed backend suite + the toolkit tests a seed change affects (ac-s6-deploy-wiring went 5/5, then red on `test_vps_exec.py`
+  and the seed whatsapp tests, 2026-11-10). Target: replay CI's own `changes` classification (extracted from `test.yml` so
+  both share one source) and run the Python jobs it selects; pending a filing-latency/memory design for the 8 GB machine.
+  Until then, a branch steward whose diff touches `products/seed/`, `products/<slug>/frontend/` or an integration runs that
+  suite itself before filing.
+  CI's "Prime hermetic state" step is replayed first (`ci_prime_flags`).
 - *The env is scrubbed the way CI's is.* `hermetic_env`: OS basics only (`HERMETIC_BASE_ENV`) plus the toolkit job's own
   `env:` plus `CI=true`. Everything else (`CLAUDE_*`, `ANTHROPIC_*`, `OPENAI_*`, `SUPABASE_*`, `NOC*` ...) is absent, because it is
   absent on a runner.
