@@ -1,16 +1,19 @@
-# Mockup protocol — the mandatory mockup-first procedure
+# Mockup protocol — the procedure for drawing a mockup when the owner asks
 
-> **What it is.** The step-by-step procedure that turns an owner's request for a screen into an
-> owner-signed-off, clickable HTML mockup and a hand-off package the frontend builds from. Owned by
+> **What it is.** The step-by-step procedure that turns an owner's request for a mockup into a
+> clickable HTML mockup the owner refines from, and a hand-off package the frontend applies. Owned by
 > `product-designer` (`.claude/agents/product-designer.md`).
 >
-> **Why it exists.** The rule is settled — *no UI is built before the owner has clicked through it*, on
-> the noc pattern, on real data where it exists (owner 2026-11-04 ×2; `CLAUDE/frontend.md` rule 1;
+> **Rule change 2026-11-11 — mockups never gate a build.** owner 2026-11-11: "mockup rule shouldnt block. let's flexibilize the rule. mockups are brought for validation only when i ask for it. build should start right away, i'll use the mockup to refine, you change what i ask in-flight or later and redeploy if the frontend has already been created".
+> A mockup is made ONLY when the owner asks for one; the build starts right away. This supersedes the
+> 2026-11-04 mockup-first rule (owner 2026-11-04 ×2), whose procedure survives below for when a mockup is requested.
+>
+> **Why it exists.** The house look is the noc pattern, on real data where it exists (`CLAUDE/frontend.md` rule 1;
 > `KB § PATTERNS/frontend/prototype-on-real-data.md`; memory `feedback-mockup-before-ui`). The RULE
 > lives in prototype-on-real-data; the PROCEDURE did not exist, so each mockup was invented ad hoc by
 > whoever drew it. This doc is that procedure.
 >
-> **How to use it.** Run §1-§8 in order for every new screen. Craft depth (what to put on the screen,
+> **How to use it.** When the owner asks for a mockup, run §1-§8 in order. Craft depth (what to put on the screen,
 > copy, states, evaluation) is in `KB § PATTERNS/design/design-craft-canon.md`; accessibility checks in
 > `KB § PATTERNS/design/accessibility.md`. **The house mechanism wins:** prototype-on-real-data
 > (frontend-owned today; transfer to product-designer requested) is the contract this procedure
@@ -30,18 +33,15 @@
 
 ---
 
-## 1 · When it is mandatory
+## 1 · When it runs: on the owner's ask
 
-**Mandatory** for: a new page, tool, dashboard, editor, wizard or admin view; a new region on an existing
-page (a panel, a tab, a table); any redesign of layout or flow; any new state of a screen whose shape
-is not obvious (a job-progress view, a permission state).
-
-**Carve-out (justify + log in the slice notes, like `noc-contract-first`'s):** a copy-only change, a
-pure CSS/token fix with no layout change, an accessibility fix that keeps the layout, a bug fix
-restoring the already-signed-off design. When in doubt, it is mandatory — a mockup costs minutes, a
-wrong build costs a slice (prototype-on-real-data §3).
-
----
+**Only when the owner asks for a mockup** (or asks `product-designer` for a redesign, IA, copy or
+accessibility review, or to refine a screen already built). A mockup NEVER gates a build: UI work starts
+right away on the noc pattern (seed tokens, app shell, real data where it exists), contract-first for
+BE↔FE. The owner uses the mockup, or the built screen, to refine; what they ask is applied in-flight or
+as a follow-up, with a redeploy if the frontend already shipped. "No mockup" is never a reason to stop a
+build or to escalate a decision (owner 2026-11-11). Accessibility checks (§5, `accessibility.md` §4)
+run on the mockup when one exists, otherwise on the built screen.
 
 ## 2 · Inputs (gather before drawing)
 

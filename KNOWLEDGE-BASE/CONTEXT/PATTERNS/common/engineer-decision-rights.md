@@ -59,6 +59,8 @@ A decision takes the HIGHEST tier any criterion gives it. The ladder reuses `own
 | C8 | cost | none | none | a new runtime dependency or a new paid call path |
 | C9 | novelty | a §4 class | none | anything not in §4 |
 
+> C5 note (owner 2026-11-11): the absence of a mockup is never an escalate reason; mockups are made only on the owner's ask and never gate a build.
+
 **Surprise test.** Answer each; any yes or unsure moves the decision up one tier (house no-silent-errors: ambiguity means ask).
 1. Would the owner be surprised to read this?
 2. Does it change an acceptance criterion or the next plan step?
