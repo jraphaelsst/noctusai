@@ -1530,3 +1530,64 @@ def test_P3_3_the_looser_override_warning_compares_each_window_to_the_default_ru
     assert any("LOOSER" in w and "300s=800" in w and "3600s" not in w for w in cfg.warnings), cfg.warnings
     tight = BreakerConfig.from_env({"NOCTUS_BREAKER_BUDGETS": json.dumps({"worker:b": [[300, 100], [3600, 1000]]})})
     assert not any("LOOSER" in w for w in tight.warnings)
+
+
+# --- scheduler billing: a run is billed only when it is a cadence violation that cost real Supabase calls ---------------
+
+
+def _scheduler_world(job_calls_per_run):
+    from noctusai_lib.api import scheduler as sch
+    from noctusai_lib.primitives.supabase_breaker import install_breaker
+
+    sch.reset_for_testing()
+    clock = VirtualClock()
+    store, alerter = InMemoryBreakerStore(), RecordingAlerter()
+    b = install_breaker(Breaker(slug="p", store=store, alerter=alerter, clock=clock, wall=clock, sync_io=True))
+
+    async def job():
+        for _ in range(job_calls_per_run):
+            b.record_call()  # the transport's count, under the run's `job:scheduler:<name>` source and tally
+
+    return sch, b, clock, job
+
+
+def test_scheduler_a_1s_job_that_an_idlegate_skips_makes_no_calls_and_is_never_held_for_an_hour():
+    sch, b, clock, job = _scheduler_world(0)
+    wrapped = sch._instrument("gated", job)
+
+    async def drive():
+        for _ in range(3600):
+            clock.advance(1.0)
+            await wrapped()
+
+    asyncio.run(drive())
+    assert b.hold_reason("scheduler:gated") is None and b.count("scheduler:gated", 3600) == 0
+    sch.reset_for_testing()
+
+
+def test_scheduler_a_1s_job_that_makes_a_supabase_call_per_run_IS_held():
+    sch, b, clock, job = _scheduler_world(1)
+    wrapped = sch._instrument("hot", job)
+
+    async def drive():
+        for _ in range(3600):
+            clock.advance(1.0)
+            await wrapped()
+
+    asyncio.run(drive())
+    assert b.hold_reason("scheduler:hot") is not None, "1 call/s from a 1 s job is the incident shape"
+    sch.reset_for_testing()
+
+
+def test_scheduler_a_nightly_job_with_thousands_of_calls_per_run_is_never_billed():
+    sch, b, clock, job = _scheduler_world(5000)
+    wrapped = sch._instrument("nightly", job)
+
+    async def drive():
+        for _ in range(5):
+            clock.advance(86_400.0)
+            await wrapped()
+
+    asyncio.run(drive())
+    assert b.hold_reason("scheduler:nightly") is None and b.count("scheduler:nightly", 3600) == 0
+    sch.reset_for_testing()

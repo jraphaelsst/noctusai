@@ -89,8 +89,6 @@ class ControleRecord:
     org_id: UUID
     modo: str
     dreno_inatividade_dias: int
-    #: 056: the org's testing-phase switch (Julia v3 §12.2) — the prompt may say "we are in a testing phase" only while on.
-    fase_testes: bool = True
     #: 056 evaluation mode (Julia v3 §12.12): while on, the agent answers only the phones (from noc) of the listed users.
     modo_avaliacao: bool = False
     avaliacao_usuarios: tuple[UUID, ...] = ()
@@ -120,13 +118,6 @@ class AgentControleStore(Protocol):
         (unknown mode / days outside 1..365)."""
         ...
 
-    def set_fase_testes(
-        self, org_id: UUID, agent_id: UUID, valor: bool, *, actor: UUID | None = None
-    ) -> ControleRecord:
-        """Switch the org's testing-phase flag with an attributed audit row (``fase_testes_alterada``; an unchanged
-        value writes nothing). Raises :class:`NotFound`."""
-        ...
-
     def set_avaliacao(
         self, org_id: UUID, agent_id: UUID, *, modo_avaliacao: bool | None = None,
         usuarios: list[UUID] | None = None, actor: UUID | None = None,
@@ -154,8 +145,6 @@ class FakeAgentControleStore:
         self.auditoria: list[tuple[UUID, UUID | None, dict[str, Any], dict[str, Any]]] = []
         #: Set to an exception to simulate the control being unreadable (fail-closed tests).
         self.falha: Exception | None = None
-        #: ``(agent_id, actor, antes, depois)`` per ``fase_testes`` change.
-        self.auditoria_fase_testes: list[tuple[UUID, UUID | None, bool, bool]] = []
         #: ``(agent_id, actor, antes, depois)`` per evaluation change: ``(modo, n_usuarios)`` pairs.
         self.auditoria_avaliacao: list[tuple[UUID, UUID | None, tuple[bool, int], tuple[bool, int]]] = []
         #: instance (org, agent) -> its core (org, agent); an entry whose core row is absent models an unresolvable core.
@@ -200,16 +189,6 @@ class FakeAgentControleStore:
             ))
         return rec
 
-    def set_fase_testes(
-        self, org_id: UUID, agent_id: UUID, valor: bool, *, actor: UUID | None = None
-    ) -> ControleRecord:
-        before = self._propria(org_id, agent_id)
-        rec = replace(before, fase_testes=bool(valor))
-        self._rows[(org_id, agent_id)] = rec
-        if before.fase_testes != rec.fase_testes:
-            self.auditoria_fase_testes.append((agent_id, actor, before.fase_testes, rec.fase_testes))
-        return rec
-
     def set_avaliacao(
         self, org_id: UUID, agent_id: UUID, *, modo_avaliacao: bool | None = None,
         usuarios: list[UUID] | None = None, actor: UUID | None = None,
@@ -240,7 +219,7 @@ class SupabaseAgentControleStore:
     def get(self, org_id: UUID, agent_id: UUID) -> ControleRecord:
         rows = (
             self._client.schema(_SCHEMA).table("agents")
-            .select("id, org_id, modo_operacao, dreno_inatividade_dias, fase_testes, modo_avaliacao, avaliacao_usuarios, "
+            .select("id, org_id, modo_operacao, dreno_inatividade_dias, modo_avaliacao, avaliacao_usuarios, "
                     "definition_scope, definition_agent_id")
             .eq("id", str(agent_id)).eq("org_id", str(org_id)).limit(1).execute().data or []
         )
@@ -279,15 +258,6 @@ class SupabaseAgentControleStore:
         })
         return self.get(org_id, agent_id)
 
-    def set_fase_testes(
-        self, org_id: UUID, agent_id: UUID, valor: bool, *, actor: UUID | None = None
-    ) -> ControleRecord:
-        exec_rpc(self._client, _SCHEMA, "set_agent_fase_testes", {
-            "p_org_id": str(org_id), "p_agent_id": str(agent_id), "p_fase_testes": bool(valor),
-            "p_actor": str(actor) if actor else None,
-        })
-        return self.get(org_id, agent_id)
-
     def set_avaliacao(
         self, org_id: UUID, agent_id: UUID, *, modo_avaliacao: bool | None = None,
         usuarios: list[UUID] | None = None, actor: UUID | None = None,
@@ -307,7 +277,6 @@ class SupabaseAgentControleStore:
         return ControleRecord(
             agent_id=UUID(str(row["id"])), org_id=UUID(str(row["org_id"])),
             modo=row["modo_operacao"], dreno_inatividade_dias=int(row["dreno_inatividade_dias"]),
-            fase_testes=bool(row.get("fase_testes", True)),
             modo_avaliacao=bool(row.get("modo_avaliacao", False)),
             avaliacao_usuarios=tuple(UUID(str(u)) for u in (row.get("avaliacao_usuarios") or ())),
         )

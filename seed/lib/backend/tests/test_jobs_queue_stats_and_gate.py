@@ -233,3 +233,31 @@ def test_real_enqueue_drops_the_queue_stats_cache() -> None:
     assert repo._stats_cache
     run(repo.enqueue(type="t", payload={}))
     assert not repo._stats_cache
+
+
+def test_real_future_dated_enqueue_drops_the_stats_cache_but_does_not_wake_the_worker() -> None:
+    """The queue COUNT changed (a claim gate must see it) even though nothing is claimable yet; but a future-dated job
+    must not cut an idle worker's sleep."""
+    from noctusai_lib.domain.jobs import wake
+
+    client = MockSupabaseClient()
+    client.set_table_data("jobs", [])
+    repo = RealSupabaseJobRepository(client)
+
+    async def drive() -> tuple[bool, bool, bool, bool]:
+        w = wake.register(asyncio.get_running_loop(), ["t"])
+        await repo.queue_stats(job_types=["t"])
+        warmed = bool(repo._stats_cache)
+        await repo.enqueue(type="t", payload={}, scheduled_for=datetime.now(timezone.utc) + timedelta(hours=1))
+        await asyncio.sleep(0.01)
+        dropped, woke_future = not repo._stats_cache, w.event.is_set()
+        await repo.queue_stats(job_types=["t"])
+        await repo.enqueue(type="t", payload={})
+        await asyncio.sleep(0.01)
+        woke_now = w.event.is_set()
+        wake.unregister(w)
+        return warmed, dropped, woke_future, woke_now
+
+    warmed, dropped, woke_future, woke_now = asyncio.run(drive())
+    assert warmed and dropped, "a future-dated enqueue must still invalidate the stats cache"
+    assert woke_future is False and woke_now is True

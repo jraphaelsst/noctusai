@@ -81,6 +81,7 @@ __all__ = [
     "configure_breaker",
     "current_source",
     "get_breaker",
+    "install_breaker",
     "is_background",
     "record_call",
     "reset_breaker_for_tests",
@@ -1235,6 +1236,14 @@ def configure_breaker(**kwargs: Any) -> Breaker:
     b.configure(**kwargs)
     b.announce_config_warnings()
     return b
+
+
+def install_breaker(breaker: "Breaker") -> "Breaker":
+    """Replace the process breaker (tests and embedding hosts that need their own clock/store)."""
+    global _breaker
+    with _breaker_lock:
+        _breaker = breaker
+    return breaker
 
 
 def reset_breaker_for_tests() -> None:

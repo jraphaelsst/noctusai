@@ -28,7 +28,7 @@ export function useControle(key: string, enabled = true) {
 export function useSetControle(key: string) {
   return useCacheWriteMutation<Controle, ControleUpdate>({
     mutationFn: (payload) => api.put<Controle>(`/api/studio/agents/${seg(key)}/controle`, payload),
-    // The server's answer is the new state; the fase_testes flag is predictable, so it is drawn at once.
+    // The server's answer is the new state; the evaluation flags are predictable, so it is drawn at once.
     targets: [
       {
         queryKey: studioKeys.controle(key),

@@ -15,7 +15,7 @@ On for every product by construction (seed); no per-product code.
 | Source | Set by | On overrun |
 |---|---|---|
 | `worker:<job types>` (HOLDABLE) | the jobs Worker: ONLY an empty poll that VIOLATES THE LOOP'S CADENCE (see below) | trip -> the Worker loop PARKS (zero Supabase calls) until a human re-arms |
-| `scheduler:<job>` (HOLDABLE) | `api/scheduler.py`: one unit per RUN START (a job firing every second is the runaway) | trip -> the job does not run; no ledger row (that row is a Supabase call) |
+| `scheduler:<job>` (HOLDABLE) | `api/scheduler.py`: a run is billed (at its REAL Supabase call count) ONLY when it started less than the platform idle-poll floor after the previous run AND made >= 1 call — a tick an `IdleGate` skipped makes none and is free, a nightly job is never "frequent" | trip -> the job does not run; no ledger row (that row is a Supabase call) |
 | `job:<type>` / `job:scheduler:<job>` | each job's own execution | alert-only + the per-JOB cap below |
 | `http` | `SupabaseSourceMiddleware`, outermost: the seed app is a `SeedFastAPI` whose built stack is always wrapped by it, so product middleware added later runs inside `http` | alert (6,000 / 5 min / process) |
 | `startup` | seed lifespan startup (catalog publish + the product's `lifespan_startup`) | alert-only (1,500 / 60 s, 2,000 / h) |
