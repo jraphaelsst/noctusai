@@ -2115,7 +2115,15 @@ def _git_init_export(tree: str | Path, head: str, timeout: int = 300) -> str | N
     return None
 
 
-def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None = None, timeout: int = 1500,
+class _CiParityTimeout(Exception):
+    """A CI-parity stage exhausted its budget and its one x1.5 retry: no verdict (UNMEASURED), never a pass."""
+
+    def __init__(self, gate: str, budgets: list[int]) -> None:
+        super().__init__(f"stage `{gate}` timed out after {budgets[0]}s and again after the x1.5 retry ({budgets[-1]}s); "
+                         "no verdict. Retry on a quieter machine, or set NOCTUS_GATE_BUDGETS_JSON='{\"%s\": <seconds>}'." % gate)
+
+
+def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None = None, timeout: int | None = None,
                            base_env: dict[str, str] | None = None,
                            verdict_store: str | Path | None = None) -> Callable[[str, str], dict[str, Any]]:
     """Real default for `deliverable(scoped_check=)`: judge the head the way CI does. Export it, prime the
@@ -2124,14 +2132,24 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
     derived from the head's own workflow + tests. Slow (minutes): the branch steward runs it once and files
     the `ci-parity:<id>` ref it returns; the run APPENDS a verdict record to the store (full head sha, head tree,
     test.yml blob, interpreter, flags, test ids, result) and the guardian only resolves the ref
-    (`validate_verdict_ref`)."""
+    (`validate_verdict_ref`).
+
+    Time limits are the SAME declared per-gate budgets the merged-tip gates use (`gate_budget`: `ci_parity:export`,
+    `ci_parity:prime:<flag>`, `ci_parity:keeper:<flag>`, `ci_parity:pytest`), each with ONE retry at x1.5 when it times
+    out; a stage that times out twice is `UNMEASURED` naming the stage (never green). `timeout=` overrides every stage."""
     py = python or sys.executable
+
+    def budget(gate: str) -> int:
+        # Lazy, at RUN time: the steward PreToolUse hook loads this module by path with only the stdlib on sys.path and
+        # builds this closure eagerly, so a `tools.` import here (or at module top) crashes every steward-class call closed.
+        from tools.noctus.dev import gate_budget as _gate_budget
+        return timeout if timeout is not None else _gate_budget.resolve_gate_budget(gate)
 
     def check(branch: str, head: str) -> dict[str, Any]:
         tree = tempfile.mkdtemp(prefix="noc-ci-parity-")
         sandbox = tempfile.mkdtemp(prefix="noc-sandbox-home-")
         try:
-            err = _export_tree(head, tree, cwd, timeout)
+            err = _export_tree(head, tree, cwd, budget("ci_parity:export"))
             if err:
                 return {"ok": False, "detail": f"UNMEASURED: {err}"}
             wf = Path(tree) / CI_WORKFLOW_REL
@@ -2145,7 +2163,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             iso = seed_isolation_error(py, tree, env)
             if iso:
                 return {"ok": False, "detail": f"UNMEASURED: {iso}"}
-            gerr = _git_init_export(tree, head, timeout)
+            gerr = _git_init_export(tree, head, budget("ci_parity:export"))
             if gerr:
                 return {"ok": False, "detail": f"UNMEASURED: {gerr}"}
             flags, prime = ci_blocking_flags(text), ci_prime_flags(text)
@@ -2153,20 +2171,28 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             ids = ci_keeper_test_ids(tool_dir / "tests")
             failed: list[str] = []
 
-            def run(argv: list[str], where: Path) -> subprocess.CompletedProcess:
-                return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, cwd=str(where), env=env)
+            def run(gate: str, argv: list[str], where: Path) -> subprocess.CompletedProcess:
+                from tools.noctus.dev import gate_budget as _gate_budget
+                first = budget(gate)
+                budgets = [first, _gate_budget.retry_budget(first)]
+                for b in budgets:
+                    try:
+                        return subprocess.run(argv, capture_output=True, text=True, timeout=b, check=False, cwd=str(where), env=env)
+                    except subprocess.TimeoutExpired:
+                        continue
+                raise _CiParityTimeout(gate, budgets)
 
             for f in prime:
-                r = run([py, "cli.py", f], tool_dir)
+                r = run(f"ci_parity:prime:{f}", [py, "cli.py", f], tool_dir)
                 if r.returncode != 0:
                     return {"ok": False, "detail": f"UNMEASURED: CI's prime step `cli.py {f}` failed in the hermetic export "
                                                    f"(exit {r.returncode}):\n{meaningful_tail((r.stdout or '') + chr(10) + (r.stderr or ''))}"}
             for f in flags:
-                r = run([py, "mcp/noctusai/cli.py", f], Path(tree))
+                r = run(f"ci_parity:keeper:{f}", [py, "mcp/noctusai/cli.py", f], Path(tree))
                 if r.returncode != 0:
                     failed.append(f"keeper {f}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}")
             if ids:
-                r = run([py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *ids], tool_dir)
+                r = run("ci_parity:pytest", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *ids], tool_dir)
                 if r.returncode != 0:
                     names = re.findall(r"^FAILED (\S+)", r.stdout or "", flags=re.M)
                     failed += [f"test {n}" for n in names] or [f"pytest exit {r.returncode}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}"]
@@ -2182,6 +2208,8 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 return {"ok": False, "detail": f"{ran}; RED: {', '.join(failed[:8])}", "failed": failed,
                         "ran": {"flags": flags, "tests": ids}, "verdict_ref": ref}
             return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": ids}, "verdict_ref": ref}
+        except _CiParityTimeout as exc:
+            return {"ok": False, "detail": f"UNMEASURED: {exc}"}
         except (OSError, subprocess.SubprocessError) as exc:
             return {"ok": False, "detail": f"UNMEASURED: {type(exc).__name__}: {exc}"[:240]}
         finally:
