@@ -2015,13 +2015,13 @@ def ci_keeper_test_ids(tests_dir: str | Path) -> list[str]:
 # never ran: test_all_products_compliant[core] (a seeded product icon), the seed backend suite + test_vps_exec
 # (a seed read_only_lines change), a product's FE vitest. The owner chose "run CI's suites" over a fast proxy.
 # So the scope is CI's own classifier (`ci_scope`, which the workflow's `changes` job also calls), the suite
-# lists come from the head's workflow matrices, and the toolkit suite is split exactly as CI shards it.
+# lists come from the head's workflow matrices. NARROWED the same day (owner, after a 2h04m local measurement
+# vs ~15-25 min in CI's parallel jobs): locally only the keeper tests + the seed roots / awake products the diff
+# touches directly. Trade-off, stated: a toolkit-only red (the test_all_products_compliant[core] shape) and the
+# shared-root fan-out are judged by the merge queue again, not here.
 # NOC-REMEDIATE[scoped-green-fe-and-tooling]: FE vitest (product-frontend-tests / seed-frontend-tests) and the
 # bespoke tooling-tests job are still CI-judged only - the export has no node_modules and tooling-tests renders
 # a template in bash. Destination: the item-5 section of KB § PATTERNS/devops/release-steward.md (tooling steward).
-
-CI_ISOLATED_TOOLKIT_FILE = "mcp/noctusai/tests/test_compliance.py"
-
 
 @dataclass(frozen=True)
 class CiSuite:
@@ -2046,32 +2046,26 @@ def _active_products(tree: Path) -> set[str] | None:
     return {ln.strip() for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip() and not ln.lstrip().startswith("#")}
 
 
-def ci_python_suites(tree: str | Path, scope: Any, workflow_text: str,
-                     toolkit_files: list[str], total_shards: int = 4) -> list[CiSuite]:
-    """The Python suites CI runs for `scope` (a `ci_scope.Scope`), in CI's own split:
-    toolkit (test_compliance isolated + `total_shards` round-robin shards over `toolkit_files`, from the repo
-    root) · seed backend roots (seed-backend-tests matrix) · product backends (product-backend-tests matrix,
-    awake per active-scope.txt, selected by the scope). Nothing when the scope is not heavy."""
+def local_suites(tree: str | Path, scope: Any, workflow_text: str, changed: list[str]) -> list[CiSuite]:
+    """The NARROW local share of CI's Python suites for item 5 (owner decision 2026-11-11, after the full CI
+    split measured 2h04m locally vs ~15-25 min in CI's parallel jobs): only the suites of what the diff
+    touches DIRECTLY - a seed backend root (seed-backend-tests matrix) the diff edits, and an awake product
+    backend (product-backend-tests matrix, active-scope.txt) the diff edits. The toolkit split and the
+    shared-root fan-out ("a seed change runs every product") stay CI-only: the merge queue runs them.
+    NOC-REMEDIATE[scoped-green-fe-and-tooling]. Nothing when the scope is not heavy."""
     root = Path(tree)
     if not scope.run_heavy:
         return []
-    embed = (("NOCTUS_EMBED_MIN_INTERVAL_MS", "0"), ("NOCTUS_DISABLE_AUTO_CACHE_PULL", "1"))
     out: list[CiSuite] = []
-    files = sorted(f for f in toolkit_files if f != CI_ISOLATED_TOOLKIT_FILE)
-    if CI_ISOLATED_TOOLKIT_FILE in toolkit_files:
-        out.append(CiSuite("toolkit:compliance", ".", ("-m", "pytest", "-q", "-p", "no:cacheprovider",
-                                                       CI_ISOLATED_TOOLKIT_FILE), embed))
-    for n in range(total_shards):
-        mine = files[n::total_shards]
-        if mine:
-            out.append(CiSuite(f"toolkit:shard-{n}", ".", ("-m", "pytest", "-q", "-p", "no:cacheprovider", *mine), embed))
     for r in _matrix(workflow_text, "seed-backend-tests", "root"):
-        if (root / r).is_dir():
+        prefix = r.rstrip("/") + "/"
+        if (root / r).is_dir() and any(c.startswith(prefix) for c in changed):
             out.append(CiSuite(f"seed:{r}", r, ("-m", "pytest", "--tb=short", "-q")))
     awake = _active_products(root)
+    direct = set(getattr(scope, "changed_products", ()) or ())
     for slug in _matrix(workflow_text, "product-backend-tests", "product"):
         d = f"products/{slug}/backend"
-        if (awake is None or slug in awake) and scope.product_selected(slug) and (root / d).is_dir():
+        if slug in direct and (awake is None or slug in awake) and (root / d).is_dir():
             out.append(CiSuite(f"product:{slug}", d, ("-m", "pytest", "--tb=short", "-q")))
     return out
 
@@ -2191,12 +2185,12 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                            admit: Callable[[str], Any] | None = None) -> Callable[[str, str], dict[str, Any]]:
     """Real default for `deliverable(scoped_check=)`: judge the head the way CI does. Export it, prime the
     hermetic state CI primes, then - in a SCRUBBED environment - run (1) every `cli.py --check-*` keeper CI
-    runs as a blocking step and (2) the Python suites CI runs for THIS diff (`ci_scope` - the classifier the
-    workflow's `changes` job calls - over `origin/dev...head`): the toolkit suite split the way CI shards it,
-    the seed backend roots and the selected awake product backends (`ci_python_suites`). A ledger-only diff
-    runs no suite, only the keeper flags + the real-tree keeper tests (`ci_keeper_test_ids`). Everything is
+    runs as a blocking step, (2) the real-tree keeper tests (`ci_keeper_test_ids`) and (3) the suites of the
+    seed roots / awake products the diff touches DIRECTLY (`local_suites`, scoped by `ci_scope` - the
+    classifier the workflow's `changes` job calls - over `origin/dev...head`). The toolkit split and the
+    shared-root fan-out stay CI-only (2h04m measured locally, 2026-11-11). A ledger-only diff runs no suite. Everything is
     derived from the head's own workflow + tests. Runs inside ONE machine-wide heavy slot (`admit`, default
-    hw_admission.heavy_slot); not admitted = UNMEASURED, never green. Slow (minutes to tens of minutes): the
+    hw_admission.heavy_slot); not admitted = UNMEASURED, never green. Minutes: the
     branch steward runs it once and files the `ci-parity:<id>` ref it returns; the run APPENDS a verdict record
     to the store (full head sha, head tree, test.yml blob, interpreter, flags, tests/suites, result) and the
     guardian only resolves the ref (`validate_verdict_ref`)."""
@@ -2209,14 +2203,15 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
         if rc_d != 0:
             return {"ok": False, "detail": f"UNMEASURED: cannot list the paths the head changes vs origin/dev "
                                            f"(CI's suite selection depends on it): {_last_line(diff_err or '')}"}
-        scope = cs.classify(diff_out.splitlines())
+        changed = diff_out.splitlines()
+        scope = cs.classify(changed)
         with slot(f"deliverable:{branch}") as adm:
             if adm is not None and not getattr(adm, "admitted", True):
                 return {"ok": False, "detail": f"UNMEASURED: no machine-wide heavy slot ({getattr(adm, 'verdict', '?')}) - "
                                                "item 5 runs CI's suites and is never judged green unrun"}
-            return _parity_run(head, scope)
+            return _parity_run(head, scope, changed)
 
-    def _parity_run(head: str, scope: Any) -> dict[str, Any]:
+    def _parity_run(head: str, scope: Any, changed: list[str]) -> dict[str, Any]:
         tree = tempfile.mkdtemp(prefix="noc-ci-parity-")
         sandbox = tempfile.mkdtemp(prefix="noc-sandbox-home-")
         try:
@@ -2258,26 +2253,19 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 r = run([py, "mcp/noctusai/cli.py", f], Path(tree))
                 if r.returncode != 0:
                     failed.append(f"keeper {f}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}")
-            if scope.run_heavy:
-                rc_l, ls_out, ls_err = _subprocess_git(tree)("ls-files", "mcp/noctusai/tests/*test_*.py",
-                                                            "mcp/noctusai/tests/**/test_*.py")
-                if rc_l != 0:
-                    return {"ok": False, "detail": f"UNMEASURED: cannot list the toolkit test files: {_last_line(ls_err or '')}"}
-                shards = int(ci_job_env(text).get("MCP_TEST_TOTAL_SHARDS") or 4)
-                suites = ci_python_suites(tree, scope, text, sorted(set(ls_out.split())), shards)
-                for s in suites:
-                    r = run([py, *s.argv], Path(tree) / s.cwd, s.env)
-                    if r.returncode != 0:
-                        failed += pytest_failures(r, s.label)
-                tests = [s.label for s in suites]
-                ran = f"{len(flags)} CI-blocking keeper flag(s) + {len(suites)} CI suite(s) for this diff ({cs.describe(scope)}), env-scrubbed"
-            else:
-                tests = ci_keeper_test_ids(tool_dir / "tests")
-                if tests:
-                    r = run([py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *tests], tool_dir)
-                    if r.returncode != 0:
-                        failed += pytest_failures(r, "test")
-                ran = f"{len(flags)} CI-blocking keeper flag(s) + {len(tests)} real-tree keeper test(s) (ledger-only diff), env-scrubbed"
+            tests = ci_keeper_test_ids(tool_dir / "tests")
+            if tests:
+                r = run([py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *tests], tool_dir)
+                if r.returncode != 0:
+                    failed += pytest_failures(r, "test")
+            suites = local_suites(tree, scope, text, changed)
+            for s in suites:
+                r = run([py, *s.argv], Path(tree) / s.cwd, s.env)
+                if r.returncode != 0:
+                    failed += pytest_failures(r, s.label)
+            tests = tests + [s.label for s in suites]
+            ran = (f"{len(flags)} CI-blocking keeper flag(s) + real-tree keeper tests + {len(suites)} directly-touched "
+                   f"suite(s) ({cs.describe(scope)}; toolkit split + shared fan-out left to CI), env-scrubbed")
             git = _subprocess_git(cwd)
             rc_t, head_tree, _e = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
             rc_b, wf_blob, _e = git("rev-parse", "--verify", "--quiet", f"{head}:{CI_WORKFLOW_REL}")

@@ -798,7 +798,9 @@ def test_a_clean_head_passes_the_ci_parity_check_and_it_emits_a_valid_verdict_re
     res = _parity(world, **_SCRUBBED_ENV)
     assert res["ok"], res
     assert res["ran"]["flags"] == ["--check-scripts-manifest"] + ["--check-in-a-later-job"]
-    assert res["ran"]["tests"] == ["toolkit:shard-0"]  # a code diff runs CI's toolkit split, not a keeper subset
+    # keeper tests always; the toolkit split is left to CI (owner 2026-11-11, measured 2h04m locally)
+    assert res["ran"]["tests"] and all("::" in t for t in res["ran"]["tests"]), res["ran"]["tests"]
+    assert not any(t.startswith("toolkit:") for t in res["ran"]["tests"])
     ok, why = RS.validate_verdict_ref(res["verdict_ref"], head, world.verdict_store)
     assert ok, why
     rec = RS.read_verdict(world.verdict_store, res["verdict_ref"].split(":")[1])
@@ -813,7 +815,7 @@ def test_a_keeper_that_only_warns_in_precommit_but_blocks_in_ci_fails_item_five(
     res = _parity(world, **_SCRUBBED_ENV)
     assert not res["ok"]
     assert "keeper --check-scripts-manifest" in res["detail"]
-    assert "toolkit:shard-0 mcp/noctusai/tests/test_keepers.py::test_real_tree_manifest_clean" in res["detail"]
+    assert "test_real_tree_manifest_clean" in res["detail"]
     d = RS.deliverable("feat/x", cwd=world.repo, derived_check=world.derived,
                        scoped_check=RS.export_ci_parity_check(world.repo, admit=_ADMIT, verdict_store=world.verdict_store),
                        verdict_ref=world.vref(), verdict_store=world.verdict_store)
@@ -1543,11 +1545,13 @@ def test_all_products_compliant(product):
 """
 
 
-def test_a_code_diff_runs_the_whole_toolkit_split_so_a_non_keeper_red_blocks(world):
+def test_a_non_keeper_toolkit_red_is_left_to_ci_not_run_locally(world):
+    """The narrowing, pinned (owner decision 2026-11-11): the full toolkit split took 2h04m locally, so a
+    non-keeper toolkit test is CI's to judge - item 5 does not run it."""
     _ci_branch(world, extra=(("mcp/noctusai/tests/test_products.py", _FLEET_RED),))
     res = _parity(world, **_SCRUBBED_ENV)
-    assert not res["ok"], res
-    assert any("test_all_products_compliant" in f for f in res["failed"]), res["failed"]
+    assert res["ok"], res
+    assert "left to CI" in res["detail"]
 
 
 def test_no_heavy_slot_is_unmeasured_never_green(world):
@@ -1585,32 +1589,29 @@ def _suite_tree(tmp_path):
     return tmp_path
 
 
-_FILES = ["mcp/noctusai/tests/test_compliance.py"] + [f"mcp/noctusai/tests/test_{c}.py" for c in "abcde"]
-
-
-def test_the_suites_are_cis_split_for_the_scope(tmp_path):
+def test_only_the_directly_touched_suites_run_locally(tmp_path):
     cs = RS._sibling("ci_scope")
     tree = _suite_tree(tmp_path)
-    labels = lambda paths: [s.label for s in RS.ci_python_suites(tree, cs.classify(paths), _SUITE_WF, _FILES)]  # noqa: E731
-    toolkit = ["toolkit:compliance", "toolkit:shard-0", "toolkit:shard-1", "toolkit:shard-2", "toolkit:shard-3"]
-    seed = ["seed:seed/lib/backend", "seed:seed/framework/backend"]
-    # a seed change is a shared root: every AWAKE product (erp-imobiliario is asleep) + seed + toolkit
-    assert labels(["seed/lib/backend/x.py"]) == toolkit + seed + ["product:core", "product:agents"]
-    # a product diff: only that product's backend, plus the toolkit + seed CI always runs on code
-    assert labels(["products/core/backend/migrations/119_x.sql"]) == toolkit + seed + ["product:core"]
+
+    def labels(paths):
+        return [s.label for s in RS.local_suites(tree, cs.classify(paths), _SUITE_WF, paths)]
+    # a seed change runs ONLY the touched seed root - the "every product" fan-out is CI's
+    assert labels(["seed/lib/backend/x.py"]) == ["seed:seed/lib/backend"]
+    # a product diff: only that product's backend
+    assert labels(["products/core/backend/migrations/119_x.sql"]) == ["product:core"]
     # an asleep product is never run, even when touched
-    assert labels(["products/erp-imobiliario/backend/a.py"]) == toolkit + seed
+    assert labels(["products/erp-imobiliario/backend/a.py"]) == []
+    # toolkit-only and ledger-only diffs run no suite (keeper tests only)
+    assert labels(["mcp/x.py"]) == []
     assert labels(["project-history/a.ndjson"]) == []
-    shard0 = next(s for s in RS.ci_python_suites(tree, cs.classify(["mcp/x.py"]), _SUITE_WF, _FILES) if s.label == "toolkit:shard-0")
-    assert shard0.argv[-2:] == ("mcp/noctusai/tests/test_a.py", "mcp/noctusai/tests/test_e.py") and shard0.cwd == "."
+    core = RS.local_suites(tree, cs.classify(["products/core/backend/a.py"]), _SUITE_WF, ["products/core/backend/a.py"])[0]
+    assert core.cwd == "products/core/backend" and core.argv == ("-m", "pytest", "--tb=short", "-q")
 
 
 def test_the_split_matches_the_real_workflow():
     """Pin against the REAL test.yml: if CI changes how it runs these suites, item 5 must change with it."""
     wf = (Path(__file__).resolve().parents[3] / ".github/workflows/test.yml").read_text()
     assert RS._matrix(wf, "seed-backend-tests", "root") and RS._matrix(wf, "product-backend-tests", "product")
-    assert "xargs -a /tmp/mcp-shard-files.txt pytest -q -p no:cacheprovider" in wf
-    assert f'ISOLATED="{RS.CI_ISOLATED_TOOLKIT_FILE}"' in wf
     assert "working-directory: products/${{ matrix.product }}/backend\n        run: pytest --tb=short -q" in wf
     assert "working-directory: ${{ matrix.root }}\n        run: pytest --tb=short -q" in wf
     assert "mcp/noctusai/tools/noctus/dev/ci_scope.py" in wf
