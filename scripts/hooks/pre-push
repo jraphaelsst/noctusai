@@ -243,6 +243,24 @@ _pp_bounded_refresh() {
 REPO_ROOT_PP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 PY_PP="$REPO_ROOT_PP/mcp/noctusai/.venv/bin/python"
 CLI_PP="$REPO_ROOT_PP/mcp/noctusai/cli.py"
+# ONE interpreter for every leg below (2026-11-11). A worktree made without `task_branch start` has no
+# .venv, and every leg here was guarded by `-x "$PY_PP"`: the branch-tree mirror keeper, stale-pointers
+# and the hard-block keepers all SKIPPED, and a push without a branch pointer went through (e1's
+# mq-ref-delete). Fall back to the PRIMARY checkout's interpreter (derived from --git-common-dir, never
+# hand-built) while still running THIS checkout's cli.py - the ledger-drain leg below did this alone.
+if [[ ! -x "$PY_PP" ]]; then
+    _pp_primary="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd || true)"
+    if [[ -n "$_pp_primary" && -x "$_pp_primary/mcp/noctusai/.venv/bin/python" ]]; then
+        PY_PP="$_pp_primary/mcp/noctusai/.venv/bin/python"
+    fi
+fi
+# FAIL CLOSED: with no interpreter anywhere every keeper below would skip, and a push whose gates did not
+# run must not read as one that passed. Ledger-only pushes and mq withdrawals exited above.
+if [[ ! -x "$PY_PP" || ! -f "$CLI_PP" ]]; then
+    echo "🔴 pre-push BLOCKED: no toolkit interpreter (looked for $REPO_ROOT_PP/mcp/noctusai/.venv and the primary checkout's) or no $CLI_PP - every keeper of this hook would be skipped." >&2
+    echo "   In the PRIMARY's mcp/noctusai: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt (task_branch start then links it into every worktree)." >&2
+    exit 1
+fi
 if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; then
     # Collect changed files across every NON-delete ref in this push.
     changed=""
