@@ -84,11 +84,14 @@ def _extract_section(text: str, header_name: str) -> str | None:
 
 
 # ── outcome tags (owner rule 2026-11-05: errors are FIXED on contact) ─────────
-# Every `drift-found:` bullet ends with exactly one tag:
+# Every `drift-found:` bullet carries exactly one tag, at its END or at its START
+# (2026-11-11: a leading `[fixed <sha>] text` was refused three times while the
+# error only showed the tag shape, never where it goes - both ends now count):
 #   [fixed <sha>] | [fixing → feat/<slug>] | [deferred → <destination> because <reason>]
 # destination ∈ NOC-REMEDIATE[<class>] marker path · roadmap path
 # (project-history/roadmaps/…) · owner reminder (MEMORY-reminders) · owner-decision ask.
 _TAG_TAIL = re.compile(r"\[((?:fixed|fixing|deferred)\b(?:[^\[\]]|\[[^\[\]]*\])*)\]\s*$", re.IGNORECASE)
+_TAG_HEAD = re.compile(r"^\[((?:fixed|fixing|deferred)\b(?:[^\[\]]|\[[^\[\]]*\])*)\]", re.IGNORECASE)
 _FIXED_RE = re.compile(r"^fixed\s+([0-9a-f]{7,40})$", re.IGNORECASE)
 _FIXING_RE = re.compile(r"^fixing\s*(?:→|->)\s*(feat/[\w./-]+)$")
 _DEFERRED_RE = re.compile(r"^deferred\s*(?:→|->)\s*(.+?)\s+because\s+(.+)$", re.IGNORECASE | re.DOTALL)
@@ -100,20 +103,21 @@ _DEST_RES = (
 )
 MIN_DEFER_REASON = 10
 TAG_SHAPE = (
-    "[fixed <sha>] | [fixing → feat/<slug>] | "
+    "one tag at the END (or start) of the bullet: [fixed <sha>] | [fixing → feat/<slug>] | "
     "[deferred → <NOC-REMEDIATE[class] | project-history/roadmaps/… | "
     "MEMORY-reminders | owner-decision> because <reason ≥10 chars>]"
 )
 
 
 def parse_outcome_tag(bullet: str) -> dict[str, Any] | None:
-    """Parse the trailing outcome tag of a footer bullet.
+    """Parse the outcome tag of a footer bullet (trailing, else leading).
 
     Returns {outcome: fixed|fixing|deferred, ref, reason?} or None when the
     bullet carries no valid tag (bare, garbled, destination-less deferral,
     reason < MIN_DEFER_REASON chars).
     """
-    m = _TAG_TAIL.search(bullet.strip())
+    text = bullet.strip()
+    m = _TAG_TAIL.search(text) or _TAG_HEAD.match(text)
     if not m:
         return None
     body = m.group(1).strip()
