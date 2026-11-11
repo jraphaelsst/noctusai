@@ -2,7 +2,7 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile access-tier`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**1036 open / in-progress**, 303 fixed, 2 accepted (1341 total).
+**1044 open / in-progress**, 296 fixed, 2 accepted (1342 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
@@ -21,8 +21,8 @@
 | p-studio | 20 | 0 | 0 | 20 | 0 | 0 |
 | personal-finance | 41 | 0 | 0 | 41 | 0 | 0 |
 | pilates | 1 | 0 | 0 | 1 | 0 | 0 |
-| seed | 4 | 0 | 0 | 4 | 0 | 26 |
-| social-wiring | 269 | 0 | 0 | 269 | 0 | 77 |
+| seed | 5 | 0 | 0 | 5 | 0 | 25 |
+| social-wiring | 276 | 0 | 0 | 276 | 0 | 71 |
 | store | 14 | 0 | 0 | 14 | 0 | 0 |
 | therapy-platform | 162 | 0 | 0 | 162 | 0 | 0 |
 
@@ -108,7 +108,15 @@
 | AT-3a8de25b | personal-finance | `schema personal-finance: browser-role SELECT on 19 of 20` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-fe44eb6e | pilates | `schema pilates: browser-role SELECT on 7` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-2df307df | seed | `GET /api/team/accept/validate` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
+| AT-4d4cca79 | seed | `GET {}/{provider}/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-b2345dca | seed | `POST /api/auth/login` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
+| AT-63775129 | social-wiring | `GET /api/calendar/oauth/callback` | service | unclear | medium | open | keeper 2026-11-10 |
+| AT-a9cb4232 | social-wiring | `GET /api/integrations/accounts/gmail/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
+| AT-7134a2a2 | social-wiring | `GET /api/integrations/accounts/google_drive/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
+| AT-33aa2b06 | social-wiring | `GET /api/integrations/accounts/instagram/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
+| AT-603c0e74 | social-wiring | `GET /api/integrations/accounts/meta/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
+| AT-a5ea1821 | social-wiring | `GET /api/integrations/accounts/youtube/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
+| AT-1bcc8a18 | social-wiring | `GET /api/youtube/oauth/callback` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-971a905f | social-wiring | `schema imobi_scheduling: browser-role SELECT on 16 tables` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-8f3316f0 | social-wiring | `schema media_scheduling: browser-role SELECT on 14` | none | browser-grant-schema | medium | open | prod-scan 2026-11-05 (owner/coordinator) 2026-11-05 |
 | AT-d56ff6ea | store | `GET /api/admin/pedidos` | org | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |

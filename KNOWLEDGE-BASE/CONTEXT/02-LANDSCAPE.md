@@ -21,11 +21,11 @@
 | **IgIg** | `products/igig/` | Agency ERP for a communication agency: CRM/orçamentos + calculadora de escopo, Central da Marca + Cofre, planejamento editorial, esteira de produção criativa + portal de aprovação white-label, distribuição/métricas, financeiro/retainers + DRE, e **Custos** (funções + profissionais) — a tabela de custo/hora que M1/M5/M6 compartilham via `custo_hora_efetivo`. Domain data on Supabase (schema `igig`) através do seam `noctusai_lib.integrations.persistence`; RLS em todas as tabelas. Merges into `orbity` in the future | 8013/8170 | `igig` |
 | **P Studio** | `products/p-studio/` | ERP for a real-estate photography/AV production studio: cadastros (clientes/imóveis/serviços/equipamentos), comercial funnel (`negocios`), shoot scheduling (`captacoes` + equipment checklist), production pipeline (`producoes`), financeiro with real bank billing. Billing goes through a `ProvedorCobranca` Protocol — Asaas is the only adapter allowed to know Asaas vocabulary, so the move to Banco do Brasil is an adapter swap. Absorbed 2026-08-13 from the sibling workspace `cadu/p-studio/` (project `p-studio-absorption-rollout`); schema + PostgREST exposure were already applied to the shared Supabase before absorption | 8014/8180 | `p_studio` |
 | **Academia de Reciclagem** | `products/academia-de-reciclagem/` | Knowledge workspace of a real environmental-education project: knowledge base, decisions, open questions, roadmap/tasks in the DB with append-only revision history; scoped API consumed by the `agents` product and `academia.*` MCP. Absorbed from the sibling `academia-de-reciclagem` workspace (scaffold 2026-09-12; roadmap `julia-agents-academia-2026-09`) | 8015/8190 | `academia_de_reciclagem` |
-| **Agentes** | `products/agents/` | Home of managed AI agents: Bia (Claude Agent SDK, web-only, approval-gated writes to academia via scoped API) + Julia, the SDR agent consumed by social-wiring via API (the One Chat operator bot is retired, 2026-11-04; Julia is the line) + the Julia v2 lead-qualification standard (platform-wide, versioned; deterministic scoring engine, lead identity encrypted at rest) + the shared lead thread (one thread per lead across agents, per-agent participants, hand-offs, consent) the per-agent controls ligado / drenando / desligado + a per-org `fase_testes` flag + a platform-wide kill switch per agent key (`plataforma_controles`, platform-admin only) + evaluation mode (replies only to allow-listed users, WhatsApp read from noc), and the Julia v2 channel runtime (turn v2 with a skill-gated, DB-described toolset; conformance + prompt-leak protection; per-chat abuse limits; JSON-Schema contract `contracts/channels.v2.json`) + DB-source dev agents (Agent Packages A11/A12: the Studio is the source, the git mirror `.claude/agents/<key>.md` is rendered at publish by `app/studio/espelho.py` through the one Claude Code renderer `app/studio/claude_surface.py`; media-analyst first) + agent layers BASE → SDR → agent (`app/studio/camadas.py`, roadmap `agent-templates-2026-11`) + the eval-loop gate (G1-G7: loops of eval rounds that stop at 100% / after 2 rounds without improvement / at the budget, overcalls flagged, in-app stop notice; owner kinds `eval_loop_parada`/`eval_loop_checkpoint` declared, WhatsApp send pending; migration 076) (scaffold 2026-09-14; roadmap `julia-agents-academia-2026-09`) | 8016/8200 | `agents` |
+| **Agentes** | `products/agents/` | Home of managed AI agents: Bia (Claude Agent SDK, web-only, approval-gated writes to academia via scoped API) + Julia, the SDR agent consumed by social-wiring via API (the One Chat operator bot is retired, 2026-11-04; Julia is the line) + the Julia v2 lead-qualification standard (platform-wide, versioned; deterministic scoring engine, lead identity encrypted at rest) + the shared lead thread (one thread per lead across agents, per-agent participants, hand-offs, consent) the per-agent controls ligado / drenando / desligado + a platform-wide kill switch per agent key (`plataforma_controles`, platform-admin only) + evaluation mode (replies only to allow-listed users, WhatsApp read from noc), and the Julia v2 channel runtime (turn v2 with a skill-gated, DB-described toolset; conformance + prompt-leak protection; per-chat abuse limits; JSON-Schema contract `contracts/channels.v2.json`) + DB-source dev agents (Agent Packages A11/A12: the Studio is the source, the git mirror `.claude/agents/<key>.md` is rendered at publish by `app/studio/espelho.py` through the one Claude Code renderer `app/studio/claude_surface.py`; media-analyst first) + agent layers BASE → SDR → agent (`app/studio/camadas.py`, roadmap `agent-templates-2026-11`) + the eval-loop gate (G1-G7: loops of eval rounds that stop at 100% / after 2 rounds without improvement / at the budget, overcalls flagged, in-app stop notice; owner kinds `eval_loop_parada`/`eval_loop_checkpoint` declared, WhatsApp send pending; migration 076) (scaffold 2026-09-14; roadmap `julia-agents-academia-2026-09`) | 8016/8200 | `agents` |
 | **Community** | `products/community/` | Management center for one paid online women's community: back office (`admin`/`moderador`) + member portal, tiered paid access (Stripe + Asaas), semi-automatic WhatsApp group management. pt-BR. Scaffolded 2026-09-16 — domain modules planned, not built | 8017/8210 | `community` |
 | **Store** | `products/store/` | Public sales page for digital products (first: the generic "Contrato Blindado de Compra e Venda" kit). Asaas one-off checkout, webhook-confirmed fulfillment by email + thank-you page, owner-only `/login` admin for landing values and sales. Scaffolded 2026-10-02 (contract `products/store/projects/store-v1-CONTRACT.md`) | 8018/8220 | `store` |
 | **Commerce** | `products/commerce/` | Generic e-commerce + ERP reference store for the commerce vertical seed (consumes `noctusai_lib.domain.commerce`): staff back office + host-resolved public storefront. Scaffolded 2026-10-12; `deploy_scope=dev` until owner validation (contract `projects/commerce-seed-p3/CONTRACT.md` §6) | 8019/8230 | `commerce` |
-| **Assistant** | `products/assistant/` | Read-only shadow of one personal WhatsApp line (D46): QR pairing + the HMAC-signed inbound webhook ONLY (no send, mark-read, backfill or chat reads); each inbound 1:1 text becomes a pending intake row (HMAC'd chat reference, 90-day body retention, append-only events in the same transaction) that a later slice classifies for scheduling intent. Own WAHA instance, line policy `send: disabled`. pt-BR. Scaffolded 2026-11-10; catalog row `dev` (owner decision, plan `project-history/assistant-chatbot/`) | 8021/8250 | `assistant` |
+| **Assistant** | `products/assistant/` | Read-only shadow of one personal WhatsApp line (D46): QR pairing + the HMAC-signed inbound webhook ONLY (no send, mark-read, backfill or chat reads); each inbound 1:1 text becomes a pending intake row (HMAC'd chat reference, 90-day body retention, append-only events in the same transaction) classified as about scheduling or not by a registry-prompted Haiku worker on the seed jobs Worker (S3, classification only; admin replay + blind sample routes); in-app "Conectar Google" per org (S7, D50: Calendar + Drive, PKCE, least-privilege scopes, token Fernet-encrypted in `assistant.oauth_credentials`). Own WAHA instance, line policy `send: disabled`. pt-BR. Scaffolded 2026-11-10; catalog row `dev` (owner decision, plan `project-history/assistant-chatbot/`) | 8021/8250 | `assistant` |
 | **Monica** | `products/monica/` | CRM of Mônica Tangerino's psychoanalysis practice (future ERP), first product of the org "Mônica Tangerino": WhatsApp-fed leads (funnel Lead→Atendimento→Negociação→Fechado + list), WhatsApp conversations (read + reply, QR connection), her own context (org specs of the agent `monica-leads`), finance mounted for later. Every screen is a seed organ (leads, WhatsApp inbox/connections, org-specs, `SectionTabsPage`); own WAHA instance (never the shared one). pt-BR. Scaffolded 2026-10-26; catalog row `dev` until the first go-live flips it in core admin (`KB § GUIDES/production-deploy.md § 5a`) | 8020/8240 | `monica` |
 | **Orbity** | `products/orbity/` | Agency operating-system (absorbing `sistema-orbity`): CRM/funil, clients, contracts, financeiro, agenda, WhatsApp automation, Meta ads, notifications — built seed-first via the absorption capability-uplift loop (in flight on `feat/orbity-build`, roadmap `project-history/roadmaps/orbity-2026-06.md`, knowledge `KB § ABSORPTIONS/orbity/`) | 8010/8140 | `orbity` |
 
@@ -42,7 +42,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 44 | 68 | 98 | 12 | 130 | 1,577 |
+| Core | 44 | 68 | 98 | 12 | 130 | 1,579 |
 | Erp Imobiliario | 64 | 56 | 80 | 79 | 136 | 1,904 |
 | Personal Finance | 15 | 18 | 30 | 26 | 48 | 482 |
 | Therapy Platform | 40 | 46 | 65 | 36 | 85 | 1,143 |
@@ -50,26 +50,26 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 53 | 120 | 267 | 220 | 696 | 10,697 |
+| Social Wiring | 53 | 120 | 267 | 220 | 698 | 10,710 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 14 | 22 | 28 | 23 | 53 | 936 |
 | Igig | 23 | 26 | 33 | 27 | 44 | 978 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 10 | 0 | 28 | 10 | 25 | 191 |
-| Agents | 35 | 1 | 82 | 51 | 214 | 3,099 |
+| Agents | 35 | 1 | 82 | 51 | 216 | 3,108 |
 | Community | 23 | 29 | 49 | 30 | 58 | 657 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 40 | 7 | 8 | 64 |
 | Monica | 2 | 1 | 15 | 0 | 8 | 37 |
-| Assistant | 1 | 2 | 11 | 0 | 5 | 25 |
-| **Total** | **360** | **437** | **908** | **542** | **1617** | **22,882** |
+| Assistant | 3 | 3 | 13 | 0 | 10 | 96 |
+| **Total** | **362** | **438** | **910** | **542** | **1626** | **22,977** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas DECLARED in migrations (20):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `assistant` + `commerce` + `community` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `monica` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `store` + `therapy`.
-- **Tables: 1193** declared across those schemas.
+- **Tables: 1198** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or

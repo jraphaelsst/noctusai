@@ -270,7 +270,7 @@ _CHAVES_MUNDO_JUIZ = frozenset({"estado_inicial", "catalogo", "fixture"})
 
 def validar_mundo_juiz(roteiro: Any, **conteudo_sintetico: Any) -> None:
     """A ``comportamento`` (judge) case may carry the WORLD its free-text ``contexto`` narrates -- ``estado_inicial``
-    (criteria / offer batches already recorded), ``catalogo`` and ``fixture`` (specs, ``fase_testes``) -- and nothing
+    (criteria / offer batches already recorded), ``catalogo`` and ``fixture`` (specs) -- and nothing
     else: no ``turnos`` (the judge case is ONE turn) and no ``canarios``. Without it the engine state block says the
     lead is brand new while the contexto says an imóvel was already shown, and the case grades the contradiction
     instead of the agent. Same synthetic-data rule as a mecanismo case (Meta 4.7)."""

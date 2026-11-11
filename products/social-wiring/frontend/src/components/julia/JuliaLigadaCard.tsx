@@ -139,7 +139,7 @@ export function JuliaLigadaCard({
         )}
         <p className="text-sm" data-testid="ligada-link-protecao">
           <Link to="/julia/protecao" className="font-medium text-primary underline">
-            Bloquear números (a fase de testes é configurada na página da Julia no agents)
+            Bloquear números (o modo de avaliação é configurado na página da Julia no agents)
           </Link>
         </p>
         {!isAdmin && (

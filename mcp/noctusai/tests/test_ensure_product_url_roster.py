@@ -292,6 +292,8 @@ class TestEnsureProductUrlRosterOrchestration:
             # 2026-08-13 fix makes `_vps_ssh._real_ssh` ALWAYS pass a finite
             # `timeout=` (never silently omitted), so any subprocess.run fake
             # must tolerate it — this is the intended, structural change.
+            if " test -f " in argv[-1]:  # the Redis-auth override probe: no lockdown on this host
+                return mock.Mock(returncode=1, stdout="", stderr="")
             captured["cmd"] = argv[-1]
             captured["kwargs"] = kwargs
             return mock.Mock(returncode=0, stdout="", stderr="")

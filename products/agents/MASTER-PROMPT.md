@@ -56,9 +56,6 @@ products/agents/backend/app/
   `decidir(..., desligado_plataforma=)` reads it FIRST: `True` -> status `agente_desligado_plataforma` for every
   trigger and org (inbound stored only for an existing thread; the turn route skips key/budget/LLM), `None`
   (unreadable) -> 503 `controle_indisponivel`. `GET /api/channels/agents/{key}/status` adds `desligado_plataforma`.
-  `agents.agents.fase_testes` (default true) rides the org controle GET/PUT (`fase_testes` optional beside `modo`;
-  changing only it applies no mode transition or 409 precondition; audited `fase_testes_alterada`) and renders into
-  the turn state as `controle.fase_testes` via the optional text `contexto.rotulo_fase_testes` (blank = no line).
 - Evaluation mode (migration 056, contract §12.12): `agents.agents.modo_avaliacao` + `avaliacao_usuarios` (noctus user ids,
   max 20; NO phones stored), written by `set_agent_avaliacao` (audit `modo_avaliacao_alterado`) through the org controle PUT
   (same `modo` ⇒ no mode preconditions; 422 `avaliacao_usuario_fora_da_org` / `avaliacao_sem_telefone`). Each user's phone is
@@ -68,7 +65,7 @@ products/agents/backend/app/
   `contact.phone_e164` is not among the resolved phones (or has none) ⇒ `restrito_avaliacao`, every trigger, no LLM,
   inbound stored only for an existing thread, never a new thread/participant. Unreadable flag ⇒ 503.
   `GET /api/channels/agents/{key}/status` carries `modo_avaliacao` only. The org controle GET/PUT add `avaliacao_resolvidos` (users from noc; full phone to org admins, masked to members) + `avaliacao_resolucao_erro` (lookup failed: null name/phone, never a 500).
-  **One testing switch on Julia's core, obeyed by every company instance (owner 2026-11-05; migration 065):** the state lives ONLY on the core (`definition_scope='plataforma'` row; an instance reaches it via `definition_agent_id`); an instance's own `modo_avaliacao`/`avaliacao_usuarios` columns are dead (`NOC-REMEDIATE[drop-instance-modo-avaliacao]`). `SupabaseAgentControleStore.get` returns the core's state (`avaliacao_herdada=True`, `avaliacao_org_id`=core org, where the NoctusAI evaluators' phones are resolved); an unresolvable core raises `NucleoIndisponivel` ⇒ 503 `controle_indisponivel`. Only a NoctusAI platform admin writes it, on the core page (instance PUT ⇒ 409 `avaliacao_somente_no_nucleo`; `set_agent_avaliacao` refuses instances). A blocked (`restrito_avaliacao`) message is never persisted. The instance view shows a read-only "Julia em fase de testes" badge.
+  **One evaluation switch on Julia's core, obeyed by every company instance (owner 2026-11-05; migration 065):** the state lives ONLY on the core (`definition_scope='plataforma'` row; an instance reaches it via `definition_agent_id`); an instance's own `modo_avaliacao`/`avaliacao_usuarios` columns are dead (`NOC-REMEDIATE[drop-instance-modo-avaliacao]`). `SupabaseAgentControleStore.get` returns the core's state (`avaliacao_herdada=True`, `avaliacao_org_id`=core org, where the NoctusAI evaluators' phones are resolved); an unresolvable core raises `NucleoIndisponivel` ⇒ 503 `controle_indisponivel`. Only a NoctusAI platform admin writes it, on the core page (instance PUT ⇒ 409 `avaliacao_somente_no_nucleo`; `set_agent_avaliacao` refuses instances). A blocked (`restrito_avaliacao`) message is never persisted. The instance view shows a read-only "Julia em modo de avaliação" badge.
 
 ### Platform grants (Julia-line S3) — how a product gets its credential
 

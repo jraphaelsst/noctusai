@@ -26,6 +26,7 @@ from typing import Any, Callable, Literal
 from uuid import UUID
 
 from noctusai_lib.api.auth.session import ApiTokenInfo, ProductTokenAdmin
+from noctusai_lib.config.credentials import invalidate_credential_cache
 from noctusai_lib.config.deploy_config import is_deploy_context
 from noctusai_lib.security.app_config import AppConfigDecryptError
 from noctusai_lib.security.key_ring import KeyRing, generate_ring_secret
@@ -328,6 +329,7 @@ class CredentialService:
                 raise CredentialError(422, "invalid_value", "ACADEMIA_AGENT_ID deve ser um UUID.") from exc
         self._require_writable()
         self._handle.store.put(spec.store_key, value)
+        invalidate_credential_cache()  # the seed chain's tier-0 override answers from a 30 s cache
         logger.info("agents.credential_set credential=%s", spec.name)
         return self.status(spec.name)
 
@@ -341,6 +343,7 @@ class CredentialService:
         self._require_writable()
         stored = KeyRing.from_value(env_value).to_value() if spec.kind == "key_ring" else env_value
         self._handle.store.put(spec.store_key, stored)
+        invalidate_credential_cache()
         logger.info("agents.credential_imported_from_env credential=%s", spec.name)
         return self.status(spec.name)
 
