@@ -191,7 +191,7 @@ async def offboarding_preview(client_id: str, auth: tuple = Depends(admin_depend
     try:
         return await asyncio.to_thread(lambda: offboarding.preview(get_admin_client(), org_id, client_id))  # org-scope-ok: offboard_client RPC (org-checked in SQL) + organ tables, org passed explicitly
     except BillingError as exc:
-        raise HTTPException(status_code=exc.status, detail=exc.code)
+        raise HTTPException(status_code=exc.status, detail=exc.code)  # detail-safe: BillingError.code is a fixed snake_case literal raised only in services/billing_charges + offboarding, never exception text
     except HTTPException:
         raise
     except Exception:
@@ -219,7 +219,7 @@ async def archive_client(
         summary = await asyncio.to_thread(lambda: offboarding.offboard(
             get_admin_client(), billing.get_gateway(), org_id, client_id, decisions, user_id=str(getattr(user, "id", "") or "") or None))  # org-scope-ok: offboard_client RPC, org-checked in SQL
     except BillingError as exc:
-        raise HTTPException(status_code=exc.status, detail=exc.code)
+        raise HTTPException(status_code=exc.status, detail=exc.code)  # detail-safe: BillingError.code is a fixed snake_case literal raised only in services/billing_charges + offboarding, never exception text
     except HTTPException:
         raise
     except Exception:
@@ -264,7 +264,7 @@ async def delete_client(client_id: str, auth: tuple = Depends(admin_dependency))
     except HTTPException:
         raise
     except BillingError as exc:
-        raise HTTPException(status_code=exc.status, detail=exc.code)
+        raise HTTPException(status_code=exc.status, detail=exc.code)  # detail-safe: BillingError.code is a fixed snake_case literal raised only in services/billing_charges + offboarding, never exception text
     except Exception:
         logger.exception("clients.delete failed org=%s id=%s", org_id, client_id)
         raise HTTPException(status_code=502, detail="Falha ao excluir cliente")
