@@ -194,3 +194,54 @@ def test_two_mq_refs_in_one_push_are_refused(repo):
     r = git(repo, "push", "origin", f"{s}:refs/heads/mq/x--{s[:7]}", f"{s}:refs/heads/mq/y--{s[:7]}", check=False)
     assert r.returncode != 0 and "exactly ONE merge-queue ref" in r.stderr
     assert not any("mq/" in ref for ref in remote_refs(repo))
+
+
+# ─── withdrawal: deleting a queue ref (2026-11-10) ───────────────────────────────────────────────
+# The guardian withdraws a queued culprit by deleting its mq ref, so the drain drops it instead of
+# bisecting it. A delete has local side "(delete)" and an all-zero oid; the guard refused it as a
+# ref-named push. Who may delete is the steward PreToolUse gate's call, asserted below.
+
+def _queue(repo):
+    s = sha(repo)
+    attest(repo, s)
+    ref = f"refs/heads/mq/x--{s[:7]}"
+    git(repo, "push", "origin", f"{s}:{ref}")
+    assert ref in remote_refs(repo)
+    return s, ref
+
+
+@pytest.mark.parametrize("form", ["--delete", "colon"])
+def test_deleting_a_queue_ref_withdraws_it(repo, form):
+    _s, ref = _queue(repo)
+    args = ["--delete", ref.removeprefix("refs/heads/")] if form == "--delete" else [f":{ref}"]
+    r = git(repo, "push", "origin", *args, check=False)
+    assert r.returncode == 0, r.stderr
+    assert ref not in remote_refs(repo)
+    assert "withdrawal" in r.stdout + r.stderr
+
+
+def test_a_queue_ref_delete_still_rides_alone(repo):
+    s, ref = _queue(repo)
+    r = git(repo, "push", "origin", f":{ref}", f"{s}:refs/heads/feat/x", check=False)
+    assert r.returncode != 0 and "rides ALONE" in r.stderr
+    assert ref in remote_refs(repo)
+
+
+def test_deleting_a_protected_branch_is_still_refused(repo):
+    r = git(repo, "push", "origin", "--delete", "dev", check=False)
+    assert r.returncode != 0
+    assert "refs/heads/dev" in remote_refs(repo)
+
+
+@pytest.mark.parametrize("cmd", ["git push origin --delete mq/x--abcdef0",
+                                 "git push origin :refs/heads/mq/x--abcdef0",
+                                 "git push -d origin mq/x--abcdef0"])
+def test_who_may_delete_a_queue_ref_is_the_steward_gate(cmd):
+    import importlib.util
+    path = Path(__file__).resolve().parents[1] / "tools" / "noctus" / "dev" / "release_steward.py"
+    spec = importlib.util.spec_from_file_location("rs_mq_delete_ut", path)
+    rs = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = rs
+    spec.loader.exec_module(rs)
+    hit = rs.classify_bash(cmd)
+    assert hit is not None and "mq/x--abcdef0" in hit.kind, cmd
