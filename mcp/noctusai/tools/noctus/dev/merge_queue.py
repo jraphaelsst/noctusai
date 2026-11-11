@@ -67,6 +67,7 @@ WORKFLOW_PREFIX = ".github/workflows/"
 PUSH_TOKEN_ENV = "MQ_PUSH_TOKEN"  # fine-grained PAT (contents+workflows write); env secret of the dev-only `merge-queue` environment
 # GitHub's wording when a token without the `workflows` permission pushes a new commit touching workflow files.
 WORKFLOW_REJECT_RE = re.compile(r"without\s+`?workflows`?\s+permission", re.I)
+WORKFLOW_REJECT_LINE_RE = re.compile(r"refusing to allow[^\n)]*", re.I)  # GitHub's own sentence, for the eject reason
 ENTRY_RE = re.compile(r"^(?P<slug>.+)--(?P<short>[0-9a-f]{7,40})$")
 
 # DERIVED files: committed by every slice after it regenerates them, so two parallel slices
@@ -197,6 +198,13 @@ WORKFLOW_EJECT_WHY = ("changes .github/workflows/* - the queue's token cannot pu
                       "land via the steward's workflow-file path")
 
 
+def _flush_print(msg: str) -> None:
+    """The drain's default log. Flushed per line: stdout is a pipe on the runner (block-buffered), and a
+    cancelled drain (2026-11-11, run 43060568244) lost EVERY line it had printed - including the push
+    rejection that would have named the cause."""
+    print(msg, flush=True)
+
+
 def status_description(text: str) -> str:
     return text if len(text) <= 140 else text[:137] + "..."
 
@@ -294,7 +302,7 @@ class Queue:
     def __init__(self, repo: str, remote: str = "origin", dev: str = "dev",
                  run: Runner = _default_run, run_url: str = "", run_id: str = "local",
                  poll_s: int = 60, timeout_s: int = 5400, sleep: Callable[[float], None] = time.sleep,
-                 workdir: str | None = None, log: Callable[[str], None] = print,
+                 workdir: str | None = None, log: Callable[[str], None] = _flush_print,
                  workflow_token: bool | None = None, push_token: str | None = None,
                  regen: Callable[[str], tuple[bool, str]] | None = None,
                  derived_regen: Callable[[str, dict[str, Any]], tuple[bool, str]] | None = None,
@@ -700,7 +708,7 @@ class Queue:
                 rc, _, perr = self.run(["git", "push", remote, f"{cand}:refs/heads/{cand_ref}"], cwd=self.workdir)
                 if rc != 0:
                     # Never crash the drain on a rejected push (2026-11-05: it wedged the queue ~1.5h).
-                    if self._handle_push_rejection(applied, base, perr, res):
+                    if self._handle_push_rejection(applied, base, perr, res, via_pat=remote != self.remote):
                         suspects = [e.ref for e in applied
                                     if not any(x["ref"] == e.ref for x in res.ejected)]
                         limit = next_batch_limit(limit, len(applied), green=False) if suspects else batch_limit
@@ -757,14 +765,26 @@ class Queue:
                 self.run(["git", "worktree", "remove", "--force", wt], cwd=self.workdir)
         return res
 
-    def _handle_push_rejection(self, applied: list[Entry], base: str, stderr: str, res: Outcome) -> bool:
+    def _handle_push_rejection(self, applied: list[Entry], base: str, stderr: str, res: Outcome,
+                               via_pat: bool = False) -> bool:
         """A candidate push was rejected. Eject the culprit(s) and return True when the batch must still be
-        bisected (cause not attributable to a single entry)."""
+        bisected (cause not attributable to a single entry).
+
+        The eject reason names WHICH credential GitHub refused and quotes GitHub's own line: "the queue's
+        token cannot push workflow edits" is a different fix when the refused push already went out with
+        MQ_PUSH_TOKEN (the PAT lost `workflows` / expired - the owner re-mints) than with github.token
+        (no PAT configured - set it). 2026-11-11: five entries were ejected with neither fact recorded."""
         stderr = self._redact(stderr or "")
         tail = stderr.strip()[-300:]
+        who = "MQ_PUSH_TOKEN (PAT)" if via_pat else "github.token"
+        self.log(f"  candidate push via {who} rejected:\n{tail}")
         if is_workflow_rejection(stderr):
             culprits = [e for e in applied if touches_workflows(self.changed_paths(base, e.sha))]
-            kind, why = "needs_workflow_token", WORKFLOW_EJECT_WHY
+            m = WORKFLOW_REJECT_LINE_RE.search(stderr)
+            said = (m.group(0) if m else tail)[-160:]
+            remedy = ("the PAT itself was refused - re-mint MQ_PUSH_TOKEN with Workflows: write" if via_pat
+                      else WORKFLOW_EJECT_WHY)
+            kind, why = "needs_workflow_token", f"push via {who} refused ({said}) - {remedy}"
         else:
             culprits = applied if len(applied) == 1 else []
             kind, why = "push_rejected", f"candidate push rejected: {tail}"
