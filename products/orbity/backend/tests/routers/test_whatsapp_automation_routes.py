@@ -103,6 +103,36 @@ class TestEmittersAtTheRouterEdge:
         ex = self._executions(client)
         assert len(ex) == 1 and ex[0]["subject_type"] == "lead" and ex[0]["lead_id"]
 
+    # --- the capture honeypot: a bot's submission fires NOTHING (owner decision 2026-11-10) -----------------------------
+
+    def _capture(self, client, body):
+        from app.dependencies import coerce_org_uuid
+
+        org = str(coerce_org_uuid(self.TEST_ORG))
+        client.mock_supabase.set_table_data("leads", [])
+        client.mock_supabase.set_table_data("lead_stages", [])
+        client.mock_supabase.set_table_data("capture_events", [])
+        return org, client.raw().post(f"/api/capture/{org}", json=body)
+
+    def test_a_filled_honeypot_writes_nothing_fires_nothing_and_looks_like_success(self, client):
+        self._arm(client, "lead_created")
+        org, r = self._capture(client, {"name": "bot", "email": "bot@example.com", "hp_website": "http://spam.example"})
+        assert r.status_code == 201 and set(r.json()) == {"ok", "id"} and r.json()["ok"] is True
+        mock = client.mock_supabase
+        assert mock.table("leads").inserted_payloads == []
+        assert self._executions(client) == []  # no automation fired
+        assert mock.table("capture_events").inserted_payloads == [{"org_id": org, "kind": "honeypot_discarded"}]  # one event, no PII
+
+    def test_an_empty_honeypot_captures_and_fires_as_before(self, client):
+        self._arm(client, "lead_created")
+        _org, r = self._capture(client, {"name": "Ana", "hp_website": ""})
+        assert r.status_code == 201
+        mock = client.mock_supabase
+        inserted = mock.table("leads").inserted_payloads
+        assert len(inserted) == 1 and inserted[0]["name"] == "Ana" and "hp_website" not in inserted[0]["custom_fields"]
+        assert len(self._executions(client)) == 1  # the flow fired
+        assert mock.table("capture_events").inserted_payloads == []
+
     def test_write_still_succeeds_when_automation_is_broken(self, client):
         client.mock_supabase.set_table_data("automation_flows", None)
         r = client.post("/api/tasks", json={"title": "x"})

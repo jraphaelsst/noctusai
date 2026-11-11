@@ -119,7 +119,9 @@ class ReportsService:
     def update_report(self, report_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         payload.pop("org_id", None)        # prevent escalation
         payload.pop("public_token", None)  # immutable — generated at insert
-        if payload.get("status") == "published":
+        if payload.get("expires_at"):
+            payload = _with_default_expiry(payload)  # a caller-set expiry is clamped to the 90-day ceiling
+        if payload.get("status") == "published" and not payload.get("expires_at"):
             # publishing is what makes the link live: it never goes live without an end date
             existing = self.get_report(report_id)
             if existing is not None and not existing.get("expires_at"):
@@ -448,12 +450,21 @@ class ReportsPublicService:
 # ---------------------------------------------------------------------------
 
 REPORT_LINK_TTL_DAYS = 30
+REPORT_LINK_MAX_DAYS = 90
 
 
 def _with_default_expiry(row: dict[str, Any]) -> dict[str, Any]:
-    """A published report link always ends: no ``expires_at`` given => now + :data:`REPORT_LINK_TTL_DAYS`."""
-    if row.get("status") == "published" and not row.get("expires_at"):
-        row = {**row, "expires_at": (datetime.now(tz=timezone.utc) + timedelta(days=REPORT_LINK_TTL_DAYS)).isoformat()}
+    """A published report link always ends (no ``expires_at`` given => now + :data:`REPORT_LINK_TTL_DAYS`), and NO link outlives
+    :data:`REPORT_LINK_MAX_DAYS`: a caller-set ``expires_at`` further out is clamped to now + 90 days (a link is a bearer
+    credential, not a permanent address). Applied on create and on update; an unparsable value is a ValueError (422)."""
+    now = datetime.now(tz=timezone.utc)
+    ceiling = now + timedelta(days=REPORT_LINK_MAX_DAYS)
+    if row.get("expires_at"):
+        asked = _parse_dt(row["expires_at"])
+        if asked > ceiling:
+            row = {**row, "expires_at": ceiling.isoformat()}
+    elif row.get("status") == "published":
+        row = {**row, "expires_at": (now + timedelta(days=REPORT_LINK_TTL_DAYS)).isoformat()}
     return row
 
 
