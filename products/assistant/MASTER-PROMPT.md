@@ -15,6 +15,9 @@ S3 classifies it as about scheduling or not (classification only, D48: no reply,
   `send: disabled` line. Never add a code path that sends; never construct a raw `WahaClient(`.
 - **Webhook HMAC is required.** `create_whatsapp_inbox_router(webhook_only=True, require_webhook_hmac=True)`; no secret
   => 401 to everything and a deploy refuses to boot (`required_prod_config`).
+- **Webhook base = the line's edge relay.** The WAHA core is on a private network; the seed client accepts `set_webhook`
+  only under the policy's `webhook_relay`. `webhook_base_url()` returns that relay when the policy declares one, the
+  public product URL otherwise (dev/Fake). Never register the public URL on the shadow line.
 - **Input contract before storage:** `inbound_one_to_one_only(excluded)` then `assistant.append_intake`: dedup on the
   WAHA message id, forward-only from `paired_at`, text only. Third parties are an HMAC'd `chat_ref`, never a phone.
   Never log a phone, chat id or body.
