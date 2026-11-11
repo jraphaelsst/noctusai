@@ -55,9 +55,9 @@ def _ok():
 async def test_turn_is_attributed_to_agent_and_conversation():
     spy = _Spy(tool_responses=_ok())
     conv = uuid4()
-    _ = [e async for e in _rt(spy).run_turn(_spec("monica"), _ctx(conv=conv), "ola", broker=None)]
+    _ = [e async for e in _rt(spy).run_turn(_spec("nosnolimiar"), _ctx(conv=conv), "ola", broker=None)]
     attr = spy.seen[0]
-    assert (attr.agent_key, attr.conversation_id, attr.product, attr.org_id) == ("monica", str(conv), "agents", str(ORG))
+    assert (attr.agent_key, attr.conversation_id, attr.product, attr.org_id) == ("nosnolimiar", str(conv), "agents", str(ORG))
 
 
 @pytest.mark.asyncio

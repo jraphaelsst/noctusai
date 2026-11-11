@@ -36,7 +36,7 @@
 **Versions this doc is written against** (verify before relying on a newer API): React `^18.3.1`,
 react-router-dom `^7`, `@tanstack/react-query` `^5.83` (seed `^5.102`), react-hook-form `^7.88`,
 zod `^4.6`, `@hookform/resolvers` `^5.9`, Vite `^8`, vitest `4.1.x`, TypeScript `^5.5`–`^5.9`
-(`products/{core,agents,monica,social-wiring}/frontend/package.json`, `seed/lib/frontend/package.json`).
+(`products/{core,agents,nosnolimiar,social-wiring}/frontend/package.json`, `seed/lib/frontend/package.json`).
 🔴 **React 18, not 19** — `use()`, `useActionState`, `useOptimistic`, form Actions and ref-as-prop
 are NOT available; a react.dev page that shows them is describing a version we do not run.
 
@@ -343,7 +343,7 @@ draft organ; three date-format families exist in the seed (§8.3).
 `"noImplicitAny": false` in all five active products and in the scaffold the next product copies
 (`products/seed/frontend/tsconfig.json:14-15`, `templates/product-seed/frontend/tsconfig.json:14-15`,
 `products/core/frontend/tsconfig.json:18,21`, `products/social-wiring/frontend/tsconfig.json:14-15`,
-`products/agents/frontend/tsconfig.json:14-15`, `products/monica/frontend/tsconfig.json:14-15`). Lint
+`products/agents/frontend/tsconfig.json:14-15`, `products/nosnolimiar/frontend/tsconfig.json:14-15`). Lint
 downgrades `@typescript-eslint/no-explicit-any` to `warn`, citing payload and react-hook-form `as any`
 workarounds (`seed/framework/frontend/eslint.config.js:28-31`); `as any` appears 254× in the active
 product FEs.
@@ -353,7 +353,7 @@ product FEs.
    is born strict — the root fix (a per-product flip is the quick-fix shape).
 2. Per existing product: record a baseline of `tsc --noEmit --strict` errors; a keeper ratchets the count
    down (never up), the way `check_mutation_invalidate_only` ratchets mutations.
-3. Pilots: one product per wave (core → social-wiring → agents/monica), then fan out.
+3. Pilots: one product per wave (core → social-wiring → agents/nosnolimiar), then fan out.
 4. After `strict`: add `noUncheckedIndexedAccess` (an indexed read is `T | undefined`) — the flag that
    catches `arr[0].id` on an empty list (TSConfig reference).
 
@@ -371,7 +371,7 @@ product FEs.
 ## 6 · Forms
 
 **Current state.** react-hook-form + zod + `@hookform/resolvers` are declared in four of the five
-active product FEs (`products/{agents,monica,social-wiring,seed}/frontend/package.json`), but only
+active product FEs (`products/{agents,nosnolimiar,social-wiring,seed}/frontend/package.json`), but only
 **one** active-product file uses them (`products/social-wiring/frontend/src/pages/Certidoes.tsx:37-38,
 250-251`); the rest are hand-rolled `useState` forms (e.g.
 `products/core/frontend/src/pages/admin/AdminPlans.tsx:179-250`). Declared ≠ adopted.

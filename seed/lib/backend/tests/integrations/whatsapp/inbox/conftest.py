@@ -18,8 +18,8 @@ CONN = uuid.UUID("33333333-3333-3333-3333-333333333333")
 @pytest.fixture(params=["fake", "supabase"])
 def store(request):
     if request.param == "fake":
-        return build_whatsapp_chat_store(None, schema="monica", allow_fake=True)
-    return build_whatsapp_chat_store(MockSupabaseClient(validate_schema=False), schema="monica")
+        return build_whatsapp_chat_store(None, schema="nosnolimiar", allow_fake=True)
+    return build_whatsapp_chat_store(MockSupabaseClient(validate_schema=False), schema="nosnolimiar")
 
 
 @pytest.fixture

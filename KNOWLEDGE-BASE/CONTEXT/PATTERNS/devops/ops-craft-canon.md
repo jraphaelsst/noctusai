@@ -250,9 +250,9 @@ Decision (owner, one pick-one question): **fold into the brief while an incident
 
 ### C · Three restarts in a week → an automation proposal
 
-The toil ledger shows `vps_restart` on `noctus-monica` on Monday, Wednesday and Friday, each after a DEGRADED event, each `ok`. The third run crosses the threshold (§5: same action, same target, 3 times in 7 days). The steward:
-1. opens `PRB-YYYYMMDD-monica-restarts` with the three ledger rows as evidence and the workaround "L3 restart, cap 2 per day";
-2. files an L1 proposal to devops-engineer: "root-cause the monica restart loop (OOM? healthcheck? leak?). Evidence: three `ops-actions` rows and the watchdog reasons. Do not raise the retry cap.";
+The toil ledger shows `vps_restart` on `noctus-nosnolimiar` on Monday, Wednesday and Friday, each after a DEGRADED event, each `ok`. The third run crosses the threshold (§5: same action, same target, 3 times in 7 days). The steward:
+1. opens `PRB-YYYYMMDD-nosnolimiar-restarts` with the three ledger rows as evidence and the workaround "L3 restart, cap 2 per day";
+2. files an L1 proposal to devops-engineer: "root-cause the nosnolimiar restart loop (OOM? healthcheck? leak?). Evidence: three `ops-actions` rows and the watchdog reasons. Do not raise the retry cap.";
 3. stops counting further restarts as routine. Each new one is attached to the problem record.
 
 Why not simply automate the restart: automating the restart would hide the cause, and `owner-operations.md` §2 forbids that ("restart loops hide root causes").

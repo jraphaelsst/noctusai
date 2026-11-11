@@ -549,7 +549,7 @@ class TestSSOMintSerializationAndRetry:
             except Exception as exc:  # pragma: no cover - failure path asserted below
                 errors.append(exc)
 
-        threads = [threading.Thread(target=mint, args=(p,)) for p in ("agents", "monica")]
+        threads = [threading.Thread(target=mint, args=(p,)) for p in ("agents", "nosnolimiar")]
         for t in threads:
             t.start()
         for t in threads:

@@ -26,7 +26,7 @@ A thing that lands in the wrong layer is a structural fork (`../../03-SEED-ARCHI
 
 ### 1a · A market product composes several verticals (owner 2026-11-08)
 
-One market = one product, and that product **mounts several vertical modules** (CRM, ERP, CMS, …) in sidebar groups ordered by `MODULE_GROUP_ORDER` (`@noctusai/lib` `design-system/components/nav-groups.ts`). Canons: social-wiring (real estate), orbity (digital agencies), monica (psychoanalysis clinics), core (SaaS — noc runs its own business on the same modules). A module is a `ModuleSpec` (BE: organs + page keys + permissions) plus `defineModule` (FE: nav group + routes + page keys); a market extends a module with `extendModule`, never with a copy. Market configuration the org can change (funnel stages, origins, lost reasons) is a **preset the market ships and the org edits** — the seed owns the mechanics, never the list. Roadmap: `project-history/roadmaps/crm-cms-erp-vertical-seeds-2026-11.md`.
+One market = one product, and that product **mounts several vertical modules** (CRM, ERP, CMS, …) in sidebar groups ordered by `MODULE_GROUP_ORDER` (`@noctusai/lib` `design-system/components/nav-groups.ts`). Canons: social-wiring (real estate), orbity (digital agencies), nosnolimiar (psychoanalysis clinics), core (SaaS — noc runs its own business on the same modules). A module is a `ModuleSpec` (BE: organs + page keys + permissions) plus `defineModule` (FE: nav group + routes + page keys); a market extends a module with `extendModule`, never with a copy. Market configuration the org can change (funnel stages, origins, lost reasons) is a **preset the market ships and the org edits** — the seed owns the mechanics, never the list. Roadmap: `project-history/roadmaps/crm-cms-erp-vertical-seeds-2026-11.md`.
 
 ## 2 · Named seams a vertical seed must declare up front
 
@@ -70,7 +70,7 @@ Scaffold a market ERP from this layer with `noctus.dev.scaffold_product(overlay=
 | `lost_reasons` | `FunnelConfig.lost_reasons`, preset default | the list |
 | `lead_origins` + `lead_source` | origin slugs (data) + `LeadSource` Protocol/Fake/Real (whatsapp, meta lead ads, website form, xlsx import, email) | RE portal webhooks (OLX, Imovelweb) are L2 adapters |
 | `qualification_schema` | JSON schema per market, fed to the agent and shown on the card | fields per market |
-| `agent_hook` | `LeadAgentHook` (on_inbound / on_created / on_stage_entered) → agents product by agent key | RE Julia; clinics `monica-leads`; others Fake |
+| `agent_hook` | `LeadAgentHook` (on_inbound / on_created / on_stage_entered) → agents product by agent key | RE Julia; clinics `nosnolimiar-leads`; others Fake |
 | `assignment_strategy` | `round_robin`·`by_team`·`by_source`·`manual` + capacity; custom = named hook | who owns a lead |
 | `activity_types` | preset list | visita only RE |
 | `proposal_accept` / `on_won` | `QuoteAcceptHandler` + funnel action → `papel=proposta_aceite`; `on_stage_entered` | what a won deal becomes (processo de venda, contract, paciente, org) |

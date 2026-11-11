@@ -35,7 +35,7 @@ PAIRS = {p.id: p for p in DEFAULT_REGISTRY}
 FIN = PAIRS["finance.settled_cents@social-wiring"]
 FUNIL = PAIRS["sw.pipeline.funil"]
 PART = PAIRS["agents.thread_participante.estado"]
-ACTIVE = {"agents", "core", "monica", "seed", "social-wiring"}
+ACTIVE = {"agents", "core", "nosnolimiar", "seed", "social-wiring"}
 
 
 def _settlement(entry, amount, kind="payment", reversed_=False):

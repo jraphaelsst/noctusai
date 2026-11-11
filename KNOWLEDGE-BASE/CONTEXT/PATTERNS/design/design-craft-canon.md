@@ -41,7 +41,7 @@
 **Facts this doc is written against (2026-11-05, re-check before relying on them):** Tailwind
 `^3.4.17-19` with the default type scale and `font-sans` system stack (no `fontSize`/`fontFamily`
 extension in `tailwind.config.base.ts`); `lucide-react ^0.462.0` icons; dark mode by `.dark` class
-(`tailwind.config.base.ts:20`, `useTheme.ts:43`); active products `agents · core · monica ·
+(`tailwind.config.base.ts:20`, `useTheme.ts:43`); active products `agents · core · nosnolimiar ·
 social-wiring` (+ `seed`) per `deploy/fleet/active-scope.txt`.
 
 ---

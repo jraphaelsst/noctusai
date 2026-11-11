@@ -45,7 +45,7 @@ New gaps that D46 creates:
   values (agreed with the agents team, 2026-11-10).
 - **C2 · `products/assistant` is a new seed-scaffolded product** (`noc-new-product`), with
   `ativo` + `deploy_scope` set by the product catalog. It mounts the seed WhatsApp connections and
-  inbox routers exactly as Monica does (`products/monica/backend/app/routers/whatsapp_router.py:29-34`),
+  inbox routers exactly as Nós no Limiar does (`products/nosnolimiar/backend/app/routers/whatsapp_router.py:29-34`),
   with `mirror_read_to_whatsapp=False` (belt and braces under C1).
 - **C3 · The shadow loop is an `on_message` consumer.** For each inbound message it writes:
   - one classification row: `is_scheduling` true/false, confidence, model, prompt version, latency, cost;
@@ -109,7 +109,7 @@ Ledger: `project-history/council/2026-11/a1afa844-de99-4c24-a0b4-820446b100bd.nd
 9. **LGPD gates the QR scan** (S6 depends on S5): the legal checklist in `research/lgpd-personal-line.md`, including the owner's written acceptance of the WhatsApp ToS risk.
 10. **Webhook HMAC required** on the assistant mount; refuse to start in prod without it.
 11. **S6 does not depend on the Julia entry** (a rebase at most).
-12. **Allocation (X):** a new product, `products/assistant`. Grounds: the owner's own words (memory `project_assistant_product.md`, 2026-11-09): "a small, simple noc product called **Assistant**". Not daily-life, not a monica module.
+12. **Allocation (X):** a new product, `products/assistant`. Grounds: the owner's own words (memory `project_assistant_product.md`, 2026-11-09): "a small, simple noc product called **Assistant**". Not daily-life, not a nosnolimiar module.
 
 **First step (before anything touches the personal line):** a throwaway-number WAHA instance (the owner's spare number from D42) with markOnline=false, fullSync=false, the edge deny proxy and the dashboard off. Prove the session config, 24 h of zero presence/seen/sends from WAHA itself (P7), and the real session-state events (P8). The owner scans that QR.
 

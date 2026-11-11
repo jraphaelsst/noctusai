@@ -93,7 +93,7 @@ def _defs(tmp_path: Path, rel: str, body: str) -> list[dict]:
 class TestOrgOwnedDefinitionNotInstanciavel:
 
     def test_owned_and_open_json_is_flagged(self, tmp_path):
-        out = _defs(tmp_path, "products/m/ops/agents/a.json", json.dumps({"owner_product": "monica", "instanciavel": True}))
+        out = _defs(tmp_path, "products/m/ops/agents/a.json", json.dumps({"owner_product": "nosnolimiar", "instanciavel": True}))
         assert len(out) == 1 and "EVERY org" in out[0]["issue"]
 
 

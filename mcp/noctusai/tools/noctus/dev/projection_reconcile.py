@@ -167,7 +167,7 @@ def _sw_pipeline_pair(pipeline: str, card_table: str, migration: str) -> PairSpe
 #: runtime anyway). Columns verified against origin/dev migrations 2026-11-07.
 DEFAULT_REGISTRY: tuple[PairSpec, ...] = (
     _finance_pair("social-wiring", "social_wiring", "products/social-wiring/backend/migrations/260_finance.sql"),
-    _finance_pair("monica", "monica", "products/monica/backend/migrations/012_finance.sql"),
+    _finance_pair("nosnolimiar", "nosnolimiar", "products/nosnolimiar/backend/migrations/012_finance.sql"),
     _finance_pair("agents", "agents", "products/agents/backend/migrations/027_finance.sql"),
     _finance_pair("core", "public", "products/core/backend/migrations/085_finance.sql"),
     _sw_pipeline_pair("funil", "atendimentos", "products/social-wiring/backend/migrations/060_negociacoes_venda_to_atendimentos.sql"),
@@ -539,7 +539,7 @@ def register(server) -> None:
         description=(
             "READ-ONLY projection check: for each registered state<->log pair, fold the "
             "append-only log and diff it against the stored state row. Pairs (data, not code): "
-            "finance.settled_cents@<social-wiring|monica|agents|core> (fin_entries.settled_cents vs "
+            "finance.settled_cents@<social-wiring|nosnolimiar|agents|core> (fin_entries.settled_cents vs "
             "signed unreversed fin_settlements), sw.pipeline.<funil|processos_venda|esteira> (card "
             "etapa_id vs latest pipeline_movimentos), agents.thread_participante.estado (estado vs "
             "latest thread_participante_eventos). Filter with pairs=[ids] or product=<slug>. "

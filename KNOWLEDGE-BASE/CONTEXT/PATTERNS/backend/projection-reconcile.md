@@ -16,7 +16,7 @@ convention that one function writes both sides:
 | `agents.thread_participante.estado` | `agents.thread_participantes.estado` | `agents.thread_participante_eventos` by `(thread_id, agent_id)` | `latest` `para` by `created_at` |
 
 Finance pairs exist for every active schema carrying the seed finance organ:
-`social_wiring`, `monica`, `agents`, `public` (core).
+`social_wiring`, `nosnolimiar`, `agents`, `public` (core).
 
 ## The check — `noctus.dev.projection_reconcile`
 

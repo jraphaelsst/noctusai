@@ -66,7 +66,7 @@ async def toggle_agent(
     # social-wiring bridge it used to special-case is retired (Julia is the WhatsApp line). Phase 2 of the per-app
     # WhatsApp switch: let `external_ref={product, connection_id}` call THAT product's seed route
     # `PUT /api/whatsapp/connections/{id}/enabled` (seed `create_whatsapp_connections_router`, already shipped), so
-    # the "Agentes" toggle IS the app's on/off button for every app (monica first) — 2026-10-26
+    # the "Agentes" toggle IS the app's on/off button for every app (nosnolimiar first) — 2026-10-26
     record = (await anyio.to_thread.run_sync(lambda: store.set_active(ctx.org_id, key, payload.ativo)))
     return _agent_out(record)
 
