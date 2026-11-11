@@ -96,7 +96,7 @@ _(empty)_
 - **Same structure in every market canon.** "mind that orbity and monica(nosnolimiar) also should have that same structure". New slices:
   - **W3-O1:** orbity nav onto the canonical module groups;
   - **W3-M0:** Mônica nav onto the canonical module groups, after the nosnolimiar rename lands.
-  - Each starts from a product-designer page→group mockup that the owner approves, as SW's did.
+  - Each is built right away (owner 2026-11-11: "mockups are brought for validation only when i ask for it. build should start right away"). A product-designer mockup is drawn only if the owner asks, and the owner's refinements land in-flight or as a follow-up + redeploy.
   - Sequenced by the owner: "do that only after you're done with what u were doing". They start when the in-flight W1-4/W1-5/W1-6 and rename lanes are done.
 - **White-label CRM (owner idea, 2026-10-19, recovered by the 30-day sweep):** "white-label the CRM to sell it", for orbity. Now subsumed by the whole-product white-label direction above.
   - Open question **Q5**, to answer at W7-O / before orbity's first resale: what white-label must cover per org (brand/logo/theme already exist as `marcas`; custom domain; e-mail sender name; WhatsApp line; product name in copy; the public pages under SW's security canon).
