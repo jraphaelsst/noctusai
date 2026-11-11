@@ -63,6 +63,94 @@ services:
       retries: 3
       start_period: 5s
 
+  # ── redis-acl — the LOCKED-DOWN Redis (ACL, `default` user OFF) on the private data net ────────────────
+  # Redis lockdown (security review F3, 2026-11-10): the `redis` service above has no auth and sits on the
+  # network every container (n8n, WAHA, cloudflared ...) shares. It is about to hold the fleet breaker key
+  # `noctus:breaker:fleet`. This sibling is deployed ALONGSIDE it, profile-gated (a missing aclfile would
+  # make docker create a DIRECTORY at the mount path), and joined ONLY to the internal `noctus-data` net
+  # (products + this); WAHA/n8n/cloudflared never see it. Users/patterns are DERIVED by
+  # `noctus.dev.redis_acl` into redis-auth/users.acl (hashes only, gitignored). Products reach it as
+  # redis://noctus-redis-acl:6379 with REDIS_USERNAME/REDIS_PASSWORD (the seam, redis-auth-seam.md).
+  # Runbook + per-step rollback: KB § PATTERNS/devops/redis-acl-lockdown.md.
+  redis-acl:
+    # PINNED BY DIGEST to redis 7.4.6 (index digest, 2026-11-10): CVE-2025-49844 (Lua use-after-free -> RCE) and
+    # CVE-2025-46818 are fixed in 7.2.11 / 7.4.6 / 8.0.4 / 8.2.2; the floating 7-alpine tag can resolve to a vulnerable build. NEVER run an
+    # older one: rollout steps 0 and 2 refuse < 7.4.6. Bump deliberately (verify `redis-server --version` first).
+    image: redis:7.4.6-alpine@sha256:3b73847e72874be07e6657b129a94761662b79bc0f679273757d4218573b2a98
+    container_name: noctus-redis-acl
+    expose:
+      - "6379"
+    # APP data only (the breaker has its own instance below). volatile-lru: only keys WITH a TTL (sessions,
+    # limiter counters, caches) are evicted. mem_limit is ~2x maxmemory: a BGREWRITEAOF fork can copy-on-write
+    # up to the whole dataset, so a tight limit would OOM-kill Redis exactly when it is busiest.
+    # ALERT (NOC-REMEDIATE below): used_memory > 80% of maxmemory, or container memory > 80% of mem_limit
+    # (`noctus.vps.stats`); both fire long before eviction starts failing writes.
+    command: ["redis-server", "--appendonly", "yes", "--aclfile", "/etc/redis/users.acl",
+              "--maxmemory", "512mb", "--maxmemory-policy", "volatile-lru"]
+    mem_limit: 1g
+    volumes:
+      - redis_acl_data:/data
+      - ./redis-auth/users.acl:/etc/redis/users.acl:ro
+    networks:
+      noctus-data:
+        aliases: [noctus-redis-acl]
+    user: redis
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    restart: unless-stopped
+    healthcheck:
+      # `healthcheck` ACL user: nopass, +ping only (the default user is off). Reveals liveness, nothing else.
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning --user healthcheck --pass x ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    profiles:
+      - redis-acl
+
+  # ── breaker-redis — a DEDICATED, tiny Redis for the fleet breaker keys (noctus:breaker:*) ───────────────
+  # Round-3 decision: the breaker shares NOTHING with app data. Under the app Redis's volatile-lru a runaway that
+  # fills memory makes `SETNX noctus:breaker:fleet` fail with OOM exactly when it must succeed, and a hung Lua
+  # script on the app instance would freeze the breaker too. Here: nothing but breaker keys, `noeviction` (a full
+  # instance REFUSES writes loudly instead of dropping a trip), no scripting for ANY user (-@scripting in every
+  # aclfile line), AOF on. 64mb is ~thousands of times the real footprint (a handful of tiny keys + a capped
+  # audit list); mem_limit leaves AOF-rewrite headroom. Same digest pin, same internal network, same profile.
+  # Users: breaker-users.acl (hashes only, gitignored) rendered by `noctus.dev.redis_acl`.
+  # NOC-REMEDIATE[redis-memory-alert]: alert on used_memory > 80% of maxmemory for BOTH instances (needs an `info`
+  # grant for the probe user or a watchdog exec; `noctus.vps.stats` container memory is the interim signal). — 2026-11-10
+  breaker-redis:
+    image: redis:7.4.6-alpine@sha256:3b73847e72874be07e6657b129a94761662b79bc0f679273757d4218573b2a98
+    container_name: noctus-breaker-redis
+    expose:
+      - "6379"
+    command: ["redis-server", "--appendonly", "yes", "--aclfile", "/etc/redis/users.acl",
+              "--maxmemory", "64mb", "--maxmemory-policy", "noeviction"]
+    mem_limit: 192m
+    volumes:
+      - breaker_redis_data:/data
+      - ./redis-auth/breaker-users.acl:/etc/redis/users.acl:ro
+    networks:
+      noctus-data:
+        aliases: [noctus-breaker-redis]
+    user: redis
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning --user healthcheck --pass x ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    profiles:
+      - redis-acl
+
   cache-pg:
     # NoctusAI keeper-mirror cache backend — Postgres + pgvector.
     # Used in PROD only; dev uses local SQLite (see KB § PATTERNS/common/
@@ -143,9 +231,16 @@ networks:
   noctus-net:
     name: noctus-net
     external: true
+  # Private data net: `docker network create --internal noctus-data` (once, before the redis-acl profile).
+  # Internal = no egress, no host publish; Redis needs neither. Joined by redis-acl + the live products.
+  noctus-data:
+    name: noctus-data
+    external: true
 
 volumes:
   redis_data:
+  redis_acl_data:
+  breaker_redis_data:
   waha_sessions:
   cache_pg_data:
     name: noctus-cache-pg-data

@@ -167,6 +167,84 @@ class TestLedgerWriteIsBestEffort:
         assert await _fire("bare") == 1
 
 
+class TestFrequentJobsDoNotWriteALedgerRowPerIdleTick:
+    """A 30 s job that finds nothing must not insert 2,880 ledger rows a day (2026-11-09 egress incident:
+    `POST scheduler_runs` ~10k/22h). Errors always land; clean runs are sampled to one per heartbeat."""
+
+    @pytest.fixture
+    def clock(self):
+        now = {"t": 1_000.0}
+        sched.set_sampling_clock(lambda: now["t"])  # the public seam; reset_for_testing() restores the real one
+        return now
+
+    @pytest.mark.asyncio
+    async def test_idle_ticks_of_a_frequent_job_are_sampled(self, ledger, clock):
+        async def _job():
+            return None
+
+        sched.register("fast", _job, seconds=30)
+        for _ in range(240):  # 2 h of 30 s ticks
+            await _fire("fast")
+            clock["t"] += 30
+        assert len(ledger.runs) <= 2 * 12 + 1  # one heartbeat per 5 min, never one per tick (240)
+
+    @pytest.mark.asyncio
+    async def test_errors_are_never_sampled_away_and_recovery_is_recorded(self, ledger, clock):
+        state = {"fail": True}
+
+        async def _job():
+            if state["fail"]:
+                raise RuntimeError("upstream 502")
+
+        sched.register("flaky", _job, seconds=30)
+        for _ in range(3):
+            with pytest.raises(RuntimeError):
+                await _fire("flaky")
+            clock["t"] += 30
+        assert [r.status for r in ledger.runs] == ["error"] * 3
+        state["fail"] = False
+        await _fire("flaky")  # first ok after an error: recorded at once, not at the next heartbeat
+        assert ledger.runs[-1].status == "ok"
+
+    @pytest.mark.asyncio
+    async def test_a_failed_ledger_write_retries_after_a_bounded_backoff_not_every_tick(self, clock):
+        class _Flaky(FakeRunLedger):
+            fail = True
+            attempts = 0
+
+            def record(self, run):
+                self.attempts += 1
+                if self.fail:
+                    raise RuntimeError("402")
+                super().record(run)
+
+        led = _Flaky("demo")
+        sched.set_run_observer(led)
+
+        async def _job():
+            return None
+
+        sched.register("fast2", _job, seconds=30)
+        for _ in range(240):  # 2 h of 30 s ticks during an outage
+            await _fire("fast2")
+            clock["t"] += 30
+        assert led.attempts <= 30  # 60s, 120s, 240s, then one per 5 min = ~26 in 2 h; never one per tick (240)
+        led.fail = False
+        clock["t"] += 301  # the window passes: the next tick writes (recovery is not lost)
+        await _fire("fast2")
+        assert len(led.runs) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_job_that_is_not_frequent_records_every_run(self, ledger, clock):
+        async def _job():
+            return None
+
+        sched.register("hourly", _job, hours=1)
+        for _ in range(5):
+            await _fire("hourly")
+        assert len(ledger.runs) == 5
+
+
 class TestJobRegistry:
     def test_specs_keep_the_schedule_as_written(self, monkeypatch):
         monkeypatch.delenv(timeutil.PLATFORM_TIMEZONE_ENV, raising=False)

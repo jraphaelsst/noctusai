@@ -151,3 +151,30 @@ def test_hermetic_seam_forces_in_memory_even_when_redis_is_reachable(monkeypatch
 
     assert resolve_limiter_storage_uri("redis://127.0.0.1:6379", probe_client=_Reachable()) is None
 
+
+
+# ── REDIS_PASSWORD_FILE (security review r2, P3) ────────────────────────────────────────────────
+
+def test_password_file_supplies_the_password_when_env_has_none(monkeypatch, tmp_path):
+    from noctusai_lib.integrations.redis import redis_connection_url
+
+    f = tmp_path / "pw"
+    f.write_text("s3cret\n")
+    monkeypatch.delenv("REDIS_PASSWORD", raising=False)
+    monkeypatch.setenv("REDIS_PASSWORD_FILE", str(f))
+    monkeypatch.setenv("REDIS_USERNAME", "core")
+    assert redis_connection_url("redis://h:6379/0") == "redis://core:s3cret@h:6379/0"
+
+
+def test_password_env_wins_over_file_and_unreadable_file_is_loud(monkeypatch, tmp_path):
+    import pytest as _pt
+
+    from noctusai_lib.integrations.redis import redis_connection_url
+
+    monkeypatch.setenv("REDIS_USERNAME", "core")
+    monkeypatch.setenv("REDIS_PASSWORD", "fromenv")
+    monkeypatch.setenv("REDIS_PASSWORD_FILE", str(tmp_path / "x"))
+    assert "fromenv" in redis_connection_url("redis://h:6379/0")
+    monkeypatch.delenv("REDIS_PASSWORD")
+    with _pt.raises(OSError):
+        redis_connection_url("redis://h:6379/0")

@@ -13,7 +13,7 @@ from app.studio.eval_mecanismo import RoteiroInvalido, validar_mundo_juiz
 MUNDO = {
     "catalogo": [{"codigo": "ONE8970", "titulo": "Casa 3 quartos", "preco": 1050000}],
     "estado_inicial": {"criterios": {"operacao": "compra"}, "lotes": [["ONE8970"]]},
-    "fixture": {"fase_testes": False},
+    "fixture": {"modo": "ligado"},
 }
 EVALS = Path(__file__).resolve().parents[4] / "projects" / "julia-v2" / "content-v3" / "evals"
 

@@ -529,6 +529,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--deploy-image-skip-boot-smoke", action="store_true", help="With --deploy-image: bypass the in-image boot smoke run before the swap — almost always wrong.")
     parser.add_argument("--deploy-image-skip-ancestry-check", action="store_true", help="With --deploy-image: bypass the PROD-PIN ancestry guard (tag='latest'+source='pull' must descend from origin/prod) — almost always wrong.")
     parser.add_argument("--deploy-image-skip-compose-drift-check", action="store_true", help="With --deploy-image: bypass the VPS compose-drift precheck (VPS checkout behind the image's deploy/fleet/) — run noctus.dev.deploy_pull instead; recorded in the result.")
+    parser.add_argument("--deploy-image-redis-auth", choices=["auto", "off"], default="auto", help="With --deploy-image: Redis-auth override mode. auto (default) adds compose.redis-auth.prod.yml to every compose call when present and refuses a listed service without its env; off skips it (recorded in the payload and the ledger). KB § PATTERNS/devops/redis-acl-lockdown.md.")
     parser.add_argument("--deploy-image-allow-inactive", action="store_true", help="With --deploy-image: bypass the catalog-scope refusal for a deliberate, supervised reactivation — almost always wrong.")
     parser.add_argument("--deploy-image-allow-stale-toolkit", action="store_true", help="With --deploy-image: bypass the toolkit-staleness refusal for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; this mirrors the MCP tool's own allow_stale_toolkit escape hatch for a human invoking the CLI directly against a long-lived local checkout). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--projection-reconcile", action="store_true", help="READ-ONLY: fold each registered append-only log and diff it against its stored state row (projection check). consistent|drift|inconclusive|skipped per pair; exit 0 only when every measured pair is consistent. MCP: noctus.dev.projection_reconcile.")
@@ -574,6 +575,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--merge-queue", metavar="ACTION", choices=["list", "status", "watch"], help="Read-only view of the CI merge queue (the one path into dev): list = waiting entries + verdicts; status = one enqueued sha's verdict (--merge-queue-sha); watch = long-running, one flushed line per transition (MQ / MQ-LEFT / MQ-BATCH per finished candidate batch, red or cancelled included / MQ-WATCH-ERROR; --merge-queue-interval). Every failure still prints a JSON object with status=error. MCP: noctus.dev.merge_queue. KB § PATTERNS/devops/merge-queue.md.")
     parser.add_argument("--tunnel-config", metavar="ACTION", choices=["render", "check", "apply"], help="Make deploy/tunnel/ingress.yml canonical for the cloudflared tunnel: render = offline ingress block; check = read-only drift diff vs the LIVE VPS config; apply = backup + rewrite + restart (DRY-RUN unless --tunnel-config-confirm). MCP: noctus.dev.tunnel_config. KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md.")
     parser.add_argument("--tunnel-config-confirm", action="store_true", help="With --tunnel-config=apply: actually write the live config + restart the tunnel (production mutation).")
+    parser.add_argument("--redis-acl", metavar="ACTION", choices=["check", "render"], help="Prod Redis ACL lockdown, derived from the live roster: check = the override (host-local, gitignored, written by render --services) and the cutover marker are consistent, pass-file modes reported (offline); render = plan (add --redis-acl-write to write the gitignored aclfiles/env/pass files from REDIS_ACL_MASTER_SECRET; --redis-acl-services writes the override + cutover marker). Never touches the VPS. MCP: noctus.dev.redis_acl. KB § PATTERNS/devops/redis-acl-lockdown.md.")
+    parser.add_argument("--redis-acl-write", action="store_true", help="With --redis-acl=render: write the files (needs REDIS_ACL_MASTER_SECRET in env or deploy/fleet/.env.fleet).")
+    parser.add_argument("--redis-acl-services", metavar="SVC,SVC", default=None, help="With --redis-acl=render --redis-acl-write: the services to CUT OVER (written to the host-local compose.redis-auth.prod.yml). Re-render without a service to roll it back; an empty value removes the override.")
     parser.add_argument("--merge-queue-interval", type=float, default=60, help="With --merge-queue=watch: poll interval in seconds.")
     parser.add_argument("--merge-queue-sha", default=None, help="With --merge-queue=status: the enqueued sha.")
     parser.add_argument("--task-branch-slugs", default=None, help="With --task-branch=train: comma-separated ready feat/<slug> branches to merge --no-ff into ONE train-<name> branch (omit => dry-run candidate listing; --task-branch-slug names the train). Merge-all-before-integrating: one integrate of the train lands them all.")
@@ -762,6 +766,12 @@ def build_parser() -> argparse.ArgumentParser:
         parser.add_argument(f"--source-register-{_sr}", default="read" if _sr == "action" else "", dest=f"source_register_{_sr.replace('-', '_')}", help=f"With --source-register: the {_sr} argument.")
     parser.add_argument("--source-register-limit", type=int, default=50, dest="source_register_limit", help="With --source-register: max rows on read.")
     parser.add_argument("--source-register-allow-stale-toolkit", action="store_true", help="With --source-register: bypass the toolkit-staleness fresh-subprocess hop (escape hatch).")
+    parser.add_argument("--waha-instance-owner-hand", nargs=2, metavar=("ACTION", "LINE"), dest="waha_instance_owner_hand", help="OWNER ONLY, by hand, in a Terminal.app window (D49): run as `PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH mcp/noctusai/.venv/bin/python mcp/noctusai/cli.py --waha-instance-owner-hand apply <line>`. provision|apply ONE `personal: true` WAHA line that noctus.dev.waha_instance refuses for every agent. Refuses without an interactive TTY, inside an agent harness (CLAUDECODE / CLAUDE_CODE_*), unless the shell's parent is macOS Terminal.app ONLY, judged on its real image + code signature read from the kernel (only system shells/login in between, the app started by launchd, every process started after its parent), with PYTHON*/DYLD_* unset, PATH starting /usr/bin:/bin and no other process on the tty, on any policy other than the strict read-only shadow shape or one the VPS checkout does not declare identically; you TYPE the line name and CONFIRMO on /dev/tty. Every attempt is audited (waha-owner-hand.ndjson). Deliberately NOT an MCP tool. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a.")
+    parser.add_argument("--waha-owner-hand-host", default="noctus-vps", dest="waha_owner_hand_host", help="With --waha-instance-owner-hand: the SSH host alias of the VPS (default noctus-vps).")
+    parser.add_argument("--supabase-request-budget", action="store_true", help="Measure Supabase request volume from the project's edge logs (ok|warn|critical|unknown; needs SUPABASE_ACCESS_TOKEN). MCP: noctus.dev.supabase_request_budget.")
+    parser.add_argument("--srb-window-hours", type=float, default=1.0, help="With --supabase-request-budget: window in hours (max 24).")
+    parser.add_argument("--srb-start", default=None, help="With --supabase-request-budget: ISO start (use with --srb-end).")
+    parser.add_argument("--srb-end", default=None, help="With --supabase-request-budget: ISO end (use with --srb-start).")
     return parser
 
 
@@ -4168,6 +4178,7 @@ def main():
             skip_compose_drift_check=bool(getattr(args, "deploy_image_skip_compose_drift_check", False)),
             skip_boot_smoke=bool(getattr(args, "deploy_image_skip_boot_smoke", False)),
             allow_inactive=bool(getattr(args, "deploy_image_allow_inactive", False)),
+            redis_auth=getattr(args, "deploy_image_redis_auth", "auto"),
             allow_stale_toolkit=bool(getattr(args, "deploy_image_allow_stale_toolkit", False)),
         )
         print(json.dumps(r, indent=2, default=str))
@@ -4295,6 +4306,13 @@ def main():
         )
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
+
+    elif getattr(args, "redis_acl", None):
+        from tools.noctus.dev.redis_acl import redis_acl as _redis_acl
+        r = _redis_acl(args.redis_acl, write=bool(args.redis_acl_write), services=args.redis_acl_services,
+                       worktree_path=args.worktree_path)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
 
     elif getattr(args, "tunnel_config", None):
         from tools.noctus.dev.tunnel_config import tunnel_config as _tunnel_config
@@ -4880,10 +4898,24 @@ def main():
             print("[branch-pointer] non-exempt paths present — cache refresh applies")
             sys.exit(1)
 
+    elif args.waha_instance_owner_hand:
+        from settings import REPO_ROOT as _oh_root
+        from tools.noctus.dev.waha_owner_hand import owner_hand as _owner_hand
+        _oh_action, _oh_line = args.waha_instance_owner_hand
+        r = _owner_hand(_oh_action, _oh_line, ssh_host=args.waha_owner_hand_host, repo_root=str(_oh_root))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
+
     elif args.source_register:
         from tools.noctus.dev.source_register import source_register as _source_register
         _sr_kw = {k: getattr(args, f"source_register_{k}") for k in ("query", "tier_filter", "limit", "source", "outcome", "tier", "label", "claim", "evidence", "question", "note", "by", "events")}
         r = _source_register(args.source_register_action, **_sr_kw, confirm=bool(getattr(args, "source_register_confirm", False)), allow_stale_toolkit=bool(getattr(args, "source_register_allow_stale_toolkit", False)))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
+
+    elif args.supabase_request_budget:
+        from tools.noctus.dev.supabase_request_budget import supabase_request_budget as _supabase_request_budget
+        r = _supabase_request_budget(window_hours=args.srb_window_hours, start=args.srb_start, end=args.srb_end)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 

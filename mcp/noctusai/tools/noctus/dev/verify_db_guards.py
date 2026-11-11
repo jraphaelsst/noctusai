@@ -12032,6 +12032,47 @@ END;
 
 
 
+_ASSISTANT_GOOGLE_EVENTOS_APPEND_ONLY_PROBE = GuardProbe(
+    id="assistant.google_conexao_eventos.append_only",
+    product="assistant",
+    schema="assistant",
+    guard_name="guard_google_conexao_eventos_append_only",
+    kind="write_refusal",
+    migrations=("019_google_connection.sql",),
+    rationale=(
+        "The Google connection event log (connect / disconnect / reconnect_needed, who and when) is the measurable record of "
+        "a credential lifecycle: an UPDATE or DELETE would rewrite it. Self-provisioning: the probe stores a throwaway grant "
+        "row (the trigger writes the `connect` event, so this also proves the trigger fires) and tries to rewrite that "
+        "event, all inside the rolled-back transaction; no organization row is borrowed."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_org text := 'noc-probe-' || gen_random_uuid()::text;
+  v_ev uuid;
+BEGIN
+  INSERT INTO assistant.oauth_credentials (org_id, provider, encrypted_tokens, metadata)
+  VALUES (v_org, 'google_calendar', 'x', '{"account_email": "probe@invalid", "scopes": []}'::jsonb);
+  SELECT e.id INTO v_ev FROM assistant.google_conexao_eventos e WHERE e.org_id = v_org LIMIT 1;
+  IF v_ev IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: storing a grant produced no connect event (the event trigger did not fire)';
+  END IF;
+  BEGIN
+    UPDATE assistant.google_conexao_eventos SET event_type = 'disconnect' WHERE id = v_ev;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: UPDATE on the append-only event log succeeded - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%append_only%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 def _assistant_ai_outputs_probe(probe_id: str, guard_name: str, attempt_sql: str, rationale: str) -> GuardProbe:
     """Self-provisioning (same shape as the 015 eventos probe): connection + intake row through
     `assistant.append_intake`, then the write that must be refused, all inside the rolled-back transaction."""
@@ -12102,6 +12143,7 @@ _ASSISTANT_AI_OUTPUTS_PROBES: tuple[GuardProbe, ...] = (
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
+    _ASSISTANT_GOOGLE_EVENTOS_APPEND_ONLY_PROBE,
     *_ASSISTANT_AI_OUTPUTS_PROBES,
     _AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE,
     _RUIDO_SHAPE_PROBE,

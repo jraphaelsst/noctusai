@@ -1560,6 +1560,7 @@ export function createEdicaoFotosHooks(api: ApiClient) {
       queryKey: ['edicao-fotos', 'processamento'],
       queryFn: () => api.get('/api/edicao-fotos/processamento'),
       enabled,
+      // poll-budget: caller-set, default off; ~5 calls/tick; worst 0 by default, 7200/day per open tab at 60s; hidden=paused
       refetchInterval,
     });
     return {

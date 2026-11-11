@@ -347,16 +347,19 @@ async def _drain_forwards_async(
 def configure() -> None:
     """Register both drains on the seed-side scheduler. Idempotent; called
     from `portal_leads/__init__.py::register()` at import time."""
+    # poll-budget: 15min; <=2 calls/tick (retry inbox read); worst 192/day; max added delay 0 (cadence unchanged); idle=fixed
     seed_scheduler.register(
         "olx_leads_retry",
         olx_leads_retry_job,
         cron="*/15 * * * *",
     )
+    # poll-budget: 5min; <=2 calls/tick (outbox read + app_integration_config); worst 576/day; max added delay 0 (cadence unchanged); idle=fixed
     seed_scheduler.register(
         "portal_lead_forward_drain",
         portal_lead_forward_drain_job,
         cron="*/5 * * * *",
     )
+    # poll-budget: 15min; <=2 calls/tick (retry inbox read); worst 192/day; max added delay 0 (cadence unchanged); idle=fixed
     seed_scheduler.register(
         "imovelweb_leads_retry",
         imovelweb_leads_retry_job,
@@ -364,6 +367,7 @@ def configure() -> None:
     )
     # :17 rather than :00 — every other hourly job in the fleet fires on the
     # hour, and this one makes an upstream call per authorized agency.
+    # poll-budget: hourly; 1 call per authorized agency (+Vista/portal upstream); worst 24 x orgs calls/day; max added delay 0 (cadence unchanged); idle=fixed
     seed_scheduler.register(
         "imovelweb_reconcile",
         imovelweb_reconcile_job,
