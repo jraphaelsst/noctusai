@@ -440,7 +440,7 @@ Who to consult or route to, by need. Advisors are read-only; executors work in a
 | `compliance-reviewer` | advisor | diff review, regression baseline, eight-way sync, replication-to-seed | the merged tip or the branch | after every wave, before landing |
 | `legal-advisor` | advisor | contracts, LGPD program, e-signature validity | facts from the owner or `product-designer` | with `security` on LGPD |
 | `accountant` | advisor | DRE, tax, where a cost or revenue item belongs | finance data shapes from `backend-engineer` | with finance organ work |
-| `product-designer` | advisor + mockups | mockup-first before any new screen; IA, content, accessibility | the owner's answers; constraints from `architect` | before `frontend-engineer` |
+| `product-designer` | advisor + mockups | mockups only when the owner asks (never a build gate, 2026-11-11); IA, content, accessibility | the owner's answers; constraints from `architect` | on the owner's ask, alongside or after `frontend-engineer` |
 | `product-manager` | advisor + spec | the what and why: stories, testable acceptance, metric target, scope-creep log, backlog draft | the owner's answers | before `product-architect` and `product-designer`; the tech-lead turns the spec into dispatch |
 | `product-architect` | advisor + spec | which organ, module, market product, pack or tier carries each function; variant matrix; capability interfaces | the spec; the catalog | with `architect` (seams) and `product-designer` (screens) |
 | `product-analyst` | advisor | post-ship: did the metric move (met / not met / inconclusive); decision reviews; council outcomes | the spec target and measured data | after ship, feeds `product-manager` and the decision log |
