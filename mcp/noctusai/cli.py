@@ -563,7 +563,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--migration-replay-base", default=None, help="CI: add every migration/config path changed in BASE..HEAD to the PATHs.")
     parser.add_argument("--migrate-product", metavar="PRODUCT", help="Apply a product's SQL migrations to the shared Supabase project. DRY-RUN unless --migrate-product-confirm. MCP: noctus.dev.migrate_product. Also an R4 fresh-subprocess target.")
     parser.add_argument("--migrate-product-confirm", action="store_true", help="With --migrate-product: actually apply pending migrations (a production action). Without it, dry-run only.")
-    parser.add_argument("--migrate-product-target", default=None, help="With --migrate-product: filename filter — apply/list only this one file.")
+    parser.add_argument("--migrate-product-target", default=None, help="With --migrate-product: apply/list ONLY this one file (refused while an earlier file is pending).")
+    parser.add_argument("--migrate-product-upto", default=None, help="With --migrate-product: apply/list every pending file up to AND including this one, in order.")
+    parser.add_argument("--migrate-product-allow-out-of-order", action="store_true", help="With --migrate-product-target: allow applying it while earlier files are pending (deliberate only).")
     parser.add_argument("--migrate-product-sha", default=None, help="With --migrate-product: read migration files via `git show <sha>:<path>` instead of the working tree (R3, release-no-freeze) — the exact set that existed at that commit. Skips the stale-tree refusal (moot for a pinned historical commit).")
     parser.add_argument("--migrate-product-project-ref", default="nyplttplcoyiiqjrvtiw", help="With --migrate-product: the Supabase project reference.")
     parser.add_argument("--migrate-product-schema", default=None, help="With --migrate-product: override the auto-derived schema.")
@@ -4296,6 +4298,8 @@ def main():
             args.migrate_product,
             confirm=bool(getattr(args, "migrate_product_confirm", False)),
             target=getattr(args, "migrate_product_target", None),
+            upto=getattr(args, "migrate_product_upto", None),
+            allow_out_of_order=getattr(args, "migrate_product_allow_out_of_order", False),
             sha=getattr(args, "migrate_product_sha", None),
             project_ref=getattr(args, "migrate_product_project_ref", "nyplttplcoyiiqjrvtiw"),
             schema=getattr(args, "migrate_product_schema", None),
