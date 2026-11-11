@@ -444,6 +444,14 @@ role.
 - **Errors:** user-facing pt-BR messages never embed the offending value (`KB § PATTERNS/security/lgpd.md` §4);
   FastAPI's default 422 echoes `input` — public anonymous routes parse the body themselves to avoid
   echo (`products/agents/backend/app/public_ask/router.py:1-14` is the reference).
+- **No-leak (owner rule "no-leaking", 2026-11-11): an error body is a CODE, never exception text.** `detail=str(exc)` /
+  `f"… {exc}"` hands a stranger the internal hostname (`http://waha-assistant:3000/…`), env-var names and driver
+  messages (CWE-209). Raise `noctusai_lib.api.integration_errors.integration_error(code, exc=exc, op=…)`: fixed pt-BR
+  message + stable `code`, exception logged server-side, one `integration_error code=… status=…` line per dispatch
+  (the telemetry leg). Gate: keeper `check_http_detail_echoes_exception` (`--check-http-detail-echoes-exception`;
+  seed = zero tolerance, products ratcheted by `deploy/security/http-detail-echo-baseline.json`,
+  `NOC-REMEDIATE[http-detail-echo]`; escape `# detail-safe: <reason>` only for domain-authored text). Verify-then-persist:
+  a create that calls an upstream verifies first, so a failed call leaves no row.
 
 **Anti-patterns.** Deny-list SSRF filters. Trusting `Content-Type`. Rendering LLM output as HTML.
 

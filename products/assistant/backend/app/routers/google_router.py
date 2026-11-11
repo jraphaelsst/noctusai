@@ -19,6 +19,7 @@ from fastapi import Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from noctusai_lib.api.access_tiers import make_router
+from noctusai_lib.api.integration_errors import integration_error
 from noctusai_seed.organ_auth import make_organ_auth
 
 from app.dependencies import _db, coerce_org_uuid, get_admin_client
@@ -41,21 +42,21 @@ def get_provider():
     try:
         return gc.build_provider()
     except gc.GoogleNotConfigured as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from None
+        raise integration_error("not_configured", exc=exc, op="google_provider") from None
 
 
 def get_state_store():
     try:
         return gc.build_state_store(get_admin_client())
     except gc.GoogleNotConfigured as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from None
+        raise integration_error("not_configured", exc=exc, op="google_state_store") from None
 
 
 def get_credential_store():
     try:
         return gc.build_credential_store(get_admin_client())
     except gc.GoogleNotConfigured as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from None
+        raise integration_error("not_configured", exc=exc, op="google_credential_store") from None
 
 
 def get_google_clients(store: Any = Depends(get_credential_store)) -> gc.GoogleClients:
@@ -103,7 +104,7 @@ async def connect_start(
     try:
         redirect = gc.redirect_uri()
     except gc.GoogleNotConfigured as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from None
+        raise integration_error("not_configured", exc=exc, op="google_redirect_uri") from None
     # The provider mints the verifier+challenge WITH the consent URL, and the store needs the verifier to mint the state,
     # so the URL is built once with a placeholder and the real state is set as that one query parameter.
     probe = await provider.authorization_url(state="pending", scopes=gc.ASSISTANT_GOOGLE_SCOPES, redirect_uri=redirect)

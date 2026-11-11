@@ -417,7 +417,9 @@ def test_events_route_exists_only_with_a_realtime_bus():
 def test_bad_cursor_is_422():
     h = _Harness()
     conn_id, _ = h.create_connection()
-    assert h.client.get(f"/api/whatsapp/connections/{conn_id}/chats?cursor=garbage").status_code == 422
+    resp = h.client.get(f"/api/whatsapp/connections/{conn_id}/chats?cursor=garbage")
+    assert resp.status_code == 422
+    assert "garbage" not in resp.text  # no-leaking: a fixed message + code, never the parser's exception text
 
 
 # ─── per-app switch ─────────────────────────────────────────────────────────

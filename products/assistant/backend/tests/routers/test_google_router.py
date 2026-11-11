@@ -293,8 +293,13 @@ def test_missing_google_client_or_encryption_key_is_a_503(client):
 
     app.dependency_overrides[gr.require_org_admin] = lambda: (type("U", (), {"id": "u"})(), "t", ORG)
     try:
-        assert client.post("/api/google/connect/start").status_code == 503  # no GOOGLE_OAUTH_CLIENT_ID in the test env
-        assert client.get("/api/google/status").status_code == 503  # no valid ENCRYPTION_KEY
+        started = client.post("/api/google/connect/start")  # no GOOGLE_OAUTH_CLIENT_ID in the test env
+        status = client.get("/api/google/status")  # no valid ENCRYPTION_KEY
+        assert started.status_code == 503 and status.status_code == 503
+        # no-leaking: a deploy gap is a CODE, never the env-var names / config text
+        for resp in (started, status):
+            assert "GOOGLE_" not in resp.text and "ENCRYPTION_KEY" not in resp.text
+            assert resp.json()["code"] == "not_configured"
     finally:
         app.dependency_overrides.pop(gr.require_org_admin, None)
 

@@ -641,7 +641,7 @@ def create_auth_router(
         try:
             scopes = scopes_allowed.validate(body.scopes or [])
         except UnknownTokenScopeError as exc:
-            raise HTTPException(status_code=422, detail=str(exc))
+            raise HTTPException(status_code=422, detail=str(exc))  # detail-safe: UnknownTokenScopeError is authored text naming only the caller's own scope
         _check_service_account(body.service_account_id)
 
         sb = deps.get_admin_client()

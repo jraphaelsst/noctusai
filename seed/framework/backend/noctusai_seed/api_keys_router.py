@@ -65,6 +65,7 @@ from typing import Any, Awaitable, Callable, Iterable, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.integration_errors import integration_error
 from noctusai_lib.config.credentials import resolve_credential
 from noctusai_lib.security.api_keys import (
     ApiKeySpec,
@@ -183,9 +184,7 @@ def create_api_keys_router(
         try:
             return store_factory()
         except EncryptionNotConfigured as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
-            ) from exc
+            raise integration_error("not_configured", exc=exc, op="api_keys_store") from exc
 
     def _store_optional_dep():
         """READ-path DI seam — a config gap degrades to platform-chain-only
