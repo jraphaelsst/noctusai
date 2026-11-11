@@ -24,6 +24,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Header
 
+from noctusai_lib.config.credentials import invalidate_credential_cache
+
 from app.database import get_admin_client
 from app.dependencies import get_current_user
 from app.schemas.credentials import CredentialsBody
@@ -150,4 +152,5 @@ async def salvar_credentials(
                 row, on_conflict="org_id,key"
             ).execute))
 
+    invalidate_credential_cache()  # this process serves the new key at once (other workers within the TTL)
     return {"ok": True, "updated": [p for p, _ in pairs]}

@@ -13,6 +13,8 @@ adapter is owned by the consumer-side ``E-SW-AUTH`` project. See
 
 from __future__ import annotations
 
+import hashlib
+import re
 import secrets
 import time
 from typing import NamedTuple, Protocol
@@ -144,6 +146,21 @@ class SessionStore(Protocol):
         ...
 
 
+#: A session id is `secrets.token_urlsafe(32)`: exactly 43 url-safe base64 chars. Anything else is not a session
+#: id. Notably a 64-hex string is a sha256 KEY NAME (visible in SCAN / ACL LOG / a dump), never a cookie.
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
+
+
+def session_id_digest(session_id: str) -> str:
+    """sha256 hex of a session id (or any bearer secret). The ONE helper that turns a credential into something
+    safe to use as a Redis key name / limiter key: key names leak (SCAN, ACL LOG, dumps, metrics)."""
+    return hashlib.sha256(session_id.encode()).hexdigest()
+
+
+def is_valid_session_id(session_id: str) -> bool:
+    return isinstance(session_id, str) and SESSION_ID_RE.fullmatch(session_id) is not None
+
+
 class FakeSessionStore:
     """Deterministic in-memory ``SessionStore``.
 
@@ -252,6 +269,9 @@ class FakeSessionStore:
 
 
 __all__ = [
+    "SESSION_ID_RE",
+    "is_valid_session_id",
+    "session_id_digest",
     "FakeSessionStore",
     "SessionStore",
 ]

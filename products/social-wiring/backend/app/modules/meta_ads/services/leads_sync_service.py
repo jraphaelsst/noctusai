@@ -32,6 +32,7 @@ from noctusai_lib.integrations.meta import MetaAdapter, MetaGraphError
 from noctusai_lib.primitives.phone import normalize_phone
 
 from app.modules.leads.services import meta_form_aliases
+from app.services import table_reads
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,33 @@ _PROMOTE_BY_TYPE = {
     "EMAIL": "email",
     "PHONE": "phone",
 }
+
+
+#: What a re-sync compares to decide a stored row is already current (the Meta record is immutable after creation, so
+#: in practice every row is). `synced_at` is the write stamp, never part of the comparison.
+_FORM_COMPARE = ("page_id", "name", "status", "locale", "leads_count", "questions", "created_time")
+_LEAD_COMPARE = (
+    "form_id", "form_name", "ad_id", "adset_id", "campaign_id", "campaign_name", "platform", "is_organic",
+    "created_time", "full_name", "email", "phone", "answers",
+)
+
+
+def _comparable(value: Any) -> Any:
+    """A timestamp string from PostgREST (`+00:00`) and one we built (`Z` / naive UTC) compare equal; anything else as-is."""
+    if isinstance(value, str) and len(value) >= 10 and value[:4].isdigit() and value[4] == "-":
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _unchanged(stored: dict[str, Any] | None, row: dict[str, Any], keys: tuple[str, ...]) -> bool:
+    """True when `stored` already carries every compared value of `row` (no write needed)."""
+    if not stored:
+        return False
+    return all(_comparable(stored.get(k)) == _comparable(row.get(k)) for k in keys)
 
 
 def _iso(dt: Any) -> str | None:
@@ -101,6 +129,16 @@ class LeadsSyncService:
         now_iso = datetime.now(timezone.utc).isoformat()
         key_type_by_form: dict[str, dict[str, str]] = {}
         all_forms: list[Any] = []
+        # ONE paged read of the stored forms instead of one upsert per form per run (2026-11-09 egress incident:
+        # ~700 `meta_ads_lead_forms` upserts / 22 h, almost all rewriting an identical row).
+        stored_forms = {
+            r["id"]: r
+            for r in table_reads.paged_rows(
+                self._admin.schema(_SCHEMA), "meta_ads_lead_forms", org_id,
+                select="id, " + ", ".join(_FORM_COMPARE),
+            )
+        }
+        self.forms_skipped_unchanged = 0
         for page in adapter.list_facebook_pages():
             forms = adapter.list_leadgen_forms(page.id, with_questions=True)
             for form in forms:
@@ -128,6 +166,9 @@ class LeadsSyncService:
                     "created_time": _iso(form.created_time),
                     "synced_at": now_iso,
                 }
+                if _unchanged(stored_forms.get(form.id), row, _FORM_COMPARE):
+                    self.forms_skipped_unchanged += 1
+                    continue
                 (
                     self._admin.schema(_SCHEMA)
                     .table("meta_ads_lead_forms")
@@ -155,6 +196,7 @@ class LeadsSyncService:
         never a faked-empty success, never a hard failure that loses the
         forms already synced."""
         upserted = 0
+        unchanged = 0
         ingested = 0
         ingest_errors = 0
         gated = False
@@ -174,11 +216,33 @@ class LeadsSyncService:
                     continue
                 raise
             key_types = key_type_by_form.get(form.id, {})
-            for lead in leads:
-                row = self.upsert_lead(
-                    lead, org_id=org_id, form=form, key_types=key_types
+            # Two batched reads per form replace one upsert + one `leads` lookup PER LEAD, per run (2026-11-09
+            # egress incident: ~2.6k `meta_ads_leads` upserts + ~2.8k `leads` reads in 22 h for two runs over the
+            # same ~1.3k immutable records): what is stored and unchanged is not rewritten, what is already in
+            # `leads` is not re-ingested.
+            lead_ids = [str(lead.id) for lead in leads]
+            stored = {
+                r["id"]: r
+                for r in table_reads.in_batched_rows(
+                    self._admin.schema(_SCHEMA), "meta_ads_leads", org_id, "id", lead_ids,
+                    select="id, " + ", ".join(_LEAD_COMPARE),
                 )
-                upserted += 1
+            }
+            ingested_ids = {
+                r["meta_lead_id"]
+                for r in table_reads.in_batched_rows(
+                    self._admin.schema(_SCHEMA), "leads", org_id, "meta_lead_id", lead_ids, select="id, meta_lead_id",
+                )
+            }
+            for lead in leads:
+                row = self.build_lead_row(lead, org_id=org_id, form=form, key_types=key_types)
+                if _unchanged(stored.get(str(lead.id)), row, _LEAD_COMPARE):
+                    unchanged += 1
+                else:
+                    self.write_lead_row(row)
+                    upserted += 1
+                if str(lead.id) in ingested_ids:
+                    continue
                 # One bad lead (unparseable created_time, a transient DB error)
                 # must not abort the other 499 — but it is COUNTED and logged,
                 # never swallowed: the next run offers the row again.
@@ -196,12 +260,35 @@ class LeadsSyncService:
                     ingested += 1
         return {
             "leads_upserted": upserted,
+            "leads_unchanged": unchanged,
             "leads_ingested": ingested,
             "ingest_errors": ingest_errors,
             "records_gated": gated,
         }
 
     def upsert_lead(
+        self,
+        lead: Any,
+        *,
+        org_id: UUID,
+        form: Any,
+        key_types: dict[str, str],
+        simulado: bool = False,
+    ) -> dict[str, Any]:
+        """Build the row and ALWAYS write it (the webhook path: one lead, no stored copy to compare against)."""
+        row = self.build_lead_row(lead, org_id=org_id, form=form, key_types=key_types, simulado=simulado)
+        self.write_lead_row(row)
+        return row
+
+    def write_lead_row(self, row: dict[str, Any]) -> None:
+        (
+            self._admin.schema(_SCHEMA)
+            .table("meta_ads_leads")
+            .upsert(row, on_conflict="id")
+            .execute()
+        )
+
+    def build_lead_row(
         self,
         lead: Any,
         *,
@@ -259,12 +346,6 @@ class LeadsSyncService:
             # Only stamped when true: the column defaults to false (migration
             # 218), and a real sync must never need it to exist.
             row["simulado"] = True
-        (
-            self._admin.schema(_SCHEMA)
-            .table("meta_ads_leads")
-            .upsert(row, on_conflict="id")
-            .execute()
-        )
         # Returned (rather than the previous `None`) so the webhook receiver's
         # fan-out — unified-base normalization, operator alert, realtime push —
         # can work from the row it just wrote instead of re-reading it back.
