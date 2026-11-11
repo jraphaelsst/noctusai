@@ -137,7 +137,7 @@ class RealWhatsAppSender:
         *,
         resolve_client: Any = None,
     ) -> None:
-        self._get_admin_client = get_admin_client
+        self._get_admin_client = get_admin_client  # org-scope-ok: WhatsApp connection store (not a tenant table)
         self._settings = settings
         self._resolve_client = resolve_client or resolve_org_waha_client
 
@@ -178,4 +178,4 @@ def make_default_sender() -> RealWhatsAppSender:
     from app.config import settings
     from app.dependencies import get_admin_client
 
-    return RealWhatsAppSender(get_admin_client, settings)
+    return RealWhatsAppSender(get_admin_client, settings)  # org-scope-ok: WhatsApp connection store (not a tenant table)

@@ -38,6 +38,8 @@ from noctusai_lib.primitives.roles import ADMIN_ROLES
 
 from noctusai_lib.api.token_link import TokenLinkGone, token_fingerprint
 
+from app.org_scope import org_member_ids
+
 logger = logging.getLogger(__name__)
 
 
@@ -444,9 +446,11 @@ class PublicApprovalService:
             logger.error("public_approval.notify skipped: no core client org=%s", org_id)
             return 0
         try:
-            if post.get("assignee_user_id"):
-                recipients = [str(post["assignee_user_id"])]
-            else:
+            # The assignee is a recipient ONLY while still a member of THIS org (a stale or forged id must not turn the
+            # notification into a message to another tenant's user): intersect, else fall back to the org's admins.
+            assignee = [str(post["assignee_user_id"])] if post.get("assignee_user_id") else []
+            recipients = sorted(org_member_ids(self._core, org_id, set(assignee))) if assignee else []
+            if not recipients:
                 rows = (
                     self._core.table("noctus_users").select("id").eq("org_id", org_id)
                     .in_("org_role", list(ADMIN_ROLES)).execute().data or []

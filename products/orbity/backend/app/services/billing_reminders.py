@@ -93,7 +93,7 @@ def _org_waha_client(org_id: str) -> Any:
     from app.dependencies import get_admin_client
 
     try:
-        store = build_whatsapp_connection_store(get_admin_client(), encryption_key=settings.encryption_key, schema="orbity")
+        store = build_whatsapp_connection_store(get_admin_client(), encryption_key=settings.encryption_key, schema="orbity")  # org-scope-ok: WhatsApp connection store (not a tenant table), org passed to the resolver
         return make_waha_client_resolver(store)(org_id)
     except EncryptionNotConfigured:
         logger.warning("orbity reminders: ENCRYPTION_KEY ausente — conexões WhatsApp ignoradas (org=%s)", org_id)

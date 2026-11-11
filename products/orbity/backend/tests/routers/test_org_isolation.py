@@ -162,6 +162,8 @@ def test_a_foreign_id_named_in_the_body_is_refused_422(client, path, body, table
     _seed(client, table)
     resp = client.post(path, json=body)
     assert resp.status_code == 422, f"POST {path} -> {resp.status_code} {resp.text[:200]}"
+    # THE refusal (the wrapper's, or the service's own parent check), not an unrelated validation 422
+    assert "Referência inválida" in resp.text or "não encontrad" in resp.text, resp.text[:300]
     assert LEAK not in resp.text
 
 
@@ -196,3 +198,119 @@ def test_a_customer_role_cannot_list(client, path):
     client.mock_supabase.set_table_data(
         "noctus_users", [{"id": TEST_USER_ID, "org_id": "test-org-123", "org_role": "membro", "role": "user"}])
     assert client.get(path).status_code == 403
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Round 2 (security review of 034)
+# ---------------------------------------------------------------------------------------------------------------------
+from app.org_scope import FOREIGN_KEYS, USER_REFERENCES, make_org_client  # noqa: E402
+from noctusai_lib.api.org_scoped import ForeignReferenceError, OrgScopeViolation  # noqa: E402
+from noctusai_lib.testing import MockSupabaseClient  # noqa: E402
+
+INSIDER = "c0000000-0000-4000-8000-000000000001"   # a user of org A
+OUTSIDER = "c0000000-0000-4000-8000-0000000000bb"  # a user of org B
+MEMBER_ELSEWHERE = "c0000000-0000-4000-8000-0000000000cc"  # home org B, ACTIVE member of org A
+
+
+def _users(client, *, membership_status="active"):
+    client.mock_supabase.set_table_data("noctus_users", [
+        {"id": TEST_USER_ID, "org_id": ORG_A, "org_role": "owner", "role": "user"},
+        {"id": INSIDER, "org_id": ORG_A, "org_role": "member", "role": "user"},
+        {"id": OUTSIDER, "org_id": ORG_B, "org_role": "member", "role": "user"},
+        {"id": MEMBER_ELSEWHERE, "org_id": ORG_B, "org_role": "member", "role": "user"},
+    ])
+    client.mock_supabase.set_table_data("org_memberships", [
+        {"user_id": MEMBER_ELSEWHERE, "org_id": ORG_A, "org_role": "member", "status": membership_status},
+    ])
+
+
+EVENT = {"title": "e", "starts_at": "2026-12-01T10:00:00+00:00", "ends_at": "2026-12-01T11:00:00+00:00"}
+USER_WRITES = [
+    ("/api/tasks", {"title": "t"}, "assignee_user_id"),
+    ("/api/agenda/events", EVENT, "assignee_user_id"),
+    ("/api/content/posts", {"platform": "instagram"}, "assignee_user_id"),
+    ("/api/crm/leads", {"name": "n"}, "owner_id"),
+]
+
+
+@pytest.mark.parametrize("path,body,col", USER_WRITES, ids=[p for p, _b, _c in USER_WRITES])
+def test_a_user_id_outside_the_org_is_refused_422(client, path, body, col):
+    _users(client)
+    resp = client.post(path, json={**body, col: OUTSIDER})
+    assert resp.status_code == 422 and "Referência inválida" in resp.text, resp.text[:300]
+    assert not _written(client, path), "a row naming another org's user was written"
+
+
+def _written(client, path):
+    table = {"/api/tasks": "tasks", "/api/agenda/events": "agenda_events", "/api/content/posts": "content_posts", "/api/crm/leads": "leads"}[path]
+    return client.mock_supabase.table(table).inserted_payloads
+
+
+@pytest.mark.parametrize("path,body,col", USER_WRITES, ids=[p for p, _b, _c in USER_WRITES])
+def test_a_user_of_the_org_or_an_active_member_is_accepted(client, path, body, col):
+    """The write REACHES the database (the response model of a bare mock row is not what is under test)."""
+    _users(client)
+    for uid in (INSIDER, MEMBER_ELSEWHERE):
+        client.post(path, json={**body, col: uid})
+        assert _written(client, path)[-1][col] == uid
+
+
+def test_a_suspended_membership_does_not_count(client):
+    _users(client, membership_status="removed")
+    resp = client.post("/api/tasks", json={"title": "t", "assignee_user_id": MEMBER_ELSEWHERE})
+    assert resp.status_code == 422 and "Referência inválida" in resp.text
+
+
+def test_reassigning_to_an_outsider_is_refused_422(client):
+    _users(client)
+    tid = "a0000000-0000-4000-8000-0000000000a1"
+    client.mock_supabase.set_table_data("tasks", [{"id": tid, "org_id": ORG_A, "title": "mine", "status": "todo", "priority": "med"}])
+    resp = client.patch(f"/api/tasks/{tid}", json={"assignee_user_id": OUTSIDER})
+    assert resp.status_code == 422 and "Referência inválida" in resp.text
+
+
+# -- the whole foreign-key map, at the wrapper (every table/column, incl. the ones no public route reaches) -------------
+@pytest.mark.parametrize("table,col,parent", [(t, c, p) for t, cols in FOREIGN_KEYS.items() for c, p in cols.items()],
+                         ids=[f"{t}.{c}" for t, cols in FOREIGN_KEYS.items() for c in cols])
+def test_every_declared_foreign_key_refuses_another_orgs_parent(table, col, parent):
+    db = MockSupabaseClient(validate_schema=False, schema="orbity")
+    db.set_table_data(parent, [{"id": FOREIGN, "org_id": ORG_B}, {"id": "a0000000-0000-4000-8000-0000000000a9", "org_id": ORG_A}])
+    db.set_table_data(table, [])
+    scoped = make_org_client(db, ORG_A)
+    with pytest.raises(ForeignReferenceError) as err:
+        scoped.table(table).insert({"id": "d0000000-0000-4000-8000-000000000001", col: FOREIGN}).execute()
+    assert err.value.status_code == 422
+    scoped.table(table).insert({"id": "d0000000-0000-4000-8000-000000000002", col: "a0000000-0000-4000-8000-0000000000a9"}).execute()
+
+
+@pytest.mark.parametrize("table", sorted(USER_REFERENCES))
+def test_user_reference_columns_are_wired_with_a_validator(table):
+    core = MockSupabaseClient(validate_schema=False, schema="public")
+    core.set_table_data("noctus_users", [{"id": OUTSIDER, "org_id": ORG_B}])
+    core.set_table_data("org_memberships", [])
+    scoped = make_org_client(MockSupabaseClient(validate_schema=False, schema="orbity"), ORG_A, core)
+    for col in USER_REFERENCES[table]:
+        with pytest.raises(ForeignReferenceError):
+            scoped.table(table).insert({"id": "d0000000-0000-4000-8000-000000000003", col: OUTSIDER}).execute()
+
+
+# -- F1 in orbity: an upsert can never move another tenant's row --------------------------------------------------------
+def test_campaign_metrics_upsert_cannot_take_over_another_orgs_row():
+    db = MockSupabaseClient(validate_schema=False, schema="orbity")
+    row = {"id": FOREIGN, "org_id": ORG_B, "campaign_id": FOREIGN, "date": "2026-11-01", "spend": 1}
+    db.set_table_data("campaign_metrics", [row])
+    scoped = make_org_client(db, ORG_A)
+    with pytest.raises(OrgScopeViolation):
+        scoped.table("campaign_metrics").upsert({"id": FOREIGN, "campaign_id": FOREIGN, "date": "2026-11-01", "spend": 9}).execute()
+    with pytest.raises(OrgScopeViolation):
+        scoped.table("campaign_metrics").upsert({"id": FOREIGN, "spend": 9}, on_conflict="campaign_id,date").execute()
+    assert db.table("campaign_metrics").select("*").execute().data == [row]
+
+
+def test_the_manual_metric_entry_route_refuses_another_orgs_campaign(client):
+    _users(client)
+    client.mock_supabase.set_table_data("campaigns", [{"id": FOREIGN, "org_id": ORG_B, "name": LEAK}])
+    client.mock_supabase.set_table_data("campaign_metrics", [])
+    resp = client.put(f"/api/meta-ads/campaigns/{FOREIGN}/metrics", json={"date": "2026-11-01", "spend": 5})
+    assert resp.status_code in (404, 422), resp.text  # not-found, or the foreign-reference refusal: never a write
+    assert client.mock_supabase.table("campaign_metrics").select("*").execute().data == []

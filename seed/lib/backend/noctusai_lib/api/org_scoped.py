@@ -15,7 +15,16 @@ What it enforces, for every table the wrapper touches:
   non-null value must name a row of the SAME org in the parent table, else :class:`ForeignReferenceError` (422).
   This closes the confused-deputy class (a request naming another tenant's ``stage_id`` / ``client_id`` /
   ``post_id``): a plain FK constraint accepts any existing id, whoever owns it;
-* ``rpc`` / ``schema`` / ``auth`` / ``storage`` and any other attribute are NOT exposed (an RPC bypasses the scope).
+* ``upsert`` is refused unless its ``on_conflict`` names the org column (or ``ignore_duplicates=True``), and
+  ``insert(..., upsert=True)`` is refused: ``ON CONFLICT (id) DO UPDATE SET org_id=<mine>`` would MOVE another tenant's
+  row into the caller's org. The conflict target must be a composite unique key that includes the org column;
+* ``select`` column strings may not carry an embed / alias / cast (``(``, ``!``, ``:``): an embedded relation is not
+  filtered by the parent's org predicate;
+* ``reference_validators`` (``{table: {column: fn(ids) -> valid_ids}}``) prove ids that live outside the schema (a user id
+  that must belong to the org) with the same 422 as a foreign key. Both checks are batched: ONE query per distinct
+  (column, parent) per write, however many rows;
+* ``rpc`` / ``schema`` / ``auth`` / ``storage`` and any other attribute are NOT exposed (an RPC bypasses the scope), and the
+  wrapped client itself is name-mangled (``test_service_only_lockdown`` bans reaching for it).
 
 It is a drop-in for the supabase client in a service that only calls ``.table(name)`` (the product code keeps its
 own ``.eq("org_id", ...)`` as defence in depth; a duplicate filter is harmless).
@@ -24,7 +33,7 @@ Tests: ``seed/lib/backend/tests/api/test_org_scoped.py``. KB § PATTERNS/securit
 """
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -44,6 +53,10 @@ class ForeignReferenceError(HTTPException):
         self.table, self.column, self.parent = table, column, parent
 
 
+_EMBED_CHARS = ("(", "!", ":")
+_IN_BATCH = 100
+
+
 def _norm(value: Any) -> str:
     return str(value).strip().lower() if value is not None else ""
 
@@ -54,10 +67,13 @@ class OrgScopedTable:
     def __init__(self, scoped: "OrgScopedClient", name: str):
         self._s = scoped
         self._name = name
-        self._inner = scoped._inner.table(name)
+        self._inner = _raw(scoped, name)
 
     # -- reads / deletes -------------------------------------------------------------------------------------
     def select(self, *args: Any, **kwargs: Any):
+        cols = args[0] if args else kwargs.get("columns", "*")
+        if isinstance(cols, str) and any(ch in cols for ch in _EMBED_CHARS):
+            raise OrgScopeViolation(f"{self._name}: select(...) may not embed, alias or cast ({cols!r}): embeds are not org-filtered")
         return self._inner.select(*args, **kwargs).eq(self._s._col, self._s.org_id)
 
     def delete(self, *args: Any, **kwargs: Any):
@@ -65,11 +81,19 @@ class OrgScopedTable:
 
     # -- writes ----------------------------------------------------------------------------------------------
     def insert(self, values: Any, *args: Any, **kwargs: Any):
+        if kwargs.get("upsert"):
+            raise OrgScopeViolation(f"{self._name}: insert(upsert=True) is refused; use upsert(on_conflict='{self._s._col},...')")
         rows = self._stamp(values)
         self._check_refs(rows)
         return self._inner.insert(rows, *args, **kwargs)
 
     def upsert(self, values: Any, *args: Any, **kwargs: Any):
+        conflict = kwargs.get("on_conflict") or (args[0] if args and isinstance(args[0], str) else "")
+        keys = {k.strip() for k in str(conflict).split(",") if k.strip()}
+        if not kwargs.get("ignore_duplicates") and self._s._col not in keys:
+            raise OrgScopeViolation(
+                f"{self._name}: upsert needs on_conflict naming '{self._s._col}' (a composite unique key) or ignore_duplicates=True: "
+                "a conflict on the id alone would move another tenant's row into this org")
         rows = self._stamp(values)
         self._check_refs(rows)
         return self._inner.upsert(rows, *args, **kwargs)
@@ -96,19 +120,39 @@ class OrgScopedTable:
         return out if many else out[0]
 
     def _check_refs(self, rows: Any) -> None:
-        fks = self._s._fks.get(self._name)
-        if not fks:
+        fks = self._s._fks.get(self._name) or {}
+        validators = self._s._validators.get(self._name) or {}
+        if not fks and not validators:
             return
-        for row in rows if isinstance(rows, list) else [rows]:
-            for column, parent in fks.items():
-                value = row.get(column)
-                if value is None:
-                    continue
-                found = (
-                    self._s._inner.table(parent).select("id").eq(self._s._col, self._s.org_id).eq("id", str(value)).limit(1).execute()
-                )
-                if not (found.data or []):
-                    raise ForeignReferenceError(self._name, column, parent)
+        rows = rows if isinstance(rows, list) else [rows]
+        for column, parent in fks.items():
+            wanted = _distinct(rows, column)
+            if not wanted:
+                continue
+            found: set[str] = set()
+            for chunk in _chunks(sorted(wanted)):
+                res = _raw(self._s, parent).select("id").eq(self._s._col, self._s.org_id).in_("id", chunk).execute()
+                found |= {_norm(r.get("id")) for r in (res.data or [])}
+            if wanted - found:
+                raise ForeignReferenceError(self._name, column, parent)
+        for column, validate in validators.items():
+            wanted = _distinct(rows, column)
+            if wanted and wanted - {_norm(v) for v in validate(set(wanted))}:
+                raise ForeignReferenceError(self._name, column, "validator")
+
+
+def _distinct(rows: Iterable[Mapping[str, Any]], column: str) -> set[str]:
+    return {_norm(r[column]) for r in rows if r.get(column) is not None}
+
+
+def _chunks(values: list[str]):
+    for i in range(0, len(values), _IN_BATCH):
+        yield values[i: i + _IN_BATCH]
+
+
+def _raw(scoped: "OrgScopedClient", name: str):
+    """The ONLY place that touches the wrapped client (name-mangled). The lockdown test bans every other reference."""
+    return scoped._OrgScopedClient__inner.table(name)
 
 
 class OrgScopedClient:
@@ -121,6 +165,7 @@ class OrgScopedClient:
         *,
         org_column: str = "org_id",
         foreign_keys: Optional[Mapping[str, Mapping[str, str]]] = None,
+        reference_validators: Optional[Mapping[str, Mapping[str, Callable[[set[str]], Iterable[Any]]]]] = None,
     ):
         if client is None:
             raise ValueError("OrgScopedClient needs a client")
@@ -128,9 +173,10 @@ class OrgScopedClient:
             self.org_id = str(UUID(str(org_id)))
         except (ValueError, TypeError) as exc:
             raise ValueError("OrgScopedClient needs a real org id from the authenticated context") from exc
-        self._inner = client
+        self.__inner = client
         self._col = org_column
         self._fks = dict(foreign_keys or {})
+        self._validators = dict(reference_validators or {})
 
     def table(self, name: str) -> OrgScopedTable:
         return OrgScopedTable(self, name)

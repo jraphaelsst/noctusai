@@ -439,7 +439,7 @@ class MetaAdsService:
         try:
             result = (
                 self._t("campaign_metrics")
-                .upsert(row, on_conflict="campaign_id,date")
+                .upsert(row, on_conflict="org_id,campaign_id,date")
                 .execute()
             )
         except Exception:

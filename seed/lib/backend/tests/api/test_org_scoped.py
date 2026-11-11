@@ -34,11 +34,12 @@ def test_select_by_foreign_id_is_not_found():
 
 
 def test_update_and_delete_cannot_touch_other_org():
-    c = _client()
+    m = _mock()
+    c = _client(m)
     c.table("things").update({"name": "x"}).eq("id", "2").execute()
     c.table("things").delete().eq("id", "2").execute()
-    assert {r["id"] for r in c._inner.table("things").select("*").execute().data} == {"1", "2"}
-    assert [r["name"] for r in c._inner.table("things").select("*").eq("id", "2").execute().data] == ["b1"]
+    assert {r["id"] for r in m.table("things").select("*").execute().data} == {"1", "2"}
+    assert [r["name"] for r in m.table("things").select("*").eq("id", "2").execute().data] == ["b1"]
 
 
 def test_insert_stamps_org_and_refuses_other_org():
@@ -79,3 +80,80 @@ def test_needs_a_real_org_id():
     for bad in (None, "", "not-a-uuid"):
         with pytest.raises(ValueError):
             OrgScopedClient(_mock(), bad)
+
+
+# -- F1: an upsert may never move another tenant's row ------------------------------------------------------------
+def test_upsert_without_the_org_in_on_conflict_is_refused():
+    c = _client()
+    with pytest.raises(OrgScopeViolation):
+        c.table("things").upsert({"id": "2", "name": "takeover"}).execute()  # no on_conflict: ON CONFLICT (id) DO UPDATE
+    with pytest.raises(OrgScopeViolation):
+        c.table("things").upsert({"id": "2"}, on_conflict="id").execute()
+    with pytest.raises(OrgScopeViolation):
+        c.table("things").upsert({"id": "2"}, on_conflict="k,date").execute()
+
+
+def test_insert_with_upsert_true_is_refused():
+    with pytest.raises(OrgScopeViolation):
+        _client().table("things").insert({"id": "2"}, upsert=True).execute()
+
+
+def test_upsert_with_a_composite_org_key_or_ignore_duplicates_passes():
+    m = _mock()
+    c = _client(m)
+    c.table("things").upsert({"id": "9", "k": 1}, on_conflict="org_id,k").execute()
+    c.table("things").upsert({"id": "10"}, on_conflict=" org_id , id ").execute()
+    c.table("things").upsert({"id": "11"}, ignore_duplicates=True).execute()
+    assert [r["org_id"] for r in m.table("things").select("*").eq("id", "9").execute().data] == [ORG_A]
+
+
+# -- F5: no embeds -------------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("cols", ["*, parents(*)", "id, p:parents(id)", "id, parents!inner(id)", "id::text"])
+def test_select_refuses_embeds_aliases_and_casts(cols):
+    with pytest.raises(OrgScopeViolation):
+        _client().table("things").select(cols)
+
+
+def test_the_wrapped_client_is_not_reachable_by_attribute():
+    c = _client()
+    for name in ("_inner", "inner", "client", "_client", "_raw"):
+        with pytest.raises(AttributeError):
+            getattr(c, name)
+
+
+# -- F9: one parent query per distinct (column, parent), however many rows -----------------------------------------
+class _Counting(MockSupabaseClient):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.selects: list[str] = []
+
+    def table(self, name):
+        self.selects.append(name)
+        return super().table(name)
+
+
+def test_bulk_insert_checks_each_distinct_parent_once():
+    m = _Counting(validate_schema=False, schema="t")
+    m.set_table_data("things", [])
+    m.set_table_data("parents", [{"id": "pa", "org_id": ORG_A}])
+    c = _client(m)
+    c.table("things").insert([{"id": str(i), "parent_id": "pa"} for i in range(50)]).execute()
+    assert m.selects.count("parents") == 1
+
+
+# -- reference validators (ids that live outside the schema) -------------------------------------------------------
+def test_reference_validator_refuses_ids_it_does_not_vouch_for():
+    seen = []
+
+    def vouch(ids):
+        seen.append(set(ids))
+        return {i for i in ids if i == "u-mine"}
+
+    c = OrgScopedClient(_mock(), ORG_A, reference_validators={"things": {"owner_id": vouch}})
+    c.table("things").insert({"id": "20", "owner_id": "u-mine"}).execute()
+    c.table("things").insert({"id": "21", "owner_id": None}).execute()
+    with pytest.raises(ForeignReferenceError):
+        c.table("things").insert({"id": "22", "owner_id": "u-other-org"}).execute()
+    with pytest.raises(ForeignReferenceError):
+        c.table("things").update({"owner_id": "u-other-org"}).eq("id", "1").execute()
+    assert seen[0] == {"u-mine"}

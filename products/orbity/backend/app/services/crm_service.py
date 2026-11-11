@@ -552,7 +552,7 @@ class CRMService:
         try:
             upsert_res = (
                 self._t("lead_scoring_results")
-                .upsert(result_row, on_conflict="lead_id")
+                .upsert(result_row, on_conflict="org_id,lead_id")
                 .execute()
             )
         except Exception:

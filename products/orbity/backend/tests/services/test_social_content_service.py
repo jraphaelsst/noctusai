@@ -405,11 +405,23 @@ class TestPublicDecide:
 
     def test_decide_notifies_assignee_with_feedback_on_revision(self):
         db = self._notify_db(_post(assignee_user_id="u-assignee"))
-        core = self._core([])
+        core = self._core([{"id": "u-assignee", "org_id": str(ORG), "org_role": "member"}])
         self._decide(PublicApprovalService(db, core_db=core), "revision", "Trocar a foto")
         sent = core.table("notifications").inserted_payloads
         assert [n["user_id"] for n in sent] == ["u-assignee"]
         assert "Trocar a foto" in sent[0]["message"]
+
+    def test_decide_never_notifies_an_assignee_who_is_not_in_the_org(self):
+        """The assignee id on the post is not trusted at the sink: a user of ANOTHER org (stale or forged id) is dropped and the
+        org's admins are told instead."""
+        db = self._notify_db(_post(assignee_user_id="u-outsider"))
+        other_org = "00000000-0000-4000-8000-0000000000ff"
+        core = self._core([
+            {"id": "u-outsider", "org_id": other_org, "org_role": "member"},
+            {"id": "u-admin", "org_id": str(ORG), "org_role": "admin"},
+        ])
+        self._decide(PublicApprovalService(db, core_db=core), "approved")
+        assert [n["user_id"] for n in core.table("notifications").inserted_payloads] == ["u-admin"]
 
     def test_decide_without_core_client_records_decision_and_reports_zero(self, caplog):
         db, svc = self._setup_decide([_approval()])  # no core_db

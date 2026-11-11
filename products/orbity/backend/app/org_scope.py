@@ -8,9 +8,10 @@ tenant's ``stage_id`` / ``client_id`` / ``post_id`` is refused 422). KB § PATTE
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from noctusai_lib.api.org_scoped import OrgScopedClient
+from noctusai_lib.domain.org_memberships import active_member_user_ids
 
 #: The tables migration 034 makes service-only (with 031/032's: everything the browser used to reach).
 SERVICE_ONLY_TABLES: frozenset[str] = frozenset({
@@ -44,5 +45,36 @@ FOREIGN_KEYS: dict[str, dict[str, str]] = {
 }
 
 
-def make_org_client(admin_client: Any, org_id: Any) -> OrgScopedClient:
-    return OrgScopedClient(admin_client, org_id, foreign_keys=FOREIGN_KEYS)
+#: table -> user-id columns that must name a member of the caller's org (a user id is not a row of this schema).
+USER_REFERENCES: dict[str, tuple[str, ...]] = {
+    "tasks": ("assignee_user_id",),
+    "agenda_events": ("assignee_user_id",),
+    "content_posts": ("assignee_user_id",),
+    "leads": ("owner_id",),
+}
+
+
+def org_member_ids(core_client: Any, org_id: str, candidates: set[str]) -> set[str]:
+    """Of ``candidates``, the user ids that belong to ``org_id``: the home org on the trusted ``noctus_users`` row, or an ACTIVE
+    ``org_memberships`` row (multi-org). ``user_metadata`` is never consulted."""
+    wanted = sorted({str(c) for c in candidates})
+    home = core_client.table("noctus_users").select("id").eq("org_id", str(org_id)).in_("id", wanted).execute().data or []
+    found = {str(r["id"]) for r in home if r.get("id")}
+    rest = set(wanted) - found
+    if rest:
+        found |= rest & set(active_member_user_ids(core_client, str(org_id)))
+    return found
+
+
+def _validators(core_client: Any, org_id: str) -> dict[str, dict[str, Callable[[set[str]], set[str]]]]:
+    check = lambda ids: org_member_ids(core_client, org_id, ids)  # noqa: E731
+    return {table: {col: check for col in cols} for table, cols in USER_REFERENCES.items()}
+
+
+def make_org_client(admin_client: Any, org_id: Any, core_client: Any = None) -> OrgScopedClient:
+    """``org_id`` must already be the authenticated request's org (a real UUID): a non-UUID raises, it is never coerced."""
+    scoped = OrgScopedClient(
+        admin_client, org_id, foreign_keys=FOREIGN_KEYS,
+        reference_validators=_validators(core_client, str(org_id)) if core_client is not None else None,
+    )
+    return scoped

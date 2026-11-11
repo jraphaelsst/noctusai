@@ -8,6 +8,9 @@
 -- keys proven to belong to the same org). The browser roles hold no privilege and no policy on any of them; the customer
 -- role (`membro`) was already denied by get_current_user_org (403) and by current_org_id() (NULL). Same shape as 031/032.
 -- Nothing in the frontend reads these through PostgREST (verified). Re-runnable.
+-- BEFORE APPLYING (prod): run products/orbity/backend/audits/cross_org_references.sql (read-only, as postgres/service_role).
+-- It MUST return 0 rows: any row is a reference whose target lives in another org (or a user outside the org), which the
+-- org-bound client would refuse from now on. Fix or null those rows first.
 SET search_path = orbity, public;
 
 -- member (org-scoped) policies of any name go; only the service_role policy remains.
