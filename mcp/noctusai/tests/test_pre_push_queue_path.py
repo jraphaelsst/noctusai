@@ -245,3 +245,35 @@ def test_who_may_delete_a_queue_ref_is_the_steward_gate(cmd):
     spec.loader.exec_module(rs)
     hit = rs.classify_bash(cmd)
     assert hit is not None and "mq/x--abcdef0" in hit.kind, cmd
+
+
+# ─── one interpreter for every leg; fail closed without one (2026-11-11, raised by b5) ───────────────────
+# A worktree made without task_branch has no .venv; every keeper leg was guarded by `-x "$PY_PP"`, so the
+# branch-tree mirror keeper SKIPPED and a pointer-less branch was pushed. Now the hook uses the primary's
+# interpreter, and with none anywhere it refuses instead of judging the push by nothing.
+
+def _linked_worktree(repo):
+    wt = repo / ".claude" / "worktrees" / "y"
+    git(repo, "worktree", "add", "-q", "-b", "feat/y", str(wt), "dev")
+    venv = wt / "mcp" / "noctusai" / ".venv"
+    if venv.exists():  # the fixture committed the primary's venv link; a real worktree has none (gitignored)
+        shutil.rmtree(venv)
+    (wt / "y.txt").write_text("y\n")
+    git(wt, "add", "-A")
+    git(wt, "commit", "-m", "feat: y")
+    return wt
+
+
+def test_a_worktree_without_a_venv_is_judged_with_the_primarys(repo):
+    wt = _linked_worktree(repo)  # no mcp/noctusai/.venv of its own; feat/y has no pointer in the stub
+    assert not (wt / "mcp" / "noctusai" / ".venv").exists()
+    r = git(wt, "push", "origin", "feat/y", check=False)
+    assert r.returncode != 0 and "branch-tree mirror keeper BLOCKED" in r.stderr, r.stderr
+    assert "SKIPPED" not in r.stdout + r.stderr
+
+
+def test_no_interpreter_anywhere_fails_closed(repo):
+    shutil.rmtree(repo / "mcp" / "noctusai" / ".venv")
+    r = git(repo, "push", "origin", "feat/x", check=False)
+    assert r.returncode != 0 and "no toolkit interpreter" in r.stderr, r.stderr
+    assert "refs/heads/feat/x" not in remote_refs(repo)
