@@ -47,3 +47,18 @@ def test_redaction_is_by_name_and_idempotent():
     out = redact_path_params({"token": RAW, "webhook_secret": "x", "api_key": "y", "signature": "z", "id": "7"})
     assert out["id"] == "7" and all(v.startswith("tok:") for k, v in out.items() if k != "id")
     assert redact_path_params(out) == out
+
+
+def test_identifier_names_that_merely_contain_a_secret_word_stay_readable():
+    """The match is on whole name segments, not substrings: an id OF a token/key/credential is an identifier, not a secret, and
+    the audit trail must still say WHICH resource changed (feature_key, token_id, signup_id, assignments, sigla, keyword...)."""
+    ids = {n: "v" for n in ("feature_key", "module_key", "period_key", "item_key", "key", "keyword", "token_id", "old_token_id",
+                            "key_id", "credential_id", "signup_id", "sigla", "assignments", "assignee_id", "design_id")}
+    assert redact_path_params(ids) == ids
+
+
+def test_secret_shaped_names_are_redacted():
+    names = ("token", "invite_token", "portal_token", "webhook_token", "access_token", "refresh_token", "secret", "app_secret",
+             "webhook_secret", "signature", "sig", "hmac", "password", "api_key", "service_role_key", "secret_key", "private_key")
+    out = redact_path_params({n: RAW for n in names})
+    assert all(v == token_fingerprint(RAW) for v in out.values()), out
