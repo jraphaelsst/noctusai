@@ -33,7 +33,8 @@ Endpoints:
   POST   /api/capture/{org_id}               PUBLIC lead capture
 """
 import logging
-from uuid import UUID
+import anyio
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
@@ -59,7 +60,8 @@ from app.schemas.crm import (
     StageMoveRequest,
 )
 from noctusai_lib.api.access_tiers import access_tier
-from noctusai_lib.domain.licensing import enforce_license
+from noctusai_lib.api.honeypot import HONEYPOT_FIELD, honeypot_tripped
+from noctusai_lib.domain.licensing import enforce_license, get_license_gate
 from app.rate_limit import limiter
 from app.services.automation_service import AutomationService
 from app.services.automation_triggers import adisparar
@@ -530,11 +532,21 @@ def _capture_org_key(request: Request) -> str:
     return f"capture-org:{raw}"
 
 
+def _record_honeypot_discard(org_id: UUID) -> None:
+    """One no-PII event (org + kind + time) per discarded submission: the bot rate is measurable. A failed write is logged
+    LOUD and never changes the response (the bot must not learn anything from it)."""
+    try:
+        get_admin_client().table("capture_events").insert({"org_id": str(org_id), "kind": "honeypot_discarded"}).execute()
+    except Exception:
+        logger.exception("capture_events: could not record the honeypot discard org=%s", org_id)
+    logger.info("capture_honeypot_discarded org=%s", org_id)
+
+
 @capture_router.post(
     "/api/capture/{org_id}",
     status_code=status.HTTP_201_CREATED,
 )
-@access_tier("public", reason="lead capture form (per-IP and per-org rate limited, custom_fields capped, org-checked stage)", category="lead-capture")
+@access_tier("public", reason="lead capture form (hidden honeypot field, per-IP and per-org rate limited, custom_fields capped, org-checked stage)", category="lead-capture")
 # `shared_limit(scope=)` pins the bucket: slowapi's default scope is the request PATH, so `/api/capture/<id>` spelled in 2^32 case/hyphen
 # variants would otherwise be 2^32 fresh buckets (per IP and per org alike).
 @limiter.shared_limit("20/minute;200/hour", scope="capture-ip", key_func=client_ip_key)
@@ -554,14 +566,24 @@ async def capture_lead(
     lead columns; everything else lands in custom_fields JSONB.
     """
     # The org must exist AND hold an orbity license BEFORE anything is written (a public id of an org without orbity -- or a
-    # made-up one -- is a 404, never a lead row): same gate every authenticated call passes. 503 when the check is down.
+    # made-up one -- is a 404, never a lead row): same gate every authenticated call passes. 503 when the check is down OR
+    # when no gate is configured at all (enforce_license is a silent no-op then: a public write must fail CLOSED).
+    if get_license_gate() is None:
+        logger.error("capture_lead: the license gate is not configured -- refusing (503)")
+        raise HTTPException(status_code=503, detail="Falha ao verificar a licença da organização")
     try:
         enforce_license(org_id, None)
     except HTTPException as exc:
         raise HTTPException(status_code=404 if exc.status_code == 403 else exc.status_code, detail="Organização não encontrada") from exc
+    # Honeypot (owner decision 2026-11-10): a bot filled the invisible field. Discard QUIETLY -- the same success shape as a
+    # real capture (status code included), nothing written, no automation fired -- and record one no-PII event.
+    if honeypot_tripped(payload.model_extra):
+        await anyio.to_thread.run_sync(lambda: _record_honeypot_discard(org_id))  # sync supabase call: off the event loop
+        return {"ok": True, "id": str(uuid4())}
     try:
         # model_dump(mode="json") serializes UUID → str for stage_id
         raw = payload.model_dump(mode="json")
+        raw.pop(HONEYPOT_FIELD, None)  # an EMPTY honeypot is not a lead field either
         svc = _admin_crm(org_id)
         row = svc.capture_lead(raw)
     except CaptureStageInvalid as exc:
