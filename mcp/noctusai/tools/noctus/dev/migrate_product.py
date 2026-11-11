@@ -83,7 +83,12 @@ IDEMPOTENCY
 - Each file is applied only when its ``filename`` is absent from
   ``schema_migrations`` (primary-key guard also prevents double-insert).
 - Re-running with ``confirm=True`` on a fully-applied set is a no-op.
-- ``target=`` (optional) limits to one specific file by filename match.
+- ``upto=`` (optional) applies every pending file UP TO AND INCLUDING the named one, in order --
+  "apply up to 074" means 072, 073, 074 (b5 finding 2026-11-11: ``target=074`` was read as "up to").
+- ``target=`` (optional) applies ONLY that one file. It REFUSES (``status='refused_out_of_order'``)
+  with ``confirm=True`` while an EARLIER migration is still pending, because applying 074 before 072/073
+  runs the chain out of order (a dry-run answers and names them in ``earlier_pending``); ``allow_out_of_order=True`` is the deliberate escape hatch. ``target`` and ``upto`` are
+  mutually exclusive.
 
 RETURN SHAPE
 ------------
@@ -1153,7 +1158,7 @@ def _apply_migration_sql(
 
 _ERROR_STATUSES = frozenset({
     "error", "not_configured", "refused_stale_tree", _catalog_scope_guard.REFUSED_STATUS,
-    "checksum_drift", "checksum_inconclusive",
+    "checksum_drift", "checksum_inconclusive", "refused_out_of_order",
 })
 
 
@@ -1163,6 +1168,8 @@ def migrate_product(
     *,
     confirm: bool = False,
     target: str | None = None,
+    upto: str | None = None,
+    allow_out_of_order: bool = False,
     sha: str | None = None,
     project_ref: str = "nyplttplcoyiiqjrvtiw",
     schema: str | None = None,
@@ -1182,7 +1189,11 @@ def migrate_product(
         product:      Product slug (e.g. ``orbity``, ``erp-imobiliario``).
         confirm:      False (default) = dry-run (list pending; no DDL run).
                       True = apply all pending files in order.
-        target:       Optional filename filter — apply / list only this file.
+        target:       Apply / list ONLY this one file. Refused while an earlier file is
+                      still pending unless ``allow_out_of_order=True``.
+        upto:         Apply / list every file up to AND including this one, in order.
+                      Mutually exclusive with ``target``.
+        allow_out_of_order: Escape hatch for ``target=`` skipping earlier pending files.
         sha:          R3 (release-no-freeze): when given, migration files —
                       AND the schema they're applied to (F8, closes NOC-
                       REMEDIATE[migrate-product-sha-schema]) — are read via
@@ -1457,11 +1468,19 @@ def migrate_product(
         return _result("up_to_date")
     chain_files = list(all_files)  # the whole chain — checksum verification spans every applied file
 
-    # ── Apply optional target filter ──────────────────────────────────────────
-    if target is not None:
-        all_files = [f for f in all_files if f.name == target]
-        if not all_files:
-            return _result("error", error=f"target file not found in migrations: {target!r}")
+    # ── Apply optional target / upto filter ───────────────────────────────────
+    # `upto` cuts the chain here; `target` is validated here and narrowed after the applied set is
+    # known, because its out-of-order refusal needs to know which EARLIER files are still pending.
+    if target is not None and upto is not None:
+        return _result("error", error="target= and upto= are mutually exclusive: target applies ONE file, "
+                                      "upto applies every pending file through the named one.")
+    chain_names = [f.name for f in all_files]
+    if upto is not None:
+        if upto not in chain_names:
+            return _result("error", error=f"upto file not found in migrations: {upto!r}")
+        all_files = all_files[: chain_names.index(upto) + 1]
+    if target is not None and target not in chain_names:
+        return _result("error", error=f"target file not found in migrations: {target!r}")
 
     # ── Ensure tracking table exists ──────────────────────────────────────────
     ensure_sql = _ensure_tracking_table_sql(derived_schema)
@@ -1538,6 +1557,25 @@ def migrate_product(
             "reason": "no sha= — checksums are verified against the blessed sha's blobs, never the working tree",
         }
 
+    # ── target=: one file, never silently out of order ────────────────────────
+    if target is not None:
+        idx = chain_names.index(target)
+        earlier_pending = [f.name for f in all_files[:idx] if f.name not in already_applied]
+        # Only a WRITE is refused: a dry-run (task_branch's per-file status probe) never runs DDL, so it
+        # answers for the one file and names the earlier pending ones (`earlier_pending`) instead.
+        if earlier_pending and confirm and not allow_out_of_order:
+            return _result(
+                "refused_out_of_order",
+                pending=earlier_pending + ([target] if target not in already_applied else []),
+                error=(f"target={target!r} applies ONLY that file, but earlier migration(s) "
+                       f"{earlier_pending} are still pending -- applying it now runs the chain out of "
+                       f"order. Use upto={target!r} to apply them all in order, or "
+                       "allow_out_of_order=True if skipping them is deliberate."),
+            )
+        all_files = [all_files[idx]]
+    else:
+        earlier_pending = []
+
     # ── Classify: pending vs. skipped ────────────────────────────────────────
     skipped: list[str] = []
     pending: list[Path] = []
@@ -1555,6 +1593,7 @@ def migrate_product(
             skipped_already_applied=skipped,
             pending=pending_names,
             checksum_verification=checksum_verification,
+            **({"earlier_pending": earlier_pending} if target is not None else {}),
         )
 
     # ── Apply pending files in order ──────────────────────────────────────────
@@ -2008,6 +2047,9 @@ def register(server) -> None:
             "allow_stale_toolkit=True is the escape hatch (almost always "
             "wrong) that stays fully in-process. See "
             "noctus.dev.toolkit_freshness. "
+            "target=<file> applies ONLY that file and refuses (refused_out_of_order) while an earlier "
+            "file is pending (allow_out_of_order=True to override); upto=<file> applies every pending "
+            "file through it, in order. "
             "Returns {status, exit_code, product, schema, schema_source, "
             "project_ref, applied, skipped_already_applied, pending, error, "
             "stale_tree, allow_stale_tree, catalog_scope, allow_inactive, sha, "
@@ -2020,6 +2062,8 @@ def register(server) -> None:
         product: str,
         confirm: bool = False,
         target: str | None = None,
+        upto: str | None = None,
+        allow_out_of_order: bool = False,
         sha: str | None = None,
         project_ref: str = "nyplttplcoyiiqjrvtiw",
         schema: str | None = None,
@@ -2035,6 +2079,8 @@ def register(server) -> None:
             product=product,
             confirm=confirm,
             target=target,
+            upto=upto,
+            allow_out_of_order=allow_out_of_order,
             sha=sha,
             project_ref=project_ref,
             schema=schema,

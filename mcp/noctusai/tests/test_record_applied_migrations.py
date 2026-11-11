@@ -48,3 +48,52 @@ def test_failure_cleans_up_branch(tmp_path):
         git_fn=lambda wt, *a: (1, "", "boom"), primary_root=str(primary), slug_suffix="2")
     assert res["status"] == "error"
     assert "cleanup" in calls
+
+
+# ── integrate conflict is re-derived on fresh dev (b5 finding 2026-11-11) ─────
+def _conflicting_tb(primary: Path, calls: list, conflicts: int):
+    state = {"left": conflicts}
+
+    def tb(action, slug, **kw):
+        calls.append(action)
+        if action == "start":
+            be = primary / ".claude" / "worktrees" / slug / "products" / "x" / "backend"
+            be.mkdir(parents=True, exist_ok=True)
+            (be / "migrations-applied.json").write_text('{"applied": {}}')
+            return {"status": "started", "worktree": f".claude/worktrees/{slug}"}
+        if action == "integrate" and state["left"] > 0:
+            state["left"] -= 1
+            return {"status": "conflict", "error": "rebase conflict"}
+        return {"status": "integrated"}
+    return tb
+
+
+def test_an_integrate_conflict_is_re_derived_on_fresh_dev(tmp_path):
+    primary = tmp_path / "primary"
+    calls: list = []
+    git_calls: list = []
+
+    def git(wt, *a):
+        git_calls.append(a[0])
+        return 0, "abc", ""
+    res = record_applied_migrations(
+        "x", {"073_c.sql": "ab" * 32}, task_branch_fn=_conflicting_tb(primary, calls, 1),
+        git_fn=git, primary_root=str(primary), slug_suffix="3")
+    assert res["status"] == "recorded", res
+    assert res["attempts"] == 2
+    assert calls.count("integrate") == 2
+    # the retry rebuilt on fresh dev, then re-wrote and re-committed the rows
+    assert git_calls.index("reset") < len(git_calls) - 1
+    assert git_calls.count("commit") == 2
+    assert "073_c.sql" in json.loads(Path(res["path"]).read_text())["applied"]
+
+
+def test_a_persistent_conflict_is_reported_after_the_bounded_attempts(tmp_path):
+    primary = tmp_path / "primary"
+    calls: list = []
+    res = record_applied_migrations(
+        "x", {"073_c.sql": "ab" * 32}, task_branch_fn=_conflicting_tb(primary, calls, 99),
+        git_fn=lambda wt, *a: (0, "abc", ""), primary_root=str(primary), slug_suffix="4")
+    assert res["status"] == "error"
+    assert calls.count("integrate") == 3
+    assert "after 3 attempt(s)" in res["error"] and "kept for manual integrate" in res["error"]

@@ -12,6 +12,11 @@ Root fix: the record NEVER touches the caller's tree. This tool opens a ``task_b
 persist failure is REPORTED (``status='error'`` + ``error``), never raised -- the rows stay in the
 result (``files``) so the call can be retried by hand with this tool.
 
+A CONFLICT on integrate is re-derived, never left for a human (b5 finding 2026-11-11: two applied-record
+branches for agents, 072/074 and 073, raced on the same JSON and the second was "kept for manual
+integrate"). The ledger is DATA, not a diff: the rows are re-merged with ``record_applied`` onto a fresh
+``origin/dev`` and the commit is re-made, up to ``_INTEGRATE_ATTEMPTS`` times.
+
 KB § PATTERNS/backend/migrate-product-mcp-tool.md · KB § PATTERNS/common/branching.md
 """
 from __future__ import annotations
@@ -29,6 +34,7 @@ _COMMIT_TRAILER = (
     "Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>"
 )
 _SAFE = re.compile(r"[^a-z0-9]+")
+_INTEGRATE_ATTEMPTS = 3
 
 
 def _default_git(wt: str, *args: str) -> tuple[int, str, str]:
@@ -89,24 +95,37 @@ def record_applied_migrations(
         wt = _resolve_worktree(start["worktree"], primary_root)
         from noctusai_lib.testing.migrations_applied import record_applied
 
-        path = record_applied(Path(wt) / "products" / product / "backend", files)
-        result["path"] = str(path)
-        for args in (("add", "--", rel),
-                     ("commit", "-q", "-m",
-                      f"chore({product}): record applied migrations ({', '.join(sorted(files))})\n\n"
-                      f"Written by noctus.dev.record_applied_migrations from an isolated branch "
-                      f"(migrate_product never writes the primary).\n\n{_COMMIT_TRAILER}")):
-            rc, _o, err = git(wt, *args)
-            if rc != 0:
-                _cleanup_failed(tb, slug, root_kw)
-                return {**result, "status": "error", "error": f"git {args[0]} failed: {err[:300]}"}
-        rc, sha, _e = git(wt, "rev-parse", "--short", "HEAD")
-        result["commit"] = sha if rc == 0 else None
-        integ = tb(action="integrate", slug=slug, confirm=True, **root_kw)
-        result["integrate"] = {k: integ.get(k) for k in ("status", "message", "error")}
+        msg = (f"chore({product}): record applied migrations ({', '.join(sorted(files))})\n\n"
+               f"Written by noctus.dev.record_applied_migrations from an isolated branch "
+               f"(migrate_product never writes the primary).\n\n{_COMMIT_TRAILER}")
+        integ: dict[str, Any] = {}
+        for attempt in range(1, _INTEGRATE_ATTEMPTS + 1):
+            if attempt > 1:
+                # dev moved under us (another applied-record landed). Re-derive: fresh dev + our rows.
+                for args in (("fetch", "-q", "origin", "dev"), ("reset", "-q", "--hard", "origin/dev")):
+                    rc, _o, err = git(wt, *args)
+                    if rc != 0:
+                        return {**result, "status": "error", "attempts": attempt,
+                                "error": f"re-derive after integrate conflict: git {args[0]} failed: {err[:300]}"
+                                         f" -- branch feat/{slug} kept"}
+            path = record_applied(Path(wt) / "products" / product / "backend", files)
+            result["path"] = str(path)
+            for args in (("add", "--", rel), ("commit", "-q", "-m", msg)):
+                rc, _o, err = git(wt, *args)
+                if rc != 0:
+                    _cleanup_failed(tb, slug, root_kw)
+                    return {**result, "status": "error", "error": f"git {args[0]} failed: {err[:300]}"}
+            rc, sha, _e = git(wt, "rev-parse", "--short", "HEAD")
+            result["commit"] = sha if rc == 0 else None
+            integ = tb(action="integrate", slug=slug, confirm=True, **root_kw)
+            result["integrate"] = {k: integ.get(k) for k in ("status", "message", "error")}
+            result["attempts"] = attempt
+            if integ.get("status") != "conflict":
+                break
         if integ.get("status") not in ("integrated", "up_to_date"):
             return {**result, "status": "error",
                     "error": f"task_branch integrate: {integ.get('status')} {integ.get('error') or ''}"
+                             f" after {result.get('attempts')} attempt(s)"
                              f" -- branch feat/{slug} kept for manual integrate"}
         return {**result, "status": "recorded"}
     except Exception as exc:  # noqa: BLE001 -- DDL already ran: report, never raise
