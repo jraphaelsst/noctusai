@@ -482,8 +482,8 @@ def test_a_personal_line_is_refused_outright_whatever_the_flags_or_any_transcrip
         out = _prov(PERSONAL, FakeVps(PERSONAL, EXISTING), confirm=confirm)
         assert out["status"] == "refused" and out["error"] == wi.PERSONAL_REFUSAL and out["needs_owner_by_hand"] is True
     assert not vps.wrote and vps.cmds == []  # refused BEFORE any ssh: not even a read
-    assert wi.PERSONAL_REFUSAL == ("personal line: provisioning requires an out-of-band owner confirmation that does not "
-                                   "exist yet; the owner performs this step by hand")
+    assert wi.PERSONAL_REFUSAL.startswith("personal line: refused for every agent and tool caller")
+    assert "--waha-instance-owner-hand <provision|apply> <line>" in wi.PERSONAL_REFUSAL
     # no transcript path remains at all: the helper and the parameter are gone
     assert not hasattr(wi, "_owner_consent") and "consent_session_id" not in wi.waha_instance.__code__.co_varnames
 
