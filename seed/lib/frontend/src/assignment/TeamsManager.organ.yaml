@@ -1,0 +1,33 @@
+name: TeamsManager
+kind: component
+path: seed/lib/frontend/src/assignment/TeamsManager.tsx
+phase: pilot-seed
+registered_at: "2026-11-11"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "TeamsManager: create / rename / delete a team, add / remove a member from the org (the picker is /workload), rotation order (up / down), active, capacity (blank = unlimited), out-of-office window. Reads for anyone; controls need canWrite. Refusals render through the stable error codes."
+  - "Part of the assignment organ (project-history/roadmaps/crm-cms-erp-vertical-seeds-2026-11.plan.md W1-4); backend noctusai_lib.domain.assignment; endpoint contract frozen in KB § PATTERNS/backend/assignment-organ.md § 4. pt-BR copy in assignment/messages.ts."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); components never use isLoading and never gate on a bare isFetching. Every write goes through useCacheWriteMutation (the server's Team answer is written into the cached list)."
+  - "Seed-portable: no product coupling and no market nouns; the host passes its authenticated api client and its own role decision (canWrite); the server enforces roles again."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Per-product copies were rejected (replication-to-seed symmetry): SW julia_equipes, erp distribuicao and igig owner fields converge here."
+  - "A member picker endpoint was rejected: GET /workload already lists every org member with their load, so the team page reuses it."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
