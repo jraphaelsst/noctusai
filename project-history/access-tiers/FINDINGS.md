@@ -2,7 +2,7 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile access-tier`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**1044 open / in-progress**, 296 fixed, 2 accepted (1342 total).
+**1043 open / in-progress**, 297 fixed, 2 accepted (1342 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
@@ -17,7 +17,7 @@
 | erp-imobiliario | 186 | 0 | 1 | 185 | 0 | 15 |
 | igig | 58 | 0 | 0 | 58 | 0 | 13 |
 | monica | 9 | 0 | 0 | 9 | 0 | 13 |
-| orbity | 24 | 0 | 0 | 24 | 0 | 38 |
+| orbity | 23 | 0 | 0 | 23 | 0 | 39 |
 | p-studio | 20 | 0 | 0 | 20 | 0 | 0 |
 | personal-finance | 41 | 0 | 0 | 41 | 0 | 0 |
 | pilates | 1 | 0 | 0 | 1 | 0 | 0 |
@@ -99,7 +99,6 @@
 | AT-8a30e145 | igig | `GET /api/webhooks/meta/leadgen` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-e966f014 | igig | `POST /api/comercial/leads/publico` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-91dd4cc4 | igig | `POST /api/esteira/aprovar/{token}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
-| AT-cec6b842 | orbity | `POST /api/capture/{org_id}` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-9b37a4ca | p-studio | `GET /api/financeiro/status` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-45da28e3 | p-studio | `GET /api/negocios/etapas` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
 | AT-0e0dc110 | p-studio | `GET /api/producoes/etapas` | none | unclear | medium | open | access-tiers-gate (initial scan) 2026-11-05 |
