@@ -29,6 +29,34 @@ class TestWebhook:
         assert r.status_code == 404
 
 
+    @pytest.mark.parametrize("env", [None, "", "production", "prod", "staging", "locall"])
+    def test_unsigned_inbound_is_refused_unless_the_env_explicitly_says_local(self, client, monkeypatch, env):
+        """Fail closed: no HMAC secret + an unset/unknown/prod APP_ENV (the fleet does not pin it) never accepts unsigned."""
+        if env is None:
+            monkeypatch.delenv("APP_ENV", raising=False)
+        else:
+            monkeypatch.setenv("APP_ENV", env)
+        r = client.raw().post("/api/whatsapp/webhook/any-token", json={"event": "message"})
+        assert r.status_code == 401
+
+    @pytest.mark.parametrize("env", ["local", "dev", "development", "test", "TESTING"])
+    def test_unsigned_inbound_passes_only_in_an_explicit_local_env(self, client, monkeypatch, env):
+        monkeypatch.setenv("APP_ENV", env)
+        r = client.raw().post("/api/whatsapp/webhook/any-token", json={"event": "message"})
+        assert r.status_code == 404  # past the signature gate; the token is unknown
+
+    def test_badly_signed_inbound_is_refused_when_a_secret_is_set(self, client):
+        from app.config import settings
+
+        settings.waha_webhook_hmac_secret = "s3cret"  # settings is plain config data, restored below
+        try:
+            r = client.raw().post("/api/whatsapp/webhook/any-token", json={"event": "message"},
+                                  headers={"X-Webhook-Hmac": "00"})
+        finally:
+            settings.waha_webhook_hmac_secret = ""
+        assert r.status_code == 401
+
+
 class TestEmittersAtTheRouterEdge:
     """A successful write starts the org's matching ACTIVE flow (observed in the
     automation_executions table — no patching of our own code)."""

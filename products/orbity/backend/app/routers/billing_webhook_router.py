@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from noctusai_lib.domain.payments import make_event_inbox
 from noctusai_lib.integrations.payments.webhook_events import PaymentWebhookSignatureError, parse_webhook_event
 
+from noctusai_lib.api.access_tiers import access_tier
 from app.billing import platform_resolve
 from app.dependencies import get_admin_client
 from app.rate_limit import limiter
@@ -30,6 +31,7 @@ TOKEN_CREDENTIAL = "asaas_webhook_token"
 
 
 @router.post("/api/billing/webhook/asaas/{org_id}")
+@access_tier("service", reason="per-org asaas access token verified by parse_webhook_event (fail closed without one)", category="webhook")
 @limiter.limit("300/minute")
 async def asaas_webhook(request: Request, org_id: UUID) -> dict:
     org = str(org_id)
