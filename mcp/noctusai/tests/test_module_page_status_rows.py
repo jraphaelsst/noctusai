@@ -21,6 +21,14 @@ _FACTORY = 'def crm_module():\n    return ModuleSpec(key="crm", pages=(PageSpec(
 _SEED_SQL = "INSERT INTO demo.status_pagina (nome_pagina, status) VALUES ('crm_leads', 'producao');\n"
 _FE = "defineModule({ key: 'crm', items: [{ label: 'L', path: '/crm/leads', pageKey: 'crm_leads' }] });\n"
 _MAIN = "products/demo/backend/app/main.py"
+# Same provisioning guard as the sibling ts-morph keeper tests (test_check_silent_refusal.py): `node` alone is not
+# enough -- the CI-parity export tree and a fresh clone have no gitignored `mcp/noctusai/node/node_modules`.
+_TS_SCRIPT = Path(__file__).resolve().parents[1] / "node" / "module_page_keys_scan.mjs"
+_TS_MORPH_READY = (
+    shutil.which("node") is not None
+    and _TS_SCRIPT.exists()
+    and (_TS_SCRIPT.parent / "node_modules" / "ts-morph").exists()
+)
 
 
 def _tree(tmp_path: Path, files: dict[str, str], baseline: dict | None = None) -> Path:
@@ -68,12 +76,12 @@ class TestModulePageStatusRows:
         assert "drop it" in check_module_page_status_rows(repo_root=root)[0]["issue"]
         assert lower_module_page_status_rows_baseline(root) == {}
 
-    @pytest.mark.skipif(shutil.which("node") is None, reason="needs node + ts-morph")
+    @pytest.mark.skipif(not _TS_MORPH_READY, reason="NOT RUN: node + ts-morph (mcp/noctusai/node/node_modules) not provisioned")
     def test_fe_define_module_page_key_is_checked(self, tmp_path):
         root = _tree(tmp_path, {"products/demo/frontend/src/modules.ts": _FE})
         assert "crm_leads" in check_module_page_status_rows(repo_root=root)[0]["issue"]
 
-    @pytest.mark.skipif(shutil.which("node") is None, reason="needs node + ts-morph")
+    @pytest.mark.skipif(not _TS_MORPH_READY, reason="NOT RUN: node + ts-morph (mcp/noctusai/node/node_modules) not provisioned")
     def test_synthetic_grupo_header_keys_are_exempt(self, tmp_path):
         fe = "defineModule({ key: 'crm', items: [{ label: 'G', path: '/__grupo/x', pageKey: '__grupo:x' }] });\n"
         assert check_module_page_status_rows(repo_root=_tree(tmp_path, {"products/demo/frontend/src/modules.ts": fe})) == []
