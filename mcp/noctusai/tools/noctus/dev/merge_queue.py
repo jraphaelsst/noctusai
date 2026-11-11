@@ -26,6 +26,15 @@ Shape
   rebased over without a re-test — the same predicate `test.yml` paths-ignore
   uses). Red -> retry the failed jobs once (flake guard), then halve the batch
   (bisection): a batch of one that is red is ejected with its failing jobs.
+* PRIORITY LANE (2026-11-11): an entry whose diff touches `.github/` or whose tip
+  carries an `MQ-Priority: <why>` trailer composes FIRST and ALONE, ahead of
+  oldest-first and of an open bisection.
+* PARALLEL WAVE (2026-11-11): up to `PARALLEL_CANDIDATES` product-disjoint
+  groups (`products/<slug>/` only; anything else is the shared area and never
+  runs alongside another) are composed on the same base and tested
+  concurrently. The first green lands; a later green lands without a re-run
+  only when its re-composed tree is the exact union of the two tested trees,
+  otherwise it stays queued and is re-tested. KB merge-queue.md § 6c.
 * VERDICT: a commit status `merge-queue` on the ENQUEUED sha (success = landed,
   description names the dev sha; failure = ejected + why). `task_branch
   action='landed'` reads it and runs the post-landing tail.
