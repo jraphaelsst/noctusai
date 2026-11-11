@@ -151,6 +151,17 @@ class TestOutcomeTags:
         assert len(r["untagged"]) == 1
         assert "expected_tag_shape" in r
 
+    @pytest.mark.parametrize("bullet", [
+        "  - [fixed a972dc780] docstring did not describe the lane",
+        "  - [fixing \u2192 feat/x-y] the thing",
+        "  - [deferred \u2192 NOC-REMEDIATE[mq-area-map-dedup] because it rides that follow-up] the docstring",
+    ])
+    def test_a_leading_tag_counts(self, bullet):
+        assert eol.lint_return(_ft(bullet))["ok"] is True
+
+    def test_the_refusal_says_where_the_tag_goes(self):
+        assert "END" in eol.lint_return(_ft("  - bare"))["expected_tag_shape"]
+
     def test_none_allowed(self):
         assert eol.lint_return(_ft("  - none"))["ok"] is True
 
