@@ -10,6 +10,15 @@
 
 **Editing those three surfaces *IS* the production-promotion decision.** Everything downstream (bless → promote → CI build → `:latest` → fleet pull) is faithful automation of a declaration already made. There is **no later PER-PRODUCT gate** — once a slug is on `docker-compose.prod.yml`, it is publicly reachable the moment its next promoted build lands on `:latest` (`.github/workflows/build-and-push.yml` — 2026-07-20 fix: `:latest` now moves ONLY on a `prod`-ref build, never a bare `main` push, `KB § GUIDES/production-deploy.md § 2b`) — no human ever reviews "should THIS PRODUCT be public" again. THIS gate is what still fires: the `prod`-branch FF/PROD-PIN fix governs *which build* of already-consented code reaches production; it never asks "should this slug be registered at all."
 
+## Consent phase — `pre-third-users` (owner decision 2026-11-11; revisit when a 3rd user onboards)
+
+The owner, typed live in the steward's terminal and confirmed directly in e1's: *"i dont want the wording rule. when i ask to deploy or to go to prod is enough, not by exact words. i get the imnportance of this, but we still dont have third users, only marina. i want speed now"*. So while `compliance.CONSENT_PHASE == "pre-third-users"`:
+
+- **The go is the owner's plain ask.** A message the owner wrote that asks to deploy / ship / release / promote / publish / launch / go live, or to go/push/take something to prod (`_owner_deploy_ask`), is consent for prod exposure (`prod_consent`, tier `owner-ask`), for shipping a project (`ship_consent`, tier `owner-ask`) and for prod migrations (noc-steward §5). No canonical sentence, no slug, no per-slice sha or migration filenames (council chair ruling 59c61ef0's wording requirement is superseded for this phase).
+- **What stays.** The evidence must be the owner's OWN typed turn in the harness-written transcript of the session that acts (`_human_authored_transcript_texts`) — a peer's relay is never consent. Negated / hypothetical / deferred phrasing ("don't deploy", "should we ship?", "before we release") is not an ask. Past tense and nouns ("deployed", "the deployment failed") are not asks. The other legs of a consent record (`dev_validated`, the ✅ milestone) are unchanged.
+- **What it trades.** Without slug-binding, any deploy ask in the session counts, including one aimed at a different product, and a pasted report that contains "deploy" in an imperative clause can be cited. `owner-ask` is ranked WEAKEST (`_AUTHORIZATION_RANKS` 6/7), so an exact or slug-bound statement is always cited first, and the record names the tier. Acceptable with one owner and one other user; the wrong default once a third person can ask.
+- **Revisit trigger:** a third user onboards → set `CONSENT_PHASE = "multi-user"`; the exact / slug-bound tiers are then required again with no other code change.
+
 ## The fire boundary — a SET-DIFFERENCE on slugs, not a content diff
 
 ```

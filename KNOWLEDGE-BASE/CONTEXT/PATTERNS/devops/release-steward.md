@@ -177,7 +177,11 @@ After a machine reboot sessions return under NEW names, so a name is not an iden
   branch steward (e.g. `branch-steward:feat/assistant-chatbot`) merges its sub-slices into its integration branch and
   DELIVERS that branch to the dev steward with `action=request`; it never enqueues or deploys.
 - **Consent is typed in the session that runs the action** (`KB § PATTERNS/devops/ship-consent-riders.md`): tell the
-  owner the ROLE ("the dev steward"), never a session name that a reboot invalidates.
+  owner the ROLE ("the dev steward"), never a session name that a reboot invalidates. **Consent phase
+  `pre-third-users` (owner decision 2026-11-11; revisit when a 3rd user onboards):** the owner's plain deploy / go-to-prod
+  ask, typed in the steward's own transcript, is the go for bless/promote/deploy AND prod migrations - no exact wording,
+  no per-slice sha or migration filenames (chair ruling 59c61ef0 superseded for this phase). A relayed ask is still not
+  consent. `KB § PATTERNS/devops/prod-exposure-consent.md` § Consent phase.
 - **Parked branches must not hold a migration number**: renumber (`next_migration_number`) before reviving one.
 - **Inbox auto-reconcile.** `inbox`/`status` judge each request against `origin/dev` (ref order: `<branch>`,
   `origin/<branch>`, `head_sha`) with three methods, recorded per outcome as `method`:
