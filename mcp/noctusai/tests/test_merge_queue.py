@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -40,8 +41,10 @@ class FakeCI:
     """Stands in for `gh`: dispatch, run list/view, rerun, statuses."""
 
     def __init__(self, origin: str, red_if=lambda tree: "BREAK" in tree, flaky_once=False,
-                 failed_log: str = "", failed_job: str = "Product Backend Tests (x)"):
+                 failed_log: str = "", failed_job: str = "Product Backend Tests (x)", barrier=None):
         self.origin, self.red_if, self.flaky_once = origin, red_if, flaky_once
+        self.barrier = barrier  # parallel tests: every run blocks until ALL peers are in flight = proof of overlap
+        self._lock = threading.Lock()
         self.failed_log, self.failed_job = failed_log, failed_job
         self.statuses: dict[str, list[tuple[str, str]]] = {}
         self.dispatched: list[tuple[str, str]] = []
@@ -50,6 +53,15 @@ class FakeCI:
         self._runs: dict[str, str] = {}
 
     def __call__(self, cmd, cwd=None):
+        if cmd[:2] == ["gh", "run"] and cmd[2] == "view" and "--log-failed" not in cmd and self.barrier is not None:
+            barrier = self.barrier
+            if barrier is not None:
+                barrier.wait(timeout=10)  # raises (test fails) if the peer never goes in flight
+                self.barrier = None  # spent: later single-candidate rounds must not wait for a peer
+        with self._lock:
+            return self._call(cmd, cwd)
+
+    def _call(self, cmd, cwd=None):
         if cmd[0] == "git":
             p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
             return p.returncode, p.stdout, p.stderr
@@ -790,3 +802,132 @@ def test_verify_db_guards_failure_attributes_to_the_migration_entry_of_that_prod
     assert res.ejected[0]["slug"] == "mig-agents" and res.ejected[0]["kind"] == "ci_red_attributed"
     assert "001_a.sql" in res.ejected[0]["why"] and "test_verify_db_guards" in res.ejected[0]["why"]
     assert ci.last(bad)[0] == "failure"
+
+
+# ── priority lane + parallel product-disjoint candidates (2026-11-11) ─────────
+
+def _paths(*names):
+    return {n: [n] for n in names}
+
+
+def test_areas_and_partition_are_pure_and_conservative():
+    assert mq.entry_areas(["products/sw/a.py", "products/agents/b.py"]) == {"sw", "agents"}
+    assert mq.entry_areas(["products/sw/a.py", "mcp/x.py"]) == {"sw", mq.SHARED_AREA}
+    assert mq.entry_areas(["products/seed/a.py"]) == {mq.SHARED_AREA}
+    assert mq.entry_areas([]) == {mq.SHARED_AREA}  # unreadable diff = shared
+    es = [mq.Entry(f"mq/{n}--abc1234", "s", n, i) for i, n in enumerate("abcd")]
+    paths = {"mq/a--abc1234": ["products/sw/1"], "mq/b--abc1234": ["products/agents/1"],
+             "mq/c--abc1234": ["products/sw/2"], "mq/d--abc1234": ["mcp/x"]}
+    groups = mq.partition_wave(es, paths, 4)
+    assert [[e.slug for e in g] for g in groups] == [["a", "c"], ["b"]]  # same product merges; the shared tail waits
+    assert mq.partition_wave(es, paths, 4, k=1) == []  # one group is no wave
+    assert mq.partition_wave(es[3:], paths, 4) == [] and mq.partition_wave([es[3], es[0], es[1]], paths, 4) == []
+    assert mq.is_priority([".github/dependabot.yml"]) and mq.is_priority(["x"], "t\n\nMQ-Priority: ci is red")
+    assert not mq.is_priority(["products/sw/a"], "no trailer MQ-Priority in prose")
+
+
+def test_github_diff_entry_composes_first_and_alone(world):
+    enqueue(world, "old", [("old.txt", "o\n")], 2000)
+    enqueue(world, "ciFix", [(".github/dependabot.yml", "x: 1\n")], 2100)
+    ci = FakeCI(world["origin"])
+    res = make_queue(world, ci).drain()
+    assert res.rounds[0]["batch"] == ["ciFix"]  # ahead of the older entry, alone
+    assert [x["slug"] for x in res.landed] == ["ciFix", "old"]
+
+
+def test_priority_trailer_flag_composes_first_and_alone(world):
+    enqueue(world, "old", [("old.txt", "o\n")], 2000)
+    enqueue(world, "urgent", [("u.txt", "u\n")], 2100)
+    sha = sh(world["work"], "git", "rev-parse", "HEAD")
+    sh(world["work"], "git", "commit", "-q", "--amend", "-m", "urgent\n\nMQ-Priority: unblocks CI")
+    new = sh(world["work"], "git", "rev-parse", "HEAD")
+    sh(world["work"], "git", "push", "-q", "origin", f"{new}:refs/heads/mq/urgent--{new[:7]}", f":refs/heads/mq/urgent--{sha[:7]}")
+    res = make_queue(world, FakeCI(world["origin"])).drain()
+    assert res.rounds[0]["batch"] == ["urgent"]
+    assert {x["slug"] for x in res.landed} == {"old", "urgent"}
+
+
+def test_two_product_disjoint_entries_run_concurrently_and_both_land_without_a_retest(world):
+    a = enqueue(world, "a", [("products/sw/a.txt", "a\n")], 2000)
+    b = enqueue(world, "b", [("products/agents/b.txt", "b\n")], 2100)
+    ci = FakeCI(world["origin"], barrier=threading.Barrier(2))  # both runs must be in flight at once
+    res = make_queue(world, ci).drain()
+    assert {x["slug"] for x in res.landed} == {"a", "b"} and not res.ejected
+    assert len(ci.dispatched) == 2  # two candidates, and NO third run to re-test the second on the new tip
+    assert all(r.get("parallel") for r in res.rounds)
+    tree = sh(world["origin"], "git", "ls-tree", "-r", "--name-only", "dev")
+    assert "products/sw/a.txt" in tree and "products/agents/b.txt" in tree
+    assert ci.last(a)[0] == "success" and ci.last(b)[0] == "success"
+    assert queue_refs(world) == [] and not sh(world["origin"], "git", "for-each-ref", "refs/heads/mq-candidate/")
+
+
+def test_shared_entry_never_runs_alongside_another_candidate(world):
+    enqueue(world, "p1", [("products/sw/a.txt", "a\n")], 2000)
+    enqueue(world, "p2", [("products/agents/b.txt", "b\n")], 2100)
+    enqueue(world, "sh", [("mcp/tool.py", "t\n")], 2200)
+    ci = FakeCI(world["origin"])
+    res = make_queue(world, ci).drain()
+    assert {x["slug"] for x in res.landed} == {"p1", "p2", "sh"}
+    parallel = [r for r in res.rounds if r.get("parallel")]
+    assert sorted(sum((r["batch"] for r in parallel), [])) == ["p1", "p2"]
+    shared_round = next(r for r in res.rounds if r["batch"] == ["sh"])
+    assert not shared_round.get("parallel") and res.rounds.index(shared_round) == len(res.rounds) - 1
+
+
+def test_shared_entry_in_front_keeps_the_single_batch(world):
+    enqueue(world, "sh", [("mcp/tool.py", "t\n")], 2000)
+    enqueue(world, "p1", [("products/sw/a.txt", "a\n")], 2100)
+    enqueue(world, "p2", [("products/agents/b.txt", "b\n")], 2200)
+    ci = FakeCI(world["origin"])
+    res = make_queue(world, ci).drain()
+    assert len(ci.dispatched) == 1 and not any(r.get("parallel") for r in res.rounds)
+    assert len(res.landed) == 3
+
+
+def test_a_red_parallel_candidate_ejects_only_itself(world):
+    good = enqueue(world, "good", [("products/sw/g.txt", "g\n")], 2000)
+    bad = enqueue(world, "bad", [("products/agents/BREAK", "boom\n")], 2100)
+    ci = FakeCI(world["origin"], red_if=lambda t: any("BREAK" in p for p in t), barrier=threading.Barrier(2))
+    res = make_queue(world, ci).drain()
+    assert [x["slug"] for x in res.landed] == ["good"]
+    assert [x["slug"] for x in res.ejected] == ["bad"] and res.ejected[0]["kind"] == "ci_red"
+    assert ci.last(good)[0] == "success" and ci.last(bad)[0] == "failure"
+    assert "BREAK" not in sh(world["origin"], "git", "ls-tree", "-r", "--name-only", "dev")
+
+
+def test_second_green_whose_derived_files_move_on_the_combined_tree_is_retested(world):
+    # counts.md is DERIVED from the whole tree: each candidate wrote 1, the combined tree needs 2 -> not the union
+    # of the tested trees, so the second green must NOT land untested; the next round re-tests it on the new tip.
+    def regen(wt):
+        n = len([p for p in Path(wt, "products").rglob("*.txt")])
+        f = Path(wt, "KNOWLEDGE-BASE", "counts.md")
+        f.parent.mkdir(exist_ok=True)
+        f.write_text(f"n={n}\n")
+        return True, ""
+    enqueue(world, "a", [("products/sw/a.txt", "a\n")], 2000)
+    enqueue(world, "b", [("products/agents/b.txt", "b\n")], 2100)
+    ci = FakeCI(world["origin"], barrier=threading.Barrier(2))
+    res = make_queue(world, ci, regen=regen).drain()
+    assert {x["slug"] for x in res.landed} == {"a", "b"}
+    assert len(ci.dispatched) == 3  # a, b in parallel; b re-tested on a's tip
+    assert sh(world["origin"], "git", "show", "dev:KNOWLEDGE-BASE/counts.md") == "n=2"
+
+
+def test_parallel_candidates_that_would_not_recompose_cleanly_stay_queued(world):
+    enqueue(world, "a", [("products/sw/a.txt", "a\n")], 2000)
+    enqueue(world, "b", [("products/agents/b.txt", "b\n")], 2100)
+    ci = FakeCI(world["origin"], barrier=threading.Barrier(2))
+    q = make_queue(world, ci)
+    real = q.compose
+    calls = []
+
+    def compose(batch, base, wt):
+        calls.append(base)
+        if len(calls) == 3:  # the re-compose of the second green on the new tip
+            return base, [], [q._eject_info(batch[0], "conflict", "x")]
+        return real(batch, base, wt)
+
+    q.compose = compose  # self-patch-ok: forces the re-compose outcome (a conflict) to prove the fallback; the landing logic itself is untouched
+    res = q.drain(max_rounds=1)
+    assert len(res.landed) == 1 and not res.ejected  # the other is neither landed untested nor ejected
+    assert len(queue_refs(world)) == 1
