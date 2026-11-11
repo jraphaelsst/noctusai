@@ -541,7 +541,10 @@ def _version_detail(store, gate: EvalGate, org_id: UUID, v: VersionRecord) -> Ve
         publish_override_reason=v.publish_override_reason, eval_run_id=v.eval_run_id,
         limiar_aplicado=v.limiar_aplicado,
         secoes=[
-            SectionOut(id=s.id, chave=s.chave, titulo=s.titulo, ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo)
+            SectionOut(
+                id=s.id, chave=s.chave, titulo=s.titulo, ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo,
+                regras=list(s.regras),
+            )
             for s in store.list_sections(org_id, v.id)
         ],
         skills=[
@@ -777,7 +780,10 @@ def replace_draft_sections(
     if len(set(chaves)) != len(chaves):
         raise http_error(422, "duplicate_chave", "Chaves de seção repetidas.")
     secoes = [
-        SectionInput(id=s.id, chave=s.chave, titulo=s.titulo, ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo)
+        SectionInput(
+            id=s.id, chave=s.chave, titulo=s.titulo, ordem=s.ordem, conteudo=s.conteudo, ativo=s.ativo,
+            regras=tuple(s.regras),
+        )
         for s in payload.secoes
     ]
     antes = [s.chave for s in store.list_sections(ctx.org_id, draft.id)] if ctx.caller_kind == "product" else []

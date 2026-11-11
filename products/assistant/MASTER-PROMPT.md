@@ -27,6 +27,10 @@ S3 classifies it as about scheduling or not (classification only, D48: no reply,
   the message TEXT and nothing else; strict parse, never a guess; budget refused/unverifiable => `skipped_budget`;
   one `ai_outputs` row per (message, prompt_version, model); runs on the seed jobs Worker only (poll-budget line in
   `shadow/worker.py`); no live LLM call in tests.
+- **Evaluation (S4):** the owner labels BLIND on `/avaliacao` (text only, never the verdict); labels are append-only
+  `assistant.ai_feedback_events` events (seed template `ai_feedback_events_table_sql`; relabel = next `rodada`);
+  `shadow/avaliacao.py` turns `resumo_rotulos` into agreement (`nao_sei` outside the denominator). Contract:
+  `project-history/assistant-chatbot/s4-contrato-avaliacao.md`. The page shows third-party text: keep the notice, never log it.
 - **Google connection (S7, D50):** the org admin connects Google in `/configuracoes/google`. `connect/start` mints a
   server-bound single-use `state` (SHA-256 stored, 10 min, bound to org/user AND to the starting browser via the host-only
   cookie `__Host-ast_goauth`, carries the PKCE verifier Fernet-encrypted in `oauth_states`); the signed `GET /api/google/oauth/callback` consumes it (unknown/replayed/expired => 400), exchanges
@@ -48,6 +52,7 @@ backend/app/
   routers/google_router.py   Conectar Google (admin) + the signed OAuth callback
   services/google_connection.py   scopes, stores, provider, status, Google clients (seed factories)
   shadow/classificador.py  registry call + strict parse
+  shadow/avaliacao.py     agreement math (verdict x owner label)
   shadow/worker.py        seed jobs Worker handlers, replay enqueue, start/stop
   services/intake.py      IntakeChatStore (the seam the seed ingest writes into) + chat_ref HMAC
   services/pairing.py     paired_at stamp/clear from WAHA session.status
