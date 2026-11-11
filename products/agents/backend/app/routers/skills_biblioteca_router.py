@@ -424,6 +424,9 @@ def fixar_ref(
             alvo = next((v for v in versoes if v.status == "publicada"), None)
         else:
             alvo = next((v for v in versoes if v.versao == body.versao), None)
+        if alvo is None and body.versao is None:
+            # The skill EXISTS but has nothing published to pin: a bare 404 read as "skill not found".
+            raise _err(409, "skill_sem_versao_publicada", "A skill nao tem versao publicada: publique a skill antes de fixa-la.")
         if alvo is None:
             raise NotFound("versao")
         if alvo.status == "rascunho":

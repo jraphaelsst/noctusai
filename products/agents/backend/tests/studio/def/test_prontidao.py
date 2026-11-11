@@ -157,6 +157,55 @@ class TestCompor:
         assert [i.detalhe["ferramenta"] for i in p.itens if i.codigo == "ferramenta_sem_descricao"] == ["encerrar"]
         assert p.pronto_para_publicar, "advisory items never block"
 
+    def test_julia_expected_tools_are_unchanged_by_the_template_split(self):
+        """Regression: the qualification + real-estate tools stay expected for the default (Julia) call."""
+        kw = dict(usa_canais=True, tem_skills=True, tool_policy={"knowledge": True}, com_padrao=True)
+        julia = pr.ferramentas_esperadas(**kw)
+        assert {"avaliar_lead", "registrar_perfil", "registrar_reacao_imovel", "registrar_intencao_visita",
+                "concluir_qualificacao", "handoff", "encerrar", "kb_buscar"} <= set(julia)
+        explicit = pr.ferramentas_esperadas(**kw, padrao_conclusivo=True, imobiliario=True)
+        assert explicit == julia
+
+    def test_a_standard_without_a_conclusive_stage_does_not_expect_concluir_qualificacao(self):
+        kw = dict(usa_canais=True, tem_skills=False, tool_policy={}, com_padrao=True)
+        sdr = pr.ferramentas_esperadas(**kw, padrao_conclusivo=False)
+        assert "concluir_qualificacao" not in sdr and {"avaliar_lead", "registrar_perfil", "registrar_reacao_imovel"} <= set(sdr)
+        assert "concluir_qualificacao" in pr.ferramentas_esperadas(**kw, padrao_conclusivo=True)
+
+    def test_the_real_estate_reaction_tool_is_expected_only_for_a_real_estate_agent(self):
+        kw = dict(usa_canais=True, tem_skills=False, tool_policy={}, com_padrao=True)
+        assert "registrar_reacao_imovel" not in pr.ferramentas_esperadas(**kw, imobiliario=False)
+        assert "registrar_reacao_imovel" in pr.ferramentas_esperadas(**kw, imobiliario=True)
+        assert pr.agente_imobiliario(["handoff", "oferecer_imoveis"]) and not pr.agente_imobiliario(["handoff", "avaliar_lead"])
+
+    def test_conclusive_stage_is_read_from_the_pinned_or_published_version(self):
+        from types import SimpleNamespace as NS
+
+        def est(c): return NS(conclusivo=c)
+
+        class Padroes:
+            def __init__(self, estagios, pin_estagios=None):
+                self.pub, self.pin = NS(estagios=estagios), NS(estagios=pin_estagios or estagios)
+
+            def obter_versao_publicada(self, chave):
+                return self.pub
+
+            def obter_versao(self, vid):
+                return self.pin
+
+        draft_pin, draft_sem = NS(qualificacao_versao_id=uuid4()), NS(qualificacao_versao_id=None)
+        assert pr._padrao_tem_estagio_conclusivo(Padroes((est(False), est(False))), "p", draft_sem) is False
+        assert pr._padrao_tem_estagio_conclusivo(Padroes((est(False), est(True))), "p", draft_sem) is True
+        assert pr._padrao_tem_estagio_conclusivo(Padroes((est(True),), (est(False),)), "p", draft_pin) is False  # the pin wins
+        assert pr._padrao_tem_estagio_conclusivo(Padroes(()), None, draft_sem) is True  # no standard: unchanged
+        from app.stores.errors import NotFound
+
+        class Vazio:
+            def obter_versao_publicada(self, chave):
+                raise NotFound("x")
+
+        assert pr._padrao_tem_estagio_conclusivo(Vazio(), "p", draft_sem) is True  # unmeasurable keeps the expectation
+
     def test_parameter_labels_are_judged_against_the_tool_schema(self):
         from app.channels.tool_registry import schema_de
 
