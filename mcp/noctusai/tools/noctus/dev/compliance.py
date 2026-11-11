@@ -16412,14 +16412,14 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "firing every product's org triggers (licenses, ERP site config). Its sibling guards (platform scope "
         "trigger, scope CHECKs) are probed.",
     ),
-    # Monica 017 is NOT APPLIED (file-only until the tech-lead runs migrate_product): it adds the per-app switch
+    # nosnolimiar (ex-monica) 017 -- per-app switch; applied in prod, but its CHECK still has no GuardProbe: it adds the per-app switch
     # columns; `session_role` is a two-value vocabulary CHECK that is also enforced at the API edge (the seed
-    # create route's Literal + `SESSION_ROLES` in the store). The constraint does not exist in prod to probe yet.
-    # Replace with a real GuardProbe in the SAME change that applies it.
+    # create route's Literal + `SESSION_ROLES` in the store). The constraint now exists in prod; a real
+    # GuardProbe (verify_db_guards.py) replaces this entry.
     (
-        "products/monica/backend/migrations/017_whatsapp_app_switch.sql",
+        "products/nosnolimiar/backend/migrations/017_whatsapp_app_switch.sql",
         "whatsapp_connections_session_role_check",
-        "Migration 017 unapplied — the session_role vocabulary CHECK has no live constraint to probe yet; "
+        "Migration 017 — the session_role vocabulary CHECK has no GuardProbe yet; "
         "the API edge (Literal + SESSION_ROLES) already refuses other values and is tested.",
     ),
     # Migration 303 (social-wiring) is NOT APPLIED (file-only until the

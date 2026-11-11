@@ -382,14 +382,14 @@ only — vitest docs), never a repo-wide target, and never a block reason by its
 
 **Re-inventory (2026-11-05, file counts — not coverage).** Counts: backend `test_*.py` under
 `backend/tests`, frontend `*.test.ts(x)` under `frontend/src`, Playwright `*.spec.ts`, `tests/realdb/`.
-Awake products per `deploy/fleet/active-scope.txt` (agents, core, monica, seed, social-wiring); the rest
+Awake products per `deploy/fleet/active-scope.txt` (agents, core, nosnolimiar, seed, social-wiring); the rest
 are asleep — no gate checks them.
 
 | Product | Awake | BE test files | FE test files | E2E specs | realdb |
 |---|---|---:|---:|---:|---|
 | agents | ✅ | 169 | 53 | 0 | — |
 | core | ✅ | 108 | 40 | 7 | ✅ |
-| monica | ✅ | 8 | 2 | 0 | — |
+| nosnolimiar | ✅ | 8 | 2 | 0 | — |
 | seed (product) | ✅ | 9 | 2 | 0 | — |
 | social-wiring | ✅ | 662 | 329 | 5 | ✅ |
 | erp-imobiliario | asleep | 136 | 27 | 9 | ✅ |
@@ -408,7 +408,7 @@ are asleep — no gate checks them.
 | dev-team | asleep | 3 | 1 | 0 | — |
 
 Fleet-wide: property-based 0, mutation 0, coverage tooling 0, Playwright configs 3 (core, erp,
-social-wiring). **Highest-leverage gaps among awake products:** monica and the seed product have thin
+social-wiring). **Highest-leverage gaps among awake products:** nosnolimiar and the seed product have thin
 FE suites and no e2e; agents has no golden-path e2e; property tests for seed-lib money/date rules (§6).
 
 ---

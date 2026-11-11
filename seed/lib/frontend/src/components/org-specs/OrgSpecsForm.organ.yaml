@@ -8,7 +8,7 @@ validation_status: emerging
 
 known_facts:
   - "Import: import { createOrgSpecsHooks, OrgSpecsForm } from '@noctusai/lib/components'. Build hooks once: const hooks = createOrgSpecsHooks(api, { path?, queryKey?, invalidate? }); render <OrgSpecsForm hooks={hooks} agentKey=... />."
-  - "Lifted from products/agents Studio EspecificacoesOrgTab (consumer #1, now a thin wrapper); consumer #2 = monica 'Contexto' page via its own backend proxy."
+  - "Lifted from products/agents Studio EspecificacoesOrgTab (consumer #1, now a thin wrapper); consumer #2 = nosnolimiar 'Contexto' page via its own backend proxy."
   - "Wire: GET/PUT {path(agentKey)} -> { agent_key, declaradas[{chave,rotulo,descricao,tipo texto|texto_longo,obrigatoria,exemplo}], valores[{chave,valor}], faltando[] }; PUT body { valores } sends EVERY declared key (blank clears)."
   - "Default path is agents' /api/studio/agents/{key}/specs; a non-agents product passes path: () => '/api/<its proxy>' (backend: noctusai_lib.integrations.agents.make_agents_org_specs_client, forwards the user's token)."
   - "Write = useCacheWriteMutation (commit the saved view into the specs entry; `invalidate` refetches derived views). Draft = useUnsavedChanges (notice + beforeunload). Loading uses showSkeleton, never isLoading."

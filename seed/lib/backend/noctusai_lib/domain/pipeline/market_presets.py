@@ -7,16 +7,16 @@ migrate the canon onto it without a data change:
   real estate  social-wiring migration 060 `ensure_default_pipeline_stages`
   SaaS         core migration 107 + `app/noc_funnel.py`
   agencies     orbity 005_crm_core.sql `seed_default_lead_stages`
-  clinics      monica `app/crm.py` LEADS_CONFIG
+  clinics      nosnolimiar `app/crm.py` LEADS_CONFIG
 
 NOC-REMEDIATE[crm-preset-to-canon]: each preset moves to its canon's
 `app/market/crm_preset.py` when that canon migrates (W3-S2 SW, W3-C1 core,
-W7-O orbity, W2-4 monica) and is deleted here then — the seed ships only the
+W7-O orbity, W2-4 nosnolimiar) and is deleted here then — the seed ships only the
 mechanics (`presets.py`) and a generic preset — 2026-11-08.
 
 Deltas vs today (deliberate, listed so the migration slice can act on them):
   * roles are the canonical ones: core `novo` -> `entrada`; SW `qualificacao`
-    gains `qualificado`; monica `negociacao` gains `proposta`;
+    gains `qualificado`; nosnolimiar `negociacao` gains `proposta`;
   * orbity colors were hex; mapped to the nearest design token;
   * orbity `Perdido` (`is_lost`) is a LOST STATUS, not a stage; `Fechado`
     (`is_won`) carries `ganho`.

@@ -79,7 +79,7 @@ The latency class is chosen exactly as `latency-budgets.json` `_doc` says: the f
 |---|---|---|---|
 | `core` (apex, auth, SSO, admin) | 99.5 % | ≈ 3 h 36 min ≈ 21 failed probe-runs | 95 % of requests within their class budget (that is the p95 budget restated as an SLO) |
 | `agents` (customer-facing agents) | 99.5 % | ≈ 3 h 36 min | same |
-| `monica` | 99.0 % | ≈ 7 h 12 min ≈ 43 failed probe-runs | same |
+| `nosnolimiar` | 99.0 % | ≈ 7 h 12 min ≈ 43 failed probe-runs | same |
 | `social-wiring` | 99.0 % | ≈ 7 h 12 min | same |
 | `seed` (reference product) | 99.0 % | ≈ 7 h 12 min | same |
 | any other running container not in active scope | no SLO; best effort | — | — |
@@ -214,7 +214,7 @@ If you cannot decide between two levels, pick the higher one and review it in th
 | **`noctus-cache-pg`** | keeper-mirror caches (Tier-2) | none, **by design**: everything is regenerable from git plus embeddings (`KB § PATTERNS/devops/prod-cache-container.md` § Backup) | unbounded (stated, accepted) | cold rebuild via each cache's `--force` + `cache_deploy_mirror`; time **not measured** | RTO measured once in a drill | measure it (drill C below) |
 | **Redis** (`noctus-redis`, infra Redis) | rate limits, ephemeral cache | none needed | n/a (ephemeral) | restart | — | fail-open behaviour when Redis is down is a known code item (PROJECT follow-up 8) |
 | **n8n** (`noctus-services`: `pgdata` + `n8n-data` volumes) | workflows, credentials, execution history | none found (no cron.d job, no systemd timer, no dump directory) | **undefined** | unknown | RPO ≤ 24 h: nightly `pg_dump` + `n8n export:workflow --all` off-host | devops L1 proposal |
-| **WAHA sessions** (`waha-sessions`, `noctus-waha-monica`) | paired WhatsApp sessions | none | n/a: re-pairing with a QR scan restores it | the owner's phone time | document re-pair in the rebuild runbook | — |
+| **WAHA sessions** (`waha-sessions`, `noctus-waha-nosnolimiar`) | paired WhatsApp sessions | none | n/a: re-pairing with a QR scan restores it | the owner's phone time | document re-pair in the rebuild runbook | — |
 | **Deploy-local secrets** (`.env`, `.env.fleet`, `.env.services`, tunnel credentials and `cert.pem`) | every secret the fleet needs | `deploy/prod-pull.sh` tars them before each pull into `/opt/noctus/backups` (257 archives, 1.8 MB, newest 2026-11-04) | per deploy | minutes, **if the host survives** | 3-2-1: an encrypted off-host copy (owner's password manager, or an age-encrypted file in private storage) | 🔴 all copies are **on the same host**. Host loss means secret loss. Key names (not values) are in `deploy/fleet/env.fleet.keys`. |
 | **GHCR images** | built product images | GHCR, off-host; rebuildable from git | 0 | one CI build | — | — |
 | **Git** | code, KB, ledgers (`origin/ledgers`) | GitHub plus local clones | 0 | clone | — | — |
@@ -284,7 +284,7 @@ The drill reads production only. Restores go to scratch. Any VPS write needs the
 | 3 | No privilege escalation | `security_opt: [no-new-privileges:true]` | runtime: no new privileges | ⚠️ 7 of 20 |
 | 4 | Read-only root filesystem | `read_only: true` plus `tmpfs:` for scratch | runtime: read-only root FS | ⚠️ 7 of 20 |
 | 5 | Healthcheck | Dockerfile `HEALTHCHECK` or compose `healthcheck:` on `/api/health` | images: add HEALTHCHECK | ✅ 19 in prod compose plus 2 in infra |
-| 6 | Memory and PID limits | `mem_limit`, `pids_limit` | runtime: limit memory / PIDs | ⚠️ some services. **Owner decision recorded at `docker-compose.prod.yml:614,645`: "server protection without per-container limits"** for commerce and monica. Respect the decision, and record any new exception the same way. |
+| 6 | Memory and PID limits | `mem_limit`, `pids_limit` | runtime: limit memory / PIDs | ⚠️ some services. **Owner decision recorded at `docker-compose.prod.yml:614,645`: "server protection without per-container limits"** for commerce and nosnolimiar. Respect the decision, and record any new exception the same way. |
 | 7 | Bounded logs | `logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}` | host / daemon configuration | ✅ **at host level**: `/etc/docker/daemon.json` sets json-file 10 MB × 3, and all 20 running containers report that LogConfig (read-only check 2026-11-05). ⚠️ The setting is not in git, so a rebuilt host loses it silently, and the daemon setting only applies to containers created after a daemon restart (Docker json-file docs). Target: capture it in the host-rebuild runbook or in the `x-prod-defaults` anchor. |
 | 8 | Restart policy | `restart: unless-stopped` | runtime: restart policy | ✅ via `x-prod-defaults` (`docker-compose.prod.yml:110-116`) |
 | 9 | No published ports for internal services | `expose:` not `ports:`; `noctus-net` | network | ✅ house rule (`containerization.md`) |

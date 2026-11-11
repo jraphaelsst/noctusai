@@ -132,9 +132,9 @@ class _Harness:
     def __init__(self, *, hmac_secret=None, org=ORG_A, raise_401=False, mirror_read=False, realtime=True,
                  with_lid_cache=False, on_purge=None, audit_sink=None):
         self.conn_store = build_whatsapp_connection_store(
-            _FakeSupabase(), encryption_key=generate_key().decode(), schema="monica"
+            _FakeSupabase(), encryption_key=generate_key().decode(), schema="nosnolimiar"
         )
-        self.chat_store = build_whatsapp_chat_store(None, schema="monica", allow_fake=True)
+        self.chat_store = build_whatsapp_chat_store(None, schema="nosnolimiar", allow_fake=True)
         self.waha = FakeWahaClient(session="default")
         self.new_chats: list = []
         self.messages: list = []
@@ -154,8 +154,8 @@ class _Harness:
         app.include_router(create_whatsapp_connections_router(
             MagicMock(), MagicMock(), store_factory=lambda: self.conn_store,
             get_current_user_org=_auth(org, raise_401=raise_401), waha_base_url="https://waha.example.com",
-            resolve_webhook_base_url=lambda: "https://monica.example.com", waha_client_factory=waha_factory,
-            chat_store_factory=lambda: self.chat_store, on_purge=on_purge, audit_product_slug="monica",
+            resolve_webhook_base_url=lambda: "https://nosnolimiar.example.com", waha_client_factory=waha_factory,
+            chat_store_factory=lambda: self.chat_store, on_purge=on_purge, audit_product_slug="nosnolimiar",
         ))
         if audit_sink is not None:
             app.state.audit_sink, app.state.audit_enabled = audit_sink, True
@@ -463,7 +463,7 @@ def test_enabled_route_is_org_scoped_and_strict_401():
     intruder = FastAPI()
     intruder.include_router(create_whatsapp_connections_router(
         MagicMock(), MagicMock(), store_factory=lambda: h.conn_store, get_current_user_org=_auth(ORG_B),
-        waha_base_url="https://waha.example.com", resolve_webhook_base_url=lambda: "https://monica.example.com",
+        waha_base_url="https://waha.example.com", resolve_webhook_base_url=lambda: "https://nosnolimiar.example.com",
     ))
     resp = TestClient(intruder).put(f"/api/whatsapp/connections/{conn_id}/enabled", json={"enabled": False})
     assert resp.status_code == 404
@@ -476,7 +476,7 @@ def test_enabled_route_is_org_scoped_and_strict_401():
 @pytest.mark.parametrize("method,suffix,body", [
     ("post", "start", None), ("post", "restart", None), ("post", "logout", None), ("post", "recover", None),
     ("get", "qr", None), ("post", "backfill", None),
-    ("post", "webhook", {"url": "https://monica.example.com/api/whatsapp/webhook/x", "events": ["message"]}),
+    ("post", "webhook", {"url": "https://nosnolimiar.example.com/api/whatsapp/webhook/x", "events": ["message"]}),
 ])
 def test_borrower_session_controls_are_409_session_borrowed(method, suffix, body):
     h = _Harness()
@@ -564,7 +564,7 @@ def test_purge_is_org_scoped_and_strict_401():
     app = FastAPI()
     app.include_router(create_whatsapp_connections_router(
         MagicMock(), MagicMock(), store_factory=lambda: h.conn_store, get_current_user_org=_auth(ORG_B),
-        waha_base_url="https://waha.example.com", resolve_webhook_base_url=lambda: "https://monica.example.com",
+        waha_base_url="https://waha.example.com", resolve_webhook_base_url=lambda: "https://nosnolimiar.example.com",
         chat_store_factory=lambda: h.chat_store,
     ))
     assert TestClient(app).post(

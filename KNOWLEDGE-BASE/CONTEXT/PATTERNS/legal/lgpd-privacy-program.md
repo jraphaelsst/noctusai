@@ -41,7 +41,7 @@
 | Encarregado formal act | art. 41; Res. 18/2024 art. 3 | ⚠️ named, no written act; conflict-of-interest question | §11 |
 | Small-agent classification | Res. 2/2022 arts. 2–4 | ❌ not recorded | §11 — lawyer |
 | Incident register + decision | art. 48; Res. 15/2024 | ❌ (erp-certidoes owed retroactively) | §10 |
-| DPA with each client org | arts. 39, 42 §1 I; ANPD guide §4.1 | ❌ (monica DECISIONS S-DPA "owner action") | §13 template |
+| DPA with each client org | arts. 39, 42 §1 I; ANPD guide §4.1 | ❌ (nosnolimiar DECISIONS S-DPA "owner action") | §13 template |
 | Retention schedule | arts. 15, 16 | ⚠️ per-surface (`documento_retencao_politicas`), many tables without one | §12 |
 
 ## 2 · Roles per product
@@ -54,13 +54,13 @@
 | social-wiring — leads, clients, deals, contracts, certidões, Julia | leads, buyers, sellers, spouses, witnesses, brokers | the client org (imobiliária; e.g. One Consultoria — `LGPD-WARNINGS.md:63`) | operador | high for CRM data |
 | social-wiring — Biblioteca de virais (third-party Reels) | third-party creators' voices | the org that registers the profile; **NoctusAI if it reuses outputs across orgs** | operador / controlador | open — §15 |
 | agents — Julia and every studio agent on WhatsApp | leads | the client org | operador | high; per-org LLM key ⇒ the LLM vendor is the **org's** operator, not NoctusAI's suboperador (`LGPD-WARNINGS.md:63` mitigation) |
-| monica → nosnolimiar — leads, WhatsApp, patients, clinical tools | prospective and current patients | Mônica / Nós no Limiar (`products/monica/projects/clinical-tools-build/DECISIONS.md:39` "Mônica = controller, NoctusAI = operator") | operador | high |
+| monica → nosnolimiar — leads, WhatsApp, patients, clinical tools | prospective and current patients | Mônica / Nós no Limiar (`products/nosnolimiar/projects/clinical-tools-build/DECISIONS.md:39` "Mônica = controller, NoctusAI = operator") | operador | high |
 | store — kit buyers (nome, e-mail, CPF at checkout) | consumers | the seller of the kit (fornecedor) — **identify the legal entity** (`consumer-ecommerce.md` §2) | operador if the seller is a client; controlador if NoctusAI sells | open |
 | mcp/vista — read tools over a client's Vista CRM | owners, brokers, clients | the client imobiliária | operador | high (`LGPD-WARNINGS.md:18`) |
 | Platform telemetry, cost ledgers, security logs | users | NoctusAI | controlador | high |
 | Aggregate/product-improvement use of client data | any | **NoctusAI becomes controller** for that purpose — needs its own basis | controlador | rule |
 
-**Gap in the published policy.** `consent.ts` §1 declares João Raphael controller of the platform's data with no statement that, for client-org data, NoctusAI acts as operator and the org is the controller. Titulares of client data (leads, patients) must find the **org's** controller identity and channel — the Julia per-org notice already does this for leads; monica's consent screen plans it (S-CO). **Proposed delta:** a §"Quando atuamos como operador" in the policy + per-org notices for every operator surface. Lawyer approves the text.
+**Gap in the published policy.** `consent.ts` §1 declares João Raphael controller of the platform's data with no statement that, for client-org data, NoctusAI acts as operator and the org is the controller. Titulares of client data (leads, patients) must find the **org's** controller identity and channel — the Julia per-org notice already does this for leads; nosnolimiar's consent screen plans it (S-CO). **Proposed delta:** a §"Quando atuamos como operador" in the policy + per-org notices for every operator surface. Lawyer approves the text.
 
 ## 3 · Legal bases per processing (arts. 7 and 11)
 
@@ -70,7 +70,7 @@
 - **Legitimate interest never covers sensitive data** — it exists only in art. 7, not art. 11 (ANPD LI guide fev/2024, p. 7) [órgão oficial]. Use the guide's 3-phase test — (1) finalidade, (2) necessidade, (3) balanceamento e salvaguardas — and **keep the test on record** (art. 10 §§1–3: only strictly necessary data; transparency; ANPD may demand a RIPD) [norma].
 - **Consent** must be for determined purposes (generic authorizations are void), revocable free of charge, and the controller carries the burden of proof (art. 8 §§2, 4, 5) [norma]. House proof = `ai_consent` rows with `rationale_pt` snapshot (`lgpd.md` §9).
 - **Art. 7 V is for the titular's own contract.** It fits buyer/seller civil qualification on their own promise contract (`lgpd.md` §11 register entry); it does **not** fit witnesses, spouses-as-anuentes or former owners — those need art. 7 II (registry/notarial obligation, where it exists), art. 7 VI or IX (legal obligation/rights/legitimate interest) [interpretation — lawyer confirms].
-- **Psychoanalysis is not a regulated health profession** ⇒ art. 11 II f (health protection "por profissionais de saúde") is doubtful; monica's clinical tools chose art. 11 I consent (`DECISIONS.md:38`) — correct conservative default, lawyer confirms [interpretation].
+- **Psychoanalysis is not a regulated health profession** ⇒ art. 11 II f (health protection "por profissionais de saúde") is doubtful; nosnolimiar's clinical tools chose art. 11 I consent (`DECISIONS.md:38`) — correct conservative default, lawyer confirms [interpretation].
 
 | Processing (house) | Data | Proposed basis | Tier / decision owner |
 |---|---|---|---|
@@ -164,7 +164,7 @@ RIPD — <processo> — v<n> — <data>
 7. Responder em linguagem simples; registrar data de resposta.
 ```
 
-**Known house gaps:** deleting a monica lead does not delete its chat/messages (`LGPD-WARNINGS.md:21` open item 2); no single "find everything about titular X" tool across products — a candidate `noctus.dev.*` tool (DSAR locator), routed to the tech-lead.
+**Known house gaps:** deleting a nosnolimiar lead does not delete its chat/messages (`LGPD-WARNINGS.md:21` open item 2); no single "find everything about titular X" tool across products — a candidate `noctus.dev.*` tool (DSAR locator), routed to the tech-lead.
 
 ## 7 · Automated decisions (art. 20)
 
@@ -210,7 +210,7 @@ Res. 2/2022 art. 4 II c lists "decisões tomadas unicamente com base em tratamen
 | OpenAI | Julia chats, extraction, clinical (therapy) | EUA | org's operator when the org's key is used; else NoctusAI's suboperador | provider DPA (usually EU SCCs) — ANPD Annex II verbatim? | **open** |
 | Anthropic | Biblioteca classification, igig assistant | EUA | suboperador | same question | **open** |
 | Google, Meta | OAuth, CAPI, WhatsApp | EUA/global | suboperador / independent controller (Meta platform terms) | provider terms | **open** |
-| Supabase | everything | region per project — **check** (monica `DECISIONS.md:41` S-RG) | suboperador | DPA | **open** |
+| Supabase | everything | region per project — **check** (nosnolimiar `DECISIONS.md:41` S-RG) | suboperador | DPA | **open** |
 | Cloudflare, Resend, VPS host | traffic, e-mail, hosting | global / per host | suboperador | DPA | **open** |
 | Asaas, D4Sign | payments, signatures | Brasil (verify) | suboperador | — (no transfer if BR) | verify |
 
@@ -280,7 +280,7 @@ The LGPD does not require a written contract, but the ANPD calls it good practic
 
 ## 14 · LGPD-WARNINGS triage plan (51 open on 2026-11-05)
 
-`LGPD-WARNINGS.md` is append-only by keeper (`check_lgpd_entry_removal`); this plan **proposes** a disposition per entry (by line number of the `- [ ]` line); it does not edit the file. Active products = `deploy/fleet/active-scope.txt` (agents, core, monica, seed, social-wiring); others are asleep.
+`LGPD-WARNINGS.md` is append-only by keeper (`check_lgpd_entry_removal`); this plan **proposes** a disposition per entry (by line number of the `- [ ]` line); it does not edit the file. Active products = `deploy/fleet/active-scope.txt` (agents, core, nosnolimiar, seed, social-wiring); others are asleep.
 
 | Bucket | Lines | Count | Who acts | Closure evidence |
 |---|---|---|---|---|

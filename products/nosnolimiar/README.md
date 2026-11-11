@@ -1,0 +1,61 @@
+# Nós no Limiar
+
+CRM do consultório de psicanálise de **Mônica Tangerino** (psicanalista; fala sobre os assuntos importantes da vida pelas lentes da psicanálise; Instagram `@psimonicatangerino` profissional, `@monicatangerino` pessoal). Primeiro produto da organização "Mônica Tangerino"; hoje CRM, no futuro ERP (o financeiro já está montado e escondido atrás de `status_pagina`; 022 renames the schema `monica` → `nosnolimiar`). UI em pt-BR. Tudo é órgão da seed — o produto só liga os órgãos.
+
+## Telas
+
+| Rota | O que é | Órgão da seed |
+|---|---|---|
+| `/` | Início: quantos leads em cada etapa do funil | `useLeadsBoard` |
+| `/leads` (Funil) · `/leads/lista` (Lista) | Kanban de leads (arrastar muda a etapa; clicar abre o lead; "abrir conversa") e a tabela com filtros (etapa, origem, data do 1º contato, busca). **Funil e Lista compartilham os filtros.** CRUD completo (a Mônica apaga números que não são leads) | `LeadsBoard`, `LeadsList`, `LeadDetailModal` |
+| `/conversas` | Conversas de WhatsApp: ler e responder, `?chat=` abre uma conversa, "Ver lead" no cabeçalho | `WhatsAppInbox` |
+| `/contexto` | Quem a Mônica é, em palavras dela (abordagem, serviços, tom de voz…) — a base do futuro agente de leads | `OrgSpecsForm` via proxy `/api/contexto` |
+| `/configuracoes/conexoes` | Conexão do WhatsApp por QR (só administradores). Abas como sub-rotas; cresce com uma linha em `sections` | `SectionTabsPage`, `WhatsAppConnectionsPage` |
+| `/pacientes` (Lista) · `/pacientes/agenda` (Agenda) · `/pacientes/:id` | Pacientes: lista (busca, status, tags, próxima sessão, valor em aberto), agenda semanal de todas as sessões e a página do paciente com abas Sessões · Agenda fixa · Financeiro · Dados. Horário semanal fixo gera as próximas 8 semanas de sessões; sessão realizada ou falta com valor vira conta a receber no Financeiro; "Registrar pagamento" (Pix, dinheiro, cartão, transferência — sem gateway) dá baixa nela. `?lead=` abre o paciente de um lead | `ClientsList`, `ClientsAgenda`, `ClientDetailPage` |
+| `/equipe` · `/financeiro` | Equipe e financeiro (organs da seed) | `TeamPage`, `FinanceRoutedPage` |
+
+Funil: **Lead → Atendimento → Negociação → Fechado**. Cada etapa tem uma etiqueta colorida no cartão e no lead: vermelha "Lead", amarela "Em atendimento" (Atendimento e Negociação), verde "Paciente" (Fechado). **Mover um lead para Fechado cria o paciente** (uma vez só; falha aparece como aviso, não desfaz a mudança) e o lead ganha "Ver paciente". Origens: WhatsApp, Instagram, Indicação, Outro (`backend/app/crm.py` — são dados, mudar não pede migration). Todo número novo que escreve (não-grupo) vira lead em "Lead" com origem WhatsApp; apagar o lead **não** o traz de volta (a conversa persiste — é o desejado). Toda mensagem, recebida ou enviada, atualiza a prévia do cartão.
+
+**Liga/desliga por app (fase de testes)**: cada conexão tem um interruptor (`PUT /api/whatsapp/connections/{id}/enabled`). Desligado, o Nós no Limiar ignora a linha (o webhook responde `disabled` e não grava nada; enviar dá 409) — outros apps no mesmo número continuam respondendo. Uma conexão `borrower` usa a sessão de WhatsApp de outro app: parear/reiniciar/desconectar ficam bloqueados. Com o app desligado, "Apagar dados de teste" (`POST .../purge`, digitando o nome da conexão) apaga conversas, mensagens e os leads automáticos que ninguém editou; leads editados são mantidos, sem o vínculo com a conversa. Detalhes: `KB § INTEGRATIONS/whatsapp.md`.
+
+## Stack
+
+- **Backend**: FastAPI via `create_product_app()` (porta 8020); `mount_leads` (gancho `on_stage_entered` → paciente), `mount_clients` (pacientes, sessões, horários, pagamentos), conexões + caixa de entrada do WhatsApp (`app/routers/whatsapp_router.py`), proxy `/api/contexto`, `mount_finance`.
+- **Frontend**: React via `createProductApp()` + `createProductLayout()` (porta 8240).
+- **Banco**: Supabase, schema `nosnolimiar` (migrations 001–022: leads, pacientes (`clients`, `client_sessions`, `client_schedules`, `client_payments`), `whatsapp_connections|chats|messages`, finance (012 + rev2 020: `fin_ledger_signed_sum`, tables service-role only), `status_pagina`; 022 renames the schema `monica` → `nosnolimiar`).
+
+## Configuração (nomes; valores só no `.env` do servidor)
+
+| Chave | Para quê |
+|---|---|
+| `ENCRYPTION_KEY` | Fernet: a chave da API do WAHA fica cifrada em `whatsapp_connections` (sem ela o boot em produção falha) |
+| `NOSNOLIMIAR_WAHA_BASE_URL` | URL do WAHA **próprio da Mônica**. Sem default; vazio ⇒ criar conexão responde 503 claro. **Nunca** o WAHA compartilhado (single-session, número da linha da Julia, nome legado "One Chat") |
+| `NOSNOLIMIAR_WAHA_SESSION` | sessão do WAHA (default `default`) |
+| `NOSNOLIMIAR_WAHA_WEBHOOK_HMAC_SECRET` | igual ao `WHATSAPP_HOOK_HMAC_KEY` do WAHA, se ele assinar |
+| `REDIS_URL` | tempo real da caixa de entrada (SSE entre workers). Sem Redis e sem a opção abaixo, o boot em produção recusa |
+| `NOSNOLIMIAR_INBOX_REALTIME_IN_PROCESS` | `true` declara 1 worker (sem Redis) |
+| `AGENTS_URL` / `PRODUCT_URL_AGENTS` | onde fica o produto `agents` (Contexto); `AGENTS_ALLOW_FAKE=true` só em dev |
+| `NOSNOLIMIAR_AGENT_KEY` | chave da definição de agente do Contexto (default `nosnolimiar-leads`) |
+
+## Rodando
+
+```bash
+uvicorn app.main:app --reload --port 8020 --app-dir products/nosnolimiar/backend
+cd products/nosnolimiar/frontend && npm run dev
+```
+
+## Testes
+
+```bash
+cd products/nosnolimiar/backend && pytest          # 100: 401 estrito, inbox -> lead, lead fechado -> paciente, contexto, finance, migrations
+cd products/nosnolimiar/frontend && npx vitest run # 10 CRM + finance route
+cd products/nosnolimiar/frontend && npx vite build
+```
+
+## Dados pessoais (LGPD)
+
+As conversas são dados pessoais ligados à saúde (consultório de psicanálise). Registro e pendências em `LGPD-WARNINGS.md` (entrada `products/nosnolimiar`) e `KB § PATTERNS/security/lgpd.md`. O contexto da Mônica (`agents.agent_org_specs`) é conteúdo dela, não de pacientes.
+
+## Operação
+
+`ops/agents/` — definição do agente `nosnolimiar-leads` (campos do Contexto) e o script de pré-preenchimento (preparado, não aplicado). Passos de go-live em `ops/agents/README.md`.

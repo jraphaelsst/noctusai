@@ -5,24 +5,24 @@
 name: noctus-waha
 
 services:
-  waha-monica:
-    # monica's own WhatsApp number (session `default`). Internal only: http://waha-monica:3000
+  waha-nosnolimiar:
+    # nosnolimiar's own WhatsApp number (session `default`). Internal only: http://waha-nosnolimiar:3000
     image: devlikeapro/waha:noweb-2026.9.2
     platform: linux/amd64
-    container_name: noctus-waha-monica
+    container_name: noctus-waha-nosnolimiar
     environment:
       WHATSAPP_DEFAULT_ENGINE: NOWEB
-      WHATSAPP_API_KEY: ${WAHA_MONICA_API_KEY:?generate WAHA_MONICA_API_KEY in .env.fleet on the VPS}
-      WHATSAPP_HOOK_HMAC_KEY: ${WAHA_MONICA_HMAC_SECRET:?generate WAHA_MONICA_HMAC_SECRET in .env.fleet on the VPS}
+      WHATSAPP_API_KEY: ${WAHA_NOSNOLIMIAR_API_KEY:?generate WAHA_NOSNOLIMIAR_API_KEY in .env.fleet on the VPS}
+      WHATSAPP_HOOK_HMAC_KEY: ${WAHA_NOSNOLIMIAR_HMAC_SECRET:?generate WAHA_NOSNOLIMIAR_HMAC_SECRET in .env.fleet on the VPS}
       WAHA_DASHBOARD_USERNAME: admin
-      WAHA_DASHBOARD_PASSWORD: ${WAHA_MONICA_DASHBOARD_PASSWORD:?generate WAHA_MONICA_DASHBOARD_PASSWORD in .env.fleet on the VPS}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_NOSNOLIMIAR_DASHBOARD_PASSWORD:?generate WAHA_NOSNOLIMIAR_DASHBOARD_PASSWORD in .env.fleet on the VPS}
       WHATSAPP_SWAGGER_USERNAME: admin
-      WHATSAPP_SWAGGER_PASSWORD: ${WAHA_MONICA_DASHBOARD_PASSWORD:?generate WAHA_MONICA_DASHBOARD_PASSWORD in .env.fleet on the VPS}
+      WHATSAPP_SWAGGER_PASSWORD: ${WAHA_NOSNOLIMIAR_DASHBOARD_PASSWORD:?generate WAHA_NOSNOLIMIAR_DASHBOARD_PASSWORD in .env.fleet on the VPS}
       NODE_OPTIONS: --max-old-space-size=384
     expose:
       - "3000"
     volumes:
-      - waha_monica:/app/.sessions
+      - waha_nosnolimiar:/app/.sessions
     networks:
       - noctus-net
     mem_limit: 512m
@@ -136,7 +136,7 @@ networks:
     name: noctus-waha-assistant-edge
 
 volumes:
-  waha_monica:
-    name: noctus-waha-monica
+  waha_nosnolimiar:
+    name: noctus-waha-nosnolimiar
   waha_assistant:
     name: noctus-waha-assistant

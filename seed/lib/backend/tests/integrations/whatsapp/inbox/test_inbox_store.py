@@ -195,15 +195,15 @@ def test_bad_cursor_is_a_value_error():
 
 def test_factory_refuses_without_client_unless_fake_opted_in():
     with pytest.raises(InboxStoreNotConfigured):
-        build_whatsapp_chat_store(None, schema="monica")
-    assert build_whatsapp_chat_store(None, schema="monica", allow_fake=True) is not None
+        build_whatsapp_chat_store(None, schema="nosnolimiar")
+    assert build_whatsapp_chat_store(None, schema="nosnolimiar", allow_fake=True) is not None
 
 
 def test_ddl_carries_the_load_bearing_constraints():
-    chats = whatsapp_chats_table_ddl("monica")
-    messages = whatsapp_messages_table_ddl("monica")
+    chats = whatsapp_chats_table_ddl("nosnolimiar")
+    messages = whatsapp_messages_table_ddl("nosnolimiar")
     assert "PRIMARY KEY (connection_id, chat_id)" in chats
-    assert "REFERENCES monica.whatsapp_connections(id) ON DELETE CASCADE" in chats
+    assert "REFERENCES nosnolimiar.whatsapp_connections(id) ON DELETE CASCADE" in chats
     assert "new_chat_notified_at" in chats and "ENABLE ROW LEVEL SECURITY" in chats
     assert "UNIQUE (connection_id, waha_message_id)" in messages
     assert "service_role_bypass" in messages and "current_org_id()" in messages

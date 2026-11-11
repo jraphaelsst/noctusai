@@ -264,12 +264,12 @@ between); goal status is recomputed from progress, never trusted from a client.
 from noctusai_lib.domain.metas import EventType, GoalCategory, MetasConfig, Modality, RuleSeed
 from noctusai_seed.organs import mount_engagement, mount_metas
 
-cfg = MetasConfig(schema="monica",
+cfg = MetasConfig(schema="nosnolimiar",
     event_types=(EventType("venda", "Venda"), EventType("captacao", "Captação")),
     modalities=(Modality("padrao", "Padrão"), Modality("compartilhada", "Compartilhada")),
     categories=(GoalCategory("vgv", "VGV", "value"), GoalCategory("vendas", "Vendas", "count:venda")),
     default_rules=(RuleSeed("venda", "padrao", 50.0), RuleSeed("captacao", "padrao", 1.0)))
-kw = dict(schema="monica", auth_dependency=get_current_user_org, get_admin_client=get_admin_client, get_core_client=get_core_client)
+kw = dict(schema="nosnolimiar", auth_dependency=get_current_user_org, get_admin_client=get_admin_client, get_core_client=get_core_client)
 app = create_product_app(..., organs=[mount_metas(cfg=cfg, **kw), mount_engagement(**kw)])
 ```
 

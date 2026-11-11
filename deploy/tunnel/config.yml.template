@@ -56,8 +56,8 @@ ingress:
     service: http://store:8018
   - hostname: commerce.noctusai.com
     service: http://commerce:8019
-  - hostname: monica.noctusai.com
-    service: http://monica:8020
+  - hostname: nosnolimiar.noctusai.com
+    service: http://nosnolimiar:8020
   - hostname: assistant.noctusai.com
     service: http://assistant:8021
   - hostname: igig.noctusai.com

@@ -38,6 +38,9 @@
 retired:
   - erp-imobiliario.noctusai.com
   - social-wiring.noctusai.com
+  # 2026-11-02, owner's decision: the product `monica` was renamed `nosnolimiar` ("Nós no Limiar"); the old
+  # host is retired with NO redirect (see project-history/roadmaps/nosnolimiar-rename-2026-11.md).
+  - monica.noctusai.com
 
 routes:
   # ── Apex → core ──────────────────────────────────────────────────────
@@ -118,9 +121,9 @@ routes:
   - hostname: commerce.noctusai.com
     service:  http://commerce:8019
 
-  # ── monica (prod exposure consented 2026-10-26; see deploy/consent/monica.prod.yml) ──
-  - hostname: monica.noctusai.com
-    service:  http://monica:8020
+  # ── nosnolimiar (renamed from monica 2026-11-02; see deploy/consent/nosnolimiar.prod.yml) ──
+  - hostname: nosnolimiar.noctusai.com
+    service:  http://nosnolimiar:8020
 
   # ── assistant (prod exposure consent: deploy/consent/assistant.prod.yml) ──
   - hostname: assistant.noctusai.com

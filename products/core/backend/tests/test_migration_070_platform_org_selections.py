@@ -29,29 +29,49 @@ def _declared_schemas() -> dict[str, str]:
     return out
 
 
-def _later_seed_row_schemas() -> dict[str, str]:
+def _later_seed_row_schemas() -> tuple[dict[str, str], dict[str, tuple[str, str | None]]]:
     """`db_schema` set by core seed-row migrations after 070 (070 is applied, so a
-    product scaffolded later maps itself in its own `NNN_seed_<slug>_product.sql`)."""
+    product scaffolded later maps itself in its own `NNN_seed_<slug>_product.sql`),
+    and product RENAMES after 070 (`UPDATE public.products SET slug = 'new', ...,
+    db_schema = 'new' WHERE slug = 'old'`, e.g. core 098 monica -> nosnolimiar), applied
+    in file order so a renamed product maps under its on-disk slug."""
     out: dict[str, str] = {}
+    renames: dict[str, tuple[str, str | None]] = {}
     for path in sorted(MIGRATION.parent.glob("*.sql")):
         if path.name <= MIGRATION.name:
             continue
+        text = path.read_text(encoding="utf-8")
         out.update(
             (slug, schema)
             for schema, slug in re.findall(
                 r"UPDATE\s+public\.products\s+SET\s+db_schema\s*=\s*'([^']+)'\s+WHERE\s+slug\s*=\s*'([^']+)'",
-                path.read_text(encoding="utf-8"),
+                text,
                 re.IGNORECASE,
             )
         )
-    return out
+        for set_clause, old in re.findall(
+            r"UPDATE\s+public\.products\s+SET\s+(.*?)\s+WHERE\s+slug\s*=\s*'([^']+)'\s*;",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            new = re.search(r"\bslug\s*=\s*'([^']+)'", set_clause, re.IGNORECASE)
+            if not new:
+                continue
+            schema = re.search(r"\bdb_schema\s*=\s*'([^']+)'", set_clause, re.IGNORECASE)
+            renames[old] = (new.group(1), schema.group(1) if schema else None)
+    return out, renames
 
 
 def test_backfill_equals_every_products_create_product_app_schema():
     declared = _declared_schemas()
     block = SQL.split("FROM (VALUES", 1)[1].split(") AS v(slug, db_schema)", 1)[0]
     backfill = dict(re.findall(r"\('([^']+)',\s*'([^']+)'\)", block))
-    backfill.update(_later_seed_row_schemas())
+    seed_rows, renames = _later_seed_row_schemas()
+    backfill.update(seed_rows)
+    for old, (new, schema) in renames.items():
+        if old in backfill:
+            backfill[new] = schema or backfill[old]
+            del backfill[old]
     # `store` etc. may have no catalog row yet; every on-disk product must be MAPPED.
     assert backfill == declared
 

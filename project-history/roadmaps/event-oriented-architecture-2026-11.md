@@ -9,8 +9,8 @@
 | P0 | Finance balances summed in SQL; `projection_reconcile` drift tool | **Landed and deployed** |
 | P1a | Seed E1 transition-log primitive + keeper `check_transition_log_hand_written` | Queued with the steward (c585f6f3b) |
 | P3 | Seed E2 event store (`es_streams`/`es_events`/`es_checkpoints`), plus a CI real-Postgres proof | Queued, stacked on P1a (863187f67) |
-| P1 pilots | Seed FUNNEL organ `pipeline_movimentos` (seed level, never per product); agents `thread_participantes` + opt-out; monica `client_sessions` | Next, after P1a lands |
-| P2 | monica clinical tools on E1 | After the P1 pilots |
+| P1 pilots | Seed FUNNEL organ `pipeline_movimentos` (seed level, never per product); agents `thread_participantes` + opt-out; nosnolimiar `client_sessions` | Next, after P1a lands |
+| P2 | nosnolimiar clinical tools on E1 | After the P1 pilots |
 | P4 | core `public.subscriptions` on E2: direct cutover, `imported_initial_state` event, revenue-movements projection | After P3 lands |
 | P5 | Broader projections and the first integration event (agents → SW Julia state feed; SW `cliente_touches`); outbox as a seed organ | After P4 |
 | Adoption | The 15 hand-written history tables in `mcp/noctusai/tests/transition_log_hand_written_baseline.json`, ratcheted down | Rolling |
