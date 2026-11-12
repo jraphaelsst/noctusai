@@ -10,7 +10,10 @@ Input contract (plan item 4), applied BEFORE anything is stored: `inbound_one_to
 API-sourced, no groups/status/broadcast, minus the exclusion list), then the intake store dedups on the WAHA message
 id, enforces forward-only from `paired_at` and keeps text only (`assistant.append_intake`).
 
-The line is read-only shadow: its policy is `send: disabled` (`ASSISTANT_WAHA_LINE_POLICY`) and no code path here sends.
+Live reply (owner decision 2026-11-12, OFF by default -- `ASSISTANT_REPLY_ENABLED`): each stored inbound text is also
+handed, through the `on_message` seam, to `app.live` (agent turn in `agents` -> bubbles back on the same line). The
+shadow data (intake + classifier) is untouched. The line policy must be `send: enabled` for the reply path; the only
+code that sends is `app.live.resposta`, behind its send-seam allow-list guard.
 """
 from __future__ import annotations
 
@@ -28,6 +31,7 @@ from noctusai_seed.whatsapp_connections_router import create_whatsapp_connection
 from noctusai_seed.whatsapp_inbox_router import create_whatsapp_inbox_router
 
 from app.config import settings
+from app.live.wiring import build_on_message, build_replier
 from app.dependencies import _db, coerce_org_uuid, get_admin_client, get_current_user_org
 from app.services.intake import IntakeChatStore
 from app.services.pairing import apply_session_status
@@ -48,10 +52,11 @@ def _intake_store() -> IntakeChatStore:
 def webhook_base_url(line_policy_json: str, product_url: Callable[[], str]) -> str:
     """Where WAHA posts inbound events.
 
-    On the Assistant's `send: disabled` line the WAHA core sits on a private network behind the edge deny proxy and
-    cannot reach the product; the edge's port 3001 is the WEBHOOK RELAY, and the seed client accepts `set_webhook`
-    ONLY under the policy's `webhook_relay` (KB § INTEGRATIONS/whatsapp.md §6a). So the relay IS the base when the
-    line declares one; the public product URL is used only for a line without a relay (local dev, a Fake)."""
+    A `send: disabled` line has an edge deny proxy: the WAHA core sits on a private network and cannot reach the
+    product, the edge's port 3001 is the WEBHOOK RELAY, and the seed client accepts `set_webhook` ONLY under the
+    policy's `webhook_relay` (KB § INTEGRATIONS/whatsapp.md §6a). So the relay IS the base when the line declares one.
+    The live (`send: enabled`) line has NO edge: its policy declares no relay and the webhook goes direct to the
+    product URL (also local dev, a Fake)."""
     if line_policy_json:
         relay = parse_line_policy(line_policy_json).webhook_relay
         if relay:
@@ -74,6 +79,10 @@ def _excluded() -> list[str]:
 def build_should_store():
     """The pre-store input contract, built from the live settings (exclusion list included)."""
     return inbound_one_to_one_only(_excluded())
+
+
+def _replier():
+    return build_replier(_connection_store, get_admin_client)
 
 
 async def _on_session_status(record, status: str) -> None:
@@ -106,7 +115,7 @@ router.include_router(
         webhook_hmac_secret=settings.assistant_waha_webhook_hmac_secret or None,
         resolve_org_id=coerce_org_uuid,
         should_store=build_should_store(),
-        read_only=True,
+        on_message=build_on_message(_replier),
         webhook_only=True,
         require_webhook_hmac=True,
         on_session_status=_on_session_status,

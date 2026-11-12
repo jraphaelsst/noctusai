@@ -1,4 +1,4 @@
-"""The webhook base on a `send: disabled` line is the edge relay, never the public product URL.
+"""The webhook base: the edge relay on a `send: disabled` line that declares one; the product URL on the live line.
 
 The WAHA core sits on a private network behind the edge deny proxy and cannot reach the product; the seed client
 refuses `set_webhook` outside the policy's `webhook_relay` (KB § INTEGRATIONS/whatsapp.md §6a). Registering the
@@ -38,3 +38,8 @@ def test_a_policy_without_relay_falls_back_to_the_product_url():
 def test_a_malformed_policy_raises_instead_of_guessing():
     with pytest.raises(ValueError):
         webhook_base_url("{not json", _never)
+
+
+def test_the_live_send_enabled_line_has_no_edge_so_the_webhook_goes_direct_to_the_product():
+    live = {"send": "enabled", "mark_online": True, "full_sync": True, "auto_repair": True}
+    assert webhook_base_url(json.dumps(live), lambda: "https://assistant.example.test") == "https://assistant.example.test"
