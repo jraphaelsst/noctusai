@@ -606,3 +606,38 @@ class TestWiringScannerKnowsMakeRouter:
         from tools.noctus.dev.scan_wiring import _APIROUTER_PREFIX_RE
         m = _APIROUTER_PREFIX_RE.search('router = make_router(tier="org", guard=get_current_user_org, prefix="/api/example")')
         assert m and m.group("prefix") == "/api/example"
+
+
+class TestScanMemo:
+    """The four whole-tree scans are memoised per process on a stat signature of their inputs: the real-tree keeper
+    tests (and `check_all`) used to re-scan the same unchanged tree ~10x (570 s of a 1500 s CI-parity budget)."""
+
+    def test_repeat_scan_of_an_unchanged_tree_is_a_hit_and_a_change_is_a_miss(self, tmp_path):
+        root = _tree(tmp_path, _HEAD + "@router.post('/hook')\ndef hook(): ...\n")
+        before = at.scan_cache_info()
+        first = at.classify_routes(root)
+        second = at.classify_routes(root)
+        mid = at.scan_cache_info()
+        assert mid["misses"] - before["misses"] == 1 and mid["hits"] - before["hits"] == 1
+        assert [r.key for r in first] == [r.key for r in second] and first
+        (root / "products/agents/backend/app/routers/r.py").write_text(
+            _HEAD + "@router.get('/agents/{k}/evals/runs')\ndef runs(ctx=Depends(require_member)): ...\n", encoding="utf-8")
+        third = at.classify_routes(root)
+        assert at.scan_cache_info()["misses"] - mid["misses"] == 1
+        assert [r.verdict for r in third] != [r.verdict for r in second]
+
+    def test_a_caller_mutating_a_result_never_poisons_the_cache(self, tmp_path):
+        root = _tree(tmp_path, _HEAD + "@router.post('/hook')\ndef hook(): ...\n")
+        at.analyze_streams(root).append({"key": "junk"})
+        at.analyze_tables(root)["findings"].append({"key": "junk"})
+        assert {"key": "junk"} not in at.analyze_streams(root)
+        assert {"key": "junk"} not in at.analyze_tables(root)["findings"]
+
+    def test_a_new_migration_invalidates_the_table_scan(self, tmp_path):
+        root = _tree(tmp_path, "")
+        at.analyze_tables(root)
+        (root / "products/agents/backend/migrations/090.sql").write_text(
+            "CREATE TABLE agents.widgets (id int);\nCOMMENT ON TABLE agents.widgets IS 'tier:platform';\n"
+            "GRANT SELECT ON agents.widgets TO authenticated;\n", encoding="utf-8")
+        after = at.analyze_tables(root)
+        assert any("widgets" in f["key"] for f in after["findings"])

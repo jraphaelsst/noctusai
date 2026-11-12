@@ -16,6 +16,7 @@ import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { financeKeys } from "@noctusai/lib";
 import { api } from "@/lib/api";
+import { errorCopy } from "@/lib/errorCopy";
 import { useAuthStore } from "@noctusai/seed/infra";
 
 // ---------------------------------------------------------------------------
@@ -161,7 +162,7 @@ export function useRequeueCharge() {
       toast.success("Cobrança enviada para a fila do gateway");
     },
     onError: (error: Error) => {
-      toast.error("Não foi possível enviar a cobrança ao gateway", { description: error.message });
+      toast.error("Não foi possível enviar a cobrança ao gateway", { description: errorCopy(error) });
     },
   });
 }
@@ -190,7 +191,7 @@ export function useCreateExtraCharge() {
       toast.success("Cobrança criada");
     },
     onError: (error: Error) => {
-      toast.error("Erro ao criar a cobrança", { description: error.message });
+      toast.error("Erro ao criar a cobrança", { description: errorCopy(error) });
     },
   });
 }

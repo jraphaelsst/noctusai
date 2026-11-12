@@ -59,7 +59,8 @@ async def monthly_cash_flow(month: str, auth: tuple = Depends(get_current_user_o
     try:
         summary = await asyncio.to_thread(lambda: FinancialService(get_admin_client(), org_id).monthly_cash_flow(month))
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        logger.warning("financial.cash_flow refused org=%s: %s", org_id, type(exc).__name__)
+        raise HTTPException(status_code=422, detail="invalid_month")
     except Exception:
         logger.exception("financial.cash_flow failed org=%s month=%s", org_id, month)
         raise HTTPException(status_code=502, detail="Falha ao calcular fluxo de caixa")

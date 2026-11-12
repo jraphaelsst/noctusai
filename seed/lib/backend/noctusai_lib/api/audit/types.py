@@ -10,6 +10,32 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, Mapping, Optional
 
+from noctusai_lib.api.token_link import token_fingerprint
+
+#: Path-parameter names that carry a bearer credential (an approval / report link token, a webhook routing token, a signature):
+#: the audit row stores their FINGERPRINT, never the value (owner mandate: a token must never land in a table or a log).
+#: Judged on the LAST ``_``-separated segment of the name, never a substring: ``invite_token``/``app_secret`` are secrets, while
+#: ``token_id``/``feature_key``/``signup_id``/``assignments`` are identifiers the audit trail must keep readable. A bare ``key``
+#: segment is an identifier (``item_key``, ``{key}``) unless the name is a known credential-key shape.
+_SECRET_LAST_SEGMENTS = frozenset({"token", "secret", "signature", "sig", "password", "hmac"})
+_SECRET_KEY_NAMES = frozenset({"api_key", "apikey", "secret_key", "private_key", "access_key", "service_role_key"})
+
+
+def is_secret_param_name(name: str) -> bool:
+    lowered = str(name).lower()
+    return lowered in _SECRET_KEY_NAMES or lowered.rsplit("_", 1)[-1] in _SECRET_LAST_SEGMENTS
+
+
+def redact_path_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    """``params`` with every secret-named value replaced by ``token_fingerprint(value)`` (idempotent: a fingerprint stays)."""
+    out: dict[str, Any] = {}
+    for name, value in dict(params or {}).items():
+        if value is not None and is_secret_param_name(name) and not str(value).startswith("tok:"):
+            out[name] = token_fingerprint(str(value))
+        else:
+            out[name] = value
+    return out
+
 #: Who/what issued the request. Detected by
 #: :func:`noctusai_lib.api.audit.detect.detect_actor_kind` from the
 #: ``X-Noctus-Client`` header + User-Agent — independent of whether an

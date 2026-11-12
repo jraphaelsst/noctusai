@@ -636,6 +636,15 @@ class TestNeverPublishesAndKeepsTheSecret:
         monkeypatch.setenv("NOCTUS_AGENTS_ENV_FILE", str(f))
         assert run(srv, private, action="list", kind="texto", agent="julia")["status"] == "ok"
 
+    def test_the_url_can_come_from_the_agents_env_file_too(self, srv, private, monkeypatch, tmp_path):
+        # 2026-11-11: the file carried both keys, the token was read from it and the URL was not -> base_url_ausente
+        f = tmp_path / "agents.env"
+        f.write_text(f"{C.ENV_URL}={srv.url}\n", encoding="utf-8")
+        monkeypatch.delenv(C.ENV_URL, raising=False)
+        monkeypatch.setenv("NOCTUS_AGENTS_ENV_FILE", str(f))
+        out = C.content("list", "texto", agent="julia")
+        assert out["status"] == "ok" and srv.log, out
+
 
 class TestInputsAreGuarded:
     def test_a_payload_inside_a_git_work_tree_is_refused(self, srv, tmp_path):

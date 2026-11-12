@@ -20,6 +20,7 @@ import { useQuery } from "@tanstack/react-query";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { errorCopy } from "@/lib/errorCopy";
 import { useAuthStore } from "@noctusai/seed/infra";
 
 // ---------------------------------------------------------------------------
@@ -247,7 +248,7 @@ export function useGenerateSnapshot() {
       toast.success("Snapshot gerado com sucesso!");
     },
     onError: (error: Error) => {
-      toast.error("Erro ao gerar snapshot", { description: error.message });
+      toast.error("Erro ao gerar snapshot", { description: errorCopy(error) });
     },
   });
 }

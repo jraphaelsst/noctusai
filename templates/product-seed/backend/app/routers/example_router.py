@@ -34,6 +34,7 @@ from app.dependencies import (
     get_user_client,
 )
 from noctusai_lib.api.access_tiers import make_router
+from noctusai_lib.api.integration_errors import integration_error
 
 from app.schemas.example import (
     ExampleCreate,
@@ -67,7 +68,7 @@ async def list_examples(
         result = await service.list(limit=limit, cursor=cursor)
     except ExampleServiceError as exc:
         logger.exception("example.list failed for org=%s", org_id)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise integration_error("upstream_error", exc=exc, op="example.list") from exc
     return ExampleListResponse(**result)
 
 
@@ -88,7 +89,7 @@ async def create_example(
         row = await service.create(payload=payload.model_dump(mode="json"))
     except ExampleServiceError as exc:
         logger.exception("example.create failed for org=%s", org_id)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise integration_error("upstream_error", exc=exc, op="example.create") from exc
     return ExampleOut(**row)
 
 
@@ -132,7 +133,7 @@ async def update_example(
         row = await service.update(example_id=example_id, payload=data)
     except ExampleServiceError as exc:
         logger.exception("example.update failed for org=%s id=%s", org_id, example_id)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise integration_error("upstream_error", exc=exc, op="example.update") from exc
     if not row:
         raise HTTPException(status_code=404, detail="Exemplo não encontrado")
     return ExampleOut(**row)
@@ -158,7 +159,7 @@ async def delete_example(
         ok = await service.delete(example_id=example_id)
     except ExampleServiceError as exc:
         logger.exception("example.delete failed for org=%s id=%s", org_id, example_id)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise integration_error("upstream_error", exc=exc, op="example.delete") from exc
     if not ok:
         raise HTTPException(status_code=404, detail="Exemplo não encontrado")
     return {"ok": True}

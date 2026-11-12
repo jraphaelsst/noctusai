@@ -16220,6 +16220,24 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
 #: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
 #: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
 _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
+    # orbity 035: composite (org_id, ...) unique indexes that exist ONLY as ON CONFLICT arbiters for the org-bound client (it
+    # refuses an upsert whose conflict target lacks org_id). The old, stricter global keys (campaign_metrics_campaign_date_ux,
+    # lead_scoring_results_lead_id_key) stay and fire first on any duplicate (same error class), so a duplicate-insert probe
+    # could never attribute the refusal to the new index. Not a refusal guard of its own: what must hold is that the conflict
+    # target RESOLVES, and that is asserted on the real chain by mcp/noctusai/tests/test_orbity_service_role_hardening_on_replay.py
+    # (a zero-row INSERT ... ON CONFLICT (org_id, ...) fails with 42P10 if the index is missing).
+    (
+        "products/orbity/backend/migrations/035_orbity_function_and_grant_hardening.sql",
+        "campaign_metrics_org_campaign_date_ux",
+        "ON CONFLICT arbiter shadowed by the stricter pre-existing (campaign_id, date) key, which refuses the same duplicate first; "
+        "resolution of the arbiter is asserted on the replayed chain (42P10 if missing), not by a refusal probe.",
+    ),
+    (
+        "products/orbity/backend/migrations/035_orbity_function_and_grant_hardening.sql",
+        "lead_scoring_results_org_lead_ux",
+        "ON CONFLICT arbiter shadowed by the stricter pre-existing UNIQUE (lead_id), which refuses the same duplicate first; "
+        "resolution of the arbiter is asserted on the replayed chain (42P10 if missing), not by a refusal probe.",
+    ),
     # assistant 015: the seed connection table's UNIQUE index on the random per-line webhook routing token (a lookup key,
     # not a business invariant; same shape as the erp portal token below). The table is empty until the owner pairs the
     # line (S6), so a rollback-only probe has no row to borrow and the product is dev-scope.
@@ -25526,11 +25544,23 @@ _PERFORMATIVE_VERBS = r"authoriz\w*|authoris\w*|approv\w*|allow\w*|permit\w*|con
 #: Verbs that DIRECT the action — the user is naming this product for prod.
 _DIRECTIVE_VERBS = r"deploy\w*|publish\w*|ship\w*|launch\w*|promot\w*|releas\w*|go[- ]live"
 #: Markers that make a sentence hypothetical, negated, or deferred.
+#: Matched on text with curly apostrophes folded to "'" (`_fold_apostrophes`). 2026-11-11 (found by 8a):
+#: "i cant keep on deploy to prod and validating while users are using ..." - the owner describing a
+#: release CADENCE, negated without an apostrophe - was cited as the deploy ask over the real one.
 _NON_COMMITTAL = (
-    r"\b(not|never|dont|don't|do not|isn't|isnt|cannot|can't|won't|wont|without|"
+    r"\b(not|never|dont|don't|do not|isn't|isnt|cannot|can't|cant|can not|won't|wont|"
+    r"shouldn't|shouldnt|couldn't|couldnt|wouldn't|wouldnt|mustn't|mustnt|without|"
     r"stop|avoid|hold off|not yet|before|until|unless|if|whether|should we|"
-    r"can we|could we|would we|do we|are we|when do|how do|what if)\b"
+    r"can we|could we|would we|do we|are we|when do|how do|what if|keep on|"
+    # purpose / possibility / example framing (8a, same 2026-11-11 turn): "so we can deploy to prod once on a
+    # schedule ... for example" describes a FUTURE cadence, it does not ask.
+    r"so we can|so that|we can|we could|we'd|we would|would|could|might|able to|for example|"
+    r"for instance|someday|eventually|one day|in the future)\b"
 )
+
+
+def _fold_apostrophes(text: str) -> str:
+    return text.replace("\u2019", "'").replace("\u2018", "'")
 
 
 #: CONSENT PHASE (owner decision 2026-11-11, typed live in the steward's terminal and confirmed in e1's):
@@ -25557,7 +25587,7 @@ def _owner_deploy_ask(text: str, phase: str | None = None) -> bool:
 
     if (phase or CONSENT_PHASE) != "pre-third-users" or not text:
         return False
-    t = " ".join(text.split()).casefold()
+    t = _fold_apostrophes(" ".join(text.split()).casefold())
     for m in re.finditer(rf"\b(?:{_OWNER_ASK_VERBS})\b(?!-)|{_OWNER_ASK_TO_PROD}", t):
         clause = t[max(0, m.start() - 60):m.start()].rsplit(".", 1)[-1].rsplit(",", 1)[-1]
         if re.search(_NON_COMMITTAL, clause) or t[m.end():m.end() + 1] == "?":
@@ -25600,7 +25630,7 @@ def _authorization_tier(slug: str, text: str, phase: str | None = None) -> str |
 
     if not text or not slug:
         return None
-    t = " ".join(text.split()).casefold()
+    t = _fold_apostrophes(" ".join(text.split()).casefold())
     if re.search(r"\bun(authoriz|authoris|approv)\w*", t):
         return None
     if slug.casefold() in t and re.search(r"\b(prod|production)\b", t):
@@ -25673,6 +25703,21 @@ def _is_harness_injected_queue_content(content: str) -> bool:
     return content.lstrip().startswith(_HARNESS_QUEUE_PREFIXES)
 
 
+#: A block the human PASTED (the harness wraps it in `<pasted_content id=...>` tags). Its text came from
+#: somewhere else - very often an agent's own message pasted back - so it is never the human's words.
+_PASTED_BLOCK_RE = re.compile(
+    r"<pasted_content\b[^>]*>.*?(?:</pasted_content>|\Z)", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_pasted_content(text: str) -> str:
+    """Drop every pasted block (an unclosed one runs to the end), keeping only what the human TYPED.
+
+    The 2026-11-11 defect (found by 8a): the owner pasted b5's message back - which quoted the canonical
+    sentence "I authorize assistant to be published to production." - and `prod_consent author` cited
+    that AGENT text as the owner's consent. Same shape as the 2026-08-16 wrong-message citation."""
+    return _PASTED_BLOCK_RE.sub(" ", text or "")
+
+
 def _human_authored_transcript_texts(
     session_id: str, home: Path | None = None
 ) -> tuple[list[str], str]:
@@ -25693,7 +25738,9 @@ def _human_authored_transcript_texts(
         only in this shape, never as a `promptSource="typed"` record.
 
     Sidechain (subagent) records are excluded: a subagent's conversation is
-    not the user speaking to the tech-lead.
+    not the user speaking to the tech-lead. PASTED blocks (`<pasted_content>`)
+    are stripped from every message (`_strip_pasted_content`): a paste is
+    someone else's text, often the agent's own, never the human's words.
 
     Returns `(entries, detail)` where each entry is `(source, text)` —
     provenance is carried, not flattened away, so the consent record can
@@ -25729,20 +25776,20 @@ def _human_authored_transcript_texts(
                 if rec.get("operation") == "enqueue":
                     content = str(rec.get("content") or "")
                     if not _is_harness_injected_queue_content(content):
-                        entries.append(("queued", content))
+                        entries.append(("queued", _strip_pasted_content(content)))
                 continue
             source = rec.get("promptSource")
             if rtype != "user" or source not in _HUMAN_PROMPT_SOURCES or rec.get("isMeta"):
                 continue
             content = (rec.get("message") or {}).get("content")
             if isinstance(content, str):
-                entries.append((str(source), content))
+                entries.append((str(source), _strip_pasted_content(content)))
             elif isinstance(content, list):
                 for block in content:
                     # `tool_result` blocks are the agent's own output echoed
                     # back — never the human speaking.
                     if isinstance(block, dict) and block.get("type") == "text":
-                        entries.append((str(source), str(block.get("text") or "")))
+                        entries.append((str(source), _strip_pasted_content(str(block.get("text") or ""))))
     return entries, ""
 
 
@@ -26969,6 +27016,20 @@ def check_new_dependency_justified(paths: list[str] | None = None, repo_root: Pa
                 "mechanism on stated metrics (recall/precision, speed, cost, maintenance, fit, security) and record "
                 "numbers in mcp/noctusai/dependency-additions.json (skill noc-dep-update, gate 0).")})
     return issues
+
+
+# ---------------------------------------------------------------------------
+# NO-LEAKING (owner rule 2026-11-11): an HTTP error body is a CODE, never exception text. Logic in `http_detail_echo.py`;
+# construction `noctusai_lib.api.integration_errors.integration_error`. Seed = zero tolerance; products ratcheted by
+# `deploy/security/http-detail-echo-baseline.json` (only shrinks). KB § PATTERNS/security/appsec-craft-canon.md.
+# ---------------------------------------------------------------------------
+def check_http_detail_echoes_exception(repo_root: Path | None = None) -> list[dict]:
+    """`HTTPException(detail=<expr>)` / error `JSONResponse` bodies that reference the caught exception (`str(exc)`,
+    `f"{exc}"`, `repr(exc)`, `exc.args`) over `seed/**` + `products/*/backend/app/**`. BLOCKING: any seed echo; any
+    product echo not in the ratchet baseline. Escape: `# detail-safe: <reason>` on the call."""
+    from tools.noctus.dev import http_detail_echo
+
+    return http_detail_echo.check(repo_root or REPO_ROOT)
 
 
 # ---------------------------------------------------------------------------

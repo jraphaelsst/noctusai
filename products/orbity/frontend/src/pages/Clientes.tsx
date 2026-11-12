@@ -16,6 +16,7 @@ import { Button, useIsOrgAdmin } from "@noctusai/lib/design-system";
 import { ClientForm, EMPTY_CLIENT, valuesOf, type ClientFormValues, type ClientRowLike } from "@/components/ClientForm";
 import { ClientOffboardingDialog } from "@/components/ClientOffboardingDialog";
 import { api } from "@/lib/api";
+import { errorCopy } from "@/lib/errorCopy";
 import { useQueryClient } from "@tanstack/react-query";
 
 interface ClientRow extends ClientRowLike {
@@ -42,15 +43,13 @@ async function reactivateClient(id: string, reload: () => void) {
     toast.success("Cliente reativado");
     reload();
   } catch (err: unknown) {
-    toast.error("Falha ao reativar cliente", { description: err instanceof Error ? err.message : undefined });
+    toast.error("Falha ao reativar cliente", { description: errorCopy(err) });
   }
 }
 
 /** The server's pt-BR reason (`{detail}` of a 409 etc.), not the transport `[409] ...` wrapper. */
 function serverReason(err: unknown): string {
-  const body = (err as { body?: { detail?: unknown } } | null)?.body;
-  if (typeof body?.detail === "string") return body.detail;
-  return err instanceof Error ? err.message : "Falha ao excluir cliente";
+  return errorCopy(err) ?? "Falha ao excluir cliente";
 }
 
 export default function Clientes() {

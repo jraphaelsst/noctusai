@@ -42,9 +42,8 @@ from noctusai_lib.api.rate_limit import client_ip_key
 
 from app.dependencies import (
     coerce_org_uuid,
-    get_admin_client,
     get_current_user_org,
-    get_user_client,
+    get_org_client,
 )
 from app.schemas.crm import (
     ActivityCreate,
@@ -78,7 +77,7 @@ capture_router = APIRouter(tags=["Lead Capture"])
 # ---------------------------------------------------------------------------
 
 def _crm(token: str, org_id: UUID) -> CRMService:
-    return CRMService(get_user_client(token), org_id=org_id)
+    return CRMService(get_org_client(org_id), org_id=org_id)
 
 
 def _admin_crm(org_id: UUID) -> CRMService:
@@ -87,7 +86,7 @@ def _admin_crm(org_id: UUID) -> CRMService:
     Used exclusively by the unauthenticated public capture endpoint so
     RLS service_role bypass policy allows the INSERT.
     """
-    return CRMService(get_admin_client(), org_id=org_id)
+    return CRMService(get_org_client(org_id), org_id=org_id)
 
 
 async def _emit_stage_change(
@@ -126,6 +125,8 @@ def get_funil(auth: tuple = Depends(get_current_user_org)) -> list:
     org_id = coerce_org_uuid(raw_org)
     try:
         return _crm(token, org_id).get_funil()
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.funil failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao carregar funil")
@@ -137,6 +138,8 @@ def list_stages(auth: tuple = Depends(get_current_user_org)) -> list:
     org_id = coerce_org_uuid(raw_org)
     try:
         return _crm(token, org_id).list_stages()
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.stages failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar etapas")
@@ -155,6 +158,8 @@ def seed_default_stages(auth: tuple = Depends(get_current_user_org)) -> list:
     org_id = coerce_org_uuid(raw_org)
     try:
         return _crm(token, org_id).seed_default_stages()
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.seed_default_stages failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar etapas padrão")
@@ -185,6 +190,8 @@ def list_leads(
             page=page,
             page_size=page_size,
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.list_leads failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar leads")
@@ -203,6 +210,8 @@ async def create_lead(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _crm(token, org_id).create_lead(payload.model_dump(mode="json", exclude_none=True))
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.create_lead failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar lead")
@@ -223,6 +232,8 @@ def get_lead(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _crm(token, org_id).get_lead(lead_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.get_lead failed org=%s id=%s", org_id, lead_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar lead")
@@ -255,6 +266,8 @@ async def update_lead(
             previous_stage_id = str(before["stage_id"]) if before and before.get("stage_id") else None
             stage = svc.get_stage(data["stage_id"])
         row = svc.update_lead(lead_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.update_lead failed org=%s id=%s", org_id, lead_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar lead")
@@ -278,7 +291,7 @@ def delete_lead(
     try:
         if crm.get_lead(lead_id) is None:
             raise HTTPException(status_code=404, detail="Lead não encontrado")
-        AutomationService(get_user_client(token), org_id=org_id).cancel_for_removed_lead(lead_id)
+        AutomationService(get_org_client(org_id), org_id=org_id).cancel_for_removed_lead(lead_id)
         ok = crm.delete_lead(lead_id, deleted_by=str(user.id) if hasattr(user, "id") else None)
     except HTTPException:
         raise
@@ -313,7 +326,10 @@ async def move_stage(
             user_id=str(user.id) if hasattr(user, "id") else None,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        logger.warning("crm.move_stage refused org=%s lead=%s: %s", org_id, lead_id, type(exc).__name__)
+        raise HTTPException(status_code=400, detail="invalid_stage")
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.move_stage failed org=%s lead=%s", org_id, lead_id)
         raise HTTPException(status_code=502, detail="Falha ao mover lead")
@@ -369,7 +385,10 @@ def add_activity(
             created_by=str(user.id) if hasattr(user, "id") else None,
         )
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("crm.add_activity refused org=%s lead=%s: %s", org_id, lead_id, type(exc).__name__)
+        raise HTTPException(status_code=404, detail="lead_not_found")
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.add_activity failed org=%s lead=%s", org_id, lead_id)
         raise HTTPException(status_code=502, detail="Falha ao registrar atividade")
@@ -395,7 +414,10 @@ def score_lead(
     try:
         row = _crm(token, org_id).score_lead(lead_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("crm.score_lead refused org=%s lead=%s: %s", org_id, lead_id, type(exc).__name__)
+        raise HTTPException(status_code=404, detail="lead_not_found")
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.score_lead failed org=%s lead=%s", org_id, lead_id)
         raise HTTPException(status_code=502, detail="Falha ao pontuar lead")
@@ -427,6 +449,8 @@ def list_scoring_rules(
         if form_id:
             query = query.eq("form_id", form_id)
         result = query.execute()
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.list_scoring_rules failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar regras")
@@ -448,6 +472,8 @@ def create_scoring_rule(
     row_data = {**payload.model_dump(mode="json"), "org_id": str(org_id)}
     try:
         result = svc._t("lead_scoring_rules").insert(row_data).execute()
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.create_scoring_rule failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar regra")
@@ -481,6 +507,8 @@ def update_scoring_rule(
             .eq("id", rule_id)
             .execute()
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.update_scoring_rule failed org=%s id=%s", org_id, rule_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar regra")
@@ -509,6 +537,8 @@ def delete_scoring_rule(
             .eq("id", rule_id)
             .execute()
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.delete_scoring_rule failed org=%s id=%s", org_id, rule_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar regra")
@@ -536,7 +566,9 @@ def _record_honeypot_discard(org_id: UUID) -> None:
     """One no-PII event (org + kind + time) per discarded submission: the bot rate is measurable. A failed write is logged
     LOUD and never changes the response (the bot must not learn anything from it)."""
     try:
-        get_admin_client().table("capture_events").insert({"org_id": str(org_id), "kind": "honeypot_discarded"}).execute()
+        get_org_client(org_id).table("capture_events").insert({"org_id": str(org_id), "kind": "honeypot_discarded"}).execute()
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("capture_events: could not record the honeypot discard org=%s", org_id)
     logger.info("capture_honeypot_discarded org=%s", org_id)
@@ -587,7 +619,10 @@ async def capture_lead(
         svc = _admin_crm(org_id)
         row = svc.capture_lead(raw)
     except CaptureStageInvalid as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        logger.warning("capture_lead refused org=%s: %s", org_id, type(exc).__name__)
+        raise HTTPException(status_code=422, detail="capture_stage_invalid") from exc
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("capture_lead failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao registrar lead")

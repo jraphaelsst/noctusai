@@ -18,6 +18,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { errorCopy } from "@/lib/errorCopy";
 import { useAuthStore } from "@noctusai/seed/infra";
 
 // ---------------------------------------------------------------------------
@@ -345,7 +346,7 @@ export function useTriggerFlow() {
       toast.success("Fluxo disparado com sucesso!");
     },
     onError: (error: Error) => {
-      toast.error("Erro ao disparar fluxo", { description: error.message });
+      toast.error("Erro ao disparar fluxo", { description: errorCopy(error) });
     },
   });
 }

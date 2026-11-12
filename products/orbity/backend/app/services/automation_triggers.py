@@ -107,8 +107,8 @@ def disparar(
             logger.warning("automation.disparar: %s without a subject — ignored", trigger_type)
             return started
         if db is None:
-            from app.dependencies import get_admin_client
-            db = get_admin_client()
+            from app.dependencies import get_org_client
+            db = get_org_client(UUID(str(org_id)))  # org-bound: this emitter can only ever see/touch THIS org's flows
 
         svc = AutomationService(db, org_id=UUID(str(org_id)))
         flows = (

@@ -27,6 +27,7 @@ from typing import Awaitable, Callable
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
+from noctusai_lib.api.integration_errors import integration_error
 from noctusai_lib.integrations.whatsapp.log_safety import install_phone_scrub
 from noctusai_lib.integrations.whatsapp.dedup import (
     InMemoryWebhookDedup,
@@ -131,10 +132,7 @@ def create_whatsapp_webhook_router(
             logger.debug("WhatsApp inbound ignored: %s", exc)
             return {"status": "ignored"}
         except WhatsAppPayloadError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(exc),
-            ) from exc
+            raise integration_error("invalid_payload", exc=exc, op="inbound_parse") from exc
 
         if inbound.provider_message_id and not _dedup.claim(
             inbound.provider_message_id

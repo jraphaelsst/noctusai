@@ -44,7 +44,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.dependencies import (
     coerce_org_uuid,
     get_current_user_org,
-    get_user_client,
+    get_org_client,
 )
 from app.schemas.meta_ads import (
     AdAccountCreate,
@@ -73,7 +73,7 @@ router = APIRouter(tags=["Meta Ads"])
 # ---------------------------------------------------------------------------
 
 def _svc(token: str, org_id: UUID) -> MetaAdsService:
-    return MetaAdsService(get_user_client(token), org_id=org_id)
+    return MetaAdsService(get_org_client(org_id), org_id=org_id)
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +97,8 @@ def list_ad_accounts(
             page=page,
             page_size=page_size,
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("meta_ads.list_ad_accounts failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar contas de anúncio")
@@ -115,6 +117,8 @@ def create_ad_account(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).create_ad_account(payload.model_dump(mode="json", exclude_none=True))
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("meta_ads.create_ad_account failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao conectar conta de anúncio")
@@ -134,6 +138,8 @@ def get_ad_account(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_ad_account(account_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("meta_ads.get_ad_account failed org=%s id=%s", org_id, account_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar conta de anúncio")
@@ -159,6 +165,8 @@ def update_ad_account(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
         row = _svc(token, org_id).update_ad_account(account_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "meta_ads.update_ad_account failed org=%s id=%s", org_id, account_id
@@ -181,6 +189,8 @@ def delete_ad_account(
     org_id = coerce_org_uuid(raw_org)
     try:
         ok = _svc(token, org_id).delete_ad_account(account_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "meta_ads.delete_ad_account failed org=%s id=%s", org_id, account_id
@@ -216,6 +226,8 @@ def list_campaigns(
             page=page,
             page_size=page_size,
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("meta_ads.list_campaigns failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar campanhas")
@@ -236,6 +248,8 @@ def create_campaign(
         row = _svc(token, org_id).create_campaign(
             payload.model_dump(exclude_none=True, mode="json")
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("meta_ads.create_campaign failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar campanha")
@@ -255,6 +269,8 @@ def get_campaign(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_campaign(campaign_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "meta_ads.get_campaign failed org=%s id=%s", org_id, campaign_id
@@ -282,6 +298,8 @@ def update_campaign(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
         row = _svc(token, org_id).update_campaign(campaign_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "meta_ads.update_campaign failed org=%s id=%s", org_id, campaign_id
@@ -304,6 +322,8 @@ def delete_campaign(
     org_id = coerce_org_uuid(raw_org)
     try:
         ok = _svc(token, org_id).delete_campaign(campaign_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "meta_ads.delete_campaign failed org=%s id=%s", org_id, campaign_id
@@ -329,6 +349,8 @@ def update_situation(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).update_situation(campaign_id, payload.situation)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "meta_ads.update_situation failed org=%s id=%s", org_id, campaign_id
@@ -361,6 +383,8 @@ def list_campaign_metrics(
             date_from=date_from,
             date_to=date_to,
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "meta_ads.list_campaign_metrics failed org=%s campaign=%s",
@@ -385,6 +409,8 @@ def put_campaign_metric(
     svc = _svc(token, org_id)
     try:
         campaign = svc.get_campaign(str(campaign_id))
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "meta_ads.put_campaign_metric lookup failed org=%s campaign=%s",
@@ -399,6 +425,8 @@ def put_campaign_metric(
     data["campaign_id"] = str(campaign_id)
     try:
         row = svc.upsert_campaign_metric(data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "meta_ads.put_campaign_metric failed org=%s campaign=%s",
@@ -435,7 +463,10 @@ def sync_campaigns(
     try:
         result = _svc(token, org_id).sync_campaigns(str(payload.ad_account_id))
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("meta_ads.sync refused org=%s: %s", org_id, type(exc).__name__)
+        raise HTTPException(status_code=404, detail="ad_account_not_found")
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "meta_ads.sync_campaigns failed org=%s account=%s",
@@ -473,6 +504,8 @@ def get_aggregate(
             period_end=period_end,
             client_id=client_id,
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("meta_ads.aggregate failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao calcular agregado")

@@ -12,6 +12,7 @@ import { useConfirm } from "@noctusai/lib/components";
 import { Button, Dialog, DialogBody, DialogFooter, DialogHeader, Skeleton } from "@noctusai/lib/design-system";
 import { RetryError } from "@noctusai/lib/organ-kit";
 import { api } from "@/lib/api";
+import { errorCopy } from "@/lib/errorCopy";
 import { formatCents, formatDay } from "@/lib/charges";
 
 export type ChargeAction = "cancel" | "keep";
@@ -96,7 +97,7 @@ export function ClientOffboardingDialog({ clientId, open, onClose, onDone }: { c
       queryClient.invalidateQueries({ queryKey: ["orbity-client-options"] });
       onDone();
     } catch (err: unknown) {
-      toast.error("Falha ao inativar cliente", { description: err instanceof Error ? err.message : undefined });
+      toast.error("Falha ao inativar cliente", { description: errorCopy(err) });
     } finally {
       setSubmitting(false);
     }
@@ -109,7 +110,7 @@ export function ClientOffboardingDialog({ clientId, open, onClose, onDone }: { c
         {showSkeleton ? (
           <Skeleton className="h-32 w-full" />
         ) : preview.isError && !data ? (
-          <RetryError message={`Erro ao carregar as cobranças do cliente: ${preview.error.message}`} onRetry={() => void preview.refetch()} retryLabel="Tentar novamente" />
+          <RetryError message={`Erro ao carregar as cobranças do cliente: ${errorCopy(preview.error)}`} onRetry={() => void preview.refetch()} retryLabel="Tentar novamente" />
         ) : data ? (
           <div className="space-y-4">
             {data.charges.length === 0 ? (

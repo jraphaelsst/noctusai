@@ -197,7 +197,9 @@ frontend-owned (`frontend-craft-canon.md` §4.2, WE1); designers spec the APG be
 
 ---
 
-## 4 · Design-time checks (run on every mockup — before any code)
+## 4 · Design-time checks (run on every mockup when one exists; otherwise on the built screen)
+
+> 2026-11-11 (owner: 'mockup rule shouldnt block'): mockups are made only on the owner's ask, so these checks also run on the built screen.
 
 1. **Contrast table.** List every token pair the mockup uses (text on surface, icon on surface, border
    on surface, fill + label). Look each up in §3.1 (or compute). Anything below 4.5 (text) / 3.0 (UI)

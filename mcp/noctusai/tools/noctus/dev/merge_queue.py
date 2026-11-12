@@ -26,6 +26,15 @@ Shape
   rebased over without a re-test — the same predicate `test.yml` paths-ignore
   uses). Red -> retry the failed jobs once (flake guard), then halve the batch
   (bisection): a batch of one that is red is ejected with its failing jobs.
+* PRIORITY LANE (2026-11-11): an entry whose diff touches `.github/` or whose tip
+  carries an `MQ-Priority: <why>` trailer composes FIRST and ALONE, ahead of
+  oldest-first and of an open bisection.
+* PARALLEL WAVE (2026-11-11): up to `PARALLEL_CANDIDATES` product-disjoint
+  groups (`products/<slug>/` only; anything else is the shared area and never
+  runs alongside another) are composed on the same base and tested
+  concurrently. The first green lands; a later green lands without a re-run
+  only when its re-composed tree is the exact union of the two tested trees,
+  otherwise it stays queued and is re-tested. KB merge-queue.md § 6c.
 * VERDICT: a commit status `merge-queue` on the ENQUEUED sha (success = landed,
   description names the dev sha; failure = ejected + why). `task_branch
   action='landed'` reads it and runs the post-landing tail.
@@ -38,6 +47,7 @@ construction instead of by discipline.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import re
@@ -64,10 +74,25 @@ POST_LAND_DISPATCH: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 # A queue ref is `mq/<slug>--<sha7>`; the slug is everything before the last `--`.
 WORKFLOW_PREFIX = ".github/workflows/"
+EXTRAHEADER_KEY = "http.https://github.com/.extraheader"  # actions/checkout's persisted github.token header
 PUSH_TOKEN_ENV = "MQ_PUSH_TOKEN"  # fine-grained PAT (contents+workflows write); env secret of the dev-only `merge-queue` environment
 # GitHub's wording when a token without the `workflows` permission pushes a new commit touching workflow files.
 WORKFLOW_REJECT_RE = re.compile(r"without\s+`?workflows`?\s+permission", re.I)
+WORKFLOW_REJECT_LINE_RE = re.compile(r"refusing to allow[^\n)]*", re.I)  # GitHub's own sentence, for the eject reason
 ENTRY_RE = re.compile(r"^(?P<slug>.+)--(?P<short>[0-9a-f]{7,40})$")
+
+# PRIORITY LANE (2026-11-11): an entry that fixes CI itself (diff under `.github/`) or whose tip commit carries an
+# `MQ-Priority: <why>` trailer composes FIRST and ALONE, ahead of oldest-first order (the apt-mirror CI fix waited
+# behind the queue and the first candidate went infra-red without it). The trailer is the flag: it rides the commit
+# through enqueue's rebase untouched, so no enqueue-path change is needed.
+PRIORITY_PATH_PREFIX = ".github/"
+PRIORITY_TRAILER_RE = re.compile(r"^MQ-Priority:\s*\S", re.M)
+# PARALLEL CANDIDATES: up to K product-disjoint candidates run CI at the same time (same dev base). Anything outside
+# products/<slug>/ is the one SHARED area and conflicts with everything: it never runs alongside another candidate.
+PARALLEL_CANDIDATES = 2
+SHARED_AREA = "shared"
+PRODUCT_PATH_RE = re.compile(r"^products/(?P<slug>[^/]+)/")
+NON_PRODUCT_SLUGS = frozenset({"seed"})  # products/seed/ is the shared seed, not a product
 
 # DERIVED files: committed by every slice after it regenerates them, so two parallel slices
 # always conflict on them although neither edit is "real" (2026-11-07 run 42405063978 ejected
@@ -144,6 +169,43 @@ def order_entries(entries: list[Entry]) -> list[Entry]:
     return sorted(entries, key=lambda e: (e.committed_at, e.ref))
 
 
+def is_priority(paths: list[str], message: str = "") -> bool:
+    return any(p.startswith(PRIORITY_PATH_PREFIX) for p in paths) or bool(PRIORITY_TRAILER_RE.search(message or ""))
+
+
+def entry_areas(paths: list[str]) -> frozenset[str]:
+    """The areas an entry touches: one per products/<slug>/, SHARED_AREA for anything else (or no readable diff)."""
+    areas = set()
+    for p in paths:
+        m = PRODUCT_PATH_RE.match(p)
+        areas.add(m.group("slug") if m and m.group("slug") not in NON_PRODUCT_SLUGS else SHARED_AREA)
+    return frozenset(areas or {SHARED_AREA})
+
+
+def partition_wave(pool: list[Entry], paths_by_ref: dict[str, list[str]], limit: int,
+                   k: int = PARALLEL_CANDIDATES) -> list[list[Entry]]:
+    """Groups of area-disjoint entries that may run as concurrent candidates; [] = no wave (the caller runs ONE batch).
+    Only the leading non-shared prefix of the next `limit` entries is eligible (FIFO: a shared entry waits for its turn
+    and never overlaps another candidate); entries that share a product merge into one group; at most `k` groups."""
+    if k < 2:
+        return []
+    prefix: list[Entry] = []
+    for e in pool[:limit]:
+        if SHARED_AREA in entry_areas(paths_by_ref.get(e.ref, [])):
+            break
+        prefix.append(e)
+    groups: list[tuple[set[str], list[Entry]]] = []
+    for e in prefix:
+        areas, members = set(entry_areas(paths_by_ref[e.ref])), [e]
+        for g in [g for g in groups if g[0] & areas]:
+            groups.remove(g)
+            areas |= g[0]
+            members = g[1] + members
+        groups.append((areas, members))
+    groups.sort(key=lambda g: prefix.index(g[1][0]))
+    return [g[1] for g in groups[:k]] if len(groups) >= 2 else []
+
+
 def is_ledger_only(paths: list[str]) -> bool:
     paths = [p for p in paths if p.strip()]
     return bool(paths) and all(LEDGER_ONLY_RE.match(p) for p in paths)
@@ -195,6 +257,13 @@ def push_token_from_env(env: dict[str, str] | None = None) -> str:
 
 WORKFLOW_EJECT_WHY = ("changes .github/workflows/* - the queue's token cannot push workflow edits; "
                       "land via the steward's workflow-file path")
+
+
+def _flush_print(msg: str) -> None:
+    """The drain's default log. Flushed per line: stdout is a pipe on the runner (block-buffered), and a
+    cancelled drain (2026-11-11, run 43060568244) lost EVERY line it had printed - including the push
+    rejection that would have named the cause."""
+    print(msg, flush=True)
 
 
 def status_description(text: str) -> str:
@@ -294,7 +363,7 @@ class Queue:
     def __init__(self, repo: str, remote: str = "origin", dev: str = "dev",
                  run: Runner = _default_run, run_url: str = "", run_id: str = "local",
                  poll_s: int = 60, timeout_s: int = 5400, sleep: Callable[[float], None] = time.sleep,
-                 workdir: str | None = None, log: Callable[[str], None] = print,
+                 workdir: str | None = None, log: Callable[[str], None] = _flush_print,
                  workflow_token: bool | None = None, push_token: str | None = None,
                  regen: Callable[[str], tuple[bool, str]] | None = None,
                  derived_regen: Callable[[str, dict[str, Any]], tuple[bool, str]] | None = None,
@@ -320,6 +389,18 @@ class Queue:
         if workflow_batch and self.push_token and self.repo:
             return f"https://x-access-token:{self.push_token}@github.com/{self.repo}.git"
         return self.remote
+
+    def push_cmd(self, remote: str, refspec: str) -> list[str]:
+        """The git push argv. A push to the authenticated PAT URL first CLEARS the checkout's persisted
+        `http.https://github.com/.extraheader` (actions/checkout writes `AUTHORIZATION: basic <github.token>`
+        there, and git sends it on EVERY github.com URL - including `x-access-token:<PAT>@github.com`). Left in
+        place, a "PAT" push can authenticate as github.token, which has no `workflows` permission (b5's
+        hypothesis, 2026-11-11; the eject reason now quotes GitHub's own sentence, which says whether the
+        refused actor was a "GitHub App" or a "Personal Access Token"). The plain remote keeps the header:
+        that is its only credential."""
+        if remote != self.remote and remote.startswith("https://x-access-token:"):
+            return ["git", "-c", f"{EXTRAHEADER_KEY}=", "push", remote, refspec]
+        return ["git", "push", remote, refspec]
 
     def batch_needs_workflows(self, base: str, sha: str) -> bool:
         return bool(self.push_token) and touches_workflows(self.changed_paths(base, sha))
@@ -495,6 +576,26 @@ class Queue:
     def delete_ref(self, ref: str) -> None:
         self.git("push", self.remote, f":refs/heads/{ref}", check=False)
 
+    # lanes -------------------------------------------------------------------
+    def entry_paths(self, base: str, e: Entry) -> list[str]:
+        """What the entry itself changes (merge-base diff, so a branch that is behind dev is not charged with dev's
+        newer commits). Unreadable -> [] which every caller treats as the conservative SHARED answer."""
+        try:
+            return [p for p in self.git("diff", "--name-only", f"{base}...{e.sha}").splitlines() if p.strip()]
+        except RuntimeError:
+            return []
+
+    def priority_entry(self, pool: list[Entry], base: str) -> Entry | None:
+        for e in pool:
+            msg = self.git("log", "-1", "--format=%B", e.sha, check=False)
+            if is_priority(self.entry_paths(base, e), msg):
+                return e
+        return None
+
+    def plan_wave(self, pool: list[Entry], base: str, limit: int, k: int = PARALLEL_CANDIDATES) -> list[list[Entry]]:
+        paths = {e.ref: self.entry_paths(base, e) for e in pool[:limit]}
+        return partition_wave(pool, paths, limit, k)
+
     # compose -----------------------------------------------------------------
     def compose(self, batch: list[Entry], base: str, wt: str) -> tuple[str, list[Entry], list[dict]]:
         """Apply each entry onto `base` in a scratch worktree. Returns
@@ -639,7 +740,7 @@ class Queue:
         """FF dev to the candidate. Returns (landed, sha_on_dev)."""
         for _ in range(5):
             remote = self.push_remote(self.batch_needs_workflows(tested_base, cand_sha))
-            rc, _, err = self.run(["git", "push", remote, f"{cand_sha}:refs/heads/{self.dev}"], cwd=wt)
+            rc, _, err = self.run(self.push_cmd(remote, f"{cand_sha}:refs/heads/{self.dev}"), cwd=wt)
             if rc == 0:
                 return True, cand_sha
             self.fetch()
@@ -674,12 +775,25 @@ class Queue:
                 break
             suspects = [r for r in suspects if any(e.ref == r for e in queue)]
             pool = [e for e in queue if e.ref in suspects] if suspects else queue
-            batch = pool[:limit]
             base = self.dev_sha()
-            self.log(f"round {n}: dev={base[:9]} batch={[e.slug for e in batch]} (queue {len(queue)})")
+            prio = self.priority_entry(queue, base)  # the priority lane outranks FIFO AND an open bisection
+            groups: list[list[Entry]] = []
+            if prio is not None:
+                batch = [prio]
+            else:
+                batch = pool[:limit]
+                groups = [] if suspects else self.plan_wave(pool, base, limit)
+            lane = "priority" if prio is not None else f"parallel x{len(groups)}" if groups else "batch"
+            self.log(f"round {n} [{lane}]: dev={base[:9]} batch={[e.slug for e in batch] if not groups else [[e.slug for e in g] for g in groups]} (queue {len(queue)})")
             if dry_run:
-                res.rounds.append({"round": n, "batch": [e.slug for e in batch], "dry_run": True})
+                res.rounds.append({"round": n, "batch": [e.slug for e in batch], "lane": lane, "dry_run": True})
                 break
+            if groups:
+                suspects, limit, stop = self._run_wave(n, groups, base, res, batch_limit, limit)
+                if stop:
+                    break
+                continue
+            saved = (list(suspects), limit) if prio is not None else None  # a priority run never moves the bisection
             wt = tempfile.mkdtemp(prefix="mq-")
             os.rmdir(wt)
             try:
@@ -697,10 +811,10 @@ class Queue:
                     continue
                 cand_ref = f"{CANDIDATE_PREFIX}{self.run_id}-{n}"
                 remote = self.push_remote(self.batch_needs_workflows(base, cand))
-                rc, _, perr = self.run(["git", "push", remote, f"{cand}:refs/heads/{cand_ref}"], cwd=self.workdir)
+                rc, _, perr = self.run(self.push_cmd(remote, f"{cand}:refs/heads/{cand_ref}"), cwd=self.workdir)
                 if rc != 0:
                     # Never crash the drain on a rejected push (2026-11-05: it wedged the queue ~1.5h).
-                    if self._handle_push_rejection(applied, base, perr, res):
+                    if self._handle_push_rejection(applied, base, perr, res, via_pat=remote != self.remote):
                         suspects = [e.ref for e in applied
                                     if not any(x["ref"] == e.ref for x in res.ejected)]
                         limit = next_batch_limit(limit, len(applied), green=False) if suspects else batch_limit
@@ -755,16 +869,157 @@ class Queue:
                 self.delete_ref(cand_ref)
             finally:
                 self.run(["git", "worktree", "remove", "--force", wt], cwd=self.workdir)
+                if saved is not None:
+                    suspects, limit = saved
         return res
 
-    def _handle_push_rejection(self, applied: list[Entry], base: str, stderr: str, res: Outcome) -> bool:
+    def _run_wave(self, n: int, groups: list[list[Entry]], base: str, res: Outcome, batch_limit: int,
+                  limit: int) -> tuple[list[str], int, bool]:
+        """Several area-disjoint candidates composed on the SAME dev base, CI run concurrently (the wall-clock overlap
+        is the gain). Returns (suspects, limit, stop). A red candidate ejects/bisects on its own and never touches the
+        others. LAND RULE: the first green lands as today; a later green is re-composed on the NEW dev tip and lands
+        WITHOUT a CI re-run only if the result is provably the exact union of the two tested trees (see
+        `_land_after_peer`); anything else stays queued and the next round re-tests it on the combined tree."""
+        suspects: list[str] = []
+        stop = False
+        wts: list[str] = []
+        cands: list[dict[str, Any]] = []
+
+        def scratch() -> str:
+            wt = tempfile.mkdtemp(prefix="mq-")
+            os.rmdir(wt)
+            wts.append(wt)
+            return wt
+
+        try:
+            for i, group in enumerate(groups, 1):
+                wt = scratch()
+                cand, applied, ejected = self.compose(group, base, wt)
+                for x in ejected:
+                    self._finish_eject(x)
+                    res.ejected.append(x)
+                if not applied:
+                    continue
+                if cand == base:
+                    for e in applied:
+                        self._finish_land(e, base)
+                        res.landed.append({"slug": e.slug, "dev": base})
+                    continue
+                ref = f"{CANDIDATE_PREFIX}{self.run_id}-{n}p{i}"
+                remote = self.push_remote(self.batch_needs_workflows(base, cand))
+                rc, _, perr = self.run(self.push_cmd(remote, f"{cand}:refs/heads/{ref}"), cwd=self.workdir)
+                if rc != 0:
+                    if self._handle_push_rejection(applied, base, perr, res, via_pat=remote != self.remote):
+                        suspects += [e.ref for e in applied if not any(x["ref"] == e.ref for x in res.ejected)]
+                    continue
+                for e in applied:
+                    self.set_status(e.sha, "pending", f"testing in parallel candidate {ref} ({len(applied)} entr{'y' if len(applied) == 1 else 'ies'})")
+                cands.append({"ref": ref, "cand": cand, "applied": applied, "wt": wt})
+            if not cands:
+                return suspects, (next_batch_limit(limit, len(suspects), False) if suspects else batch_limit), False
+            tip, landed_paths = base, set()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(cands)) as pool:
+                futs = {pool.submit(self.dispatch_and_wait, c["ref"], c["cand"], base): c for c in cands}
+                for fut in concurrent.futures.as_completed(futs):
+                    c, applied = futs[fut], futs[fut]["applied"]
+                    try:
+                        ci = fut.result()
+                    except RuntimeError as exc:  # one candidate's gh failure must not strand the others
+                        ci = {"verdict": "unavailable", "detail": str(exc)[:200]}
+                    rnd = {"round": n, "candidate": c["cand"], "batch": [e.slug for e in applied], "ci": ci, "parallel": True}
+                    if ci["verdict"] == "green":
+                        if tip == base:
+                            ok, landed_sha = self.land(c["cand"], base, c["wt"])
+                        else:
+                            ok, landed_sha = self._land_after_peer(c, base, tip, landed_paths, scratch)
+                        rnd["landed"] = ok
+                        if ok:
+                            landed_paths |= set(self.changed_paths(tip, landed_sha))
+                            for e in applied:
+                                self._finish_land(e, landed_sha)
+                                res.landed.append({"slug": e.slug, "dev": landed_sha})
+                            for wf in post_land_workflows(self.changed_paths(tip, landed_sha)):
+                                self.gh("workflow", "run", wf, "--ref", self.dev, "-R", self.repo, check=False)
+                                rnd.setdefault("dispatched", []).append(wf)
+                            tip = landed_sha
+                        else:
+                            for e in applied:
+                                self.set_status(e.sha, "pending", "green in a parallel candidate, dev moved - still queued, re-tested next round")
+                    elif ci["verdict"] == "red":
+                        if len(applied) == 1:
+                            x = self._eject_info(applied[0], "ci_red", f"Tests & Build red: {ci.get('failed_jobs', [])[:4]}")
+                            self._finish_eject(x)
+                            res.ejected.append(x)
+                        else:
+                            culprit, why = self.red_attribution(ci, applied, base)
+                            if culprit is not None:
+                                x = self._eject_info(culprit, "ci_red_attributed", why)
+                                self._finish_eject(x)
+                                res.ejected.append(x)
+                                rnd["attribution"] = {"path": "attributed", "reason": why}
+                            else:
+                                suspects += [e.ref for e in applied]
+                                limit = next_batch_limit(limit, len(applied), green=False)
+                                rnd["attribution"] = {"path": "bisect", "reason": why}
+                    else:
+                        stop = True  # timeout/unavailable: leave queued, the next drain retries
+                        for e in applied:
+                            self.set_status(e.sha, "pending", f"CI {ci['verdict']} - still queued, will retry")
+                    res.rounds.append(rnd)
+            for c in cands:
+                self.delete_ref(c["ref"])
+        finally:
+            for wt in wts:
+                self.run(["git", "worktree", "remove", "--force", wt], cwd=self.workdir)
+        return suspects, (limit if suspects else batch_limit), stop
+
+    def _land_after_peer(self, c: dict[str, Any], base: str, tip: str, landed_paths: set[str],
+                         scratch: Callable[[], str]) -> tuple[bool, str]:
+        """Land a green parallel candidate whose peer already moved dev (base -> tip) WITHOUT re-running CI - only when
+        the result is provably A (+) B: re-compose its entries on `tip` (this re-runs the kb-counts/derived regen on the
+        COMBINED tree), then require (1) the two diffs vs base share no file, (2) the re-composed tree differs from the
+        tested candidate only in the peer's files, (3) it differs from `tip` in exactly the candidate's own files.
+        Any miss -> (False, "") and the entries stay queued for a real re-test. Residual risk, stated: file-disjoint is
+        not effect-disjoint; products-only + no shared file is what keeps it small. KB § PATTERNS/devops/merge-queue.md."""
+        self.fetch()
+        if self.dev_sha() != tip:
+            self.log("  parallel candidate green but dev moved beyond the wave - re-test next round")
+            return False, ""
+        wt2 = scratch()
+        cand2, applied2, ejected2 = self.compose(c["applied"], tip, wt2)
+        if ejected2 or len(applied2) != len(c["applied"]) or cand2 == tip:
+            self.log("  parallel candidate did not re-compose cleanly on the new tip - re-test next round")
+            return False, ""
+        own = set(self.changed_paths(base, c["cand"]))
+        if own & landed_paths:
+            self.log(f"  parallel candidates overlap on {sorted(own & landed_paths)[:3]} - re-test next round")
+            return False, ""
+        if not set(self.changed_paths(c["cand"], cand2)) <= landed_paths or set(self.changed_paths(tip, cand2)) != own:
+            self.log("  combined tree is not exactly the union of the tested trees (derived files moved) - re-test next round")
+            return False, ""
+        self.log("  parallel candidate is exactly peer+own on the new tip - landing without a CI re-run")
+        return self.land(cand2, tip, wt2)
+
+    def _handle_push_rejection(self, applied: list[Entry], base: str, stderr: str, res: Outcome,
+                               via_pat: bool = False) -> bool:
         """A candidate push was rejected. Eject the culprit(s) and return True when the batch must still be
-        bisected (cause not attributable to a single entry)."""
+        bisected (cause not attributable to a single entry).
+
+        The eject reason names WHICH credential GitHub refused and quotes GitHub's own line: "the queue's
+        token cannot push workflow edits" is a different fix when the refused push already went out with
+        MQ_PUSH_TOKEN (the PAT lost `workflows` / expired - the owner re-mints) than with github.token
+        (no PAT configured - set it). 2026-11-11: five entries were ejected with neither fact recorded."""
         stderr = self._redact(stderr or "")
         tail = stderr.strip()[-300:]
+        who = "MQ_PUSH_TOKEN (PAT)" if via_pat else "github.token"
+        self.log(f"  candidate push via {who} rejected:\n{tail}")
         if is_workflow_rejection(stderr):
             culprits = [e for e in applied if touches_workflows(self.changed_paths(base, e.sha))]
-            kind, why = "needs_workflow_token", WORKFLOW_EJECT_WHY
+            m = WORKFLOW_REJECT_LINE_RE.search(stderr)
+            said = (m.group(0) if m else tail)[-160:]
+            remedy = ("the PAT itself was refused - re-mint MQ_PUSH_TOKEN with Workflows: write" if via_pat
+                      else WORKFLOW_EJECT_WHY)
+            kind, why = "needs_workflow_token", f"push via {who} refused ({said}) - {remedy}"
         else:
             culprits = applied if len(applied) == 1 else []
             kind, why = "push_rejected", f"candidate push rejected: {tail}"
