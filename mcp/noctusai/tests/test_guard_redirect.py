@@ -211,7 +211,8 @@ class TestAutoClaimAndBashRedirect:
 
     def test_bash_cwd_in_a_worktree_auto_claims_it(self, layout):
         primary, wt = layout
-        _hook(_bash(primary, "git status", cwd=wt))
+        # a WRITE claims the worktree; read-only calls take the no-git fast path and do not (2026-11-12)
+        _hook(_bash(primary, "touch notes.txt", cwd=wt))
         assert pwg.read_claims(str(primary))["s1"]["worktree"] == str(wt)
 
     def test_git_dash_c_into_a_worktree_auto_claims_it(self, layout):

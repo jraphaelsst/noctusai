@@ -75,6 +75,20 @@ def _judge(payload: dict) -> dict | None:
                 pass
 
 
+_WRITE_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
+
+
+def _is_read_only_call(payload: dict) -> bool:
+    """True when the call provably cannot write (no git, no repo walk needed to say so)."""
+    tool = payload.get("tool_name", "")
+    if tool in _WRITE_TOOLS:
+        return False
+    if tool != "Bash":
+        return True  # Grep/Glob/Read/...: no write intent at all
+    command = str((payload.get("tool_input") or {}).get("command") or "")
+    return _load_guard().bash_is_read_only(command)
+
+
 def _judge_timed(payload: dict, stages: dict[str, float]) -> dict | None:
     import time
     mark = [time.monotonic()]
@@ -89,6 +103,18 @@ def _judge_timed(payload: dict, stages: dict[str, float]) -> dict | None:
     guard = _load_guard()
     guard.set_deadline(DEFAULT_DEADLINE_S - DEADLINE_MARGIN_S)
     lap("load")
+    if _is_read_only_call(payload):
+        # READ-ONLY FAST PATH (2026-11-12): only the pure-string git-bypass check runs. No `git`
+        # subprocess, no worktree discovery, no baseline -- those cost seconds under load and a
+        # read has nothing to guard. A stale baseline from an earlier write is dropped by a plain
+        # file remove (no git) so the Post leg never diffs against it.
+        verdict = guard.decide_git_bypass(tool_name, tool_input)
+        if verdict is None and tool_name == "Bash":
+            from _guard_failclosed import _primary_root
+            guard.discard_pretool_baseline(guard.GuardContext(str(_primary_root()), "", ()),
+                                           payload.get("session_id"))
+        lap("readonly-fastpath")
+        return verdict
     # Hooks-bypass and hook-integrity are checked FIRST: both are universal,
     # branch- and location-independent concerns (see each function's own
     # docstring), so a command that is also a primary-checkout write gets the
@@ -140,7 +166,7 @@ def _judge_timed(payload: dict, stages: dict[str, float]) -> dict | None:
 
 
 def main() -> int:
-    return run_guard("primary-write", _judge)
+    return run_guard("primary-write", _judge, fail_open_when=_is_read_only_call)
 
 
 if __name__ == "__main__":

@@ -626,6 +626,22 @@ executor agent must carry it; never a hand-listed constant. Activation is a
 
 ---
 
+### §11c · Read-only fast path + the timeout asymmetry (2026-11-12)
+
+Measured in `guard-events.ndjson` (422 `slow` rows, 409 timeouts): a plain `grep`/`ls` still ran
+`discover_context` (3 `git` subprocesses), the hook-integrity probe, the auto-claim and a `git status`
+baseline -- seconds under load, past the 8 s alarm, so a READ was denied "timed out".
+
+- **Fast path.** A call that provably cannot write (`Grep`/`Glob`/`Read`/any non-write tool, or a `Bash`
+  command `bash_is_read_only` accepts) runs only the pure-string git-bypass check; no `git`, no worktree
+  discovery, no baseline (a stale baseline is removed by a plain file delete). ~0.03 s vs seconds.
+  Consequence: only writes auto-claim a worktree.
+- **Asymmetry.** If the guard STILL times out or crashes on a read-only call, the call is ALLOWED with a
+  stderr warning and an `allow-timeout` row in the event log (`run_guard(fail_open_when=...)`); a write
+  (`Edit`/`Write`/non-read-only `Bash`) stays FAIL-CLOSED. Rationale: a read cannot cause the divergence
+  the guard exists to stop, so blocking it on a slow probe is pure cost and is how guards get disabled.
+- Test: `mcp/noctusai/tests/test_primary_guard_readonly_fastpath.py` (latency budget with a slow `git` shim).
+
 ### §11b · Guard-event log (2026-11-05)
 
 **Advisor write-scope guard (D34, 2026-11-09).** `claude-guard-advisor-write.py` (logic `advisor_write_guard.py`) keeps a spec-writing ADVISOR (`product-manager`, `product-architect`, `product-designer`: derived from agent frontmatter = `Write` tool + `ADVISOR` in the description) to spec/notes paths: any `scratchpad/` directory, or `projects/<slug>/spec/` (designer: `mockups/`). It keys on the hook payload's `agent_type`, which a branch-level keeper cannot see because the tech-lead commits these files. WARN-FIRST SHADOW: a violation is logged as a `warn` event and the write proceeds; promote with `MODE = "enforce"` (or env `NOC_ADVISOR_WRITE_MODE=enforce`) on evidence from `gate_alignment walls`. Fails closed like the others (`[noc-guard:advisor-write]`).
