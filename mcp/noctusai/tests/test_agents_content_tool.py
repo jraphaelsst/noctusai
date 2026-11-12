@@ -113,7 +113,7 @@ def _handler(state: FakeAgents):
             """The eval-loop gate subset (contract eval-loop-gate-contract.md)."""
             lid = "22222222-2222-4222-8222-222222222222"
             if m == "POST" and path.endswith("/evals/loops"):
-                return self._send(201, {"id": lid, "suite": b["suite"], "status": "ativo", "rodadas_planejadas": b["rodadas_planejadas"]})
+                return self._send(201, {"id": lid, "suite": b["suite"], "status": "ativo", "rodadas_planejadas": b.get("rodadas_planejadas")})
             if m == "GET" and "/evals/loops" in path and path.split("?")[0].endswith("/loops"):
                 return self._send(200, {"items": [{"id": lid, "status": "ativo", "q": path.partition("?")[2]}]})
             if m == "GET" and path.endswith(f"/evals/loops/{lid}"):
@@ -912,6 +912,11 @@ class TestEvalLoopActions:
         assert out["status"] == "done" and out["resultado"]["id"] == LID
         assert srv.log[0][2] == {"suite": "comportamento", "rodadas_planejadas": 5, "orcamento_usd": 10}
         assert TOKEN not in json.dumps(out)
+
+    def test_loop_iniciar_suite_alone_passes_through_without_defaults(self, srv, private):
+        pl = private("l.json", {"suite": "mecanismo"})
+        out = C.content("loop_iniciar", agent="julia", base_url=srv.url, payload_path=pl, confirm=True)
+        assert out["status"] == "done" and srv.log[0][2] == {"suite": "mecanismo"}
 
     def test_loop_iniciar_validates_the_payload(self, srv, private):
         pl = private("l.json", {"suite": "x", "rodadas_planejadas": 5})
