@@ -12,6 +12,9 @@ role cascade reads, never ``user_metadata``).
 """
 from __future__ import annotations
 
+import contextvars
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, Callable, Protocol
 from uuid import UUID
 
@@ -19,12 +22,42 @@ from noctusai_lib.domain.notifications import write_in_app
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
 __all__ = [
+    "EvalSideEffectRefused",
+    "eval_scope",
+    "in_eval_scope",
     "FakeNotificationSink",
     "NotificationSink",
     "ORG_ADMIN_ROLES",
     "SupabaseNotificationSink",
     "get_notification_sink",
 ]
+
+_EVAL_SCOPE: contextvars.ContextVar[bool] = contextvars.ContextVar("agents_eval_scope", default=False)
+
+
+class EvalSideEffectRefused(RuntimeError):
+    """A Real outbound notifier was reached from inside an eval run. An eval NEVER notifies anyone: the eval drivers
+    inject Fakes, and the Real refuses by construction (not by a flag a driver could forget)."""
+
+
+@contextmanager
+def eval_scope() -> Iterator[None]:
+    """Everything run inside (threads included -- ``to_thread`` copies the context) is an eval: Real notifiers refuse."""
+    token = _EVAL_SCOPE.set(True)
+    try:
+        yield
+    finally:
+        _EVAL_SCOPE.reset(token)
+
+
+def in_eval_scope() -> bool:
+    return _EVAL_SCOPE.get()
+
+
+def _refuse_in_eval(what: str) -> None:
+    if _EVAL_SCOPE.get():
+        raise EvalSideEffectRefused(f"{what}: a real notification was attempted from an eval run")
+
 
 #: The org roles that receive an org-level notice (same set as ``app.dependencies.ADMIN_ROLES``).
 ORG_ADMIN_ROLES = ("owner", "admin")
@@ -93,14 +126,19 @@ class SupabaseNotificationSink:
     """Writes to core's ``public.notifications`` with a public-scoped client."""
 
     def __init__(self, core_client_factory: Callable[[], Any]) -> None:
+        _refuse_in_eval("SupabaseNotificationSink")
         self._core = core_client_factory
 
+    def _client(self) -> Any:
+        _refuse_in_eval("SupabaseNotificationSink")
+        return self._core()
+
     def platform_admin_ids(self) -> list[str]:
-        resp = self._core().table("noctus_users").select("id").eq("role", "admin").execute()
+        resp = self._client().table("noctus_users").select("id").eq("role", "admin").execute()
         return [str(r["id"]) for r in (resp.data or [])]
 
     def org_admin_ids(self, org_id: UUID) -> list[str]:
-        core = self._core()
+        core = self._client()
 
         def memberships(start: int, end: int):
             return (
@@ -121,12 +159,12 @@ class SupabaseNotificationSink:
         return sorted(ids)
 
     def user_label(self, user_id: UUID | str) -> str | None:
-        rows = self._core().table("noctus_users").select("id, email").eq("id", str(user_id)).limit(1).execute().data or []
+        rows = self._client().table("noctus_users").select("id, email").eq("id", str(user_id)).limit(1).execute().data or []
         return (rows[0].get("email") or None) if rows else None
 
     def already_sent(self, user_id: str, key: str) -> bool:
         resp = (
-            self._core()
+            self._client()
             .table("notifications")
             .select("id")
             .eq("user_id", user_id)
@@ -141,7 +179,7 @@ class SupabaseNotificationSink:
         org_id: UUID | None = None,
     ) -> None:
         write_in_app(
-            self._core(), user_ids=[user_id], kind=kind, title=title, message=message, metadata=metadata,
+            self._client(), user_ids=[user_id], kind=kind, title=title, message=message, metadata=metadata,
             org_id=org_id,
         )
 
@@ -149,4 +187,5 @@ class SupabaseNotificationSink:
 def get_notification_sink() -> NotificationSink:
     from app.dependencies import get_core_client
 
+    _refuse_in_eval("get_notification_sink")
     return SupabaseNotificationSink(get_core_client)
