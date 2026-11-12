@@ -41,7 +41,7 @@ afterEach(() => {
 const CONN = 'conn-1';
 const chat = (id: string, over: Partial<InboxChat> = {}): InboxChat => ({
   chat_id: id, name: id, phone: null, is_group: false, last_message_preview: '',
-  last_message_at: '2026-10-26T10:00:00+00:00', last_message_from_me: false, unread_count: 0, ...over,
+  last_message_at: '2026-10-26T10:00:00+00:00', last_message_from_me: false, unread_count: 0, agent_paused: false, ...over,
 });
 const msg = (id: string, over: Partial<InboxMessage> = {}): InboxMessage => ({
   id, chat_id: 'a@c.us', from_me: false, body: id, type: 'chat', media_url: null, ack: null,
@@ -115,7 +115,15 @@ function fakeServer() {
       path.endsWith('/messages')
         ? { items: [...state.messages], has_more: false }
         : { items: [...state.chats], next_cursor: null }),
+    patch: vi.fn(async (_path: string, body: { paused: boolean }) => {
+      state.chats = state.chats.map((c) => ({ ...c, agent_paused: body.paused }));
+      return state.chats[0];
+    }),
     post: vi.fn(async (path: string, body?: any) => {
+      if (path.endsWith('/apagar-dados')) {
+        state.chats = [];
+        return { messages_deleted: 1, chat_deleted: true };
+      }
       if (path.endsWith('/read')) {
         state.chats = state.chats.map((c) => ({ ...c, unread_count: 0 }));
         return null;
@@ -130,7 +138,7 @@ function fakeServer() {
 
 function setup(apiOver: Partial<Record<keyof ApiClient, any>> = {}, options = {}) {
   const server = fakeServer();
-  const api = { get: server.get, post: server.post, ...apiOver } as unknown as ApiClient;
+  const api = { get: server.get, post: server.post, patch: server.patch, ...apiOver } as unknown as ApiClient;
   const hooks = createWhatsAppInboxHooks(api, options);
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -272,6 +280,15 @@ describe('useInboxEvents: realtime patches the caches', () => {
     expect(s.chats.result.current.chats).toHaveLength(1);
   });
 
+  it('chat.upsert carrying agent_paused patches the cached chat IN PLACE (no reorder); chat.deleted removes it and its thread', async () => {
+    const s = await live();
+    act(() => { captured.onEvent!({ id: '1', event: 'chat.upsert', payload: { chat: chat('a@c.us', { agent_paused: true }) } }); });
+    await waitFor(() => expect(s.chats.result.current.chats[0].agent_paused).toBe(true));
+    act(() => { captured.onEvent!({ id: '2', event: 'chat.deleted', payload: { chat_id: 'a@c.us' } }); });
+    await waitFor(() => expect(s.chats.result.current.chats).toHaveLength(0));
+    expect(s.qc.getQueryCache().findAll({ queryKey: ['whatsapp-inbox', '/api/whatsapp/connections', CONN, 'messages', 'a@c.us'] })).toHaveLength(0);
+  });
+
   it('message.ack and chat.read patch in place', async () => {
     const s = await live();
     act(() => {
@@ -290,5 +307,43 @@ describe('useInboxEvents: realtime patches the caches', () => {
     act(() => { captured.onEvent!({ id: '1', event: 'chat.upsert', payload: { chat: chat('z@c.us') } }); });
     await new Promise((r) => setTimeout(r, 20));
     expect(filtered.result.current.chats.map((c) => c.chat_id)).toEqual(['a@c.us']);
+  });
+});
+
+
+describe('useSetChatAgentPaused / useDeleteInboxChat', () => {
+  it('pause: PATCHes agent-paused and the server row lands in the cached list (a refetch does not undo it)', async () => {
+    const s = setup();
+    const chats = renderHook(() => s.hooks.useInboxChats(CONN), { wrapper: s.wrapper });
+    await waitFor(() => expect(chats.result.current.chats).toHaveLength(1));
+    const pause = renderHook(() => s.hooks.useSetChatAgentPaused(CONN), { wrapper: s.wrapper });
+    await act(async () => { await pause.result.current.mutateAsync({ chatId: 'a@c.us', paused: true }); });
+    expect(s.server.patch).toHaveBeenCalledWith('/api/whatsapp/connections/conn-1/chats/a%40c.us/agent-paused', { paused: true });
+    await waitFor(() => expect(chats.result.current.chats[0].agent_paused).toBe(true));
+    await waitFor(() => expect(chats.result.current.isRefreshing).toBe(false));
+    expect(chats.result.current.chats[0].agent_paused).toBe(true);
+  });
+
+  it('pause failure rolls the optimistic flag back', async () => {
+    const s = setup({ patch: vi.fn(async () => { throw new Error('refused'); }) });
+    const chats = renderHook(() => s.hooks.useInboxChats(CONN), { wrapper: s.wrapper });
+    await waitFor(() => expect(chats.result.current.chats).toHaveLength(1));
+    const pause = renderHook(() => s.hooks.useSetChatAgentPaused(CONN), { wrapper: s.wrapper });
+    await act(async () => { await pause.result.current.mutateAsync({ chatId: 'a@c.us', paused: true }).catch(() => undefined); });
+    expect(chats.result.current.chats[0].agent_paused).toBe(false);
+  });
+
+  it('delete: POSTs apagar-dados, then the chat and its thread cache are gone', async () => {
+    const s = setup();
+    const chats = renderHook(() => s.hooks.useInboxChats(CONN), { wrapper: s.wrapper });
+    const thread = renderHook(() => s.hooks.useInboxMessages(CONN, 'a@c.us'), { wrapper: s.wrapper });
+    await waitFor(() => expect(chats.result.current.chats).toHaveLength(1));
+    await waitFor(() => expect(thread.result.current.messages).toHaveLength(1));
+    thread.unmount();
+    const del = renderHook(() => s.hooks.useDeleteInboxChat(CONN), { wrapper: s.wrapper });
+    await act(async () => { await del.result.current.mutateAsync('a@c.us'); });
+    expect(s.server.post).toHaveBeenCalledWith('/api/whatsapp/connections/conn-1/chats/a%40c.us/apagar-dados');
+    await waitFor(() => expect(chats.result.current.chats).toHaveLength(0));
+    expect(s.qc.getQueryCache().findAll({ queryKey: ['whatsapp-inbox', '/api/whatsapp/connections', CONN, 'messages', 'a@c.us'] })).toHaveLength(0);
   });
 });
