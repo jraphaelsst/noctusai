@@ -45,7 +45,13 @@ def test_balances_better_than_round_robin_on_real_table():
     table = _table()
     rr = [files[i::TOTAL] for i in range(TOTAL)]
     lpt = ci_shards.split(files, table, TOTAL)
-    assert max(ci_shards.shard_loads(lpt, table)) < 0.7 * max(ci_shards.shard_loads(rr, table))
+    lpt_max, rr_max = max(ci_shards.shard_loads(lpt, table)), max(ci_shards.shard_loads(rr, table))
+    # The invariant is "near the ideal split", not "beats round-robin by X%": how well round-robin does depends on
+    # file-name order (dev's set at 2026-11-12 gave rr 622s vs lpt 541s, so a 0.7x ratio failed on luck alone).
+    ideal = sum(ci_shards.shard_loads([files], table)) / TOTAL
+    biggest = max(ci_shards.shard_loads([[f] for f in files], table))
+    assert lpt_max <= max(1.05 * ideal, biggest)
+    assert lpt_max <= rr_max
 
 
 def test_unknown_files_get_the_median():
