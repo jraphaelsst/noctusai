@@ -273,6 +273,8 @@ export interface Controle {
   avaliacao_resolvidos?: AvaliacaoResolvido[];
   /** True on a company INSTANCE: the evaluation state is Julia's CORE's (one evaluation switch for every company), read-only here. */
   avaliacao_herdada?: boolean;
+  /** Phone allow-list (E.164; masked for a non-admin member). Empty = the agent answers EVERY number; non-empty = ONLY these. */
+  contatos_permitidos?: string[];
 }
 export interface AvaliacaoResolvido {
   usuario_id: string;
@@ -289,6 +291,8 @@ export interface ControleUpdate {
   modo: ModoOperacao;
   modo_avaliacao?: boolean;
   avaliacao_usuarios?: string[];
+  /** Replaces the phone allow-list (any format; the server stores E.164). `[]` = every number. */
+  contatos_permitidos?: string[];
   dreno_inatividade_dias?: number;
 }
 

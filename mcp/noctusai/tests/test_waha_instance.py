@@ -476,13 +476,16 @@ def test_a_foreign_webhook_surviving_the_write_is_drift():
     assert out["status"] == "drift" and out["foreign_webhooks"] == ["https://evil.example/h"]
 
 
-def test_a_personal_line_is_refused_outright_whatever_the_flags_or_any_transcript_say():
-    vps = FakeVps(PERSONAL, EXISTING)
+def test_a_personal_line_goes_through_the_agent_gate_before_any_ssh_whatever_the_flags_say():
+    # D49 superseded (2026-11-12): an agent may provision a personal line, but only through the agent gate -- whose
+    # store/runner check runs BEFORE any remote read (this runner is not marked as a test fake, so it is refused).
+    # The full agent path: tests/test_waha_personal_agent.py
     for confirm in (True, False):
-        out = _prov(PERSONAL, FakeVps(PERSONAL, EXISTING), confirm=confirm)
-        assert out["status"] == "refused" and out["error"] == wi.PERSONAL_REFUSAL and out["needs_owner_by_hand"] is True
-    assert not vps.wrote and vps.cmds == []  # refused BEFORE any ssh: not even a read
-    assert wi.PERSONAL_REFUSAL.startswith("personal line: refused for every agent and tool caller")
+        vps = FakeVps(PERSONAL, EXISTING)
+        out = _prov(PERSONAL, vps, confirm=confirm)
+        assert out["status"] == "refused" and "test fake" in out["error"], out
+        assert not vps.wrote and vps.cmds == []  # refused BEFORE any ssh: not even a read
+    assert "agent may provision/apply a personal line" in wi.PERSONAL_REFUSAL
     assert "--waha-instance-owner-hand <provision|apply> <line>" in wi.PERSONAL_REFUSAL
     # no transcript path remains at all: the helper and the parameter are gone
     assert not hasattr(wi, "_owner_consent") and "consent_session_id" not in wi.waha_instance.__code__.co_varnames
@@ -490,13 +493,14 @@ def test_a_personal_line_is_refused_outright_whatever_the_flags_or_any_transcrip
 
 def test_personal_on_the_vps_checkout_alone_also_refuses():
     # caller's checkout says non-personal, the VPS says personal
-    out = _prov(EDGE, FakeVps(PERSONAL, EXISTING))
-    assert out["status"] == "refused" and out["needs_owner_by_hand"] is True
+    vps = FakeVps(PERSONAL, EXISTING)
+    out = _prov(EDGE, vps)
+    assert out["status"] == "refused" and not vps.wrote  # the agent gate judges it (unmarked runner here: refused)
 
 
-def test_apply_on_a_personal_line_starts_nothing_and_is_refused():
+def test_apply_on_a_personal_line_with_the_real_runner_on_the_fake_store_starts_nothing():
     out = wi._apply(wi.parse_instances(PERSONAL), "probe", "h", True)
-    assert out["status"] == "refused" and out["error"] == wi.PERSONAL_REFUSAL
+    assert out["status"] == "refused" and "fake" in out["error"]
 
 
 def test_a_send_disabled_line_must_declare_personal_explicitly():
@@ -533,8 +537,8 @@ def test_apply_reads_the_vps_yml_before_any_compose_up_and_the_strictest_wins():
         return (0, PERSONAL, "") if cmd.startswith("cat ") else (0, "", "")
 
     out = wi._apply(wi.parse_instances(EDGE), "probe", "h", True, _test_sh=sh_personal_on_vps)
-    assert out["status"] == "refused" and out["error"] == wi.PERSONAL_REFUSAL
-    assert len(calls) == 1 and calls[0].startswith("cat ")  # nothing was started
+    assert out["status"] == "refused" and "test fake" in out["error"]  # the agent gate judges a VPS-personal line
+    assert all("compose" not in c for c in calls)  # nothing was started
 
     calls.clear()
 
@@ -566,7 +570,7 @@ def test_apply_refuses_when_only_the_live_label_says_personal_and_when_the_label
         return 0, "", ""
 
     out = wi._apply(wi.parse_instances(EDGE), "probe", "h", True, _test_sh=sh_label)
-    assert out["status"] == "refused" and out["error"] == wi.PERSONAL_REFUSAL
+    assert out["status"] == "refused" and "test fake" in out["error"]  # labelled personal => the agent gate judges it
     assert all("compose" not in c for c in calls)
 
     def sh_label_down(host, cmd, timeout=90):

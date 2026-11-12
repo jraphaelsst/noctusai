@@ -212,8 +212,13 @@ def decidir(
     avaliacao_numeros: Sequence[str] = (),
     telefone_e164: str | None = None,
     max_retomadas_seguidas: int = MAX_RETOMADAS_PADRAO,
+    contatos_permitidos: Sequence[str] | None = (),
 ) -> Decisao:
     """The §5.2 decision table (see the module docstring). Pure.
+
+    ``contatos_permitidos`` (084, the per-agent phone allow-list): EMPTY = every number is answered (Julia's rows are
+    empty, so her table is unchanged); non-empty = ONLY these numbers, anyone else (or a contact without a valid phone)
+    gets ``restrito_avaliacao`` with nothing stored, every trigger; ``None`` = unreadable -> 503.
 
     ``modo`` not one of :data:`MODOS` (the control could not be read) -> 503
     ``controle_indisponivel``: fail closed, whatever the trigger. ``participante`` is the deciding
@@ -247,6 +252,16 @@ def decidir(
             numero = normalizar_e164(telefone_e164)
             if numero is None or numero not in {normalizar_e164(n) for n in avaliacao_numeros}:
                 return _recusa(STATUS_RESTRITO_AVALIACAO, persistir=False)  # owner 2026-11-05: NEVER stored in her history
+        # ── the per-agent phone allow-list (084, owner 2026-11-12): empty = everybody; non-empty = only these numbers. Same
+        # refusal as the evaluation gate (nothing opened, nothing stored); every trigger. ``None`` = unreadable. ──
+        if contatos_permitidos is None:
+            return Decisao(
+                status=STATUS_CONTROLE_INDISPONIVEL, persistir_inbound=False, executar_llm=False, http_status=503
+            )
+        if len(contatos_permitidos) > 0:
+            numero = normalizar_e164(telefone_e164)
+            if numero is None or numero not in {normalizar_e164(n) for n in contatos_permitidos}:
+                return _recusa(STATUS_RESTRITO_AVALIACAO, persistir=False)
 
     # ── the lead withdrew consent: nobody answers, nobody follows up (an existing thread still records) ──
     if thread is not None and thread.lead_opt_out:
@@ -484,6 +499,7 @@ def aplicar_controles(
             avaliacao_numeros=numeros_avaliacao,
             telefone_e164=(contact or {}).get("phone_e164"),
             max_retomadas_seguidas=max_retomadas_seguidas,
+            contatos_permitidos=controle.contatos_permitidos,
         )
         if decisao.http_status == 503:
             raise ControleIndisponivel()

@@ -13,7 +13,7 @@
 | Shared transport + errors | same package | `AgentsHttpTransport` (httpx, timeout/network mapping, `raise_for_status` hook), `raise_for_agents_status`, `AgentsClientError` + `AgentsNotConfigured` / `AgentsTokenInvalid` / `AgentNotFound` / `AgentsBadRequest(.fields)` / `AgentsUpstreamError` / `AgentsTimeout` |
 | Frontend organ | `@noctusai/lib/components` (`components/org-specs/`) | `createOrgSpecsHooks(api, { path?, queryKey?, invalidate? })` -> `{ useOrgSpecs, useUpdateOrgSpecs }`; `<OrgSpecsForm hooks agentKey canEdit? notice? intro? emptyMessage? conflictLabels? formatError? />` |
 
-social-wiring's Julia channel client (`app/clients/agents.py`, turns / threads / handoffs, authenticated by the org's
+social-wiring's Julia channel client (now seed `noctusai_lib.integrations.agents_channel`, re-exported by `app/clients/agents.py`; turns / threads / handoffs, authenticated by the org's
 `pk_` channel token) stays product-side: it subclasses `AgentsHttpTransport` and the seed error bases; only the
 generic part moved. Fake is never silent: without a base URL the factory raises `AgentsNotConfigured` unless
 `allow_fake=True` is passed explicitly.

@@ -165,3 +165,42 @@ describe("useEvalRuns polling", () => {
     expect(refetchInterval(query)).toBe(false);
   });
 });
+
+describe("consolidation counters refresh when a run finishes (no run-detail panel open)", () => {
+  const RUN = { id: "r1", version_id: "v1", compiled_hash: "h", total: 2, aprovados: 0, score: null, limiar: 0.8, started_at: "t", finished_at: null, erro: null };
+
+  it("the runs-list poll invalidates consolidacao and detail on the in-flight -> terminal transition", async () => {
+    mockGet.mockResolvedValueOnce({ items: [{ ...RUN, status: "executando" }] });
+    const { useEvalRuns } = await import("@/hooks/studio/useEvals");
+    const qc = newClient();
+    for (const k of [["studio", "isaia", "evals", "consolidacao"], ["studio", "isaia", "detail"]]) qc.setQueryData(k, {});
+    const { result } = renderHook(() => useEvalRuns("isaia"), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(result.current.data?.[0].status).toBe("executando"));
+    const consolidacao = () => qc.getQueryCache().find({ queryKey: ["studio", "isaia", "evals", "consolidacao"] });
+    expect(consolidacao()?.state.isInvalidated).toBe(false);
+
+    mockGet.mockResolvedValueOnce({ items: [{ ...RUN, status: "concluida", aprovados: 2, score: 1, finished_at: "t2" }] });
+    await qc.invalidateQueries({ queryKey: ["studio", "isaia", "evals", "runs", null] });
+    await waitFor(() => expect(result.current.data?.[0].status).toBe("concluida"));
+
+    await waitFor(() => expect(consolidacao()?.state.isInvalidated).toBe(true));
+    expect(qc.getQueryCache().find({ queryKey: ["studio", "isaia", "detail"] })?.state.isInvalidated).toBe(true);
+  });
+
+  it("a run already terminal on first load is old news: nothing is invalidated", async () => {
+    mockGet.mockResolvedValueOnce({ items: [{ ...RUN, status: "concluida", finished_at: "t2" }] });
+    const { useEvalRuns } = await import("@/hooks/studio/useEvals");
+    const qc = newClient();
+    qc.setQueryData(["studio", "isaia", "evals", "consolidacao"], {});
+    const { result } = renderHook(() => useEvalRuns("isaia"), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(result.current.showSkeleton).toBe(false));
+    expect(qc.getQueryCache().find({ queryKey: ["studio", "isaia", "evals", "consolidacao"] })?.state.isInvalidated).toBe(false);
+  });
+
+  it("runsThatFinished only names runs seen in flight before", async () => {
+    const { runsThatFinished } = await import("@/hooks/studio/useEvals");
+    expect(runsThatFinished(new Set(["a", "b"]), [
+      { id: "a", status: "concluida" }, { id: "b", status: "executando" }, { id: "c", status: "falhou" },
+    ])).toEqual(["a"]);
+  });
+});

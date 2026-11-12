@@ -1,6 +1,6 @@
 # Eval-loop gate — contract (G1–G7)
 
-Owner spec (2026-11-09), verbatim: "running evals that dont make score better needs to get flagged … eval loops should be gated and stop whenever it feels like its 'good enough' … 2 calls not improving score stops and notifies why stopped mid-flight". Migration `076_eval_loops.sql`. Backend slice only; a UI slice follows from this document.
+Owner spec (2026-11-09), verbatim: "running evals that dont make score better needs to get flagged … eval loops should be gated and stop whenever it feels like its 'good enough' … 2 calls not improving score stops and notifies why stopped mid-flight". Migration `076_eval_loops.sql`; target / budget cap / max rounds became a platform-admin config on 2026-11-12 (migration `086_eval_loop_config.sql`, "Target 95% · Cap at U$5" + "set the number of rounds ... as a config"). Backend slice only; a UI slice follows from this document.
 
 Platform IP tier: every table is `agents.eval_*` (service role only, `COMMENT … 'tier:platform'`). Every route below is platform-admin or the platform-issued `studio:evals-run` token (a `studio:publish` token on a dev-advisor agent also reads/starts, exactly like the run routes). No new public surface.
 
@@ -8,13 +8,13 @@ Platform IP tier: every table is `agents.eval_*` (service role only, `COMMENT �
 
 | # | Rule | Enforced by |
 |---|---|---|
-| G1 | target 100% (`alvo`), floor = the agent's `publicacao_limiar` (`piso`, stored at loop start) | `eval_loops.alvo/piso`; read in the state (`acima_do_piso`) and in the stop message |
-| G2 | planned rounds N, checkpoints at 5, 10, 15 (those ≤ N) | `rodadas_planejadas` (1..100); a checkpoint is an in-app notice + `checkpoints[]` in the state; at N the loop concludes `rodadas_esgotadas` |
-| G3 | stop at 100% | run close hook: `score >= alvo` → `concluido` / `alvo_atingido` |
+| G1 | target = the config's `alvo` (default 95%), floor = the agent's `publicacao_limiar` (`piso`); both frozen on the loop at start | `eval_loops.alvo/piso`; read in the state (`acima_do_piso`) and in the stop message |
+| G2 | planned rounds N (omitted → the config's `rodadas_max`, default 10; never above it), checkpoints at 5, 10, 15 (those ≤ N) | `rodadas_planejadas` (1..100, ≤ config `rodadas_max`); a checkpoint is an in-app notice + `checkpoints[]` in the state; at N the loop concludes `rodadas_esgotadas` |
+| G3 | stop at the target (`score >= alvo`, default 95%) | run close hook: `score >= alvo` → `concluido` / `alvo_atingido` |
 | G4 | 2 consecutive scored rounds without improvement → STOP + notify mid-flight, above or below the floor | run close hook → `parado` / `sem_melhora` + notification (payload below) |
 | G5 | every round that did not raise the score is an "overcall", listed with its cost | `serie[].overcall`, `overcalls[]`, `custo_overcalls_usd`; a `WARNING agents.eval_loop.overcall` log |
 | G6 | a round on an unchanged content hash beyond the consolidation passes is refused: fix first, then run | run start → 409 `hash_inalterado` |
-| G7 | spend per round against the loop budget (default US$ 20); reaching it stops the loop for an owner decision | run close hook → `parado` / `orcamento_atingido`; run start clamps the run cap to what is left |
+| G7 | spend per round against the loop budget (the config's cap, default US$ 5, never exceeded); reaching it stops the loop for an owner decision | run close hook → `parado` / `orcamento_atingido`; run start clamps the run cap to what is left |
 
 Definitions. A **round** is one run started with the loop's id. A round **improved** when its score is strictly above the best score of the earlier scored rounds; the first scored round is the baseline (neither an improvement nor an overcall). A round with no score (the run failed before measuring: harness error, spec refused, cancelled) is **neutral** for G4/G5, but its cost still counts for G7. Stop order when a round closes: G3 → G7 → G4 → rounds exhausted.
 
@@ -40,8 +40,11 @@ A looped run is a whole-suite run (default selection, consolidation still skips 
 ## Endpoints (prefix `/api/studio/agents/{key}/evals/loops`)
 
 ### `POST /{key}/evals/loops` → 201 `LoopOut`
-Body (strict): `{ "suite": "comportamento" | "mecanismo", "rodadas_planejadas": 1..100, "orcamento_usd": number > 0, ≤ 500 (optional) }`. `orcamento_usd` omitted → `STUDIO_EVAL_LOOP_BUDGET_USD` (20.00). `alvo` is 1.0 and `piso` is the agent's `publicacao_limiar`, both stored on the loop.
-Errors: 409 `loop_ativo_existente` (the agent already has an active loop on this suite); 422 `orcamento_acima_do_padrao` (a token above the default budget); 422 validation (suite, rounds, unknown field); 404 `agent_not_found`; 403 `user_required`.
+Body (strict): `{ "suite": "comportamento" | "mecanismo", "rodadas_planejadas"?: 1..100, "orcamento_usd"?: number > 0, ≤ 500 }`. Both optional: `rodadas_planejadas` omitted → the config's `rodadas_max`; `orcamento_usd` omitted → the config's `orcamento_usd`. `alvo` is the config's `alvo` at the moment the loop starts and `piso` the agent's `publicacao_limiar`, both stored (frozen) on the loop: a later config edit never moves an open loop.
+Errors: 409 `loop_ativo_existente` (the agent already has an active loop on this suite); 422 `rodadas_acima_do_maximo` (rounds above the config's max); 422 `orcamento_acima_do_teto` (budget above the config's cap, for EVERY caller, a platform admin included: change the config instead); 422 validation (suite, bounds, unknown field); 404 `agent_not_found`; 403 `user_required`.
+
+### `GET` / `PUT /api/studio/plataforma/eval-loop-config` (platform admin only)
+The platform-level loop config (loops run on platform agents): one set of values, stored in `agents.runtime_settings` (keys `eval_loop_alvo`, `eval_loop_orcamento_usd`, `eval_loop_rodadas_max`; service role only, tier platform). Until first edited it reads the code defaults. `GET` → `{alvo: 0.95, orcamento_usd: 5.0, rodadas_max: 10, alterado_por: uuid|null, alterado_em: iso|null}`. `PUT` body (strict, full replace, all three required): `{alvo: 0 < x ≤ 1, orcamento_usd: 0 < x ≤ 500, rodadas_max: 1..100}` → the same shape; 422 on an out-of-range, missing or unknown field; 403 `platform_admin_required`; 401 unauthenticated. A change that alters a value records one immutable `loop_config_alterada` event (`agents.eval_loop_config_eventos`: before, after, actor) in the same transaction (RPC `agents.set_eval_loop_config`); an unchanged PUT records nothing.
 
 ### `GET /{key}/evals/loops[?suite=&status=]` → `{items: LoopOut[]}` (newest first)
 ### `GET /{key}/evals/loops/{loop_id}` → `LoopOut`; 404 `loop_not_found`
@@ -91,13 +94,13 @@ Recipients: every platform admin (the owner is one). Dedup keys `eval_loop:<loop
 
 - **Stop, no improvement** (kind `agents.eval_loop_parado`):
   title `Loop de avaliação parado: <chave> (<suite>)`;
-  message `Parou na rodada 4 de 30: 2 rodadas seguidas sem melhora da nota (piso 80%, alvo 100%; melhor nota abaixo do piso). Notas: 60% → 70% → 70% → 69%. <Mudou entre as duas últimas rodadas: secao:x, texto:y. | O conteúdo não mudou entre as duas últimas rodadas (mesmo hash): a rodada foi repetida sem correção. | O conteúdo mudou … (hash diferente), sem melhora na nota.> Casos ainda falhando (3): a, b, c. Gasto US$ 5.50 de US$ 20.00.`
+  message `Parou na rodada 4 de 30: 2 rodadas seguidas sem melhora da nota (piso 80%, alvo 95%; melhor nota abaixo do piso). Notas: 60% → 70% → 70% → 69%. <Mudou entre as duas últimas rodadas: secao:x, texto:y. | O conteúdo não mudou entre as duas últimas rodadas (mesmo hash): a rodada foi repetida sem correção. | O conteúdo mudou … (hash diferente), sem melhora na nota.> Casos ainda falhando (3): a, b, c. Gasto US$ 4.50 de US$ 5.00.`
   metadata `{motivo, loop_id, agente_chave, suite, serie[], hashes[], casos_falhando[], gasto_usd, orcamento_usd, rodadas_feitas, rodadas_planejadas, overcalls[{rodada, custo_usd}], detalhe}`.
 - **Target reached** (same kind): title `Loop concluído: <chave> (<suite>)`.
 - **Budget** (same kind): `O orçamento do loop foi atingido na rodada N: US$ X de US$ Y. Notas: … Decisão do dono: aumentar o orçamento em um novo loop ou encerrar.` + failing cases.
-- **Planned rounds exhausted** (same kind): `As N rodadas planejadas acabaram sem chegar a 100%. Notas: … Gasto …`.
+- **Planned rounds exhausted** (same kind): `As N rodadas planejadas acabaram sem chegar a <alvo>% (95% by default). Notas: … Gasto …`.
 - **Checkpoint** (kind `agents.eval_loop_checkpoint`, rounds 5/10/15 ≤ N): `Rodada N de M. Notas: … Gasto … Rodadas sem melhora: K (US$ …).`
 
 ## Not in this slice
 
-The frontend (loop card "100% / 80%", series chart, overcall list, stop button); a "resume a stopped loop" action (the owner decides by opening a new loop, with a new budget if wanted); email delivery of the stop notice (in-app only, per the spec); an automatic per-loop budget for Julia (the same default applies, the owner sets `orcamento_usd` per loop).
+The frontend (loop card "95% / 80%", series chart, overcall list, stop button); a "resume a stopped loop" action (the owner decides by opening a new loop, with a new budget if wanted); email delivery of the stop notice (in-app only, per the spec); an automatic per-loop budget for Julia (the same default applies, the owner sets `orcamento_usd` per loop).
