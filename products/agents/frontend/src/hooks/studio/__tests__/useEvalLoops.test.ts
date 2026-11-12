@@ -132,13 +132,13 @@ describe("useRunLoopRound", () => {
 
 describe("loop config", () => {
   it("GETs the config and PUT writes the server answer into the cache while the refetch is pending", async () => {
-    mockGet.mockResolvedValueOnce({ alvo: 0.95, orcamento_usd: 5, rodadas_max: 10, atualizado_em: null });
+    mockGet.mockResolvedValueOnce({ alvo: 0.95, orcamento_usd: 5, rodadas_max: 10, alterado_por: null, alterado_em: null });
     const { useLoopConfig, useUpdateLoopConfig, loopConfigKey, LOOP_CONFIG_PATH } = await import("@/hooks/studio/useEvalLoops");
     const qc = newClient();
     const { result: cfg } = renderHook(() => useLoopConfig(), { wrapper: wrapper(qc) });
     await waitFor(() => expect(cfg.current.data?.rodadas_max).toBe(10));
     expect(mockGet).toHaveBeenCalledWith(LOOP_CONFIG_PATH);
-    const put = vi.fn().mockResolvedValue({ alvo: 0.9, orcamento_usd: 4, rodadas_max: 6, atualizado_em: "2026-11-12T00:00:00Z" });
+    const put = vi.fn().mockResolvedValue({ alvo: 0.9, orcamento_usd: 4, rodadas_max: 6, alterado_por: "u1", alterado_em: "2026-11-12T00:00:00Z" });
     const { api } = await import("@/lib/api");
     (api as unknown as { put: unknown }).put = put;
     mockGet.mockReturnValue(new Promise(() => {}));

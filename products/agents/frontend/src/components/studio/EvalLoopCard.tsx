@@ -447,7 +447,7 @@ export function EvalLoopCard({ agentKey, versionId }: { agentKey: string; versio
         {loops.isRefreshing && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" aria-label="Atualizando" />}
       </h3>
       {body}
-      {platformAdmin && config.data && <ConfigEditor key={config.data.atualizado_em ?? "cfg"} config={config.data} />}
+      {platformAdmin && config.data && <ConfigEditor key={config.data.alterado_em ?? "cfg"} config={config.data} />}
     </Card>
   );
 }

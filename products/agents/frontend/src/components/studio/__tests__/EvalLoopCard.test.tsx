@@ -11,7 +11,7 @@ const mockStop = vi.fn();
 const mockConfig = vi.fn();
 const mockConfigSave = vi.fn();
 const mockPlatformAdmin = vi.fn();
-const CONFIG = { alvo: 0.95, orcamento_usd: 5, rodadas_max: 10, atualizado_em: null };
+const CONFIG = { alvo: 0.95, orcamento_usd: 5, rodadas_max: 10, alterado_por: null, alterado_em: null };
 vi.mock("@/hooks/studio/useEvalLoops", async () => {
   const actual = await vi.importActual<typeof import("@/hooks/studio/useEvalLoops")>("@/hooks/studio/useEvalLoops");
   return {

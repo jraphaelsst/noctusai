@@ -403,9 +403,10 @@ export interface EvalLoopConfig {
   alvo: number;
   orcamento_usd: number;
   rodadas_max: number;
-  atualizado_em: string | null;
+  alterado_por: string | null;
+  alterado_em: string | null;
 }
-export type EvalLoopConfigInput = Omit<EvalLoopConfig, "atualizado_em">;
+export type EvalLoopConfigInput = Omit<EvalLoopConfig, "alterado_por" | "alterado_em">;
 
 // §D2 Clients: collapsed into FE-DEF's `../types.ts` (`Client`,
 // `ClientSummary`, `ClientCreateInput`, `ClientPatchInput`, `ClientEntry`,

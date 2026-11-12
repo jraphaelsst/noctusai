@@ -30,7 +30,7 @@ import type { MecanismoRunIniciada } from "@/api/studio/types-prontidao";
 import { seg, studioKeys } from "./keys";
 
 /** Platform-level loop config route — one constant so a path change is a one-line edit. */
-export const LOOP_CONFIG_PATH = "/api/studio/evals/loop-config";
+export const LOOP_CONFIG_PATH = "/api/studio/plataforma/eval-loop-config";
 export const loopConfigKey = ["studio", "__evals__", "loop-config"] as const;
 
 export const loopsKey = (agentKey: string) => ["studio", agentKey, "evals", "loops"] as const;
@@ -190,7 +190,7 @@ export function useLoopConfig(enabled = true) {
 export function useUpdateLoopConfig() {
   return useCacheWriteMutation<EvalLoopConfig, EvalLoopConfigInput>({
     mutationFn: (payload) => api.put<EvalLoopConfig>(LOOP_CONFIG_PATH, payload),
-    // The server stamps `atualizado_em`: commit its answer over the single cached entry.
+    // The server stamps `alterado_em`: commit its answer over the single cached entry.
     targets: [{ queryKey: loopConfigKey, commit: (_old: EvalLoopConfig | undefined, saved) => saved }],
   });
 }
