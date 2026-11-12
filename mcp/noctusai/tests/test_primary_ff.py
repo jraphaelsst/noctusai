@@ -87,13 +87,18 @@ def test_untracked_file_the_ff_would_overwrite_is_refused_loudly(repos):
     assert "NOT fast-forwarded" in summary_line(r)
 
 
+def _peer_edits(peer: Path, name: str, body: str) -> None:
+    _commit(peer, name, body)
+    _git(peer, "push", "-q", "origin", "HEAD:dev")
+
+
 @pytest.mark.parametrize("staged", [False, True])
-def test_tracked_modification_is_never_touched(repos, staged):
+def test_a_tracked_modification_the_ff_would_change_is_never_touched(repos, staged):
     primary, peer = repos
     (primary / "base.txt").write_text("local edit\n")
     if staged:
         _git(primary, "add", "base.txt")
-    _peer_pushes(peer)
+    _peer_edits(peer, "base.txt", "upstream edit\n")
     head = _git(primary, "rev-parse", "HEAD")
 
     r = ff_primary_to_dev(str(primary), fetch=True)
@@ -101,6 +106,34 @@ def test_tracked_modification_is_never_touched(repos, staged):
     assert r["status"] == "skipped_dirty" and r["files"] == ["base.txt"]
     assert _git(primary, "rev-parse", "HEAD") == head
     assert (primary / "base.txt").read_text() == "local edit\n"
+
+
+def test_a_staged_change_refuses_even_when_disjoint(repos):
+    primary, peer = repos
+    (primary / "base.txt").write_text("mid-commit\n")
+    _git(primary, "add", "base.txt")
+    _peer_pushes(peer)
+    head = _git(primary, "rev-parse", "HEAD")
+
+    r = ff_primary_to_dev(str(primary), fetch=True)
+
+    assert r["status"] == "skipped_dirty" and "staged" in r["reason"]
+    assert _git(primary, "rev-parse", "HEAD") == head
+
+
+def test_an_unstaged_edit_the_ff_does_not_touch_is_carried_through(repos):
+    # 2026-11-12: one unshipped council-ledger row held the primary 113 commits behind, so every push ran the
+    # stale pre-push hook the primary's .git/hooks symlinks point at.
+    primary, peer = repos
+    (primary / "base.txt").write_text("unshipped ledger row\n")
+    _peer_pushes(peer)
+
+    r = ff_primary_to_dev(str(primary), fetch=True)
+
+    assert r["status"] == "fast_forwarded" and r["kept_dirty"] == ["base.txt"]
+    assert (primary / "new.txt").exists()
+    assert (primary / "base.txt").read_text() == "unshipped ledger row\n"
+    assert "kept 1 unstaged edit(s)" in summary_line(r)
 
 
 def test_non_dev_branch_is_never_touched(repos):

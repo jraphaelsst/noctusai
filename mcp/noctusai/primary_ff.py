@@ -9,8 +9,9 @@ it by hand (the scoped mcp gate and the .env scrub both shipped and then did
 not run, because the primary still held the old code).
 
 **When it refuses (and says so — never silently):** the primary is on any
-branch other than ``dev``, a detached HEAD, has TRACKED modifications (staged
-or not), has local commits ``origin/dev`` lacks (diverged), or the FF would
+branch other than ``dev``, a detached HEAD, has STAGED changes or unstaged
+modifications to a file the FF changes (unstaged edits to files it does not
+touch are carried through and reported as ``kept_dirty``), has local commits ``origin/dev`` lacks (diverged), or the FF would
 overwrite an untracked file that DIFFERS from the incoming blob (untracked files byte-identical to
 the incoming blob are removed first and reported in ``removed_identical_untracked`` — a tool wrote
 the same bytes the commit now carries; nothing is lost). Untracked files are otherwise fine: an ff-only
@@ -100,12 +101,23 @@ def ff_primary_to_dev(
         rc, dirty, err = g("status", "--porcelain", "--untracked-files=no")
         if rc != 0:
             return {"status": "error", "reason": f"status failed: {err[:200]}"}
+        kept_dirty: list[str] = []
         if dirty:
             # split, never slice: callers may have stripped the first line's leading space
             files = [ln.split(maxsplit=1)[-1] for ln in dirty.splitlines() if ln.strip()]
-            return {"status": "skipped_dirty",
-                    "reason": f"{len(files)} tracked modification(s) in the primary",
-                    "files": files[:20]}
+            # Unstaged edits to files the FF does not touch are carried through untouched (git's own ff-only
+            # check is the backstop). 2026-11-12: one unshipped council-ledger row kept the primary 113 commits
+            # behind for two days, so every push ran a stale pre-push hook (the primary's hooks are symlinks).
+            # A staged change (someone mid-commit) or an edit to a file the FF changes still refuses.
+            staged = g("diff", "--cached", "--quiet")[0] != 0
+            rc_in, incoming, _e = g("diff", "--name-only", "HEAD", upstream)
+            overlap = sorted(set(files) & set(incoming.splitlines())) if rc_in == 0 else files
+            if staged or overlap:
+                return {"status": "skipped_dirty",
+                        "reason": (f"{len(files)} tracked modification(s) in the primary"
+                                   + (" (staged)" if staged else f"; the FF changes {len(overlap)} of them")),
+                        "files": (overlap or files)[:20]}
+            kept_dirty = files
         rc, counts, err = g("rev-list", "--left-right", "--count", f"HEAD...{upstream}")
         if rc != 0:
             return {"status": "error", "reason": f"rev-list failed: {err[:200]}"}
@@ -129,6 +141,8 @@ def ff_primary_to_dev(
                     "reason": f"git merge --ff-only refused: {err[:300]}", "head": before}
         rc, after, _e = g("rev-parse", "--short", "HEAD")
         out = {"status": "fast_forwarded", "from": before, "to": after, "commits": behind}
+        if kept_dirty:
+            out["kept_dirty"] = kept_dirty[:20]
         if removed["removed"]:
             out["removed_identical_untracked"] = removed["removed"]
         return out
@@ -143,7 +157,9 @@ def summary_line(result: dict[str, Any]) -> str:
         rm = result.get("removed_identical_untracked")
         return (f"noc: primary checkout fast-forwarded {result['from']}..{result['to']} "
                 f"({result['commits']} commit(s))"
-                + (f"; removed {len(rm)} byte-identical untracked file(s): {', '.join(rm)}" if rm else ""))
+                + (f"; removed {len(rm)} byte-identical untracked file(s): {', '.join(rm)}" if rm else "")
+                + (f"; kept {len(kd)} unstaged edit(s) the FF does not touch: {', '.join(kd)}"
+                   if (kd := result.get("kept_dirty")) else ""))
     if s in (None, "up_to_date"):
         return ""
     return f"noc: primary checkout NOT fast-forwarded ({s}): {result.get('reason', '')}"
