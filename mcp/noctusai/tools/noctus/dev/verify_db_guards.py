@@ -12297,12 +12297,46 @@ _ASSISTANT_FEEDBACK_EVENTS_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_ASSISTANT_LINE_EVENTS_PROBES: tuple[GuardProbe, ...] = tuple(
+    GuardProbe(
+        id=f"assistant.whatsapp_line_events.{op.lower()}_refused", product="assistant", schema="assistant",
+        guard_name="guard_whatsapp_line_events_append_only", kind="write_refusal",
+        migrations=("020_whatsapp_line_events.sql",),
+        rationale=("The WhatsApp line-policy refusal log is the audit trail of what protects a personal number: an UPDATE or "
+                   "DELETE would rewrite it. Self-provisioning (no FK, no fixture)."),
+        sql=_do_block(f"""
+DECLARE
+  v_ev uuid;
+BEGIN
+  INSERT INTO assistant.whatsapp_line_events (event, line, op, reason)
+  VALUES ('noc-probe', 'http://probe.invalid', 'POST /x', 'noc-probe') RETURNING id INTO v_ev;
+  BEGIN
+    {stmt}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {op} on the append-only line event log succeeded - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%append_only%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+    for op, stmt in (("UPDATE", "UPDATE assistant.whatsapp_line_events SET reason = 'x' WHERE id = v_ev;"),
+                     ("DELETE", "DELETE FROM assistant.whatsapp_line_events WHERE id = v_ev;"))
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
     _ASSISTANT_GOOGLE_EVENTOS_APPEND_ONLY_PROBE,
     *_ASSISTANT_AI_OUTPUTS_PROBES,
     *_ASSISTANT_FEEDBACK_EVENTS_PROBES,
+    *_ASSISTANT_LINE_EVENTS_PROBES,
     _AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE,
     _RUIDO_SHAPE_PROBE,
     _TITULO_PAREADO_PROBE,

@@ -480,11 +480,11 @@ def _looser(new: LinePolicy, prior: LinePolicy) -> bool:
 
 
 def _check_registrable(base_url: str, policy: LinePolicy, allow_memory_sink: bool) -> None:
-    # NOC-REMEDIATE[line-event-persistence]: refusal events reach only the in-memory sink until S2 (products/assistant)
-    # ships its append-only events table and calls set_default_line_event_sink(...). Until then a send:disabled line
-    # cannot be registered without an explicit allow_memory_sink=True (tests only) -- a refusal nobody can audit later
-    # must not be what protects a personal number. — 2026-11-10
-    if not policy.send_enabled and isinstance(_default_sink, InMemoryLineEventSink) and not allow_memory_sink:
+    # A send:disabled line cannot be registered while refusals reach only the in-memory sink (allow_memory_sink=True is
+    # tests only) -- a refusal nobody can audit later must not be what protects a personal number. The persistent sink is
+    # `line_event_sink.make_line_event_sink` (append-only `<schema>.whatsapp_line_events`).
+    persistent = bool(getattr(_default_sink, "persistent", False)) or not isinstance(_default_sink, InMemoryLineEventSink)
+    if not policy.send_enabled and not persistent and not allow_memory_sink:
         raise LinePolicyError(
             f"line {base_url!r}: refusing to register `send: disabled` while the event sink is in-memory "
             "(refusals would not be persisted); call set_default_line_event_sink(<persistent sink>) first"

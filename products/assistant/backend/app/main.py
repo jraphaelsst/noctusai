@@ -9,9 +9,12 @@ NoctusAI Assistant -- a read-only shadow of one personal WhatsApp line.
 
 Run with: uvicorn app.main:app --reload --port 8021
 """
-from noctusai_lib.integrations.whatsapp import parse_line_policy, register_line_policy
+from noctusai_lib.integrations.whatsapp import (
+    make_line_event_sink, parse_line_policy, register_line_policy, set_default_line_event_sink,
+)
 from noctusai_seed import create_product_app
 from app.config import settings
+from app.dependencies import get_admin_client
 from app.rate_limit import limiter
 from app.routers.classificacao_router import router as classificacao_router
 from app.routers.google_router import callback_router as google_callback_router, router as google_router
@@ -21,6 +24,10 @@ from app.shadow.worker import start_worker, stop_worker
 # Line policy v1: declare the Assistant's own line (`ASSISTANT_WAHA_LINE_POLICY`, from waha-instances.yml). A malformed
 # value fails the boot; an absent one leaves the line undeclared => the seed refuses its writes (fail-closed).
 if settings.assistant_waha_base_url and settings.assistant_waha_line_policy:
+    # A `send: disabled` line is only registrable with a PERSISTENT refusal sink (append-only `whatsapp_line_events`,
+    # migration 020). The Real sink builds its client lazily (only on a refusal), so importing the app under tests needs
+    # no DB; tests that exercise a refusal swap in the Fake via `set_default_line_event_sink`.
+    set_default_line_event_sink(make_line_event_sink(schema="assistant", client_factory=get_admin_client))
     register_line_policy(
         settings.assistant_waha_base_url,
         parse_line_policy(settings.assistant_waha_line_policy),

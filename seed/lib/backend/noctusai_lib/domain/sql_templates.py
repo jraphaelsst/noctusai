@@ -705,6 +705,52 @@ CREATE TRIGGER guard_ai_feedback_events_append_only
     FOR EACH ROW EXECUTE FUNCTION {fn}();"""
 
 
+def whatsapp_line_events_table_sql(schema: str) -> str:
+    """Canonical ``<schema>.whatsapp_line_events`` -- the APPEND-ONLY sink of the WhatsApp line-policy events
+    (``whatsapp.line.write_refused`` / ``...repair_refused``; python side: ``integrations.whatsapp.line_event_sink``).
+
+    INSERT-only: UPDATE/DELETE are refused by a trigger and ungranted; SERVICE ROLE ONLY (``tier:service``). No message
+    content, no phone: ``line`` is a host label, ``op`` a redacted endpoint. Idempotent; see ``ai_outputs_table_sql``.
+    """
+    s = _checked_schema(schema)
+    fn = f"{s}.guard_whatsapp_line_events_append_only"
+    return f"""CREATE TABLE IF NOT EXISTS {s}.whatsapp_line_events (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event       TEXT NOT NULL,
+    line        TEXT NOT NULL,
+    op          TEXT NOT NULL,
+    reason      TEXT NOT NULL,
+    policy      JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS whatsapp_line_events_line_idx ON {s}.whatsapp_line_events (line, occurred_at DESC);
+ALTER TABLE {s}.whatsapp_line_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS service_role_select ON {s}.whatsapp_line_events;
+CREATE POLICY service_role_select ON {s}.whatsapp_line_events FOR SELECT TO service_role USING (true);
+DROP POLICY IF EXISTS service_role_insert ON {s}.whatsapp_line_events;
+CREATE POLICY service_role_insert ON {s}.whatsapp_line_events FOR INSERT TO service_role WITH CHECK (true);
+REVOKE ALL ON {s}.whatsapp_line_events FROM PUBLIC, anon, authenticated;
+REVOKE UPDATE, DELETE, TRUNCATE ON {s}.whatsapp_line_events FROM service_role;
+GRANT SELECT, INSERT ON {s}.whatsapp_line_events TO service_role;
+COMMENT ON TABLE {s}.whatsapp_line_events IS 'tier:service';
+
+CREATE OR REPLACE FUNCTION {fn}()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = {s}, public
+AS $$
+BEGIN
+    RAISE EXCEPTION 'append_only' USING ERRCODE = 'P0001';
+END;
+$$;
+REVOKE ALL ON FUNCTION {fn}() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION {fn}() TO service_role;
+DROP TRIGGER IF EXISTS guard_whatsapp_line_events_append_only ON {s}.whatsapp_line_events;
+CREATE TRIGGER guard_whatsapp_line_events_append_only
+    BEFORE UPDATE OR DELETE ON {s}.whatsapp_line_events
+    FOR EACH ROW EXECUTE FUNCTION {fn}();"""
+
+
 def invitation_token_lockdown_sql(schema: str) -> str:
     """Make ``<schema>.invitations.token`` unreadable through the API roles.
 
