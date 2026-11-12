@@ -19941,6 +19941,8 @@ def check_all_products() -> tuple[int, list]:
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())
+    # 2026-11-12 (W1-C) — a worker idle poll is a per-tick RPC; fixed/short idle = 56k calls/day.
+    all_issues.extend(check_worker_idle_polling())
     # 2026-11-07 — Motion only via @noctusai/lib/marketing (reduced-motion + chunk boundary).
     all_issues.extend(check_motion_import_boundary())
     # 2026-10-19 — vendor reverse-engineering captures/exports belong in _private-studies, not git.
@@ -28741,3 +28743,105 @@ def check_merge_drivers_have_contract_coverage(paths: list[Path] | None = None, 
              "issue": (f"merge driver '{name}' (.gitattributes) has no SPECS fixture - add its minimal valid "
                        f"base/ours/theirs so the contract (markers on conflict / clean merge / writes only %A) covers it")}
             for name in custom if name not in covered]
+
+
+# ---------------------------------------------------------------------------
+# `check_worker_idle_polling` — a job worker's idle poll is a PER-TICK RPC
+# against the shared database. 2026-11-09: a fixed 1s idle made ~15k
+# `claim_next_job`/hour; W1-C 2026-11-12: even a 30s cap left 56k calls/24h
+# (~20 loops). The construction is the seed `Worker` default (300s cap, doubling
+# backoff, in-process wake in `jobs/wake.py`); this is the backstop that keeps a
+# product or a refactor from putting a fixed short idle or an unbounded read
+# back into the loop. Escape: `# poll-ok: <reason>` on the offending line.
+# KB § PATTERNS/backend/polling-request-budget.md
+# ---------------------------------------------------------------------------
+_WORKER_IDLE_MIN_CAP_S = 120.0
+_WORKER_POLL_ROOTS = ("seed/lib/backend/noctusai_lib", "products")
+_BOUNDED_READ_MARKERS = (".limit(", ".single(", ".maybe_single(", "count=", ".head(")
+
+
+def _poll_num(node) -> float | None:
+    import ast as _ast
+    if isinstance(node, _ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+        return float(node.value)
+    return None
+
+
+def check_worker_idle_polling(repo_root: Path | None = None) -> list[dict]:
+    """Refuse a fixed/short idle in `Worker(...)` wiring or the worker loop, and an
+    unbounded `.select(` read inside `run_forever` / a `claim_gate` function."""
+    import ast as _ast
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+
+    def add(rel: str, line: int, msg: str) -> None:
+        issues.append({"file": f"{rel}:{line}", "severity": "high", "issue": msg})
+
+    files: list[Path] = []
+    for r in _WORKER_POLL_ROOTS:
+        base = root / r
+        if not base.is_dir():
+            continue
+        for p in base.rglob("*.py"):
+            parts = set(p.relative_to(root).parts)
+            if parts & {"tests", "node_modules", ".venv", "migrations"} or p.name.startswith("test_"):
+                continue
+            files.append(p)
+
+    for path in sorted(files):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if not any(t in text for t in ("Worker(", "claim_gate", "run_forever", "DEFAULT_MAX_IDLE")):
+            continue
+        try:
+            tree = _ast.parse(text)
+        except SyntaxError:
+            continue
+        rel = str(path.relative_to(root))
+        lines = text.splitlines()
+
+        def waived(lineno: int) -> bool:
+            return "poll-ok:" in lines[lineno - 1] if 0 < lineno <= len(lines) else False
+
+        is_worker_module = rel.endswith("domain/jobs/worker.py")
+
+        for node in _ast.walk(tree):
+            # (1) Worker(...) wiring: the idle cap must not be short or equal to the base poll.
+            if isinstance(node, _ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", "")) == "Worker":
+                kw = {k.arg: k.value for k in node.keywords if k.arg}
+                cap = _poll_num(kw["max_idle_interval_seconds"]) if "max_idle_interval_seconds" in kw else None
+                base = _poll_num(kw["poll_interval_seconds"]) if "poll_interval_seconds" in kw else None
+                if waived(node.lineno):
+                    continue
+                if cap is not None and cap < _WORKER_IDLE_MIN_CAP_S:
+                    add(rel, node.lineno, f"Worker(max_idle_interval_seconds={cap:g}) is below {_WORKER_IDLE_MIN_CAP_S:g}s: every idle worker pays one claim RPC per tick (56k/day at 30s). Drop the override to take the seed default, or justify with `# poll-ok: <reason>`.")
+                elif cap is not None and base is not None and cap == base:
+                    add(rel, node.lineno, "Worker idle cap equals the base poll interval: a FIXED idle poll, no backoff. Drop max_idle_interval_seconds to take the seed default.")
+            # (2) the default cap constant itself.
+            if is_worker_module and isinstance(node, _ast.Assign):
+                for t in node.targets:
+                    if getattr(t, "id", "") == "DEFAULT_MAX_IDLE_INTERVAL_SECONDS":
+                        v = _poll_num(node.value)
+                        if v is None or v < 300.0:
+                            add(rel, node.lineno, "DEFAULT_MAX_IDLE_INTERVAL_SECONDS must be a literal >= 300 (prod budget <= ~6k claim_next_job/day).")
+            # (3) loop / gate paths: fixed short sleep or unbounded read.
+            if isinstance(node, (_ast.AsyncFunctionDef, _ast.FunctionDef)) and (
+                node.name == "run_forever" or node.name.startswith("claim_gate") or node.name == "claim_allowed"
+            ):
+                for sub in _ast.walk(node):
+                    if (isinstance(sub, _ast.Call) and getattr(sub.func, "attr", "") == "sleep"
+                            and sub.args and (_poll_num(sub.args[0]) or 99999) <= 5 and not waived(sub.lineno)):
+                        add(rel, sub.lineno, f"fixed short sleep in {node.name}: an idle loop must back off (seed Worker idle_sleep), not sleep a constant.")
+                    if isinstance(sub, _ast.Call) and getattr(sub.func, "attr", "") == "select" and not waived(sub.lineno):
+                        seg = _ast.get_source_segment(text, sub) or ""
+                        # the chain continues AFTER .select(...): take the enclosing statement's source.
+                        stmt_src = ""
+                        for st in _ast.walk(node):
+                            if isinstance(st, _ast.stmt) and st.lineno <= sub.lineno <= (st.end_lineno or st.lineno) and not isinstance(st, (_ast.AsyncFunctionDef, _ast.FunctionDef, _ast.With, _ast.AsyncWith, _ast.Try, _ast.If, _ast.For, _ast.While, _ast.AsyncFor)):
+                                stmt_src = _ast.get_source_segment(text, st) or ""
+                                break
+                        if not any(m in (stmt_src or seg) for m in _BOUNDED_READ_MARKERS):
+                            add(rel, sub.lineno, f"unbounded `.select(` read in {node.name}: it runs every tick (and silently caps at 1000 rows). Bound it (`.limit(1)`/`.maybe_single()`/count) or cache the gate.")
+    return issues
