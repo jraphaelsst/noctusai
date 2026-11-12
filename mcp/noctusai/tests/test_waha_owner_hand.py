@@ -541,7 +541,7 @@ def test_only_the_strict_personal_shadow_shape_is_accepted(tmp_path, edit):
     yml = YML.replace(*edit)
     io = FakeIO(sh=FakeVps(vps_yml=yml))
     out, _ = _run(tmp_path, io, yml=yml)
-    assert out["status"] == "refused" and "strict read-only personal line" in out["error"] and not io.sh.touched
+    assert out["status"] == "refused" and "allowed personal line shape" in out["error"] and not io.sh.touched
 
 
 def test_unknown_action_and_remove_are_refused(tmp_path):
