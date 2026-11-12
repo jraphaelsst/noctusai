@@ -215,6 +215,38 @@ class TestPublicApproveEndpoints:
         assert resp.status_code != 401
         assert resp.status_code != 403
 
+    def _seed_link(self, client, **approval_over):
+        from datetime import datetime, timedelta, timezone
+
+        org = "00000000-0000-0000-0000-0000000000a1"
+        client.mock_supabase.set_table_data("post_approvals", [{
+            "id": "appr-1", "org_id": org, "post_id": "post-1", "public_token": TEST_TOKEN, "status": "pending",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(), **approval_over}])
+        client.mock_supabase.set_table_data("content_posts", [{
+            "id": "post-1", "org_id": org, "platform": "instagram", "caption": "Oi", "hashtags": None,
+            "media_url": None, "scheduled_for": None, "status": "draft", "assignee_user_id": None}])
+
+    def test_public_view_carries_no_internal_ids(self, client):
+        self._seed_link(client)
+        resp = client.raw().get(f"/api/content/approve/{TEST_TOKEN}")
+        assert resp.status_code == 200
+        assert set(resp.json()) == {"platform", "caption", "hashtags", "media_url", "scheduled_for", "approval_status", "expires_at"}
+
+    def test_a_link_without_an_expiry_fails_closed(self, client):
+        self._seed_link(client, expires_at=None)
+        assert client.raw().get(f"/api/content/approve/{TEST_TOKEN}").status_code == 410
+
+    def test_a_decided_link_cannot_be_used_again(self, client):
+        self._seed_link(client, status="approved")
+        resp = client.raw().post(f"/api/content/approve/{TEST_TOKEN}", json={"decision": "revision"})
+        assert resp.status_code == 410
+
+    def test_the_decision_response_carries_no_internal_ids(self, client):
+        self._seed_link(client)
+        resp = client.raw().post(f"/api/content/approve/{TEST_TOKEN}", json={"decision": "approved"})
+        assert resp.status_code == 200
+        assert set(resp.json()) == {"ok", "status", "team_notified"}
+
     def test_post_approval_invalid_decision_returns_422(self, client):
         """Invalid decision value → Pydantic 422 before service layer."""
         resp = client.raw().post(

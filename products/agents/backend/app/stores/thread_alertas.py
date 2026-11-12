@@ -18,7 +18,8 @@ __all__ = [
 ]
 
 _SCHEMA = "agents"
-TIPOS_ALERTA = ("lead_insatisfeito", "erro_agente", "desvio", "outro")
+#: ``emergencia`` (migration 079): the alert row IS the recorded emergency marking (the participant also gets an inactivity window).
+TIPOS_ALERTA = ("lead_insatisfeito", "erro_agente", "desvio", "outro", "emergencia")
 
 
 @dataclass(frozen=True)

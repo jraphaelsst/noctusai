@@ -31,7 +31,7 @@ import anyio.to_thread
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from app.dependencies import coerce_org_uuid, get_current_user_org, get_user_client
+from app.dependencies import coerce_org_uuid, get_current_user_org, get_org_client
 from app.schemas.content_plans import (
     AIGenerateOut,
     AIGenerateParams,
@@ -61,7 +61,7 @@ router = APIRouter(tags=["Content Plans"])
 
 
 def _svc(token: str, org_id: UUID) -> ContentPlansService:
-    return ContentPlansService(get_user_client(token), org_id=org_id)
+    return ContentPlansService(get_org_client(org_id), org_id=org_id)
 
 
 @contextmanager
@@ -72,7 +72,8 @@ def _guard(op: str, org_id: UUID, failure: str) -> Iterator[None]:
     except HTTPException:
         raise
     except PlanReferenceError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        logger.warning("content_plans.%s refused org=%s: %s", op, org_id, type(exc).__name__)
+        raise HTTPException(status_code=422, detail="plan_reference_invalid")
     except Exception:
         logger.exception("content_plans.%s failed org=%s", op, org_id)
         raise HTTPException(status_code=502, detail=failure)
@@ -246,7 +247,8 @@ def promote_item_to_post(
         try:
             result = svc.promote_to_post(plan, item_id)
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc))
+            logger.warning("content_plans.promote_item refused org=%s: %s", org_id, type(exc).__name__)
+            raise HTTPException(status_code=409, detail="post_not_promotable")
     if result is None:
         raise HTTPException(status_code=404, detail="Conteúdo não encontrado")
     return PostOut(**result["post"])
@@ -302,7 +304,7 @@ async def generate_items_with_ai(
             client_name = None
             if plan.get("client_id"):
                 rows = (
-                    get_user_client(token).table("clients").select("name")
+                    get_org_client(org_id).table("clients").select("name")
                     .eq("org_id", str(org_id)).eq("id", str(plan["client_id"])).execute().data
                 ) or []
                 client_name = rows[0].get("name") if rows else None

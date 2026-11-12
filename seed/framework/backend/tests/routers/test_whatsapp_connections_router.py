@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from noctusai_lib.integrations.whatsapp import FakeWahaClient
 from noctusai_lib.integrations.whatsapp.connection_store import build_whatsapp_connection_store
+from noctusai_lib.primitives.exceptions import http_exception_handler
 from noctusai_lib.security.encrypted_tokens import generate_key
 from noctusai_seed.whatsapp_connections_router import create_whatsapp_connections_router
 
@@ -237,6 +238,29 @@ class TestUpdateAndDelete:
         assert resp.status_code == 200
         assert resp.json()["label"] == "New"
 
+    @pytest.mark.parametrize("field,value", [("base_url", "http://169.254.169.254/"), ("session_name", "other")])
+    def test_patch_cannot_repoint_the_connection(self, field, value):
+        """base_url / session_name are server-derived (as on create): a caller-supplied host is an SSRF that would send
+        the decrypted WAHA key to an arbitrary URL."""
+        app, store, _waha = _app()
+        created = self._create(app)
+        resp = TestClient(app).patch(f"/api/whatsapp/connections/{created['id']}", json={field: value})
+        assert resp.status_code == 422
+        assert TestClient(app).get("/api/whatsapp/connections").json()[0][field] != value
+
+    def test_patch_webhook_url_must_be_under_the_apps_own_route(self):
+        """Same owned-prefix check as POST /{id}/webhook: a PATCHed URL shaped like another app's would later be removed
+        from the shared WAHA session by DELETE."""
+        app, _store, _waha = _app()
+        created = self._create(app)
+        foreign = TestClient(app).patch(
+            f"/api/whatsapp/connections/{created['id']}", json={"webhook_url": "https://other-app.example.com/api/whatsapp/webhook/x"})
+        assert foreign.status_code == 422 and foreign.json()["detail"]["code"] == "webhook_url_foreign"
+        ok = TestClient(app).patch(
+            f"/api/whatsapp/connections/{created['id']}",
+            json={"webhook_url": "https://product.example.com/api/whatsapp/webhook/mine"})
+        assert ok.status_code == 200 and ok.json()["webhook_url"] == "https://product.example.com/api/whatsapp/webhook/mine"
+
     def test_patch_missing_connection_404(self):
         app, _store, _waha = _app()
         resp = TestClient(app).patch(
@@ -370,3 +394,101 @@ class TestLiveWahaOps:
         app, _store, _waha = _app(raise_401=True)
         resp = TestClient(app).get(f"/api/whatsapp/connections/{uuid.uuid4()}/status")
         assert resp.status_code == 401
+
+
+# ─── no-leaking (owner rule 2026-11-11): an upstream failure is a CODE, never exception text ───────────────
+_SECRET_MSG = "ConnectError: http://waha-x:3000/secret"
+
+
+class _BoomWaha(FakeWahaClient):
+    """A WAHA whose every call fails with an exception message naming an internal host."""
+
+    async def start_session(self, *a, **k):
+        raise RuntimeError(_SECRET_MSG)
+
+    async def set_webhook(self, *a, **k):
+        raise RuntimeError(_SECRET_MSG)
+
+    async def get_qr(self, *a, **k):
+        raise RuntimeError(_SECRET_MSG)
+
+    async def get_session(self, *a, **k):
+        raise RuntimeError(_SECRET_MSG)
+
+    async def recover_session(self, *a, **k):
+        raise RuntimeError(_SECRET_MSG)
+
+    async def restart_session(self, *a, **k):
+        raise RuntimeError(_SECRET_MSG)
+
+
+def _swap_app():
+    store = build_whatsapp_connection_store(
+        _FakeSupabase(), encryption_key=generate_key().decode(), schema="social_wiring"
+    )
+    holder = {"client": FakeWahaClient(session="default")}
+    router = create_whatsapp_connections_router(
+        MagicMock(), MagicMock(), store_factory=lambda: store, get_current_user_org=_org_dep(),
+        waha_base_url="https://waha.example.com", resolve_webhook_base_url=lambda: "https://product.example.com",
+        waha_client_factory=lambda **_k: holder["client"],
+    )
+    app = FastAPI()
+    app.add_exception_handler(HTTPException, http_exception_handler)  # the app factory's real error shape
+    app.include_router(router)
+    return app, store, holder
+
+
+def _assert_no_leak(resp, *, status_code, code):
+    assert resp.status_code == status_code
+    text = resp.text
+    for needle in ("waha-x", "3000", "secret", "ConnectError", "http://"):
+        assert needle not in text, f"{needle!r} leaked in {text}"
+    body = resp.json()
+    assert body["code"] == code and body["detail"]
+
+
+class TestNoLeakOnWahaFailure:
+    def test_failed_create_leaks_nothing_and_persists_no_row(self):
+        app, store, holder = _swap_app()
+        holder["client"] = _BoomWaha(session="default")
+        resp = TestClient(app).post("/api/whatsapp/connections", json={"label": "L", "api_key": "k"})
+        _assert_no_leak(resp, status_code=502, code="waha_webhook_failed")
+        assert store.list_connections(org_id=uuid.UUID(ORG_A)) == []  # verify-then-persist: no junk row
+
+    @pytest.mark.parametrize(
+        "method,suffix,code",
+        [("get", "qr", "waha_unavailable"), ("post", "restart", "waha_unavailable"),
+         ("post", "recover", "waha_unavailable")],
+    )
+    def test_live_ops_leak_nothing(self, method, suffix, code):
+        app, _store, holder = _swap_app()
+        created = TestClient(app).post("/api/whatsapp/connections", json={"label": "L", "api_key": "k"}).json()
+        holder["client"] = _BoomWaha(session="default")
+        resp = getattr(TestClient(app), method)(f"/api/whatsapp/connections/{created['id']}/{suffix}")
+        _assert_no_leak(resp, status_code=502, code=code)
+
+    def test_webhook_config_leaks_nothing(self):
+        app, _store, holder = _swap_app()
+        created = TestClient(app).post("/api/whatsapp/connections", json={"label": "L", "api_key": "k"}).json()
+        holder["client"] = _BoomWaha(session="default")
+        resp = TestClient(app).post(
+            f"/api/whatsapp/connections/{created['id']}/webhook", json={"url": created["webhook_url"]}
+        )
+        _assert_no_leak(resp, status_code=502, code="waha_webhook_failed")
+
+    def test_unconfigured_waha_names_no_env_var(self):
+        app, _store, _waha = _app(waha_base_url=None)
+        app.add_exception_handler(HTTPException, http_exception_handler)
+        resp = TestClient(app).post("/api/whatsapp/connections", json={"label": "L", "api_key": "k"})
+        assert resp.status_code == 503
+        assert "WAHA_BASE_URL" not in resp.text and resp.json()["code"] == "not_configured"
+
+    def test_dispatch_emits_the_telemetry_line(self, caplog):
+        import logging
+
+        app, _store, holder = _swap_app()
+        holder["client"] = _BoomWaha(session="default")
+        with caplog.at_level(logging.WARNING, logger="noctusai.integration_error"):
+            TestClient(app).post("/api/whatsapp/connections", json={"label": "L", "api_key": "k"})
+        lines = [r.getMessage() for r in caplog.records if r.name == "noctusai.integration_error"]
+        assert any("code=waha_webhook_failed" in ln and "status=502" in ln and "exc=RuntimeError" in ln for ln in lines)

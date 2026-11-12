@@ -1361,6 +1361,16 @@
    "class": "never-fires",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-http-detail-echoes-exception": {
+   "mechanism": "api: noctusai_lib.api.integration_errors.integration_error (fixed pt-BR message + stable code; the structured integration_error log line is the telemetry leg)",
+   "owner": "backend-engineer",
+   "placement": "warn",
+   "standard": "BLOCKING keeper (owner rule 'no-leaking', 2026-11-11): an HTTPException detail / error JSONResponse body never carries exception text; seed zero-tolerance, products ratcheted by deploy/security/http-detail-echo-baseline.json",
+   "new": true,
+   "declared": "2026-11-11",
+   "source": "OWASP ASVS V7.4 / CWE-209 (error message containing sensitive information); owner rule 'no-leaking' 2026-11-11; KB § PATTERNS/security/appsec-craft-canon.md §9",
+   "telemetry": "integration_error structured log line (code/status/op/exc class) + cli exit wrapper -> gate events"
+  },
   "keeper:check-job-start-without-handoff": {
    "severity": "high",
    "kind": "keeper-batch",
@@ -3529,6 +3539,18 @@
    "branch": "feat/guardian-tool-authorship-keeper",
    "gates": [
     "keeper:check-guardian-tool-authorship"
+   ]
+  },
+  {
+   "id": "D36",
+   "decision": "An HTTP error body is a fixed message plus a stable code, never exception text (no internal hosts, env-var names or driver messages); a create verifies the upstream before it persists",
+   "home": "KB § PATTERNS/security/appsec-craft-canon.md",
+   "construction": "api:noctusai_lib.api.integration_errors.integration_error (fixed pt-BR message + code; exception logged server-side)",
+   "gate": "keeper:check-http-detail-echoes-exception",
+   "telemetry": "integration_error structured log line (code=, status=, op=, exc= class) + keeper gate events",
+   "branch": "feat/sec-http-detail-no-leak",
+   "gates": [
+    "keeper:check-http-detail-echoes-exception"
    ]
   }
  ]

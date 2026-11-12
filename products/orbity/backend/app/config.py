@@ -14,22 +14,28 @@ class SeedSettings(ProductSettings):
 
     cors_origins: str = "@registry:own:orbity"
 
+    # Request-history audit trail ON (same as social-wiring): since migration 034 platform staff acting in an agency org
+    # (the org picker) get real read/write on its data instead of RLS-empty results, and every such write must leave a
+    # client-visible row naming the acting actor (`acting_audit_actor`, stashed by the seed auth dependency). The seed
+    # middleware stays inert unless this is on. `AUDIT_TRAIL_ENABLED=0` in the environment still turns it off.
+    audit_trail_enabled: bool = True
+
     # Fernet key (fleet `ENCRYPTION_KEY`): encrypts each org's WAHA API key at
     # rest in `orbity.whatsapp_connections`. Empty => the connections organ
-    # answers 503 and saved connections are ignored (static WAHA_* fallback).
+    # answers 503 and saved connections are ignored (sending then refuses: no static fallback).
     encryption_key: str = ""
 
     # Shared WAHA server (fleet `WAHA_BASE_URL` / `WAHA_API_KEY` / `WAHA_SESSION`).
     # `waha_base_url` is what a NEW connection is created against (the router
-    # derives base_url/session server-side) and the static fallback when an
-    # org has no saved connection. Empty AND no saved connection => sending
-    # refuses with "WhatsApp não conectado" (never a silent Fake).
+    # derives base_url/session server-side). It is NEVER a sending fallback: an org
+    # with no saved connection => sending refuses with "WhatsApp não conectado"
+    # (never the shared line, never a silent Fake).
     waha_base_url: str = ""
     waha_api_key: str = ""
     waha_session: str = "default"
     waha_external_base_url: str = ""
     # WAHA's hex HMAC of the raw inbound body (headers X-Webhook-Hmac + X-Webhook-Hmac-Algorithm, sha512 default).
-    # Unset => unsigned webhooks accepted (early-dev only), same as community.
+    # Unset => unsigned webhooks are accepted ONLY when APP_ENV explicitly says local/dev/test; anywhere else 401.
     waha_webhook_hmac_secret: str = ""
 
     # Fake WAHA client ONLY under explicit opt-in (test harness / local dev,

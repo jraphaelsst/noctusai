@@ -75,6 +75,12 @@ GATE_BUDGETS_S: dict[str, int] = {
     "migration_replay": 600,
     "kb_sync_verify": 300,
     "claude_md_router": 120,
+    # release_steward scoped_green (`export_ci_parity_check`): one budget PER STAGE, each with the one x1.5 retry, instead
+    # of one 1500 s cap on a stage (2026-11-11: a loaded box timed the real-tree keeper pytest out three times).
+    "ci_parity:export": 300,
+    "ci_parity:pytest": 1100,
+    "ci_parity:keeper:": 600,
+    "ci_parity:prime:": 300,
     # generic product legs: pytest:agents p90 ~123 s -> 3x ~370, rounded up.
     "pytest:": 600,
     "e2e:": 600,

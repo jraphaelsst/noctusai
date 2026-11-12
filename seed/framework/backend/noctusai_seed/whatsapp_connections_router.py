@@ -100,6 +100,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.audit.types import AuditActor, AuditEntry
+from noctusai_lib.api.integration_errors import integration_error
 from noctusai_lib.integrations.whatsapp import (
     WahaSessionNotReady,
     WhatsAppConnectionRecord,
@@ -151,10 +152,13 @@ class WhatsAppConnectionCreateIn(StrictHttpModel):
 
 
 class WhatsAppConnectionUpdateIn(StrictHttpModel):
+    """What a member may change. ``base_url`` and ``session_name`` are deliberately NOT here: like on create they are
+    derived server-side (the product's WAHA host + the generated session), never taken from the caller -- a
+    client-supplied host would let any org member point the server's authenticated WAHA calls (and the decrypted api key)
+    at an arbitrary URL (SSRF, security review F3). ``StrictHttpModel`` makes sending them a 422."""
+
     label: Optional[str] = None
     api_key: Optional[str] = None
-    base_url: Optional[str] = None
-    session_name: Optional[str] = None
     webhook_url: Optional[str] = None
 
 
@@ -294,9 +298,7 @@ def create_whatsapp_connections_router(
         try:
             return store_factory()
         except EncryptionNotConfigured as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
-            ) from exc
+            raise integration_error("not_configured", exc=exc, op="store") from exc
 
     def _require_record(
         store: WhatsAppConnectionStore, *, connection_id: UUID, org_id: UUID, decrypt: bool = False
@@ -306,9 +308,7 @@ def create_whatsapp_connections_router(
         try:
             record = store.get_connection(connection_id=connection_id, org_id=org_id, decrypt=decrypt)
         except WhatsAppConnectionStoreError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
-            ) from exc
+            raise integration_error("not_configured", exc=exc, op="store") from exc
         if record is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="connection not found")
         return record
@@ -331,6 +331,21 @@ def create_whatsapp_connections_router(
                 detail="Cannot build webhook URL: product URL not configured",
             ) from exc
         return f"{base}{webhook_path_prefix}/"
+
+    def _require_owned_webhook_url(url: str) -> str:
+        """``url`` stripped, 422 ``webhook_url_foreign`` unless it is under THIS app's own webhook route. Shared by
+        ``POST /{id}/webhook`` and ``PATCH /{id}``: ``set_webhook`` REPLACES entries under the owned prefix, and a stored
+        URL is what ``DELETE`` later removes -- a URL shaped like another app's would delete that app's registration on
+        the shared WAHA session (H1)."""
+        url = url.strip()
+        owned = _owned_webhook_prefix()
+        if not url.startswith(owned) or len(url) == len(owned):
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "webhook_url_foreign", "message": "Webhook URL must be under this app's own webhook route"},
+            )
+        return url
+
 
     def _waha_client(record: WhatsAppConnectionRecord):
         return waha_client_factory(
@@ -363,10 +378,7 @@ def create_whatsapp_connections_router(
 
         base_url = (waha_base_url or "").strip()
         if not base_url:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="WAHA server not configured (WAHA_BASE_URL is empty)",
-            )
+            raise integration_error("not_configured", op="waha_base_url")
         session_name = (waha_session or "default").strip()
 
         webhook_token = secrets.token_urlsafe(24)
@@ -380,6 +392,29 @@ def create_whatsapp_connections_router(
             ) from exc
         webhook_url = f"{product_base}{webhook_path_prefix}/{webhook_token}"
 
+        client = waha_client_factory(
+            base_url=base_url or None, api_key=body.api_key.strip(), session=session_name
+        )
+        if body.session_role != "borrower":  # a borrowed session is started/paired by its owner
+            try:
+                await client.start_session()
+            except Exception as exc:  # noqa: BLE001 — non-fatal, /start retries later
+                logger.warning(
+                    "WAHA start_session failed for new connection (session=%s): %s",
+                    session_name, type(exc).__name__,
+                )
+        try:
+            # owned_prefix is explicit: never derived from the URL, so only THIS product's entries are replaced.
+            await client.set_webhook(
+                webhook_url, webhook_events, owned_prefix=f"{product_base}{webhook_path_prefix}/"
+            )
+        except Exception as exc:  # noqa: BLE001 — explicit action, surface as 502
+            logger.error(
+                "WAHA set_webhook failed for new connection (session=%s): %s",
+                session_name, type(exc).__name__,
+            )
+            raise integration_error("waha_webhook_failed", exc=exc, op="register") from exc
+        # Persist ONLY after WAHA accepted the key: a failed create leaves no row behind.
         record = store.create_connection(
             org_id=resolve_org_id(raw_org),
             user_id=resolve_user_id(user),
@@ -391,32 +426,6 @@ def create_whatsapp_connections_router(
             webhook_token=webhook_token,
             session_role=body.session_role,
         )
-
-        client = waha_client_factory(
-            base_url=base_url or None, api_key=body.api_key.strip(), session=session_name
-        )
-        if body.session_role != "borrower":  # a borrowed session is started/paired by its owner
-            try:
-                await client.start_session()
-            except Exception as exc:  # noqa: BLE001 — non-fatal, /start retries later
-                logger.warning(
-                    "WAHA start_session failed for new connection %s (session=%s): %s",
-                    record.id, session_name, exc,
-                )
-        try:
-            # owned_prefix is explicit: never derived from the URL, so only THIS product's entries are replaced.
-            await client.set_webhook(
-                webhook_url, webhook_events, owned_prefix=f"{product_base}{webhook_path_prefix}/"
-            )
-        except Exception as exc:  # noqa: BLE001 — explicit action, surface as 502
-            logger.error(
-                "WAHA set_webhook failed for connection %s (session=%s): %s",
-                record.id, session_name, exc,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"WAHA webhook registration failed: {exc}",
-            ) from exc
         return _out(record)
 
     @router.patch("/{connection_id}", response_model=WhatsAppConnectionOut)
@@ -433,10 +442,8 @@ def create_whatsapp_connections_router(
             connection_id=connection_id,
             org_id=org_id,
             label=body.label.strip() if body.label is not None else None,
-            base_url=body.base_url.strip() if body.base_url is not None else None,
-            session_name=body.session_name.strip() if body.session_name is not None else None,
             api_key=body.api_key.strip() if body.api_key is not None else None,
-            webhook_url=body.webhook_url if body.webhook_url is not None else None,
+            webhook_url=_require_owned_webhook_url(body.webhook_url) if body.webhook_url is not None else None,
         )
         if record is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="connection not found")
@@ -515,9 +522,7 @@ def create_whatsapp_connections_router(
         except WahaSessionNotReady as exc:
             return WhatsAppConnectionQrOut(connection_id=connection_id, scannable=False, status=exc.status)
         except Exception as exc:  # noqa: BLE001 — explicit action, surface as 502
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=f"WAHA QR fetch failed: {exc}"
-            ) from exc
+            raise integration_error("waha_unavailable", exc=exc, op="qr") from exc
         return WhatsAppConnectionQrOut(
             connection_id=connection_id,
             scannable=True,
@@ -536,9 +541,7 @@ def create_whatsapp_connections_router(
             await getattr(client, action)()
             payload = await client.get_session()
         except Exception as exc:  # noqa: BLE001 — explicit action, surface as 502
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=f"WAHA {action} failed: {exc}"
-            ) from exc
+            raise integration_error("waha_unavailable", exc=exc, op=action) from exc
         return _status_from_session(payload, connection_id=connection_id, session=record.session_name)
 
     @router.post("/{connection_id}/start", response_model=WhatsAppConnectionStatusOut)
@@ -589,9 +592,7 @@ def create_whatsapp_connections_router(
         try:
             outcome = await client.recover_session()
         except Exception as exc:  # noqa: BLE001 — explicit action, surface as 502
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=f"WAHA recover failed: {exc}"
-            ) from exc
+            raise integration_error("waha_unavailable", exc=exc, op="recover") from exc
 
         if on_session_event is not None:
             await on_session_event(
@@ -622,22 +623,13 @@ def create_whatsapp_connections_router(
         org_id = resolve_org_id(raw_org)
         record = _require_record(store, connection_id=connection_id, org_id=org_id, decrypt=True)
         _refuse_borrowed(record)
-        url = body.url.strip()
+        url = _require_owned_webhook_url(body.url)
         owned = _owned_webhook_prefix()
-        if not url.startswith(owned) or len(url) == len(owned):
-            # H1: set_webhook REPLACES entries under owned_prefix -- a URL shaped like another app's would
-            # delete that app's registration on the shared WAHA session.
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "webhook_url_foreign", "message": "Webhook URL must be under this app's own webhook route"},
-            )
         client = _waha_client(record)
         try:
             result = await client.set_webhook(url, body.events, owned_prefix=owned)
         except Exception as exc:  # noqa: BLE001 — explicit action, surface as 502
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=f"WAHA webhook config failed: {exc}"
-            ) from exc
+            raise integration_error("waha_webhook_failed", exc=exc, op="webhook") from exc
         store.update_connection(connection_id=connection_id, org_id=org_id, webhook_url=url)
         waha_status = result.get("status") if isinstance(result, dict) else None
         return WhatsAppWebhookResultOut(

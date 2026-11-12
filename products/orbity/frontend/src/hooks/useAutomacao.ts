@@ -18,6 +18,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { errorCopy } from "@/lib/errorCopy";
 import { useAuthStore } from "@noctusai/seed/infra";
 
 // ---------------------------------------------------------------------------
@@ -345,7 +346,7 @@ export function useTriggerFlow() {
       toast.success("Fluxo disparado com sucesso!");
     },
     onError: (error: Error) => {
-      toast.error("Erro ao disparar fluxo", { description: error.message });
+      toast.error("Erro ao disparar fluxo", { description: errorCopy(error) });
     },
   });
 }
@@ -366,7 +367,10 @@ export function useExecutions(leadId?: string) {
     },
     enabled: !!user,
     staleTime: 60 * 1000,
-    refetchInterval: 30 * 1000, // poll every 30s for running executions
+    // poll-budget: 30s while this list holds an execution still in flight, otherwise never; hidden=paused (TanStack default
+    // refetchIntervalInBackground=false); one GET per tick, org-scoped. Was an unconditional 30s poll even with nothing running.
+    refetchInterval: (query) =>
+      query.state.data?.some((e) => e.status === "running") ? 30 * 1000 : false,
   });
 }
 

@@ -84,6 +84,22 @@ class ParametrosDef:
     eixos: dict[str, Any] = field(default_factory=dict)
     #: Rule: ask for the identity fields only when it is true (e.g. visit intent recorded). None = any time.
     pedir_identificacao_quando: dict[str, Any] | None = None
+    #: Follow-ups (retomadas) in a row with no reply from the lead (owner rule 2026-11-10: 2). The channel turn refuses
+    #: one more with ``limite_retomadas``; 0 = never follow up.
+    max_retomadas_seguidas: int = 2
+    #: The catalogue the agent's generic offer tools read (``app.catalogos.CATALOGOS``); ``None`` = the standard names
+    #: none (an agent with ``oferecer_opcoes`` active then fails readiness: ``catalogo_ausente``).
+    catalogo: str | None = None
+    #: Identity fields this standard DESIRES (asked once, never a blocker), from ``identificacao.CAMPOS``.
+    #: ``None`` = the key predates the standard (a published legacy version): the engine falls back to
+    #: ``DESEJADOS_PADRAO`` on an explicit, logged branch. ``()`` = declared, wants none. Anything else is
+    #: exactly what is asked -- no silent default for a standard that declares.
+    identificacao_desejada: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        from app.qualificacao.identificacao import validar_desejados  # lazy: identificacao imports the matcher
+        if self.identificacao_desejada is not None:
+            object.__setattr__(self, "identificacao_desejada", validar_desejados(self.identificacao_desejada))
 
 
 @dataclass(frozen=True)
@@ -144,6 +160,9 @@ class EventoImovel:
     id: UUID | None = None
     agent_id: UUID | None = None
     thread_id: UUID | None = None
+    #: The catalogue ``codigo_imovel`` belongs to (migration 081). NOC-REMEDIATE[codigo-opcao-rename]: the column and
+    #: this field keep the real-estate name ``codigo_imovel`` until the imóvel tools retire -- 2026-11-11
+    catalogo: str = "imoveis_sw"
 
 
 @dataclass(frozen=True)

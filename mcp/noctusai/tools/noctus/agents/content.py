@@ -163,10 +163,16 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     return out
 
 
+def _from_env(key: str) -> str:
+    """The process env wins; else the agents env file (one file carries both the token and the URL)."""
+    val = os.environ.get(key, "").strip()
+    if not val:
+        val = _parse_env_file(Path(os.environ.get("NOCTUS_AGENTS_ENV_FILE") or DEFAULT_ENV_FILE).expanduser()).get(key, "").strip()
+    return val
+
+
 def _token() -> str:
-    tok = os.environ.get(ENV_TOKEN, "").strip()
-    if not tok:
-        tok = _parse_env_file(Path(os.environ.get("NOCTUS_AGENTS_ENV_FILE") or DEFAULT_ENV_FILE).expanduser()).get(ENV_TOKEN, "").strip()
+    tok = _from_env(ENV_TOKEN)
     if not tok:
         raise ContentError(
             "nao_configurado",
@@ -177,9 +183,10 @@ def _token() -> str:
 
 
 def _base_url(base_url: str | None) -> str:
-    url = (base_url or os.environ.get(ENV_URL, "")).strip().rstrip("/")
+    url = (base_url or _from_env(ENV_URL)).strip().rstrip("/")
     if not url:
-        raise ContentError("base_url_ausente", "Informe base_url (o ambiente alvo) ou defina NOCTUS_AGENTS_URL.")
+        raise ContentError("base_url_ausente", "Informe base_url (o ambiente alvo) ou defina NOCTUS_AGENTS_URL "
+                                               "(no ambiente ou em ~/.config/noctus/agents.env).")
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
     if parts.username or parts.password or not host:
@@ -500,7 +507,7 @@ class _SkillRef:
 
 _CRITERIO_FIELDS = ("grupo", "rotulo", "descricao_modelo", "tipo", "opcoes", "unidade", "sensivel", "pontuacao", "ordem", "ativo", "eixo", "escopo", "validade_dias")
 _ESTAGIO_FIELDS = ("rotulo", "descricao", "ordem", "regra", "conclusivo", "terminal")
-_PARAM_FIELDS = ("minimo_para_ofertar", "lote_ofertas", "score_max", "eixos", "pedir_identificacao_quando")
+_PARAM_FIELDS = ("minimo_para_ofertar", "lote_ofertas", "score_max", "eixos", "pedir_identificacao_quando", "max_retomadas_seguidas")
 
 
 def _norm_opcoes(opcoes: Any) -> Any:

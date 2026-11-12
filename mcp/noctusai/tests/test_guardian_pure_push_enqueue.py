@@ -13,6 +13,7 @@ the REAL export-and-regenerate mechanism pointed at a tiny regenerator that live
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -742,14 +743,32 @@ _SESSION_TEST = """
 def test_real_tree_session_keeper():
     assert check_needs_session() == []
 """
+_SLOW_ONCE_TEST = """
+
+def test_real_tree_slow_once_keeper():
+    # first attempt hangs past the stage budget (a loaded machine); a retry finds the marker and is instant
+    import time
+    marker = ROOT / "slow-once.flag"
+    if not marker.exists():
+        marker.write_text("1")
+        time.sleep(60)
+    assert check_manifest() == []
+"""
+_SLOW_ALWAYS_TEST = """
+
+def test_real_tree_slow_always_keeper():
+    import time
+    time.sleep(60)
+    assert check_manifest() == []
+"""
 _SCRUBBED_ENV = {"CLAUDE_CODE_SESSION_ID": "sess-123", "CLAUDE_PROJECT_DIR": "/somewhere", "OPENAI_API_KEY": "k"}
 
 
-def _ci_branch(world, *, rogue_script=False, session_test=False):
+def _ci_branch(world, *, rogue_script=False, session_test=False, extra_test=""):
     """A pushed branch whose head carries a tiny CI definition + the keepers it blocks on."""
     wt = world.worktree()
     for rel, text in ((".github/workflows/test.yml", _WORKFLOW), ("mcp/noctusai/cli.py", _CLI),
-                      ("mcp/noctusai/tests/test_keepers.py", _KEEPER_TESTS + (_SESSION_TEST if session_test else "")),
+                      ("mcp/noctusai/tests/test_keepers.py", _KEEPER_TESTS + (_SESSION_TEST if session_test else "") + extra_test),
                       ("scripts/MANIFEST", "tool.sh\n"), ("scripts/tool.sh", "#!/bin/sh\n")):
         (wt / rel).parent.mkdir(parents=True, exist_ok=True)
         (wt / rel).write_text(text)
@@ -1521,3 +1540,28 @@ def test_the_deliverable_git_seam_resolves_path_arguments_from_the_toplevel(tmp_
     git = RS._subprocess_git(repo / "mcp" / "noctusai")
     rc, out, _ = git("ls-tree", "--name-only", "HEAD", "products/p/backend/migrations/")
     assert rc == 0 and out.strip() == "products/p/backend/migrations/001_a.sql"
+
+
+def test_a_stage_that_times_out_is_retried_once_then_passes_under_the_declared_budget(world, monkeypatch):
+    """scoped_green uses the merged-tip budget system: per-stage budget, ONE x1.5 retry. A slow first attempt (the
+    loaded-box case) is not an UNMEASURED verdict when the retry fits."""
+    _ci_branch(world, extra_test=_SLOW_ONCE_TEST)
+    monkeypatch.setenv("NOCTUS_GATE_BUDGETS_JSON", json.dumps({"ci_parity:pytest": 12}))
+    res = _parity(world)
+    assert res["ok"], res["detail"]
+    assert world.verdict_store.exists()
+
+
+def test_a_stage_that_times_out_twice_is_unmeasured_naming_the_stage_never_green(world, monkeypatch):
+    _ci_branch(world, extra_test=_SLOW_ALWAYS_TEST)
+    monkeypatch.setenv("NOCTUS_GATE_BUDGETS_JSON", json.dumps({"ci_parity:pytest": 2}))
+    res = _parity(world)
+    assert not res["ok"] and res["detail"].startswith("UNMEASURED:")
+    assert "ci_parity:pytest" in res["detail"] and "x1.5 retry" in res["detail"]
+    assert not world.verdict_store.exists()  # an unmeasured run mints no record
+
+
+def test_every_ci_parity_stage_has_a_declared_budget():
+    from tools.noctus.dev import gate_budget as gb
+    for gate in ("ci_parity:export", "ci_parity:pytest", "ci_parity:keeper:--check-x", "ci_parity:prime:--stamp"):
+        assert gb.declared_gate_budget(gate) is not None, gate

@@ -1,15 +1,20 @@
-# Prototype first — a clickable mockup, on real data where it exists, then code
+# Real data first; a mockup only when the owner asks
 
-**Rule.** No UI is built before the owner has clicked through it. A new page or tool (a dashboard, an
-admin view, a product screen, an editor) is first built as a **clickable mockup** on the noc pattern
-(the seed tokens and app shell, never a vendor's look). It reads the **REAL database** wherever the
-data exists. It is iterated with the owner until it is right, and only then written as product code.
-Never code-first for a screen whose shape is still unknown.
+**Rule (2026-11-11).** A mockup never gates a build. UI work starts right away, on the noc pattern (the
+seed tokens and app shell, never a vendor's look), contract-first for BE↔FE, and it reads the **REAL
+database** wherever the data exists. A clickable mockup is made only when the owner asks for one; it is
+a validation and refinement tool. The owner's changes are applied in-flight, or later as a follow-up with
+a redeploy if the frontend already shipped. "No mockup" is never a reason to stop or to escalate.
 
 Sample content is allowed in exactly one case: the real data **does not exist yet** (a feature that has
 never run, such as an editor before its first video). It is then labelled as sample on the mockup and in
 the report, and swapped for real data as soon as the data exists. Sample content never stands in for
 data that exists but was not wired up.
+
+> **Superseded 2026-11-11 — owner 2026-11-11: "mockup rule shouldnt block. let's flexibilize the rule. mockups are brought for validation only when i ask for it. build should start right away, i'll use the mockup to refine, you change what i ask in-flight or later and redeploy if the frontend has already been created"**
+> The text below is the 2026-11-04 mockup-first rule, kept as history and as the procedure for when a
+> mockup IS requested (`KB § PATTERNS/design/mockup-protocol.md`). Its "no UI is built before the owner
+> clicked through it" no longer applies.
 
 Owner, 2026-11-04 (two statements the same day):
 - *"the new dashboard page … it should consume real data from db so we have a real scenario. we'll use

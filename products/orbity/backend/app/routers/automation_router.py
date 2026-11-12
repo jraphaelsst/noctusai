@@ -33,7 +33,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.dependencies import (
     coerce_org_uuid,
     get_current_user_org,
-    get_user_client,
+    get_org_client,
 )
 from app.schemas.automation import (
     ExecutionOut,
@@ -58,7 +58,7 @@ router = APIRouter(tags=["Automation"])
 # ---------------------------------------------------------------------------
 
 def _svc(token: str, org_id: UUID) -> AutomationService:
-    return AutomationService(get_user_client(token), org_id=org_id)
+    return AutomationService(get_org_client(org_id), org_id=org_id)
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +74,8 @@ def list_flows(
     org_id = coerce_org_uuid(raw_org)
     try:
         return _svc(token, org_id).list_flows(active_only=active_only)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("automation.list_flows failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar fluxos")
@@ -92,6 +94,8 @@ def create_flow(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).create_flow(payload.model_dump(mode="json", exclude_none=True))
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("automation.create_flow failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar fluxo")
@@ -111,6 +115,8 @@ def get_flow(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_flow(flow_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("automation.get_flow failed org=%s id=%s", org_id, flow_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar fluxo")
@@ -136,6 +142,8 @@ def update_flow(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
         row = _svc(token, org_id).update_flow(flow_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("automation.update_flow failed org=%s id=%s", org_id, flow_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar fluxo")
@@ -153,6 +161,8 @@ def delete_flow(
     org_id = coerce_org_uuid(raw_org)
     try:
         ok = _svc(token, org_id).delete_flow(flow_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("automation.delete_flow failed org=%s id=%s", org_id, flow_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar fluxo")
@@ -177,6 +187,8 @@ def list_steps(
     org_id = coerce_org_uuid(raw_org)
     try:
         return _svc(token, org_id).list_steps(flow_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("automation.list_steps failed org=%s flow=%s", org_id, flow_id)
         raise HTTPException(status_code=502, detail="Falha ao listar passos")
@@ -198,6 +210,8 @@ def create_step(
         row = _svc(token, org_id).create_step(
             flow_id, payload.model_dump(mode="json", exclude_none=True)
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("automation.create_step failed org=%s flow=%s", org_id, flow_id)
         raise HTTPException(status_code=502, detail="Falha ao criar passo")
@@ -221,6 +235,8 @@ def update_step(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
         row = _svc(token, org_id).update_step(step_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("automation.update_step failed org=%s id=%s", org_id, step_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar passo")
@@ -238,6 +254,8 @@ def delete_step(
     org_id = coerce_org_uuid(raw_org)
     try:
         ok = _svc(token, org_id).delete_step(step_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("automation.delete_step failed org=%s id=%s", org_id, step_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar passo")
@@ -269,7 +287,10 @@ def trigger_flow(
             lead_id=str(payload.lead_id),
         )
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("automation.start_execution refused org=%s: %s", org_id, type(exc).__name__)
+        raise HTTPException(status_code=404, detail="flow_or_lead_not_found")
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "automation.trigger_flow failed org=%s flow=%s lead=%s",
@@ -292,6 +313,8 @@ def list_executions(
     org_id = coerce_org_uuid(raw_org)
     try:
         return _svc(token, org_id).list_executions(lead_id=lead_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("automation.list_executions failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar execuções")
@@ -309,6 +332,8 @@ def cancel_execution(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).cancel_execution(execution_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "automation.cancel_execution failed org=%s id=%s", org_id, execution_id
@@ -341,6 +366,8 @@ def run_due(
     org_id = coerce_org_uuid(raw_org)
     try:
         counts = _svc(token, org_id).run_due()
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("automation.run_due failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao processar ações pendentes")

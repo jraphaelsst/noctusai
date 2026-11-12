@@ -67,6 +67,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.integration_errors import integration_error
 from noctusai_lib.config.deploy_config import is_deploy_context
 from noctusai_lib.integrations.whatsapp import (
     WahaSessionNotReady,
@@ -208,7 +209,7 @@ def create_whatsapp_inbox_router(
         try:
             return connection_store_factory()
         except EncryptionNotConfigured as exc:
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+            raise integration_error("not_configured", exc=exc, op="inbox_store") from exc
 
     def _require_record(
         store: WhatsAppConnectionStore, *, connection_id: UUID, org_id: UUID, decrypt: bool = False
@@ -216,7 +217,7 @@ def create_whatsapp_inbox_router(
         try:
             record = store.get_connection(connection_id=connection_id, org_id=org_id, decrypt=decrypt)
         except WhatsAppConnectionStoreError as exc:
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+            raise integration_error("service_unavailable", exc=exc, op="inbox_record") from exc
         if record is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail="connection not found")
         return record
@@ -253,7 +254,7 @@ def create_whatsapp_inbox_router(
                 org_id=org_id, connection_id=connection_id, q=q, limit=limit, cursor=cursor
             )
         except ValueError as exc:
-            raise HTTPException(422, detail=str(exc)) from exc
+            raise integration_error("invalid_request", exc=exc, op="inbox_page") from exc
         return InboxChatsPageOut(items=[InboxChatOut(**c.as_dict()) for c in items], next_cursor=next_cursor)
 
     @router.get(f"{prefix}/{{connection_id}}/chats/{{chat_id:path}}/messages", response_model=InboxMessagesPageOut)
@@ -273,7 +274,7 @@ def create_whatsapp_inbox_router(
                 org_id=org_id, connection_id=connection_id, chat_id=chat_id, before=before, limit=limit
             )
         except ValueError as exc:
-            raise HTTPException(422, detail=str(exc)) from exc
+            raise integration_error("invalid_request", exc=exc, op="inbox_page") from exc
         return InboxMessagesPageOut(
             items=[InboxMessageOut(**m.as_dict()) for m in items], has_more=has_more
         )

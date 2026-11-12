@@ -174,7 +174,7 @@ STATUS_RESPONDEU = ("respondido", "silencio", "handoff", "encerrado", "concluido
 #: Nothing is sent to the lead and no action is applied: agents decided NOT to serve this message.
 STATUS_SEM_ATENDIMENTO = (
     "agente_desligado", "agente_desligado_plataforma", "restrito_avaliacao", "novo_lead_recusado", "conversa_pausada", "conversa_com_outro_responsavel",
-    "conversa_com_outro_agente", "controle_indisponivel", "lead_opt_out", "reengajamento_ignorado", "limite_atingido",
+    "conversa_com_outro_agente", "controle_indisponivel", "lead_opt_out", "reengajamento_ignorado", "limite_retomadas", "limite_atingido",
     "limite_taxa", "novo_lead_limitado", "loop_detectado",
 )
 #: The not-served statuses that mean "a LIMIT stopped a real person": never silence -- SW routes each to a human
