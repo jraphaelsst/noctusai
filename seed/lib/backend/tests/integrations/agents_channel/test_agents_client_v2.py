@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 
-from app.clients.agents import (
+from noctusai_lib.integrations.agents_channel import (
     STATUS_RESPONDEU,
     STATUS_SEM_ATENDIMENTO,
     AgentsBadRequest,
@@ -177,7 +177,7 @@ class TestTurnResponse:
     async def test_a_malformed_action_logs_the_kind_only_never_its_content(self, caplog):
         """audit H4 (minor): the old `%r` of a bad action could carry a lead's slot values into the log line."""
         secret = "CPF-123.456.789-00-do-lead"
-        with caplog.at_level(logging.WARNING, logger="app.clients.agents"):
+        with caplog.at_level(logging.WARNING, logger="noctusai_lib.integrations.agents_channel.client"):
             r = parse_turn_result(_body(actions=[secret, {"seq": 1}, {"type": "encerrar", "motivo": "outro"}]))
         assert [a.type for a in r.julia_actions] == ["encerrar"]
         text = "\n".join(rec.getMessage() for rec in caplog.records)
@@ -361,7 +361,7 @@ class TestThreadApi:
             await c.opt_out(LEAD, mensagem_lead="x" * 1001)
 
     async def test_the_fake_validates_like_the_real_one_and_reports_the_consent_state(self):
-        from app.clients.agents import FakeAgentsClient
+        from noctusai_lib.integrations.agents_channel import FakeAgentsClient
 
         f = FakeAgentsClient()
         assert await f.consentimento(LEAD) is None  # never seen = never opted out
@@ -376,7 +376,7 @@ class TestThreadApi:
         assert c.opt_out_ativo is False and c.opt_in_origem == "formulario_meta"
 
     async def test_consentimento_reads_the_lead_level_state_and_maps_404_lead_desconhecido_to_none(self):
-        from app.clients.agents import AgentsUpstreamError
+        from noctusai_lib.integrations.agents_channel import AgentsUpstreamError
 
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.method == "GET" and request.url.path.endswith("/consentimento")
@@ -439,7 +439,7 @@ class TestThreadApi:
         assert issubclass(LeadSemQualificacao, Exception)
 
     async def test_resumo_is_the_thread_route_and_narrative_only(self):
-        from app.clients.agents import ResumoRequest
+        from noctusai_lib.integrations.agents_channel import ResumoRequest
 
         seen = []
 
@@ -452,7 +452,7 @@ class TestThreadApi:
         assert (out.resumo, out.desfecho, out.slots, out.intencoes) == ("Resumo.", "qualificado", {}, ())
 
     async def test_decisao_sends_options_and_data_only_no_rule(self):
-        from app.clients.agents import DecisaoRequest
+        from noctusai_lib.integrations.agents_channel import DecisaoRequest
 
         seen = []
 

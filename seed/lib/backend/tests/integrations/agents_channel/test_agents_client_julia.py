@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 
-from app.clients.agents import (
+from noctusai_lib.integrations.agents_channel import (
     AgentsTokenInvalid,
     AgentsUpstreamError,
     ConversationNotFound,
@@ -183,7 +183,7 @@ class TestUso:
     def test_http_sends_the_month_and_parses_the_body(self):
         import asyncio
 
-        from app.clients.agents import AgentUso
+        from noctusai_lib.integrations.agents_channel import AgentUso
 
         seen = {}
 
