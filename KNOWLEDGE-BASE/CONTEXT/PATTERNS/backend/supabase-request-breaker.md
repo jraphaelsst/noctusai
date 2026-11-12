@@ -43,7 +43,7 @@ On for every product by construction (seed); no per-product code.
   is bounded: finite, at most 60 s, and below the default (10 s) it is alerted and, in a deploy context, clamped to the default.
   The error-backoff sleep ignores the job waker; `RescheduleLater` delays are clamped to at least the floor. Job arrivals (1-2 jobs/s) are free: each poll after work claims a job or is the free first
   empty. In a DEPLOY context a `max_idle_interval_seconds` below the floor is clamped to it with a loud warning (no product sets
-  `max_idle_interval_seconds` today: all use the default 30 s). A poll that claims a job bills nothing; **there is no credit
+  `max_idle_interval_seconds` today: all use the default idle cap, 300 s since W1-C). A poll that claims a job bills nothing; **there is no credit
   scheme**. (b) JOB: everything one job does counts toward its own cap (`job_call_cap`, per-type
   `job_call_caps`), both clamped to `MAX_BUDGET_CALLS`. **OBSERVE mode (default):** reaching the cap only ALERTS (`job-cap:*`,
   once per job) and the job is dead-lettered at the hard ceiling; **ENFORCE** (`NOCTUS_BREAKER_JOB_CAP_ENFORCE=1`)
