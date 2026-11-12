@@ -1,4 +1,15 @@
 {
-  "_doc": "Migration files applied in prod (filename -> sha256 as stored in the ledger). Maintained by noctus.dev.migrate_product confirm=True; applied files are frozen. KB § PATTERNS/architect/vertical-seed.md.",
-  "applied": {}
+  "_doc": "Migration files applied in prod (filename -> sha256 as stored in the ledger). Maintained by noctus.dev.migrate_product confirm=True; applied files are frozen. KB \u00a7 PATTERNS/architect/vertical-seed.md.",
+  "applied": {
+    "008_org_picker_acting_audit.sql": "4a595a93cf44d2e9828ba734627b0f99cab9a44d0d8294014b3f28a4779f7fab",
+    "009_org_picker_ready.sql": "8717451879fb653e0921a7f7a7f6bc57dcf24e1ddc87f9826972c320104b777b",
+    "010_anon_grant_lockdown.sql": "8851f2c57524c6eccefa8ce521b247e2ca301206d9af14f9d078f68b3a0c8000",
+    "011_anon_sequence_lockdown.sql": "6beb98e2472477de1eb1525c8639d8a040c1d5934bc99bc6f7df92c1ceea1a90",
+    "014_status_pagina_configuracoes.sql": "0b3b0bb848115f965fe0ecb116e23885a13770e9c56cb4e9966b698b46b0d5d8",
+    "015_intake.sql": "f1301096d3617c03faed4e32269c05d753aa342794b542f6bd6fa02b818ddcdb",
+    "016_status_pagina_conexao.sql": "7da9762bb48cf510ae3671dcc416e263ea85d0626d9ad8c920fe461498e12b28",
+    "017_classificador.sql": "3215920fcc5333cd0e69357fd1a6a8bf77d19d46146c304a3e122dd44ce2b040",
+    "018_rotulos_avaliacao.sql": "6d09b8efd16adaeda67feef2354e56077291a9db1a924fdb82531b9c45ac235a",
+    "019_google_connection.sql": "9b8e58273d1dbb90a03c25eb85e4d4e0a4e0fcdb7cbbd014bf21851d39964ecc"
+  }
 }
