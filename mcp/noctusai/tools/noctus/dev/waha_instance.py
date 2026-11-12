@@ -557,7 +557,7 @@ class _AgentRun:
         from . import waha_owner_hand as oh
 
         if self.action == "apply" and res.get("ok"):
-            lab = oh._live_label_problems(self.name, self.host, self.sh)
+            lab = oh._live_label_problems(_inst(self.spec, self.name), self.host, self.sh)
             if lab:
                 res = {**res, "ok": False, "status": "label_drift", "label_problems": lab}
         outcome = str(res.get("status") or ("ok" if res.get("ok") else "error"))
@@ -751,6 +751,10 @@ def _apply_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _test_sh
         rc, out, err = sh(host, up + f"waha-{name}", timeout=300)
     else:
         rc, out, err = sh(host, up + " ".join(services_of(inst)), timeout=300)
+        if rc == 0 and inst.get("personal"):  # personal live (no edge): still pin markOnline/fullSync off on the core
+            prov = _provision(spec, name, host, True, _test_sh=_test_sh, _owner_grant=_owner_grant, _agent=_agent)
+            if not prov["ok"]:
+                return {"ok": False, "action": "apply", "status": "provision_failed", "name": name, "provision": prov}
     return {"ok": rc == 0, "action": "apply", "status": "applied" if rc == 0 else "error", "name": name,
             "stdout": out.strip()[-600:], "error": None if rc == 0 else err.strip()[-600:]}
 
@@ -818,7 +822,7 @@ def register(server) -> None:
             "vs RSS vs session status) | plan/add (the service + the .env.fleet key NAMES to generate on the VPS -- values never "
             "cross the wire) | apply (confirm=True: compose up -d --no-deps for ONE instance; refuses when keys are missing) | "
             "provision (creates/aligns the session config FROM the policy on the core; TIGHTEN-ONLY vs the VPS's own yml and the running "
-            "config; a PERSONAL line is allowed for agents only in the strict read-only shadow shape, with the VPS yml + compose "
+            "config; a PERSONAL line is allowed for agents only in the two strict shapes (read-only shadow | personal live: send on, no edge, mark_online/full_sync off), with the VPS yml + compose "
             "hashing identical, the personal label on core+edge, and an audit row written first; the QR scan stays the "
             "owner's) | "
             "remove (confirm=True; refuses a WORKING session unless force; snapshots the volume first, never deletes it; "

@@ -263,6 +263,8 @@ class AgentStatus:
     conteudo_completo: Optional[bool] = None
     #: julia-v3 (CONTRACT §12.1): the PLATFORM kill switch is on (every org's Julia is off). None from an older agents build.
     desligado_plataforma: Optional[bool] = None
+    #: The agent's allow-list (see `ControleInfo.contatos_permitidos`); None from an older agents build.
+    contatos_permitidos: Optional[tuple[str, ...]] = None
 
     def as_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -502,6 +504,9 @@ class ControleInfo:
     #: `avaliacao_usuarios` are noctus USER ids of the org (never phones). Absent from an older agents => mode OFF, no ids.
     modo_avaliacao: bool = False
     avaliacao_usuarios: tuple[str, ...] = ()
+    #: Allow-list of the agent (E.164 numbers; agents' `contatos_permitidos`): EMPTY = every number is answered. None = this
+    #: agents build does not send it (a consumer that gates on it must treat None as "unreadable", never as "everyone").
+    contatos_permitidos: Optional[tuple[str, ...]] = None
 
 
 @dataclass(frozen=True)
@@ -1300,6 +1305,15 @@ def parse_uso(body: Any) -> AgentUso:
     return AgentUso(turnos=int(turnos), custo_usd=float(custo), limite_diario_usd=float(limite))
 
 
+def parse_contatos_permitidos(body: Any) -> Optional[tuple[str, ...]]:
+    """`contatos_permitidos` of a status / controle body: a list of numbers (empty = everyone), or None when absent / malformed
+    (the caller fails closed on None)."""
+    raw = body.get("contatos_permitidos")
+    if not isinstance(raw, list):
+        return None
+    return tuple(str(x) for x in raw)
+
+
 def parse_agent_status(body: Any) -> AgentStatus:
     aceita = body.get("aceita_novos_leads")
     abertas = body.get("threads_abertas")
@@ -1318,6 +1332,7 @@ def parse_agent_status(body: Any) -> AgentStatus:
         threads_abertas=abertas if isinstance(abertas, int) and not isinstance(abertas, bool) else None,
         conteudo_completo=completo if isinstance(completo, bool) else None,
         desligado_plataforma=plataforma if isinstance(plataforma, bool) else None,
+        contatos_permitidos=parse_contatos_permitidos(body),
     )
 
 
@@ -1453,6 +1468,7 @@ def parse_controle(body: Any) -> ControleInfo:
         drenagem=dict(body["drenagem"]) if isinstance(body.get("drenagem"), dict) else {},
         modo_avaliacao=body.get("modo_avaliacao") is True,
         avaliacao_usuarios=tuple(str(u) for u in body["avaliacao_usuarios"]) if isinstance(body.get("avaliacao_usuarios"), list) else (),
+        contatos_permitidos=parse_contatos_permitidos(body),
     )
 
 
@@ -1796,7 +1812,7 @@ __all__ = [
     "QualificacaoResumo", "ResumoRequest", "ResumoResult", "STATUS_RESPONDEU", "STATUS_SEM_ATENDIMENTO", "STATUS_LIMITE_PARA_HUMANO",
     "STATUS_TURNO", "ThreadInfo", "ThreadNotFound", "TransicaoInvalida", "TurnInProgress",
     "TurnMessage", "TurnRequest", "TurnResult", "make_agents_client", "parse_agent_status", "parse_consent",
-    "parse_controle", "parse_decisao_result", "parse_estagios", "parse_handoff", "parse_qualificacao_estado", "parse_resumo_result",
+    "parse_controle", "parse_contatos_permitidos", "parse_decisao_result", "parse_estagios", "parse_handoff", "parse_qualificacao_estado", "parse_resumo_result",
     "parse_thread", "parse_turn_result", "parse_uso",
     "MOTIVO_ENCERRAR_PEDIU_PARAR", "ORIGENS_OPT_OUT", "ORIGEM_OPT_OUT_PADRAO", "OPT_OUT_MENSAGEM_MAX", "OPT_OUT_MOTIVO_MAX",
     "opt_out_body", "NOTIFICACAO_STATUS", "OptOutEvento", "OptOutEventoNotFound", "OptOutPagina", "REATIVACAO_MOTIVO_MAX",
