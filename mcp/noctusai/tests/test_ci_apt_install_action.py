@@ -15,6 +15,10 @@ from pathlib import Path
 import pytest
 import yaml
 
+# The action runs on ubuntu runners: GNU `sed -i -E`. BSD sed (macOS) reads `-E` as the -i backup suffix and never
+# rewrites the sources, so a mirror-switch assertion there is vacuous (a3140d263 passed locally, ejected in CI 43163857803).
+GNU_SED = subprocess.run(["sed", "--version"], capture_output=True).returncode == 0
+
 ROOT = Path(__file__).resolve().parents[3]
 ACTION = ROOT / ".github/actions/apt-install/action.yml"
 
@@ -31,7 +35,8 @@ def _stub(bin_dir: Path, name: str, body: str) -> None:
     p.chmod(p.stat().st_mode | stat.S_IEXEC)
 
 
-def _run(tmp_path: Path, *, update_out: str, pkgs: str = "", google: bool = False) -> subprocess.CompletedProcess:
+def _run(tmp_path: Path, *, update_out: str, pkgs: str = "", google: bool = False,
+         failing_host: str = "") -> subprocess.CompletedProcess:
     etc = tmp_path / "etc/apt"
     (etc / "sources.list.d").mkdir(parents=True)
     (etc / "apt.conf.d").mkdir()
@@ -43,7 +48,11 @@ def _run(tmp_path: Path, *, update_out: str, pkgs: str = "", google: bool = Fals
     bin_dir.mkdir()
     _stub(bin_dir, "sudo", 'exec "$@"')
     _stub(bin_dir, "timeout", 'shift; exec "$@"')
-    _stub(bin_dir, "apt-get", f'if [ "$1" = update ]; then printf "%s\\n" "{update_out}"; fi; exit 0')
+    # With `failing_host`, only THAT mirror answers `update_out`; any other mirror the sources point at answers healthy,
+    # exactly like a real outage of one mirror (the stub used to answer Ign: for every mirror, so the walk never stopped).
+    failing = (f'if grep -rqF "{failing_host}" "{etc}/sources.list.d"; then printf "%s\\n" "{update_out}"; '
+               f'else printf "%s\\n" "{HEALTHY}"; fi' if failing_host else f'printf "%s\\n" "{update_out}"')
+    _stub(bin_dir, "apt-get", f'if [ "$1" = update ]; then {failing}; fi; exit 0')
     script = _script().replace("/etc/apt", str(etc))
     env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "PKGS": pkgs, "CAP": "5"}
     # Exactly GitHub's composite invocation: bash --noprofile --norc -eo pipefail {0}
@@ -72,11 +81,23 @@ def test_packages_install_on_a_healthy_mirror(tmp_path):
     assert "apt install OK" in r.stdout
 
 
-def test_an_ign_mirror_is_switched_to_the_fallback(tmp_path):
-    r = _run(tmp_path, update_out="Ign:1 http://azure.archive.ubuntu.com/ubuntu noble InRelease")
+@pytest.mark.skipif(not GNU_SED, reason="the action targets GNU sed (ubuntu runners); BSD sed cannot rewrite the sources")
+def test_an_ign_mirror_is_switched_to_the_first_healthy_fallback(tmp_path):
+    r = _run(tmp_path, update_out="Ign:1 http://azure.archive.ubuntu.com/ubuntu noble InRelease",
+             failing_host="azure.archive.ubuntu.com")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "apt mirror switched to http://archive.ubuntu.com/ubuntu/" in r.stdout
-    assert "archive.ubuntu.com" in (tmp_path / "etc/apt/sources.list.d/ubuntu.sources").read_text()
+    assert "mirrors.txt" not in r.stdout  # stopped at the first mirror that answered cleanly
+    sources = (tmp_path / "etc/apt/sources.list.d/ubuntu.sources").read_text()
+    assert "URIs: http://archive.ubuntu.com/ubuntu/" in sources and "azure." not in sources
+
+
+@pytest.mark.skipif(not GNU_SED, reason="the action targets GNU sed (ubuntu runners); BSD sed cannot rewrite the sources")
+def test_every_mirror_failing_walks_to_the_mirrors_list(tmp_path):
+    r = _run(tmp_path, update_out="Ign:1 http://archive.ubuntu.com/ubuntu noble InRelease")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "no apt mirror answered cleanly" in r.stdout
+    assert "mirror+http://mirrors.ubuntu.com/mirrors.txt" in (tmp_path / "etc/apt/sources.list.d/ubuntu.sources").read_text()
 
 
 @pytest.mark.parametrize("line", ["set -uo pipefail", "set +e"])
