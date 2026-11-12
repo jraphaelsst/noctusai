@@ -187,6 +187,46 @@ describe("createProductLayout — BackToCore", () => {
     const link = screen.getByRole("link", { name: /Voltar ao NoctusAI/ });
     expect(link.getAttribute("href")).toMatch(/\/painel$/);
   });
+  function renderSso(supabase: ReturnType<typeof makeSupabaseClient>) {
+    renderLayout(
+      createProductLayout({
+        ...baseConfig(),
+        useAuthStore: () => ({
+          user: { id: "u1", email: "u1@example.com", user_metadata: { org_role: "admin" } },
+        }),
+        supabase,
+      }),
+    );
+    return screen.getByRole("link", { name: /Voltar ao NoctusAI/ });
+  }
+
+  it("Voltar (primary click) ends THIS product session: signOut scope local, never global, marker left, then core", async () => {
+    const stub = await import("./stubs/design-system");
+    stub.orgSelectionCalls.length = 0;
+    localStorage.clear();
+    const supabase = makeSupabaseClient();
+    const link = renderSso(supabase);
+    fireEvent.click(link);
+    await waitFor(() => expect(window.location.href).toMatch(/\/painel$/));
+    expect(supabase.auth.signOut).toHaveBeenCalledTimes(1);
+    expect(supabase.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(localStorage.getItem("noctus:entry")).toBe("left");
+    // the org selection is bound to the session: end it while the token is still valid
+    expect(stub.orgSelectionCalls).toEqual(["end"]);
+  });
+
+  it.each([
+    ["ctrl", { ctrlKey: true }],
+    ["meta", { metaKey: true }],
+    ["shift", { shiftKey: true }],
+    ["middle button", { button: 1 }],
+  ])("Voltar with %s (new tab/window) is a plain link: no revoke", async (_label, init) => {
+    const supabase = makeSupabaseClient();
+    const link = renderSso(supabase);
+    fireEvent.click(link, init);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(supabase.auth.signOut).not.toHaveBeenCalled();
+  });
 });
 
 // ── Session mode (cookie-session sibling — `sessionAuth`) ───────────────────

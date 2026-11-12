@@ -9,7 +9,7 @@
  * Everything here is framework-free and takes its browser dependencies as an argument (storage, document,
  * Web Locks, clock, navigate) so each rule of the decision table is testable without patching globals.
  *
- * Marker `noctus:entry` (product-origin localStorage): `active` (redeemed here) | `left` (Voltar) |
+ * Marker `noctus:entry` (product-origin localStorage): `active` (redeemed here) | `left` (Voltar, S5) |
  * `signed-out` (Sair). It only decides whether a visit to `/` bounces; it grants nothing.
  */
 
@@ -57,6 +57,26 @@ export function clearSessionLost(): void {
 }
 export function wasSessionLost(): boolean {
   return sessionLost;
+}
+
+// --- "This tab is leaving for core" (set by session-ending.ts `leaveProduct`, i.e. Voltar) -------
+
+let leaving = false;
+
+/**
+ * Voltar revokes this tab's session and then navigates to core. The revoke makes supabase-js emit
+ * SIGNED_OUT in THIS tab too, which mounts the entry gate; without this flag the gate would read marker
+ * `left` and send the tab to core's login, which launches the product again (Voltar bounced back in).
+ * Sibling tabs never see it (module state is per tab), so they still re-enter as the decision table says.
+ */
+export function markLeaving(): void {
+  leaving = true;
+}
+export function clearLeaving(): void {
+  leaving = false;
+}
+export function isLeaving(): boolean {
+  return leaving;
 }
 
 // --- URLs --------------------------------------------------------------------------------------

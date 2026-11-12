@@ -33,7 +33,15 @@ If proactive refresh fails: API call returns 401 → `createApiClient`'s `onToke
 
 ## Logout Behavior
 
-Not configurable: the seed Header control always signs out (the `products.logout_behavior` column and its core admin page were removed; migration 109). "Voltar ao NoctusAI" is a separate icon-only Sidebar-footer control.
+Not configurable: the seed Header control always signs out (the `products.logout_behavior` column and its core admin page were removed; migration 109). Three endings, one seed contract (`seed/lib/frontend/src/session-ending.ts`):
+
+| Control | Server reach | Lands on |
+|---|---|---|
+| **Sair** (header) | `signOut({scope:'global'})` — every session of the user, core included | the product's own Landing (`goToProductLanding`, marker `signed-out`) |
+| **Voltar ao NoctusAI** (icon-only sidebar footer, `BackToCore`) | `leaveProduct` → `signOut({scope:'local'})` — THIS product's SSO-minted session only (+ its cookie session); core and other products stay signed in. Plain primary click only; ctrl/meta/shift/middle-click opens core in a new tab and revokes nothing | core `/painel`; the product's other tabs re-enter through core when looked at (marker `left`, `reentry.ts`) |
+| **Expiry** (inactivity, refused refresh) | none (`endSessionLocally`) | the login prompt |
+
+Product login is collected at core only (`/login` on a product redirects to core's central login), so signing in through a product also opens core's session.
 
 ## Security Policies
 
