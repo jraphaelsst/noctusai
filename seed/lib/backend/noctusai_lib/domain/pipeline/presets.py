@@ -29,6 +29,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from noctusai_lib.domain.activities.types import ActivityTypeSpec as ActivityTypeDefault
+
 from .config import PipelineConfig
 from .defaults import StageDefault, ensure_default_stages
 from .stages import STAGE_COLORS, stage_by_role
@@ -92,6 +94,9 @@ class CrmPreset:
     pipelines: Mapping[str, tuple[StageDefault, ...]]
     lost_reasons: tuple[LostReasonDefault, ...] = ()
     lead_origins: tuple[OriginDefault, ...] = ()
+    #: The market's activity types (`domain.activities`): data seeded lazily per org, which the org then edits. Empty =>
+    #: the organ's generic set (tarefa / ligacao / reuniao); a market that declares any lists ALL it wants.
+    activity_types: tuple[ActivityTypeDefault, ...] = ()
 
     def __post_init__(self) -> None:
         if not (self.market or "").strip():
@@ -120,6 +125,10 @@ class CrmPreset:
         object.__setattr__(self, "pipelines", norm)
         object.__setattr__(self, "lost_reasons", tuple(self.lost_reasons))
         object.__setattr__(self, "lead_origins", tuple(self.lead_origins))
+        object.__setattr__(self, "activity_types", tuple(self.activity_types))
+        act_slugs = [a.slug for a in self.activity_types]
+        if len(set(act_slugs)) != len(act_slugs):
+            raise ValueError(f"CrmPreset {self.market!r}: repeated activity-type slug")
         codes = [r.codigo for r in self.lost_reasons]
         if len(set(codes)) != len(codes):
             raise ValueError(f"CrmPreset {self.market!r}: repeated lost-reason code")

@@ -72,7 +72,7 @@ Scaffold a market ERP from this layer with `noctus.dev.scaffold_product(overlay=
 | `qualification_schema` | JSON schema per market, fed to the agent and shown on the card | fields per market |
 | `agent_hook` | `LeadAgentHook` (on_inbound / on_created / on_stage_entered) → agents product by agent key | RE Julia; clinics `monica-leads`; others Fake |
 | `assignment_strategy` | `round_robin`·`by_team`·`by_source`·`by_unit`·`manual` + capacity + out-of-office; custom = named hook (`strategy_hooks`); BUILT (W1-4): `../backend/assignment-organ.md` | who owns a lead |
-| `activity_types` | preset list | visita only RE |
+| `activity_types` | `CrmPreset.activity_types`: `(slug, label, kind)` rows over the four kinds `task·call·meeting·visit`, seeded lazily per org (organ: `PATTERNS/backend/activities-organ.md`) | visita, chave_retirada/devolucao, manutenção and campo are RE rows; nullable `org_unit_id` rides on every activity (multi-branch convention) |
 | `proposal_accept` / `on_won` | `QuoteAcceptHandler` + funnel action → `papel=proposta_aceite`; `on_stage_entered` | what a won deal becomes (processo de venda, contract, paciente, org) |
 | `consent_channels` | opt-out registry + `OutboundGate` on every sender; the agent decides an opt-out, the seed records and enforces | retention note per market |
 | `nouns` | Lead/Cliente/Paciente, Corretor/Terapeuta/Account | labels |
