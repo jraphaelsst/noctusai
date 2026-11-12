@@ -400,3 +400,20 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
   caller. (The seed team router has no role-change route and refuses removal with 409.)
 
 Composes with: `no-metadata-authz.md`, `database-rls.md`, `audit-trail.md`.
+
+## One brand per org (owner decision 2026-11-05)
+
+- **Org = brand = customer.** An org has exactly ONE brand (SW `social_wiring.marcas`; core
+  `public.org_brand_identities`). A module (CoreStudio) is never a brand or an org; a person
+  is not a brand. New orgs start on the standard NOC design.
+- **Integrations are NoctusAI's.** The structural connections (n8n, YouTube, Meta, Google …)
+  attach to the NoctusAI account/primary brand, except a customer's own. A non-customer
+  brand's integration rows (and their history) are RE-POINTED to the NoctusAI primary brand,
+  never deleted.
+- **Status 2026-11-12 (verified):** prod data already complies: 5 marcas in 5 orgs, 0 orgs
+  with more than one; 1 brand identity row. **Enforcement is NOT on `dev`:** the only uniques
+  on `marcas` are `(org_id, slug)` and `(org_id) WHERE is_primary`, so a second non-primary
+  marca can still be created. The guard (create-marca `409 org_ja_tem_marca`, FE hides
+  "Nova marca") and the pending `unique(org_id)` migration live on the LOCAL branch
+  `feat/one-brand-per-org` (6 ahead / 999 behind, never pushed). Landing it is tracked in
+  `project-history/roadmaps/owner-kept-ideas-2026-11.md` (r15).
