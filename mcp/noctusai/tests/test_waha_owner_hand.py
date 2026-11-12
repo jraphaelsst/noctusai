@@ -541,7 +541,7 @@ def test_only_the_strict_personal_shadow_shape_is_accepted(tmp_path, edit):
     yml = YML.replace(*edit)
     io = FakeIO(sh=FakeVps(vps_yml=yml))
     out, _ = _run(tmp_path, io, yml=yml)
-    assert out["status"] == "refused" and "strict read-only personal line" in out["error"] and not io.sh.touched
+    assert out["status"] == "refused" and "allowed personal line shape" in out["error"] and not io.sh.touched
 
 
 def test_unknown_action_and_remove_are_refused(tmp_path):
@@ -770,11 +770,13 @@ def test_offline_the_row_is_spooled_read_back_from_the_real_spool_and_shown_by_i
 # --- the MCP surface, the registry, the CLI -----------------------------------------------------------------------------
 
 
-def test_the_mcp_surface_still_refuses_a_personal_line(tmp_path):
+def test_the_mcp_surface_never_takes_an_owner_grant_and_routes_personal_lines_to_the_agent_gate(tmp_path):
+    # D49 superseded 2026-11-12: agents may provision/apply a personal line (tests/test_waha_personal_agent.py); the
+    # MCP surface still can never pass an owner grant, and on the fake store the real runner is refused before any read.
     root = _root(tmp_path)
     for action in ("provision", "apply"):
         out = wi.waha_instance(action=action, name="shadow", ssh_host="vps", confirm=True, repo_root=str(root))
-        assert out["status"] == "refused" and out["error"] == wi.PERSONAL_REFUSAL
+        assert out["status"] == "refused" and "fake" in out["error"]
     assert "--waha-instance-owner-hand" in wi.PERSONAL_REFUSAL
     import inspect
     assert "_owner_grant" not in inspect.signature(wi.waha_instance).parameters

@@ -499,16 +499,73 @@ def _noweb_matches(got, want: dict) -> bool:
             and got["store"].get("fullSync") is want["store"]["fullSync"])
 
 
-PERSONAL_REFUSAL = ("personal line: refused for every agent and tool caller; the owner performs this step by hand, in a "
-                    "Terminal.app window: PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH mcp/noctusai/.venv/bin/python "
+PERSONAL_REFUSAL = ("personal line: refused for this caller -- an agent may provision/apply a personal line (with every "
+                    "check below) but never remove it, and an owner-hand grant must cover this exact line, host and "
+                    "policy; the owner can also run the step by hand, in a Terminal.app window: "
+                    "PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH mcp/noctusai/.venv/bin/python "
                     "mcp/noctusai/cli.py --waha-instance-owner-hand <provision|apply> <line>")
-# Consent for a PERSONAL line is RESOLVED by the owner-hand path (owner decision D49, 2026-11-10; no second factor, no
-# OTP, ever): `waha_owner_hand.owner_hand`, CLI-only (never an MCP tool), refuses without an interactive TTY, inside an
-# agent harness, unless the shell's parent is the pinned Terminal.app judged on its real image + code signature read from
-# the kernel in-process (only system shells / login in between, the app started by launchd), and until the human TYPES the line name and CONFIRMO on /dev/tty; every attempt is audited in the
-# `waha-owner-hand.ndjson` ledger. Only the grant it mints after that gate lifts this refusal: bound to line + policy
-# hash + host + a secret nonce whose digest is in a fresh `confirmed` audit row, single use. Transcript-sentence consent stays removed (forgeable).
+# A PERSONAL line (owner decision 2026-11-12, superseding D49 of 2026-11-10; option (b) of keep / agents-with-QR-human /
+# remove-all-checks): an AGENT caller may provision/apply it through this tool. It runs the SAME checks as the owner-hand
+# path (`waha_owner_hand.personal_line_checks`: strict shadow shape, the VPS yml + rendered compose hashing identical to
+# this checkout, `noctus.line.personal=true` on core AND edge, the core off noctus-net), keeps the edge-before-QR order,
+# and writes an audit row (who, line, host, policy hash) BEFORE anything touches the VPS (fail closed) plus an outcome
+# row. The human consent step is the owner's phone scanning the QR: nothing here pairs a number or connects Google.
+# `remove` stays refused for agents (PERSONAL_REFUSAL). The CLI-only owner-hand path stays as an alternative; a grant
+# passed that does not cover the line still refuses (never falls through to the agent path).
 # The host precondition stays OPEN: NOC-REMEDIATE[personal-core-host-exec-authz] (see vps_exec).
+
+
+class _AgentRun:
+    """One agent provision/apply of a personal line: the shared checks + its audit rows (one run per top-level call; a
+    provision nested inside apply re-runs the checks but writes no second `agent_started` row)."""
+
+    def __init__(self, spec: dict, name: str, host: str, sh, action: str, root: "Path | str"):
+        self.spec, self.name, self.host, self.sh, self.action, self.root = spec, name, host, sh, action, root
+        self.run_id: "str | None" = None
+        self.policy_hash: "str | None" = None
+
+    def store_problem(self) -> "str | None":
+        """Runs BEFORE any remote read of a line this checkout declares personal: the audit store + runner seam."""
+        from . import waha_owner_hand as oh
+
+        return oh.agent_store_problem(self.host, self.root, self.sh)
+
+    def check(self, write_audit: bool) -> "str | None":
+        """None = cleared to act (and, with write_audit, its `agent_started` row is durable); else the refusal."""
+        from . import waha_owner_hand as oh
+
+        why = self.store_problem()
+        if why:
+            return why
+        chk = oh.personal_line_checks(self.spec, _inst(self.spec, self.name), self.name, self.host, self.sh)
+        if chk["problem"]:
+            return chk["problem"]
+        self.policy_hash = chk["policy_hash"]
+        if write_audit and self.run_id is None:
+            run_id = oh._new_id()
+            _res, why = oh.agent_audit(self.root, self.action, self.name, self.host, self.policy_hash,
+                                       oh.AGENT_STARTED, run_id)
+            if why:
+                return why + ": refused before touching the VPS (fail closed)"
+            self.run_id = run_id
+        return None
+
+    def finish(self, res: dict) -> dict:
+        """After the action: verify the live labels (apply), write the outcome row; a no-op when nothing was started."""
+        if self.run_id is None:
+            return res
+        from . import waha_owner_hand as oh
+
+        if self.action == "apply" and res.get("ok"):
+            lab = oh._live_label_problems(_inst(self.spec, self.name), self.host, self.sh)
+            if lab:
+                res = {**res, "ok": False, "status": "label_drift", "label_problems": lab}
+        outcome = str(res.get("status") or ("ok" if res.get("ok") else "error"))
+        audit, why = oh.agent_audit(self.root, self.action, self.name, self.host, self.policy_hash, outcome, self.run_id)
+        res = {**res, "agent_personal": True, "policy_hash": self.policy_hash, "audit_run_id": self.run_id}
+        if why:
+            res["audit_warning"] = f"the outcome row was not durable: {why}"
+        return res
 
 
 def _owner_allows(grant, inst: dict, host: str, vps_inst: "dict | None" = None) -> bool:
@@ -530,21 +587,29 @@ def _vps_instance(name: str, host: str, sh) -> "tuple[dict | None, str]":
         return None, f"the VPS checkout does not declare line {name!r} ({exc}): deploy_pull first"
 
 
-def _provision(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None) -> dict:
+def _provision(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None,
+               root: "Path | str | None" = None, _agent: "_AgentRun | None" = None) -> dict:
     """Create/align the session config from the policy against the CORE, then READ IT BACK (explicit, idempotent).
 
     The caller's checkout is NOT trusted: provisioning may only TIGHTEN, compared with BOTH the running config and the
     VPS's own checkout of waha-instances.yml (a branch with `mark_online: true` cannot write itself onto the live core).
-    A `personal: true` line is REFUSED (see PERSONAL_REFUSAL) unless `_owner_grant` -- minted only by the CLI-only
-    owner-hand path after its human gate -- covers this line, host and policy hash on BOTH checkouts.
+    A `personal: true` line: with `_owner_grant` (CLI-only owner-hand path) the grant must cover this line, host and
+    policy hash on BOTH checkouts, else REFUSED; without one the caller is an agent and goes through `_AgentRun` (the
+    shared personal-line checks + an audit row before any write).
 
     `_test_sh` is a TEST-ONLY injection point for the remote runner: it is absent from the public function and the MCP
-    schema, and must never be passed by production code. `_owner_grant` is absent from both as well."""
+    schema, and must never be passed by production code. `_owner_grant` and `_agent` are absent from both as well."""
+    sh = _test_sh or _sh
+    top = _agent is None and _owner_grant is None
+    agent = _AgentRun(spec, name, host, sh, "provision", root or REPO_ROOT) if top else _agent
     with _GrantScope(_owner_grant):
-        return _provision_in_scope(spec, name, host, confirm, _test_sh=_test_sh, _owner_grant=_owner_grant)
+        res = _provision_in_scope(spec, name, host, confirm, _test_sh=_test_sh, _owner_grant=_owner_grant,
+                                  _agent=agent)
+    return agent.finish(res) if top else res
 
 
-def _provision_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None) -> dict:
+def _provision_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None,
+                        _agent: "_AgentRun | None" = None) -> dict:
     """The body of `_provision`, inside the owner-hand scope of its grant."""
     sh = _test_sh or _sh
     inst = _inst(spec, name)
@@ -554,7 +619,9 @@ def _provision_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _tes
                                 "error": why, **kw}
 
     if inst.get("personal") and not _owner_allows(_owner_grant, inst, host):
-        return refuse(PERSONAL_REFUSAL, needs_owner_by_hand=True)
+        why = PERSONAL_REFUSAL if _agent is None else _agent.store_problem()
+        if why:  # before ANY remote read
+            return refuse(why, needs_owner_by_hand=True) if _agent is None else refuse(why)
     vps_inst, why = _vps_instance(name, host, sh)
     if vps_inst is None:
         return refuse(why)
@@ -564,7 +631,11 @@ def _provision_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _tes
         return refuse("REFUSED, loosening vs the VPS's own waha-instances.yml: " + "; ".join(bad))
 
     if (inst.get("personal") or vps_inst.get("personal")) and not _owner_allows(_owner_grant, inst, host, vps_inst):
-        return refuse(PERSONAL_REFUSAL, needs_owner_by_hand=True)
+        if _agent is None:
+            return refuse(PERSONAL_REFUSAL, needs_owner_by_hand=True)
+        why = _agent.check(write_audit=confirm)
+        if why:
+            return refuse(why)
 
     probe = f"docker exec -e POLICY_SESSION={shlex.quote(inst['session'])} {core} node -e '{_READ_JS}'"
     rc, out, err = sh(host, probe, timeout=60)
@@ -605,39 +676,54 @@ def _provision_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _tes
             "expect_noweb": want, "read_back": got.get("noweb"), "webhooks": hooks, "foreign_webhooks": foreign}
 
 
-def _personal_refusal(inst: dict, name: str, host: str, sh, action: str, owner_grant=None) -> "dict | None":
+def _personal_refusal(inst: dict, name: str, host: str, sh, action: str, owner_grant=None,
+                      agent: "_AgentRun | None" = None) -> "dict | None":
     """Refusal payload when the line is personal in ANY of the three sources (this checkout's yml, the VPS's own yml, the
-    LIVE container label `noctus.line.personal=true`), or when a source cannot be read (fail closed); None = not personal.
+    LIVE container label `noctus.line.personal=true`), or when a source cannot be read (fail closed); None = cleared.
     Nothing is started, stopped or copied before this runs (not the core, not a volume tar), `force` does not bypass it.
-    Only the owner-hand grant (CLI-only, human-gated) lifts it, and only for the line/host/policy hash it names."""
+    A covering owner-hand grant clears it; else an `agent` run clears it only when the shared personal-line checks pass
+    and its audit row is durable; with neither (e.g. `remove`) a personal line is refused."""
     out = lambda why, **kw: {"ok": False, "action": action, "status": "refused", "name": name,  # noqa: E731
                              "error": why, **kw}
-    if inst.get("personal") and not _owner_allows(owner_grant, inst, host):  # nothing at all is touched: not even the core
-        return out(PERSONAL_REFUSAL, needs_owner_by_hand=True)
+    if inst.get("personal") and not _owner_allows(owner_grant, inst, host):  # before ANY remote read
+        if agent is None:
+            return out(PERSONAL_REFUSAL, needs_owner_by_hand=True)  # nothing at all is touched: not even the core
+        why = agent.store_problem()
+        if why:
+            return out(why)
     # the VPS's own checkout is read first: the strictest of local and VPS wins, unreadable refuses
     vps_inst, why = _vps_instance(name, host, sh)
     if vps_inst is None:
         return out(why)
     personal_ok = _owner_allows(owner_grant, inst, host, vps_inst)
-    if vps_inst.get("personal") and not personal_ok:
-        return out(PERSONAL_REFUSAL, needs_owner_by_hand=True)
     # the LIVE label is the third source (a core created before the render change / by hand may be personal while both
-    # ymls say otherwise): any labelled container of this line refuses; an unreadable lookup fails closed
+    # ymls say otherwise): any labelled container of this line counts; an unreadable lookup fails closed
     rc, lab, lerr = sh(host, "docker ps -a --filter label=noctus.line.personal=true --format '{{.Names}}'")
     if rc != 0:
         return out(f"cannot read the live `noctus.line.personal` labels ({lerr.strip()[-120:]}): refused (fail closed)")
     mine = {f"noctus-{core_service(inst)}", core_service(inst), f"noctus-waha-{name}", f"waha-{name}"}
-    if mine & {n.strip().lstrip("/") for n in lab.splitlines() if n.strip()} and not personal_ok:
+    labelled = bool(mine & {n.strip().lstrip("/") for n in lab.splitlines() if n.strip()})
+    if not (inst.get("personal") or vps_inst.get("personal") or labelled) or personal_ok:
+        return None
+    if agent is None:
         return out(PERSONAL_REFUSAL, needs_owner_by_hand=True)
-    return None
+    why = agent.check(write_audit=True)
+    return out(why) if why else None
 
 
-def _apply(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None) -> dict:
+def _apply(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None,
+           root: "Path | str | None" = None) -> dict:
+    """`_test_sh` / `_owner_grant` are TEST-ONLY / owner-hand-only (see `_provision`). Without a grant the caller is an
+    agent: a personal line goes through `_AgentRun` (checks + audit), the outcome row and the live-label check after."""
+    agent = None if _owner_grant is not None else _AgentRun(spec, name, host, _test_sh or _sh, "apply",
+                                                               root or REPO_ROOT)
     with _GrantScope(_owner_grant):
-        return _apply_in_scope(spec, name, host, confirm, _test_sh=_test_sh, _owner_grant=_owner_grant)
+        res = _apply_in_scope(spec, name, host, confirm, _test_sh=_test_sh, _owner_grant=_owner_grant, _agent=agent)
+    return agent.finish(res) if agent is not None else res
 
 
-def _apply_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None) -> dict:
+def _apply_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _test_sh=None, _owner_grant=None,
+                    _agent: "_AgentRun | None" = None) -> dict:
     sh = _test_sh or _sh
     p = _plan(spec, name)
     if not confirm:
@@ -645,7 +731,7 @@ def _apply_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _test_sh
                                       "(an edge line: core -> provision -> edge, in that order)")
         return p
     inst = _inst(spec, name)
-    refused = _personal_refusal(inst, name, host, sh, "apply", _owner_grant)
+    refused = _personal_refusal(inst, name, host, sh, "apply", _owner_grant, _agent)
     if refused is not None:
         return refused
     rc, _o, err = sh(host, f"cd {VPS_FLEET} && for k in {' '.join(inst_keys(inst).values())}; do "
@@ -659,12 +745,16 @@ def _apply_in_scope(spec: dict, name: str, host: str, confirm: bool, *, _test_sh
         rc, out, err = sh(host, up + core_service(inst), timeout=300)
         if rc != 0:
             return {"ok": False, "action": "apply", "status": "error", "name": name, "error": err.strip()[-600:]}
-        prov = _provision(spec, name, host, True, _test_sh=_test_sh, _owner_grant=_owner_grant)
+        prov = _provision(spec, name, host, True, _test_sh=_test_sh, _owner_grant=_owner_grant, _agent=_agent)
         if not prov["ok"]:
             return {"ok": False, "action": "apply", "status": "provision_failed", "name": name, "provision": prov}
         rc, out, err = sh(host, up + f"waha-{name}", timeout=300)
     else:
         rc, out, err = sh(host, up + " ".join(services_of(inst)), timeout=300)
+        if rc == 0 and inst.get("personal"):  # personal live (no edge): still pin markOnline/fullSync off on the core
+            prov = _provision(spec, name, host, True, _test_sh=_test_sh, _owner_grant=_owner_grant, _agent=_agent)
+            if not prov["ok"]:
+                return {"ok": False, "action": "apply", "status": "provision_failed", "name": name, "provision": prov}
     return {"ok": rc == 0, "action": "apply", "status": "applied" if rc == 0 else "error", "name": name,
             "stdout": out.strip()[-600:], "error": None if rc == 0 else err.strip()[-600:]}
 
@@ -713,9 +803,9 @@ def waha_instance(action: str = "list", name: str | None = None, ssh_host: str =
         if action in ("plan", "add"):
             return _plan(spec, name or "")
         if action == "provision":
-            return _provision(spec, name or "", ssh_host, confirm)
+            return _provision(spec, name or "", ssh_host, confirm, root=root)
         if action == "apply":
-            return _apply(spec, name or "", ssh_host, confirm)
+            return _apply(spec, name or "", ssh_host, confirm, root=root)
         if action == "remove":
             return _remove(spec, name or "", ssh_host, confirm, force)
     except ValueError as e:
@@ -732,8 +822,11 @@ def register(server) -> None:
             "vs RSS vs session status) | plan/add (the service + the .env.fleet key NAMES to generate on the VPS -- values never "
             "cross the wire) | apply (confirm=True: compose up -d --no-deps for ONE instance; refuses when keys are missing) | "
             "provision (creates/aligns the session config FROM the policy on the core; TIGHTEN-ONLY vs the VPS's own yml and the running "
-            "config; a PERSONAL line is refused here: the owner runs the CLI-only `--waha-instance-owner-hand` path by hand) | "
-            "remove (confirm=True; refuses a WORKING session unless force; snapshots the volume first, never deletes it). "
+            "config; a PERSONAL line is allowed for agents only in the two strict shapes (read-only shadow | personal live: send on, no edge, mark_online/full_sync off), with the VPS yml + compose "
+            "hashing identical, the personal label on core+edge, and an audit row written first; the QR scan stays the "
+            "owner's) | "
+            "remove (confirm=True; refuses a WORKING session unless force; snapshots the volume first, never deletes it; "
+            "a PERSONAL line is never removed by an agent). "
             "DRY-RUN default. KB § CONTEXT/INTEGRATIONS/whatsapp.md § One WAHA per number."
         ),
     )
