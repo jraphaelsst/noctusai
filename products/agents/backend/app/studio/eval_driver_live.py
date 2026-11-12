@@ -36,7 +36,7 @@ from app.channels import turno as turno_mod
 from app.channels.controles import LeadIdentidade, aplicar_controles
 from app.channels.tool_registry import make_channel_tools_factory
 from app.config import settings
-from app.notifications import FakeNotificationSink
+from app.notifications import FakeNotificationSink, eval_scope
 from app.qualificacao.ident_store import FakeIdentificacaoStore
 from app.qualificacao.identificacao import IdentCipher, IdentificacaoService
 from app.qualificacao.lead_store import FakeLeadQualificacaoStore
@@ -309,7 +309,9 @@ class LiveEvalTurnDriver:
             studio_store=self._studio, catalog=self._catalog, conversations=conversations, messages=messages,
             threads=threads, controles=controles, conformidade=conformidade, qual=qual,
             padroes=self._padroes, ident=ident, sw=sw, catalogo_fixo=catalogo, skills_factory=self._skills_factory,
-            notificacoes=FakeNotificationSink(),  # an eval never notifies a real owner
+            # an eval never notifies a real owner; the world org has a synthetic admin so a notice lands in the Fake
+            # (a Fake with no recipients made every eval opt-out log a failed notification)
+            notificacoes=FakeNotificationSink(org_admins={org_id: [str(UUID(int=0xE7A1))]}),
             # the channel route always wires an alert store; without one ``sinalizar_alerta`` is not offered and the
             # ``info_indisponivel`` alert is never raised, so the suite would judge a toolset prod does not run
             alertas=FakeThreadAlertaStore(), metricas=self._metricas,
@@ -359,6 +361,10 @@ class LiveEvalTurnDriver:
     # ── one turn ──
 
     async def executar_turno(self, thread: ThreadState, mensagem_lead: str) -> TurnOutcome:
+        with eval_scope():  # a Real notifier reached from here refuses (app.notifications.EvalSideEffectRefused)
+            return await self._executar_turno(thread, mensagem_lead)
+
+    async def _executar_turno(self, thread: ThreadState, mensagem_lead: str) -> TurnOutcome:
         if self._mundo is None:
             self._mundo = self._montar(thread)
         m = self._mundo
@@ -432,6 +438,10 @@ class LiveEvalTurnDriver:
         )
 
     async def executar_retomada(self, thread: ThreadState, retomada: Retomada) -> TurnOutcome:
+        with eval_scope():
+            return await self._executar_retomada(thread, retomada)
+
+    async def _executar_retomada(self, thread: ThreadState, retomada: Retomada) -> TurnOutcome:
         """ONE follow-up turn through the real path: ``gatilho=reengajamento``, no lead message, no abuse-limit check
         (the channel route skips it for this trigger too), the flavour in ``estado.reengajamento``. The controls decide
         whether it runs; a refusal is reported as ``retomada_status`` (``reengajamento_ignorado``), never as a pass."""

@@ -566,3 +566,32 @@ def test_cpf_sintetico_terceiro_is_a_valid_cpf_distinct_from_the_leads_and_track
     assert s.substituir("[[cpf_sintetico_terceiro]]") == terceiro
     assert s.terceiros() == (terceiro,)
     assert Sinteticos().terceiros() == ()
+
+
+# ── transcript persisted per execution (diagnosing a failing case) ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_execution_carries_the_transcript_turn_texts_bubbles_and_tool_args():
+    caso = _caso(
+        {"sem_violacoes": True}, k=1,
+        turnos=("quero comprar", {"lead": "orcamento 500 mil"}),
+    )
+    driver = FakeEvalTurnDriver([
+        _turno(bolhas=("Oi!", "Compra ou aluguel?")),
+        _turno(bolhas=("Anotado.",), tools=[ToolCall("registrar_info", {"orcamento": 500000})]),
+    ])
+    res = await executar_suite([caso], driver)
+    t = res.casos[0].execucoes[0].transcricao
+    assert [x["lead"] for x in t] == ["quero comprar", "orcamento 500 mil"]
+    assert t[0]["bolhas"] == ["Oi!", "Compra ou aluguel?"] and t[0]["ferramentas"] == []
+    assert t[1]["ferramentas"] == [{"nome": "registrar_info", "args": {"orcamento": 500000}, "ok": True}]
+
+
+@pytest.mark.asyncio
+async def test_erro_execution_keeps_the_partial_transcript_up_to_the_failing_turn():
+    caso = _caso({"sem_violacoes": True}, turnos=("a", "b"), k=1)
+    driver = FakeEvalTurnDriver([_turno(bolhas=("resposta 1",))], erro_no_turno={(0, 1): RuntimeError("x")})
+    e = (await executar_suite([caso], driver)).casos[0].execucoes[0]
+    assert e.status == "erro"
+    assert [x["lead"] for x in e.transcricao] == ["a"] and e.transcricao[0]["bolhas"] == ["resposta 1"]

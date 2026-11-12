@@ -671,7 +671,15 @@ class EvalRunner:
         channel tools, the state block, the org specs filled, the case ``contexto`` in the state block -- never a
         ``<nota do sistema>`` in the lead's turn. ``None`` = this agent / this process has no such path."""
         agente, fabrica = self._agente, self._turn_driver_factory
-        if fabrica is None or agente is None or not getattr(agente, "usa_canais", False) or spec.runtime != "llm":
+        if fabrica is None or agente is None:
+            return None
+        # A TEMPLATE (``modelo``) is never owned by a channel product (073), yet it is the lead-facing definition its
+        # children inherit: it is judged on the same path they run (channel tools, skills opened and executed, org specs
+        # filled from the case fixture / the shared synthetic sample org) -- the legacy path has no skill tool and only
+        # ``[dado: x]`` pointers, so the model narrated "abrindo a skill ..." and echoed raw slots (prod runs 97db817b, c4c4be57).
+        # The channel turn always runs on the neutral runtime (``preparar`` forces it), so a template needs no ``llm`` flag.
+        e_modelo = bool(getattr(agente, "modelo", False))
+        if not e_modelo and not (getattr(agente, "usa_canais", False) and spec.runtime == "llm"):
             return None
         driver = fabrica()
         if driver is None:
@@ -692,6 +700,9 @@ class EvalRunner:
             # codes only (never a text): WHY there is no reply -- a hand-off, a blocked reply, a stop
             motivo = ",".join([*out.acoes, *(f"{v.regra}:{v.detalhe}" for v in out.violacoes)]) or "silencio"
             raise _CaseError(f"O agente não produziu resposta ({motivo}).")
+        if placeholder_cru_em(texto):  # the same strict rule as the legacy path: a raw {{…}} / [dado: …] is never judged
+            logger.error("agents.eval.placeholder_cru run_id=%s case_id=%s", run.id, getattr(case, "id", None))
+            raise _CaseError("A resposta trouxe um placeholder cru ({{…}} ou [dado: …]).")
         return texto[:MAX_SAIDA_CHARS], TurnCost(custo_usd=out.custo_usd)
 
     @staticmethod
