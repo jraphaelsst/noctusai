@@ -10,6 +10,7 @@ import { ProntidaoAcao, acaoDoItem } from "@/components/studio/ProntidaoAcao";
 import { useProntidao } from "@/hooks/studio/useProntidao";
 import {
   PRONTIDAO_GRUPO_LABEL,
+  type CamadaBase,
   type Prontidao,
   type ProntidaoGrupo,
   type ProntidaoItem,
@@ -21,6 +22,23 @@ const ICON: Record<ProntidaoSeveridade, React.ReactNode> = {
   aviso: <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" aria-label="Aviso" />,
   ok: <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-label="Ok" />,
 };
+
+/** "Base: agente-base ✓ validada (v3)" / "✗ não validada — 2 casos críticos pendentes" for the chain-gate items. */
+export function linhaDaBase(c: CamadaBase): string {
+  const v = c.versao != null ? ` (v${c.versao})` : "";
+  if (c.validada) return `Base: ${c.agent_key} ✓ validada${v}`;
+  const porque =
+    c.motivo === "sem_versao" ? "sem versão" :
+    c.motivo === "sem_casos" ? "sem casos de avaliação" :
+    c.motivo === "sem_medicao" ? "não medida" :
+    `${c.criticos_pendentes.length} ${c.criticos_pendentes.length === 1 ? "caso crítico pendente" : "casos críticos pendentes"}`;
+  return `Base: ${c.agent_key} ✗ não validada — ${porque}`;
+}
+
+function camadasDoItem(i: ProntidaoItem): CamadaBase[] {
+  const c = i.detalhe?.camadas;
+  return i.codigo.startsWith("base_") && Array.isArray(c) ? (c as CamadaBase[]) : [];
+}
 
 export function contarBloqueantes(p: Prontidao): number {
   return p.itens.filter((i) => i.severidade === "bloqueante").length;
@@ -55,6 +73,11 @@ export function ProntidaoLista({ prontidao, agentKey }: { prontidao: Prontidao; 
                   {ICON[i.severidade]}
                   <div>
                     {i.mensagem}
+                    {camadasDoItem(i).map((c) => (
+                      <span key={c.agent_key} className="block text-xs text-muted-foreground" data-testid={`prontidao-base-${c.agent_key}`}>
+                        {linhaDaBase(c)}
+                      </span>
+                    ))}
                     {agentKey && acaoDoItem(i.codigo) ? (
                       <ProntidaoAcao codigo={i.codigo} agentKey={agentKey} />
                     ) : (

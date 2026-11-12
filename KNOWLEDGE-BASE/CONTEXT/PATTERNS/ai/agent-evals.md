@@ -424,6 +424,15 @@ Owner rule: a case that passed N CONSECUTIVE times is `consolidado` and is not r
 - **Criticality and dependencies are proposals until a human sets them** (`criticidade_origem` padrao/sugerida/definida; `depende_de_origem` declarada/inferida). The heuristic only reads POSITIVE signals (a required tool, a required skill, typed tags, a quoted part key): which sections drive a behaviour cannot be read off a case, so an inferred list is a lower bound the owner reviews.
 - **Not tracked:** a code change (tool behaviour, guards, firewall) does not move any prompt part; a case whose behaviour is code-driven must be revalidated with `rodar_tudo` after such a change.
 
+## 15 · The chain gate: validate the base once, children run only their own scope (2026-11-12)
+
+Owner rule: the base agent's evals are validated and the SDR does not run them; once the base is validated the whole chain assumes it and runs only the cases of its own scope (`app/studio/camada_validada.py`, derived, nothing stored).
+
+- **A layer is validated** when every ACTIVE `critico` case of its OWN suite is `consolidado` AND unaffected on the layer's CURRENT effective part hashes. Affectedness is re-evaluated at read time with the same pure rule a run applies (`reconciliar_afetacao`), because a run persists `consolidado -> revalidar` only when it is next booked. `normal` cases are reported (counts), never blocking: the publish gate already holds a layer to its judge `limiar` and the mechanism pass^k, which cover normal cases in aggregate. No active case = not validated.
+- **Children never run ancestor cases:** a run lists the agent's own cases (`list_cases(org, agent)`); pinned by a test.
+- **Chain gate:** a child's readiness gets `base_validada` (ok) / `base_nao_validada` (blocking, publish refusal `base_nao_validada`) naming each ancestor, its version and the pending critical cases. A parent with no version is `sem_versao`, never "no bases".
+- **Invalidation is free:** a child compiles its EFFECTIVE chain, so an ancestor edit moves the part hashes of every descendant. Their consolidated cases that depend on a changed part (or declare no dependency) go to `revalidar` (shorter streak, not a reset) at the next run, and the derived verdict drops at once.
+
 ## Composes-with
 
 `KB § PATTERNS/ai/ai-engineering-canon.md` · `KB § PATTERNS/security/ai-agent-security-canon.md` §9 ·
