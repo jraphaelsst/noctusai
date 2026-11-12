@@ -36,7 +36,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Restore watchdog state
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .mq-watchdog/state.json
           key: mq-watchdog-state-${{ github.run_id }}
