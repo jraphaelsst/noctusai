@@ -2,7 +2,7 @@
 
 > **Durable record** (per `KB § PATTERNS/common/roadmap-tracking.md`).
 > Origin: the owner judged the Criador de Agentes "too raw" (2026-11-09) and set the order: Julia validated and published as the first canon, then templates extracted from her, then the media-analyst built from them, then the creator as the multiplier.
-> Decision (revised 2026-11-09 ~21:00Z, round 7): **build the layers NOW so nothing gets reworked.** Order: mechanism → `agente-base` (refined to 100%) → `sdr-base` (refined to 100%) → Julia layered on them, re-evaluated, then published. The owner publishes each one.
+> Decision (revised 2026-11-09 ~21:00Z, round 7): **build the layers NOW so nothing gets reworked.** Order: mechanism → `agente-base` (refined to the 95% target) → `sdr-base` (refined to the 95% target) → Julia layered on them, re-evaluated, then published. The owner publishes each one.
 > Every definition below was **asked and answered by the owner** in six rounds on 2026-11-09 (the owner: "dont assume, guess, infer… ask me for clarifications"). A row not marked owner-ratified is a proposal.
 
 ## Origin
@@ -82,13 +82,13 @@ The owner, verbatim: "running evals that dont make score better needs to get fla
 
 | # | Rule |
 |---|---|
-| G1 | **Target 100%** run score. **Floor 80%** (`publicacao_limiar`): the "100%/80%" card. |
-| G2 | A loop declares its planned rounds N (e.g. 30), with checkpoints at 5, 10 and 15. |
-| G3 | **Stop at 100%.** |
+| G1 | **Target 95%** run score (owner, 2026-11-12; was 100%). **Floor 80%** (`publicacao_limiar`). Both shown on the loop card from the loop, never hard-coded. |
+| G2 | Max rounds = the owner-editable platform loop config `rodadas_max` (2026-11-12); a loop may plan fewer, never more, and stops there. Checkpoints at 5, 10 and 15. |
+| G3 | **Stop at the target (95%).** |
 | G4 | **2 consecutive runs without a score improvement → STOP** and notify mid-flight with the reason (score series, what changed between runs, the cases still failing). Applies above or below the floor; the owner evaluates. |
 | G5 | Every run that does not raise the score is **flagged** (an "overcall") and listed with its cost for watch-over. |
 | G6 | A run on an unchanged content hash beyond the consolidation passes is refused as a re-run of unfixed issues. Fix first, then run. |
-| G7 | Spend is tracked per round. The template loops' budget is **US$20** total; reaching it stops everything for an owner decision. |
+| G7 | Spend is tracked per round. The loop budget cap is **US$ 5** (owner, 2026-11-12; was US$20), from the loop config; reaching it stops everything for an owner decision. |
 
 The gate is built into the app's eval runs (not only into noc-iterate) and probed across agents: the templates first, then Julia.
 
@@ -145,7 +145,7 @@ Owner order. Detail: `~/.noctusai/private/julia/HANDOVER-noc02-to-noc1-2026-11-0
 | P3.4 | `agente-base`: the BASE pieces, no-business evals | T2 |
 | P3.5 | `sdr-base` = BASE + the 4 SDR pieces, placeholder evals | T3 |
 | P3.6 | `.md` mirror for `agente-base`, `sdr-base` and the creator (non-dev kinds; Julia excluded) | `agent_export` writes their `.md`; the drift keeper covers them |
-| P3.7 | Julia re-expressed as SDR + her layer, then re-evaluated on her own cases (byte-identical no longer required: round 7, layer first, then publish) | her suite at 100% on the layered hash |
+| P3.7 | Julia re-expressed as SDR + her layer, then re-evaluated on her own cases (byte-identical no longer required: round 7, layer first, then publish) | her suite at the 95% target on the layered hash |
 | P3.8 | Readiness: no org fallback number → publish blocked | an org without one gets a blocking item |
 
 ## Phase 4 — media-analyst (fires on T2)
@@ -211,3 +211,4 @@ Owner order. Detail: `~/.noctusai/private/julia/HANDOVER-noc02-to-noc1-2026-11-0
 ## File trail
 
 - This doc · `.claude/skills/noc-new-agent/SKILL.md` · `KB § PATTERNS/backend/canonical-agent-template.md`.
+- **2026-11-12**: owner corrections — target 95% (was 100%), budget cap US$ 5 (was 20), max rounds as an owner-editable loop config the loop stops at. Refinement runs only inside a loop (skill `noc-iterate`).

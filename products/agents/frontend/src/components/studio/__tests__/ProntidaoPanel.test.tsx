@@ -30,6 +30,26 @@ describe("ProntidaoPanel", () => {
     expect(screen.getByTestId("prontidao-acao-sem_avaliacao").textContent).toBe("Rode uma avaliação");
   });
 
+  it("shows each base of the chain gate with its verdict", () => {
+    const camada = (over: object) => ({ agent_key: "agente-base", versao: 3, validada: true, motivo: "validada", criticos_total: 4, criticos_consolidados: 4, criticos_pendentes: [], ...over });
+    mockUse.mockReturnValue(
+      view({
+        data: {
+          pronto_para_publicar: false,
+          itens: [
+            {
+              codigo: "base_nao_validada", grupo: "avaliacao", severidade: "bloqueante", mensagem: "A base não está validada", acao_sugerida: null,
+              detalhe: { camadas: [camada({}), camada({ agent_key: "sdr-base", versao: null, validada: false, motivo: "criticos_pendentes", criticos_pendentes: ["a", "b"] })] },
+            },
+          ],
+        },
+      }),
+    );
+    render(<ProntidaoPanel agentKey="julia" />);
+    expect(screen.getByTestId("prontidao-base-agente-base").textContent).toBe("Base: agente-base ✓ validada (v3)");
+    expect(screen.getByTestId("prontidao-base-sdr-base").textContent).toBe("Base: sdr-base ✗ não validada — 2 casos críticos pendentes");
+  });
+
   it("shows ready header", () => {
     mockUse.mockReturnValue(view({ data: { pronto_para_publicar: true, itens: [] } }));
     render(<ProntidaoPanel agentKey="a" />);

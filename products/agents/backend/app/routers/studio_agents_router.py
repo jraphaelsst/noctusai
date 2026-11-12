@@ -101,6 +101,7 @@ from app.stores.studio_definitions import (
     VersionRecord,
 )
 from app.studio.bundles import client_bundle, compile_version
+from app.studio.camada_validada import base_nao_validada, coletar_camadas_base
 from app.studio.prontidao import avaliar as avaliar_prontidao, falta_numero_fallback, juiz_aprovado, recusa_de_compilacao
 from app.studio.eval_driver import get_eval_turn_driver
 from app.studio.eval_mecanismo import decidir_portao
@@ -1078,6 +1079,7 @@ def publish_draft(
     skills=Depends(get_skills_store_dep),
     evals=Depends(get_eval_store_dep),
     controles=Depends(get_prontidao_controles_dep),
+    consolidacao=Depends(get_consolidacao_store_dep),
 ) -> VersionDetailOut:
     """§D1 publish + §J2.1 gate: pass ⇔ a run exists ∧ status='concluida' ∧
     completa (covered every active case, H1) ∧ total >= 1 ∧
@@ -1098,7 +1100,7 @@ def publish_draft(
             return [i.to_dict() for i in avaliar_prontidao(
                 store=store, catalog=catalog, org_id=ctx.org_id, agent=agent, draft=draft, gate=gate, padroes=padroes,
                 skills=skills, geracoes=geracoes, evals=evals, controles=controles, compiled=compiled_,
-                conformidade=conformidade).itens]
+                conformidade=conformidade, consolidacao=consolidacao).itens]
         except Exception:  # noqa: BLE001 -- the refusal itself must still be delivered
             logger.exception("agents.studio.publish.prontidao_indisponivel agent_id=%s", agent.id)
             return None
@@ -1158,6 +1160,16 @@ def publish_draft(
             "A ferramenta 'oferecer_opcoes' está ativa e o padrão de qualificação não indica o catálogo de opções.",
             prontidao=itens_prontidao,
         )
+    # 073 chain gate, direct (like the fallback number): a failed readiness read must not let a child past an unvalidated base
+    if agent.pai_agent_id is not None:
+        nao_validadas = base_nao_validada(coletar_camadas_base(
+            store=store, catalog=catalog, consolidacao=consolidacao, org_id=ctx.org_id, agent=agent, draft=draft))
+        if nao_validadas:
+            raise http_error(
+                409, "base_nao_validada",
+                "A base deste agente não está validada: consolide os casos críticos da base antes de publicar.",
+                bases=[c.to_dict() for c in nao_validadas], prontidao=itens_prontidao,
+            )
     if itens_prontidao and any(i["codigo"] == "regras_seguranca_sem_parametros" for i in itens_prontidao):
         raise http_error(
             409, "compile_blocked", "As regras de segurança desta instância estão sem parâmetros (migração 063).",
