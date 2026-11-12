@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 import httpx
 import pytest
 
-from app.clients.agents import (
+from noctusai_lib.integrations.agents_channel import (
     AgentNotFound,
     AgentsBadRequest,
     AgentsClient,
