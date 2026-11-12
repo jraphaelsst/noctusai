@@ -987,6 +987,22 @@ if [[ -n "$STAGED_NPM_MANIFEST" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-bis-0. Worker idle-polling gate (blocking, only when a worker / ─
+# jobs file is staged) ───────────────────────────────────────────────────
+# Keeper `check_worker_idle_polling` + `KB § PATTERNS/backend/polling-request-
+# budget.md`. A job worker's idle poll is a per-tick RPC: a fixed 1s idle was
+# ~15k claim_next_job/hour (2026-11-09) and a 30s cap still 56k/day (W1-C
+# 2026-11-12). Construction = the seed Worker default (300s cap + wake).
+STAGED_WORKER_POLL=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(seed/lib/backend/noctusai_lib/|products/[^/]+/backend/app/).*\.py$' | xargs -I{} sh -c 'grep -lE "Worker\(|claim_gate|run_forever|DEFAULT_MAX_IDLE" "{}" 2>/dev/null' || true)
+if [[ -n "$STAGED_WORKER_POLL" ]] && have_py; then
+    echo "[pre-commit] worker/jobs file staged — checking idle-poll budget..."
+    if ! "$PY" "$CLI" --check-worker-idle-polling --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] WORKER-IDLE-POLLING check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Drop the max_idle_interval_seconds override (seed default 300s + in-process wake), bound the gate read, or add '# poll-ok: <reason>'. See KB § PATTERNS/backend/polling-request-budget.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-bis-1. Vendor-study-in-git gate (blocking, only when a path ─────
 # under projects/**/captures/ or an exported app bundle is staged) ────────
 # Keeper `check_no_vendor_study_in_git` + skill `noc-reverse-engineer`.

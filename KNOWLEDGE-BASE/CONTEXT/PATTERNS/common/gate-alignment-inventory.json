@@ -3060,6 +3060,20 @@
    "class": "never-fires",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-worker-idle-polling": {
+   "mechanism": "seed/lib/backend/noctusai_lib/domain/jobs/worker.py",
+   "owner": "backend-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-12",
+   "shadow": {
+    "since": "2026-11-12",
+    "fires": 1,
+    "fix_rate": "1/1 (assistant Worker cap=30 fixed in the introducing slice); fleet otherwise clean"
+   },
+   "source": "KB § PATTERNS/backend/polling-request-budget.md (2026-11-09 egress incident; W1-C 2026-11-12: 56k claim_next_job/24h at a 30s cap)"
+  },
   "keeper:check-workflow-actionlint": {
    "mechanism": "none (hand-written workflow YAML or CI config; no scaffold constrains it, the linter is the framework-native check)",
    "owner": "devops-engineer",
@@ -3592,6 +3606,18 @@
    "branch": "feat/sec-http-detail-no-leak",
    "gates": [
     "keeper:check-http-detail-echoes-exception"
+   ]
+  },
+  {
+   "id": "D37",
+   "decision": "A job worker's idle poll is a per-tick RPC: it backs off to a 300s cap and is woken in-process when work becomes claimable; a fixed/short idle or an unbounded gate read is refused",
+   "home": "KB § PATTERNS/backend/polling-request-budget.md",
+   "construction": "api:noctusai_lib.domain.jobs.worker.Worker (DEFAULT_MAX_IDLE_INTERVAL_SECONDS=300 + jobs/wake.py run_at wake)",
+   "gate": "keeper:check-worker-idle-polling",
+   "telemetry": "noctus.dev.supabase_request_budget (rpc/claim_next_job calls/day from the edge logs) + keeper gate events",
+   "branch": "feat/w1c-claim-next-job-polling",
+   "gates": [
+    "keeper:check-worker-idle-polling"
    ]
   }
  ]

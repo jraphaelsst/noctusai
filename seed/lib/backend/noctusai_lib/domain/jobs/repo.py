@@ -272,8 +272,8 @@ class FakeJobRepository:
         self._jobs[job.id] = job
         if dedupe_key is not None:
             self._dedupe_index[dedupe_key] = job.id
-        if job.scheduled_for is None or job.scheduled_for <= now:  # a future-dated job is not claimable yet: no wake
-            notify_enqueued(job.type)
+        # A future-dated job is not claimable yet: `run_at` arms the wake for the moment it is due (not now).
+        notify_enqueued(job.type, run_at=job.scheduled_for)
         return job
 
     async def claim_next(
@@ -378,6 +378,7 @@ class FakeJobRepository:
             lease_expires_at=None,
         )
         self._jobs[job_id] = requeued
+        notify_enqueued(requeued.type, run_at=requeued.scheduled_for)
         return requeued
 
     async def reschedule(self, job_id: str, *, delay_s: float) -> Job:
@@ -397,6 +398,7 @@ class FakeJobRepository:
             lease_expires_at=None,
         )
         self._jobs[job_id] = pending
+        notify_enqueued(pending.type, run_at=pending.scheduled_for)
         return pending
 
     async def list_dead_letters(
@@ -674,10 +676,9 @@ class RealSupabaseJobRepository:
         # (claim gates must see it) and any in-process worker should wake.
         # ALWAYS invalidate (also fences a stats read already in flight): the queue COUNT changed even when nothing is
         # claimable yet (a future-dated job still shows in `queue_stats`). Wake only a claimable job: a future-dated one
-        # must not cut an idle worker's sleep (it would poll for nothing — the breaker's wake-laundering shape).
+        # must not cut an idle worker's sleep NOW; `run_at` wakes it when the job is DUE (no empty poll).
         self._stats_cache.invalidate()
-        if job.scheduled_for is None or job.scheduled_for <= job.created_at:
-            notify_enqueued(job.type)
+        notify_enqueued(job.type, run_at=job.scheduled_for)
         return job
 
     async def claim_next(
@@ -749,7 +750,10 @@ class RealSupabaseJobRepository:
         rows: list[dict[str, Any]] = getattr(result, "data", None) or []
         if not rows:
             raise KeyError(f"Job not found: {job_id}")
-        return self._row_to_job(rows[0])
+        job = self._row_to_job(rows[0])
+        if job.status is JobStatus.PENDING:  # retry path: wake the worker when the backoff elapses
+            notify_enqueued(job.type, run_at=job.scheduled_for)
+        return job
 
     async def reschedule(self, job_id: str, *, delay_s: float) -> Job:
         now = datetime.now(timezone.utc)
@@ -767,7 +771,9 @@ class RealSupabaseJobRepository:
         rows: list[dict[str, Any]] = getattr(result, "data", None) or []
         if not rows:
             raise KeyError(f"Job not found: {job_id}")
-        return self._row_to_job(rows[0])
+        job = self._row_to_job(rows[0])
+        notify_enqueued(job.type, run_at=job.scheduled_for)
+        return job
 
     async def list_dead_letters(
         self,
