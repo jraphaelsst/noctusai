@@ -1,5 +1,5 @@
 -- ============================================================================
--- 084_contatos_permitidos.sql -- per-agent PHONE allow-list ("contatos permitidos"), owner 2026-11-12.
+-- 085_contatos_permitidos.sql -- per-agent PHONE allow-list ("contatos permitidos"), owner 2026-11-12.
 --
 -- The owner's personal WhatsApp line is a live agent ("assistente pessoal"). He edits a list of phone numbers; the agent
 -- answers ONLY those numbers, and an EMPTY list means EVERY number (the opposite of evaluation mode, where empty = nobody).

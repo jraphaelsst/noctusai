@@ -625,7 +625,7 @@ def studio_set_agent_controle(
         if atual.avaliacao_herdada:
             raise _err(409, "avaliacao_somente_no_nucleo",
                        "O modo de avaliação é um só, no núcleo da Julia (organização NoctusAI); ela vale para todas as empresas.")
-    # The phone allow-list (084, owner 2026-11-12): per agent, never inherited, so an instance edits its own; a content token
+    # The phone allow-list (085, owner 2026-11-12): per agent, never inherited, so an instance edits its own; a content token
     # never edits it (the owner decides who the agent talks to). Validated BEFORE any change lands.
     if payload.contatos_permitidos is not None:
         if ctx.caller_kind == "product":

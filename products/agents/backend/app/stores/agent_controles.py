@@ -42,7 +42,7 @@ __all__ = [
 _SCHEMA = "agents"
 #: 056 ``avaliacao_usuarios`` CHECK: at most this many allow-listed users.
 AVALIACAO_NUMEROS_MAX = 20
-#: 084 ``set_agent_contatos_permitidos``: at most this many allow-listed phone numbers.
+#: 085 ``set_agent_contatos_permitidos``: at most this many allow-listed phone numbers.
 CONTATOS_PERMITIDOS_MAX = 100
 
 
@@ -56,7 +56,7 @@ def normalizar_e164(bruto: Any) -> str | None:
 
 
 def normalizar_contatos(brutos: list[Any]) -> tuple[str, ...]:
-    """The phone allow-list (084), each number as E.164, de-duplicated, order kept. Raises :class:`ValueError` on a number
+    """The phone allow-list (085), each number as E.164, de-duplicated, order kept. Raises :class:`ValueError` on a number
     that is not a plausible phone or on more than :data:`CONTATOS_PERMITIDOS_MAX`."""
     out: list[str] = []
     for b in brutos:
@@ -117,7 +117,7 @@ class ControleRecord:
     avaliacao_org_id: UUID | None = None
     #: True for an instance: the evaluation state is inherited from Julia's core and is read-only here.
     avaliacao_herdada: bool = False
-    #: 084 per-agent phone allow-list (E.164). EMPTY = every number is answered; non-empty = ONLY these numbers. Always the
+    #: 085 per-agent phone allow-list (E.164). EMPTY = every number is answered; non-empty = ONLY these numbers. Always the
     #: agent row's own (never inherited from a core, unlike the evaluation state).
     contatos_permitidos: tuple[str, ...] = ()
 
@@ -152,7 +152,7 @@ class AgentControleStore(Protocol):
     def set_contatos_permitidos(
         self, org_id: UUID, agent_id: UUID, *, numeros: list[str], actor: UUID | None = None,
     ) -> ControleRecord:
-        """Replace the phone allow-list (084; E.164-normalised, de-duplicated; empty = every number) with an audit row
+        """Replace the phone allow-list (085; E.164-normalised, de-duplicated; empty = every number) with an audit row
         (``contatos_permitidos_alterados``; counts only). Raises :class:`NotFound`, :class:`ValueError` (a non-phone, more than 100)."""
         ...
 

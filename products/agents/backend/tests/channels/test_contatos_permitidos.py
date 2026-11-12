@@ -1,4 +1,4 @@
-"""Per-agent phone allow-list (migration 084, owner 2026-11-12): EMPTY = every number is answered; non-empty = ONLY those
+"""Per-agent phone allow-list (migration 085, owner 2026-11-12): EMPTY = every number is answered; non-empty = ONLY those
 numbers; the on/off is the existing ``modo``. Decision rows, the turn endpoint, the status / controle reads, the Studio
 PUT (+ audit) and the migration pin."""
 from __future__ import annotations

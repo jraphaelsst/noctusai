@@ -1,5 +1,5 @@
 /**
- * "Contatos permitidos" (migration 084, owner 2026-11-12): the agent's phone allow-list. EMPTY = the agent answers every
+ * "Contatos permitidos" (migration 085, owner 2026-11-12): the agent's phone allow-list. EMPTY = the agent answers every
  * number; with numbers it answers ONLY them (the on/off is the mode switch above). The list on screen is the last server
  * answer (the cache write draws the change at once and the server's answer commits it); the server decides every message.
  */
