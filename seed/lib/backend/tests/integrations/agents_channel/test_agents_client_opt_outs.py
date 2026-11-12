@@ -7,7 +7,7 @@ import json
 import httpx
 import pytest
 
-from app.clients.agents import (
+from noctusai_lib.integrations.agents_channel import (
     FakeAgentsClient, HttpAgentsClient, LeadDesconhecido, SemOptOutAtivo, parse_opt_out_pagina,
 )
 
@@ -42,7 +42,7 @@ async def test_listar_sends_the_paging_params_and_parses_the_page():
 
 
 async def test_a_malformed_record_is_an_upstream_error_not_a_silent_drop():
-    from app.clients.agents import AgentsUpstreamError
+    from noctusai_lib.integrations.agents_channel import AgentsUpstreamError
 
     with pytest.raises(AgentsUpstreamError):
         parse_opt_out_pagina({"items": ["x"]})
