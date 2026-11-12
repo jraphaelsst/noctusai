@@ -7,7 +7,10 @@ guard that merely "fails open, loudly" silently stops guarding (CLAUDE.md §1
 scripts refuse instead of waving through:
 
 * any unexpected exception          -> deny, naming guard + exception class
-* internal deadline (8 s < the 10 s settings timeout) -> deny, "timed out"
+* internal deadline (8 s < the 10 s settings timeout) -> deny, "timed out" --
+  EXCEPT a provably READ-ONLY call (`fail_open_when`), which is allowed with a
+  logged `allow-timeout` warning: a read cannot cause the harm the guard exists
+  to stop, so blocking it on a slow probe is pure cost. Writes stay fail-closed.
 * empty / malformed / non-object stdin -> deny (cannot judge => refuse)
 
 Every deny reason starts with the stable marker `[noc-guard:<name>]` so a UI
@@ -135,6 +138,7 @@ def run_guard(
     stdout: TextIO | None = None,
     deadline_s: float = DEFAULT_DEADLINE_S,
     event_log: Path | None = None,
+    fail_open_when: Callable[[dict[str, Any]], bool] | None = None,
 ) -> int:
     """Read the hook payload, call `judge(payload)`, emit a deny on a verdict OR on any failure.
 
@@ -167,6 +171,13 @@ def run_guard(
             "fix the caller/guard, do not bypass."
         )
 
+    def _read_only_timeout() -> bool:
+        """ASYMMETRY: a READ-ONLY call that merely ran out of time is allowed (logged), never blocked."""
+        try:
+            return bool(fail_open_when and isinstance(payload, dict) and fail_open_when(payload))
+        except Exception:  # noqa: BLE001 - an unprovable read-only call stays fail-closed
+            return False
+
     def _on_alarm(_signum, _frame):
         raise GuardTimeout()
 
@@ -178,6 +189,11 @@ def run_guard(
             signal.setitimer(signal.ITIMER_REAL, deadline_s)
         verdict = judge(payload)
     except GuardTimeout:
+        if _read_only_timeout():
+            msg = f"[noc-guard:{name}] WARNING: guard timed out after {deadline_s:g}s on a read-only call -- allowed"
+            print(msg, file=sys.stderr)
+            log_event(name, "allow-timeout", msg, payload, event_log)
+            return 0
         return _emit(
             f"guard timed out (failed closed) after {deadline_s:g}s; fix the guard, do not bypass."
         )
