@@ -116,6 +116,9 @@ import httpx
 
 ENV_TOKEN = "NOCTUS_AGENTS_CONTENT_TOKEN"
 ENV_URL = "NOCTUS_AGENTS_URL"
+#: Optional platform-issued ``studio:evals-run`` token for the eval-loop actions (falls back to ENV_TOKEN: a platform
+#: admin or an evals-run token is what those routes accept).
+ENV_EVALS_TOKEN = "NOCTUS_AGENTS_EVALS_TOKEN"
 DEFAULT_ENV_FILE = Path("~/.config/noctus/agents.env")
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 _HTTP_TIMEOUT = httpx.Timeout(60.0, connect=15.0)
@@ -127,6 +130,10 @@ LIFECYCLE_ACTIONS = (
     "criar_agente", "excluir_agente", "configurar_agente", "definicao", "gerar", "geracao", "conceder", "concessoes",
     "prontidao", "atualizar_skills",
 )
+#: The eval refinement loop (contract: products/agents/docs/eval-loop-gate-contract.md): one route each.
+LOOP_ACTIONS = ("loop_iniciar", "loops", "loop", "loop_parar", "rodada", "run")
+_SUITES = ("comportamento", "mecanismo")
+_UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
 _DEFINICAO_CAMPOS = (
     "nome", "descricao", "runtime", "owner_product", "escopo_qualificacao", "padrao_qualificacao", "rascunho_padrao",
     "instanciavel", "papel", "superficie_claude", "modelo", "pai_agent_id",
@@ -141,10 +148,12 @@ LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 class ContentError(Exception):
     """A refusal or failure with a machine code. The message is already free of the token."""
 
-    def __init__(self, codigo: str, mensagem: str) -> None:
+    def __init__(self, codigo: str, mensagem: str, servidor: dict[str, Any] | None = None) -> None:
         super().__init__(mensagem)
         self.codigo = codigo
         self.mensagem = mensagem
+        #: The server's ``{code, detail, http}`` verbatim (token redacted), set for any HTTP refusal.
+        self.servidor = servidor
 
 
 # ── safety: URL, token, payload file ────────────────────────────────────────
@@ -176,8 +185,8 @@ def _from_env(key: str) -> str:
     return val
 
 
-def _token() -> str:
-    tok = _from_env(ENV_TOKEN)
+def _token(evals: bool = False) -> str:
+    tok = (_from_env(ENV_EVALS_TOKEN) if evals else "") or _from_env(ENV_TOKEN)
     if not tok:
         raise ContentError(
             "nao_configurado",
@@ -275,7 +284,9 @@ class _Api:
                     detalhe = str(env.get("detail") or "")
             except ValueError:
                 pass
-            raise ContentError(codigo, self._redact(f"{method} {path}: {resp.status_code} {detalhe}")[:300])
+            raise ContentError(
+                codigo, self._redact(f"{method} {path}: {resp.status_code} {detalhe}")[:300],
+                {"http": resp.status_code, "code": codigo, "detail": self._redact(detalhe)[:2000]})
         if resp.status_code == 204 or not resp.content:
             return None
         return resp.json()
@@ -847,13 +858,15 @@ def content(
 ) -> dict[str, Any]:
     """List / get / set an agent's content rows in the target environment. See the module docstring."""
     try:
+        if action in LOOP_ACTIONS:
+            return _loop_actions(action, agent, base_url, bool(confirm), _transport, payload_path=payload_path, chave=chave)
         if action in LIFECYCLE_ACTIONS:
             return _lifecycle(action, agent, base_url, bool(confirm), _transport, payload_path=payload_path, chave=chave)
         if action in PADRAO_ACTIONS:
             return _criar_padrao(padrao, payload_path, base_url, bool(confirm), _transport)
         if action not in ACTIONS:
             raise ContentError(
-                "acao_invalida", f"action deve ser um de {(*ACTIONS, *LIFECYCLE_ACTIONS, *PADRAO_ACTIONS)} (esta ferramenta nunca publica).",
+                "acao_invalida", f"action deve ser um de {(*ACTIONS, *LIFECYCLE_ACTIONS, *LOOP_ACTIONS, *PADRAO_ACTIONS)} (esta ferramenta nunca publica).",
             )
         if kind not in KINDS:
             raise ContentError("kind_invalido", f"kind deve ser um de {KINDS}.")
@@ -876,7 +889,10 @@ def content(
         finally:
             api.close()
     except ContentError as exc:
-        return {"status": "error", "codigo": exc.codigo, "mensagem": exc.mensagem}
+        out = {"status": "error", "codigo": exc.codigo, "mensagem": exc.mensagem}
+        if exc.servidor:
+            out["servidor"] = exc.servidor
+        return out
 
 
 def _criar_padrao(padrao: str | None, payload_path: str | None, base_url: str | None, confirm: bool, transport) -> dict[str, Any]:
@@ -917,6 +933,82 @@ def _only(payload: Any, allowed: tuple[str, ...], what: str) -> dict[str, Any]:
     if extra:
         raise ContentError("payload_invalido", f"Campos desconhecidos em {what}: {extra}. Permitidos: {list(allowed)}.")
     return payload
+
+
+def _loop_actions(
+    action: str, agent: str | None, base_url: str | None, confirm: bool, transport: httpx.BaseTransport | None, *,
+    payload_path: str | None = None, chave: str | None = None,
+) -> dict[str, Any]:
+    """The eval refinement loop: start / list / read / stop a loop, start a round, read a run. Reads need no confirm;
+    writes are a dry-run that makes NO request unless ``confirm=True``. Any server refusal (409/422...) is returned
+    verbatim under ``servidor`` ({http, code, detail}) -- the gate's reasons are the loop's steering signal."""
+    if not agent or not _AGENT_KEY_RE.match(agent):
+        raise ContentError("agent_invalido", "Informe 'agent' (a chave do agente: letras, digitos, '_', '-', '.').")
+    if action in ("loop", "loop_parar", "run") and not (chave and _UUID_RE.match(chave)):
+        raise ContentError("chave_invalida", "chave deve ser o id (uuid) do loop (loop, loop_parar) ou da run (run).")
+    a = f"/api/studio/agents/{_q(agent)}"
+    body: Any = None
+    pre_version = False
+    if action == "loop_iniciar":
+        body = _only(_load_payload(payload_path), ("suite", "rodadas_planejadas", "orcamento_usd"), "loop_iniciar")
+        if body.get("suite") not in _SUITES or not isinstance(body.get("rodadas_planejadas"), int):
+            raise ContentError("payload_invalido", f"loop_iniciar precisa de 'suite' ({'|'.join(_SUITES)}) e 'rodadas_planejadas' (inteiro).")
+        method, path = "POST", f"{a}/evals/loops"
+    elif action == "loops":
+        filt = _only(_load_payload(payload_path), ("suite", "status"), "loops") if payload_path else {}
+        qs = "&".join(f"{k}={quote(str(v), safe='')}" for k, v in filt.items())
+        method, path = "GET", f"{a}/evals/loops" + (f"?{qs}" if qs else "")
+    elif action == "loop":
+        method, path = "GET", f"{a}/evals/loops/{chave}"
+    elif action == "loop_parar":
+        body = _only(_load_payload(payload_path), ("motivo",), "loop_parar") if payload_path else {}
+        method, path = "POST", f"{a}/evals/loops/{chave}/stop"
+    elif action == "run":
+        # The behaviour run route; a mechanism run lives at .../mecanismo-runs/{id} (payload suite=mecanismo).
+        suite = (_only(_load_payload(payload_path), ("suite",), "run") if payload_path else {}).get("suite", "comportamento")
+        if suite not in _SUITES:
+            raise ContentError("payload_invalido", f"suite deve ser {'|'.join(_SUITES)}.")
+        method, path = "GET", f"{a}/evals/runs/{chave}" if suite == "comportamento" else f"{a}/mecanismo-runs/{chave}"
+    else:  # rodada
+        body = _only(_load_payload(payload_path), ("suite", "loop_id", "version_id", "rodar_tudo"), "rodada")
+        loop_id = body.get("loop_id") or chave
+        if body.get("suite") not in _SUITES or not (isinstance(loop_id, str) and _UUID_RE.match(loop_id)):
+            raise ContentError("payload_invalido", "rodada precisa de 'suite' e 'loop_id' (uuid; ou chave=<loop_id>).")
+        if body["suite"] == "mecanismo":
+            qs = f"loop_id={loop_id}" + ("&rodar_tudo=true" if body.get("rodar_tudo") else "")
+            method, path, body = "POST", f"{a}/draft/mecanismo-runs?{qs}", None
+        else:
+            vid = body.get("version_id")
+            if vid is not None and not (isinstance(vid, str) and _UUID_RE.match(vid)):
+                raise ContentError("payload_invalido", "version_id deve ser um uuid (omita para usar o rascunho atual).")
+            pre_version = vid is None
+            body = {"version_id": vid, "loop_id": loop_id}
+            method, path = "POST", f"{a}/evals/runs"
+    reading = method == "GET"
+    base = _base_url(base_url)
+    token = _token(evals=True)
+    head = {"action": action, "agent": agent, "alvo": base, "requisicao": f"{method} {path}"}
+    if not reading and not confirm:
+        out = {"status": "planned", **head, "dry_run": True,
+               "mensagem": "Nada foi feito. Repita com confirm=True (uma rodada executa a suite ao vivo e gasta do orcamento do loop)."}
+        if pre_version:
+            out["version_id"] = "rascunho atual (resolvido na confirmacao)"
+        if isinstance(body, dict) and body:
+            out["campos"] = sorted(body)
+        return out
+    api = _Api(base, token, transport)
+    try:
+        if pre_version:
+            draft = api.call("GET", f"{a}/draft")
+            body["version_id"] = (draft or {}).get("id")
+            if not body["version_id"]:
+                raise ContentError("rascunho_ausente", "O agente nao tem rascunho (version_id indeterminado).")
+        result = api.call(method, path, body)
+    finally:
+        api.close()
+    if reading:
+        return {"status": "ok", **head, "dry_run": False, "resultado": result}
+    return {"status": "started" if action == "rodada" else "done", **head, "dry_run": False, "resultado": result}
 
 
 def _lifecycle(
@@ -1072,7 +1164,7 @@ def register(server) -> None:
             "an exemplar agent key}: AI-generated first DRAFT, background, never publishes) | geracao (chave = run id, "
             "empty = list: progress, cost, lacunas, gerado vs editado) | prontidao (reads what the draft still owes before "
             "publish: blocking items + advisories + pronto_para_publicar) | atualizar_skills (re-pin every library skill "
-            "of the draft to its newest published version; dry-run lists what would move) | excluir_agente (agent=<key>: deletes it; needs a token minted with permitir_exclusao; the server "
+            "of the draft to its newest published version; dry-run lists what would move) | Eval refinement loop (platform admin / studio:evals-run token; NOCTUS_AGENTS_EVALS_TOKEN preferred, else the content token; server refusals come back verbatim under `servidor`): loop_iniciar (payload {suite: comportamento|mecanismo, rodadas_planejadas, orcamento_usd?}) | loops (optional payload {suite?, status?}) | loop (chave=loop_id) | loop_parar (chave=loop_id, payload {motivo?}) | rodada (payload {suite, loop_id | chave=loop_id, version_id? (default: current draft), rodar_tudo?}: books + starts the next round) | run (chave=run_id, payload {suite?}: results incl. saida/notas_juiz/veredito); writes dry-run unless confirm=True | excluir_agente (agent=<key>: deletes it; needs a token minted with permitir_exclusao; the server "
             "refuses published/in-use/on agents) - writes are dry-run unless confirm=True. set reads a JSON payload from payload_path (a file "
             "OUTSIDE git) and is a DRY-RUN returning a unified diff unless confirm=True. Token from "
             "NOCTUS_AGENTS_CONTENT_TOKEN (studio:content-write), never echoed. base_url = the target environment "
