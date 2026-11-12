@@ -72,6 +72,7 @@
     "326_finance_rev2.sql": "14e3a87ed6acf03216189d9a777f044b46626b6e746c224a0e8d168e1f7a81bd",
     "327_finance_service_only.sql": "b0496119928d19a9e2678337dd7782d2343a2b9ce2b3a8e44db779d9b595454e",
     "328_documentos_service_only.sql": "cc7835c1935122a0a99062f785b5ca65f53bd25bbee20fa6c0dc4ad0583934a2",
-    "330_esteira_card_hub_service_only.sql": "8be43f0ebee7ca502a339a8934094fa4c44e5f2c080da3c336797a7936050ce3"
+    "330_esteira_card_hub_service_only.sql": "8be43f0ebee7ca502a339a8934094fa4c44e5f2c080da3c336797a7936050ce3",
+    "339_marca_one_per_org.sql": "3c9a79209be958b322ef12a28f532359719366b85fcbab35aea786be36fb26f7"
   }
 }
