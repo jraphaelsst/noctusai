@@ -14,6 +14,12 @@ class SeedSettings(ProductSettings):
 
     cors_origins: str = "@registry:own:orbity"
 
+    # Request-history audit trail ON (same as social-wiring): since migration 034 platform staff acting in an agency org
+    # (the org picker) get real read/write on its data instead of RLS-empty results, and every such write must leave a
+    # client-visible row naming the acting actor (`acting_audit_actor`, stashed by the seed auth dependency). The seed
+    # middleware stays inert unless this is on. `AUDIT_TRAIL_ENABLED=0` in the environment still turns it off.
+    audit_trail_enabled: bool = True
+
     # Fernet key (fleet `ENCRYPTION_KEY`): encrypts each org's WAHA API key at
     # rest in `orbity.whatsapp_connections`. Empty => the connections organ
     # answers 503 and saved connections are ignored (sending then refuses: no static fallback).

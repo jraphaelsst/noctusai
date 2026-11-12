@@ -12,6 +12,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { errorCopy } from "@/lib/errorCopy";
 import { useAuthStore } from "@noctusai/seed/infra";
 import type { Platform, Post } from "@/hooks/useConteudo";
 
@@ -184,7 +185,7 @@ export function useCreatePlan() {
       toast.success("Planejamento criado!");
     },
     onError: (error: Error) => {
-      toast.error("Erro ao criar planejamento", { description: error.message });
+      toast.error("Erro ao criar planejamento", { description: errorCopy(error) });
     },
   });
 }
@@ -199,7 +200,7 @@ export function useUpdatePlan() {
       toast.success("Planejamento atualizado!");
     },
     onError: (error: Error) => {
-      toast.error("Erro ao atualizar planejamento", { description: error.message });
+      toast.error("Erro ao atualizar planejamento", { description: errorCopy(error) });
     },
   });
 }
@@ -214,7 +215,7 @@ export function useDeletePlan() {
       toast.success("Planejamento removido!");
     },
     onError: (error: Error) => {
-      toast.error("Erro ao remover planejamento", { description: error.message });
+      toast.error("Erro ao remover planejamento", { description: errorCopy(error) });
     },
   });
 }
@@ -236,7 +237,7 @@ export function useAppendPlanItems() {
       },
     ],
     onError: (error: Error) => {
-      toast.error("Erro ao adicionar conteúdos", { description: error.message });
+      toast.error("Erro ao adicionar conteúdos", { description: errorCopy(error) });
     },
   });
 }
@@ -261,7 +262,7 @@ export function useUpdatePlanItem() {
       },
     ],
     onError: (error: Error) => {
-      toast.error("Erro ao atualizar conteúdo", { description: error.message });
+      toast.error("Erro ao atualizar conteúdo", { description: errorCopy(error) });
     },
   });
 }
@@ -290,7 +291,7 @@ export function useDeletePlanItem() {
       },
     ],
     onError: (error: Error) => {
-      toast.error("Erro ao remover conteúdo", { description: error.message });
+      toast.error("Erro ao remover conteúdo", { description: errorCopy(error) });
     },
   });
 }
@@ -309,7 +310,7 @@ export function useReorderPlanItems() {
       },
     ],
     onError: (error: Error) => {
-      toast.error("Erro ao reordenar conteúdos", { description: error.message });
+      toast.error("Erro ao reordenar conteúdos", { description: errorCopy(error) });
     },
   });
 }
@@ -336,7 +337,7 @@ export function useCreateTasksFromItems() {
       }
     },
     onError: (error: Error) => {
-      toast.error("Erro ao criar tarefas", { description: error.message });
+      toast.error("Erro ao criar tarefas", { description: errorCopy(error) });
     },
   });
 }
@@ -363,7 +364,7 @@ export function usePromoteItemToPost() {
       toast.success("Post criado como rascunho — siga em Posts para enviar à aprovação.");
     },
     onError: (error: Error) => {
-      toast.error("Erro ao criar post", { description: error.message });
+      toast.error("Erro ao criar post", { description: errorCopy(error) });
     },
   });
 }

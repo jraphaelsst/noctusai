@@ -32,7 +32,7 @@ from noctusai_lib.primitives._correlation import get_correlation_id
 
 from .detect import client_hint_from_ua, detect_actor_kind
 from .sink import AuditSink
-from .types import AuditActor, AuditEntry
+from .types import AuditActor, AuditEntry, redact_path_params
 
 #: The only methods worth recording — a GET/HEAD/OPTIONS never mutates
 #: state, so auditing it would be pure noise (and pure cost) at
@@ -116,7 +116,7 @@ class AuditMiddleware:
             product_slug=self._product_slug,
             method=scope.get("method", ""),
             route_template=getattr(route, "path", str(route)),
-            path_params=dict(scope.get("path_params") or {}),
+            path_params=redact_path_params(scope.get("path_params") or {}),
             status=status,
             actor_kind=detect_actor_kind(x_noctus_client=x_noctus_client, user_agent=user_agent),
             client_hint=client_hint_from_ua(user_agent),

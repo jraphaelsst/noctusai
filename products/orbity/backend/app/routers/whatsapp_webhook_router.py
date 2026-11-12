@@ -106,7 +106,8 @@ async def whatsapp_webhook_by_token(
         logger.debug("orbity whatsapp webhook: ignored (%s)", exc)
         return Response(status_code=status.HTTP_200_OK)
     except WhatsAppPayloadError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        logger.warning("orbity whatsapp webhook: payload rejected: %s", type(exc).__name__)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_webhook_payload") from exc
 
     if inbound.provider_message_id and not _dedup.claim(inbound.provider_message_id):
         logger.debug("orbity whatsapp webhook: dedup hit")

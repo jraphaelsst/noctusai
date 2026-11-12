@@ -44,7 +44,7 @@ from app.dependencies import (
     get_admin_client,
     get_core_client,
     get_current_user_org,
-    get_user_client,
+    get_org_client,
 )
 from app.schemas.social_content import (
     ApprovalCreate,
@@ -75,7 +75,7 @@ approve_router = APIRouter(tags=["Content Approval"])
 # ---------------------------------------------------------------------------
 
 def _svc(token: str, org_id) -> SocialContentService:
-    return SocialContentService(get_user_client(token), org_id=org_id)
+    return SocialContentService(get_org_client(org_id), org_id=org_id)
 
 
 def _admin_approval_svc() -> PublicApprovalService:
@@ -84,7 +84,7 @@ def _admin_approval_svc() -> PublicApprovalService:
     Mirrors _admin_crm() in crm_router — service_role bypasses RLS for the
     public approve path. Security guarantee is entirely at the token level.
     """
-    return PublicApprovalService(get_admin_client(), core_db=get_core_client())
+    return PublicApprovalService(get_admin_client(), core_db=get_core_client())  # org-scope-ok: public token link, org derived from the token row
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +110,8 @@ def list_campaigns(
             page=page,
             page_size=page_size,
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.list_campaigns failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar campanhas")
@@ -130,6 +132,8 @@ def create_campaign(
         row = _svc(token, org_id).create_campaign(
             payload.model_dump(mode="json", exclude_none=True)
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.create_campaign failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar campanha")
@@ -149,6 +153,8 @@ def get_campaign(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_campaign(campaign_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.get_campaign failed org=%s id=%s", org_id, campaign_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar campanha")
@@ -174,6 +180,8 @@ def update_campaign(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
         row = _svc(token, org_id).update_campaign(campaign_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.update_campaign failed org=%s id=%s", org_id, campaign_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar campanha")
@@ -191,6 +199,8 @@ def delete_campaign(
     org_id = coerce_org_uuid(raw_org)
     try:
         ok = _svc(token, org_id).delete_campaign(campaign_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.delete_campaign failed org=%s id=%s", org_id, campaign_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar campanha")
@@ -224,6 +234,8 @@ def list_posts(
             page=page,
             page_size=page_size,
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.list_posts failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar posts")
@@ -244,6 +256,8 @@ def create_post(
         row = _svc(token, org_id).create_post(
             payload.model_dump(mode="json", exclude_none=True)
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.create_post failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar post")
@@ -263,6 +277,8 @@ def get_post(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_post(post_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.get_post failed org=%s id=%s", org_id, post_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar post")
@@ -288,6 +304,8 @@ def update_post(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
         row = _svc(token, org_id).update_post(post_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.update_post failed org=%s id=%s", org_id, post_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar post")
@@ -305,6 +323,8 @@ def delete_post(
     org_id = coerce_org_uuid(raw_org)
     try:
         ok = _svc(token, org_id).delete_post(post_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.delete_post failed org=%s id=%s", org_id, post_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar post")
@@ -333,6 +353,8 @@ def create_approval(
         row = _svc(token, org_id).create_approval(
             post_id, expires_in_days=payload.expires_in_days
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "content.create_approval failed org=%s post=%s", org_id, post_id
@@ -353,6 +375,8 @@ def list_post_approvals(
     org_id = coerce_org_uuid(raw_org)
     try:
         return _svc(token, org_id).list_approvals(post_id=post_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "content.list_post_approvals failed org=%s post=%s", org_id, post_id
@@ -369,6 +393,8 @@ def list_approvals(
     org_id = coerce_org_uuid(raw_org)
     try:
         return _svc(token, org_id).list_approvals(post_id=post_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.list_approvals failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar aprovações")
@@ -387,6 +413,8 @@ def get_approval(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_approval(approval_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "content.get_approval failed org=%s id=%s", org_id, approval_id
@@ -423,6 +451,8 @@ def public_get_approval(request: Request, token: str) -> PublicApprovalView:
         raise HTTPException(status_code=404, detail="Link de aprovação não encontrado")
     except TokenLinkGone:
         raise HTTPException(status_code=410, detail="Link de aprovação expirado")
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("public_get_approval failed %s", token_fingerprint(token))
         raise HTTPException(status_code=502, detail="Falha ao buscar aprovação")
@@ -463,6 +493,8 @@ def public_submit_approval(
         raise HTTPException(status_code=404, detail="Approval token not found")
     except TokenLinkGone:
         raise HTTPException(status_code=410, detail="Link de aprovação expirado ou já respondido")
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("public_submit_approval failed %s", token_fingerprint(token))
         raise HTTPException(status_code=502, detail="Falha ao registrar decisão")

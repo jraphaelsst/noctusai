@@ -30,7 +30,7 @@ from app.dependencies import (
     coerce_org_uuid,
     get_admin_client,
     get_current_user_org,
-    get_user_client,
+    get_org_client,
 )
 from app.schemas.reports import (
     PublicReportOut,
@@ -56,7 +56,7 @@ public_reports_router = APIRouter(tags=["Reports Public"])
 # ---------------------------------------------------------------------------
 
 def _svc(token: str, org_id: UUID) -> ReportsService:
-    return ReportsService(get_user_client(token), org_id=org_id, admin_db=get_admin_client())
+    return ReportsService(get_org_client(org_id), org_id=org_id)
 
 
 def _public_svc() -> ReportsPublicService:
@@ -66,7 +66,7 @@ def _public_svc() -> ReportsPublicService:
     server-side (status, expiry) before returning any data. No client-supplied
     org_id is ever trusted.
     """
-    return ReportsPublicService(get_admin_client())
+    return ReportsPublicService(get_admin_client())  # org-scope-ok: public token link, org derived from the token row
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +83,8 @@ def list_reports(
     org_id = coerce_org_uuid(raw_org)
     try:
         return _svc(token, org_id).list_reports(client_id=client_id, status=report_status)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.list failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar relatórios")
@@ -103,6 +105,8 @@ def create_report(
         row = _svc(token, org_id).create_report(
             payload.model_dump(mode="json", exclude_none=True)
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.create failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar relatório")
@@ -122,6 +126,8 @@ def get_report(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_report(report_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.get failed org=%s id=%s", org_id, report_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar relatório")
@@ -147,6 +153,8 @@ def update_report(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
         row = _svc(token, org_id).update_report(report_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.update failed org=%s id=%s", org_id, report_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar relatório")
@@ -164,6 +172,8 @@ def delete_report(
     org_id = coerce_org_uuid(raw_org)
     try:
         ok = _svc(token, org_id).delete_report(report_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.delete failed org=%s id=%s", org_id, report_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar relatório")
@@ -188,6 +198,8 @@ def list_snapshots(
     org_id = coerce_org_uuid(raw_org)
     try:
         return _svc(token, org_id).list_snapshots(report_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.snapshots failed org=%s report=%s", org_id, report_id)
         raise HTTPException(status_code=502, detail="Falha ao listar snapshots")
@@ -208,7 +220,10 @@ def generate_snapshot(
     try:
         row = _svc(token, org_id).generate_snapshot(report_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("reports.generate refused org=%s report=%s: %s", org_id, report_id, type(exc).__name__)
+        raise HTTPException(status_code=404, detail="report_not_found")
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.generate failed org=%s report=%s", org_id, report_id)
         raise HTTPException(status_code=502, detail="Falha ao gerar snapshot")
@@ -242,6 +257,8 @@ def get_public_report(request: Request, token: str) -> PublicReportOut:
     except (TokenLinkNotFound, TokenLinkGone):
         # one answer for unknown / draft / expired, as before: a link that cannot be used reveals nothing
         raise HTTPException(status_code=404, detail=not_found_detail)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.public_read %s failed", token_fingerprint(token))
         raise HTTPException(status_code=502, detail="Falha ao buscar relatório público")

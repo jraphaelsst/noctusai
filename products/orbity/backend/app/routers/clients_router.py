@@ -36,7 +36,7 @@ from app.dependencies import (
     get_admin_client,
     get_core_client,
     get_current_user_org,
-    get_user_client,
+    get_org_client,
 )
 from app.schemas.clients import ArchiveRequest, ClientCreate, ClientOut, ClientUpdate, CnpjLookupOut
 from app.services import offboarding
@@ -70,9 +70,11 @@ def list_clients(
 ) -> dict:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    svc = ClientsService(get_user_client(token), org_id=org_id)
+    svc = ClientsService(get_org_client(org_id), org_id=org_id)
     try:
         result = svc.list(active_only=active_only, page=page, page_size=page_size)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("clients.list failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar clientes")
@@ -86,7 +88,7 @@ async def create_client(
 ) -> ClientOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    svc = ClientsService(get_user_client(token), org_id=org_id)
+    svc = ClientsService(get_org_client(org_id), org_id=org_id)
     data = payload.model_dump(mode="json", exclude_none=True)
     if "document" in data:
         data["document"] = _normalized_document(data["document"])
@@ -94,6 +96,8 @@ async def create_client(
             del data["document"]
     try:
         row = svc.create(data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("clients.create failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar cliente")
@@ -108,9 +112,11 @@ def get_client(
 ) -> ClientOut:
     _user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    svc = ClientsService(get_user_client(token), org_id=org_id)
+    svc = ClientsService(get_org_client(org_id), org_id=org_id)
     try:
         row = svc.get(client_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("clients.get failed org=%s id=%s", org_id, client_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar cliente")
@@ -139,9 +145,11 @@ def update_client(
         data["document"] = _normalized_document(data["document"])
         if data["document"] is None:
             del data["document"]
-    svc = ClientsService(get_user_client(token), org_id=org_id)
+    svc = ClientsService(get_org_client(org_id), org_id=org_id)
     try:
         row = svc.update(client_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("clients.update failed org=%s id=%s", org_id, client_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar cliente")
@@ -181,9 +189,11 @@ async def lookup_cnpj(
 async def offboarding_preview(client_id: str, auth: tuple = Depends(admin_dependency)) -> dict:
     org_id = str(coerce_org_uuid(auth[2]))
     try:
-        return await asyncio.to_thread(lambda: offboarding.preview(get_admin_client(), org_id, client_id))
+        return await asyncio.to_thread(lambda: offboarding.preview(get_admin_client(), org_id, client_id))  # org-scope-ok: offboard_client RPC (org-checked in SQL) + organ tables, org passed explicitly
     except BillingError as exc:
-        raise HTTPException(status_code=exc.status, detail=exc.message)
+        raise HTTPException(status_code=exc.status, detail=exc.code)  # detail-safe: BillingError.code is a fixed snake_case literal raised only in services/billing_charges + offboarding, never exception text
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("clients.offboarding_preview failed org=%s id=%s", org_id, client_id)
         raise HTTPException(status_code=502, detail="Falha ao consultar as cobranças do cliente")
@@ -207,9 +217,11 @@ async def archive_client(
     decisions = {c.entry_id: c.action for c in (payload.charges if payload else [])}
     try:
         summary = await asyncio.to_thread(lambda: offboarding.offboard(
-            get_admin_client(), billing.get_gateway(), org_id, client_id, decisions, user_id=str(getattr(user, "id", "") or "") or None))
+            get_admin_client(), billing.get_gateway(), org_id, client_id, decisions, user_id=str(getattr(user, "id", "") or "") or None))  # org-scope-ok: offboard_client RPC, org-checked in SQL
     except BillingError as exc:
-        raise HTTPException(status_code=exc.status, detail=exc.message)
+        raise HTTPException(status_code=exc.status, detail=exc.code)  # detail-safe: BillingError.code is a fixed snake_case literal raised only in services/billing_charges + offboarding, never exception text
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("clients.archive failed org=%s id=%s", org_id, client_id)
         raise HTTPException(status_code=502, detail="Falha ao inativar cliente")
@@ -234,9 +246,9 @@ async def delete_client(client_id: str, auth: tuple = Depends(admin_dependency))
     org_id = coerce_org_uuid(raw_org)
     try:
         # The live-client check is the 404 authority: preview() below would still find an already-deleted row.
-        if ClientsService(get_user_client(token), org_id=org_id).get(client_id) is None:
+        if ClientsService(get_org_client(org_id), org_id=org_id).get(client_id) is None:
             raise HTTPException(status_code=404, detail="Cliente não encontrado")
-        blockers = await asyncio.to_thread(lambda: offboarding.deletion_blockers(get_admin_client(), str(org_id), client_id))
+        blockers = await asyncio.to_thread(lambda: offboarding.deletion_blockers(get_admin_client(), str(org_id), client_id))  # org-scope-ok: organ tables, org passed explicitly
         if blockers["contracts"] or blockers["charges"]:
             raise HTTPException(
                 status_code=409,
@@ -247,12 +259,12 @@ async def delete_client(client_id: str, auth: tuple = Depends(admin_dependency))
                     "charges": len(blockers["charges"]),
                 },
             )
-        deleted = ClientsService(get_user_client(token), org_id=org_id).soft_delete(
+        deleted = ClientsService(get_org_client(org_id), org_id=org_id).soft_delete(
             client_id, deleted_by=str(getattr(user, "id", "") or "") or None)
     except HTTPException:
         raise
     except BillingError as exc:
-        raise HTTPException(status_code=exc.status, detail=exc.message)
+        raise HTTPException(status_code=exc.status, detail=exc.code)  # detail-safe: BillingError.code is a fixed snake_case literal raised only in services/billing_charges + offboarding, never exception text
     except Exception:
         logger.exception("clients.delete failed org=%s id=%s", org_id, client_id)
         raise HTTPException(status_code=502, detail="Falha ao excluir cliente")
