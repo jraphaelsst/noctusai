@@ -413,6 +413,15 @@ class TestThreadApi:
         assert (c.modo, c.aceita_novos_leads, c.threads_abertas, c.drenagem["efetivas"]) == ("drenando", False, 4, 3)
         assert seen == [("GET", "/api/channels/agents/julia/controle")]
 
+    async def test_controle_and_status_parse_the_allow_list(self):
+        base = {"agent_key": "a", "modo": "ligado", "aceita_novos_leads": True}
+        c = await _client(lambda _r: httpx.Response(200, json={**base, "contatos_permitidos": ["+5511988887777"]})).controle("a")
+        assert c.contatos_permitidos == ("+5511988887777",)
+        assert (await _client(lambda _r: httpx.Response(200, json={**base, "contatos_permitidos": []})).controle("a")).contatos_permitidos == ()
+        assert (await _client(lambda _r: httpx.Response(200, json=base)).controle("a")).contatos_permitidos is None  # older agents
+        st = {"agent_key": "a", "nome": "A", "ativo": True, "llm_configurado": True, "modo": "ligado", "contatos_permitidos": ["+55"]}
+        assert (await _client(lambda _r: httpx.Response(200, json=st)).agent_status("a")).contatos_permitidos == ("+55",)
+
     async def test_qualificacao_and_identificacao_and_their_404s(self):
         body = {"lead_ref": LEAD, "versao_id": "v", "estagio": "qualificado", "regra_id": "r", "score": 61, "scores": {"prontidao": 30},
                 "valores": {"operacao": "compra"}, "faltando": ["prazo_decisao"], "pode_ofertar": True, "pode_concluir": False,

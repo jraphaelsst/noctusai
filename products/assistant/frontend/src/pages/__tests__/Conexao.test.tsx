@@ -22,7 +22,7 @@ describe("Conexao", () => {
     admin.value = true;
     render(<Conexao />);
     expect(screen.getByTestId("organ")).toBeInTheDocument();
-    expect(screen.getByTestId("conexao-somente-leitura")).toHaveTextContent("nunca envia");
+    expect(screen.getByTestId("conexao-resposta")).toHaveTextContent("número é permitido");
   });
 
   it("refuses a non-admin", () => {

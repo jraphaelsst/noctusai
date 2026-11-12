@@ -1,8 +1,9 @@
 # Assistant
 
-A small, simple noc product: a **read-only shadow of one personal WhatsApp line**. It pairs the line (QR), receives
-inbound 1:1 text messages through a signed webhook, appends each as a pending **intake** row and classifies it as
-about scheduling or not (S3, classification only - D48). It never sends, drafts, marks as read or shows presence.
+A small, simple noc product around **one personal WhatsApp line**. It pairs the line (QR), receives inbound 1:1 text
+messages through a signed webhook, appends each as a pending **intake** row and classifies it as about scheduling or
+not (S3, classification only - D48). Since 2026-11-12 it can also **answer** (live reply, below): the owner's assistant
+agent, hosted in the `agents` product, replies on the same line. It never marks as read, shows typing or presence.
 
 ## Stack
 
@@ -15,9 +16,8 @@ about scheduling or not (S3, classification only - D48). It never sends, drafts,
 - `/api/whatsapp/connections*` (admin) - QR pairing, status, start/restart/logout/recover.
 - `POST /api/whatsapp/webhook/{token}` - the inbound webhook. **HMAC required**: no `ASSISTANT_WAHA_WEBHOOK_HMAC_SECRET`
   means every call is a 401 and a deploy refuses to boot.
-  WAHA reaches it only through the edge's webhook relay: on the `send: disabled` line the webhook is registered as
-  `<ASSISTANT_WAHA_LINE_POLICY.webhook_relay>/api/whatsapp/webhook/{token}` (`http://waha-assistant:3001/...` in prod),
-  never the public URL (`webhook_base_url`, pinned by `test_webhook_relay_base.py`).
+  The line is the owner's personal live line (`send: enabled`, no edge, no `webhook_relay`): WAHA posts DIRECT to the
+  product URL (`webhook_base_url`, pinned by `test_webhook_relay_base.py`).
 - `POST /api/classificacao/replay` (admin) - re-classify chosen rows under the registry's current prompt/model
   (new `ai_outputs` rows only).
 - `GET /api/classificacao/amostra` (admin) - stratified sample for labelling; `modo=cego` (default) hides the
@@ -28,7 +28,8 @@ about scheduling or not (S3, classification only - D48). It never sends, drafts,
   owner label as counts (the only place the verdict is shown). UI: page `/avaliacao` (blind, keyboard 1/2/3).
 - `POST /api/google/connect/start`, `GET /api/google/status`, `POST /api/google/disconnect`, `GET /api/google/prova`
   (admin) - the in-app "Conectar Google" (S7, D50); `GET /api/google/oauth/callback` - the signed redirect target.
-- Nothing else: no send, mark-read, backfill, chat or message reads, SSE.
+- Nothing else: no send route, mark-read, backfill, chat or message reads, SSE (the only sender is the live reply,
+  an internal path of the webhook, below).
 
 ## Input contract (before anything is stored)
 
@@ -53,6 +54,34 @@ prompt_version, model). Budget refused or unverifiable => `skipped_budget` (text
 route can classify it later); invalid output => `failed`. The worker does
 not start without an enforced `LLM_SPEND_LIMITS` entry (rows stay `pending`). Definition:
 `project-history/assistant-chatbot/s3-definicao-agendamento.md`.
+
+## Live reply (owner decision 2026-11-12, migration 021)
+
+**Off by default** (`ASSISTANT_REPLY_ENABLED=false`): the product only shadows. When on, each admitted inbound text (the
+intake contract above, 1:1 only, never a group/status/broadcast, never pre-pairing history) is handed - after the intake
+row is committed, scheduled in the background so the webhook still acks WAHA at once - to `app.live.resposta.LiveReplier`:
+
+1. **Turn**: `AgentsClient.run_turn` (seed `noctusai_lib.integrations.agents_channel`, same shape as social-wiring's lead
+   path; `agent_key` = `ASSISTANT_AGENT_KEY`, conversation key = the HMAC'd `chat_ref`, the number rides only in the
+   request's `contact.phone_e164` so `agents` can match its own list). `agents` decides on/off and the allow-list: a
+   not-served status (`agente_desligado`, `restrito_avaliacao`, limits...) means NO reply and never an error to the
+   contact; a typed client error means no reply + a log + an event.
+2. **Send-seam guard** (defence in depth, independent of the turn): before any send it re-reads the agent's on/off +
+   allow-list from `agents` (`app/live/controles.py`, ONE adapter: `CAMPO_LISTA = "contatos_permitidos"`, parsed by the seed `ControleInfo`/`AgentStatus`; absent = unreadable = closed). Off, or a non-empty list that
+   does not name this number, refuses; **unreadable (error / field absent) refuses - fail closed**. **Empty list = every
+   number allowed.** The allow-list and the agent on/off live in `agents` (owner-edited there), not here.
+3. **Send**: one WhatsApp message per paragraph through the seed WAHA client under the line policy (`send: enabled`),
+   `ASSISTANT_REPLY_PARAGRAPH_DELAY_SECONDS` apart; no mark-read / typing / presence. A partial delivery is recorded, never
+   blindly retried.
+4. **Event**: every attempt appends ONE immutable event to `assistant.respostas_eventos` (migration 021, tier:service,
+   INSERT-only, `UNIQUE (intake_id)`): `enviada | enviada_parcial | recusada_lista | agente_desligado |
+   controle_indisponivel | sem_atendimento | erro_turno | erro_envio | mensagem_antiga`, a reason code and counts. No phone
+   number, message text or reply text is stored. Silent no-ops (switch off, group, history) write nothing.
+
+Boot refuses (`LiveReplyConfigError`) when the switch is on and any of `ASSISTANT_AGENT_KEY`, `ASSISTANT_AGENTS_BASE_URL`,
+`ASSISTANT_AGENTS_TOKEN`, the WAHA base URL / line policy (must be `send: enabled`), the identity key or `ENCRYPTION_KEY` is
+missing. A missing agents token never falls back to a Fake. Messages older than `ASSISTANT_REPLY_MAX_AGE_SECONDS` (900)
+are not answered. Debounce: a conversation must be quiet for `ASSISTANT_REPLY_DEBOUNCE_SECONDS` (4 s) and its whole burst becomes ONE turn and ONE reply (one event per message, same outcome, `dados.lote`); one turn at a time per conversation (in-process lock). The attempt's event is written after the send, so a crash mid-reply can leave no row (`NOC-REMEDIATE[assistant-reply-claim-before-send]`).
 
 ## Google connection (S7, migration 019)
 
@@ -84,7 +113,8 @@ Settings tab `/configuracoes/google` (admin): Conectar / Desconectar, the connec
 `ENCRYPTION_KEY`, `ASSISTANT_WAHA_BASE_URL`, `ASSISTANT_WAHA_SESSION`, `ASSISTANT_WAHA_LINE_POLICY`,
 `ASSISTANT_WAHA_WEBHOOK_HMAC_SECRET`, `ASSISTANT_IDENTITY_HMAC_KEY`, `ASSISTANT_EXCLUDED_NUMBERS`,
 `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI` (optional), `ASSISTANT_CLASSIFIER_ENABLED`, `ASSISTANT_CLASSIFIER_MAX_CHARS`, `LLM_SPEND_LIMITS` (enforced entry required),
-`NOCTUS_SCHEDULERS_ENABLED`.
+`NOCTUS_SCHEDULERS_ENABLED`; live reply: `ASSISTANT_REPLY_ENABLED` (kill switch, default off), `ASSISTANT_AGENT_KEY`,
+`ASSISTANT_AGENTS_BASE_URL`, `ASSISTANT_AGENTS_TOKEN`, `ASSISTANT_REPLY_MAX_AGE_SECONDS`, `ASSISTANT_REPLY_PARAGRAPH_DELAY_SECONDS`, `ASSISTANT_REPLY_DEBOUNCE_SECONDS`.
 
 ## Running
 

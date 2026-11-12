@@ -1,4 +1,4 @@
-"""The Assistant migration pins the seed template; booting a `send: disabled` line needs the persistent sink."""
+"""The Assistant migration pins the seed template; the personal live line registers with the persistent refusal sink wired first."""
 from pathlib import Path
 
 from noctusai_lib.domain.sql_templates import whatsapp_line_events_table_sql

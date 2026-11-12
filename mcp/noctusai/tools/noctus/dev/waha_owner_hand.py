@@ -238,14 +238,26 @@ def grant_covers(grant, inst: dict, host: str, vps_inst: "dict | None" = None) -
     return True
 
 
-def shadow_shape_problems(inst: dict) -> list[str]:
-    """The strict read-only shadow shape a personal line must have (anything else is refused, never loosened)."""
+def personal_shape_problems(inst: dict) -> list[str]:
+    """A personal line has EXACTLY one of two shapes; anything else is refused, never loosened.
+
+    shadow        : send disabled, edge_deny_writes true  (read-only; an edge proxy 403s every write)
+    personal live : send enabled,  edge_deny_writes false (owner decision 2026-11-12; a send-enabled line has no edge)
+    Common to both: personal true, dashboard false (the dashboard/Swagger can send), mark_online false (presence is
+    privacy), full_sync false (history is privacy), auto_repair false."""
     pol = inst.get("line_policy") or {}
-    want = {"send": "disabled", "mark_online": False, "full_sync": False}
-    out = [f"line_policy.{k} must be {v!r}, is {pol.get(k)!r}" for k, v in want.items() if pol.get(k) != v]
-    for k, v in (("personal", True), ("edge_deny_writes", True), ("dashboard", False)):
+    out = [f"line_policy.{k} must be False, is {pol.get(k)!r}" for k in ("mark_online", "full_sync", "auto_repair")
+           if pol.get(k) is not False]
+    for k, v in (("personal", True), ("dashboard", False)):
         if inst.get(k) is not v:
             out.append(f"{k} must be {v!r}, is {inst.get(k)!r}")
+    send = pol.get("send")
+    if send not in ("disabled", "enabled"):
+        out.append(f"line_policy.send must be 'disabled' (shadow) or 'enabled' (personal live), is {send!r}")
+    else:
+        edge = send == "disabled"
+        if inst.get("edge_deny_writes") is not edge:
+            out.append(f"edge_deny_writes must be {edge!r} for send: {send}, is {inst.get('edge_deny_writes')!r}")
     return out
 
 
@@ -624,16 +636,22 @@ def _summary(inst: dict, phash: str, host: str, action: str) -> str:
         f"  policy      : send={pol['send']}  markOnline={str(pol['mark_online']).lower()}  "
         f"fullSync={str(pol['full_sync']).lower()}  auto_repair={str(pol['auto_repair']).lower()}  "
         f"personal={str(inst.get('personal')).lower()}\n"
-        f"  edge proxy  : waha-{inst['name']} (deny writes)  dashboard=off\n"
+        + (f"  edge proxy  : waha-{inst['name']} (deny writes)  dashboard=off\n" if inst.get("edge_deny_writes")
+           else "  edge proxy  : none (personal LIVE: this line SENDS; allow-list enforced in the product)  dashboard=off\n") +
+
         f"  target host : {host}\n"
         f"  policy hash : {phash}   (policy + rendered core/edge compose; the VPS checkout matches)\n\n"
     )
 
 
-def _vps_compose(name: str, host: str, sh) -> "tuple[dict | None, list[str]]":
-    """(services of the VPS's compose.waha.yml, problems): core AND edge labelled personal, core off noctus-net."""
+def _vps_compose(inst: dict, host: str, sh) -> "tuple[dict | None, list[str]]":
+    """(services of the VPS's compose.waha.yml, problems). Every container of the line carries the personal label.
+    Shadow (edge): core AND edge exist, the core is off noctus-net (reachable only through its edge). Personal live (no
+    edge, send enabled): the single service exists, IS on noctus-net (the product must reach the core -- the privacy
+    posture there is the shape checks + no published host port + the allow-list, not network isolation)."""
     import yaml
 
+    name, edge = inst["name"], bool(inst.get("edge_deny_writes"))
     rc, text, err = sh(host, f"cat {wi.VPS_FLEET}/compose.waha.yml")
     if rc != 0:
         return None, [f"cannot read the VPS's compose.waha.yml ({err.strip()[-120:]})"]
@@ -642,22 +660,28 @@ def _vps_compose(name: str, host: str, sh) -> "tuple[dict | None, list[str]]":
     except yaml.YAMLError as exc:
         return None, [f"the VPS's compose.waha.yml does not parse ({exc.__class__.__name__})"]
     out = []
-    for svc in (f"waha-{name}-core", f"waha-{name}"):
+    for svc in wi.services_of(inst):
         s = svcs.get(svc)
         if not isinstance(s, dict):
-            out.append(f"service {svc} missing from the VPS compose (an edge line has core + edge)")
+            out.append(f"service {svc} missing from the VPS compose")
             continue
         if str((s.get("labels") or {}).get("noctus.line.personal")) != "true":
             out.append(f"service {svc} lacks the label noctus.line.personal=true on the VPS")
-    core_nets = (svcs.get(f"waha-{name}-core") or {}).get("networks") or []
-    if "noctus-net" in core_nets:
+    core = svcs.get(wi.core_service(inst)) or {}
+    core_nets = core.get("networks") or []
+    if edge and "noctus-net" in core_nets:
         out.append(f"waha-{name}-core is on noctus-net on the VPS (the core must be reachable only through its edge)")
+    if not edge and "noctus-net" not in core_nets:
+        out.append(f"waha-{name} is not on noctus-net on the VPS (a no-edge personal live line must be reachable by its product)")
+    if not edge and core.get("ports"):
+        out.append(f"waha-{name} publishes host ports on the VPS (a personal line is internal-only: `expose`, never `ports`)")
     return svcs, out
 
 
-def _live_label_problems(name: str, host: str, sh) -> list[str]:
+def _live_label_problems(inst: dict, host: str, sh) -> list[str]:
     out, fmt = [], shlex.quote('{{index .Config.Labels "noctus.line.personal"}}')
-    for c in (f"noctus-waha-{name}-core", f"noctus-waha-{name}"):
+    for svc in wi.services_of(inst):
+        c = f"noctus-{svc}"
         rc, val, _ = sh(host, f"docker inspect -f {fmt} {c}")
         if rc != 0 or val.strip() != "true":
             out.append(f"{c} is not running with the label noctus.line.personal=true")
@@ -665,17 +689,17 @@ def _live_label_problems(name: str, host: str, sh) -> list[str]:
 
 
 def personal_line_checks(spec: dict, inst: dict, name: str, host: str, sh) -> dict:
-    """The checks EVERY personal-line provision/apply runs, whoever the caller (owner-hand or agent): the strict shadow
-    shape; the VPS's own waha-instances.yml declaring the identical policy; its compose.waha.yml labelling core AND edge
+    """The checks EVERY personal-line provision/apply runs, whoever the caller (owner-hand or agent): the strict personal
+    shape (shadow | personal live); the VPS's own waha-instances.yml declaring the identical policy; its compose.waha.yml labelling core AND edge
     `noctus.line.personal=true` with the core off noctus-net; and its core + edge compose blocks hashing identical to
     this checkout's render. Returns {problem: str | None, fields, policy_hash (fields + compose, once known)}."""
     import yaml
 
     fields = policy_hash(inst)
     out: dict = {"problem": None, "fields": fields, "policy_hash": None}
-    bad = shadow_shape_problems(inst)
+    bad = personal_shape_problems(inst)
     if bad:
-        out["problem"] = "not a strict read-only personal line: " + "; ".join(bad)
+        out["problem"] = "not an allowed personal line shape (read-only shadow | personal live): " + "; ".join(bad)
         return out
     vps_inst, vwhy = wi._vps_instance(name, host, sh)
     if vps_inst is None:
@@ -685,7 +709,7 @@ def personal_line_checks(spec: dict, inst: dict, name: str, host: str, sh) -> di
         out["problem"] = ("the VPS's own waha-instances.yml declares a different policy for this line "
                           f"(VPS {policy_hash(vps_inst)[:12]} vs here {fields[:12]}): deploy_pull first, then re-run")
         return out
-    vps_svcs, bad = _vps_compose(name, host, sh)
+    vps_svcs, bad = _vps_compose(inst, host, sh)
     if bad:
         out["problem"] = "the VPS's rendered compose is not safe for a personal line: " + "; ".join(bad)
         return out
@@ -842,7 +866,7 @@ def _owner_hand(action: str, name: str, ssh_host: str, repo_root: "str | None", 
         else:
             res = wi._apply(spec, name, ssh_host, True, _owner_grant=grant, **kw)
             if res.get("ok"):
-                lab = _live_label_problems(name, ssh_host, sh)
+                lab = _live_label_problems(inst, ssh_host, sh)
                 if lab:
                     res = {**res, "ok": False, "status": "label_drift", "label_problems": lab}
     finally:  # the outcome row CONSUMES the grant (single use), whatever happened
@@ -853,5 +877,5 @@ def _owner_hand(action: str, name: str, ssh_host: str, repo_root: "str | None", 
 
 
 __all__ = ["owner_hand", "human_gate", "chain_problem", "policy_hash", "compose_fingerprint", "grant_covers",
-           "shadow_shape_problems", "OwnerHandGrant", "EMULATORS", "SHELL_IMAGES", "TEST_HOST", "LEDGER_NAME",
+           "personal_shape_problems", "OwnerHandGrant", "EMULATORS", "SHELL_IMAGES", "TEST_HOST", "LEDGER_NAME",
            "COMMAND"]
