@@ -130,7 +130,8 @@ def _auth(org=ORG_A, *, raise_401=False):
 
 class _Harness:
     def __init__(self, *, hmac_secret=None, org=ORG_A, raise_401=False, mirror_read=False, realtime=True,
-                 with_lid_cache=False, on_purge=None, audit_sink=None):
+                 with_lid_cache=False, on_purge=None, audit_sink=None,
+                 inbox_kwargs=None):
         self.conn_store = build_whatsapp_connection_store(
             _FakeSupabase(), encryption_key=generate_key().decode(), schema="monica"
         )
@@ -164,6 +165,7 @@ class _Harness:
             get_current_user_org=_auth(org, raise_401=raise_401), waha_client_factory=waha_factory,
             on_new_chat=on_new_chat, on_message=on_message, realtime=self.realtime, lid_cache=self.lid_cache,
             webhook_hmac_secret=hmac_secret, mirror_read_to_whatsapp=mirror_read,
+            **(inbox_kwargs or {}),
         ))
         self.client = TestClient(app)
 
@@ -249,9 +251,14 @@ def test_webhook_invalid_json_is_acknowledged_not_retried():
     ("post", "/api/whatsapp/connections/{c}/chats/x@c.us/read", None),
     ("post", "/api/whatsapp/connections/{c}/backfill", None),
     ("get", "/api/whatsapp/connections/{c}/events", None),
+    ("patch", "/api/whatsapp/connections/{c}/chats/x@c.us/agent-paused", {"paused": True}),
+    ("post", "/api/whatsapp/connections/{c}/chats/x@c.us/apagar-dados", None),
 ])
 def test_authenticated_routes_return_strict_401_without_auth(method, path, body):
-    h = _Harness(raise_401=True)
+    async def _hook(*_a):
+        return None
+
+    h = _Harness(raise_401=True, inbox_kwargs={"on_agent_pause": _hook, "allow_chat_delete": True})
     resp = getattr(h.client, method)(path.format(c=uuid.uuid4()), **({"json": body} if body else {}))
     assert resp.status_code == 401
 
@@ -595,6 +602,8 @@ def test_read_only_unmounted_routes_are_an_explicit_pinned_list():
     assert READ_ONLY_UNMOUNTED_ROUTES == (
         ("POST", "/{connection_id}/chats/{chat_id:path}/messages"),
         ("POST", "/{connection_id}/backfill"),
+        ("PATCH", "/{connection_id}/chats/{chat_id:path}/agent-paused"),
+        ("POST", "/{connection_id}/chats/{chat_id:path}/apagar-dados"),
     )
 
 
@@ -645,3 +654,131 @@ def test_on_session_status_fires_for_session_events_and_a_raising_hook_still_ack
         headers={"content-type": "application/json"},
     )
     assert resp.status_code == 200 and seen == ["WORKING"]
+
+
+# ─── per-chat agent pause + LGPD erasure ────────────────────────────────────
+
+
+class _Sink:
+    def __init__(self):
+        self.entries = []
+
+    async def record(self, entry):
+        self.entries.append(entry)
+
+
+def _seeded(**inbox_kwargs):
+    audit = _Sink()
+    h = _Harness(audit_sink=audit, inbox_kwargs=inbox_kwargs)
+    conn_id, path = h.create_connection()
+    assert h.post_event(path, _msg()).status_code == 200
+    return h, conn_id, audit
+
+
+def test_agent_pause_and_erasure_routes_are_not_mounted_by_default():
+    h, conn_id, _ = _seeded()
+    base = f"/api/whatsapp/connections/{conn_id}/chats/{CHAT}"
+    assert h.client.patch(f"{base}/agent-paused", json={"paused": True}).status_code == 404
+    assert h.client.post(f"{base}/apagar-dados").status_code == 404
+    assert h.client.get(f"/api/whatsapp/connections/{conn_id}/chats").json()["items"][0]["agent_paused"] is False
+
+
+def test_agent_pause_calls_the_hook_then_records_and_the_dto_carries_it():
+    calls = []
+
+    async def hook(org_id, connection_id, chat, paused, actor):
+        calls.append((str(org_id), chat.chat_id, chat.agent_paused, paused, actor))
+
+    h, conn_id, _ = _seeded(on_agent_pause=hook)
+    base = f"/api/whatsapp/connections/{conn_id}/chats"
+    resp = h.client.patch(f"{base}/{CHAT}/agent-paused", json={"paused": True})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["agent_paused"] is True and resp.json()["chat_id"] == CHAT
+    assert calls == [(ORG_A, CHAT, False, True, USER)]  # the hook saw the state BEFORE the change
+    assert h.client.get(base).json()["items"][0]["agent_paused"] is True
+    stored = h.chat_store.chats[(conn_id, CHAT)]
+    assert stored["agent_paused_by"] == USER and stored["agent_paused_at"]
+    assert h.client.patch(f"{base}/{CHAT}/agent-paused", json={"paused": False}).json()["agent_paused"] is False
+
+
+def test_agent_pause_hook_failure_is_502_and_records_nothing():
+    def hook(*_a):  # sync hooks are supported too
+        raise RuntimeError("agent down")
+
+    h, conn_id, _ = _seeded(on_agent_pause=hook)
+    base = f"/api/whatsapp/connections/{conn_id}/chats"
+    resp = h.client.patch(f"{base}/{CHAT}/agent-paused", json={"paused": True})
+    assert resp.status_code == 502 and resp.json()["detail"]["code"] == "agent_pause_failed"
+    assert h.client.get(base).json()["items"][0]["agent_paused"] is False
+
+
+def test_agent_pause_unknown_chat_404_and_other_org_404_and_strict_body():
+    async def hook(*_a):
+        return None
+
+    h, conn_id, _ = _seeded(on_agent_pause=hook)
+    base = f"/api/whatsapp/connections/{conn_id}/chats"
+    assert h.client.patch(f"{base}/nope@c.us/agent-paused", json={"paused": True}).status_code == 404
+    assert h.client.patch(f"{base}/{CHAT}/agent-paused", json={"paused": "x"}).status_code == 422
+    app = FastAPI()
+    app.include_router(create_whatsapp_inbox_router(
+        chat_store_factory=lambda: h.chat_store, connection_store_factory=lambda: h.conn_store,
+        get_current_user_org=_auth(ORG_B), on_agent_pause=hook,
+    ))
+    assert TestClient(app).patch(f"{base}/{CHAT}/agent-paused", json={"paused": True}).status_code == 404
+
+
+def test_pause_and_erasure_use_the_admin_dependency():
+    async def hook(*_a):
+        return None
+
+    h = _Harness(inbox_kwargs={"on_agent_pause": hook, "allow_chat_delete": True})
+    conn_id, _ = h.create_connection()
+    app = FastAPI()
+
+    def _forbidden():
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+
+    app.include_router(create_whatsapp_inbox_router(
+        chat_store_factory=lambda: h.chat_store, connection_store_factory=lambda: h.conn_store,
+        get_current_user_org=_auth(ORG_A), get_admin_user_org=_forbidden, on_agent_pause=hook, allow_chat_delete=True,
+    ))
+    c = TestClient(app)
+    base = f"/api/whatsapp/connections/{conn_id}/chats/{CHAT}"
+    assert c.patch(f"{base}/agent-paused", json={"paused": True}).status_code == 403
+    assert c.post(f"{base}/apagar-dados").status_code == 403
+    assert c.get(f"/api/whatsapp/connections/{conn_id}/chats").status_code == 200  # reads stay member-level
+
+
+def test_erasure_removes_chat_and_messages_audits_without_content_and_pushes_chat_deleted():
+    erased = []
+
+    async def on_delete(org_id, connection_id, chat_id, actor):
+        erased.append((str(org_id), chat_id, actor))
+
+    h, conn_id, audit = _seeded(allow_chat_delete=True, on_delete_chat=on_delete)
+    base = f"/api/whatsapp/connections/{conn_id}/chats"
+    assert h.client.get(f"{base}/{CHAT}/messages").json()["items"]
+    resp = h.client.post(f"{base}/{CHAT}/apagar-dados")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"messages_deleted": 1, "chat_deleted": True}
+    assert erased == [(ORG_A, CHAT, USER)]
+    assert h.client.get(base).json()["items"] == []
+    assert h.client.get(f"{base}/{CHAT}/messages").json()["items"] == []
+    assert h.client.post(f"{base}/{CHAT}/apagar-dados").status_code == 404  # already gone
+    assert len(audit.entries) == 1
+    entry = audit.entries[0]
+    assert entry.actor.user_id == USER and entry.path_params["messages_deleted"] == "1"
+    assert len(entry.path_params["chat_ref"]) == 16
+    assert CHAT not in repr(entry) and "5511999990001" not in repr(entry) and "oi" not in entry.path_params.values()
+
+
+def test_erasure_hook_failure_is_502_and_erases_nothing():
+    async def on_delete(*_a):
+        raise RuntimeError("downstream down")
+
+    h, conn_id, audit = _seeded(allow_chat_delete=True, on_delete_chat=on_delete)
+    base = f"/api/whatsapp/connections/{conn_id}/chats"
+    resp = h.client.post(f"{base}/{CHAT}/apagar-dados")
+    assert resp.status_code == 502 and resp.json()["detail"]["code"] == "delete_chat_failed"
+    assert len(h.client.get(base).json()["items"]) == 1 and audit.entries == []

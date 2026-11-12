@@ -106,6 +106,7 @@ def chat_from_row(row: dict[str, Any]) -> InboxChat:
         last_message_at=to_iso(row.get("last_message_at")),
         last_message_from_me=row.get("last_message_from_me"),
         unread_count=int(row.get("unread_count") or 0),
+        agent_paused=bool(row.get("agent_paused")),
     )
 
 
@@ -193,6 +194,17 @@ class WhatsAppChatStore(Protocol):
     ) -> tuple[list[InboxMessage], bool]: ...
 
     def mark_read(self, *, org_id: UUID, connection_id: UUID, chat_id: str) -> Optional[InboxChat]: ...
+
+    def set_agent_paused(
+        self, *, org_id: UUID, connection_id: UUID, chat_id: str, paused: bool, actor: Optional[str] = None
+    ) -> Optional[InboxChat]:
+        """Record the per-chat agent-pause flag (+ when / by whom). ``None`` when the chat does not exist."""
+        ...
+
+    def delete_chat(self, *, org_id: UUID, connection_id: UUID, chat_id: str) -> Optional[int]:
+        """Erase ONE chat and all its messages (LGPD erasure on a contact's request). Returns the number of
+        messages deleted, or ``None`` when the chat does not exist."""
+        ...
 
     def claim_new_chat_notification(self, *, org_id: UUID, connection_id: UUID, chat_id: str) -> bool: ...
 
@@ -359,6 +371,27 @@ class FakeWhatsAppChatStore:
             row["last_read_at"] = utc_now_iso()
             row["unread_count"] = 0
             return chat_from_row(row)
+
+    def set_agent_paused(self, *, org_id, connection_id, chat_id, paused, actor=None):
+        with self._lock:
+            row = self._chat(org_id, connection_id, chat_id)
+            if row is None:
+                return None
+            row["agent_paused"] = bool(paused)
+            row["agent_paused_at"] = utc_now_iso()
+            row["agent_paused_by"] = actor
+            return chat_from_row(row)
+
+    def delete_chat(self, *, org_id, connection_id, chat_id):
+        with self._lock:
+            if self._chat(org_id, connection_id, chat_id) is None:
+                return None
+            cid = str(connection_id)
+            msg_keys = [k for k, r in self.messages.items() if k[0] == cid and r["chat_id"] == chat_id]
+            for k in msg_keys:
+                del self.messages[k]
+            del self.chats[(cid, chat_id)]
+            return len(msg_keys)
 
     def claim_new_chat_notification(self, *, org_id, connection_id, chat_id) -> bool:
         with self._lock:
@@ -570,6 +603,25 @@ class SupabaseWhatsAppChatStore:
             org_id, connection_id, chat_id,
         ).execute()
         return self.get_chat(org_id=org_id, connection_id=connection_id, chat_id=chat_id)
+
+    def set_agent_paused(self, *, org_id, connection_id, chat_id, paused, actor=None):
+        if self._chat_row(org_id, connection_id, chat_id) is None:
+            return None
+        self._chat_scope(
+            self._chats().update(
+                {"agent_paused": bool(paused), "agent_paused_at": utc_now_iso(), "agent_paused_by": actor}
+            ),
+            org_id, connection_id, chat_id,
+        ).execute()
+        return self.get_chat(org_id=org_id, connection_id=connection_id, chat_id=chat_id)
+
+    def delete_chat(self, *, org_id, connection_id, chat_id):
+        if self._chat_row(org_id, connection_id, chat_id) is None:
+            return None
+        # messages first, explicitly: correctness must not depend on a product's FK cascade being declared
+        messages = self._chat_scope(self._messages().delete(), org_id, connection_id, chat_id).execute()
+        self._chat_scope(self._chats().delete(), org_id, connection_id, chat_id).execute()
+        return len(messages.data or [])
 
     def claim_new_chat_notification(self, *, org_id, connection_id, chat_id) -> bool:
         resp = self._chat_scope(

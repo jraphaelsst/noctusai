@@ -35,7 +35,7 @@ from noctusai_seed.whatsapp_inbox_router import create_whatsapp_inbox_router
 
 from app.config import settings
 from app.dependencies import _db, coerce_org_uuid, get_admin_client, get_current_user_org
-from app.services.whatsapp_leads import on_message, on_new_chat, on_purge
+from app.services.whatsapp_leads import on_delete_chat, on_message, on_new_chat, on_purge
 
 SCHEMA = "monica"
 
@@ -97,5 +97,11 @@ router.include_router(
         lid_cache=InMemoryLidPhoneCache(),
         webhook_hmac_secret=settings.monica_waha_webhook_hmac_secret or None,
         resolve_org_id=coerce_org_uuid,
+        # Per-conversation LGPD erasure (admin). No `on_agent_pause`: Monica has no agent answering on this inbox,
+        # so the pause route is not mounted and the FE leaves `enableAgentPause` off.
+        allow_chat_delete=True,
+        on_delete_chat=on_delete_chat,
+        get_admin_user_org=_organ_auth.admin,
+        audit_product_slug="monica",
     )
 )

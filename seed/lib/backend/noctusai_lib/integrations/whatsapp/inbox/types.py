@@ -32,6 +32,9 @@ class InboxChat:
     last_message_at: Optional[str]
     last_message_from_me: Optional[bool]
     unread_count: int
+    #: Per-chat "the product's agent is paused here" flag. The organ only RECORDS it (the product's injected
+    #: ``on_agent_pause`` decides what pausing means); it is on the wire so every consumer can render it.
+    agent_paused: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -43,6 +46,7 @@ class InboxChat:
             "last_message_at": self.last_message_at,
             "last_message_from_me": self.last_message_from_me,
             "unread_count": self.unread_count,
+            "agent_paused": self.agent_paused,
         }
 
 

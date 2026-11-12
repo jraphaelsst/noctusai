@@ -19,7 +19,7 @@ products/monica/backend/app/
   crm.py                       → LEADS_CONFIG: stages lead/atendimento/negociacao/fechado (colour + tag Lead/Em atendimento/Paciente), origins whatsapp/instagram/indicacao/outro; CLIENTS_CONFIG (Paciente/Pacientes, America/Sao_Paulo); on_stage_entered: fechado -> ClientsService.ensure_from_lead
   routers/whatsapp_router.py   → seed connections router (admin via make_organ_auth) + seed inbox router
   routers/contexto_router.py   → /api/contexto: proxy to agents org specs, forwards the USER's bearer
-  services/whatsapp_leads.py   → on_new_chat -> LeadsService.upsert_from_whatsapp; on_message -> touch_last_message; on_purge -> LeadsService.purge_from_whatsapp
+  services/whatsapp_leads.py   → on_new_chat -> LeadsService.upsert_from_whatsapp; on_message -> touch_last_message; on_purge -> LeadsService.purge_from_whatsapp; on_delete_chat -> drops the chat's untouched automatic lead / detaches an edited one (per-conversation LGPD erasure, admin)
 ```
 
 - **inbox → leads**: `on_new_chat` fires once per chat first created by an inbound non-group message (atomic claim on the chat row); a deleted lead is NOT recreated (intended — the chat row persists). `on_message` (seed seam, added with this product) fires for every newly stored message, inbound and outbound.
@@ -35,7 +35,7 @@ products/monica/frontend/src/
   lib/crm.ts              → the hooks, built once: createLeadsHooks, createWhatsAppInboxHooks, createWhatsAppConnectionsHooks, createOrgSpecsHooks, createClientsHooks
   pages/Leads.tsx         → /leads/* Funil + Lista sharing one filter state
   pages/Pacientes.tsx     → /pacientes/* seed ClientsList / ClientsAgenda / ClientDetailPage (tab in ?aba=), ?lead= resolves a converted lead
-  pages/Conversas.tsx     → seed WhatsAppInbox, ?chat= deep link, "Ver lead" header slot
+  pages/Conversas.tsx     → seed WhatsAppInbox, ?chat= deep link, "Ver lead" header slot, `allowDeleteChat` ("Apagar dados", admin; the agent-pause switch is NOT enabled: no agent answers on this inbox)
   pages/Contexto.tsx      → seed OrgSpecsForm
   pages/Configuracoes.tsx → seed SectionTabsPage (sub-routes), section Conexões (admin only)
 ```

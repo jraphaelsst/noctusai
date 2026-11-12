@@ -6,6 +6,9 @@
   deletes numbers that are not leads.
 * `on_purge` -- the testing-phase purge of a connection: the untouched automatic leads go, the ones a person
   worked on are DETACHED from the connection (kept, without the conversation link / preview).
+* `on_delete_chat` -- the per-conversation LGPD erasure: the chat's lead goes with it when it is an untouched
+  automatic one, and is DETACHED (kept, without the conversation link / message preview) when a person worked on it
+  -- the same rule as the purge, for one chat.
 * `on_message` -- every newly stored message, inbound AND outbound, refreshes the lead card's preview.
   A chat without a lead (deleted, or a group) is left alone: `touch_last_message` never recreates one.
 
@@ -14,6 +17,7 @@ uses), so a test patch of the database reaches them.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from uuid import UUID
 
@@ -43,3 +47,19 @@ async def on_message(org_id: UUID, connection_id: UUID, chat: Any, message: Any)
 
 async def on_purge(org_id: UUID, connection_id: UUID) -> dict[str, int]:
     return await leads_service().purge_from_whatsapp(org_id, connection_id)
+
+
+def _forget_chat_sync(org_id: str, connection_id: str, chat_id: str) -> None:
+    store = leads_service().store
+    lead = store.find_by_chat(org_id, connection_id, chat_id)
+    if lead is None:  # a deleted lead (or a group): nothing downstream references this chat
+        return
+    untouched = lead.get("origin") == LEADS_CONFIG.whatsapp_origin and not lead.get("created_by") and not lead.get("edited_at")
+    if untouched:
+        store.delete(org_id, lead["id"])
+    else:
+        store.update(org_id, lead["id"], {"whatsapp_connection_id": None, "whatsapp_chat_id": None, "last_message_preview": None})
+
+
+async def on_delete_chat(org_id: UUID, connection_id: UUID, chat_id: str, actor: Any = None) -> None:
+    await asyncio.to_thread(_forget_chat_sync, str(org_id), str(connection_id), chat_id)
