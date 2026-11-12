@@ -343,6 +343,15 @@ integration green); restricting the skip to product-only entries with no shared 
 keeps that risk small, not zero. Path areas come from the queue's own map (`entry_areas`), to be
 derived from `ci_scope.classify` once that lands (`NOC-REMEDIATE[mq-area-map-dedup]`).
 
+## 6d · Toolkit shards are balanced by measured time (2026-11-11)
+
+The slowest `MCP Toolkit Tests` shard gates every batch. Round-robin by file count gave 933s / 206s / 357s / 665s
+(run `43029073315`). The split is now longest-processing-time bin packing over per-file seconds
+(`mcp/noctusai/tools/noctus/dev/ci_shards.py`, table `scripts/ci/mcp-test-durations.json`; an unknown file weighs
+the median). Predicted 540s per shard. `test_compliance.py` stays isolated. Refresh the table from a run's shard
+logs (recipe in the module docstring) when a shard drifts more than ~2x from the others. The coverage-proof job
+uses the same splitter, so a file can never be dropped or run twice. Owner-approved speedup 5.
+
 ## 7 · Limits and options
 
 - **Why not GitHub's native merge queue?** It needs an organization-owned
