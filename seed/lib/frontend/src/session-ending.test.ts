@@ -8,15 +8,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   adoptRotatedPair,
   endSessionLocally,
+  leaveProduct,
   readSharedActivity,
   signOutExplicitly,
   writeSharedActivity,
   SHARED_ACTIVITY_KEY,
 } from './session-ending';
+import { clearLeaving, isLeaving, readEntryMarker } from './reentry';
 
 afterEach(() => {
   vi.unstubAllGlobals();
   localStorage.clear();
+  clearLeaving();
 });
 
 describe('adoptRotatedPair — refusal after another tab rotated the chain', () => {
@@ -77,6 +80,70 @@ describe('signOutExplicitly — the explicit "Sair" is the only server revoke', 
       revoke: async () => { throw new Error('network'); }, clearLocal, strict: true,
     })).rejects.toThrow('network');
     expect(clearLocal).not.toHaveBeenCalled();
+  });
+});
+
+describe('leaveProduct — Voltar ends THIS product session only (S5)', () => {
+  function fakeSupabase(result: unknown = { error: null }) {
+    return { auth: { signOut: vi.fn().mockResolvedValue(result) } };
+  }
+
+  it('revokes with scope local, never global, then navigates', async () => {
+    const supabase = fakeSupabase();
+    const navigate = vi.fn();
+    await leaveProduct({ supabase, navigate });
+    expect(supabase.auth.signOut).toHaveBeenCalledTimes(1);
+    expect(supabase.auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+    expect(navigate).toHaveBeenCalledTimes(1);
+  });
+
+  it('stamps marker `left` and silences the re-entry gate BEFORE the revoke', async () => {
+    const seen: Array<[string | null, boolean]> = [];
+    const supabase = {
+      auth: {
+        signOut: vi.fn(async () => {
+          seen.push([readEntryMarker(), isLeaving()]);
+          return { error: null };
+        }),
+      },
+    };
+    await leaveProduct({ supabase, navigate: vi.fn() });
+    expect(seen).toEqual([['left', true]]);
+  });
+
+  it('drops the product cookie session after the revoke and before leaving', async () => {
+    const order: string[] = [];
+    const supabase = { auth: { signOut: vi.fn(async () => { order.push('revoke'); return { error: null }; }) } };
+    await leaveProduct({
+      supabase,
+      dropProductCookie: async () => { order.push('cookie'); },
+      navigate: () => order.push('navigate'),
+    });
+    expect(order).toEqual(['revoke', 'cookie', 'navigate']);
+  });
+
+  it('a failed revoke (returned or thrown) is reported and the user still leaves', async () => {
+    for (const supabase of [
+      fakeSupabase({ error: new Error('network') }),
+      { auth: { signOut: vi.fn().mockRejectedValue(new Error('offline')) } },
+    ]) {
+      const navigate = vi.fn();
+      const onRevokeError = vi.fn();
+      await leaveProduct({ supabase, navigate, onRevokeError });
+      expect(onRevokeError).toHaveBeenCalledTimes(1);
+      expect(navigate).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('a failing cookie drop never blocks leaving', async () => {
+    const navigate = vi.fn();
+    await leaveProduct({
+      supabase: fakeSupabase(),
+      dropProductCookie: async () => { throw new Error('down'); },
+      navigate,
+      onRevokeError: vi.fn(),
+    });
+    expect(navigate).toHaveBeenCalledTimes(1);
   });
 });
 

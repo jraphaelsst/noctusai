@@ -49,7 +49,7 @@ import {
 import type { LogoutScope, NavGroup, NavItem } from "@noctusai/lib/design-system";
 import {
   resolveEffectiveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
-  usePageStatus, filterNavByPageStatus, stripNavRoutes, env, ORG_ROLE_LABELS, endSessionLocally,
+  usePageStatus, filterNavByPageStatus, stripNavRoutes, env, ORG_ROLE_LABELS, endSessionLocally, leaveProduct, dropProductCookieSession,
   useOrgScopeEpoch, useOrgSwapInFlight,
 } from "@noctusai/lib";
 import type { NavGroupWithRoute, NavItemWithRoute, StatusPagina } from "@noctusai/lib";
@@ -434,6 +434,23 @@ export function createProductLayout(config: ProductLayoutConfig) {
       goToProductLanding();
     };
 
+    // Voltar (SSO session lifecycle S5): end THIS product's session (scope local, never global — the
+    // core session and other products stay signed in), then go to core's dashboard. Supabase mode only:
+    // a `sessionAuth` product has no per-product SSO session to end here, so its Voltar stays a plain link.
+    const handleLeave = sessionAuth
+      ? undefined
+      : async () => {
+          // The org selection is bound to this session: end it while the token is still valid.
+          await endOrgSelectionBestEffort();
+          await leaveProduct({
+            supabase: supabase!,
+            dropProductCookie: () => dropProductCookieSession(),
+            navigate: () => {
+              window.location.href = CORE_APP_HOME;
+            },
+          });
+        };
+
     // Profile update — enrichment override wins; otherwise the per-mode
     // default (Supabase `auth.updateUser`, or the required
     // `sessionAuth.onUpdateProfile` in cookie-session mode).
@@ -484,7 +501,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
             navGroups={navGroups}
             storageKey={sidebarStorageSlug(brandTitle)}
             standaloneItems={standaloneItems.length > 0 ? standaloneItems : undefined}
-            footerContent={ssoCtx.isSSO ? <BackToCore href={CORE_APP_HOME} /> : undefined}
+            footerContent={ssoCtx.isSSO ? <BackToCore href={CORE_APP_HOME} onLeave={handleLeave} /> : undefined}
             // 🔴 Fixed 2026-09-28: `onNavigate` was never wired, so picking a
             // nav item on MOBILE left the off-canvas drawer open over the
             // page it had just navigated to (desktop is unaffected — no

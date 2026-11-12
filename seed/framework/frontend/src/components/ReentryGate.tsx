@@ -14,6 +14,7 @@ import {
   clearReentryTrips,
   decideEntry,
   enterViaCore,
+  isLeaving,
   isLoginRequiredBounce,
   readEntryMarker,
   sanitizeNextPath,
@@ -78,6 +79,9 @@ export function ReentryGate({ slug, coreUrl, Landing, navigate = defaultCoreNavi
   const decision: EntryDecision | null = useMemo(() => {
     if (bounced) return { kind: "landing" };
     if (!settled) return null;
+    // Voltar (S5): this tab revoked its own session and is already navigating to core. Stay still;
+    // re-entering here would launch the product again and undo the Voltar.
+    if (isLeaving()) return null;
     const marker = readEntryMarker();
     const d = decideEntry({ phase, pathname, marker });
     // No Landing to show at "/": a stranger goes straight to core's login; a signed-out visitor clicks "Entrar".

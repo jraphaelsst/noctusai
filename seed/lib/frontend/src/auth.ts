@@ -32,13 +32,15 @@ import { autoRetryDelayMs } from './retry';
 import { adoptRotatedPair } from './session-ending';
 import { markSessionLost } from './reentry';
 
-// How a session ends (expiry = local only; explicit Sair = the only server revoke).
+// How a session ends (expiry = local only; Voltar = this product's session only; Sair = global revoke).
 export {
   adoptRotatedPair,
   endSessionLocally,
+  leaveProduct,
   signOutExplicitly,
   type StoredSessionPair,
   type EndSessionLocallyOptions,
+  type LeaveProductOptions,
   type SignOutExplicitlyOptions,
 } from './session-ending';
 

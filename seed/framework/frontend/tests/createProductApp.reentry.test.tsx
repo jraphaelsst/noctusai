@@ -5,7 +5,7 @@
 import React, { lazy } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { clearSessionLost, markSessionLost } from "@noctusai/lib";
+import { clearLeaving, clearSessionLost, markLeaving, markSessionLost } from "@noctusai/lib";
 import { createProductApp } from "../src/app";
 import { goToProductLanding } from "../src/product-landing";
 import { mockSupabaseAuth } from "./fixtures";
@@ -102,6 +102,32 @@ describe("createProductApp — ReentryGate (S4)", () => {
     await new Promise((r) => setTimeout(r, 400));
     expect(navigate).not.toHaveBeenCalled();
     setVisibility("visible");
+    await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+    expect(navigate).toHaveBeenCalledWith(`${CORE}/login?produto=demo-product&next=%2Fclientes%2F9&prompt=login`);
+  });
+
+  it("Voltar: THIS tab (leaving for core) never bounces itself back through core's login", async () => {
+    localStorage.setItem("noctus:entry", "left");
+    window.history.pushState({}, "", "/clientes/9");
+    markLeaving();
+    markSessionLost();
+    try {
+      const { App, navigate } = buildApp();
+      render(<App />);
+      await new Promise((r) => setTimeout(r, 400));
+      expect(navigate).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("landing-page")).toBeNull();
+    } finally {
+      clearLeaving();
+    }
+  });
+
+  it("Voltar: a SIBLING tab (session lost, marker left) re-enters through core prompt=login keeping its path", async () => {
+    localStorage.setItem("noctus:entry", "left");
+    window.history.pushState({}, "", "/clientes/9");
+    markSessionLost();
+    const { App, navigate } = buildApp();
+    render(<App />);
     await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
     expect(navigate).toHaveBeenCalledWith(`${CORE}/login?produto=demo-product&next=%2Fclientes%2F9&prompt=login`);
   });

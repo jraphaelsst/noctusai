@@ -47,9 +47,9 @@ export type { ApiClient, CreateApiClientOptions, RefreshAttempt, RefreshWithBack
 
 // Auth
 export { useSupabaseAuthInit, markAuthReady, useAuthReady, useAuthReconnecting, classifyBootSession, classifyBootMeStatus, classifySupabaseRefresh, createSupabaseTokenRefresher, createDeadSessionHandler, IDENTITY_CHECK_THROTTLE_MS } from './auth';
-export { adoptRotatedPair, endSessionLocally, signOutExplicitly, type StoredSessionPair, type EndSessionLocallyOptions, type SignOutExplicitlyOptions } from './session-ending';
+export { adoptRotatedPair, endSessionLocally, leaveProduct, signOutExplicitly, type StoredSessionPair, type EndSessionLocallyOptions, type LeaveProductOptions, type SignOutExplicitlyOptions } from './session-ending';
 export {
-  ENTRY_MARKER_KEY, readEntryMarker, writeEntryMarker, markSessionLost, clearSessionLost, wasSessionLost, sanitizeNextPath, buildCoreEntryUrl,
+  ENTRY_MARKER_KEY, readEntryMarker, writeEntryMarker, markSessionLost, clearSessionLost, wasSessionLost, markLeaving, clearLeaving, isLeaving, sanitizeNextPath, buildCoreEntryUrl,
   decideEntry, isLoginRequiredBounce, applyLoginRequiredBounce, isLoopTripped, clearReentryTrips, clearInflight, recordSuccessfulRedeem, whenVisible, enterViaCore,
   INFLIGHT_TTL_MS, LOOP_MAX_TRIPS, LOOP_WINDOW_MS,
 } from './reentry';
