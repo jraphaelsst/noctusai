@@ -58,6 +58,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+# ONE path classifier with CI's `changes` job and release_steward item 5 (stdlib, same directory). As a package
+# import under the toolkit / tests; as a sibling module when CI runs this file as a bare script.
+if __package__:
+    from . import ci_scope
+else:  # pragma: no cover - the `python3 merge_queue.py drain` path on the runner
+    import ci_scope
+
 QUEUE_PREFIX = "mq/"
 CANDIDATE_PREFIX = "mq-candidate/"
 STATUS_CONTEXT = "merge-queue"
@@ -91,7 +98,6 @@ PRIORITY_TRAILER_RE = re.compile(r"^MQ-Priority:\s*\S", re.M)
 # products/<slug>/ is the one SHARED area and conflicts with everything: it never runs alongside another candidate.
 PARALLEL_CANDIDATES = 2
 SHARED_AREA = "shared"
-PRODUCT_PATH_RE = re.compile(r"^products/(?P<slug>[^/]+)/")
 NON_PRODUCT_SLUGS = frozenset({"seed"})  # products/seed/ is the shared seed, not a product
 
 # DERIVED files: committed by every slice after it regenerates them, so two parallel slices
@@ -177,8 +183,8 @@ def entry_areas(paths: list[str]) -> frozenset[str]:
     """The areas an entry touches: one per products/<slug>/, SHARED_AREA for anything else (or no readable diff)."""
     areas = set()
     for p in paths:
-        m = PRODUCT_PATH_RE.match(p)
-        areas.add(m.group("slug") if m and m.group("slug") not in NON_PRODUCT_SLUGS else SHARED_AREA)
+        m = ci_scope.PRODUCT_RE.match(p)
+        areas.add(m.group(1) if m and m.group(1) not in NON_PRODUCT_SLUGS else SHARED_AREA)
     return frozenset(areas or {SHARED_AREA})
 
 
@@ -296,36 +302,49 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
-# NOC-REMEDIATE[mq-area-map-dedup]: this path->area map duplicates `ci_scope.classify` (on
-# feat/scoped-green-product-tests, not yet on dev when this landed). Destination: once both are on dev, derive
-# these areas from ci_scope so the queue, CI's `changes` job and item 5 share ONE classifier (tooling steward e1).
+def _breaks_product(slug: str) -> Callable[[str], bool]:
+    """A change to `path` can break product `slug`'s tests iff CI would select that product's suites for it
+    (`ci_scope`: its own products/<slug>/ or any shared root - seed/, requirements, .github/, scripts/ci/, ...)."""
+    return lambda path: ci_scope.classify([path]).product_selected(slug)
+
+
+def _breaks_shared(path: str) -> bool:
+    return bool(ci_scope.SHARED_RE.match(path))
+
+
+def _breaks_toolkit(path: str) -> bool:
+    return path.startswith("mcp/") or _breaks_shared(path)
+
+
 def failure_areas(test_ids: list[str], failed_jobs: list[str], known_products: list[str],
                   ) -> list[dict[str, Any]]:
-    """Each failure -> {name, prefixes, migrations_of}: source areas whose change can break it.
-    `migrations_of` set (a product slug or "*") = only an entry ADDING a migration (of that product) matches."""
+    """Each failure -> {name, touches, migrations_of}: `touches(path)` says whether a change to that path can break it,
+    classified by `ci_scope` (the classifier CI's `changes` job and item 5 use - one answer, 2026-11-12).
+    `migrations_of` set (a product slug or "*") = only an entry ADDING a migration (of that product) matches.
+    Wider is the safe direction: two matching entries fall back to bisect; a too-narrow area ejects an innocent."""
     areas: list[dict[str, Any]] = []
     for tid in test_ids:
         path = tid.split("::", 1)[0]
-        m = re.match(r"^products/([^/]+)/", path)
+        m = ci_scope.PRODUCT_RE.match(path)
         if MIGRATION_TEST_RE.search(tid):
             named = [p for p in known_products if len(p) > 2 and _norm(p) in _norm(tid.split("::", 1)[-1])]
-            areas.append({"name": tid, "prefixes": (), "migrations_of": named[0] if len(named) == 1 else "*"})
-        elif m:
-            areas.append({"name": tid, "prefixes": (f"products/{m.group(1)}/", "seed/"), "migrations_of": None})
-        elif path.startswith("seed/") or path.startswith("templates/product-seed/"):
-            areas.append({"name": tid, "prefixes": ("seed/",), "migrations_of": None})
+            areas.append({"name": tid, "touches": None, "migrations_of": named[0] if len(named) == 1 else "*"})
+        elif m and m.group(1) not in NON_PRODUCT_SLUGS:
+            areas.append({"name": tid, "touches": _breaks_product(m.group(1)), "migrations_of": None})
+        elif m or path.startswith("seed/") or path.startswith("templates/product-seed/"):
+            areas.append({"name": tid, "touches": _breaks_shared, "migrations_of": None})
         elif path.startswith("mcp/"):
-            areas.append({"name": tid, "prefixes": ("mcp/",), "migrations_of": None})
+            areas.append({"name": tid, "touches": _breaks_toolkit, "migrations_of": None})
     if areas:
         return areas
     for job in failed_jobs:  # no readable test id: only a job whose scope is unambiguous counts
         pm = JOB_PRODUCT_RE.search(job)
         if job.startswith("Product Backend Tests") and pm and pm.group(1) in known_products:
-            areas.append({"name": job, "prefixes": (f"products/{pm.group(1)}/", "seed/"), "migrations_of": None})
+            areas.append({"name": job, "touches": _breaks_product(pm.group(1)), "migrations_of": None})
         elif job.startswith("Seed "):
-            areas.append({"name": job, "prefixes": ("seed/",), "migrations_of": None})
+            areas.append({"name": job, "touches": _breaks_shared, "migrations_of": None})
         elif job.startswith("MCP Toolkit Tests"):
-            areas.append({"name": job, "prefixes": ("mcp/",), "migrations_of": None})
+            areas.append({"name": job, "touches": _breaks_toolkit, "migrations_of": None})
     return areas
 
 
@@ -333,8 +352,7 @@ def attribute_culprit(test_ids: list[str], failed_jobs: list[str],
                       entry_paths: dict[str, list[str]]) -> tuple[str | None, str]:
     """(culprit_ref, why). culprit_ref is None - with the reason the caller logs - unless EXACTLY ONE entry's
     diff touches the failing areas. Pure: never guesses; every None is a documented fallback to bisect."""
-    known = sorted({m.group("p") for ps in entry_paths.values() for p in ps
-                    if (m := re.match(r"^products/(?P<p>[^/]+)/", p))})
+    known = sorted({m.group(1) for ps in entry_paths.values() for p in ps if (m := ci_scope.PRODUCT_RE.match(p))})
     areas = failure_areas(test_ids, failed_jobs, known)
     if not areas:
         return None, f"failure unreadable (no test id or scoped job in {failed_jobs[:3] or 'the log'})"
@@ -346,7 +364,7 @@ def attribute_culprit(test_ids: list[str], failed_jobs: list[str],
                 match = next((p for p in paths if (m := MIGRATION_PATH_RE.match(p))
                               and (mig == "*" or m.group("p") == mig)), None)
             else:
-                match = next((p for p in paths if p.startswith(a["prefixes"])), None)
+                match = next((p for p in paths if a["touches"](p)), None)
             if match:
                 hits[ref] = f"{a['name']} <- {match}"
                 break
