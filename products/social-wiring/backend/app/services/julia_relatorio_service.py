@@ -822,7 +822,8 @@ async def _opt_out(servicos: Any, connection: Any, contato: dict[str, Any], chat
     and the report destination by WhatsApp (outbound flow `interno`) -- ONE notice per opt-out action (the ledger makes a replay
     `repetida`, and the report row's `chave` makes the WhatsApp one idempotent). Every skipped leg is a named, logged reason."""
     motivo = acao.payload.get("motivo")
-    motivo_txt = OPT_OUT_MOTIVOS.get(motivo, "não informado")
+    # The agent's own reason (agents' `motivo_texto`) is WHY; the closed enum only says how it was detected (fallback).
+    motivo_txt = _s(acao.payload.get("motivo_texto"), 300) or OPT_OUT_MOTIVOS.get(motivo, "não informado")
     trecho = _s(acao.payload.get("trecho"), 300)
     quem = f"{mascarar_nome(contato.get('nome'))} ({mascarar_telefone(contato.get('telefone_e164'))})"
     org_id = connection.org_id
@@ -846,7 +847,7 @@ async def _opt_out(servicos: Any, connection: Any, contato: dict[str, Any], chat
     link = link_da_conversa(chat_id)
     if link:
         linhas.append(f"Conversa: {link}")
-    dados = {"tipo_alerta": "opt_out", "motivo": motivo, "descricao": mensagem, "trecho": trecho or None}
+    dados = {"tipo_alerta": "opt_out", "motivo": motivo, "motivo_texto": _s(acao.payload.get("motivo_texto"), 300) or None, "descricao": mensagem, "trecho": trecho or None}
     row = await _gerar_e_entregar(
         servicos, connection=connection, contato=contato, tipo=TIPO_ALERTA, texto="\n".join(linhas), dados=dados,
         thread_id=result.thread, chave=f"opt_out:{lote_hash}:{acao.seq}",

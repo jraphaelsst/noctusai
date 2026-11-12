@@ -38,14 +38,17 @@ def test_config_value_is_stored_encrypted_only(sql):
 
 
 def test_runtime_setting_keys_match_the_service():
-    """The service's editable keys == the CHECK of the NEWEST migration that (re)defines it (010, then 074...)."""
-    from app.services.runtime_settings import EDITABLE_KEYS
+    """The service's editable keys == the CHECK of the NEWEST migration that (re)defines it (010, then 074...), minus the one
+    key that is now core-owned: `numero_fallback_atendimento` stays allowed by the CHECK (a dead row, core 121 copied it
+    out; NOC-REMEDIATE[agents-runtime-settings-numero-row] drops it) but the service neither reads nor writes it."""
+    from app.services.runtime_settings import EDITABLE_KEYS, NUMERO_FALLBACK
 
     ultima = [p for p in sorted(MIGRATION_PATH.parent.glob("*.sql"))
               if "ADD CONSTRAINT runtime_settings_key_check" in p.read_text(encoding="utf-8")][-1]
     check = re.search(r"CHECK \(key IN \(([^)]*)\)\)", ultima.read_text(encoding="utf-8"))
     assert check
-    assert tuple(k.strip().strip("'") for k in check.group(1).split(",")) == EDITABLE_KEYS
+    in_check = tuple(k.strip().strip("'") for k in check.group(1).split(","))
+    assert tuple(k for k in in_check if k != NUMERO_FALLBACK) == EDITABLE_KEYS
 
 
 def test_new_nav_pages_have_status_rows(sql):

@@ -1447,7 +1447,9 @@ async def aplicar_encerramento(
                          trecho=_limpo(trecho, TRECHO_OPT_OUT_MAX))
                 break
         # the explicit report SW consumes (discriminator ``type``, like every action)
-        t.acao(type="opt_out", motivo=origem_opt_out, trecho=_limpo(trecho, TRECHO_OPT_OUT_MAX))
+        # `motivo_texto` = the agent's own reason (the recorded event's `motivo`): SW shows it in the owner's notice.
+        t.acao(type="opt_out", motivo=origem_opt_out, motivo_texto=_limpo(motivo_texto, MOTIVO_MAX_CHARS),
+               trecho=_limpo(trecho, TRECHO_OPT_OUT_MAX))
 
 
 #: ``trecho`` prefix of a missing-spec alert: the machine key the dedupe reads (never shown to a lead).

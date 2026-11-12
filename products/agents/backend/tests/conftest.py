@@ -116,10 +116,10 @@ def _hermetic_config_stores():
     )
     # 074: the test world has a hand-off fallback number (publishing a conversational agent needs one); the
     # "no number" refusal is proven by tests that install their own service over an empty store.
-    ajustes = FakeRuntimeSettingsStore()
-    ajustes.put(runtime_settings.NUMERO_FALLBACK, "+5511900000000", updated_by=None)
+    # (The number is core's one owner number, injected here; no core in the test world.)
     runtime_settings.install_runtime_settings_service(
-        runtime_settings.RuntimeSettingsService(ajustes, settings, ttl_seconds=0)
+        runtime_settings.RuntimeSettingsService(
+            FakeRuntimeSettingsStore(), settings, ttl_seconds=0, owner_number=lambda: "+5511900000000")
     )
     yield
     resolver.reset_for_testing()

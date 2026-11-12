@@ -1058,6 +1058,19 @@
             "title": "Motivo",
             "type": "string"
           },
+          "motivo_texto": {
+            "anyOf": [
+              {
+                "maxLength": 280,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Motivo Texto"
+          },
           "seq": {
             "default": 0,
             "minimum": 0,

@@ -14,6 +14,9 @@ from noctusai_seed import create_product_app
 from noctusai_seed.organs import mount_finance
 
 from app.config import settings
+
+# Declares Core's owner notifications (Notificações catalog) before the app's lifespan registers them.
+import app.notification_kinds  # noqa: E402,F401
 from app.rate_limit import limiter
 from app.database import _db, get_admin_client
 from app.dependencies import get_platform_finance_auth

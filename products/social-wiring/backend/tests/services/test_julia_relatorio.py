@@ -226,8 +226,20 @@ class TestDestino:
 
 # ── opt-out notices (go-live) ───────────────────────────────────────────────
 class TestOptOut:
-    def _acao(self, seq=0, motivo="pedido_do_lead", trecho="não quero mais receber mensagens"):
-        return JuliaAction(type="opt_out", seq=seq, payload={"motivo": motivo, "trecho": trecho})
+    def _acao(self, seq=0, motivo="pedido_do_lead", trecho="não quero mais receber mensagens", motivo_texto=None):
+        payload = {"motivo": motivo, "trecho": trecho}
+        if motivo_texto:
+            payload["motivo_texto"] = motivo_texto
+        return JuliaAction(type="opt_out", seq=seq, payload=payload)
+
+    async def test_the_agents_own_reason_is_what_the_owner_reads(self, world):
+        """The closed enum only says HOW it was detected; the owner wants WHY, in the agent's words (r08)."""
+        world.agents = FakeAgentsClient([_ok("ok", actions=[self._acao(motivo_texto="Lead disse que já comprou outro imóvel")])])
+        await _run(world, buffer_lead(world, LEAD_CHAT, ["já comprei, parem"]))
+        (texto,) = _para_destino(world)
+        assert "Motivo: Lead disse que já comprou outro imóvel" in texto
+        msg = [n for n in world.notifications() if n["metadata"].get("tipo") == svc.KIND_OPT_OUT][0]["message"]
+        assert "motivo: Lead disse que já comprou outro imóvel" in msg
 
     async def test_one_in_app_notice_and_one_interno_whatsapp_each_with_the_reason(self, world):
         world.agents = FakeAgentsClient([_ok("Tudo bem, não vou mais te escrever.", actions=[self._acao()])])

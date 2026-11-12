@@ -100,7 +100,8 @@ KINDS: tuple[NotificationKind, ...] = (
     NotificationKind(
         kind="julia_opt_out",
         titulo="Lead pediu para parar de receber mensagens",
-        descricao="Nome e telefone mascarados do lead, o motivo e o trecho do pedido.",
+        descricao="Nome e telefone mascarados do lead, o motivo (as palavras do agente sobre por que o lead quis parar; se o "
+                  "agente não deu, como foi detectado) e o trecho do pedido.",
         gatilho="O agente registra um opt-out do lead.",
         canais=("whatsapp", "in_app"),
     ),

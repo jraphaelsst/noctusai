@@ -608,7 +608,8 @@ class TestOptOutIsReportedToSW:
                       motivo_texto="O lead pediu para parar")), say("Entendido."), *[say(f"R{i}?") for i in range(4)]]))
         acoes = chan.turn(turn_body("não me mande mais mensagens, por favor", ids=["a"])).json()["actions"]
         assert {k: v for k, v in acoes[1].items() if k != "seq"} == {
-            "type": "opt_out", "motivo": "pedido_do_lead", "trecho": "não me mande mais mensagens"}
+            "type": "opt_out", "motivo": "pedido_do_lead", "trecho": "não me mande mais mensagens",
+            "motivo_texto": "O lead pediu para parar"}  # the agent's own words for WHY travel with the action
         acao = acoes[0]
         assert acao["lead_opt_out"] is True and acao["opt_out_origem"] == "pedido_do_lead"
         assert acao["trecho"] == "não me mande mais mensagens"

@@ -136,8 +136,9 @@ function KindRow({ row }: { row: NotificationKindRow }) {
 
 function ProductSection({ group }: { group: NotificationProduct }) {
   const toggle = useSwitchNotification();
-  const allOn = group.enabled_count === group.total;
-  const allOff = group.enabled_count === 0;
+  const empty = group.total === 0;
+  const allOn = empty || group.enabled_count === group.total;
+  const allOff = empty || group.enabled_count === 0;
   return (
     <section className="space-y-3" aria-labelledby={`notif-${group.product}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -165,11 +166,17 @@ function ProductSection({ group }: { group: NotificationProduct }) {
       {toggle.isError && (
         <p role="alert" className="text-xs text-destructive">Não foi possível salvar: {toggle.error.message}.</p>
       )}
-      <ul className="space-y-3">
-        {group.kinds.map((k) => (
-          <KindRow key={k.kind} row={k} />
-        ))}
-      </ul>
+      {empty ? (
+        <p className="text-sm text-muted-foreground">
+          Este produto está no ar, mas não declara nenhum aviso para o dono — nada dele chega por WhatsApp.
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {group.kinds.map((k) => (
+            <KindRow key={k.kind} row={k} />
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
@@ -318,7 +325,9 @@ function OwnerRecipientsSection() {
       <div>
         <h2 id="notif-destinatarios" className="text-lg font-semibold text-foreground">Quem recebe os avisos</h2>
         <p className="max-w-prose text-sm text-muted-foreground">
-          Os avisos por WhatsApp saem da linha da NoctusAI para estes números, para todos os produtos.
+          Os avisos por WhatsApp saem da linha da NoctusAI para estes números, para todos os produtos. Este é o
+          único cadastro de números do dono: os produtos (por exemplo, o número de passagem para uma pessoa nos
+          agentes) leem daqui — não há outro lugar para digitar o número.
         </p>
       </div>
       <LineStatus />

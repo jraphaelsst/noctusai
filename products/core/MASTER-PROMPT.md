@@ -68,6 +68,7 @@ Central auth and administration hub for the NoctusAI multi-product SaaS platform
 
 ### Communication
 - **notifications** -- `public.notifications` table, platform-wide notification delivery
+- **owner notifications (Notificações page, `/api/admin/notifications`)** -- every owner-facing notice a product declares, with a per-(product, kind) switch; the roster lists EVERY live product + core even when it declares no kind (`declared: false`). `public.notification_owner_recipients` is the platform's ONE owner number (agents' hand-off number reads it; migration 121 copied the old agents value in). Core declares `skill_scout_novo_skill` (WhatsApp only; `app/notification_kinds.py`, `skill_scout_notice_service`, `POST /api/admin/notifications/skill-scout`). KB `PATTERNS/backend/owner-notification-catalog.md`
 - **webhooks** -- webhook registration and delivery system (`webhook_delivery` service)
 - **settings** -- platform settings
 - **templates** -- email/notification templates

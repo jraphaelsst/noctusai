@@ -440,6 +440,8 @@ class OptOutActionOut(_ActionOut):
 
     type: Literal["opt_out"]
     motivo: Literal["palavra_chave", "pedido_do_lead"]
+    #: The agent's own reason, in words (the recorded event's ``motivo``; <= 280 chars). SW puts it in the owner's notice.
+    motivo_texto: str | None = Field(default=None, max_length=280)
     #: The lead's words behind it (sanitized, <= 200 chars).
     trecho: str | None = Field(default=None, max_length=200)
 
