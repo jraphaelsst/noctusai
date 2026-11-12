@@ -129,8 +129,9 @@ class FakeConsolidacaoStore:
                         "criticidade": m.criticidade, "criticidade_origem": m.criticidade_origem,
                         "depende_de": m.depende_de, "depende_de_origem": m.depende_de_origem}),
                 )
-        for cid, m in self.meta.items():
-            out.setdefault(cid, m)
+        if self._evals is None:  # without an eval store the meta rows ARE the cases; with one, other agents' rows are not ours
+            for cid, m in self.meta.items():
+                out.setdefault(cid, m)
         return {k: v for k, v in out.items() if suite is None or v.suite == suite}
 
     def get_estados(self, org_id: UUID, agent_id: UUID) -> dict[UUID, EstadoCaso]:

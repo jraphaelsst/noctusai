@@ -34,6 +34,7 @@ from app.studio.compiler import CONTEUDO_CODIGOS
 from app.studio.eval_mecanismo import MecanismoRequisito, PortaoMecanismo, decidir_portao
 from app.studio.especificacoes_service import config_atual, violacoes_armazenadas
 from app.studio.models import CompiledPrompt, ConfigValidacao, GateRun
+from app.studio.camada_validada import VeredictoCamada, base_nao_validada, coletar_camadas_base
 from app.studio.camadas import efetivo
 from app.studio.regras_secao import REGRA_DISCORDAR
 
@@ -75,7 +76,7 @@ Severidade = Literal["bloqueante", "aviso", "ok"]
 #: The publish refusals (409 ``code``) a BLOCKING readiness item may stand for. Closed: ``compor`` raises on any other.
 RECUSAS_PUBLICACAO = frozenset({
     "conteudo_incompleto", "compile_blocked", "mecanismo_reprovado", "eval_required", "qualificacao_indisponivel",
-    "numero_fallback_ausente", "catalogo_ausente",
+    "numero_fallback_ausente", "catalogo_ausente", "base_nao_validada",
 })
 
 
@@ -195,6 +196,9 @@ class Entrada:
     numero_fallback_definido: bool = True
     #: ``parametros.catalogo`` of the qualification standard the draft runs on (``None`` = names none, or no standard).
     padrao_catalogo: str | None = None
+    #: 073 chain gate: the verdict of every ANCESTOR layer, root first (``()`` = no parent). A child relies on its bases
+    #: being validated (``app.studio.camada_validada``) and runs only the cases of its own scope.
+    camadas_base: tuple[VeredictoCamada, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -441,6 +445,29 @@ def _avaliacao(e: Entrada) -> list[Item]:
     return itens
 
 
+def _camadas(e: Entrada) -> list[Item]:
+    """Chain gate: a child is not publishable while an ancestor layer's own critical cases are not consolidated on the
+    ancestor's current content. One item for the whole chain; the detail lists each ancestor (never case text)."""
+    if not e.camadas_base:
+        return []
+    det = {"camadas": [c.to_dict() for c in e.camadas_base]}
+    pend = base_nao_validada(e.camadas_base)
+    if not pend:
+        nomes = ", ".join(f"{c.agent_key} (v{c.versao})" if c.versao is not None else c.agent_key for c in e.camadas_base)
+        return [Item("base_validada", "avaliacao", "ok", f"A base está validada: {nomes}.", detalhe=det)]
+    partes = "; ".join(
+        f"{c.agent_key}: " + ("sem versão" if c.motivo == "sem_versao" else
+                              "sem casos de avaliação" if c.motivo == "sem_casos" else
+                              "não medida" if c.motivo == "sem_medicao" else
+                              f"{len(c.criticos_pendentes)} de {c.criticos_total} casos críticos pendentes")
+        for c in pend)
+    return [Item(
+        "base_nao_validada", "avaliacao", "bloqueante",
+        f"A base não está validada ({partes}). Este agente só roda os casos do seu próprio escopo.",
+        "Rode a avaliação da base (agente de origem) até consolidar os casos críticos; depois volte a este agente.",
+        "base_nao_validada", det)]
+
+
 def _skills(e: Entrada) -> list[Item]:
     itens = [
         Item(
@@ -603,7 +630,7 @@ def _canonico(e: Entrada) -> list[Item]:
 
 def compor(e: Entrada) -> Prontidao:
     """The readiness items of the snapshot (blocking first, then advisory, then ok; stable within a severity)."""
-    itens = [*_compilador(e), *_padrao(e), *_avaliacao(e), *_skills(e), *_ferramentas(e), *_catalogo(e), *_periferia(e), *_atendimento(e), *_canonico(e)]
+    itens = [*_compilador(e), *_padrao(e), *_avaliacao(e), *_camadas(e), *_skills(e), *_ferramentas(e), *_catalogo(e), *_periferia(e), *_atendimento(e), *_canonico(e)]
     for i in itens:
         if i.grupo not in GRUPOS:
             raise ValueError(f"item {i.codigo!r} has group {i.grupo!r}, outside GRUPOS (the panel cannot label it)")
@@ -622,7 +649,7 @@ def compor(e: Entrada) -> Prontidao:
 def coletar(
     *, store: Any, catalog: Any, org_id: UUID, agent: Any, draft: Any, gate: Any, padroes: Any, skills: Any,
     geracoes: Any, evals: Any, controles: Any | None, compiled: CompiledPrompt | None = None,
-    spec_validacao: ConfigValidacao | None = None, conformidade: Any | None = None,
+    spec_validacao: ConfigValidacao | None = None, conformidade: Any | None = None, consolidacao: Any | None = None,
 ) -> Entrada:
     """Read everything the composer needs for ``draft`` of ``agent`` (``org_id`` owns the definition). ``compiled``:
     the prompt the caller already compiled (publish) -- otherwise compiled here, read-only (nothing is stamped)."""
@@ -650,6 +677,14 @@ def coletar(
             padrao_catalogo = vp.parametros.catalogo
         except NotFound:
             padrao_catalogo = None
+
+    # chain gate: an agent with a parent is judged against its bases. No consolidation store for a child is a loud
+    # failure (readiness must never read "no bases" for an agent that has one).
+    camadas_base: tuple[VeredictoCamada, ...] = ()
+    if getattr(agent, "pai_agent_id", None) is not None:
+        if consolidacao is None:
+            raise ValueError("coletar: um agente com pai exige a store de consolidação (portão da cadeia)")
+        camadas_base = coletar_camadas_base(store=store, catalog=catalog, consolidacao=consolidacao, org_id=org_id, agent=agent, draft=draft)
 
     casos = evals.list_cases(org_id, agent.id)
     ativos = [c for c in casos if c.ativo]
@@ -718,6 +753,7 @@ def coletar(
         tags_comportamento=tuple(sorted({t for c in ativos if c.suite == "comportamento" for t in c.tags})),
         numero_fallback_definido=_numero_fallback() is not None,
         padrao_catalogo=padrao_catalogo,
+        camadas_base=camadas_base,
     )
 
 

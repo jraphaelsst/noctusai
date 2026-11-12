@@ -109,6 +109,30 @@ def _handler(state: FakeAgents):
                 return self._send(200, {"id": path.rsplit("/", 1)[1], "status": "executando", "areas": []})
             return self._err(404, "nao_encontrado")
 
+        def _evals_route(self, m: str, path: str, b):
+            """The eval-loop gate subset (contract eval-loop-gate-contract.md)."""
+            lid = "22222222-2222-4222-8222-222222222222"
+            if m == "POST" and path.endswith("/evals/loops"):
+                return self._send(201, {"id": lid, "suite": b["suite"], "status": "ativo", "rodadas_planejadas": b.get("rodadas_planejadas")})
+            if m == "GET" and "/evals/loops" in path and path.split("?")[0].endswith("/loops"):
+                return self._send(200, {"items": [{"id": lid, "status": "ativo", "q": path.partition("?")[2]}]})
+            if m == "GET" and path.endswith(f"/evals/loops/{lid}"):
+                return self._send(200, {"id": lid, "status": "ativo", "rodadas": []})
+            if m == "POST" and path.endswith(f"/evals/loops/{lid}/stop"):
+                return self._send(200, {"id": lid, "status": "parado", "motivo_parada": "parado_manualmente"})
+            if m == "POST" and path.endswith("/evals/runs"):
+                if b["loop_id"] == "33333333-3333-4333-8333-333333333333":
+                    return self._send(409, {"detail": {"code": "rodada_em_aberto", "detail": "ha uma rodada aberta"}})
+                return self._send(202, {"id": "44444444-4444-4444-8444-444444444444", "status": "executando"})
+            if m == "POST" and "/draft/mecanismo-runs" in path:
+                return self._send(202, {"run_id": "55555555-5555-4555-8555-555555555555", "q": path.partition("?")[2]})
+            if m == "GET" and "/evals/runs/" in path:
+                return self._send(200, {"id": path.rsplit("/", 1)[1], "status": "concluida",
+                                        "resultados": [{"saida": "x", "notas_juiz": [], "veredito": "passou"}]})
+            if m == "GET" and "/mecanismo-runs/" in path:
+                return self._send(200, {"id": path.rsplit("/", 1)[1], "status": "concluida", "casos": []})
+            return self._err(404, "nao_encontrado")
+
         def _route(self, m: str, path: str, b):
             A = r"/api/studio/agents/julia"
             if path.startswith("/api/studio/plataforma/agents/") or "/geracoes" in path:
@@ -205,6 +229,8 @@ def _handler(state: FakeAgents):
             if mo and m == "PUT" and mo.group(1) in state.regras:
                 state.regras[mo.group(1)].update({k: v for k, v in b.items() if v is not None})
                 return self._send(200, state.regras[mo.group(1)])
+            if "/evals/" in path or "/mecanismo-runs" in path:
+                return self._evals_route(m, path, b)
             # readiness + re-pin (the agents API: GET .../prontidao, POST .../draft/skills-biblioteca/atualizar)
             if m == "GET" and path == f"{A}/prontidao":
                 return self._send(200, {
@@ -872,3 +898,75 @@ class TestRascunhoKind:
     def test_get_reads_the_settings(self, srv, private):
         out = run(srv, private, action="get", kind="rascunho", agent="julia", chave="model")
         assert out["itens"] == {"model": "sonnet"}
+
+
+LID = "22222222-2222-4222-8222-222222222222"
+
+
+class TestEvalLoopActions:
+    def test_loop_iniciar_dry_run_makes_no_request_then_confirm_posts(self, srv, private):
+        pl = private("l.json", {"suite": "comportamento", "rodadas_planejadas": 5, "orcamento_usd": 10})
+        out = C.content("loop_iniciar", agent="julia", base_url=srv.url, payload_path=pl)
+        assert out["status"] == "planned" and out["requisicao"] == "POST /api/studio/agents/julia/evals/loops" and srv.log == []
+        out = C.content("loop_iniciar", agent="julia", base_url=srv.url, payload_path=pl, confirm=True)
+        assert out["status"] == "done" and out["resultado"]["id"] == LID
+        assert srv.log[0][2] == {"suite": "comportamento", "rodadas_planejadas": 5, "orcamento_usd": 10}
+        assert TOKEN not in json.dumps(out)
+
+    def test_loop_iniciar_suite_alone_passes_through_without_defaults(self, srv, private):
+        pl = private("l.json", {"suite": "mecanismo"})
+        out = C.content("loop_iniciar", agent="julia", base_url=srv.url, payload_path=pl, confirm=True)
+        assert out["status"] == "done" and srv.log[0][2] == {"suite": "mecanismo"}
+
+    def test_loop_iniciar_validates_the_payload(self, srv, private):
+        pl = private("l.json", {"suite": "x", "rodadas_planejadas": 5})
+        assert C.content("loop_iniciar", agent="julia", base_url=srv.url, payload_path=pl)["codigo"] == "payload_invalido"
+        pl = private("l2.json", {"suite": "mecanismo", "rodadas_planejadas": 5, "extra": 1})
+        assert C.content("loop_iniciar", agent="julia", base_url=srv.url, payload_path=pl)["status"] == "error"
+        assert srv.log == []
+
+    def test_reads_need_no_confirm(self, srv, private):
+        out = C.content("loops", agent="julia", base_url=srv.url, payload_path=private("f.json", {"suite": "mecanismo", "status": "ativo"}))
+        assert out["status"] == "ok" and out["resultado"]["items"][0]["q"] == "suite=mecanismo&status=ativo"
+        assert C.content("loop", agent="julia", base_url=srv.url, chave=LID)["resultado"]["id"] == LID
+        run = C.content("run", agent="julia", base_url=srv.url, chave="44444444-4444-4444-8444-444444444444")
+        assert run["resultado"]["resultados"][0]["veredito"] == "passou"
+        mec = C.content("run", agent="julia", base_url=srv.url, chave=LID, payload_path=private("m.json", {"suite": "mecanismo"}))
+        assert mec["requisicao"].endswith(f"/mecanismo-runs/{LID}")
+        assert srv.writes() == []
+
+    def test_chave_must_be_a_uuid(self, srv):
+        assert C.content("loop", agent="julia", base_url=srv.url, chave="x")["codigo"] == "chave_invalida"
+        assert C.content("run", agent="julia", base_url=srv.url)["codigo"] == "chave_invalida"
+
+    def test_loop_parar(self, srv, private):
+        assert C.content("loop_parar", agent="julia", base_url=srv.url, chave=LID)["status"] == "planned" and srv.log == []
+        out = C.content("loop_parar", agent="julia", base_url=srv.url, chave=LID, confirm=True,
+                        payload_path=private("s.json", {"motivo": "chega"}))
+        assert out["resultado"]["motivo_parada"] == "parado_manualmente" and srv.log[0][2] == {"motivo": "chega"}
+
+    def test_rodada_behaviour_uses_the_current_draft_version(self, srv, private):
+        pl = private("r.json", {"suite": "comportamento", "loop_id": LID})
+        out = C.content("rodada", agent="julia", base_url=srv.url, payload_path=pl)
+        assert out["status"] == "planned" and srv.log == []
+        out = C.content("rodada", agent="julia", base_url=srv.url, payload_path=pl, confirm=True)
+        assert out["status"] == "started"
+        assert srv.log[-1][:2] == ("POST", "/api/studio/agents/julia/evals/runs")
+        assert srv.log[-1][2] == {"version_id": srv.draft_id, "loop_id": LID}
+
+    def test_rodada_mecanismo_posts_with_loop_id_query(self, srv, private):
+        pl = private("r.json", {"suite": "mecanismo"})
+        out = C.content("rodada", agent="julia", base_url=srv.url, payload_path=pl, chave=LID, confirm=True)
+        assert srv.log[-1][1] == f"/api/studio/agents/julia/draft/mecanismo-runs?loop_id={LID}"
+        assert out["resultado"]["run_id"].startswith("5555")
+
+    def test_gate_refusals_surface_code_and_detail_verbatim(self, srv, private):
+        pl = private("r.json", {"suite": "comportamento", "loop_id": "33333333-3333-4333-8333-333333333333", "version_id": srv.draft_id})
+        out = C.content("rodada", agent="julia", base_url=srv.url, payload_path=pl, confirm=True)
+        assert out["status"] == "error" and out["codigo"] == "rodada_em_aberto"
+        assert out["servidor"] == {"http": 409, "code": "rodada_em_aberto", "detail": "ha uma rodada aberta"}
+
+    def test_evals_token_is_preferred_for_loop_actions(self, srv, monkeypatch):
+        monkeypatch.setenv(C.ENV_EVALS_TOKEN, "pk_evals_other")
+        out = C.content("loops", agent="julia", base_url=srv.url)
+        assert out["codigo"] == "unauthorized" and "pk_evals_other" not in json.dumps(out)
