@@ -120,7 +120,10 @@ def test_failures_are_reported_as_assert_and_code(studio):
     body = _run(studio)
     assert not body["aprovado"]
     assert body["casos"][0]["execucoes"][0]["falhas"] == [{"assert": "estagio_final", "codigo": "esperado:visita|obtido:novo"}]
-    assert "segredo" not in str(body)
+    ex = body["casos"][0]["execucoes"][0]
+    # failure details stay codes-only; the reply text lives ONLY in the explicit transcript (diagnosis, 084)
+    assert "segredo" not in str(ex["falhas"])
+    assert ex["transcricao"][0]["bolhas"] == ["segredo do prompt"]
 
 
 def test_an_agent_without_mecanismo_cases_is_409(studio):

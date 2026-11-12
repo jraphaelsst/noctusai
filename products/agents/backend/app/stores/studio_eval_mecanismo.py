@@ -124,6 +124,7 @@ class FakeMecanismoStore:
                     "case_id": cr.caso.id, "indice": e.indice, "status": e.status,
                     "falhas": [f.to_dict() for f in e.falhas], "ferramentas": list(e.ferramentas),
                     "custo_usd": e.custo_usd, "duracao_ms": e.duracao_ms,
+                    "transcricao": list(e.transcricao),
                 })
         row.update(
             status="concluida", total_casos=len(resultado.casos), casos_aprovados=resultado.casos_aprovados,
@@ -237,6 +238,7 @@ class SupabaseMecanismoStore:
                 "org_id": str(org_id), "run_id": str(run_id), "case_id": str(cr.caso.id), "indice": e.indice,
                 "status": e.status, "falhas": [f.to_dict() for f in e.falhas], "ferramentas": list(e.ferramentas),
                 "custo_usd": e.custo_usd, "duracao_ms": e.duracao_ms,
+                "transcricao": list(e.transcricao),
             }
             for cr in resultado.casos for e in cr.execucoes
         ]

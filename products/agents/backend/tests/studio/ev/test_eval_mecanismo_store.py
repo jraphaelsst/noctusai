@@ -184,8 +184,9 @@ async def test_failed_failures_are_stored_as_codes_only():
         started_by=uuid4(), limite_usd=None,
     )
     assert not res.aprovado and not store.runs[run_id]["aprovado"]
-    stored = str(store.execucoes[run_id])
-    assert "segredo" not in stored and "esperado:visita|obtido:novo" in stored
+    stored = str([{k: v for k, v in e.items() if k != "transcricao"} for e in store.execucoes[run_id]])
+    assert "segredo" not in stored and "esperado:visita|obtido:novo" in stored  # falhas stay codes-only
+    assert store.execucoes[run_id][0]["transcricao"][0]["bolhas"] == ["segredo do prompt"]  # the transcript is explicit (084)
     assert not decidir_portao(store.requisito(ORG, AGENT, VERSION), "h1").liberado
 
 
@@ -226,3 +227,18 @@ def test_agent_flag_makes_an_empty_suite_required():
     store.flags[AGENT] = AgenteFlags(exige_mecanismo=True)
     req = store.requisito(ORG, AGENT, VERSION)
     assert req.exigido and req.casos_ativos == 0 and decidir_portao(req, "h").codigo == "sem_casos"
+
+
+@pytest.mark.asyncio
+async def test_fake_store_persists_the_transcript_on_the_execution_row():
+    from app.studio.eval_mecanismo import Caso, executar_suite
+
+    store = FakeMecanismoStore(FakeEvalStore())
+    org = uuid4()
+    run = store.start_run(org, uuid4(), uuid4(), compiled_hash="h", driver="fake", limite_usd=None,
+                          started_by=uuid4(), total_casos=1)
+    caso = Caso(id=uuid4(), slug="c", k=1, roteiro={"turnos": [{"lead": "oi"}]}, asserts={"sem_violacoes": True})
+    res = await executar_suite([caso], FakeEvalTurnDriver([_ok_turn()]))
+    store.finish_run(org, run, res, driver="fake")
+    row = store.list_execucoes(org, run)[0]
+    assert row["transcricao"][0]["lead"] == "oi" and row["transcricao"][0]["bolhas"]
