@@ -54,6 +54,10 @@
     "075_retire_one_chat.sql": "95e90f16e8b973e633b0284e908b15f2fb9c67f705012574955163a1178abfe2",
     "076_eval_loops.sql": "b8d6734e86160f480d2e4be2a3366f80ad5032ac6389d67668c784f2716cae6d",
     "077_remove_fase_testes.sql": "8832ee41956c7193b87847531347c0adf22b9e28f913151278dada2778a52d49",
-    "078_secao_regras.sql": "b8ecc822db1d06c7bc17c0ba4f163e1e659b9ce424d35b1ffcfd22b05b0fea38"
+    "078_secao_regras.sql": "b8ecc822db1d06c7bc17c0ba4f163e1e659b9ce424d35b1ffcfd22b05b0fea38",
+    "079_emergencia_inatividade.sql": "ee9925222bcea86da2606f76d24caabe46fc60386fd5264540696aaf60e42d83",
+    "080_retomada_limite.sql": "549fbf3128bc6d865b9b46f2c12fbd6549fecb7ab353490bfa66a5a3a41d816b",
+    "081_catalogo_opcoes.sql": "e2b533aab8534848a434382d776e2f59ada7fe25f5f17fde4983aa7e3fec5753",
+    "082_qualificacao_identificacao_desejada.sql": "004732ea4912d073dd871ed4bf9fac9565f6644e0b204005410bcdf5c70e6f66"
   }
 }
