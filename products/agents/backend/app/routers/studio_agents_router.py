@@ -1242,6 +1242,8 @@ class MecanismoExecucaoOut(BaseModel):
     indice: int
     status: str
     falhas: list[MecanismoFalhaOut]
+    #: per turn {lead|retomada, bolhas, ferramentas[{nome,args,ok}]}; empty for rows from before migration 084
+    transcricao: list[dict] = []
 
 
 class MecanismoCasoOut(BaseModel):
@@ -1404,7 +1406,7 @@ def get_mecanismo_run(
                 slug=slugs.get(cid, cid[:8]), passou=aprov == len(execs), taxa=round(aprov / len(execs), 3),
                 execucoes=[
                     MecanismoExecucaoOut(
-                        indice=e["indice"], status=e["status"],
+                        indice=e["indice"], status=e["status"], transcricao=e.get("transcricao") or [],
                         falhas=[MecanismoFalhaOut(assert_=f["assert"], codigo=f["codigo"]) for f in (e.get("falhas") or [])])
                     for e in execs
                 ]))

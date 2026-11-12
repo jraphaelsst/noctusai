@@ -648,6 +648,9 @@ class ExecucaoResultado:
     ferramentas: tuple[str, ...] = ()
     custo_usd: float = 0.0
     duracao_ms: int = 0
+    #: per turn: ``{lead|retomada, bolhas, ferramentas[{nome,args,ok}]}`` -- what the agent said and called, so a
+    #: failing case is diagnosable. Synthetic fixtures only (eval_pii refuses real data at the case boundary).
+    transcricao: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -734,12 +737,13 @@ async def _executar_execucao(
     )
     falhas: list[Falha] = []
     custo = 0.0
+    transcricao: list[dict[str, Any]] = []
 
     def pronto(status: str) -> ExecucaoResultado:
         return ExecucaoResultado(
             indice=indice, status=status, falhas=tuple(falhas),
             ferramentas=tuple(c.nome for c in traco.ferramentas), custo_usd=custo,
-            duracao_ms=int((time.monotonic() - inicio) * 1000),
+            duracao_ms=int((time.monotonic() - inicio) * 1000), transcricao=tuple(transcricao),
         )
 
     for i, turno in enumerate(roteiro["turnos"]):
@@ -754,6 +758,11 @@ async def _executar_execucao(
             logger.exception("eval_mecanismo: driver falhou no turno %d (execucao %d)", i + 1, indice)
             falhas.append(Falha("driver", f"erro_turno{i + 1}:{type(exc).__name__}"))
             return pronto("erro")
+        transcricao.append({
+            **({"retomada": True} if "retomada" in turno else {"lead": turno["lead"]}),
+            "bolhas": list(outcome.bolhas),
+            "ferramentas": [{"nome": c.nome, "args": dict(c.args), "ok": c.ok} for c in outcome.ferramentas],
+        })
         custo += outcome.custo_usd or 0.0
         orcamento.add(outcome.custo_usd)
         traco.absorver(outcome)
