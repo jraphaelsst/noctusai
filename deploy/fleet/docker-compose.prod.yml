@@ -692,6 +692,40 @@ services:
     tmpfs:
       - /tmp:mode=1777,size=96m
 
+  # ── assistant 8021 — read-only shadow of the owner's PERSONAL WhatsApp line (D46/D49; prod exposure consent:
+  # deploy/consent/assistant.prod.yml). Only NON-SECRET config here; secrets come from the root .env (env_file):
+  # ENCRYPTION_KEY, ASSISTANT_WAHA_WEBHOOK_HMAC_SECRET (== WAHA_ASSISTANT_HMAC_SECRET), ASSISTANT_IDENTITY_HMAC_KEY,
+  # GOOGLE_OAUTH_CLIENT_ID/SECRET. The line is `send: disabled` behind the edge deny proxy `waha-assistant`
+  # (waha-instances.yml); the product never writes to WhatsApp. No message bodies in logs.
+  assistant:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-assistant:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-assistant
+    environment:
+      <<: *prod-env
+      ASSISTANT_WAHA_BASE_URL: http://waha-assistant:3000
+      ASSISTANT_WAHA_SESSION: default
+      # Line policy v1 (waha-instances.yml `line_policy` + the edge relay; KB § INTEGRATIONS/whatsapp.md § 6a). Keeper-checked == declared.
+      ASSISTANT_WAHA_LINE_POLICY: '{"send":"disabled","mark_online":false,"full_sync":false,"auto_repair":false,"webhook_relay":"http://waha-assistant:3001"}'
+      # S3 money gate: the classifier worker refuses to start without an ENFORCED limit covering `assistant`.
+      # USD 2 per rolling 24 h (conservative first cap; raise from the observed spend, KB § integrations/llm spend_guard).
+      LLM_SPEND_LIMITS: '{"assistant": {"usd": 2, "mode": "enforce", "window_hours": 24}}'
+    expose:
+      - "8021"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8021/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=96m
+
   # ── transcriber 9000 — self-hosted faster-whisper worker (infra, NOT a product) ─
   # Contract: products/social-wiring/projects/core-studio-build/specs/transcription-contract.md §2.
   # Deliberately NOT <<: *prod-defaults: no env_file (holds no credentials besides
