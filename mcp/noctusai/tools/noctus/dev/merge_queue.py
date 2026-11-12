@@ -1072,7 +1072,20 @@ def queue_snapshot(repo: str = "", run: Runner = _default_run, workdir: str | No
     entries = q.entries()
     return {"status": "ok", "dev": q.dev_sha(), "count": len(entries),
             "entries": [{"slug": e.slug, "ref": e.ref, "sha": e.sha,
-                         "verdict": read_status(q.repo, e.sha, run=run)} for e in entries]}
+                         "verdict": listed_verdict(read_status(q.repo, e.sha, run=run))} for e in entries]}
+
+
+def listed_verdict(v: dict[str, Any]) -> dict[str, Any]:
+    """The verdict of an entry that is STILL LISTED. The verdict is a commit status on the sha, so re-enqueueing the
+    same sha after an eject keeps the old run's `failure` as its newest status (2026-11-12: the watch printed
+    mq-ref-delete b363927bb "ejected (needs_workflow_token)" from drain 43111891747 for a fresh entry). A listed ref is
+    never terminal - the drain removes it when it lands or ejects - so a terminal state here belongs to an earlier
+    enqueue: report `queued`, naming the stale verdict. The leaving path (`read_status` by sha) is unchanged: by then
+    the drain has written the new verdict."""
+    if v.get("state") not in ("landed", "ejected"):
+        return v
+    stale = " ".join(x for x in (str(v.get("description") or ""), str(v.get("url") or "")) if x)
+    return {"state": "queued", "detail": f"re-enqueued; the sha's previous verdict is stale ({v['state']}: {stale})"[:400]}
 
 
 def error_report(exc: BaseException) -> dict[str, Any]:
