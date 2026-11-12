@@ -179,6 +179,8 @@ export interface QualParametros {
   score_max: number;
   eixos: Record<string, unknown>;
   pedir_identificacao_quando: Record<string, unknown> | null;
+  /** Follow-ups in a row with no reply from the lead (0..10, default 2). Round-tripped untouched by the editor. */
+  max_retomadas_seguidas?: number;
 }
 export interface PadraoVersao extends PadraoVersaoMeta {
   padrao: string;

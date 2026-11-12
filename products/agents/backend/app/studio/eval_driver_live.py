@@ -31,6 +31,7 @@ from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet
 
+from app.catalogos.fixture import FixtureCatalogo, casa as _casa
 from app.channels import turno as turno_mod
 from app.channels.controles import LeadIdentidade, aplicar_controles
 from app.channels.tool_registry import make_channel_tools_factory
@@ -73,35 +74,6 @@ _CANAL = "whatsapp"
 
 
 # ── the fixture social-wiring ───────────────────────────────────────────────
-
-
-def _num(v: Any) -> float | None:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
-
-
-def _casa(item: Mapping[str, Any], args: Mapping[str, Any]) -> bool:
-    """Does a synthetic catalogue item satisfy the search args? A filter applies only to a field the item HAS:
-    a fixture describes what it needs, the rest is not constrained."""
-    for campo in ("operacao", "tipo", "cidade"):
-        if args.get(campo) and campo in item and str(item[campo]).casefold() != str(args[campo]).casefold():
-            return False
-    if args.get("bairros") and "bairro" in item:
-        if str(item["bairro"]).casefold() not in {str(b).casefold() for b in args["bairros"]}:
-            return False
-    preco = _num(item.get("preco"))
-    if preco is not None:
-        if args.get("preco_min") is not None and preco < float(args["preco_min"]):
-            return False
-        if args.get("preco_max") is not None and preco > float(args["preco_max"]):
-            return False
-    for campo, arg in (("quartos", "quartos_min"), ("vagas", "vagas_min")):
-        valor = _num(item.get(campo))
-        if valor is not None and args.get(arg) is not None and valor < float(args[arg]):
-            return False
-    return True
 
 
 class FixtureSwClient:
@@ -319,6 +291,8 @@ class LiveEvalTurnDriver:
         ident = IdentificacaoService(FakeIdentificacaoStore(), IdentCipher(Fernet.generate_key()))
         qual = QualificacaoService(self._padroes, leads, identificacao=ident)
         sw = FixtureSwClient(thread.catalogo)
+        # the generic offer tools read the SAME synthetic catalogue (the eval world never builds a real adapter)
+        catalogo = FixtureCatalogo(thread.catalogo)
         diario = _Diario()
         runtime = LlmToolRuntime(
             messages=messages,
@@ -334,7 +308,7 @@ class LiveEvalTurnDriver:
         svc = turno_mod.ServicosCanal(
             studio_store=self._studio, catalog=self._catalog, conversations=conversations, messages=messages,
             threads=threads, controles=controles, conformidade=conformidade, qual=qual,
-            padroes=self._padroes, ident=ident, sw=sw, skills_factory=self._skills_factory,
+            padroes=self._padroes, ident=ident, sw=sw, catalogo_fixo=catalogo, skills_factory=self._skills_factory,
             notificacoes=FakeNotificationSink(),  # an eval never notifies a real owner
             # the channel route always wires an alert store; without one ``sinalizar_alerta`` is not offered and the
             # ``info_indisponivel`` alert is never raised, so the suite would judge a toolset prod does not run

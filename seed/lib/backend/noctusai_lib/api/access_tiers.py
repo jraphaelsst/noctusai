@@ -244,7 +244,7 @@ PROMPT_DERIVED_TOOLS: dict[str, str] = {"abrir_skill": "skills", "ler_arquivo_sk
 #: tools reviewed as NOT returning prompt-derived content. A tool in neither map is refused until classified.
 NOT_PROMPT_DERIVED_TOOLS: frozenset[str] = frozenset({
     "avaliar_lead", "registrar_perfil", "oferecer_imoveis", "detalhes_imovel", "consultar_empreendimento",
-    "registrar_reacao_imovel", "registrar_intencao_visita", "registrar_identificacao", "registrar_documento",
+    "registrar_reacao_imovel", "oferecer_opcoes", "detalhes_opcao", "registrar_reacao_opcao", "registrar_intencao_visita", "registrar_identificacao", "registrar_documento",
     "concluir_qualificacao", "handoff", "encerrar", "captacao", "consentimento_credito",
     "registrar_solicitacao_titular", "sinalizar_alerta",
 })

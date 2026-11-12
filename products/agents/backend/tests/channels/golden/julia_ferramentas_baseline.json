@@ -1,0 +1,745 @@
+{
+ "_doc": "Frozen from the registry BEFORE the generic offer tools (migration 081): Julia's tool set, effective required texts and tool schemas must not move. Regenerate ONLY by an owner-approved change to Julia.",
+ "exige": {
+  "abrir_skill": [
+   "skills"
+  ],
+  "avaliar_lead": [
+   "qualificacao"
+  ],
+  "captacao": [],
+  "concluir_qualificacao": [
+   "qualificacao"
+  ],
+  "consentimento_credito": [
+   "credito"
+  ],
+  "consultar_empreendimento": [
+   "sw"
+  ],
+  "detalhes_imovel": [
+   "qualificacao",
+   "sw"
+  ],
+  "encerrar": [],
+  "handoff": [],
+  "ler_arquivo_skill": [
+   "skills"
+  ],
+  "oferecer_imoveis": [
+   "qualificacao",
+   "sw"
+  ],
+  "registrar_documento": [
+   "documentos",
+   "identificacao"
+  ],
+  "registrar_identificacao": [
+   "identificacao"
+  ],
+  "registrar_intencao_visita": [
+   "qualificacao"
+  ],
+  "registrar_perfil": [
+   "qualificacao"
+  ],
+  "registrar_reacao_imovel": [
+   "qualificacao"
+  ],
+  "registrar_solicitacao_titular": [],
+  "sinalizar_alerta": [
+   "alertas"
+  ]
+ },
+ "ferramentas": [
+  "abrir_skill",
+  "ler_arquivo_skill",
+  "avaliar_lead",
+  "registrar_perfil",
+  "oferecer_imoveis",
+  "detalhes_imovel",
+  "consultar_empreendimento",
+  "registrar_reacao_imovel",
+  "registrar_intencao_visita",
+  "registrar_identificacao",
+  "registrar_documento",
+  "concluir_qualificacao",
+  "handoff",
+  "encerrar",
+  "captacao",
+  "consentimento_credito",
+  "registrar_solicitacao_titular",
+  "sinalizar_alerta"
+ ],
+ "schemas": {
+  "abrir_skill": {
+   "additionalProperties": false,
+   "properties": {
+    "nome": {
+     "maxLength": 64,
+     "minLength": 1,
+     "title": "Nome",
+     "type": "string"
+    }
+   },
+   "required": [
+    "nome"
+   ],
+   "title": "AbrirSkillArgs",
+   "type": "object"
+  },
+  "avaliar_lead": {
+   "additionalProperties": false,
+   "properties": {},
+   "title": "AvaliarLeadArgs",
+   "type": "object"
+  },
+  "captacao": {
+   "additionalProperties": false,
+   "properties": {
+    "descricao": {
+     "maxLength": 1000,
+     "minLength": 1,
+     "title": "Descricao",
+     "type": "string"
+    },
+    "endereco": {
+     "anyOf": [
+      {
+       "maxLength": 300,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Endereco"
+    },
+    "operacao": {
+     "anyOf": [
+      {
+       "enum": [
+        "venda",
+        "aluguel"
+       ],
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Operacao"
+    }
+   },
+   "required": [
+    "descricao"
+   ],
+   "title": "CaptacaoArgs",
+   "type": "object"
+  },
+  "concluir_qualificacao": {
+   "additionalProperties": false,
+   "properties": {},
+   "title": "ConcluirQualificacaoArgs",
+   "type": "object"
+  },
+  "consentimento_credito": {
+   "additionalProperties": false,
+   "properties": {
+    "aceito": {
+     "title": "Aceito",
+     "type": "boolean"
+    },
+    "trecho": {
+     "maxLength": 160,
+     "minLength": 1,
+     "title": "Trecho",
+     "type": "string"
+    }
+   },
+   "required": [
+    "aceito",
+    "trecho"
+   ],
+   "title": "ConsentimentoCreditoArgs",
+   "type": "object"
+  },
+  "consultar_empreendimento": {
+   "additionalProperties": false,
+   "properties": {
+    "nome": {
+     "maxLength": 120,
+     "minLength": 1,
+     "title": "Nome",
+     "type": "string"
+    }
+   },
+   "required": [
+    "nome"
+   ],
+   "title": "ConsultarEmpreendimentoArgs",
+   "type": "object"
+  },
+  "detalhes_imovel": {
+   "additionalProperties": false,
+   "properties": {
+    "codigo": {
+     "maxLength": 64,
+     "minLength": 1,
+     "title": "Codigo",
+     "type": "string"
+    }
+   },
+   "required": [
+    "codigo"
+   ],
+   "title": "DetalhesImovelArgs",
+   "type": "object"
+  },
+  "encerrar": {
+   "additionalProperties": false,
+   "properties": {
+    "motivo": {
+     "enum": [
+      "lead_encerrou",
+      "sem_interesse",
+      "invalido",
+      "outro",
+      "lead_pediu_parar"
+     ],
+     "title": "Motivo",
+     "type": "string"
+    },
+    "motivo_texto": {
+     "anyOf": [
+      {
+       "maxLength": 280,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Motivo Texto"
+    },
+    "trecho": {
+     "anyOf": [
+      {
+       "maxLength": 160,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Trecho"
+    }
+   },
+   "required": [
+    "motivo"
+   ],
+   "title": "EncerrarArgs",
+   "type": "object"
+  },
+  "handoff": {
+   "additionalProperties": false,
+   "properties": {
+    "motivo": {
+     "anyOf": [
+      {
+       "maxLength": 280,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Motivo"
+    },
+    "motivo_codigo": {
+     "enum": [
+      "pedido_humano",
+      "reclamacao",
+      "assunto_sensivel",
+      "parceria",
+      "fora_do_escopo",
+      "outro",
+      "seguranca",
+      "direito_titular",
+      "info_indisponivel"
+     ],
+     "title": "Motivo Codigo",
+     "type": "string"
+    }
+   },
+   "required": [
+    "motivo_codigo"
+   ],
+   "title": "HandoffArgs",
+   "type": "object"
+  },
+  "ler_arquivo_skill": {
+   "additionalProperties": false,
+   "properties": {
+    "caminho": {
+     "maxLength": 255,
+     "minLength": 1,
+     "title": "Caminho",
+     "type": "string"
+    },
+    "nome": {
+     "maxLength": 64,
+     "minLength": 1,
+     "title": "Nome",
+     "type": "string"
+    }
+   },
+   "required": [
+    "nome",
+    "caminho"
+   ],
+   "title": "LerArquivoSkillArgs",
+   "type": "object"
+  },
+  "oferecer_imoveis": {
+   "additionalProperties": false,
+   "properties": {
+    "limite": {
+     "anyOf": [
+      {
+       "maximum": 5,
+       "minimum": 1,
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Limite"
+    },
+    "modo": {
+     "enum": [
+      "campanha",
+      "similares"
+     ],
+     "title": "Modo",
+     "type": "string"
+    }
+   },
+   "required": [
+    "modo"
+   ],
+   "title": "OferecerImoveisArgs",
+   "type": "object"
+  },
+  "registrar_documento": {
+   "additionalProperties": false,
+   "properties": {
+    "provider_message_id": {
+     "maxLength": 256,
+     "minLength": 1,
+     "title": "Provider Message Id",
+     "type": "string"
+    },
+    "tipo_provavel": {
+     "enum": [
+      "rg",
+      "cpf",
+      "cin",
+      "cnh",
+      "outro"
+     ],
+     "title": "Tipo Provavel",
+     "type": "string"
+    }
+   },
+   "required": [
+    "provider_message_id",
+    "tipo_provavel"
+   ],
+   "title": "RegistrarDocumentoArgs",
+   "type": "object"
+  },
+  "registrar_identificacao": {
+   "additionalProperties": false,
+   "properties": {
+    "campo": {
+     "enum": [
+      "nome",
+      "email",
+      "cpf",
+      "rg"
+     ],
+     "title": "Campo",
+     "type": "string"
+    },
+    "valor": {
+     "maxLength": 120,
+     "minLength": 1,
+     "title": "Valor",
+     "type": "string"
+    }
+   },
+   "required": [
+    "campo",
+    "valor"
+   ],
+   "title": "RegistrarIdentificacaoArgs",
+   "type": "object"
+  },
+  "registrar_intencao_visita": {
+   "additionalProperties": false,
+   "properties": {
+    "codigo": {
+     "maxLength": 64,
+     "minLength": 1,
+     "title": "Codigo",
+     "type": "string"
+    },
+    "preferencia_horario": {
+     "anyOf": [
+      {
+       "maxLength": 120,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Preferencia Horario"
+    }
+   },
+   "required": [
+    "codigo"
+   ],
+   "title": "RegistrarIntencaoVisitaArgs",
+   "type": "object"
+  },
+  "registrar_perfil": {
+   "$defs": {
+    "ItemPerfilArgs": {
+     "additionalProperties": false,
+     "properties": {
+      "criterio": {
+       "maxLength": 64,
+       "minLength": 1,
+       "title": "Criterio",
+       "type": "string"
+      },
+      "trecho": {
+       "anyOf": [
+        {
+         "maxLength": 160,
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "default": null,
+       "title": "Trecho"
+      },
+      "valor": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        },
+        {
+         "type": "number"
+        },
+        {
+         "type": "boolean"
+        },
+        {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        },
+        {
+         "additionalProperties": {
+          "type": "number"
+         },
+         "type": "object"
+        }
+       ],
+       "title": "Valor"
+      }
+     },
+     "required": [
+      "criterio",
+      "valor"
+     ],
+     "title": "ItemPerfilArgs",
+     "type": "object"
+    }
+   },
+   "additionalProperties": false,
+   "properties": {
+    "itens": {
+     "items": {
+      "$ref": "#/$defs/ItemPerfilArgs"
+     },
+     "maxItems": 10,
+     "minItems": 1,
+     "title": "Itens",
+     "type": "array"
+    }
+   },
+   "required": [
+    "itens"
+   ],
+   "title": "RegistrarPerfilArgs",
+   "type": "object"
+  },
+  "registrar_reacao_imovel": {
+   "additionalProperties": false,
+   "properties": {
+    "codigo": {
+     "maxLength": 64,
+     "minLength": 1,
+     "title": "Codigo",
+     "type": "string"
+    },
+    "motivo": {
+     "anyOf": [
+      {
+       "maxLength": 200,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Motivo"
+    },
+    "reacao": {
+     "enum": [
+      "gostou",
+      "nao_gostou",
+      "quer_ver_mais"
+     ],
+     "title": "Reacao",
+     "type": "string"
+    }
+   },
+   "required": [
+    "codigo",
+    "reacao"
+   ],
+   "title": "RegistrarReacaoImovelArgs",
+   "type": "object"
+  },
+  "registrar_solicitacao_titular": {
+   "additionalProperties": false,
+   "properties": {
+    "tipo": {
+     "enum": [
+      "confirmacao",
+      "acesso",
+      "correcao",
+      "eliminacao",
+      "portabilidade",
+      "revogacao_consentimento",
+      "oposicao",
+      "info_compartilhamento",
+      "outro"
+     ],
+     "title": "Tipo",
+     "type": "string"
+    },
+    "trecho": {
+     "maxLength": 300,
+     "minLength": 1,
+     "title": "Trecho",
+     "type": "string"
+    }
+   },
+   "required": [
+    "tipo",
+    "trecho"
+   ],
+   "title": "RegistrarSolicitacaoTitularArgs",
+   "type": "object"
+  },
+  "sinalizar_alerta": {
+   "additionalProperties": false,
+   "properties": {
+    "descricao": {
+     "maxLength": 500,
+     "minLength": 1,
+     "title": "Descricao",
+     "type": "string"
+    },
+    "tipo": {
+     "enum": [
+      "lead_insatisfeito",
+      "erro_agente",
+      "desvio",
+      "outro",
+      "emergencia"
+     ],
+     "title": "Tipo",
+     "type": "string"
+    },
+    "trecho": {
+     "anyOf": [
+      {
+       "maxLength": 500,
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "title": "Trecho"
+    }
+   },
+   "required": [
+    "tipo",
+    "descricao"
+   ],
+   "title": "SinalizarAlertaArgs",
+   "type": "object"
+  }
+ },
+ "textos_exigidos": [
+  "compilador.dados_org_intro",
+  "compilador.ferramenta_linha.conhecimento_desativada",
+  "compilador.ferramenta_linha.skills_ativada",
+  "compilador.ferramenta_linha.web_desativada",
+  "compilador.qualificacao_intro",
+  "compilador.qualificacao_rotulo_criterios",
+  "compilador.qualificacao_rotulo_estagios",
+  "compilador.qualificacao_rotulo_identidade",
+  "compilador.qualificacao_rotulo_minimo",
+  "compilador.qualificacao_rotulo_opcoes",
+  "compilador.skills_intro",
+  "compilador.titulo_dados_org",
+  "compilador.titulo_ferramentas",
+  "compilador.titulo_qualificacao",
+  "compilador.titulo_skills",
+  "conformidade.correcao.contato_nao_permitido",
+  "conformidade.correcao.fallback_enviado",
+  "conformidade.correcao.formato_suspeito",
+  "conformidade.correcao.imovel_sem_ferramenta",
+  "conformidade.correcao.insatisfacao_sem_alerta",
+  "conformidade.correcao.link_nao_permitido",
+  "conformidade.correcao.padroes_proibidos",
+  "conformidade.correcao.perfil_citado_sem_registro",
+  "conformidade.correcao.pergunta_repetida",
+  "conformidade.correcao.pii_na_resposta",
+  "conformidade.correcao.termina_sem_pergunta",
+  "conformidade.correcao.transferencia_sem_handoff",
+  "conformidade.correcao.valor_sem_ferramenta",
+  "conformidade.correcao.vazamento_prompt",
+  "conformidade.handoff_resumo",
+  "contexto.aviso_proveniencia",
+  "contexto.aviso_valores_cliente",
+  "contexto.dossie_vazio",
+  "contexto.nao",
+  "contexto.rotulo_atendente",
+  "contexto.rotulo_campanha",
+  "contexto.rotulo_data_hora",
+  "contexto.rotulo_encerrado",
+  "contexto.rotulo_estagio",
+  "contexto.rotulo_faltando",
+  "contexto.rotulo_gostou",
+  "contexto.rotulo_oferecidos",
+  "contexto.rotulo_origem",
+  "contexto.rotulo_score",
+  "contexto.sim",
+  "contexto.titulo_credito",
+  "contexto.titulo_dossie",
+  "contexto.titulo_estado",
+  "contexto.titulo_handoff",
+  "contexto.titulo_proveniencia",
+  "contexto.titulo_reengajamento",
+  "credito.consentiu",
+  "credito.pedir",
+  "credito.recusou",
+  "decisao.rotulo_dados",
+  "decisao.rotulo_opcoes",
+  "decisao.sem_dados",
+  "decisao.sistema",
+  "escalonamento.resumo",
+  "ferramenta.campo_removido",
+  "ferramenta.handoff.motivo_padrao",
+  "ferramenta.handoff.resumo_conclusao",
+  "ferramenta.handoff.resumo_titular",
+  "ferramenta.resultado.argumentos_invalidos",
+  "ferramenta.resultado.concluido",
+  "ferramenta.resultado.desconhecida",
+  "ferramenta.resultado.encerrado",
+  "ferramenta.resultado.encerrado_opt_out",
+  "ferramenta.resultado.handoff",
+  "ferramenta.resultado.recusa.arquivo_inexistente",
+  "ferramenta.resultado.recusa.campo_desconhecido",
+  "ferramenta.resultado.recusa.codigo_invalido",
+  "ferramenta.resultado.recusa.consentimento_sem_evidencia",
+  "ferramenta.resultado.recusa.credito_inativo",
+  "ferramenta.resultado.recusa.criterio_derivado",
+  "ferramenta.resultado.recusa.criterio_desconhecido",
+  "ferramenta.resultado.recusa.criterio_repetido",
+  "ferramenta.resultado.recusa.estagio_nao_conclusivo",
+  "ferramenta.resultado.recusa.evento_invalido",
+  "ferramenta.resultado.recusa.fonte_invalida",
+  "ferramenta.resultado.recusa.fora_do_escopo",
+  "ferramenta.resultado.recusa.identificacao_indisponivel",
+  "ferramenta.resultado.recusa.identificacao_nao_devida",
+  "ferramenta.resultado.recusa.imovel_ja_oferecido",
+  "ferramenta.resultado.recusa.imovel_nao_oferecido",
+  "ferramenta.resultado.recusa.indisponivel",
+  "ferramenta.resultado.recusa.itens_demais",
+  "ferramenta.resultado.recusa.limite_ferramentas",
+  "ferramenta.resultado.recusa.limite_ofertas",
+  "ferramenta.resultado.recusa.limite_recusas",
+  "ferramenta.resultado.recusa.lote_invalido",
+  "ferramenta.resultado.recusa.motivo_longo",
+  "ferramenta.resultado.recusa.motivo_texto_ausente",
+  "ferramenta.resultado.recusa.nao_coletar",
+  "ferramenta.resultado.recusa.nao_pode_ofertar",
+  "ferramenta.resultado.recusa.opcao_invalida",
+  "ferramenta.resultado.recusa.opt_out_sem_evidencia",
+  "ferramenta.resultado.recusa.origem_invalida",
+  "ferramenta.resultado.recusa.sem_codigo_campanha",
+  "ferramenta.resultado.recusa.sem_itens",
+  "ferramenta.resultado.recusa.skill_inexistente",
+  "ferramenta.resultado.recusa.trecho_ausente",
+  "ferramenta.resultado.recusa.trecho_curto",
+  "ferramenta.resultado.recusa.trecho_longo",
+  "ferramenta.resultado.recusa.trecho_nao_confere",
+  "ferramenta.resultado.recusa.usar_identificacao",
+  "ferramenta.resultado.recusa.valor_invalido",
+  "ferramenta.resultado.recusa.valor_nao_confere",
+  "ferramenta.resultado.recusa.versao_nao_publicada",
+  "ferramenta.resultado.registrado",
+  "ferramenta.resultado.solicitacao_registrada",
+  "historico.rotulo_midia",
+  "historico.rotulo_truncado",
+  "reengajamento.horas",
+  "reengajamento.minutos",
+  "reengajamento.regua",
+  "reengajamento.texto_base",
+  "resumo.rotulo_atendente",
+  "resumo.rotulo_cliente",
+  "resumo.rotulo_conversa",
+  "resumo.sem_mensagens",
+  "resumo.sistema",
+  "runtime.confirmacao_opt_out",
+  "runtime.ferramenta_falhou",
+  "seguranca.marcador_interno"
+ ]
+}
