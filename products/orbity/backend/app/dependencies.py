@@ -76,6 +76,19 @@ def get_admin_client():
     return _db.get_admin_client()
 
 
+def get_org_client(org_id: Any):
+    """Service-role client BOUND to ``org_id`` (the authenticated request's org): every query is org-scoped by construction.
+
+    The 23 tenant tables are service-only since migration 034 -- routers and services MUST come through here, never
+    ``get_admin_client()`` (guard: ``tests/test_service_only_lockdown.py``). Pass the org the auth dependency resolved:
+    ``org_id`` is not coerced, so a non-UUID raises instead of silently mapping to another org. User ids a request names
+    (assignee/owner) are proven to be members of that org. See ``app/org_scope.py``.
+    """
+    from app.org_scope import make_org_client
+
+    return make_org_client(get_admin_client(), org_id, get_core_client())
+
+
 def get_core_client():
     """Service-role client on core's `public` schema (noctus_users, notifications)."""
     return _db.get_core_client()

@@ -21,6 +21,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from noctusai_lib.api.access_tiers import access_tier
 from noctusai_seed.organ_auth import make_organ_auth
 
 from app import billing
@@ -58,7 +59,8 @@ async def monthly_cash_flow(month: str, auth: tuple = Depends(get_current_user_o
     try:
         summary = await asyncio.to_thread(lambda: FinancialService(get_admin_client(), org_id).monthly_cash_flow(month))
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        logger.warning("financial.cash_flow refused org=%s: %s", org_id, type(exc).__name__)
+        raise HTTPException(status_code=422, detail="invalid_month")
     except Exception:
         logger.exception("financial.cash_flow failed org=%s month=%s", org_id, month)
         raise HTTPException(status_code=502, detail="Falha ao calcular fluxo de caixa")
@@ -84,6 +86,7 @@ async def list_charges(
 
 
 @router.post("/charges", response_model=ChargeOut, status_code=status.HTTP_201_CREATED)
+@access_tier("org", reason="org ADMIN of the selected org (make_organ_auth.admin)")
 async def create_extra_charge(payload: ExtraChargeCreate, auth: tuple = Depends(admin_dependency)) -> ChargeOut:
     org_id = _org(auth)
     try:
@@ -100,6 +103,7 @@ async def create_extra_charge(payload: ExtraChargeCreate, auth: tuple = Depends(
 
 
 @router.post("/charges/{entry_id}/generate", response_model=ChargeOut, status_code=status.HTTP_200_OK)
+@access_tier("org", reason="org ADMIN of the selected org (make_organ_auth.admin)")
 async def generate_charge(entry_id: str, auth: tuple = Depends(admin_dependency)) -> ChargeOut:
     org_id = _org(auth)
     try:

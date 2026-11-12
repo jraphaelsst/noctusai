@@ -837,6 +837,17 @@ if [[ -n "$STAGED_TIER_LLM" ]] && have_py; then
         fi
     done
 fi
+# (e) no-leaking (owner rule 2026-11-11): an HTTP error body is a code, never exception text. Seed = zero; products ratcheted
+#     (deploy/security/http-detail-echo-baseline.json). Build triad: integration_error() + this keeper + its structured log line.
+STAGED_DETAIL_ECHO=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/backend/app/.*\.py|seed/.*\.py|deploy/security/http-detail-echo-baseline\.json)$' || true)
+if [[ -n "$STAGED_DETAIL_ECHO" ]] && have_py; then
+    echo "[pre-commit] backend/seed python staged — checking HTTP error bodies never echo exception text..."
+    # WARN-first SHADOW (new gates start at warning; promote to blocking after >=7 shadow days via
+    # `--gate-alignment declare --placement blocking` + the {since,fires,fix_rate} record, then flip to `exit 1`).
+    if ! "$PY" "$CLI" --check-http-detail-echoes-exception --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] WARNING (shadow): HTTP-DETAIL-ECHO — raise noctusai_lib.api.integration_errors.integration_error(code, exc=exc) (fixed pt-BR message + code; the exception is logged server-side) instead of detail=str(exc) / f\"{exc}\". Domain-authored text only: '# detail-safe: <reason>'. See KB § PATTERNS/security/appsec-craft-canon.md." >&2
+    fi
+fi
 # (d) the living findings ledgers agree with the scanners (access-tier burn-down, Julia's mistakes, ...): a status that disagrees with
 #     reality fails. Fix: `cli.py --findings-ledger-reconcile <ledger>` (the tool is the only writer; never hand-edit a ledger).
 STAGED_LEDGER_SURFACE=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/backend/.*\.(py|sql)|seed/(framework|lib)/backend/.*\.py|project-history/(access-tiers|julia)/.*)$' || true)

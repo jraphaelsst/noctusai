@@ -216,6 +216,55 @@ class TestStaleGuard:
         assert world.rows("julia_eventos", tipo="reengajamento") == []
 
 
+@pytest.mark.asyncio
+class TestLimiteRetomadas:
+    """The follow-up cap (agents decides, `limite_retomadas`): the contact's sequence ENDS -- no further tier, no regua,
+    the cold-lead hook runs once, every queued job goes stale, and a reply from the lead reopens the contact."""
+
+    async def test_the_default_tier_that_hits_the_cap_ends_the_sequence_and_runs_the_cold_lead_hook_once(self, world, frio):
+        _cfg(world, minutos_ativo=True, horas_ativo=True)
+        _regua(world, tentativas=((1, 1, "dias"),))
+        c = _contato(world)
+        repo = FakeJobRepository()
+        await _armar(world, repo, c)
+        gen = world.contato()["gen"]
+        turnos = Turnos(enviou=svc.RESULTADO_LIMITE_RETOMADAS)
+        assert await _executar(world, repo, turnos, _jobs(repo, svc.JOB_MINUTOS)[0], MANHA) == "limite_retomadas"
+        assert len(frio) == 1 and _jobs(repo, svc.JOB_REGUA) == []
+        assert world.rows("julia_eventos", tipo="reengajamento") == []  # nothing went out: no "Julia reativou" timeline row
+        after = world.contato()
+        assert after["encerrado_at"] and after["gen"] == gen + 1
+        # the sibling hours job is now stale (the gen moved on): it does not send
+        sibling = Turnos()
+        assert await _executar(world, repo, sibling, _jobs(repo, svc.JOB_HORAS)[0], MANHA) == "obsoleto"
+        assert sibling.chamadas == []
+
+    async def test_a_regua_attempt_that_hits_the_cap_does_not_arm_the_next_one(self, world, frio):
+        _regua(world, tentativas=((1, 1, "dias"), (2, 1, "dias")))
+        c = _contato(world)
+        repo = FakeJobRepository()
+        await _armar(world, repo, c)
+        _cfg(world, minutos_ativo=False, horas_ativo=False)
+        await _iniciar(world, repo, c)
+        job = _jobs(repo, svc.JOB_REGUA)[0]
+        assert await _executar(world, repo, Turnos(enviou=svc.RESULTADO_LIMITE_RETOMADAS), job, MANHA) == "limite_retomadas"
+        assert len(_jobs(repo, svc.JOB_REGUA)) == 1 and len(frio) == 1
+
+    async def test_a_reply_from_the_lead_reopens_the_contact(self, world, frio):
+        _cfg(world, minutos_ativo=True)
+        c = _contato(world)
+        repo = FakeJobRepository()
+        await _armar(world, repo, c)
+        await _executar(world, repo, Turnos(enviou=svc.RESULTADO_LIMITE_RETOMADAS), _jobs(repo)[0], MANHA)
+        assert world.contato()["encerrado_at"]
+        contatos.registrar_inbound(world.sw, world.contato())
+        assert world.contato()["encerrado_at"] is None
+
+
+async def _iniciar(world: World, repo, contato) -> None:
+    await svc._iniciar_regua_ou_esfriar(repo, world.sw, ORG, world.contato(), base=MANHA)
+
+
 async def _executar(world: World, repo, turnos, job, agora) -> str:
     fn = svc.executar_tentativa if job.type == svc.JOB_REGUA else svc.executar_default
     return await fn(job, deps=world.deps(), repo=repo, run_turn=turnos, agora=agora)

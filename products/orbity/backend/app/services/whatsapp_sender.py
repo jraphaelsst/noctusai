@@ -1,14 +1,17 @@
 """
 Real WhatsApp send for the Orbity automation engine.
 
-Resolution (community-style, `resolve_community_waha_client`):
+Resolution -- the org's OWN line or nothing:
   1. the org's NEWEST saved connection in `orbity.whatsapp_connections`
      (base_url + decrypted api_key + session_name — saved via
      `Configurações → Conexões WhatsApp`);
-  2. else the static fleet `WAHA_*` settings;
-  3. else REFUSE — `WhatsAppNotConnected`. The seed `FakeWahaClient` is used
-     ONLY under `settings.whatsapp_allow_fake` (test harness / local dev):
-     a Fake in a real deploy reports "sent" with nothing sent.
+  2. else REFUSE — `WhatsAppNotConnected`. There is NO fallback to the static
+     fleet `WAHA_*` line (a host shared across tenants: a message must leave
+     from the number the org itself connected). The seed `FakeWahaClient` is
+     used ONLY under `settings.whatsapp_allow_fake` (test harness / local
+     dev): a Fake in a real deploy reports "sent" with nothing sent.
+  In prod WhatsApp is also OFF at the seed's line policy (no declared policy
+  => every write refused; NOC-REMEDIATE[orbity-waha-own-instance]).
 
 `send` is SYNC (`WahaClient.send_text_to_phone_sync`): the engine drain is sync code
 that the scheduler runs via `anyio.to_thread.run_sync` (igig pattern), so it
@@ -66,7 +69,12 @@ def resolve_org_waha_client(
     settings: Any,
     allow_fake: bool | None = None,
 ):
-    """The org's WAHA client, or ``None`` when WhatsApp is not configured."""
+    """The org's OWN WAHA client. No saved connection => :class:`WhatsAppNotConnected` (loud, pt-BR), never a fallback.
+
+    Deliberately there is NO static fleet ``WAHA_*`` line: that host is shared across tenants, so a message must go out
+    through the number the org itself connected (security review F1, 2026-11-10). The only other source is the fake,
+    and only under an explicit ``whatsapp_allow_fake`` (tests / local dev).
+    """
     fake_ok = settings.whatsapp_allow_fake if allow_fake is None else allow_fake
 
     record = None
@@ -85,12 +93,9 @@ def resolve_org_waha_client(
             org_id,
         )
 
+    base_url = api_key = session = None
     if record is not None:
         base_url, api_key, session = record.base_url, record.api_key, record.session_name
-    else:
-        base_url = settings.waha_base_url
-        api_key = settings.waha_api_key or None
-        session = settings.waha_session
 
     def _client(url: str | None):
         return get_whatsapp_client(
@@ -105,8 +110,12 @@ def resolve_org_waha_client(
         build_real=lambda: _client(base_url),
         build_fake=lambda: _client(None),
         allow_fake=bool(fake_ok),
-        unconfigured=lambda: None,
+        unconfigured=_not_connected,
     )
+
+
+def _not_connected():
+    raise WhatsAppNotConnected()
 
 
 class RealWhatsAppSender:
@@ -115,7 +124,8 @@ class RealWhatsAppSender:
     Args:
         get_admin_client: zero-arg callable returning the service-role client
             (late-bound so tests/DI hand in a mock — no module singleton).
-        settings: the product settings (encryption key, static WAHA fallback).
+        settings: the product settings (encryption key; the optional fake-allow
+            switch). The static fleet ``WAHA_*`` line is never used.
         resolve_client: DI seam for the org -> WAHA client resolution (tests
             inject a `FakeWahaClient` to assert `sent_messages`).
     """
@@ -127,7 +137,7 @@ class RealWhatsAppSender:
         *,
         resolve_client: Any = None,
     ) -> None:
-        self._get_admin_client = get_admin_client
+        self._get_admin_client = get_admin_client  # org-scope-ok: WhatsApp connection store (not a tenant table)
         self._settings = settings
         self._resolve_client = resolve_client or resolve_org_waha_client
 
@@ -168,4 +178,4 @@ def make_default_sender() -> RealWhatsAppSender:
     from app.config import settings
     from app.dependencies import get_admin_client
 
-    return RealWhatsAppSender(get_admin_client, settings)
+    return RealWhatsAppSender(get_admin_client, settings)  # org-scope-ok: WhatsApp connection store (not a tenant table)

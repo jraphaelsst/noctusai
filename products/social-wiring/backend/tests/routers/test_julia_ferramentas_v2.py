@@ -13,9 +13,15 @@ import pytest
 from tests.routers.test_julia_ferramentas_router import _ORG, _OTHER, _product, _row, catalogo, ok, tools  # noqa: F401
 
 # Provider paths this test reads (gate_sweep runs it when one changes; KB self-branching-mode, CONTRACT_OF).
-CONTRACT_OF = ("products/agents/backend/app/channels/tool_registry.py",)
+# The keys agents sends to SW are built in the real-estate catalogue adapter (`imoveis_sw.py`, behind
+# `CatalogoOpcoes`); `tool_registry.py` dispatches the tools through it. Both are declared so a change to either
+# re-runs this contract.
+CONTRACT_OF = (
+    "products/agents/backend/app/catalogos/imoveis_sw.py",
+    "products/agents/backend/app/channels/tool_registry.py",
+)
 REPO = Path(__file__).resolve().parents[5]
-AGENTS_REGISTRY = REPO / "products/agents/backend/app/channels/tool_registry.py"
+AGENTS_SW_ADAPTER = REPO / "products/agents/backend/app/catalogos/imoveis_sw.py"
 
 
 def _buscar(ok, **body):
@@ -136,11 +142,16 @@ class TestImovelCampanha:
 
 # ── the contract with what agents really sends ───────────────────────────────
 def _agents_sw_keys() -> dict[str, set[str]]:
-    """Statically read agents' `tool_registry.py`: the keys it puts in each SW tool call. No cross-product import."""
-    tree = ast.parse(AGENTS_REGISTRY.read_text())
+    """Statically read agents' SW catalogue adapter: the keys it puts in each SW tool call. No cross-product import.
+
+    Fails loudly when a function it reads is gone (a moved mapping must move this test with it, never leave it
+    collecting empty sets)."""
+    tree = ast.parse(AGENTS_SW_ADAPTER.read_text())
     keys: dict[str, set[str]] = {"buscar_imoveis": set(), "imovel_campanha": set()}
+    achados: set[str] = set()
     for fn in ast.walk(tree):
-        if isinstance(fn, ast.FunctionDef) and fn.name == "_consulta_sw":
+        if isinstance(fn, ast.FunctionDef) and fn.name == "consulta_sw":
+            achados.add(fn.name)
             for n in ast.walk(fn):
                 if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == "q" and isinstance(n.slice, ast.Constant):
                     keys["buscar_imoveis"].add(n.slice.value)
@@ -149,14 +160,19 @@ def _agents_sw_keys() -> dict[str, set[str]]:
                         if (isinstance(e, ast.Tuple) and len(e.elts) == 2
                                 and all(isinstance(x, ast.Constant) and isinstance(x.value, str) for x in e.elts)):
                             keys["buscar_imoveis"].add(e.elts[1].value)
-        if isinstance(fn, ast.AsyncFunctionDef) and fn.name == "_oferecer":
+        if isinstance(fn, ast.AsyncFunctionDef) and fn.name == "buscar":
+            achados.add(fn.name)
             for n in ast.walk(fn):
                 if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == "args" and isinstance(n.slice, ast.Constant):
                     keys["buscar_imoveis"].add(n.slice.value)
-                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_sw" and n.args:
-                    nome, corpo = n.args[0], n.args[1] if len(n.args) > 1 else None
-                    if isinstance(nome, ast.Constant) and nome.value == "imovel_campanha" and isinstance(corpo, ast.Dict):
-                        keys["imovel_campanha"] |= {k.value for k in corpo.keys if isinstance(k, ast.Constant)}
+        if (isinstance(fn, ast.Call) and isinstance(fn.func, ast.Attribute) and fn.func.attr == "_chamar"
+                and len(fn.args) >= 3 and isinstance(fn.args[1], ast.Constant) and fn.args[1].value == "imovel_campanha"
+                and isinstance(fn.args[2], ast.Dict)):
+            achados.add("imovel_campanha")
+            keys["imovel_campanha"] |= {k.value for k in fn.args[2].keys if isinstance(k, ast.Constant)}
+    assert achados == {"consulta_sw", "buscar", "imovel_campanha"}, (
+        f"{AGENTS_SW_ADAPTER.name} no longer has {sorted({'consulta_sw', 'buscar', 'imovel_campanha'} - achados)}: "
+        "follow the SW mapping to its new home")
     return keys
 
 
@@ -181,9 +197,9 @@ class TestContractWithAgents:
         assert isinstance(body["data"], list) and "restantes_estimados" in body  # what agents reads from the body
 
     def test_agents_reads_data_and_forwards_every_sw_meta_key_from_the_body(self):
-        src = AGENTS_REGISTRY.read_text()
+        src = AGENTS_SW_ADAPTER.read_text()
         assert 'body.get("data")' in src
         [meta] = [n.value for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Assign)
-                  and any(isinstance(t, ast.Name) and t.id == "_BUSCA_META" for t in n.targets)]
+                  and any(isinstance(t, ast.Name) and t.id == "BUSCA_META" for t in n.targets)]
         forwarded = {e.value for e in meta.elts}  # the explicit allowlist agents forwards to the model
         assert {"restantes_estimados", "relaxado", "similar_a_encontrado", "itens_nao_verificaveis"} <= forwarded

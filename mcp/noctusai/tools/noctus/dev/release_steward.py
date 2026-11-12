@@ -2010,6 +2010,113 @@ def ci_keeper_test_ids(tests_dir: str | Path) -> list[str]:
     return ids
 
 
+# ─── item 5 runs the Python suites CI would run for this diff (owner decision 2026-11-11) ──────────────
+# Three deliveries went 5/5 and were ejected by the merge queue on suites the DIFF selected in CI but item 5
+# never ran: test_all_products_compliant[core] (a seeded product icon), the seed backend suite + test_vps_exec
+# (a seed read_only_lines change), a product's FE vitest. The owner chose "run CI's suites" over a fast proxy.
+# So the scope is CI's own classifier (`ci_scope`, which the workflow's `changes` job also calls), the suite
+# lists come from the head's workflow matrices. NARROWED the same day (owner, after a 2h04m local measurement
+# vs ~15-25 min in CI's parallel jobs): locally only the keeper tests + the seed roots / awake products the diff
+# touches directly. Trade-off, stated: a toolkit-only red (the test_all_products_compliant[core] shape) and the
+# shared-root fan-out are judged by the merge queue again, not here.
+# NOC-REMEDIATE[scoped-green-fe-and-tooling]: FE vitest (product-frontend-tests / seed-frontend-tests) and the
+# bespoke tooling-tests job are still CI-judged only - the export has no node_modules and tooling-tests renders
+# a template in bash. Destination: the item-5 section of KB § PATTERNS/devops/release-steward.md (tooling steward).
+
+@dataclass(frozen=True)
+class CiSuite:
+    label: str
+    cwd: str            # relative to the export root
+    argv: tuple[str, ...]  # after the interpreter: `python <argv...>`
+    env: tuple[tuple[str, str], ...] = ()
+
+
+def _matrix(workflow_text: str, job: str, key: str) -> list[str]:
+    import yaml  # the toolkit venv carries PyYAML; only item 5's runner needs it
+    doc = yaml.safe_load(workflow_text) or {}
+    vals = (((doc.get("jobs") or {}).get(job) or {}).get("strategy") or {}).get("matrix", {}).get(key) or []
+    return [str(v) for v in vals]
+
+
+def _active_products(tree: Path) -> set[str] | None:
+    """`deploy/fleet/active-scope.txt` at the head; None = missing = every product (CI fails toward coverage)."""
+    f = tree / "deploy" / "fleet" / "active-scope.txt"
+    if not f.is_file():
+        return None
+    return {ln.strip() for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip() and not ln.lstrip().startswith("#")}
+
+
+def local_suites(tree: str | Path, scope: Any, workflow_text: str, changed: list[str]) -> list[CiSuite]:
+    """The NARROW local share of CI's Python suites for item 5 (owner decision 2026-11-11, after the full CI
+    split measured 2h04m locally vs ~15-25 min in CI's parallel jobs): only the suites of what the diff
+    touches DIRECTLY - a seed backend root (seed-backend-tests matrix) the diff edits, and an awake product
+    backend (product-backend-tests matrix, active-scope.txt) the diff edits. The toolkit split and the
+    shared-root fan-out ("a seed change runs every product") stay CI-only: the merge queue runs them.
+    NOC-REMEDIATE[scoped-green-fe-and-tooling]. Nothing when the scope is not heavy."""
+    root = Path(tree)
+    if not scope.run_heavy:
+        return []
+    out: list[CiSuite] = []
+    for r in _matrix(workflow_text, "seed-backend-tests", "root"):
+        prefix = r.rstrip("/") + "/"
+        if (root / r).is_dir() and any(c.startswith(prefix) for c in changed):
+            out.append(CiSuite(f"seed:{r}", r, ("-m", "pytest", "--tb=short", "-q")))
+    awake = _active_products(root)
+    direct = set(getattr(scope, "changed_products", ()) or ())
+    for slug in _matrix(workflow_text, "product-backend-tests", "product"):
+        d = f"products/{slug}/backend"
+        if slug in direct and (awake is None or slug in awake) and (root / d).is_dir():
+            out.append(CiSuite(f"product:{slug}", d, ("-m", "pytest", "--tb=short", "-q")))
+    return out
+
+
+#: Migration -> DB-guard edge (owner-approved speedup 1, 2026-11-11): a toolkit-only red stalled the queue 2h
+#: (agents 079 added DB guards; mcp test_verify_db_guards::TestAgentsStudioProbes failed). A diff that adds or edits
+#: `products/<p>/backend/migrations/*.sql` also runs the DB-guard suite + that product's PGlite replay tests.
+_MIGRATION_RE = re.compile(r"^products/([^/]+)/backend/migrations/[^/]+\.sql$")
+DB_GUARDS_TEST = "mcp/noctusai/tests/test_verify_db_guards.py"
+#: replay-test filename prefix per product slug, where it is not the slug itself (`test_<prefix>_..._on_replay.py`)
+_REPLAY_PREFIX = {"social-wiring": "sw", "erp-imobiliario": "erp"}
+PGLITE_NODE_DIR = "mcp/noctusai/node"
+
+
+def migration_guard_suite(tree: str | Path, changed: list[str]) -> CiSuite | None:
+    """The DB-guard suite for a diff that touches product migrations: `test_verify_db_guards.py` + the replay tests
+    of each touched product (`test_<prefix>_*on_replay*.py`) + the generic `test_migration_*replay*` ones. None when
+    no migration is touched. Run from the repo root, like CI's toolkit job. Needs PGlite (`needs_pglite`)."""
+    root = Path(tree)
+    products = sorted({m.group(1) for c in changed if (m := _MIGRATION_RE.match(c))})
+    if not products:
+        return None
+    tests_dir = root / "mcp" / "noctusai" / "tests"
+    replay = sorted(p.name for p in tests_dir.glob("test_*replay*.py"))
+    prefixes = {_REPLAY_PREFIX.get(p, p.replace("-", "_")) for p in products} | {"migration"}
+    mine = [f"mcp/noctusai/tests/{n}" for n in replay if any(n.startswith(f"test_{x}_") for x in prefixes)]
+    files = ([DB_GUARDS_TEST] if (root / DB_GUARDS_TEST).is_file() else []) + mine
+    if not files:
+        return None
+    return CiSuite(f"db-guards:{','.join(products)}", ".", ("-m", "pytest", "-q", "-p", "no:cacheprovider", *files))
+
+
+def link_pglite(tree: str | Path, source_repo: str | Path) -> str:
+    """Give the export the SAME PGlite CI installs (`npm ci` in mcp/noctusai/node): symlink the source checkout's
+    node_modules ONLY when its package-lock.json is byte-identical to the export's. Returns "" on success, else why.
+    In the export CI=true, so a missing PGlite FAILS the replay tests - a false red; mismatch = UNMEASURED instead."""
+    dst, src = Path(tree) / PGLITE_NODE_DIR, Path(source_repo) / PGLITE_NODE_DIR
+    lock_d, lock_s = dst / "package-lock.json", src / "package-lock.json"
+    mods = (src / "node_modules").resolve()
+    if not (mods / "@electric-sql" / "pglite").is_dir():
+        return f"PGlite is not installed in {src} (run `npm ci` there)"
+    try:
+        if lock_d.read_bytes() != lock_s.read_bytes():
+            return f"{PGLITE_NODE_DIR}/package-lock.json differs between the head and {src} - its node_modules is not what CI installs"
+    except OSError as exc:
+        return f"cannot compare {PGLITE_NODE_DIR}/package-lock.json: {exc}"
+    if not (dst / "node_modules").exists():
+        (dst / "node_modules").symlink_to(mods, target_is_directory=True)
+    return ""
+
+
 VERDICT_STORE_NAME = "deliverable-verdicts.ndjson"
 _VERDICT_REF_RE = re.compile(r"^ci-parity:([0-9a-f]{32})$")
 _FULL_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -2115,23 +2222,66 @@ def _git_init_export(tree: str | Path, head: str, timeout: int = 300) -> str | N
     return None
 
 
-def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None = None, timeout: int = 1500,
+def _hw_slot(job: str):
+    return _sibling("hw_admission").heavy_slot(job)
+
+
+class _CiParityTimeout(Exception):
+    """A CI-parity stage exhausted its budget and its one x1.5 retry: no verdict (UNMEASURED), never a pass."""
+
+    def __init__(self, gate: str, budgets: list[int]) -> None:
+        super().__init__(f"stage `{gate}` timed out after {budgets[0]}s and again after the x1.5 retry ({budgets[-1]}s); "
+                         "no verdict. Retry on a quieter machine, or set NOCTUS_GATE_BUDGETS_JSON='{\"%s\": <seconds>}'." % gate)
+
+
+def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None = None, timeout: int | None = None,
                            base_env: dict[str, str] | None = None,
-                           verdict_store: str | Path | None = None) -> Callable[[str, str], dict[str, Any]]:
+                           verdict_store: str | Path | None = None,
+                           admit: Callable[[str], Any] | None = None) -> Callable[[str, str], dict[str, Any]]:
     """Real default for `deliverable(scoped_check=)`: judge the head the way CI does. Export it, prime the
     hermetic state CI primes, then - in a SCRUBBED environment - run (1) every `cli.py --check-*` keeper CI
-    runs as a blocking step and (2) every test that asserts a keeper clean on the live tree. Both sets are
-    derived from the head's own workflow + tests. Slow (minutes): the branch steward runs it once and files
-    the `ci-parity:<id>` ref it returns; the run APPENDS a verdict record to the store (full head sha, head tree,
-    test.yml blob, interpreter, flags, test ids, result) and the guardian only resolves the ref
-    (`validate_verdict_ref`)."""
+    runs as a blocking step, (2) the real-tree keeper tests (`ci_keeper_test_ids`) and (3) the suites of the
+    seed roots / awake products the diff touches DIRECTLY (`local_suites`, scoped by `ci_scope` - the
+    classifier the workflow's `changes` job calls - over `origin/dev...head`). The toolkit split and the
+    shared-root fan-out stay CI-only (2h04m measured locally, 2026-11-11). A ledger-only diff runs no suite. Everything is
+    derived from the head's own workflow + tests. Runs inside ONE machine-wide heavy slot (`admit`, default
+    hw_admission.heavy_slot); not admitted = UNMEASURED, never green. Minutes: the
+    branch steward runs it once and files the `ci-parity:<id>` ref it returns; the run APPENDS a verdict record
+    to the store (full head sha, head tree, test.yml blob, interpreter, flags, tests/suites, result) and the
+    guardian only resolves the ref (`validate_verdict_ref`).
+
+    Time limits are the SAME declared per-gate budgets the merged-tip gates use (`gate_budget`: `ci_parity:export`,
+    `ci_parity:prime:<flag>`, `ci_parity:keeper:<flag>`, `ci_parity:pytest`, `ci_parity:suite:<label>`), each with ONE
+    retry at x1.5 when it times out; a stage that times out twice is `UNMEASURED` naming the stage (never green).
+    `timeout=` overrides every stage."""
     py = python or sys.executable
+    slot = admit or _hw_slot
+    cs = _sibling("ci_scope")
+
+    def budget(gate: str) -> int:
+        # Lazy, at RUN time: the steward PreToolUse hook loads this module by path with only the stdlib on sys.path and
+        # builds this closure eagerly, so a `tools.` import here (or at module top) crashes every steward-class call closed.
+        from tools.noctus.dev import gate_budget as _gate_budget
+        return timeout if timeout is not None else _gate_budget.resolve_gate_budget(gate)
 
     def check(branch: str, head: str) -> dict[str, Any]:
+        rc_d, diff_out, diff_err = _subprocess_git(cwd)("diff", "--name-only", f"origin/dev...{head}")
+        if rc_d != 0:
+            return {"ok": False, "detail": f"UNMEASURED: cannot list the paths the head changes vs origin/dev "
+                                           f"(CI's suite selection depends on it): {_last_line(diff_err or '')}"}
+        changed = diff_out.splitlines()
+        scope = cs.classify(changed)
+        with slot(f"deliverable:{branch}") as adm:
+            if adm is not None and not getattr(adm, "admitted", True):
+                return {"ok": False, "detail": f"UNMEASURED: no machine-wide heavy slot ({getattr(adm, 'verdict', '?')}) - "
+                                               "item 5 runs CI's suites and is never judged green unrun"}
+            return _parity_run(head, scope, changed)
+
+    def _parity_run(head: str, scope: Any, changed: list[str]) -> dict[str, Any]:
         tree = tempfile.mkdtemp(prefix="noc-ci-parity-")
         sandbox = tempfile.mkdtemp(prefix="noc-sandbox-home-")
         try:
-            err = _export_tree(head, tree, cwd, timeout)
+            err = _export_tree(head, tree, cwd, budget("ci_parity:export"))
             if err:
                 return {"ok": False, "detail": f"UNMEASURED: {err}"}
             wf = Path(tree) / CI_WORKFLOW_REL
@@ -2145,43 +2295,74 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             iso = seed_isolation_error(py, tree, env)
             if iso:
                 return {"ok": False, "detail": f"UNMEASURED: {iso}"}
-            gerr = _git_init_export(tree, head, timeout)
+            gerr = _git_init_export(tree, head, budget("ci_parity:export"))
             if gerr:
                 return {"ok": False, "detail": f"UNMEASURED: {gerr}"}
             flags, prime = ci_blocking_flags(text), ci_prime_flags(text)
             tool_dir = Path(tree) / "mcp" / "noctusai"
-            ids = ci_keeper_test_ids(tool_dir / "tests")
             failed: list[str] = []
 
-            def run(argv: list[str], where: Path) -> subprocess.CompletedProcess:
-                return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, cwd=str(where), env=env)
+            def run(gate: str, argv: list[str], where: Path,
+                    extra: tuple[tuple[str, str], ...] = ()) -> subprocess.CompletedProcess:
+                from tools.noctus.dev import gate_budget as _gate_budget
+                first = budget(gate)
+                budgets = [first, _gate_budget.retry_budget(first)]
+                for b in budgets:
+                    try:
+                        return subprocess.run(argv, capture_output=True, text=True, timeout=b, check=False, cwd=str(where),
+                                              env={**env, **dict(extra)})
+                    except subprocess.TimeoutExpired:
+                        continue
+                raise _CiParityTimeout(gate, budgets)
+
+            def pytest_failures(r: subprocess.CompletedProcess, label: str) -> list[str]:
+                names = re.findall(r"^FAILED (\S+)", r.stdout or "", flags=re.M)
+                return [f"{label} {n}" for n in names] or [f"{label} pytest exit {r.returncode}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}"]
 
             for f in prime:
-                r = run([py, "cli.py", f], tool_dir)
+                r = run(f"ci_parity:prime:{f}", [py, "cli.py", f], tool_dir)
                 if r.returncode != 0:
                     return {"ok": False, "detail": f"UNMEASURED: CI's prime step `cli.py {f}` failed in the hermetic export "
                                                    f"(exit {r.returncode}):\n{meaningful_tail((r.stdout or '') + chr(10) + (r.stderr or ''))}"}
             for f in flags:
-                r = run([py, "mcp/noctusai/cli.py", f], Path(tree))
+                r = run(f"ci_parity:keeper:{f}", [py, "mcp/noctusai/cli.py", f], Path(tree))
                 if r.returncode != 0:
                     failed.append(f"keeper {f}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}")
-            if ids:
-                r = run([py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *ids], tool_dir)
+            tests = ci_keeper_test_ids(tool_dir / "tests")
+            if tests:
+                r = run("ci_parity:pytest", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *tests], tool_dir)
                 if r.returncode != 0:
-                    names = re.findall(r"^FAILED (\S+)", r.stdout or "", flags=re.M)
-                    failed += [f"test {n}" for n in names] or [f"pytest exit {r.returncode}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}"]
-            ran = f"{len(flags)} CI-blocking keeper flag(s) + {len(ids)} real-tree keeper test(s), env-scrubbed"
+                    failed += pytest_failures(r, "test")
+            suites = local_suites(tree, scope, text, changed)
+            guard = migration_guard_suite(tree, changed)
+            if guard is not None:
+                why = link_pglite(tree, cwd or Path.cwd())
+                if why:
+                    return {"ok": False, "detail": f"UNMEASURED: the diff touches migrations, so {guard.label} must run, "
+                                                   f"but {why}"}
+                suites = suites + [guard]
+            for s in suites:
+                r = run(f"ci_parity:suite:{s.label}", [py, *s.argv], Path(tree) / s.cwd, s.env)
+                if r.returncode != 0:
+                    failed += pytest_failures(r, s.label)
+            n_tests = len(tests)
+            tests = tests + [s.label for s in suites]
+            ran = (f"{len(flags)} CI-blocking keeper flag(s) + {n_tests} real-tree keeper test(s) + {len(suites)} "
+                   f"directly-touched suite(s){' incl. ' + guard.label if guard is not None else ''} "
+                   f"({cs.describe(scope)}; toolkit split + shared fan-out left to CI), env-scrubbed")
             git = _subprocess_git(cwd)
             rc_t, head_tree, _e = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
             rc_b, wf_blob, _e = git("rev-parse", "--verify", "--quiet", f"{head}:{CI_WORKFLOW_REL}")
             if rc_t != 0 or rc_b != 0:
                 return {"ok": False, "detail": "UNMEASURED: cannot resolve the head tree / test.yml blob to record the verdict"}
             ref = record_verdict(verdict_store, head=head, tree=head_tree.strip(), workflow_blob=wf_blob.strip(),
-                                 interpreter=f"{py} {sys.version.split()[0]}", flags=flags, tests=ids, ok=not failed)
+                                 interpreter=f"{py} {sys.version.split()[0]}", flags=flags, tests=tests, ok=not failed)
             if failed:
                 return {"ok": False, "detail": f"{ran}; RED: {', '.join(failed[:8])}", "failed": failed,
-                        "ran": {"flags": flags, "tests": ids}, "verdict_ref": ref}
-            return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": ids}, "verdict_ref": ref}
+                        "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref}
+            return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref}
+        except _CiParityTimeout as exc:
+            return {"ok": False, "detail": f"UNMEASURED: {exc}"}
         except (OSError, subprocess.SubprocessError) as exc:
             return {"ok": False, "detail": f"UNMEASURED: {type(exc).__name__}: {exc}"[:240]}
         finally:

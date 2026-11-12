@@ -358,6 +358,10 @@ export * from './finance';
 // noctusai_lib.domain.inventory. Product-agnostic; the host passes its authenticated api client.
 export * from './inventory';
 
+// Assignment organ (who owns a lead: teams, members, strategies, capacity, out-of-office; writes the funnel's `responsavel_field`).
+// Backend: noctusai_lib.domain.assignment. Product-agnostic; the host passes its authenticated api client.
+export * from './assignment';
+
 // Purchasing organ (purchase orders -> approval -> partial receipts -> stock in + payables). Backend:
 // noctusai_lib.domain.purchasing. Product-agnostic; the host passes its authenticated api client (+ the parties / items /
 // inventory hooks for the pickers). Names are Purchase* / Purchasing* to avoid barrel collisions.

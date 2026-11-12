@@ -33,7 +33,8 @@ Endpoints:
   POST   /api/capture/{org_id}               PUBLIC lead capture
 """
 import logging
-from uuid import UUID
+import anyio
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
@@ -41,9 +42,8 @@ from noctusai_lib.api.rate_limit import client_ip_key
 
 from app.dependencies import (
     coerce_org_uuid,
-    get_admin_client,
     get_current_user_org,
-    get_user_client,
+    get_org_client,
 )
 from app.schemas.crm import (
     ActivityCreate,
@@ -58,10 +58,13 @@ from app.schemas.crm import (
     ScoringRuleUpdate,
     StageMoveRequest,
 )
+from noctusai_lib.api.access_tiers import access_tier
+from noctusai_lib.api.honeypot import HONEYPOT_FIELD, honeypot_tripped
+from noctusai_lib.domain.licensing import enforce_license, get_license_gate
 from app.rate_limit import limiter
 from app.services.automation_service import AutomationService
 from app.services.automation_triggers import adisparar
-from app.services.crm_service import CRMService
+from app.services.crm_service import CaptureStageInvalid, CRMService
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +77,7 @@ capture_router = APIRouter(tags=["Lead Capture"])
 # ---------------------------------------------------------------------------
 
 def _crm(token: str, org_id: UUID) -> CRMService:
-    return CRMService(get_user_client(token), org_id=org_id)
+    return CRMService(get_org_client(org_id), org_id=org_id)
 
 
 def _admin_crm(org_id: UUID) -> CRMService:
@@ -83,7 +86,7 @@ def _admin_crm(org_id: UUID) -> CRMService:
     Used exclusively by the unauthenticated public capture endpoint so
     RLS service_role bypass policy allows the INSERT.
     """
-    return CRMService(get_admin_client(), org_id=org_id)
+    return CRMService(get_org_client(org_id), org_id=org_id)
 
 
 async def _emit_stage_change(
@@ -122,6 +125,8 @@ def get_funil(auth: tuple = Depends(get_current_user_org)) -> list:
     org_id = coerce_org_uuid(raw_org)
     try:
         return _crm(token, org_id).get_funil()
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.funil failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao carregar funil")
@@ -133,6 +138,8 @@ def list_stages(auth: tuple = Depends(get_current_user_org)) -> list:
     org_id = coerce_org_uuid(raw_org)
     try:
         return _crm(token, org_id).list_stages()
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.stages failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar etapas")
@@ -151,6 +158,8 @@ def seed_default_stages(auth: tuple = Depends(get_current_user_org)) -> list:
     org_id = coerce_org_uuid(raw_org)
     try:
         return _crm(token, org_id).seed_default_stages()
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.seed_default_stages failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar etapas padrão")
@@ -181,6 +190,8 @@ def list_leads(
             page=page,
             page_size=page_size,
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.list_leads failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar leads")
@@ -199,6 +210,8 @@ async def create_lead(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _crm(token, org_id).create_lead(payload.model_dump(mode="json", exclude_none=True))
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.create_lead failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar lead")
@@ -219,6 +232,8 @@ def get_lead(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _crm(token, org_id).get_lead(lead_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.get_lead failed org=%s id=%s", org_id, lead_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar lead")
@@ -251,6 +266,8 @@ async def update_lead(
             previous_stage_id = str(before["stage_id"]) if before and before.get("stage_id") else None
             stage = svc.get_stage(data["stage_id"])
         row = svc.update_lead(lead_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.update_lead failed org=%s id=%s", org_id, lead_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar lead")
@@ -274,7 +291,7 @@ def delete_lead(
     try:
         if crm.get_lead(lead_id) is None:
             raise HTTPException(status_code=404, detail="Lead não encontrado")
-        AutomationService(get_user_client(token), org_id=org_id).cancel_for_removed_lead(lead_id)
+        AutomationService(get_org_client(org_id), org_id=org_id).cancel_for_removed_lead(lead_id)
         ok = crm.delete_lead(lead_id, deleted_by=str(user.id) if hasattr(user, "id") else None)
     except HTTPException:
         raise
@@ -309,7 +326,10 @@ async def move_stage(
             user_id=str(user.id) if hasattr(user, "id") else None,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        logger.warning("crm.move_stage refused org=%s lead=%s: %s", org_id, lead_id, type(exc).__name__)
+        raise HTTPException(status_code=400, detail="invalid_stage")
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.move_stage failed org=%s lead=%s", org_id, lead_id)
         raise HTTPException(status_code=502, detail="Falha ao mover lead")
@@ -365,7 +385,10 @@ def add_activity(
             created_by=str(user.id) if hasattr(user, "id") else None,
         )
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("crm.add_activity refused org=%s lead=%s: %s", org_id, lead_id, type(exc).__name__)
+        raise HTTPException(status_code=404, detail="lead_not_found")
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.add_activity failed org=%s lead=%s", org_id, lead_id)
         raise HTTPException(status_code=502, detail="Falha ao registrar atividade")
@@ -391,7 +414,10 @@ def score_lead(
     try:
         row = _crm(token, org_id).score_lead(lead_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("crm.score_lead refused org=%s lead=%s: %s", org_id, lead_id, type(exc).__name__)
+        raise HTTPException(status_code=404, detail="lead_not_found")
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.score_lead failed org=%s lead=%s", org_id, lead_id)
         raise HTTPException(status_code=502, detail="Falha ao pontuar lead")
@@ -423,6 +449,8 @@ def list_scoring_rules(
         if form_id:
             query = query.eq("form_id", form_id)
         result = query.execute()
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.list_scoring_rules failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar regras")
@@ -444,6 +472,8 @@ def create_scoring_rule(
     row_data = {**payload.model_dump(mode="json"), "org_id": str(org_id)}
     try:
         result = svc._t("lead_scoring_rules").insert(row_data).execute()
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.create_scoring_rule failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar regra")
@@ -477,6 +507,8 @@ def update_scoring_rule(
             .eq("id", rule_id)
             .execute()
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.update_scoring_rule failed org=%s id=%s", org_id, rule_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar regra")
@@ -505,6 +537,8 @@ def delete_scoring_rule(
             .eq("id", rule_id)
             .execute()
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("crm.delete_scoring_rule failed org=%s id=%s", org_id, rule_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar regra")
@@ -517,11 +551,38 @@ def delete_scoring_rule(
 # Public lead capture (unauthenticated)
 # ---------------------------------------------------------------------------
 
+def _capture_org_key(request: Request) -> str:
+    """Per-ORG limiter key on the CANONICAL org id: `{ABC...}` / upper-case / un-hyphenated spellings of one UUID are ONE
+    bucket (a raw path string would hand the caller a fresh bucket per spelling). An unparsable id keeps its raw value."""
+    raw = str(request.path_params.get("org_id", ""))
+    try:
+        raw = str(UUID(raw))
+    except ValueError:
+        pass
+    return f"capture-org:{raw}"
+
+
+def _record_honeypot_discard(org_id: UUID) -> None:
+    """One no-PII event (org + kind + time) per discarded submission: the bot rate is measurable. A failed write is logged
+    LOUD and never changes the response (the bot must not learn anything from it)."""
+    try:
+        get_org_client(org_id).table("capture_events").insert({"org_id": str(org_id), "kind": "honeypot_discarded"}).execute()
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("capture_events: could not record the honeypot discard org=%s", org_id)
+    logger.info("capture_honeypot_discarded org=%s", org_id)
+
+
 @capture_router.post(
     "/api/capture/{org_id}",
     status_code=status.HTTP_201_CREATED,
 )
-@limiter.limit("20/minute;200/hour", key_func=client_ip_key)
+@access_tier("public", reason="lead capture form (hidden honeypot field, per-IP and per-org rate limited, custom_fields capped, org-checked stage)", category="lead-capture")
+# `shared_limit(scope=)` pins the bucket: slowapi's default scope is the request PATH, so `/api/capture/<id>` spelled in 2^32 case/hyphen
+# variants would otherwise be 2^32 fresh buckets (per IP and per org alike).
+@limiter.shared_limit("20/minute;200/hour", scope="capture-ip", key_func=client_ip_key)
+@limiter.shared_limit("120/minute;1500/hour", scope="capture-org", key_func=_capture_org_key)  # per ORG, on top of per IP: a botnet of IPs still cannot flood one tenant
 async def capture_lead(
     request: Request,  # required positionally by @limiter.limit (slowapi)
     org_id: UUID,
@@ -536,13 +597,38 @@ async def capture_lead(
     Known keys (name/email/phone/company/source/value/stage_id) map to
     lead columns; everything else lands in custom_fields JSONB.
     """
+    # The org must exist AND hold an orbity license BEFORE anything is written (a public id of an org without orbity -- or a
+    # made-up one -- is a 404, never a lead row): same gate every authenticated call passes. 503 when the check is down OR
+    # when no gate is configured at all (enforce_license is a silent no-op then: a public write must fail CLOSED).
+    if get_license_gate() is None:
+        logger.error("capture_lead: the license gate is not configured -- refusing (503)")
+        raise HTTPException(status_code=503, detail="Falha ao verificar a licença da organização")
+    try:
+        enforce_license(org_id, None)
+    except HTTPException as exc:
+        raise HTTPException(status_code=404 if exc.status_code == 403 else exc.status_code, detail="Organização não encontrada") from exc
+    # Honeypot (owner decision 2026-11-10): a bot filled the invisible field. Discard QUIETLY -- the same success shape as a
+    # real capture (status code included), nothing written, no automation fired -- and record one no-PII event.
+    if honeypot_tripped(payload.model_extra):
+        await anyio.to_thread.run_sync(lambda: _record_honeypot_discard(org_id))  # sync supabase call: off the event loop
+        return {"ok": True, "id": str(uuid4())}
     try:
         # model_dump(mode="json") serializes UUID → str for stage_id
         raw = payload.model_dump(mode="json")
+        raw.pop(HONEYPOT_FIELD, None)  # an EMPTY honeypot is not a lead field either
         svc = _admin_crm(org_id)
         row = svc.capture_lead(raw)
+    except CaptureStageInvalid as exc:
+        logger.warning("capture_lead refused org=%s: %s", org_id, type(exc).__name__)
+        raise HTTPException(status_code=422, detail="capture_stage_invalid") from exc
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("capture_lead failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao registrar lead")
+    # NOC-REMEDIATE[orbity-capture-automation-budget]: a captured lead starts the org's `lead_created` flows, whose steps can
+    # send WhatsApp. WhatsApp is OFF for orbity in prod (no WAHA line policy => the seed refuses every send) and capture is
+    # already capped per IP and per org (120/min), so a per-org SEND budget for capture-triggered automations is moot today;
+    # it must exist (per-org sends/hour counted in the engine) BEFORE orbity's WhatsApp is switched on. — 2026-11-10
     await adisparar("lead_created", org_id, lead_id=row.get("id"))
     return {"ok": True, "id": row.get("id")}

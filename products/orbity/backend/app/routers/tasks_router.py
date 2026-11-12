@@ -29,7 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.dependencies import (
     coerce_org_uuid,
     get_current_user_org,
-    get_user_client,
+    get_org_client,
 )
 from app.schemas.tasks import (
     RoutineCreate,
@@ -67,7 +67,7 @@ router = APIRouter(tags=["Tasks"])
 # ---------------------------------------------------------------------------
 
 def _svc(token: str, org_id: UUID) -> TasksService:
-    return TasksService(get_user_client(token), org_id=org_id)
+    return TasksService(get_org_client(org_id), org_id=org_id)
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +95,8 @@ def list_tasks(
             page=page,
             page_size=page_size,
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("tasks.list_tasks failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar tarefas")
@@ -113,6 +115,8 @@ async def create_task(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).create_task(payload.model_dump(mode="json", exclude_none=True))
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("tasks.create_task failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar tarefa")
@@ -133,6 +137,8 @@ def get_task(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_task(task_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("tasks.get_task failed org=%s id=%s", org_id, task_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar tarefa")
@@ -160,6 +166,8 @@ async def update_task(
         svc = _svc(token, org_id)
         before = svc.get_task(task_id) if data.get("status") == "done" else None
         row = svc.update_task(task_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("tasks.update_task failed org=%s id=%s", org_id, task_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar tarefa")
@@ -178,6 +186,8 @@ def delete_task(
     org_id = coerce_org_uuid(raw_org)
     try:
         ok = _svc(token, org_id).delete_task(task_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("tasks.delete_task failed org=%s id=%s", org_id, task_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar tarefa")
@@ -207,6 +217,8 @@ async def update_task_status(
         svc = _svc(token, org_id)
         before = svc.get_task(task_id) if payload.status == "done" else None
         row = svc.update_task(task_id, update_data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("tasks.update_task_status failed org=%s id=%s", org_id, task_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar status")
@@ -229,6 +241,8 @@ def list_routines(
     org_id = coerce_org_uuid(raw_org)
     try:
         return _svc(token, org_id).list_routines(active_only=active_only)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("tasks.list_routines failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar rotinas")
@@ -247,6 +261,8 @@ def create_routine(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).create_routine(payload.model_dump(mode="json", exclude_none=True))
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("tasks.create_routine failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar rotina")
@@ -266,6 +282,8 @@ def get_routine(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_routine(routine_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("tasks.get_routine failed org=%s id=%s", org_id, routine_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar rotina")
@@ -291,6 +309,8 @@ def update_routine(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
         row = _svc(token, org_id).update_routine(routine_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("tasks.update_routine failed org=%s id=%s", org_id, routine_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar rotina")
@@ -308,6 +328,8 @@ def delete_routine(
     org_id = coerce_org_uuid(raw_org)
     try:
         ok = _svc(token, org_id).delete_routine(routine_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("tasks.delete_routine failed org=%s id=%s", org_id, routine_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar rotina")
@@ -329,6 +351,8 @@ def run_due_routines(
     org_id = coerce_org_uuid(raw_org)
     try:
         spawned = _svc(token, org_id).run_due_routines()
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("tasks.run_due_routines failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao executar rotinas")

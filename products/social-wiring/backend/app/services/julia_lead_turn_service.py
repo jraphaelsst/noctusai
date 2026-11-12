@@ -65,6 +65,7 @@ from app.modules.supervisao import alertas as supervisao_alertas
 from app.services import julia_acoes_service, julia_conhecimento_service, julia_contatos_service, julia_contexto_service, julia_conversas_service
 from app.services.identidade_mascara import ref as ref_log
 from app.services import julia_origem_service
+from app.services.julia_reengajamento_service import RESULTADO_LIMITE_RETOMADAS
 from app.services import julia_protecao_service as protecao
 from app.services import julia_equipes_service  # registers the `estado.atendente_nome` provider on import
 from app.services import julia_espelho_service, julia_relatorio_service, julia_thread_service
@@ -1025,13 +1026,14 @@ def _registrar_primeira_resposta(deps: LeadDeps, org_id: Any, contato: dict[str,
 async def run_reengajamento_turn(
     deps: LeadDeps, connection: WhatsAppConnectionRecord, chat_id: str, contato: dict[str, Any],
     estado_extra: dict[str, Any], marker_id: str,
-) -> bool:
+) -> bool | str:
     """A re-engagement turn: `gatilho="reengajamento"` with the flavour as DATA in `contexto.estado` (`reengajamento` = the
     tier, and for a regua text `reescrever` + `texto_base` + `tentativa`) -- agents renders its own instruction from its DB
     texts. There is NO fake lead message (the old `[sistema] ...` marker is gone). Returns True when a message went out; an
     agents failure, or a status that means "not served" (`reengajamento_ignorado`: the agent is off / paused / not the
     active participant), is logged and reads as False (the job still completes: a re-engagement is best-effort, a retry
-    storm against a down agents is worse). Does NOT bump `gen` (nothing came in).
+    storm against a down agents is worse). `limite_retomadas` (the follow-up cap) returns `RESULTADO_LIMITE_RETOMADAS`: the caller
+    ends the contact's sequence. Does NOT bump `gen` (nothing came in).
 
     `estado_extra["reengajamento"]` names the flow the outbound gate checks (`minutos` | `horas` | `regua`); a regua turn
     also carries `regua_id`, which goes to the gate and NOT to agents. `marker_id` (unique per job) keys the action ledger."""
@@ -1082,7 +1084,8 @@ async def run_reengajamento_turn(
             deps, connection=connection, chat_id=chat_id, result=result, state=state, chat_store=chat_store,
             julia_turn=julia_turn, agents_client=client, mensagens=[],
         )
-        return False
+        # the follow-up cap: the caller ends this contact's sequence (it is not a plain "nothing sent")
+        return RESULTADO_LIMITE_RETOMADAS if result.status == "limite_retomadas" else False
     return await _deliver(
         deps, connection=connection, chat_id=chat_id, key=f"lead:{connection.id}:{chat_id}", run=[], result=result,
         state=state, chat_store=chat_store, julia_turn=julia_turn,

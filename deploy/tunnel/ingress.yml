@@ -122,6 +122,10 @@ routes:
   - hostname: monica.noctusai.com
     service:  http://monica:8020
 
+  # ── assistant (prod exposure consent: deploy/consent/assistant.prod.yml) ──
+  - hostname: assistant.noctusai.com
+    service:  http://assistant:8021
+
   - hostname: igig.noctusai.com
     service:  http://igig:8013
 

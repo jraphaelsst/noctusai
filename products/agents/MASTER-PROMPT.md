@@ -99,6 +99,7 @@ products/agents/backend/app/
   it also refunds the per-tool call count, the global `max_chamadas_ferramenta_turno` still bounds a loop); every other code counts. The refusal log line carries `classe=`.
   Past `max_recusas_por_turno` / `max_erros_ferramenta_por_turno` the toolset stops the turn (`should_stop`) and the turn
   ends in a hand-off to the org owner + a flagged event (silence, or the DB text `runtime.parada_segura`).
+- Emergency (migration 079): `sinalizar_alerta tipo=emergencia` sets `thread_participantes.fecha_inativo_min=10`; the thread stays open, the `agents_thread_inatividade` job (every minute) closes the participant via `transicionar` (motivo `inatividade`) once `conversations.last_message_at` + window passed (every message, including the agent's reply, refreshes it); `encerrar` is refused with `emergencia_aberta` meanwhile (a lead's stop request is exempt).
 - Julia v3 (CONTRACT §12): `sinalizar_alerta` (-> `agents.thread_alertas`, action `alerta`, one per tipo per turn),
   `registrar_documento` (an ID photo/scan -> flag on `lead_identificacao`, CPF satisfied pending extraction, action
   `documento_identificacao`; the id is checked against the inbound lead message, whose `provider_message_id` is stored
@@ -168,7 +169,12 @@ products/agents/backend/app/
   `itens_essenciais` (SW hard filters), nice-to-haves as `caracteristicas`; the answer's `restantes_estimados`,
   `relaxado` (axes SW widened), `similar_a_encontrado` and `itens_nao_verificaveis` (asked items SW's catalogue cannot
   verify — pets, proximidades — which did not filter; Julia confirms them) reach the model next to the listings
-  (explicit allowlist `_BUSCA_META`).
+  (explicit allowlist `BUSCA_META`, now in `app/catalogos/imoveis_sw.py`).
+  **Offer catalogue seam (migration 081).** `oferecer_opcoes` / `detalhes_opcao` / `registrar_reacao_opcao` are the
+  catalogue-neutral twins of the three imóvel tools and share ONE core with them (`app/channels/tool_registry.py`); the
+  catalogue is an adapter behind `app.catalogos.CatalogoOpcoes` (`imoveis_sw`, `fixture`; `catalogo_para` refuses an
+  unknown key). The agent's catalogue is `qualificacao_parametros.catalogo`; readiness blocks `oferecer_opcoes` active
+  without one (`catalogo_ausente`); lead events carry `lead_imovel_eventos.catalogo` (duplicate-offer is per catalogue).
   `encerrar` ends the participation: a later re-engagement is ignored (no model call) and the thread reports
   `reengajamento_suprimido`; the lead-level opt-out (`POST /leads/{ref}/opt-out`) does the same for every agent.
   `encerrar` with motive `lead_pediu_parar` (+ a required `motivo_texto`) IS that lead-level opt-out: a lead who
@@ -441,6 +447,10 @@ model only records criterion values through tools; **score and stage are compute
   `identificacao`. Axis config (`parametros.eixos`): `max`, `multiplicadores` (rule x factor), `decaimento`
   (factor after N days without a lead reply). `parametros.lote_ofertas` = up to 3 properties per offer run (owner's
   rule 2026-11-03; migration 055 column default; 1..5, shown in the editor).
+  Follow-up cap (owner 2026-11-10): `parametros.max_retomadas_seguidas` (default **2**, 0..10, migration 080) is the most
+  follow-ups (`gatilho:"reengajamento"`) in a row with no reply from the lead; `controles.decidir` refuses one more with
+  status `limite_retomadas` (no model call, nothing stored; opt-out is decided first), every outcome is one append-only
+  `thread_retomada_eventos` row, and social-wiring ends that contact's sequence.
 - **Store timestamps**: every Real-store row mapper parses `timestamptz` through `app.stores._util.db_ts`
   (PostgREST returns ISO strings, the Fakes hold `datetime`; a passthrough 500'd every published-version read).
 - **Stages** are rules in a closed DSL (`todos/algum/nao`, `criterio`, `score` incl. `eixo`, `evento`,

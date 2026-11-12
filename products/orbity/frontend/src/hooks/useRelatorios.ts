@@ -20,6 +20,7 @@ import { useQuery } from "@tanstack/react-query";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { errorCopy } from "@/lib/errorCopy";
 import { useAuthStore } from "@noctusai/seed/infra";
 
 // ---------------------------------------------------------------------------
@@ -52,13 +53,11 @@ export interface ReportSnapshot {
 }
 
 export interface PublicReport {
-  report_id: string;
   name: string;
   period_start: string;
   period_end: string;
   status: string;
   expires_at: string | null;
-  snapshot_id: string | null;
   generated_at: string | null;
   payload: Record<string, unknown>;
 }
@@ -249,7 +248,7 @@ export function useGenerateSnapshot() {
       toast.success("Snapshot gerado com sucesso!");
     },
     onError: (error: Error) => {
-      toast.error("Erro ao gerar snapshot", { description: error.message });
+      toast.error("Erro ao gerar snapshot", { description: errorCopy(error) });
     },
   });
 }

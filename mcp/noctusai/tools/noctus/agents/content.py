@@ -25,7 +25,7 @@ Payload (a JSON file, the exact request body of the underlying route):
 ====================  ==========================================================  =============================
 kind                  payload                                                     route
 ====================  ==========================================================  =============================
-``secao``             ``{"secoes": [{chave, titulo, ordem, conteudo, ativo}]}``   PUT agents/{agent}/draft/sections
+``secao``             ``{"secoes": [{chave, titulo, ordem, conteudo, ativo, regras?}]}``   PUT agents/{agent}/draft/sections
 ``texto``             ``{"itens": [{chave, conteudo}]}``                          PUT .../draft/textos
 ``ferramenta``        ``{"itens": [{ferramenta, ativo, descricao, parametros,     PUT .../draft/ferramentas
                       obrigatoria_skill}]}``
@@ -38,6 +38,8 @@ kind                  payload                                                   
 ``padrao_criterio``   ``{"itens": [{chave, grupo, rotulo, tipo, ...}]}``          /api/qualificacao (draft)
 ``padrao_estagio``    ``{"itens": [{chave, rotulo, ordem, regra, ...}]}``         idem
 ``padrao_parametros`` the ParametrosIn body (an object)                           idem
+(action)``criar_padrao`` ``padrao=<key>``, payload ``{nome, descricao?, notas?}``     POST /api/qualificacao/padroes (+ /versoes)
+                      creates the standard and its first DRAFT (idempotent; never publishes)
 ``evals_mecanismo``   ``{"itens": [{slug, titulo, entrada, k, roteiro, asserts,   /api/studio/agents/{agent}/
                       tags, ativo}]}`` (mechanism cases; ``merge=False``          evals/cases
                       deactivates the ones left out)
@@ -118,6 +120,9 @@ DEFAULT_ENV_FILE = Path("~/.config/noctus/agents.env")
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 _HTTP_TIMEOUT = httpx.Timeout(60.0, connect=15.0)
 ACTIONS = ("list", "get", "set")
+PADRAO_ACTIONS = ("criar_padrao",)
+_PADRAO_KEY_RE = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
+_CRIAR_PADRAO_CAMPOS = ("nome", "descricao", "notas")
 LIFECYCLE_ACTIONS = (
     "criar_agente", "excluir_agente", "configurar_agente", "definicao", "gerar", "geracao", "conceder", "concessoes",
     "prontidao", "atualizar_skills",
@@ -163,10 +168,16 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     return out
 
 
+def _from_env(key: str) -> str:
+    """The process env wins; else the agents env file (one file carries both the token and the URL)."""
+    val = os.environ.get(key, "").strip()
+    if not val:
+        val = _parse_env_file(Path(os.environ.get("NOCTUS_AGENTS_ENV_FILE") or DEFAULT_ENV_FILE).expanduser()).get(key, "").strip()
+    return val
+
+
 def _token() -> str:
-    tok = os.environ.get(ENV_TOKEN, "").strip()
-    if not tok:
-        tok = _parse_env_file(Path(os.environ.get("NOCTUS_AGENTS_ENV_FILE") or DEFAULT_ENV_FILE).expanduser()).get(ENV_TOKEN, "").strip()
+    tok = _from_env(ENV_TOKEN)
     if not tok:
         raise ContentError(
             "nao_configurado",
@@ -177,9 +188,10 @@ def _token() -> str:
 
 
 def _base_url(base_url: str | None) -> str:
-    url = (base_url or os.environ.get(ENV_URL, "")).strip().rstrip("/")
+    url = (base_url or _from_env(ENV_URL)).strip().rstrip("/")
     if not url:
-        raise ContentError("base_url_ausente", "Informe base_url (o ambiente alvo) ou defina NOCTUS_AGENTS_URL.")
+        raise ContentError("base_url_ausente", "Informe base_url (o ambiente alvo) ou defina NOCTUS_AGENTS_URL "
+                                               "(no ambiente ou em ~/.config/noctus/agents.env).")
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
     if parts.username or parts.password or not host:
@@ -308,7 +320,13 @@ class _ReplaceSet:
             rows = draft.get("secoes", [])
         else:
             rows = api.call("GET", f"/api/studio/agents/{_q(agent)}/versions/{draft['id']}/{self.read}").get("itens", [])
-        return {r[self.id_field]: {f: r.get(f) for f in self.fields} for r in rows}
+        return {r[self.id_field]: {f: self._norm(f, r.get(f)) for f in self.fields} for r in rows}
+
+    @staticmethod
+    def _norm(field: str, value: Any) -> Any:
+        # ``regras`` (agent_prompt_sections.regras, migration 078) is always a list: the PUT replaces every section, so a
+        # missing value would be sent as ``[]`` and erase the tags -- it is read back and carried forward instead.
+        return list(value or []) if field == "regras" else value
 
     def plan(self, api: _Api, agent: str, payload: Any, merge: bool) -> tuple[list[dict[str, Any]], Callable[[], None] | None]:
         items = _items(payload, self.body_key)
@@ -320,6 +338,8 @@ class _ReplaceSet:
             unknown = set(it) - set(self.fields) - {self.id_field}
             if unknown:
                 raise ContentError("payload_invalido", f"Campos desconhecidos: {', '.join(sorted(unknown))}.")
+            if "regras" in it and not (isinstance(it["regras"], list) and all(isinstance(r, str) for r in it["regras"])):
+                raise ContentError("payload_invalido", "'regras' deve ser uma lista de textos (as regras de seção aceitas pelo servidor).")
             base = dict(cur.get(it[self.id_field]) or {})
             proposed[it[self.id_field]] = {**base, **{k: v for k, v in it.items() if k != self.id_field}}
         changes = []
@@ -446,6 +466,11 @@ class _Skill:
 
 # ── pins of library skills on an agent draft ────────────────────────────────
 
+SKILL_SEM_VERSAO = "skill_sem_versao_publicada"
+_SKILL_SEM_VERSAO_MSG = (
+    "A skill '{skill}' nao tem versao PUBLICADA: so ha rascunho. Publique a skill na biblioteca (ato humano) e fixe de novo."
+)
+
 
 class _SkillRef:
     def _current(self, api: _Api, agent: str) -> dict[str, dict[str, Any]]:
@@ -458,6 +483,7 @@ class _SkillRef:
         if not isinstance(remover, list) or not all(isinstance(r, str) for r in remover):
             raise ContentError("payload_invalido", "'remover' deve ser uma lista de chaves de skill.")
         cur = self._current(api, agent)
+        biblioteca: dict[str, dict] | None = None
         changes, steps = [], []
         for it in items:
             skill = it.get("skill")
@@ -466,6 +492,15 @@ class _SkillRef:
             unknown = set(it) - {"skill", "versao", "obrigatoria_para", "ordem"}
             if unknown:
                 raise ContentError("payload_invalido", f"Campos desconhecidos: {', '.join(sorted(unknown))}.")
+            if it.get("versao") is None:
+                # No explicit version = "the newest PUBLISHED one": name the real cause up front instead of a bare 404.
+                if biblioteca is None:
+                    biblioteca = {s["chave"]: s for s in api.call("GET", "/api/skills-biblioteca")["items"]}
+                lib = biblioteca.get(skill)
+                if lib is None:
+                    raise ContentError("skill_inexistente", f"A skill '{skill}' nao existe na biblioteca: crie-a (kind=skill) e publique.")
+                if lib.get("versao_publicada") is None:
+                    raise ContentError(SKILL_SEM_VERSAO, _SKILL_SEM_VERSAO_MSG.format(skill=skill))
             old = cur.get(skill)
             touched = {k: v for k, v in it.items() if k != "skill"}
             before = None if old is None else {k: old.get({"versao": "versao"}.get(k, k)) for k in touched}
@@ -500,7 +535,8 @@ class _SkillRef:
 
 _CRITERIO_FIELDS = ("grupo", "rotulo", "descricao_modelo", "tipo", "opcoes", "unidade", "sensivel", "pontuacao", "ordem", "ativo", "eixo", "escopo", "validade_dias")
 _ESTAGIO_FIELDS = ("rotulo", "descricao", "ordem", "regra", "conclusivo", "terminal")
-_PARAM_FIELDS = ("minimo_para_ofertar", "lote_ofertas", "score_max", "eixos", "pedir_identificacao_quando")
+_PARAM_FIELDS = ("minimo_para_ofertar", "lote_ofertas", "score_max", "eixos", "pedir_identificacao_quando",
+                 "max_retomadas_seguidas", "catalogo", "identificacao_desejada")
 
 
 def _norm_opcoes(opcoes: Any) -> Any:
@@ -773,7 +809,7 @@ class _ConformidadeRegras:
 # ── dispatch ────────────────────────────────────────────────────────────────
 
 _REPLACE_SETS: dict[str, _ReplaceSet] = {
-    "secao": _ReplaceSet("secoes", "chave", ("titulo", "ordem", "conteudo", "ativo"), "sections", "draft"),
+    "secao": _ReplaceSet("secoes", "chave", ("titulo", "ordem", "conteudo", "ativo", "regras"), "sections", "draft"),
     "texto": _ReplaceSet("itens", "chave", ("conteudo",), "textos", "textos"),
     "ferramenta": _ReplaceSet("itens", "ferramenta", ("ativo", "descricao", "parametros", "obrigatoria_skill"), "ferramentas", "ferramentas"),
     "decisao": _ReplaceSet("itens", "chave", ("titulo", "regra", "opcoes"), "decisoes", "decisoes"),
@@ -813,9 +849,11 @@ def content(
     try:
         if action in LIFECYCLE_ACTIONS:
             return _lifecycle(action, agent, base_url, bool(confirm), _transport, payload_path=payload_path, chave=chave)
+        if action in PADRAO_ACTIONS:
+            return _criar_padrao(padrao, payload_path, base_url, bool(confirm), _transport)
         if action not in ACTIONS:
             raise ContentError(
-                "acao_invalida", f"action deve ser um de {(*ACTIONS, *LIFECYCLE_ACTIONS)} (esta ferramenta nunca publica).",
+                "acao_invalida", f"action deve ser um de {(*ACTIONS, *LIFECYCLE_ACTIONS, *PADRAO_ACTIONS)} (esta ferramenta nunca publica).",
             )
         if kind not in KINDS:
             raise ContentError("kind_invalido", f"kind deve ser um de {KINDS}.")
@@ -839,6 +877,37 @@ def content(
             api.close()
     except ContentError as exc:
         return {"status": "error", "codigo": exc.codigo, "mensagem": exc.mensagem}
+
+
+def _criar_padrao(padrao: str | None, payload_path: str | None, base_url: str | None, confirm: bool, transport) -> dict[str, Any]:
+    """Create a qualification standard (``POST /api/qualificacao/padroes``) and its first DRAFT version. Idempotent: an
+    existing standard is kept, and one with no version only gets the draft. Never publishes (``_Api.call`` refuses)."""
+    if not padrao:
+        raise ContentError("padrao_ausente", "A acao criar_padrao precisa de 'padrao' (a chave, ex.: sdr-base).")
+    if not _PADRAO_KEY_RE.match(padrao):
+        raise ContentError("padrao_invalido", "A chave do padrao: minusculas, digitos, '_' ou '-', comecando por letra (2 a 64).")
+    body = _only(_load_payload(payload_path), _CRIAR_PADRAO_CAMPOS, "criar_padrao")
+    if not isinstance(body.get("nome"), str) or not body["nome"].strip():
+        raise ContentError("payload_invalido", "O payload de criar_padrao precisa de 'nome'.")
+    base = _base_url(base_url)
+    api = _Api(base, _token(), transport)
+    head = {"action": "criar_padrao", "padrao": padrao, "alvo": base}
+    try:
+        existe = any(p["chave"] == padrao for p in api.call("GET", "/api/qualificacao/padroes")["items"])
+        versoes = api.call("GET", f"/api/qualificacao/padroes/{_q(padrao)}/versoes")["items"] if existe else []
+        if existe and versoes:
+            return {"status": "no_change", **head, "dry_run": not confirm, "mensagem": "O padrao ja existe e tem versao: nada a criar."}
+        passos = ([] if existe else ["POST /api/qualificacao/padroes"]) + [f"POST /api/qualificacao/padroes/{padrao}/versoes"]
+        if not confirm:
+            return {"status": "planned", **head, "dry_run": True, "passos": passos, "campos": sorted(body),
+                    "mensagem": "Nada foi escrito. Repita com confirm=True para criar o padrao e seu RASCUNHO (nunca publica)."}
+        if not existe:
+            api.call("POST", "/api/qualificacao/padroes", {"chave": padrao, "nome": body["nome"], "descricao": body.get("descricao")})
+        api.call("POST", f"/api/qualificacao/padroes/{_q(padrao)}/versoes", {"notas": body.get("notas")})
+        return {"status": "created", **head, "dry_run": False, "passos": passos, "escritas": api.writes,
+                "mensagem": "Padrao criado com a versao em RASCUNHO. Preencha com padrao_criterio/estagio/parametros; publicar e um ato humano."}
+    finally:
+        api.close()
 
 
 def _only(payload: Any, allowed: tuple[str, ...], what: str) -> dict[str, Any]:
@@ -994,7 +1063,7 @@ def register(server) -> None:
             "Write an agent's CONTENT rows (the 'Claude, change Julia's X' path) into a target environment through the "
             "agents Studio API, DRAFTS ONLY (never publishes). action=list|get|set; kind=secao|texto|ferramenta|decisao|"
             "spec (need agent=<key>), skill|skill_ref (library skills / pins on the agent draft), padrao_criterio|"
-            "padrao_estagio|padrao_parametros (need padrao=<key>), evals_mecanismo|evals_comportamento (mechanism / LLM-judged behaviour eval cases) | evals_consolidacao (per-case criticidade + depende_de, both suites; payload {itens: [{slug, criticidade?, depende_de?}]}) | "
+            "padrao_estagio|padrao_parametros (need padrao=<key>; action=criar_padrao padrao=<key> payload {nome, descricao?} creates a NEW standard + its first draft version), evals_mecanismo|evals_comportamento (mechanism / LLM-judged behaviour eval cases) | evals_consolidacao (per-case criticidade + depende_de, both suites; payload {itens: [{slug, criticidade?, depende_de?}]}) | "
             "conformidade_regras (rule switches; NOT versioned - live from the next turn) | rascunho (the DRAFT settings: payload {configuracoes: {provider, model, effort, max_turns, idioma, tool_policy: {web_search, knowledge}, notas}}, only the fields sent change) (need agent=<key>). Lifecycle: "
             "action=criar_agente (agent=<any valid key>: creates the EMPTY platform definition; optional payload_path with nome, "
             "runtime, owner_product, escopo/padrao_qualificacao, rascunho_padrao, instanciavel, papel and a briefing that "

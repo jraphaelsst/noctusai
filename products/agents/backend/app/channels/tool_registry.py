@@ -37,6 +37,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from noctusai_lib.integrations.llm import ToolCall, ToolResult, ToolSpec
 
 from app.channels import proveniencia as prov
+from app.catalogos import CATALOGO_PADRAO, CatalogoDesconhecido, CatalogoIndisponivel, CatalogoOpcoes, ImoveisSwCatalogo, catalogo_para, chaves_de_catalogo
+from app.catalogos.imoveis_sw import BUSCA_META as _BUSCA_META, consulta_sw as _consulta_sw  # noqa: F401  (re-exported: tests + eval)
 from app.channels import texto_seguro
 from app.clients.social_wiring import (
     JULIA_TOOL_TIMEOUT_SECONDS,
@@ -86,6 +88,11 @@ __all__ = [
 ]
 
 MOTIVO_MAX_CHARS = 280
+#: An emergency alert keeps the thread open and closes it after this many minutes without a message (the owner's rule:
+#: "stay open, point to the numbers and close after 10 min of inactivity; every interaction refreshes the timer").
+#: NOC-REMEDIATE[inatividade-por-agente]: a per-agent window (agent/definition setting) replaces this constant -- 2026-11-10
+EMERGENCIA_JANELA_MIN = 10
+TIPO_ALERTA_EMERGENCIA = "emergencia"
 #: ``sinalizar_alerta`` caps (migration 057 CHECKs).
 ALERTA_DESCRICAO_MAX = 500
 ALERTA_TRECHO_MAX = 500
@@ -161,6 +168,22 @@ class OferecerImoveisArgs(_Args):
 
 class DetalhesImovelArgs(_Args):
     codigo: str = Field(min_length=1, max_length=64)
+
+
+class OferecerOpcoesArgs(_Args):
+    #: ``origem`` = the option the lead arrived with; ``similares`` = a search by the lead's profile.
+    modo: Literal["origem", "similares"]
+    limite: int | None = Field(default=None, ge=1, le=5)
+
+
+class DetalhesOpcaoArgs(_Args):
+    codigo: str = Field(min_length=1, max_length=64)
+
+
+class RegistrarReacaoOpcaoArgs(_Args):
+    codigo: str = Field(min_length=1, max_length=64)
+    reacao: Literal["gostou", "nao_gostou", "quer_ver_mais"]
+    motivo: str | None = Field(default=None, max_length=200)
 
 
 class ConsultarEmpreendimentoArgs(_Args):
@@ -254,6 +277,11 @@ TOOLS: dict[str, ToolDef] = {t.nome: t for t in (
     ToolDef("detalhes_imovel", DetalhesImovelArgs, frozenset({"qualificacao", "sw"})),
     ToolDef("consultar_empreendimento", ConsultarEmpreendimentoArgs, frozenset({"sw"})),
     ToolDef("registrar_reacao_imovel", RegistrarReacaoImovelArgs, frozenset({"qualificacao"})),
+    # the catalogue-neutral counterparts (081). ``catalogo`` is a runtime capability (the standard names a catalogue the
+    # turn can build) the readiness derivation never grants, so they are never "expected" of an agent that did not opt in
+    ToolDef("oferecer_opcoes", OferecerOpcoesArgs, frozenset({"qualificacao", "catalogo"})),
+    ToolDef("detalhes_opcao", DetalhesOpcaoArgs, frozenset({"qualificacao", "catalogo"})),
+    ToolDef("registrar_reacao_opcao", RegistrarReacaoOpcaoArgs, frozenset({"qualificacao", "catalogo"})),
     ToolDef("registrar_intencao_visita", RegistrarIntencaoVisitaArgs, frozenset({"qualificacao"})),
     ToolDef("registrar_identificacao", RegistrarIdentificacaoArgs, frozenset({"identificacao"})),
     ToolDef("registrar_documento", RegistrarDocumentoArgs, frozenset({"identificacao", "documentos"})),
@@ -482,6 +510,8 @@ class JuliaTurno:
     #: ``contexto.estado`` (interacao_id, origem, credito) -- the operational facts SW sent.
     estado_sw: Any | None = None
     ferramentas_sw: bool = True
+    #: A catalogue that REPLACES the one the standard names (the eval world's synthetic one); ``None`` = the standard's.
+    catalogo_fixo: Any | None = None
     # ── the turn's ledger ──
     actions: list[dict[str, Any]] = field(default_factory=list)
     recusas: int = 0
@@ -600,6 +630,11 @@ class JuliaTurno:
         credito = getattr(self.estado_sw, "credito", None)
         if credito is not None and credito.ativo:
             caps.add("credito")
+        chave = self.padrao.parametros.catalogo
+        if self.catalogo_fixo is not None or (
+            chave in chaves_de_catalogo() and (chave != "imoveis_sw" or "sw" in caps)
+        ):
+            caps.add("catalogo")  # the standard names a catalogue this turn can build: the generic offer tools may be offered
         return frozenset(caps)
 
     def no_lote(self, trecho: str | None, maximo: int) -> bool:
@@ -669,6 +704,7 @@ def _msg_esgotado(t: Any) -> dict[str, str]:
 #: Every code literal of this module (and ``CODIGOS_RECUSA``) sits in exactly one of the two (tested).
 RECUSAS_CORRIGIVEIS: frozenset[str] = frozenset({
     "skill_inexistente", "arquivo_inexistente", "sem_codigo_campanha", "imovel_nao_oferecido",
+    "sem_origem", "opcao_nao_oferecida",
 })
 RECUSAS_CONTADAS: frozenset[str] = frozenset({
     "sem_itens", "itens_demais", "versao_nao_publicada", "fonte_invalida", "criterio_repetido", "criterio_derivado",
@@ -678,7 +714,7 @@ RECUSAS_CONTADAS: frozenset[str] = frozenset({
     "nao_pode_ofertar", "limite_ofertas", "identificacao_nao_devida", "campo_desconhecido", "valor_nao_confere",
     "identificacao_indisponivel", "credito_inativo", "limite_recusas", "indisponivel", "motivo_texto_ausente",
     "consentimento_sem_evidencia", "opt_out_sem_evidencia", "limite_ferramentas", "argumentos_invalidos",
-    "documento_nao_encontrado", "documento_sem_midia", "emergencia_aberta",
+    "documento_nao_encontrado", "documento_sem_midia", "emergencia_aberta", "opcao_ja_oferecida",
 })
 
 
@@ -720,46 +756,16 @@ def _link_do_evento(link: object) -> str | None:
     return link if isinstance(link, str) and link.startswith(("http://", "https://")) and len(link) <= 200 else None
 
 
-def _consulta_sw(valores: Mapping[str, Any]) -> dict[str, Any]:
-    """The SW search arguments from the lead's COMPUTED values.
-
-    NOC-REMEDIATE[julia-v2-consulta-sw-mapa]: the criterion -> SW parameter mapping is keyed by the v1
-    standard's criterion keys here; it belongs on the criterion row (a ``param_sw`` column of
-    ``qualificacao_criterios``) so a renamed criterion cannot silently stop filtering -- 2026-10-19
-    """
-    q: dict[str, Any] = {}
-    if valores.get("operacao") in ("compra", "aluguel"):
-        q["operacao"] = valores["operacao"]
-    if isinstance(valores.get("tipo_imovel"), str):
-        q["tipo"] = valores["tipo_imovel"]
-    faixa = valores.get("faixa_preco")
-    if isinstance(faixa, dict):
-        if "min" in faixa:
-            q["preco_min"] = faixa["min"]
-        if "max" in faixa:
-            q["preco_max"] = faixa["max"]
-    for src, dst in (("quartos_min", "quartos_min"), ("vagas_min", "vagas_min")):
-        if isinstance(valores.get(src), (int, float)) and not isinstance(valores.get(src), bool):
-            q[dst] = int(valores[src])
-    reg = valores.get("regioes")
-    if isinstance(reg, str) and reg.strip():
-        q["bairros"] = [reg.strip()]
-    elif isinstance(reg, list) and reg:
-        q["bairros"] = [str(r) for r in reg][:10]
-    # nice-to-haves (SW ranks by them and relaxes them first) vs MUST-haves (SW hard filters, never relaxed)
-    for src, dst in (("caracteristicas", "caracteristicas"), ("itens_essenciais", "itens_essenciais")):
-        if isinstance(valores.get(src), list) and valores[src]:
-            q[dst] = [str(c) for c in valores[src]][:20]
-    return q
+#: The generic offer tool forwards only these sibling facts of a catalogue answer (the contract of ``oferecer_opcoes``).
+_META_OPCOES = ("relaxado", "itens_nao_verificaveis")
+#: The real-estate refusal codes the generic tools answer under their catalogue-neutral names.
+_ALIAS_OPCAO = {"imovel_ja_oferecido": "opcao_ja_oferecida", "imovel_nao_oferecido": "opcao_nao_oferecida"}
 
 
-#: The sibling keys of a ``buscar_imoveis`` answer (SW CONTRACT 8.3, v2) the model must see next to the listings:
-#: how many more pass (``restantes_estimados``), which axes SW widened to fill the batch (``relaxado`` -- Julia
-#: must say what was widened, never present a widened result as an exact match) and whether the campaign anchor
-#: was found (``similar_a_encontrado``), and the asked items SW's catalogue cannot verify (``itens_nao_verificaveis``
-#: -- pets, proximidades, ...: they did not filter the result, Julia confirms them with the lead / broker). Anything
-#: else SW adds is NOT forwarded (explicit allowlist).
-_BUSCA_META = ("restantes_estimados", "relaxado", "similar_a_encontrado", "itens_nao_verificaveis")
+def _codigo_recusa(codigo: str | None, generico: bool, padrao: str = "evento_invalido") -> str:
+    """The refusal code of an event the service refused, in the vocabulary of the tool that asked."""
+    c = codigo or padrao
+    return _ALIAS_OPCAO.get(c, c) if generico else c
 
 
 def make_channel_tools_factory(**_unused: Any):
@@ -833,26 +839,39 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         payload.pop("codigo", None)
         return _Resultado(payload, erro=bool(r.recusados), recusa=bool(r.recusados))
 
-    async def _evento(codigo: str, evento: str, origem: str, motivo: str | None = None, lote: int | None = None) -> Any:
+    async def _evento(
+        codigo: str, evento: str, origem: str, motivo: str | None = None, lote: int | None = None,
+        catalogo: str = CATALOGO_PADRAO,
+    ) -> Any:
         return await asyncio.to_thread(
             t.qual.registrar_evento_imovel, t.org_id, t.lead_ref_id, agent_id=t.agent_id,
             versao_id=_versao_id(), codigo_imovel=codigo, evento=evento, origem=origem, lote=lote, motivo=motivo,
-            thread_id=t.thread_id, escopo=t.escopo, sinais=t.sinais,
+            thread_id=t.thread_id, escopo=t.escopo, sinais=t.sinais, catalogo=catalogo,
         )
 
-    async def _origem_oferta(codigo: str) -> str:
+    async def _origem_oferta(codigo: str, catalogo: str = CATALOGO_PADRAO) -> str:
         eventos = await asyncio.to_thread(t.qual.eventos, t.org_id, t.lead_ref_id)
         for e in eventos:
-            if e.codigo_imovel == codigo and e.evento == "oferecido":
+            if e.codigo_imovel == codigo and e.evento == "oferecido" and e.catalogo == catalogo:
                 return e.origem
         return "similar"
 
-    async def _reacao(a: RegistrarReacaoImovelArgs) -> _Resultado:
-        origem = await _origem_oferta(a.codigo)
-        r = await _evento(a.codigo, a.reacao, origem, _limpo(a.motivo, 200))
+    async def _reacao_nucleo(
+        codigo: str, reacao: str, motivo: str | None, *, catalogo: str, generico: bool,
+    ) -> _Resultado:
+        """One reaction of the lead to an offered option: the event the qualification engine reads (``gostou`` /
+        ``nao_gostou`` / ``quer_ver_mais``). The real-estate and the generic tool share it; only the refusal names differ."""
+        origem = await _origem_oferta(codigo, catalogo)
+        r = await _evento(codigo, reacao, origem, _limpo(motivo, 200), catalogo=catalogo)
         if not r.ok:
-            return _recusa(t, r.codigo or "evento_invalido")
+            return _recusa(t, _codigo_recusa(r.codigo, generico))
         return _ok(inalterado=r.inalterado)
+
+    async def _reacao(a: RegistrarReacaoImovelArgs) -> _Resultado:
+        return await _reacao_nucleo(a.codigo, a.reacao, a.motivo, catalogo=CATALOGO_PADRAO, generico=False)
+
+    async def _reacao_opcao(a: RegistrarReacaoOpcaoArgs) -> _Resultado:
+        return await _reacao_nucleo(a.codigo, a.reacao, a.motivo, catalogo=_catalogo_do_turno().chave, generico=True)
 
     async def _visita(a: RegistrarIntencaoVisitaArgs) -> _Resultado:
         origem = await _origem_oferta(a.codigo)
@@ -919,6 +938,10 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         """Julia flags an unhappy lead / her own mistake / a drift. One alert per tipo per turn (a repeat is a
         no-op answered ok); SW turns the ``alerta`` action into a message to the report destination."""
         assert t.alertas is not None
+        if a.tipo == TIPO_ALERTA_EMERGENCIA:
+            # idempotent (also on a repeat / re-run): the thread stays open and the inactivity job closes it
+            await asyncio.to_thread(
+                t.threads.definir_janela_inatividade, t.org_id, t.thread_id, t.agent_id, EMERGENCIA_JANELA_MIN)
         if a.tipo in t.alertas_tipos:
             return _ok(inalterado=True, mensagem=t.texto("ferramenta.resultado.registrado"))
         previos = await asyncio.to_thread(t.alertas.listar, t.org_id, t.thread_id)
@@ -961,22 +984,54 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         iid = getattr(t.estado_sw, "interacao_id", None)
         return {"interacao_id": str(iid)} if iid is not None else {}
 
-    async def _oferecer(a: OferecerImoveisArgs) -> _Resultado:
-        campanha = getattr(getattr(t.estado_sw, "origem", None), "codigo_imovel_campanha", None)
-        ja = await asyncio.to_thread(t.qual.codigos_oferecidos, t.org_id, t.lead_ref_id)
+    def _interacao_id() -> str | None:
+        iid = getattr(t.estado_sw, "interacao_id", None)
+        return str(iid) if iid is not None else None
+
+    def _catalogo_do_turno() -> CatalogoOpcoes:
+        """The catalogue the GENERIC tools read: the eval world's fixture, else the one the standard names. An unknown
+        key or a missing client raises (loud) -- the handler answers ``indisponivel``, never another catalogue."""
+        if t.catalogo_fixo is not None:
+            return t.catalogo_fixo
+        return catalogo_para(t.padrao.parametros.catalogo, sw=t.sw if t.ferramentas_sw else None)
+
+    def _catalogo_ou_falha() -> CatalogoOpcoes | _Resultado:
+        try:
+            return _catalogo_do_turno()
+        except (CatalogoDesconhecido, CatalogoIndisponivel) as exc:
+            logger.error("agents.channel.catalogo_indisponivel org_id=%s agent_id=%s cause=%s", t.org_id, t.agent_id, exc)
+            return _falha_sw(t)
+
+    def _lembrar(item: Mapping[str, Any]) -> None:
+        """What the reply may repeat about an offered option: its code and its link (conformance reads both)."""
+        t.codigos_vistos.add(str(item["codigo"]).casefold())
+        if (lk := _pedaco_link(item)) is not None:
+            t.links_vistos.add(lk)
+            t.links_por_codigo[str(item["codigo"])] = lk
+
+    async def _oferecer_nucleo(
+        catalogo: CatalogoOpcoes, *, de_origem: bool, limite_pedido: int | None, generico: bool,
+    ) -> _Resultado:
+        """Offer from ``catalogo``. ONE implementation for ``oferecer_imoveis`` (the real-estate catalogue) and
+        ``oferecer_opcoes`` (any catalogue): they differ only in the names they speak -- refusal codes, the result's
+        list key, and the option shape (``generico``)."""
+        origem_codigo = catalogo.origem(t.estado_sw)
+        ja = await asyncio.to_thread(
+            t.qual.codigos_oferecidos, t.org_id, t.lead_ref_id, *((catalogo.chave,) if generico else ()))
         reenvio = False
-        if a.modo == "campanha":
-            # The ad's own property is the ONE exception to ``pode_ofertar``: it opens the conversation, before any
-            # qualification, and it is the lead's own interest, not a search result. The caps still bind.
-            if not campanha:
-                return _recusa(t, "sem_codigo_campanha")
+        if de_origem:
+            # The origin option (the ad's own property) is the ONE exception to ``pode_ofertar``: it opens the
+            # conversation, before any qualification, and it is the lead's own interest, not a search result. The caps
+            # still bind.
+            if not origem_codigo:
+                return _recusa(t, "sem_origem" if generico else "sem_codigo_campanha")
             # Already offered => the lead asks for it again (the link, "qual era o imóvel?"): resend the card and its
-            # link, never ``esgotado`` -- an ad listing is not a batch to exhaust. No new offer event, no cap use.
-            reenvio = campanha in ja
+            # link, never ``esgotado`` -- an origin option is not a batch to exhaust. No new offer event, no cap use.
+            reenvio = origem_codigo in ja
             if not reenvio and t.limites.max_imoveis_distintos - len(ja) <= 0:
                 return _recusa(t, "limite_ofertas")
             limite, origem = 1, "campanha"
-            body = await _sw("imovel_campanha", {"codigo": campanha})
+            busca = await catalogo.buscar_origem(t.org_id, origem_codigo, interacao_id=_interacao_id())
         else:
             estado = await asyncio.to_thread(t.qual.avaliar, t.org_id, t.lead_ref_id, _versao_id(), t.escopo, t.sinais)
             if not estado.pode_ofertar:
@@ -985,40 +1040,35 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
             if restante_cap <= 0:
                 return _recusa(t, "limite_ofertas")
             lote_padrao = max(1, int(t.padrao.parametros.lote_ofertas))
-            limite, origem = min(a.limite or lote_padrao, lote_padrao, restante_cap), "similar"
-            args = _consulta_sw(estado.valores)
-            if campanha:
-                args["similar_a"] = campanha
-            args["excluir_codigos"] = ja[-200:]
-            args["limite"] = limite
-            body = await _sw("buscar_imoveis", {**args, **_interacao()})
-        if body is None:
+            limite, origem = min(limite_pedido or lote_padrao, lote_padrao, restante_cap), "similar"
+            busca = await catalogo.buscar(
+                t.org_id, perfil=estado.valores, excluir=ja, limite=limite, similar_a=origem_codigo,
+                interacao_id=_interacao_id())
+        if busca is None:
             return _falha_sw(t)
-        itens = [i for i in (body.get("data") or []) if isinstance(i, dict) and str(i.get("codigo") or "").strip()]
-        itens = [i for i in itens if reenvio or str(i["codigo"]) not in ja][:limite]
+        itens = [i for i in busca.itens if reenvio or str(i["codigo"]) not in ja][:limite]
         if not itens:
             return _ok(esgotado=True, **_msg_esgotado(t))
+        chave_lista, allow = ("opcoes", texto_seguro.ALLOW_OPCAO) if generico else ("imoveis", texto_seguro.ALLOW_OFERTA)
+
+        def _forma(i: Mapping[str, Any]) -> dict[str, Any]:
+            # the cards are the catalogue's own text: shaped like every other catalogue text, wrapped under one key
+            return _catalogo({}, catalogo.opcao(i) if generico else i, allow).dados
+
         if reenvio:  # the offer event already exists: only the card + link are handed to the model again
             for i in itens:
-                t.codigos_vistos.add(str(i["codigo"]).casefold())
-                if (lk := _pedaco_link(i)) is not None:
-                    t.links_vistos.add(lk)
-                    t.links_por_codigo[str(i["codigo"])] = lk
-            return _ok(reenvio=True, dados_catalogo={"imoveis": [_catalogo(body, i, texto_seguro.ALLOW_OFERTA).dados for i in itens]})
+                _lembrar(i)
+            return _ok(reenvio=True, dados_catalogo={chave_lista: [_forma(i) for i in itens]})
         lote = await asyncio.to_thread(t.qual.proximo_lote, t.org_id, t.lead_ref_id)
         for i in itens:
             # the listing link rides on the offer event (``motivo``): the hand-off report reads it back on a later turn
-            r = await _evento(str(i["codigo"]), "oferecido", origem, _link_do_evento(_pedaco_link(i)), lote=lote)
+            r = await _evento(
+                str(i["codigo"]), "oferecido", origem, _link_do_evento(_pedaco_link(i)), lote=lote, catalogo=catalogo.chave)
             if not r.ok and r.codigo != "imovel_ja_oferecido":
-                return _recusa(t, r.codigo or "evento_invalido")
-            t.codigos_vistos.add(str(i["codigo"]).casefold())
-            if (lk := _pedaco_link(i)) is not None:
-                t.links_vistos.add(lk)
-                t.links_por_codigo[str(i["codigo"])] = lk
-        # the cards are the agency's listing text: shaped like every other catalogue text, wrapped under one key
-        shaped = [_catalogo(body, i, texto_seguro.ALLOW_OFERTA).dados for i in itens]
-        out: dict[str, Any] = {"lote": lote, "dados_catalogo": {"imoveis": shaped}}
-        out.update({k: body[k] for k in _BUSCA_META if k in body})
+                return _recusa(t, _codigo_recusa(r.codigo, generico))
+            _lembrar(i)
+        out: dict[str, Any] = {"lote": lote, "dados_catalogo": {chave_lista: [_forma(i) for i in itens]}}
+        out.update({k: busca.meta[k] for k in (_META_OPCOES if generico else _BUSCA_META) if k in busca.meta})
         return _ok(**out)
 
     def _catalogo(body: Mapping[str, Any], item: Mapping[str, Any], allow: Mapping[str, Any]) -> texto_seguro.Catalogo:
@@ -1028,26 +1078,51 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
             t.sinais_ferramenta.append(("injecao_ferramenta", {"campos": sorted({x["campo"] for x in c.sinais})}))
         return c
 
-    async def _detalhes(a: DetalhesImovelArgs) -> _Resultado:
-        body = await _sw("detalhes_imovel", {"codigo": a.codigo, **_interacao()})
-        if body is None:
+    async def _detalhes_nucleo(catalogo: CatalogoOpcoes, codigo: str, *, generico: bool) -> _Resultado:
+        item = await catalogo.detalhar(t.org_id, codigo, interacao_id=_interacao_id())
+        if item is None:
             return _falha_sw(t)
-        item = body.get("data") if isinstance(body.get("data"), dict) else body
         if item.get("encontrado") is False:  # nothing was found: nothing is offered, nothing is remembered
             return _ok(encontrado=False)
-        c = _catalogo(body, item, texto_seguro.ALLOW_DETALHES)
-        ja = await asyncio.to_thread(t.qual.codigos_oferecidos, t.org_id, t.lead_ref_id)
-        if a.codigo not in ja:
+        c = (_catalogo({}, catalogo.opcao(item), texto_seguro.ALLOW_OPCAO) if generico
+             else _catalogo({}, item, texto_seguro.ALLOW_DETALHES))
+        ja = await asyncio.to_thread(
+            t.qual.codigos_oferecidos, t.org_id, t.lead_ref_id, *((catalogo.chave,) if generico else ()))
+        if codigo not in ja:
             if len(ja) >= t.limites.max_imoveis_distintos:
                 return _recusa(t, "limite_ofertas")
-            r = await _evento(a.codigo, "oferecido", "pedido_lead", _link_do_evento(c.dados.get("link")))
+            r = await _evento(
+                codigo, "oferecido", "pedido_lead", _link_do_evento(c.dados.get("link")), catalogo=catalogo.chave)
             if not r.ok and r.codigo != "imovel_ja_oferecido":
-                return _recusa(t, r.codigo or "evento_invalido")
-        t.codigos_vistos.add(a.codigo.casefold())
+                return _recusa(t, _codigo_recusa(r.codigo, generico))
+        t.codigos_vistos.add(codigo.casefold())
         if (lk := c.dados.get("link")) is not None:
             t.links_vistos.add(lk)
-            t.links_por_codigo[a.codigo] = lk
+            t.links_por_codigo[codigo] = lk
         return _ok(encontrado=True, dados_catalogo=c.dados)
+
+    # the real-estate tools: the SAME cores over the real-estate catalogue
+    async def _oferecer(a: OferecerImoveisArgs) -> _Resultado:
+        assert t.sw is not None
+        return await _oferecer_nucleo(
+            ImoveisSwCatalogo(t.sw), de_origem=a.modo == "campanha", limite_pedido=a.limite, generico=False)
+
+    async def _detalhes(a: DetalhesImovelArgs) -> _Resultado:
+        assert t.sw is not None
+        return await _detalhes_nucleo(ImoveisSwCatalogo(t.sw), a.codigo, generico=False)
+
+    # the generic tools: the catalogue is data (the standard's ``parametros.catalogo``)
+    async def _oferecer_opcoes(a: OferecerOpcoesArgs) -> _Resultado:
+        catalogo = _catalogo_ou_falha()
+        if isinstance(catalogo, _Resultado):
+            return catalogo
+        return await _oferecer_nucleo(catalogo, de_origem=a.modo == "origem", limite_pedido=a.limite, generico=True)
+
+    async def _detalhes_opcao(a: DetalhesOpcaoArgs) -> _Resultado:
+        catalogo = _catalogo_ou_falha()
+        if isinstance(catalogo, _Resultado):
+            return catalogo
+        return await _detalhes_nucleo(catalogo, a.codigo, generico=True)
 
     async def _empreendimento(a: ConsultarEmpreendimentoArgs) -> _Resultado:
         body = await _sw("consultar_empreendimento", {"nome": a.nome})
@@ -1092,6 +1167,12 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
 
     async def _encerrar(a: EncerrarArgs) -> _Resultado:
         opt_out = a.motivo == MOTIVO_LEAD_PEDIU_PARAR
+        if not opt_out:
+            # an open emergency is closed by inactivity or by a person -- never by the agent. The lead's own stop request
+            # is the exception: it is a right, not a conversation choice.
+            part = await asyncio.to_thread(t.threads.get_participante, t.org_id, t.thread_id, t.agent_id)
+            if part is not None and part.fecha_inativo_min is not None:
+                return _recusa(t, "emergencia_aberta")
         motivo_texto = _limpo(a.motivo_texto, MOTIVO_MAX_CHARS)
         if opt_out and motivo_texto is None:
             return _recusa(t, "motivo_texto_ausente")
@@ -1157,6 +1238,8 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         "abrir_skill": _abrir_skill, "ler_arquivo_skill": _ler_arquivo,
         "avaliar_lead": lambda a: _avaliar(), "registrar_perfil": _registrar_perfil,
         "oferecer_imoveis": _oferecer, "detalhes_imovel": _detalhes,
+        "oferecer_opcoes": _oferecer_opcoes, "detalhes_opcao": _detalhes_opcao,
+        "registrar_reacao_opcao": _reacao_opcao,
         "consultar_empreendimento": _empreendimento, "registrar_reacao_imovel": _reacao,
         "registrar_intencao_visita": _visita, "registrar_identificacao": _identificar,
         "registrar_documento": _documento, "sinalizar_alerta": _alerta,
@@ -1177,6 +1260,7 @@ def construir_toolset(t: JuliaTurno) -> LlmToolset:
         por_tool = {
             "oferecer_imoveis": lim.max_oferecer_turno, "abrir_skill": lim.max_abrir_skill_turno,
             "detalhes_imovel": lim.max_detalhes_turno,
+            "oferecer_opcoes": lim.max_oferecer_turno, "detalhes_opcao": lim.max_detalhes_turno,
         }
         return t.chamadas > lim.max_chamadas_ferramenta_turno or (
             nome in por_tool and t.chamadas_por_ferramenta[nome] > por_tool[nome])

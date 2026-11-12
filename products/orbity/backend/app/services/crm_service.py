@@ -70,6 +70,10 @@ def _normalize_br_phone(raw: str | None) -> str | None:
     return digits
 
 
+class CaptureStageInvalid(ValueError):
+    """The public capture named a ``stage_id`` that is not one of the org's stages."""
+
+
 class CRMService:
     def __init__(self, db: Any, org_id: UUID) -> None:
         self._db = db
@@ -548,7 +552,7 @@ class CRMService:
         try:
             upsert_res = (
                 self._t("lead_scoring_results")
-                .upsert(result_row, on_conflict="lead_id")
+                .upsert(result_row, on_conflict="org_id,lead_id")
                 .execute()
             )
         except Exception:
@@ -596,6 +600,11 @@ class CRMService:
         }
         if row.get("phone"):
             row["phone"] = _normalize_br_phone(row["phone"])
+
+        # A caller-supplied stage must be one of THIS org's stages: the id is a public, guessable-by-leak UUID and the
+        # insert runs as service_role, so without this check a lead could be filed under another org's stage (F7).
+        if row.get("stage_id") and self.get_stage(str(row["stage_id"])) is None:
+            raise CaptureStageInvalid("stage_id does not belong to this organization")
 
         # O80: a captured lead lands in the org's first stage (else it never shows in the Funil).
         # A soft-deleted lead with the same phone/email is NOT resurrected: capture always inserts

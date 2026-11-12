@@ -41,6 +41,8 @@ class FakeAgents:
         self.regras: dict[str, dict] = {r: {"regra": r, "ativo": True, "politica": "registrar", "parametros": {}}
                                         for r in ("vazamento_prompt", "termina_sem_pergunta")}
         self.pins: dict[str, dict] = {}
+        self.padroes: list[str] = ["imob-lead"]
+        self.padrao_novo_versoes: list[dict] = []
         self.padrao_versoes: list[dict] = [{
             "id": str(uuid.uuid4()), "versao": 1, "status": "publicada", "notas": None, "publicada_em": "2026-01-01T00:00:00Z",
             "criterios": [{"chave": "operacao", "grupo": "prontidao", "rotulo": "Operacao", "descricao_modelo": "d", "tipo": "enum",
@@ -230,6 +232,22 @@ def _handler(state: FakeAgents):
                 state.pins.pop(mo.group(1), None)
                 return self._send(200, {})
             # qualification standard
+            if path == "/api/qualificacao/padroes":
+                if m == "GET":
+                    return self._send(200, {"items": [{"id": "p", "chave": k, "nome": k, "descricao": None} for k in state.padroes]})
+                if m == "POST":
+                    if b["chave"] in state.padroes:
+                        return self._err(409, "padrao_ja_existe")
+                    state.padroes.append(b["chave"])
+                    state.padrao_novo_versoes = []
+                    return self._send(201, {"id": "p", "chave": b["chave"], "nome": b["nome"], "descricao": b.get("descricao")})
+            if path == "/api/qualificacao/padroes/novo-padrao/versoes" and "novo-padrao" in state.padroes:
+                if m == "GET":
+                    return self._send(200, {"items": state.padrao_novo_versoes})
+                if m == "POST":
+                    v = {"id": str(uuid.uuid4()), "versao": 1, "status": "rascunho", "notas": b.get("notas"), "publicada_em": None}
+                    state.padrao_novo_versoes.append(v)
+                    return self._send(201, v)
             if path == "/api/qualificacao/padroes/imob-lead/versoes":
                 if m == "GET":
                     return self._send(200, {"items": [{k: x[k] for k in ("id", "versao", "status", "notas", "publicada_em")}
@@ -381,6 +399,7 @@ class TestKinds:
         assert out["status"] == "error" and out["codigo"] == "nome_obrigatorio"
 
     def test_skill_pins(self, srv, private):
+        srv.skills["qualificar-lead"] = {"nome": "Q", "descricao": None, "versoes": [{"id": "1", "versao": 1, "status": "publicada"}]}
         srv.pins["velha"] = {"skill": "velha", "versao": 1, "nova_versao": None, "obrigatoria_para": [], "ordem": 0}
         payload = {"itens": [{"skill": "qualificar-lead", "obrigatoria_para": ["registrar_perfil"], "ordem": 10}], "remover": ["velha"]}
         plan = run(srv, private, payload, action="set", kind="skill_ref", agent="julia")
@@ -414,6 +433,88 @@ class TestKinds:
     def test_unknown_standard(self, srv, private):
         out = run(srv, private, action="list", kind="padrao_criterio", padrao="nada")
         assert out["status"] == "error" and out["codigo"] == "padrao_inexistente"
+
+
+class TestSecaoRegras:
+    """Section ``regras`` (migration 078): a set must never silently drop a rule tag."""
+
+    def test_a_set_without_regras_keeps_the_current_tags(self, srv, private):
+        srv.secoes[0]["regras"] = ["discordar-com-respeito"]
+        out = run(srv, private, {"secoes": [{"chave": "persona", "conteudo": "novo"}]}, action="set", kind="secao", agent="julia", confirm=True)
+        assert out["status"] == "written"
+        assert srv.secoes[0]["regras"] == ["discordar-com-respeito"] and srv.secoes[0]["conteudo"] == "novo"
+
+    def test_other_sections_keep_their_tags_too(self, srv, private):
+        srv.secoes.append({"chave": "honestidade", "titulo": "H", "ordem": 2, "conteudo": "h", "ativo": True, "regras": ["discordar-com-respeito"]})
+        run(srv, private, {"secoes": [{"chave": "persona", "conteudo": "novo"}]}, action="set", kind="secao", agent="julia", confirm=True)
+        assert {s["chave"]: s["regras"] for s in srv.secoes} == {"persona": [], "honestidade": ["discordar-com-respeito"]}
+
+    def test_regras_can_be_set_and_cleared(self, srv, private):
+        run(srv, private, {"secoes": [{"chave": "persona", "regras": ["discordar-com-respeito"]}]}, action="set", kind="secao", agent="julia", confirm=True)
+        assert srv.secoes[0]["regras"] == ["discordar-com-respeito"]
+        run(srv, private, {"secoes": [{"chave": "persona", "regras": []}]}, action="set", kind="secao", agent="julia", confirm=True)
+        assert srv.secoes[0]["regras"] == []
+
+    def test_regras_must_be_a_list_of_strings(self, srv, private):
+        out = run(srv, private, {"secoes": [{"chave": "persona", "regras": "x"}]}, action="set", kind="secao", agent="julia")
+        assert out["status"] == "error" and out["codigo"] == "payload_invalido"
+
+    def test_get_shows_regras(self, srv, private):
+        srv.secoes[0]["regras"] = ["discordar-com-respeito"]
+        got = run(srv, private, action="get", kind="secao", agent="julia")["itens"]
+        assert got["persona"]["regras"] == ["discordar-com-respeito"]
+
+
+class TestCriarPadrao:
+    def test_dry_run_reads_only(self, srv, private):
+        out = run(srv, private, {"nome": "Novo", "descricao": "d"}, action="criar_padrao", padrao="novo-padrao")
+        assert out["status"] == "planned" and out["dry_run"] is True and srv.writes() == []
+        assert "novo-padrao" not in srv.padroes
+
+    def test_confirm_creates_padrao_and_a_draft_never_publishes(self, srv, private):
+        out = run(srv, private, {"nome": "Novo", "descricao": "d"}, action="criar_padrao", padrao="novo-padrao", confirm=True)
+        assert out["status"] == "created" and "novo-padrao" in srv.padroes
+        (v,) = srv.padrao_novo_versoes
+        assert v["status"] == "rascunho"
+        assert not any("publicar" in p or "publish" in p for _m, p in srv.writes())
+
+    def test_existing_padrao_is_a_no_op(self, srv, private):
+        out = run(srv, private, {"nome": "X"}, action="criar_padrao", padrao="imob-lead", confirm=True)
+        assert out["status"] == "no_change" and srv.writes() == []
+
+    def test_existing_padrao_without_a_version_gets_the_draft(self, srv, private):
+        srv.padroes.append("novo-padrao")
+        out = run(srv, private, {"nome": "X"}, action="criar_padrao", padrao="novo-padrao", confirm=True)
+        assert out["status"] == "created" and len(srv.padrao_novo_versoes) == 1
+        assert srv.writes() == [("POST", "/api/qualificacao/padroes/novo-padrao/versoes")]
+
+    def test_validation(self, srv, private):
+        assert run(srv, private, {"nome": "X"}, action="criar_padrao")["codigo"] == "padrao_ausente"
+        assert run(srv, private, {"nome": "X"}, action="criar_padrao", padrao="Ruim Key")["codigo"] == "padrao_invalido"
+        assert run(srv, private, {"descricao": "d"}, action="criar_padrao", padrao="novo-padrao")["codigo"] == "payload_invalido"
+        assert run(srv, private, {"nome": "X", "x": 1}, action="criar_padrao", padrao="novo-padrao")["codigo"] == "payload_invalido"
+
+    def test_usable_after_creation(self, srv, private):
+        run(srv, private, {"nome": "Novo"}, action="criar_padrao", padrao="novo-padrao", confirm=True)
+        out = run(srv, private, action="list", kind="padrao_criterio", padrao="novo-padrao")
+        assert out["codigo"] != "padrao_inexistente" if out["status"] == "error" else True
+
+
+class TestSkillRefSemVersaoPublicada:
+    def test_pin_of_a_skill_with_only_a_draft_says_the_real_cause(self, srv, private):
+        srv.skills["so-rascunho"] = {"nome": "S", "descricao": None, "versoes": [{"id": "1", "versao": 1, "status": "rascunho"}]}
+        out = run(srv, private, {"itens": [{"skill": "so-rascunho", "obrigatoria_para": [], "ordem": 1}]}, action="set", kind="skill_ref", agent="julia")
+        assert out["status"] == "error" and out["codigo"] == "skill_sem_versao_publicada"
+        assert "publique" in out["mensagem"].lower() and srv.writes() == []
+
+    def test_unknown_skill_is_its_own_error(self, srv, private):
+        out = run(srv, private, {"itens": [{"skill": "nao-existe", "obrigatoria_para": [], "ordem": 1}]}, action="set", kind="skill_ref", agent="julia")
+        assert out["status"] == "error" and out["codigo"] == "skill_inexistente"
+
+    def test_server_code_is_passed_through(self, srv, private):
+        srv.skills["pub"] = {"nome": "S", "descricao": None, "versoes": [{"id": "1", "versao": 1, "status": "publicada"}]}
+        out = run(srv, private, {"itens": [{"skill": "pub", "obrigatoria_para": [], "ordem": 1}]}, action="set", kind="skill_ref", agent="julia", confirm=True)
+        assert out["status"] == "written"
 
 
 class TestEvalAndConformanceKinds:
@@ -534,6 +635,15 @@ class TestNeverPublishesAndKeepsTheSecret:
         monkeypatch.delenv(C.ENV_TOKEN)
         monkeypatch.setenv("NOCTUS_AGENTS_ENV_FILE", str(f))
         assert run(srv, private, action="list", kind="texto", agent="julia")["status"] == "ok"
+
+    def test_the_url_can_come_from_the_agents_env_file_too(self, srv, private, monkeypatch, tmp_path):
+        # 2026-11-11: the file carried both keys, the token was read from it and the URL was not -> base_url_ausente
+        f = tmp_path / "agents.env"
+        f.write_text(f"{C.ENV_URL}={srv.url}\n", encoding="utf-8")
+        monkeypatch.delenv(C.ENV_URL, raising=False)
+        monkeypatch.setenv("NOCTUS_AGENTS_ENV_FILE", str(f))
+        out = C.content("list", "texto", agent="julia")
+        assert out["status"] == "ok" and srv.log, out
 
 
 class TestInputsAreGuarded:

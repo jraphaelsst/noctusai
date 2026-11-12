@@ -17,7 +17,7 @@ import hashlib
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -239,3 +239,27 @@ def progresso_dreno(abertos: Sequence[ThreadAberto], dreno_inatividade_dias: int
         "idade_max_dias": max((i.days for i in idades), default=0),
         "idades_dias": [i.days for i in idades[:_IDADES_MAX]],
     }
+
+
+#: ``motivo`` of the participant event the inactivity close writes (the emergency window: migration 077).
+MOTIVO_INATIVIDADE = "inatividade"
+
+
+def encerrar_inativos(threads: Any, agora: datetime | None = None) -> int:
+    """Close every active participant whose inactivity window elapsed (``conversations.last_message_at`` + window).
+    One atomic compare-and-set per participant (``transicionar`` de=("ativo",)): it writes exactly one
+    ``thread_participante_eventos`` row (``motivo='inatividade'``, actor ``sistema``) and a concurrent run / replica
+    that lost the race gets ``False`` and writes nothing -- idempotent and multi-replica safe. Returns how many this
+    call closed. A failing row is logged and does not stop the others."""
+    agora = agora or datetime.now(timezone.utc)
+    fechados = 0
+    for p in threads.list_inativos_vencidos(agora):
+        try:
+            if threads.transicionar(
+                p.org_id, p.thread_id, p.agent_id, de=("ativo",), para="encerrado", ator_tipo="sistema",
+                motivo=MOTIVO_INATIVIDADE,
+            ):
+                fechados += 1
+        except Exception:  # noqa: BLE001 -- one bad row never stops the sweep; the next tick retries it
+            logger.exception("agents.thread.inatividade_falhou thread_id=%s", p.thread_id)
+    return fechados

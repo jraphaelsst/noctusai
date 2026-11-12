@@ -44,7 +44,7 @@ from app.dependencies import (
     get_admin_client,
     get_core_client,
     get_current_user_org,
-    get_user_client,
+    get_org_client,
 )
 from app.schemas.social_content import (
     ApprovalCreate,
@@ -58,6 +58,9 @@ from app.schemas.social_content import (
     PostUpdate,
     PublicApprovalView,
 )
+from noctusai_lib.api.access_tiers import access_tier
+from noctusai_lib.api.token_link import TokenLinkGone, TokenLinkNotFound, resolve_token_link, token_fingerprint
+
 from app.rate_limit import limiter
 from app.services.social_content_service import PublicApprovalService, SocialContentService
 
@@ -72,7 +75,7 @@ approve_router = APIRouter(tags=["Content Approval"])
 # ---------------------------------------------------------------------------
 
 def _svc(token: str, org_id) -> SocialContentService:
-    return SocialContentService(get_user_client(token), org_id=org_id)
+    return SocialContentService(get_org_client(org_id), org_id=org_id)
 
 
 def _admin_approval_svc() -> PublicApprovalService:
@@ -81,7 +84,7 @@ def _admin_approval_svc() -> PublicApprovalService:
     Mirrors _admin_crm() in crm_router — service_role bypasses RLS for the
     public approve path. Security guarantee is entirely at the token level.
     """
-    return PublicApprovalService(get_admin_client(), core_db=get_core_client())
+    return PublicApprovalService(get_admin_client(), core_db=get_core_client())  # org-scope-ok: public token link, org derived from the token row
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +110,8 @@ def list_campaigns(
             page=page,
             page_size=page_size,
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.list_campaigns failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar campanhas")
@@ -127,6 +132,8 @@ def create_campaign(
         row = _svc(token, org_id).create_campaign(
             payload.model_dump(mode="json", exclude_none=True)
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.create_campaign failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar campanha")
@@ -146,6 +153,8 @@ def get_campaign(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_campaign(campaign_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.get_campaign failed org=%s id=%s", org_id, campaign_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar campanha")
@@ -171,6 +180,8 @@ def update_campaign(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
         row = _svc(token, org_id).update_campaign(campaign_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.update_campaign failed org=%s id=%s", org_id, campaign_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar campanha")
@@ -188,6 +199,8 @@ def delete_campaign(
     org_id = coerce_org_uuid(raw_org)
     try:
         ok = _svc(token, org_id).delete_campaign(campaign_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.delete_campaign failed org=%s id=%s", org_id, campaign_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar campanha")
@@ -221,6 +234,8 @@ def list_posts(
             page=page,
             page_size=page_size,
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.list_posts failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar posts")
@@ -241,6 +256,8 @@ def create_post(
         row = _svc(token, org_id).create_post(
             payload.model_dump(mode="json", exclude_none=True)
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.create_post failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar post")
@@ -260,6 +277,8 @@ def get_post(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_post(post_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.get_post failed org=%s id=%s", org_id, post_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar post")
@@ -285,6 +304,8 @@ def update_post(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
         row = _svc(token, org_id).update_post(post_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.update_post failed org=%s id=%s", org_id, post_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar post")
@@ -302,6 +323,8 @@ def delete_post(
     org_id = coerce_org_uuid(raw_org)
     try:
         ok = _svc(token, org_id).delete_post(post_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.delete_post failed org=%s id=%s", org_id, post_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar post")
@@ -330,6 +353,8 @@ def create_approval(
         row = _svc(token, org_id).create_approval(
             post_id, expires_in_days=payload.expires_in_days
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "content.create_approval failed org=%s post=%s", org_id, post_id
@@ -350,6 +375,8 @@ def list_post_approvals(
     org_id = coerce_org_uuid(raw_org)
     try:
         return _svc(token, org_id).list_approvals(post_id=post_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "content.list_post_approvals failed org=%s post=%s", org_id, post_id
@@ -366,6 +393,8 @@ def list_approvals(
     org_id = coerce_org_uuid(raw_org)
     try:
         return _svc(token, org_id).list_approvals(post_id=post_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("content.list_approvals failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar aprovações")
@@ -384,6 +413,8 @@ def get_approval(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_approval(approval_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception(
             "content.get_approval failed org=%s id=%s", org_id, approval_id
@@ -403,39 +434,31 @@ def get_approval(
     response_model=PublicApprovalView,
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("30/minute;300/hour", key_func=client_ip_key)
+@access_tier("public", reason="client approval link: unguessable token, server-checked expiry (fails closed), org-scoped reads, no internal ids returned", category="token-link")
+# shared_limit(scope=) pins the bucket: slowapi's default scope is the request PATH, which here contains the token -- every guess would get a
+# fresh bucket and the limit would never trip.
+@limiter.shared_limit("30/minute;300/hour", scope="approve-get", key_func=client_ip_key)
 def public_get_approval(request: Request, token: str) -> PublicApprovalView:
-    """Public — fetch the post for the client via approval token.
+    """Public -- the post for the client behind an approval link (``token-link`` tier).
 
-    No auth required. Returns a safe PublicApprovalView (no org_id).
-    Returns 404 if token not found or malformed. Returns 410 if expired.
-
-    A malformed token (not a valid UUID) is validated away before the DB
-    round-trip — same non-guessable-link-is-404 reasoning as reports_router
-    (avoids postgres 22P02 being misreported as 502).
-    """
-    not_found_detail = "Link de aprovação não encontrado"
-
-    try:
-        UUID(token)
-    except ValueError:
-        raise HTTPException(status_code=404, detail=not_found_detail)
-
+    The token is resolved ONLY through ``resolve_token_link``: a malformed or unknown token is 404, an expired one 410
+    (a missing/unparsable expiry counts as expired). The response is an explicit public view with no internal ids."""
     svc = _admin_approval_svc()
     try:
-        pair = svc.fetch_by_token(token)
-    except ValueError as exc:
-        logger.info("public_get_approval: token expired or invalid token=%s", token)
-        raise HTTPException(status_code=410, detail=str(exc))
+        approval = resolve_token_link(token, svc.fetch_approval_row)
+        post = svc.post_of(approval)
+    except TokenLinkNotFound:
+        raise HTTPException(status_code=404, detail="Link de aprovação não encontrado")
+    except TokenLinkGone:
+        raise HTTPException(status_code=410, detail="Link de aprovação expirado")
+    except HTTPException:
+        raise
     except Exception:
-        logger.exception("public_get_approval failed token=%s", token)
+        logger.exception("public_get_approval failed %s", token_fingerprint(token))
         raise HTTPException(status_code=502, detail="Falha ao buscar aprovação")
-    if pair is None:
-        raise HTTPException(status_code=404, detail=not_found_detail)
-    approval, post = pair
+    if post is None:
+        raise HTTPException(status_code=404, detail="Link de aprovação não encontrado")
     return PublicApprovalView(
-        approval_id=approval["id"],
-        post_id=post["id"],
         platform=post["platform"],
         caption=post.get("caption"),
         hashtags=post.get("hashtags"),
@@ -450,36 +473,29 @@ def public_get_approval(request: Request, token: str) -> PublicApprovalView:
     "/api/content/approve/{token}",
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("10/minute;60/hour", key_func=client_ip_key)
+@access_tier("public", reason="client approval link: one-time decision (UPDATE ... status='pending'), expiry fails closed, org-scoped writes", category="token-link")
+@limiter.shared_limit("10/minute;60/hour", scope="approve-post", key_func=client_ip_key)
 def public_submit_approval(
     request: Request,  # required positionally by @limiter.limit (slowapi)
     token: str,
     payload: ApprovalDecision,
 ) -> dict:
-    """Public — submit client decision (approved|revision) via token.
+    """Public -- the client's decision (approved|revision) via the approval link (``token-link`` tier).
 
-    No auth required. Token IS the authorization.
-    Returns 404 if token not found or malformed. Returns 410 if expired or
-    already decided.
-    """
-    try:
-        UUID(token)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Approval token not found")
-
+    404 for a malformed/unknown token, 410 for an expired or already-decided link (one-time use)."""
     svc = _admin_approval_svc()
     try:
-        updated = svc.decide(token, payload.decision, feedback=payload.feedback)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=410, detail=str(exc))
+        approval = resolve_token_link(token, svc.fetch_approval_row)
+        if approval.get("status") != "pending":
+            raise TokenLinkGone("already decided")
+        updated = svc.decide(approval, payload.decision, feedback=payload.feedback)
+    except (TokenLinkNotFound, LookupError):
+        raise HTTPException(status_code=404, detail="Approval token not found")
+    except TokenLinkGone:
+        raise HTTPException(status_code=410, detail="Link de aprovação expirado ou já respondido")
+    except HTTPException:
+        raise
     except Exception:
-        logger.exception("public_submit_approval failed token=%s", token)
+        logger.exception("public_submit_approval failed %s", token_fingerprint(token))
         raise HTTPException(status_code=502, detail="Falha ao registrar decisão")
-    return {
-        "ok": True,
-        "approval_id": updated.get("id"),
-        "status": updated.get("status"),
-        "team_notified": updated.get("team_notified", 0),
-    }
+    return {"ok": True, "status": updated.get("status"), "team_notified": updated.get("team_notified", 0)}

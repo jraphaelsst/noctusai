@@ -23,6 +23,7 @@ also embedded in publish 409 bodies, which a content token reads).
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping
 from uuid import UUID
@@ -74,7 +75,7 @@ Severidade = Literal["bloqueante", "aviso", "ok"]
 #: The publish refusals (409 ``code``) a BLOCKING readiness item may stand for. Closed: ``compor`` raises on any other.
 RECUSAS_PUBLICACAO = frozenset({
     "conteudo_incompleto", "compile_blocked", "mecanismo_reprovado", "eval_required", "qualificacao_indisponivel",
-    "numero_fallback_ausente",
+    "numero_fallback_ausente", "catalogo_ausente",
 })
 
 
@@ -192,6 +193,8 @@ class Entrada:
     #: 074: the hand-off fallback number is set (one for every org for now). ``True`` for snapshots built by older
     #: callers; :func:`coletar` always reads it.
     numero_fallback_definido: bool = True
+    #: ``parametros.catalogo`` of the qualification standard the draft runs on (``None`` = names none, or no standard).
+    padrao_catalogo: str | None = None
 
 
 @dataclass(frozen=True)
@@ -237,13 +240,32 @@ class Prontidao:
 _FERRAMENTAS_CONHECIMENTO = ("kb_buscar", "kb_ler")
 
 
+#: Qualification tools that only make sense for a real-estate agent (they read/record a property offered to the lead).
+FERRAMENTAS_IMOBILIARIAS = frozenset({"registrar_reacao_imovel"})
+#: Tools whose row marks an agent as real-estate (it offers / details properties): the catalog the reaction tool refers to.
+_SINAIS_IMOBILIARIOS = frozenset({"oferecer_imoveis", "detalhes_imovel", "consultar_empreendimento"})
+#: Tools a standard supports only when it has a ``conclusivo`` stage (the code gate ``estagio_nao_conclusivo``).
+FERRAMENTAS_DE_CONCLUSAO = frozenset({"concluir_qualificacao"})
+
+
+def agente_imobiliario(ferramentas: Iterable[str]) -> bool:
+    """Real-estate agent = it has a content row for a property tool (offer / details / enterprise)."""
+    return bool(_SINAIS_IMOBILIARIOS & set(ferramentas))
+
+
 def ferramentas_esperadas(
     *, usa_canais: bool, tem_skills: bool, tool_policy: Mapping[str, Any], com_padrao: bool,
+    padrao_conclusivo: bool = True, imobiliario: bool = True,
 ) -> dict[str, str]:
     """``{tool: why}`` -- the tools this draft's configuration says it works with, DERIVED from the channel registry
     (``app.channels.tool_registry.TOOLS``: a tool's ``exige`` are the capabilities it needs) and the tool policy:
     skills present -> the skill tools; a qualification standard -> the qualification tools; a channel agent -> the
-    capability-free tools (handoff, stop, data-subject request...); ``knowledge`` on -> ``kb_buscar``/``kb_ler``."""
+    capability-free tools (handoff, stop, data-subject request...); ``knowledge`` on -> ``kb_buscar``/``kb_ler``.
+
+    A standard does not imply every qualification tool (the SDR template is not Julia): ``concluir_qualificacao`` is
+    expected only when the standard has a ``conclusivo`` stage (``padrao_conclusivo``), and the real-estate reaction tool
+    only for a real-estate agent (``imobiliario``). Both default to ``True`` -- the pre-existing (Julia) expectation --
+    so a caller that cannot tell keeps the stricter set instead of hiding a missing description."""
     from app.channels.tool_registry import TOOLS
 
     capacidades: set[str] = set()
@@ -253,6 +275,10 @@ def ferramentas_esperadas(
         capacidades.add("qualificacao")
     out: dict[str, str] = {}
     for nome, d in TOOLS.items():
+        if nome in FERRAMENTAS_DE_CONCLUSAO and not padrao_conclusivo:
+            continue
+        if nome in FERRAMENTAS_IMOBILIARIAS and not imobiliario:
+            continue
         if d.exige and d.exige <= capacidades:
             out[nome] = "skills fixadas" if d.exige == {"skills"} else "padrão de qualificação"
         elif not d.exige and usa_canais:
@@ -454,6 +480,28 @@ def _ferramentas(e: Entrada) -> list[Item]:
     return itens
 
 
+def _catalogo(e: Entrada) -> list[Item]:
+    """An agent with ``oferecer_opcoes`` ACTIVE needs a catalogue to offer from: the standard's ``parametros.catalogo``
+    (a key of ``app.catalogos.CATALOGOS``). Without one the tool would answer ``indisponivel`` to every lead."""
+    from app.catalogos import CATALOGOS
+
+    ativa = any(f.ferramenta == "oferecer_opcoes" and f.ativo and (f.descricao or "").strip() for f in e.ferramentas)
+    if not ativa:
+        return []
+    if e.padrao_catalogo not in CATALOGOS:
+        return [Item(
+            "catalogo_ausente", "ferramentas", "bloqueante",
+            "A ferramenta 'oferecer_opcoes' está ativa, mas o padrão de qualificação não indica de onde vêm as opções "
+            "(catálogo): o agente não teria o que oferecer.",
+            f"Defina 'catalogo' nos parâmetros do padrão de qualificação ({', '.join(CATALOGOS)}) e publique o padrão.",
+            "catalogo_ausente",
+            detalhe={"catalogo": e.padrao_catalogo},
+        )]
+    return [Item(
+        "catalogo_definido", "ferramentas", "ok", f"O catálogo de opções do agente é '{e.padrao_catalogo}'.",
+    )]
+
+
 def _periferia(e: Entrada) -> list[Item]:
     itens: list[Item] = []
     if e.specs_org_faltando:
@@ -555,7 +603,7 @@ def _canonico(e: Entrada) -> list[Item]:
 
 def compor(e: Entrada) -> Prontidao:
     """The readiness items of the snapshot (blocking first, then advisory, then ok; stable within a severity)."""
-    itens = [*_compilador(e), *_padrao(e), *_avaliacao(e), *_skills(e), *_ferramentas(e), *_periferia(e), *_atendimento(e), *_canonico(e)]
+    itens = [*_compilador(e), *_padrao(e), *_avaliacao(e), *_skills(e), *_ferramentas(e), *_catalogo(e), *_periferia(e), *_atendimento(e), *_canonico(e)]
     for i in itens:
         if i.grupo not in GRUPOS:
             raise ValueError(f"item {i.codigo!r} has group {i.grupo!r}, outside GRUPOS (the panel cannot label it)")
@@ -593,6 +641,15 @@ def coletar(
             atualizacao = draft.qualificacao_versao_id is not None and draft.qualificacao_versao_id != nova.id
         except NotFound:
             publicado = False
+
+    padrao_catalogo: str | None = None
+    if chave is not None and publicado:
+        try:
+            pinada = draft.qualificacao_versao_id
+            vp = padroes.obter_versao(pinada) if pinada is not None else padroes.obter_versao_publicada(chave)
+            padrao_catalogo = vp.parametros.catalogo
+        except NotFound:
+            padrao_catalogo = None
 
     casos = evals.list_cases(org_id, agent.id)
     ativos = [c for c in casos if c.ativo]
@@ -645,7 +702,9 @@ def coletar(
         pins=tuple(PinSkill(r.skill_chave, r.versao, r.nova_versao) for r in refs),
         ferramentas=linhas,
         ferramentas_esperadas=ferramentas_esperadas(
-            usa_canais=agent.usa_canais, tem_skills=tem_skills, tool_policy=dict(draft.tool_policy), com_padrao=chave is not None),
+            usa_canais=agent.usa_canais, tem_skills=tem_skills, tool_policy=dict(draft.tool_policy), com_padrao=chave is not None,
+            padrao_conclusivo=_padrao_tem_estagio_conclusivo(padroes, chave, draft),
+            imobiliario=agente_imobiliario(f.ferramenta for f in rows)),
         rotulos_ausentes=rotulos_ausentes(linhas),
         specs_org_faltando=tuple(faltando),
         specs_org_invalidas=invalidas,
@@ -658,7 +717,24 @@ def coletar(
         regras_secoes=tuple(sorted({r for s in ef.list_sections(org_id, draft.id) if s.ativo and s.conteudo.strip() for r in s.regras})),
         tags_comportamento=tuple(sorted({t for c in ativos if c.suite == "comportamento" for t in c.tags})),
         numero_fallback_definido=_numero_fallback() is not None,
+        padrao_catalogo=padrao_catalogo,
     )
+
+
+def _padrao_tem_estagio_conclusivo(padroes: Any, chave: str | None, draft: Any) -> bool:
+    """Does the standard this draft works with have a ``conclusivo`` stage? Reads the version the draft pins, else the
+    published one. Unreadable -> ``True`` (unmeasurable keeps the expectation; it never hides a missing description)."""
+    if chave is None:
+        return True
+    try:
+        pin = getattr(draft, "qualificacao_versao_id", None)
+        versao = padroes.obter_versao(pin) if pin is not None else padroes.obter_versao_publicada(chave)
+    except NotFound:
+        try:
+            versao = padroes.obter_versao_publicada(chave)
+        except NotFound:
+            return True
+    return any(e.conclusivo for e in versao.estagios)
 
 
 def canonico_exigido(agent: Any) -> bool:

@@ -396,7 +396,7 @@ def card_hub_routers(
                 ordem=enviados.get("ordem", ...),
             )
         except extras_svc.TipoIncompativel as exc:
-            raise HTTPException(status_code=422, detail=str(exc))
+            raise HTTPException(status_code=422, detail=str(exc))  # detail-safe: TipoIncompativel is domain-authored
 
     @entity_router.delete(
         entity_path("/checklist-extras/{extra_id}"),
@@ -443,7 +443,7 @@ def card_hub_routers(
                 enviado_por=ctx.user_id,
             )
         except extras_svc.TipoIncompativel as exc:
-            raise HTTPException(status_code=422, detail=str(exc))
+            raise HTTPException(status_code=422, detail=str(exc))  # detail-safe: TipoIncompativel is domain-authored
 
     @entity_router.delete(
         entity_path("/checklist-extras/{extra_id}/documento"),

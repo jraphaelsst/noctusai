@@ -1,23 +1,39 @@
 /**
- * Social Wiring sidebar nav — the single source for both nav shapes.
+ * Social Wiring sidebar nav — built on the seed module manifests (W3-S1,
+ * crm-cms-erp-vertical-seeds plan; page-to-group table = "SW Sidebar Mockup"
+ * 2026-11-08, approved).
+ *
+ * Canonical group order is the seed's `MODULE_GROUP_ORDER`
+ * (CRM · Redes Sociais · ERP · CMS · CoreStudio · Banib · Emissões ·
+ * Integrações · Configurações), applied by `composeModules`. Dashboard is a
+ * standalone item after the groups. Existing URLs never move; a page lives in
+ * exactly one group. Every `route` key is the page's existing status_pagina key,
+ * so dev-only pages stay dev/owner-only (`filterNavByPageStatus`).
  *
  * `NAV_GROUPS` carries a status_pagina `route` key per item (gated nav);
- * `NAV_FALLBACK` (ungated — shown while page status loads / on failure) is
- * DERIVED from it via the canonical `stripNavRoutes`, so the two can never
- * drift (they used to be two hand-maintained copies in App.tsx).
+ * `NAV_FALLBACK` (ungated) is DERIVED from it via `stripNavRoutes`.
  *
- * Groups (regrouped 2026-10-05 per core-studio/MENUS.md; Julia added 2026-10-13):
- *   Principal · Julia · Imóveis · Leads · Clientes
- *   Edição de Fotos (Operação / Configuração) · CoreStudio
- *   Marketing (Email / Mailchimp) · Emissões
- *   Conexões (Marcas, Monitor, YouTube, Meta, n8n) · Configuração
+ * NOC-REMEDIATE[sw-nav-extend-seed-modules]: SW defines its module groups locally
+ * with `defineModule` (declared deviation) because the seed ships no base
+ * crm/erp/cms modules yet. Destination: plan slice W2-6 (seed `crmModule`, later
+ * erp/cms) -- then SW switches to `extendModule(base, ...)`. Keys match
+ * MODULE_GROUP_ORDER. — 2026-11-11
  *
- * WhatsApp is NOT in Conexões any more — it lives in the Julia group
- * (`nav/julia.ts`, owner decision 2026-10-13). pt-BR copy preserved.
+ * NOC-REMEDIATE[sw-modules-enablement-endpoint]: SW has no `GET /api/modules`, so
+ * `useEnabledModules` cannot feed per-org enablement (it would read null -> no
+ * module renders). All modules are ON by default (owner, 2026-11-08), so every
+ * module is enabled statically below. Destination: W1-1 follow-up (mount the
+ * seed modules router in SW, then pass `useEnabledModules().enabledKeys`). — 2026-11-11
+ *
+ * Banib (stub, "Em breve") is omitted: a disabled entry needs a status_pagina
+ * row (unlisted pages are hidden) = a backend migration, out of this slice.
+ * CoreStudio keeps its literal tree (two items share one page key, which
+ * `defineModule` forbids); it is a local group keyed `corestudio`.
  */
-import { stripNavRoutes } from "@noctusai/lib";
-import type { NavGroupWithRoute } from "@noctusai/lib";
-import type { NavGroup } from "@noctusai/lib/design-system";
+import { composeModules, defineModule, stripNavRoutes } from "@noctusai/lib";
+import type { ModuleItem } from "@noctusai/lib";
+import type { NavGroupWithRoute, NavItemWithRoute } from "@noctusai/lib";
+import type { NavGroup, NavItem } from "@noctusai/lib/design-system";
 import {
   LayoutDashboard,
   Users,
@@ -74,89 +90,151 @@ import {
   Eye,
 } from "lucide-react";
 import { Youtube, Instagram } from "@noctusai/lib/brand-icons";
-import { JULIA_NAV_GROUP } from "@/nav/julia";
+import { JULIA_ICON, JULIA_LABEL, JULIA_NAV_KEY, JULIA_PAGES } from "@/nav/julia";
 
-export const NAV_GROUPS: NavGroupWithRoute[] = [
-  {
-    key: "principal",
-    label: "Principal",
-    icon: Home,
-    items: [
-      { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
-      { name: "Contatos", href: "/contatos", icon: UserRound, route: "contatos" },
-      { name: "Agendamentos", href: "/agendamentos", icon: CalendarClock, route: "agendamentos" },
-    ],
-  },
-  // Julia (chatbot module) — directly after Principal; see nav/julia.ts.
-  JULIA_NAV_GROUP,
-  {
-    key: "imoveis",
-    label: "Imóveis",
-    icon: Building2,
-    items: [
-      { name: "Imóveis", href: "/imoveis", icon: Building2, route: "imoveis" },
-      { name: "Permutas", href: "/permutas", icon: ArrowLeftRight, route: "permutas" },
-      { name: "Condomínios", href: "/condominios", icon: Building, route: "condominios" },
-    ],
-  },
-  {
-    key: "leads",
-    label: "Leads",
-    icon: Target,
-    items: [
-      { name: "Leads", href: "/leads", icon: Target, route: "leads" },
-      { name: "Campanhas", href: "/campanhas", icon: Megaphone, route: "campanhas" },
-      { name: "Funil de Vendas", href: "/funil", icon: KanbanSquare, route: "funil" },
-      { name: "Processos de Venda", href: "/processos-venda", icon: Workflow, route: "processos_venda" },
-      { name: "ROI por Portal", href: "/portal-roi", icon: TrendingUp, route: "portal_roi" },
-      { name: "Blocos do Atendimento", href: "/atendimento-blocos", icon: Layers, route: "atendimento_blocos" },
-      { name: "Supervisão", href: "/supervisao", icon: Eye, route: "supervisao" },
-    ],
-  },
-  {
-    key: "clientes",
-    label: "Clientes",
-    icon: UserCheck,
-    items: [
-      { name: "Clientes", href: "/clientes", icon: UserCheck, route: "clientes" },
-      { name: "Revisão de Duplicados", href: "/clientes/revisao", icon: GitMerge, route: "clientes_revisao" },
-    ],
-  },
-  {
-    key: "edicao-fotos",
-    label: "Edição de Fotos",
-    icon: ImagePlus,
-    items: [
-    ],
-    groups: [
-      {
-        key: "edicao-fotos-operacao",
-        label: "Operação",
-        icon: Activity,
-        items: [
-          { name: "Lotes", href: "/edicao-fotos", icon: ImagePlus, route: "edicao-fotos" },
-          { name: "Novo Lote", href: "/edicao-fotos/novo", icon: Plus, route: "edicao-fotos-novo-lote" },
-          { name: "Painel", href: "/edicao-fotos/painel", icon: BarChart3, route: "edicao-fotos-painel" },
-          { name: "Processamento", href: "/edicao-fotos/processamento", icon: Activity, route: "edicao-fotos-processamento" },
-        ],
-      },
-      {
-        key: "edicao-fotos-config",
-        label: "Configuração",
-        icon: Settings2,
-        items: [
-          { name: "Configurações", href: "/edicao-fotos/configuracoes", icon: Settings2, route: "edicao-fotos-configuracoes" },
-          { name: "Referências", href: "/edicao-fotos/referencias", icon: Images, route: "edicao-fotos-referencias" },
-          { name: "Guias de Estilo", href: "/edicao-fotos/guias", icon: BookOpen, route: "edicao-fotos-guias" },
-          { name: "Regras", href: "/edicao-fotos/regras", icon: ScrollText, route: "edicao-fotos-regras" },
-          { name: "Curadores", href: "/edicao-fotos/curadores", icon: UserCog, route: "edicao-fotos-curadores" },
-          { name: "Modelos", href: "/edicao-fotos/modelos", icon: Cpu, route: "edicao-fotos-modelos" },
-        ],
-      },
-    ],
-  },
-  {
-    key: "media-creation",
+type Icon = ModuleItem["icon"];
+
+/** A sub-group header inside a module. Never rendered as a page: its path/pageKey only keep `defineModule`'s uniqueness checks satisfied. */
+const grp = (slug: string, label: string, icon: Icon, children: ModuleItem[]): ModuleItem => ({
+  label,
+  icon,
+  path: `/__grupo/${slug}`,
+  pageKey: `__grupo:${slug}`,
+  children,
+});
+
+/** A page: nav-only (routes stay declared in App.tsx, URLs never move). */
+const pg = (label: string, path: string, pageKey: string, icon: Icon): ModuleItem => ({ label, path, pageKey, icon });
+
+const juliaItems: ModuleItem[] = Object.values(JULIA_PAGES).map((p) => pg(p.name, p.href, p.route, p.icon));
+
+const crm = defineModule({
+  key: "crm",
+  icon: Users,
+  items: [
+    grp("pessoas", "Pessoas", UserRound, [
+      pg("Contatos", "/contatos", "contatos", UserRound),
+      pg("Clientes", "/clientes", "clientes", UserCheck),
+      pg("Revisão de Duplicados", "/clientes/revisao", "clientes_revisao", GitMerge),
+    ]),
+    grp("vendas", "Vendas", Target, [
+      pg("Leads", "/leads", "leads", Target),
+      pg("Funil de Vendas", "/funil", "funil", KanbanSquare),
+      pg("Processos de Venda", "/processos-venda", "processos_venda", Workflow),
+      pg("Agendamentos", "/agendamentos", "agendamentos", CalendarClock),
+    ]),
+    grp("campanhas", "Campanhas", Megaphone, [
+      pg("Campanhas", "/campanhas", "campanhas", Megaphone),
+      pg("ROI por Portal", "/portal-roi", "portal_roi", TrendingUp),
+    ]),
+    grp(JULIA_NAV_KEY, JULIA_LABEL, JULIA_ICON, juliaItems),
+    grp("atendimento", "Atendimento", Activity, [
+      pg("Monitor", "/monitor", "monitor", Activity),
+      pg("Blocos do Atendimento", "/atendimento-blocos", "atendimento_blocos", Layers),
+      pg("Supervisão", "/supervisao", "supervisao", Eye),
+    ]),
+    grp("email", "E-mail", Mail, [
+      pg("Painel", "/email", "email_painel", BarChart3),
+      pg("Campanhas", "/email/campanhas", "email_campanhas_noc", Send),
+      pg("Contatos", "/email/contatos", "email_contatos_noc", UserRound),
+      pg("Listas", "/email/listas", "email_listas_noc", List),
+      pg("Templates", "/email/templates", "email_templates_noc", FileText),
+      pg("Automações", "/email/automacoes", "email_automacoes_noc", Workflow),
+      pg("Domínios", "/email/dominios", "email_dominios_noc", Globe),
+      grp("mailchimp", "Mailchimp", Mail, [
+        pg("Membros", "/email-marketing/membros", "email_membros", Users),
+        pg("Listas", "/email-marketing/listas", "email_listas", List),
+        pg("Templates", "/email-marketing/templates", "email_templates", FileText),
+        pg("Campanhas", "/email-marketing/campanhas", "email_campanhas", Send),
+        pg("Configuração", "/email-marketing/configuracao", "email_config", Settings2),
+      ]),
+    ]),
+  ],
+});
+
+const redesSociais = defineModule({
+  key: "redes-sociais",
+  icon: Share2,
+  items: [
+    pg("Meta", "/meta", "meta", Instagram),
+    pg("YouTube", "/youtube", "youtube", Youtube),
+    // SIMEC (marketing intelligence, Instagram) — status_pagina `simec`, migration 284.
+    pg("SIMEC", "/simec", "simec", BarChart3),
+  ],
+});
+
+const erp = defineModule({
+  key: "erp",
+  icon: Building2,
+  items: [
+    grp("imoveis", "Imóveis", Building2, [
+      pg("Imóveis", "/imoveis", "imoveis", Building2),
+      pg("Condomínios", "/condominios", "condominios", Building),
+      pg("Permutas", "/permutas", "permutas", ArrowLeftRight),
+    ]),
+    grp("financeiro", "Financeiro", Landmark, [pg("Financeiro", "/financeiro", "financeiro", Landmark)]),
+  ],
+});
+
+const cms = defineModule({
+  key: "cms",
+  icon: ImagePlus,
+  items: [
+    grp("edicao-fotos", "Edição de Fotos", ImagePlus, [
+      grp("edicao-fotos-operacao", "Operação", Activity, [
+        pg("Lotes", "/edicao-fotos", "edicao-fotos", ImagePlus),
+        pg("Novo Lote", "/edicao-fotos/novo", "edicao-fotos-novo-lote", Plus),
+        pg("Painel", "/edicao-fotos/painel", "edicao-fotos-painel", BarChart3),
+        pg("Processamento", "/edicao-fotos/processamento", "edicao-fotos-processamento", Activity),
+      ]),
+      grp("edicao-fotos-config", "Configuração", Settings2, [
+        pg("Configurações", "/edicao-fotos/configuracoes", "edicao-fotos-configuracoes", Settings2),
+        pg("Referências", "/edicao-fotos/referencias", "edicao-fotos-referencias", Images),
+        pg("Guias de Estilo", "/edicao-fotos/guias", "edicao-fotos-guias", BookOpen),
+        pg("Regras", "/edicao-fotos/regras", "edicao-fotos-regras", ScrollText),
+        pg("Curadores", "/edicao-fotos/curadores", "edicao-fotos-curadores", UserCog),
+        pg("Modelos", "/edicao-fotos/modelos", "edicao-fotos-modelos", Cpu),
+      ]),
+    ]),
+  ],
+});
+
+const emissoes = defineModule({
+  key: "emissoes",
+  icon: Stamp,
+  items: [
+    pg("Certidões", "/certidoes", "certidoes", ShieldCheck),
+    pg("Extrator de Matrículas", "/matriculas", "matriculas", ScrollText),
+    pg("Agentes Financeiros", "/agentes-financeiros", "agentes_financeiros", Landmark),
+  ],
+});
+
+const integracoes = defineModule({
+  key: "integracoes",
+  icon: Smartphone,
+  items: [
+    pg("Marcas", "/marcas", "marcas", Building2),
+    pg("n8n", "/n8n", "n8n", Workflow),
+  ],
+});
+
+const configuracoes = defineModule({
+  key: "configuracoes",
+  icon: Settings2,
+  items: [
+    pg("Configurações", "/configuracoes", "configuracoes", SettingsIcon),
+    pg("Equipe", "/equipe", "equipe", Users),
+    pg("Imobiliárias", "/imobiliarias", "imobiliarias", Building2),
+    pg("Testemunhas", "/testemunhas", "testemunhas", UserRound),
+    pg("Favorecidos", "/favorecidos", "favorecidos", Landmark),
+    pg("Custos", "/custos", "custos", Wallet),
+  ],
+});
+
+/** CoreStudio: unchanged tree (see docblock), local group keyed `corestudio`. */
+const CORESTUDIO_GROUP: NavGroupWithRoute =
+{
+    key: "corestudio",
     label: "CoreStudio",
     icon: Wand2,
     items: [
@@ -210,80 +288,23 @@ export const NAV_GROUPS: NavGroupWithRoute[] = [
         ],
       },
     ],
-  },
-  {
-    key: "marketing",
-    label: "Marketing",
-    icon: Share2,
-    items: [
-      // SIMEC (marketing intelligence, Instagram) — status_pagina `simec`, migration 284.
-      { name: "SIMEC", href: "/simec", icon: BarChart3, route: "simec" },
-    ],
-    groups: [
-      {
-        key: "email-noc",
-        label: "Email",
-        icon: Mail,
-        items: [
-          { name: "Painel", href: "/email", icon: BarChart3, route: "email_painel" },
-          { name: "Campanhas", href: "/email/campanhas", icon: Send, route: "email_campanhas_noc" },
-          { name: "Contatos", href: "/email/contatos", icon: UserRound, route: "email_contatos_noc" },
-          { name: "Listas", href: "/email/listas", icon: List, route: "email_listas_noc" },
-          { name: "Templates", href: "/email/templates", icon: FileText, route: "email_templates_noc" },
-          { name: "Automações", href: "/email/automacoes", icon: Workflow, route: "email_automacoes_noc" },
-          { name: "Domínios", href: "/email/dominios", icon: Globe, route: "email_dominios_noc" },
-        ],
-      },
-      {
-        key: "email",
-        label: "Mailchimp",
-        icon: Mail,
-        items: [
-          { name: "Membros", href: "/email-marketing/membros", icon: Users, route: "email_membros" },
-          { name: "Listas", href: "/email-marketing/listas", icon: List, route: "email_listas" },
-          { name: "Templates", href: "/email-marketing/templates", icon: FileText, route: "email_templates" },
-          { name: "Campanhas", href: "/email-marketing/campanhas", icon: Send, route: "email_campanhas" },
-          { name: "Configuração", href: "/email-marketing/configuracao", icon: Settings2, route: "email_config" },
-        ],
-      },
-    ],
-  },
-  {
-    key: "emissoes",
-    label: "Emissões",
-    icon: Stamp,
-    items: [
-      { name: "Certidões", href: "/certidoes", icon: ShieldCheck, route: "certidoes" },
-      { name: "Extrator de Matrículas", href: "/matriculas", icon: ScrollText, route: "matriculas" },
-      { name: "Agentes Financeiros", href: "/agentes-financeiros", icon: Landmark, route: "agentes_financeiros" },
-    ],
-  },
-  {
-    key: "conexoes",
-    label: "Conexões",
-    icon: Smartphone,
-    items: [
-      { name: "Marcas", href: "/marcas", icon: Building2, route: "marcas" },
-      { name: "Monitor", href: "/monitor", icon: Activity, route: "monitor" },
-      { name: "YouTube", href: "/youtube", icon: Youtube, route: "youtube" },
-      { name: "Meta", href: "/meta", icon: Instagram, route: "meta" },
-      { name: "n8n", href: "/n8n", icon: Workflow, route: "n8n" },
-    ],
-  },
-  {
-    key: "config",
-    label: "Configuração",
-    icon: Settings2,
-    items: [
-      { name: "Configurações", href: "/configuracoes", icon: SettingsIcon, route: "configuracoes" },
-      { name: "Imobiliárias", href: "/imobiliarias", icon: Building2, route: "imobiliarias" },
-      { name: "Testemunhas", href: "/testemunhas", icon: UserRound, route: "testemunhas" },
-      { name: "Favorecidos", href: "/favorecidos", icon: Landmark, route: "favorecidos" },
-      { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
-      { name: "Custos", href: "/custos", icon: Wallet, route: "custos" },
-      { name: "Financeiro", href: "/financeiro", icon: Landmark, route: "financeiro" },
-    ],
-  },
+  };
+
+export const SW_MODULES = [crm, redesSociais, erp, cms, emissoes, integracoes, configuracoes] as const;
+
+const composed = composeModules({
+  modules: SW_MODULES,
+  localGroups: [CORESTUDIO_GROUP],
+  // NOC-REMEDIATE[sw-modules-enablement-endpoint]: static all-on (see docblock).
+  enabledKeys: new Set(SW_MODULES.map((m) => m.enablementKey)),
+});
+
+export const NAV_GROUPS: NavGroupWithRoute[] = composed.navGroups;
+
+/** Dashboard stays a standalone item after the groups (label unchanged; the "Painel" rename is open decision D3). */
+export const STANDALONE_ITEMS: NavItemWithRoute[] = [
+  { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
 ];
 
 export const NAV_FALLBACK: NavGroup[] = stripNavRoutes(NAV_GROUPS) as NavGroup[];
+export const STANDALONE_FALLBACK: NavItem[] = STANDALONE_ITEMS.map(({ route: _r, ...rest }) => rest as NavItem);

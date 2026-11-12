@@ -82,6 +82,40 @@ class TestAccessTierRoutes:
         good = bad.replace("def lead(): ...", "def lead():\n    verify_turnstile()")
         assert check_access_tier_routes(_tree(tmp_path / "g", good)) == []
 
+    def test_token_link_must_use_the_helper_and_a_rate_limit(self, tmp_path):
+        bad = _HEAD + "@router.get('/approve/{t}')\n@limiter.limit('5/minute')\n@access_tier('public', reason='x', category='token-link')\ndef approve(t): ...\n"
+        assert "resolve_token_link" in check_access_tier_routes(_tree(tmp_path, bad))[0]["issue"]
+        good = bad.replace("def approve(t): ...", "def approve(t):\n    resolve_token_link(t, fetch)")
+        assert check_access_tier_routes(_tree(tmp_path / "g", good)) == []
+        unlimited = good.replace("@limiter.limit('5/minute')\n", "")
+        assert "rate limit" in check_access_tier_routes(_tree(tmp_path / "u", unlimited))[0]["issue"]
+
+    def test_token_link_helper_named_only_in_a_docstring_or_string_is_unclear(self, tmp_path):
+        """P2-1: text matching let `resolve_token_link` in a docstring / string pass; the keeper walks the AST."""
+        deco = "@router.get('/approve/{t}')\n@limiter.limit('5/minute')\n@access_tier('public', reason='x', category='token-link')\n"
+        for i, body in enumerate((
+            'def approve(t):\n    """Uses resolve_token_link."""\n    return t\n',
+            'def approve(t):\n    note = "resolve_token_link(t, fetch)"\n    return note\n',
+            "def approve(t):\n    resolve_token_link('literal', fetch)\n",       # not the path parameter
+            "def approve(t):\n    resolve_token_link(other, fetch)\n",           # not the path parameter
+        )):
+            issues = check_access_tier_routes(_tree(tmp_path / str(i), _HEAD + deco + body))
+            assert issues and "path parameter" in issues[0]["issue"], body
+        ok = _HEAD + deco + "def approve(t):\n    return resolve_token_link(t, fetch)\n"
+        assert check_access_tier_routes(_tree(tmp_path / "ok", ok)) == []
+        kw = _HEAD + deco + "def approve(t):\n    return resolve_token_link(token=t, fetch=fetch)\n"
+        assert check_access_tier_routes(_tree(tmp_path / "kw", kw)) == []
+
+    def test_token_link_rate_limit_must_be_a_decorator_call(self, tmp_path):
+        src = _HEAD + "@router.get('/approve/{t}')\n@access_tier('public', reason='x', category='token-link')\ndef approve(t):\n    limiter = 1  # rate limit\n    return resolve_token_link(t, fetch)\n"
+        assert "rate limit" in check_access_tier_routes(_tree(tmp_path, src))[0]["issue"]
+        shared = _HEAD + "@router.get('/approve/{t}')\n@limiter.shared_limit('5/minute', scope='x')\n@access_tier('public', reason='x', category='token-link')\ndef approve(t):\n    return resolve_token_link(t, fetch)\n"
+        assert check_access_tier_routes(_tree(tmp_path / "s", shared)) == []
+
+    def test_token_link_write_needs_no_captcha(self, tmp_path):
+        src = _HEAD + "@router.post('/approve/{t}')\n@limiter.limit('5/minute')\n@access_tier('public', reason='x', category='token-link')\ndef approve(t):\n    resolve_token_link(t, fetch)\n"
+        assert check_access_tier_routes(_tree(tmp_path, src)) == []
+
     def test_signed_webhook_is_service_not_public(self, tmp_path):
         src = _HEAD + "@router.post('/hook')\ndef hook():\n    verify_hmac_sha256(b'', '', '')\n"
         assert check_access_tier_routes(_tree(tmp_path, src)) == []
@@ -169,6 +203,20 @@ class TestAccessTierTables:
         sql2 = "REVOKE ALL ON public.fin_accounts FROM anon, authenticated;\n"
         root = _tree(tmp_path, "", {"001.sql": sql1, "002.sql": sql2})
         assert at.analyze_tables(root)["grant_findings"] == []
+
+    def test_rename_moves_the_table_and_its_grants_to_the_new_name(self, tmp_path):
+        """orbity 023 retires tables with `ALTER TABLE ... RENAME TO` inside a DO block: the renamed table is the one
+        that still holds the browser grant -- the scanner must see `contracts_legacy`, not a phantom `contracts`."""
+        sql1 = "CREATE TABLE public.contracts (id int);\n"
+        sql2 = ("DO $retire$\nBEGIN\n    ALTER TABLE public.contracts RENAME TO contracts_legacy;\nEND\n$retire$;\n")
+        keys = {f["key"] for f in at.analyze_tables(_tree(tmp_path, "", {"001.sql": sql1, "002.sql": sql2}))["grant_findings"]}
+        assert "grant:public.contracts_legacy:authenticated" in keys
+        assert not any(k.startswith("grant:public.contracts:") for k in keys)
+
+    def test_plain_rename_statement_is_followed(self, tmp_path):
+        sql = "CREATE TABLE public.a (id int);\nALTER TABLE public.a RENAME TO b;\n"
+        keys = {f["key"] for f in at.analyze_tables(_tree(tmp_path, "", {"001.sql": sql}))["grant_findings"]}
+        assert "grant:public.b:authenticated" in keys and "grant:public.a:authenticated" not in keys
 
     def test_explicit_revoke_in_same_migration_is_clean(self, tmp_path):
         sql = "CREATE TABLE public.fin_x (id int);\nREVOKE ALL ON public.fin_x FROM anon, authenticated;\n"
@@ -558,3 +606,38 @@ class TestWiringScannerKnowsMakeRouter:
         from tools.noctus.dev.scan_wiring import _APIROUTER_PREFIX_RE
         m = _APIROUTER_PREFIX_RE.search('router = make_router(tier="org", guard=get_current_user_org, prefix="/api/example")')
         assert m and m.group("prefix") == "/api/example"
+
+
+class TestScanMemo:
+    """The four whole-tree scans are memoised per process on a stat signature of their inputs: the real-tree keeper
+    tests (and `check_all`) used to re-scan the same unchanged tree ~10x (570 s of a 1500 s CI-parity budget)."""
+
+    def test_repeat_scan_of_an_unchanged_tree_is_a_hit_and_a_change_is_a_miss(self, tmp_path):
+        root = _tree(tmp_path, _HEAD + "@router.post('/hook')\ndef hook(): ...\n")
+        before = at.scan_cache_info()
+        first = at.classify_routes(root)
+        second = at.classify_routes(root)
+        mid = at.scan_cache_info()
+        assert mid["misses"] - before["misses"] == 1 and mid["hits"] - before["hits"] == 1
+        assert [r.key for r in first] == [r.key for r in second] and first
+        (root / "products/agents/backend/app/routers/r.py").write_text(
+            _HEAD + "@router.get('/agents/{k}/evals/runs')\ndef runs(ctx=Depends(require_member)): ...\n", encoding="utf-8")
+        third = at.classify_routes(root)
+        assert at.scan_cache_info()["misses"] - mid["misses"] == 1
+        assert [r.verdict for r in third] != [r.verdict for r in second]
+
+    def test_a_caller_mutating_a_result_never_poisons_the_cache(self, tmp_path):
+        root = _tree(tmp_path, _HEAD + "@router.post('/hook')\ndef hook(): ...\n")
+        at.analyze_streams(root).append({"key": "junk"})
+        at.analyze_tables(root)["findings"].append({"key": "junk"})
+        assert {"key": "junk"} not in at.analyze_streams(root)
+        assert {"key": "junk"} not in at.analyze_tables(root)["findings"]
+
+    def test_a_new_migration_invalidates_the_table_scan(self, tmp_path):
+        root = _tree(tmp_path, "")
+        at.analyze_tables(root)
+        (root / "products/agents/backend/migrations/090.sql").write_text(
+            "CREATE TABLE agents.widgets (id int);\nCOMMENT ON TABLE agents.widgets IS 'tier:platform';\n"
+            "GRANT SELECT ON agents.widgets TO authenticated;\n", encoding="utf-8")
+        after = at.analyze_tables(root)
+        assert any("widgets" in f["key"] for f in after["findings"])

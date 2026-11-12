@@ -84,7 +84,9 @@ def test_connection_create_without_a_configured_waha_is_a_clear_503_not_a_fake(c
     finally:
         app.dependency_overrides.pop(_organ_auth.admin, None)
     assert resp.status_code == 503, resp.text
-    assert "WAHA" in resp.text
+    # A stable catalog code, never free text naming the integration or its env var (no-leak: integration_error()).
+    assert resp.json()["code"] == "not_configured"
+    assert "MONICA_WAHA" not in resp.text
 
 
 # --- leads config -------------------------------------------------------------------------------------------

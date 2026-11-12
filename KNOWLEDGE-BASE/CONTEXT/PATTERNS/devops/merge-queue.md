@@ -266,6 +266,15 @@ fast-forwards, and cancelling mid-FF is the one unsafe cut, so the budget is
 ~150x the observed runtime. Re-measure when a job's p95 drifts toward half its
 timeout.
 
+**Mirror outage (2026-11-11 ~14:16Z).** `azure.archive.ubuntu.com` answered `Ign:` for every package and every
+apt step hung to its 10-min timeout. About 12 red jobs per batch (candidates -9/-10, runs `43036758510`/`43043398036`), and
+the drain bisected an infra red. **Rule:** every apt use goes through `.github/actions/apt-install`. It drops the Google
+source, sets apt-wide retries and timeouts (`/etc/apt/apt.conf.d/99noc-resilient`, inherited by playwright's own
+`apt-get`), probes the mirror under a hard cap, and walks `archive.ubuntu.com` → `mirrors.ubuntu.com/mirrors.txt` on a
+hang, `Ign:` or `Err:`. It fails loudly naming the mirror. Playwright jobs run it with no `packages` before
+`--with-deps` / `install-deps`. The fix rides in the candidate's own `test.yml`, so the batch that carries it already
+gets past the broken mirror.
+
 ## 6b · Watchdog — the queue tells the owner, with or without a steward
 
 **Rule.** The queue reports itself off-host. A watcher that lives in a session
@@ -301,6 +310,48 @@ The message reports:
 
 **In-session feed reports batches too (2026-11-09).** `cli.py --merge-queue watch` also prints `MQ-BATCH <candidate> -> success|failure|cancelled <url>` once per finished candidate batch (the first poll is a silent baseline; a failed read prints `MQ-WATCH-ERROR batches …`). Before this an entry-only watch stayed silent through a whole bisect, because nothing leaves the list while suspects are retried. One Monitor on `^MQ-LEFT|^MQ-BATCH|^MQ-WATCH-ERROR` is the whole live loop; the procedure is skill `noc-steward`.
 
+## 6c · Priority lane and parallel product-disjoint candidates (2026-11-11)
+
+**Priority lane.** An entry whose diff vs dev touches `.github/`, or whose tip commit carries a
+`MQ-Priority: <why>` trailer, composes FIRST and ALONE, ahead of oldest-first order and ahead of
+an open bisection (a priority run never moves the bisection state). Why: on 2026-11-11 the
+apt-mirror CI fix waited behind FIFO and the first candidate went infra-red without it. The
+trailer is the flag because it rides the commit through enqueue's rebase untouched: no enqueue
+change. (`.github/workflows/*` still needs the push token, as before.)
+
+**Parallel candidates (K=2, `PARALLEL_CANDIDATES`).** When the leading entries of the next batch
+are all product-only (every changed path under `products/<slug>/`, other than the shared
+`products/seed/`) and fall into 2+ disjoint product groups, each group is composed on the SAME dev
+base and pushed as its own candidate (`mq-candidate/<run>-<n>p<i>`); their CI runs overlap, which
+is the gain. Entries sharing a product merge into one group. A red candidate ejects (or
+attributes/bisects) on its own and never touches the others.
+
+**What never runs in parallel.** Anything outside `products/<slug>/` (seed, mcp, `.github`, KB,
+scripts, ledgers, an unreadable diff) is ONE shared area that conflicts with everything: a shared
+entry is never a second candidate, an open bisection never forms a wave, a priority entry is
+always alone. With a shared entry first in line the queue behaves exactly as before.
+
+**Land rule.** The first green lands as today. A later green is re-composed on the new dev tip
+(re-running the kb-counts/derived regen on the COMBINED tree) and lands WITHOUT a CI re-run only
+when the result is provably the exact union of the two tested trees: the two diffs vs base share
+no file, the re-composed tree differs from the tested candidate only in the peer's files, and it
+differs from the tip in exactly the candidate's own files. Any miss (shared derived file such as
+counts moved, dev moved beyond the wave, re-compose not clean) leaves the entries queued and the
+next round re-tests them on the combined tree, so a miss costs time, never correctness.
+**Residual risk, stated:** file-disjoint is not effect-disjoint (per-branch green is not
+integration green); restricting the skip to product-only entries with no shared file is what
+keeps that risk small, not zero. Path areas come from the queue's own map (`entry_areas`), to be
+derived from `ci_scope.classify` once that lands (`NOC-REMEDIATE[mq-area-map-dedup]`).
+
+## 6d · Toolkit shards are balanced by measured time (2026-11-11)
+
+The slowest `MCP Toolkit Tests` shard gates every batch. Round-robin by file count gave 933s / 206s / 357s / 665s
+(run `43029073315`). The split is now longest-processing-time bin packing over per-file seconds
+(`mcp/noctusai/tools/noctus/dev/ci_shards.py`, table `scripts/ci/mcp-test-durations.json`; an unknown file weighs
+the median). Predicted 540s per shard. `test_compliance.py` stays isolated. Refresh the table from a run's shard
+logs (recipe in the module docstring) when a shard drifts more than ~2x from the others. The coverage-proof job
+uses the same splitter, so a file can never be dropped or run twice. Owner-approved speedup 5.
+
 ## 7 · Limits and options
 
 - **Why not GitHub's native merge queue?** It needs an organization-owned
@@ -323,6 +374,27 @@ The message reports:
 - **Bisection is "first half", not speculative.** A red batch of N retries its
   first ⌈N/2⌉. That is enough at our volume; Uber-style speculation is not
   warranted.
+- **A red batch is attributed before it is bisected (2026-11-11).** Each
+  bisect step is a ~50-minute CI run, and a 2-hour stall happened. So on a red
+  batch the drain first reads the failing tests (`gh run view --log-failed`,
+  `FAILED path::Class::test`), maps each to an area, and compares that with each
+  entry's diff against the batch base (`attribute_culprit`, a pure function):
+  - `products/<p>/...` test -> that product + `seed/`; `seed/...` -> `seed/`;
+    `mcp/...` -> `mcp/`; no readable test id -> only a scoped job name
+    (`Product Backend Tests (pytest) (<p>)`, `Seed ...`, `MCP Toolkit Tests`);
+  - the migration edge: `verify_db_guards`, `*_on_replay*` and migration-replay
+    tests map to entries whose diff adds `products/<p>/.../migrations/*.sql`
+    (the product `<p>` when the test names it, e.g. `TestAgentsStudioProbes` ->
+    agents; otherwise any migration).
+  EXACTLY ONE matching entry is ejected as `ci_red_attributed`, the reason
+  naming the failing test and the matching path (it rides the `merge-queue`
+  status, so the `MQ-LEFT` line carries it), and the rest go to a fresh
+  candidate. Zero or several matches, or an unreadable failure, bisect exactly as
+  before; the log line says `ATTRIBUTED` or `bisecting (<reason>)` and each
+  round record carries `attribution: {path: attributed|bisect, reason}`. It
+  never guesses. Covered by the `culprit attribution` tests in
+  `test_merge_queue.py`.
+
 - **The suspects stay isolated until the culprit is out (2026-11-05).** The
   entries of a red batch are *suspects*. While any of them are still queued,
   batches are drawn only from them:

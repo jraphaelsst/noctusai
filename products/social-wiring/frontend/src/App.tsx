@@ -18,7 +18,7 @@
 import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import { useSocialWiringLayoutEnrichment } from "@/hooks/useLayoutEnrichment";
-import { NAV_GROUPS, NAV_FALLBACK } from "@/nav/navGroups";
+import { NAV_GROUPS, NAV_FALLBACK, STANDALONE_ITEMS, STANDALONE_FALLBACK } from "@/nav/navGroups";
 import { JULIA_PAGES } from "@/nav/julia";
 import { Share2 } from "lucide-react";
 
@@ -153,6 +153,8 @@ const Layout = createProductLayout({
   brandTitle: "Social Wiring",
   navGroups: NAV_GROUPS,
   navGroupsFallback: NAV_FALLBACK,
+  standaloneItems: STANDALONE_ITEMS,
+  standaloneItemsFallback: STANDALONE_FALLBACK,
   ...infra.appConfig,
   NotificationBell: infra.NotificationBell,
   useLayoutEnrichment: useSocialWiringLayoutEnrichment,

@@ -50,7 +50,7 @@ function PageShell({ children }: { children: React.ReactNode }) {
 function LoadingState() {
   return (
     <PageShell>
-      <div className="rounded-xl bg-white border border-gray-200 p-6 shadow-sm animate-pulse space-y-4">
+      <div className="rounded-xl bg-white border border-gray-200 p-6 shadow-xs animate-pulse space-y-4">
         <div className="h-4 bg-gray-200 rounded w-1/3" />
         <div className="h-6 bg-gray-200 rounded w-2/3" />
         <div className="h-32 bg-gray-200 rounded" />
@@ -100,7 +100,7 @@ function TerminalState({
 
   return (
     <PageShell>
-      <div className="rounded-xl bg-white border border-gray-200 p-10 text-center shadow-sm">
+      <div className="rounded-xl bg-white border border-gray-200 p-10 text-center shadow-xs">
         <Icon className={`h-12 w-12 mx-auto mb-4 ${color}`} />
         <h2 className="text-lg font-semibold text-gray-800 mb-2">{title}</h2>
         <p className="text-sm text-gray-500">{body}</p>
@@ -116,7 +116,7 @@ function TerminalState({
 function DoneState({ decision, teamNotified }: { decision: ApprovalDecision; teamNotified: boolean }) {
   return (
     <PageShell>
-      <div className="rounded-xl bg-white border border-gray-200 p-10 text-center shadow-sm">
+      <div className="rounded-xl bg-white border border-gray-200 p-10 text-center shadow-xs">
         {decision === "approved" ? (
           <CheckCircle2 className="h-12 w-12 text-green-500 mx-auto mb-4" />
         ) : (
@@ -226,7 +226,7 @@ export default function AprovacaoPublica() {
   return (
     <PageShell>
       {/* Header */}
-      <div className="rounded-xl bg-white border border-gray-200 p-6 shadow-sm">
+      <div className="rounded-xl bg-white border border-gray-200 p-6 shadow-xs">
         <div className="flex items-center gap-3 mb-3">
           <div className="rounded-lg bg-indigo-50 p-2">
             <Megaphone className="h-5 w-5 text-indigo-600" />
@@ -252,7 +252,7 @@ export default function AprovacaoPublica() {
 
       {/* Media preview */}
       {post.media_url && (
-        <div className="rounded-xl bg-white border border-gray-200 overflow-hidden shadow-sm">
+        <div className="rounded-xl bg-white border border-gray-200 overflow-hidden shadow-xs">
           <img
             src={post.media_url}
             alt="Mídia do post"
@@ -272,7 +272,7 @@ export default function AprovacaoPublica() {
 
       {/* Caption */}
       {post.caption && (
-        <div className="rounded-xl bg-white border border-gray-200 p-5 shadow-sm">
+        <div className="rounded-xl bg-white border border-gray-200 p-5 shadow-xs">
           <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Legenda</p>
           <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
             {post.caption}
@@ -282,7 +282,7 @@ export default function AprovacaoPublica() {
 
       {/* Hashtags */}
       {post.hashtags && (
-        <div className="rounded-xl bg-white border border-gray-200 p-5 shadow-sm">
+        <div className="rounded-xl bg-white border border-gray-200 p-5 shadow-xs">
           <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Hashtags</p>
           <p className="text-sm text-indigo-600 break-words">{post.hashtags}</p>
         </div>
@@ -290,7 +290,7 @@ export default function AprovacaoPublica() {
 
       {/* Feedback textarea (revealed on "Solicitar revisão") */}
       {showFeedback && (
-        <div className="rounded-xl bg-amber-50 border border-amber-200 p-5 shadow-sm space-y-2">
+        <div className="rounded-xl bg-amber-50 border border-amber-200 p-5 shadow-xs space-y-2">
           <label className="text-sm font-medium text-amber-800">
             Descreva o que precisa ser ajustado:
           </label>
@@ -299,7 +299,7 @@ export default function AprovacaoPublica() {
             onChange={(e) => setFeedback(e.target.value)}
             rows={4}
             placeholder="Ex: ajustar a legenda, trocar a imagem, mudar o horário..."
-            className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
+            className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-gray-800 placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-amber-400 resize-none"
           />
         </div>
       )}
@@ -309,7 +309,7 @@ export default function AprovacaoPublica() {
         <button
           onClick={() => handleDecision("approved")}
           disabled={decide.isPending}
-          className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-green-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-green-700 disabled:opacity-60 transition-colors"
+          className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-green-600 px-6 py-3 text-sm font-semibold text-white shadow-xs hover:bg-green-700 disabled:opacity-60 transition-colors"
         >
           <CheckCircle2 className="h-4 w-4" />
           Aprovar
@@ -323,7 +323,7 @@ export default function AprovacaoPublica() {
             }
           }}
           disabled={decide.isPending || (showFeedback && !feedback.trim())}
-          className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-amber-400 bg-amber-50 px-6 py-3 text-sm font-semibold text-amber-800 shadow-sm hover:bg-amber-100 disabled:opacity-60 transition-colors"
+          className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-amber-400 bg-amber-50 px-6 py-3 text-sm font-semibold text-amber-800 shadow-xs hover:bg-amber-100 disabled:opacity-60 transition-colors"
         >
           <XCircle className="h-4 w-4" />
           {showFeedback ? "Enviar revisão" : "Solicitar revisão"}

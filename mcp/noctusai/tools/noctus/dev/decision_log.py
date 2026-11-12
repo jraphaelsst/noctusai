@@ -795,6 +795,11 @@ def run(action: str, *, root: Path | None = None, **kw: Any) -> dict:
         else:
             from settings import REPO_ROOT
             root = Path(REPO_ROOT)
+            if action in ("record", "review") and (root / ".git").is_dir():
+                # The server's fixed cwd is the PRIMARY checkout; a write without worktree_path lands in the primary's
+                # project-history/decisions/ instead of the caller's branch (2026-11-11). Refuse, name the fix.
+                return _err("refusing to write to the primary checkout: pass worktree_path=<your worktree's absolute root> "
+                            "so the decision lands in (and is committed with) your branch")
     else:
         kw.pop("worktree_path", None)
     if action == "record":

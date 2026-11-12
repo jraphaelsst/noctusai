@@ -179,7 +179,7 @@ def editorial_router(
         )
 
     def _missing(e: Exception) -> HTTPException:
-        return HTTPException(404, detail={"detail": str(e), "code": "not_found"})
+        return HTTPException(404, detail={"detail": str(e), "code": "not_found"})  # detail-safe: domain-authored message
 
     def _awaits(store: EditorialStore, ctx: EditorialContext, item: Any, grants: list[str]) -> bool:
         """True when the caller may perform the item's next forward transition.
@@ -243,7 +243,7 @@ def editorial_router(
         except EditorialDenied as e:
             raise _deny(e)
         except EditorialConflict as e:
-            raise HTTPException(409, detail={"detail": str(e), "code": "already_exists"})
+            raise HTTPException(409, detail={"detail": str(e), "code": "already_exists"})  # detail-safe: domain-authored message
         return success_response(_jsonable(res))
 
     @router.get("/{item_id}")
