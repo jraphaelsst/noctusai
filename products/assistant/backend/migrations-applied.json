@@ -10,6 +10,7 @@
     "016_status_pagina_conexao.sql": "7da9762bb48cf510ae3671dcc416e263ea85d0626d9ad8c920fe461498e12b28",
     "017_classificador.sql": "3215920fcc5333cd0e69357fd1a6a8bf77d19d46146c304a3e122dd44ce2b040",
     "018_rotulos_avaliacao.sql": "6d09b8efd16adaeda67feef2354e56077291a9db1a924fdb82531b9c45ac235a",
-    "019_google_connection.sql": "9b8e58273d1dbb90a03c25eb85e4d4e0a4e0fcdb7cbbd014bf21851d39964ecc"
+    "019_google_connection.sql": "9b8e58273d1dbb90a03c25eb85e4d4e0a4e0fcdb7cbbd014bf21851d39964ecc",
+    "020_whatsapp_line_events.sql": "002d16672512ea68890d4b9391776671c97dc85317350668c45a6a0196f0193b"
   }
 }
