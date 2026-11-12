@@ -16,8 +16,8 @@ agent, hosted in the `agents` product, replies on the same line. It never marks 
 - `/api/whatsapp/connections*` (admin) - QR pairing, status, start/restart/logout/recover.
 - `POST /api/whatsapp/webhook/{token}` - the inbound webhook. **HMAC required**: no `ASSISTANT_WAHA_WEBHOOK_HMAC_SECRET`
   means every call is a 401 and a deploy refuses to boot.
-  The live line (`send: enabled`) has no edge: WAHA posts direct to the product URL. A `send: disabled` line that
-  declares a `webhook_relay` still registers through it (`webhook_base_url`, pinned by `test_webhook_relay_base.py`).
+  The line is the owner's personal live line (`send: enabled`, no edge, no `webhook_relay`): WAHA posts DIRECT to the
+  product URL (`webhook_base_url`, pinned by `test_webhook_relay_base.py`).
 - `POST /api/classificacao/replay` (admin) - re-classify chosen rows under the registry's current prompt/model
   (new `ai_outputs` rows only).
 - `GET /api/classificacao/amostra` (admin) - stratified sample for labelling; `modo=cego` (default) hides the

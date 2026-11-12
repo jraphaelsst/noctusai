@@ -22,12 +22,15 @@ from app.routers.google_router import callback_router as google_callback_router,
 from app.routers.whatsapp_router import router as whatsapp_router
 from app.shadow.worker import start_worker, stop_worker
 
-# Line policy v1: declare the Assistant's own line (`ASSISTANT_WAHA_LINE_POLICY`, from waha-instances.yml). A malformed
-# value fails the boot; an absent one leaves the line undeclared => the seed refuses its writes (fail-closed).
+# Line policy v1: declare the Assistant's own line (`ASSISTANT_WAHA_LINE_POLICY`, from waha-instances.yml; the personal
+# live shape: send enabled, no edge). A malformed value fails the boot; an absent one leaves the line undeclared => the seed
+# refuses its writes (fail-closed), so the live reply cannot send.
 if settings.assistant_waha_base_url and settings.assistant_waha_line_policy:
-    # A `send: disabled` line is only registrable with a PERSISTENT refusal sink (append-only `whatsapp_line_events`,
-    # migration 020). The Real sink builds its client lazily (only on a refusal), so importing the app under tests needs
-    # no DB; tests that exercise a refusal swap in the Fake via `set_default_line_event_sink`.
+    # The personal live line (`send: enabled`, mark_online/full_sync/auto_repair off, no edge) still REFUSES things the
+    # policy forbids (auto-repair, presence); those refusals land in the append-only `whatsapp_line_events` (migration 020)
+    # through a PERSISTENT sink (a `send: disabled` line would not even register without one). The Real sink builds its
+    # client lazily (only on a refusal), so importing the app under tests needs no DB; tests that exercise a refusal swap in
+    # the Fake via `set_default_line_event_sink`.
     set_default_line_event_sink(make_line_event_sink(schema="assistant", client_factory=get_admin_client))
     register_line_policy(
         settings.assistant_waha_base_url,
