@@ -100,3 +100,41 @@ class TestPoolIsolationMarker:
     def test_markers(self):
         assert FakeSlotPool.isolated is False
         assert RealSlotPool.isolated is True
+
+
+class TestOwnerNumberFromCore:
+    """074 -> core 121: the hand-off number is the platform's ONE owner number, read from core (never an agents row)."""
+
+    def test_reads_core_and_normalizes(self):
+        service = RuntimeSettingsService(
+            FakeRuntimeSettingsStore(), _settings(), ttl_seconds=0, owner_number=lambda: "(11) 90000-0000")
+        assert service.numero_fallback_atendimento() == "+5511900000000"
+
+    def test_an_agents_row_is_ignored(self):
+        store = FakeRuntimeSettingsStore()
+        store.put("numero_fallback_atendimento", "+5511911112222", updated_by=None)  # the old agents copy
+        service = RuntimeSettingsService(store, _settings(), ttl_seconds=0, owner_number=lambda: None)
+        assert service.numero_fallback_atendimento() is None
+
+    def test_no_source_means_unset(self):
+        assert RuntimeSettingsService(FakeRuntimeSettingsStore(), _settings(), ttl_seconds=0).numero_fallback_atendimento() is None
+
+    def test_core_unreadable_is_unset_and_loud_not_a_crash(self, caplog):
+        def boom() -> str | None:
+            raise RuntimeError("core down")
+
+        service = RuntimeSettingsService(FakeRuntimeSettingsStore(), _settings(), ttl_seconds=0, owner_number=boom)
+        assert service.numero_fallback_atendimento() is None
+        assert "agents.owner_number_read_failed" in caplog.text
+
+    def test_not_editable_here(self):
+        import pytest
+
+        from app.services.runtime_settings import RuntimeSettingsError
+
+        service = RuntimeSettingsService(
+            FakeRuntimeSettingsStore(), _settings(), ttl_seconds=0, owner_number=lambda: "+5511900000000")
+        with pytest.raises(RuntimeSettingsError):
+            service.update({"numero_fallback_atendimento": "+5511911112222"}, updated_by=None)
+        view = {v.key: v for v in service.view()}["numero_fallback_atendimento"]
+        assert (view.source, view.editable) == ("core", False)

@@ -12,7 +12,7 @@ export interface AgentSetting {
   key: string;
   value: number | string | null;
   default: number | string | null;
-  source: "db" | "env";
+  source: "db" | "env" | "core";
   editable: boolean;
   min: number | null;
   max: number | null;
@@ -26,7 +26,6 @@ export type AgentSettingsPatch = Partial<{
   approval_timeout_seconds: number | null;
   max_turns: number | null;
   messages_rate_limit: string | null;
-  numero_fallback_atendimento: string | null;
 }>;
 
 export function useAgentSettings() {

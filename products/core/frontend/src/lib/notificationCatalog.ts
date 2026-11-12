@@ -34,6 +34,8 @@ export interface NotificationProduct {
   kinds: NotificationKindRow[];
   enabled_count: number;
   total: number;
+  /** false = a live product that declares no owner notification (still listed, so the gap is visible). */
+  declared: boolean;
 }
 
 export interface NotificationCatalog {

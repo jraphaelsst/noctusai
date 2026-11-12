@@ -52,6 +52,21 @@ recipient -> `gate.record`. It never raises (an undeclared kind does). No transp
 4. Test the switched-off path (`suppressed`, nothing sent) and the no-recipient path (`no_recipient` is recorded,
    never silent).
 
+## One owner number, every live product on the page (W1-D, 2026-11-12)
+
+- **One owner number, in core.** `public.notification_owner_recipients` is the only list of owner numbers (core page
+  Notificações → "Quem recebe os avisos"). Anything that needs "the owner's number" READS it — Agents' hand-off number
+  (`RuntimeSettingsService.numero_fallback_atendimento`) is the first active recipient, read-only on its page. Core
+  migration `121_owner_number_one_source.sql` copied the old agents value into core, straight from that row (no number
+  in code or migrations).
+- **Every live product is on the page.** `notification_catalog_service.live_roster` adds each `ativo` + `deploy_scope='live'`
+  product (and `core`) even when it declares no kind, so "this product warns the owner about nothing" is visible
+  (`declared: false`) instead of the product vanishing.
+- **Reasons ride with the notice.** Julia's `opt_out` action carries the agent's own `motivo_texto`; SW's owner notice shows
+  it (the closed `motivo` enum is only the fallback).
+- **skill-scout notices are WhatsApp-only**: core declares `skill_scout_novo_skill` (`canais=("whatsapp",)`) and sends it
+  through `notify_owner` (`skill_scout_notice_service`, `POST /api/admin/notifications/skill-scout`).
+
 ## Open follow-ups
 
 - Bell-only owner alerts that the owner has **not** asked for by name stay bell-only until he chooses. The candidate

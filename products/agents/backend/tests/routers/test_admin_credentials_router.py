@@ -68,6 +68,7 @@ def admin_client(agents_client, caplog):
                        "messages_rate_limit": "20/minute", "turn_timeout_seconds": 600,
                        "claude_cli_slots": 3})(),
         ttl_seconds=0,
+        owner_number=lambda: "(11) 90000-0000",  # core's one owner number (raw spelling: the service normalizes)
     )
     app.dependency_overrides[get_credential_service_dep] = lambda: kit.service
     app.dependency_overrides[get_runtime_settings_service_dep] = lambda: runtime
@@ -226,18 +227,14 @@ class TestAgentSettings:
         assert admin_client.put("/api/admin/agent-settings", json=body).status_code == 422
 
 
-    def test_fallback_number_is_stored_as_e164_and_resets_to_unset(self, admin_client):
-        """074: one hand-off fallback number for every org; any spelling with DDD is stored canonical."""
+    def test_fallback_number_is_core_owned_read_only_and_never_written_here(self, admin_client):
+        """One owner number, in core: the page SHOWS it (source "core", not editable); a write is refused (422)."""
         _seed_user(admin_client, role="admin")
-        resp = admin_client.put("/api/admin/agent-settings", json={"numero_fallback_atendimento": "(11) 99457-3387"})
-        assert resp.status_code == 200, resp.text
-        items = {i["key"]: i for i in resp.json()["items"]}
-        assert (items["numero_fallback_atendimento"]["value"], items["numero_fallback_atendimento"]["source"]) == (
-            "+5511994573387", "db")
-        assert admin_client.runtime_settings.numero_fallback_atendimento() == "+5511994573387"
-        reset = admin_client.put("/api/admin/agent-settings", json={"numero_fallback_atendimento": None})
-        items = {i["key"]: i for i in reset.json()["items"]}
-        assert (items["numero_fallback_atendimento"]["value"], items["numero_fallback_atendimento"]["source"]) == (None, "env")
+        resp = admin_client.get("/api/admin/agent-settings")
+        item = {i["key"]: i for i in resp.json()["items"]}["numero_fallback_atendimento"]
+        assert (item["value"], item["source"], item["editable"]) == ("+5511900000000", "core", False)
+        refused = admin_client.put("/api/admin/agent-settings", json={"numero_fallback_atendimento": "+5511911112222"})
+        assert refused.status_code == 422
 
 
 class TestAgentSettingsJsonModeWrite:

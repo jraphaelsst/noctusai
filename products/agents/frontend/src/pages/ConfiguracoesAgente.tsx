@@ -35,7 +35,7 @@ const LABELS: Record<string, { label: string; help: string }> = {
   },
   numero_fallback_atendimento: {
     label: "Número de atendimento (passagem a uma pessoa)",
-    help: "Quando um agente passa a conversa para uma pessoa, a equipe é avisada neste número. Um número para todas as organizações. Sem ele, nenhum agente de conversa pode ser publicado.",
+    help: "Quando um agente passa a conversa para uma pessoa, a equipe é avisada neste número. É o número do dono, cadastrado uma única vez no core (Notificações → Quem recebe os avisos); aqui só aparece. Sem ele, nenhum agente de conversa pode ser publicado.",
   },
   claude_cli_slots: {
     label: "Conversas simultâneas (slots)",
@@ -130,7 +130,7 @@ export default function ConfiguracoesAgente() {
                     <label htmlFor={`setting-${item.key}`} className="text-sm font-medium text-foreground">
                       {meta.label}
                     </label>
-                    <Badge variant="outline">{item.source === "db" ? "personalizado" : "padrão"}</Badge>
+                    <Badge variant="outline">{item.source === "db" ? "personalizado" : item.source === "core" ? "do core" : "padrão"}</Badge>
                     {item.editable && item.source === "db" && (
                       <button
                         type="button"
@@ -148,6 +148,7 @@ export default function ConfiguracoesAgente() {
                     type={typeof item.default === "number" ? "number" : "text"}
                     min={item.min ?? undefined}
                     max={item.max ?? undefined}
+                    placeholder={item.source === "core" ? "Nenhum número ativo no core" : undefined}
                     readOnly={!item.editable}
                     disabled={!item.editable}
                     value={form[item.key] ?? ""}

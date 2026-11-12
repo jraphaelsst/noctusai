@@ -2,9 +2,11 @@
 setting is the default (Configurações do agente page).
 
 Editable: ``approval_timeout_seconds`` (contract §E.2 "Timeout"),
-``max_turns`` (§E.5), ``messages_rate_limit`` (§E rate limit),
-``numero_fallback_atendimento`` (074: the E.164 number an agent hand-off notifies;
-one for every org for now, no default: unset blocks publishing a conversational agent).
+``max_turns`` (§E.5), ``messages_rate_limit`` (§E rate limit).
+Read-only here: ``numero_fallback_atendimento`` -- the E.164 number an agent hand-off notifies. It is the platform's ONE
+owner number, kept in core (``public.notification_owner_recipients``, edited on core's "Notificações" page; migration core
+121 copied the old agents value there) and read through the injected ``owner_number`` callable. Unset (or core unreadable,
+logged) blocks publishing a conversational agent.
 Read-only: ``claude_cli_slots`` — structural (one uid + one tmpfs mount per
 slot in the image and compose, §E.11), so changing it needs a redeploy.
 
@@ -43,7 +45,7 @@ __all__ = [
 ]
 
 NUMERO_FALLBACK = "numero_fallback_atendimento"
-EDITABLE_KEYS = ("approval_timeout_seconds", "max_turns", "messages_rate_limit", NUMERO_FALLBACK)
+EDITABLE_KEYS = ("approval_timeout_seconds", "max_turns", "messages_rate_limit")
 
 _RATE_LIMIT_RE = re.compile(r"^[1-9]\d{0,4}/(second|minute|hour|day)$")
 _SPEC_PATH = Path(__file__).resolve().parent.parent / "agents" / "bia" / "spec.yaml"
@@ -63,7 +65,7 @@ class SettingView:
     key: str
     value: Any
     default: Any
-    source: Literal["db", "env"]
+    source: Literal["db", "env", "core"]
     editable: bool
     min: int | None = None
     max: int | None = None
@@ -82,8 +84,10 @@ class RuntimeSettingsService:
         *,
         ttl_seconds: float = 30.0,
         clock: Callable[[], float] = time.monotonic,
+        owner_number: Callable[[], str | None] | None = None,
     ) -> None:
         self._store = store
+        self._owner_number = owner_number
         self._settings = settings
         self._ttl = ttl_seconds
         self._clock = clock
@@ -98,15 +102,7 @@ class RuntimeSettingsService:
             "approval_timeout_seconds": int(getattr(self._settings, "approval_timeout_seconds", 300)),
             "max_turns": int(configured_turns) if configured_turns else _spec_max_turns(),
             "messages_rate_limit": str(getattr(self._settings, "messages_rate_limit", "20/minute")),
-            NUMERO_FALLBACK: self._numero_env(),
         }
-
-    def _numero_env(self) -> str | None:
-        raw = getattr(self._settings, NUMERO_FALLBACK, None)
-        numero = normalize_phone(raw)
-        if raw and numero is None:  # loud: a typo in env must not read as "nobody set a number"
-            logger.error("agents.runtime_setting_invalid_in_env key=%s", NUMERO_FALLBACK)
-        return numero
 
     def _max_approval_timeout(self) -> int:
         # An approval wait happens INSIDE a turn; it must end before the
@@ -151,8 +147,19 @@ class RuntimeSettingsService:
         return str(self._effective("messages_rate_limit"))
 
     def numero_fallback_atendimento(self) -> str | None:
-        """The E.164 number an agent hand-off notifies, or ``None`` when nobody set one (publish refuses)."""
-        return self._effective(NUMERO_FALLBACK)
+        """The E.164 number an agent hand-off notifies: the platform's one owner number, read from core. ``None`` when
+        core has no active recipient or cannot be read (loud) -- publish refuses either way."""
+        if self._owner_number is None:
+            return None
+        try:
+            raw = self._owner_number()
+        except Exception:
+            logger.exception("agents.owner_number_read_failed — hand-off number unavailable")
+            return None
+        numero = normalize_phone(raw) if raw else None
+        if raw and numero is None:
+            logger.error("agents.owner_number_invalid_in_core")
+        return numero
 
     # ── page ───────────────────────────────────────────────────────────
 
@@ -163,7 +170,6 @@ class RuntimeSettingsService:
             "approval_timeout_seconds": (_MIN_APPROVAL_TIMEOUT, self._max_approval_timeout()),
             "max_turns": (1, _MAX_TURNS_LIMIT),
             "messages_rate_limit": (None, None),
-            NUMERO_FALLBACK: (None, None),
         }
         views = [
             SettingView(
@@ -177,16 +183,14 @@ class RuntimeSettingsService:
             )
             for key in EDITABLE_KEYS
         ]
+        views.append(SettingView(
+            key=NUMERO_FALLBACK, value=self.numero_fallback_atendimento(), default=None, source="core", editable=False,
+        ))
         slots = int(getattr(self._settings, "claude_cli_slots", 3))
         views.append(SettingView(key="claude_cli_slots", value=slots, default=slots, source="env", editable=False))
         return views
 
     def _validate(self, key: str, value: Any) -> Any:
-        if key == NUMERO_FALLBACK:
-            numero = normalize_phone(value) if isinstance(value, str) else None
-            if numero is None:
-                raise RuntimeSettingsError(key, "Informe um telefone válido com DDD, ex.: +55 11 99999-9999.")
-            return numero
         if key == "messages_rate_limit":
             if not isinstance(value, str) or not _RATE_LIMIT_RE.match(value.strip()):
                 raise RuntimeSettingsError(key, "Use o formato N/second|minute|hour|day, ex.: 20/minute.")
@@ -228,6 +232,24 @@ class RuntimeSettingsService:
 _singleton: RuntimeSettingsService | None = None
 
 
+def _core_owner_number(settings: Any) -> Callable[[], str | None]:
+    """The platform's one owner number: the first ACTIVE row of core's ``notification_owner_recipients`` (oldest first),
+    through the seed's cached source. Without a service-role key there is no core to read (tests, local): ``None``."""
+    if not getattr(settings, "supabase_service_role_key", None):
+        return lambda: None
+    from noctusai_lib.domain.notification_catalog import SupabaseOwnerRecipientSource
+
+    from app.database import get_core_client
+
+    source = SupabaseOwnerRecipientSource(get_core_client)
+
+    def read() -> str | None:
+        active = source.active()
+        return active[0].numero if active else None
+
+    return read
+
+
 def get_runtime_settings_service(settings: Any) -> RuntimeSettingsService:
     """Process singleton (its cache must be shared by every consumer)."""
     global _singleton
@@ -238,6 +260,7 @@ def get_runtime_settings_service(settings: Any) -> RuntimeSettingsService:
             get_runtime_settings_store(settings),
             settings,
             ttl_seconds=float(getattr(settings, "credential_cache_ttl_seconds", 30) or 0),
+            owner_number=_core_owner_number(settings),
         )
     return _singleton
 

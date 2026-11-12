@@ -20,6 +20,7 @@ USERS = {"admin": ADMIN_USER, "owner": OWNER_USER, "member": MEMBER_USER}
 ROUTES = [
     ("get", "/api/admin/notifications", None),
     ("get", "/api/admin/notifications/sends", None),
+    ("post", "/api/admin/notifications/skill-scout", {"nome": "n", "resumo": "r"}),
     ("patch", "/api/admin/notifications/social-wiring", {"enabled": False}),
     ("patch", "/api/admin/notifications/social-wiring/lead", {"enabled": False}),
 ]
@@ -91,7 +92,9 @@ def test_catalog_groups_by_product_with_30_day_stats(env):
     resp = env.client.get("/api/admin/notifications")
     assert resp.status_code == 200
     data = resp.json()["data"]
-    [group] = data["products"]
+    by_product = {g["product"]: g for g in data["products"]}
+    group = by_product["social-wiring"]
+    assert by_product["core"]["declared"] is False  # the platform shell is always listed, even before it registers kinds
     assert group["product"] == "social-wiring" and group["total"] == 2 and group["enabled_count"] == 1
     lead = next(k for k in group["kinds"] if k["kind"] == "lead")
     assert lead["counts_30d"]["sent"] == 1 and lead["counts_30d"]["failed"] == 1  # the 40-day-old send is outside
@@ -121,3 +124,13 @@ def test_unknown_kind_is_404_and_bad_slug_422(env):
 def test_sends_ledger_filters(env):
     rows = env.client.get("/api/admin/notifications/sends", params={"product": "social-wiring", "kind": "lead"}).json()["data"]
     assert [r["id"] for r in rows][:2] == [2, 1]
+
+
+def test_skill_scout_notice_is_accepted_and_reports_the_outcome(env):
+    resp = env.client.post("/api/admin/notifications/skill-scout", json={"nome": "pdf-forms", "resumo": "Preenche PDFs."})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["status"] in {"sent", "no_recipient", "failed", "suppressed", "partial"}
+
+
+def test_skill_scout_notice_rejects_unknown_fields(env):
+    assert env.client.post("/api/admin/notifications/skill-scout", json={"nome": "n", "resumo": "r", "canal": "email"}).status_code == 422

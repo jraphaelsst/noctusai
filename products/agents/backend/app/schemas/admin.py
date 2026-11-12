@@ -73,7 +73,7 @@ class AgentSettingOut(BaseModel):
     key: str
     value: Any
     default: Any
-    source: Literal["db", "env"]
+    source: Literal["db", "env", "core"]
     editable: bool
     min: int | None = None
     max: int | None = None
@@ -89,4 +89,3 @@ class AgentSettingsPatch(_Strict):
     approval_timeout_seconds: int | None = None
     max_turns: int | None = None
     messages_rate_limit: str | None = None
-    numero_fallback_atendimento: str | None = None

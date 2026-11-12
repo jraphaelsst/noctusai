@@ -15,6 +15,8 @@ from typing import Any, Optional
 from noctusai_lib.domain.notification_catalog import KINDS_TABLE, SEND_STATUSES, SENDS_TABLE
 
 STATS_WINDOW = timedelta(days=30)
+#: The platform shell is not a `products` row but sends owner notices of its own (skill-scout); always on the roster.
+PLATFORM_PRODUCT = "core"
 _SENDS_PAGE = 1000
 _SENDS_MAX = 20000
 
@@ -27,8 +29,19 @@ def _blank_counts() -> dict[str, int]:
     return {s: 0 for s in SEND_STATUSES}
 
 
+def live_roster(db: Any) -> list[str]:
+    """Slugs of every product that runs in prod (`ativo` + `deploy_scope='live'`) plus the platform shell.
+
+    The page lists these even while they declare no kinds, so "this product has no owner notification" is something
+    the owner SEES, not a product that silently vanished from the page."""
+    rows = db.table("products").select("slug, ativo, deploy_scope").execute().data or []
+    slugs = {r["slug"] for r in rows if r.get("slug") and r.get("ativo") and r.get("deploy_scope") == "live"}
+    return sorted(slugs | {PLATFORM_PRODUCT})
+
+
 def list_catalog(db: Any, now: datetime) -> dict:
-    """Every declared kind grouped by product, with 30-day counts per status and the last dispatch."""
+    """Every declared kind grouped by product (plus every live product, empty when it declares none), with
+    30-day counts per status and the last dispatch."""
     kinds = db.table(KINDS_TABLE).select("*").order("product").order("kind").execute().data or []
     since = (now - STATS_WINDOW).isoformat()
     sends: list[dict] = []
@@ -53,7 +66,7 @@ def list_catalog(db: Any, now: datetime) -> dict:
         if entry["last_sent_at"] is None and row.get("status") in ("sent", "partial"):
             entry["last_sent_at"] = row.get("created_at")
 
-    products: dict[str, list[dict]] = {}
+    products: dict[str, list[dict]] = {slug: [] for slug in live_roster(db)}
     for k in kinds:
         s = stats.get((k["product"], k["kind"]), {"counts": _blank_counts(), "last": None, "last_sent_at": None})
         products.setdefault(k["product"], []).append({
@@ -80,6 +93,7 @@ def list_catalog(db: Any, now: datetime) -> dict:
                 "kinds": rows,
                 "enabled_count": sum(1 for r in rows if r["enabled"]),
                 "total": len(rows),
+                "declared": bool(rows),
             }
             for p, rows in sorted(products.items())
         ],
@@ -107,4 +121,4 @@ def list_sends(db: Any, *, product: Optional[str], kind: Optional[str], limit: i
     return query.order("created_at", desc=True).limit(limit).execute().data or []
 
 
-__all__ = ["KindNotFound", "STATS_WINDOW", "list_catalog", "list_sends", "set_enabled"]
+__all__ = ["KindNotFound", "PLATFORM_PRODUCT", "STATS_WINDOW", "live_roster", "list_catalog", "list_sends", "set_enabled"]

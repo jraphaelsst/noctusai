@@ -5,6 +5,7 @@
   PATCH /api/admin/notifications/{product}          → {enabled} for every kind of the product
   PATCH /api/admin/notifications/{product}/{kind}   → {enabled} for one kind
   GET/POST /recipients · PATCH/DELETE /recipients/{id} → who receives the owner notices (NoctusAI line)
+  POST  /api/admin/notifications/skill-scout        → one WhatsApp-only notice for a skill the skill-scout recommends
   GET   /api/admin/notifications/owner-line         → {configurada, instancia} (is the NoctusAI line set up here?)
 
 Access: platform tier — `require_platform_admin_dep` on the router AND on every route (401 without a valid bearer,
@@ -26,6 +27,7 @@ from noctusai_lib.api.schemas import StrictHttpModel
 
 from app.services import notification_catalog_service as svc
 from app.services import owner_recipients_service as rec_svc
+from app.services import skill_scout_notice_service as scout_svc
 from app.services.trusted_auth import get_trusted_db, require_platform_admin_dep
 
 router = make_router(
@@ -44,6 +46,12 @@ class SwitchBody(StrictHttpModel):
 def _user_id(auth: AuthContext) -> Optional[str]:
     uid = getattr(auth, "user_id", None) or getattr(getattr(auth, "user", None), "id", None)
     return str(uid) if uid else None
+
+
+class SkillScoutNotice(StrictHttpModel):
+    nome: str = Field(..., min_length=1, max_length=120)
+    resumo: str = Field(..., min_length=1, max_length=400)
+    fonte_url: Optional[str] = Field(None, max_length=300)
 
 
 class RecipientCreate(StrictHttpModel):
@@ -68,6 +76,18 @@ def _err(status: int, code: str, message: str) -> HTTPException:
 @router.get("/owner-line")
 async def get_owner_line(_: AuthContext = Depends(require_platform_admin_dep)):
     return {"data": rec_svc.owner_line_status()}
+
+
+@router.post("/skill-scout")
+async def post_skill_scout(
+    body: SkillScoutNotice,
+    _: AuthContext = Depends(require_platform_admin_dep),
+):
+    """WhatsApp only. The seed gate honours the owner's switch and records the outcome; `status` says what happened."""
+    out = await run_blocking(
+        lambda: scout_svc.avisar_novo_skill(nome=body.nome, resumo=body.resumo, fonte_url=body.fonte_url)
+    )
+    return {"data": {"status": out.status, "recipients": out.recipients, "delivered": out.delivered, "reason": out.reason}}
 
 
 @router.get("/recipients")

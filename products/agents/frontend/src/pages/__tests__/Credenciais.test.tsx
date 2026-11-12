@@ -151,10 +151,10 @@ describe("ConfiguracoesAgente", () => {
     expect(timeout.value).toBe("300");
   });
 
-  it("shows an unset fallback number as an empty field, not the text null", async () => {
+  it("shows an unset fallback number as an empty READ-ONLY field owned by core, not the text null", async () => {
     mockUseAgentSettings.mockReturnValue({
       data: [
-        { key: "numero_fallback_atendimento", value: null, default: null, source: "env", editable: true, min: null, max: null },
+        { key: "numero_fallback_atendimento", value: null, default: null, source: "core", editable: false, min: null, max: null },
       ],
       showSkeleton: false,
       isError: false,
@@ -164,5 +164,8 @@ describe("ConfiguracoesAgente", () => {
     const numero = within(container).getByLabelText("Número de atendimento (passagem a uma pessoa)") as HTMLInputElement;
     expect(numero.value).toBe("");
     expect(numero.type).toBe("text");
+    expect(numero.disabled).toBe(true);
+    expect(within(container).getByText("do core")).toBeTruthy();
+    expect(within(container).getByText(/cadastrado uma única vez no core/)).toBeTruthy();
   });
 });
