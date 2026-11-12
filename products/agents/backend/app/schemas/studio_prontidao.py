@@ -14,7 +14,7 @@ class ProntidaoItemOut(BaseModel):
     mensagem: str
     acao_sugerida: str | None = None
     #: A BLOCKING item names the 409 ``code`` publish answers with (``conteudo_incompleto`` | ``compile_blocked`` |
-    #: ``mecanismo_reprovado`` | ``eval_required`` | ``qualificacao_indisponivel`` | ``numero_fallback_ausente``); ``null`` otherwise.
+    #: ``mecanismo_reprovado`` | ``eval_required`` | ``qualificacao_indisponivel`` | ``numero_fallback_ausente`` | ``catalogo_ausente`` | ``base_nao_validada``); ``null`` otherwise.
     recusa_publicacao: str | None = None
     detalhe: dict[str, Any] | None = None
 
