@@ -52,7 +52,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
 | Social Wiring | 53 | 120 | 267 | 220 | 698 | 10,710 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
-| Orbity | 14 | 22 | 28 | 23 | 53 | 944 |
+| Orbity | 14 | 22 | 28 | 23 | 57 | 986 |
 | Igig | 23 | 26 | 33 | 27 | 44 | 978 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 10 | 0 | 28 | 10 | 25 | 191 |
@@ -62,7 +62,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Commerce | 3 | 0 | 40 | 7 | 8 | 64 |
 | Monica | 2 | 1 | 15 | 0 | 8 | 37 |
 | Assistant | 3 | 3 | 16 | 0 | 13 | 114 |
-| **Total** | **362** | **438** | **914** | **542** | **1642** | **23,153** |
+| **Total** | **362** | **438** | **914** | **542** | **1646** | **23,195** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
