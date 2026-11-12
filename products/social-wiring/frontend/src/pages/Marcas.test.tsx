@@ -209,3 +209,17 @@ describe("Marcas — create dialog", () => {
     expect(buttons.length).toBeGreaterThan(0);
   });
 });
+
+describe("Marcas — one brand per org", () => {
+  it("hides every create button once the org has its brand", async () => {
+    mockUseClients.mockReturnValue({ data: [makeClient({ id: "c-1" })], isPending: false, isError: false });
+    const { queryAllByTestId } = await renderMarcas();
+    expect(queryAllByTestId("create-client-btn")).toHaveLength(0);
+  });
+
+  it("does not offer creation while the list is still loading", async () => {
+    mockUseClients.mockReturnValue({ data: undefined, isPending: true, isError: false });
+    const { queryAllByTestId } = await renderMarcas();
+    expect(queryAllByTestId("create-client-btn")).toHaveLength(0);
+  });
+});

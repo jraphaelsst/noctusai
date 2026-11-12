@@ -32,6 +32,7 @@ __all__ = [
     "Marca",
     "MarcaService",
     "MarcaNotFound",
+    "OrgJaTemMarca",
     "build_marca_service",
 ]
 
@@ -51,6 +52,13 @@ class Marca:
     notes: Optional[str]
     created_at: Any
     updated_at: Any
+
+
+class OrgJaTemMarca(Exception):
+    """Raised when an org that already has its brand asks for a second one.
+
+    Owner decision 2026-11-05: ONE brand per org (org = brand = customer). A second brand is a second org.
+    Typed so the router answers ``409 org_ja_tem_marca`` and the UI can explain instead of showing a generic error."""
 
 
 class MarcaNotFound(Exception):
@@ -126,7 +134,13 @@ class MarcaService:
         notes: Optional[str] = None,
         created_by: Optional[UUID] = None,
     ) -> Marca:
-        """Create a new marca row."""
+        """Create the org's marca. One brand per org: a second one raises :class:`OrgJaTemMarca`.
+
+        Existing extras (orgs split later) keep working; only CREATION is refused. The DB unique index
+        ``uq_marcas_one_per_org`` (written, applied after the split) is the backstop for a concurrent create."""
+        existing = self._table().select("id").eq("org_id", str(org_id)).limit(1).execute()
+        if existing.data:
+            raise OrgJaTemMarca(f"org {org_id} already has a marca")
         row_id = str(uuid4())
         data: dict = {
             "id": row_id,
@@ -140,7 +154,12 @@ class MarcaService:
         if created_by is not None:
             data["created_by"] = str(created_by)
 
-        resp = self._table().insert(data).execute()
+        try:
+            resp = self._table().insert(data).execute()
+        except Exception as exc:
+            if "uq_marcas_one_per_org" in str(exc):
+                raise OrgJaTemMarca(f"org {org_id} already has a marca") from exc
+            raise
         rows = resp.data or []
         if not rows:
             raise RuntimeError("marcas insert returned no data")
