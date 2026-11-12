@@ -16,6 +16,7 @@ from noctusai_lib.integrations.agents_channel import make_agents_client
 from noctusai_lib.integrations.whatsapp import get_whatsapp_client, parse_line_policy
 
 from app.config import settings
+from app.live.numeros import numeros_do_dono
 from app.live.registro import RegistroResposta
 from app.live.resposta import LiveReplier, ReplyConfig
 
@@ -68,6 +69,7 @@ def build_replier(connection_store_factory: Callable[[], Any], admin_client_fact
             max_age_s=settings.assistant_reply_max_age_seconds,
             paragraph_delay_s=settings.assistant_reply_paragraph_delay_seconds,
             debounce_s=settings.assistant_reply_debounce_seconds,
+            owner_numbers=numeros_do_dono(settings.assistant_owner_numbers),
         ),
         identity_key=lambda: settings.assistant_identity_hmac_key,
     )

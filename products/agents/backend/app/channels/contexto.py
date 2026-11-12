@@ -66,9 +66,16 @@ def _lit(value: Any) -> str:
 lit = _lit
 
 
+#: The platform's own wording for who is writing (a closed enum maps to fixed text: no client string reaches the prompt).
+_REMETENTE_LINHA = {
+    "dono": "Remetente desta conversa: dono da linha",
+    "contato": "Remetente desta conversa: contato",
+}
+
+
 def render_contexto_system(
     conteudo: ConteudoBundle, *, agora: datetime, fuso: str, estado: Any | None, dossie: Dossie,
-    tag: str | None = None,
+    tag: str | None = None, remetente: str | None = None,
 ) -> str:
     """``estado`` is the request's ``contexto.estado`` (``None`` = not sent); a re-engagement turn is the
     one whose ``estado.reengajamento`` names the flow. ``tag`` is the turn's random provenance tag: when given, a
@@ -87,6 +94,8 @@ def render_contexto_system(
     out.append(f"## {T('contexto.titulo_estado')}")
     local = agora.astimezone(ZoneInfo(fuso))
     out.append(f"{T('contexto.rotulo_data_hora')}: {local.strftime('%Y-%m-%d %H:%M')} ({fuso})")
+    if remetente is not None:
+        out.append(_REMETENTE_LINHA[remetente])  # KeyError on a non-enum value: the schema already refused it
     if estado is not None:
         out.append(f"{T('contexto.rotulo_encerrado')}: {T('contexto.sim') if estado.encerrado else T('contexto.nao')}")
         if getattr(estado, "atendente_nome", None):

@@ -527,7 +527,7 @@ async def _executar(
     *, svc: ServicosCanal, prep: Preparado, agent: Any, org_id: UUID, thread: Any, runtime: Any, slot: Any,
     bus: Any, contexto: Any | None, gatilho: str, lote_lead: list[str], ultima_resposta_em: datetime | None,
     agora: datetime, lote_entrada: list[str] | None = None, nota_caso: str | None = None,
-    medida: dict[str, Any] | None = None,
+    remetente: str | None = None, medida: dict[str, Any] | None = None,
 ) -> ResultadoTurno:
     """Run the model for ``thread`` and settle everything the turn does. ``lote_lead`` are the texts of the
     batch just stored (empty for a re-engagement) that the lead SAID (typed + spoken); ``lote_entrada`` adds the text
@@ -658,7 +658,7 @@ async def _executar(
     contexto_system = render_contexto_system(
         conteudo, agora=(contexto.agora if contexto is not None else agora),
         fuso=(contexto.fuso if contexto is not None else "America/Sao_Paulo"), estado=estado_sw, dossie=dossie,
-        tag=tag,
+        tag=tag, remetente=remetente,
     )
     if sinal_parar:  # the lead's message looks like an opt-out request: a hint to JULIA, who decides (see above)
         dica = _texto_opcional(conteudo, "contexto.sinal_opt_out")

@@ -712,6 +712,8 @@ services:
       ASSISTANT_REPLY_ENABLED: ${ASSISTANT_REPLY_ENABLED:-false}
       ASSISTANT_AGENT_KEY: ${ASSISTANT_AGENT_KEY:-}  # env-fleet-empty-ok — REVIEWED 2026-11-12: switch OFF by default; with it ON the product refuses to boot on an empty value
       ASSISTANT_AGENTS_BASE_URL: ${ASSISTANT_AGENTS_BASE_URL:-}
+      # The line owner's OTHER phones (comma-separated E.164; PII, set in the root .env): a message from one is sent to agents as remetente=dono.
+      ASSISTANT_OWNER_NUMBERS: ${ASSISTANT_OWNER_NUMBERS:-}  # env-fleet-empty-ok — REVIEWED 2026-11-12: empty = nobody is the owner (every sender is a contact); optional
       ASSISTANT_AGENTS_TOKEN: ${ASSISTANT_AGENTS_TOKEN:-}  # env-fleet-empty-ok — REVIEWED 2026-11-12: same (boot refusal when the live reply is on)
       # S3 money gate: the classifier worker refuses to start without an ENFORCED limit covering `assistant`.
       # USD 2 per rolling 24 h (conservative first cap; raise from the observed spend, KB § integrations/llm spend_guard).
