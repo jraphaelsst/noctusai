@@ -1,8 +1,11 @@
 """The OWNER-BY-HAND path for a `personal: true` WAHA line (owner decision D49, 2026-11-10). CLI ONLY.
 
-`noctus.dev.waha_instance` refuses to provision/apply a personal line for every caller (PERSONAL_REFUSAL). This module
-is the one way the OWNER does that step himself, from a macOS Terminal.app window (Aplicativos › Utilitários), from
-the primary checkout:
+Since 2026-11-12 (owner decision superseding D49, option (b)) an AGENT may also provision/apply a personal line through
+`noctus.dev.waha_instance`: it runs the SAME `personal_line_checks` below, writes an `agent_started` audit row (who,
+line, host, policy hash) to this module's ledger BEFORE touching the VPS, and an outcome row after; the owner's phone
+scanning the QR stays the human consent step, and `remove` of a personal line stays refused for agents. This module
+remains the alternative where the OWNER does the step himself, from a macOS Terminal.app window (Aplicativos ›
+Utilitários), from the primary checkout:
 
     PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH mcp/noctusai/.venv/bin/python mcp/noctusai/cli.py \
         --waha-instance-owner-hand apply <line>       # core -> provision -> edge  (`provision`: session config only)
@@ -16,10 +19,11 @@ foreign webhooks dropped, edge-before-QR order), plus checks of its own: the lin
 service blocks, and the VPS's own checkout (its `waha-instances.yml` and its `compose.waha.yml`) must give the
 IDENTICAL hash; the VPS compose must stamp `noctus.line.personal=true` on core AND edge and keep the core off noctus-net.
 
-Threat model (also in KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a). The risk is a WELL-MEANING AGENT UNDER PRESSURE --
-a session that reads "the owner does it by hand" as an obstacle -- not a hostile operator (whoever has a shell here or
-root on the VPS can pair a number without this tool). What such a session cannot produce by accident is a human at a
-real terminal window, so:
+Threat model (also in KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a). Under D49 the risk was a WELL-MEANING AGENT UNDER
+PRESSURE reading "the owner does it by hand" as an obstacle. Since 2026-11-12 agents are no longer refused for
+provision/apply (the owner chose it); what bounds them is the shared shape/hash/label checks + the audit row, and the
+pairing itself still needs the owner's phone. This path's own gate (below) keeps its meaning only for THIS path: a grant
+it mints proves a human at a real terminal window typed the confirmation, so:
 
 * the parent process chain is read from the KERNEL, in-process (sysctl KERN_PROC + libproc: parent pid, start time,
   real executable image) -- never argv (a process sets its own: `exec -a`), never `ps` or any tool resolved through
@@ -660,6 +664,86 @@ def _live_label_problems(name: str, host: str, sh) -> list[str]:
     return out
 
 
+def personal_line_checks(spec: dict, inst: dict, name: str, host: str, sh) -> dict:
+    """The checks EVERY personal-line provision/apply runs, whoever the caller (owner-hand or agent): the strict shadow
+    shape; the VPS's own waha-instances.yml declaring the identical policy; its compose.waha.yml labelling core AND edge
+    `noctus.line.personal=true` with the core off noctus-net; and its core + edge compose blocks hashing identical to
+    this checkout's render. Returns {problem: str | None, fields, policy_hash (fields + compose, once known)}."""
+    import yaml
+
+    fields = policy_hash(inst)
+    out: dict = {"problem": None, "fields": fields, "policy_hash": None}
+    bad = shadow_shape_problems(inst)
+    if bad:
+        out["problem"] = "not a strict read-only personal line: " + "; ".join(bad)
+        return out
+    vps_inst, vwhy = wi._vps_instance(name, host, sh)
+    if vps_inst is None:
+        out["problem"] = vwhy
+        return out
+    if policy_hash(vps_inst) != fields:
+        out["problem"] = ("the VPS's own waha-instances.yml declares a different policy for this line "
+                          f"(VPS {policy_hash(vps_inst)[:12]} vs here {fields[:12]}): deploy_pull first, then re-run")
+        return out
+    vps_svcs, bad = _vps_compose(name, host, sh)
+    if bad:
+        out["problem"] = "the VPS's rendered compose is not safe for a personal line: " + "; ".join(bad)
+        return out
+    local_fp = compose_fingerprint((yaml.safe_load(wi.render_compose(spec)) or {}).get("services") or {}, name)
+    vps_fp = compose_fingerprint(vps_svcs, name)
+    phash, vhash = policy_hash(inst, local_fp), policy_hash(vps_inst, vps_fp)
+    out["policy_hash"] = phash
+    if phash != vhash:
+        drift = sorted(s for s in local_fp if local_fp[s] != vps_fp.get(s))
+        out["problem"] = (f"the VPS's compose.waha.yml differs from this checkout's render for {', '.join(drift)} "
+                          f"(VPS {vhash[:12]} vs here {phash[:12]}): render, merge and deploy_pull first, then re-run")
+    return out
+
+
+# --- the AGENT path (D49 superseded 2026-11-12, owner decision; option (b)) ---------------------------------------------
+#: An agent/tool caller of `noctus.dev.waha_instance` may provision/apply a personal line. It runs the SAME
+#: `personal_line_checks` as the owner-hand path and writes an audit row (who, line, host, policy hash) to the same ledger
+#: BEFORE anything touches the VPS (not durable => refused, fail closed), plus an outcome row after. Pairing stays human:
+#: nothing here scans a QR or connects Google; the owner's phone scanning the QR is the consent step. `remove` of a
+#: personal line stays refused for agents.
+AGENT_STARTED = "agent_started"
+
+
+def agent_store_problem(host: str, root: "str | Path", sh) -> "str | None":
+    """Production: the audit ledger is the real store. Fake store: only inside pytest, with a runner explicitly marked as
+    a test fake, the reserved TEST_HOST and a temp ledger root -- an agent run on the fake store reaches nothing real."""
+    from ._ledger_store import MODE_FAKE, store_mode
+
+    try:
+        mode = store_mode()
+    except ValueError as exc:
+        return str(exc)
+    if mode != MODE_FAKE:
+        return _store_problem(False, host, root)
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return "the fake ledger store (NOCTUS_LEDGER_STORE=fake) is test-only: an agent personal-line run is refused"
+    if sh is None or sh is wi._sh or getattr(sh, "__noc_test_fake__", False) is not True:
+        return ("on the fake ledger store an agent personal-line run needs a runner explicitly marked as a test fake "
+                "(`__noc_test_fake__ = True`): the real remote runner is never reachable from a test")
+    return _store_problem(True, host, root)
+
+
+def agent_who() -> dict:
+    io = _RealIO()
+    return {"git_email": io.git_email(), "os_user": io.os_user(),
+            "session": os.environ.get("CLAUDE_CODE_SESSION_ID") or "unknown"}
+
+
+def agent_audit(root: "str | Path", action: str, name: str, host: str, phash: "str | None", outcome: str,
+                run_id: str) -> "tuple[dict, str | None]":
+    """Append one agent row; returns (result, why-not-durable | None)."""
+    row_id = _new_id()
+    row = {"ts": _now(), "id": row_id, "tool": "waha_instance", "caller": "agent", "run_id": run_id, "action": action,
+           "line": name, "host": host, "who": agent_who(), "policy_hash": phash, "outcome": outcome}
+    res = _audit(Path(root), row)
+    return res, _audit_durable(Path(root), res, row_id)
+
+
 def owner_hand(action: str, name: str, ssh_host: str = "noctus-vps", repo_root: "str | None" = None, *,
                _test_io=None) -> dict:
     """Run provision/apply for ONE personal line, only for an interactive human who typed the confirmation. Under a test
@@ -678,8 +762,6 @@ def _owner_hand(action: str, name: str, ssh_host: str, repo_root: "str | None", 
     `_test_io` is a TEST-ONLY injection point (terminal, env, parent chain, identity, remote runner). It is refused
     outside a pytest test and unless it carries its own explicitly test-marked fake runner (never the real one). The CLI
     never passes it and it is not part of any tool schema; production code must never pass it."""
-    import yaml
-
     io = _test_io or _RealIO()
     root = Path(repo_root) if repo_root else Path(wi.REPO_ROOT)
     who = {"git_email": io.git_email(), "os_user": io.os_user()}
@@ -706,28 +788,12 @@ def _owner_hand(action: str, name: str, ssh_host: str, repo_root: "str | None", 
     except ValueError as exc:
         return refuse(str(exc))
     fields = policy_hash(inst)
-    base["policy_hash"] = fields
-    bad = shadow_shape_problems(inst)
-    if bad:
-        return refuse("not a strict read-only personal line: " + "; ".join(bad))
     sh = io.sh if _test_io is not None else wi._sh
-    vps_inst, vwhy = wi._vps_instance(name, ssh_host, sh)
-    if vps_inst is None:
-        return refuse(vwhy)
-    if policy_hash(vps_inst) != fields:
-        return refuse("the VPS's own waha-instances.yml declares a different policy for this line "
-                      f"(VPS {policy_hash(vps_inst)[:12]} vs here {fields[:12]}): deploy_pull first, then re-run")
-    vps_svcs, bad = _vps_compose(name, ssh_host, sh)
-    if bad:
-        return refuse("the VPS's rendered compose is not safe for a personal line: " + "; ".join(bad))
-    local_fp = compose_fingerprint((yaml.safe_load(wi.render_compose(spec)) or {}).get("services") or {}, name)
-    vps_fp = compose_fingerprint(vps_svcs, name)
-    phash, vhash = policy_hash(inst, local_fp), policy_hash(vps_inst, vps_fp)
-    base["policy_hash"] = phash
-    if phash != vhash:
-        drift = sorted(s for s in local_fp if local_fp[s] != vps_fp.get(s))
-        return refuse(f"the VPS's compose.waha.yml differs from this checkout's render for {', '.join(drift)} "
-                      f"(VPS {vhash[:12]} vs here {phash[:12]}): render, merge and deploy_pull first, then re-run")
+    chk = personal_line_checks(spec, inst, name, ssh_host, sh)
+    base["policy_hash"] = chk["policy_hash"] or fields
+    if chk["problem"]:
+        return refuse(chk["problem"])
+    phash = chk["policy_hash"]
 
     try:
         tty = io.open_tty()

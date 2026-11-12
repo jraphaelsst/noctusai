@@ -5164,12 +5164,16 @@ _AGENTS_EVAL_LOOP_PROBES: tuple[GuardProbe, ...] = (
         rationale="Two loops racing one suite would each read the other's rounds as score noise, so G4 would stop "
                   "(or not) on someone else's run.",
     ),
-    # 086: the loop config (target / budget cap / max rounds) in runtime_settings, and its append-only change events.
+)
+
+# 086: the loop config (target / budget cap / max rounds) in runtime_settings, and its append-only change events.
+# Own group (like 076's): `migrations[-1]` is 086 for both, so the replay test runs them on the 086 chain.
+_AGENTS_EVAL_LOOP_CONFIG_PROBES: tuple[GuardProbe, ...] = (
     _julia_v2_probe(
         probe_id="eval_loop_config.value_bounds", guard_name="runtime_settings_eval_loop_valores",
         migrations=("010_credentials_and_runtime_settings.sql", "086_eval_loop_config.sql"), setup="",
         attack=f"INSERT INTO {_JV2}.runtime_settings (key, value) VALUES ('eval_loop_alvo', '2'::jsonb);",
-        fragments=("runtime_settings_eval_loop_valores",), what="a loop target above 100%",
+        fragments=("runtime_settings_eval_loop_valores",), what="a loop target above 1.0 (above one hundred percent)",
         rationale="The loop gate stops at score >= alvo: a target above 1 can never be reached, so the loop would only "
                   "ever stop on the budget or the rounds (and the cap/rounds bounds guard the same way).",
     ),
@@ -12517,6 +12521,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_CAMADAS_PROBES,
     *_AGENTS_FALLBACK_PROBES,
     *_AGENTS_EVAL_LOOP_PROBES,
+    *_AGENTS_EVAL_LOOP_CONFIG_PROBES,
     *_AGENTS_EMERGENCIA_PROBES,
     *_AGENTS_RETOMADA_PROBES,
     *_AGENTS_CATALOGO_PROBES,

@@ -34,7 +34,7 @@ def _runner(driver, usa_canais=True):
 
 CASO = SimpleNamespace(entrada="Quero visitar sábado", contexto="O lead já viu o imóvel ONE9001.",
                        roteiro={"estado_inicial": {"criterios": {"operacao": "compra"}}, "fixture": {"specs": {"x": "y"}}})
-RUN = SimpleNamespace(modelo_geracao=None)
+RUN = SimpleNamespace(id="run-1", modelo_geracao=None)
 SPEC = SimpleNamespace(runtime="llm")
 
 
@@ -62,3 +62,43 @@ def test_an_empty_reply_says_why_in_codes_only():
     with pytest.raises(_CaseError) as exc:
         asyncio.run(_runner(d)._resposta_pelo_canal(RUN, SPEC, CASO))
     assert "handoff" in str(exc.value) and "vazamento_prompt:bloqueada" in str(exc.value)
+
+
+# ── templates (``modelo``): never on a channel, but judged on the SAME lead-facing path ─────────────────────────────────
+# prod judge runs 97db817b (agente-base) / c4c4be57 (sdr-base): a template is no channel agent (073: never owned by a channel
+# product), so it fell to the legacy path -- no channel tools, no skills (``skills=()``), specs only as ``[dado: x]`` pointers. The
+# model narrated "abrindo a skill ..." (judged as the answer) and echoed raw slots (``erro: placeholder cru``).
+
+def _template_runner(driver):
+    r = _runner(driver, usa_canais=False)
+    r._agente = SimpleNamespace(key="sdr-base", usa_canais=False, modelo=True)
+    return r
+
+
+def test_a_template_runs_on_the_channel_path_with_its_fixture_specs():
+    d = _Driver(bolhas=("Oi! Posso ajudar com a busca.",))
+    saida, _ = asyncio.run(_template_runner(d)._resposta_pelo_canal(RUN, SPEC, CASO))
+    [(thread, _msg)] = d.chamadas
+    assert saida == "Oi! Posso ajudar com a busca." and thread.fixture == {"specs": {"x": "y"}}
+
+
+def test_a_template_whose_runtime_is_not_llm_still_takes_the_channel_path():
+    # the channel turn always runs on the neutral runtime (``preparar`` forces it); a template is judged as its children run
+    d = _Driver()
+    assert asyncio.run(_template_runner(d)._resposta_pelo_canal(RUN, SimpleNamespace(runtime="claude_sdk"), CASO)) is not None
+
+
+def test_a_non_template_non_channel_agent_still_keeps_the_old_path():
+    r = _runner(_Driver(), usa_canais=False)
+    r._agente = SimpleNamespace(key="x", usa_canais=False, modelo=False)
+    assert asyncio.run(r._resposta_pelo_canal(RUN, SPEC, CASO)) is None
+
+
+@pytest.mark.parametrize("bolha", ["Prazo: {{org.prazo}}", "Veja [dado: prazo]"])
+def test_a_raw_placeholder_in_the_final_reply_is_never_judged_for_any_agent(bolha):
+    from app.studio.evals import _CaseError
+
+    with pytest.raises(_CaseError, match="placeholder cru"):
+        asyncio.run(_runner(_Driver(bolhas=(bolha,)))._resposta_pelo_canal(RUN, SPEC, CASO))
+    with pytest.raises(_CaseError, match="placeholder cru"):
+        asyncio.run(_template_runner(_Driver(bolhas=(bolha,)))._resposta_pelo_canal(RUN, SPEC, CASO))
