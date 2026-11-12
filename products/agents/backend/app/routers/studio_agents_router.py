@@ -247,6 +247,13 @@ def get_consolidacao_store_dep(evals=Depends(get_eval_store_dep)):
     return get_consolidacao_store(settings, evals)
 
 
+def get_eval_loop_config_store_dep():
+    """Seam over the eval-loop config (target / budget cap / max rounds, migration 086). Tests override it with a shared Fake."""
+    from app.stores.eval_loop_config import get_eval_loop_config_store
+
+    return get_eval_loop_config_store(settings)
+
+
 def get_loop_store_dep():
     """Seam over the eval-loop store (loops + rounds, migration 076). Tests override it with a shared Fake."""
     from app.stores.studio_eval_loops import get_loop_store

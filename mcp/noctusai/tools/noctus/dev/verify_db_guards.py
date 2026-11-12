@@ -5164,6 +5164,25 @@ _AGENTS_EVAL_LOOP_PROBES: tuple[GuardProbe, ...] = (
         rationale="Two loops racing one suite would each read the other's rounds as score noise, so G4 would stop "
                   "(or not) on someone else's run.",
     ),
+    # 086: the loop config (target / budget cap / max rounds) in runtime_settings, and its append-only change events.
+    _julia_v2_probe(
+        probe_id="eval_loop_config.value_bounds", guard_name="runtime_settings_eval_loop_valores",
+        migrations=("010_credentials_and_runtime_settings.sql", "086_eval_loop_config.sql"), setup="",
+        attack=f"INSERT INTO {_JV2}.runtime_settings (key, value) VALUES ('eval_loop_alvo', '2'::jsonb);",
+        fragments=("runtime_settings_eval_loop_valores",), what="a loop target above 100%",
+        rationale="The loop gate stops at score >= alvo: a target above 1 can never be reached, so the loop would only "
+                  "ever stop on the budget or the rounds (and the cap/rounds bounds guard the same way).",
+    ),
+    _julia_v2_probe(
+        probe_id="eval_loop_config_eventos.append_only", guard_name="guard_eval_loop_config_eventos_append_only",
+        migrations=("086_eval_loop_config.sql",),
+        setup=(f"INSERT INTO {_JV2}.eval_loop_config_eventos (evento, antes, depois) "
+               "VALUES ('loop_config_alterada', '{}'::jsonb, '{}'::jsonb);"),
+        attack=f"UPDATE {_JV2}.eval_loop_config_eventos SET evento = 'loop_config_alterada' WHERE antes = '{{}}'::jsonb;",
+        fragments=("eval_loop_config_eventos is append-only",), what="an UPDATE of a loop-config change event",
+        rationale="The events are the record of who changed the loop target/cap/rounds and when: an editable row is a "
+                  "history anyone could rewrite.",
+    ),
 )
 
 
