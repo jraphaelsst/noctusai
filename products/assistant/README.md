@@ -28,12 +28,26 @@ agent, hosted in the `agents` product, replies on the same line. It never marks 
   owner label as counts (the only place the verdict is shown). UI: page `/avaliacao` (blind, keyboard 1/2/3).
 - `POST /api/google/connect/start`, `GET /api/google/status`, `POST /api/google/disconnect`, `GET /api/google/prova`
   (admin) - the in-app "Conectar Google" (S7, D50); `GET /api/google/oauth/callback` - the signed redirect target.
-- Nothing else: no send route, mark-read, backfill, chat or message reads, SSE (the only sender is the live reply,
-  an internal path of the webhook, below).
+- `GET .../connections/{id}/chats`, `.../chats/{chat}/messages` (GET read / POST send), `.../chats/{chat}/read`,
+  `POST .../backfill`, `GET .../events` (SSE) (admin; tier `org`) - the owner's **conversations** (seed
+  `WhatsAppInbox` organ; UI page `/conversas`), see below. Mark-read is local only: it never shows blue ticks.
+
+## Conversas (the owner's inbox, migration 022)
+
+Owner decision 2026-11-12: the personal line's 1:1 conversations are kept, in both directions, so the owner can read and
+answer them in the app and the assistant can be evaluated over time (this reverses 015's "no chat log" for the owner's own
+line). `app/services/inbox_mirror.py` (`MirrorChatStore`) is the store behind the webhook: every 1:1 message (groups, status,
+broadcast and the exclusion list are dropped) lands in the seed `whatsapp_chats` / `whatsapp_messages` (service-role only,
+no browser policy), including the owner's sends and the assistant's replies; the intake queue below is fed exactly as before
+(inbound only, live-only: a message older than 24h, i.e. a backfill, never reaches it). The owner's own text (`from_me`,
+not API-sourced) is appended to the agent's thread as `humano` without a turn (`app/services/humano_para_agente.py`, agents'
+`POST /api/channels/threads/{id}/mensagens`) so the agent does not contradict it. Per-chat agent pause and per-chat LGPD
+delete follow the seed lift (`NOC-REMEDIATE[assistant-inbox-pause-delete]`). Inbox realtime needs `REDIS_URL` or
+`ASSISTANT_INBOX_REALTIME_IN_PROCESS=true` (a single-worker choice); a deploy with neither refuses to boot.
 
 ## Input contract (before anything is stored)
 
-Inbound only (no `from_me`, no API-sourced), 1:1 only (no groups / status / broadcast), minus
+The INTAKE queue takes inbound only (no `from_me`, no API-sourced), 1:1 only (no groups / status / broadcast), minus
 `ASSISTANT_EXCLUDED_NUMBERS`; then `assistant.append_intake` dedups on the WAHA message id, keeps text only (media
 without text is `skipped`), and is forward-only from the connection's `paired_at` (stamped when WAHA reports
 `WORKING`). The third party is stored as an HMAC'd `chat_ref` (`ASSISTANT_IDENTITY_HMAC_KEY`), never a phone.

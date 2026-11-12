@@ -66,6 +66,11 @@ class SeedSettings(ProductSettings):
     # Debounce: a conversation must be quiet this long before its burst of messages becomes ONE agent turn.
     assistant_reply_debounce_seconds: float = 4.0
 
+    # -- Conversas (the owner's inbox, migration 022) ------------------------------------------------------
+    # Inbox realtime (SSE) bus: Redis when REDIS_URL is set; the in-process bus only as a declared single-worker choice
+    # (outside a deploy it is always allowed). A deploy with neither refuses to boot (InboxRealtimeNotConfigured).
+    assistant_inbox_realtime_in_process: bool = False
+
     # Rate-limit for the public webhook (per-IP). Public surface -- DDOS guard.
     webhook_rate_limit: str = "60/minute"
 

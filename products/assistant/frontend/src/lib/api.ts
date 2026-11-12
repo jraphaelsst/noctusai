@@ -10,7 +10,9 @@
  *   2. Domain-call wrappers live here when the wire shape is awkward
  *      (e.g., translating `{items, next_cursor}` into a paginator).
  *
+ * `getAuthToken` is the session-token provider the inbox's SSE stream needs (EventSource cannot send the bearer header).
+ *
  * Mirrors the 4-product convention (core, dev-team, ERP, PF, therapy).
  *
  */
-export { api } from "@noctusai/seed/infra";
+export { api, getAuthToken } from "@noctusai/seed/infra";

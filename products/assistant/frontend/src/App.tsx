@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, MessageCircle, Smartphone, Settings, ClipboardCheck } from "lucide-react";
+import { LayoutDashboard, Users, Home, MessageCircle, MessageSquare, Smartphone, Settings, ClipboardCheck } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -24,6 +24,8 @@ const Configuracoes = lazy(() => import("@/pages/Configuracoes"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
 // WhatsApp pairing page (seed `WhatsAppConnectionsPage` organ).
 const Conexao = lazy(() => import("@/pages/Conexao"));
+// The owner's conversations (seed `WhatsAppInbox` organ).
+const Conversas = lazy(() => import("@/pages/Conversas"));
 const Avaliacao = lazy(() => import("@/pages/avaliacao/Avaliacao"));
 
 // Nav
@@ -35,6 +37,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
+      { name: "Conversas", href: "/conversas", icon: MessageSquare, route: "conversas" },
       { name: "Conexão", href: "/conexao", icon: Smartphone, route: "conexao" },
       { name: "Avaliação", href: "/avaliacao", icon: ClipboardCheck, route: "avaliacao" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
@@ -51,6 +54,7 @@ const NAV_FALLBACK: NavGroup[] = [
     defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
+      { name: "Conversas", href: "/conversas", icon: MessageSquare },
       { name: "Conexão", href: "/conexao", icon: Smartphone },
       { name: "Avaliação", href: "/avaliacao", icon: ClipboardCheck },
       { name: "Equipe", href: "/equipe", icon: Users },
@@ -71,6 +75,7 @@ const Layout = createProductLayout({
 export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
+    { path: "/conversas", component: Conversas },
     { path: "/conexao", component: Conexao },
     { path: "/avaliacao", component: Avaliacao },
     { path: "/equipe", component: Equipe },
