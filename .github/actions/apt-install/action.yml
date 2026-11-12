@@ -33,15 +33,18 @@ runs:
         CAP: ${{ inputs.attempt-seconds }}
       run: |
         set -uo pipefail
+        # Composite `shell: bash` runs `bash -e -o pipefail`; this script checks every rc itself, so -e must be
+        # OFF - a grep that finds nothing (no Google source on the image) killed every job in 19ms on 2026-11-11.
+        set +e
         # (1) a third-party source must not be able to fail the build (2026-09-09)
-        sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f
+        { sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null || true; } | sudo xargs -r rm -f
         sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list 2>/dev/null || true
         # (2) apt-wide retries/timeouts - inherited by playwright's own apt-get calls
         printf 'Acquire::Retries "3";\nAcquire::http::Timeout "20";\nAcquire::https::Timeout "20";\n' \
           | sudo tee /etc/apt/apt.conf.d/99noc-resilient >/dev/null
 
         SRC_FILES="$(ls /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true)"
-        current_mirror() { grep -hoE 'https?://[a-z0-9.-]+/ubuntu|mirror\+[^ ]+' $SRC_FILES 2>/dev/null | head -1; }
+        current_mirror() { { grep -hoE 'https?://[a-z0-9.-]+/ubuntu|mirror\+[^ ]+' $SRC_FILES 2>/dev/null || true; } | head -1; }
         switch_mirror() {  # $1 = replacement URI exactly as written into the sources (incl. trailing slash for http)
           for f in $SRC_FILES; do
             sudo sed -i -E "s#https?://(azure\.)?archive\.ubuntu\.com/ubuntu/?#$1#g" "$f"
@@ -69,7 +72,7 @@ runs:
           [ "$healthy" = 1 ] || echo "::warning::no apt mirror answered cleanly; trying install on $MIRROR anyway"
         fi
         # (4) install with a capped attempt; one more mirror switch on failure; loud failure naming the mirror
-        [ -z "$PKGS" ] && { echo "apt sources ready on $MIRROR"; exit 0; }
+        if [ -z "$PKGS" ]; then echo "apt sources ready on $MIRROR"; exit 0; fi
         install() { sudo timeout "$CAP" apt-get install -y --no-install-recommends $PKGS; }
         if install; then echo "apt install OK on $MIRROR"; exit 0; fi
         for m in $FALLBACKS; do
