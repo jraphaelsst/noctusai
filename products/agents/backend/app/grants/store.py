@@ -243,8 +243,22 @@ class SupabaseGrantStore:
         })
 
 
-def get_grant_store(settings: Any) -> GrantStore:
+def get_grant_store(settings: Any, *, deploy_context: bool | None = None) -> GrantStore:
+    """The Supabase store when a service-role key is configured; otherwise the Fake -- outside a deploy context only.
+
+    In a deploy context (``noctusai_lib.config.deploy_config.is_deploy_context`` when ``deploy_context`` is None) a
+    missing key RAISES: an in-memory ledger there would let a platform admin mint and deliver real tokens whose grant
+    is recorded nowhere (same rule as the seed's ``make_grant_delivery``)."""
     if not getattr(settings, "supabase_service_role_key", None):
+        if deploy_context is None:
+            from noctusai_lib.config.deploy_config import is_deploy_context
+
+            deploy_context = is_deploy_context()
+        if deploy_context:
+            raise RuntimeError(
+                "get_grant_store: refusing the in-memory grant store in a deploy context -- "
+                "configure SUPABASE_SERVICE_ROLE_KEY."
+            )
         return FakeGrantStore()
     from app.database import get_admin_client
 

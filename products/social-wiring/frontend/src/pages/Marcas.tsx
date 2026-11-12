@@ -336,9 +336,13 @@ export default function MarcasPage() {
             Gerencie marcas e suas contas de integração.
           </p>
         </div>
-        <CreateClientDialog
-          onCreated={(client) => handleOpen(client, "contas")}
-        />
+        {/* One brand per org (owner decision 2026-11-05): "Nova marca" exists only while the org has none.
+            Hidden while loading/erroring too — we cannot yet say the org has no brand. */}
+        {!isPending && !isError && marcas.length === 0 && (
+          <CreateClientDialog
+            onCreated={(client) => handleOpen(client, "contas")}
+          />
+        )}
       </div>
 
       {/* Content */}

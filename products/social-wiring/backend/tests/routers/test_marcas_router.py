@@ -157,6 +157,15 @@ class TestCRUD:
         resp = http_client.get(f"/api/marcas/{uuid4()}", headers=_auth())
         assert resp.status_code == 404
 
+    def test_second_marca_is_409_org_ja_tem_marca(self, http_client):
+        """One brand per org (2026-11-05): the second POST is refused with a TYPED 409 and writes nothing."""
+        _make_client(http_client)
+        resp = http_client.post("/api/marcas", json={"slug": "outra", "name": "Outra"}, headers=_auth())
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["code"] == "org_ja_tem_marca"
+        listed = http_client.get("/api/marcas", headers=_auth()).json()
+        assert [m["slug"] for m in listed] == ["agent-x"]
+
     def test_create_forbidden_fields_422(self, http_client):
         """extra='forbid' on the create model."""
         resp = http_client.post(

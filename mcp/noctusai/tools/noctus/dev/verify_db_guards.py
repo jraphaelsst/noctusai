@@ -7556,13 +7556,39 @@ _SW_ONE_PRIMARY_MARCA_PROBE = GuardProbe(
            (v_org, 'noc-probe-b', 'NOC probe b', true);
 """,
         sqlstate_condition="unique_violation",
-        constraint_names=("uq_marcas_one_primary_per_org",),
+        # Since 339 a second marca of ANY kind in the org is refused by uq_marcas_one_per_org; which of the two
+        # indexes reports first is an index-order detail, and both refusals keep "one primary per org" true.
+        constraint_names=("uq_marcas_one_primary_per_org", "uq_marcas_one_per_org"),
         what="a second primary marca in the same org",
     ),
     rationale=(
         "An org owns ONE brand identity that its products inherit (owner "
         "2026-10-07); two primaries make which identity a product renders "
         "ambiguous."
+    ),
+)
+
+_SW_ONE_MARCA_PER_ORG_PROBE = GuardProbe(
+    id="social_wiring.marcas.one_per_org",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="uq_marcas_one_per_org",
+    kind="write_refusal",
+    migrations=("339_marca_one_per_org.sql",),
+    sql=_constraint_refusal_probe(
+        setup_sql=_table_fixture_check("social_wiring.marcas") + _PROBE_ORG_SETUP,
+        op_sql="""
+    INSERT INTO social_wiring.marcas (org_id, slug, name)
+    VALUES (v_org, 'noc-probe-a', 'NOC probe a'),
+           (v_org, 'noc-probe-b', 'NOC probe b');
+""",
+        sqlstate_condition="unique_violation",
+        constraint_names=("uq_marcas_one_per_org",),
+        what="a second (non-primary) marca in the same org",
+    ),
+    rationale=(
+        "ONE brand per org (owner 2026-11-05: org = brand = customer). The API refuses a second create with "
+        "409 org_ja_tem_marca; this unique index is the backstop for two concurrent creates."
     ),
 )
 
@@ -12075,6 +12101,52 @@ END;
 )
 
 
+_AGENT_PRODUCT_GRANT_EVENTOS_APPEND_ONLY_PROBE = GuardProbe(
+    id="agents.grant_eventos.append_only",
+    product="agents",
+    schema=_AGENTS_SCHEMA,
+    guard_name="guard_agent_product_grant_eventos_append_only",
+    kind="write_refusal",
+    migrations=("083_agent_product_grant_eventos.sql",),
+    rationale=(
+        "EOA: the grant event log is the measurable record of every grant lifecycle change (created / activated / "
+        "failed / revoked / tokens rotated, who and when); an UPDATE would rewrite it. Self-provisioning: the probe "
+        "inserts a throwaway grant (the capture trigger writes `grant_criado`, so this also proves the capture fires) "
+        "and tries to rewrite that event, all inside the rolled-back transaction."
+    ),
+    sql=_do_block(f"""
+DECLARE
+  v_grant uuid;
+  v_ev uuid;
+BEGIN
+  IF to_regclass('{_AGENTS_SCHEMA}.agent_product_grant_eventos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_AGENTS_SCHEMA}.agent_product_grant_eventos does not exist (migration 083 not applied)';
+  END IF;
+  INSERT INTO {_AGENTS_SCHEMA}.agent_product_grants (org_id, agent_id, agent_key, product, status)
+  VALUES ('00000000-0000-0000-0000-00000000a003', '00000000-0000-0000-0000-00000000a004', 'noc-probe', 'noc-probe', 'pendente')
+  RETURNING id INTO v_grant;
+  SELECT id INTO v_ev FROM {_AGENTS_SCHEMA}.agent_product_grant_eventos
+   WHERE grant_id = v_grant AND event_type = 'grant_criado' LIMIT 1;
+  IF v_ev IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: inserting a grant wrote no grant_criado event (the capture trigger did not fire)';
+  END IF;
+  BEGIN
+    UPDATE {_AGENTS_SCHEMA}.agent_product_grant_eventos SET para = 'ativo' WHERE id = v_ev;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: UPDATE on the append-only grant event log succeeded - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%append-only%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE = GuardProbe(
     id="assistant.intake_messages_eventos.append_only",
     product="assistant",
@@ -12304,6 +12376,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_ASSISTANT_AI_OUTPUTS_PROBES,
     *_ASSISTANT_FEEDBACK_EVENTS_PROBES,
     _AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE,
+    _AGENT_PRODUCT_GRANT_EVENTOS_APPEND_ONLY_PROBE,
     _RUIDO_SHAPE_PROBE,
     _TITULO_PAREADO_PROBE,
     _ONUS_CREDOR_PAREADO_PROBE,
@@ -12345,6 +12418,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _PLATFORM_ORG_HOLDS_EVERY_PRODUCT_PROBE,
     _PLATFORM_ORG_NEW_PRODUCT_PROBE,
     _SW_ONE_PRIMARY_MARCA_PROBE,
+    _SW_ONE_MARCA_PER_ORG_PROBE,
     _SW_ONE_PRIMARY_KIT_PROBE,
     _CERTIDAO_CONSULTA_ORIGEM_PROBE,
     _CERTIDAO_CONSULTA_DOCUMENTO_PROBE,

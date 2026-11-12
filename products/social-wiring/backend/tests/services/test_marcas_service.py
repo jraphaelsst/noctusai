@@ -84,10 +84,20 @@ class TestListGet:
         assert svc.list_marcas(org_id=_ORG_A) == []
 
     def test_list_returns_created(self, svc):
+        _make(svc, org_id=_ORG_A, slug="a", name="A")
+        _make(svc, org_id=_ORG_B, slug="b", name="B")
+        assert [m.slug for m in svc.list_marcas(org_id=_ORG_A)] == ["a"]
+        assert [m.slug for m in svc.list_marcas(org_id=_ORG_B)] == ["b"]
+
+    def test_one_brand_per_org_second_create_is_refused(self, svc):
+        """Owner decision 2026-11-05: org = brand = customer. A second marca is a second org."""
+        from app.services.marcas_service import OrgJaTemMarca
+
         _make(svc, slug="a", name="A")
-        _make(svc, slug="b", name="B")
-        marcas = svc.list_marcas(org_id=_ORG_A)
-        assert len(marcas) == 2
+        with pytest.raises(OrgJaTemMarca):
+            _make(svc, slug="b", name="B")
+        assert [m.slug for m in svc.list_marcas(org_id=_ORG_A)] == ["a"]
+        _make(svc, org_id=_ORG_B, slug="b", name="B")   # another org is unaffected
 
     def test_org_isolation(self, svc):
         _make(svc, org_id=_ORG_B, slug="b-client")

@@ -2,7 +2,7 @@
 
 Endpoints:
     GET    /api/marcas          → Marca[]
-    POST   /api/marcas          → Marca (201)
+    POST   /api/marcas          → Marca (201) | 409 org_ja_tem_marca (ONE brand per org)
     PATCH  /api/marcas/{id}     → Marca
     DELETE /api/marcas/{id}     → 204
 
@@ -21,6 +21,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.dependencies import (
@@ -32,6 +33,7 @@ from app.services.marcas_service import (
     Marca,
     MarcaNotFound,
     MarcaService,
+    OrgJaTemMarca,
     build_marca_service,
 )
 
@@ -150,7 +152,10 @@ def get_marca(
     return _out(_require_marca(svc, marca_id, org_id))
 
 
-@router.post("", response_model=MarcaOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=MarcaOut, status_code=status.HTTP_201_CREATED,
+    responses={409: {"description": "org_ja_tem_marca: the org already has its one brand; a second brand is a second org"}},
+)
 def create_marca(
     body: MarcaCreate,
     auth: tuple = Depends(get_current_user_org),
@@ -165,6 +170,14 @@ def create_marca(
             name=body.name,
             kind=body.kind,
             notes=body.notes,
+        )
+    except OrgJaTemMarca:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "detail": "Esta organização já tem a sua marca. Cada marca é uma organização própria.",
+                "code": "org_ja_tem_marca",
+            },
         )
     except Exception as exc:
         # Unique-constraint violation (org_id, slug) surfaces as a 409.

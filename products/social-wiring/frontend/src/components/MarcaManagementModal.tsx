@@ -291,7 +291,8 @@ export function MarcaManagementModal({
 
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-border px-5 py-3">
-          {!showCreate && editingId === null && (
+          {/* One brand per org: no "Nova marca" once the org has its brand (the API answers 409 org_ja_tem_marca). */}
+          {!showCreate && editingId === null && marcas.length === 0 && (
             <button
               type="button"
               onClick={startCreate}
