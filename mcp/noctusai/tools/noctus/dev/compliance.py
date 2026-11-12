@@ -27019,6 +27019,20 @@ def check_new_dependency_justified(paths: list[str] | None = None, repo_root: Pa
 
 
 # ---------------------------------------------------------------------------
+# NO-LEAKING (owner rule 2026-11-11): an HTTP error body is a CODE, never exception text. Logic in `http_detail_echo.py`;
+# construction `noctusai_lib.api.integration_errors.integration_error`. Seed = zero tolerance; products ratcheted by
+# `deploy/security/http-detail-echo-baseline.json` (only shrinks). KB § PATTERNS/security/appsec-craft-canon.md.
+# ---------------------------------------------------------------------------
+def check_http_detail_echoes_exception(repo_root: Path | None = None) -> list[dict]:
+    """`HTTPException(detail=<expr>)` / error `JSONResponse` bodies that reference the caught exception (`str(exc)`,
+    `f"{exc}"`, `repr(exc)`, `exc.args`) over `seed/**` + `products/*/backend/app/**`. BLOCKING: any seed echo; any
+    product echo not in the ratchet baseline. Escape: `# detail-safe: <reason>` on the call."""
+    from tools.noctus.dev import http_detail_echo
+
+    return http_detail_echo.check(repo_root or REPO_ROOT)
+
+
+# ---------------------------------------------------------------------------
 # ACCESS TIERS (owner directive 2026-11-05): every route and every table declares who may touch it;
 # undeclared is refused. Logic + registry in `access_tiers.py` / `noctusai_lib.api.access_tiers`; these are the
 # keeper entry points. Ratchet baseline `deploy/security/access-tier-baseline.json` (only shrinks).

@@ -1,0 +1,842 @@
+{
+ "_": "NOC-REMEDIATE[http-detail-echo]: product backlog of HTTP error bodies that echo exception text. Destination: drain each to noctusai_lib.api.integration_errors.integration_error; this file only shrinks (cli --update-http-detail-echo-baseline). KB § PATTERNS/security/appsec-craft-canon.md",
+ "version": 1,
+ "findings": {
+  "products/academia-de-reciclagem/backend/app/routers/_common.py::error_response::{'detail': str(exc) or 'Conflito.', 'code': 'conflict'}#1": {
+   "file": "products/academia-de-reciclagem/backend/app/routers/_common.py",
+   "line": 46
+  },
+  "products/academia-de-reciclagem/backend/app/routers/_common.py::error_response::{'detail': str(exc) or 'Dado inválido.', 'code': 'invalid'}#1": {
+   "file": "products/academia-de-reciclagem/backend/app/routers/_common.py",
+   "line": 51
+  },
+  "products/academia-de-reciclagem/backend/app/routers/import_router.py::import_bundle::{'detail': f'Segredo detectado em: {exc.path}', 'code': 'secret_detected'}#1": {
+   "file": "products/academia-de-reciclagem/backend/app/routers/import_router.py",
+   "line": 97
+  },
+  "products/academia-de-reciclagem/backend/app/routers/import_router.py::import_bundle::{'detail': str(exc), 'code': 'bundle_invalid'}#1": {
+   "file": "products/academia-de-reciclagem/backend/app/routers/import_router.py",
+   "line": 105
+  },
+  "products/academia-de-reciclagem/backend/app/routers/import_router.py::import_bundle::{'detail': str(exc), 'code': 'bundle_too_large'}#1": {
+   "file": "products/academia-de-reciclagem/backend/app/routers/import_router.py",
+   "line": 91
+  },
+  "products/adconnect/backend/app/routers/cart.py::add_cart_item::str(exc)#1": {
+   "file": "products/adconnect/backend/app/routers/cart.py",
+   "line": 150
+  },
+  "products/adconnect/backend/app/routers/cart.py::checkout::str(exc)#1": {
+   "file": "products/adconnect/backend/app/routers/cart.py",
+   "line": 237
+  },
+  "products/adconnect/backend/app/routers/financial.py::stripe_webhook::f'Invalid JSON: {exc}'#1": {
+   "file": "products/adconnect/backend/app/routers/financial.py",
+   "line": 297
+  },
+  "products/adconnect/backend/app/routers/sellout.py::review_report::str(exc)#1": {
+   "file": "products/adconnect/backend/app/routers/sellout.py",
+   "line": 232
+  },
+  "products/adconnect/backend/app/routers/sellout.py::submit_attachment::str(exc)#1": {
+   "file": "products/adconnect/backend/app/routers/sellout.py",
+   "line": 185
+  },
+  "products/adconnect/backend/app/routers/sellout.py::submit_estruturado::str(exc)#1": {
+   "file": "products/adconnect/backend/app/routers/sellout.py",
+   "line": 118
+  },
+  "products/adconnect/backend/app/routers/sellout.py::submit_nfe::str(exc)#1": {
+   "file": "products/adconnect/backend/app/routers/sellout.py",
+   "line": 151
+  },
+  "products/agents/backend/app/routers/agent_settings_router.py::update_agent_settings::{'detail': exc.detail, 'code': 'invalid_field', 'field': exc.field}#1": {
+   "file": "products/agents/backend/app/routers/agent_settings_router.py",
+   "line": 42
+  },
+  "products/agents/backend/app/routers/persona_router.py::update_persona::{'detail': str(exc), 'code': 'invalid_field'}#1": {
+   "file": "products/agents/backend/app/routers/persona_router.py",
+   "line": 102
+  },
+  "products/agents/backend/app/routers/studio_agents_router.py::delete_studio_agent::{'code': exc.code, 'message': message, 'detail': message}#1": {
+   "file": "products/agents/backend/app/routers/studio_agents_router.py",
+   "line": 655
+  },
+  "products/agents/backend/app/routers/studio_import_router.py::import_agent_bundle::{'detail': exc.detail, 'code': exc.code}#1": {
+   "file": "products/agents/backend/app/routers/studio_import_router.py",
+   "line": 121
+  },
+  "products/agents/backend/app/studio/eval_loop_service.py::abrir::{'detail': mensagem_conflito(exc), 'code': exc.code}#1": {
+   "file": "products/agents/backend/app/studio/eval_loop_service.py",
+   "line": 168
+  },
+  "products/agents/backend/app/studio/spend.py::reserve_run::{'detail': exc.message, 'code': 'daily_spend_ceiling_exceeded'}#1": {
+   "file": "products/agents/backend/app/studio/spend.py",
+   "line": 44
+  },
+  "products/agents/backend/app/studio/spend.py::reserve_run::{'detail': exc.message, 'code': 'daily_spend_ceiling_unverifiable'}#1": {
+   "file": "products/agents/backend/app/studio/spend.py",
+   "line": 46
+  },
+  "products/community/backend/app/routers/whatsapp_webhook_router.py::whatsapp_webhook_by_token::str(exc)#1": {
+   "file": "products/community/backend/app/routers/whatsapp_webhook_router.py",
+   "line": 184
+  },
+  "products/core/backend/app/routers/auth.py::change_password::str(e)#1": {
+   "file": "products/core/backend/app/routers/auth.py",
+   "line": 310
+  },
+  "products/core/backend/app/routers/auth.py::signup::f'Erro no cadastro: {str(e)}'#1": {
+   "file": "products/core/backend/app/routers/auth.py",
+   "line": 93
+  },
+  "products/core/backend/app/routers/auth.py::signup::str(exc)#1": {
+   "file": "products/core/backend/app/routers/auth.py",
+   "line": 80
+  },
+  "products/core/backend/app/routers/billing.py::stripe_webhook::f'Assinatura do webhook inválida: {exc}'#1": {
+   "file": "products/core/backend/app/routers/billing.py",
+   "line": 121
+  },
+  "products/core/backend/app/routers/billing.py::subscribe::str(exc)#1": {
+   "file": "products/core/backend/app/routers/billing.py",
+   "line": 238
+  },
+  "products/core/backend/app/routers/billing_admin.py::cancel_subscription::f'O gateway recusou o cancelamento: {exc}'#1": {
+   "file": "products/core/backend/app/routers/billing_admin.py",
+   "line": 367
+  },
+  "products/core/backend/app/routers/billing_admin.py::update_secret::str(exc)#1": {
+   "file": "products/core/backend/app/routers/billing_admin.py",
+   "line": 263
+  },
+  "products/core/backend/app/routers/credits.py::buy_credits::str(exc)#1": {
+   "file": "products/core/backend/app/routers/credits.py",
+   "line": 110
+  },
+  "products/core/backend/app/routers/credits.py::buy_credits::str(exc)#2": {
+   "file": "products/core/backend/app/routers/credits.py",
+   "line": 112
+  },
+  "products/core/backend/app/routers/credits.py::pricing_or_503::str(exc)#1": {
+   "file": "products/core/backend/app/routers/credits.py",
+   "line": 51
+  },
+  "products/core/backend/app/routers/fleet_control.py::act_on_product::str(exc)#1": {
+   "file": "products/core/backend/app/routers/fleet_control.py",
+   "line": 97
+  },
+  "products/core/backend/app/routers/licenses.py::grant_license::str(exc)#1": {
+   "file": "products/core/backend/app/routers/licenses.py",
+   "line": 76
+  },
+  "products/core/backend/app/routers/licenses.py::revoke_license::str(exc)#1": {
+   "file": "products/core/backend/app/routers/licenses.py",
+   "line": 94
+  },
+  "products/core/backend/app/routers/platform_templates.py::_http::'; '.join(exc.errors)#1": {
+   "file": "products/core/backend/app/routers/platform_templates.py",
+   "line": 48
+  },
+  "products/core/backend/app/routers/products.py::atualizar_product::refusal.detail#1": {
+   "file": "products/core/backend/app/routers/products.py",
+   "line": 182
+  },
+  "products/core/backend/app/routers/webhooks.py::retry_webhook_delivery::str(exc)#1": {
+   "file": "products/core/backend/app/routers/webhooks.py",
+   "line": 212
+  },
+  "products/core/backend/app/routers/website_admin.py::put_admin_settings::str(exc)#1": {
+   "file": "products/core/backend/app/routers/website_admin.py",
+   "line": 70
+  },
+  "products/core/backend/app/routers/website_admin.py::rollback_settings::str(exc)#1": {
+   "file": "products/core/backend/app/routers/website_admin.py",
+   "line": 96
+  },
+  "products/core/backend/app/routers/website_public.py::create_lead::str(exc)#1": {
+   "file": "products/core/backend/app/routers/website_public.py",
+   "line": 122
+  },
+  "products/core/backend/app/services/brand/service.py::activate::{'code': 'tokens_invalidos', 'errors': exc.errors}#1": {
+   "file": "products/core/backend/app/services/brand/service.py",
+   "line": 476
+  },
+  "products/core/backend/app/services/brand/service.py::patch::{'code': 'tokens_invalidos', 'errors': exc.errors}#1": {
+   "file": "products/core/backend/app/services/brand/service.py",
+   "line": 455
+  },
+  "products/dev-team/backend/app/api/configs.py::get_config::str(exc)#1": {
+   "file": "products/dev-team/backend/app/api/configs.py",
+   "line": 59
+  },
+  "products/dev-team/backend/app/api/configs.py::patch_config::str(exc)#1": {
+   "file": "products/dev-team/backend/app/api/configs.py",
+   "line": 91
+  },
+  "products/erp-imobiliario/backend/app/routers/ai.py::generate_description::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/ai.py",
+   "line": 91
+  },
+  "products/erp-imobiliario/backend/app/routers/ai.py::lead_score::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/ai.py",
+   "line": 135
+  },
+  "products/erp-imobiliario/backend/app/routers/ai.py::suggest_price::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/ai.py",
+   "line": 186
+  },
+  "products/erp-imobiliario/backend/app/routers/assinaturas.py::enviar_assinatura::f\"Plataforma de assinatura não configurada: {', '.join(exc.faltando)}\"#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/assinaturas.py",
+   "line": 165
+  },
+  "products/erp-imobiliario/backend/app/routers/assinaturas.py::enviar_assinatura::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/assinaturas.py",
+   "line": 186
+  },
+  "products/erp-imobiliario/backend/app/routers/banco.py::conciliar_movimentacao::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/banco.py",
+   "line": 227
+  },
+  "products/erp-imobiliario/backend/app/routers/comissoes.py::criar_comissao::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/comissoes.py",
+   "line": 202
+  },
+  "products/erp-imobiliario/backend/app/routers/equipes.py::adicionar_membro::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/equipes.py",
+   "line": 163
+  },
+  "products/erp-imobiliario/backend/app/routers/equipes.py::adicionar_membro::str(e)#2": {
+   "file": "products/erp-imobiliario/backend/app/routers/equipes.py",
+   "line": 166
+  },
+  "products/erp-imobiliario/backend/app/routers/equipes.py::atualizar::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/equipes.py",
+   "line": 120
+  },
+  "products/erp-imobiliario/backend/app/routers/equipes.py::atualizar_membro::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/equipes.py",
+   "line": 184
+  },
+  "products/erp-imobiliario/backend/app/routers/equipes.py::criar::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/equipes.py",
+   "line": 91
+  },
+  "products/erp-imobiliario/backend/app/routers/matching.py::embed_ativo::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/matching.py",
+   "line": 127
+  },
+  "products/erp-imobiliario/backend/app/routers/matching.py::embed_batch::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/matching.py",
+   "line": 155
+  },
+  "products/erp-imobiliario/backend/app/routers/meta_fechamentos.py::fechar_periodo::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/meta_fechamentos.py",
+   "line": 44
+  },
+  "products/erp-imobiliario/backend/app/routers/meta_periodos.py::atualizar::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/meta_periodos.py",
+   "line": 153
+  },
+  "products/erp-imobiliario/backend/app/routers/meta_periodos.py::auto_generate::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/meta_periodos.py",
+   "line": 119
+  },
+  "products/erp-imobiliario/backend/app/routers/meta_periodos.py::auto_generate::str(e)#2": {
+   "file": "products/erp-imobiliario/backend/app/routers/meta_periodos.py",
+   "line": 122
+  },
+  "products/erp-imobiliario/backend/app/routers/meta_periodos.py::criar::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/meta_periodos.py",
+   "line": 92
+  },
+  "products/erp-imobiliario/backend/app/routers/meta_periodos.py::criar::str(e)#2": {
+   "file": "products/erp-imobiliario/backend/app/routers/meta_periodos.py",
+   "line": 95
+  },
+  "products/erp-imobiliario/backend/app/routers/meta_periodos.py::preview_trimestre::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/meta_periodos.py",
+   "line": 106
+  },
+  "products/erp-imobiliario/backend/app/routers/metas_configuracao.py::upsert::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/metas_configuracao.py",
+   "line": 59
+  },
+  "products/erp-imobiliario/backend/app/routers/metas_configuracao.py::upsert::str(e)#2": {
+   "file": "products/erp-imobiliario/backend/app/routers/metas_configuracao.py",
+   "line": 62
+  },
+  "products/erp-imobiliario/backend/app/routers/metas_empresa.py::atualizar::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/metas_empresa.py",
+   "line": 114
+  },
+  "products/erp-imobiliario/backend/app/routers/metas_empresa.py::upsert::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/metas_empresa.py",
+   "line": 73
+  },
+  "products/erp-imobiliario/backend/app/routers/metas_empresa.py::upsert::str(e)#2": {
+   "file": "products/erp-imobiliario/backend/app/routers/metas_empresa.py",
+   "line": 76
+  },
+  "products/erp-imobiliario/backend/app/routers/metas_equipe.py::upsert::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/metas_equipe.py",
+   "line": 59
+  },
+  "products/erp-imobiliario/backend/app/routers/metas_equipe.py::upsert::str(e)#2": {
+   "file": "products/erp-imobiliario/backend/app/routers/metas_equipe.py",
+   "line": 62
+  },
+  "products/erp-imobiliario/backend/app/routers/regras_pontuacao.py::atualizar::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/regras_pontuacao.py",
+   "line": 130
+  },
+  "products/erp-imobiliario/backend/app/routers/regras_pontuacao.py::upsert::str(e)#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/regras_pontuacao.py",
+   "line": 110
+  },
+  "products/erp-imobiliario/backend/app/routers/regras_pontuacao.py::upsert::str(e)#2": {
+   "file": "products/erp-imobiliario/backend/app/routers/regras_pontuacao.py",
+   "line": 113
+  },
+  "products/erp-imobiliario/backend/app/routers/vista_showcase.py::agencias::f'Vista erro {e.status}.'#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/vista_showcase.py",
+   "line": 262
+  },
+  "products/erp-imobiliario/backend/app/routers/vista_showcase.py::cliente_detalhes::f\"Campo '{e.field}' não disponível para este tenant — atualize CLIENTE_DETAIL_FIELDS.\"#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/vista_showcase.py",
+   "line": 219
+  },
+  "products/erp-imobiliario/backend/app/routers/vista_showcase.py::cliente_detalhes::f'Vista respondeu erro {e.status}.'#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/vista_showcase.py",
+   "line": 223
+  },
+  "products/erp-imobiliario/backend/app/routers/vista_showcase.py::clientes::f\"Campo Vista '{e.field}' indisponível para este tenant — atualize CLIENTE_LIST_FIELDS.\"#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/vista_showcase.py",
+   "line": 200
+  },
+  "products/erp-imobiliario/backend/app/routers/vista_showcase.py::clientes::f'Vista respondeu erro {e.status}.'#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/vista_showcase.py",
+   "line": 204
+  },
+  "products/erp-imobiliario/backend/app/routers/vista_showcase.py::imoveis::f\"Campo Vista '{e.field}' indisponível para este tenant — atualize IMOVEL_LIST_FIELDS.\"#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/vista_showcase.py",
+   "line": 112
+  },
+  "products/erp-imobiliario/backend/app/routers/vista_showcase.py::imoveis::f'Vista respondeu erro {e.status}.'#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/vista_showcase.py",
+   "line": 116
+  },
+  "products/erp-imobiliario/backend/app/routers/vista_showcase.py::imoveis_conteudo::f'Vista erro {e.status}.'#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/vista_showcase.py",
+   "line": 159
+  },
+  "products/erp-imobiliario/backend/app/routers/vista_showcase.py::imovel_detalhes::f\"Campo '{e.field}' não disponível para este tenant.\"#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/vista_showcase.py",
+   "line": 137
+  },
+  "products/erp-imobiliario/backend/app/routers/vista_showcase.py::imovel_detalhes::f'Imóvel {e.codigo} não está publicado (Exibir no site = Não) — sem dados visíveis para esta chave.'#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/vista_showcase.py",
+   "line": 135
+  },
+  "products/erp-imobiliario/backend/app/routers/vista_showcase.py::imovel_detalhes::f'Vista respondeu erro {e.status}.'#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/vista_showcase.py",
+   "line": 141
+  },
+  "products/erp-imobiliario/backend/app/routers/vista_showcase.py::usuarios::f'Vista erro {e.status}.'#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/vista_showcase.py",
+   "line": 245
+  },
+  "products/erp-imobiliario/backend/app/routers/whatsapp_webhook.py::iniciar_session::f'Erro ao conectar WAHA: {str(e)}'#1": {
+   "file": "products/erp-imobiliario/backend/app/routers/whatsapp_webhook.py",
+   "line": 272
+  },
+  "products/igig/backend/app/routers/distribuicao_router.py::executar_publicacao::{'detail': str(exc), 'code': 'credencial_ilegivel'}#1": {
+   "file": "products/igig/backend/app/routers/distribuicao_router.py",
+   "line": 204
+  },
+  "products/igig/backend/app/routers/financeiro_router.py::dre::str(exc)#1": {
+   "file": "products/igig/backend/app/routers/financeiro_router.py",
+   "line": 533
+  },
+  "products/igig/backend/app/routers/financeiro_router.py::excedentes::str(exc)#1": {
+   "file": "products/igig/backend/app/routers/financeiro_router.py",
+   "line": 502
+  },
+  "products/igig/backend/app/routers/financeiro_router.py::gerar_competencia::str(exc)#1": {
+   "file": "products/igig/backend/app/routers/financeiro_router.py",
+   "line": 464
+  },
+  "products/igig/backend/app/routers/relatorio_router.py::obter_relatorio::str(exc)#1": {
+   "file": "products/igig/backend/app/routers/relatorio_router.py",
+   "line": 55
+  },
+  "products/orbity/backend/app/routers/automation_router.py::trigger_flow::str(exc)#1": {
+   "file": "products/orbity/backend/app/routers/automation_router.py",
+   "line": 272
+  },
+  "products/orbity/backend/app/routers/clients_router.py::archive_client::exc.message#1": {
+   "file": "products/orbity/backend/app/routers/clients_router.py",
+   "line": 209
+  },
+  "products/orbity/backend/app/routers/clients_router.py::delete_client::exc.message#1": {
+   "file": "products/orbity/backend/app/routers/clients_router.py",
+   "line": 251
+  },
+  "products/orbity/backend/app/routers/clients_router.py::offboarding_preview::exc.message#1": {
+   "file": "products/orbity/backend/app/routers/clients_router.py",
+   "line": 184
+  },
+  "products/orbity/backend/app/routers/content_plans_router.py::_guard::str(exc)#1": {
+   "file": "products/orbity/backend/app/routers/content_plans_router.py",
+   "line": 75
+  },
+  "products/orbity/backend/app/routers/content_plans_router.py::promote_item_to_post::str(exc)#1": {
+   "file": "products/orbity/backend/app/routers/content_plans_router.py",
+   "line": 249
+  },
+  "products/orbity/backend/app/routers/crm_router.py::add_activity::str(exc)#1": {
+   "file": "products/orbity/backend/app/routers/crm_router.py",
+   "line": 368
+  },
+  "products/orbity/backend/app/routers/crm_router.py::move_stage::str(exc)#1": {
+   "file": "products/orbity/backend/app/routers/crm_router.py",
+   "line": 312
+  },
+  "products/orbity/backend/app/routers/crm_router.py::score_lead::str(exc)#1": {
+   "file": "products/orbity/backend/app/routers/crm_router.py",
+   "line": 394
+  },
+  "products/orbity/backend/app/routers/financial_router.py::monthly_cash_flow::str(exc)#1": {
+   "file": "products/orbity/backend/app/routers/financial_router.py",
+   "line": 61
+  },
+  "products/orbity/backend/app/routers/meta_ads_router.py::sync_campaigns::str(exc)#1": {
+   "file": "products/orbity/backend/app/routers/meta_ads_router.py",
+   "line": 438
+  },
+  "products/orbity/backend/app/routers/reports_router.py::generate_snapshot::str(exc)#1": {
+   "file": "products/orbity/backend/app/routers/reports_router.py",
+   "line": 208
+  },
+  "products/orbity/backend/app/routers/social_content_router.py::public_get_approval::str(exc)#1": {
+   "file": "products/orbity/backend/app/routers/social_content_router.py",
+   "line": 429
+  },
+  "products/orbity/backend/app/routers/social_content_router.py::public_submit_approval::str(exc)#1": {
+   "file": "products/orbity/backend/app/routers/social_content_router.py",
+   "line": 474
+  },
+  "products/orbity/backend/app/routers/social_content_router.py::public_submit_approval::str(exc)#2": {
+   "file": "products/orbity/backend/app/routers/social_content_router.py",
+   "line": 476
+  },
+  "products/orbity/backend/app/routers/whatsapp_webhook_router.py::whatsapp_webhook_by_token::str(exc)#1": {
+   "file": "products/orbity/backend/app/routers/whatsapp_webhook_router.py",
+   "line": 100
+  },
+  "products/p-studio/backend/app/routers/integracoes_router.py::_servico::str(exc)#1": {
+   "file": "products/p-studio/backend/app/routers/integracoes_router.py",
+   "line": 194
+  },
+  "products/p-studio/backend/app/routers/integracoes_router.py::salvar_credencial::str(exc)#1": {
+   "file": "products/p-studio/backend/app/routers/integracoes_router.py",
+   "line": 249
+  },
+  "products/social-wiring/backend/app/modules/card_hub/router.py::reler_financiamento_documento_route::exc.mensagem#1": {
+   "file": "products/social-wiring/backend/app/modules/card_hub/router.py",
+   "line": 1653
+  },
+  "products/social-wiring/backend/app/modules/certidoes/routers/certidoes.py::obter_transcricao_pdf::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/certidoes/routers/certidoes.py",
+   "line": 1619
+  },
+  "products/social-wiring/backend/app/modules/certidoes/routers/certidoes.py::reler_certidao::exc.mensagem#1": {
+   "file": "products/social-wiring/backend/app/modules/certidoes/routers/certidoes.py",
+   "line": 1182
+  },
+  "products/social-wiring/backend/app/modules/certidoes/routers/certidoes.py::voltar_automatico::exc.mensagem#1": {
+   "file": "products/social-wiring/backend/app/modules/certidoes/routers/certidoes.py",
+   "line": 1222
+  },
+  "products/social-wiring/backend/app/modules/instagram/router.py::list_media::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/instagram/router.py",
+   "line": 250
+  },
+  "products/social-wiring/backend/app/modules/instagram/router.py::sync_account::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/instagram/router.py",
+   "line": 331
+  },
+  "products/social-wiring/backend/app/modules/matriculas/router.py::baixar_extracao_pdf::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/matriculas/router.py",
+   "line": 605
+  },
+  "products/social-wiring/backend/app/modules/media_creation/routers/brand_kits.py::delete_brand_kit::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/media_creation/routers/brand_kits.py",
+   "line": 72
+  },
+  "products/social-wiring/backend/app/modules/media_creation/routers/dashboard_criacao.py::get_dashboard::exc.detail#1": {
+   "file": "products/social-wiring/backend/app/modules/media_creation/routers/dashboard_criacao.py",
+   "line": 41
+  },
+  "products/social-wiring/backend/app/modules/media_creation/routers/esteira.py::atualizar_post::json.loads(exc.json(include_url=False, include_context=False))#1": {
+   "file": "products/social-wiring/backend/app/modules/media_creation/routers/esteira.py",
+   "line": 170
+  },
+  "products/social-wiring/backend/app/modules/media_creation/routers/esteira_legenda.py::gerar_legenda::exc.detail#1": {
+   "file": "products/social-wiring/backend/app/modules/media_creation/routers/esteira_legenda.py",
+   "line": 47
+  },
+  "products/social-wiring/backend/app/modules/media_creation/routers/generation.py::generate_copy::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/media_creation/routers/generation.py",
+   "line": 135
+  },
+  "products/social-wiring/backend/app/modules/media_creation/routers/generation.py::generate_prompts::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/media_creation/routers/generation.py",
+   "line": 121
+  },
+  "products/social-wiring/backend/app/modules/media_creation/routers/generation.py::generate_storyboard::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/media_creation/routers/generation.py",
+   "line": 107
+  },
+  "products/social-wiring/backend/app/modules/media_creation/routers/generation.py::publish_post::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/media_creation/routers/generation.py",
+   "line": 213
+  },
+  "products/social-wiring/backend/app/modules/media_creation/routers/generation.py::render_post::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/media_creation/routers/generation.py",
+   "line": 184
+  },
+  "products/social-wiring/backend/app/modules/media_creation/routers/generation.py::score_post::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/media_creation/routers/generation.py",
+   "line": 154
+  },
+  "products/social-wiring/backend/app/modules/media_creation/routers/references.py::delete_reference::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/media_creation/routers/references.py",
+   "line": 62
+  },
+  "products/social-wiring/backend/app/modules/n8n/routers/folders.py::create_folder::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/n8n/routers/folders.py",
+   "line": 100
+  },
+  "products/social-wiring/backend/app/modules/n8n/routers/folders.py::create_folder::str(exc)#2": {
+   "file": "products/social-wiring/backend/app/modules/n8n/routers/folders.py",
+   "line": 106
+  },
+  "products/social-wiring/backend/app/modules/n8n/routers/folders.py::delete_folder::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/n8n/routers/folders.py",
+   "line": 153
+  },
+  "products/social-wiring/backend/app/modules/n8n/routers/folders.py::delete_folder::str(exc)#2": {
+   "file": "products/social-wiring/backend/app/modules/n8n/routers/folders.py",
+   "line": 155
+  },
+  "products/social-wiring/backend/app/modules/n8n/routers/folders.py::update_folder::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/n8n/routers/folders.py",
+   "line": 130
+  },
+  "products/social-wiring/backend/app/modules/n8n/routers/folders.py::update_folder::str(exc)#2": {
+   "file": "products/social-wiring/backend/app/modules/n8n/routers/folders.py",
+   "line": 132
+  },
+  "products/social-wiring/backend/app/modules/n8n/routers/folders.py::update_folder::str(exc)#3": {
+   "file": "products/social-wiring/backend/app/modules/n8n/routers/folders.py",
+   "line": 134
+  },
+  "products/social-wiring/backend/app/modules/n8n/routers/settings.py::put_settings_route::f'n8n error: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/modules/n8n/routers/settings.py",
+   "line": 123
+  },
+  "products/social-wiring/backend/app/modules/n8n/services/account_resolver.py::decrypt_or_503::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/n8n/services/account_resolver.py",
+   "line": 202
+  },
+  "products/social-wiring/backend/app/modules/n8n/services/account_resolver.py::get_account_service::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/n8n/services/account_resolver.py",
+   "line": 95
+  },
+  "products/social-wiring/backend/app/modules/permutas/router.py::embutir_route::f'{exc} Configure a chave em Configurações → Chaves de API, ou troque o provedor dos vetores semânticos.'#1": {
+   "file": "products/social-wiring/backend/app/modules/permutas/router.py",
+   "line": 125
+  },
+  "products/social-wiring/backend/app/modules/permutas/router.py::embutir_route::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/permutas/router.py",
+   "line": 137
+  },
+  "products/social-wiring/backend/app/modules/portal_leads/routers/receiver_tokens.py::mint_token::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/portal_leads/routers/receiver_tokens.py",
+   "line": 182
+  },
+  "products/social-wiring/backend/app/modules/scheduling/router.py::propose_slots::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/scheduling/router.py",
+   "line": 388
+  },
+  "products/social-wiring/backend/app/modules/simec/router.py::create_readout::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/simec/router.py",
+   "line": 329
+  },
+  "products/social-wiring/backend/app/modules/simec/router.py::get_config::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/simec/router.py",
+   "line": 273
+  },
+  "products/social-wiring/backend/app/modules/simec/router.py::get_simec_service::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/simec/router.py",
+   "line": 76
+  },
+  "products/social-wiring/backend/app/modules/simec/router.py::put_account_config::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/simec/router.py",
+   "line": 308
+  },
+  "products/social-wiring/backend/app/modules/simec/router.py::put_org_config::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/simec/router.py",
+   "line": 289
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/dashboard.py::_build_dashboard_service::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/dashboard.py",
+   "line": 68
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/settings.py::_build_credential_store::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/settings.py",
+   "line": 64
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/settings.py::_build_youtube_service::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/settings.py",
+   "line": 79
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/settings.py::youtube_oauth_callback::f'OAuth code exchange failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/settings.py",
+   "line": 248
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/snapshot.py::_resolve_account_id::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/snapshot.py",
+   "line": 263
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/snapshot.py::run_snapshot::f'YouTube API failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/snapshot.py",
+   "line": 121
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/snapshot.py::run_snapshot::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/snapshot.py",
+   "line": 116
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/snapshot.py::run_snapshot::str(exc)#2": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/snapshot.py",
+   "line": 126
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/upload.py::_build_upload_service::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/upload.py",
+   "line": 112
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/upload.py::_resolve_metadata_from_product_code::f'local imoveis lookup failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/upload.py",
+   "line": 232
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/upload.py::upload_from_drive::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/upload.py",
+   "line": 449
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/upload.py::upload_video::f'failed to write upload to disk: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/upload.py",
+   "line": 336
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/upload.py::upload_video::f'invalid metadata payload: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/upload.py",
+   "line": 294
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/upload.py::upload_video::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/upload.py",
+   "line": 327
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/upload.py::upload_video_from_code::f'failed to write upload to disk: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/upload.py",
+   "line": 415
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/upload.py::upload_video_from_code::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/upload.py",
+   "line": 409
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/videos.py::_build_video_cache_service::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/videos.py",
+   "line": 92
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/videos.py::_resolve_sync_account::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/videos.py",
+   "line": 597
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/videos.py::delete_video::f'YouTube API failed: {exc}. Catalog row preserved — nothing was deleted.'#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/videos.py",
+   "line": 567
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/videos.py::delete_video::f'{exc} Connect via Settings → YouTube before deleting.'#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/videos.py",
+   "line": 562
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/videos.py::delete_video::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/videos.py",
+   "line": 551
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/videos.py::sync_videos::f'YouTube API failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/videos.py",
+   "line": 298
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/videos.py::sync_videos::f'{exc} Connect via Settings → YouTube before syncing.'#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/videos.py",
+   "line": 293
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/videos.py::sync_videos::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/videos.py",
+   "line": 303
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/videos.py::update_video::f'YouTube API failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/videos.py",
+   "line": 427
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/videos.py::update_video::f'{exc} Connect via Settings → YouTube before updating.'#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/videos.py",
+   "line": 422
+  },
+  "products/social-wiring/backend/app/modules/youtube/routers/videos.py::update_video::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/modules/youtube/routers/videos.py",
+   "line": 408
+  },
+  "products/social-wiring/backend/app/routers/_meta_common.py::build_store::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/routers/_meta_common.py",
+   "line": 84
+  },
+  "products/social-wiring/backend/app/routers/_meta_common.py::get_account_adapter::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/routers/_meta_common.py",
+   "line": 136
+  },
+  "products/social-wiring/backend/app/routers/_meta_common.py::get_account_adapter::str(exc)#2": {
+   "file": "products/social-wiring/backend/app/routers/_meta_common.py",
+   "line": 141
+  },
+  "products/social-wiring/backend/app/routers/_meta_common.py::get_dm_gateway::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/routers/_meta_common.py",
+   "line": 219
+  },
+  "products/social-wiring/backend/app/routers/_meta_common.py::get_dm_gateway::str(exc)#2": {
+   "file": "products/social-wiring/backend/app/routers/_meta_common.py",
+   "line": 224
+  },
+  "products/social-wiring/backend/app/routers/_meta_common.py::get_ig_insights_adapter::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/routers/_meta_common.py",
+   "line": 174
+  },
+  "products/social-wiring/backend/app/routers/calendar_router.py::_build_store::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/routers/calendar_router.py",
+   "line": 89
+  },
+  "products/social-wiring/backend/app/routers/calendar_router.py::calendar_oauth_callback::f'OAuth code exchange failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/calendar_router.py",
+   "line": 267
+  },
+  "products/social-wiring/backend/app/routers/campanhas_router.py::criar_solicitacao::f'Imóvel não encontrado no catálogo: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/campanhas_router.py",
+   "line": 82
+  },
+  "products/social-wiring/backend/app/routers/campanhas_router.py::criar_solicitacao::f'Já existe uma solicitação pendente para {exc}.'#1": {
+   "file": "products/social-wiring/backend/app/routers/campanhas_router.py",
+   "line": 87
+  },
+  "products/social-wiring/backend/app/routers/chat_router.py::_build_intake::f'redis unavailable: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/chat_router.py",
+   "line": 96
+  },
+  "products/social-wiring/backend/app/routers/chat_router.py::chat_message::f'chatbot failure: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/chat_router.py",
+   "line": 352
+  },
+  "products/social-wiring/backend/app/routers/chat_router.py::chat_message::f'failed to stage file: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/chat_router.py",
+   "line": 305
+  },
+  "products/social-wiring/backend/app/routers/chat_router.py::stage_chat_file::f'failed to stage file: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/chat_router.py",
+   "line": 188
+  },
+  "products/social-wiring/backend/app/routers/intake_monitor_router.py::get_conversation::f'Conversation state for {session_id!r} is corrupt: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/intake_monitor_router.py",
+   "line": 150
+  },
+  "products/social-wiring/backend/app/routers/integration_accounts_router.py::create_account::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/routers/integration_accounts_router.py",
+   "line": 346
+  },
+  "products/social-wiring/backend/app/routers/integration_accounts_router.py::drive_oauth_callback::f'OAuth code exchange failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/integration_accounts_router.py",
+   "line": 2149
+  },
+  "products/social-wiring/backend/app/routers/integration_accounts_router.py::get_account_service::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/routers/integration_accounts_router.py",
+   "line": 197
+  },
+  "products/social-wiring/backend/app/routers/integration_accounts_router.py::gmail_oauth_callback::f'OAuth code exchange failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/integration_accounts_router.py",
+   "line": 1923
+  },
+  "products/social-wiring/backend/app/routers/integration_accounts_router.py::instagram_oauth_callback::f'OAuth code exchange failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/integration_accounts_router.py",
+   "line": 1519
+  },
+  "products/social-wiring/backend/app/routers/integration_accounts_router.py::meta_oauth_callback::f'Long-lived token exchange failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/integration_accounts_router.py",
+   "line": 1192
+  },
+  "products/social-wiring/backend/app/routers/integration_accounts_router.py::meta_oauth_callback::f'OAuth code exchange failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/integration_accounts_router.py",
+   "line": 1172
+  },
+  "products/social-wiring/backend/app/routers/integration_accounts_router.py::sync_account::f'channel sync failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/integration_accounts_router.py",
+   "line": 465
+  },
+  "products/social-wiring/backend/app/routers/integration_accounts_router.py::youtube_oauth_callback::f'OAuth code exchange failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/integration_accounts_router.py",
+   "line": 753
+  },
+  "products/social-wiring/backend/app/routers/marcas_router.py::create_marca::f'marca create failed: {exc}'#1": {
+   "file": "products/social-wiring/backend/app/routers/marcas_router.py",
+   "line": 177
+  },
+  "products/social-wiring/backend/app/routers/meta_insights_router.py::create_ig_snapshot::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/routers/meta_insights_router.py",
+   "line": 303
+  },
+  "products/social-wiring/backend/app/routers/settings_router.py::get_api_key_store_dep::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/routers/settings_router.py",
+   "line": 986
+  },
+  "products/social-wiring/backend/app/routers/settings_router.py::get_app_config_store_dep::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/routers/settings_router.py",
+   "line": 649
+  },
+  "products/social-wiring/backend/app/services/vista_credenciais.py::adapter_ou_503::str(exc)#1": {
+   "file": "products/social-wiring/backend/app/services/vista_credenciais.py",
+   "line": 69
+  },
+  "products/store/backend/app/routers/public_router.py::download::{'detail': exc.detail, 'code': 'download_unavailable'}#1": {
+   "file": "products/store/backend/app/routers/public_router.py",
+   "line": 118
+  },
+  "products/therapy-platform/backend/app/services/auth_service.py::google_auth::f'Falha na autenticação Google: {e}'#1": {
+   "file": "products/therapy-platform/backend/app/services/auth_service.py",
+   "line": 273
+  },
+  "products/therapy-platform/backend/app/services/auth_service.py::register_clinic::f'Erro ao criar usuário: {e}'#1": {
+   "file": "products/therapy-platform/backend/app/services/auth_service.py",
+   "line": 195
+  },
+  "products/therapy-platform/backend/app/services/auth_service.py::register_patient::f'Erro ao criar usuário: {e}'#1": {
+   "file": "products/therapy-platform/backend/app/services/auth_service.py",
+   "line": 45
+  },
+  "products/therapy-platform/backend/app/services/auth_service.py::register_therapist::f'Erro ao criar usuário: {e}'#1": {
+   "file": "products/therapy-platform/backend/app/services/auth_service.py",
+   "line": 105
+  },
+  "products/therapy-platform/backend/app/services/clinic_service.py::invite_therapist::f'Erro ao convidar terapeuta: {e}'#1": {
+   "file": "products/therapy-platform/backend/app/services/clinic_service.py",
+   "line": 167
+  }
+ }
+}
