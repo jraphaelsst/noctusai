@@ -6,7 +6,7 @@ agent's ``publicacao_limiar``) and a budget; target / budget cap / max rounds ar
 loop at the target / after 2 rounds without improvement / at the budget and notifies the platform admins in-app mid-flight.
 
 Auth mirrors the run routes: start / read = ``require_evals_run_access`` (a platform admin, a ``studio:publish`` token on a
-dev agent, or the platform-issued ``studio:evals-run`` token); stop = ``require_evals_run_cancel``. No caller may exceed the configured budget cap or max rounds. Error codes (409): ``loop_ativo_existente``, ``loop_ja_encerrado``; (404)
+dev agent, or the platform-issued ``studio:evals-run`` token); stop = ``require_evals_run_cancel``. No caller may exceed the configured budget cap or max rounds. Error codes (409): ``loop_ativo_existente``, ``loop_ja_encerrado``, ``execucao_em_andamento`` / ``loop_ativo_do_usuario`` (one run / loop per user, migration 087); (404)
 ``loop_not_found``; (422) ``orcamento_acima_do_teto``, ``rodadas_acima_do_maximo``. The run-start codes live on the run routes (see the contract).
 """
 from __future__ import annotations
@@ -18,10 +18,13 @@ from fastapi import APIRouter, Depends, Query, status
 from app.dependencies import require_evals_run_access, require_evals_run_cancel, require_platform_admin
 from app.routers.studio_agents_router import (
     get_eval_loop_config_store_dep,
+    get_eval_store_dep,
     get_loop_service_dep,
     get_loop_store_dep,
+    get_mecanismo_store_dep,
     get_studio_definition_store_dep,
     actor_id,
+    guard_um_por_usuario,
     http_error,
     require_user_or_dev_advisor,
 )
@@ -51,11 +54,15 @@ def start_loop(
     defs=Depends(get_studio_definition_store_dep),
     loops=Depends(get_loop_store_dep),
     config=Depends(get_eval_loop_config_store_dep),
+    runs=Depends(get_eval_store_dep),
+    mecanismo=Depends(get_mecanismo_store_dep),
 ) -> LoopOut:
     """Open a loop: G1 target (the config's ``alvo``, frozen on the loop) / floor = the agent's ``publicacao_limiar``; G2 the
     planned rounds (omitted = the config's max, never above it); G7 the budget (omitted = the config's cap, never above it)."""
     agent = resolve_studio_agent(defs, ctx.org_id, key)
     require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
+    guard_um_por_usuario(ctx, agent, suite=payload.suite, loop_id=None, runs=runs, mecanismo=mecanismo, loops=loops, defs=defs,
+                         abrindo_loop=True)
     cfg = config.get().config
     rodadas, orcamento = resolver_criacao(cfg, rodadas_planejadas=payload.rodadas_planejadas, orcamento_usd=payload.orcamento_usd)
     try:

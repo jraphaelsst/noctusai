@@ -50,6 +50,8 @@ from app.routers.studio_agents_router import (
     get_loop_service_dep,
     audit_definition_read,
     actor_id,
+    get_mecanismo_store_dep,
+    guard_um_por_usuario,
     get_eval_store_dep,  # defined in studio_agents_router (publish/readiness read the cases too); re-exported here
     require_user_or_dev_advisor,
     get_studio_definition_store_dep,
@@ -285,6 +287,7 @@ async def create_run(
     consol=Depends(get_consolidacao_store_dep),
     ceiling=Depends(get_spend_ceiling_dep),
     loops=Depends(get_loop_service_dep),
+    mecanismo=Depends(get_mecanismo_store_dep),
 ) -> EvalRunOut:
     # The store/definition calls are sync PostgREST: run them in a worker thread so the loop keeps
     # serving. Only the scheduler (asyncio.create_task) stays on the loop. Exceptions (NotFound ->
@@ -306,6 +309,9 @@ async def create_run(
         compiled_hash = current_hash(ctx.org_id, agent, version)
 
         limite_usd = payload.limite_usd if payload.limite_usd is not None else settings.studio_eval_run_budget_usd
+        # one run / loop per user at a time (names what is running; migration 087's trigger is the race backstop)
+        guard_um_por_usuario(ctx, agent, suite="comportamento", loop_id=payload.loop_id, runs=store, mecanismo=mecanismo,
+                             loops=loops.store, defs=defs, fase="tudo" if payload.loop_id is None else "em_andamento")
         if payload.loop_id is not None:
             if payload.case_ids is not None or payload.repetir_falhas_de is not None:
                 raise http_error(422, "loop_run_parcial", "Uma run de loop cobre a suíte inteira: não aceita case_ids nem repetir_falhas_de.")
@@ -316,6 +322,8 @@ async def create_run(
             limite_usd = loops.admitir(
                 ctx.org_id, agent.id, payload.loop_id, suite="comportamento", compiled_hash=compiled_hash, limite_usd=limite_usd,
                 ler_resumo=lambda rid: resumo_comportamento(store, ctx.org_id, agent.id, rid)).limite_usd
+            guard_um_por_usuario(ctx, agent, suite="comportamento", loop_id=payload.loop_id, runs=store, mecanismo=mecanismo,
+                                 loops=loops.store, defs=defs, fase="loop")
 
         case_ids = payload.case_ids
         if payload.repetir_falhas_de is not None:

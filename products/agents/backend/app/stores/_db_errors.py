@@ -74,6 +74,8 @@ MENSAGENS_CONFLITO: dict[str, str] = {
     "loop_ativo_existente": "Este agente já tem um loop de avaliação ativo nesta suíte. Encerre-o antes de abrir outro.",
     "rodada_em_andamento": "Já há uma rodada deste loop em andamento.",
     "loop_encerrado": "O loop de avaliação foi encerrado. Inicie um novo loop.",
+    "execucao_em_andamento": "Você já tem uma avaliação em andamento. Aguarde terminar ou cancele-a antes de iniciar outra.",
+    "loop_ativo_do_usuario": "Você já tem um loop de avaliação ativo. Finalize-o ou pare-o (\"Parar loop\") antes de iniciar outra avaliação.",
     "compiled_prompt_immutable": "O prompt compilado já gravado não pode ser alterado.",
     "audit_log_append_only": "O histórico de auditoria não pode ser alterado.",
     "draft_exists": "Este agente já tem um rascunho em edição.",
@@ -161,6 +163,9 @@ _P0001_CODES: dict[str, Callable[[str], Exception]] = {
     "skill_exists": _conflict("skill_exists"),
     "client_entries_cap": _conflict("client_entries_cap"),
     "kind_immutable": _conflict("kind_immutable"),
+    # 087 guard_eval_um_por_usuario (the race backstop of the one-run-per-user rule)
+    "execucao_em_andamento": _conflict("execucao_em_andamento"),
+    "loop_ativo_do_usuario": _conflict("loop_ativo_do_usuario"),
     # 031 guard_agent_definition_scope
     "definition_not_platform": _conflict("definition_not_platform"),
     "definition_invalid": _conflict("definition_invalid"),

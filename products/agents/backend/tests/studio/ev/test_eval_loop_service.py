@@ -215,12 +215,16 @@ def test_one_active_loop_per_agent_and_suite():
     from app.stores._db_errors import StudioConflict
 
     w = W()
-    with pytest.raises(StudioConflict) as exc:
+    with pytest.raises(StudioConflict) as exc:  # another user: the (agent, suite) slot is taken
         w.loops.create_loop(ORG, AGENT, agente_chave="agente-base", suite="comportamento", rodadas_planejadas=5, alvo=1.0, piso=0.8,
-                            orcamento_usd=5.0, started_by=OWNER)
+                            orcamento_usd=5.0, started_by=uuid4())
     assert exc.value.code == "loop_ativo_existente"
+    with pytest.raises(StudioConflict) as exc:  # the SAME user may not hold two loops, even on the other suite (migration 087)
+        w.loops.create_loop(ORG, AGENT, agente_chave="agente-base", suite="mecanismo", rodadas_planejadas=5, alvo=1.0, piso=0.8,
+                            orcamento_usd=5.0, started_by=OWNER)
+    assert exc.value.code == "loop_ativo_do_usuario"
     w.loops.create_loop(ORG, AGENT, agente_chave="agente-base", suite="mecanismo", rodadas_planejadas=5, alvo=1.0, piso=0.8,
-                        orcamento_usd=5.0, started_by=OWNER)  # the other suite is free
+                        orcamento_usd=5.0, started_by=uuid4())  # the other suite is free for another user
 
 
 def test_the_configured_target_95_stops_the_loop_and_the_message_names_95_not_100():

@@ -41,7 +41,7 @@ A looped run is a whole-suite run (default selection, consolidation still skips 
 
 ### `POST /{key}/evals/loops` → 201 `LoopOut`
 Body (strict): `{ "suite": "comportamento" | "mecanismo", "rodadas_planejadas"?: 1..100, "orcamento_usd"?: number > 0, ≤ 500 }`. Both optional: `rodadas_planejadas` omitted → the config's `rodadas_max`; `orcamento_usd` omitted → the config's `orcamento_usd`. `alvo` is the config's `alvo` at the moment the loop starts and `piso` the agent's `publicacao_limiar`, both stored (frozen) on the loop: a later config edit never moves an open loop.
-Errors: 409 `loop_ativo_existente` (the agent already has an active loop on this suite); 422 `rodadas_acima_do_maximo` (rounds above the config's max); 422 `orcamento_acima_do_teto` (budget above the config's cap, for EVERY caller, a platform admin included: change the config instead); 422 validation (suite, bounds, unknown field); 404 `agent_not_found`; 403 `user_required`.
+Errors: 409 `execucao_em_andamento` / `loop_ativo_do_usuario` (one run / loop per user, see "One run or loop per user" below); 409 `loop_ativo_existente` (another user already has an active loop on this agent's suite); 422 `rodadas_acima_do_maximo` (rounds above the config's max); 422 `orcamento_acima_do_teto` (budget above the config's cap, for EVERY caller, a platform admin included: change the config instead); 422 validation (suite, bounds, unknown field); 404 `agent_not_found`; 403 `user_required`.
 
 ### `GET` / `PUT /api/studio/plataforma/eval-loop-config` (platform admin only)
 The platform-level loop config (loops run on platform agents): one set of values, stored in `agents.runtime_settings` (keys `eval_loop_alvo`, `eval_loop_orcamento_usd`, `eval_loop_rodadas_max`; service role only, tier platform). Until first edited it reads the code defaults. `GET` → `{alvo: 0.95, orcamento_usd: 5.0, rodadas_max: 10, alterado_por: uuid|null, alterado_em: iso|null}`. `PUT` body (strict, full replace, all three required): `{alvo: 0 < x ≤ 1, orcamento_usd: 0 < x ≤ 500, rodadas_max: 1..100}` → the same shape; 422 on an out-of-range, missing or unknown field; 403 `platform_admin_required`; 401 unauthenticated. A change that alters a value records one immutable `loop_config_alterada` event (`agents.eval_loop_config_eventos`: before, after, actor) in the same transaction (RPC `agents.set_eval_loop_config`); an unchanged PUT records nothing.
@@ -64,9 +64,26 @@ overcalls:   [{rodada, run_id, score, custo_usd}], custo_overcalls_usd,
 checkpoints: [{rodada: 5|10|15, atingido, score|null, gasto_usd|null}]
 ```
 
+## One run or loop per user at a time (migration 087)
+
+Owner 2026-11-12: **1 run per user at a time.** Marina cannot open a second run while hers is on; Cindy is never affected by Marina's runs or loops. Scope = the run's `started_by` (the human's user id; a `studio:evals-run` / `studio:publish` token is recorded by its token row id, so the rule applies per token), across ALL agents, BOTH suites, single runs AND loop rounds. In flight = behaviour `pendente`/`executando`, mechanism `executando` (a run that ended, was cancelled, or was failed by the startup orphan sweep frees the slot by definition).
+
+Checked on every start of a run (`POST …/evals/runs`, `POST …/draft/mecanismo-runs`) and on opening a loop (`POST …/evals/loops`). Body = `{detail (pt-BR), code, em_andamento: {...}}`; `em_andamento` carries what blocks, for the UI to link or cancel it.
+
+| code | when | pt-BR message / `em_andamento` |
+|---|---|---|
+| 409 `execucao_em_andamento` | the user has ANY run in flight (any agent, either suite) | Você já tem uma avaliação em andamento (agente-base · comportamento, rodada 3 do loop). Aguarde terminar ou cancele-a antes de iniciar outra. · `{run_id, agent_key, suite, status, loop_id\|null, rodada\|null}` |
+| 409 `loop_ativo_do_usuario` | the user has an ACTIVE loop and starts a second loop, a single (non-loop) run, or a round of ANOTHER loop; the loop's own next round is fine | Você já tem um loop de avaliação ativo (agente-base · mecanismo). Continue as rodadas dele ou pare-o ("Parar loop") … · `{loop_id, agent_key, suite}` |
+
+Order of checks: for a single run or a new loop both run first, in-flight before open-loop. For a loop round: (1) the in-flight check, (2) the loop admission below (404 / 422 / `loop_encerrado` / `rodada_em_andamento` …), (3) the open-loop check — so an in-flight run is named instead of the generic "a round is open", and an unknown loop stays a 404.
+
+Race safety: a BEFORE INSERT trigger (`agents.guard_eval_um_por_usuario`) on `eval_runs`, `eval_mecanismo_runs` and `eval_loops` takes a per-user transaction advisory lock and then reads both run tables (the in-flight predicate) and, when inserting a loop, the user's active loops; it raises `execucao_em_andamento` / `loop_ativo_do_usuario`, mapped to the same 409 codes (without the `em_andamento` body). Two simultaneous starts by one user therefore cannot both book. A trigger, not a partial unique index, because the two suites are two tables. Residual: a single run racing a loop that is opened in the same instant is caught by the in-flight predicate in all but one ordering (single run books first while the loop does not exist yet), which leaves at most one run in flight, never two.
+
+Each refusal is an append-only event (`agents.eval_recusas_eventos`: user, code, target agent/suite/loop, the run or loop that blocked, when) plus a `agents.studio.eval_um_por_usuario.recusa` warning log.
+
 ## Run start with a loop (both suites)
 
-Checked in this order; every refusal is a 409 `{detail (pt-BR), code}` unless noted, and **no run is booked** when it refuses.
+Checked in this order (after the one-per-user in-flight check above); every refusal is a 409 `{detail (pt-BR), code}` unless noted, and **no run is booked** when it refuses.
 
 | code | when | pt-BR message |
 |---|---|---|

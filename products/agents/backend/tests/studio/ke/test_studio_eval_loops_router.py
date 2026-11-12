@@ -51,9 +51,10 @@ class TestStartAndRead:
         seed_org_role(ke_client, role="owner")
         seed_studio_agent(ke_client)
         assert self._start(ke_client).status_code == 201
-        dup = self._start(ke_client)
-        assert dup.status_code == 409 and dup.json()["code"] == "loop_ativo_existente"
-        assert ke_client.post(LOOPS, json={"suite": "mecanismo", "rodadas_planejadas": 5}).status_code == 201
+        dup = self._start(ke_client)  # the same user already holds a loop (087); another user hits loop_ativo_existente
+        assert dup.status_code == 409 and dup.json()["code"] == "loop_ativo_do_usuario"
+        other = ke_client.post(LOOPS, json={"suite": "mecanismo", "rodadas_planejadas": 5})
+        assert other.status_code == 409 and other.json()["code"] == "loop_ativo_do_usuario"
 
     @pytest.mark.parametrize("payload", [
         {"suite": "outra", "rodadas_planejadas": 5}, {"suite": "comportamento", "rodadas_planejadas": 0},
@@ -194,7 +195,8 @@ class TestLoopRuns:
         state = ke_client.get(f"{LOOPS}/{loop['id']}").json()
         assert [(s["rodada"], s["status"]) for s in state["serie"]] == [(1, "executando")]
         second = self._post_run(ke_client, version_id, loop_id=loop["id"])
-        assert second.status_code == 409 and second.json()["code"] == "rodada_em_andamento"
+        assert second.status_code == 409 and second.json()["code"] == "execucao_em_andamento"  # 087 names the run in flight
+        assert "rodada 1 do loop" in second.json()["detail"]
 
     def test_g6_an_unchanged_hash_after_failures_is_refused_with_the_failing_cases(self, ke_client):
         seed_org_role(ke_client, role="owner")
@@ -258,8 +260,10 @@ class TestLoopRuns:
     def test_a_loop_of_the_other_suite_and_an_unknown_loop(self, ke_client):
         seed_org_role(ke_client, role="owner")
         agent, version_id, ids, _ = self._seed(ke_client)
-        mec = ke_client.post(LOOPS, json={"suite": "mecanismo", "rodadas_planejadas": 5}).json()
-        wrong = self._post_run(ke_client, version_id, loop_id=mec["id"])
+        mec = ke_client.stores.loops.create_loop(  # another user's loop of the mecanismo suite (this user holds the comportamento one)
+            DEFAULT_ORG_ID, agent.id, agente_chave="isaia", suite="mecanismo", rodadas_planejadas=5, alvo=1.0, piso=0.8,
+            orcamento_usd=5.0, started_by=uuid4())
+        wrong = self._post_run(ke_client, version_id, loop_id=str(mec.id))
         assert wrong.status_code == 422 and wrong.json()["code"] == "loop_suite_invalida"
         assert self._post_run(ke_client, version_id, loop_id=str(uuid4())).status_code == 404
 
@@ -272,8 +276,10 @@ class TestLoopRuns:
         assert s["status"] == "ativo" and s["serie"][0]["status"] == "cancelada" and s["serie"][0]["score"] is None
         assert self._post_run(ke_client, version_id, loop_id=loop["id"]).status_code == 202  # the slot is free again
 
-    def test_runs_without_a_loop_are_unchanged(self, ke_client):
+    def test_a_run_without_a_loop_is_refused_while_the_user_has_an_active_loop(self, ke_client):
         seed_org_role(ke_client, role="owner")
         agent, version_id, ids, loop = self._seed(ke_client)
-        assert self._post_run(ke_client, version_id).status_code == 202
+        # 087: a single run is refused while the user has an active loop, and the loop is untouched
+        refused = self._post_run(ke_client, version_id)
+        assert refused.status_code == 409 and refused.json()["code"] == "loop_ativo_do_usuario"
         assert ke_client.get(f"{LOOPS}/{loop['id']}").json()["serie"] == []

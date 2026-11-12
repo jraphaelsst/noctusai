@@ -139,6 +139,17 @@ describe("EvalLoopCard", () => {
     expect(screen.getByTestId("loop-refusal-hash").textContent).toBe("Corrija o conteúdo antes da próxima rodada.");
   });
 
+  it.each([
+    ["execucao_em_andamento", "Você já tem uma avaliação em andamento (agente-base · comportamento). Aguarde terminar ou cancele-a antes de iniciar outra."],
+    ["loop_ativo_do_usuario", "Você já tem um loop de avaliação ativo (agente-base · mecanismo). Continue as rodadas dele ou pare-o (\"Parar loop\") antes de iniciar rodadas de outro loop."],
+  ])("one-run-per-user refusal %s shows the pt-BR detail", async (code, detail) => {
+    mockRound.mockRejectedValue(new ApiError(409, detail, { detail, code }));
+    mockLoops.mockReturnValue(state([loop()]));
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    fireEvent.click(screen.getByTestId("loop-proxima"));
+    expect((await screen.findByTestId("loop-refusal")).textContent).toBe(detail);
+  });
+
   it("disables the next round while one is in flight", () => {
     mockLoops.mockReturnValue(state([loop({ serie: [rodada(1, { status: "executando", score: null })] })]));
     render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
