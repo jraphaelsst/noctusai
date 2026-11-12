@@ -267,7 +267,10 @@ class TestPins:
         resp = lib.put(f"{AGENT}/julia/draft/skills-biblioteca/rasc", json={"versao": 1})
         assert resp.status_code == 409 and resp.json()["code"] == "versao_nao_publicada"
         none = lib.put(f"{AGENT}/julia/draft/skills-biblioteca/rasc", json={})
-        assert none.status_code == 404  # no published version to default to
+        # no published version to default to: the real cause, not a bare "not_found"
+        assert none.status_code == 409 and none.json()["code"] == "skill_sem_versao_publicada"
+        assert lib.put(f"{AGENT}/julia/draft/skills-biblioteca/rasc", json={"versao": 9}).status_code == 404  # explicit missing version
+        assert lib.put(f"{AGENT}/julia/draft/skills-biblioteca/nao-existe", json={}).status_code == 404  # unknown skill
 
     def test_obrigatoria_para_is_shape_checked(self, lib):
         _publicar_skill(lib)
