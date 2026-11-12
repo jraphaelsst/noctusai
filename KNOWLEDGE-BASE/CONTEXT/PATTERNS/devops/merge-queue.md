@@ -266,6 +266,15 @@ fast-forwards, and cancelling mid-FF is the one unsafe cut, so the budget is
 ~150x the observed runtime. Re-measure when a job's p95 drifts toward half its
 timeout.
 
+**Mirror outage (2026-11-11 ~14:16Z).** `azure.archive.ubuntu.com` answered `Ign:` for every package and every
+apt step hung to its 10-min timeout. About 12 red jobs per batch (candidates -9/-10, runs `43036758510`/`43043398036`), and
+the drain bisected an infra red. **Rule:** every apt use goes through `.github/actions/apt-install`. It drops the Google
+source, sets apt-wide retries and timeouts (`/etc/apt/apt.conf.d/99noc-resilient`, inherited by playwright's own
+`apt-get`), probes the mirror under a hard cap, and walks `archive.ubuntu.com` → `mirrors.ubuntu.com/mirrors.txt` on a
+hang, `Ign:` or `Err:`. It fails loudly naming the mirror. Playwright jobs run it with no `packages` before
+`--with-deps` / `install-deps`. The fix rides in the candidate's own `test.yml`, so the batch that carries it already
+gets past the broken mirror.
+
 ## 6b · Watchdog — the queue tells the owner, with or without a steward
 
 **Rule.** The queue reports itself off-host. A watcher that lives in a session
@@ -335,6 +344,15 @@ keeps that risk small, not zero. Path areas come from `ci_scope` (the classifier
 job and release-steward item 5 use): the wave's product slugs, and the culprit-attribution areas,
 where a shared root (seed, requirements, `.github/`, the CI scripts dir, package.json, active-scope)
 can break any product's tests (2026-11-12).
+
+## 6d · Toolkit shards are balanced by measured time (2026-11-11)
+
+The slowest `MCP Toolkit Tests` shard gates every batch. Round-robin by file count gave 933s / 206s / 357s / 665s
+(run `43029073315`). The split is now longest-processing-time bin packing over per-file seconds
+(`mcp/noctusai/tools/noctus/dev/ci_shards.py`, table `scripts/ci/mcp-test-durations.json`; an unknown file weighs
+the median). Predicted 540s per shard. `test_compliance.py` stays isolated. Refresh the table from a run's shard
+logs (recipe in the module docstring) when a shard drifts more than ~2x from the others. The coverage-proof job
+uses the same splitter, so a file can never be dropped or run twice. Owner-approved speedup 5.
 
 ## 7 · Limits and options
 

@@ -325,34 +325,9 @@ jobs:
       - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko + libpq/ffi)
         timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
         if: steps.gate.outputs.run == 'true'
-        run: |
-          # 🔴 A THIRD-PARTY APT SOURCE MUST NOT BE ABLE TO FAIL THIS BUILD.
-          # The runner image ships Google's Chrome repo, so `apt-get update`
-          # contacts dl.google.com even for a job whose only wants are
-          # cairo/pango/libpq/ffi — and `apt-get update` exits 100 when ANY
-          # source fails. On 2026-09-09 that index served a corrupt
-          # "Hash Sum mismatch" for hours and took the WHOLE matrix down on a
-          # diff touching none of it, blocking `release stage='bless'` (which
-          # correctly refuses a red tip).
-          #
-          # Two layers, because the first attempt at this guessed wrong:
-          # removing `/etc/apt/sources.list.d/google-chrome.list` did nothing,
-          # since the image can declare the repo as a deb822 `.sources` file or
-          # inline in `sources.list`. So find it by CONTENT rather than by a
-          # path we assumed.
-          sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
-            | sudo xargs -r rm -f
-          sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list 2>/dev/null || true
-          # And then refuse to let a stale index be fatal at all. This is NOT a
-          # swallowed error: `apt-get install` below is the real gate and stays
-          # fatal — a package that genuinely cannot be resolved fails there,
-          # loudly and by name. What `|| true` drops is only the "some index
-          # failed to download" verdict, which says nothing about whether the
-          # packages we actually need are installable.
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update || true
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-            libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
-            libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libcairo2-dev libgirepository1.0-dev libpango1.0-dev libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
 
       - name: Install dependencies (root superset)
         if: steps.gate.outputs.run == 'true'
@@ -417,17 +392,9 @@ jobs:
 
       - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko + libpq/ffi)
         timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
-        run: |
-          # Same third-party-apt-source guard as `product-backend-tests` above —
-          # see that job for the full rationale (dl.google.com served a corrupt
-          # index on 2026-09-09 and took the whole matrix down).
-          sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
-            | sudo xargs -r rm -f
-          sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list 2>/dev/null || true
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update || true
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-            libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
-            libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libcairo2-dev libgirepository1.0-dev libpango1.0-dev libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
 
       - name: Install dependencies (root superset)
         # The root requirements.txt already carries `-e seed/lib/backend` and
@@ -755,6 +722,10 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
 
+      - name: Prepare apt sources (mirror-resilient; playwright's apt-get inherits it)
+        timeout-minutes: 10  # apt is the observed hang point (2026-11-05, 2026-11-11)
+        uses: ./.github/actions/apt-install
+
       - name: Install Playwright browsers (cache miss)
         timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
         if: steps.pw-cache.outputs.cache-hit != 'true'
@@ -827,6 +798,10 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
+
+      - name: Prepare apt sources (mirror-resilient; playwright's apt-get inherits it)
+        timeout-minutes: 10  # apt is the observed hang point (2026-11-05, 2026-11-11)
+        uses: ./.github/actions/apt-install
 
       - name: Install Playwright browsers (cache miss)
         timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
@@ -904,6 +879,10 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}
+
+      - name: Prepare apt sources (mirror-resilient; playwright's apt-get inherits it)
+        timeout-minutes: 10  # apt is the observed hang point (2026-11-05, 2026-11-11)
+        uses: ./.github/actions/apt-install
 
       - name: Install Playwright browsers (cache miss)
         timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
@@ -1501,16 +1480,9 @@ jobs:
 
       - name: Install system build deps (cairo/pango/gdk + libpq/ffi)
         timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
-        run: |
-          # Same third-party-apt-source guard as `product-backend-tests` — see
-          # that job for the incident it exists for.
-          sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
-            | sudo xargs -r rm -f
-          sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list 2>/dev/null || true
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update || true
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-            libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
-            libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libcairo2-dev libgirepository1.0-dev libpango1.0-dev libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
 
       - name: Install dependencies (root superset + the MCP toolkit set)
         # The connectors import the `mcp` SDK and `scripts/codemods` imports
@@ -1675,32 +1647,9 @@ jobs:
 
       - name: Install system build deps (libpq for psycopg; ffi for cffi)
         timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
-        run: |
-          # 🔴 A THIRD-PARTY APT SOURCE MUST NOT BE ABLE TO FAIL THIS BUILD.
-          # The runner image ships Google's Chrome repo, so `apt-get update`
-          # contacts dl.google.com even for a job whose only wants are
-          # cairo/pango/libpq/ffi — and `apt-get update` exits 100 when ANY
-          # source fails. On 2026-09-09 that index served a corrupt
-          # "Hash Sum mismatch" for hours and took the WHOLE matrix down on a
-          # diff touching none of it, blocking `release stage='bless'` (which
-          # correctly refuses a red tip).
-          #
-          # Two layers, because the first attempt at this guessed wrong:
-          # removing `/etc/apt/sources.list.d/google-chrome.list` did nothing,
-          # since the image can declare the repo as a deb822 `.sources` file or
-          # inline in `sources.list`. So find it by CONTENT rather than by a
-          # path we assumed.
-          sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
-            | sudo xargs -r rm -f
-          sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list 2>/dev/null || true
-          # And then refuse to let a stale index be fatal at all. This is NOT a
-          # swallowed error: `apt-get install` below is the real gate and stays
-          # fatal — a package that genuinely cannot be resolved fails there,
-          # loudly and by name. What `|| true` drops is only the "some index
-          # failed to download" verdict, which says nothing about whether the
-          # packages we actually need are installable.
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update || true
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends libffi-dev libpq-dev pkg-config
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libffi-dev libpq-dev pkg-config
 
       - name: Install toolkit deps (incl. -e seed/lib/backend → noctusai_lib)
         # MUST run from mcp/noctusai/: requirements.txt has `-e ../../seed/lib/backend`,
@@ -1747,11 +1696,10 @@ jobs:
       - name: Compute this shard's test files (derived — never hand-listed, except the one named isolate)
         id: shard
         # `compliance` shard: just the one measured-heaviest file (see the
-        # strategy comment above). Every OTHER shard round-robins over the
-        # SORTED, git-derived file list MINUS that one file (same derive-
-        # don't-hand-maintain discipline `tooling-tests` above already uses
-        # for its connector list): file[i] belongs to shard (i % 4).
-        # Deterministic, exhaustive, non-overlapping by construction — proved
+        # strategy comment above). Every OTHER shard gets a duration-balanced
+        # slice of the git-derived file list MINUS that one file: greedy LPT
+        # over measured per-file seconds (ci_shards.py; unknown files weigh
+        # the median). Deterministic, exhaustive, non-overlapping — proved
         # independently by the `mcp-toolkit-tests-coverage` job.
         # `SHARD` is set via `env:` (not interpolated as `${{ matrix.shard }}`
         # directly into the script) — the standard GH Actions hardening: never
@@ -1768,27 +1716,10 @@ jobs:
             exit 0
           fi
 
-          FILES=()
-          while IFS= read -r line; do
-            [ -n "$line" ] && [ "$line" != "$ISOLATED" ] && FILES+=("$line")
-          done < <(git ls-files 'mcp/noctusai/tests/*test_*.py' 'mcp/noctusai/tests/**/test_*.py' | sort -u)
-
-          # 🔴 FLOOR — same shape as the connector-suite floor in `tooling-tests`
-          # above: a derivation that silently comes back near-empty must refuse,
-          # not report green over nothing.
-          if [ "${#FILES[@]}" -lt 99 ]; then
-            echo "::error::only ${#FILES[@]} test file(s) discovered under mcp/noctusai/tests (minus the isolated one) — the derivation is broken, refusing to shard over nothing"
-            exit 1
-          fi
-
-          MINE=()
-          for i in "${!FILES[@]}"; do
-            if [ $(( i % MCP_TEST_TOTAL_SHARDS )) -eq "$SHARD" ]; then
-              MINE+=("${FILES[$i]}")
-            fi
-          done
-          echo "shard $SHARD/${MCP_TEST_TOTAL_SHARDS}: ${#MINE[@]} of ${#FILES[@]} non-isolated file(s)"
-          printf '%s\n' "${MINE[@]}" > /tmp/mcp-shard-files.txt
+          # Duration-balanced split (LPT bin packing over the measured table
+          # scripts/ci/mcp-test-durations.json); keeps the file-count FLOOR,
+          # writes /tmp/mcp-shard-files.txt, prints the "shard k/N: x of y" line.
+          python3 mcp/noctusai/tools/noctus/dev/ci_shards.py --shard "$SHARD" --total "$MCP_TEST_TOTAL_SHARDS"
 
       - name: Run MCP toolkit suite — shard ${{ matrix.shard }} (hermetic — no live OpenAI key)
         env:
@@ -1831,20 +1762,16 @@ jobs:
             exit 1
           fi
 
-          FILES=()
-          while IFS= read -r line; do
-            [ -n "$line" ] && [ "$line" != "$ISOLATED" ] && FILES+=("$line")
-          done < /tmp/all.txt
-
           : > /tmp/union.txt
           echo "$ISOLATED" >> /tmp/union.txt
           for shard in 0 1 2 3; do
-            for i in "${!FILES[@]}"; do
-              if [ $(( i % 4 )) -eq "$shard" ]; then
-                echo "${FILES[$i]}" >> /tmp/union.txt
-              fi
-            done
+            python3 mcp/noctusai/tools/noctus/dev/ci_shards.py --shard "$shard" --total 4 --list | grep '^mcp/' >> /tmp/union.txt
           done
+          # a file listed by two shards would survive `sort -u`; count lines first
+          if [ "$(wc -l < /tmp/union.txt)" -ne "$TOTAL" ]; then
+            echo "::error::a test file is assigned to more than one shard (or dropped)"
+            exit 1
+          fi
           sort -u /tmp/union.txt -o /tmp/union.txt
 
           if ! diff -q /tmp/all.txt /tmp/union.txt >/dev/null; then
@@ -1852,4 +1779,4 @@ jobs:
             diff /tmp/all.txt /tmp/union.txt || true
             exit 1
           fi
-          echo "OK: $TOTAL test files, exactly covered once each by the 5 shards (1 isolated + 4 round-robin)"
+          echo "OK: $TOTAL test files, exactly covered once each by the 5 shards (1 isolated + 4 duration-balanced)"
