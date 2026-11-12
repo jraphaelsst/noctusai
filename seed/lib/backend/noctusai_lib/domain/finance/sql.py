@@ -480,6 +480,11 @@ CREATE INDEX IF NOT EXISTS idx_{t['budgets']}_org_month ON {s}.{t['budgets']} (o
     return out
 
 
+# NOC-REMEDIATE[finance-rpc-invoker]: the finance RPCs (settle / reverse / ledger_signed_sum) are SECURITY DEFINER and take
+# `p_org_id` from the caller; they are service-role only (REVOKE from PUBLIC/anon/authenticated), but INVOKER + an org
+# check inside would be defence in depth. Changing the generated SQL fans out to EVERY finance consumer (orbity, monica,
+# agents, social-wiring...: new organ revision + prod migration each), so it is a fleet-wide slice of its own, not a
+# side change of one product's wake. Security review F6. — 2026-11-10
 def _rpcs(cfg: FinanceConfig, s: str) -> str:
     """Row-locked settle / reverse (closes `NOC-REMEDIATE[finance-settle-overpay-race]`).
 

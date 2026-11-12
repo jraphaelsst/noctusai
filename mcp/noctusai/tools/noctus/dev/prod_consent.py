@@ -177,10 +177,12 @@ def _challenge(slug: str) -> dict:
             f"Ask the user to type this sentence, verbatim, in the "
             f"conversation:\n\n    {phrase}\n\n"
             "Do NOT type it on their behalf, and do not paraphrase when "
-            "asking — the gate matches this exact sentence against the "
-            "session transcript, which the harness writes and the agent "
-            "does not. Once the user has typed it, call action='author' "
-            "with the session_id to write the record."
+            "asking — the gate matches what the USER wrote in the session "
+            "transcript, which the harness writes and the agent does not. "
+            "In consent phase pre-third-users (owner decision 2026-11-11) the "
+            "owner's own plain deploy / go-to-prod ask in this session is "
+            "accepted too (tier `owner-ask`). Once the user has typed it, call "
+            "action='author' with the session_id to write the record."
         ),
     }
 

@@ -33,12 +33,110 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
+  waha-assistant-core:
+    # assistant's own WhatsApp number (session `default`). internal only; reach it through the edge `waha-assistant`
+    image: devlikeapro/waha:noweb-2026.9.2
+    platform: linux/amd64
+    container_name: noctus-waha-assistant-core
+    environment:
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WHATSAPP_API_KEY: ${WAHA_ASSISTANT_API_KEY:?generate WAHA_ASSISTANT_API_KEY in .env.fleet on the VPS}
+      WHATSAPP_HOOK_HMAC_KEY: ${WAHA_ASSISTANT_HMAC_SECRET:?generate WAHA_ASSISTANT_HMAC_SECRET in .env.fleet on the VPS}
+      WAHA_DASHBOARD_ENABLED: "false"
+      WHATSAPP_SWAGGER_ENABLED: "false"
+      NODE_OPTIONS: --max-old-space-size=384
+    expose:
+      - "3000"
+    volumes:
+      - waha_assistant:/app/.sessions
+    networks:
+      - waha_assistant_edge
+    mem_limit: 512m
+    restart: unless-stopped
+    labels:
+      noctus.line.personal: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/ping').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+  waha-assistant:
+    # EDGE DENY for assistant's read-only line `assistant` (send: disabled): http://waha-assistant:3000 is THIS proxy; it 403s every
+    # write to WhatsApp and forwards the rest to waha-assistant-core. Products talk to the proxy, never to the core.
+    image: nginx:1.27-alpine
+    container_name: noctus-waha-assistant
+    depends_on:
+      - waha-assistant-core
+    environment:
+      EDGE_CONF: |
+        resolver 127.0.0.11 valid=10s ipv6=off;
+        map "$$request_method $$uri" $$wa_write {
+          default 1;
+          "~* ^POST /api/sessions/[^/]+/start$$" 0;
+          "~* ^(GET|HEAD|OPTIONS) /api/(send|reaction|starttyping|stoptyping|forwardmessage|[^/]+/presence)" 1;
+          "~* ^(GET|HEAD|OPTIONS) /" 0;
+        }
+        server {
+          listen 3000;
+          client_max_body_size 2m;
+          # smuggling spellings in the PATH (encoded control chars, `?` `#` `/` `%`, backslash; the query string is not judged, the
+          # seed judges the path only) are refused BEFORE the decision is taken:
+          # the decision is on the decoded $$uri, and `logout%3F/start` decodes to a path the core reads as the legacy logout.
+          if ($$request_uri ~* "^[^?]*(%(0[0-9a-f]|1[0-9a-f]|2[0356f]|3f|5c|7f)|\x5c)") { return 400; }
+          proxy_set_header X-HTTP-Method-Override "";
+          proxy_set_header X-HTTP-Method "";
+          proxy_set_header X-Method-Override "";
+          location / {
+            if ($$wa_write) { return 403 '{"error":"line_write_refused","detail":"this line is read-only (send: disabled)"}'; }
+            set $$up http://waha-assistant-core:3000;
+            proxy_pass $$up$$uri$$is_args$$args;
+            proxy_set_header Host $$host;
+            proxy_read_timeout 60s;
+          }
+        }
+        server {
+          listen 3001;
+          client_max_body_size 2m;
+          if ($$request_uri ~* "^[^?]*(%(0[0-9a-f]|1[0-9a-f]|2[0356f]|3f|5c|7f)|\x5c)") { return 400; }
+          proxy_set_header X-HTTP-Method-Override "";
+          proxy_set_header X-HTTP-Method "";
+          proxy_set_header X-Method-Override "";
+          location / {
+            if ($$request_method != POST) { return 405; }
+            set $$hook http://assistant:8021;
+            proxy_pass $$hook$$uri$$is_args$$args;
+            proxy_set_header Host $$host;
+            proxy_read_timeout 30s;
+          }
+        }
+    command: ["/bin/sh", "-c", "printf '%s' \"$$EDGE_CONF\" > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]
+    expose:
+      - "3000"
+      - "3001"
+    networks:
+      - noctus-net
+      - waha_assistant_edge
+    mem_limit: 64m
+    restart: unless-stopped
+    labels:
+      noctus.line.personal: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3000/ping || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 networks:
   noctus-net:
     name: noctus-net
     external: true
+  waha_assistant_edge:
+    name: noctus-waha-assistant-edge
 
 volumes:
   waha_monica:
     name: noctus-waha-monica
+  waha_assistant:
+    name: noctus-waha-assistant

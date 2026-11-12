@@ -563,7 +563,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--migration-replay-base", default=None, help="CI: add every migration/config path changed in BASE..HEAD to the PATHs.")
     parser.add_argument("--migrate-product", metavar="PRODUCT", help="Apply a product's SQL migrations to the shared Supabase project. DRY-RUN unless --migrate-product-confirm. MCP: noctus.dev.migrate_product. Also an R4 fresh-subprocess target.")
     parser.add_argument("--migrate-product-confirm", action="store_true", help="With --migrate-product: actually apply pending migrations (a production action). Without it, dry-run only.")
-    parser.add_argument("--migrate-product-target", default=None, help="With --migrate-product: filename filter — apply/list only this one file.")
+    parser.add_argument("--migrate-product-target", default=None, help="With --migrate-product: apply/list ONLY this one file (refused while an earlier file is pending).")
+    parser.add_argument("--migrate-product-upto", default=None, help="With --migrate-product: apply/list every pending file up to AND including this one, in order.")
+    parser.add_argument("--migrate-product-allow-out-of-order", action="store_true", help="With --migrate-product-target: allow applying it while earlier files are pending (deliberate only).")
     parser.add_argument("--migrate-product-sha", default=None, help="With --migrate-product: read migration files via `git show <sha>:<path>` instead of the working tree (R3, release-no-freeze) — the exact set that existed at that commit. Skips the stale-tree refusal (moot for a pinned historical commit).")
     parser.add_argument("--migrate-product-project-ref", default="nyplttplcoyiiqjrvtiw", help="With --migrate-product: the Supabase project reference.")
     parser.add_argument("--migrate-product-schema", default=None, help="With --migrate-product: override the auto-derived schema.")
@@ -766,6 +768,8 @@ def build_parser() -> argparse.ArgumentParser:
         parser.add_argument(f"--source-register-{_sr}", default="read" if _sr == "action" else "", dest=f"source_register_{_sr.replace('-', '_')}", help=f"With --source-register: the {_sr} argument.")
     parser.add_argument("--source-register-limit", type=int, default=50, dest="source_register_limit", help="With --source-register: max rows on read.")
     parser.add_argument("--source-register-allow-stale-toolkit", action="store_true", help="With --source-register: bypass the toolkit-staleness fresh-subprocess hop (escape hatch).")
+    parser.add_argument("--waha-instance-owner-hand", nargs=2, metavar=("ACTION", "LINE"), dest="waha_instance_owner_hand", help="OWNER ONLY, by hand, in a Terminal.app window (D49): run as `PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH mcp/noctusai/.venv/bin/python mcp/noctusai/cli.py --waha-instance-owner-hand apply <line>`. provision|apply ONE `personal: true` WAHA line that noctus.dev.waha_instance refuses for every agent. Refuses without an interactive TTY, inside an agent harness (CLAUDECODE / CLAUDE_CODE_*), unless the shell's parent is macOS Terminal.app ONLY, judged on its real image + code signature read from the kernel (only system shells/login in between, the app started by launchd, every process started after its parent), with PYTHON*/DYLD_* unset, PATH starting /usr/bin:/bin and no other process on the tty, on any policy other than the strict read-only shadow shape or one the VPS checkout does not declare identically; you TYPE the line name and CONFIRMO on /dev/tty. Every attempt is audited (waha-owner-hand.ndjson). Deliberately NOT an MCP tool. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a.")
+    parser.add_argument("--waha-owner-hand-host", default="noctus-vps", dest="waha_owner_hand_host", help="With --waha-instance-owner-hand: the SSH host alias of the VPS (default noctus-vps).")
     parser.add_argument("--supabase-request-budget", action="store_true", help="Measure Supabase request volume from the project's edge logs (ok|warn|critical|unknown; needs SUPABASE_ACCESS_TOKEN). MCP: noctus.dev.supabase_request_budget.")
     parser.add_argument("--srb-window-hours", type=float, default=1.0, help="With --supabase-request-budget: window in hours (max 24).")
     parser.add_argument("--srb-start", default=None, help="With --supabase-request-budget: ISO start (use with --srb-end).")
@@ -4294,6 +4298,8 @@ def main():
             args.migrate_product,
             confirm=bool(getattr(args, "migrate_product_confirm", False)),
             target=getattr(args, "migrate_product_target", None),
+            upto=getattr(args, "migrate_product_upto", None),
+            allow_out_of_order=getattr(args, "migrate_product_allow_out_of_order", False),
             sha=getattr(args, "migrate_product_sha", None),
             project_ref=getattr(args, "migrate_product_project_ref", "nyplttplcoyiiqjrvtiw"),
             schema=getattr(args, "migrate_product_schema", None),
@@ -4895,6 +4901,14 @@ def main():
         else:
             print("[branch-pointer] non-exempt paths present — cache refresh applies")
             sys.exit(1)
+
+    elif args.waha_instance_owner_hand:
+        from settings import REPO_ROOT as _oh_root
+        from tools.noctus.dev.waha_owner_hand import owner_hand as _owner_hand
+        _oh_action, _oh_line = args.waha_instance_owner_hand
+        r = _owner_hand(_oh_action, _oh_line, ssh_host=args.waha_owner_hand_host, repo_root=str(_oh_root))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
 
     elif args.source_register:
         from tools.noctus.dev.source_register import source_register as _source_register

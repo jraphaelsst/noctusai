@@ -470,7 +470,7 @@ class TestVerifyAuthorizationPhrase:
         assert ok, reason
 
     def test_refused_when_user_never_typed_it(self, tmp_path):
-        _write_transcript(tmp_path, "s", [_typed("just ship it already")])
+        _write_transcript(tmp_path, "s", [_typed("igig is looking good")])
         ok, reason = _verify_authorization_phrase(
             "demo", {"phrase": PHRASE, "session_id": "s"}, home=tmp_path)
         assert not ok
@@ -650,21 +650,52 @@ class TestAuthorizationIntentHeuristic:
     def test_directive_tier(self, text):
         assert _authorization_tier("igig", text) == "directive"
 
+    # The strict tiers are judged in the `multi-user` phase, where the owner-ask tier is closed;
+    # the pre-third-users trade-off is pinned separately below (TestOwnerAskPhase).
     @pytest.mark.parametrize("text", NOT_AUTHORIZATION)
     def test_rejected(self, text):
-        assert _authorization_tier("igig", text) is None
+        assert _authorization_tier("igig", text, phase="multi-user") is None
 
     def test_slug_binding_is_never_traded_away(self):
         """The single most important property: consent for one product can
         never authorize another, and a slug-less grant authorizes nothing."""
-        assert _authorization_tier("igig", "i authorize deploy to prod") is None
+        assert _authorization_tier("igig", "i authorize deploy to prod", phase="multi-user") is None
         assert _authorization_tier("orbity", "i authorize igig to prod") is None
 
     def test_bool_wrapper_agrees_with_tier(self):
         for text in self.PERFORMATIVE + self.DIRECTIVE:
             assert _matches_authorization_intent("igig", text)
         for text in self.NOT_AUTHORIZATION:
-            assert not _matches_authorization_intent("igig", text)
+            assert not _matches_authorization_intent("igig", text, phase="multi-user")
+
+
+class TestOwnerAskPhase:
+    """CONSENT_PHASE pre-third-users (owner decision 2026-11-11): the owner's plain deploy /
+    go-to-prod ask is consent, without the slug — traded knowingly ("we still dont have third
+    users, only marina. i want speed now"). Revisit when a third user onboards."""
+
+    ASKS = ["and then deploy to prod", "i allow deploy to production", "just ship it already",
+            "please release everything", "go to prod", "push it to production"]
+    NOT_ASKS = ["dont deploy igig to prod yet", "should we deploy igig to prod?",
+                "before we deploy igig to prod, run the tests", "hold off on the igig prod deploy",
+                "it was deployed yesterday", "the deployment failed", "igig is looking good",
+                "do not ship it"]
+
+    @pytest.mark.parametrize("text", ASKS)
+    def test_a_plain_ask_is_the_owner_ask_tier(self, text):
+        assert _authorization_tier("igig", text) == "owner-ask"
+        assert _authorization_tier("igig", text, phase="multi-user") is None
+
+    @pytest.mark.parametrize("text", NOT_ASKS)
+    def test_negations_questions_and_descriptions_are_not_asks(self, text):
+        assert _authorization_tier("igig", text) is None
+
+    def test_a_slug_bound_statement_keeps_its_stronger_tier(self):
+        assert _authorization_tier("igig", "please deploy igig to prod") == "directive"
+
+    def test_the_phase_ships_as_pre_third_users(self):
+        from tools.noctus.dev.compliance import CONSENT_PHASE
+        assert CONSENT_PHASE == "pre-third-users"
 
 
 class TestSuggestionAcceptedCountsAsHuman:
@@ -709,10 +740,10 @@ class TestEvidenceIsTheUsersSentenceNotTheWholeBlob:
 
     def test_returns_none_when_nothing_authorizes(self, tmp_path):
         # NB: "please deploy igig to prod" DOES authorize since 2026-08-09
-        # (tier=directive, at the user's explicit request). These do not —
-        # no slug binding, and a deferral.
+        # (tier=directive, at the user's explicit request), and since 2026-11-11 a plain
+        # "deploy to prod" does too (tier=owner-ask). These do not — a description and a deferral.
         _write_transcript(tmp_path, "s", [
-            _typed("and then deploy to prod"),
+            _typed("igig is looking good"),
             _typed("dont deploy igig to prod yet"),
         ])
         assert _find_authorization_evidence("igig", "s", home=tmp_path) is None
@@ -879,3 +910,43 @@ class TestHarnessInjectedQueueRecordsAreNotHuman:
                         "demo to be published to production."}])
         texts, _ = _human_authored_transcript_texts("h5", home=tmp_path)
         assert len(texts) == 1
+
+
+class TestPastedContentIsNeverTheOwnersWords:
+    """2026-11-11 (found by 8a, reported by b5): the owner pasted b5's message back - which quoted the
+    canonical sentence - and `prod_consent author` cited that AGENT text as consent. A paste is
+    someone else's text; only what the human typed OUTSIDE the paste counts."""
+
+    PASTE = ('<pasted_content id="28de">\n Assistant: Only you can make that call. It needs this exact '
+             'sentence, typed here:\n\n    I authorize demo to be published to production.\n'
+             '</pasted_content>')
+
+    def test_an_owner_turn_that_only_pastes_the_sentence_back_is_refused(self, tmp_path):
+        _write_transcript(tmp_path, "s", [_typed(f"why is this stuck?\n\n{self.PASTE}")])
+        ok, _ = _verify_authorization_phrase(
+            "demo", {"phrase": PHRASE, "session_id": "s"}, home=tmp_path)
+        assert not ok
+        assert _find_authorization_evidence("demo", "s", home=tmp_path) is None
+
+    def test_a_mid_turn_queued_paste_is_refused_too(self, tmp_path):
+        _write_transcript(tmp_path, "s", [
+            {"type": "queue-operation", "operation": "enqueue", "content": f"look:\n{self.PASTE}"}])
+        texts, _ = _human_authored_transcript_texts("s", home=tmp_path)
+        assert all("I authorize demo" not in t for _src, t in texts)
+
+    def test_an_unclosed_paste_is_dropped_to_the_end(self, tmp_path):
+        _write_transcript(tmp_path, "s", [_typed(f"hi <pasted_content id=\"x\">{PHRASE}")])
+        texts, _ = _human_authored_transcript_texts("s", home=tmp_path)
+        assert texts and PHRASE not in texts[0][1]
+
+    def test_a_pasted_plain_deploy_ask_is_not_the_owner_ask_tier(self, tmp_path):
+        # pre-third-users makes ANY plain deploy ask consent - so a paste carrying one is the cheapest forgery.
+        paste = '<pasted_content id="9f">\n b5: next step - go to prod with igig\n</pasted_content>'
+        _write_transcript(tmp_path, "s", [_typed(f"what does this mean?\n\n{paste}")])
+        assert _find_authorization_evidence("igig", "s", home=tmp_path) is None
+
+    def test_the_owners_own_words_around_a_paste_still_count(self, tmp_path):
+        _write_transcript(tmp_path, "s", [_typed(f"{self.PASTE}\n\n{PHRASE}")])
+        ok, reason = _verify_authorization_phrase(
+            "demo", {"phrase": PHRASE, "session_id": "s"}, home=tmp_path)
+        assert ok, reason

@@ -25533,7 +25533,40 @@ _NON_COMMITTAL = (
 )
 
 
-def _authorization_tier(slug: str, text: str) -> str | None:
+#: CONSENT PHASE (owner decision 2026-11-11, typed live in the steward's terminal and confirmed in e1's):
+#: "when i ask to deploy or to go to prod is enough, not by exact words ... we still dont have third users,
+#: only marina. i want speed now". While the phase is `pre-third-users`, the owner's plain deploy / go-to-prod
+#: ask - verified in a message the HUMAN wrote (`_human_authored_transcript_texts`, never a relay) - is the
+#: go for prod exposure (`prod_consent`), ship approval (`ship_consent`) and prod migrations (noc-steward §5).
+#: Revisit when a third user onboards: set this to "multi-user" and the exact/slug-bound tiers are required
+#: again. KB § PATTERNS/devops/prod-exposure-consent.md § Consent phase.
+CONSENT_PHASE = "pre-third-users"
+
+#: An IMPERATIVE deploy ask: the bare verb only ("deploy", "release everything", "ship it") - never a past
+#: tense or a noun ("deployed", "the deployment failed"), which describe rather than ask.
+_OWNER_ASK_VERBS = r"deploy|ship|release|promote|publish|launch|go[- ]live"
+#: "go to prod", "push it to production", "take this to prod"
+_OWNER_ASK_TO_PROD = r"(?:go|push|take|send|move|put)\s+(?:\w+\s+){0,2}(?:to|in|into|on)\s+(?:prod|production)\b"
+
+
+def _owner_deploy_ask(text: str, phase: str | None = None) -> bool:
+    """True when `text` (a message the human wrote) asks to deploy / go to prod, under CONSENT_PHASE
+    `pre-third-users` only. Same negation / hypothetical filter as `_authorization_tier`: "don't deploy",
+    "should we release?", "before we ship" are not asks."""
+    import re
+
+    if (phase or CONSENT_PHASE) != "pre-third-users" or not text:
+        return False
+    t = " ".join(text.split()).casefold()
+    for m in re.finditer(rf"\b(?:{_OWNER_ASK_VERBS})\b(?!-)|{_OWNER_ASK_TO_PROD}", t):
+        clause = t[max(0, m.start() - 60):m.start()].rsplit(".", 1)[-1].rsplit(",", 1)[-1]
+        if re.search(_NON_COMMITTAL, clause) or t[m.end():m.end() + 1] == "?":
+            continue
+        return True
+    return False
+
+
+def _authorization_tier(slug: str, text: str, phase: str | None = None) -> str | None:
     """Classify `text` as authorization for publishing `slug` to production.
 
     Returns `"performative"` (the user granted permission — "I authorize /
@@ -25568,29 +25601,29 @@ def _authorization_tier(slug: str, text: str) -> str | None:
     if not text or not slug:
         return None
     t = " ".join(text.split()).casefold()
-    if slug.casefold() not in t:
-        return None
-    if not re.search(r"\b(prod|production)\b", t):
-        return None
     if re.search(r"\bun(authoriz|authoris|approv)\w*", t):
         return None
-
-    for tier, pattern in (("performative", _PERFORMATIVE_VERBS),
-                          ("directive", _DIRECTIVE_VERBS)):
-        for m in re.finditer(rf"\b({pattern})\b", t):
-            # Look back over the clause for negation / hypothetical framing.
-            start = max(0, m.start() - 60)
-            window = t[start:m.start()]
-            clause = window.rsplit(".", 1)[-1].rsplit(",", 1)[-1]
-            if re.search(_NON_COMMITTAL, clause):
-                continue
-            return tier
+    if slug.casefold() in t and re.search(r"\b(prod|production)\b", t):
+        for tier, pattern in (("performative", _PERFORMATIVE_VERBS),
+                              ("directive", _DIRECTIVE_VERBS)):
+            for m in re.finditer(rf"\b({pattern})\b", t):
+                # Look back over the clause for negation / hypothetical framing.
+                start = max(0, m.start() - 60)
+                window = t[start:m.start()]
+                clause = window.rsplit(".", 1)[-1].rsplit(",", 1)[-1]
+                if re.search(_NON_COMMITTAL, clause):
+                    continue
+                return tier
+    # CONSENT_PHASE pre-third-users: the owner's plain deploy / go-to-prod ask, no slug and no exact words.
+    # Ranked WEAKEST, so a slug-bound or exact statement in the same transcript is always cited first.
+    if _owner_deploy_ask(text, phase=phase):
+        return "owner-ask"
     return None
 
 
-def _matches_authorization_intent(slug: str, text: str) -> bool:
+def _matches_authorization_intent(slug: str, text: str, phase: str | None = None) -> bool:
     """Bool wrapper over `_authorization_tier` — see there for the design."""
-    return _authorization_tier(slug, text) is not None
+    return _authorization_tier(slug, text, phase=phase) is not None
 
 
 def _canonical_authorization_phrase(slug: str) -> str:
@@ -25640,6 +25673,21 @@ def _is_harness_injected_queue_content(content: str) -> bool:
     return content.lstrip().startswith(_HARNESS_QUEUE_PREFIXES)
 
 
+#: A block the human PASTED (the harness wraps it in `<pasted_content id=...>` tags). Its text came from
+#: somewhere else - very often an agent's own message pasted back - so it is never the human's words.
+_PASTED_BLOCK_RE = re.compile(
+    r"<pasted_content\b[^>]*>.*?(?:</pasted_content>|\Z)", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_pasted_content(text: str) -> str:
+    """Drop every pasted block (an unclosed one runs to the end), keeping only what the human TYPED.
+
+    The 2026-11-11 defect (found by 8a): the owner pasted b5's message back - which quoted the canonical
+    sentence "I authorize assistant to be published to production." - and `prod_consent author` cited
+    that AGENT text as the owner's consent. Same shape as the 2026-08-16 wrong-message citation."""
+    return _PASTED_BLOCK_RE.sub(" ", text or "")
+
+
 def _human_authored_transcript_texts(
     session_id: str, home: Path | None = None
 ) -> tuple[list[str], str]:
@@ -25660,7 +25708,9 @@ def _human_authored_transcript_texts(
         only in this shape, never as a `promptSource="typed"` record.
 
     Sidechain (subagent) records are excluded: a subagent's conversation is
-    not the user speaking to the tech-lead.
+    not the user speaking to the tech-lead. PASTED blocks (`<pasted_content>`)
+    are stripped from every message (`_strip_pasted_content`): a paste is
+    someone else's text, often the agent's own, never the human's words.
 
     Returns `(entries, detail)` where each entry is `(source, text)` —
     provenance is carried, not flattened away, so the consent record can
@@ -25696,20 +25746,20 @@ def _human_authored_transcript_texts(
                 if rec.get("operation") == "enqueue":
                     content = str(rec.get("content") or "")
                     if not _is_harness_injected_queue_content(content):
-                        entries.append(("queued", content))
+                        entries.append(("queued", _strip_pasted_content(content)))
                 continue
             source = rec.get("promptSource")
             if rtype != "user" or source not in _HUMAN_PROMPT_SOURCES or rec.get("isMeta"):
                 continue
             content = (rec.get("message") or {}).get("content")
             if isinstance(content, str):
-                entries.append((str(source), content))
+                entries.append((str(source), _strip_pasted_content(content)))
             elif isinstance(content, list):
                 for block in content:
                     # `tool_result` blocks are the agent's own output echoed
                     # back — never the human speaking.
                     if isinstance(block, dict) and block.get("type") == "text":
-                        entries.append((str(source), str(block.get("text") or "")))
+                        entries.append((str(source), _strip_pasted_content(str(block.get("text") or ""))))
     return entries, ""
 
 
@@ -25805,6 +25855,8 @@ _AUTHORIZATION_RANKS: dict[int, str] = {
     3: "performative/other",
     4: "directive/typed",
     5: "directive/other",
+    6: "owner-ask/typed",   # CONSENT_PHASE pre-third-users only
+    7: "owner-ask/other",
 }
 
 
@@ -25820,6 +25872,8 @@ def _rank_authorization_sentence(slug: str, source: str, sentence: str) -> int |
         return 2 if typed else 3
     if tier == "directive":
         return 4 if typed else 5
+    if tier == "owner-ask":
+        return 6 if typed else 7
     return None
 
 

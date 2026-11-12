@@ -4843,7 +4843,13 @@ _AGENTS_DB_SOURCE_PROBES: tuple[GuardProbe, ...] = (
     _agents_studio_probe(
         probe_id="agents.fonte_check",
         guard_name="agents_fonte_check",
-        attack_sql=f"    UPDATE {_AGENTS_SCHEMA}.agents SET fonte = 'svn' WHERE id = v_agent;",
+        # An INSERT, never an UPDATE: 070's BEFORE UPDATE trigger guard_agent_fonte_immutable raises
+        # 'fonte_immutable' before any CHECK is evaluated, so an UPDATE attack never reaches this guard
+        # (predeploy read `ambiguous` and BLOCKED agents W2, 2026-11-10).
+        attack_sql=(
+            f"    INSERT INTO {_AGENTS_SCHEMA}.agents (org_id, key, nome, runtime, definition_mode, fonte) "
+            "VALUES (v_org, 'noc-probe-fonte', 'NOC probe', 'claude_sdk', 'studio', 'svn');"
+        ),
         guard_fragment="agents_fonte_check",
         what="an agent source other than git|db",
         rationale="A11: the mirror rules key on fonte; an unknown source would match neither the git build nor the DB export.",
@@ -12140,11 +12146,76 @@ _ASSISTANT_AI_OUTPUTS_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+def _assistant_feedback_events_probe(probe_id: str, guard_name: str, attempt_sql: str, rationale: str,
+                                     *, fragment: str | None = None) -> GuardProbe:
+    """Self-provisioning probe on `assistant.ai_feedback_events` (migration 018): no FK on labeler/subject, so the
+    probe only borrows an existing org id; `attempt_sql` is the write that must be refused."""
+    fragment_lit = _sql_lit(fragment or guard_name)
+    return GuardProbe(
+        id=probe_id, product="assistant", schema="assistant", guard_name=guard_name, kind="write_refusal",
+        migrations=("018_rotulos_avaliacao.sql",), rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_ev uuid;
+BEGIN
+  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to borrow an org_id from (a genuinely org-less database)';
+  END IF;
+  INSERT INTO assistant.ai_feedback_events (org_id, labeler_id, subject_id, label, round)
+  VALUES (v_org_id, gen_random_uuid(), gen_random_uuid(), 'nao_sei', 1)
+  RETURNING id INTO v_ev;
+  BEGIN
+{attempt_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: the write succeeded - {guard_name} did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_ASSISTANT_FEEDBACK_EVENTS_PROBES: tuple[GuardProbe, ...] = (
+    _assistant_feedback_events_probe(
+        "assistant.ai_feedback_events.update_refused", "guard_ai_feedback_events_append_only",
+        "    UPDATE assistant.ai_feedback_events SET label = 'agendamento' WHERE id = v_ev;",
+        "The owner's labels are the ground truth the classifier is scored against: a relabel is a NEW event with the "
+        "next round, never an UPDATE. A trigger refuses UPDATE and DELETE.", fragment="append_only",
+    ),
+    _assistant_feedback_events_probe(
+        "assistant.ai_feedback_events.delete_refused", "guard_ai_feedback_events_append_only",
+        "    DELETE FROM assistant.ai_feedback_events WHERE id = v_ev;",
+        "A deleted label would silently change the agreement read; the table is append-only.", fragment="append_only",
+    ),
+    _assistant_feedback_events_probe(
+        "assistant.ai_feedback_events.label_allowed_values", "ai_feedback_events_label_check",
+        """    INSERT INTO assistant.ai_feedback_events (org_id, labeler_id, subject_id, label, round)
+    VALUES (v_org_id, gen_random_uuid(), gen_random_uuid(), 'talvez', 1);""",
+        "A label is agendamento | nao_agendamento | nao_sei; any other value would fall outside the agreement matrix.",
+    ),
+    _assistant_feedback_events_probe(
+        "assistant.ai_feedback_events.round_positive", "ai_feedback_events_round_check",
+        """    INSERT INTO assistant.ai_feedback_events (org_id, labeler_id, subject_id, label, round)
+    VALUES (v_org_id, gen_random_uuid(), gen_random_uuid(), 'nao_sei', 0);""",
+        "Rounds start at 1; the highest round is the effective label.",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
     _ASSISTANT_GOOGLE_EVENTOS_APPEND_ONLY_PROBE,
     *_ASSISTANT_AI_OUTPUTS_PROBES,
+    *_ASSISTANT_FEEDBACK_EVENTS_PROBES,
     _AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE,
     _RUIDO_SHAPE_PROBE,
     _TITULO_PAREADO_PROBE,

@@ -48,6 +48,12 @@
     "068_finance_service_only.sql": "5afa7deab845622ad9d61d8f220ef1eeb2e5ff9491ecf2b102d93e0b1dab2925",
     "069_status_pagina_agentes_plataforma.sql": "0ccf4ab25f6b471027fdfd98d640e68a7e2e21df4ca353db14f6f3df6b7736e0",
     "070_agent_db_source.sql": "49d977d5a408fd2fc11e8888dfba3ac8dcdf5989241c2a991deb8ec71f144aaf",
-    "071_eval_runs_paralelos.sql": "a119a27f7680c6ae4b067b7dccb4ad0e614f4d44b27ced6dadfb558a48c10916"
+    "071_eval_runs_paralelos.sql": "a119a27f7680c6ae4b067b7dccb4ad0e614f4d44b27ced6dadfb558a48c10916",
+    "072_eval_consolidacao.sql": "ebf7fcb106a0efd4bc3bbab90046cab38ae937843830f7e375019e5cc653985f",
+    "074_numero_fallback_atendimento.sql": "df5e5c12b80f3fcec84b062a788468a24aa209b83763af7b3e852f0830368eb5",
+    "075_retire_one_chat.sql": "95e90f16e8b973e633b0284e908b15f2fb9c67f705012574955163a1178abfe2",
+    "076_eval_loops.sql": "b8d6734e86160f480d2e4be2a3366f80ad5032ac6389d67668c784f2716cae6d",
+    "077_remove_fase_testes.sql": "8832ee41956c7193b87847531347c0adf22b9e28f913151278dada2778a52d49",
+    "078_secao_regras.sql": "b8ecc822db1d06c7bc17c0ba4f163e1e659b9ce424d35b1ffcfd22b05b0fea38"
   }
 }

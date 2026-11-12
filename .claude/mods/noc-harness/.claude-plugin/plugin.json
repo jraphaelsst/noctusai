@@ -1,6 +1,6 @@
 {
   "name": "noc-harness",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "NoctusAI harness UX: status line, reminders band, orchestration pane, friction ledger, memory routing, compaction capture, wrap-up nudge. A UX + reliability layer over the canonical Python gates — never a gate itself.",
   "author": {
     "name": "NoctusAI"
@@ -16,8 +16,8 @@
     "reminders_band": {
       "type": "boolean",
       "title": "Reminders band",
-      "description": "Owner reminders + wrap-up nudge above the prompt.",
-      "default": true
+      "description": "Owner reminders + wrap-up nudge above the prompt. Off by default (owner, 2026-11-11: cleaner UI); reminders live in MEMORY-reminders.md and every session still surfaces them; /noc-band shows the band for this session.",
+      "default": false
     },
     "orchestration_pane": {
       "type": "boolean",

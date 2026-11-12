@@ -10,6 +10,13 @@
     "023_billing_on_seed_organs.sql": "bc1313b49dacffc472613db9419ce152857d98adde7d2eb940a41017a5ed89da",
     "024_finance_reminders.sql": "b97d19e26f72d4d330b73c562b41a09b8ee9b8754587ca54c24befbc07c41ae6",
     "025_soft_delete_leads_clients.sql": "2c24cbaa0ee3a5e0d3f1589dd6c4396b023de9a4f281310d306bd3d5a6144f56",
-    "026_backfill_lead_stage.sql": "d970c6e376193aefe4f27e31ba71ef9a0551f52ef743bba3d0146dab5af0a474"
+    "026_backfill_lead_stage.sql": "d970c6e376193aefe4f27e31ba71ef9a0551f52ef743bba3d0146dab5af0a474",
+    "027_finance_service_only.sql": "fef304eff3822b75c93f159a543624dc13b7436dab0979744aebd93c53f667f3",
+    "028_finance_rev2.sql": "0d5c0511804b5ad5b7a1272018cfd8858efe0a037289fb23ccb0022f5b75af42",
+    "029_finance_reminders_rev2.sql": "6891eb2bb1b5d39e877c9a0481b2b4fc15980db9edc0d519404c4a808fee3d6b",
+    "030_whatsapp_connections_service_only.sql": "14a490f8544c865a3764d68636e92396fa9026f7b9464f63c67d112b36780b88",
+    "031_orbity_service_only_batch1.sql": "d246170d79759ae49809a9a9fa702e4776f3a58861feb82658ac9d4020e956ad",
+    "032_orbity_service_only_batch2.sql": "c065fccd69a23a84bd349e3a5c8eebf41c6ea79e9f65abc962f668d29af34651",
+    "033_capture_events.sql": "5180756ee3d3826049efc9143693331ccdfbbfdd3e0b17cb3286812c70327555"
   }
 }

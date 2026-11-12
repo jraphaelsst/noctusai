@@ -1,6 +1,6 @@
 # Canonical agent template — the must-haves every agent carries
 
-> **Rule.** Every conversational agent built in Agents Studio carries the canonical template's must-haves. v1 has two: a section with the key `discordar-com-respeito` (the agent disagrees respectfully and never agrees to please), and behaviour eval cases tagged `bajulacao` (cases that try to make it flatter, confirm an unsourced number, or change its answer under insistence). The generator (`criador-de-agentes`, `papel='gerador'`) writes both into every draft. Prontidão reports a missing one as an `aviso` (group `modelo`), which is the shadow stage. Promotion to blocking is in §4.
+> **Rule.** Every conversational agent built in Agents Studio carries the canonical template's must-haves. v1 has two: a section that declares the RULE `discordar-com-respeito` (the agent disagrees respectfully and never agrees to please; in the 15-section template it lives inside `honestidade`, readiness checks the rule, never a section key), and behaviour eval cases tagged `bajulacao` (cases that try to make it flatter, confirm an unsourced number, or change its answer under insistence). The generator (`criador-de-agentes`, `papel='gerador'`) writes both into every draft. Prontidão reports a missing one as an `aviso` (group `modelo`), which is the shadow stage. Promotion to blocking is in §4.
 
 Born 2026-11-08. Owner answer (a) to the v03 "LLM Council" report: anti-sycophancy is a MUST-HAVE in the canonical agent template. Answer (b): add 2–3 bajulação cases to Julia's eval loop now.
 
@@ -16,14 +16,14 @@ Sycophancy is a model default, not a content bug: asked "this price is great, ri
 
 | Piece | Where | What it does |
 |---|---|---|
-| constants | `products/agents/backend/app/studio/prontidao.py` `CHAVE_SECAO_DISCORDAR`, `TAG_BAJULACAO` | one name for the section key and the tag |
+| constants | `products/agents/backend/app/studio/regras_secao.py` `REGRA_DISCORDAR` (closed list `REGRAS_SECAO`, column `agent_prompt_sections.regras`, migration 078) and `prontidao.py` `TAG_BAJULACAO` | one name for the section rule and the case tag; an unknown rule is a 422; a child section merged onto a parent's keeps the parent's rules |
 | readiness | same file, `_canonico` | `sem_secao_discordar` / `sem_evals_bajulacao` (aviso) or `modelo_canonico` (ok); skipped for the generator itself (it emits JSON, it does not converse) |
 | generator | `criador-de-agentes` sections `principios`, `area-secoes`, `area-evals` (Studio data, not code) | every generated draft gets the section and 2–3 `bajulacao` cases |
 | groups | `GRUPOS` in prontidao.py ↔ `ProntidaoGrupo` in `frontend/src/api/studio/types-prontidao.ts` | a closed set; a test keeps the two equal, and `compor` refuses an item outside it |
 
 ## 3 · How to apply
 
-- New agent: "Gerar com IA" already writes both. Built by hand: add the section (key `discordar-com-respeito`, written for the agent's context) and 2–3 cases with the `bajulacao` tag.
+- New agent: "Gerar com IA" already writes both. Built by hand: tag the section that says it (usually `honestidade`) with the rule `discordar-com-respeito` (written for the agent's context) and 2–3 cases with the `bajulacao` tag.
 - A new must-have: add it to `_canonico` (aviso first), to the generator's sections, and to the table above, in the same change.
 
 ## 4 · Promotion to blocking (named destination)
