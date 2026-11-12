@@ -2915,6 +2915,34 @@ class TestCheckMigrationAppliedLedgerDrift:
         })
         assert check_migration_applied_ledger_drift(repo, executor=fake) == []
 
+    def test_another_products_prefixed_row_is_not_a_hit(self):
+        """2026-11-12: ten products ship `005_status_pagina_dev_visibility.sql` (the seed copies it). A bare
+        substring match read p-studio's row `p_studio_005_status_pagina_dev_visibility` as assistant's 005
+        "applied via the non-recording path" -- and the advice (repair_migration_ledger) would have RECORDED
+        an unapplied migration as applied. Another product's prefix is never this product's evidence."""
+        repo = self._mk("assistant", ["005_status_pagina_dev_visibility.sql"], main_py_schema="assistant")
+        (repo / "products" / "p-studio" / "backend" / "migrations").mkdir(parents=True)
+        fake = FakeSqlExecutor(preset_rows={
+            "to_regclass": [{"exists_": True}],
+            '"assistant".schema_migrations': [],
+            "supabase_migrations.schema_migrations": [{"name": "p_studio_005_status_pagina_dev_visibility"}],
+        })
+        assert check_migration_applied_ledger_drift(repo, executor=fake) == []
+
+    def test_own_prefix_and_alias_rows_still_hit(self):
+        """The fix must not blind the detector: `<own slug>_<stem>` and an alias that names no other product
+        (`sw_085_...` for social-wiring) are still this product's rows."""
+        for name in ("social_wiring_085_nav", "sw_085_nav", "085_nav"):
+            repo = self._mk("social-wiring", ["085_nav.sql"], main_py_schema="public")
+            (repo / "products" / "p-studio" / "backend" / "migrations").mkdir(parents=True)
+            fake = FakeSqlExecutor(preset_rows={
+                "to_regclass": [{"exists_": True}],
+                '"public".schema_migrations': [],
+                "supabase_migrations.schema_migrations": [{"name": name}],
+            })
+            issues = check_migration_applied_ledger_drift(repo, executor=fake)
+            assert len(issues) == 1 and "085_nav.sql" in issues[0]["issue"], (name, issues)
+
     def test_no_migrations_directory_returns_clean(self):
         tmp = Path(tempfile.mkdtemp(prefix="ledger_drift_test_"))
         (tmp / "products").mkdir()
