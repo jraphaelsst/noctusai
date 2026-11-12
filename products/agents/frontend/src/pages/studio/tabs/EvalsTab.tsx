@@ -60,6 +60,7 @@ import {
   Select,
   Textarea,
 } from "@noctusai/lib/design-system";
+import { EvalLoopCard } from "@/components/studio/EvalLoopCard";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { ApiError, errorMessage } from "@/lib/errors";
 import { formatUsdCost } from "@/lib/utils";
@@ -759,6 +760,8 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
           </div>
         )}
       </div>
+
+      {isAdmin && <EvalLoopCard agentKey={agentKey} versionId={draft?.id ?? null} />}
 
       {isAdmin && showNewRun && draft && <NewRunForm agentKey={agentKey} versionId={draft.id} onDone={handleRunCreated} />}
 
