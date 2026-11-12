@@ -60,9 +60,9 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Community | 23 | 29 | 49 | 30 | 58 | 657 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 40 | 7 | 8 | 64 |
-| Monica | 2 | 1 | 15 | 0 | 8 | 37 |
+| Monica | 2 | 1 | 15 | 0 | 8 | 39 |
 | Assistant | 3 | 3 | 16 | 0 | 14 | 116 |
-| **Total** | **362** | **439** | **916** | **542** | **1650** | **23,255** |
+| **Total** | **362** | **439** | **916** | **542** | **1650** | **23,257** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
