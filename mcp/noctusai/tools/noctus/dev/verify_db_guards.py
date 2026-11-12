@@ -12310,6 +12310,9 @@ DECLARE
 BEGIN
   INSERT INTO assistant.whatsapp_line_events (event, line, op, reason)
   VALUES ('noc-probe', 'http://probe.invalid', 'POST /x', 'noc-probe') RETURNING id INTO v_ev;
+  IF v_ev IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: the probe event row was not inserted';
+  END IF;
   BEGIN
     {stmt}
     RAISE EXCEPTION 'NOC_PROBE:permitted: {op} on the append-only line event log succeeded - the guard did not fire';
