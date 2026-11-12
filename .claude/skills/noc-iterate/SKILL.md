@@ -51,6 +51,15 @@ Gate: `products/agents/docs/eval-loop-gate-contract.md` (G1–G7). Process owner
    each finding to `agent-creator` §5 in the same session; report to the owner: version, score series, overcalls +
    cost, fixes per round (harness vs target), overrides, doubts, spend. Publishing stays the owner's act.
 
+## From Claude Code: `noctus.agents.content` (never curl)
+
+`agent=<key>`; writes dry-run unless `confirm=True`; payloads in a JSON file outside git.
+`loop_iniciar` `{suite}` (+ optional `rodadas_planejadas`, `orcamento_usd`, never above the config) · `loops` /
+`loop chave=<loop_id>` (state, `serie`, `falhas`) · `rodada` `{suite, loop_id}` (behaviour suite uses the current
+draft version) · `run chave=<run_id>` (results with `saida`, `notas_juiz`, `veredito`; mechanism: `{suite: mecanismo}`)
+· `loop_parar chave=<loop_id>`. Token: `NOCTUS_AGENTS_EVALS_TOKEN` (a `studio:evals-run` token) else the content
+token. A refusal returns `servidor: {http, code, detail}` verbatim: read it, never retry blind.
+
 ## Hard rules
 
 - A failure is never "noted": it is fixed (harness on a branch, target on the layer, case via the content tool) or
