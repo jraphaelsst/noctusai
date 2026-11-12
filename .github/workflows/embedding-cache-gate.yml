@@ -72,34 +72,9 @@ jobs:
         timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
         # pycairo / weasyprint / psycopg2-binary build deps — same set as test.yml
         # to keep the env shape uniform across CI jobs.
-        run: |
-          # 🔴 A THIRD-PARTY APT SOURCE MUST NOT BE ABLE TO FAIL THIS BUILD.
-          # The runner image ships Google's Chrome repo, so `apt-get update`
-          # contacts dl.google.com even for a job whose only wants are
-          # cairo/pango/libpq/ffi — and `apt-get update` exits 100 when ANY
-          # source fails. On 2026-09-09 that index served a corrupt
-          # "Hash Sum mismatch" for hours and took the WHOLE matrix down on a
-          # diff touching none of it, blocking `release stage='bless'` (which
-          # correctly refuses a red tip).
-          #
-          # Two layers, because the first attempt at this guessed wrong:
-          # removing `/etc/apt/sources.list.d/google-chrome.list` did nothing,
-          # since the image can declare the repo as a deb822 `.sources` file or
-          # inline in `sources.list`. So find it by CONTENT rather than by a
-          # path we assumed.
-          sudo grep -rlE 'dl\.google\.com' /etc/apt/sources.list.d/ 2>/dev/null \
-            | sudo xargs -r rm -f
-          sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list 2>/dev/null || true
-          # And then refuse to let a stale index be fatal at all. This is NOT a
-          # swallowed error: `apt-get install` below is the real gate and stays
-          # fatal — a package that genuinely cannot be resolved fails there,
-          # loudly and by name. What `|| true` drops is only the "some index
-          # failed to download" verdict, which says nothing about whether the
-          # packages we actually need are installable.
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update || true
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-            libcairo2-dev libgirepository1.0-dev libpango1.0-dev \
-            libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libcairo2-dev libgirepository1.0-dev libpango1.0-dev libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
 
       - name: Install dependencies
         # Relative to mcp/noctusai: requirements.txt carries `-e ../../seed/lib/backend`
