@@ -146,3 +146,33 @@ def test_a_template_is_never_instanciavel_nor_channel_owned(mundo):
         st.update_definicao(PLAT, "agente-base", {"instanciavel": True})
     with pytest.raises(ValueError):
         st.update_definicao(PLAT, "agente-base", {"owner_product": "social-wiring"})
+
+
+class _SemSkills:
+    def listar_refs(self, _version_id):
+        return []
+
+
+def test_card_counts_the_inherited_texts_of_the_chain_and_agrees_with_readiness(mundo):
+    """The Overview card reads the EFFECTIVE chain: a child with no texts of its own inherits its bases' texts, so
+    the card cannot show a gap readiness (which compiles the merged chain) does not see."""
+    from app.studio.geracao import conteudo_status
+
+    st, cat, (base, base_d), _, (julia, julia_d) = mundo
+    assert st.list_textos(PLAT, julia_d.id) == []  # zero OWN texts
+    own_base = conteudo_status(st, _SemSkills(), base)
+    card = conteudo_status(st, _SemSkills(), julia)
+    assert card["obrigatorios_faltando"] == []
+    assert card["textos_preenchidos"] == own_base["textos_preenchidos"] > 0
+    # parity with readiness: no missing-text warning from the compiler either
+    c = compile_version(st, cat, PLAT, julia, julia_d)
+    assert not [w for w in c.avisos if w.bloqueante and "texto" in w.codigo]
+
+
+def test_card_counts_a_child_override_once(mundo):
+    from app.studio.geracao import conteudo_status
+
+    st, _, (base, base_d), _, (julia, julia_d) = mundo
+    antes = conteudo_status(st, _SemSkills(), julia)["textos_preenchidos"]
+    st.replace_textos(PLAT, julia_d.id, [TextoInput("compilador.titulo_ferramentas", "Minhas ferramentas")])
+    assert conteudo_status(st, _SemSkills(), julia)["textos_preenchidos"] == antes
