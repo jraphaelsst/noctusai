@@ -11,7 +11,7 @@ from typing import Any, Optional
 from noctusai_lib.integrations.agents_channel import AgentsClient
 
 #: The ControleInfo attribute that carries the allow-list (numbers, any format). ONE edit if agents names it differently.
-CAMPO_LISTA = "numeros_permitidos"
+CAMPO_LISTA = "contatos_permitidos"
 #: Modes of `ControleInfo.modo` under which the agent answers new messages.
 MODOS_LIGADO = ("ligado",)
 

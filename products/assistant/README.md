@@ -67,7 +67,7 @@ row is committed, scheduled in the background so the webhook still acks WAHA at 
    not-served status (`agente_desligado`, `restrito_avaliacao`, limits...) means NO reply and never an error to the
    contact; a typed client error means no reply + a log + an event.
 2. **Send-seam guard** (defence in depth, independent of the turn): before any send it re-reads the agent's on/off +
-   allow-list from `agents` (`app/live/controles.py`, ONE adapter: field name `CAMPO_LISTA`). Off, or a non-empty list that
+   allow-list from `agents` (`app/live/controles.py`, ONE adapter: `CAMPO_LISTA = "contatos_permitidos"`, parsed by the seed `ControleInfo`/`AgentStatus`; absent = unreadable = closed). Off, or a non-empty list that
    does not name this number, refuses; **unreadable (error / field absent) refuses - fail closed**. **Empty list = every
    number allowed.** The allow-list and the agent on/off live in `agents` (owner-edited there), not here.
 3. **Send**: one WhatsApp message per paragraph through the seed WAHA client under the line policy (`send: enabled`),
@@ -81,7 +81,7 @@ row is committed, scheduled in the background so the webhook still acks WAHA at 
 Boot refuses (`LiveReplyConfigError`) when the switch is on and any of `ASSISTANT_AGENT_KEY`, `ASSISTANT_AGENTS_BASE_URL`,
 `ASSISTANT_AGENTS_TOKEN`, the WAHA base URL / line policy (must be `send: enabled`), the identity key or `ENCRYPTION_KEY` is
 missing. A missing agents token never falls back to a Fake. Messages older than `ASSISTANT_REPLY_MAX_AGE_SECONDS` (900)
-are not answered. One turn at a time per conversation (in-process lock); no batching of rapid messages yet.
+are not answered. Debounce: a conversation must be quiet for `ASSISTANT_REPLY_DEBOUNCE_SECONDS` (4 s) and its whole burst becomes ONE turn and ONE reply (one event per message, same outcome, `dados.lote`); one turn at a time per conversation (in-process lock). The attempt's event is written after the send, so a crash mid-reply can leave no row (`NOC-REMEDIATE[assistant-reply-claim-before-send]`).
 
 ## Google connection (S7, migration 019)
 
@@ -114,7 +114,7 @@ Settings tab `/configuracoes/google` (admin): Conectar / Desconectar, the connec
 `ASSISTANT_WAHA_WEBHOOK_HMAC_SECRET`, `ASSISTANT_IDENTITY_HMAC_KEY`, `ASSISTANT_EXCLUDED_NUMBERS`,
 `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI` (optional), `ASSISTANT_CLASSIFIER_ENABLED`, `ASSISTANT_CLASSIFIER_MAX_CHARS`, `LLM_SPEND_LIMITS` (enforced entry required),
 `NOCTUS_SCHEDULERS_ENABLED`; live reply: `ASSISTANT_REPLY_ENABLED` (kill switch, default off), `ASSISTANT_AGENT_KEY`,
-`ASSISTANT_AGENTS_BASE_URL`, `ASSISTANT_AGENTS_TOKEN`, `ASSISTANT_REPLY_MAX_AGE_SECONDS`, `ASSISTANT_REPLY_PARAGRAPH_DELAY_SECONDS`.
+`ASSISTANT_AGENTS_BASE_URL`, `ASSISTANT_AGENTS_TOKEN`, `ASSISTANT_REPLY_MAX_AGE_SECONDS`, `ASSISTANT_REPLY_PARAGRAPH_DELAY_SECONDS`, `ASSISTANT_REPLY_DEBOUNCE_SECONDS`.
 
 ## Running
 

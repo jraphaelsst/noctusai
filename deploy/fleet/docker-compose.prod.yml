@@ -707,6 +707,12 @@ services:
       ASSISTANT_WAHA_SESSION: default
       # Line policy v1 (waha-instances.yml `line_policy` + the edge relay; KB § INTEGRATIONS/whatsapp.md § 6a). Keeper-checked == declared.
       ASSISTANT_WAHA_LINE_POLICY: '{"send":"enabled","mark_online":false,"full_sync":false,"auto_repair":false}'
+      # Live reply (owner decision 2026-11-12): the product kill switch starts OFF; the agent key / agents URL / channel token come
+      # from the root .env (the token is a secret: never a literal here). With the switch on, the product refuses to boot if any is empty.
+      ASSISTANT_REPLY_ENABLED: ${ASSISTANT_REPLY_ENABLED:-false}
+      ASSISTANT_AGENT_KEY: ${ASSISTANT_AGENT_KEY:-}  # env-fleet-empty-ok — REVIEWED 2026-11-12: switch OFF by default; with it ON the product refuses to boot on an empty value
+      ASSISTANT_AGENTS_BASE_URL: ${ASSISTANT_AGENTS_BASE_URL:-}
+      ASSISTANT_AGENTS_TOKEN: ${ASSISTANT_AGENTS_TOKEN:-}  # env-fleet-empty-ok — REVIEWED 2026-11-12: same (boot refusal when the live reply is on)
       # S3 money gate: the classifier worker refuses to start without an ENFORCED limit covering `assistant`.
       # USD 2 per rolling 24 h (conservative first cap; raise from the observed spend, KB § integrations/llm spend_guard).
       LLM_SPEND_LIMITS: '{"assistant": {"usd": 2, "mode": "enforce", "window_hours": 24}}'

@@ -63,6 +63,8 @@ class SeedSettings(ProductSettings):
     assistant_reply_max_age_seconds: int = 900
     # Pause between two reply bubbles (one WhatsApp message per paragraph).
     assistant_reply_paragraph_delay_seconds: float = 0.6
+    # Debounce: a conversation must be quiet this long before its burst of messages becomes ONE agent turn.
+    assistant_reply_debounce_seconds: float = 4.0
 
     # Rate-limit for the public webhook (per-IP). Public surface -- DDOS guard.
     webhook_rate_limit: str = "60/minute"

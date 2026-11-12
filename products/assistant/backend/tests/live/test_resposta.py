@@ -59,7 +59,7 @@ def _msg(chat=f"{NUMERO}@c.us", body="oi, tudo bem?", from_me=False, age_s=5):
                         media_url=None, ack=None, timestamp=ts, sender_name=None)
 
 
-def _build(agents, *, reg=None, enabled=True, policy=ENABLED, waha=None):
+def _build(agents, *, reg=None, enabled=True, policy=ENABLED, waha=None, sleep=None):
     waha = waha or FakeWahaClient(line_policy=policy)
     reg = reg or Reg()
 
@@ -71,7 +71,7 @@ def _build(agents, *, reg=None, enabled=True, policy=ENABLED, waha=None):
 
     rep = LiveReplier(agents=agents, waha_for=waha_for, registro=reg,
                       config=ReplyConfig(enabled=enabled, agent_key="assistente"),
-                      identity_key=lambda: "k", sleep=nosleep)
+                      identity_key=lambda: "k", sleep=sleep or nosleep)
     return rep, waha, reg
 
 
@@ -206,3 +206,49 @@ def test_missing_agents_client_is_a_declared_refusal_not_a_fake():
     rep, waha, reg = _build(None)
     assert run(rep, _msg()) == r.ERRO_TURNO
     assert reg.eventos[0]["motivo"] == "agents_nao_configurado" and waha.sent_messages == []
+
+
+def test_a_burst_is_one_turn_one_reply_and_one_event_per_message():
+    ag = Ctl(lista=[])
+    async def tick(_):
+        await asyncio.sleep(0)  # a real quiet window yields: the other webhook calls land while it waits
+
+    rep, waha, reg = _build(ag, sleep=tick)
+    msgs = [_msg(body=t) for t in ("oi", "tudo bem?", "preciso de ajuda")]
+
+    async def go():
+        return await asyncio.gather(*(rep.responder(ORG, CONN, m) for m in msgs))
+
+    outs = asyncio.run(go())
+    assert sorted(o for o in outs if o) == [r.ENVIADA] and outs.count(None) == 2  # one call answers for the batch
+    assert len(ag.turns) == 1 and [m.texto for m in ag.turns[0].messages] == ["oi", "tudo bem?", "preciso de ajuda"]
+    assert len(waha.sent_messages) == 1
+    assert [e["waha_message_id"] for e in reg.eventos] == [m.id for m in msgs]
+    assert all(e["desfecho"] == r.ENVIADA and e["dados"]["lote"] == 3 for e in reg.eventos)
+
+
+def test_two_bursts_apart_are_two_turns():
+    ag = Ctl(lista=[])
+    rep, waha, reg = _build(ag)
+    run(rep, _msg(body="a"))
+    run(rep, _msg(body="b"))
+    assert len(ag.turns) == 2 and len(waha.sent_messages) == 2
+
+
+def test_status_payload_with_the_allow_list_flows_through_the_real_parser_to_the_seam():
+    import httpx
+    from noctusai_lib.integrations.agents_channel import HttpAgentsClient, TurnResult
+
+    def make(lista):
+        body = {"agent_key": "assistente", "modo": "ligado", "aceita_novos_leads": True}
+        if lista is not None:
+            body["contatos_permitidos"] = lista
+        http = HttpAgentsClient("https://agents.example.test", "pk_t", transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, json=body) if req.url.path.endswith("/controle")
+            else httpx.Response(200, json={"conversation_id": "c", "status": "respondido", "reply": {"partes": ["oi"]}})))
+        return http
+
+    # list names the number -> sent; names someone else -> refused; field absent (older agents) -> closed
+    for lista, esperado in (([f"+{NUMERO}"], r.ENVIADA), (["+5599900001111"], r.RECUSADA_LISTA), (None, r.CONTROLE_INDISPONIVEL)):
+        rep, waha, reg = _build(make(lista))
+        assert run(rep, _msg()) == esperado, lista

@@ -67,6 +67,7 @@ def build_replier(connection_store_factory: Callable[[], Any], admin_client_fact
             enabled=settings.assistant_reply_enabled, agent_key=settings.assistant_agent_key,
             max_age_s=settings.assistant_reply_max_age_seconds,
             paragraph_delay_s=settings.assistant_reply_paragraph_delay_seconds,
+            debounce_s=settings.assistant_reply_debounce_seconds,
         ),
         identity_key=lambda: settings.assistant_identity_hmac_key,
     )
@@ -77,10 +78,14 @@ _tasks: set[asyncio.Task] = set()
 
 def build_on_message(replier_factory: Callable[[], LiveReplier]):
     """The webhook's `on_message(org_id, connection_id, chat, message)` seam. Schedules; never awaits the turn."""
+    holder: list[LiveReplier] = []  # ONE replier per process: the debounce buffers live in it
+
     async def on_message(org_id: UUID, connection_id: UUID, chat: Any, message: Any) -> None:
         if not settings.assistant_reply_enabled or message.from_me:
             return
-        task = asyncio.ensure_future(replier_factory().responder(org_id, connection_id, message))
+        if not holder:
+            holder.append(replier_factory())
+        task = asyncio.ensure_future(holder[0].responder(org_id, connection_id, message))
         _tasks.add(task)
         task.add_done_callback(_tasks.discard)
 
