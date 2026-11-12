@@ -58,6 +58,7 @@
     "079_emergencia_inatividade.sql": "ee9925222bcea86da2606f76d24caabe46fc60386fd5264540696aaf60e42d83",
     "080_retomada_limite.sql": "549fbf3128bc6d865b9b46f2c12fbd6549fecb7ab353490bfa66a5a3a41d816b",
     "081_catalogo_opcoes.sql": "e2b533aab8534848a434382d776e2f59ada7fe25f5f17fde4983aa7e3fec5753",
-    "082_qualificacao_identificacao_desejada.sql": "004732ea4912d073dd871ed4bf9fac9565f6644e0b204005410bcdf5c70e6f66"
+    "082_qualificacao_identificacao_desejada.sql": "004732ea4912d073dd871ed4bf9fac9565f6644e0b204005410bcdf5c70e6f66",
+    "083_agent_product_grant_eventos.sql": "cca02ed77363f7a6cbc1d3d602df580149465a52e54b0e9b38ac8db1f166fae8"
   }
 }
