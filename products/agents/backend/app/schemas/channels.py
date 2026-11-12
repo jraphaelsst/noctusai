@@ -585,6 +585,9 @@ class ChannelAgentStatusOut(BaseModel):
     desligado_plataforma: bool = False
     #: Evaluation mode (Julia v3 §12.12): the agent answers only an allow-list. The numbers are never exposed here.
     modo_avaliacao: bool = False
+    #: 084 per-agent phone allow-list (E.164, read live by the consumer's send guard): empty = every number, non-empty = ONLY
+    #: these. The on/off is ``modo`` (``desligado`` = nobody).
+    contatos_permitidos: list[str] = Field(default_factory=list)
     threads_abertas: int = 0
     #: Every required text/spec is filled: a turn would not answer 409 ``conteudo_incompleto``.
     conteudo_completo: bool = False

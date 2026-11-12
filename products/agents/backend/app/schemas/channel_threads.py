@@ -293,6 +293,8 @@ class ControleOut(BaseModel):
     avaliacao_resolvidos: list[AvaliacaoResolvidoOut] = Field(default_factory=list)
     #: The lookup in noc failed: ``avaliacao_resolvidos`` carries ``nome``/``telefone`` null per id.
     avaliacao_resolucao_erro: bool = False
+    #: 084 per-agent phone allow-list (E.164): empty = the agent answers every number; non-empty = ONLY these. The on/off is ``modo``.
+    contatos_permitidos: list[str] = Field(default_factory=list)
     threads_abertas: int
     drenagem: DrenagemOut
 
@@ -307,6 +309,9 @@ class ControleUpdateRequest(StrictHttpModel):
     #: only these (``modo`` equal to the current one) applies no mode transition and none of its 409 preconditions.
     modo_avaliacao: bool | None = None
     avaliacao_usuarios: list[UUID] | None = Field(default=None, max_length=20)
+    #: The phone allow-list (084; at most 100, any format -> stored E.164). ``[]`` = every number. Replaces the list; like the
+    #: evaluation fields, changing only this (``modo`` equal to the current one) applies no mode transition and no 409 precondition.
+    contatos_permitidos: list[str] | None = Field(default=None, max_length=100)
 
 
 class MensagemThreadOut(BaseModel):

@@ -101,7 +101,7 @@ from app.schemas.channel_threads import (
 from app.routers.qualificacao_router import get_qualificacao_service_dep
 from app.schemas.channels import ChannelRef
 from app.stores._util import utcnow
-from app.stores.agent_controles import NucleoIndisponivel, get_agent_controle_store, normalizar_usuarios
+from app.stores.agent_controles import get_agent_controle_store, normalizar_contatos, normalizar_usuarios
 from app.stores.errors import Conflict, NotFound, TurnInProgress
 from app.stores.threads import OutroAgenteAtivo, mapa_agentes
 from app.studio.resolucao import conteudo_status, resolve_agent_for_org
@@ -490,6 +490,11 @@ def _controle_out(
         avaliacao_herdada=controle.avaliacao_herdada,
         avaliacao_resolvidos=resolvidos,
         avaliacao_resolucao_erro=erro,
+        # The Studio read hands the full numbers to an org admin only (members see them masked, like the evaluators' phones);
+        # the channel read (a service token, no user resolver) needs them whole: the consumer's send guard compares them.
+        contatos_permitidos=[
+            (mascarar_telefone(n) or "") if (usuarios is not None and not admin) else n for n in controle.contatos_permitidos
+        ],
         threads_abertas=drenagem["abertas"],
         drenagem=DrenagemOut(**drenagem),
     )
@@ -550,6 +555,8 @@ def _aplicar_flags(controles: Any, ctx: AuthContext, agent: Any, payload: Contro
             ctx.org_id, agent.id, modo_avaliacao=payload.modo_avaliacao, usuarios=payload.avaliacao_usuarios,
             actor=ctx.user_id,
         )
+    if payload.contatos_permitidos is not None:
+        controles.set_contatos_permitidos(ctx.org_id, agent.id, numeros=payload.contatos_permitidos, actor=ctx.user_id)
 
 
 @router.get("/api/channels/agents/{agent_key}/controle", response_model=ControleOut)
@@ -567,8 +574,8 @@ def channel_agent_controle(
     agent = _agente_do_token(studio_store, ctx, agent_key)
     try:
         return _controle_out(ctx.org_id, agent, controles, threads)
-    except NucleoIndisponivel as exc:
-        logger.exception("agents.controle.nucleo_indisponivel org_id=%s agent=%s", ctx.org_id, agent_key)
+    except Exception as exc:  # any unreadable control (incl. Julia's core): 503, never a reply (fail closed)
+        logger.exception("agents.controle.indisponivel org_id=%s agent=%s cause=%s", ctx.org_id, agent_key, type(exc).__name__)
         raise ControleIndisponivel().as_http_exception() from exc
 
 
@@ -618,9 +625,19 @@ def studio_set_agent_controle(
         if atual.avaliacao_herdada:
             raise _err(409, "avaliacao_somente_no_nucleo",
                        "O modo de avaliação é um só, no núcleo da Julia (organização NoctusAI); ela vale para todas as empresas.")
+    # The phone allow-list (084, owner 2026-11-12): per agent, never inherited, so an instance edits its own; a content token
+    # never edits it (the owner decides who the agent talks to). Validated BEFORE any change lands.
+    if payload.contatos_permitidos is not None:
+        if ctx.caller_kind == "product":
+            raise _err(403, "platform_admin_required", "Somente um administrador da plataforma NoctusAI altera os contatos permitidos.")
+        try:
+            normalizar_contatos(payload.contatos_permitidos)
+        except ValueError as exc:
+            raise _err(422, "contatos_permitidos_invalido", str(exc)) from exc
     # validate the evaluation allow-list BEFORE any change lands (a bad list must not half-apply)
     _validar_avaliacao(ctx.org_id, atual, payload, usuarios)
-    tem_flags = any(v is not None for v in (payload.modo_avaliacao, payload.avaliacao_usuarios))
+    tem_flags = any(
+        v is not None for v in (payload.modo_avaliacao, payload.avaliacao_usuarios, payload.contatos_permitidos))
     so_flags = (
         tem_flags and payload.modo == atual.modo
         and payload.dreno_inatividade_dias in (None, atual.dreno_inatividade_dias)

@@ -24,6 +24,8 @@ from app.stores.errors import NotFound
 
 __all__ = [
     "AVALIACAO_NUMEROS_MAX",
+    "CONTATOS_PERMITIDOS_MAX",
+    "normalizar_contatos",
     "normalizar_e164",
     "normalizar_usuarios",
     "DRENO_DIAS_PADRAO",
@@ -40,6 +42,8 @@ __all__ = [
 _SCHEMA = "agents"
 #: 056 ``avaliacao_usuarios`` CHECK: at most this many allow-listed users.
 AVALIACAO_NUMEROS_MAX = 20
+#: 084 ``set_agent_contatos_permitidos``: at most this many allow-listed phone numbers.
+CONTATOS_PERMITIDOS_MAX = 100
 
 
 def normalizar_e164(bruto: Any) -> str | None:
@@ -49,6 +53,21 @@ def normalizar_e164(bruto: Any) -> str | None:
         return None
     digitos = "".join(ch for ch in str(bruto) if ch.isdigit())
     return f"+{digitos}" if 8 <= len(digitos) <= 15 else None
+
+
+def normalizar_contatos(brutos: list[Any]) -> tuple[str, ...]:
+    """The phone allow-list (084), each number as E.164, de-duplicated, order kept. Raises :class:`ValueError` on a number
+    that is not a plausible phone or on more than :data:`CONTATOS_PERMITIDOS_MAX`."""
+    out: list[str] = []
+    for b in brutos:
+        n = normalizar_e164(b)
+        if n is None:
+            raise ValueError(f"contatos_permitidos: not a valid phone number: {str(b)[:24]!r}")
+        if n not in out:
+            out.append(n)
+    if len(out) > CONTATOS_PERMITIDOS_MAX:
+        raise ValueError(f"contatos_permitidos allows at most {CONTATOS_PERMITIDOS_MAX} numbers")
+    return tuple(out)
 
 
 def normalizar_usuarios(brutos: list[Any]) -> tuple[UUID, ...]:
@@ -98,6 +117,9 @@ class ControleRecord:
     avaliacao_org_id: UUID | None = None
     #: True for an instance: the evaluation state is inherited from Julia's core and is read-only here.
     avaliacao_herdada: bool = False
+    #: 084 per-agent phone allow-list (E.164). EMPTY = every number is answered; non-empty = ONLY these numbers. Always the
+    #: agent row's own (never inherited from a core, unlike the evaluation state).
+    contatos_permitidos: tuple[str, ...] = ()
 
     @property
     def aceita_novos_leads(self) -> bool:
@@ -127,6 +149,13 @@ class AgentControleStore(Protocol):
         :class:`NotFound`, :class:`ValueError` (a non-UUID user id, more than 20)."""
         ...
 
+    def set_contatos_permitidos(
+        self, org_id: UUID, agent_id: UUID, *, numeros: list[str], actor: UUID | None = None,
+    ) -> ControleRecord:
+        """Replace the phone allow-list (084; E.164-normalised, de-duplicated; empty = every number) with an audit row
+        (``contatos_permitidos_alterados``; counts only). Raises :class:`NotFound`, :class:`ValueError` (a non-phone, more than 100)."""
+        ...
+
 
 def _validate(modo: str, dias: int | None) -> None:
     if modo not in MODOS:
@@ -147,6 +176,8 @@ class FakeAgentControleStore:
         self.falha: Exception | None = None
         #: ``(agent_id, actor, antes, depois)`` per evaluation change: ``(modo, n_usuarios)`` pairs.
         self.auditoria_avaliacao: list[tuple[UUID, UUID | None, tuple[bool, int], tuple[bool, int]]] = []
+        #: ``(agent_id, actor, antes, depois)`` per allow-list change: the number of listed phones before / after.
+        self.auditoria_contatos: list[tuple[UUID, UUID | None, int, int]] = []
         #: instance (org, agent) -> its core (org, agent); an entry whose core row is absent models an unresolvable core.
         self._nucleos: dict[tuple[UUID, UUID], tuple[UUID, UUID]] = {}
 
@@ -207,6 +238,17 @@ class FakeAgentControleStore:
             self.auditoria_avaliacao.append((
                 agent_id, actor, (before.modo_avaliacao, len(before.avaliacao_usuarios)),
                 (rec.modo_avaliacao, len(rec.avaliacao_usuarios))))
+        return rec
+
+    def set_contatos_permitidos(
+        self, org_id: UUID, agent_id: UUID, *, numeros: list[str], actor: UUID | None = None,
+    ) -> ControleRecord:
+        novos = normalizar_contatos(numeros)
+        before = self._propria(org_id, agent_id)
+        rec = replace(before, contatos_permitidos=novos)
+        self._rows[(org_id, agent_id)] = rec
+        if novos != before.contatos_permitidos:
+            self.auditoria_contatos.append((agent_id, actor, len(before.contatos_permitidos), len(novos)))
         return rec
 
 
@@ -272,6 +314,16 @@ class SupabaseAgentControleStore:
         })
         return self.get(org_id, agent_id)
 
+    def set_contatos_permitidos(
+        self, org_id: UUID, agent_id: UUID, *, numeros: list[str], actor: UUID | None = None,
+    ) -> ControleRecord:
+        novos = normalizar_contatos(numeros)
+        exec_rpc(self._client, _SCHEMA, "set_agent_contatos_permitidos", {
+            "p_org_id": str(org_id), "p_agent_id": str(agent_id), "p_numeros": list(novos),
+            "p_actor": str(actor) if actor else None,
+        })
+        return self.get(org_id, agent_id)
+
     @staticmethod
     def _record(row: dict[str, Any]) -> ControleRecord:
         return ControleRecord(
@@ -279,6 +331,7 @@ class SupabaseAgentControleStore:
             modo=row["modo_operacao"], dreno_inatividade_dias=int(row["dreno_inatividade_dias"]),
             modo_avaliacao=bool(row.get("modo_avaliacao", False)),
             avaliacao_usuarios=tuple(UUID(str(u)) for u in (row.get("avaliacao_usuarios") or ())),
+            contatos_permitidos=tuple(str(n) for n in (row.get("contatos_permitidos") or ())),
         )
 
 
