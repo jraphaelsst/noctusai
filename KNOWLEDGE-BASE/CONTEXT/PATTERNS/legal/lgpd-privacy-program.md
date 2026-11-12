@@ -115,6 +115,8 @@ Both controller and operator must keep it, "especially when based on legitimate 
   revisado_em: AAAA-MM-DD
 ```
 
+**Permutas: structured extraction (SW, r23, advisory sign-off 2026-11-12, APPROVED WITH CONDITIONS).** Today the free-text `observacoes` of a permuta already goes to an external embedding provider (EUA); an LLM note→fields extraction to the same provider class adds no new exposure and *reduces* it when: (1) names, phones, e-mails, CPF and personal income/debt figures are stripped server-side before the call (regex/NER, no external call); (2) the extraction schema accepts property/permuta attributes only, with a test proving no person field comes back; (3) the raw note stays with the controller under the card's retention and the `embedding` / `embedding_interesses` vectors are deleted on migration, with no parallel copy; (4) zero-retention / no-training is in the provider DPA; (5) the provider is listed as suboperador in the client DPA addendum (§13) and in the §9 matrix; (6) the discard reasons collected for the trigger are reason codes only, no free text about the client; (7) the processing is flagged via `noctus.dev.lgpd_flag`. Match suggestions reviewed by the broker stay outside art. 20. Basis is the controller's (art. 7 V, or IX with a balancing test); incidental sensitive data has no basis here, so it is stripped, never kept. Lawyer/encarregado: the art. 33 mechanism per provider, the DPA addendum text, the basis each agency declares, and whether sensitive volume found by the stripper requires a RIPD. Roadmap: `project-history/roadmaps/owner-kept-ideas-2026-11.md` (r23).
+
 ## 5 · RIPD — relatório de impacto (art. 38)
 
 **When.** The law lets the ANPD *require* it (art. 38; art. 10 §3 for legitimate interest) [norma]. The ANPD Q&A recommends it whenever processing may generate **high risk**, using Res. 2/2022 art. 4 as the reference until a specific rule exists (one general criterion — large scale or significant effect on rights — **plus** one specific — emerging technology, automated decisions, sensitive data, children/elderly), ideally **before** the processing starts; it is sent to the ANPD only when requested [órgão oficial].
@@ -207,7 +209,7 @@ Res. 2/2022 art. 4 II c lists "decisões tomadas unicamente com base em tratamen
 
 | Provider | Data | Destination | Role toward client data | Mechanism available | Status |
 |---|---|---|---|---|---|
-| OpenAI | Julia chats, extraction, clinical (therapy) | EUA | org's operator when the org's key is used; else NoctusAI's suboperador | provider DPA (usually EU SCCs) — ANPD Annex II verbatim? | **open** |
+| OpenAI | Julia chats, extraction, clinical (therapy), SW permutas embeddings (`permutas/embeddings.py`; Gemini is the per-org alternative) | EUA | org's operator when the org's key is used; else NoctusAI's suboperador | provider DPA (usually EU SCCs) — ANPD Annex II verbatim? | **open** |
 | Anthropic | Biblioteca classification, igig assistant | EUA | suboperador | same question | **open** |
 | Google, Meta | OAuth, CAPI, WhatsApp | EUA/global | suboperador / independent controller (Meta platform terms) | provider terms | **open** |
 | Supabase | everything | region per project — **check** (monica `DECISIONS.md:41` S-RG) | suboperador | DPA | **open** |
