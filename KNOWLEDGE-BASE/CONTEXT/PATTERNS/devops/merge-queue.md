@@ -301,6 +301,39 @@ The message reports:
 
 **In-session feed reports batches too (2026-11-09).** `cli.py --merge-queue watch` also prints `MQ-BATCH <candidate> -> success|failure|cancelled <url>` once per finished candidate batch (the first poll is a silent baseline; a failed read prints `MQ-WATCH-ERROR batches …`). Before this an entry-only watch stayed silent through a whole bisect, because nothing leaves the list while suspects are retried. One Monitor on `^MQ-LEFT|^MQ-BATCH|^MQ-WATCH-ERROR` is the whole live loop; the procedure is skill `noc-steward`.
 
+## 6c · Priority lane and parallel product-disjoint candidates (2026-11-11)
+
+**Priority lane.** An entry whose diff vs dev touches `.github/`, or whose tip commit carries a
+`MQ-Priority: <why>` trailer, composes FIRST and ALONE, ahead of oldest-first order and ahead of
+an open bisection (a priority run never moves the bisection state). Why: on 2026-11-11 the
+apt-mirror CI fix waited behind FIFO and the first candidate went infra-red without it. The
+trailer is the flag because it rides the commit through enqueue's rebase untouched: no enqueue
+change. (`.github/workflows/*` still needs the push token, as before.)
+
+**Parallel candidates (K=2, `PARALLEL_CANDIDATES`).** When the leading entries of the next batch
+are all product-only (every changed path under `products/<slug>/`, other than the shared
+`products/seed/`) and fall into 2+ disjoint product groups, each group is composed on the SAME dev
+base and pushed as its own candidate (`mq-candidate/<run>-<n>p<i>`); their CI runs overlap, which
+is the gain. Entries sharing a product merge into one group. A red candidate ejects (or
+attributes/bisects) on its own and never touches the others.
+
+**What never runs in parallel.** Anything outside `products/<slug>/` (seed, mcp, `.github`, KB,
+scripts, ledgers, an unreadable diff) is ONE shared area that conflicts with everything: a shared
+entry is never a second candidate, an open bisection never forms a wave, a priority entry is
+always alone. With a shared entry first in line the queue behaves exactly as before.
+
+**Land rule.** The first green lands as today. A later green is re-composed on the new dev tip
+(re-running the kb-counts/derived regen on the COMBINED tree) and lands WITHOUT a CI re-run only
+when the result is provably the exact union of the two tested trees: the two diffs vs base share
+no file, the re-composed tree differs from the tested candidate only in the peer's files, and it
+differs from the tip in exactly the candidate's own files. Any miss (shared derived file such as
+counts moved, dev moved beyond the wave, re-compose not clean) leaves the entries queued and the
+next round re-tests them on the combined tree, so a miss costs time, never correctness.
+**Residual risk, stated:** file-disjoint is not effect-disjoint (per-branch green is not
+integration green); restricting the skip to product-only entries with no shared file is what
+keeps that risk small, not zero. Path areas come from the queue's own map (`entry_areas`), to be
+derived from `ci_scope.classify` once that lands (`NOC-REMEDIATE[mq-area-map-dedup]`).
+
 ## 7 · Limits and options
 
 - **Why not GitHub's native merge queue?** It needs an organization-owned
