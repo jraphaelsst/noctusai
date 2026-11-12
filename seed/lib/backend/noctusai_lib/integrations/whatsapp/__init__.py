@@ -117,6 +117,12 @@ from noctusai_lib.integrations.whatsapp.meta_cloud_client import (
     FakeMetaCloudClient,
     MetaCloudClient,
 )
+from noctusai_lib.integrations.whatsapp.line_event_sink import (
+    FakeLineEventSink,
+    LineEventPersistenceError,
+    SupabaseLineEventSink,
+    make_line_event_sink,
+)
 from noctusai_lib.integrations.whatsapp.line_policy import (
     FAKE_LINE_URL,
     UNDECLARED,
@@ -244,6 +250,10 @@ def get_meta_cloud_client(
 
 
 __all__ = [
+    "FakeLineEventSink",
+    "LineEventPersistenceError",
+    "SupabaseLineEventSink",
+    "make_line_event_sink",
     "LinePolicyDrift",
     "strictest",
     "InMemoryLineEventSink",
