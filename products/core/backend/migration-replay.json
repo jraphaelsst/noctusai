@@ -87,11 +87,5 @@
       "remediate": "migration-chain-rebaseline"
     }
   ],
-  "fixtures": [
-    {
-      "before": "121_owner_number_one_source.sql",
-      "why": "A prod-shaped agents.runtime_settings row (placeholder number) so 121's copy path runs on replay, twice (idempotency); without it the guard no-ops.",
-      "sql": "CREATE SCHEMA IF NOT EXISTS agents; CREATE TABLE IF NOT EXISTS agents.runtime_settings (key TEXT PRIMARY KEY, value JSONB NOT NULL); INSERT INTO agents.runtime_settings (key, value) VALUES ('numero_fallback_atendimento', to_jsonb('+5511900000000'::text)) ON CONFLICT (key) DO NOTHING;"
-    }
-  ]
+  "fixtures": []
 }
