@@ -107,6 +107,13 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from noctusai_lib.primitives.supabase_breaker import (
+    MAX_BUDGET_CALLS,
+    call_tally,
+    get_breaker,
+    job_scope,
+    source_scope,
+)
 from noctusai_lib.primitives.timeutil import platform_timezone_name
 
 # Silence APScheduler verbose DEBUG logging once at import time. Adopters
@@ -294,11 +301,49 @@ async def _report(run: JobRun) -> None:
         )
 
 
-def _instrument(name: str, fn: Callable[..., Any]) -> Callable[..., Awaitable[Any]]:
+def _instrument(
+    name: str, fn: Callable[..., Any], call_cap: int = MAX_BUDGET_CALLS
+) -> Callable[..., Awaitable[Any]]:
     """Wrap `fn` so every run is timed, classified and reported."""
+
+    source = f"scheduler:{name}"
+    _held_logged: set[str] = set()
+    _last_start: list[Optional[float]] = [None]  # start time of the previous run of this job
 
     @functools.wraps(fn)
     async def _run(*args: Any, **kwargs: Any) -> Any:
+        # Supabase request breaker (2026-11-10): a held job is DISABLED — it does not run, and (deliberately) writes
+        # NO run-ledger row either (that row is itself a Supabase call, i.e. the runaway). Every Supabase call the job
+        # makes — including its own ledger write below — is counted under `job:scheduler:<job>` (alert-only).
+        breaker = get_breaker()
+        hold = await breaker.check(source)
+        if hold is not None:
+            if source not in _held_logged:
+                _held_logged.add(source)
+                logger.critical("scheduler job %r is HELD by the Supabase breaker (%s: %s) — not running until a "
+                                "human re-arms", name, hold.get("scope"), hold.get("reason"))
+            return None
+        _held_logged.discard(source)
+        # The holdable source is billed for a run ONLY when it is a cadence violation that really cost Supabase calls: the
+        # run started less than the platform idle-poll floor after the previous run AND made >= 1 Supabase call (billed
+        # at its real call count). A tick an `IdleGate` skipped makes none (free, however often it fires); a nightly job
+        # is never "frequent". What one run does is alert-only attribution plus an absolute per-run call cap.
+        now = breaker._clock()
+        gap = None if _last_start[0] is None else now - _last_start[0]
+        _last_start[0] = now
+        calls = 0
+        try:
+            with call_tally() as tally, source_scope(f"job:{source}"), \
+                    job_scope(call_cap, hard=breaker.job_hard_limit(call_cap)):
+                try:
+                    return await _run_instrumented(*args, **kwargs)
+                finally:
+                    calls = tally.n
+        finally:  # billed OUTSIDE the run's scopes, so the bill is not also counted into the run's own tally/budget
+            if calls > 0 and gap is not None and gap < breaker._config.min_idle_poll_s:
+                breaker.record_call(source, n=calls)
+
+    async def _run_instrumented(*args: Any, **kwargs: Any) -> Any:
         _ensure_capture_handler()
         capture = _RunCapture()
         token = _current_run.set(capture)
@@ -372,6 +417,7 @@ def register(
     seconds: Optional[int] = None,
     cron: Optional[str] = None,
     misfire_grace_time: int = 30,
+    breaker_call_cap: int = MAX_BUDGET_CALLS,
 ) -> None:
     """Register an async job on the module-level scheduler.
 
@@ -441,7 +487,7 @@ def register(
     )
 
     scheduler.add_job(
-        _instrument(name, fn),
+        _instrument(name, fn, breaker_call_cap),
         trigger=trigger,
         id=name,
         replace_existing=True,
@@ -557,8 +603,10 @@ def _publish_job_registry() -> None:
         return
 
     def _publish() -> None:
+        # A bare thread starts with an EMPTY context (-> `unattributed`): name the work (Supabase breaker).
         try:
-            observer.register_jobs(specs)
+            with source_scope("bg:scheduler-registry"):
+                observer.register_jobs(specs)
         except Exception:  # noqa: BLE001 — boot must not depend on it; loud, not silent
             logger.error(
                 "scheduler job registry publish FAILED (%d job(s)): the Operação page "

@@ -42,6 +42,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+from noctusai_lib.primitives.background import run_in_thread
 from noctusai_lib.api import StrictHttpModel
 
 from app.config import settings
@@ -1297,11 +1298,7 @@ def start_lead_sync(
     org_id, adapter = org_and_adapter
     job_id = str(uuid.uuid4())
     _set_job(job_id, status_="running", org_id=org_id)
-    threading.Thread(
-        target=_run_lead_sync_job,
-        kwargs={"job_id": job_id, "org_id": org_id, "adapter": adapter},
-        daemon=True,
-    ).start()
+    run_in_thread("ads-lead-sync", _run_lead_sync_job, job_id=job_id, org_id=org_id, adapter=adapter)
     return AdsSyncStartedOut(job_id=job_id)
 
 
@@ -1315,18 +1312,8 @@ def start_sync(
     ad_account_id = _require_ad_account_id()
     job_id = str(uuid.uuid4())
     _set_job(job_id, status_="running", org_id=org_id)
-    thread = threading.Thread(
-        target=_run_sync_job,
-        kwargs={
-            "job_id": job_id,
-            "org_id": org_id,
-            "adapter": adapter,
-            "ad_account_id": ad_account_id,
-            "mode": payload.mode,
-        },
-        daemon=True,
-    )
-    thread.start()
+    run_in_thread("ads-sync", _run_sync_job, job_id=job_id, org_id=org_id, adapter=adapter,
+                  ad_account_id=ad_account_id, mode=payload.mode)
     return AdsSyncStartedOut(job_id=job_id)
 
 

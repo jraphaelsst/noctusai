@@ -771,6 +771,11 @@ def build_parser() -> argparse.ArgumentParser:
         parser.add_argument(f"--source-register-{_sr}", default="read" if _sr == "action" else "", dest=f"source_register_{_sr.replace('-', '_')}", help=f"With --source-register: the {_sr} argument.")
     parser.add_argument("--source-register-limit", type=int, default=50, dest="source_register_limit", help="With --source-register: max rows on read.")
     parser.add_argument("--source-register-allow-stale-toolkit", action="store_true", help="With --source-register: bypass the toolkit-staleness fresh-subprocess hop (escape hatch).")
+    parser.add_argument("--supabase-breaker", action="store_true", help="Supabase request breaker over prod Redis: status | rearm | trip (independent of Supabase). MCP: noctus.dev.supabase_breaker.")
+    for _sb in ("action", "source", "product", "reason", "by", "ssh-host"):
+        parser.add_argument(f"--supabase-breaker-{_sb}", default="status" if _sb == "action" else ("noctus-vps" if _sb == "ssh-host" else ""), dest=f"supabase_breaker_{_sb.replace('-', '_')}", help=f"With --supabase-breaker: the {_sb} argument.")
+    parser.add_argument("--supabase-breaker-confirm", action="store_true", help="With --supabase-breaker: apply (a write). Without it, dry-run only.")
+    parser.add_argument("--supabase-breaker-allow-stale-toolkit", action="store_true", help="With --supabase-breaker: bypass the toolkit-staleness fresh-subprocess hop (escape hatch).")
     parser.add_argument("--waha-instance-owner-hand", nargs=2, metavar=("ACTION", "LINE"), dest="waha_instance_owner_hand", help="OWNER ONLY, by hand, in a Terminal.app window (D49): run as `PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH mcp/noctusai/.venv/bin/python mcp/noctusai/cli.py --waha-instance-owner-hand apply <line>`. provision|apply ONE `personal: true` WAHA line that noctus.dev.waha_instance refuses for every agent. Refuses without an interactive TTY, inside an agent harness (CLAUDECODE / CLAUDE_CODE_*), unless the shell's parent is macOS Terminal.app ONLY, judged on its real image + code signature read from the kernel (only system shells/login in between, the app started by launchd, every process started after its parent), with PYTHON*/DYLD_* unset, PATH starting /usr/bin:/bin and no other process on the tty, on any policy other than the strict read-only shadow shape or one the VPS checkout does not declare identically; you TYPE the line name and CONFIRMO on /dev/tty. Every attempt is audited (waha-owner-hand.ndjson). Deliberately NOT an MCP tool. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a.")
     parser.add_argument("--waha-owner-hand-host", default="noctus-vps", dest="waha_owner_hand_host", help="With --waha-instance-owner-hand: the SSH host alias of the VPS (default noctus-vps).")
     parser.add_argument("--supabase-request-budget", action="store_true", help="Measure Supabase request volume from the project's edge logs (ok|warn|critical|unknown; needs SUPABASE_ACCESS_TOKEN). MCP: noctus.dev.supabase_request_budget.")
@@ -4940,6 +4945,12 @@ def main():
         from tools.noctus.dev.source_register import source_register as _source_register
         _sr_kw = {k: getattr(args, f"source_register_{k}") for k in ("query", "tier_filter", "limit", "source", "outcome", "tier", "label", "claim", "evidence", "question", "note", "by", "events")}
         r = _source_register(args.source_register_action, **_sr_kw, confirm=bool(getattr(args, "source_register_confirm", False)), allow_stale_toolkit=bool(getattr(args, "source_register_allow_stale_toolkit", False)))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
+
+    elif args.supabase_breaker:
+        from tools.noctus.dev.supabase_breaker import supabase_breaker as _supabase_breaker
+        r = _supabase_breaker(args.supabase_breaker_action, source=args.supabase_breaker_source, product=args.supabase_breaker_product, reason=args.supabase_breaker_reason, by=args.supabase_breaker_by, ssh_host=args.supabase_breaker_ssh_host, confirm=bool(getattr(args, "supabase_breaker_confirm", False)), allow_stale_toolkit=bool(getattr(args, "supabase_breaker_allow_stale_toolkit", False)))
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 

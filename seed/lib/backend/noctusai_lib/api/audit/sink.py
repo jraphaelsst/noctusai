@@ -263,10 +263,14 @@ class RealAuditSink:
             self._task = asyncio.create_task(self._flush_loop())
 
     async def _flush_loop(self) -> None:
-        while True:
-            batch = await self._collect_batch()
-            if batch:
-                await self._write_batch(batch)
+        # Detached from the request that happened to start it: its own explicit (alert-only) breaker source.
+        from noctusai_lib.primitives.supabase_breaker import source_scope
+
+        with source_scope("bg:audit-flush"):
+            while True:
+                batch = await self._collect_batch()
+                if batch:
+                    await self._write_batch(batch)
 
     async def _collect_batch(self) -> list[AuditEntry]:
         batch: list[AuditEntry] = []

@@ -72,6 +72,12 @@ logger = logging.getLogger(__name__)
 _INVITATIONS_TABLE = "invitations"
 
 
+def _breaker_degraded():
+    from noctusai_lib.primitives.supabase_breaker import get_breaker
+
+    return get_breaker().degraded
+
+
 def _create_health_router(product_name: str, version: str = "0.1.0") -> APIRouter:
     router = APIRouter(tags=["Health"])
 
@@ -93,6 +99,8 @@ def _create_health_router(product_name: str, version: str = "0.1.0") -> APIRoute
             "status": "ok",
             "version": version,
             "product": product_name,
+            # Supabase request breaker running without Redis (trips not persisted, fleet key unreadable)
+            "breaker_degraded": _breaker_degraded(),
             "startup_hook_error": getattr(
                 request.app.state, "startup_hook_error", None
             ),
@@ -701,6 +709,12 @@ def _build_me_router(deps, settings, product_name: str, version: str) -> APIRout
     return create_me_router(deps)
 
 
+def _build_supabase_breaker_router(deps, settings, product_name: str, version: str) -> APIRouter:
+    # Auto-mounted by create_product_app on every product (platform-admin only).
+    from noctusai_seed.supabase_breaker_router import create_supabase_breaker_router
+    return create_supabase_breaker_router(deps, settings)
+
+
 # Maintenance contract for _STANDARD_ROUTERS:
 # Adding a new standard router requires all three of:
 #   (a) adding an entry to this registry,
@@ -721,6 +735,7 @@ _STANDARD_ROUTERS = {
     "auth":           _build_auth_router,
     "mfa":            _build_mfa_router,
     "me":             _build_me_router,
+    "supabase_breaker": _build_supabase_breaker_router,
 }
 
 #: Modules whose standard-router endpoints authenticate INSIDE the framework (a manual check over
@@ -735,6 +750,7 @@ HANDLER_AUTHENTICATED_ROUTER_MODULES: frozenset[str] = frozenset({
     "noctusai_seed.status_pagina_router",
     "noctusai_seed.mfa_router",
     "noctusai_seed.me_router",
+    "noctusai_seed.supabase_breaker_router",
 })
 
 

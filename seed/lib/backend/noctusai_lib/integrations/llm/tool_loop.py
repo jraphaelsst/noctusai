@@ -23,6 +23,7 @@ a side-effecting tool (send a message, book a visit) must not fire twice.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import logging
 import threading
@@ -140,7 +141,8 @@ def run_tool_loop_sync(*args: Any, **kwargs: Any) -> ToolLoopResult:
         except BaseException as exc:  # re-raised on the caller's thread
             box["error"] = exc
 
-    t = threading.Thread(target=_runner)
+    ctx = contextvars.copy_context()  # the helper thread keeps the caller's Supabase-breaker source
+    t = threading.Thread(target=lambda: ctx.run(_runner))
     t.start()
     t.join()
     if "error" in box:

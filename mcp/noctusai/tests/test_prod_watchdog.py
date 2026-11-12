@@ -841,7 +841,7 @@ def test_breaker_script_uses_the_acl_redis_when_the_trip_credential_exists(tmp_p
                        text=True, env=env, timeout=30)
     assert r.returncode == 0 and json.loads(r.stdout) == {"tripped": True, "already": False}
     txt = log.read_text()
-    assert "noctus-redis-acl" in txt and "--user trip" in txt and "--no-auth-warning" in txt and "-e REDISCLI_AUTH" in txt
+    assert "noctus-breaker-redis" in txt and "--user trip" in txt and "--no-auth-warning" in txt and "-e REDISCLI_AUTH" in txt
     assert "SETNX noctus:breaker:fleet" in txt and " SET " not in txt  # the trip user holds +setnx only
     assert "AUTH: s3cr3t-trip-pass" in txt                 # delivered through the environment ...
     assert not any("s3cr3t" in l for l in txt.splitlines() if l.startswith("ARGS:"))  # ... never on a command line
@@ -886,7 +886,7 @@ def test_host_probe_reads_the_breaker_key_from_the_acl_redis_too(tmp_path):
     env = {**_os.environ, "PATH": f"{d}:{_os.environ['PATH']}", "NOCTUS_REDIS_TRIP_PASS_FILE": str(pw_file)}
     out = subprocess.run(["bash", str(WATCHDOG_DIR / "host-probe.sh")], capture_output=True, text=True, env=env, timeout=60)
     assert json.loads(out.stdout.strip().splitlines()[-1])["breaker_tripped"] == 1
-    assert "noctus-redis-acl" in log.read_text() and "--user trip" in log.read_text()
+    assert "noctus-breaker-redis" in log.read_text() and "--user trip" in log.read_text()
 
 
 # ── signature pin through the watchdog: reported as on/off, the value never leaves the process ──

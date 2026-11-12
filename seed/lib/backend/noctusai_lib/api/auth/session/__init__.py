@@ -31,6 +31,7 @@ wave-by-wave plan.
 from noctusai_lib.api.auth.session.api_tokens import (
     ApiTokenResolver,
     FakeApiTokenResolver,
+    NoApiTokensResolver,
     SupabaseApiTokenResolver,
     hash_token,
 )
@@ -149,6 +150,7 @@ __all__ = [
     "ExpiredSessionError",
     "FakeApiTokenAuditWriter",
     "FakeApiTokenResolver",
+    "NoApiTokensResolver",
     "FakeProductTokenAdmin",
     "FakeSessionRevoker",
     "FakeSessionStore",

@@ -19,6 +19,7 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/postgrest-schema-targeting.md
   - CONTEXT/PATTERNS/backend/postgrest-row-cap.md
   - CONTEXT/PATTERNS/backend/polling-request-budget.md
+  - CONTEXT/PATTERNS/backend/supabase-request-breaker.md
   - CONTEXT/PATTERNS/backend/projection-reconcile.md
   - CONTEXT/PATTERNS/backend/request-path-latency.md
   - CONTEXT/PATTERNS/backend/data-in-the-wrong-field.md
@@ -89,6 +90,7 @@ Implement server-side slices to the architect's contracts at the profession's st
 - **Never block the loop:** a no-await handler is `def`, else `run_blocking`/`to_thread`; reuse the pooled/cached clients. → `KB § PATTERNS/backend/request-path-latency.md`
 - **Unbounded select caps at 1 000 silently;** paginate with `iter_paged_rows`, batch `.in_()` via `_batched`. → `KB § PATTERNS/backend/postgrest-row-cap.md`
 - **A forever-loop pays per tick:** write down ticks/day × calls/tick before adding a poller; idle backs off, counts never fetch rows, per-tick gates are cached. → `KB § PATTERNS/backend/polling-request-budget.md`
+- **Background loops run under the Supabase request breaker:** a runaway source is stopped + the owner emailed; a new loop sets its `source_scope` and declares its own polls (`# poll-budget:`); never catch a trip and carry on. → `KB § PATTERNS/backend/supabase-request-breaker.md`
 - **Data in the wrong field ⇒ move it on an exact round-tripping match, never re-ask.** → `KB § PATTERNS/backend/data-in-the-wrong-field.md`
 - **Document extraction is measured on real documents** — every page, no silent truncation, untrusted ⇒ human gate. → `KB § PATTERNS/backend/document-extraction-learnings.md`
 - **Every `UploadFile` route needs a `max_body_path_overrides` entry** (the app refuses to boot otherwise). → `KB § PATTERNS/backend/upload-route-body-override-derivation.md`

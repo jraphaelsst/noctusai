@@ -28,6 +28,7 @@ from noctusai_lib.primitives.exceptions import (
 )
 from .request_memo import RequestMemoMiddleware
 from .request_timing import RequestTimingMiddleware
+from .supabase_source import SupabaseSourceMiddleware
 from .security_headers import SecurityHeadersMiddleware
 from .audit import AuditMiddleware, AuditSink
 from noctusai_lib.integrations.llm.attribution import UsageAttributionMiddleware
@@ -311,6 +312,9 @@ def configure_app(
     # the handler's real 502/504; only the wire status becomes 503 — the one
     # CloudFlare passes through with our body intact. See its docstring.
     app.add_middleware(EdgeSafeStatusMiddleware)
+    # THE outermost middleware (added LAST): every request-handler Supabase call is source `http` (alert-only), also
+    # for what the middlewares inside it do (audit, auth, rate limit). Product middleware is added after create.
+    app.add_middleware(SupabaseSourceMiddleware)
 
     # -----------------------------------------------------------------------
     # Exception handlers

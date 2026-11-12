@@ -36,6 +36,7 @@ deploy surfaces *all* of its gaps in one error rather than first-fail.
 from __future__ import annotations
 
 import os
+from typing import Mapping, Optional
 
 # Env values matching one of these mark an explicit deploy context. The VPS
 # sets ``APP_ENV=production``; CI/preview environments may set ``staging``.
@@ -126,10 +127,16 @@ def is_deploy_context() -> bool:
     A plain dev shell sets neither, so this returns ``False`` there — and the
     ``required_in_prod`` config arms become no-ops, preserving dev defaults.
     """
-    if os.environ.get("APP_ENV", "").strip().lower() in _DEPLOY_APP_ENVS:
+    return is_deploy_context_in(os.environ)
+
+
+def is_deploy_context_in(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """:func:`is_deploy_context` judged against an EXPLICIT env mapping (tests, config parsing); ``None`` = ``os.environ``."""
+    env = os.environ if environ is None else environ
+    if env.get("APP_ENV", "").strip().lower() in _DEPLOY_APP_ENVS:
         return True
 
-    for key, value in os.environ.items():
+    for key, value in env.items():
         if (
             key.startswith(_PRODUCT_URL_PREFIX)
             and key != _PRODUCT_URL_PATTERN_KEY

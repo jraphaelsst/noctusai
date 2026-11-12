@@ -187,6 +187,7 @@ def register_all(server) -> None:
     from . import vps_exec
     from . import vps_exec_sql
     from . import source_register
+    from . import supabase_breaker
     from . import supabase_request_budget
 
     absorption_tracking.register(server)
@@ -364,6 +365,7 @@ def register_all(server) -> None:
     vps_exec.register(server)
     vps_exec_sql.register(server)
     source_register.register(server)
+    supabase_breaker.register(server)
     supabase_request_budget.register(server)
 
 

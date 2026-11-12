@@ -501,6 +501,16 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append("--source-register-confirm")
         return argv
 
+    if tool_name == "supabase_breaker":
+        argv = ["--supabase-breaker"]
+        for k in ("action", "source", "product", "reason", "by", "ssh_host"):
+            v = kwargs.get(k)
+            if v not in (None, ""):
+                argv.append(f"--supabase-breaker-{k.replace('_', '-')}={v}")
+        if kwargs.get("confirm"):
+            argv.append("--supabase-breaker-confirm")
+        return argv
+
     return None
 
 
@@ -535,6 +545,7 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
         "action", "query", "tier_filter", "limit", "source", "outcome", "tier", "label",
         "claim", "evidence", "question", "note", "by", "events", "confirm",
     }),
+    "supabase_breaker": frozenset({"action", "source", "product", "reason", "by", "ssh_host", "confirm"}),
 }
 
 

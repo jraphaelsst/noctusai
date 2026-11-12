@@ -296,9 +296,23 @@ class SupabaseApiTokenResolver:
         )
 
 
+class NoApiTokensResolver:
+    """DECLARED policy: this surface accepts no ``noc_*``/``pk_*`` API tokens at all.
+
+    Not a Fake: legal in a deploy context because the refusal is the intended, named behaviour (a platform-admin
+    surface authenticates a human by session cookie, never a machine token). ``resolve`` always returns ``None``,
+    which ``make_get_auth_context`` turns into a strict 401. A surface that DOES accept tokens must pass a real
+    resolver (``make_api_token_resolver(admin_client, schema=...)``), whose Fake deploy-context refusal stays intact.
+    """
+
+    async def resolve(self, token_secret: str) -> AuthContext | None:
+        return None
+
+
 __all__ = [
     "ApiTokenResolver",
     "FakeApiTokenResolver",
+    "NoApiTokensResolver",
     "SupabaseApiTokenResolver",
     "hash_token",
 ]

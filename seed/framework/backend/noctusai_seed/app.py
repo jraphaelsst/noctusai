@@ -31,6 +31,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from fastapi import FastAPI
+from noctusai_lib.api.supabase_source import SeedFastAPI
 
 from noctusai_lib.domain.ai.consent import configure_consent_module
 from noctusai_lib.logging_config import configure_logging, resolve_json_logs
@@ -383,6 +384,35 @@ def create_product_app(
         else make_run_ledger(_product_slug, lambda: db.get_core_client())
     )
 
+    # 3d. Supabase request breaker (2026-11-10) — every Supabase REST call is counted per source (worker / scheduler /
+    #     http) at the shared transport; a runaway BACKGROUND source is stopped, the owner alerted by email (Resend,
+    #     no Supabase), trips persisted in Redis until a human re-arms. Fake store/alerter under pytest.
+    #     → KB § PATTERNS/backend/supabase-request-breaker.md
+    from noctusai_lib.integrations.supabase_breaker_io import make_breaker_alerter, make_breaker_store
+    from noctusai_lib.primitives.background import spawn_background
+    from noctusai_lib.primitives.supabase_breaker import (
+        STARTUP_SOURCE,
+        configure_breaker,
+        refresh_loop,
+        source_scope,
+    )
+
+    _bk = configure_breaker(
+        slug=_product_slug,
+        store=make_breaker_store(getattr(settings, "redis_url", None), use_fake=_under_pytest()),
+        alerter=make_breaker_alerter(use_fake=_under_pytest()),
+    )
+    from noctusai_lib.config.deploy_config import is_deploy_context as _is_deploy
+    from noctusai_lib.integrations.supabase_breaker_io import RedisBreakerStore as _RedisStore
+
+    if not _under_pytest() and _is_deploy() and not isinstance(_bk.store, _RedisStore):
+        # A deployed process whose breaker has no Redis: trips are in-memory only and the fleet key cannot be read.
+        # One alert + /api/health `breaker_degraded`.
+        _bk.set_degraded("no breaker Redis: breaker trips are not persisted and the fleet key is unreadable")
+    elif not _under_pytest() and getattr(_bk.store, "on_app_redis_fallback", False):
+        _bk.set_degraded("breaker on app-Redis fallback (NOCTUS_BREAKER_REDIS_URL unset): after the ACL cutover every "
+                         "breaker write is refused")
+
     # 3c. Owner-notification catalog (2026-11-09) — the gate every owner-facing WhatsApp notification passes:
     #     the owner's per-kind on/off switch (core admin "Notificações") + one ledger row per send in core
     #     `public.notification_sends`. Declared kinds register lazily on the first send (and the product may call
@@ -568,31 +598,39 @@ def create_product_app(
         # instead of a container that merely refuses to exist.
         # → KB § PATTERNS/backend/startup-hook-must-not-be-fatal.md
         app.state.startup_hook_error = None
-        # Owner-notification catalog: publish this product's declared kinds to core at boot, so core's
-        # Notificações page lists every notification before its first send. Off the event loop; the gate's
-        # `register()` never raises (logs ERROR) — a catalog hiccup never blocks serving.
-        try:
-            from noctusai_lib.domain.notification_catalog import get_notification_gate as _gng
-
-            await asyncio.to_thread(_gng(_product_slug).register)
-        except Exception:  # noqa: BLE001 — loud, never fatal (startup-hook-must-not-be-fatal)
-            logger.error("notification catalog registration failed at startup for %s", _product_slug, exc_info=True)
-        if lifespan_startup:
+        # Supabase request breaker: boot work is its own source (a heavy boot must not trip `unattributed`).
+        with source_scope(STARTUP_SOURCE):
+            # Owner-notification catalog: publish this product's declared kinds to core at boot, so core's
+            # Notificações page lists every notification before its first send. Off the event loop; the gate's
+            # `register()` never raises (logs ERROR) — a catalog hiccup never blocks serving.
             try:
-                await lifespan_startup() if _is_coroutine(lifespan_startup) else lifespan_startup()
-            except Exception as exc:  # noqa: BLE001 — see the block comment above
-                app.state.startup_hook_error = f"{type(exc).__name__}: {exc}"
-                logger.exception(
-                    "%s: lifespan_startup hook %r FAILED — the API is starting "
-                    "anyway and serving DEGRADED; /api/health reports "
-                    "startup_hook_error. Whatever this hook was supposed to do "
-                    "(recovery / scheduling) did NOT happen.",
-                    name,
-                    getattr(lifespan_startup, "__name__", lifespan_startup),
-                )
+                from noctusai_lib.domain.notification_catalog import get_notification_gate as _gng
+
+                await asyncio.to_thread(_gng(_product_slug).register)
+            except Exception:  # noqa: BLE001 — loud, never fatal (startup-hook-must-not-be-fatal)
+                logger.error("notification catalog registration failed at startup for %s", _product_slug, exc_info=True)
+            if lifespan_startup:
+                try:
+                    await lifespan_startup() if _is_coroutine(lifespan_startup) else lifespan_startup()
+                except Exception as exc:  # noqa: BLE001 — see the block comment above
+                    app.state.startup_hook_error = f"{type(exc).__name__}: {exc}"
+                    logger.exception(
+                        "%s: lifespan_startup hook %r FAILED — the API is starting "
+                        "anyway and serving DEGRADED; /api/health reports "
+                        "startup_hook_error. Whatever this hook was supposed to do "
+                        "(recovery / scheduling) did NOT happen.",
+                        name,
+                        getattr(lifespan_startup, "__name__", lifespan_startup),
+                    )
+        _bk_stop = asyncio.Event()
+        if not _under_pytest():
+            await asyncio.to_thread(_bk.probe)  # boot probe: a refused credential degrades the breaker NOW, not at the first trip
+            # seed-owned 10 s ticker (ONE Redis MGET): processes without a Worker/scheduler still see the fleet key
+            spawn_background("breaker-refresh", refresh_loop(_bk_stop))
         try:
             yield
         finally:
+            _bk_stop.set()
             if lifespan_shutdown:
                 # Same reasoning on the way out, plus one more: an exception
                 # here would skip `shutdown_llm()` below and leak the provider
@@ -618,7 +656,7 @@ def create_product_app(
     has_lifespan = True  # now always true — we own shutdown_llm
 
     # 6. Create the FastAPI app
-    app = FastAPI(
+    app = SeedFastAPI(  # outermost `http` source wrapper, also over middleware a product adds later
         title=f"NoctusAI {name} API",
         description=f"Backend API for {name}",
         version=version,
@@ -707,6 +745,8 @@ def create_product_app(
             # "me" (round 2) rides on EVERY product: the seed SPA's access check
             # reads it, so opting out would strand it.
             *(() if "me" in standard_routers else ("me",)),
+            # "supabase_breaker" rides on EVERY product: the platform-admin re-arm surface of the request breaker.
+            *(() if "supabase_breaker" in standard_routers else ("supabase_breaker",)),
         ],
         team_policy=team,
     ):

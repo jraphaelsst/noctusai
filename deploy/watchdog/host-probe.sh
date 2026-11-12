@@ -100,7 +100,7 @@ if [[ -r "$PROBE_PASS_FILE" ]]; then acl_user="probe"; acl_file="$PROBE_PASS_FIL
 elif [[ -r "$TRIP_PASS_FILE" ]]; then acl_user="trip"; acl_file="$TRIP_PASS_FILE"; fi
 if [[ -n "$acl_user" ]]; then
   export REDISCLI_AUTH; REDISCLI_AUTH="$(cat "$acl_file")"
-  bt="$(timeout 10 docker exec -e REDISCLI_AUTH "${NOCTUS_REDIS_CONTAINER:-noctus-redis-acl}" redis-cli --no-auth-warning --user "$acl_user" EXISTS noctus:breaker:fleet 2>/dev/null)"
+  bt="$(timeout 10 docker exec -e REDISCLI_AUTH "${NOCTUS_REDIS_CONTAINER:-noctus-breaker-redis}" redis-cli --no-auth-warning --user "$acl_user" EXISTS noctus:breaker:fleet 2>/dev/null)"
 else
   bt="$(timeout 10 docker exec "${NOCTUS_REDIS_CONTAINER:-noctus-redis}" redis-cli EXISTS noctus:breaker:fleet 2>/dev/null)"
 fi

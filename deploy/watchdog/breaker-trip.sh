@@ -32,11 +32,11 @@ MAX_BYTES=2048
 
 # Redis target. Today: the unauthenticated `noctus-redis`. Once the ACL Redis lands
 # (redis-acl-lockdown doc §5, branch feat/redis-acl-lockdown) the `trip` credential file exists and we talk to
-# `noctus-redis-acl` as user `trip`, the password coming from that root-owned file through the
+# `noctus-breaker-redis` as user `trip`, the password coming from that root-owned file through the
 # ENVIRONMENT (docker exec -e REDISCLI_AUTH), never a command line.
 TRIP_PASS_FILE="${NOCTUS_REDIS_TRIP_PASS_FILE:-/opt/noctus/noctusai/deploy/fleet/redis-auth/trip.pass}"
 if [[ -r "$TRIP_PASS_FILE" ]]; then
-  REDIS_CONTAINER="${NOCTUS_REDIS_CONTAINER:-noctus-redis-acl}"
+  REDIS_CONTAINER="${NOCTUS_REDIS_CONTAINER:-noctus-breaker-redis}"
   export REDISCLI_AUTH; REDISCLI_AUTH="$(cat "$TRIP_PASS_FILE")"
   rcli() { timeout 15 docker exec -e REDISCLI_AUTH "$REDIS_CONTAINER" redis-cli --no-auth-warning --user trip "$@" 2>/dev/null; }
 else

@@ -272,7 +272,8 @@ class FakeJobRepository:
         self._jobs[job.id] = job
         if dedupe_key is not None:
             self._dedupe_index[dedupe_key] = job.id
-        notify_enqueued(job.type)
+        if job.scheduled_for is None or job.scheduled_for <= now:  # a future-dated job is not claimable yet: no wake
+            notify_enqueued(job.type)
         return job
 
     async def claim_next(
@@ -671,8 +672,12 @@ class RealSupabaseJobRepository:
         _ = result  # Keep linter happy without assuming response shape.
         # A job just landed in this process: the cached queue_stats is stale
         # (claim gates must see it) and any in-process worker should wake.
-        self._stats_cache.invalidate()  # also fences a stats read already in flight
-        notify_enqueued(job.type)
+        # ALWAYS invalidate (also fences a stats read already in flight): the queue COUNT changed even when nothing is
+        # claimable yet (a future-dated job still shows in `queue_stats`). Wake only a claimable job: a future-dated one
+        # must not cut an idle worker's sleep (it would poll for nothing — the breaker's wake-laundering shape).
+        self._stats_cache.invalidate()
+        if job.scheduled_for is None or job.scheduled_for <= job.created_at:
+            notify_enqueued(job.type)
         return job
 
     async def claim_next(
