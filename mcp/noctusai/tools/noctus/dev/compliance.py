@@ -17488,6 +17488,16 @@ def check_migration_applied_ledger_drift(
 
     supabase_names: list[str] | None = None  # lazy-fetched, shared across products
 
+    # Every product on disk (asleep ones too: their rows are still in the shared catalog) by slug + schema token.
+    other_product_tokens: set[str] = {"core"}
+    for d in products_root.iterdir():
+        if d.is_dir() and not d.name.startswith("."):
+            other_product_tokens.add(d.name.replace("-", "_"))
+            try:
+                other_product_tokens.add(_resolve_schema(d.name, None, products_root)[0])
+            except Exception as exc:  # a product without a resolvable schema still contributes its slug token
+                logger.debug("check_migration_applied_ledger_drift: no schema for %s: %s", d.name, exc)
+
     def _fetch_supabase_migration_names() -> list[str]:
         result = executor.execute(
             "SELECT name FROM supabase_migrations.schema_migrations ORDER BY name;"
@@ -17553,12 +17563,24 @@ def check_migration_applied_ledger_drift(
         if not supabase_names:
             continue
 
+        # A catalog row is THIS product's evidence only when it is the bare stem or `<prefix>_<stem>` with a
+        # prefix that names no OTHER product (own slug, own schema or an alias like `sw_` all pass). 2026-11-12:
+        # a bare substring match read p-studio's `p_studio_005_status_pagina_dev_visibility` as assistant's
+        # 005 (ten products share that seed file), and the advice -- repair the ledger -- would have recorded
+        # an unapplied migration as applied.
+        own_tokens = {slug.replace("-", "_"), schema}
+        foreign_tokens = other_product_tokens - own_tokens
+
+        def _is_own_row(n: str, stem: str) -> bool:
+            if n == stem:
+                return True
+            if not n.endswith("_" + stem):
+                return False
+            return n[: -len(stem) - 1] not in foreign_tokens
+
         for filename in missing:
             stem = filename[:-4] if filename.endswith(".sql") else filename
-            hit = next(
-                (n for n in supabase_names if stem in n or n in stem),
-                None,
-            )
+            hit = next((n for n in supabase_names if _is_own_row(n, stem)), None)
             if hit is None:
                 continue
             findings.append({
