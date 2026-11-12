@@ -50,7 +50,6 @@ from app.channels import admissao, extracao
 from app.channels import turno as turno_mod
 from app.channels.bubbles import split_into_bubbles
 from app.channels.controles import MAX_RETOMADAS_PADRAO, ControleIndisponivel, LeadIdentidade, aplicar_controles
-from app.stores.agent_controles import NucleoIndisponivel
 from app.channels.retention import ChannelRetention
 from app.config import settings
 from app.dependencies import (
@@ -524,8 +523,8 @@ def channel_agent_status(
     configured = bool(basis is not None and key_resolver(basis.provider, ctx.org_id))
     try:
         controle = controles.get(ctx.org_id, agent.id)
-    except NucleoIndisponivel as exc:  # the testing state (Julia's core) is unreadable: fail closed
-        logger.exception("agents.status.nucleo_indisponivel org_id=%s agent=%s", ctx.org_id, agent.key)
+    except Exception as exc:  # the control (or the testing state of Julia's core) is unreadable: fail closed, 503
+        logger.exception("agents.status.controle_indisponivel org_id=%s agent=%s cause=%s", ctx.org_id, agent.key, type(exc).__name__)
         raise ControleIndisponivel().as_http_exception() from exc
     desligado_plataforma = bool(plataforma.get(agent.key).desligado)
     svc = turno_mod.ServicosCanal(
@@ -544,6 +543,7 @@ def channel_agent_status(
         aceita_novos_leads=controle.aceita_novos_leads,
         desligado_plataforma=desligado_plataforma,
         modo_avaliacao=controle.modo_avaliacao,
+        contatos_permitidos=list(controle.contatos_permitidos),
         threads_abertas=len(threads.list_abertos(ctx.org_id, agent.id)),
         conteudo_completo=turno_mod.conteudo_completo(svc, ctx.org_id, agent),
     )

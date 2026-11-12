@@ -9,6 +9,7 @@ import { env } from "@noctusai/lib";
 import { toast } from "sonner";
 import { Badge, Button, Dialog, DialogBody, DialogFooter, DialogHeader, Switch } from "@noctusai/lib/design-system";
 import type { Controle, ModoOperacao } from "@/api/studio/types-julia";
+import { ContatosPermitidosSection } from "@/components/studio/ContatosPermitidosSection";
 import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import { useControle, useControlePlataforma, useSetControle, useSetControlePlataforma } from "@/hooks/studio/useControle";
 import { useIsPlatformAdmin } from "@/hooks/useIsPlatformAdmin";
@@ -352,6 +353,8 @@ export function ControlesCard({ agentKey }: { agentKey: string }) {
           )}
         </div>
       )}
+
+      <ContatosPermitidosSection agentKey={agentKey} c={c} isAdmin={isAdmin} />
 
       {isAdmin && (
         <div className="flex flex-wrap items-end gap-2">

@@ -187,6 +187,7 @@ AUDIT_ACOES = (
     "historico_transferido", "agente_arquivado",
     "plataforma_desligada", "plataforma_religada", "fase_testes_alterada",  # fase_testes_alterada: legacy, kept so old audit rows stay valid
     "modo_avaliacao_alterado",
+    "contatos_permitidos_alterados",  # 085: the per-agent phone allow-list (empty = everybody)
 )
 #: 048 ``agents.excluir_agente`` guard codes (the 409 ``code`` of ``DELETE /api/studio/agents/{key}``).
 EXCLUSAO_CODIGOS = ("publicado", "tem_instancias", "tem_conversas", "tem_canal", "ativo")
