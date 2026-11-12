@@ -2,7 +2,7 @@
 ``ponto_cache``, the mechanism-run summary and the replace-set optimistic lock. Strict 401/403 on each."""
 from __future__ import annotations
 
-from tests.julia_body import JULIA_BODY
+from tests.julia_body import JULIA_BODY, com_pai
 
 import importlib
 from uuid import UUID, uuid4
@@ -24,7 +24,7 @@ UI = "/api/studio"
 def _julia(studio):
     studio.store.mark_platform_org(DEFAULT_ORG_ID)
     _base._platform_admin(studio)
-    assert studio.post(f"{PLAT}/agents", json=JULIA_BODY).status_code == 201
+    assert studio.post(f"{PLAT}/agents", json=com_pai(studio)).status_code == 201
     studio.as_role("owner")
     _base._fill(studio)
     return studio.store.get_agent(DEFAULT_ORG_ID, "julia")

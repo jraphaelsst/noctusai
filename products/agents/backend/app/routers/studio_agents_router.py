@@ -1137,6 +1137,11 @@ def publish_draft(
             "A ferramenta 'oferecer_opcoes' está ativa e o padrão de qualificação não indica o catálogo de opções.",
             prontidao=itens_prontidao,
         )
+    if itens_prontidao and any(i["codigo"] == "sem_modelo_pai" for i in itens_prontidao):
+        raise http_error(
+            409, "sem_modelo_pai", "O agente não tem um modelo (template) pai: escolha um antes de publicar.",
+            prontidao=itens_prontidao,
+        )
     # 073 chain gate, direct (like the fallback number): a failed readiness read must not let a child past an unvalidated base
     if agent.pai_agent_id is not None:
         nao_validadas = base_nao_validada(coletar_camadas_base(

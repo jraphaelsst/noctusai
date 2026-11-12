@@ -138,7 +138,7 @@ def gen(studio):
     v = skills.criar_rascunho(sk.id, None, None)
     skills.salvar_rascunho(v, {"descricao_modelo": "quando qualificar", "corpo": "corpo"})
     skills.publicar(v, DEFAULT_USER_ID)
-    assert studio.post(f"{PLAT}/agents", json={"key": "alvo", "nome": "Alvo"}).status_code == 201
+    assert studio.post(f"{PLAT}/agents", json={"key": "alvo", "nome": "Alvo", "modelo": True}).status_code == 201
     try:
         yield w
     finally:
@@ -151,7 +151,7 @@ def gen(studio):
 def _gerador(w, *, sem: tuple[str, ...] = (), publicar: bool = True, key: str = "criador"):
     s = w.studio
     made = s.post(f"{PLAT}/agents", json={
-        "key": key, "nome": "Criador", "papel": "gerador",
+        "key": key, "nome": "Criador", "papel": "gerador", "modelo": True,
         "rascunho_padrao": {"provider": "anthropic", "model": "claude-opus-5", "effort": "high"}})
     assert made.status_code == 201, made.text
     agent = s.store.get_agent(DEFAULT_ORG_ID, key)
@@ -167,7 +167,7 @@ def _gerador(w, *, sem: tuple[str, ...] = (), publicar: bool = True, key: str = 
 
 def _exemplar(w):
     s = w.studio
-    s.post(f"{PLAT}/agents", json={"key": "modelo", "nome": "Modelo"})
+    s.post(f"{PLAT}/agents", json={"key": "modelo", "nome": "Modelo", "modelo": True})
     assert s.put(f"{PLAT}/agentes/modelo/exemplar", json={"exemplar": True}).status_code == 200
     agent = s.store.get_agent(DEFAULT_ORG_ID, "modelo")
     draft = s.store.get_draft(DEFAULT_ORG_ID, agent.id)
@@ -612,7 +612,7 @@ class TestCompletenessAndLearning:
 
 class TestCreateWithBriefing:
     def test_a_new_definition_with_a_briefing_starts_a_generation(self, gen):
-        r = gen.studio.post(f"{PLAT}/agents", json={"key": "novo-agente", "nome": "Novo", "briefing": BRIEFING})
+        r = gen.studio.post(f"{PLAT}/agents", json={"key": "novo-agente", "nome": "Novo", "modelo": True, "briefing": BRIEFING})
         assert r.status_code == 201, r.text
         g = r.json()["geracao"]
         assert g["status"] == "pendente" and g["agent_key"] == "novo-agente" and len(g["areas"]) == len(AREAS)
@@ -630,7 +630,7 @@ class TestCreateWithBriefing:
         assert r.status_code == 409 and r.json()["code"] == "agente_ja_existe" and gen.pending == []
 
     def test_without_a_briefing_the_response_has_no_generation(self, gen):
-        assert gen.studio.post(f"{PLAT}/agents", json={"key": "so-casca", "nome": "Casca"}).json()["geracao"] is None
+        assert gen.studio.post(f"{PLAT}/agents", json={"key": "so-casca", "nome": "Casca", "modelo": True}).json()["geracao"] is None
 
 
 def test_hashes_are_the_single_identity_of_an_item(gen):
@@ -707,7 +707,7 @@ class TestEvalsArea:
 
 def _segundo_exemplar(w):
     s = w.studio
-    s.post(f"{PLAT}/agents", json={"key": "outro-modelo", "nome": "Outro", "padrao_qualificacao": "imob-lead"})
+    s.post(f"{PLAT}/agents", json={"key": "outro-modelo", "nome": "Outro", "modelo": True, "padrao_qualificacao": "imob-lead"})
     assert s.put(f"{PLAT}/agentes/outro-modelo/exemplar", json={"exemplar": True}).status_code == 200
     agent = s.store.get_agent(DEFAULT_ORG_ID, "outro-modelo")
     draft = s.store.get_draft(DEFAULT_ORG_ID, agent.id)

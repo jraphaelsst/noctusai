@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 
-from tests.julia_body import JULIA_BODY
+from tests.julia_body import JULIA_BODY, com_pai
 
 from uuid import NAMESPACE_OID, UUID, uuid5
 
@@ -71,7 +71,7 @@ def plat(studio):
     """The platform org is the default org; ``julia``'s definition exists with its (empty) draft."""
     studio.store.mark_platform_org(DEFAULT_ORG_ID)
     _platform_admin(studio)
-    resp = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
+    resp = studio.post(f"{PLAT}/agents", json=com_pai(studio))
     assert resp.status_code == 201, resp.text
     # 050: julia is product-owned (closed) -- the other org holds an instance only because it was granted
     studio.store.grant_definition_org(studio.store.get_platform_definition("julia").id, OTHER_ORG_ID)
@@ -104,12 +104,12 @@ class TestPlatformDefinition:
     def test_platform_admin_creates_it_once_in_the_platform_org(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)
         _platform_admin(studio)
-        first = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
+        first = studio.post(f"{PLAT}/agents", json=com_pai(studio))
         assert first.status_code == 201
         assert first.json()["definition_scope"] == "plataforma" and first.json()["conteudo_modo"] == "linhas"
-        dup = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
+        dup = studio.post(f"{PLAT}/agents", json=com_pai(studio))
         assert dup.status_code == 409 and dup.json()["code"] == "agente_ja_existe"
-        again = studio.post(f"{PLAT}/agents", json={**JULIA_BODY, "reutilizar": True})
+        again = studio.post(f"{PLAT}/agents", json=com_pai(studio, {**JULIA_BODY, "reutilizar": True}))
         assert again.status_code == 201 and again.json()["id"] == first.json()["id"]
         draft = studio.store.get_draft(DEFAULT_ORG_ID, UUID(first.json()["id"]))
         assert draft.versao == 1 and studio.store.list_sections(DEFAULT_ORG_ID, draft.id) == []
@@ -140,7 +140,7 @@ class TestPlatformDefinition:
         assert sdr.status_code == 201, sdr.text
         assert sdr.json()["pai_agent_id"] == base.json()["id"]
         assert studio.store.get_platform_definition("sdr-base").pai_agent_id == UUID(base.json()["id"])
-        solto = studio.post(f"{PLAT}/agents", json={"key": "solto", "nome": "Solto"})
+        solto = studio.post(f"{PLAT}/agents", json=com_pai(studio, {"key": "solto", "nome": "Solto"}))
         assert solto.status_code == 201
         filho_de_nao_modelo = studio.post(f"{PLAT}/agents", json={"key": "x1", "nome": "X", "pai_agent_id": solto.json()["id"]})
         assert filho_de_nao_modelo.status_code == 409 and filho_de_nao_modelo.json()["code"] == "pai_invalido"
@@ -151,15 +151,35 @@ class TestPlatformDefinition:
         nulo = studio.patch(f"{PLAT}/agents/solto", json={"modelo": None})
         assert nulo.status_code == 422 and nulo.json()["code"] == "invalid_field"
 
+    def test_a_non_template_runtime_agent_needs_a_parent_template_at_creation(self, studio):
+        studio.store.mark_platform_org(DEFAULT_ORG_ID)
+        _platform_admin(studio)
+        raiz = studio.post(f"{PLAT}/agents", json={"key": "agente-base", "nome": "Agente base", "modelo": True})
+        assert raiz.status_code == 201, raiz.text  # a template may be a root
+        solto = studio.post(f"{PLAT}/agents", json={"key": "assistente", "nome": "Assistente"})
+        assert solto.status_code == 422, solto.text
+        corpo = solto.json()
+        assert corpo["code"] == "pai_obrigatorio" and "agente-base" in corpo["detail"]
+        assert "agente-base" in corpo["message"]
+        assert studio.store.get_platform_definition("assistente") is None  # nothing was created
+        filho = studio.post(f"{PLAT}/agents", json={"key": "assistente", "nome": "Assistente", "pai_agent_id": raiz.json()["id"]})
+        assert filho.status_code == 201, filho.text
+        # a dev agent (not a runtime channel agent) is not a template child
+        dev = studio.post(f"{PLAT}/agents", json={"key": "dev-x", "nome": "Dev", "kind": "dev-executor", "fonte": "db",
+                                                  "superficie_claude": {"tools": ["Read"]}})
+        assert dev.status_code == 201, dev.text
+        # the idempotent re-use of an existing key never demands a parent
+        assert studio.post(f"{PLAT}/agents", json={"key": "assistente", "reutilizar": True}).status_code == 201
+
     def test_the_mirror_rules_are_refused_at_creation(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)
         _platform_admin(studio)
-        runtime_db = studio.post(f"{PLAT}/agents", json={"key": "a1", "nome": "A", "fonte": "db"})
+        runtime_db = studio.post(f"{PLAT}/agents", json=com_pai(studio, {"key": "a1", "nome": "A", "fonte": "db"}))
         assert runtime_db.status_code == 422 and runtime_db.json()["code"] == "invalid_field"
         advisor_bash = studio.post(f"{PLAT}/agents", json={
             "key": "a2", "nome": "A", "kind": "dev-advisor", "fonte": "db", "superficie_claude": {"tools": ["Bash"]}})
         assert advisor_bash.status_code == 422 and "A10" in advisor_bash.json()["detail"]
-        runtime_sup = studio.post(f"{PLAT}/agents", json={"key": "a3", "nome": "A", "superficie_claude": {"tools": ["Read"]}})
+        runtime_sup = studio.post(f"{PLAT}/agents", json=com_pai(studio, {"key": "a3", "nome": "A", "superficie_claude": {"tools": ["Read"]}}))
         assert runtime_sup.status_code == 422
 
     def test_publishing_a_db_source_agent_stores_its_git_mirror(self, studio):
@@ -201,7 +221,7 @@ class TestPlatformDefinition:
     def test_an_org_owner_is_not_a_platform_admin(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)
         studio.as_org_admin_only()
-        resp = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
+        resp = studio.post(f"{PLAT}/agents", json=com_pai(studio))
         assert resp.status_code == 403 and resp.json()["code"] == "platform_admin_required"
         assert studio.get(f"{PLAT}/textos").status_code == 403
 
@@ -210,7 +230,7 @@ class TestPlatformDefinition:
         _platform_admin(studio)
         sem_nome = studio.post(f"{PLAT}/agents", json={"key": "qualquer"})
         assert sem_nome.status_code == 422 and sem_nome.json()["code"] == "nome_obrigatorio"
-        ok = studio.post(f"{PLAT}/agents", json={"key": "qualquer", "nome": "Qualquer"})
+        ok = studio.post(f"{PLAT}/agents", json=com_pai(studio, {"key": "qualquer", "nome": "Qualquer"}))
         assert ok.status_code == 201 and ok.json()["geracao"] is None
         assert studio.post(f"{PLAT}/agents", json={"key": "Chave Ruim", "nome": "x"}).status_code == 422
 
@@ -222,7 +242,7 @@ class TestPlatformDefinition:
             "escopo_qualificacao": "sdr", "padrao_qualificacao": "imob-lead", "instanciavel": False,
             "rascunho_padrao": {"provider": "openai", "model": "gpt-5.6-terra", "max_turns": 8},
         }
-        made = studio.post(f"{PLAT}/agents", json=body).json()
+        made = studio.post(f"{PLAT}/agents", json=com_pai(studio, body)).json()
         assert (made["runtime"], made["owner_product"], made["usa_canais"]) == ("llm", "social-wiring", True)
         assert (made["escopo_qualificacao"], made["padrao_qualificacao"], made["instanciavel"]) == ("sdr", "imob-lead", False)
         draft = studio.store.get_draft(DEFAULT_ORG_ID, UUID(made["id"]))
@@ -238,9 +258,9 @@ class TestPlatformDefinition:
     def test_a_product_owned_definition_cannot_be_opened_and_is_granted_per_org(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)
         _platform_admin(studio)
-        refused = studio.post(f"{PLAT}/agents", json={**JULIA_BODY, "key": "aberta", "instanciavel": True})
+        refused = studio.post(f"{PLAT}/agents", json=com_pai(studio, {**JULIA_BODY, "key": "aberta", "instanciavel": True}))
         assert refused.status_code == 422 and refused.json()["code"] == "invalid_field"
-        assert studio.post(f"{PLAT}/agents", json={**JULIA_BODY, "key": "fechada"}).status_code == 201
+        assert studio.post(f"{PLAT}/agents", json=com_pai(studio, {**JULIA_BODY, "key": "fechada"})).status_code == 201
         org = "11111111-2222-4333-8444-555555555555"
         first = studio.post(f"{PLAT}/agents/fechada/grants", json={"org_id": org})
         assert first.status_code == 201 and first.json()["created"] is True and first.json()["org_ids"] == [org]
@@ -252,13 +272,13 @@ class TestPlatformDefinition:
     def test_there_is_at_most_one_generator(self, studio):
         studio.store.mark_platform_org(DEFAULT_ORG_ID)
         _platform_admin(studio)
-        assert studio.post(f"{PLAT}/agents", json={"key": "gerador-a", "nome": "A", "papel": "gerador"}).status_code == 201
-        dup = studio.post(f"{PLAT}/agents", json={"key": "gerador-b", "nome": "B", "papel": "gerador"})
+        assert studio.post(f"{PLAT}/agents", json=com_pai(studio, {"key": "gerador-a", "nome": "A", "papel": "gerador"})).status_code == 201
+        dup = studio.post(f"{PLAT}/agents", json=com_pai(studio, {"key": "gerador-b", "nome": "B", "papel": "gerador"}))
         assert dup.status_code == 409 and dup.json()["code"] == "gerador_ja_existe"
 
     def test_a_non_platform_org_cannot_hold_the_definition(self, studio):
         _platform_admin(studio)  # not flagged as the platform org
-        resp = studio.post(f"{PLAT}/agents", json=JULIA_BODY)
+        resp = studio.post(f"{PLAT}/agents", json={"key": "julia", "nome": "Julia", "modelo": True})
         assert resp.status_code == 409 and resp.json()["code"] == "definition_not_platform"
 
     def test_platform_texts_round_trip(self, studio):
