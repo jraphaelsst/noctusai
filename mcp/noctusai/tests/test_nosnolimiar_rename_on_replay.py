@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from settings import REPO_ROOT
 from tools.noctus.dev import migration_replay as mr
 
@@ -44,13 +46,23 @@ def _section(sql: str, start: str, end: str) -> str:
 
 
 # ---------------------------------------------------------------- dry-run == real (pure text) ---------------------
-def test_dry_run_body_is_byte_identical_to_cutover():
-    real = (_RENAME / "cutover.sql").read_text(encoding="utf-8").split("\n")
-    dry = (_RENAME / "cutover-dry-run.sql").read_text(encoding="utf-8").split("\n")
+@pytest.mark.parametrize("name", ["cutover", "cleanup-old-org"])
+def test_dry_run_body_is_byte_identical_to_the_real_script(name):
+    real = (_RENAME / f"{name}.sql").read_text(encoding="utf-8").split("\n")
+    dry = (_RENAME / f"{name}-dry-run.sql").read_text(encoding="utf-8").split("\n")
     assert len(real) == len(dry)
-    assert real[1:-2] == dry[1:-2], "cutover-dry-run.sql drifted from cutover.sql -- regenerate it"
+    assert real[1:-2] == dry[1:-2], f"{name}-dry-run.sql drifted from {name}.sql -- regenerate it"
     assert dry[0] == "-- *** DRY RUN (ends in ROLLBACK) *** " + real[0][3:]
     assert real[-2] == "COMMIT;" and dry[-2].startswith("ROLLBACK;")
+
+
+def test_the_window_script_deletes_nothing_the_old_org_goes_in_the_deferred_cleanup():
+    """Owner delegation 2026-11-12: the old org is deleted >= 7 days after the window, never inside it."""
+    win = (_RENAME / "cutover.sql").read_text(encoding="utf-8")
+    for forbidden in ("DELETE FROM", "DROP ", "TRUNCATE", "core.audit_log_purge"):
+        assert forbidden not in win, f"cutover.sql (the window) must not contain {forbidden!r}: irreversible steps live in cleanup-old-org.sql"
+    late = (_RENAME / "cleanup-old-org.sql").read_text(encoding="utf-8")
+    assert "DELETE FROM public.organizations" in late and "still have MT as home org" in late
 
 
 # ---------------------------------------------------------------- cutover section 3: one branding per org --------
@@ -81,7 +93,7 @@ END $$;
 
 
 def test_section3_deletes_mt_brand_never_moves_it(pglite):
-    sql = (_RENAME / "cutover.sql").read_text(encoding="utf-8")
+    sql = (_RENAME / "cleanup-old-org.sql").read_text(encoding="utf-8")
     sec3 = _section(sql, "-- ── 3 · social_wiring", "-- ── 4 ·")
     assert "SET org_id" not in sec3, "section 3 must never MOVE social_wiring rows to NnL (one branding per org)"
     steps = [
@@ -126,7 +138,7 @@ SET session_replication_role = origin;
 
 
 def test_inventory_allows_the_allowlist_and_blocks_everything_else(pglite):
-    sql = (_RENAME / "cutover.sql").read_text(encoding="utf-8")
+    sql = (_RENAME / "cleanup-old-org.sql").read_text(encoding="utf-8")
     inv = _section(sql, "-- ── 6a", "-- ── 6 ·")
     steps = mr._steps_for(_ROOT, "core", set(), "worktree", {})
     steps += [
