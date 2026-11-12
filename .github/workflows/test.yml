@@ -231,64 +231,13 @@ jobs:
           # shellcheck disable=SC2001  # sed line-prefix reads clearer than a ${var//} expansion
           echo "$CHANGED" | sed 's/^/  /'
 
-          # (a) A diff touching ONLY project-history/*.ndjson needs zero code
-          # verification — every heavy job below skips via job-level `if:`.
-          NON_LEDGER="$(echo "$CHANGED" | grep -vE '^project-history/.*\.ndjson$' || true)"
-          if [ -z "$NON_LEDGER" ]; then
-            {
-              echo "run_heavy=false"
-              echo "shared_changed=false"
-              echo "harness_changed=false"
-              echo "changed_products=,"
-            } >> "$GITHUB_OUTPUT"
-            echo "scope: project-history/*.ndjson-only diff → every heavy job skipped"
-            exit 0
-          fi
-          echo "run_heavy=true" >> "$GITHUB_OUTPUT"
-
-          # (a2) Claude Code mod surface (`harness-mod-tests`). Computed BEFORE
-          # the shared-root early exit below so a `.github/` change that also
-          # touches a mod is never missed.
-          # here-string, NEVER `echo "$CHANGED" | grep -q` under `set -o pipefail`: grep -q exits on
-          # the first match, echo of a large diff takes SIGPIPE, pipefail makes the pipeline
-          # non-zero and the `if` reads a MATCH as no-match (2026-10-06: harness-mod-tests skipped
-          # on the very commits that changed the mod; same latent false-negative here).
-          if grep -qE '^(\.claude/mods/|\.claude-plugin/|\.claude/settings\.json$)' <<< "$CHANGED"; then
-            echo "harness_changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "harness_changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # (b) A shared-root change invalidates every product — same family
-          # of paths build-and-push.yml treats as "rebuild the active set".
-          # `deploy/fleet/active-scope.txt` itself is IN this set: waking a
-          # product (editing the file, or the commit that regenerates it) must
-          # re-test it immediately, not wait for a diff that happens to touch
-          # its own `products/<slug>/` tree.
-          # here-string, NEVER `echo "$CHANGED" | grep -q` under `set -o pipefail`: grep -q exits on
-          # the first match, echo of a large diff takes SIGPIPE, pipefail makes the pipeline
-          # non-zero and the `if` reads a MATCH as no-match (2026-10-06: harness-mod-tests skipped
-          # on the very commits that changed the mod; same latent false-negative here).
-          if grep -qE '^(seed/|requirements.*\.txt$|\.github/|scripts/ci/|package(-lock)?\.json$|deploy/fleet/active-scope\.txt$)' <<< "$CHANGED"; then
-            {
-              echo "shared_changed=true"
-              echo "changed_products=,"
-            } >> "$GITHUB_OUTPUT"
-            echo "scope: shared root changed → every product matrix entry runs"
-            exit 0
-          fi
-
-          # (c) Product-scoped diff — only the touched products' matrix
-          # entries run (product-backend-tests / product-frontend-tests).
-          # Comma-wrapped so a downstream `contains(...)` check is an exact
-          # segment match, never a substring false-positive (e.g. `core` vs
-          # `core-x`).
-          SLUGS="$(echo "$CHANGED" | sed -nE 's#^products/([^/]+)/.*#\1#p' | sort -u | tr '\n' ',')"
-          {
-            echo "shared_changed=false"
-            echo "changed_products=,${SLUGS}"
-          } >> "$GITHUB_OUTPUT"
-          echo "scope: product-scoped diff → changed products: ${SLUGS:-none}"
+          # (a)-(c) PATH classification - ledger-only / harness mods / shared root / touched products - is
+          # ONE Python source shared with the release steward's deliverable item 5 (which must select the
+          # same suites CI does; three 5/5 deliveries were ejected when it did not, 2026-11-10).
+          # Stdlib only. Base selection above stays here: it depends on the GitHub event.
+          SCOPE="$(python3 mcp/noctusai/tools/noctus/dev/ci_scope.py <<< "$CHANGED")"
+          echo "$SCOPE" >> "$GITHUB_OUTPUT"
+          echo "$SCOPE"
 
   product-backend-tests:
     # Per-product backend pytest. WAS 3 hand-maintained jobs (erp/core/pf) — the

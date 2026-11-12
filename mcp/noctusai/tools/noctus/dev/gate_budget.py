@@ -81,6 +81,9 @@ GATE_BUDGETS_S: dict[str, int] = {
     "ci_parity:pytest": 1100,
     "ci_parity:keeper:": 600,
     "ci_parity:prime:": 300,
+    # item 5's directly-touched suites (`local_suites` + `migration_guard_suite`): a product / seed backend suite,
+    # the same generic 600 s the `pytest:` product legs use.
+    "ci_parity:suite:": 600,
     # generic product legs: pytest:agents p90 ~123 s -> 3x ~370, rounded up.
     "pytest:": 600,
     "e2e:": 600,
