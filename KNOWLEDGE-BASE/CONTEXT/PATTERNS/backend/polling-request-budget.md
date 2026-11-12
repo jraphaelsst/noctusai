@@ -56,11 +56,11 @@ audit its hot paths (loops, schedulers, per-request reads) against this rule.
   fleet-wide and passed two reviews (see `noc-learn-refine` 2.2.0, "attack the fix's COST").
 
 ## What fixes it (and where)
-- **Construction:** seed Worker idle backoff (1 s → 30 s cap, reset on claim); `queue_stats` via
+- **Construction:** seed Worker idle backoff (1 s → 300 s cap, reset on claim; W1-C 2026-11-12: the 30 s cap still cost 56k `claim_next_job`/day across ~20 loops, so ~5.8k/day at 300 s); in-process enqueue AND retry-backoff / reschedule wake the worker when due (`jobs/wake.py` `run_at=`); cross-process producers wait <= the cap; `queue_stats` via
   count queries; cached flags; per-tick gates cached. Branch `feat/supabase-egress-polling`.
-- **Backstop (to build):** a keeper refusing `select("*")` / unbounded reads reachable from a
+- **Backstop (built, `check_worker_idle_polling`; seed test `test_jobs_idle_polling_budget.py`):** a keeper refusing `select("*")` / unbounded reads reachable from a
   `claim_gate`, `run_forever` or scheduler tick; a seed test asserting the call count over N idle
-  ticks. Proposed to the owner 2026-11-10 as the follow-up slice to the polling fix.
+  ticks. Escape: `# poll-ok: <reason>`.
 - **Telemetry (to build):** Supabase calls per product per minute + org egress in the daily ops
   check (`noc-daily-ops`), with an alert well before quota.
 

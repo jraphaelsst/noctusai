@@ -213,11 +213,11 @@ def worker_id() -> str:
     return f"assistant-classificador-{socket.gethostname()}-{os.getpid()}"
 
 
-# poll-budget: seed Worker, idle 1s doubling to 30s cap, reset on claim; 1 call/tick idle (claim_next_job); worst 2880/day idle per process (+ ~6 calls per message: claim, read row, LLM ledger + registry measurement, record_classification, complete); idle=backoff+event (in-process notify_enqueued on intake)
+# poll-budget: seed Worker, idle 1s doubling to the seed 300s cap, reset on claim; 1 call/tick idle (claim_next_job); worst 288/day idle per process (+ ~6 calls per message: claim, read row, LLM ledger + registry measurement, record_classification, complete); idle=backoff+event (in-process notify_enqueued on intake)
 def build_worker(repo: JobRepository, classificador: Classificador, *, idle_sleep: Any = None) -> Worker:
     return Worker(
         repo, worker_id=worker_id(), handlers=classificador.handlers(), retry_policy=RETRY_POLICY,
-        poll_interval_seconds=1.0, max_idle_interval_seconds=30.0, lease_seconds=LEASE_SECONDS,
+        poll_interval_seconds=1.0, lease_seconds=LEASE_SECONDS,
         idle_sleep=idle_sleep,
     )
 

@@ -218,7 +218,7 @@ def test_idle_worker_makes_one_claim_per_tick_and_backs_off():
     worker = w.build_worker(_Repo(), w.Classificador(None), idle_sleep=_sleep)
     _run(worker.run_forever(stop_event=stop))
     assert calls["claim"] == 10  # one call per idle tick, nothing else on the wire
-    assert sleeps[:6] == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0] and max(sleeps) == 30.0
+    assert sleeps[:9] == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0] and max(sleeps) == 300.0  # seed cap (W1-C)
 
 
 def test_replay_enqueue_accepts_skipped_budget_rows(registro):

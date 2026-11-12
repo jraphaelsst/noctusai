@@ -69,6 +69,12 @@ from noctusai_lib.domain.jobs.retry_policy import (
 
 logger = logging.getLogger(__name__)
 
+# Idle-poll cap. 86400 / 300 = 288 claim RPCs/day per idle worker; ~20 worker
+# loops fleet-wide ~= 5.8k/day (was 56k/day at the old 30s cap, W1-C 2026-11-12).
+# Do not lower it per product: in-process enqueue/retry/reschedule wake the
+# worker (`jobs/wake.py`); only cross-process producers wait the full cap.
+DEFAULT_MAX_IDLE_INTERVAL_SECONDS = 300.0
+
 
 # A handler takes a Job and returns when its work is done. Raising any
 # exception triggers a retry; raising DeadLetterError lands directly on
@@ -100,7 +106,7 @@ class Worker:
         lease_seconds: float = 600.0,
         heartbeat_interval_seconds: float | None = None,
         claim_gate: Callable[[], Awaitable[bool]] | None = None,
-        max_idle_interval_seconds: float = 30.0,
+        max_idle_interval_seconds: float = DEFAULT_MAX_IDLE_INTERVAL_SECONDS,
         idle_backoff_multiplier: float = 2.0,
         idle_sleep: Callable[[float, asyncio.Event | None], Awaitable[None]] | None = None,
         breaker: Breaker | None = None,
@@ -157,8 +163,10 @@ class Worker:
         # quota (every REST call then returned 402). Each consecutive idle
         # poll now doubles the sleep up to `max_idle_interval_seconds`, and
         # the first claimed job resets it to `poll_interval_seconds`. At the
-        # 30s cap that is ~120 claim calls/hour PER worker (~1.2k/hour for ~10
-        # workers). In-process enqueues wake the worker at once (`jobs/wake.py`).
+        # 300s cap that is 12 claim calls/hour PER worker (W1-C: the 30s cap still
+        # cost 56k calls/day fleet-wide). In-process enqueues, retry backoffs and
+        # reschedules wake the worker when due (`jobs/wake.py`). The breaker's
+        # platform floor below only clamps a cap that is TOO LOW.
         _floor = (breaker or get_breaker())._config.min_idle_poll_s
         if max_idle_interval_seconds < _floor and is_deploy_context():
             logger.warning(
@@ -612,6 +620,7 @@ class Worker:
 
 
 __all__ = [
+    "DEFAULT_MAX_IDLE_INTERVAL_SECONDS",
     "JobHandler",
     "Worker",
 ]
