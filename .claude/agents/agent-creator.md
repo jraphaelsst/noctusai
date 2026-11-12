@@ -28,7 +28,7 @@ owns_kb: []
 2. **Pin the checkpoint.** Create the agent as a child of the chosen template's newest published version. It starts with zero own pieces.
 3. **Write only the child's layer.** Market + org content as own pieces. Same key as the parent: append (prose) or replace (single value), and say so in the report.
 4. **Write the child's own eval cases** before the first run. Template cases are generic (no business; placeholders like "Opção A", a free slot). A child's cases use its real context. Each case declares `criticidade` and `depende_de`.
-5. **Run the eval loop under the gate (§3).**
+5. **Run the eval loop under the gate (§3)** — the procedure is skill `noc-iterate`: a plain Run only measures; refinement happens only inside a loop.
 6. **Readiness (prontidão).** Every item green, including the org fallback number. Then hand the owner a report: version, score series, overrides, doubts, cost.
 7. **Owner publishes.** Never this agent.
 
@@ -63,3 +63,4 @@ owns_kb: []
 | 2026-11-09 | 3 | A BASE text can't use a market word in its spec keys (`nome_imobiliaria`) | BASE uses neutral keys (`nome_organizacao`); a child keeps its own keys and its orgs fill both. Never rename a live child's keys during layering |
 | 2026-11-09 | 5 | The council needs a durable, blind record per refine round, tied to the eval run it judged | Wired §3 to the council ledger v1.1 (one session per round, subject = the eval run). In an inline-only session the seats are not independent, so the session records `mode=single_chat`; never claim `subagents` |
 | 2026-11-09 | 6 | "Fallback number" was ambiguous: customer-facing vs where the team is notified; and per-org vs one for all | Owner: it is the NOTIFICATION number, one for every org for now (agents runtime setting, migration 074). Step 6 checks the readiness item; the creator never invents or fills the number |
+| 2026-11-12 | 5 | The owner's first runs on agente-base/sdr-base were plain Runs (no `loop_id`): no loop, no refine, failures sat unfixed. The Studio had no loop card and `noc-iterate` was never written. 7 of the failures were harness (raw placeholder on templates; a narrated skill call judged as the reply) | Wrote skill `noc-iterate` (harness-vs-target split is step 3; harness fixes ship on a branch before the next round); Studio loop card built on its own branch; templates now eval on the channel path |
