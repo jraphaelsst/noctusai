@@ -381,6 +381,27 @@ def test_read_status_maps_github_states():
     assert mq.read_status("o/r", "a" * 40, run=run_none)["state"] == "queued"
 
 
+def test_a_listed_entry_never_shows_an_earlier_enqueues_terminal_verdict(world):
+    # 2026-11-12 (b5): mq-ref-delete b363927bb was re-enqueued at the SAME sha after drain 43111891747 ejected it;
+    # the sha's newest commit status was still that failure, so the watch printed a stale "ejected" for a live entry.
+    sha = enqueue(world, "again", [("scripts/hooks/x", "x\n")], 2000)
+    old = json.dumps({"state": "failure", "description": "ejected (needs_workflow_token): old run",
+                      "target_url": "https://github.com/o/r/actions/runs/43111891747"})
+
+    def run(cmd, cwd=None, **kw):
+        if cmd[:2] == ["gh", "api"]:
+            return 0, old, ""
+        return mq._default_run(cmd, cwd=cwd, **kw)
+    snap = mq.queue_snapshot("o/r", run=run, workdir=str(world["runner"]))
+    [e] = [x for x in snap["entries"] if x["sha"] == sha]
+    assert e["verdict"]["state"] == "queued"
+    assert "stale" in e["verdict"]["detail"] and "43111891747" in e["verdict"]["detail"]
+    # the leaving path still reads the sha's real verdict (by then the drain has written the new one)
+    assert mq.read_status("o/r", sha, run=run)["state"] == "ejected"
+    # non-terminal verdicts pass through untouched
+    assert mq.listed_verdict({"state": "pending", "description": "testing"}) == {"state": "pending", "description": "testing"}
+
+
 def test_cli_merge_queue_status_does_not_crash_on_os_shadowing():
     # 2026-11-05 (reported by noctusai-00): main() has a branch-local
     # `import os`, which makes `os` a local name for the whole function, so
