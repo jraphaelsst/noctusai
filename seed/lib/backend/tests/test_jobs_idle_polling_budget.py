@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 from noctusai_lib.domain.jobs import FakeJobRepository, RetryPolicy, Worker
 from noctusai_lib.domain.jobs.worker import DEFAULT_MAX_IDLE_INTERVAL_SECONDS
+from noctusai_lib.primitives.supabase_breaker import Breaker, BreakerConfig
 
 
 class CountingRepo(FakeJobRepository):
@@ -153,8 +154,10 @@ def test_reschedule_wakes_worker_when_due() -> None:
                 raise RescheduleLater(0.3)
             done.set()
 
+        # floor 0: the breaker clamps RescheduleLater to the platform idle-poll floor (10s); a test needs 0.3s.
         w = Worker(repo, worker_id="w", handlers={"t": handler},
-                   poll_interval_seconds=50.0, max_idle_interval_seconds=300.0)
+                   poll_interval_seconds=50.0, max_idle_interval_seconds=300.0,
+                   breaker=Breaker(config=BreakerConfig(min_idle_poll_s=0.0)))
         stop = asyncio.Event()
         task = asyncio.create_task(w.run_forever(stop_event=stop))
         await asyncio.sleep(0.05)
