@@ -32,6 +32,7 @@ from tools.noctus.dev.verify_db_guards import (  # noqa: E402
     _AGENTS_EMERGENCIA_PROBES,
     _AGENTS_EVAL_LOOP_CONFIG_PROBES,
     _AGENTS_EVAL_LOOP_PROBES,
+    _AGENTS_EVAL_UM_POR_USUARIO_PROBES,
     _AGENTS_FALLBACK_PROBES,
     _AGENTS_GERACAO_PROBES,
     _AGENTS_ISOLATION_PROBES,
@@ -650,6 +651,7 @@ class TestAgentsStudioProbes:
             and p not in _AGENTS_FALLBACK_PROBES
             and p not in _AGENTS_EVAL_LOOP_PROBES  # 075: same replay file
             and p not in _AGENTS_EVAL_LOOP_CONFIG_PROBES  # 086 loop config: same replay file
+            and p not in _AGENTS_EVAL_UM_POR_USUARIO_PROBES  # 087 one run per user: same replay file
             and p not in _AGENTS_EMERGENCIA_PROBES  # 079: same replay file
             and p not in _AGENTS_RETOMADA_PROBES  # 080 follow-up cap: same replay file
             and p not in _AGENTS_CATALOGO_PROBES  # 081 offer catalogue: same replay file

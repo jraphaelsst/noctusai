@@ -5159,7 +5159,9 @@ _AGENTS_EVAL_LOOP_PROBES: tuple[GuardProbe, ...] = (
     _julia_v2_probe(
         probe_id="eval_loops.one_active_loop_per_suite", guard_name="uq_agents_eval_loops_ativo_por_suite",
         migrations=_LOOPS_MIGS, setup="\n    ".join((_JV2_AGENT, _loop_insert("ativo", "NULL", "NULL"))),
-        attack=_loop_insert("ativo", "NULL", "NULL"),
+        # A DIFFERENT user opens the second loop: on the real chain 087's one-per-user trigger would otherwise refuse
+        # first (same started_by), and the probe would prove 087 instead of this per-suite index.
+        attack=_loop_insert("ativo", "NULL", "NULL").replace("v_org);", "gen_random_uuid());"),
         fragments=("uq_agents_eval_loops_ativo_por_suite",), what="a second ACTIVE loop on the same agent and suite",
         rationale="Two loops racing one suite would each read the other's rounds as score noise, so G4 would stop "
                   "(or not) on someone else's run.",
@@ -5187,7 +5189,11 @@ _AGENTS_EVAL_LOOP_CONFIG_PROBES: tuple[GuardProbe, ...] = (
         rationale="The events are the record of who changed the loop target/cap/rounds and when: an editable row is a "
                   "history anyone could rewrite.",
     ),
-    # 087: one eval run / loop per user at a time -- the DB trigger is the race-safe backstop (per-user advisory lock).
+)
+
+# 087: one eval run / loop per user at a time -- the DB trigger is the race-safe backstop (per-user advisory lock).
+# Own group (like 086's): `migrations[-1]` is 087 for all three, so the replay test runs them on the 087 chain.
+_AGENTS_EVAL_UM_POR_USUARIO_PROBES: tuple[GuardProbe, ...] = (
     _julia_v2_probe(
         probe_id="eval_um_por_usuario.run_in_flight_blocks_a_new_loop", guard_name="guard_eval_um_por_usuario",
         migrations=(*_LOOPS_MIGS, "087_eval_um_por_usuario.sql"),
@@ -12522,6 +12528,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_FALLBACK_PROBES,
     *_AGENTS_EVAL_LOOP_PROBES,
     *_AGENTS_EVAL_LOOP_CONFIG_PROBES,
+    *_AGENTS_EVAL_UM_POR_USUARIO_PROBES,
     *_AGENTS_EMERGENCIA_PROBES,
     *_AGENTS_RETOMADA_PROBES,
     *_AGENTS_CATALOGO_PROBES,
