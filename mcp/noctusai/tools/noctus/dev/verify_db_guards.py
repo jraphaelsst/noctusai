@@ -12102,7 +12102,7 @@ END;
 
 
 _AGENT_PRODUCT_GRANT_EVENTOS_APPEND_ONLY_PROBE = GuardProbe(
-    id="agents.grant_eventos.append_only",
+    id="agents.grants.eventos_append_only",
     product="agents",
     schema=_AGENTS_SCHEMA,
     guard_name="guard_agent_product_grant_eventos_append_only",
@@ -12123,7 +12123,7 @@ BEGIN
     RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_AGENTS_SCHEMA}.agent_product_grant_eventos does not exist (migration 083 not applied)';
   END IF;
   INSERT INTO {_AGENTS_SCHEMA}.agent_product_grants (org_id, agent_id, agent_key, product, status)
-  VALUES ('00000000-0000-0000-0000-00000000a003', '00000000-0000-0000-0000-00000000a004', 'noc-probe', 'noc-probe', 'pendente')
+  VALUES (gen_random_uuid(), gen_random_uuid(), 'noc-probe', 'noc-probe', 'pendente')
   RETURNING id INTO v_grant;
   SELECT id INTO v_ev FROM {_AGENTS_SCHEMA}.agent_product_grant_eventos
    WHERE grant_id = v_grant AND event_type = 'grant_criado' LIMIT 1;

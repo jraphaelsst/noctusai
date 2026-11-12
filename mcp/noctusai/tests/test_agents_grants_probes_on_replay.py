@@ -1,4 +1,4 @@
-"""Agents 060 (platform grant ledger, Julia-line D1): the one-live-grant GuardProbe runs on the REAL core + agents chain
+"""Agents 060 (platform grant ledger, Julia-line D1) + 083 (its append-only event log): the grant GuardProbes run on the REAL core + agents chain
 on PGlite and reports `refused`; the table stays service-role only, and the migration applies twice."""
 from __future__ import annotations
 
@@ -19,8 +19,11 @@ def _step(name: str, sql: str) -> dict:
 
 
 def test_the_probe_is_registered():
-    assert [p.id for p in _PROBES] == ["agents.grants.one_live_unique"]
-    assert _PROBES[0].guard_name == "idx_agent_product_grants_one_live" and _PROBES[0].product == "agents"
+    assert [p.id for p in _PROBES] == ["agents.grants.one_live_unique", "agents.grants.eventos_append_only"]
+    assert [p.guard_name for p in _PROBES] == [
+        "idx_agent_product_grants_one_live", "guard_agent_product_grant_eventos_append_only",
+    ]
+    assert {p.product for p in _PROBES} == {"agents"}
 
 
 def test_the_one_live_probe_is_refused_and_the_table_stays_private_on_the_real_chain(pglite):

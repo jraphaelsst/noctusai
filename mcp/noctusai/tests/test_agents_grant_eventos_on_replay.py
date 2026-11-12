@@ -83,7 +83,7 @@ def test_grant_lifecycle_is_recorded_append_only_on_the_real_chain(pglite):
     steps.append(_step("private", _PRIVATE_AND_TIERED))
     steps.append(_step("no_update", "UPDATE agents.agent_product_grant_eventos SET para = 'x';"))
     steps.append(_step("no_delete", "DELETE FROM agents.agent_product_grant_eventos;"))
-    probe = next(p for p in vdg.DEFAULT_REGISTRY if p.id == "agents.grant_eventos.append_only")
+    probe = next(p for p in vdg.DEFAULT_REGISTRY if p.id == "agents.grants.eventos_append_only")
     assert probe.migrations == (Path(_MIG).name,)
     steps.append({"product": "agents", "file": probe.id, "sql": vdg.wrap_rollback_only(probe.sql), "mode": "file",
                   "twice": False})
@@ -97,5 +97,5 @@ def test_grant_lifecycle_is_recorded_append_only_on_the_real_chain(pglite):
     for name in ("no_update", "no_delete"):
         fails = by_file[f"step:{name}"]["failures"]
         assert fails and "append-only" in fails[0]["error"], fails
-    probe_fails = by_file["agents.grant_eventos.append_only"]["failures"]
+    probe_fails = by_file["agents.grants.eventos_append_only"]["failures"]
     assert probe_fails and "NOC_PROBE:refused:" in probe_fails[0]["error"], probe_fails
