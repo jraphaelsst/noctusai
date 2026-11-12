@@ -951,8 +951,9 @@ def _loop_actions(
     pre_version = False
     if action == "loop_iniciar":
         body = _only(_load_payload(payload_path), ("suite", "rodadas_planejadas", "orcamento_usd"), "loop_iniciar")
-        if body.get("suite") not in _SUITES or not isinstance(body.get("rodadas_planejadas"), int):
-            raise ContentError("payload_invalido", f"loop_iniciar precisa de 'suite' ({'|'.join(_SUITES)}) e 'rodadas_planejadas' (inteiro).")
+        # rodadas_planejadas / orcamento_usd are optional: omitted -> the server's platform loop config; no client default/cap.
+        if body.get("suite") not in _SUITES or ("rodadas_planejadas" in body and not isinstance(body["rodadas_planejadas"], int)):
+            raise ContentError("payload_invalido", f"loop_iniciar precisa de 'suite' ({'|'.join(_SUITES)}); 'rodadas_planejadas' (inteiro) e 'orcamento_usd' sao opcionais.")
         method, path = "POST", f"{a}/evals/loops"
     elif action == "loops":
         filt = _only(_load_payload(payload_path), ("suite", "status"), "loops") if payload_path else {}
@@ -1164,7 +1165,7 @@ def register(server) -> None:
             "an exemplar agent key}: AI-generated first DRAFT, background, never publishes) | geracao (chave = run id, "
             "empty = list: progress, cost, lacunas, gerado vs editado) | prontidao (reads what the draft still owes before "
             "publish: blocking items + advisories + pronto_para_publicar) | atualizar_skills (re-pin every library skill "
-            "of the draft to its newest published version; dry-run lists what would move) | Eval refinement loop (platform admin / studio:evals-run token; NOCTUS_AGENTS_EVALS_TOKEN preferred, else the content token; server refusals come back verbatim under `servidor`): loop_iniciar (payload {suite: comportamento|mecanismo, rodadas_planejadas, orcamento_usd?}) | loops (optional payload {suite?, status?}) | loop (chave=loop_id) | loop_parar (chave=loop_id, payload {motivo?}) | rodada (payload {suite, loop_id | chave=loop_id, version_id? (default: current draft), rodar_tudo?}: books + starts the next round) | run (chave=run_id, payload {suite?}: results incl. saida/notas_juiz/veredito); writes dry-run unless confirm=True | excluir_agente (agent=<key>: deletes it; needs a token minted with permitir_exclusao; the server "
+            "of the draft to its newest published version; dry-run lists what would move) | Eval refinement loop (platform admin / studio:evals-run token; NOCTUS_AGENTS_EVALS_TOKEN preferred, else the content token; server refusals come back verbatim under `servidor`): loop_iniciar (payload {suite: comportamento|mecanismo, rodadas_planejadas?, orcamento_usd? (omitted -> platform loop config)}) | loops (optional payload {suite?, status?}) | loop (chave=loop_id) | loop_parar (chave=loop_id, payload {motivo?}) | rodada (payload {suite, loop_id | chave=loop_id, version_id? (default: current draft), rodar_tudo?}: books + starts the next round) | run (chave=run_id, payload {suite?}: results incl. saida/notas_juiz/veredito); writes dry-run unless confirm=True | excluir_agente (agent=<key>: deletes it; needs a token minted with permitir_exclusao; the server "
             "refuses published/in-use/on agents) - writes are dry-run unless confirm=True. set reads a JSON payload from payload_path (a file "
             "OUTSIDE git) and is a DRY-RUN returning a unified diff unless confirm=True. Token from "
             "NOCTUS_AGENTS_CONTENT_TOKEN (studio:content-write), never echoed. base_url = the target environment "
