@@ -413,8 +413,6 @@ describe("useCreateApproval", () => {
 // Mirrors backend PublicApprovalView exactly (flat). A hand-shaped nested fixture
 // here once masked a FE↔BE contract break — keep it byte-compatible with the API.
 const PUBLIC_APPROVAL: PublicApproval = {
-  approval_id: "apv-pub-1",
-  post_id: "post-1",
   platform: "instagram",
   caption: "Caption de aprovação de conteúdo",
   hashtags: "#orbity #social",

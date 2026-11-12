@@ -41,11 +41,14 @@ TIER_RANK: dict[str, int] = {"platform": 3, "service": 2, "org": 1, "public": 0}
 F = TypeVar("F", bound=Callable)
 
 
-#: THE PUBLIC TIER IS A CLOSED ALLOWLIST (owner, 2026-11-05): landing/marketing pages + their navigation, login /
+#: THE PUBLIC TIER IS A CLOSED ALLOWLIST (owner, 2026-11-05; + token-link 2026-11-10): landing/marketing pages + their navigation, login /
 #: signup / password reset, pricing / checkout / thank-you (no order or PII without a signed or one-time token),
 #: legal + consent pages (privacy, terms, data deletion -- seed-mounted, Meta/Google review need them), and lead
 #: capture on those pages (forms, newsletter). EVERYTHING ELSE is access-level.
-PUBLIC_CATEGORIES: tuple[str, ...] = ("landing", "auth", "pricing-checkout", "legal-consent", "lead-capture")
+PUBLIC_CATEGORIES: tuple[str, ...] = ("landing", "auth", "pricing-checkout", "legal-consent", "lead-capture", "token-link")
+#: A ``token-link`` route (owner, 2026-11-10: an unguessable link the org sent to one person -- approval / report links) must
+#: resolve its token through this helper (expiry fails closed, malformed = 404, fingerprint in logs): KB access-tiers.md.
+TOKEN_LINK_HELPERS: tuple[str, ...] = ("resolve_token_link",)
 #: Reachable from the network but NOT anonymous: the handler must run a verification call (tier ``service``, signed).
 SIGNED_KINDS: tuple[str, ...] = ("webhook", "oauth-callback", "health")
 #: A public API returns only fields meant for the public, is rate-limited, and a public WRITE carries one of these.
@@ -241,7 +244,7 @@ PROMPT_DERIVED_TOOLS: dict[str, str] = {"abrir_skill": "skills", "ler_arquivo_sk
 #: tools reviewed as NOT returning prompt-derived content. A tool in neither map is refused until classified.
 NOT_PROMPT_DERIVED_TOOLS: frozenset[str] = frozenset({
     "avaliar_lead", "registrar_perfil", "oferecer_imoveis", "detalhes_imovel", "consultar_empreendimento",
-    "registrar_reacao_imovel", "registrar_intencao_visita", "registrar_identificacao", "registrar_documento",
+    "registrar_reacao_imovel", "oferecer_opcoes", "detalhes_opcao", "registrar_reacao_opcao", "registrar_intencao_visita", "registrar_identificacao", "registrar_documento",
     "concluir_qualificacao", "handoff", "encerrar", "captacao", "consentimento_credito",
     "registrar_solicitacao_titular", "sinalizar_alerta",
 })

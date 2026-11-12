@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -39,8 +40,12 @@ def commit(repo, path, text, msg, when):
 class FakeCI:
     """Stands in for `gh`: dispatch, run list/view, rerun, statuses."""
 
-    def __init__(self, origin: str, red_if=lambda tree: "BREAK" in tree, flaky_once=False):
+    def __init__(self, origin: str, red_if=lambda tree: "BREAK" in tree, flaky_once=False,
+                 failed_log: str = "", failed_job: str = "Product Backend Tests (x)", barrier=None):
         self.origin, self.red_if, self.flaky_once = origin, red_if, flaky_once
+        self.barrier = barrier  # parallel tests: every run blocks until ALL peers are in flight = proof of overlap
+        self._lock = threading.Lock()
+        self.failed_log, self.failed_job = failed_log, failed_job
         self.statuses: dict[str, list[tuple[str, str]]] = {}
         self.dispatched: list[tuple[str, str]] = []
         self.bases: list[str] = []
@@ -48,6 +53,15 @@ class FakeCI:
         self._runs: dict[str, str] = {}
 
     def __call__(self, cmd, cwd=None):
+        if cmd[:2] == ["gh", "run"] and cmd[2] == "view" and "--log-failed" not in cmd and self.barrier is not None:
+            barrier = self.barrier
+            if barrier is not None:
+                barrier.wait(timeout=10)  # raises (test fails) if the peer never goes in flight
+                self.barrier = None  # spent: later single-candidate rounds must not wait for a peer
+        with self._lock:
+            return self._call(cmd, cwd)
+
+    def _call(self, cmd, cwd=None):
         if cmd[0] == "git":
             p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
             return p.returncode, p.stdout, p.stderr
@@ -64,6 +78,8 @@ class FakeCI:
             sha = sh(self.origin, "git", "rev-parse", f"refs/heads/{ref}")
             rid = [k for k, v in self._runs.items() if v == sha][-1]
             return 0, json.dumps([{"databaseId": int(rid), "headSha": sha}]), ""
+        if args[:2] == ["run", "view"] and "--log-failed" in args:
+            return 0, self.failed_log, ""
         if args[:2] == ["run", "view"]:
             sha = self._runs[args[2]]
             tree = sh(self.origin, "git", "ls-tree", "-r", "--name-only", sha)
@@ -71,7 +87,7 @@ class FakeCI:
             if self.flaky_once and self.reruns == 0:
                 red = True
             concl = "failure" if red else "success"
-            jobs = [{"name": "Product Backend Tests (x)", "conclusion": concl}]
+            jobs = [{"name": self.failed_job, "conclusion": concl}]
             return 0, json.dumps({"status": "completed", "conclusion": concl, "url": "u", "jobs": jobs}), ""
         if args[:2] == ["run", "rerun"]:
             self.reruns += 1
@@ -484,6 +500,39 @@ def test_workflow_permission_rejection_maps_to_the_workflow_reason(world):
     assert res.ejected[0]["kind"] == "needs_workflow_token"
     assert {x["slug"] for x in res.landed} == {"ok"} and ci.last(ok)[0] == "success"
     assert ci.last(wf)[0] == "failure"
+    why = res.ejected[0]["why"]
+    assert "github.token" in why and "refusing to allow a GitHub App" in why  # names the refused credential
+
+
+def test_a_refused_pat_push_says_the_pat_was_refused(world):
+    """2026-11-11: the PAT pushed a workflow batch at 16:19 and five entries were ejected at 16:41 with a
+    reason that could not say whether the PAT or github.token was refused. The reason now says."""
+    enqueue(world, "wf", [(WF, "name: x\n")], 2100)
+    ci = FakeCI(world["origin"])
+    logs: list[str] = []
+
+    def rejecting(cmd, cwd=None):
+        if cmd[:4] == ["git", "-c", f"{mq.EXTRAHEADER_KEY}=", "push"]:
+            return 1, "", (f"remote: error: GH013 {cmd[4]}\n ! [remote rejected] (refusing to allow a Personal "
+                           "Access Token to create or update workflow `x.yml` without `workflows` permission)")
+        return ci(cmd, cwd=cwd)
+
+    q = mq.Queue("o/r", regen=_NOREGEN, run=rejecting, run_id="7", poll_s=0, sleep=lambda s: None,
+                 workdir=world["runner"], log=logs.append, push_token=TOK)
+    res = q.drain()
+    x = res.ejected[0]
+    assert x["kind"] == "needs_workflow_token"
+    assert "MQ_PUSH_TOKEN (PAT)" in x["why"] and "Personal Access Token" in x["why"] and "re-mint" in x["why"]
+    assert TOK not in x["why"] and not any(TOK in m for m in logs)  # the stderr quote is redacted
+    assert any("rejected" in m and "Personal Access Token" in m for m in logs)
+
+
+def test_the_default_drain_log_flushes_every_line(capsys, monkeypatch):
+    seen = {}
+    monkeypatch.setattr("builtins.print", lambda *a, **k: seen.update(k))
+    mq._flush_print("x")
+    assert seen.get("flush") is True
+    assert mq.Queue("o/r").log is mq._flush_print
 
 
 # ── MQ_PUSH_TOKEN: the PAT is used ONLY for workflow batches ───────────────
@@ -491,9 +540,14 @@ def test_workflow_permission_rejection_maps_to_the_workflow_reason(world):
 TOK = "github_pat_SECRET123"
 
 
-def _token_runner(world, ci, pushes):
-    """Record every push remote; route the authenticated URL to the local bare origin."""
+def _token_runner(world, ci, pushes, cleared=None):
+    """Record every push remote; route the authenticated URL to the local bare origin. A PAT push must arrive as
+    `git -c <extraheader>= push <url>` - recorded in `cleared` - and is replayed as a plain local push."""
     def run(cmd, cwd=None):
+        if cmd[:4] == ["git", "-c", f"{mq.EXTRAHEADER_KEY}=", "push"]:
+            if cleared is not None:
+                cleared.append(cmd[4])
+            cmd = ["git", *cmd[3:]]
         if cmd[:2] == ["git", "push"]:
             pushes.append(cmd[2])
             if cmd[2].startswith("https://x-access-token:"):
@@ -512,6 +566,20 @@ def test_workflow_batch_pushes_candidate_and_dev_via_the_token_url_and_lands(wor
     assert WF in sh(world["origin"], "git", "ls-tree", "-r", "--name-only", "refs/heads/dev").splitlines()
     assert pushes[:2] == [f"https://x-access-token:{TOK}@github.com/o/r.git"] * 2  # candidate, then dev FF
     assert wf  # enqueued
+
+
+def test_a_pat_push_clears_the_checkout_github_token_header_and_a_plain_push_keeps_it(world):
+    """actions/checkout persists `AUTHORIZATION: basic <github.token>` as http.https://github.com/.extraheader; git
+    sends it on the PAT URL too, so an uncleared "PAT" push can authenticate as github.token (no workflows)."""
+    wf = _stale_enqueue(world, "wf", [(WF, "name: x\n")], 2100)
+    _diverge_dev(world)
+    pushes: list[str] = []
+    cleared: list[str] = []
+    res = _token_runner(world, FakeCI(world["origin"]), pushes, cleared).drain()
+    assert [x["slug"] for x in res.landed] == ["wf"] and wf
+    assert len(cleared) == 2 and all(u.startswith("https://x-access-token:") for u in cleared)
+    q = mq.Queue("o/r", push_token=TOK)
+    assert q.push_cmd("origin", "a:b") == ["git", "push", "origin", "a:b"]
 
 
 def test_non_workflow_batch_with_token_still_pushes_via_the_plain_remote(world):
@@ -713,3 +781,205 @@ def test_derived_only_commit_empties_after_resolve_is_skipped_not_ejected(world)
     assert calls == ["access-tiers"]
     assert sh(wt, "git", "show", f"{head}:b.txt") == "b"
     assert sh(wt, "git", "show", f"{head}:{DERIVED}") == "derived-from-merged-tree"
+
+
+# ── culprit attribution (2026-11-11): a red batch ejects the one entry whose diff covers the failure ──
+
+def _fail_line(test_id, job="Tooling Tests (pytest)"):
+    return f"{job}\tRun pytest\t2026-11-11T10:00:00Z FAILED {test_id} - AssertionError\n"
+
+
+def _attr_rounds(res):
+    return [r.get("attribution", {}).get("path") for r in res.rounds if "attribution" in r]
+
+
+def test_attribute_culprit_is_pure_and_never_guesses():
+    paths = {"mq/a--1": ["mcp/noctusai/tools/x.py"], "mq/b--2": ["products/sw/backend/app/y.py"]}
+    ref, why = mq.attribute_culprit(["mcp/noctusai/tests/test_x.py::test_a"], [], paths)
+    assert ref == "mq/a--1" and "test_x.py" in why and "mcp/noctusai/tools/x.py" in why
+    ref, why = mq.attribute_culprit([], ["Some Unknown Job"], paths)
+    assert ref is None and "unreadable" in why
+
+
+def test_single_attributable_culprit_is_ejected_without_bisect(world):
+    good = enqueue(world, "good", [("products/sw/backend/app/g.py", "g\n")], 2000)
+    bad = enqueue(world, "bad", [("mcp/noctusai/tools/BREAK.py", "boom\n")], 2100)
+    ci = FakeCI(world["origin"], red_if=lambda t: any("BREAK" in p for p in t),
+                failed_log=_fail_line("mcp/noctusai/tests/test_thing.py::test_it"), failed_job="MCP Toolkit Tests")
+    res = make_queue(world, ci).drain()
+    assert [x["slug"] for x in res.ejected] == ["bad"]
+    assert res.ejected[0]["kind"] == "ci_red_attributed"
+    assert "test_thing.py::test_it" in res.ejected[0]["why"] and "BREAK.py" in res.ejected[0]["why"]
+    assert {x["slug"] for x in res.landed} == {"good"}
+    assert "attributed" in _attr_rounds(res)
+    assert ci.last(bad)[0] == "failure" and "ci_red_attributed" in ci.last(bad)[1]
+    assert len(ci.dispatched) == 2  # the red batch + ONE rerun of the rest; a bisect would need more
+
+
+def test_ambiguous_match_falls_back_to_bisect(world):
+    a = enqueue(world, "a", [("mcp/noctusai/tools/a.py", "a\n")], 2000)
+    b = enqueue(world, "b", [("mcp/noctusai/tools/BREAK.py", "boom\n")], 2100)
+    ci = FakeCI(world["origin"], red_if=lambda t: any("BREAK" in p for p in t),
+                failed_log=_fail_line("mcp/noctusai/tests/test_thing.py::test_it"), failed_job="MCP Toolkit Tests")
+    logs = []
+    q = make_queue(world, ci)
+    q.log = logs.append
+    res = q.drain()
+    assert [x["slug"] for x in res.ejected] == ["b"] and res.ejected[0]["kind"] == "ci_red"
+    assert "bisect" in _attr_rounds(res)
+    assert any("bisect" in m and "2 entries" in m for m in logs)
+
+
+def test_unreadable_failure_falls_back_to_bisect(world):
+    enqueue(world, "a", [("products/sw/backend/app/a.py", "a\n")], 2000)
+    enqueue(world, "b", [("BREAK", "boom\n")], 2100)
+    ci = FakeCI(world["origin"], failed_log="garbage with no failures\n", failed_job="Mystery Job")
+    logs = []
+    q = make_queue(world, ci)
+    q.log = logs.append
+    res = q.drain()
+    assert res.ejected[0]["kind"] == "ci_red" and "bisect" in _attr_rounds(res)
+    assert any("unreadable" in m for m in logs)
+
+
+def test_verify_db_guards_failure_attributes_to_the_migration_entry_of_that_product(world):
+    enqueue(world, "code", [("products/agents/backend/app/x.py", "x\n")], 2000)
+    enqueue(world, "mig-sw", [("products/sw/backend/migrations/006_s.sql", "-- s\n")], 2050)
+    bad = enqueue(world, "mig-agents", [("products/agents/backend/migrations/001_a.sql", "-- BREAK\n"),
+                                        ("products/agents/backend/BREAK", "x\n")], 2100)
+    ci = FakeCI(world["origin"], failed_job="MCP Toolkit Tests", red_if=lambda t: any("BREAK" in p for p in t),
+                failed_log=_fail_line("mcp/noctusai/tests/test_verify_db_guards.py::TestAgentsStudioProbes::test_p",
+                                      "MCP Toolkit Tests"))
+    res = make_queue(world, ci).drain()
+    assert res.ejected[0]["slug"] == "mig-agents" and res.ejected[0]["kind"] == "ci_red_attributed"
+    assert "001_a.sql" in res.ejected[0]["why"] and "test_verify_db_guards" in res.ejected[0]["why"]
+    assert ci.last(bad)[0] == "failure"
+
+
+# ── priority lane + parallel product-disjoint candidates (2026-11-11) ─────────
+
+def _ci_runs(ci):
+    return [d for d in ci.dispatched if d[0] == mq.CI_WORKFLOW]  # post-land workflow dispatches are not CI runs
+
+
+def test_areas_and_partition_are_pure_and_conservative():
+    assert mq.entry_areas(["products/sw/a.py", "products/agents/b.py"]) == {"sw", "agents"}
+    assert mq.entry_areas(["products/sw/a.py", "mcp/x.py"]) == {"sw", mq.SHARED_AREA}
+    assert mq.entry_areas(["products/seed/a.py"]) == {mq.SHARED_AREA}
+    assert mq.entry_areas([]) == {mq.SHARED_AREA}  # unreadable diff = shared
+    es = [mq.Entry(f"mq/{n}--abc1234", "s", n, i) for i, n in enumerate("abcd")]
+    paths = {"mq/a--abc1234": ["products/sw/1"], "mq/b--abc1234": ["products/agents/1"],
+             "mq/c--abc1234": ["products/sw/2"], "mq/d--abc1234": ["mcp/x"]}
+    groups = mq.partition_wave(es, paths, 4)
+    assert [[e.slug for e in g] for g in groups] == [["a", "c"], ["b"]]  # same product merges; the shared tail waits
+    assert mq.partition_wave(es, paths, 4, k=1) == []  # one group is no wave
+    assert mq.partition_wave(es[3:], paths, 4) == [] and mq.partition_wave([es[3], es[0], es[1]], paths, 4) == []
+    assert mq.is_priority([".github/dependabot.yml"]) and mq.is_priority(["x"], "t\n\nMQ-Priority: ci is red")
+    assert not mq.is_priority(["products/sw/a"], "no trailer MQ-Priority in prose")
+
+
+def test_github_diff_entry_composes_first_and_alone(world):
+    enqueue(world, "old", [("old.txt", "o\n")], 2000)
+    enqueue(world, "ciFix", [(".github/dependabot.yml", "x: 1\n")], 2100)
+    ci = FakeCI(world["origin"])
+    res = make_queue(world, ci).drain()
+    assert res.rounds[0]["batch"] == ["ciFix"]  # ahead of the older entry, alone
+    assert [x["slug"] for x in res.landed] == ["ciFix", "old"]
+
+
+def test_priority_trailer_flag_composes_first_and_alone(world):
+    enqueue(world, "old", [("old.txt", "o\n")], 2000)
+    enqueue(world, "urgent", [("u.txt", "u\n")], 2100)
+    sha = sh(world["work"], "git", "rev-parse", "HEAD")
+    sh(world["work"], "git", "commit", "-q", "--amend", "-m", "urgent\n\nMQ-Priority: unblocks CI")
+    new = sh(world["work"], "git", "rev-parse", "HEAD")
+    sh(world["work"], "git", "push", "-q", "origin", f"{new}:refs/heads/mq/urgent--{new[:7]}", f":refs/heads/mq/urgent--{sha[:7]}")
+    res = make_queue(world, FakeCI(world["origin"])).drain()
+    assert res.rounds[0]["batch"] == ["urgent"]
+    assert {x["slug"] for x in res.landed} == {"old", "urgent"}
+
+
+def test_two_product_disjoint_entries_run_concurrently_and_both_land_without_a_retest(world):
+    a = enqueue(world, "a", [("products/sw/a.txt", "a\n")], 2000)
+    b = enqueue(world, "b", [("products/agents/b.txt", "b\n")], 2100)
+    ci = FakeCI(world["origin"], barrier=threading.Barrier(2))  # both runs must be in flight at once
+    res = make_queue(world, ci).drain()
+    assert {x["slug"] for x in res.landed} == {"a", "b"} and not res.ejected
+    assert len(_ci_runs(ci)) == 2  # two candidates, and NO third run to re-test the second on the new tip
+    assert all(r.get("parallel") for r in res.rounds)
+    tree = sh(world["origin"], "git", "ls-tree", "-r", "--name-only", "dev")
+    assert "products/sw/a.txt" in tree and "products/agents/b.txt" in tree
+    assert ci.last(a)[0] == "success" and ci.last(b)[0] == "success"
+    assert queue_refs(world) == [] and not sh(world["origin"], "git", "for-each-ref", "refs/heads/mq-candidate/")
+
+
+def test_shared_entry_never_runs_alongside_another_candidate(world):
+    enqueue(world, "p1", [("products/sw/a.txt", "a\n")], 2000)
+    enqueue(world, "p2", [("products/agents/b.txt", "b\n")], 2100)
+    enqueue(world, "sh", [("mcp/tool.py", "t\n")], 2200)
+    ci = FakeCI(world["origin"])
+    res = make_queue(world, ci).drain()
+    assert {x["slug"] for x in res.landed} == {"p1", "p2", "sh"}
+    parallel = [r for r in res.rounds if r.get("parallel")]
+    assert sorted(sum((r["batch"] for r in parallel), [])) == ["p1", "p2"]
+    shared_round = next(r for r in res.rounds if r["batch"] == ["sh"])
+    assert not shared_round.get("parallel") and res.rounds.index(shared_round) == len(res.rounds) - 1
+
+
+def test_shared_entry_in_front_keeps_the_single_batch(world):
+    enqueue(world, "sh", [("mcp/tool.py", "t\n")], 2000)
+    enqueue(world, "p1", [("products/sw/a.txt", "a\n")], 2100)
+    enqueue(world, "p2", [("products/agents/b.txt", "b\n")], 2200)
+    ci = FakeCI(world["origin"])
+    res = make_queue(world, ci).drain()
+    assert len(_ci_runs(ci)) == 1 and not any(r.get("parallel") for r in res.rounds)
+    assert len(res.landed) == 3
+
+
+def test_a_red_parallel_candidate_ejects_only_itself(world):
+    good = enqueue(world, "good", [("products/sw/g.txt", "g\n")], 2000)
+    bad = enqueue(world, "bad", [("products/agents/BREAK", "boom\n")], 2100)
+    ci = FakeCI(world["origin"], red_if=lambda t: any("BREAK" in p for p in t), barrier=threading.Barrier(2))
+    res = make_queue(world, ci).drain()
+    assert [x["slug"] for x in res.landed] == ["good"]
+    assert [x["slug"] for x in res.ejected] == ["bad"] and res.ejected[0]["kind"] == "ci_red"
+    assert ci.last(good)[0] == "success" and ci.last(bad)[0] == "failure"
+    assert "BREAK" not in sh(world["origin"], "git", "ls-tree", "-r", "--name-only", "dev")
+
+
+def test_second_green_whose_derived_files_move_on_the_combined_tree_is_retested(world):
+    # counts.md is DERIVED from the whole tree: each candidate wrote 1, the combined tree needs 2 -> not the union
+    # of the tested trees, so the second green must NOT land untested; the next round re-tests it on the new tip.
+    def regen(wt):
+        n = len([p for p in Path(wt, "products").rglob("*.txt")])
+        f = Path(wt, "KNOWLEDGE-BASE", "counts.md")
+        f.parent.mkdir(exist_ok=True)
+        f.write_text(f"n={n}\n")
+        return True, ""
+    enqueue(world, "a", [("products/sw/a.txt", "a\n")], 2000)
+    enqueue(world, "b", [("products/agents/b.txt", "b\n")], 2100)
+    ci = FakeCI(world["origin"], barrier=threading.Barrier(2))
+    res = make_queue(world, ci, regen=regen).drain()
+    assert {x["slug"] for x in res.landed} == {"a", "b"}
+    assert len(_ci_runs(ci)) == 3  # a, b in parallel; b re-tested on a's tip
+    assert sh(world["origin"], "git", "show", "dev:KNOWLEDGE-BASE/counts.md") == "n=2"
+
+
+def test_parallel_candidates_that_would_not_recompose_cleanly_stay_queued(world):
+    enqueue(world, "a", [("products/sw/a.txt", "a\n")], 2000)
+    enqueue(world, "b", [("products/agents/b.txt", "b\n")], 2100)
+    ci = FakeCI(world["origin"], barrier=threading.Barrier(2))
+    q = make_queue(world, ci)
+    real = q.compose
+    calls = []
+
+    def compose(batch, base, wt):
+        calls.append(base)
+        if len(calls) == 3:  # the re-compose of the second green on the new tip
+            return base, [], [q._eject_info(batch[0], "conflict", "x")]
+        return real(batch, base, wt)
+
+    q.compose = compose  # self-patch-ok: forces the re-compose outcome (a conflict) to prove the fallback; the landing logic itself is untouched
+    res = q.drain(max_rounds=1)
+    assert len(res.landed) == 1 and not res.ejected  # the other is neither landed untested nor ejected
+    assert len(queue_refs(world)) == 1

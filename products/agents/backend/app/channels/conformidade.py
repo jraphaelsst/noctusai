@@ -135,6 +135,7 @@ CAMPOS_PROTEGIDOS: dict[str, tuple[str, ...]] = {
     "captacao": ("descricao", "endereco"),
     "encerrar": ("motivo_texto",),
     "registrar_reacao_imovel": ("motivo",),
+    "registrar_reacao_opcao": ("motivo",),
     "registrar_intencao_visita": ("preferencia_horario",),
     "sinalizar_alerta": ("descricao", "trecho"),
 }

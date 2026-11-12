@@ -12,7 +12,7 @@ and consumed over `/api/channels/*`; SW never calls an LLM for Julia's turns.
 ## Stack
 
 - **Backend**: FastAPI via `create_product_app()` from `noctusai_seed`; features are product modules assembled from the `MODULES` list in `app/main.py` (`app/modules/*`) plus the Julia routers in `app/routers/julia_*`.
-- **Frontend**: React via `createProductApp()` + `createProductLayout()` from `@noctusai/seed`; nav in `src/nav/navGroups.ts` (Julia group in `src/nav/julia.ts`).
+- **Frontend**: React via `createProductApp()` + `createProductLayout()` from `@noctusai/seed`; nav in `src/nav/navGroups.ts` (seed module groups CRM/Redes Sociais/ERP/CMS/... in canonical order; Julia pages in `src/nav/julia.ts`).
 - **Database**: Supabase, schema `social_wiring`; RLS own-org + service role.
 - **Auth**: SSO + direct login (seed factory); `/chat` and the Julia privacy notice (`/privacidade/:slug`) are public.
 - **Container**: ONE container — uvicorn serves the built SPA + API on one port (`serve_spa`).

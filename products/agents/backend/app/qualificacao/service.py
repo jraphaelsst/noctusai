@@ -186,11 +186,12 @@ class QualificacaoService:
         estado = self._calcular(v, org_id, lead_ref_id, self._leads.listar_registros(org_id, lead_ref_id), eventos)
         return QualificacaoLead(cache.versao_id, estado, tuple(eventos), estado.calculado_em or self._agora())
 
-    def codigos_oferecidos(self, org_id: UUID, lead_ref_id: UUID) -> list[str]:
-        """Every code already offered to this lead (``excluir_codigos`` of the next search)."""
+    def codigos_oferecidos(self, org_id: UUID, lead_ref_id: UUID, catalogo: str | None = None) -> list[str]:
+        """Every code already offered to this lead (``excluir_codigos`` of the next search); ``catalogo`` narrows it to
+        one catalogue (``None`` = every one: the real-estate tools, whose events all carry the default)."""
         vistos: list[str] = []
         for e in self._leads.listar_eventos(org_id, lead_ref_id):
-            if e.evento == "oferecido" and e.codigo_imovel not in vistos:
+            if e.evento == "oferecido" and e.codigo_imovel not in vistos and (catalogo is None or e.catalogo == catalogo):
                 vistos.append(e.codigo_imovel)
         return vistos
 
@@ -317,6 +318,7 @@ class QualificacaoService:
         thread_id: UUID | None = None,
         escopo: str | None = None,
         sinais: LeadSinais | None = None,
+        catalogo: str = "imoveis_sw",
     ) -> EventoImovelResultado:
         if evento not in EVENTOS_IMOVEL:
             return EventoImovelResultado(False, "evento_invalido")
@@ -336,7 +338,8 @@ class QualificacaoService:
 
         registros = self._leads.listar_registros(org_id, lead_ref_id)
         eventos = self._leads.listar_eventos(org_id, lead_ref_id)
-        do_codigo = [e for e in eventos if e.codigo_imovel == codigo_imovel]
+        # the same code in two catalogues is two options: the duplicate-offer rule is per catalogue
+        do_codigo = [e for e in eventos if e.codigo_imovel == codigo_imovel and e.catalogo == catalogo]
         oferecido = any(e.evento == "oferecido" for e in do_codigo)
         ultima = next((e.evento for e in reversed(do_codigo) if e.evento != "oferecido"), None)
 
@@ -353,7 +356,8 @@ class QualificacaoService:
 
         novo = self._leads.adicionar_evento(
             org_id, lead_ref_id, agent_id=agent_id, thread_id=thread_id,
-            evento=EventoImovel(codigo_imovel=codigo_imovel, evento=evento, origem=origem, lote=lote, motivo=motivo),
+            evento=EventoImovel(
+                codigo_imovel=codigo_imovel, evento=evento, origem=origem, lote=lote, motivo=motivo, catalogo=catalogo),
         )
         estado = self._calcular(v, org_id, lead_ref_id, registros, [*eventos, novo], escopo, sinais)
         self._persistir(org_id, lead_ref_id, v, estado)

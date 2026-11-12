@@ -12,4 +12,3 @@ _db = create_database_module(settings, schema="orbity")
 get_supabase_client = _db.get_client
 get_core_client = _db.get_core_client
 get_admin_client = _db.get_admin_client
-supabase_admin = _db.get_admin_client() if settings.supabase_service_role_key else None

@@ -157,6 +157,55 @@ class TestCompor:
         assert [i.detalhe["ferramenta"] for i in p.itens if i.codigo == "ferramenta_sem_descricao"] == ["encerrar"]
         assert p.pronto_para_publicar, "advisory items never block"
 
+    def test_julia_expected_tools_are_unchanged_by_the_template_split(self):
+        """Regression: the qualification + real-estate tools stay expected for the default (Julia) call."""
+        kw = dict(usa_canais=True, tem_skills=True, tool_policy={"knowledge": True}, com_padrao=True)
+        julia = pr.ferramentas_esperadas(**kw)
+        assert {"avaliar_lead", "registrar_perfil", "registrar_reacao_imovel", "registrar_intencao_visita",
+                "concluir_qualificacao", "handoff", "encerrar", "kb_buscar"} <= set(julia)
+        explicit = pr.ferramentas_esperadas(**kw, padrao_conclusivo=True, imobiliario=True)
+        assert explicit == julia
+
+    def test_a_standard_without_a_conclusive_stage_does_not_expect_concluir_qualificacao(self):
+        kw = dict(usa_canais=True, tem_skills=False, tool_policy={}, com_padrao=True)
+        sdr = pr.ferramentas_esperadas(**kw, padrao_conclusivo=False)
+        assert "concluir_qualificacao" not in sdr and {"avaliar_lead", "registrar_perfil", "registrar_reacao_imovel"} <= set(sdr)
+        assert "concluir_qualificacao" in pr.ferramentas_esperadas(**kw, padrao_conclusivo=True)
+
+    def test_the_real_estate_reaction_tool_is_expected_only_for_a_real_estate_agent(self):
+        kw = dict(usa_canais=True, tem_skills=False, tool_policy={}, com_padrao=True)
+        assert "registrar_reacao_imovel" not in pr.ferramentas_esperadas(**kw, imobiliario=False)
+        assert "registrar_reacao_imovel" in pr.ferramentas_esperadas(**kw, imobiliario=True)
+        assert pr.agente_imobiliario(["handoff", "oferecer_imoveis"]) and not pr.agente_imobiliario(["handoff", "avaliar_lead"])
+
+    def test_conclusive_stage_is_read_from_the_pinned_or_published_version(self):
+        from types import SimpleNamespace as NS
+
+        def est(c): return NS(conclusivo=c)
+
+        class Padroes:
+            def __init__(self, estagios, pin_estagios=None):
+                self.pub, self.pin = NS(estagios=estagios), NS(estagios=pin_estagios or estagios)
+
+            def obter_versao_publicada(self, chave):
+                return self.pub
+
+            def obter_versao(self, vid):
+                return self.pin
+
+        draft_pin, draft_sem = NS(qualificacao_versao_id=uuid4()), NS(qualificacao_versao_id=None)
+        assert pr._padrao_tem_estagio_conclusivo(Padroes((est(False), est(False))), "p", draft_sem) is False
+        assert pr._padrao_tem_estagio_conclusivo(Padroes((est(False), est(True))), "p", draft_sem) is True
+        assert pr._padrao_tem_estagio_conclusivo(Padroes((est(True),), (est(False),)), "p", draft_pin) is False  # the pin wins
+        assert pr._padrao_tem_estagio_conclusivo(Padroes(()), None, draft_sem) is True  # no standard: unchanged
+        from app.stores.errors import NotFound
+
+        class Vazio:
+            def obter_versao_publicada(self, chave):
+                raise NotFound("x")
+
+        assert pr._padrao_tem_estagio_conclusivo(Vazio(), "p", draft_sem) is True  # unmeasurable keeps the expectation
+
     def test_parameter_labels_are_judged_against_the_tool_schema(self):
         from app.channels.tool_registry import schema_de
 
@@ -198,7 +247,42 @@ class TestCompor:
         assert sev == sorted(sev, key=["bloqueante", "aviso", "ok"].index)
         assert pr.RECUSAS_PUBLICACAO == {
             "conteudo_incompleto", "compile_blocked", "mecanismo_reprovado", "eval_required", "qualificacao_indisponivel",
-            "numero_fallback_ausente"}
+            "numero_fallback_ausente", "catalogo_ausente"}
+
+
+class TestCatalogo:
+    """081: an agent with ``oferecer_opcoes`` active needs a catalogue to offer from."""
+
+    @staticmethod
+    def _linhas(*nomes, ativo=True, descricao="Oferece."):
+        return tuple(FerramentaLinha(n, ativo, descricao, {}) for n in nomes)
+
+    def test_active_tool_and_no_catalogue_blocks_with_its_own_refusal(self):
+        p = pr.compor(_entrada(ferramentas=self._linhas("oferecer_opcoes"), casos_comportamento=3, juiz=_juiz()))
+        item = next(i for i in p.itens if i.codigo == "catalogo_ausente")
+        assert item.severidade == "bloqueante" and item.recusa_publicacao == "catalogo_ausente" and not p.pronto_para_publicar
+
+    def test_a_catalogue_the_factory_does_not_know_blocks_too(self):
+        p = pr.compor(_entrada(ferramentas=self._linhas("oferecer_opcoes"), padrao_catalogo="inventado"))
+        assert "catalogo_ausente" in _codigos(p, "bloqueante")
+
+    @pytest.mark.parametrize("chave", ["imoveis_sw", "fixture"])
+    def test_a_known_catalogue_is_ok(self, chave):
+        p = pr.compor(_entrada(ferramentas=self._linhas("oferecer_opcoes"), padrao_catalogo=chave))
+        assert "catalogo_definido" in _codigos(p, "ok") and "catalogo_ausente" not in _codigos(p)
+
+    @pytest.mark.parametrize("linhas", [
+        (), _linhas.__func__("oferecer_opcoes", ativo=False), _linhas.__func__("oferecer_opcoes", descricao=" "),
+        _linhas.__func__("oferecer_imoveis", "detalhes_opcao"),
+    ])
+    def test_without_the_tool_active_and_described_it_says_nothing(self, linhas):
+        assert not [i for i in pr.compor(_entrada(ferramentas=linhas)).itens if "catalogo" in i.codigo]
+
+    def test_the_generic_tools_are_never_expected_of_an_agent_that_did_not_opt_in(self):
+        # Julia (a standard + the channel) must not get "ferramenta_sem_descricao" for tools she never asked for
+        esperadas = pr.ferramentas_esperadas(usa_canais=True, tem_skills=True, tool_policy={}, com_padrao=True)
+        assert not {"oferecer_opcoes", "detalhes_opcao", "registrar_reacao_opcao"} & set(esperadas)
+        assert {"avaliar_lead", "registrar_reacao_imovel"} <= set(esperadas)
 
 
 # ── the route ───────────────────────────────────────────────────────────────
@@ -349,6 +433,14 @@ def _cenario_sem_numero_fallback(studio):
         runtime_settings.RuntimeSettingsService(FakeRuntimeSettingsStore(), settings, ttl_seconds=0))
 
 
+def _cenario_sem_catalogo(studio):
+    """Green in every other way, but the generic offer tool is ACTIVE and no standard names a catalogue (081)."""
+    _cenario_verde(studio)
+    assert studio.put(f"{BASE}/novo/draft/ferramentas", json={"itens": [
+        {"ferramenta": "oferecer_opcoes", "descricao": "Oferece opções do catálogo.", "parametros": {}}]}).status_code == 200
+    _passar_juiz(studio)
+
+
 def _cenario_padrao_ausente(studio):
     _cenario_verde(studio)
     studio.store.update_definicao(DEFAULT_ORG_ID, "novo", {"padrao_qualificacao": "padrao-sem-versao"})
@@ -379,6 +471,7 @@ CENARIOS = [
     ("mecanismo_sem_execucao", _cenario_mecanismo_sem_execucao, "mecanismo_reprovado"),
     ("padrao_sem_versao_publicada", _cenario_padrao_ausente, "qualificacao_indisponivel"),
     ("sem_numero_fallback", _cenario_sem_numero_fallback, "numero_fallback_ausente"),
+    ("oferecer_opcoes_sem_catalogo", _cenario_sem_catalogo, "catalogo_ausente"),
     ("verde", _cenario_verde, None),
     ("verde_so_com_mecanismo", _cenario_verde_so_com_mecanismo, None),
     ("somente_avisos", _cenario_aviso_apenas, None),

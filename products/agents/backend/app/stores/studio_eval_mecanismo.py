@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-from app.stores._db_errors import exec_query
+from app.stores._db_errors import exec_query, exec_rpc
 from app.stores._util import utcnow, utcnow_iso
 from app.stores.errors import NotFound
 from app.studio.eval_mecanismo import (

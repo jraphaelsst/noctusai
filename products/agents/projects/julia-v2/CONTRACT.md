@@ -632,7 +632,7 @@ Pure function `app/channels/controles.py::decidir(modo, thread, participante, ga
 | any | exists | another agent is `ativo` | `conversa_com_outro_agente` | yes | no |
 
 - **Opt-out is Julia's decision (REVISED 2026-11-08; was "precedes every refusal").** OWNER DECISION 2026-11-08 ("it shouldn't be deterministic, Julia judges"): the opt-out is Julia's decision, made by calling `encerrar` (`lead_pediu_parar`). No code path ends a conversation from a stop word any more; a stop word in a conversation the controls REFUSE (paused / handed over / another agent / agent off or killed / draining) is therefore no longer recorded as an opt-out by the route: those turns run no model, so the message is handled exactly as the refusal table says (a human sees it). `turno.opt_out_em_conversa_recusada`, the in-turn backstop and `OPT_OUT_PALAVRA_CHAVE` as a producer are gone; the `encerrar` + `opt_out` actions SW consumes are unchanged and come only from Julia's tool call. Trade-off and mitigations: see GUARDRAILS P1-3.
-- Re-engagement turns (`gatilho:"reengajamento"`) run only when `ligado`/`drenando` ∧ participant `ativo`. Otherwise `status: "reengajamento_ignorado"`.
+- Re-engagement turns (`gatilho:"reengajamento"`) run only when `ligado`/`drenando` ∧ participant `ativo`. Otherwise `status: "reengajamento_ignorado"`. Follow-up cap (owner 2026-11-10): an eligible re-engagement is refused with `status: "limite_retomadas"` (no model, nothing persisted) once `max_retomadas_seguidas` (default 2, in the qualification standard parameters) follow-ups went out with no reply from the lead; opt-out is decided first and always wins; every outcome is one append-only `thread_retomada_eventos` row. SW ends that contact's sequence.
 - Fail-closed in SW: any non-`respondido` status, any error or a timeout → nothing is sent (the existing `_handle_turn_error`, `lais_lead_turn_service.py:530-568`).
 
 ### 5.2a Abuse limits (guardrails B5, migration 045)
@@ -836,7 +836,7 @@ Response:
 
 ```json
 { "thread_id": "…", "conversation_id": "…" /* = thread_id, alias one release */,
-  "status": "respondido|silencio|handoff|encerrado|concluido|agente_desligado|novo_lead_recusado|conversa_pausada|conversa_com_outro_responsavel|conversa_com_outro_agente|reengajamento_ignorado|lead_opt_out|limite_atingido|limite_taxa|novo_lead_limitado|loop_detectado",
+  "status": "respondido|silencio|handoff|encerrado|concluido|agente_desligado|novo_lead_recusado|conversa_pausada|conversa_com_outro_responsavel|conversa_com_outro_agente|reengajamento_ignorado|limite_retomadas|lead_opt_out|limite_atingido|limite_taxa|novo_lead_limitado|loop_detectado",
   "reply": {"partes": ["…"]},
   "actions": [ {"seq":1,"type":"handoff","motivo_codigo":"pedido_humano","motivo":"…"},
                {"seq":2,"type":"lead_pronto","estagio":"pronto_para_corretor","score":78,"valores":{…},"imoveis_gostou":["A123"],"intencoes_visita":["A123"]},

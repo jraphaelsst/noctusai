@@ -391,8 +391,6 @@ export function useCreateApproval() {
  * "Decisão já registrada" (found by the 2026-10-15 live smoke).
  */
 export interface PublicApproval {
-  approval_id: string;
-  post_id: string;
   platform: Platform;
   caption: string | null;
   hashtags: string | null;
@@ -424,7 +422,7 @@ export function usePublicApproval(token: string | null) {
 export function useDecideApproval(token: string | null) {
   return useMutation({ // noc-allow: invalidate-only — public token-gated decision by the client (no JWT); it touches no authed cache entry, the team sees the outcome through the approvals/posts refetch
     mutationFn: async (payload: DecideApprovalPayload) => {
-      return api.post<{ ok: boolean; approval_id: string; status: string; team_notified: number }>(
+      return api.post<{ ok: boolean; status: string; team_notified: number }>(
         `/api/content/approve/${token}`,
         payload,
       );

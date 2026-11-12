@@ -13,6 +13,7 @@ the REAL export-and-regenerate mechanism pointed at a tiny regenerator that live
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -734,23 +735,41 @@ def test_real_tree_manifest_clean():
     assert check_manifest() == []
 
 
-def test_unrelated_red_test_is_not_a_keeper_assertion():
-    assert 1 + 1 == 3
+def test_unrelated_green_test():
+    assert 1 + 1 == 2
 """
 _SESSION_TEST = """
 
 def test_real_tree_session_keeper():
     assert check_needs_session() == []
 """
+_SLOW_ONCE_TEST = """
+
+def test_real_tree_slow_once_keeper():
+    # first attempt hangs past the stage budget (a loaded machine); a retry finds the marker and is instant
+    import time
+    marker = ROOT / "slow-once.flag"
+    if not marker.exists():
+        marker.write_text("1")
+        time.sleep(60)
+    assert check_manifest() == []
+"""
+_SLOW_ALWAYS_TEST = """
+
+def test_real_tree_slow_always_keeper():
+    import time
+    time.sleep(60)
+    assert check_manifest() == []
+"""
 _SCRUBBED_ENV = {"CLAUDE_CODE_SESSION_ID": "sess-123", "CLAUDE_PROJECT_DIR": "/somewhere", "OPENAI_API_KEY": "k"}
 
 
-def _ci_branch(world, *, rogue_script=False, session_test=False):
-    """A pushed branch whose head carries a tiny CI definition + the keepers it blocks on."""
+def _ci_branch(world, *, rogue_script=False, session_test=False, extra=(), extra_test=""):
+    """A pushed branch whose head carries a tiny CI definition + the keepers it blocks on (+ `extra` files)."""
     wt = world.worktree()
     for rel, text in ((".github/workflows/test.yml", _WORKFLOW), ("mcp/noctusai/cli.py", _CLI),
-                      ("mcp/noctusai/tests/test_keepers.py", _KEEPER_TESTS + (_SESSION_TEST if session_test else "")),
-                      ("scripts/MANIFEST", "tool.sh\n"), ("scripts/tool.sh", "#!/bin/sh\n")):
+                      ("mcp/noctusai/tests/test_keepers.py", _KEEPER_TESTS + (_SESSION_TEST if session_test else "") + extra_test),
+                      ("scripts/MANIFEST", "tool.sh\n"), ("scripts/tool.sh", "#!/bin/sh\n"), *extra):
         (wt / rel).parent.mkdir(parents=True, exist_ok=True)
         (wt / rel).write_text(text)
     if rogue_script:
@@ -760,8 +779,14 @@ def _ci_branch(world, *, rogue_script=False, session_test=False):
     return wt, world.push(wt, "feat/x")
 
 
+def _ADMIT(job):
+    """The heavy-slot seam: tests judge the run itself; the slot is asserted on its own below."""
+    import contextlib
+    return contextlib.nullcontext(None)
+
+
 def _parity(world, **env):
-    return RS.export_ci_parity_check(world.repo, base_env={**os.environ, **env}, verdict_store=world.verdict_store)(
+    return RS.export_ci_parity_check(world.repo, admit=_ADMIT, base_env={**os.environ, **env}, verdict_store=world.verdict_store)(
         "feat/x", sh(world.repo, "git", "rev-parse", "feat/x"))
 
 
@@ -792,7 +817,9 @@ def test_a_clean_head_passes_the_ci_parity_check_and_it_emits_a_valid_verdict_re
     res = _parity(world, **_SCRUBBED_ENV)
     assert res["ok"], res
     assert res["ran"]["flags"] == ["--check-scripts-manifest"] + ["--check-in-a-later-job"]
-    assert res["ran"]["tests"] == ["tests/test_keepers.py::test_real_tree_manifest_clean"]
+    # keeper tests always; the toolkit split is left to CI (owner 2026-11-11, measured 2h04m locally)
+    assert res["ran"]["tests"] and all("::" in t for t in res["ran"]["tests"]), res["ran"]["tests"]
+    assert not any(t.startswith("toolkit:") for t in res["ran"]["tests"])
     ok, why = RS.validate_verdict_ref(res["verdict_ref"], head, world.verdict_store)
     assert ok, why
     rec = RS.read_verdict(world.verdict_store, res["verdict_ref"].split(":")[1])
@@ -807,9 +834,9 @@ def test_a_keeper_that_only_warns_in_precommit_but_blocks_in_ci_fails_item_five(
     res = _parity(world, **_SCRUBBED_ENV)
     assert not res["ok"]
     assert "keeper --check-scripts-manifest" in res["detail"]
-    assert "test tests/test_keepers.py::test_real_tree_manifest_clean" in res["detail"]
+    assert "test_real_tree_manifest_clean" in res["detail"]
     d = RS.deliverable("feat/x", cwd=world.repo, derived_check=world.derived,
-                       scoped_check=RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store),
+                       scoped_check=RS.export_ci_parity_check(world.repo, admit=_ADMIT, verdict_store=world.verdict_store),
                        verdict_ref=world.vref(), verdict_store=world.verdict_store)
     five = item(d, "scoped_green")
     assert d["verdict"] == "needs_resync" and not five["ok"] and "manifest" in five["detail"]
@@ -823,7 +850,7 @@ def test_a_test_that_depends_on_the_session_env_is_run_without_it(world, monkeyp
     # proof the keeper is green on the dev machine ...
     assert subprocess.run([sys.executable, "-c", "import os,sys; sys.exit(0 if os.environ.get('CLAUDE_CODE_SESSION_ID') else 1)"]).returncode == 0
     # ... and red the way CI sees it, because the check scrubs the env
-    res = RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store)("feat/x", sh(world.repo, "git", "rev-parse", "feat/x"))
+    res = RS.export_ci_parity_check(world.repo, admit=_ADMIT, verdict_store=world.verdict_store)("feat/x", sh(world.repo, "git", "rev-parse", "feat/x"))
     assert not res["ok"] and "test_real_tree_session_keeper" in res["detail"]
     assert "keeper --check-advisory" not in res["detail"]  # a continue-on-error step does not block CI
 
@@ -833,7 +860,7 @@ def test_a_missing_workflow_is_unmeasured_never_green(world):
     (wt / "src" / "b.txt").write_text("b\n")
     world.commit(wt, "no ci definition")
     head = world.push(wt, "feat/x")
-    res = RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store)("feat/x", head)
+    res = RS.export_ci_parity_check(world.repo, admit=_ADMIT, verdict_store=world.verdict_store)("feat/x", head)
     assert not res["ok"] and "UNMEASURED" in res["detail"]
     assert not world.verdict_store.exists()  # an unmeasured run mints no record
 
@@ -1028,7 +1055,7 @@ def test_the_ci_parity_check_imports_the_heads_seed_lib(world):
     wt, head = _seed_branch(world, extra_files={".github/workflows/test.yml": wf, "mcp/noctusai/cli.py": cli,
                                                 "mcp/noctusai/tests/test_keepers.py": _KEEPER_TESTS,
                                                 "scripts/MANIFEST": "tool.sh\n", "scripts/tool.sh": "#!/bin/sh\n"})
-    res = RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store)("feat/x", head)
+    res = RS.export_ci_parity_check(world.repo, admit=_ADMIT, verdict_store=world.verdict_store)("feat/x", head)
     assert res["ok"], res
 
 
@@ -1325,7 +1352,7 @@ def test_run_scoped_gives_the_export_a_throwaway_git_repo_like_ci_has(world):
     world.commit(wt, "ci definition whose prime step needs git")
     head = world.push(wt, "feat/x")
     before = sh(world.repo, "git", "rev-list", "--all", "--count"), sh(world.repo, "git", "worktree", "list", "--porcelain")
-    res = RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store)("feat/x", head)
+    res = RS.export_ci_parity_check(world.repo, admit=_ADMIT, verdict_store=world.verdict_store)("feat/x", head)
     assert res["ok"], res
     assert "--check-gitdir-is-the-export" in res["ran"]["flags"]
     assert (sh(world.repo, "git", "rev-list", "--all", "--count"), sh(world.repo, "git", "worktree", "list", "--porcelain")) == before
@@ -1351,7 +1378,7 @@ def test_a_failing_prime_step_reports_the_real_error_not_the_banner(world):
     world.set_counts(wt)
     world.commit(wt, "a prime step that fails loudly")
     head = world.push(wt, "feat/x")
-    res = RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store)("feat/x", head)
+    res = RS.export_ci_parity_check(world.repo, admit=_ADMIT, verdict_store=world.verdict_store)("feat/x", head)
     assert not res["ok"] and "UNMEASURED" in res["detail"]
     assert "RealError: the stamp could not be written" in res["detail"]
     assert "NoctusAI Dev Toolkit" not in res["detail"] and "\x1b" not in res["detail"]
@@ -1359,7 +1386,7 @@ def test_a_failing_prime_step_reports_the_real_error_not_the_banner(world):
 
 def test_a_red_keeper_flag_carries_its_own_error_in_the_result(world):
     _wt, head = _ci_branch(world, rogue_script=True)
-    res = RS.export_ci_parity_check(world.repo, verdict_store=world.verdict_store)("feat/x", head)
+    res = RS.export_ci_parity_check(world.repo, admit=_ADMIT, verdict_store=world.verdict_store)("feat/x", head)
     assert not res["ok"] and "script(s) without a manifest row" in res["detail"]
 
 
@@ -1521,3 +1548,170 @@ def test_the_deliverable_git_seam_resolves_path_arguments_from_the_toplevel(tmp_
     git = RS._subprocess_git(repo / "mcp" / "noctusai")
     rc, out, _ = git("ls-tree", "--name-only", "HEAD", "products/p/backend/migrations/")
     assert rc == 0 and out.strip() == "products/p/backend/migrations/001_a.sql"
+
+
+# ─── item 5 runs the suites CI runs for the diff (owner decision 2026-11-11) ─────────────────────────────
+# Three deliveries went 5/5 and were then ejected on suites the diff selected in CI: the fleet-parametrized
+# compliance test (8a), the seed suite + test_vps_exec (ac-s6), a product FE test. The scope is ci_scope's.
+
+_FLEET_RED = """\
+import pytest
+
+
+@pytest.mark.parametrize("product", ["core"])
+def test_all_products_compliant(product):
+    assert product != "core", "a seeded product icon is not registered"
+"""
+
+
+def test_a_non_keeper_toolkit_red_is_left_to_ci_not_run_locally(world):
+    """The narrowing, pinned (owner decision 2026-11-11): the full toolkit split took 2h04m locally, so a
+    non-keeper toolkit test is CI's to judge - item 5 does not run it."""
+    _ci_branch(world, extra=(("mcp/noctusai/tests/test_products.py", _FLEET_RED),))
+    res = _parity(world, **_SCRUBBED_ENV)
+    assert res["ok"], res
+    assert "left to CI" in res["detail"]
+
+
+def test_no_heavy_slot_is_unmeasured_never_green(world):
+    import contextlib
+
+    @contextlib.contextmanager
+    def busy(job):
+        yield type("Adm", (), {"admitted": False, "verdict": "waiting_for_slot"})()
+
+    _ci_branch(world)
+    res = RS.export_ci_parity_check(world.repo, admit=busy, verdict_store=world.verdict_store)(
+        "feat/x", sh(world.repo, "git", "rev-parse", "feat/x"))
+    assert not res["ok"] and "UNMEASURED" in res["detail"] and "waiting_for_slot" in res["detail"]
+    assert not world.verdict_store.exists()
+
+
+_SUITE_WF = """\
+jobs:
+  product-backend-tests:
+    strategy:
+      matrix:
+        product: [core, agents, erp-imobiliario]
+  seed-backend-tests:
+    strategy:
+      matrix:
+        root: [seed/lib/backend, seed/framework/backend]
+"""
+
+
+def _suite_tree(tmp_path):
+    for d in ("products/core/backend", "products/agents/backend", "products/erp-imobiliario/backend",
+              "seed/lib/backend", "seed/framework/backend", "deploy/fleet"):
+        (tmp_path / d).mkdir(parents=True)
+    (tmp_path / "deploy/fleet/active-scope.txt").write_text("# awake\ncore\nagents\n")
+    return tmp_path
+
+
+def test_only_the_directly_touched_suites_run_locally(tmp_path):
+    cs = RS._sibling("ci_scope")
+    tree = _suite_tree(tmp_path)
+
+    def labels(paths):
+        return [s.label for s in RS.local_suites(tree, cs.classify(paths), _SUITE_WF, paths)]
+    # a seed change runs ONLY the touched seed root - the "every product" fan-out is CI's
+    assert labels(["seed/lib/backend/x.py"]) == ["seed:seed/lib/backend"]
+    # a product diff: only that product's backend
+    assert labels(["products/core/backend/migrations/119_x.sql"]) == ["product:core"]
+    # an asleep product is never run, even when touched
+    assert labels(["products/erp-imobiliario/backend/a.py"]) == []
+    # toolkit-only and ledger-only diffs run no suite (keeper tests only)
+    assert labels(["mcp/x.py"]) == []
+    assert labels(["project-history/a.ndjson"]) == []
+    core = RS.local_suites(tree, cs.classify(["products/core/backend/a.py"]), _SUITE_WF, ["products/core/backend/a.py"])[0]
+    assert core.cwd == "products/core/backend" and core.argv == ("-m", "pytest", "--tb=short", "-q")
+
+
+def test_the_split_matches_the_real_workflow():
+    """Pin against the REAL test.yml: if CI changes how it runs these suites, item 5 must change with it."""
+    wf = (Path(__file__).resolve().parents[3] / ".github/workflows/test.yml").read_text()
+    assert RS._matrix(wf, "seed-backend-tests", "root") and RS._matrix(wf, "product-backend-tests", "product")
+    assert "working-directory: products/${{ matrix.product }}/backend\n        run: pytest --tb=short -q" in wf
+    assert "working-directory: ${{ matrix.root }}\n        run: pytest --tb=short -q" in wf
+    assert "mcp/noctusai/tools/noctus/dev/ci_scope.py" in wf
+
+
+# ── migration -> DB-guard edge (owner-approved speedup 1, 2026-11-11) ───────────────────────────────────
+def _guard_tree(tmp_path):
+    t = tmp_path / "mcp" / "noctusai" / "tests"
+    t.mkdir(parents=True)
+    for n in ("test_verify_db_guards.py", "test_agents_camadas_probes_on_replay.py",
+              "test_sw_vitrine_probes_on_replay.py", "test_migration_chain_replay.py", "test_other.py"):
+        (t / n).write_text("")
+    return tmp_path
+
+
+def test_a_migration_diff_runs_db_guards_and_only_that_products_replays(tmp_path):
+    tree = _guard_tree(tmp_path)
+    s = RS.migration_guard_suite(tree, ["products/agents/backend/migrations/079_x.sql", "products/agents/backend/a.py"])
+    assert s.label == "db-guards:agents" and s.cwd == "."
+    assert s.argv[-3:] == ("mcp/noctusai/tests/test_verify_db_guards.py",
+                           "mcp/noctusai/tests/test_agents_camadas_probes_on_replay.py",
+                           "mcp/noctusai/tests/test_migration_chain_replay.py")
+    sw = RS.migration_guard_suite(tree, ["products/social-wiring/backend/migrations/339_y.sql"])
+    assert "mcp/noctusai/tests/test_sw_vitrine_probes_on_replay.py" in sw.argv
+    assert "mcp/noctusai/tests/test_agents_camadas_probes_on_replay.py" not in sw.argv
+
+
+def test_no_migration_no_db_guard_suite(tmp_path):
+    tree = _guard_tree(tmp_path)
+    assert RS.migration_guard_suite(tree, ["products/agents/backend/app/x.py", "mcp/y.py"]) is None
+
+
+def _node(root, lock: str, pglite: bool):
+    d = root / "mcp" / "noctusai" / "node"
+    d.mkdir(parents=True)
+    (d / "package-lock.json").write_text(lock)
+    if pglite:
+        (d / "node_modules" / "@electric-sql" / "pglite").mkdir(parents=True)
+    return d
+
+
+def test_pglite_is_linked_only_when_the_lockfile_matches(tmp_path):
+    src, export = tmp_path / "src", tmp_path / "export"
+    _node(src, "lock-a", True)
+    _node(export, "lock-a", False)
+    assert RS.link_pglite(export, src) == ""
+    assert (export / "mcp/noctusai/node/node_modules/@electric-sql/pglite").is_dir()
+
+
+def test_a_lockfile_mismatch_or_missing_pglite_is_unmeasured_never_linked(tmp_path):
+    src, export = tmp_path / "src", tmp_path / "export"
+    _node(src, "lock-a", True)
+    _node(export, "lock-b", False)
+    assert "differs" in RS.link_pglite(export, src)
+    assert not (export / "mcp/noctusai/node/node_modules").exists()
+    src2 = tmp_path / "src2"
+    _node(src2, "lock-b", False)
+    assert "not installed" in RS.link_pglite(export, src2)
+
+
+def test_a_stage_that_times_out_is_retried_once_then_passes_under_the_declared_budget(world, monkeypatch):
+    """scoped_green uses the merged-tip budget system: per-stage budget, ONE x1.5 retry. A slow first attempt (the
+    loaded-box case) is not an UNMEASURED verdict when the retry fits."""
+    _ci_branch(world, extra_test=_SLOW_ONCE_TEST)
+    monkeypatch.setenv("NOCTUS_GATE_BUDGETS_JSON", json.dumps({"ci_parity:pytest": 12}))
+    res = _parity(world)
+    assert res["ok"], res["detail"]
+    assert world.verdict_store.exists()
+
+
+def test_a_stage_that_times_out_twice_is_unmeasured_naming_the_stage_never_green(world, monkeypatch):
+    _ci_branch(world, extra_test=_SLOW_ALWAYS_TEST)
+    monkeypatch.setenv("NOCTUS_GATE_BUDGETS_JSON", json.dumps({"ci_parity:pytest": 2}))
+    res = _parity(world)
+    assert not res["ok"] and res["detail"].startswith("UNMEASURED:")
+    assert "ci_parity:pytest" in res["detail"] and "x1.5 retry" in res["detail"]
+    assert not world.verdict_store.exists()  # an unmeasured run mints no record
+
+
+def test_every_ci_parity_stage_has_a_declared_budget():
+    from tools.noctus.dev import gate_budget as gb
+    for gate in ("ci_parity:export", "ci_parity:pytest", "ci_parity:keeper:--check-x", "ci_parity:prime:--stamp",
+                 "ci_parity:suite:products/core/backend"):
+        assert gb.declared_gate_budget(gate) is not None, gate

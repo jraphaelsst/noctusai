@@ -441,7 +441,7 @@ function CampaignDialogInner({
                 onChange={(e) =>
                   setForm((f) => ({ ...f, ad_account_id: e.target.value }))
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {adAccounts.map((acc) => (
                   <option key={acc.id} value={acc.id}>
@@ -464,7 +464,7 @@ function CampaignDialogInner({
                     external_campaign_id: e.target.value,
                   }))
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 placeholder="ex: 12345678901234"
               />
               <p className="mt-1 text-xs text-muted-foreground">
@@ -482,7 +482,7 @@ function CampaignDialogInner({
               onChange={(e) =>
                 setForm((f) => ({ ...f, name: e.target.value }))
               }
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -494,7 +494,7 @@ function CampaignDialogInner({
                 onChange={(e) =>
                   setForm((f) => ({ ...f, objective: e.target.value }))
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 placeholder="ex: LEAD_GENERATION"
               />
             </div>
@@ -513,7 +513,7 @@ function CampaignDialogInner({
                       : undefined,
                   }))
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
           </div>
@@ -528,7 +528,7 @@ function CampaignDialogInner({
                     status: e.target.value as CampaignStatus,
                   }))
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <option value="active">Ativa</option>
                 <option value="paused">Pausada</option>
@@ -545,7 +545,7 @@ function CampaignDialogInner({
                     situation: e.target.value as SituationLiteral,
                   }))
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <option value="on-track">No Prazo</option>
                 <option value="attention">Atenção</option>
@@ -561,7 +561,7 @@ function CampaignDialogInner({
               onChange={(e) =>
                 setForm((f) => ({ ...f, result_metric: e.target.value }))
               }
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               placeholder="ex: leads, conversões"
             />
           </div>
@@ -645,7 +645,7 @@ function CampanhasTab() {
               situation: (e.target.value as SituationLiteral) || undefined,
             }))
           }
-          className="flex h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
           <option value="">Todas as situações</option>
           <option value="on-track">No Prazo</option>
@@ -661,7 +661,7 @@ function CampanhasTab() {
               ad_account_id: e.target.value || undefined,
             }))
           }
-          className="flex h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
           <option value="">Todas as contas</option>
           {adAccounts.map((acc) => (
@@ -679,7 +679,7 @@ function CampanhasTab() {
               status: (e.target.value as CampaignStatus) || undefined,
             }))
           }
-          className="flex h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
           <option value="">Todos os status</option>
           <option value="active">Ativa</option>
@@ -800,7 +800,7 @@ function CampanhasTab() {
                           situation: e.target.value as SituationLiteral,
                         })
                       }
-                      className={`rounded-full border-none px-2.5 py-0.5 text-xs font-medium cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${SITUATION_COLORS[campaign.situation as SituationLiteral]}`}
+                      className={`rounded-full border-none px-2.5 py-0.5 text-xs font-medium cursor-pointer focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${SITUATION_COLORS[campaign.situation as SituationLiteral]}`}
                       aria-label="Situação da campanha"
                     >
                       <option value="on-track">{SITUATION_LABEL["on-track"]}</option>
@@ -965,7 +965,7 @@ function AdAccountDialogInner({ open, editing, onClose }: AdAccountDialogProps) 
                     external_account_id: e.target.value,
                   }))
                 }
-                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 placeholder="ex: act_123456789"
               />
               <p className="mt-1 text-xs text-muted-foreground">
@@ -983,7 +983,7 @@ function AdAccountDialogInner({ open, editing, onClose }: AdAccountDialogProps) 
               onChange={(e) =>
                 setForm((f) => ({ ...f, name: e.target.value }))
               }
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <div>
@@ -996,7 +996,7 @@ function AdAccountDialogInner({ open, editing, onClose }: AdAccountDialogProps) 
                   status: e.target.value as AdAccountStatus,
                 }))
               }
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             >
               <option value="active">Ativa</option>
               <option value="paused">Pausada</option>

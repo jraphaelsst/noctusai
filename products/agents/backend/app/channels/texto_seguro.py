@@ -104,6 +104,9 @@ ALLOW_OFERTA: Allow = {
     "quartos": None, "suites": None, "vagas": None, "destaques": None, "link": None,
     "confirmacao_proprietario": None,
 }
+#: One option of an ``oferecer_opcoes`` batch (the generic shape of :func:`app.catalogos.protocolo.opcao_de_item`);
+#: ``atributos`` is the free-form rest, shaped leaf by leaf.
+ALLOW_OPCAO: Allow = {"codigo": None, "titulo": None, "resumo": None, "atributos": None, "link": None}
 _ALLOW_EXEMPLO: Allow = {"codigo": None, "titulo": None, "tipo": None, "quartos": None, "preco": None}
 ALLOW_EMPREENDIMENTO: Allow = {
     "nome": None, "construtora": None, "bairro": None, "cidade": None, "unidades": None, "tipos": None,
@@ -159,7 +162,7 @@ def _formatar(item: Mapping[str, Any], allow: Allow, limites: Any, sinais: list[
             continue
         if chave == "titulo" and isinstance(valor, str):
             valor = _texto(valor, limites.catalogo_titulo_max, link)
-        elif chave == "descricao" and isinstance(valor, str):
+        elif chave in ("descricao", "resumo") and isinstance(valor, str):
             valor = _texto(valor, limites.catalogo_descricao_max, link)
         elif chave in ("caracteristicas", "destaques"):
             if not isinstance(valor, list):
@@ -172,7 +175,7 @@ def _formatar(item: Mapping[str, Any], allow: Allow, limites: Any, sinais: list[
             valor = _generico(valor, 200, link)
         textos = valor if isinstance(valor, list) and all(isinstance(x, str) for x in valor) else [valor]
         livres = [x for x in textos if isinstance(x, str)]
-        if chave in ("titulo", "descricao", "caracteristicas", "destaques") and livres and conf.sinal_extracao(livres, None):
+        if chave in ("titulo", "descricao", "resumo", "caracteristicas", "destaques") and livres and conf.sinal_extracao(livres, None):
             sinais.append({"campo": chave})
             continue
         if valor in ("", []):

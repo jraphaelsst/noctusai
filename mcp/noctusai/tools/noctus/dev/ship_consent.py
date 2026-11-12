@@ -11,8 +11,9 @@ Actions
 -------
 challenge  Return the canonical sentence the USER must type. Writes nothing.
 author     Append an approval row to `ship-consent.ndjson` (origin/ledgers) —
-           REFUSES unless that exact sentence is found in a message the human
-           actually wrote, verified against the harness-written session
+           REFUSES unless that exact sentence - or, in consent phase
+           `pre-third-users` (owner decision 2026-11-11), the owner's plain deploy /
+           go-to-prod ask - is found in a message the human actually wrote, verified against the harness-written session
            transcript (the SAME evidence layer `noctus.dev.prod_consent` uses:
            `compliance._human_authored_transcript_texts`). The agent supplies
            the project + session id; it cannot supply the evidence.
@@ -44,7 +45,7 @@ from typing import Any, Callable
 from settings import LEDGER_ROOT, REPO_ROOT
 
 from tools.noctus.dev._ledger_store import LedgerStoreError, merge_ndjson_text, open_ledger
-from tools.noctus.dev.compliance import _human_authored_transcript_texts
+from tools.noctus.dev.compliance import CONSENT_PHASE, _human_authored_transcript_texts, _owner_deploy_ask
 
 LEDGER_REL = "project-history/ship-consent.ndjson"
 LEDGER_PATH: Path = LEDGER_ROOT / LEDGER_REL   # legacy dev copy (dual-read) + the Fake's file
@@ -77,24 +78,39 @@ def _run(cmd: list[str], cwd: str | None = None) -> tuple[int, str, str]:
     return r.returncode, (r.stdout or ""), (r.stderr or "")
 
 
-def find_phrase(project: str, session_id: str, home: Path | None = None) -> tuple[str | None, str]:
-    """Return `(prompt_source, "")` when the canonical phrase for `project`
-    appears in a HUMAN-authored message of `session_id`, else `(None, why)`.
-    A missing/unreadable transcript is a refusal with its own reason — never
-    read as "no consent needed"."""
+def find_evidence(project: str, session_id: str, home: Path | None = None) -> tuple[dict | None, str]:
+    """The user's approval in a HUMAN-authored message of `session_id`: `({source, text, tier}, "")` or
+    `(None, why)`. Tier `exact` = the canonical sentence (any phase). Tier `owner-ask` = a plain deploy /
+    go-to-prod ask, accepted only while `compliance.CONSENT_PHASE` is `pre-third-users` (owner decision
+    2026-11-11: "when i ask to deploy or to go to prod is enough, not by exact words"). The exact sentence
+    wins over an ask anywhere in the transcript; within a tier the LATEST statement is operative. A missing /
+    unreadable transcript is a refusal with its own reason - never read as "no consent needed"."""
     entries, detail = _human_authored_transcript_texts(session_id, home=home)
     if detail:
         return None, detail
     want = _norm(canonical_phrase(project))
-    for source, text in reversed(entries):  # latest statement is operative
+    for source, text in reversed(entries):
         if want in _norm(text):
-            return source, ""
+            return {"source": source, "text": canonical_phrase(project), "tier": "exact"}, ""
+    for source, text in reversed(entries):
+        for sentence in (x.strip() for x in " ".join(text.split()).replace("? ", "?\n").replace(". ", ".\n")
+                         .replace("! ", "!\n").splitlines()):
+            if sentence and _owner_deploy_ask(sentence):
+                return {"source": source, "text": sentence, "tier": "owner-ask"}, ""
+    phase = (" (or, in consent phase pre-third-users, the owner's plain deploy / go-to-prod ask)"
+             if CONSENT_PHASE == "pre-third-users" else "")
     return None, (
-        f"the sentence {canonical_phrase(project)!r} was not found in any of the "
+        f"consent not found: neither the sentence {canonical_phrase(project)!r}{phase} appears in any of the "
         f"{len(entries)} human-authored message(s) of session {session_id}. If the "
         "user typed it in the turn you are in, the transcript is flushed at turn "
         "end — re-run `author` next turn. Never hand-write the ledger row."
     )
+
+
+def find_phrase(project: str, session_id: str, home: Path | None = None) -> tuple[str | None, str]:
+    """`(prompt_source, "")` when `find_evidence` finds an approval, else `(None, why)`."""
+    ev, why = find_evidence(project, session_id, home=home)
+    return (ev["source"], "") if ev else (None, why)
 
 
 def verify_row(row: dict, home: Path | None = None) -> tuple[bool, str]:
@@ -178,6 +194,9 @@ def _challenge(project: str) -> dict:
         "ok": True, "action": "challenge", "project": project, "phrase": phrase,
         "instructions": (
             "Ask the user to type this sentence, verbatim:\n\n    " + phrase + "\n\n"
+            + ("In consent phase pre-third-users the owner's own plain deploy / go-to-prod ask, "
+               "typed in this session, is accepted too (owner decision 2026-11-11). "
+               if CONSENT_PHASE == "pre-third-users" else "") +
             "Do not type it for them or paraphrase it. It approves shipping the "
             "project's commits that are on origin/dev at the moment `author` "
             "records it; later commits need a fresh approval. Then call "
@@ -192,8 +211,9 @@ def _author(project: str, session_id: str, dev_sha: str | None, runner: Runner,
         return {"ok": False, "action": "author",
                 "error": "session_id is required — the row must point at the "
                          "transcript carrying the user's approval"}
-    source, why = find_phrase(project, session_id, home=home)
-    if source is None:
+    ev, why = find_evidence(project, session_id, home=home)
+    source = ev["source"] if ev else None
+    if ev is None:
         return {"ok": False, "action": "author", "project": project,
                 "error": f"REFUSED — {why}", "phrase_to_ask_for": canonical_phrase(project)}
     if not dev_sha:
@@ -208,7 +228,8 @@ def _author(project: str, session_id: str, dev_sha: str | None, runner: Runner,
     digest = hashlib.sha256(transcripts[0].read_bytes()).hexdigest() if transcripts else ""
     row = {
         "ts": _now(), "action": "author", "project": project, "dev_sha": dev_sha,
-        "phrase": canonical_phrase(project), "prompt_source": source,
+        # the user's OWN words, verbatim, and which tier accepted them
+        "phrase": ev["text"], "tier": ev["tier"], "consent_phase": CONSENT_PHASE, "prompt_source": source,
         "session_id": session_id, "transcript_sha256": digest,
         "consented_by": email.strip() if rc == 0 else "", "recorded_by": "agent",
     }

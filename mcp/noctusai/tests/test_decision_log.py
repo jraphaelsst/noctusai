@@ -452,3 +452,22 @@ def test_merge_path_audit_is_warn_only_with_telemetry(repo, tmp_path):
     assert json.loads(tp.read_text().splitlines()[0])["slice"] == SLICE
     bad = dl.merge_path_audit(repo, slice_id=SLICE, base="nope", telemetry_path=tp)
     assert bad["status"] == "inconclusive"
+
+
+def test_write_without_worktree_path_from_the_primary_checkout_is_refused(tmp_path, monkeypatch):
+    """The server's cwd is the PRIMARY checkout: a worktree session omitting worktree_path used to write the row there."""
+    import settings
+    (tmp_path / ".git").mkdir()  # a primary checkout has a .git DIRECTORY
+    monkeypatch.setattr(settings, "REPO_ROOT", tmp_path)
+    for action, kw in (("record", {"slice_id": SLICE}), ("review", {"id_ref": "x"})):
+        out = dl.run(action, **kw)
+        assert not out["ok"] and "worktree_path" in out["error"]
+    assert not (tmp_path / "project-history").exists()
+    assert dl.run("list")["ok"]  # reads are unaffected
+
+
+def test_a_worktree_root_is_not_refused(tmp_path, monkeypatch):
+    import settings
+    (tmp_path / ".git").write_text("gitdir: /elsewhere\n")  # a linked worktree has a .git FILE
+    monkeypatch.setattr(settings, "REPO_ROOT", tmp_path)
+    assert "refusing" not in dl.run("record", slice_id=SLICE).get("error", "")

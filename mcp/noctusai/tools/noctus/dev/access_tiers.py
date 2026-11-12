@@ -17,10 +17,13 @@ The ratchet is the living findings ledger (``access_tier_findings``): a violatio
 from __future__ import annotations
 
 import ast
+import copy
 import fnmatch
 import importlib.util
 import json
+import os
 import re
+import threading
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +35,76 @@ REGISTRY_REL = Path("seed/lib/backend/noctusai_lib/api/access_tiers.py")
 CATALOG_REL = Path("project-history/access-tiers/endpoint-catalog.md")
 _METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "websocket"}
 _SKIP_DIRS = {"tests", "test", "migrations", "node_modules", "__pycache__", "venv", ".venv", "scripts", "templates"}
+
+
+# ---------------------------------------------------------------------------
+# Per-process scan memo
+# ---------------------------------------------------------------------------
+# The four whole-tree scans (routes ~70 s, streams ~35 s, tables ~7 s on a loaded laptop) are pure functions of the
+# backend sources, the migrations and the registry. Every keeper, every ledger check and every real-tree test used to
+# redo them (a CI-parity pytest run scanned the same unchanged tree ~10x = 570 s of a 1500 s budget, 2026-11-11), so a
+# result is reused while a stat signature (path, mtime_ns, size) of EVERY input is unchanged. Any edit, add or delete
+# of an input changes the signature, so a stale answer is impossible; callers get a deep copy, never the cached object.
+_MEMO_PRUNE = _SKIP_DIRS - {"migrations"} | {"build", "dist", ".git"}
+_MEMO_SUFFIXES = (".py", ".sql")
+_MEMO_MAX = 64  # tmp-tree fixtures must not evict the real-tree entries (a size of 8 let them: 142 s re-scan)
+_memo: dict[tuple, Any] = {}
+_memo_stats = {"hits": 0, "misses": 0}
+_memo_lock = threading.Lock()
+
+
+def _inputs_signature(root: Path) -> tuple:
+    """Stat signature of everything a scan reads: every .py/.sql under products/*/backend and seed/{framework,lib}/backend
+    (pruning the dirs `_py_files` skips; `migrations` kept for the .sql), plus the product dir listing."""
+    sig: list[tuple] = []
+    prods = root / "products"
+    names = sorted(p.name for p in prods.iterdir() if p.is_dir()) if prods.is_dir() else []  # product-scope: all — signature of every input
+    sig.append(("products", tuple(names)))
+    bases = [prods / n / "backend" for n in names] + [root / "seed/framework/backend", root / "seed/lib/backend"]
+    for base in bases:
+        if not base.is_dir():
+            continue
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = sorted(d for d in dirnames if d not in _MEMO_PRUNE)
+            for fn in sorted(filenames):
+                if fn.endswith(_MEMO_SUFFIXES):
+                    fp = os.path.join(dirpath, fn)
+                    try:
+                        st = os.stat(fp)
+                    except OSError:
+                        continue
+                    sig.append((fp, st.st_mtime_ns, st.st_size))
+    return tuple(sig)
+
+
+def _memoised_scan(fn):
+    """Memoise `fn(root)` on (scan name, resolved root, input signature)."""
+    name = fn.__name__
+
+    def wrapper(root: Path | None = None):
+        r = Path(root or REPO_ROOT)
+        key = (name, str(r.resolve()), _inputs_signature(r))
+        with _memo_lock:
+            if key in _memo:
+                _memo_stats["hits"] += 1
+                _memo[key] = _memo.pop(key)  # LRU touch
+                return copy.deepcopy(_memo[key])
+        value = fn(r)
+        with _memo_lock:
+            _memo_stats["misses"] += 1
+            _memo[key] = copy.deepcopy(value)
+            while len(_memo) > _MEMO_MAX:
+                _memo.pop(next(iter(_memo)))
+        return value
+
+    wrapper.__name__, wrapper.__doc__, wrapper.__wrapped__ = name, fn.__doc__, fn  # type: ignore[attr-defined]
+    return wrapper
+
+
+def scan_cache_info() -> dict[str, int]:
+    """Hit / miss / size counters of the scan memo (tests and diagnostics)."""
+    with _memo_lock:
+        return {**_memo_stats, "size": len(_memo)}
 
 
 def load_registry(root: Path | None = None):
@@ -62,6 +135,25 @@ def _is_gate_name(name: str) -> bool:
 
 def _call_name(call: ast.Call) -> str | None:
     return _tail(call.func)
+
+
+_PATH_PARAM_RE = re.compile(r"\{(\w+)(?::[^}]*)?\}")
+
+
+def _token_link_problem(fn: ast.AST, path: str, helpers: tuple[str, ...]) -> str:
+    """Why a ``token-link`` route is not compliant, or "" when it is. Walks the AST (a docstring / string / comment that
+    merely names the helper must not pass): (1) a decorator CALL ``limit`` / ``shared_limit`` (the rate limit), and (2) an
+    ``ast.Call`` to one of ``helpers`` whose token argument is one of the route's PATH parameters."""
+    if not any(isinstance(d, ast.Call) and _call_name(d) in ("limit", "shared_limit") for d in getattr(fn, "decorator_list", [])):
+        return "token-link route needs a rate limit decorator (`limiter.limit(...)` / `limiter.shared_limit(...)`)"
+    params = set(_PATH_PARAM_RE.findall(path))
+    for n in ast.walk(fn):
+        if isinstance(n, ast.Call) and _call_name(n) in helpers:
+            token_args = list(n.args[:1]) + [k.value for k in n.keywords if k.arg == "token"]
+            if any(isinstance(a, ast.Name) and a.id in params for a in token_args):
+                return ""
+    return (f"token-link route must CALL {list(helpers)} with its path parameter as the token "
+            "(expiry fails closed, malformed = 404, no token in logs); naming it in a docstring does not count")
 
 
 def _const_str(node: ast.AST | None) -> str | None:
@@ -452,14 +544,17 @@ def _classify_set(product: str, files: list[Path], root: Path, reg) -> list[Rout
                 elif "/admin" in path and tier in ("org", "public") and not decl:
                     verdict, note = "unclear", f"admin-looking path behind tier {tier}; confirm it is customer-owned"
                 elif tier == "public":
-                    # the closed public allowlist: landing | auth | pricing-checkout | legal-consent | lead-capture
+                    # the closed public allowlist: landing | auth | pricing-checkout | legal-consent | lead-capture | token-link
                     limited = any("limit" in ast.unparse(d).lower() or "rate" in ast.unparse(d).lower() for d in fn.decorator_list) \
                         or "limiter" in body_src or "rate_limit" in body_src or "ratelimit" in body_src
                     if category not in reg.PUBLIC_CATEGORIES:
                         verdict, note = "unclear", f"public route outside the closed allowlist {list(reg.PUBLIC_CATEGORIES)} (category={category or 'none'}): every other route is access-level"
-                    elif not limited:
+                    elif category == "token-link" and (tl_problem := _token_link_problem(fn, path, reg.TOKEN_LINK_HELPERS)):
+                        # AST, not text: a docstring or a string naming the helper proves nothing
+                        verdict, note = "unclear", tl_problem
+                    elif category != "token-link" and not limited:
                         verdict, note = "unclear", "public route without a rate limit"
-                    elif deco.func.attr.upper() != "GET" and not any(a in body_src for a in reg.ABUSE_PROTECTION_NAMES):
+                    elif category != "token-link" and deco.func.attr.upper() != "GET" and not any(a in body_src for a in reg.ABUSE_PROTECTION_NAMES):
                         verdict, note = "unclear", f"public write without abuse protection (one of {sorted(reg.ABUSE_PROTECTION_NAMES)})"
                 routes.append(Route(
                     product, rel, fn.name, fn.lineno, deco.func.attr.upper(), path,  # type: ignore[attr-defined]
@@ -500,6 +595,7 @@ def active_products(root: Path) -> list[str]:
     return [o for o in out if o != "seed"] + (["seed"] if (root / "seed").is_dir() else [])
 
 
+@_memoised_scan
 def classify_routes(root: Path | None = None) -> list[Route]:
     root = root or REPO_ROOT
     reg = load_registry(root)
@@ -604,6 +700,21 @@ def _apply_do_block(stmt: str, tables: dict[str, "_Tbl"], pschema: str | None) -
                         t.policies.pop(pn)
 
 
+_RENAME_RE = re.compile(r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?" + _Q + r"\s+RENAME\s+TO\s+\"?(?P<new>[\w-]+)\"?", re.I)
+
+
+def _apply_renames(stmt: str, tables: dict[str, "_Tbl"], pschema: str | None) -> None:
+    """``ALTER TABLE s.a RENAME TO b`` -- top-level or inside a ``DO`` block (orbity 023 retires its tables this way): the
+    table keeps its grants and policies under the NEW name. Without it the scanner keeps a phantom `a` and never sees `b`."""
+    for m in _RENAME_RE.finditer(stmt):
+        old = _tbl_key(m.group("schema"), m.group("table"), pschema)
+        t = tables.pop(old, None)
+        if t is None:
+            continue
+        t.name = m.group("new")
+        tables[_tbl_key(m.group("schema"), m.group("new"), pschema)] = t
+
+
 def _tbl_key(schema: str | None, name: str, product_schema: str | None) -> str:
     return f"{(schema or product_schema or '').lower()}.{name.lower()}".lstrip(".")
 
@@ -624,6 +735,7 @@ def _migration_files(root: Path, prod: str) -> list[Path]:
     return sorted(d.glob("*.sql")) if d.is_dir() else []
 
 
+@_memoised_scan
 def analyze_tables(root: Path | None = None) -> dict[str, Any]:
     """Replay each active product's migration chain statically; return its Platform-IP tables with the grants
     and policies that expose them to ``authenticated`` / ``anon``."""
@@ -656,6 +768,8 @@ def analyze_tables(root: Path | None = None) -> dict[str, Any]:
                 head = st.lstrip()
                 line = cleaned[: cleaned.find(st)].count("\n") + 1 if st in cleaned else 1
                 where = f"{rel}:{line}"
+                if re.search(r"\bRENAME\s+TO\b", head, re.I):
+                    _apply_renames(head, tables, pschema)
                 if m := _CREATE_TABLE_RE.match(head):
                     k = _tbl_key(m.group("schema"), m.group("table"), pschema)
                     t = tables.setdefault(k, _Tbl(m.group("schema"), m.group("table"), prod, rel))
@@ -851,6 +965,7 @@ def _table_violations(root: Path) -> dict[str, dict]:
 
 
 # --- LLM streaming: delta events reach a browser only through the leak filter ---------------------------------
+@_memoised_scan
 def analyze_streams(root: Path | None = None) -> list[dict]:
     root = root or REPO_ROOT
     reg = load_registry(root)
@@ -887,6 +1002,7 @@ def analyze_streams(root: Path | None = None) -> list[dict]:
 
 
 # --- leak fingerprint: every prompt-derived source is registered at the one seam -------------------------------
+@_memoised_scan
 def analyze_fingerprint(root: Path | None = None) -> list[dict]:
     root = root or REPO_ROOT
     reg = load_registry(root)
@@ -1153,7 +1269,7 @@ def render_catalog(root: Path | None = None) -> str:
     L += ["", "## API docs exposure (owner decision: `/docs` + `/openapi.json` stay PUBLIC; every documented route is gated by its tier -- proven by the schema-driven 401/403 contract test -- and Platform IP is left out of the public schema)", ""]
     L += [f"- {p}: {state}" for p, state in docs.items()]
     pub = [r for r in routes if r.tier == "public"]
-    L += ["", "## Public routes by category (closed allowlist: landing, auth, pricing-checkout, legal-consent, lead-capture)", ""]
+    L += ["", "## Public routes by category (closed allowlist: landing, auth, pricing-checkout, legal-consent, lead-capture, token-link)", ""]
     if not pub:
         L.append("_No route currently declares `@access_tier(\"public\", category=...)`; every anonymous-reachable route is in the baseline as unclear._")
     for cat in load_registry(root).PUBLIC_CATEGORIES:
