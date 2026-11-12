@@ -34,9 +34,9 @@ owns_kb: []
 
 ## 3 · Eval-loop gate (owner spec, 2026-11-09)
 
-- Target **100%** run score. Floor **80%** (`publicacao_limiar`).
-- Declare the planned rounds N up front, with checkpoints at 5 / 10 / 15.
-- Stop at 100%.
+- Target **95%** run score (owner, 2026-11-12; was 100%). Floor **80%** (`publicacao_limiar`). Budget cap **US$ 5** per loop (was 20).
+- Max rounds = the platform loop config `rodadas_max` (owner-editable); a loop may plan fewer, never more. Checkpoints at 5 / 10 / 15.
+- Stop at the target. Target, cap and max rounds come from the loop config, frozen per loop.
 - **2 consecutive runs without a score improvement → STOP** and notify why (score series, what changed, the cases still failing).
 - Every run that doesn't raise the score is an **overcall**: list it with its cost.
 - Never re-run an unchanged hash beyond the consolidation passes. Fix first.
