@@ -14,6 +14,8 @@ import pytest
 
 from noctusai_lib.testing import MockSupabaseClient
 
+from noctusai_lib.api.token_link import TokenLinkGone, TokenLinkNotFound, resolve_token_link
+
 from app.services.reports_service import (
     ReportsPublicService,
     ReportsService,
@@ -304,54 +306,141 @@ class TestGenerateSnapshot:
 # ---------------------------------------------------------------------------
 
 class TestReportsPublicService:
-    def test_unknown_token_returns_none(self):
+    """The public read: token -> report (resolve_token_link) -> latest snapshot INSIDE the report's org."""
+
+    @staticmethod
+    def _open(pub, token):
+        return resolve_token_link(token, pub.fetch_published_report)
+
+    def test_unknown_token_is_not_found(self):
         db, pub = _pub_svc([])
         db.set_table_data("reports", [])
-        result = pub.get_published_report_by_token("nonexistent-token")
-        assert result is None
+        with pytest.raises(TokenLinkNotFound):
+            self._open(pub, str(uuid.uuid4()))
 
-    def test_draft_report_returns_none(self):
+    def test_draft_report_is_not_found(self):
         row = _report(status="draft")
         db, pub = _pub_svc([row])
         db.set_table_data("reports", [row])
-        result = pub.get_published_report_by_token(row["public_token"])
-        assert result is None
+        with pytest.raises(TokenLinkNotFound):
+            self._open(pub, row["public_token"])
 
-    def test_expired_published_report_returns_none(self):
+    def test_expired_published_report_is_gone(self):
         row = _report(status="published", expires_at="2026-01-01T00:00:00+00:00")
         db, pub = _pub_svc([row])
         db.set_table_data("reports", [row])
-        result = pub.get_published_report_by_token(row["public_token"])
-        assert result is None
+        with pytest.raises(TokenLinkGone):
+            self._open(pub, row["public_token"])
 
-    def test_published_not_expired_returns_dict(self):
-        row = _report(status="published")
-        snap = _snapshot(row["id"])
-        db, pub = _pub_svc([snap])
-        db.set_table_data("reports", [row])
-        db.set_table_data("report_snapshots", [snap])
-        result = pub.get_published_report_by_token(row["public_token"])
-        assert result is not None
-        assert result["report"]["status"] == "published"
-        assert result["snapshot"]["report_id"] == row["id"]
+    def test_a_report_link_without_an_expiry_fails_closed(self):
+        for bad in (None, "garbage"):
+            row = _report(status="published", expires_at=bad)
+            db, pub = _pub_svc([row])
+            db.set_table_data("reports", [row])
+            with pytest.raises(TokenLinkGone):
+                self._open(pub, row["public_token"])
 
-    def test_published_with_future_expiry_returns_dict(self):
+    def test_published_with_future_expiry_opens_with_its_snapshot(self):
         row = _report(status="published", expires_at="2099-01-01T00:00:00+00:00")
         snap = _snapshot(row["id"])
         db, pub = _pub_svc([snap])
         db.set_table_data("reports", [row])
         db.set_table_data("report_snapshots", [snap])
-        result = pub.get_published_report_by_token(row["public_token"])
-        assert result is not None
+        report = self._open(pub, row["public_token"])
+        assert pub.latest_snapshot(report)["report_id"] == row["id"]
 
-    def test_published_without_snapshot_returns_none_snapshot(self):
-        row = _report(status="published")
+    def test_published_without_snapshot_has_no_snapshot(self):
+        row = _report(status="published", expires_at="2099-01-01T00:00:00+00:00")
         db, pub = _pub_svc([])
         db.set_table_data("reports", [row])
         db.set_table_data("report_snapshots", [])
-        result = pub.get_published_report_by_token(row["public_token"])
-        assert result is not None
-        assert result["snapshot"] is None
+        assert pub.latest_snapshot(self._open(pub, row["public_token"])) is None
+
+    def test_a_snapshot_of_org_a_pointing_at_the_report_of_org_b_never_shows(self):
+        """LEAK (security review round 3): the snapshot is read inside the report's own org."""
+        row = _report(status="published", expires_at="2099-01-01T00:00:00+00:00")  # org A
+        stray = {**_snapshot(row["id"]), "org_id": "00000000-0000-0000-0000-0000000000bb"}  # org B row, same report_id
+        db, pub = _pub_svc([stray])
+        db.set_table_data("reports", [row])
+        db.set_table_data("report_snapshots", [stray])
+        assert pub.latest_snapshot(self._open(pub, row["public_token"])) is None
+
+
+class _FinanceDeniedDb:
+    """The user's JWT client as prod serves it: `revenues` / `expenses` are security-invoker views over the service-only
+    finance tables, so reading them under the user's role is `permission denied`. Everything else is the shared mock."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def table(self, name):
+        if name in ("revenues", "expenses"):
+            raise PermissionError(f"permission denied for view {name}")
+        return self._inner.table(name)
+
+
+class TestGenerateReadsFinanceThroughTheAdminClient:
+    def test_generate_with_revenue_no_longer_fails(self):
+        report = _report(id_="report-9", period_start="2026-05-01", period_end="2026-05-31")
+        user_db = MockSupabaseClient(data=[_snapshot("report-9")], schema="orbity")
+        user_db.set_table_data("reports", [report])
+        user_db.set_table_data("leads", [])
+        admin_db = MockSupabaseClient(schema="orbity")
+        admin_db.set_table_data("revenues", [
+            {"id": str(uuid.uuid4()), "amount": 5000, "status": "paid", "paid_at": "2026-05-10T00:00:00+00:00", "org_id": str(ORG)},
+            {"id": str(uuid.uuid4()), "amount": 700, "status": "paid", "paid_at": "2026-05-12T00:00:00+00:00", "org_id": "00000000-0000-0000-0000-0000000000bb"},
+        ])
+        admin_db.set_table_data("expenses", [{"id": str(uuid.uuid4()), "amount": 2000, "due_date": "2026-05-15", "org_id": str(ORG)}])
+        svc = ReportsService(_FinanceDeniedDb(user_db), org_id=ORG, admin_db=admin_db)
+        svc.generate_snapshot("report-9")  # was a 502 (PermissionError) before
+        payload = user_db.table("report_snapshots").inserted_payloads[-1]["payload"]
+        assert payload["revenues"] == {"total": 5000.0, "count": 1}  # the other org's 700 is excluded by .eq(org_id)
+        assert payload["expenses"]["total"] == 2000.0
+
+
+class TestPublishedLinkExpiry:
+    def test_publishing_without_an_expiry_gets_a_default_one(self):
+        db, svc = _svc([_report(status="draft", expires_at=None)])
+        svc.update_report(db.table("reports").select("*").execute().data[0]["id"], {"status": "published"})
+        payload = db.table("reports").updated_payloads[-1]
+        assert payload["expires_at"]  # now + REPORT_LINK_TTL_DAYS
+
+    def test_creating_a_published_report_gets_a_default_expiry(self):
+        db, svc = _svc([])
+        svc.create_report({"name": "R", "period_start": "2026-01-01", "period_end": "2026-01-31", "status": "published"})
+        assert db.table("reports").inserted_payloads[-1]["expires_at"]
+
+    def test_an_expiry_ten_years_out_is_clamped_to_90_days_on_create(self):
+        from datetime import timedelta
+
+        db, svc = _svc([])
+        svc.create_report({"name": "R", "period_start": "2026-01-01", "period_end": "2026-01-31", "status": "published",
+                           "expires_at": (datetime.now(timezone.utc) + timedelta(days=3650)).isoformat()})
+        got = datetime.fromisoformat(db.table("reports").inserted_payloads[-1]["expires_at"])
+        assert abs((got - (datetime.now(timezone.utc) + timedelta(days=90))).total_seconds()) < 60
+
+    def test_an_expiry_ten_years_out_is_clamped_to_90_days_on_update(self):
+        from datetime import timedelta
+
+        row = _report(status="published", expires_at="2026-12-01T00:00:00+00:00")
+        db, svc = _svc([row])
+        svc.update_report(row["id"], {"expires_at": (datetime.now(timezone.utc) + timedelta(days=3650)).isoformat()})
+        got = datetime.fromisoformat(db.table("reports").updated_payloads[-1]["expires_at"])
+        assert abs((got - (datetime.now(timezone.utc) + timedelta(days=90))).total_seconds()) < 60
+
+    def test_an_expiry_inside_the_ceiling_is_kept_on_update(self):
+        row = _report(status="published", expires_at="2026-12-01T00:00:00+00:00")
+        db, svc = _svc([row])
+        soon = (datetime.now(timezone.utc) + __import__("datetime").timedelta(days=10)).isoformat()
+        svc.update_report(row["id"], {"expires_at": soon})
+        assert db.table("reports").updated_payloads[-1]["expires_at"] == soon
+
+    def test_an_explicit_expiry_is_kept(self):
+        db, svc = _svc([])
+        soon = (datetime.now(timezone.utc) + __import__("datetime").timedelta(days=20)).isoformat()
+        svc.create_report({"name": "R", "period_start": "2026-01-01", "period_end": "2026-01-31", "status": "published",
+                           "expires_at": soon})
+        assert db.table("reports").inserted_payloads[-1]["expires_at"] == soon
 
 
 # ---------------------------------------------------------------------------

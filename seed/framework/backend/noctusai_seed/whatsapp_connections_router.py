@@ -152,10 +152,13 @@ class WhatsAppConnectionCreateIn(StrictHttpModel):
 
 
 class WhatsAppConnectionUpdateIn(StrictHttpModel):
+    """What a member may change. ``base_url`` and ``session_name`` are deliberately NOT here: like on create they are
+    derived server-side (the product's WAHA host + the generated session), never taken from the caller -- a
+    client-supplied host would let any org member point the server's authenticated WAHA calls (and the decrypted api key)
+    at an arbitrary URL (SSRF, security review F3). ``StrictHttpModel`` makes sending them a 422."""
+
     label: Optional[str] = None
     api_key: Optional[str] = None
-    base_url: Optional[str] = None
-    session_name: Optional[str] = None
     webhook_url: Optional[str] = None
 
 
@@ -329,6 +332,21 @@ def create_whatsapp_connections_router(
             ) from exc
         return f"{base}{webhook_path_prefix}/"
 
+    def _require_owned_webhook_url(url: str) -> str:
+        """``url`` stripped, 422 ``webhook_url_foreign`` unless it is under THIS app's own webhook route. Shared by
+        ``POST /{id}/webhook`` and ``PATCH /{id}``: ``set_webhook`` REPLACES entries under the owned prefix, and a stored
+        URL is what ``DELETE`` later removes -- a URL shaped like another app's would delete that app's registration on
+        the shared WAHA session (H1)."""
+        url = url.strip()
+        owned = _owned_webhook_prefix()
+        if not url.startswith(owned) or len(url) == len(owned):
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "webhook_url_foreign", "message": "Webhook URL must be under this app's own webhook route"},
+            )
+        return url
+
+
     def _waha_client(record: WhatsAppConnectionRecord):
         return waha_client_factory(
             base_url=record.base_url or None, api_key=record.api_key, session=record.session_name
@@ -424,10 +442,8 @@ def create_whatsapp_connections_router(
             connection_id=connection_id,
             org_id=org_id,
             label=body.label.strip() if body.label is not None else None,
-            base_url=body.base_url.strip() if body.base_url is not None else None,
-            session_name=body.session_name.strip() if body.session_name is not None else None,
             api_key=body.api_key.strip() if body.api_key is not None else None,
-            webhook_url=body.webhook_url if body.webhook_url is not None else None,
+            webhook_url=_require_owned_webhook_url(body.webhook_url) if body.webhook_url is not None else None,
         )
         if record is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="connection not found")
@@ -607,15 +623,8 @@ def create_whatsapp_connections_router(
         org_id = resolve_org_id(raw_org)
         record = _require_record(store, connection_id=connection_id, org_id=org_id, decrypt=True)
         _refuse_borrowed(record)
-        url = body.url.strip()
+        url = _require_owned_webhook_url(body.url)
         owned = _owned_webhook_prefix()
-        if not url.startswith(owned) or len(url) == len(owned):
-            # H1: set_webhook REPLACES entries under owned_prefix -- a URL shaped like another app's would
-            # delete that app's registration on the shared WAHA session.
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "webhook_url_foreign", "message": "Webhook URL must be under this app's own webhook route"},
-            )
         client = _waha_client(record)
         try:
             result = await client.set_webhook(url, body.events, owned_prefix=owned)

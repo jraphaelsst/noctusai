@@ -310,6 +310,18 @@ services:
     <<: *prod-defaults
     image: ghcr.io/jraphaelsst/noctus-orbity:${NOCTUS_IMAGE_TAG:-latest}
     container_name: noctus-orbity
+    # WhatsApp is OFF for orbity: NO `WAHA_LINE_POLICIES` is declared, so the seed's line policy fails CLOSED and every
+    # write to WhatsApp is refused (KB § INTEGRATIONS/whatsapp.md § 6a). Orbity's lines are DB-sourced on the shared `waha`
+    # host, which no tenant may send through unreviewed.
+    # NOC-REMEDIATE[orbity-waha-own-instance]: owner decision pending -- either orbity gets its own `waha-orbity` instance
+    # (deploy/fleet/waha-instances.yml, a declared send-enabled line policy) or WhatsApp stays off. — 2026-11-10
+    environment:
+      <<: *prod-env
+      # Pinned HERE, not in `.env` (the file laptops copy): orbity's WhatsApp webhook relaxes signature checking only
+      # when `is_explicit_local_env()` (APP_ENV local/dev/development/test/testing). A VPS `.env` carrying a dev value
+      # must never reach this container. Per-service, not fleet-wide: APP_ENV=production also turns on
+      # `is_deploy_context()` -> `required_in_prod` config arms, a boot check every other product would need first.
+      APP_ENV: production
     expose:
       - "8010"
     healthcheck:

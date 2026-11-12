@@ -23,7 +23,7 @@
 | C2 | reversibility | one `git revert`, nothing outside git | shared or seed code | migration, backfill or external effect |
 | C3 | blast radius | inside the slice's declared paths | same product outside those paths, or seed internals | another product, seed public API, CI or keepers |
 | C4 | contract | — | — | any new or changed endpoint, schema, table, RLS, access tier or event shape |
-| C5 | user-visible | internal text only | non-customer detail inside an approved mockup | new screen, or customer-facing wording |
+| C5 | user-visible | internal text only | a new screen, region or customer-facing copy (built right away; the owner refines later) | legal, consent, LGPD or pricing wording, or a screen the owner asked to see first |
 | C6 | security / LGPD / money | — | tightening only | any loosening, new personal data, or any money path |
 | C7 | irreversible ops | — | — | prod exposure, deploy, deletion, sending to customers |
 | C8 | cost | — | — | a new runtime dependency or a new paid call path |

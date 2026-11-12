@@ -4,7 +4,7 @@
 
 ## Rules
 
-- **No UI is built before the owner clicks through a mockup.** A clickable mockup on the noc pattern (seed tokens, app shell) comes first, iterated with the owner, then contract-first code. It reads REAL data wherever that data exists (owner's Supabase connector, read-only, and its queries become the endpoint). Sample content only for data that does not exist yet, and labelled as such. Never code-first for an unvalidated screen (owner, 2026-11-04 ×2). → `KB § PATTERNS/frontend/prototype-on-real-data.md`
+- **Mockups never gate a build.** UI starts right away on the noc pattern (seed tokens, app shell), contract-first, on REAL data where it exists (sample only where it does not, labelled). A mockup is made only when the owner asks; refinements land in-flight or later + redeploy (owner, 2026-11-11, supersedes 2026-11-04). → `KB § PATTERNS/frontend/prototype-on-real-data.md`
 - **Componentize everything.** Check `KB § 04-SHARED-LIBRARY.md` before writing anything new. If another product will need it, build it shared from day one — don't fork. → `KB § 04-SHARED-LIBRARY.md`
 - **Gamification is subtle.** Rankings, points, progress bars — discrete; with a ⓘ icon explaining the formula; tied to real business activity (never "logged in today"-style rewards). → `KB § 07-GAMIFICATION.md`
 - **Core-URL routing is MANDATORY via the seed getter.** Any product→core link (SSO callback, "back to dashboard" nav, product→core XHR) resolves core's URL through `env.CORE_URL` / `env.CORE_API_URL` (`import { env } from "@noctusai/lib"`). **Never** hand-roll `import.meta.env.VITE_CORE_* || "<literal>"` — the bare-`localhost` default is the SSO "Failed to fetch" / stale-`5173`-nav recurrence (N≥3, prod outage). The `check_handrolled_core_url` keeper blocks it (carve-out: core's own same-origin `lib/api.ts`). → `KB § PATTERNS/frontend/core-url-routing.md`
@@ -19,7 +19,7 @@
 
 - Frontend patterns (TanStack Query, hooks-per-entity, mobile-first) → `KB § PATTERNS/frontend/frontend.md`
 - Per-product frontend specs → `KB § frontend/{01-CORE, 02-ERP, 03-PF, 04-THERAPY}.md` (only 01-CORE is active; ERP/PF/Therapy are asleep — reference only, per `deploy/fleet/active-scope.txt`)
-- Design before UI (mockup-first, accessibility) → agent `product-designer` · `KB § PATTERNS/design/mockup-protocol.md`
+- Design on request (mockup when asked, accessibility) → agent `product-designer` · `KB § PATTERNS/design/mockup-protocol.md`
 - Shared component catalog (check before writing anything) → `KB § 04-SHARED-LIBRARY.md`
 - Notifications (shared `NotificationBell`, proxy shape) → `KB § PATTERNS/backend/notifications.md`
 - Environment / `.env` (VITE_ security boundary) → `KB § PATTERNS/devops/environment.md`

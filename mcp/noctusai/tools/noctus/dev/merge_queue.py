@@ -67,6 +67,7 @@ WORKFLOW_PREFIX = ".github/workflows/"
 PUSH_TOKEN_ENV = "MQ_PUSH_TOKEN"  # fine-grained PAT (contents+workflows write); env secret of the dev-only `merge-queue` environment
 # GitHub's wording when a token without the `workflows` permission pushes a new commit touching workflow files.
 WORKFLOW_REJECT_RE = re.compile(r"without\s+`?workflows`?\s+permission", re.I)
+WORKFLOW_REJECT_LINE_RE = re.compile(r"refusing to allow[^\n)]*", re.I)  # GitHub's own sentence, for the eject reason
 ENTRY_RE = re.compile(r"^(?P<slug>.+)--(?P<short>[0-9a-f]{7,40})$")
 
 # DERIVED files: committed by every slice after it regenerates them, so two parallel slices
@@ -197,8 +198,102 @@ WORKFLOW_EJECT_WHY = ("changes .github/workflows/* - the queue's token cannot pu
                       "land via the steward's workflow-file path")
 
 
+def _flush_print(msg: str) -> None:
+    """The drain's default log. Flushed per line: stdout is a pipe on the runner (block-buffered), and a
+    cancelled drain (2026-11-11, run 43060568244) lost EVERY line it had printed - including the push
+    rejection that would have named the cause."""
+    print(msg, flush=True)
+
+
 def status_description(text: str) -> str:
     return text if len(text) <= 140 else text[:137] + "..."
+
+
+# ── culprit attribution (2026-11-11) ─────────────────────────────────────────
+# A red batch used to be binary-bisected, ~50 min of CI per step. Most reds name the failing
+# test, and the test's area (product / seed / mcp toolkit / migration replay) says which
+# entry's diff could have caused it. When EXACTLY ONE entry covers the failure it is ejected
+# directly; zero / several / unreadable falls back to the bisect, with the reason logged.
+FAILED_TEST_RE = re.compile(r"\b(?:FAILED|ERROR)\s+(?P<path>[\w./-]+\.py)(?P<rest>::\S+)?")
+JOB_PRODUCT_RE = re.compile(r"\(([a-z0-9][a-z0-9-]*)\)\s*$")
+MIGRATION_PATH_RE = re.compile(r"^(?:products/(?P<p>[^/]+)|seed)/.*?migrations/[^/]+\.sql$")
+# Failures whose cause is a MIGRATION an entry added (the replay + live-guard probes).
+MIGRATION_TEST_RE = re.compile(r"verify_db_guards|_on_replay|migration_replay", re.I)
+
+
+def failed_test_ids(log_text: str) -> list[str]:
+    """`path::Class::test` ids from a pytest `-rf`/`-rfE` summary inside `gh run view --log-failed`."""
+    seen: list[str] = []
+    for m in FAILED_TEST_RE.finditer(log_text or ""):
+        tid = m.group("path") + (m.group("rest") or "")
+        if tid not in seen:
+            seen.append(tid)
+    return seen
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+# NOC-REMEDIATE[mq-area-map-dedup]: this path->area map duplicates `ci_scope.classify` (on
+# feat/scoped-green-product-tests, not yet on dev when this landed). Destination: once both are on dev, derive
+# these areas from ci_scope so the queue, CI's `changes` job and item 5 share ONE classifier (tooling steward e1).
+def failure_areas(test_ids: list[str], failed_jobs: list[str], known_products: list[str],
+                  ) -> list[dict[str, Any]]:
+    """Each failure -> {name, prefixes, migrations_of}: source areas whose change can break it.
+    `migrations_of` set (a product slug or "*") = only an entry ADDING a migration (of that product) matches."""
+    areas: list[dict[str, Any]] = []
+    for tid in test_ids:
+        path = tid.split("::", 1)[0]
+        m = re.match(r"^products/([^/]+)/", path)
+        if MIGRATION_TEST_RE.search(tid):
+            named = [p for p in known_products if len(p) > 2 and _norm(p) in _norm(tid.split("::", 1)[-1])]
+            areas.append({"name": tid, "prefixes": (), "migrations_of": named[0] if len(named) == 1 else "*"})
+        elif m:
+            areas.append({"name": tid, "prefixes": (f"products/{m.group(1)}/", "seed/"), "migrations_of": None})
+        elif path.startswith("seed/") or path.startswith("templates/product-seed/"):
+            areas.append({"name": tid, "prefixes": ("seed/",), "migrations_of": None})
+        elif path.startswith("mcp/"):
+            areas.append({"name": tid, "prefixes": ("mcp/",), "migrations_of": None})
+    if areas:
+        return areas
+    for job in failed_jobs:  # no readable test id: only a job whose scope is unambiguous counts
+        pm = JOB_PRODUCT_RE.search(job)
+        if job.startswith("Product Backend Tests") and pm and pm.group(1) in known_products:
+            areas.append({"name": job, "prefixes": (f"products/{pm.group(1)}/", "seed/"), "migrations_of": None})
+        elif job.startswith("Seed "):
+            areas.append({"name": job, "prefixes": ("seed/",), "migrations_of": None})
+        elif job.startswith("MCP Toolkit Tests"):
+            areas.append({"name": job, "prefixes": ("mcp/",), "migrations_of": None})
+    return areas
+
+
+def attribute_culprit(test_ids: list[str], failed_jobs: list[str],
+                      entry_paths: dict[str, list[str]]) -> tuple[str | None, str]:
+    """(culprit_ref, why). culprit_ref is None - with the reason the caller logs - unless EXACTLY ONE entry's
+    diff touches the failing areas. Pure: never guesses; every None is a documented fallback to bisect."""
+    known = sorted({m.group("p") for ps in entry_paths.values() for p in ps
+                    if (m := re.match(r"^products/(?P<p>[^/]+)/", p))})
+    areas = failure_areas(test_ids, failed_jobs, known)
+    if not areas:
+        return None, f"failure unreadable (no test id or scoped job in {failed_jobs[:3] or 'the log'})"
+    hits: dict[str, str] = {}
+    for ref, paths in entry_paths.items():
+        for a in areas:
+            mig = a["migrations_of"]
+            if mig is not None:
+                match = next((p for p in paths if (m := MIGRATION_PATH_RE.match(p))
+                              and (mig == "*" or m.group("p") == mig)), None)
+            else:
+                match = next((p for p in paths if p.startswith(a["prefixes"])), None)
+            if match:
+                hits[ref] = f"{a['name']} <- {match}"
+                break
+    if len(hits) == 1:
+        ref, why = next(iter(hits.items()))
+        return ref, why
+    return None, (f"{len(hits)} entries match the failing areas" if hits else
+                  "no entry touches the failing areas")
 
 
 # ── the queue against a real git/gh ──────────────────────────────────────────
@@ -207,7 +302,7 @@ class Queue:
     def __init__(self, repo: str, remote: str = "origin", dev: str = "dev",
                  run: Runner = _default_run, run_url: str = "", run_id: str = "local",
                  poll_s: int = 60, timeout_s: int = 5400, sleep: Callable[[float], None] = time.sleep,
-                 workdir: str | None = None, log: Callable[[str], None] = print,
+                 workdir: str | None = None, log: Callable[[str], None] = _flush_print,
                  workflow_token: bool | None = None, push_token: str | None = None,
                  regen: Callable[[str], tuple[bool, str]] | None = None,
                  derived_regen: Callable[[str, dict[str, Any]], tuple[bool, str]] | None = None,
@@ -537,6 +632,16 @@ class Queue:
             self.sleep(self.poll_s)
         return {"verdict": "timeout", "run_id": run_id}
 
+    def red_attribution(self, ci: dict[str, Any], applied: list[Entry], base: str) -> tuple[Entry | None, str]:
+        """Read the red run's failing tests and try to name the one entry that caused it (see attribute_culprit)."""
+        try:
+            log = self.gh("run", "view", str(ci.get("run_id", "")), "-R", self.repo, "--log-failed", check=False)
+            paths = {e.ref: self.changed_paths(base, e.sha) for e in applied}
+        except RuntimeError as exc:
+            return None, f"failure unreadable ({exc})"
+        ref, why = attribute_culprit(failed_test_ids(log), list(ci.get("failed_jobs", [])), paths)
+        return next((e for e in applied if e.ref == ref), None), why
+
     # land --------------------------------------------------------------------
     def land(self, cand_sha: str, tested_base: str, wt: str) -> tuple[bool, str]:
         """FF dev to the candidate. Returns (landed, sha_on_dev)."""
@@ -603,7 +708,7 @@ class Queue:
                 rc, _, perr = self.run(["git", "push", remote, f"{cand}:refs/heads/{cand_ref}"], cwd=self.workdir)
                 if rc != 0:
                     # Never crash the drain on a rejected push (2026-11-05: it wedged the queue ~1.5h).
-                    if self._handle_push_rejection(applied, base, perr, res):
+                    if self._handle_push_rejection(applied, base, perr, res, via_pat=remote != self.remote):
                         suspects = [e.ref for e in applied
                                     if not any(x["ref"] == e.ref for x in res.ejected)]
                         limit = next_batch_limit(limit, len(applied), green=False) if suspects else batch_limit
@@ -634,9 +739,19 @@ class Queue:
                     suspects = [r for r in suspects if r != e.ref]
                     limit = len(suspects) if suspects else batch_limit
                 elif ci["verdict"] == "red":
-                    suspects = [e.ref for e in applied]
-                    limit = next_batch_limit(limit, len(applied), green=False)
-                    self.log(f"  batch red - bisecting: next batch limit {limit}")
+                    culprit, why = self.red_attribution(ci, applied, base)
+                    if culprit is not None:
+                        self.log(f"  batch red - ATTRIBUTED to {culprit.slug}: {why}; ejecting without bisect")
+                        x = self._eject_info(culprit, "ci_red_attributed", why)
+                        self._finish_eject(x)
+                        res.ejected.append(x)
+                        rnd["attribution"] = {"path": "attributed", "reason": why}
+                        suspects, limit = [], batch_limit  # the rest were never proven bad: fresh candidate
+                    else:
+                        suspects = [e.ref for e in applied]
+                        limit = next_batch_limit(limit, len(applied), green=False)
+                        rnd["attribution"] = {"path": "bisect", "reason": why}
+                        self.log(f"  batch red - bisecting ({why}; {len(applied)} entries): next batch limit {limit}")
                 else:
                     # timeout/unavailable: leave the entries queued; the next drain retries.
                     for e in applied:
@@ -650,14 +765,26 @@ class Queue:
                 self.run(["git", "worktree", "remove", "--force", wt], cwd=self.workdir)
         return res
 
-    def _handle_push_rejection(self, applied: list[Entry], base: str, stderr: str, res: Outcome) -> bool:
+    def _handle_push_rejection(self, applied: list[Entry], base: str, stderr: str, res: Outcome,
+                               via_pat: bool = False) -> bool:
         """A candidate push was rejected. Eject the culprit(s) and return True when the batch must still be
-        bisected (cause not attributable to a single entry)."""
+        bisected (cause not attributable to a single entry).
+
+        The eject reason names WHICH credential GitHub refused and quotes GitHub's own line: "the queue's
+        token cannot push workflow edits" is a different fix when the refused push already went out with
+        MQ_PUSH_TOKEN (the PAT lost `workflows` / expired - the owner re-mints) than with github.token
+        (no PAT configured - set it). 2026-11-11: five entries were ejected with neither fact recorded."""
         stderr = self._redact(stderr or "")
         tail = stderr.strip()[-300:]
+        who = "MQ_PUSH_TOKEN (PAT)" if via_pat else "github.token"
+        self.log(f"  candidate push via {who} rejected:\n{tail}")
         if is_workflow_rejection(stderr):
             culprits = [e for e in applied if touches_workflows(self.changed_paths(base, e.sha))]
-            kind, why = "needs_workflow_token", WORKFLOW_EJECT_WHY
+            m = WORKFLOW_REJECT_LINE_RE.search(stderr)
+            said = (m.group(0) if m else tail)[-160:]
+            remedy = ("the PAT itself was refused - re-mint MQ_PUSH_TOKEN with Workflows: write" if via_pat
+                      else WORKFLOW_EJECT_WHY)
+            kind, why = "needs_workflow_token", f"push via {who} refused ({said}) - {remedy}"
         else:
             culprits = applied if len(applied) == 1 else []
             kind, why = "push_rejected", f"candidate push rejected: {tail}"

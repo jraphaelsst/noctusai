@@ -17,6 +17,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { errorCopy } from "@/lib/errorCopy";
 import { useAuthStore } from "@noctusai/seed/infra";
 
 // ---------------------------------------------------------------------------
@@ -402,7 +403,7 @@ export function useSyncCampaigns() {
     },
     onError: (error: Error) => {
       toast.error("Erro ao sincronizar campanhas", {
-        description: error.message,
+        description: errorCopy(error),
       });
     },
   });

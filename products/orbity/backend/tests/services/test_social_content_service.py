@@ -13,6 +13,8 @@ from uuid import UUID
 
 from noctusai_lib.testing import MockSupabaseClient
 
+from noctusai_lib.api.token_link import TokenLinkGone, TokenLinkNotFound, resolve_token_link
+
 from app.services.social_content_service import SocialContentService, PublicApprovalService
 
 ORG = UUID("00000000-0000-0000-0000-000000000001")
@@ -294,25 +296,41 @@ class TestListGetApproval:
 # ---------------------------------------------------------------------------
 
 class TestPublicFetchByToken:
+    """The public read goes token -> approval row (resolve_token_link) -> the post INSIDE the approval's org."""
+
     def test_fetch_returns_approval_and_post(self):
-        # MockSupabaseClient returns the same data for every table query
-        db = MockSupabaseClient(data=[_approval(), _post()], schema="orbity")
+        db = MockSupabaseClient(schema="orbity")
+        db.set_table_data("post_approvals", [_approval()])
+        db.set_table_data("content_posts", [_post()])
         svc = PublicApprovalService(db)
-        pair = svc.fetch_by_token(TOKEN)
-        assert pair is not None
-        approval, post = pair
+        approval = resolve_token_link(TOKEN, svc.fetch_approval_row)
         assert approval["public_token"] == TOKEN
-        assert post["platform"] == "instagram"
+        assert svc.post_of(approval)["platform"] == "instagram"
 
-    def test_fetch_returns_none_when_not_found(self):
+    def test_unknown_token_is_not_found(self):
         _db, svc = _pub_svc([])
-        assert svc.fetch_by_token(TOKEN) is None
+        with pytest.raises(TokenLinkNotFound):
+            resolve_token_link(TOKEN, svc.fetch_approval_row)
 
-    def test_fetch_raises_value_error_on_expired_token(self):
+    def test_expired_token_is_gone(self):
         db = MockSupabaseClient(data=[_approval(expires_at=PAST)], schema="orbity")
+        with pytest.raises(TokenLinkGone):
+            resolve_token_link(TOKEN, PublicApprovalService(db).fetch_approval_row)
+
+    def test_a_missing_or_unparsable_expiry_fails_closed(self):
+        for bad in (None, "not-a-date"):
+            db = MockSupabaseClient(data=[_approval(expires_at=bad)], schema="orbity")
+            with pytest.raises(TokenLinkGone):
+                resolve_token_link(TOKEN, PublicApprovalService(db).fetch_approval_row)
+
+    def test_an_approval_of_org_a_never_reads_the_post_of_org_b(self):
+        """LEAK (security review round 3): the approval row's post_id pointing at ANOTHER org's post reads nothing."""
+        org_b = "00000000-0000-0000-0000-0000000000bb"
+        db = MockSupabaseClient(schema="orbity")
+        db.set_table_data("post_approvals", [_approval()])  # org A
+        db.set_table_data("content_posts", [_post(org_id=org_b)])  # the post it points at belongs to org B
         svc = PublicApprovalService(db)
-        with pytest.raises(ValueError, match="expired"):
-            svc.fetch_by_token(TOKEN)
+        assert svc.post_of(resolve_token_link(TOKEN, svc.fetch_approval_row)) is None
 
 
 # ---------------------------------------------------------------------------
@@ -321,24 +339,18 @@ class TestPublicFetchByToken:
 
 class TestPublicDecide:
     def _setup_decide(self, approval_rows, post_rows=None):
-        """Build a DB with separate per-table data using call sequence.
+        db = MockSupabaseClient(schema="orbity")
+        db.set_table_data("post_approvals", approval_rows)
+        db.set_table_data("content_posts", post_rows if post_rows is not None else [_post()])
+        return db, PublicApprovalService(db)
 
-        MockSupabaseClient returns the same data for all queries. For decide()
-        we need: first call → approval, second call → post, third call → updated.
-        We use a list-of-lists pattern: the mock cycles through each list item.
-        Since MockSupabaseClient always returns the seeded data, we seed with
-        all needed rows and assert on inserted/updated payloads.
-        """
-        rows = approval_rows + (post_rows or [_post()])
-        db = MockSupabaseClient(data=rows, schema="orbity")
-        svc = PublicApprovalService(db)
-        return db, svc
+    @staticmethod
+    def _decide(svc, decision, feedback=None):
+        return svc.decide(resolve_token_link(TOKEN, svc.fetch_approval_row), decision, feedback=feedback)
 
-    # These two were vacuous until 2026-10-15 (`try/except: pass` + `if payloads:`),
-    # i.e. green even if decide() broke. decide() runs fine on the mock — assert hard.
     def test_decide_approved_calls_update(self):
         db, svc = self._setup_decide([_approval()])
-        result = svc.decide(TOKEN, "approved", feedback=None)
+        result = self._decide(svc, "approved")
         payloads = db.table("post_approvals").updated_payloads
         assert payloads[0]["status"] == "approved"
         assert "decided_at" in payloads[0]
@@ -347,20 +359,43 @@ class TestPublicDecide:
 
     def test_decide_revision_with_feedback(self):
         db, svc = self._setup_decide([_approval()])
-        svc.decide(TOKEN, "revision", feedback="More contrast please")
+        self._decide(svc, "revision", "More contrast please")
         payloads = db.table("post_approvals").updated_payloads
         assert payloads[0]["status"] == "revision"
         assert payloads[0]["client_feedback"] == "More contrast please"
+
+    def test_decide_of_org_a_approval_never_writes_the_post_of_org_b(self):
+        """LEAK: an approval whose post_id points at another org's post neither reads nor WRITES that post."""
+        org_b = "00000000-0000-0000-0000-0000000000bb"
+        db, svc = self._setup_decide([_approval()], [_post(org_id=org_b)])
+        with pytest.raises(LookupError):
+            self._decide(svc, "approved")
+        assert db.table("content_posts").updated_payloads == []
+        assert db.table("post_approvals").updated_payloads == []
+
+    def test_decide_is_one_time_and_atomic(self):
+        """The UPDATE re-states status='pending': when it matches 0 rows (someone decided first) the call is Gone (410)."""
+        db, svc = self._setup_decide([_approval(status="approved")])  # already decided -> the guarded UPDATE matches nothing
+        approval = resolve_token_link(TOKEN, svc.fetch_approval_row)
+        with pytest.raises(TokenLinkGone):
+            svc.decide(approval, "revision", feedback=None)
+        assert db.table("content_posts").updated_payloads == []
 
     # --- team notification (the client page promises "a equipe foi notificada") ---
 
     def _core(self, users):
         return MockSupabaseClient(data=users, schema="public")
 
+    def _notify_db(self, post):
+        db = MockSupabaseClient(schema="orbity")
+        db.set_table_data("post_approvals", [_approval()])
+        db.set_table_data("content_posts", [post])
+        return db
+
     def test_decide_notifies_org_admins_when_post_has_no_assignee(self):
-        db = MockSupabaseClient(data=[_approval(), _post()], schema="orbity")
+        db = self._notify_db(_post())
         core = self._core([{"id": "u-admin", "org_id": str(ORG), "org_role": "admin"}])
-        result = PublicApprovalService(db, core_db=core).decide(TOKEN, "approved", feedback=None)
+        result = self._decide(PublicApprovalService(db, core_db=core), "approved")
         sent = core.table("notifications").inserted_payloads
         assert [n["user_id"] for n in sent] == ["u-admin"]
         assert sent[0]["metadata"]["tipo"] == "aprovacao_conteudo"
@@ -369,33 +404,39 @@ class TestPublicDecide:
         assert result["team_notified"] == 1
 
     def test_decide_notifies_assignee_with_feedback_on_revision(self):
-        db = MockSupabaseClient(data=[_approval(), _post(assignee_user_id="u-assignee")], schema="orbity")
-        core = self._core([])
-        PublicApprovalService(db, core_db=core).decide(TOKEN, "revision", feedback="Trocar a foto")
+        db = self._notify_db(_post(assignee_user_id="u-assignee"))
+        core = self._core([{"id": "u-assignee", "org_id": str(ORG), "org_role": "member"}])
+        self._decide(PublicApprovalService(db, core_db=core), "revision", "Trocar a foto")
         sent = core.table("notifications").inserted_payloads
         assert [n["user_id"] for n in sent] == ["u-assignee"]
         assert "Trocar a foto" in sent[0]["message"]
 
+    def test_decide_never_notifies_an_assignee_who_is_not_in_the_org(self):
+        """The assignee id on the post is not trusted at the sink: a user of ANOTHER org (stale or forged id) is dropped and the
+        org's admins are told instead."""
+        db = self._notify_db(_post(assignee_user_id="u-outsider"))
+        other_org = "00000000-0000-4000-8000-0000000000ff"
+        core = self._core([
+            {"id": "u-outsider", "org_id": other_org, "org_role": "member"},
+            {"id": "u-admin", "org_id": str(ORG), "org_role": "admin"},
+        ])
+        self._decide(PublicApprovalService(db, core_db=core), "approved")
+        assert [n["user_id"] for n in core.table("notifications").inserted_payloads] == ["u-admin"]
+
     def test_decide_without_core_client_records_decision_and_reports_zero(self, caplog):
         db, svc = self._setup_decide([_approval()])  # no core_db
-        result = svc.decide(TOKEN, "approved", feedback=None)
+        result = self._decide(svc, "approved")
         assert result["status"] == "approved"
         assert result["team_notified"] == 0
         assert "notify skipped" in caplog.text
 
-    def test_decide_raises_lookup_when_not_found(self):
+    def test_unknown_token_is_not_found_before_any_decision(self):
         _db, svc = _pub_svc([])
-        with pytest.raises(LookupError):
-            svc.decide(TOKEN, "approved", feedback=None)
+        with pytest.raises(TokenLinkNotFound):
+            self._decide(svc, "approved")
 
-    def test_decide_raises_value_error_when_already_decided(self):
-        already_decided = _approval(status="approved")
-        db, svc = self._setup_decide([already_decided])
-        with pytest.raises(ValueError, match="already decided"):
-            svc.decide(TOKEN, "revision", feedback=None)
-
-    def test_decide_raises_value_error_when_expired(self):
-        expired = _approval(expires_at=PAST)
-        _db, svc = _pub_svc([expired])
-        with pytest.raises(ValueError, match="expired"):
-            svc.decide(TOKEN, "approved", feedback=None)
+    def test_expired_link_is_gone_before_any_decision(self):
+        db, svc = self._setup_decide([_approval(expires_at=PAST)])
+        with pytest.raises(TokenLinkGone):
+            self._decide(svc, "approved")
+        assert db.table("post_approvals").updated_payloads == []

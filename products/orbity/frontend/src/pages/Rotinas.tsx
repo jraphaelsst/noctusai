@@ -76,7 +76,7 @@ function RoutineCard({ routine, onEdit, onDelete, onToggleActive }: RoutineCardP
   const isDue = nextRunDate <= new Date();
 
   return (
-    <div className={`rounded-lg border bg-card p-4 space-y-3 hover:shadow-sm transition-shadow ${routine.active ? 'border-border' : 'border-border/50 opacity-60'}`}>
+    <div className={`rounded-lg border bg-card p-4 space-y-3 hover:shadow-xs transition-shadow ${routine.active ? 'border-border' : 'border-border/50 opacity-60'}`}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-foreground">{routine.title}</p>

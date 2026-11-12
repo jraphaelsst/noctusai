@@ -30,7 +30,7 @@ from app.dependencies import (
     coerce_org_uuid,
     get_admin_client,
     get_current_user_org,
-    get_user_client,
+    get_org_client,
 )
 from app.schemas.reports import (
     PublicReportOut,
@@ -40,6 +40,9 @@ from app.schemas.reports import (
     ReportUpdate,
 )
 from app.rate_limit import limiter
+from noctusai_lib.api.access_tiers import access_tier
+from noctusai_lib.api.token_link import TokenLinkGone, TokenLinkNotFound, resolve_token_link, token_fingerprint
+
 from app.services.reports_service import ReportsPublicService, ReportsService
 
 logger = logging.getLogger(__name__)
@@ -53,7 +56,7 @@ public_reports_router = APIRouter(tags=["Reports Public"])
 # ---------------------------------------------------------------------------
 
 def _svc(token: str, org_id: UUID) -> ReportsService:
-    return ReportsService(get_user_client(token), org_id=org_id)
+    return ReportsService(get_org_client(org_id), org_id=org_id)
 
 
 def _public_svc() -> ReportsPublicService:
@@ -63,7 +66,7 @@ def _public_svc() -> ReportsPublicService:
     server-side (status, expiry) before returning any data. No client-supplied
     org_id is ever trusted.
     """
-    return ReportsPublicService(get_admin_client())
+    return ReportsPublicService(get_admin_client())  # org-scope-ok: public token link, org derived from the token row
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +83,8 @@ def list_reports(
     org_id = coerce_org_uuid(raw_org)
     try:
         return _svc(token, org_id).list_reports(client_id=client_id, status=report_status)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.list failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao listar relatórios")
@@ -100,6 +105,8 @@ def create_report(
         row = _svc(token, org_id).create_report(
             payload.model_dump(mode="json", exclude_none=True)
         )
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.create failed org=%s", org_id)
         raise HTTPException(status_code=502, detail="Falha ao criar relatório")
@@ -119,6 +126,8 @@ def get_report(
     org_id = coerce_org_uuid(raw_org)
     try:
         row = _svc(token, org_id).get_report(report_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.get failed org=%s id=%s", org_id, report_id)
         raise HTTPException(status_code=502, detail="Falha ao buscar relatório")
@@ -144,6 +153,8 @@ def update_report(
         raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
     try:
         row = _svc(token, org_id).update_report(report_id, data)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.update failed org=%s id=%s", org_id, report_id)
         raise HTTPException(status_code=502, detail="Falha ao atualizar relatório")
@@ -161,6 +172,8 @@ def delete_report(
     org_id = coerce_org_uuid(raw_org)
     try:
         ok = _svc(token, org_id).delete_report(report_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.delete failed org=%s id=%s", org_id, report_id)
         raise HTTPException(status_code=502, detail="Falha ao deletar relatório")
@@ -185,6 +198,8 @@ def list_snapshots(
     org_id = coerce_org_uuid(raw_org)
     try:
         return _svc(token, org_id).list_snapshots(report_id)
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.snapshots failed org=%s report=%s", org_id, report_id)
         raise HTTPException(status_code=502, detail="Falha ao listar snapshots")
@@ -205,7 +220,10 @@ def generate_snapshot(
     try:
         row = _svc(token, org_id).generate_snapshot(report_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        logger.warning("reports.generate refused org=%s report=%s: %s", org_id, report_id, type(exc).__name__)
+        raise HTTPException(status_code=404, detail="report_not_found")
+    except HTTPException:
+        raise
     except Exception:
         logger.exception("reports.generate failed org=%s report=%s", org_id, report_id)
         raise HTTPException(status_code=502, detail="Falha ao gerar snapshot")
@@ -221,53 +239,36 @@ def generate_snapshot(
     response_model=PublicReportOut,
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("30/minute;300/hour", key_func=client_ip_key)
+@access_tier("public", reason="published-report link: unguessable token, server-checked expiry (fails closed), org-scoped snapshot read, no internal ids returned", category="token-link")
+# shared_limit(scope=) pins the bucket: slowapi's default scope is the request PATH, which here contains the token -- every guess would get a
+# fresh bucket and the limit would never trip.
+@limiter.shared_limit("30/minute;300/hour", scope="report-public", key_func=client_ip_key)
 def get_public_report(request: Request, token: str) -> PublicReportOut:
-    """Token-gated public report — no authentication required.
+    """Token-gated public report (``token-link`` tier) -- no authentication, the link IS the credential.
 
-    The token IS the authorization. The server validates:
-      1. Token exists in orbity.reports.
-      2. status == "published".
-      3. expires_at is NULL or in the future.
-    Then returns the latest snapshot payload.
-
-    Returns 404 for not-found, not-published, or expired reports to avoid
-    leaking the existence of draft/expired reports via 403.
-
-    A malformed token (not a valid UUID) is indistinguishable from an
-    absent one to the caller — both return 404. Shape is validated here
-    (before the DB round-trip) so an invalid UUID literal never reaches
-    postgres, which would otherwise raise 22P02 and get misreported as a
-    502 by the generic except below. A genuine DB failure on a
-    well-formed token still surfaces as 502.
-    """
+    The token is resolved ONLY through ``resolve_token_link``: malformed or unknown (or a draft) is 404 -- indistinguishable,
+    so draft/expired reports are not leaked; an expired link is 410 and a missing/unparsable ``expires_at`` counts as
+    expired. The latest snapshot is read inside the report's own org. The response is an explicit public view: no ids."""
     not_found_detail = "Relatório não encontrado, não publicado ou expirado"
-
+    svc = _public_svc()
     try:
-        UUID(token)
-    except ValueError:
+        report = resolve_token_link(token, svc.fetch_published_report)
+        snapshot = svc.latest_snapshot(report)
+    except (TokenLinkNotFound, TokenLinkGone):
+        # one answer for unknown / draft / expired, as before: a link that cannot be used reveals nothing
         raise HTTPException(status_code=404, detail=not_found_detail)
-
-    try:
-        result = _public_svc().get_published_report_by_token(token)
+    except HTTPException:
+        raise
     except Exception:
-        logger.exception("reports.public_read token=%s failed", token)
+        logger.exception("reports.public_read %s failed", token_fingerprint(token))
         raise HTTPException(status_code=502, detail="Falha ao buscar relatório público")
 
-    if result is None:
-        raise HTTPException(status_code=404, detail=not_found_detail)
-
-    report = result["report"]
-    snapshot = result.get("snapshot")
-
     return PublicReportOut(
-        report_id=report["id"],
         name=report["name"],
         period_start=report["period_start"],
         period_end=report["period_end"],
         status=report["status"],
         expires_at=report.get("expires_at"),
-        snapshot_id=snapshot["id"] if snapshot else None,
         generated_at=snapshot["generated_at"] if snapshot else None,
         payload=snapshot["payload"] if snapshot else {},
     )

@@ -115,7 +115,7 @@ function EventCard({ event, onEdit, onDelete, onSyncGcal, isSyncing, clientName 
   const typeCfg = EVENT_TYPE_CONFIG[event.event_type as EventType] ?? EVENT_TYPE_CONFIG.other;
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4 space-y-2 hover:shadow-sm transition-shadow">
+    <div className="rounded-lg border border-border bg-card p-4 space-y-2 hover:shadow-xs transition-shadow">
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-foreground truncate">{event.title}</p>
