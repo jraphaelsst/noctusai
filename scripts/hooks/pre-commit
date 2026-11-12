@@ -97,6 +97,23 @@ if have_py; then
     fi
 fi
 
+# ─── 0-pre-a. Absorption-source freeze (BLOCKING) ───────────────
+# Keepers `check_absorption_source_frozen` + `check_absorption_pilot_is_canon` (Phase 5a, owner rule 2026-11-12): a
+# product on the absorption list is an absorption SOURCE - no changes under products/<source>/ outside an
+# `absorb-<source>-*` branch (deletions pass), and never a pilot. List DERIVED from the absorptions ledger.
+if have_py; then
+    if ! "$PY" "$CLI" --check-absorption-source-frozen --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] absorption-source freeze FAILED. Commit aborted." >&2
+        echo "[pre-commit] Work in the canon named above, or run this as an absorption step on branch absorb-<source>-<step>." >&2
+        echo "[pre-commit] KB § PATTERNS/architect/product-working-scope.md (absorption source)" >&2
+        exit 1
+    fi
+    if ! "$PY" "$CLI" --check-absorption-pilot-is-canon --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] absorption-pilot gate FAILED. Commit aborted. Re-point the pilot to its canon (append-only ledger row)." >&2
+        exit 1
+    fi
+fi
+
 # ─── 0-pre-b. Guardian tool-authorship gate (BLOCKING) ───────────
 # Keeper `check_guardian_tool_authorship`: the session holding the release-steward
 # lease must not commit release_steward.py / task_branch.py (ratified guardian

@@ -163,7 +163,27 @@ def _looks_empty(body: str) -> bool:
     return normalized in _EMPTY_SENTINELS or len(normalized) < 4
 
 
-def lint_return(text: str) -> dict[str, Any]:
+def _source_reference_warnings(text: str, sources: dict[str, str] | None) -> list[str]:
+    """F4 lint (warn-only): the return cites a frozen absorption SOURCE outside an absorption slice."""
+    from . import absorption_sources as _abs
+    sources_in = sources
+    if sources is None:
+        try:
+            from settings import LEDGER_ROOT
+            sources, _err = _abs.load_sources(LEDGER_ROOT)
+        except Exception:  # noqa: BLE001 - advisory lint; an unreadable registry yields no warning, never a failure
+            return []
+    live = sources_in is None
+    warns = _abs.lint_text_for_source_reference(text, sources)
+    if warns and live:  # F6: a live fire is a gate-fire row (injected sources = a test, never telemetry)
+        from .gate_alignment import record_event
+        for w in warns:
+            record_event("lint:absorption-source-reference", "warn", kind="lint", target=w["source"],
+                         reason=w["message"], source="engineer_output_linter")
+    return [f"{w['source']}: {w['message']}" for w in warns]
+
+
+def lint_return(text: str, sources: dict[str, str] | None = None) -> dict[str, Any]:
     """Inspect a dispatched-engineer return text for the two-leg footer.
 
     Returns:
@@ -210,6 +230,8 @@ def lint_return(text: str) -> dict[str, Any]:
             "drift-found section — likely a commit message instead of an "
             "engineer return"
         )
+
+    warnings.extend(_source_reference_warnings(text, sources))
 
     untagged: list[str] = []
     drift_body = _extract_section(text, "drift-found")

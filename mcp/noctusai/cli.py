@@ -333,6 +333,8 @@ def build_parser() -> argparse.ArgumentParser:
                       if any(a in ("-h", "--help") for a in sys.argv[1:]) else "see --help")
     parser.add_argument("--paths", default="", help=f"Comma-separated repo-relative paths to narrow a keeper's sweep (accepted by: {_paths_keepers}). Omitted, the keeper scans its full default scope.")
     parser.add_argument("--check-primary-checkout-commit", action="store_true", help="Keeper: refuse a WORK commit on a shared branch (dev/main/prod) in the PRIMARY checkout — the self-branching rule that CLAUDE.md has mandated since inception and that was violated in essentially every session, because nothing fails at commit time and the cost lands later as a non-fast-forward at integrate/deploy. Ledger-only commits (project-history/) pass; escape hatch NOCTUS_ALLOW_PRIMARY_COMMIT=1. Severity high. MCP keeper check_primary_checkout_commit.")
+    parser.add_argument("--check-absorption-source-frozen", action="store_true", help="Keeper (Phase 5a, owner rule 2026-11-12): refuse a commit staging a change under products/<source>/ for an absorption SOURCE (erp-imobiliario, igig, therapy-platform, community - DERIVED from the absorptions ledger, stage absorb_only) unless the branch is absorb-<source>-*; pure deletions (A6 retire) pass. Severity high. MCP keeper check_absorption_source_frozen.")
+    parser.add_argument("--check-absorption-pilot-is-canon", action="store_true", help="Keeper (Phase 5a): refuse an absorption SOURCE as the pilot of a capability row in absorptions.ndjson or of an organ sidecar (*.organ.yaml pilot: key); re-point to the canon. Severity high. MCP keeper check_absorption_pilot_is_canon.")
     parser.add_argument("--check-guardian-tool-authorship", action="store_true", help="Keeper: refuse a commit staging release_steward.py or task_branch.py when the committing session holds the live release-steward lease (the guardian never authors steward tooling; hand it to the tooling branch steward). No lease / expired lease / unknown session passes. Severity high. MCP keeper check_guardian_tool_authorship.")
     parser.add_argument("--check-git-hooks-bypass", action="store_true", help="Keeper: a tracked script/Makefile/CI-workflow/subprocess-call that hardcodes a git hooks bypass (`-c core.hooksPath=…`, `--config`/`--config-env` targeting core.hooksPath, a persistent `git config core.hooksPath <value>` SET, a `GIT_CONFIG_KEY_*=core.hooksPath` env-injection, or `--no-verify`/`-n` on commit/push). Static backstop for the PreToolUse `decide_git_bypass` gate (`primary_write_guard.py`) — born from a `-c core.hooksPath=<relative>` override that silently skipped every hook, exit 0, no warning, because git resolves a relative hooksPath against the cwd and a linked worktree's `.git` is a FILE. `.md` prose is out of scope (cannot execute); co-located allowlist for the one genuine non-bypass SET (bootstrap-seed-workspace.sh provisioning a separate sibling repo). Severity high. MCP keeper check_git_hooks_bypass.")
     parser.add_argument("--check-merge-drivers-have-contract-coverage", action="store_true", help="Keeper: every custom `merge=<name>` in .gitattributes has a SPECS fixture in mcp/noctusai/tests/test_merge_driver_contract.py (the one contract: markers + both sides on a real conflict, exit 0 on a clean merge, writes only %%A). Exits 1 on any uncovered driver. KB § PATTERNS/common/auto-generated-merge-drivers.md.")
@@ -2096,6 +2098,32 @@ def main():
             print(f"  {GREEN}✓ primary-checkout-commit: clean (not a work commit on a shared branch in the primary checkout).{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ work commit on a shared branch in the PRIMARY checkout:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')}")
+            print(f"      {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_absorption_source_frozen:
+        from tools.noctus.dev.compliance import check_absorption_source_frozen
+        issues = check_absorption_source_frozen(
+            repo_root=Path(args.worktree_path).expanduser().resolve() if args.worktree_path else None)
+        if not issues:
+            print(f"  {GREEN}✓ absorption-source-frozen: clean (no change staged under a frozen absorption source).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ change staged under a frozen absorption source:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')}")
+            print(f"      {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_absorption_pilot_is_canon:
+        from tools.noctus.dev.compliance import check_absorption_pilot_is_canon
+        issues = check_absorption_pilot_is_canon(
+            repo_root=Path(args.worktree_path).expanduser().resolve() if args.worktree_path else None)
+        if not issues:
+            print(f"  {GREEN}✓ absorption-pilot-is-canon: clean (no absorption source is a pilot).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ an absorption source is named as a pilot:{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')}")
             print(f"      {i['issue']}")

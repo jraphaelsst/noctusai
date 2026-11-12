@@ -18034,6 +18034,137 @@ from tools.noctus.dev.primary_write_guard import (  # noqa: E402
 )
 
 
+# ── Absorption sources are FROZEN (Phase 5a, owner rule 2026-11-12) ──────────────────────────────────────────────
+# F3 (COMMIT end of the F2 write guard) + F4 (pilot-is-canon). The source list is DERIVED from the absorptions ledger
+# (`absorption_sources.derive_sources`) — never a hand-kept slug set. Each fire is a gate-fire row (F6).
+def _absorption_telemetry(gate: str, outcome: str, reason: str, target: str = "", record: bool = True) -> None:
+    if not record:
+        return
+    try:
+        from tools.noctus.dev.gate_alignment import record_event
+        record_event(f"keeper:{gate}", outcome, kind="keeper", target=target[:200], reason=reason[:300], source="keeper")
+    except Exception:  # noqa: BLE001 - telemetry never changes a verdict
+        pass
+
+
+def check_absorption_source_frozen(
+    repo_root: Path | None = None,
+    staged: list[tuple[str, str]] | None = None,
+    branch: str | None = None,
+    sources: dict[str, str] | None = None,
+    record: bool = True,
+) -> list[dict]:
+    """Refuse a commit that stages a CHANGE under `products/<source>/` for an absorption SOURCE, unless the branch is
+    `absorb-<source>-*`. Pure deletions (A6 retire) pass on any branch.
+
+    `staged` is `[(status_letter, path), ...]` (injectable); default `git diff --cached --no-renames --name-status`.
+    The source list is derived from the absorptions ledger; an unreadable ledger is reported UNMEASURED (stderr +
+    telemetry), never a silent green and never a fabricated red. Escape hatch: none (use an `absorb-<source>-*` branch).
+    """
+    import subprocess
+    import sys
+
+    from tools.noctus.dev import absorption_sources as _abs
+
+    root = repo_root or REPO_ROOT
+    if sources is None:
+        sources, err = _abs.load_sources(root)
+        if err:
+            _absorption_telemetry("check-absorption-source-frozen", "unmeasured", err, record=record)
+            print(f"[absorption-source-frozen] UNMEASURED: {err}; the freeze check did not run.", file=sys.stderr)
+            return []
+    if not sources:
+        return []
+    if staged is None:
+        try:
+            proc = subprocess.run(["git", "diff", "--cached", "--no-renames", "--name-status"], cwd=root,
+                                  capture_output=True, text=True, timeout=30, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            msg = f"git diff --cached could not run: {type(exc).__name__}"
+            _absorption_telemetry("check-absorption-source-frozen", "unmeasured", msg, record=record)
+            print(f"[absorption-source-frozen] UNMEASURED: {msg}.", file=sys.stderr)
+            return []
+        staged = [(ln.split("\t", 1)[0][:1], ln.split("\t", 1)[1]) for ln in proc.stdout.splitlines() if "\t" in ln]
+    hits = [(st, p, _abs.source_of_path(p, sources)) for st, p in staged]
+    hits = [(st, p, s) for st, p, s in hits if s and st != "D"]
+    if not hits:
+        return []
+    if branch is None:
+        try:
+            br = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=root, capture_output=True,
+                                text=True, timeout=10, check=False)
+            branch = br.stdout.strip() if br.returncode == 0 else ""
+        except (OSError, subprocess.SubprocessError):
+            branch = ""
+    issues: list[dict] = []
+    for src in sorted({s for _, _, s in hits}):
+        if branch and _abs.branch_may_touch(branch, src):
+            continue
+        files = sorted(p for _, p, s in hits if s == src)
+        reason = _abs.refusal_reason(src, sources[src], branch)
+        _absorption_telemetry("check-absorption-source-frozen", "deny", reason, ",".join(files[:3]), record=record)
+        issues.append({"product": src, "file": files[0], "severity": "high",
+                       "issue": f"{len(files)} staged change(s) under frozen absorption source products/{src}/. {reason}"})
+    return issues
+
+
+def check_absorption_pilot_is_canon(
+    repo_root: Path | None = None,
+    ledger_text: str | None = None,
+    sidecars: dict[str, str] | None = None,
+    sources: dict[str, str] | None = None,
+    record: bool = True,
+) -> list[dict]:
+    """Refuse an absorption SOURCE as the `pilot` of a capability row (absorptions ledger) or of an organ sidecar
+    (`*.organ.yaml` `pilot:` / `pilot_consumer:` key). A capability whose pilot is a source is re-pointed to its canon
+    with an append-only ledger row. Inputs injectable; defaults read the ledger + `git ls-files '*.organ.yaml'`."""
+    import subprocess
+    import sys
+
+    from tools.noctus.dev import absorption_sources as _abs
+
+    root = repo_root or REPO_ROOT
+    if ledger_text is None or sources is None:
+        text, err = _abs.read_ledger_text(root)
+        if err:
+            _absorption_telemetry("check-absorption-pilot-is-canon", "unmeasured", err, record=record)
+            print(f"[absorption-pilot-is-canon] UNMEASURED: {err}; the pilot check did not run.", file=sys.stderr)
+            return []
+        ledger_text = text if ledger_text is None else ledger_text
+        if sources is None:
+            sources = _abs.derive_sources(text)
+    if not sources:
+        return []
+    if sidecars is None:
+        sidecars = {}
+        try:
+            ls = subprocess.run(["git", "ls-files", "*.organ.yaml"], cwd=root, capture_output=True, text=True,
+                                timeout=30, check=False)
+            for rel in ls.stdout.splitlines():
+                try:
+                    sidecars[rel] = (root / rel).read_text(encoding="utf-8")
+                except OSError:
+                    continue
+        except (OSError, subprocess.SubprocessError):
+            print("[absorption-pilot-is-canon] UNMEASURED: git ls-files failed; organ sidecars not scanned.", file=sys.stderr)
+    issues: list[dict] = []
+    for v in _abs.pilot_violations(ledger_text, sources):
+        msg = (f"capability '{v['capability']}' of '{v['slug']}' has pilot '{v['pilot']}', an absorption SOURCE (frozen, never a "
+               f"pilot). Re-point it to its canon '{v['canon']}': noctus.dev.absorption_log kind=capability slug={v['slug']} "
+               f"capability={v['capability']} target_organ=<same> status=<same> pilot={v['canon']}. "
+               "KB § PATTERNS/architect/product-working-scope.md (absorption source).")
+        issues.append({"product": v["pilot"], "file": "project-history/absorptions.ndjson", "severity": "high", "issue": msg})
+    for rel, text in sorted(sidecars.items()):
+        for v in _abs.sidecar_pilot_violations(text, sources):
+            issues.append({"product": v["pilot"], "file": rel, "severity": "high",
+                           "issue": f"line {v['line']}: `{v['key']}: {v['pilot']}` names an absorption SOURCE as pilot "
+                                    f"(frozen, never a pilot) - point it at the canon '{v['canon']}'."})
+    for i in issues:
+        _absorption_telemetry("check-absorption-pilot-is-canon", "deny", i["issue"], i["file"], record=record)
+    return issues
+
+
+
 def _hooks_bypass_string_from_expr(node: ast.expr) -> str | None:
     """Best-effort static string value of one AST expression. A literal
     string or an f-string's LITERAL segments only — an interpolated
