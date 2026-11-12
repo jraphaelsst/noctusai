@@ -308,7 +308,105 @@ export interface EvalRunCreate {
   /** Omitted/false: only cases that are NOT consolidated-and-unaffected run (the skipped ones are stored with the run).
    * True: run every active case (and the only way to get a publish-gate-eligible complete run). */
   rodar_tudo?: boolean;
+  /** Eval-loop round: a whole-suite run stamped with the loop (docs/eval-loop-gate-contract.md). The server then
+   * refuses `case_ids`, `repetir_falhas_de` and `modelo_geracao` (422) and clamps `limite_usd` to the budget left. */
+  loop_id?: string;
 }
+
+// ─── Eval loops (products/agents/docs/eval-loop-gate-contract.md) ──────────
+
+export type EvalLoopSuite = "comportamento" | "mecanismo";
+export type EvalLoopStatus = "ativo" | "parado" | "concluido";
+export type EvalLoopMotivoParada =
+  | "alvo_atingido"
+  | "sem_melhora"
+  | "orcamento_atingido"
+  | "rodadas_esgotadas"
+  | "parado_manualmente";
+export type EvalLoopRodadaStatus = "executando" | "concluida" | "falhou" | "cancelada";
+
+export interface EvalLoopRodada {
+  rodada: number;
+  run_id: string;
+  status: EvalLoopRodadaStatus;
+  score: number | null;
+  custo_usd: number;
+  compiled_hash: string | null;
+  melhorou: boolean | null;
+  overcall: boolean;
+  falhas: string[];
+}
+
+export interface EvalLoopOvercall {
+  rodada: number;
+  run_id: string;
+  score: number | null;
+  custo_usd: number;
+}
+
+export interface EvalLoopCheckpoint {
+  rodada: 5 | 10 | 15;
+  atingido: boolean;
+  score: number | null;
+  gasto_usd: number | null;
+}
+
+/** `sem_melhora` carries the hash comparison; other motives may send `null` or an arbitrary object. */
+export interface EvalLoopDetalheParada {
+  seguidas?: number;
+  hash_anterior?: string | null;
+  hash_atual?: string | null;
+  conteudo_mudou?: boolean;
+  partes_alteradas?: string[];
+  [k: string]: unknown;
+}
+
+export interface EvalLoop {
+  id: string;
+  agente_chave: string;
+  suite: EvalLoopSuite;
+  status: EvalLoopStatus;
+  motivo_parada: EvalLoopMotivoParada | null;
+  detalhe_parada: EvalLoopDetalheParada | null;
+  rodadas_planejadas: number;
+  rodadas_feitas: number;
+  alvo: number;
+  piso: number;
+  orcamento_usd: number;
+  gasto_usd: number;
+  restante_usd: number;
+  melhor_score: number | null;
+  score_atual: number | null;
+  acima_do_piso: boolean | null;
+  started_at: string;
+  stopped_at: string | null;
+  serie: EvalLoopRodada[];
+  overcalls: EvalLoopOvercall[];
+  custo_overcalls_usd: number;
+  checkpoints: EvalLoopCheckpoint[];
+}
+
+export interface EvalLoopListResponse {
+  items: EvalLoop[];
+}
+
+export interface EvalLoopCreate {
+  suite: EvalLoopSuite;
+  /** Omitted ⇒ the platform loop config's `rodadas_max`; above it ⇒ 422. */
+  rodadas_planejadas?: number;
+  /** Omitted ⇒ the platform loop config's `orcamento_usd` (a cap); above it ⇒ 422. */
+  orcamento_usd?: number;
+}
+
+/** Platform-level loop config (GET/PUT, platform admin): the target, the budget cap and the max rounds every loop uses. */
+export interface EvalLoopConfig {
+  alvo: number;
+  orcamento_usd: number;
+  rodadas_max: number;
+  alterado_por: string | null;
+  alterado_em: string | null;
+}
+export type EvalLoopConfigInput = Omit<EvalLoopConfig, "alterado_por" | "alterado_em">;
 
 // §D2 Clients: collapsed into FE-DEF's `../types.ts` (`Client`,
 // `ClientSummary`, `ClientCreateInput`, `ClientPatchInput`, `ClientEntry`,
