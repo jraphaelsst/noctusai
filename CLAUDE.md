@@ -9,7 +9,7 @@
 <!-- NEW-SESSION-CONTEXTUALIZATION -->
 ## 0 · New session — "contextualize"
 
-Fresh/clean-context agent AND the user says "contextualize" (or you don't know this platform) → **skill `noc-contextualize`** → read `/CONTEXTUALIZE.md` first, then do the task. Already-oriented agent → NO-OP, skip (don't re-read CONTEXTUALIZE.md).
+Fresh/clean-context agent AND the user says "contextualize" (or you don't know this platform) → **skill `noc-contextualize`** → read `/CONTEXTUALIZE.md` first, then do the task. Already-oriented agent → NO-OP.
 
 ---
 
@@ -77,7 +77,7 @@ Fresh/clean-context agent AND the user says "contextualize" (or you don't know t
 
 **Specialist subagents** (`.claude/agents/`): `architect` · `security` · `agents-security` · `compliance-reviewer` · `legal-advisor` · `accountant` · `product-designer` · `product-manager` · `product-architect` · `product-analyst` (advisors; specs/mockups only) · `backend-engineer` · `frontend-engineer` · `devops-engineer` · `integrations-engineer` · `ai-engineer` · `test-engineer` · `tooling-engineer` · `product-engineer` (executors) · `skill-scout` · `ops-steward` · `reverse-engineer` · `councillor` · `council-chair`. **Tech-lead = the orchestrator** (owns git/merge/deploy; no agent file). → `KB § 06-AGENTS.md` · `KB § PATTERNS/architect/dev-team.md`.
 
-**Procedure skills** (`.claude/skills/`, phrase-triggered): `noc-contextualize` · `noc-new-product` · `noc-new-agent` · `noc-absorb-product` · `noc-ship` · `noc-steward` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `noc-roadmap` · `noc-wrap-up` · `noc-verify-seed` · `noc-triage` · `noc-organ-consume-check` · `noc-contract-first` · `noc-mcp-tool` · `noc-archive-absorb` · `noc-dep-update` · `noc-cache-writes` · `noc-fast-responses` · `noc-perf-probe` · `noc-refs-sheet` · `noc-learn-refine` · `noc-reverse-engineer` · `noc-ig-analysis` · `noc-daily-ops` · `noc-questionnaire` · `noc-council` · `noc-research` · `noc-security-audit` · `noc-tax-params` · `skill-creator`.
+**Procedure skills** (`.claude/skills/`, phrase-triggered): `noc-contextualize` · `noc-new-product` · `noc-new-agent` · `noc-absorb-product` · `noc-ship` · `noc-steward` · `noc-branch-dispatch` · `noc-self-branch` · `noc-wiring-audit` · `noc-container-debug` · `noc-hygiene` · `noc-roadmap` · `noc-wrap-up` · `noc-verify-seed` · `noc-triage` · `noc-organ-consume-check` · `noc-contract-first` · `noc-mcp-tool` · `noc-archive-absorb` · `noc-dep-update` · `noc-cache-writes` · `noc-fast-responses` · `noc-perf-probe` · `noc-refs-sheet` · `noc-learn-refine` · `noc-reverse-engineer` · `noc-ig-analysis` · `noc-daily-ops` · `noc-questionnaire` · `noc-council` · `noc-research` · `noc-security-audit` · `noc-tax-params` · `noc-iterate` · `skill-creator`.
 
 **Slash commands** (`.claude/commands/`, user-invoked via `/<name>`): `/contextualize` (fresh-agent graph-shaped orientation) · `/codify` (drain codification pipeline) · `/gc` (methodology garbage-collection — the codify exhaust) · `/vector-status` (cache health) · `/baselines` (kb + code ratification status) · `/codification-radar` (s1/s2 → s3 promotion candidates) · `/cost-report` (vector costs) · `/verify-pass` (verify-pending pass scaffolding) · `/refresh-caches` (all-cache refresh).
 

@@ -20,6 +20,20 @@ export interface ProntidaoItem {
   severidade: ProntidaoSeveridade;
   mensagem: string;
   acao_sugerida: string | null;
+  /** Item-specific facts (keys and counts only). `base_validada` / `base_nao_validada` carry `camadas`. */
+  detalhe?: Record<string, unknown> | null;
+}
+
+/** One ancestor layer in the chain gate (`detalhe.camadas` of the `base_*` items; `app/studio/camada_validada.py`). */
+export interface CamadaBase {
+  agent_key: string;
+  versao: number | null;
+  validada: boolean;
+  /** `validada` | `sem_casos` | `criticos_pendentes` | `sem_medicao` | `sem_versao` */
+  motivo: string;
+  criticos_total: number;
+  criticos_consolidados: number;
+  criticos_pendentes: string[];
 }
 
 export interface Prontidao {

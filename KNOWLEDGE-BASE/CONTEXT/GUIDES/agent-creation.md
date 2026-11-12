@@ -71,6 +71,7 @@ shaped by the exemplar's *structure*, marking Julia as an **exemplar** (§4) is 
    a tool without a description row, missing parameter labels, unfilled org specs, generator gaps, controls off).
    Stale skill pins: `action=atualizar_skills` (`POST .../draft/skills-biblioteca/atualizar`) re-pins every skill to its newest
    published version — an **explicit** act (a pin never moves by itself; a published version stays immutable).
+   Eval refinement loop via the same tool (`noctus.agents.content`): `loop_iniciar` · `loops` · `loop` · `loop_parar` · `rodada` · `run` (writes dry-run unless `confirm=True`; server 409/422 returned verbatim under `servidor`; token `NOCTUS_AGENTS_EVALS_TOKEN` else the content token).
 8. **Run the evaluations on the current hash** — judge suite (`POST .../evals/runs`, no `case_ids`, the version's own model) and,
    for a channel agent, the mechanism suite (`POST .../mecanismo-runs`, LIVE driver). Any later edit changes the hash and In the studio these are buttons in the "Prontidão para publicar" panel (Rodar avaliação completa / Rodar suíte de mecanismo / Ligar agente); no readiness item shows an API path.
    invalidates the run; `prontidao` says `eval_juiz_hash_diferente` / `mecanismo_hash_diferente`.
