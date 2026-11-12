@@ -13,8 +13,9 @@
  * latest concluded run's score, so it is invalidated on every event that can
  * move it: run created (a version's "current" run changes), cancelled, and
  * — since a run only reaches a terminal status through polling, not a
- * mutation response — the transition a `useEvalRun` poll observes into
- * `concluida`/`falhou`/`cancelada`.
+ * mutation response — the transition a poll observes into
+ * `concluida`/`falhou`/`cancelada`: the runs-list poll (always mounted on the
+ * Evals tab) or the `useEvalRun` detail poll, whichever sees it first.
  */
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -119,7 +120,24 @@ export function useConsolidacao(agentKey: string, enabled = true) {
 
 // ─── Runs ───────────────────────────────────────────────────────────────────
 
+/** Everything a run's terminal transition moves: the version's score, the per-case consolidation counters and the
+ * readiness checklist's judge item. ONE place, called by whichever poll observes the transition first. */
+function invalidateRunOutcome(qc: ReturnType<typeof useQueryClient>, agentKey: string) {
+  qc.invalidateQueries({ queryKey: studioKeys.detail(agentKey) });
+  qc.invalidateQueries({ queryKey: consolidacaoKey(agentKey) });
+  qc.invalidateQueries({ queryKey: studioKeys.prontidao(agentKey) });
+}
+
+/** Ids of runs that WERE in flight in `previous` and are terminal in `current` (a run never seen in flight is old news). */
+export function runsThatFinished(
+  previous: ReadonlySet<string>,
+  current: ReadonlyArray<{ id: string; status: string }>,
+): string[] {
+  return current.filter((r) => previous.has(r.id) && !IN_FLIGHT.has(r.status)).map((r) => r.id);
+}
+
 export function useEvalRuns(agentKey: string, versionId?: string) {
+  const qc = useQueryClient();
   const query = useQuery<EvalRunListResponse>({
     queryKey: runsKey(agentKey, versionId),
     queryFn: () => api.get<EvalRunListResponse>(`/api/studio/agents/${agentKey}/evals/runs`, { version_id: versionId }),
@@ -129,6 +147,16 @@ export function useEvalRuns(agentKey: string, versionId?: string) {
       return data?.items.some((r) => IN_FLIGHT.has(r.status)) ? 3000 : false;
     },
   });
+
+  // The list is what polls while a run is in flight even when no run-detail panel is open, so it must also be what
+  // notices completion: otherwise the consolidation counters stay at their pre-run value until a reload.
+  const inFlight = useRef<Set<string>>(new Set());
+  const items = query.data?.items;
+  useEffect(() => {
+    if (!items) return;
+    if (runsThatFinished(inFlight.current, items).length) invalidateRunOutcome(qc, agentKey);
+    inFlight.current = new Set(items.filter((r) => IN_FLIGHT.has(r.status)).map((r) => r.id));
+  }, [agentKey, items, qc]);
 
   return {
     data: query.data?.items,
@@ -159,10 +187,7 @@ export function useEvalRun(agentKey: string, runId: string | null) {
     if (!runId || !status || IN_FLIGHT.has(status)) return;
     if (notifiedFor.current === runId) return;
     notifiedFor.current = runId;
-    qc.invalidateQueries({ queryKey: studioKeys.detail(agentKey) });
-    qc.invalidateQueries({ queryKey: consolidacaoKey(agentKey) });
-    // The readiness checklist's judge item (`eval_juiz_*`) is derived from this run.
-    qc.invalidateQueries({ queryKey: studioKeys.prontidao(agentKey) });
+    invalidateRunOutcome(qc, agentKey);
   }, [agentKey, qc, runId, status]);
 
   return {
