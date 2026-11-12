@@ -20109,6 +20109,9 @@ def check_all_products() -> tuple[int, list]:
     # mutation-cache-writes (2026-10-21) — ratchet: invalidate-only
     # useMutation blocks may only go down. KB § PATTERNS/frontend/mutation-cache-writes.md.
     all_issues.extend(check_mutation_invalidate_only())
+    # CRM vertical-seeds keepers (W1-6; warn-first, ratchet baselines; W9 flips to blocking).
+    all_issues.extend(check_module_page_status_rows())
+    all_issues.extend(check_stage_list_not_in_code())
     # silent-refusal (2026-10-24, N=4: F75b F76 F78 F86) — an empty branch reachable
     # while the query is in error, or an upload whose refusal nobody sees.
     # KB § PATTERNS/frontend/silent-refusal.md.
@@ -27668,6 +27671,362 @@ def check_structure_constructor_parity(paths: list[Path] | None = None, repo_roo
                 if empty:
                     issues.append({"file": mrel, "issue": f"[{entity}] {name}: exemption without a reason: {', '.join(empty)}",
                                    "severity": "high"})
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# CRM/CMS/ERP vertical-seeds keepers (W1-6, roadmap crm-cms-erp-vertical-seeds-2026-11).
+#
+# WARN-FIRST: both keepers emit severity `warning` (never blocking) against a SHRINK-ONLY ratchet
+# baseline of today's hits, so the current tree is green and a NEW hit warns. DESTINATION: phase W9
+# of the roadmap flips them to blocking (severity `high`) once the baselines are empty / the canons
+# have migrated. Gate-alignment inventory rows: `keeper:module-page-status-rows` /
+# `keeper:stage-list-not-in-code` (placement warn).
+#
+# 1. `check_module_page_status_rows` (ADR-1) — every page key a module declares (BE
+#    `noctusai_seed.modules.PageSpec(key=...)`, FE `defineModule({items:[{pageKey}]})`) must have a
+#    `status_pagina` row seeded by a migration of the product that mounts it; a missing row is the
+#    "nav item silently hidden" dead-branch class (KB § PATTERNS/frontend/status-pagina-dev-visibility.md).
+#    Detection is AST: Python `ast` for `PageSpec(...)` and for calls to seed module factories (a seed
+#    function that builds PageSpecs, called from a product), ts-morph
+#    (`mcp/noctusai/node/module_page_keys_scan.mjs`) for `defineModule`. The seeded side reads the
+#    product's `migrations/*.sql` (no SQL parser exists in the toolkit): a page key counts as seeded
+#    when it appears as a single-quoted literal in a migration that INSERTs into `status_pagina`.
+#    Escape (reason required, same line or <=3 above): `# noc-allow: module-page-status-row — <why>`
+#    (`//` in TS). Baseline: `mcp/noctusai/tests/module_page_status_rows_baseline.json`
+#    (`{product: [page keys]}`).
+#
+# 2. `check_stage_list_not_in_code` (ADR-2) — a funnel stage list is a market PRESET (data), never a
+#    literal in code. Flags (a) a `StageDefault(` / `LeadStage(` call (import aliases followed) and
+#    (b) a list/tuple literal of >=3 strings of which >=3 are funnel-stage vocabulary, outside a
+#    market `crm_preset.py` and the seed's preset mechanism (`domain/pipeline/{defaults,presets,
+#    market_presets}.py`). Tests are out of scope. Ratchet per file in
+#    `mcp/noctusai/tests/stage_list_not_in_code_baseline.json`. Escape (reason required):
+#    `# noc-allow: stage-list — <why>`. NOT checked yet (named, not silent): a `CREATE TABLE …stages`
+#    outside `pipeline_migration` (no SQL parser; W9).
+#    Re-derive the baseline downward with `--lower-stage-list-not-in-code-baseline`.
+# ---------------------------------------------------------------------------
+
+_MPSR_BASELINE_REL = ("mcp", "noctusai", "tests", "module_page_status_rows_baseline.json")
+_MPSR_SCRIPT_REL = ("mcp", "noctusai", "node", "module_page_keys_scan.mjs")
+_MPSR_ALLOW_PY = re.compile(r"#\s*noc-allow:\s*module-page-status-row\s*(?:—|–|-|:)\s*\S")
+_MPSR_SKIP_PARTS = {"node_modules", "dist", "build", ".git", "coverage", "tests", "__tests__", "__pycache__"}
+_MPSR_SEED_BE_ROOTS = ("seed/framework/backend/noctusai_seed", "seed/lib/backend/noctusai_lib")
+#: Synthetic sub-group headers (`defineModule` has no sub-group-without-a-page concept yet): never rendered as pages,
+#: so they need no `status_pagina` row. NOC-REMEDIATE[module-subgroup-concept]: seed `defineModule` gains a real
+#: sub-group (roadmap slice W2-6) and this exemption is deleted — 2026-11-11.
+_MPSR_EXEMPT_PREFIX = "__grupo:"
+_MPSR_INSERT = re.compile(r"insert\s+into\s+[\w.\"]*status_pagina\b", re.IGNORECASE)
+_MPSR_SQL_LITERAL = re.compile(r"'([^']+)'")
+
+
+def _mpsr_py_files(base: Path) -> Iterator[Path]:
+    if not base.is_dir():
+        return
+    for f in sorted(base.rglob("*.py")):
+        if set(f.relative_to(base).parts) & _MPSR_SKIP_PARTS or f.name.startswith("test_"):
+            continue
+        yield f
+
+
+def _mpsr_allowed(lines: list[str], line_no: int) -> bool:
+    return any(_MPSR_ALLOW_PY.search(lines[n - 1]) for n in range(max(1, line_no - 3), line_no + 1) if n <= len(lines))
+
+
+def _mpsr_pagespec_keys(tree: ast.AST, lines: list[str]) -> list[tuple[int, str]]:
+    """``(line, key)`` of every `PageSpec(<str literal>, ...)` / `PageSpec(key="...")` call in a module."""
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        name = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
+        if name != "PageSpec":
+            continue
+        arg = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "key"), None)
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and not _mpsr_allowed(lines, node.lineno):
+            found.append((node.lineno, arg.value))
+    return found
+
+
+def _mpsr_seed_factories(root: Path) -> dict[str, list[str]]:
+    """``{function name: [page keys]}`` for seed functions that build `PageSpec`s (a module factory a product calls)."""
+    factories: dict[str, list[str]] = {}
+    for rel in _MPSR_SEED_BE_ROOTS:
+        for f in _mpsr_py_files(root / rel):
+            try:
+                text = f.read_text(encoding="utf-8")
+                tree = ast.parse(text)
+            except (OSError, UnicodeDecodeError, SyntaxError):
+                continue
+            lines = text.splitlines()
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    keys = [k for _, k in _mpsr_pagespec_keys(node, lines)]
+                    if keys:
+                        factories.setdefault(node.name, []).extend(keys)
+    return factories
+
+
+def _mpsr_seeded_keys(product_dir: Path) -> set[str]:
+    """Page keys with a `status_pagina` row in any of the product's migrations (single-quoted literals of an INSERT file)."""
+    seeded: set[str] = set()
+    for sql in sorted((product_dir / "backend" / "migrations").glob("*.sql")):
+        try:
+            text = sql.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not _MPSR_INSERT.search(text):
+            continue
+        seeded.update(m.group(1) for m in _MPSR_SQL_LITERAL.finditer(text))
+    return seeded
+
+
+def _mpsr_fe_scan(files: list[Path]) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
+    """ts-morph `defineModule` page keys over ``files`` -> (results, per_file_errors, bootstrap_error)."""
+    if not files:
+        return {}, {}, None
+    script = REPO_ROOT.joinpath(*_MPSR_SCRIPT_REL)
+    if shutil.which("node") is None:
+        return {}, {}, "node_unavailable: `node` not on PATH"
+    if not script.exists():
+        return {}, {}, f"script_missing: {script}"
+    try:
+        proc = subprocess.run(
+            ["node", str(script)], input=json.dumps({"files": [str(f) for f in files]}),
+            capture_output=True, text=True, timeout=120,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return {}, {}, f"scan_failed: {exc}"
+    if proc.returncode != 0:
+        return {}, {}, f"node_crashed (exit {proc.returncode}): {(proc.stderr or '')[-300:]}"
+    try:
+        parsed = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        return {}, {}, f"non_json_stdout: {exc}"
+    return parsed.get("results", {}), parsed.get("errors", {}), None
+
+
+def module_page_status_row_gaps(root: Path) -> tuple[dict[str, dict[str, str]], list[str]]:
+    """``({product: {page key: 'file:line'}}, bootstrap_errors)`` for declared page keys that no migration seeds."""
+    factories = _mpsr_seed_factories(root)
+    gaps: dict[str, dict[str, str]] = {}
+    errors: list[str] = []
+    for product in _active_product_dirs(root / "products"):
+        declared: dict[str, str] = {}
+        for f in _mpsr_py_files(product / "backend" / "app"):
+            try:
+                text = f.read_text(encoding="utf-8")
+                tree = ast.parse(text)
+            except (OSError, UnicodeDecodeError, SyntaxError):
+                continue
+            lines = text.splitlines()
+            rel = f.relative_to(root).as_posix()
+            for line, key in _mpsr_pagespec_keys(tree, lines):
+                declared.setdefault(key, f"{rel}:{line}")
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    fn = node.func
+                    name = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
+                    if name in factories and not _mpsr_allowed(lines, node.lineno):
+                        for key in factories[name]:
+                            declared.setdefault(key, f"{rel}:{node.lineno}")
+        fe_src = product / "frontend" / "src"
+        fe_files = [
+            f for f in sorted(fe_src.rglob("*")) if f.suffix in (".ts", ".tsx") and f.is_file()
+            and not (set(f.relative_to(fe_src).parts) & _MPSR_SKIP_PARTS) and ".test." not in f.name
+        ] if fe_src.is_dir() else []
+        results, ferrors, boot = _mpsr_fe_scan(fe_files)
+        if boot:
+            errors.append(boot)
+        for path, msg in ferrors.items():
+            errors.append(f"{path}: {msg[:160]}")
+        for path, found in results.items():
+            rel = Path(path).relative_to(root).as_posix() if path.startswith(str(root)) else path
+            for item in found:
+                declared.setdefault(item["key"], f"{rel}:{item['line']}")
+        if not declared:
+            continue
+        seeded = _mpsr_seeded_keys(product)
+        missing = {k: where for k, where in sorted(declared.items()) if k not in seeded and not k.startswith(_MPSR_EXEMPT_PREFIX)}
+        if missing:
+            gaps[product.name] = missing
+    return gaps, errors
+
+
+def check_module_page_status_rows(repo_root: Path | None = None) -> list[dict]:
+    """Every page key a module declares has a `status_pagina` row seeded in the mounting product
+    (the "nav item silently hidden" dead-branch class). WARN-first (severity `warning`) against the
+    shrink-only baseline `mcp/noctusai/tests/module_page_status_rows_baseline.json`; phase W9 of the
+    crm-cms-erp-vertical-seeds roadmap flips it to blocking. Escape: `# noc-allow:
+    module-page-status-row — <why>`. A scan that cannot run is ONE explicit finding.
+    KB § PATTERNS/frontend/status-pagina-dev-visibility.md."""
+    root = repo_root or REPO_ROOT
+    try:
+        baseline = json.loads(root.joinpath(*_MPSR_BASELINE_REL).read_text(encoding="utf-8")).get("produtos", {})
+    except (OSError, ValueError):
+        baseline = {}
+    gaps, errors = module_page_status_row_gaps(root)
+    issues: list[dict] = [
+        {"product": "*", "file": "/".join(_MPSR_SCRIPT_REL), "severity": "warning",
+         "issue": f"module page-key scan could not fully run — {e}. An unscanned file is not a clean one."}
+        for e in errors
+    ]
+    for product, missing in sorted(gaps.items()):
+        for key, where in missing.items():
+            if key in baseline.get(product, []):
+                continue
+            issues.append({
+                "product": product, "file": where.rsplit(":", 1)[0], "severity": "warning",
+                "issue": (
+                    f"module page key {key!r} (declared at {where}) has no `status_pagina` row seeded by a "
+                    f"`{product}` migration — the nav item is silently hidden. Seed it "
+                    f"(`INSERT INTO <schema>.status_pagina (nome_pagina, status) VALUES ('{key}', 'producao')`) or escape with "
+                    "`# noc-allow: module-page-status-row — <why>`. KB § PATTERNS/frontend/status-pagina-dev-visibility.md"
+                ),
+            })
+    for product, keys in sorted(baseline.items()):
+        for key in keys:
+            if key not in gaps.get(product, {}):
+                issues.append({
+                    "product": product, "file": "/".join(_MPSR_BASELINE_REL), "severity": "warning",
+                    "issue": f"baseline still allows {key!r} for {product} but its row exists (or the page is gone): drop it — "
+                             "`python mcp/noctusai/cli.py --lower-module-page-status-rows-baseline` (the ratchet only shrinks).",
+                })
+    return issues
+
+
+def lower_module_page_status_rows_baseline(repo_root: Path | None = None) -> dict[str, list[str]]:
+    """Re-derive the baseline DOWNWARD: keep a (product, key) only while it is still a gap. Never adds."""
+    root = repo_root or REPO_ROOT
+    path = root.joinpath(*_MPSR_BASELINE_REL)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    gaps, _ = module_page_status_row_gaps(root)
+    lowered = {p: [k for k in keys if k in gaps.get(p, {})] for p, keys in sorted(doc.get("produtos", {}).items())}
+    doc["produtos"] = {p: ks for p, ks in lowered.items() if ks}
+    path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return doc["produtos"]
+
+
+_SLNC_BASELINE_REL = ("mcp", "noctusai", "tests", "stage_list_not_in_code_baseline.json")
+_SLNC_ALLOW = re.compile(r"#\s*noc-allow:\s*stage-list\s*(?:—|–|-|:)\s*\S")
+_SLNC_CALLS = ("StageDefault", "LeadStage")
+#: funnel-stage vocabulary: the canonical + market CRM roles (`pipeline/presets.py`) and the slugs the four canons use today.
+_SLNC_VOCAB = frozenset({
+    "entrada", "qualificado", "proposta", "proposta_aceite", "ganho", "final", "visita", "sessao_experimental", "briefing",
+    "contatado", "novo", "lead", "qualificacao", "negociacao", "fechado", "perdido", "won", "lost", "ganhou", "perdeu",
+})
+_SLNC_ALLOWED_SEED = (
+    "seed/lib/backend/noctusai_lib/domain/pipeline/defaults.py",
+    "seed/lib/backend/noctusai_lib/domain/pipeline/presets.py",
+    "seed/lib/backend/noctusai_lib/domain/pipeline/market_presets.py",
+)
+_SLNC_SKIP_PARTS = {"node_modules", "dist", "build", ".git", "tests", "__tests__", "__pycache__", "migrations"}
+
+
+def _slnc_files(root: Path) -> Iterator[Path]:
+    bases = [p / "backend" / "app" for p in _active_product_dirs(root / "products")]
+    bases += [root / "seed" / "lib" / "backend" / "noctusai_lib", root / "seed" / "framework" / "backend" / "noctusai_seed"]
+    for base in bases:
+        if not base.is_dir():
+            continue
+        for f in sorted(base.rglob("*.py")):
+            rel = f.relative_to(root).as_posix()
+            if set(f.relative_to(base).parts) & _SLNC_SKIP_PARTS or f.name.startswith("test_"):
+                continue
+            if rel in _SLNC_ALLOWED_SEED or (f.name == "crm_preset.py" and f.parent.name == "market"):
+                continue
+            yield f
+
+
+def stage_list_hits(text: str) -> list[tuple[int, str]]:
+    """``(line, kind)`` of literal funnel stage lists in one Python module (AST; the escape marker is honoured)."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    lines = text.splitlines()
+    names = set(_SLNC_CALLS)
+    for node in ast.walk(tree):  # follow `from ... import StageDefault as S`
+        if isinstance(node, ast.ImportFrom):
+            names.update(a.asname for a in node.names if a.name in _SLNC_CALLS and a.asname)
+    hits: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        kind = None
+        if isinstance(node, ast.Call):
+            fn = node.func
+            name = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
+            slug = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "slug"), None)
+            # only a LITERAL slug is a stage in code; `LeadStage(slug=x)` building from a variable is the mechanism
+            if name in names and isinstance(slug, ast.Constant) and isinstance(slug.value, str):
+                kind = f"{name}(...) literal"
+        elif isinstance(node, (ast.List, ast.Tuple)):
+            strs = [e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            if len(strs) >= 3 and len({s for s in strs if s in _SLNC_VOCAB}) >= 3:
+                kind = "literal stage tuple/list"
+        if kind and not any(_SLNC_ALLOW.search(lines[n - 1]) for n in range(max(1, node.lineno - 3), node.lineno + 1) if n <= len(lines)):
+            hits.append((node.lineno, kind))
+    return sorted(hits)
+
+
+def stage_list_counts(root: Path) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for f in _slnc_files(root):
+        try:
+            n = len(stage_list_hits(f.read_text(encoding="utf-8")))
+        except (OSError, UnicodeDecodeError):
+            continue
+        if n:
+            counts[f.relative_to(root).as_posix()] = n
+    return counts
+
+
+def lower_stage_list_not_in_code_baseline(repo_root: Path | None = None) -> dict[str, int]:
+    """Re-derive the ratchet baseline DOWNWARD (min(baseline, current) per file; never raises an entry)."""
+    root = repo_root or REPO_ROOT
+    path = root.joinpath(*_SLNC_BASELINE_REL)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    current = stage_list_counts(root)
+    lowered = {r: min(int(n), current.get(r, 0)) for r, n in sorted(doc.get("arquivos", {}).items()) if min(int(n), current.get(r, 0)) > 0}
+    doc["arquivos"] = lowered
+    path.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return lowered
+
+
+def check_stage_list_not_in_code(repo_root: Path | None = None) -> list[dict]:
+    """A funnel stage list is a market `CrmPreset` (data), not a literal in code (ADR-2): flags a
+    `StageDefault(`/`LeadStage(` call or a literal stage tuple/list outside a market `crm_preset.py`
+    and the seed's preset mechanism. WARN-first (severity `warning`) against the per-file shrink-only
+    baseline `mcp/noctusai/tests/stage_list_not_in_code_baseline.json`; phase W9 of the
+    crm-cms-erp-vertical-seeds roadmap flips it to blocking. Escape: `# noc-allow: stage-list — <why>`.
+    KB § PATTERNS/architect/event-oriented-architecture.md (ADR-2 in the roadmap)."""
+    root = repo_root or REPO_ROOT
+    baseline_rel = "/".join(_SLNC_BASELINE_REL)
+    try:
+        baseline: dict[str, int] = json.loads(root.joinpath(*_SLNC_BASELINE_REL).read_text(encoding="utf-8")).get("arquivos", {})
+    except (OSError, ValueError):
+        baseline = {}
+    issues: list[dict] = []
+    current = stage_list_counts(root)
+    for rel in sorted(set(current) | set(baseline)):
+        have, allowed = current.get(rel, 0), int(baseline.get(rel, 0))
+        product = rel.split("/")[1] if rel.startswith("products/") else "seed"
+        if have > allowed:
+            where = ", ".join(f"{n} ({k})" for n, k in stage_list_hits((root / rel).read_text(encoding="utf-8")))
+            issues.append({
+                "product": product, "file": rel, "severity": "warning",
+                "issue": (
+                    f"{have} literal funnel stage list(s) in code (line {where}), baseline allows {allowed}. Stages are a market "
+                    "`CrmPreset` (`app/market/crm_preset.py`, `noctusai_lib.domain.pipeline.presets`) seeded into `pipeline_stages` rows; "
+                    "code keys on `papel`. Escape with `# noc-allow: stage-list — <why>`. Roadmap crm-cms-erp-vertical-seeds ADR-2"
+                ),
+            })
+        elif have < allowed:
+            issues.append({
+                "product": product, "file": rel, "severity": "warning",
+                "issue": f"{have} stage list(s) left but the baseline allows {allowed}: lower `{rel}` in {baseline_rel} — "
+                         "`python mcp/noctusai/cli.py --lower-stage-list-not-in-code-baseline` (the ratchet only shrinks).",
+            })
     return issues
 
 

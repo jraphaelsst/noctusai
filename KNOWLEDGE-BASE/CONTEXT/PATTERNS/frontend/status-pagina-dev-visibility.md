@@ -110,6 +110,16 @@ const it ignored, and silently omitted `admin`.
 - Verifying ⇒ query `pg_policies`, not the FE. The FE cannot tell you what the
   read path returned.
 
+## Module pages need a row too (warn-first keeper)
+
+A page key a module declares (BE `PageSpec(key=...)`, FE `defineModule({items:[{pageKey}]})`) is only
+visible once the mounting product seeds its `status_pagina` row; a missing row hides the nav item
+silently. `check_module_page_status_rows` (`--check-module-page-status-rows`, severity `warning`,
+shrink-only baseline `mcp/noctusai/tests/module_page_status_rows_baseline.json`, escape
+`# noc-allow: module-page-status-row — <why>`) backstops it. Phase W9 of the
+crm-cms-erp-vertical-seeds roadmap flips it to blocking. Its sibling `check_stage_list_not_in_code`
+(`--check-stage-list-not-in-code`) keeps funnel stage lists in a market `CrmPreset`, not in code.
+
 ## Composes with
 
 - `KB § PATTERNS/backend/database-rls.md` — the RLS trust-root rules.

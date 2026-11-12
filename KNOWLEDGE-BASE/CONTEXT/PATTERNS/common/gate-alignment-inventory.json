@@ -1765,6 +1765,20 @@
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-module-page-status-rows": {
+   "mechanism": "api: noctusai_seed.modules.ModuleSpec/PageSpec (seed/framework/backend/noctusai_seed/modules/spec.py) is the single declared page-key source",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-11",
+   "source": "project-history/roadmaps/crm-cms-erp-vertical-seeds-2026-11.plan.md ADR-1; KB PATTERNS/frontend/status-pagina-dev-visibility.md",
+   "shadow": {
+    "since": "2026-11-11",
+    "fires": 0,
+    "fix_rate": null
+   }
+  },
   "keeper:check-motion-import-boundary": {
    "mechanism": "KB § PATTERNS/frontend/marketing-organs-and-motion.md (api: @noctusai/lib/marketing MotionProvider)",
    "owner": "tooling-engineer",
@@ -2771,6 +2785,20 @@
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
   },
+  "keeper:check-stage-list-not-in-code": {
+   "mechanism": "api: noctusai_lib.domain.pipeline.presets CrmPreset + ensure_preset_stages (seed/lib/backend/noctusai_lib/domain/pipeline/presets.py)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-11",
+   "source": "project-history/roadmaps/crm-cms-erp-vertical-seeds-2026-11.plan.md ADR-2",
+   "shadow": {
+    "since": "2026-11-11",
+    "fires": 0,
+    "fix_rate": null
+   }
+  },
   "keeper:check-stale-after-write": {
    "severity": "",
    "kind": "keeper",
@@ -3539,6 +3567,19 @@
    "branch": "feat/guardian-tool-authorship-keeper",
    "gates": [
     "keeper:check-guardian-tool-authorship"
+   ]
+  },
+  {
+   "id": "D-CRM-1",
+   "decision": "CRM/CMS/ERP vertical seeds: a module's page keys each have a seeded status_pagina row, and a funnel stage list is a market CrmPreset (data), never a literal in product code; both warn-first against shrink-only baselines, W9 flips them to blocking",
+   "home": "KB § PATTERNS/frontend/status-pagina-dev-visibility.md",
+   "construction": "noctusai_seed.modules.ModuleSpec/PageSpec + noctusai_lib.domain.pipeline.presets.CrmPreset/ensure_preset_stages",
+   "gate": "keeper:check-module-page-status-rows",
+   "telemetry": "gate events (cli wrapper) via --check-module-page-status-rows / --check-stage-list-not-in-code; walls via --gate-alignment walls",
+   "branch": "feat/crm-module-keepers",
+   "gates": [
+    "keeper:check-module-page-status-rows",
+    "keeper:check-stage-list-not-in-code"
    ]
   },
   {

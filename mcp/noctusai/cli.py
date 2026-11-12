@@ -412,6 +412,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lower-async-handler-sync-db-baseline", action="store_true", help="Lower mcp/noctusai/tests/async_handler_sync_db_baseline.json to min(current, baseline) per file after converting handlers (never raises a count).")
     parser.add_argument("--check-silent-refusal", action="store_true", help="Keeper (2026-10-24, N=4: F75b F76 F78 F86): a refusal the user never sees — a query's empty branch (rows.length === 0 / isEmpty=) reachable while the query is in ERROR (a failed search read as 'Nenhum … encontrado' + 'Cadastrar novo'), or an upload whose failure nobody observes (mutate with no onError and an unread error, a fire-and-forget onUpload, useUploadDocumento whose erro is never rendered). ts-morph AST scan (mcp/noctusai/node/silent_refusal_scan.mjs) over active products + seed frontends. Fix: QueryErrorState / !q.isError guard; useUploadDocumento + <UploadErro> from @noctusai/lib/upload-refusal. Escape: '// noc-allow: silent-refusal — why'. Severity high. KB § PATTERNS/frontend/silent-refusal.md.")
     parser.add_argument("--check-stale-after-write", action="store_true", help="Keepers (2026-10-24) check_mutation_family_write + check_job_start_without_handoff, one scan: (a) a raw useMutation that setQueryData's a key whose family (reads whose key EXTENDS it, derived from the product's own query keys) it never refreshes — setQueryData is exact, the derived reads stay stale (social-wiring F88); (b) a mutation that starts server-side async work (job/consulta id in its response type, a 202, or an invalidate-only allow saying 'queued/background') without handOffToPolling (@noctusai/lib) — the refetch races the worker and jobPolling never starts (F87). Active products + seed FE. Escapes on the useMutation line: 'noc-allow: exact-write — why' / 'noc-allow: no-job-handoff — why'. Severity high. KB § PATTERNS/frontend/mutation-cache-writes.md.")
+    parser.add_argument("--check-module-page-status-rows", action="store_true", help="Keeper (WARN-first, W1-6): every page key a module declares (BE PageSpec / FE defineModule) has a status_pagina row seeded by the mounting product's migrations; a missing row hides the nav item silently. Ratchet baseline mcp/noctusai/tests/module_page_status_rows_baseline.json; phase W9 flips it to blocking. Escape: '# noc-allow: module-page-status-row — why'. KB § PATTERNS/frontend/status-pagina-dev-visibility.md.")
+    parser.add_argument("--lower-module-page-status-rows-baseline", action="store_true", help="Re-derive mcp/noctusai/tests/module_page_status_rows_baseline.json DOWNWARD from the tree (never adds).")
+    parser.add_argument("--check-stage-list-not-in-code", action="store_true", help="Keeper (WARN-first, W1-6): a funnel stage list is a market CrmPreset, not a literal in code (StageDefault(/LeadStage( call or a literal stage tuple outside a market crm_preset.py / the seed preset mechanism). Per-file ratchet mcp/noctusai/tests/stage_list_not_in_code_baseline.json; phase W9 flips it to blocking. Escape: '# noc-allow: stage-list — why'. Roadmap crm-cms-erp-vertical-seeds ADR-2.")
+    parser.add_argument("--lower-stage-list-not-in-code-baseline", action="store_true", help="Re-derive mcp/noctusai/tests/stage_list_not_in_code_baseline.json DOWNWARD from the tree (never raises an entry).")
     parser.add_argument("--check-mutation-invalidate-only", action="store_true", help="Keeper (2026-10-21): a TanStack useMutation({...}) that neither draws its change (onMutate) nor writes the server's answer (setQueryData) makes the screen wait for write + refetch (orbity lead note ~2 s late). RATCHET against mcp/noctusai/tests/mutation_invalidate_only_baseline.json (per file; may only go down, a lowered count must lower the baseline). Fix: useCacheWriteMutation from @noctusai/lib/cache-writes. Escape: '// noc-allow: invalidate-only — why' on the useMutation line. Severity high. KB § PATTERNS/frontend/mutation-cache-writes.md.")
     parser.add_argument("--check-agent-prompt-text-in-code", action="store_true", help="Keeper (Julia v2 D3): prompt text — ToolSpec(description=...), SectionInput(conteudo=...), *_SYSTEM = ..., long UPPER_CASE string constants — must not live in products/agents/backend/app/{channels,studio,runtime} (+ routers/channels_router.py): every string a model reads is an agents DB row. RATCHET against products/agents/backend/prompt-text-baseline.json (per file; a file may carry fewer literals, never more, and a lowered count must lower the baseline). Escape: '# noc-allow: prompt-text-in-code — why'. Severity high. KB § PATTERNS/backend/backend.md.")
     parser.add_argument("--check-llm-usage-context-entry", action="store_true", help="Keeper: a metered LLM call (chat_with_tools/chat_completion*/run_tool_loop) in products/<slug>/backend/app whose file has no llm_usage_context scope records ai_usage.agent_key NULL (per-agent/per-session cost lost). Allowlist with reasons in compliance.py. Severity warning. KB § PATTERNS/backend/llm-usage.md.")
@@ -3105,6 +3109,27 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
         sys.exit(1)
+
+    elif args.check_module_page_status_rows or args.check_stage_list_not_in_code:
+        from tools.noctus.dev import compliance as _cmp
+        _name, _fn = (("module_page_status_rows", _cmp.check_module_page_status_rows) if args.check_module_page_status_rows
+                      else ("stage_list_not_in_code", _cmp.check_stage_list_not_in_code))
+        issues = _fn()
+        if not issues:
+            print(f"  {GREEN}✓ {_name} clean (warn-first; baseline-ratcheted).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} {_name} issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} — {i['issue']}")
+        # warn-first: only a high/critical severity blocks (W9 flips these keepers to `high`).
+        sys.exit(1 if any(i.get("severity") in ("high", "critical", "error") for i in issues) else 0)
+
+    elif args.lower_module_page_status_rows_baseline or args.lower_stage_list_not_in_code_baseline:
+        from tools.noctus.dev import compliance as _cmp
+        _bl = (_cmp.lower_module_page_status_rows_baseline() if args.lower_module_page_status_rows_baseline
+               else _cmp.lower_stage_list_not_in_code_baseline())
+        print(f"  {GREEN}✓ baseline lowered:{RESET} {_bl}")
+        sys.exit(0)
 
     elif args.check_mutation_invalidate_only:
         from tools.noctus.dev.compliance import check_mutation_invalidate_only
