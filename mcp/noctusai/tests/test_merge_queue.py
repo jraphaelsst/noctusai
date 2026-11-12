@@ -822,6 +822,26 @@ def test_attribute_culprit_is_pure_and_never_guesses():
     assert ref is None and "unreadable" in why
 
 
+def test_attribution_areas_are_ci_scopes_a_shared_root_can_break_any_product():
+    # 2026-11-12 (mq-area-map-dedup): the queue's own prefix map said only products/sw/ + seed/ can break an SW test,
+    # so a requirements.txt entry next to an SW entry made the SW one the "single culprit" and ejected it unbisected.
+    paths = {"mq/sw--1": ["products/social-wiring/backend/app/y.py"], "mq/req--2": ["requirements-dev.txt"]}
+    ref, why = mq.attribute_culprit(["products/social-wiring/backend/tests/test_y.py::test_a"], [], paths)
+    assert ref is None and "2 entries" in why
+    # a .github/ change can break the toolkit (it tests the CI actions) - not only mcp/ paths
+    paths = {"mq/ci--1": [".github/actions/apt-install/action.yml"], "mq/sw--2": ["products/social-wiring/a.py"]}
+    ref, why = mq.attribute_culprit(["mcp/noctusai/tests/test_ci_apt_install_action.py::test_x"], [], paths)
+    assert ref == "mq/ci--1" and "action.yml" in why
+    # another product's diff still never matches
+    paths = {"mq/ag--1": ["products/agents/a.py"], "mq/sw--2": ["products/social-wiring/a.py"]}
+    assert mq.attribute_culprit(["products/agents/tests/test_a.py::t"], [], paths)[0] == "mq/ag--1"
+
+
+def test_one_product_classifier_the_queue_uses_ci_scopes():
+    assert not hasattr(mq, "PRODUCT_PATH_RE")  # the duplicate map is gone; ci_scope is the one classifier
+    assert mq.ci_scope.PRODUCT_RE.match("products/sw/a.py")
+
+
 def test_single_attributable_culprit_is_ejected_without_bisect(world):
     good = enqueue(world, "good", [("products/sw/backend/app/g.py", "g\n")], 2000)
     bad = enqueue(world, "bad", [("mcp/noctusai/tools/BREAK.py", "boom\n")], 2100)

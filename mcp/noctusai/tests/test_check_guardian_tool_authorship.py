@@ -165,7 +165,7 @@ REPO = Path(__file__).resolve().parents[3]
 EXPECTED_PROTECTED = sorted(f"{_DEV}/{n}.py" for n in (
     "_benign_stash _catalog_scope_guard _ledger_push _ledger_store _pii_guard _push_verdict _transient_retry _vps_ssh "
     "_worktree_staleness auth_false_green_predicate auto_improvement branch_pointer build build_scope cache_backend "
-    "cache_backend_postgres council_ledger decision_log deploy_pull deploy_verify dispatch_token_log doc_staleness "
+    "cache_backend_postgres ci_scope council_ledger decision_log deploy_pull deploy_verify dispatch_token_log doc_staleness "
     "gate_alignment gate_budget gate_sweep gate_verdict_cache harness_signatures hw_admission ledger_checksums "
     "merge_queue migrate_product migration_directives migration_replay noc_graph_cache orchestrator_inline_cutoff "
     "primary_write_guard prod_consent product_scope query_key_family_predicate release_steward self_patch_predicate "

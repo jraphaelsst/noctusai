@@ -340,8 +340,10 @@ counts moved, dev moved beyond the wave, re-compose not clean) leaves the entrie
 next round re-tests them on the combined tree, so a miss costs time, never correctness.
 **Residual risk, stated:** file-disjoint is not effect-disjoint (per-branch green is not
 integration green); restricting the skip to product-only entries with no shared file is what
-keeps that risk small, not zero. Path areas come from the queue's own map (`entry_areas`), to be
-derived from `ci_scope.classify` once that lands (`NOC-REMEDIATE[mq-area-map-dedup]`).
+keeps that risk small, not zero. Path areas come from `ci_scope` (the classifier CI's `changes`
+job and release-steward item 5 use): the wave's product slugs, and the culprit-attribution areas,
+where a shared root (seed, requirements, `.github/`, the CI scripts dir, package.json, active-scope)
+can break any product's tests (2026-11-12).
 
 ## 6d · Toolkit shards are balanced by measured time (2026-11-11)
 
