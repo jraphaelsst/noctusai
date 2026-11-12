@@ -1,6 +1,6 @@
 consented_by: joaoraphaelsst@gmail.com
 consented_on: 2026-11-12
-consent_ref: 'project-history/roadmaps/assistant-golive-2026-11.md#M4: prod promote'
+consent_ref: 'owner-ask:b5-2026-11-12 "do those for me, please" (step 2: Assistant Live)'
 dev_validated: true
 recorded_by: agent
 authorization:
@@ -8,7 +8,7 @@ authorization:
   prompt_source: typed
   tier: owner-ask
   evidence_rank: owner-ask/typed
-  candidates_considered: 6
+  candidates_considered: 8
   session_id: 809b8f61-a622-4b49-a50c-5b106253abb6
-  transcript_sha256: 1ec274e24a586a86be04f15212a8d2c32e3c45e555c86349b12a6eec2bc19def
-  recorded_at: 2026-11-12T05:40:34+00:00
+  transcript_sha256: 35a0eb1e134e027fe7fb3b5117465035bde9bec92472154e7bcda67cfd36a58c
+  recorded_at: 2026-11-12T14:34:39+00:00
