@@ -17,6 +17,8 @@
     "030_whatsapp_connections_service_only.sql": "14a490f8544c865a3764d68636e92396fa9026f7b9464f63c67d112b36780b88",
     "031_orbity_service_only_batch1.sql": "d246170d79759ae49809a9a9fa702e4776f3a58861feb82658ac9d4020e956ad",
     "032_orbity_service_only_batch2.sql": "c065fccd69a23a84bd349e3a5c8eebf41c6ea79e9f65abc962f668d29af34651",
-    "033_capture_events.sql": "5180756ee3d3826049efc9143693331ccdfbbfdd3e0b17cb3286812c70327555"
+    "033_capture_events.sql": "5180756ee3d3826049efc9143693331ccdfbbfdd3e0b17cb3286812c70327555",
+    "034_orbity_service_only_batch3.sql": "3122f4dc78d1ca951d08d04ceef1c1b472e466cd17d5e8931b3c5a3bfaefde67",
+    "035_orbity_function_and_grant_hardening.sql": "c2f648f70353eabaffd23a3e6b2a99eb4376046e34d740be2e31ba384bc5de2d"
   }
 }
