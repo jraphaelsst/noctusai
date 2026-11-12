@@ -5,7 +5,7 @@
 > governance, pt-BR UX writing, usability evaluation, hand-off) written once and mapped onto NoctusAI's
 > seed mechanisms, with in-tree examples. Owned by `product-designer` (`.claude/agents/product-designer.md`).
 >
-> **Why it exists.** Since 2026-11-04 every new screen starts as an owner-validated clickable mockup
+> **Why it exists.** From 2026-11-04 to 2026-11-11 every new screen started as an owner-validated clickable mockup; since 2026-11-11 a mockup is made only when the owner asks and never gates a build ('mockup rule shouldnt block', owner)
 > (`KB § PATTERNS/frontend/prototype-on-real-data.md`, memory `feedback-mockup-before-ui`). Nobody owned
 > that step: the tech-lead designed by hand and frontend-engineer built in worktrees (audit 2026-11-05,
 > `archive/projects/2026-11-05/01-agent-refinement/audits/audit-missing-hires.md` §3). The DESIGN side of a screen — what it is

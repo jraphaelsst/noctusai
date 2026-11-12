@@ -16,8 +16,12 @@ The owner, typed live in the steward's terminal and confirmed directly in e1's: 
 
 - **The go is the owner's plain ask.** A message the owner wrote that asks to deploy / ship / release / promote / publish / launch / go live, or to go/push/take something to prod (`_owner_deploy_ask`), is consent for prod exposure (`prod_consent`, tier `owner-ask`), for shipping a project (`ship_consent`, tier `owner-ask`) and for prod migrations (noc-steward §5). No canonical sentence, no slug, no per-slice sha or migration filenames (council chair ruling 59c61ef0's wording requirement is superseded for this phase).
 - **What stays.** The evidence must be the owner's OWN typed turn in the harness-written transcript of the session that acts (`_human_authored_transcript_texts`) — a peer's relay is never consent. Negated / hypothetical / deferred phrasing ("don't deploy", "should we ship?", "before we release") is not an ask. Past tense and nouns ("deployed", "the deployment failed") are not asks. The other legs of a consent record (`dev_validated`, the ✅ milestone) are unchanged.
-- **What it trades.** Without slug-binding, any deploy ask in the session counts, including one aimed at a different product, and a pasted report that contains "deploy" in an imperative clause can be cited. `owner-ask` is ranked WEAKEST (`_AUTHORIZATION_RANKS` 6/7), so an exact or slug-bound statement is always cited first, and the record names the tier. Acceptable with one owner and one other user; the wrong default once a third person can ask.
+- **What it trades.** Without slug-binding, any deploy ask in the session counts, including one aimed at a different product (a `<pasted_content>` block is never cited - see the next section). `owner-ask` is ranked WEAKEST (`_AUTHORIZATION_RANKS` 6/7), so an exact or slug-bound statement is always cited first, and the record names the tier. Acceptable with one owner and one other user; the wrong default once a third person can ask.
 - **Revisit trigger:** a third user onboards → set `CONSENT_PHASE = "multi-user"`; the exact / slug-bound tiers are then required again with no other code change.
+
+## Pasted text is never the owner's words (2026-11-11)
+
+The evidence reader (`_human_authored_transcript_texts`) strips every `<pasted_content>` block from typed and queued messages before any consent matching. Found by 8a: the owner pasted a steward message back, which quoted the canonical sentence, and `prod_consent author` cited that agent text as the owner's consent. Only what the human typed outside a paste counts. Tests: `TestPastedContentIsNeverTheOwnersWords`.
 
 ## The fire boundary — a SET-DIFFERENCE on slugs, not a content diff
 
