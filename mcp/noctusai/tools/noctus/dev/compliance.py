@@ -17490,7 +17490,7 @@ def check_migration_applied_ledger_drift(
 
     # Every product on disk (asleep ones too: their rows are still in the shared catalog) by slug + schema token.
     other_product_tokens: set[str] = {"core"}
-    for d in products_root.iterdir():
+    for d in products_root.iterdir():  # product-scope: all — asleep products' rows are still in the shared catalog, so their prefixes must be excluded too
         if d.is_dir() and not d.name.startswith("."):
             other_product_tokens.add(d.name.replace("-", "_"))
             try:
