@@ -698,6 +698,8 @@ _MAX_BODY_PATH_OVERRIDES = {
     # spools each part to disk and the route reads one file at a time, so
     # memory stays bounded by one photo, not by this ceiling.
     "/api/edicao-fotos/lotes/*/fotos": 256 * 1024 * 1024,  # 256 MB
+    # One resumable-upload PART (seed `resumable_uploads`: <= max_part_size 16 MiB + 64 KiB framing).
+    "/api/edicao-fotos/uploads/*/parts/*": 16 * 1024 * 1024 + 64 * 1024,
     # Edição de Fotos reference-pair upload (POST /api/edicao-fotos/referencias
     # — contract §5, the before+after pair of the platform pool;
     # `app.modules.edicao_fotos.routers.referencias`). Derived: exactly two

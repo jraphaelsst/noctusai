@@ -238,6 +238,49 @@ describe('useUploadFotos: multipart field name', () => {
   });
 });
 
+describe('useUploadFotos: opt-in resumable path', () => {
+  const big = () => new File([new Uint8Array(20)], 'grande.jpg', { type: 'image/jpeg' });
+  const small = () => new File([new Uint8Array(2)], 'peq.jpg', { type: 'image/jpeg' });
+
+  it('sends big photos chunked + ingests them by upload id, small ones stay multipart', async () => {
+    const upload = vi.fn().mockResolvedValue({ fotos: [{ id: 's' }] });
+    const post = vi.fn(async (path: string) => {
+      if (path === '/api/edicao-fotos/uploads') {
+        return { id: 'u1', status: 'open', filename: 'grande.jpg', size_bytes: 20, part_size: 10, total_parts: 2, object_key: null, parts: [] };
+      }
+      if (path.endsWith('/complete')) return { id: 'u1', status: 'completed', object_key: 'k' };
+      return { fotos: [{ id: 'b' }] };
+    });
+    const putRaw = vi.fn().mockResolvedValue({});
+    const api = makeApi({ upload, post, putRaw });
+    const { useUploadFotos } = createEdicaoFotosHooks(api, { resumableThresholdBytes: 10 });
+    const { result } = renderHook(() => useUploadFotos(), { wrapper: wrapper() });
+    const percents: number[] = [];
+    let out: any;
+    await act(async () => {
+      out = await result.current.mutateAsync({ loteId: 'l1', files: [small(), big()], onProgress: (p) => percents.push(p) });
+    });
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect((upload.mock.calls[0][1] as FormData).getAll('fotos')).toHaveLength(1);
+    expect(putRaw).toHaveBeenCalledTimes(2);
+    expect(post).toHaveBeenCalledWith('/api/edicao-fotos/lotes/l1/fotos/de-upload', { upload_ids: ['u1'] });
+    expect(percents[percents.length - 1]).toBe(100);
+    expect(out.fotos).toHaveLength(2);
+  });
+
+  it('without the option every photo takes the legacy multipart request', async () => {
+    const upload = vi.fn().mockResolvedValue({ fotos: [] });
+    const putRaw = vi.fn();
+    const { useUploadFotos } = createEdicaoFotosHooks(makeApi({ upload, putRaw }));
+    const { result } = renderHook(() => useUploadFotos(), { wrapper: wrapper() });
+    await act(async () => {
+      await result.current.mutateAsync({ loteId: 'l1', files: [big(), small()] });
+    });
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(putRaw).not.toHaveBeenCalled();
+  });
+});
+
 // ── useBaixarZip — download + 409 "not ready" surfaces as ApiError ─────────
 
 describe('useBaixarZip: zip download', () => {

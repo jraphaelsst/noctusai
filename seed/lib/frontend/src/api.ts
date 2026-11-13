@@ -227,6 +227,12 @@ export interface ApiClient {
    * every other method throws.
    */
   download(path: string): Promise<Blob>;
+  /**
+   * PUT a RAW body (a `Blob` chunk) as `application/octet-stream`, abortable. `put` JSON-stringifies its body, which
+   * turns a Blob into `{}` — the resumable-upload part route needs the bytes as-is. Optional on the interface so
+   * existing hand-built `ApiClient` stubs stay valid; `createApiClient` always provides it.
+   */
+  putRaw?<T = any>(path: string, body: Blob, options?: { signal?: AbortSignal }): Promise<T>;
 }
 
 export interface CreateApiClientOptions {
@@ -662,6 +668,14 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
         headers,
         body: body ? JSON.stringify(body) : undefined,
       });
+      return handleResponse<T>(response);
+    },
+
+    async putRaw<T = any>(path: string, body: Blob, options?: { signal?: AbortSignal }): Promise<T> {
+      const headers = await buildHeaders();
+      headers['Content-Type'] = 'application/octet-stream';
+      const base = getBaseUrl();
+      const response = await fetcher(`${base}${path}`, { method: 'PUT', headers, body, signal: options?.signal });
       return handleResponse<T>(response);
     },
 
