@@ -112,6 +112,8 @@ def _handler(state: FakeAgents):
         def _evals_route(self, m: str, path: str, b):
             """The eval-loop gate subset (contract eval-loop-gate-contract.md)."""
             lid = "22222222-2222-4222-8222-222222222222"
+            if "/agents/sem-avaliacoes/" in path:  # a token without studio:evals-run (the content token)
+                return self._send(403, {"code": "scope_missing", "detail": "Missing scope(s): studio:evals-run or studio:publish"})
             if m == "POST" and path.endswith("/evals/loops"):
                 return self._send(201, {"id": lid, "suite": b["suite"], "status": "ativo", "rodadas_planejadas": b.get("rodadas_planejadas")})
             if m == "GET" and "/evals/loops" in path and path.split("?")[0].endswith("/loops"):
@@ -965,6 +967,19 @@ class TestEvalLoopActions:
         out = C.content("rodada", agent="julia", base_url=srv.url, payload_path=pl, confirm=True)
         assert out["status"] == "error" and out["codigo"] == "rodada_em_aberto"
         assert out["servidor"] == {"http": 409, "code": "rodada_em_aberto", "detail": "ha uma rodada aberta"}
+
+    def test_scope_missing_without_evals_token_says_how_to_get_one(self, srv):
+        # 2026-11-13: the content-token fallback can never reach an eval route; the bare 403 left the agent stuck.
+        out = C.content("loops", agent="sem-avaliacoes", base_url=srv.url)
+        assert out["codigo"] == "scope_missing"
+        assert out["servidor"]["detail"] == "Missing scope(s): studio:evals-run or studio:publish"
+        assert C.ENV_EVALS_TOKEN in out["mensagem"] and "avaliacoes" in out["mensagem"]
+        assert TOKEN not in json.dumps(out)
+
+    def test_scope_missing_with_evals_token_configured_adds_no_hint(self, srv, monkeypatch):
+        monkeypatch.setenv(C.ENV_EVALS_TOKEN, TOKEN)
+        out = C.content("loops", agent="sem-avaliacoes", base_url=srv.url)
+        assert out["codigo"] == "scope_missing" and C.ENV_EVALS_TOKEN not in out["mensagem"]
 
     def test_evals_token_is_preferred_for_loop_actions(self, srv, monkeypatch):
         monkeypatch.setenv(C.ENV_EVALS_TOKEN, "pk_evals_other")

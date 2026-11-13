@@ -2,7 +2,7 @@
  * Platform-admin management of the `noctus.agents.content` MCP token (scope `studio:content-write`).
  *
  *   GET    /api/studio/plataforma/content-tokens        list (never the secret)
- *   POST   /api/studio/plataforma/content-token         mint { label, expira_em_dias: 1..365 | null = never }
+ *   POST   /api/studio/plataforma/content-token         mint { label, expira_em_dias: 1..30, tipo?: conteudo | avaliacoes }
  *   DELETE /api/studio/plataforma/content-token/{id}    revoke (idempotent)
  *
  * The raw secret exists only in the mint mutation's result (`gcTime: 0`) and the dialog that shows it.
@@ -38,10 +38,12 @@ export interface ContentTokenMinted {
 
 export interface ContentTokenMintInput {
   label: string;
-  /** `null` = never expires. */
-  expira_em_dias: number | null;
-  /** Adds scope `studio:agent-delete`. Omitted = false. */
+  /** 1..30 (the server refuses a never-expiring token). */
+  expira_em_dias: number;
+  /** Adds scope `studio:agent-delete`. Omitted = false. Refused (422) with `tipo: "avaliacoes"`. */
   permitir_exclusao?: boolean;
+  /** `avaliacoes` = ONLY `studio:evals-run` (the eval loop). Omitted = `conteudo` (`studio:content-write`). */
+  tipo?: "conteudo" | "avaliacoes";
 }
 
 export function useContentTokens() {
