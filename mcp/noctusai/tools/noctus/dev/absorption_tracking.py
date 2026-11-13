@@ -72,6 +72,7 @@ from settings import LEDGER_ROOT
 
 from ._ledger_store import append_rows, read_ledger_text
 
+from . import absorption_sources as _sources
 from .cache_backend import (
     apply_locking_pragmas,
     cache_dir as _cache_dir,
@@ -87,7 +88,7 @@ CACHE_PATH = _cache_path("absorptions")
 LEDGER_PATH = LEDGER_ROOT / "project-history" / "absorptions.ndjson"
 
 # ── Allowed enums ─────────────────────────────────────────────────────────────
-LIFECYCLE_STAGES = frozenset({"cloned", "diagnosed", "uplifting", "porting", "teardown", "done"})
+LIFECYCLE_STAGES = frozenset({"cloned", "diagnosed", "uplifting", "porting", "teardown", "done", "absorb_only"})
 CAPABILITY_STATUSES = frozenset({"identified", "building", "pilot", "fleet", "native_doc", "de_referenced"})
 EVENT_KINDS = frozenset({"lifecycle", "capability"})
 
@@ -147,6 +148,12 @@ CREATE TABLE IF NOT EXISTS capabilities (
   note         TEXT,
   PRIMARY KEY (slug, capability)
 );
+CREATE TABLE IF NOT EXISTS absorption_sources (
+  slug       TEXT PRIMARY KEY,
+  canon      TEXT NOT NULL,
+  updated_ts TEXT NOT NULL,
+  note       TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_abs_stage  ON absorptions(stage);
 CREATE INDEX IF NOT EXISTS idx_cap_status ON capabilities(status);
 CREATE INDEX IF NOT EXISTS idx_cap_slug   ON capabilities(slug);
@@ -184,6 +191,7 @@ def log_entry(
     stage: str | None = None,
     source_repo: str | None = None,
     source_head: str | None = None,
+    canon: str | None = None,
     # capability fields
     capability: str | None = None,
     target_organ: str | None = None,
@@ -222,6 +230,19 @@ def log_entry(
         if err:
             return err
         entry["stage"] = stage
+        if stage == _sources.STAGE_SOURCE:
+            # F1 (Phase 5a): registers an absorption SOURCE (frozen) and names the canon it is absorbed into.
+            if not canon:
+                return {"ok": False, "error": "canon is required for stage 'absorb_only' (the product the source is absorbed into)"}
+            if canon == slug:
+                return {"ok": False, "error": "canon cannot be the source itself"}
+            current = _sources.derive_sources(_ledger_text())
+            if canon in current:
+                return {"ok": False, "error": f"canon {canon!r} is itself an absorption source; a canon is never a source"}
+            entry["absorption_source"] = True
+            entry["canon"] = canon
+        elif canon is not None:
+            return {"ok": False, "error": "canon is only valid with stage 'absorb_only'"}
         if source_repo is not None:
             entry["source_repo"] = source_repo
         if source_head is not None:
@@ -312,6 +333,19 @@ def refresh(force: bool = False, ledger: Path | None = None, cache: Path | None 
                 capability_latest[(slug, cap)] = e
 
     now = _now_iso()
+    conn.execute("DELETE FROM absorption_sources")
+    src_text = _ledger_text(lp)
+    src_map = _sources.derive_sources(src_text)
+    src_rows = []
+    for ln in src_text.splitlines():
+        try:
+            e = json.loads(ln)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if e.get("kind") == "lifecycle" and e.get("stage") == "absorb_only" and e.get("slug") in src_map:
+            src_rows.append((e["slug"], src_map[e["slug"]], e.get("ts", now), e.get("note", "")))
+    if src_rows:
+        conn.executemany("INSERT OR REPLACE INTO absorption_sources(slug, canon, updated_ts, note) VALUES (?,?,?,?)", src_rows)
     conn.execute("DELETE FROM absorptions")
     conn.execute("DELETE FROM capabilities")
 
@@ -352,7 +386,7 @@ def refresh(force: bool = False, ledger: Path | None = None, cache: Path | None 
             cap_rows,
         )
 
-    rows_written = len(abs_rows) + len(cap_rows)
+    rows_written = len(abs_rows) + len(cap_rows) + len(src_rows)
     conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)", ("source_sha", sha_now))
     conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)", ("populated_at", now))
     conn.commit()
@@ -393,14 +427,23 @@ def status(
         conn = _connect(cp)
         _init_schema(conn)
 
-    sql = "SELECT * FROM absorptions WHERE 1=1"
-    params: list = []
-    if slug:
-        sql += " AND slug = ?"
-        params.append(slug)
-    if stage:
-        sql += " AND stage = ?"
-        params.append(stage)
+    if stage == _sources.STAGE_SOURCE:
+        # The freeze registry is its own derived set (a later cloned/diagnosed row never unfreezes a source),
+        # so `stage=absorb_only` reads `absorption_sources`, not the latest-lifecycle-wins `absorptions` table.
+        sql = "SELECT slug, 'absorb_only' AS stage, canon, updated_ts, note FROM absorption_sources WHERE 1=1"
+        params = []
+        if slug:
+            sql += " AND slug = ?"
+            params.append(slug)
+    else:
+        sql = "SELECT * FROM absorptions WHERE 1=1"
+        params = []
+        if slug:
+            sql += " AND slug = ?"
+            params.append(slug)
+        if stage:
+            sql += " AND stage = ?"
+            params.append(stage)
     sql += " ORDER BY slug"
     abs_rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
 
@@ -467,7 +510,9 @@ def register(server) -> None:
             "Append a lifecycle OR capability event to the absorption tracking "
             "ledger (`project-history/absorptions.ndjson`). "
             "For lifecycle events: `kind='lifecycle'`, `slug`, `stage` required. "
-            "`stage` ∈ {'cloned','diagnosed','uplifting','porting','teardown','done'}. "
+            "`stage` ∈ {'cloned','diagnosed','uplifting','porting','teardown','done','absorb_only'}. "
+            "`stage='absorb_only'` + `canon=<product>` REGISTERS an absorption SOURCE (frozen until erased - Phase 5a; "
+            "`stage='done'` ends it); every freeze gate derives its list from these rows. "
             "For capability events: `kind='capability'`, `slug`, `capability`, "
             "`target_organ`, `status` required. "
             "`status` ∈ {'identified','building','pilot','fleet','native_doc','de_referenced'}. "
@@ -481,6 +526,7 @@ def register(server) -> None:
         stage: str | None = None,
         source_repo: str | None = None,
         source_head: str | None = None,
+        canon: str | None = None,
         capability: str | None = None,
         target_organ: str | None = None,
         status: str | None = None,
@@ -489,7 +535,7 @@ def register(server) -> None:
     ) -> dict:
         return log_entry(
             slug=slug, kind=kind, stage=stage,
-            source_repo=source_repo, source_head=source_head,
+            source_repo=source_repo, source_head=source_head, canon=canon,
             capability=capability, target_organ=target_organ,
             status=status, pilot=pilot, note=note,
         )

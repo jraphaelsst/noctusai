@@ -105,11 +105,11 @@ def _compose(**over: Any) -> dict:
 class TestComposeBriefShape:
     """Verify the output dict has the right shape in all cache states."""
 
-    def test_returns_seven_keys(self):
+    def test_returns_eight_keys(self):
         result = _compose()
         assert set(result.keys()) == {
             "brief", "suggested_agent", "auto_improvement_context",
-            "kb_references", "recent_misses", "open_findings", "degraded",
+            "kb_references", "recent_misses", "open_findings", "source_warnings", "degraded",
         }
 
     def test_brief_contains_required_sections(self):

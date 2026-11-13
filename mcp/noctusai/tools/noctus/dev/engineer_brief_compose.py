@@ -448,6 +448,30 @@ def _open_findings(target_files: list[str], degraded: list[str] | None) -> list[
     return out
 
 
+def _source_warnings(
+    description: str, target_files: list[str], sources: dict[str, str] | None, degraded: list[str],
+) -> list[dict]:
+    """F4 lint: names of absorption SOURCES (derived from the absorptions ledger) in the brief, outside a slice."""
+    from . import absorption_sources as _abs
+    live = sources is None
+    sources_resolved = sources
+    if live:
+        try:
+            from settings import LEDGER_ROOT
+            sources_resolved, err = _abs.load_sources(LEDGER_ROOT)
+        except Exception as exc:  # noqa: BLE001 - advisory lint, never blocks a brief; the reason is not silent
+            sources_resolved, err = {}, f"{type(exc).__name__}: {exc}"
+        if err:
+            _note(degraded, "absorption-sources", err)
+    warns = _abs.lint_text_for_source_reference("\n".join([description, *target_files]), sources_resolved)
+    if warns and live:  # F6: a live fire is a gate-fire row (injected sources = a test, never telemetry)
+        from .gate_alignment import record_event
+        for w in warns:
+            record_event("lint:absorption-source-reference", "warn", kind="lint", target=w["source"],
+                         reason=w["message"], source="engineer_brief_compose")
+    return warns
+
+
 def _render_brief(
     *,
     description: str,
@@ -457,6 +481,7 @@ def _render_brief(
     auto_improvement_context: list[dict],
     recent_misses: list[dict] | None = None,
     open_findings: list[str] | None = None,
+    source_warnings: list[dict] | None = None,
 ) -> str:
     """Render the brief in dispatch-engineer-tuning §4d shape."""
     title_slug = description[:60].rstrip()
@@ -491,6 +516,11 @@ def _render_brief(
     if open_findings:
         lines += ["", "### Open findings in your scope (fix-on-contact; the ledger is written only by `noctus.dev.findings_ledger`)"]
         lines += [f"- {ln.strip()}" for ln in open_findings]
+
+    # F4 (Phase 5a): a brief naming a frozen absorption SOURCE outside an absorption slice (warn, never blocks).
+    if source_warnings:
+        lines += ["", "### Frozen absorption source named (warning - reference the canon instead)"]
+        lines += [f"- `{w['source']}`: {w['message']}" for w in source_warnings]
 
     # Auto-improvement context block.
     if auto_improvement_context:
@@ -543,6 +573,7 @@ def compose_brief(
     pick_agent: Callable[[list[float]], str] | None = None,
     score_rows: Callable[[], list[dict]] | None = None,
     misses_limit: int = 5,
+    sources: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Auto-compose an engineer dispatch brief.
 
@@ -598,6 +629,9 @@ def compose_brief(
     # Step 5b: the open rows of every living findings ledger for the scopes the target files sit in.
     open_findings = _open_findings(target_files, degraded)
 
+    # Step 5c (F4): frozen absorption sources named in the brief text / targets, outside an absorption slice.
+    source_warnings = _source_warnings(description, target_files, sources, degraded)
+
     # Step 6: render.
     brief = _render_brief(
         description=description,
@@ -607,6 +641,7 @@ def compose_brief(
         auto_improvement_context=ai_ctx,
         recent_misses=misses,
         open_findings=open_findings,
+        source_warnings=source_warnings,
     )
 
     return {
@@ -616,6 +651,7 @@ def compose_brief(
         "kb_references": kb_refs,
         "recent_misses": misses,
         "open_findings": open_findings,
+        "source_warnings": source_warnings,
         "degraded": degraded,
     }
 

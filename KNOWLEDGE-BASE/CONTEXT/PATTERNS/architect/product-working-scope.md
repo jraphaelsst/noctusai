@@ -193,6 +193,22 @@ repo, and every `products/` walk in the toolkit must carry a
 `# product-scope: active|all — reason` marker. Manual fallback:
 `--refresh-build-scope` (needs the Supabase env).
 
+## 4d · Absorption SOURCE — a fourth state, orthogonal to ativo/inativo (2026-11-12)
+
+A product on the absorption list (today `erp-imobiliario` -> social-wiring, `igig` -> orbity, `therapy-platform` -> monica,
+`community` -> monica) is an absorption SOURCE until it is erased (ladder step A6): **no change, refinement or fix** to its
+code, migrations, docs or data, and **never a reference, pilot or model** for new work (reference the canon or the seed). The
+only writes allowed are the ladder's own steps (A1 salvage, A5 decouple, A6 retire) on a branch named `absorb-<source>-<step>`
+(`feat/` prefix accepted). Its findings are carried as absorption input and closed `accepted (erased)` at A6 — fix-on-contact does
+not apply to a source. The ERP template `templates/product-erp/` and the canons are never sources.
+
+**One registry, derived.** `noctus.dev.absorption_log kind=lifecycle slug=<source> stage=absorb_only canon=<canon>` (owner's
+decision; `stage=done` ends it); `noctus.dev.absorption_status stage=absorb_only` lists it. No gate keeps a slug list — each
+calls `absorption_sources.derive_sources`: the PreToolUse guard `claude-guard-absorption-source.py` (WRITE end, names the canon),
+keeper `check_absorption_source_frozen` (COMMIT end, deletions pass), keeper `check_absorption_pilot_is_canon` (ledger + organ
+sidecars), and a warn-only reference lint in `engineer_brief_compose` / `engineer_output_linter`. Every fire is a gate-fire row
+(`gate_alignment walls`). Roadmap: `project-history/roadmaps/crm-cms-erp-vertical-seeds-2026-11.md` Phase 5a.
+
 ## 5 · Before you touch a product
 
 ```sql

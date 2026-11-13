@@ -90,6 +90,23 @@
     "note": "Hosts trivy-fs/bandit SARIF; their findings should flow to the shared ledger (SARIF) - access-tiers owns the mapping."
    }
   },
+  "guard:absorption-source": {
+   "mechanism": "tool:absorption_log (stage absorb_only + canon is the single registry the guard derives from; the refusal names the canon to work in)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-12",
+   "shadow": {
+    "since": "2026-11-12",
+    "fires": 0,
+    "true_positives": 0,
+    "effective_fp": 0.0,
+    "promote_when": "waived to blocking at birth: deterministic predicate (path under a registry-derived source AND branch not absorb-<source>-*, or a pilot equal to a registry source), owner rule 2026-11-12; demote if any effective FP"
+   },
+   "source": "owner rule 2026-11-12 (absorption sources frozen), roadmap crm-cms-erp-vertical-seeds-2026-11 Phase 5a",
+   "telemetry": "_guard_failclosed.log_event deny rows (guard-events.ndjson) naming source + canon; read by gate_alignment walls"
+  },
   "guard:access-tier": {
    "severity": "",
    "kind": "guard",
@@ -287,6 +304,40 @@
    "class": "wall",
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
    "remediation": "NOC-REMEDIATE[gate-wall]: construction leg missing; owner to ship (see pattern wall table)"
+  },
+  "keeper:check-absorption-pilot-is-canon": {
+   "mechanism": "tool:absorption_log (re-point the pilot to the canon with an append-only capability row; the finding names the exact call)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-12",
+   "shadow": {
+    "since": "2026-11-12",
+    "fires": 0,
+    "true_positives": 0,
+    "effective_fp": 0.0,
+    "promote_when": "waived to blocking at birth: deterministic predicate (path under a registry-derived source AND branch not absorb-<source>-*, or a pilot equal to a registry source), owner rule 2026-11-12; demote if any effective FP"
+   },
+   "source": "owner rule 2026-11-12 (absorption sources frozen), roadmap crm-cms-erp-vertical-seeds-2026-11 Phase 5a",
+   "telemetry": "gate events: cli exit wrapper (pass/deny) + record_event deny rows per offending capability/sidecar"
+  },
+  "keeper:check-absorption-source-frozen": {
+   "mechanism": "tool:absorption_log (registry) + write-path:scripts/hooks/claude-guard-absorption-source.py (the WRITE-end guard refuses the edit before it lands; this keeper is the commit backstop)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-12",
+   "shadow": {
+    "since": "2026-11-12",
+    "fires": 0,
+    "true_positives": 0,
+    "effective_fp": 0.0,
+    "promote_when": "waived to blocking at birth: deterministic predicate (path under a registry-derived source AND branch not absorb-<source>-*, or a pilot equal to a registry source), owner rule 2026-11-12; demote if any effective FP"
+   },
+   "source": "owner rule 2026-11-12 (absorption sources frozen), roadmap crm-cms-erp-vertical-seeds-2026-11 Phase 5a",
+   "telemetry": "gate events: cli exit wrapper (pass/deny) + record_event deny rows naming files/source; UNMEASURED rows when the ledger is unreadable"
   },
   "keeper:check-access-tier-fingerprint": {
    "severity": "",
@@ -3618,6 +3669,20 @@
    "branch": "feat/w1c-claim-next-job-polling",
    "gates": [
     "keeper:check-worker-idle-polling"
+   ]
+  },
+  {
+   "id": "D-absorb-freeze",
+   "decision": "Absorption SOURCES (erp-imobiliario, igig, therapy-platform, community) are frozen until erased: no change/refinement/fix, never a reference or pilot; the list is DERIVED from the absorptions ledger (stage absorb_only + canon), gated at the write (PreToolUse), the commit (keeper) and the pilot field",
+   "home": "project-history/roadmaps/crm-cms-erp-vertical-seeds-2026-11.md (Phase 5a)",
+   "construction": "noctus.dev.absorption_log stage=absorb_only canon=<product> (the registry); every gate derives from it via absorption_sources.derive_sources",
+   "gate": "guard:absorption-source + keeper:check-absorption-source-frozen + keeper:check-absorption-pilot-is-canon",
+   "telemetry": "guard-events.ndjson deny rows + keeper gate events + lint:absorption-source-reference warn rows; read by gate_alignment walls",
+   "branch": "feat/absorption-source-freeze-gate",
+   "gates": [
+    "guard:absorption-source",
+    "keeper:check-absorption-source-frozen",
+    "keeper:check-absorption-pilot-is-canon"
    ]
   }
  ]
