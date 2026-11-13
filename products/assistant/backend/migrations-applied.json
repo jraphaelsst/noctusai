@@ -11,6 +11,8 @@
     "017_classificador.sql": "3215920fcc5333cd0e69357fd1a6a8bf77d19d46146c304a3e122dd44ce2b040",
     "018_rotulos_avaliacao.sql": "6d09b8efd16adaeda67feef2354e56077291a9db1a924fdb82531b9c45ac235a",
     "019_google_connection.sql": "9b8e58273d1dbb90a03c25eb85e4d4e0a4e0fcdb7cbbd014bf21851d39964ecc",
-    "020_whatsapp_line_events.sql": "002d16672512ea68890d4b9391776671c97dc85317350668c45a6a0196f0193b"
+    "020_whatsapp_line_events.sql": "002d16672512ea68890d4b9391776671c97dc85317350668c45a6a0196f0193b",
+    "021_respostas_eventos.sql": "28cadcac34013921b4d368c852ab3ed836ed8e7c590f94f9fb307369bf060a09",
+    "022_inbox_conversas.sql": "ab08cdd7b7aa29d49960e171e169accbb13b700420d2f6b80dd2e4cc47b5b4db"
   }
 }
