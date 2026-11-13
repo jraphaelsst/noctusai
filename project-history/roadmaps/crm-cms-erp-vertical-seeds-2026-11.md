@@ -45,6 +45,31 @@ erp-imobiliario → SW (A5 decouple public fns before A7); wake orbity (owner go
 
 > **Owner correction 2026-11-08 — what "erp" means here.** The only product absorbed into SW is **erp-imobiliario** (its database schema happens to be named `erp`; the "erp schema drop" in 51's S8 is THAT schema). **`templates/product-erp/` is the ERP product TEMPLATE and STAYS** — never absorbed, never erased; it is the L1 ERP vertical seed every market ERP is scaffolded from. There is no `products/erp` and no `erp` row in `public.products`. Owner: "erp que erp é esse? só me lembro do erp-imob, e o template de produto erp. esse erp deve ficar."
 
+### Phase 5a — Absorption sources are FROZEN (owner rule 2026-11-12; plan, gate not yet built)
+
+Owner, 2026-11-12, after an assistant chat-page brief cited erp-imobiliario's inbox page as a reference: "erp-imob is to be absorbed, so no changes or refinements to it, we just absorb what it has of value that we can aproveitar" … "as should all other apps that should (and will) be absorbed. plan that please".
+
+**The rule.** A product on the absorption list is an absorption SOURCE only, from now until it is erased (A6/A7):
+1. **No changes, no refinements, no fixes** to its code, migrations, docs or data. The only allowed writes are the absorption ladder's own steps (A1 salvage, A5 decouple, A6 retire), on a branch named `absorb-<source>-…`.
+2. **Never a reference, pilot or model for new work.** New work references the CANON (social-wiring, orbity, monica, core) or the seed. A source is read only inside an absorption slice (A0–A2), to harvest value into the canon.
+3. **Never a pilot consumer** in `absorptions.ndjson` capability rows or organ sidecars. A capability whose pilot is a source is re-pointed to its canon.
+4. Its findings are not fixed (fix-on-contact does NOT apply to a source); they are carried as absorption input and closed `accepted (erased)` at A6.
+
+**The list (sources → canon):** `erp-imobiliario` → social-wiring · `igig` → orbity · `therapy-platform` → monica · `community` → monica. Canons and the ERP template `templates/product-erp/` are never sources. Adding a product to the list is the owner's decision; the registry below is the single source of truth.
+
+**Build triad (one change, per gate↔methodology sync):**
+| Slice | What | Owner | Verify recipe |
+|---|---|---|---|
+| F1 registry | `absorption_source: true` + `canon` per product in `project-history/absorptions.ndjson` (via `noctus.dev.absorption_log`, stage `absorb_only`), DERIVED by every consumer below — no hand-kept slug list (keeper `check_hardcoded_product_slug_set`) | tooling-engineer | `absorption_status stage=absorb_only` lists exactly the 4 |
+| F2 write gate (WRITE end) | PreToolUse guard refuses Edit/Write/Bash writes under `products/<source>/` unless the worktree branch is `absorb-<source>-*`; pt-BR/English refusal names the canon to work in | tooling-engineer | a planted write in a scratch worktree is denied; same write on `absorb-igig-x` passes |
+| F3 commit keeper (COMMIT end) | `check_absorption_source_frozen`: staged paths under a source refused outside an `absorb-<source>-*` branch; A6 deletions allowed | tooling-engineer | keeper red on a planted staged edit; green on a pure deletion |
+| F4 reference lint | `engineer_brief_compose` + `engineer_output_lint` flag a brief that names a source path/slug outside an absorption slice; `check_absorption_pilot_is_canon` refuses a source as `pilot` in absorptions.ndjson / organ sidecars | tooling-engineer | lint flags the 2026-11-12 chat-page brief text; keeper red on today's `orbity/financial-management` pilot=erp-imobiliario row until re-pointed |
+| F5 data fix | re-point existing source pilots (orbity `financial-management` pilot erp-imobiliario → social-wiring) | tech-lead | F4 keeper green |
+| F6 telemetry | every F2/F3/F4 fire appends a gate-fire row (existing harness_event / gate-fire ledger) so false alarms are researched | tooling-engineer | one row per planted fire |
+| F7 docs | `product-working-scope.md` gains the "absorption source" state next to ativo/inativo; CLAUDE.md §1 catalog line pointer only (router budget) | tech-lead | `kb_sync verify` exit 0 |
+
+**Trigger.** F1–F7 fire now (owner asked). Each source then walks A0→A7 on its existing Phase 5 wave (W6-E, W7-O, W8-M); a source leaves the list only at A6 (erased).
+
 
 ## Anti-goals (explicit non-goals)
 - No separate CRM/ERP/CMS products or containers — modules mount into the market product.
@@ -53,15 +78,18 @@ erp-imobiliario → SW (A5 decouple public fns before A7); wake orbity (owner go
 - No data copy by default from absorbed products; copy is an owner decision per table.
 - No automatic schema/bucket drop, ever.
 - No rewrite of working SW features to "look seed" when a seam fill does the job.
+- No change, refinement or fix to an absorption source, and no source as a reference or pilot (Phase 5a).
 
 ## Open questions (to revisit at trigger time)
 - Q1 public tier for CMS sites + portals · Q2 therapy-platform clinical data retention · Q3 module enablement per product vs per org · Q4 monica slug (`nosnolimiar` rename) — recommendations in PLAN § 8.
+- Q5 (2026-11-12) the other asleep products — academia-de-reciclagem, adconnect, commerce, store, daily-life, personal-finance, p-studio, knowledge-extractor, dev-team — are NOT on the source list today. Owner to say which (if any) also become sources and into which canon.
 
 ## Decision log
 - 2026-11-08: Shape = modules inside one product per market; canons SW/orbity/monica/core (owner).
 - 2026-11-08: Seed owns stage mechanics, market ships default list, org edits in settings (owner).
 - 2026-11-08: Priority CRM → CMS → ERP consolidation (owner).
 - 2026-11-08: ADR-1/2/3 as above (architect; tech-lead to confirm at W1 dispatch).
+- 2026-11-12: Absorption sources are frozen: no changes/refinements, never a reference/pilot; list = erp-imobiliario, igig, therapy-platform, community; gate triad F1–F7 (Phase 5a) (owner).
 
 ## Retrospective (filled at first trigger fire)
 _(empty)_
