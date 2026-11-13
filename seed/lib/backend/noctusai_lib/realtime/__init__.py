@@ -9,6 +9,9 @@ Public surface:
 - Transport: `create_sse_router` (FastAPI router factory) +
   `sse_event_stream` (the framework-agnostic bus→SSE-frames core).
 
+- Job progress: `JobProgress`, `publish_job_progress`, `create_job_progress_router`
+  (per-job push; the browser half is `useJobProgress`).
+
 Any live surface (WhatsApp/Instagram DM inbox, in-app chat, presence)
 publishes onto an opaque `scope` string and mounts `create_sse_router`
 with its own `scope_resolver` + `auth_dependency` — this module has no
@@ -22,7 +25,17 @@ from noctusai_lib.realtime.bus import (
     RedisRealtimeBus,
     StreamRedis,
     get_realtime_bus,
+    get_shared_realtime_bus,
     redact_values,
+    reset_shared_realtime_buses,
+)
+from noctusai_lib.realtime.job_progress import (
+    JOB_PROGRESS_EVENT,
+    JobProgress,
+    create_job_progress_router,
+    job_progress_scope,
+    job_progress_stream,
+    publish_job_progress,
 )
 from noctusai_lib.realtime.sse import (
     AuthDependency,
@@ -33,6 +46,12 @@ from noctusai_lib.realtime.sse import (
 )
 
 __all__ = [
+    "JOB_PROGRESS_EVENT",
+    "JobProgress",
+    "create_job_progress_router",
+    "job_progress_scope",
+    "job_progress_stream",
+    "publish_job_progress",
     "AuthDependency",
     "FakeRealtimeBus",
     "RealtimeBus",
@@ -43,6 +62,8 @@ __all__ = [
     "redact_values",
     "create_sse_router",
     "get_realtime_bus",
+    "get_shared_realtime_bus",
+    "reset_shared_realtime_buses",
     "sse_event",
     "sse_event_stream",
 ]

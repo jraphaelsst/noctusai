@@ -89,6 +89,8 @@ async def sse_event_stream(
     heartbeat_seconds: float = _DEFAULT_HEARTBEAT_SECONDS,
     is_disconnected: Callable[[], Awaitable[bool]] | None = None,
     disconnect_poll_seconds: float = _DEFAULT_DISCONNECT_POLL_SECONDS,
+    stop_after: Callable[[RealtimeEvent], bool] | None = None,
+    max_seconds: float | None = None,
 ) -> AsyncIterator[str]:
     """Turn a `bus.subscribe(scope, ...)` stream into SSE text frames.
 
@@ -97,6 +99,10 @@ async def sse_event_stream(
       moment it's `True` — no more frames are yielded.
     - Emits `_HEARTBEAT_FRAME` when `heartbeat_seconds` have elapsed with
       no real event, so idle connections + proxies stay alive.
+    - `stop_after(event) -> True` ends the stream right AFTER that event's
+      frame is yielded (a job stream closes on its terminal status);
+      `max_seconds` ends it after that long so a client reconnects and
+      re-reads the truth (bounds a stream that missed its terminal frame).
     - On exit (disconnect, StopAsyncIteration, or the caller simply
       stopping iteration / calling `.aclose()` on THIS generator), the
       in-flight `bus.subscribe(...)` iterator is cancelled + awaited
@@ -112,10 +118,12 @@ async def sse_event_stream(
         if heartbeat_seconds > 0
         else disconnect_poll_seconds
     )
-    last_heartbeat = time.monotonic()
+    started = last_heartbeat = time.monotonic()
     next_task: asyncio.Task[RealtimeEvent] | None = None
     try:
         while True:
+            if max_seconds is not None and time.monotonic() - started >= max_seconds:
+                return
             if await check_disconnected():
                 logger.debug("SSE stream disconnected scope=%s", scope)
                 return
@@ -130,6 +138,8 @@ async def sse_event_stream(
                     return
                 last_heartbeat = time.monotonic()
                 yield _format_event_frame(event)
+                if stop_after is not None and stop_after(event):
+                    return
                 continue
             if heartbeat_seconds > 0 and (
                 time.monotonic() - last_heartbeat >= heartbeat_seconds

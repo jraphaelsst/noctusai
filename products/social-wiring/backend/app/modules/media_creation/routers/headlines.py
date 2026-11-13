@@ -21,6 +21,7 @@ from noctusai_lib.integrations.llm import LLMNotConfigured
 from noctusai_lib.integrations.llm.client import resolve_api_key
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.responses import success_response
+from noctusai_lib.realtime import create_job_progress_router
 
 from app.config import settings
 from app.dependencies import get_admin_client, get_current_user_org
@@ -33,6 +34,7 @@ from app.modules.media_creation.schemas.headlines import (
     SugestaoAgora,
 )
 from app.modules.media_creation.services import geracao_jobs
+from app.modules.media_creation.services.headline_progress import headline_progress_bus, lote_progress
 from app.modules.media_creation.services.headline_service import HeadlineError, HeadlineService
 from app.rate_limit import limiter
 
@@ -84,6 +86,43 @@ def _assert_ia(auth, check) -> None:
             status_code=503,
             detail={"code": "ia_nao_configurada", "detail": "A IA não está configurada para esta organização."},
         ) from exc
+
+
+# ── live progress (SSE; the seed job-progress channel — the poll of GET /lotes/{id} is its fallback) ──
+
+
+def _lote_org(_request, auth) -> str:
+    return str(auth[2])
+
+
+async def _lote_snapshot(_request, auth, lote_id: str):
+    """The stream's first frame, read from the batch row (the truth). Foreign / unknown id → 404."""
+    import anyio
+
+    try:
+        uuid.UUID(lote_id)
+    except ValueError:
+        return None  # not an id → nothing to stream (404), never a PostgREST uuid error
+
+    def read():
+        try:
+            return lote_progress(_svc(auth)._get_lote_row(lote_id))
+        except HeadlineError:
+            return None
+
+    return await anyio.to_thread.run_sync(read)
+
+
+router.include_router(
+    create_job_progress_router(
+        headline_progress_bus(),
+        auth_dependency=get_current_user_org,
+        org_resolver=_lote_org,
+        snapshot_loader=_lote_snapshot,
+        path="/{job_id}/progress",
+    ),
+    prefix="/lotes",
+)
 
 
 # ── batches ─────────────────────────────────────────────────────────────────

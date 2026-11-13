@@ -35,6 +35,10 @@
  *     "Atualizar" button (`resumeJobPolling`). Never a silently stale screen.
  * While it is false, the query does not poll at all and does not refetch on focus.
  *
+ * A job with a progress stream (`useJobProgress`, `noctusai_lib.realtime.job_progress`) is PUSHED, not polled:
+ * while its stream is open this read does not poll; if the stream cannot be kept the hook falls back to
+ * `handOffToPolling` and this polling takes over again.
+ *
  * Not for "live" data with no terminal state (an inbox, a feed): that is a
  * realtime stream (`useRealtimeStream`), never a background poll.
  *
@@ -97,6 +101,8 @@ export function jobPolling<TData>(
       clearBudget(query);
       return false;
     }
+    // A live job-progress stream (`useJobProgress`) is pushing this read's updates: do not ALSO poll it.
+    if (streamCovers(query)) return false;
     const elapsed = visibleActiveMs(query);
     if (elapsed >= JOB_POLL_CEILING_MS) {
       markStalled(query);
@@ -182,6 +188,35 @@ export function resumeJobPolling(qc: Pick<QueryClient, 'invalidateQueries'>): vo
 export function resetJobPollingStalled(): void {
   stalled.clear();
   notifyStalled();
+}
+
+// ─── push: a live SSE stream replaces the poll ─────────────────────────────
+
+const liveStreams = new Map<number, QueryKey>();
+let liveStreamSeq = 0;
+
+/**
+ * Declare that a job-progress stream is live for the reads under `queryKey` (prefix match):
+ * their `jobPolling` stops polling while it is. Returns the release function; releasing (stream
+ * lost, finished, unmounted) hands the read straight back to polling. Used by `useJobProgress`.
+ */
+export function markJobStreamLive(queryKey: QueryKey): () => void {
+  const id = ++liveStreamSeq;
+  liveStreams.set(id, queryKey);
+  return () => {
+    liveStreams.delete(id);
+  };
+}
+
+function streamCovers(query: JobPollingQuery<any>): boolean {
+  if (!query.queryKey || liveStreams.size === 0) return false;
+  for (const key of liveStreams.values()) if (partialMatchKey(query.queryKey, key)) return true;
+  return false;
+}
+
+/** Test seam. */
+export function resetJobStreams(): void {
+  liveStreams.clear();
 }
 
 // ─── hand-off: a job-starting write → the polled read ──────────────────────

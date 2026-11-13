@@ -1,6 +1,6 @@
 ---
 name: noc-cache-writes
-description: Use when writing or migrating a TanStack mutation in any product or the seed — triggers "add a mutation", "create/update/delete hook", "useMutation", "invalidateQueries", "the list updates late", "shows up after a second", "optimistic update", "migrate hooks to cache writes", "fan out useCacheWriteMutation", "stays stale after Salvar", "never updates after starting a job", or check_mutation_invalidate_only / check_mutation_family_write / check_job_start_without_handoff blocking a commit. Every write puts what it knows into every entry it touches; a queued job hands off to polling; never invalidate-only.
+description: Use when writing or migrating a TanStack mutation in any product or the seed — triggers "add a mutation", "create/update/delete hook", "useMutation", "invalidateQueries", "the list updates late", "shows up after a second", "optimistic update", "migrate hooks to cache writes", "fan out useCacheWriteMutation", "stays stale after Salvar", "never updates after starting a job", or check_mutation_invalidate_only / check_mutation_family_write / check_job_start_without_handoff blocking a commit. Every write puts what it knows into every entry it touches; a queued job hands off (push over SSE first when it publishes progress, polling as the fallback); never invalidate-only.
 version: 1.6.0
 ---
 
@@ -22,7 +22,7 @@ An invalidate-only `useMutation` throws the server's answer away and refetches, 
 5. **New row stand-in** → `{ id: tempId, ... }` from the ctx; commit with `listOps.replace(old, tempId, saved)` (never duplicates).
 6. **Keep the caller's UX** — toasts, `form.reset`, `navigate` stay in `onSuccess`/`onError`; they run after the cache work.
 7. **Raw `useMutation` with `setQueryData(K)`?** That write is EXACT — also `invalidateQueries({ queryKey: K })` (prefix) so the reads under `K` (`[...K, "estruturada"]`) refresh, or use `useCacheWriteMutation` (its settle does). Keeper `check_mutation_family_write`.
-8. **The write QUEUES server work** (answer = job/consulta id, 202, "queued")? It cannot place the result — `handOffToPolling(qc, readKey)` (`@noctusai/lib`) instead of a bare invalidate, so the polled read keeps polling until the job ran. A result read with no in-progress marker spreads `jobPolling(() => false, POLL_MS)`. Keeper `check_job_start_without_handoff`.
+8. **The write QUEUES server work** (answer = job/consulta id, 202, "queued")? It cannot place the result — `handOffToPolling(qc, readKey)` (`@noctusai/lib`) instead of a bare invalidate, so the polled read keeps polling until the job ran. A result read with no in-progress marker spreads `jobPolling(() => false, POLL_MS)`. If the worker publishes progress (`noctusai_lib.realtime.job_progress`), add `useJobProgress` on the read: push first (stream writes the cache, silences the poll), polling is the fallback; `handOffToJobProgress` is the SSE-aware hand-off — the keeper accepts it like `handOffToPolling`. Keeper `check_job_start_without_handoff`.
 9. **Genuinely can't place it** (server regroups the whole view, a mutation with no cached read, a fire-and-forget action like "send email") → keep `useMutation`, put `// noc-allow: invalidate-only — <why>` on the `useMutation(` line. A reason is mandatory; "too hard" is not one.
 
 ## MIGRATING an existing file (the fan-out procedure)

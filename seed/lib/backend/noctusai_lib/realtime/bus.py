@@ -440,3 +440,33 @@ def get_realtime_bus(
     return RedisRealtimeBus(
         client, key_prefix=key_prefix, maxlen=maxlen, poll_block_ms=poll_block_ms
     )
+
+
+_shared_buses: dict[str, RealtimeBus] = {}
+
+
+def get_shared_realtime_bus(redis_url: str | None, *, label: str) -> RealtimeBus:
+    """ONE process-wide bus per Redis URL (the third product copy of this cache —
+    whatsapp, meta leads, job progress — so it lives here now).
+
+    Falls back to `FakeRealtimeBus` when `redis_url` is empty and says so LOUDLY once: the Fake is
+    per-process, so with >1 worker a publish in worker A is invisible to a subscriber in worker B.
+    `label` names the surface in that warning."""
+    key = redis_url or ""
+    cached = _shared_buses.get(key)
+    if cached is not None:
+        return cached
+    bus = get_realtime_bus(redis_url or None)
+    if not redis_url:
+        logger.warning(
+            "%s realtime bus running in FAKE (in-process) mode — no redis_url configured. Events do NOT cross "
+            "process boundaries; with >1 worker, subscribers miss events published by another worker.",
+            label,
+        )
+    _shared_buses[key] = bus
+    return bus
+
+
+def reset_shared_realtime_buses() -> None:
+    """Test seam: forget every cached shared bus."""
+    _shared_buses.clear()

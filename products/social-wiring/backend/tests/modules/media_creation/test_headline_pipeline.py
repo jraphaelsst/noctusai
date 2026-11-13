@@ -579,3 +579,35 @@ class TestJobWiring:
         from app.config import settings
 
         assert any(m.id == settings.geracao_llm_model and m.provider == "anthropic" for m in MODELS)
+
+
+class TestProgressPublishing:
+    """`executar_lote(progress=...)` pushes each structure's stage and a terminal state to the live stream."""
+
+    def _run(self, sb, lid, llm):
+        seen: list[tuple[str, str, dict]] = []
+
+        async def progress(org_id, lote_id, state):
+            seen.append((org_id, lote_id, dict(state)))
+
+        asyncio.run(hp.executar_lote(sb, llm, lid, cfg=CFG, progress=progress))
+        return seen
+
+    def test_pushes_running_stages_then_a_terminal_completo(self, sb):
+        viral(sb)
+        lid = lote(sb)
+        seen = self._run(sb, lid, Llm())
+        assert seen and all(o == ORG and l == lid for o, l, _ in seen)
+        assert any("estrutura 1 de 1" in (s.get("etapa") or "") for _, _, s in seen)
+        assert seen[-1][2]["status"] == "completo"
+
+    def test_pushes_a_terminal_falha_when_nothing_was_generated(self, sb):
+        viral(sb)
+        lid = lote(sb)
+        seen = self._run(sb, lid, Llm(script=[RuntimeError("boom")]))
+        assert seen[-1][2]["status"] == "falha" and seen[-1][2]["erro"]
+
+    def test_a_publisher_is_optional(self, sb):
+        viral(sb)
+        lid = lote(sb)
+        assert run(sb, lid, Llm())["status"] == "completo"

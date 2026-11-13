@@ -1,15 +1,16 @@
 /** Headlines hooks hit the §4.4 endpoints; polling follows the REAL batch status. */
 import React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider, focusManager } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn() }));
-vi.mock("@noctusai/seed/infra", () => ({ api }));
+vi.mock("@noctusai/seed/infra", () => ({ api, getAuthToken: async () => null }));
 
 import {
   HEADLINES_POLL_MS,
   algumLoteEmAndamento,
+  aplicarProgressoLote,
   contagemParams,
   useContagemEstruturas,
   useCriarLote,
@@ -26,7 +27,14 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
   <QueryClientProvider client={qc}>{children}</QueryClientProvider>
 );
 
+beforeEach(() => {
+  // The SSE job-progress stream is not under test here: a refused stream is the fallback path (polling stays on).
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 503, body: null })));
+  vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
 afterEach(() => {
+  vi.unstubAllGlobals();
   qc.clear();
   api.get.mockReset();
   api.post.mockReset();
@@ -155,5 +163,24 @@ describe("mutations", () => {
     const del = renderHook(() => useExcluirLotes(), { wrapper });
     await del.result.current.mutateAsync(["a", "b"]);
     expect(api.post).toHaveBeenCalledWith("/api/media-creation/headlines/lotes/excluir", { ids: ["a", "b"] });
+  });
+});
+
+describe("aplicarProgressoLote (frame SSE → detalhe em cache)", () => {
+  const prev = { id: "l1", status: "processando", etapa: "x", estruturas_total: 5, estruturas_processadas: 1, erro: null } as any;
+  const frame = (o: object) => ({ status: "processando", progress: 0.6, stage: "estrutura 4 de 5", message: null, terminal: false, ...o });
+  it("espelha etapa e estruturas processadas", () => {
+    const next = aplicarProgressoLote(prev, frame({}))!;
+    expect(next.etapa).toBe("estrutura 4 de 5");
+    expect(next.estruturas_processadas).toBe(3);
+  });
+  it("o frame terminal fecha o lote e leva o erro da falha", () => {
+    const next = aplicarProgressoLote(prev, frame({ status: "falha", terminal: true, message: "sem IA" }))!;
+    expect(next.status).toBe("falha");
+    expect(next.etapa).toBeNull();
+    expect(next.erro).toBe("sem IA");
+  });
+  it("não inventa um lote que não está em cache", () => {
+    expect(aplicarProgressoLote(undefined, frame({}))).toBeUndefined();
   });
 });
