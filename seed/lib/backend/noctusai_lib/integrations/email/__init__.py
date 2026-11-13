@@ -9,6 +9,9 @@ Sub-modules:
     product digests (P3 pattern). Products bring their own `(html, text)`
     rendering; this module handles credential resolution + send +
     dry-run + structured return shape. Never raises.
+  - `subscriptions` — audience mechanism (double opt-in, one-click
+    unsubscribe + RFC 8058 header pair, hashed suppression list, lifecycle
+    events; Store Protocol+Fake+Supabase+factory, `ddl`, optional router).
   - `types` / `config` / `fake_adapter` / `smtp_adapter` / `factory` /
     `convenience` — the canonical Protocol+Fake+Real+factory sender
     (`EmailSender`), formalized 2026-09-23 (`cardhub-igig-crm` R7) at
@@ -37,6 +40,14 @@ from .smtp_adapter import SmtpEmailSender
 from .resend_adapter import ResendConfig, ResendEmailSender
 from .factory import make_email_sender
 from .convenience import send_test
+from .subscriptions import (
+    AudienceService,
+    RecipientSuppressed,
+    SuppressionGuardedSender,
+    email_audience_tables_sql,
+    make_audience_store,
+    one_click_headers,
+)
 
 __all__ = [
     "send_product_invitation_email",
@@ -59,4 +70,10 @@ __all__ = [
     "ResendEmailSender",
     "make_email_sender",
     "send_test",
+    "AudienceService",
+    "RecipientSuppressed",
+    "SuppressionGuardedSender",
+    "email_audience_tables_sql",
+    "make_audience_store",
+    "one_click_headers",
 ]
