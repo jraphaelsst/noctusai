@@ -121,7 +121,7 @@ Later, per the owner, both move into the agents product and are called via API. 
 | S7 | Metrics view + latency_report + wiring audit | S4, S6 | — |
 | S8 | Absorb Edição de Imagem (§9): wiring audit, nav move, config sub-group, `/edicao-fotos/*` redirects | S3, S4 | FE nav + redirects |
 | S9 | Manual photo editor (§10): promote the editor shell to `@noctusai/lib` if needed, then photo tools + manual versions | video-editor module located; S4 | FE (+ lib) |
-| S10 | Music library (D5): track table + licensed source adapter (Fake+Real+factory) + picker in video step 3 | Q7 decided; S6 | BE + FE |
+| S10 | Music library (D5/D8): `music_tracks` (provenance per track: source, prompt, model, date, request id, hash, licence snapshot) + append-only `music_claim_*` events + picker in video step 3. Each Stable Audio track is cleared by a private-YouTube audio-ID test before release and is never registered in Content ID (legal review `MUSIC-LEGAL.md`). Client ToS music clause drafted by a lawyer (OAB) before launch | S6; lawyer's clause | BE + FE |
 
 Pilot-first: S2–S5 ship for One's org only (it is the only real-estate client with the data), then open up.
 
@@ -206,4 +206,5 @@ Source: `_private-studies/imobshotai/STUDY-app.md` (outside git; nothing copied)
 - ~~Q7~~ → **D8 (2026-11-13): music tier A** — a fixed library generated with Stable Audio (terms allow end-user use + output ownership) plus hand-picked CC0 — and an Epidemic Sound Partner quote in parallel. The legal points in `MUSIC-LIBRARIES.md` go to `legal-advisor` before any track ships.
 - ~~Q8~~ → **D9 (2026-11-13): v1 is the TOUR WITH MUSIC** (16:9 and 9:16, no voice). The voice-over is a later evolution, to be planned: there is no VO training material, but there are clips of brokers talking that could feed it. Order: tour+music working first, then evolve.
 - **D10 (2026-11-13): vision runs on Anthropic.** Room classification, quality attributes and the fidelity gate use the Anthropic vision provider through the shared `llm_vision_provider` switch. Image *editing* (pixel generation) stays on the `photo_editing` engine's provider, because Anthropic does not generate images.
+- **Legal flag (legal-advisor, 2026-11-13):** AI-altered photos used in ads (sky replacement, virtual staging, declutter) change what the ad says about the property (CDC art. 37). They need a visible notice ("imagem ilustrativa / editada com IA"), and a separate lawyer's opinion before the photo agent offers those edits. Plain exposure, white-balance and vertical fixes are not affected.
 - **Portal note (owner, 2026-11-13):** some listings deliberately embed a condominium or generic video (ONE10449, ONE8590, ONE10702, ONE9770, ONE9012, GA0117). Having a video raises the portal score and the portals don't check that it's a tour. Flagged for later: swap in the real tour when ImobShotAI produces one. Not a defect.
