@@ -12554,6 +12554,61 @@ END;
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — social_wiring CoreStudio post axes (migration 342). Reuses the
+# migration-241 fixture (marca + esteira stage); every probe rolls back.
+# ---------------------------------------------------------------------------
+
+_SW_342_MIGRATION = "342_cs_post_axes.sql"
+
+
+def _sw342_probe(*, probe_id: str, guard_name: str, statements: str, permitted_msg: str, rationale: str) -> GuardProbe:
+    base = _sw241_refusal_probe(
+        probe_id=probe_id, guard_name=guard_name, statements=statements, permitted_msg=permitted_msg, rationale=rationale,
+    )
+    return GuardProbe(
+        id=base.id, product=base.product, schema=base.schema, guard_name=base.guard_name, kind=base.kind,
+        migrations=(_SW_342_MIGRATION,), rationale=base.rationale, sql=base.sql,
+    )
+
+
+_SW_342_PUB_INS = (
+    f"INSERT INTO {_SW_SCHEMA}.cs_post_publicacoes (org_id, post_id, rede, formato, publicar_em) "
+    "VALUES (v_org, v_post, 'instagram', 'reel', now() + interval '1 day')"
+)
+
+_SW_342_PROBES: tuple[GuardProbe, ...] = (
+    _sw342_probe(
+        probe_id="sw342_post_eventos_append_only",
+        guard_name="cs_post_eventos_imutavel",
+        statements=(
+            _sw241_stmt(_sw241_post_ins("v_marca_a")).replace(";", " RETURNING id INTO v_post;", 1)
+            + "\n"
+            + _sw241_stmt(
+                f"INSERT INTO {_SW_SCHEMA}.cs_post_eventos (org_id, post_id, tipo) VALUES (v_org, v_post, 'publicado')"
+            )
+            + "\n"
+            + _sw241_stmt(f"UPDATE {_SW_SCHEMA}.cs_post_eventos SET tipo = 'publicacao_falhou' WHERE post_id = v_post")
+        ),
+        permitted_msg="an event row was rewritten",
+        rationale="The CoreStudio event ledger is append-only: no UPDATE or DELETE for anybody, the trigger refuses even the table owner.",
+    ),
+    _sw342_probe(
+        probe_id="sw342_publicacao_alvo_unico",
+        guard_name="cs_post_publicacoes_alvo_uq",
+        statements=(
+            _sw241_stmt(_sw241_post_ins("v_marca_a")).replace(";", " RETURNING id INTO v_post;", 1)
+            + "\n"
+            + _sw241_stmt(_SW_342_PUB_INS)
+            + "\n"
+            + _sw241_stmt(_SW_342_PUB_INS)
+        ),
+        permitted_msg="the same post queued twice for the same rede x formato x conta",
+        rationale="A post is never queued twice for the same rede x formato x conta while the first is live (no double publish).",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
@@ -12674,6 +12729,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,
+    *_SW_342_PROBES,
     *_SW_JULIA_ENVIO_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
     *_SW_JULIA_CREDITO_PROBES,
