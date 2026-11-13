@@ -11,7 +11,9 @@ const conns: { value: { data: unknown; showSkeleton: boolean; error: unknown; re
 vi.mock("@noctusai/lib/design-system", async (orig) => ({ ...(await orig<object>()), useIsOrgAdmin: () => admin.value }));
 vi.mock("@noctusai/lib/components", async (orig) => ({
   ...(await orig<object>()),
-  WhatsAppInbox: ({ connectionId }: { connectionId: string }) => <div data-testid="organ">{connectionId}</div>,
+  WhatsAppInbox: ({ connectionId, enableAgentPause, allowDeleteChat }: { connectionId: string; enableAgentPause?: boolean; allowDeleteChat?: boolean }) => (
+    <div data-testid="organ" data-pause={String(!!enableAgentPause)} data-delete={String(!!allowDeleteChat)}>{connectionId}</div>
+  ),
 }));
 vi.mock("@/lib/whatsapp", () => ({ connectionsHooks: { useConnections: () => conns.value }, inboxHooks: {} }));
 
@@ -26,6 +28,14 @@ describe("Conversas", () => {
     conns.value = { data: [{ id: "c1" }], showSkeleton: false, error: null, refetch: () => {} };
     view();
     expect(screen.getByTestId("organ")).toHaveTextContent("c1");
+  });
+
+  it("turns the per-chat agent pause and the LGPD delete on for the admin", () => {
+    admin.value = true;
+    conns.value = { data: [{ id: "c1" }], showSkeleton: false, error: null, refetch: () => {} };
+    view();
+    expect(screen.getByTestId("organ")).toHaveAttribute("data-pause", "true");
+    expect(screen.getByTestId("organ")).toHaveAttribute("data-delete", "true");
   });
 
   it("points to Conexão when no line is connected", () => {

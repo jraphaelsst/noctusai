@@ -41,8 +41,11 @@ broadcast and the exclusion list are dropped) lands in the seed `whatsapp_chats`
 no browser policy), including the owner's sends and the assistant's replies; the intake queue below is fed exactly as before
 (inbound only, live-only: a message older than 24h, i.e. a backfill, never reaches it). The owner's own text (`from_me`,
 not API-sourced) is appended to the agent's thread as `humano` without a turn (`app/services/humano_para_agente.py`, agents'
-`POST /api/channels/threads/{id}/mensagens`) so the agent does not contradict it. Per-chat agent pause and per-chat LGPD
-delete follow the seed lift (`NOC-REMEDIATE[assistant-inbox-pause-delete]`). Inbox realtime needs `REDIS_URL` or
+`POST /api/channels/threads/{id}/mensagens`) so the agent does not contradict it. Per-chat agent pause: the organ stores
+`agent_paused` and `guarded_on_message` skips the live reply for a paused chat (fail closed when the flag cannot be read);
+the owner's own sends still reach the agent's thread. Per-chat LGPD delete (`POST .../apagar-dados`, admin): the hook
+`app/services/conversa_apagar.py` erases that chat's intake rows, events, classifier verdicts and jobs
+(`assistant.apagar_dados_conversa`) and the agent's thread (`delete_conversation_data`) before the organ erases the chat. Inbox realtime needs `REDIS_URL` or
 `ASSISTANT_INBOX_REALTIME_IN_PROCESS=true` (a single-worker choice); a deploy with neither refuses to boot.
 
 ## Input contract (before anything is stored)

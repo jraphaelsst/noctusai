@@ -15,6 +15,7 @@ LGPD: nothing here logs a body, a phone or a chat id.
 """
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable
@@ -24,6 +25,8 @@ from noctusai_lib.integrations.whatsapp.inbox.ingest import ChatIdentity, Should
 from noctusai_lib.integrations.whatsapp.inbox.predicates import (
     SKIP_BROADCAST, SKIP_EXCLUDED, SKIP_GROUP, inbound_one_to_one_only,
 )
+
+logger = logging.getLogger(__name__)
 
 #: A message older than this is history (backfill), not live traffic: it is stored in the inbox but not taken into intake.
 INTAKE_MAX_AGE = timedelta(hours=24)
@@ -65,13 +68,16 @@ def intake_wanted(intake_predicate: ShouldStore, message: InboxMessage, chat: Ch
 
 def guarded_on_message(
     inner: Callable[..., Any], intake_predicate: ShouldStore, forward_human: Callable[..., Any] | None = None,
+    is_paused: Callable[..., Any] | None = None,
 ) -> Callable[..., Any]:
     """The live-reply seam only sees what the intake contract admits: the inbox now also stores the owner's sends and
     delivers them to `on_message`, and the live reply must never react to them (nor to a group). The owner's own text is
     instead handed to `forward_human` (append to the agent's thread, no turn) so the agent knows what the owner said.
 
-    NOC-REMEDIATE[assistant-inbox-pause-delete]: per-chat agent pause + per-chat LGPD delete land in the seed organ on
-    feat/seed-inbox-pause-delete; wire `on_pause` / `on_delete_chat` here once that branch is on dev — 2026-11-12"""
+    Per-chat pause: `is_paused(org_id, connection_id, chat_id) -> bool` (the stored `agent_paused` flag, read through the
+    store -- never the in-flight DTO) is checked before the hand-off; a paused chat gets no live reply. The message is
+    already stored and the owner's own sends still reach the agent's thread. A lookup that fails is treated as paused
+    (fail closed: a reply the owner switched off must never go out), and logged by exception class only."""
 
     async def on_message(org_id, connection_id, chat: InboxChat, message: InboxMessage) -> None:
         identity = _identity(message.chat_id, chat.phone, chat.is_group)
@@ -81,9 +87,31 @@ def guarded_on_message(
             return
         if not intake_wanted(intake_predicate, message, identity):
             return
+        if is_paused is not None:
+            try:
+                paused = await is_paused(org_id, connection_id, message.chat_id)
+            except Exception as exc:  # noqa: BLE001 - fail closed, never reply on an unverifiable pause
+                logger.warning("agent-pause lookup failed (%s); live reply skipped", type(exc).__name__)
+                return
+            if paused:
+                return
         await inner(org_id, connection_id, chat, message)
 
     return on_message
+
+
+def build_pause_lookup(store_factory: Callable[[], Any]) -> Callable[..., Any]:
+    """`async (org_id, connection_id, chat_id) -> bool` over the inbox store's stored flag (blocking read in a thread)."""
+    import anyio.to_thread
+
+    async def is_paused(org_id, connection_id, chat_id) -> bool:
+        def read() -> bool:
+            chat = store_factory().get_chat(org_id=org_id, connection_id=connection_id, chat_id=chat_id)
+            return bool(chat is not None and chat.agent_paused)
+
+        return await anyio.to_thread.run_sync(read)
+
+    return is_paused
 
 
 def _is_live(message: InboxMessage, now: datetime) -> bool:
@@ -124,6 +152,6 @@ def build_mirror_store(inbox: Any, intake: Any, excluded: Iterable[str] = ()) ->
 
 
 __all__ = [
-    "INTAKE_MAX_AGE", "MirrorChatStore", "build_mirror_store", "conversation_should_store",
+    "INTAKE_MAX_AGE", "MirrorChatStore", "build_mirror_store", "build_pause_lookup", "conversation_should_store",
     "guarded_on_message", "intake_wanted",
 ]

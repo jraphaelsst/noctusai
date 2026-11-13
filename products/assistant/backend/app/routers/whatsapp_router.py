@@ -43,7 +43,10 @@ from app.config import settings
 from app.live.wiring import build_on_message, build_replier
 from app.dependencies import _db, coerce_org_uuid, get_admin_client, get_current_user_org
 from app.services.humano_para_agente import build_human_forwarder
-from app.services.inbox_mirror import build_mirror_store, conversation_should_store, guarded_on_message
+from app.services.inbox_mirror import (
+    build_mirror_store, build_pause_lookup, conversation_should_store, guarded_on_message,
+)
+from app.services.conversa_apagar import build_chat_eraser, on_agent_pause
 from app.services.intake import IntakeChatStore
 from app.services.pairing import apply_session_status
 
@@ -131,6 +134,13 @@ def _human_forwarder():
     )
 
 
+def _chat_eraser():
+    return build_chat_eraser(
+        get_admin_client, lambda: settings.assistant_identity_hmac_key,
+        agents_factory=_agents, agent_key=lambda: settings.assistant_agent_key,
+    )
+
+
 def _replier():
     return build_replier(_connection_store, get_admin_client)
 
@@ -167,7 +177,15 @@ router.include_router(
         webhook_hmac_secret=settings.assistant_waha_webhook_hmac_secret or None,
         resolve_org_id=coerce_org_uuid,
         should_store=build_conversation_should_store(),
-        on_message=guarded_on_message(build_on_message(_replier), build_should_store(), _human_forwarder()),
+        on_message=guarded_on_message(
+            build_on_message(_replier), build_should_store(), _human_forwarder(), build_pause_lookup(_mirror_store),
+        ),
+        # per-chat agent pause (the organ records the flag; `guarded_on_message` honours it) + per-chat LGPD erasure
+        on_agent_pause=on_agent_pause,
+        allow_chat_delete=True,
+        on_delete_chat=_chat_eraser(),
+        get_admin_user_org=_organ_auth.admin,
+        audit_product_slug="assistant",
         require_webhook_hmac=True,
         on_session_status=_on_session_status,
     )

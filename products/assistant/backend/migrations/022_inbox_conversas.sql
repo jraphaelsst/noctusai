@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS assistant.whatsapp_chats (
     unread_count INTEGER NOT NULL DEFAULT 0,
     last_read_at TIMESTAMPTZ,
     synced_through TIMESTAMPTZ,
+    -- per-chat agent pause (seed whatsapp_chats_table_ddl(with_agent_pause=True)): the live agent stops answering this chat
+    agent_paused BOOLEAN NOT NULL DEFAULT false,
+    agent_paused_at TIMESTAMPTZ,
+    agent_paused_by TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (connection_id, chat_id)
@@ -95,3 +99,36 @@ GRANT ALL ON assistant.whatsapp_messages TO service_role;
 INSERT INTO assistant.status_pagina (nome_pagina, status) VALUES
     ('conversas', 'producao')
 ON CONFLICT (nome_pagina) DO NOTHING;
+
+-- ----- Per-chat LGPD erasure of the assistant's OWN derived data (the chat + its messages are erased by the seed organ) -----
+-- A contact's chat is identified in the intake by its keyed HMAC (`chat_ref`, computed server-side). One transaction
+-- removes every row derived from that chat's intake rows: the reply events, the intake events (append-only tables:
+-- the single `assistant.retention_purge` carve-out is set LOCAL to this transaction), the classifier verdicts
+-- (ai_outputs), its jobs, then the intake rows. ai_feedback_events (the owner's labels: ids + a label, no chat data) is
+-- append-only with no carve-out and keeps only opaque ids. Returns the number of intake rows erased.
+CREATE OR REPLACE FUNCTION assistant.apagar_dados_conversa(p_org_id uuid, p_connection_id uuid, p_chat_ref text)
+RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = assistant, public
+AS $$
+DECLARE
+    v_ids uuid[];
+    v_n integer;
+BEGIN
+    SELECT coalesce(array_agg(id), '{}') INTO v_ids FROM assistant.intake_messages
+     WHERE org_id = p_org_id AND connection_id = p_connection_id AND chat_ref = p_chat_ref;
+    IF coalesce(array_length(v_ids, 1), 0) = 0 THEN
+        RETURN 0;
+    END IF;
+    PERFORM set_config('assistant.retention_purge', 'on', true);
+    DELETE FROM assistant.respostas_eventos WHERE intake_id = ANY (v_ids);
+    DELETE FROM assistant.intake_messages_eventos WHERE entidade_id = ANY (v_ids);
+    DELETE FROM assistant.ai_outputs WHERE ref_type = 'intake_message' AND ref_id = ANY (v_ids);
+    DELETE FROM assistant.jobs WHERE (payload ->> 'intake_id')::text = ANY (SELECT unnest(v_ids)::text);
+    DELETE FROM assistant.intake_messages WHERE id = ANY (v_ids);
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    PERFORM set_config('assistant.retention_purge', 'off', true);
+    RETURN v_n;
+END;
+$$;
+REVOKE ALL ON FUNCTION assistant.apagar_dados_conversa(uuid, uuid, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION assistant.apagar_dados_conversa(uuid, uuid, text) TO service_role;

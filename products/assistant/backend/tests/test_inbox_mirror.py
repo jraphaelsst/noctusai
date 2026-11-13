@@ -116,6 +116,8 @@ ROTAS = [
     ("get", f"{BASE}/chats", None), ("get", f"{BASE}/chats/5511988887777@c.us/messages", None),
     ("post", f"{BASE}/chats/5511988887777@c.us/messages", {"text": "oi"}),
     ("post", f"{BASE}/chats/5511988887777@c.us/read", None), ("post", f"{BASE}/backfill", None),
+    ("patch", f"{BASE}/chats/5511988887777@c.us/agent-paused", {"paused": True}),
+    ("post", f"{BASE}/chats/5511988887777@c.us/apagar-dados", None),
 ]
 
 
@@ -201,3 +203,94 @@ def test_no_thread_or_switched_off_or_agents_down_forwards_nothing_and_never_rai
             raise RuntimeError("down")
 
     asyncio.run(_fwd(_Down())(uuid4(), uuid4(), None, _msg()))  # no raise
+
+
+# ── per-chat agent pause: the live reply honours the stored flag ────────────────────────────────
+def _pause_seam(paused):
+    seen = []
+
+    async def inner(org_id, connection_id, chat, message):
+        seen.append(message.id)
+
+    async def is_paused(org_id, connection_id, chat_id):
+        if isinstance(paused, Exception):
+            raise paused
+        return paused
+
+    from noctusai_lib.integrations.whatsapp.inbox.predicates import inbound_one_to_one_only
+
+    return seen, guarded_on_message(inner, inbound_one_to_one_only([]), None, is_paused)
+
+
+def _chat(cid=ME):
+    from noctusai_lib.integrations.whatsapp.inbox import InboxChat
+
+    return InboxChat(chat_id=cid, name="", phone=None, is_group=False, last_message_preview="", last_message_at=None,
+                     last_message_from_me=None, unread_count=0)
+
+
+@pytest.mark.parametrize("paused,expected", [(True, []), (False, ["a"]), (RuntimeError("db"), [])])
+def test_a_paused_chat_gets_no_live_reply_unpaused_does_and_an_unverifiable_pause_fails_closed(paused, expected):
+    seen, seam = _pause_seam(paused)
+    asyncio.run(seam(uuid4(), uuid4(), _chat(), _msg("a", from_me=False)))
+    assert seen == expected
+
+
+def test_the_pause_lookup_reads_the_stored_flag_through_the_store():
+    from app.services.inbox_mirror import build_pause_lookup
+
+    inbox = FakeWhatsAppChatStore()
+    _ingest(MirrorChatStore(inbox, _IntakeSpy(), build_mirror_store(inbox, _IntakeSpy())._intake_predicate, clock=lambda: NOW),
+            _event("m1"))
+    is_paused = build_pause_lookup(lambda: inbox)
+    args = (_RECORD.org_id, _RECORD.id, ME)
+    assert asyncio.run(is_paused(*args)) is False
+    inbox.set_agent_paused(org_id=_RECORD.org_id, connection_id=_RECORD.id, chat_id=ME, paused=True, actor="u")
+    assert asyncio.run(is_paused(*args)) is True
+    assert asyncio.run(is_paused(_RECORD.org_id, _RECORD.id, "other@c.us")) is False
+
+
+# ── per-chat LGPD erasure ───────────────────────────────────────────────────────────────────────
+class _Rpc:
+    def __init__(self):
+        self.calls = []
+
+    def rpc(self, name, params):
+        self.calls.append((name, params))
+        return SimpleNamespace(execute=lambda: SimpleNamespace(data=3))
+
+
+def test_delete_purges_the_intake_of_that_chat_only_and_the_agent_thread():
+    from noctusai_lib.integrations.agents_channel import make_agents_client
+    from app.services.conversa_apagar import build_chat_eraser
+    from app.services.intake import chat_ref
+
+    rpc, fake = _Rpc(), make_agents_client(token="", base_url="", allow_fake=True)
+    erase = build_chat_eraser(lambda: rpc, lambda: "k", agents_factory=lambda: fake, agent_key=lambda: "assistente")
+    org, conn = uuid4(), uuid4()
+    asyncio.run(erase(org, conn, ME, "u1"))
+    assert rpc.calls == [("apagar_dados_conversa", {"p_org_id": str(org), "p_connection_id": str(conn), "p_chat_ref": chat_ref("k", ME)})]
+    assert [(d.agent_key, d.connection_id, d.chat_id) for d in fake.deletions] == [("assistente", str(conn), chat_ref("k", ME))]
+
+
+def test_delete_without_an_agent_configured_skips_the_agent_and_a_failure_propagates():
+    from app.services.conversa_apagar import build_chat_eraser
+
+    def no_agents():
+        raise AssertionError("agents must not be called")
+
+    asyncio.run(build_chat_eraser(lambda: _Rpc(), lambda: "k", agents_factory=no_agents, agent_key=lambda: "")(uuid4(), uuid4(), ME, None))
+
+    class _Boom:
+        def rpc(self, *_a):
+            raise RuntimeError("db down")
+
+    with pytest.raises(RuntimeError):  # the organ answers 502 and erases nothing
+        asyncio.run(build_chat_eraser(lambda: _Boom(), lambda: "k", agents_factory=no_agents, agent_key=lambda: "")(uuid4(), uuid4(), ME, None))
+
+
+def test_migration_carries_the_pause_columns_and_a_chat_scoped_erase_function():
+    sql = migration_sql(ROOT, "inbox_conversas")
+    assert "agent_paused BOOLEAN NOT NULL DEFAULT false" in sql and "agent_paused_at TIMESTAMPTZ" in sql and "agent_paused_by TEXT" in sql
+    assert "chat_ref = p_chat_ref" in sql and "connection_id = p_connection_id" in sql  # scoped to ONE chat
+    assert "GRANT EXECUTE ON FUNCTION assistant.apagar_dados_conversa(uuid, uuid, text) TO service_role;" in sql

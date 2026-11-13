@@ -70,6 +70,8 @@ export default function Conversas() {
         <WhatsAppInbox
           hooks={inboxHooks}
           connectionId={connectionId}
+          enableAgentPause
+          allowDeleteChat
           initialChatId={params.get("chat")}
           onSelectChat={onSelectChat}
         />
