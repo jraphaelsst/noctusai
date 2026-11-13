@@ -24,7 +24,7 @@ Both pages are **funnels** (step-by-step creation wizards).
 | Property-ref search | `GET /api/imoveis/busca?q=&limit=` (`routers/imoveis_router.py:115`, `imovel_hub/busca_service.py:439`; `q` ≥ 2 chars; mirror `social_wiring.imoveis.codigo` + `imovel_registry.codigo_canonical`) | **Reuse.** No new search endpoint. |
 | Live-search dropdown | `frontend/src/components/card/ImovelCodigoPicker.tsx:94` (+ `ImovelBuscaTypeahead.tsx`) | **Reuse** in select-only mode: the value can only come from a result row, never free text. |
 | Photo batches + editing | `edicao_fotos`: `fotos_lotes` already has `imovel_codigo` + `imovel_org_id` (mig 123); photo state machine `fotos_fotos.status`; events `fotos_eventos`; worker on seed `domain.jobs` + engine `noctusai_lib.domain.photo_editing`; guias/regras/referências/modelos | **Reuse the lote as the photo job.** ImobShotAI = a lote with a **mandatory** imóvel + the real-estate guia. No parallel photo pipeline. |
-| Nav | `frontend/src/nav/navGroups.ts` `CORESTUDIO_GROUP.groups` (sub-group pattern on unmerged `feat/corestudio-edicao-imagem-nav`) | New sub-group `imobshotai`; each page needs a `status_pagina` row (migration) or it stays hidden. |
+| Nav | `frontend/src/nav/navGroups.ts` `CORESTUDIO_GROUP.groups` (sub-group pattern on unmerged `feat/corestudio-edicao-imagem-nav`) | Sub-group `imobshotai` **absorbs** the "Edição de Imagem" sub-group (D2, §9); each page needs a `status_pagina` row (migration) or it stays hidden. |
 | Funnel/board UI | seed `components/pipeline/funnel/FunnelBoard.tsx`, `PipelineBoard.tsx`, `kanban/*`; used by `EsteiraBoard.tsx` | **Consume the seed organ** for the card board (`check_canonical_organ_consumption`). |
 | Video | **Nothing exists.** `CORESTUDIO-STRUCTURE.md` §3 (unmerged `feat/corestudio-structure`) designs a `video.*` job family, one container per job, SSE progress, signed-URL prefixes, `domain.video_editing` at L0 | ImobShotAI Vídeo is the **first consumer** of that seam, not its own worker. Blocked on it. |
 | Uploads / progress / approvals | seed `resumable_uploads`, `job_progress` (SSE), `approvals` organ: all three are **unmerged branches** | Consume once landed; prerequisite S0. |
@@ -55,7 +55,7 @@ One row per `(org_id, imovel_codigo)`. It is the container and the funnel positi
 ### 3.3 Card funnel stages (`etapa`)
 `fotos_enviadas → fotos_em_edicao → fotos_em_revisao → fotos_aprovadas → video_em_montagem → video_renderizando → video_em_revisao → concluido` (+ `arquivado`).
 - Photo stages are **derived from the lote/photo states** (projection), not set by hand.
-- The card is **created** when the first ImobShotAI lote for that ref is submitted. (The owner said "when photos are done". Open question Q1: create at the start and show progress, or only at `fotos_aprovadas`.)
+- The card is **created at the first upload** for that ref (D1) and shows "em edição" right away. A second upload for the same ref reuses the card (get-or-create).
 
 ### 3.4 Metrics enabled
 Time from upload to approved photos per property; photo approval/rejection rate per room and per guia; re-edit count; video approvals on the first render; properties with photos but no video (funnel drop-off); and cost per property (OpenAI edit + render).
@@ -95,7 +95,7 @@ Seed `FunnelBoard` with one column per `etapa` and one card per property (cover,
 | `POST /api/imobshotai/videos/{id}/render` | enqueue `video.render`; returns `job_id` (cache-writes hand-off to polling/SSE) |
 | `POST /api/imobshotai/videos/{id}/decisao` `{decisao, motivo}` | approval via the seed organ |
 
-Access tier: **org-member** for all of them (no `public`). Strict `== 401` tests on every route.
+Access tier: **org-member** for reads and creation. The `decisao` routes (photo and video approval) require **org admin or platform admin** (D6). No `public`. Strict `== 401` tests on every route, plus `403` for a non-admin member on `decisao`.
 
 ## 6 · Agents (built before implementation, `.md` first)
 
@@ -119,14 +119,50 @@ Later, per the owner, both move into the agents product and are called via API. 
 | S5 | Real-estate guia/regras seeded into `edicao_fotos` from the photo agent spec; room classification output stored per photo | photo agent `.md` | BE data |
 | S6 | Video: `imobshot_videos` tables + endpoints + video funnel UI | CoreStudio `video.*` seam built, general + real-estate video agents | BE + FE |
 | S7 | Metrics view + latency_report + wiring audit | S4, S6 | — |
+| S8 | Absorb Edição de Imagem (§9): wiring audit, nav move, config sub-group, `/edicao-fotos/*` redirects | S3, S4 | FE nav + redirects |
+| S9 | Manual photo editor (§10): promote the editor shell to `@noctusai/lib` if needed, then photo tools + manual versions | video-editor module located; S4 | FE (+ lib) |
+| S10 | Music library (D5): track table + licensed source adapter (Fake+Real+factory) + picker in video step 3 | Q7 decided; S6 | BE + FE |
 
 Pilot-first: S2–S5 ship for One's org only (it is the only real-estate client with the data), then open up.
 
-## 8 · Open questions for the owner
+## 8 · Owner decisions (2026-11-13)
 
-- **Q1** Card creation: at the first upload (it shows "em edição") or only once the photos are approved?
-- **Q2** Should ImobShotAI replace "Edição de Imagem" for real-estate orgs, or sit next to it? (Same engine either way.)
-- **Q3** Video formats for v1: 9:16 only (reels/shorts) or also 16:9 for YouTube, like One's current videos?
-- **Q4** Music: royalty-free library we pick, or a track the user uploads?
-- **Q5** Who approves: any org member (the approvals-organ default) or a named curator (the `curadores` already in `edicao_fotos`)?
-- **Q6** Should the third-party ImobShotAI app study (`_private-studies/imobshotai/STUDY-app.md`, pending) change anything here? It gets reviewed when it lands, as reference only.
+| # | Question | Decision |
+|---|---|---|
+| D1 | When is the card created? | **At the first upload.** The card shows "em edição" from the start (§3.3 updated). |
+| D2 | ImobShotAI vs "Edição de Imagem" | ImobShotAI **absorbs** Edição de Imagem. It is not a "replace": everything of value there is carried into ImobShotAI (§9). |
+| D3 | Manual editing | A **manual photo-editing module**, the photo twin of the CoreStudio video-editing module (tools from the real CoreStudio app), for hand-editing one or two photos (§10). |
+| D4 | Video formats v1 | **Both** 9:16 and 16:9 (1:1 optional). |
+| D5 | Music | A **built-in library** of tracks free of copyright claims. Research in flight → `_private-studies/one-imoveis/MUSIC-LIBRARIES.md`; the key test is a license that allows use in videos a SaaS renders for its clients. |
+| D6 | Who approves (photos and video) | **Org admin and platform admin only**, for now. Approval endpoints check that role, and the strict-auth tests cover a non-admin member (`403`). |
+| D7 | Direction | CoreStudio's processes will be **enhanced with the new agents and methodologies** (general video-editing agent, real-estate photo/video agents). ImobShotAI is the first place they land, not a dead end. |
+
+Still open: **Q6** — the third-party ImobShotAI app study (`_private-studies/imobshotai/STUDY-app.md`, pending) gets reviewed when it lands, as reference only.
+
+## 9 · Absorbing "Edição de Imagem" (D2)
+
+Absorb means its value moves into ImobShotAI, and nothing useful is lost or duplicated. Inventory (from `modules/edicao_fotos/`, pages `/edicao-fotos/*`):
+
+| Asset in Edição de Imagem | Fate in ImobShotAI |
+|---|---|
+| Lotes + photo state machine + `fotos_eventos` | **Kept as the engine** of the photo funnel (§2). |
+| Worker (seed `domain.jobs`), engine `domain.photo_editing`, urgente/econômico (OpenAI direct/Batch), `ProcessingGate` | Kept as is. |
+| Guias, regras, referências, modelos | Kept. They become **"Estilos"** in the funnel's step 3, and the real-estate photo agent writes the default guia. |
+| Curadores, revisão (`LoteRevisao`), decisões, avaliações | Kept, merged into step 5 and the approval rule (D6). |
+| Aprendizado / `fotos_dataset` | Kept and fed by One's dataset (`dataset/photos.csv`) plus every approve/reject. It is the training loop for good-edit and room recognition. |
+| Painel, processamento, configurações | They move to an "ImobShotAI · Configurações" sub-group (admin only). |
+| Routes `/edicao-fotos/*` | Redirect to `/imobshotai/*` (the existing redirect-page pattern, e.g. `RedirectMediaCreation`). No dead links. |
+
+Before the redirect lands, `noc-wiring-audit` runs on every current Edição de Imagem page so we know what is really wired (real data + own CRUD) and nothing working is dropped.
+
+## 10 · Manual photo editor (D3)
+
+- **Shape:** the photo twin of the CoreStudio video-editing module (same layout, the same tool-panel pattern and the same save/version model). ⚠ Location of that module still to confirm: it is not on `origin/dev` under social-wiring; asked session aa2f7b for the branch/path. The twin must **consume the same shared organ**. If the video module's editor shell isn't in `@noctusai/lib` yet, it gets promoted there first (componentize, not fork).
+- **Opens from:** the funnel's review step and the card detail ("editar à mão"), on one photo at a time.
+- **Tools v1 (real-estate set):** crop/aspect, straighten + vertical correction (perspective), exposure/contrast/highlights/shadows, white balance, window pull (balance blown windows), sky replace, object removal / clean-up, before/after toggle. AI tools (sky, removal) call the same `photo_editing` engine. Manual sliders are client-side and only persist the result.
+- **Data:** a manual edit is a new version of the photo (`fotos_edicoes`, with `origem = manual`) plus an event. It never overwrites, so the dataset can learn from human corrections against AI output.
+
+## 11 · Open questions
+
+- **Q6** Third-party app study impact (above).
+- **Q7** Music: pick the tier once `MUSIC-LIBRARIES.md` lands (free CC0/AI-generated set vs a paid partner API).
