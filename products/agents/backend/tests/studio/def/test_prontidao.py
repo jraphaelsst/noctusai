@@ -23,7 +23,7 @@ from app.studio.models import CompiledPrompt, CompileWarning, GateRun
 from app.studio import prontidao as pr
 from app.studio.prontidao import AreaGeracao, Entrada, FerramentaLinha, PinSkill
 from app.routers.studio_agents_router import get_eval_store_dep
-from tests.julia_body import JULIA_BODY
+from tests.julia_body import JULIA_BODY, com_pai
 from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID
 
 BASE = "/api/studio/agents"
@@ -247,7 +247,42 @@ class TestCompor:
         assert sev == sorted(sev, key=["bloqueante", "aviso", "ok"].index)
         assert pr.RECUSAS_PUBLICACAO == {
             "conteudo_incompleto", "compile_blocked", "mecanismo_reprovado", "eval_required", "qualificacao_indisponivel",
-            "numero_fallback_ausente", "catalogo_ausente", "base_nao_validada"}
+            "numero_fallback_ausente", "catalogo_ausente", "base_nao_validada", "sem_modelo_pai"}
+
+
+class TestSemModeloPai:
+    def test_a_parentless_non_template_agent_is_blocked_with_the_publish_refusal(self):
+        p = pr.compor(_entrada(casos_comportamento=3, juiz=_juiz(), sem_modelo_pai=True))
+        (i,) = [x for x in p.itens if x.codigo == "sem_modelo_pai"]
+        assert i.severidade == "bloqueante" and i.recusa_publicacao == "sem_modelo_pai" and "modelo" in i.mensagem
+        assert not p.pronto_para_publicar
+        assert not [x for x in pr.compor(_entrada(casos_comportamento=3, juiz=_juiz())).itens if x.codigo == "sem_modelo_pai"]
+
+
+class TestFerramentasPorTipo:
+    KW = dict(usa_canais=True, tem_skills=False, tool_policy={}, com_padrao=False)
+
+    def test_captacao_is_expected_only_of_an_sdr_agent(self):
+        assert "captacao" in pr.ferramentas_esperadas(**self.KW, sdr=True)
+        pessoal = pr.ferramentas_esperadas(**self.KW, sdr=False)
+        assert "captacao" not in pessoal and {"handoff", "encerrar"} <= set(pessoal)
+
+    def test_sdr_is_a_qualification_standard_or_an_sdr_base_ancestor(self):
+        from types import SimpleNamespace as NS
+
+        raiz = NS(id=uuid4(), key="agente-base", pai_agent_id=None, padrao_qualificacao=None)
+        sdr = NS(id=uuid4(), key="sdr-base", pai_agent_id=raiz.id, padrao_qualificacao=None)
+        todos = {raiz.id: raiz, sdr.id: sdr}
+        get = todos.__getitem__
+        assert pr.agente_sdr(NS(pai_agent_id=sdr.id, padrao_qualificacao=None), get)
+        assert pr.agente_sdr(NS(pai_agent_id=raiz.id, padrao_qualificacao="imob-lead"), get)
+        assert not pr.agente_sdr(NS(pai_agent_id=raiz.id, padrao_qualificacao=None), get)
+        assert not pr.agente_sdr(NS(pai_agent_id=None, padrao_qualificacao=None), get)
+
+    def test_a_personal_assistant_gets_no_captacao_warning_through_the_route(self, plat):
+        _preencher(plat)
+        itens = _get(plat).json()["itens"]
+        assert not [i for i in itens if i["codigo"] == "ferramenta_sem_descricao" and i["detalhe"]["ferramenta"] == "captacao"]
 
 
 class TestCatalogo:
@@ -293,10 +328,10 @@ def plat(studio):
     studio.store.mark_platform_org(DEFAULT_ORG_ID)
     studio.mock_supabase.set_table_data(
         "noctus_users", [{"id": str(DEFAULT_USER_ID), "org_id": str(DEFAULT_ORG_ID), "role": "admin", "org_role": "owner"}])
-    r = studio.post(f"{PLAT}/agents", json={**JULIA_BODY, "key": "novo", "nome": "Novo", "owner_product": None, "padrao_qualificacao": None,
-                                            "escopo_qualificacao": None})
-    assert r.status_code == 201, r.text
     studio.evals = FakeEvalStore()
+    r = studio.post(f"{PLAT}/agents", json=com_pai(studio, {**JULIA_BODY, "key": "novo", "nome": "Novo", "owner_product": None,
+                                                            "padrao_qualificacao": None, "escopo_qualificacao": None}))
+    assert r.status_code == 201, r.text
     studio.raw.app.dependency_overrides[get_eval_store_dep] = lambda: studio.evals
     return studio
 
@@ -458,6 +493,12 @@ def _cenario_base_nao_validada(studio):
     _cenario_verde(studio)
 
 
+def _cenario_sem_modelo_pai(studio):
+    """Green in every other way, but the agent has no parent template (a non-template, non-legacy, non-instance agent)."""
+    studio.store.update_definicao(DEFAULT_ORG_ID, "novo", {"pai_agent_id": None})
+    _cenario_verde(studio)
+
+
 def _cenario_aviso_apenas(studio):
     """Everything advisory at once -- and the draft is still publishable."""
     _cenario_verde(studio)
@@ -484,6 +525,7 @@ CENARIOS = [
     ("sem_numero_fallback", _cenario_sem_numero_fallback, "numero_fallback_ausente"),
     ("oferecer_opcoes_sem_catalogo", _cenario_sem_catalogo, "catalogo_ausente"),
     ("base_nao_validada", _cenario_base_nao_validada, "base_nao_validada"),
+    ("sem_modelo_pai", _cenario_sem_modelo_pai, "sem_modelo_pai"),
     ("verde", _cenario_verde, None),
     ("verde_so_com_mecanismo", _cenario_verde_so_com_mecanismo, None),
     ("somente_avisos", _cenario_aviso_apenas, None),

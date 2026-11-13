@@ -78,6 +78,7 @@ Severidade = Literal["bloqueante", "aviso", "ok"]
 RECUSAS_PUBLICACAO = frozenset({
     "conteudo_incompleto", "compile_blocked", "mecanismo_reprovado", "eval_required", "qualificacao_indisponivel",
     "numero_fallback_ausente", "catalogo_ausente", "base_nao_validada",
+    "sem_modelo_pai",
 })
 
 
@@ -200,6 +201,8 @@ class Entrada:
     #: 073 chain gate: the verdict of every ANCESTOR layer, root first (``()`` = no parent). A child relies on its bases
     #: being validated (``app.studio.camada_validada``) and runs only the cases of its own scope.
     camadas_base: tuple[VeredictoCamada, ...] = ()
+    #: A non-template runtime agent that is neither legacy nor an instance and has no parent template.
+    sem_modelo_pai: bool = False
     #: Child sections that restate the parent chain (``app.studio.camada_sobreposicao``); advisory only.
     sobreposicoes_camada: tuple[Achado, ...] = ()
 
@@ -255,6 +258,27 @@ _SINAIS_IMOBILIARIOS = frozenset({"oferecer_imoveis", "detalhes_imovel", "consul
 FERRAMENTAS_DE_CONCLUSAO = frozenset({"concluir_qualificacao"})
 
 
+#: Capability-free tools that only an SDR (lead-capture) agent works; a personal assistant is not asked for them.
+FERRAMENTAS_SDR = frozenset({"captacao"})
+
+
+def agente_sdr(agent: Any, get_by_id: Any) -> bool:
+    """SDR = it works a qualification standard (``padrao_qualificacao``) or its template chain includes ``sdr-base``."""
+    if getattr(agent, "padrao_qualificacao", None):
+        return True
+    cursor, vistos = getattr(agent, "pai_agent_id", None), set()
+    while cursor is not None and cursor not in vistos:
+        vistos.add(cursor)
+        try:
+            pai = get_by_id(cursor)
+        except NotFound:
+            return False
+        if pai.key == "sdr-base" or getattr(pai, "padrao_qualificacao", None):
+            return True
+        cursor = pai.pai_agent_id
+    return False
+
+
 def agente_imobiliario(ferramentas: Iterable[str]) -> bool:
     """Real-estate agent = it has a content row for a property tool (offer / details / enterprise)."""
     return bool(_SINAIS_IMOBILIARIOS & set(ferramentas))
@@ -262,7 +286,7 @@ def agente_imobiliario(ferramentas: Iterable[str]) -> bool:
 
 def ferramentas_esperadas(
     *, usa_canais: bool, tem_skills: bool, tool_policy: Mapping[str, Any], com_padrao: bool,
-    padrao_conclusivo: bool = True, imobiliario: bool = True,
+    padrao_conclusivo: bool = True, imobiliario: bool = True, sdr: bool = True,
 ) -> dict[str, str]:
     """``{tool: why}`` -- the tools this draft's configuration says it works with, DERIVED from the channel registry
     (``app.channels.tool_registry.TOOLS``: a tool's ``exige`` are the capabilities it needs) and the tool policy:
@@ -289,6 +313,8 @@ def ferramentas_esperadas(
         if d.exige and d.exige <= capacidades:
             out[nome] = "skills fixadas" if d.exige == {"skills"} else "padrão de qualificação"
         elif not d.exige and usa_canais:
+            if nome in FERRAMENTAS_SDR and not sdr:
+                continue
             out[nome] = "agente de canal"
     if bool(tool_policy.get("knowledge", False)):
         for nome in _FERRAMENTAS_CONHECIMENTO:
@@ -451,6 +477,11 @@ def _avaliacao(e: Entrada) -> list[Item]:
 def _camadas(e: Entrada) -> list[Item]:
     """Chain gate: a child is not publishable while an ancestor layer's own critical cases are not consolidated on the
     ancestor's current content. One item for the whole chain; the detail lists each ancestor (never case text)."""
+    if e.sem_modelo_pai:
+        return [Item(
+            "sem_modelo_pai", "avaliacao", "bloqueante",
+            "O agente não tem um modelo (template) pai: ele não herda as regras de um agente-base.",
+            "Escolha um modelo pai (agente-base ou outro template) para este agente.", "sem_modelo_pai")]
     if not e.camadas_base:
         return []
     det = {"camadas": [c.to_dict() for c in e.camadas_base]}
@@ -768,7 +799,8 @@ def coletar(
         ferramentas_esperadas=ferramentas_esperadas(
             usa_canais=agent.usa_canais, tem_skills=tem_skills, tool_policy=dict(draft.tool_policy), com_padrao=chave is not None,
             padrao_conclusivo=_padrao_tem_estagio_conclusivo(padroes, chave, draft),
-            imobiliario=agente_imobiliario(f.ferramenta for f in rows)),
+            imobiliario=agente_imobiliario(f.ferramenta for f in rows),
+            sdr=agente_sdr(agent, store.get_agent_by_id)),
         rotulos_ausentes=rotulos_ausentes(linhas),
         specs_org_faltando=tuple(faltando),
         specs_org_invalidas=invalidas,
@@ -783,6 +815,10 @@ def coletar(
         numero_fallback_definido=_numero_fallback() is not None,
         padrao_catalogo=padrao_catalogo,
         camadas_base=camadas_base,
+        sem_modelo_pai=(getattr(agent, "pai_agent_id", None) is None and not getattr(agent, "modelo", False)
+                        and getattr(agent, "conteudo_modo", "legado") != "legado"
+                        and getattr(agent, "definition_scope", None) != "instancia"
+                        and getattr(agent, "kind", "runtime") == "runtime"),
         sobreposicoes_camada=sobreposicoes,
     )
 

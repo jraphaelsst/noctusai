@@ -2,7 +2,7 @@
 hash covers it; a "new standard version available" indicator."""
 from __future__ import annotations
 
-from tests.julia_body import JULIA_BODY
+from tests.julia_body import JULIA_BODY, com_pai
 
 from dataclasses import replace
 from uuid import UUID, uuid4
@@ -20,7 +20,7 @@ BASE, PLAT, _fill, _platform_admin, _publish = _base.BASE, _base.PLAT, _base._fi
 def _plat(studio):
     studio.store.mark_platform_org(DEFAULT_ORG_ID)
     _platform_admin(studio)
-    assert studio.post(f"{PLAT}/agents", json=JULIA_BODY).status_code == 201
+    assert studio.post(f"{PLAT}/agents", json=com_pai(studio)).status_code == 201
     studio.as_role("owner")
     _fill(studio)
     # with the standard in the compile, its block's headings are required texts too
