@@ -120,9 +120,9 @@ historico: [ { versao: 2, mudanca: "…", job_origem: "job-41", revisoes: ["r7"]
 
 Preferences (pace, approval mode, "nada sobre o rosto") are per-user/org overrides on top of the preset, set only from an explicit answer, never inferred; a value is surfaced as "recomendado, igual ao último vídeo" and still asked once per job.
 
-## 6 · Defaults and open choices (owner to confirm; see the agent's open questions)
+## 6 · Defaults (decided by the owner, 2026-11-13)
 
-Captions on (burned), last take wins, natural pause compression, −14 LUFS / −1.5 dBTP, 9:16, no music/SFX unless authorized, no third-party footage, no new speech/offers/numbers. `ritmo` is a per-user preference (three levels) plus an optional playback-speed hint 1.0–1.2×; first job asks, later jobs recommend. `modo_aprovacao` default proposed: `previa` for a user's first jobs and for any preset still `nao_testado`; `criterios` only after the preset has approved renders.
+Captions on (burned), last take wins, natural pause compression, −14 LUFS / −1.5 dBTP, 9:16, no music/SFX unless authorized, no third-party footage, no new speech/offers/numbers. `ritmo` is a per-user preference (three levels) plus an optional playback-speed hint 1.0–1.2×; first job asks, later jobs recommend. `ritmo` default = `natural` (decided). `modo_aprovacao` default = `previa` until a preset has approved renders; only after that is `criterios` allowed (decided).
 
 ## 7 · Optional render stacks (the worker owns cut/audio/grade/master; overlays are a seam)
 
@@ -136,7 +136,7 @@ Third-party skill packs studied have **no licence file: study-only, nothing is v
 
 ## 8 · Open items (not decided here)
 
-1. **Word-level timestamps.** The transcription service returns `segmentos` only. Word-anchored captions/letterings need either per-word output from the service (tooling ask, the cheapest) or a forced-alignment stage (licence check). Until then the skill degrades to segment-level and says so in the report.
+1. **Word-level timestamps.** Decided 2026-11-13: our transcription service gets per-word output in a separate slice, `segmentos[].palavras[{texto, inicio, fim, confianca}]`. Until it lands the skill degrades to segment-level and says so in the report; no forced-alignment stage is needed.
 2. Safe-zone numbers per rede × formato are `nao_verificado` in the skill; they must come from the official docs via the validity matrix (S1), not from memory.
 3. Event names in §4 are proposals; they bind when the job events table lands.
 
