@@ -174,7 +174,7 @@ export function CertidoesPartesTab(props: {
   const aplicandoId = aplicarLidos.isPending ? (aplicarLidos.variables?.resultadoId ?? null) : null;
 
   return (
-    <div className="space-y-3" data-testid="certidoes-partes">
+    <div className="min-w-0 max-w-full space-y-3" data-testid="certidoes-partes">
       {q.isError && (
         <p className="text-xs text-destructive" data-testid="certidoes-partes-error-banner">
           Falha ao atualizar — exibindo os últimos dados carregados.

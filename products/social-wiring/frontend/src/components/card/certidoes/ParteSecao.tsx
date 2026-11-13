@@ -267,14 +267,14 @@ export function ParteSecao(p: ParteSecaoProps) {
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="space-y-3 border-t p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
+          <div className="flex flex-wrap items-center justify-start gap-x-4 gap-y-2">
+            <div className="min-w-0">
               <h4 className="text-sm font-semibold">Levantamento de certidões</h4>
               <p className="text-xs text-muted-foreground">
                 Data do levantamento: {formatDate(p.dataReferencia)}
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-0 flex-wrap items-center justify-start gap-2" data-testid={`parte-acoes-cabecalho-${parte.chave}`}>
               <Button size="sm" variant="outline" disabled={semDocumento || p.emissaoPendente}
                 title={semDocumento ? "Informe o CPF/CNPJ da parte antes de solicitar certidões." : undefined}
                 onClick={() => pedirEmissao({ kind: parte.kind, alvoId, tipos: null })}
@@ -352,15 +352,15 @@ export function ParteSecao(p: ParteSecaoProps) {
             }}
           />
 
-          <div className="overflow-x-auto rounded-md border">
-            <table className="w-full min-w-max border-collapse text-xs">
+          <div className="max-w-full overflow-x-auto rounded-md border" data-testid={`parte-tabela-${parte.chave}`}>
+            <table className="w-full table-auto border-collapse text-xs">
               <thead>
                 <tr className="border-b bg-muted/50">
                   <th className="w-8 p-2" />
                   <th className="p-2 text-left font-semibold">Certidão</th>
                   <th className="p-2 text-left font-semibold">Situação</th>
-                  <th className="p-2 text-left font-semibold">Emissão</th>
                   <th className="p-2 text-left font-semibold">Ações</th>
+                  <th className="p-2 text-left font-semibold">Emissão</th>
                 </tr>
               </thead>
               <tbody>
@@ -427,33 +427,7 @@ export function ParteSecao(p: ParteSecaoProps) {
                           </p>
                         )}
                       </td>
-                      <td className="p-2">
-                        {c.emitida_em ? formatDate(c.emitida_em) : "—"}
-                        {c.emitida_em && (c.emitida_em_origem === "metadados_pdf" || c.emitida_em_origem === "data_da_consulta") && (
-                          <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-data-inferida-${parte.chave}-${linha.chave}`}>
-                            {c.emitida_em_origem === "data_da_consulta"
-                              ? "Data inferida do dia da consulta (o documento não imprime data)"
-                              : "Data inferida dos metadados do PDF (a consulta não imprime data)"}
-                          </p>
-                        )}
-                        {c.numero && (
-                          <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-numero-${parte.chave}-${linha.chave}`}>
-                            Nº {c.numero}
-                          </p>
-                        )}
-                        {notaSegundaVia(c) && (
-                          <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-segunda-via-${parte.chave}-${linha.chave}`}>
-                            {notaSegundaVia(c)}
-                          </p>
-                        )}
-                        {aviso && (
-                          <p className="mt-0.5 flex items-center gap-1 text-warning-foreground" data-testid={`parte-stale-${parte.chave}-${linha.chave}`}>
-                            <AlertTriangle className="h-3 w-3" />
-                            {aviso}
-                          </p>
-                        )}
-                      </td>
-                      <td className="p-2">
+                      <td className="p-2 align-top">
                         {!na && (
                           <div className="flex flex-wrap items-center gap-1">
                             {auto && c.resultado_id && !c.pendencia && (
@@ -553,6 +527,32 @@ export function ParteSecao(p: ParteSecaoProps) {
                               </Button>
                             )}
                           </div>
+                        )}
+                      </td>
+                      <td className="p-2">
+                        {c.emitida_em ? formatDate(c.emitida_em) : "—"}
+                        {c.emitida_em && (c.emitida_em_origem === "metadados_pdf" || c.emitida_em_origem === "data_da_consulta") && (
+                          <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-data-inferida-${parte.chave}-${linha.chave}`}>
+                            {c.emitida_em_origem === "data_da_consulta"
+                              ? "Data inferida do dia da consulta (o documento não imprime data)"
+                              : "Data inferida dos metadados do PDF (a consulta não imprime data)"}
+                          </p>
+                        )}
+                        {c.numero && (
+                          <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-numero-${parte.chave}-${linha.chave}`}>
+                            Nº {c.numero}
+                          </p>
+                        )}
+                        {notaSegundaVia(c) && (
+                          <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-segunda-via-${parte.chave}-${linha.chave}`}>
+                            {notaSegundaVia(c)}
+                          </p>
+                        )}
+                        {aviso && (
+                          <p className="mt-0.5 flex items-center gap-1 text-warning-foreground" data-testid={`parte-stale-${parte.chave}-${linha.chave}`}>
+                            <AlertTriangle className="h-3 w-3" />
+                            {aviso}
+                          </p>
                         )}
                       </td>
                     </tr>
