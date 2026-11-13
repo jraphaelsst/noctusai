@@ -7705,6 +7705,32 @@ _SW_RECIPIENT_CHANNEL_PROBE = GuardProbe(
 )
 
 
+
+_SW_TRANSCRICAO_FORMATO_PROBE = GuardProbe(
+    id="social_wiring.transcricoes.formato_shape",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="transcricoes_formato_shape",
+    kind="write_refusal",
+    migrations=("340_transcricoes_formato_shape.sql",),
+    sql=_constraint_refusal_probe(
+        setup_sql=_table_fixture_check("social_wiring.transcricoes") + _PROBE_ORG_SETUP,
+        op_sql="""
+    INSERT INTO social_wiring.transcricoes
+        (org_id, user_id, contexto_tipo, contexto_ref, storage_path, bytes, duracao_s, formato)
+    VALUES (v_org, gen_random_uuid(), 'noc_probe', 'noc-probe', 'noc/probe.bin', 1, 1, 'audio/../x');
+""",
+        sqlstate_condition="check_violation",
+        constraint_names=("transcricoes_formato_shape",),
+        what="a transcription whose formato is not a canonical container name",
+    ),
+    rationale=(
+        "`formato` becomes the storage key extension and the Content-Type lookup; "
+        "340 replaced the hand-copied value list with a shape check, so this proves "
+        "a path-like / garbage value is still refused."
+    ),
+)
+
 _INVITATION_TOKEN_PROBE = GuardProbe(
     id="invitations.token_not_api_readable",
     product="<platform>",
@@ -12651,6 +12677,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _LICENSES_ONE_ACTIVE_PROBE,
     _SW_API_TOKEN_HASH_PROBE,
     _SW_RECIPIENT_CHANNEL_PROBE,
+    _SW_TRANSCRICAO_FORMATO_PROBE,
     *_COMMUNITY_PROBES,
     *_SW_179_183_PROBES,
     *_SW_190_PROBES,

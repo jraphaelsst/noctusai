@@ -223,10 +223,27 @@ def test_415_unknown_magic_bytes(env):
     assert env.repo.reservas == []
 
 
-def test_415_probe_codec_not_allowed():
-    env = Env(transcriber=FakeTranscriber(default_probe=AudioProbe(30.0, "vorbis", "webm")))
+def test_415_probe_container_not_allowed():
+    env = Env(transcriber=FakeTranscriber(default_probe=AudioProbe(30.0, "mpeg4", "avi")))
     r = env.post()
     assert r.status_code == 415 and r.json()["codigo"] == "formato_invalido"
+    assert env.repo.reservas == []
+
+
+@pytest.mark.parametrize(
+    "container,codec",
+    [  # what the REAL worker ffprobe reports (2026-11-13: these were all refused)
+        ("wav", "pcm_s16le"),
+        ("mov,mp4,m4a,3gp,3g2,mj2", "aac"),
+        ("matroska,webm", "opus"),
+        ("matroska,webm", "vorbis"),
+        ("flac", "flac"),
+    ],
+)
+def test_202_real_ffprobe_names_accepted(container, codec):
+    env = Env(transcriber=FakeTranscriber(default_probe=AudioProbe(30.0, codec, container)))
+    r = env.post()
+    assert r.status_code == 202, r.json()
 
 
 @pytest.mark.parametrize("dur,codigo", [(700.0, "duracao_excedida"), (0.4, "audio_vazio")])
