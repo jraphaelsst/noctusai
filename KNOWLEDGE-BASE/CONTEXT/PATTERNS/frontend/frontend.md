@@ -57,6 +57,8 @@ useQuery({ queryKey, queryFn, ...jobPolling((d: Lote | undefined) => !!d && emAn
 
 **Starting the job: hand off.** `isActive(data)` only sees what the last read returned. A write that queues the job and then invalidates races the worker — the refetch can land before the job's rows exist and the poll never starts (social-wiring F87, 2026-10-24). The write calls `handOffToPolling(qc, readKey)` instead: the `jobPolling` reads under `readKey` keep polling until they have seen the job run and settle (or `graceMs`). Keeper `check_job_start_without_handoff`; depth in `mutation-cache-writes.md` § Async jobs hand off to polling.
 
+**Push first, when the job can publish.** A job whose worker publishes progress (`noctusai_lib.realtime.job_progress`) is read with `useJobProgress` beside the `jobPolling` read: the stream writes each frame into the cache and silences the poll while it is open; if it cannot be kept the poll takes over (`realtime-sse-bus.md` § Job progress). `jobPolling` + the hand-off stay — they ARE the fallback.
+
 **Not for** live data with no terminal state (inbox, feed, presence) — that is a realtime stream (`inbox-chat-surface.md`), and a fixed-cadence dashboard refresh (`refetchInterval: 30_000`) stays a plain interval that rightly pauses in a hidden tab. Variable-cadence job pollers (a fast-then-slow window, a max-poll budget) do not fit the fixed-interval helper yet — extend `jobPolling` before hand-rolling a fourth.
 
 ## Hooks in dedicated files, always

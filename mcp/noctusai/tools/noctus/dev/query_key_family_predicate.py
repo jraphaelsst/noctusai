@@ -21,7 +21,7 @@ Escaped class (2026-10-24, social-wiring replay, fixed locally by 203b6a1b5):
   polled read's `jobPolling(isActive)` predicate reads only `data`; the refetch the
   invalidate triggers landed BEFORE the async job created its rows, so `isActive` was false
   and polling never started. A mutation that reaches a job-polled read only by invalidating
-  it cannot know the read will see the job → it must hand off (`handOffToPolling` from
+  it cannot know the read will see the job → it must hand off (`handOffToPolling` — or its SSE-aware twin `handOffToJobProgress`, push first / polling fallback — from
   `@noctusai/lib`). → `job_handoff_hits`.
 
 Lexical, not a TypeScript AST — the same register as `check_mutation_invalidate_only`
@@ -50,7 +50,7 @@ _TYPE_DECL = re.compile(r"(?:^|\s)(?:export\s+)?(?:interface\s+([A-Z][\w$]*)[^{]
 _JOB_FIELD = re.compile(r"(?<![\w$])(?:job_?id|jobId|consulta_?ids?|consultaIds?|run_?id|runId|execucao_?id|sync_?id|syncId|operation_?id)\s*\??\s*:")
 #: An invalidate-only allow whose own reason says the write starts async work.
 _ASYNC_REASON = re.compile(r"(?i)noc-allow:\s*invalidate-only\b.*(?:ass[ií]ncron|async|enfileir|\bfila\b|queue|background|segundo plano|\bjob|poll)")
-_HANDOFF_CALL = re.compile(r"\bhandOffToPolling\s*\(")
+_HANDOFF_CALL = re.compile(r"\b(?:handOffToPolling|handOffToJobProgress)\s*\(")
 
 _READ_CALL = re.compile(
     r"\b(?:useQuery|useSuspenseQuery|useInfiniteQuery|useSuspenseInfiniteQuery|queryOptions|"
