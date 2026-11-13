@@ -85,6 +85,10 @@ class FakeWahaClient(LinePolicyGuard):
         #: the `noweb` block the last `start_session` actually wrote (None before any start) -- what get_session echoes.
         self.session_noweb: dict[str, Any] | None = None
         self.sent_messages: list[dict[str, Any]] = []
+        #: channels the fake line "owns/admins/follows": [{"id","name","role",...}] (WahaChannels reads these)
+        self.fake_channels: list[dict[str, Any]] = []
+        #: channel posts recorded by `channel_backend` (text + image), policy-guarded like every send
+        self.channel_posts: list[dict[str, Any]] = []
         self.inbound_queue: list[WhatsAppInboundMessage] = []
         self.media_bytes: dict[str, bytes] = {}
         # Session-admin state machine. Unpaired by default — mirrors a
@@ -152,6 +156,11 @@ class FakeWahaClient(LinePolicyGuard):
 
     async def send_text(self, chat_id: str, text: str) -> dict[str, Any]:
         return self._record_send(chat_id, text)
+
+    @property
+    def channel_backend(self) -> "_FakeChannelBackend":
+        """Transport seam for `whatsapp.channels.WahaChannels` (same contract as the real HTTP backend)."""
+        return _FakeChannelBackend(self)
 
     def send_text_sync(self, chat_id: str, text: str) -> dict[str, Any]:
         return self._record_send(chat_id, text)
@@ -657,3 +666,17 @@ class FakeWahaClient(LinePolicyGuard):
         self._guard_write("post", f"/api/{self.session}/groups/{group_id}/leave")
         self.fake_groups.pop(group_id, None)
         self.left_groups.append(group_id)
+
+
+class _FakeChannelBackend:
+    def __init__(self, client: FakeWahaClient):
+        self._c = client
+
+    async def list_raw(self) -> list[dict[str, Any]]:
+        return copy.deepcopy(self._c.fake_channels)
+
+    async def post(self, path: str, body: dict[str, Any], op: str) -> dict[str, Any]:
+        self._c._guard_write("post", path)
+        record = {"id": f"fake-chan-msg-{len(self._c.channel_posts) + 1}", "op": op, **copy.deepcopy(body)}
+        self._c.channel_posts.append(record)
+        return record

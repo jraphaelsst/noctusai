@@ -76,6 +76,16 @@ from noctusai_lib.integrations.whatsapp.connection_store import (
     resolve_by_webhook_token,
     whatsapp_connections_table_ddl,
 )
+from noctusai_lib.integrations.whatsapp.channels import (
+    ChannelApiError,
+    ChannelEngineUnsupported,
+    ChannelError,
+    ChannelIdInvalid,
+    ChannelNotPostable,
+    WahaChannel,
+    WahaChannels,
+    get_channel_publisher,
+)
 from noctusai_lib.integrations.whatsapp.client import (
     WahaClient,
     WahaGroupError,
