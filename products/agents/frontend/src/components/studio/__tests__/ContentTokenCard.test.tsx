@@ -78,23 +78,36 @@ describe("ContentTokenCard", () => {
     render(<ContentTokenCard />);
     fireEvent.click(screen.getByTestId("content-token-new"));
     fireEvent.change(screen.getByTestId("content-token-label"), { target: { value: "x" } });
-    fireEvent.change(screen.getByTestId("content-token-dias"), { target: { value: "400" } });
+    fireEvent.change(screen.getByTestId("content-token-dias"), { target: { value: "31" } });
     expect(screen.getByTestId("content-token-dias-erro")).toBeTruthy();
     expect((screen.getByTestId("content-token-mint") as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(screen.getByTestId("content-token-dias"), { target: { value: "7" } });
     expect((screen.getByTestId("content-token-mint") as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("never-expires warns clearly and sends expira_em_dias null", async () => {
-    mint.mutateAsync.mockResolvedValue({ id: "t1", token: "pk_x", prefix: "pk_x", expires_at: null, scopes: [] });
+  it("has no never-expires option: the server refuses a null expiry", () => {
     render(<ContentTokenCard />);
     fireEvent.click(screen.getByTestId("content-token-new"));
-    fireEvent.change(screen.getByTestId("content-token-label"), { target: { value: "perm" } });
-    fireEvent.click(screen.getByTestId("content-token-modo-nunca"));
-    expect(screen.getByTestId("content-token-nunca-aviso").textContent).toMatch(/continua válido até ser revogado/);
+    expect(screen.queryByTestId("content-token-modo-nunca")).toBeNull();
+  });
+
+  it("mints an avaliacoes token with tipo, no delete option, and points to the evals env var", async () => {
+    mint.mutateAsync.mockResolvedValue({ id: "t9", token: "pk_ev", prefix: "pk_ev", expires_at: "2026-12-01T00:00:00Z", scopes: ["studio:evals-run"] });
+    render(<ContentTokenCard />);
+    fireEvent.click(screen.getByTestId("content-token-new"));
+    fireEvent.change(screen.getByTestId("content-token-label"), { target: { value: "loop" } });
+    fireEvent.click(screen.getByTestId("content-token-tipo-avaliacoes"));
+    expect(screen.queryByTestId("content-token-permitir-exclusao")).toBeNull();
     fireEvent.click(screen.getByTestId("content-token-mint"));
-    await waitFor(() => expect(mint.mutateAsync).toHaveBeenCalledWith({ label: "perm", expira_em_dias: null }));
-    await waitFor(() => expect(screen.getByText(/vale até ser revogado/)).toBeTruthy());
+    await waitFor(() => expect(mint.mutateAsync).toHaveBeenCalledWith({ label: "loop", expira_em_dias: 30, tipo: "avaliacoes" }));
+    expect(screen.getByText(/NOCTUS_AGENTS_EVALS_TOKEN=/)).toBeTruthy();
+  });
+
+  it("badges an avaliacoes token", () => {
+    mockTokens.mockReturnValue(view({ data: { itens: [row({ scopes: ["studio:evals-run"] }), row({ id: "t2" })] } }));
+    render(<ContentTokenCard />);
+    expect(screen.getByTestId("content-token-avaliacoes-t1")).toBeTruthy();
+    expect(screen.queryByTestId("content-token-avaliacoes-t2")).toBeNull();
   });
 
   it("revokes only after the confirm modal", async () => {

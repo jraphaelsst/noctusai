@@ -1,7 +1,8 @@
 /**
- * "Token de conteúdo (MCP)" — platform-admin section of the Studio home. Mints the `studio:content-write`
- * token the `noctus.agents.content` MCP tool uses to edit DRAFTS of the platform's agents, with an expiry
- * chosen in days (1..365) or "never", lists the platform org's tokens (never the secret) and revokes them.
+ * "Token de conteúdo (MCP)" — platform-admin section of the Studio home. Mints the tokens the
+ * `noctus.agents.content` MCP tool uses: tipo "conteúdo" (`studio:content-write`, edits DRAFTS) or tipo
+ * "avaliações" (`studio:evals-run` only, runs the eval loop), expiry 1..30 days (the server's contract: a
+ * never-expiring token is refused), lists the platform org's tokens (never the secret) and revokes them.
  * The raw secret lives only in the dialog's local state: dropped on close, never logged/cached/put in a URL.
  */
 import { useState } from "react";
@@ -25,7 +26,14 @@ const INPUT_CLASS =
   "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/50";
 
 export const CONTENT_TOKEN_DEFAULT_DAYS = 30;
-export const CONTENT_TOKEN_MAX_DAYS = 365;
+export const CONTENT_TOKEN_MAX_DAYS = 30;
+
+export type ContentTokenTipo = "conteudo" | "avaliacoes";
+
+const ENV_VAR: Record<ContentTokenTipo, string> = {
+  conteudo: "NOCTUS_AGENTS_CONTENT_TOKEN",
+  avaliacoes: "NOCTUS_AGENTS_EVALS_TOKEN",
+};
 
 function fmt(value: string | null): string {
   return value ? format(new Date(value), "dd/MM/yyyy HH:mm", { locale: ptBR }) : "—";
@@ -36,7 +44,7 @@ const STATUS_LABEL: Record<ContentTokenRow["status"], string> = { ativo: "Ativo"
 function MintDialog({ onClose }: { onClose: () => void }) {
   const mint = useMintContentToken();
   const [label, setLabel] = useState("");
-  const [nunca, setNunca] = useState(false);
+  const [tipo, setTipo] = useState<ContentTokenTipo>("conteudo");
   const [dias, setDias] = useState(String(CONTENT_TOKEN_DEFAULT_DAYS));
   const [permitirExclusao, setPermitirExclusao] = useState(false);
   // Held ONLY here; unmounting the dialog discards it.
@@ -44,12 +52,12 @@ function MintDialog({ onClose }: { onClose: () => void }) {
 
   const diasNum = Number(dias);
   const diasOk = Number.isInteger(diasNum) && diasNum >= 1 && diasNum <= CONTENT_TOKEN_MAX_DAYS;
-  const canSubmit = label.trim().length > 0 && (nunca || diasOk) && !mint.isPending;
+  const canSubmit = label.trim().length > 0 && diasOk && !mint.isPending;
 
   async function handleMint() {
     try {
-      setMinted(await mint.mutateAsync({ label: label.trim(), expira_em_dias: nunca ? null : diasNum,
-        ...(permitirExclusao ? { permitir_exclusao: true } : {}),
+      setMinted(await mint.mutateAsync({ label: label.trim(), expira_em_dias: diasNum,
+        ...(tipo === "avaliacoes" ? { tipo } : permitirExclusao ? { permitir_exclusao: true } : {}),
       }));
     } catch (err) {
       toast.error(errorMessage(err));
@@ -72,7 +80,7 @@ function MintDialog({ onClose }: { onClose: () => void }) {
               <CopyTextButton text={minted.token} />
             </div>
             <p className="text-xs text-muted-foreground">
-              Guarde em <code className="font-mono">NOCTUS_AGENTS_CONTENT_TOKEN=</code> no arquivo{" "}
+              Guarde em <code className="font-mono">{ENV_VAR[tipo]}=</code> no arquivo{" "}
               <code className="font-mono">~/.config/noctus/agents.env</code>.{" "}
               {minted.expires_at ? `Expira em ${fmt(minted.expires_at)}.` : "Não expira — vale até ser revogado."}
             </p>
@@ -94,9 +102,18 @@ function MintDialog({ onClose }: { onClose: () => void }) {
               />
             </div>
             <fieldset className="space-y-2">
-              <legend className="mb-1 block text-xs font-medium">Validade</legend>
+              <legend className="mb-1 block text-xs font-medium">Tipo</legend>
               <label className="flex items-center gap-2 text-sm">
-                <input type="radio" name="content-token-validade" checked={!nunca} onChange={() => setNunca(false)} data-testid="content-token-modo-dias" />
+                <input type="radio" name="content-token-tipo" checked={tipo === "conteudo"} onChange={() => setTipo("conteudo")} data-testid="content-token-tipo-conteudo" />
+                Conteúdo — edita rascunhos dos agentes
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="radio" name="content-token-tipo" checked={tipo === "avaliacoes"} onChange={() => setTipo("avaliacoes")} data-testid="content-token-tipo-avaliacoes" />
+                Avaliações — só roda o loop de avaliação (inicia, lê e cancela rodadas)
+              </label>
+            </fieldset>
+            <div className="space-y-1">
+              <label className="flex items-center gap-2 text-sm">
                 Expira em
                 <input
                   type="number"
@@ -106,28 +123,18 @@ function MintDialog({ onClose }: { onClose: () => void }) {
                   max={CONTENT_TOKEN_MAX_DAYS}
                   step={1}
                   value={dias}
-                  disabled={nunca}
                   onChange={(e) => setDias(e.target.value)}
                   data-testid="content-token-dias"
                 />
                 dias
               </label>
-              {!nunca && !diasOk && (
+              {!diasOk && (
                 <p className="text-xs text-destructive" data-testid="content-token-dias-erro">
                   Informe um número inteiro de 1 a {CONTENT_TOKEN_MAX_DAYS} dias.
                 </p>
               )}
-              <label className="flex items-center gap-2 text-sm">
-                <input type="radio" name="content-token-validade" checked={nunca} onChange={() => setNunca(true)} data-testid="content-token-modo-nunca" />
-                Nunca expira
-              </label>
-              {nunca && (
-                <p className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive" data-testid="content-token-nunca-aviso">
-                  Atenção: um token de escrita que nunca expira continua válido até ser revogado. Se vazar, qualquer pessoa
-                  com ele edita os rascunhos dos agentes da plataforma. Revogue-o aqui assim que não precisar mais.
-                </p>
-              )}
-            </fieldset>
+            </div>
+            {tipo === "conteudo" && (
             <label className="flex items-start gap-2 text-sm">
               <input
                 type="checkbox"
@@ -143,6 +150,7 @@ function MintDialog({ onClose }: { onClose: () => void }) {
                 </span>
               </span>
             </label>
+            )}
           </div>
         )}
       </DialogBody>
@@ -197,7 +205,8 @@ export function ContentTokenCard() {
           <p className="mt-1 max-w-3xl text-xs text-muted-foreground">
             Permite que a ferramenta <code className="font-mono">noctus.agents.content</code> edite os <strong>rascunhos</strong> dos
             agentes da plataforma (textos, seções, ferramentas, decisões, especificações, skills, padrão de qualificação, evals e regras de
-            conformidade). Ele nunca publica uma versão e nunca conversa com leads.
+            conformidade). Ele nunca publica uma versão e nunca conversa com leads. Um token do tipo{" "}
+            <strong>Avaliações</strong> só roda o loop de avaliação (<code className="font-mono">NOCTUS_AGENTS_EVALS_TOKEN</code>).
           </p>
         </div>
         <Button size="sm" variant="primary" onClick={() => setMinting(true)} data-testid="content-token-new">
@@ -221,6 +230,11 @@ export function ContentTokenCard() {
                   <Badge variant={t.status === "ativo" ? "default" : "muted"} data-testid={`content-token-status-${t.id}`}>
                     {STATUS_LABEL[t.status]}
                   </Badge>
+                  {t.scopes?.includes("studio:evals-run") && (
+                    <Badge variant="outline" data-testid={`content-token-avaliacoes-${t.id}`}>
+                      Avaliações
+                    </Badge>
+                  )}
                   {t.scopes?.includes("studio:agent-delete") && (
                     <Badge variant="outline" data-testid={`content-token-exclusao-${t.id}`}>
                       Pode excluir agentes

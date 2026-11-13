@@ -1,7 +1,7 @@
 ---
 name: noc-iterate
 description: Use to run an agent's eval REFINEMENT loop in the agents product — triggers "refine the agent", "run the eval loop", "iterate on the evals", "fix the failing evals", "get agente-base / sdr-base / Julia to target", "refinement round", "eval failed, fix the prompt", "rodada de refino", "loop de avaliação", "refinar o agente", "por que não melhorou". One loop under the eval-loop gate: round (whole-suite run with loop_id) → split each failure harness vs target → council → ONE fix on the prompt content → next round, until the gate stops it (95% target, 2 rounds without improvement, US$ 5 cap, max rounds from config).
-version: 1.0.0
+version: 1.0.1
 ---
 
 # noc-iterate — error → fix on the prompt → re-measure, under the gate
@@ -57,8 +57,11 @@ Gate: `products/agents/docs/eval-loop-gate-contract.md` (G1–G7). Process owner
 `loop_iniciar` `{suite}` (+ optional `rodadas_planejadas`, `orcamento_usd`, never above the config) · `loops` /
 `loop chave=<loop_id>` (state, `serie`, `falhas`) · `rodada` `{suite, loop_id}` (behaviour suite uses the current
 draft version) · `run chave=<run_id>` (results with `saida`, `notas_juiz`, `veredito`; mechanism: `{suite: mecanismo}`)
-· `loop_parar chave=<loop_id>`. Token: `NOCTUS_AGENTS_EVALS_TOKEN` (a `studio:evals-run` token) else the content
-token. A refusal returns `servidor: {http, code, detail}` verbatim: read it, never retry blind.
+· `loop_parar chave=<loop_id>`. Token: `NOCTUS_AGENTS_EVALS_TOKEN` in `~/.config/noctus/agents.env`, a `studio:evals-run`
+token. The content token (`studio:content-write`) NEVER reaches an eval route (403 `scope_missing`), so check this
+BEFORE step 1; missing → a platform admin mints one (Studio → Agentes → Token de conteúdo → Tipo: Avaliações, max 30
+days) — an agent cannot mint it, so stop and ask. A refusal returns `servidor: {http, code, detail}` verbatim: read
+it, never retry blind.
 
 ## Hard rules
 
