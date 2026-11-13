@@ -58,18 +58,29 @@ async def _collect(bus: RealtimeBus, scope: str, count: int, **kwargs):
     return await asyncio.wait_for(_drain(), timeout=5)
 
 
+async def _publish_until_delivered(bus, scope, event, payload, subscribe_task):
+    """Publish `event` repeatedly until the live-tail subscriber has its
+    first event. A live-tail subscription only sees events published AFTER
+    it attaches, and attaching is not observable from outside, so a fixed
+    `sleep` before one publish races the subscriber under CPU load (it went
+    red in the merge-queue parity run on a starved machine, 2026-11-13).
+    Re-publishing keeps the live-tail semantics and removes the race;
+    `_collect`'s own timeout still fails a bus that never delivers."""
+    while not subscribe_task.done():
+        await bus.publish(scope, event, payload)
+        await asyncio.sleep(0.05)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("make_bus", BUS_FACTORIES, ids=BUS_IDS)
 async def test_publish_then_subscribe_roundtrip(make_bus) -> None:
     bus = make_bus()
     scope = "wa:conn:1"
 
-    async def publisher():
-        await asyncio.sleep(0.05)  # let the subscriber attach first
-        await bus.publish(scope, "message.new", {"text": "oi"})
-
     subscribe_task = asyncio.create_task(_collect(bus, scope, 1))
-    await publisher()
+    await _publish_until_delivered(
+        bus, scope, "message.new", {"text": "oi"}, subscribe_task
+    )
     events = await subscribe_task
 
     assert len(events) == 1
@@ -106,12 +117,10 @@ async def test_no_last_event_id_is_live_tail_only(make_bus) -> None:
 
     await bus.publish(scope, "message.new", {"seq": "before"})
 
-    async def publisher():
-        await asyncio.sleep(0.05)
-        await bus.publish(scope, "message.new", {"seq": "after"})
-
     subscribe_task = asyncio.create_task(_collect(bus, scope, 1))
-    await publisher()
+    await _publish_until_delivered(
+        bus, scope, "message.new", {"seq": "after"}, subscribe_task
+    )
     events = await subscribe_task
 
     assert len(events) == 1
@@ -194,7 +203,11 @@ async def test_redis_bus_subscribe_uses_dollar_cursor_when_no_last_event_id() ->
     subscription = bus.subscribe("wa:conn:x")
 
     task = asyncio.ensure_future(subscription.__anext__())
-    await asyncio.sleep(0.05)  # let at least one poll happen
+    # wait (bounded) for at least one poll; a fixed sleep raced under load
+    for _ in range(200):
+        if redis.xread_calls:
+            break
+        await asyncio.sleep(0.01)
     task.cancel()
     try:
         await task
