@@ -13,6 +13,7 @@
     "019_google_connection.sql": "9b8e58273d1dbb90a03c25eb85e4d4e0a4e0fcdb7cbbd014bf21851d39964ecc",
     "020_whatsapp_line_events.sql": "002d16672512ea68890d4b9391776671c97dc85317350668c45a6a0196f0193b",
     "021_respostas_eventos.sql": "28cadcac34013921b4d368c852ab3ed836ed8e7c590f94f9fb307369bf060a09",
-    "022_inbox_conversas.sql": "ab08cdd7b7aa29d49960e171e169accbb13b700420d2f6b80dd2e4cc47b5b4db"
+    "022_inbox_conversas.sql": "ab08cdd7b7aa29d49960e171e169accbb13b700420d2f6b80dd2e4cc47b5b4db",
+    "023_agents_grant.sql": "e106f3333a9a7d7bbc1cddb331dffd19309d63e2b56b89b3c7e04ab78c6f6aaf"
   }
 }
