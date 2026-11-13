@@ -157,12 +157,33 @@ Before the redirect lands, `noc-wiring-audit` runs on every current Edição de 
 
 ## 10 · Manual photo editor (D3)
 
-- **Shape:** the photo twin of the CoreStudio video-editing module (same layout, the same tool-panel pattern and the same save/version model). ⚠ Location of that module still to confirm: it is not on `origin/dev` under social-wiring; asked session aa2f7b for the branch/path. The twin must **consume the same shared organ**. If the video module's editor shell isn't in `@noctusai/lib` yet, it gets promoted there first (componentize, not fork).
+- **Shape:** the photo twin of the CoreStudio **Twin video editor**, which is a design spec and not built yet: `projects/core-studio-build/specs/twin-editor-design.md` (W3-1, deferred to T3). Its principle carries over as is: **"the AI edits, you adjust"**. Every control opens already filled by the AI (marked as the AI's choice), with "outra opção" next to the manual override, and a photo that needs no change is approved without opening the editor.
+- **Reused from the twin spec, and built once as shared `@noctusai/lib` components** (whichever editor is built first creates them; the other consumes them): header with `SaveIndicator` + undo/redo, a preview canvas plus a tab panel, the **command stack** (each edit is a command; ⌘Z/⇧⌘Z), **autosave** (800 ms debounced PATCH with If-Match, "não salvo" + retry, `beforeunload` guard), and `RenderPanel`. The photo version has no scene strip; it has a **photo strip** of the property's photos (by room).
+- **Edit preset** (twin §0.2 analog): a per-workspace, versioned real-estate preset (per-room recipes from the photo agent). It is the same object as the funnel's "Estilo" (§9).
+- **AI self-check** (twin §0.3 analog) flags a photo as "precisa de atenção" when the fidelity gate fails (geometry, windows or fixtures moved vs the original), the room is uncertain, an exterior sky was replaced on an interior, or a declutter happened without the "imagem ilustrativa" label.
 - **Opens from:** the funnel's review step and the card detail ("editar à mão"), on one photo at a time.
 - **Tools v1 (real-estate set):** crop/aspect, straighten + vertical correction (perspective), exposure/contrast/highlights/shadows, white balance, window pull (balance blown windows), sky replace, object removal / clean-up, before/after toggle. AI tools (sky, removal) call the same `photo_editing` engine. Manual sliders are client-side and only persist the result.
 - **Data:** a manual edit is a new version of the photo (`fotos_edicoes`, with `origem = manual`) plus an event. It never overwrites, so the dataset can learn from human corrections against AI output.
 
-## 11 · Open questions
+## 11 · Lessons from the third-party app study (reference only)
+
+Source: `_private-studies/imobshotai/STUDY-app.md` (outside git; nothing copied). Its edit is one fixed OpenAI prompt per photo, with no room logic and no QC. Its video is a plain ffmpeg Ken Burns slideshow and is switched **off** in production. Properties live only on the phone. What we take as **our own design decisions**:
+
+| Lesson | Lands in |
+|---|---|
+| Per-photo **idempotent job id** + ledger: reserve → process → store → confirm, or refund; "recover, don't recharge" before a retry | photo events: `foto_edicao_reservada / _concluida / _estornada` in `fotos_eventos`; cost per property (§3.4) |
+| **Room first, then a per-room recipe**, plus a **fidelity gate** (edge/structure diff vs the input) before human review | photo agent `.md` + engine step; self-check (§10) |
+| Keep the **original and the edit side by side**; never overwrite | card detail + review (already the model in `fotos_edicoes`) |
+| **Watermark at delivery, not in storage** (agency logo, per viewer/role) | card export/download path |
+| Preserve input aspect and resolution; **pin the model version** + content hash on every event | engine config + events |
+| **Deterministic video baseline**: the motion cycle (push-in / pan / pull-out), eased zoom, 0.5 s crossfades, music fade in/out, x264 + faststart. The agent picks the move per room and the order; it does not generate pixels | video agent `.md` + the `video.render` job |
+| **9:16 and 16:9 from the same timeline**, with per-photo crop and pans along the long axis; upscale stills before zoompan | D4; video step 3 |
+| Story: opening card (ref, bairro, price), room captions, end card with logo + broker CTA, −14 LUFS, cuts on the beat | video framework (to be confirmed against One's real videos in `STUDY-videos.md`) |
+| Explicit **consent naming the AI vendor** before upload | photo funnel step 2 (with an LGPD check by `legal-advisor`) |
+| Real raw broker photos + an approved "golden" per room as the **eval set** | photo agent eval; One dataset |
+| Later: **level-gated mobile capture** (auto-shutter when level, ultra-wide) fixes verticals cheaper than AI | roadmap only (no mobile app today) |
+
+## 12 · Open questions
 
 - **Q6** Third-party app study impact (above).
 - **Q7** Music: pick the tier once `MUSIC-LIBRARIES.md` lands (free CC0/AI-generated set vs a paid partner API).
