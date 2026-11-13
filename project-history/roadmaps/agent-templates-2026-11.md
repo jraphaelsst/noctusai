@@ -185,6 +185,8 @@ Owner order. Detail: `~/.noctusai/private/julia/HANDOVER-noc02-to-noc1-2026-11-0
 ## Open questions (asked of the owner when the phase starts)
 
 - **Q2**: the cost of one BASE change = N children × affected evals; is a budget cap per change needed?
+- **Q3 (2026-11-12, "agents-camada-contradicao")**: the readiness overlap check (`camada_sobreposicao.py`) is lexical + key rules only. A child section that CONTRADICTS a parent with different words (assistente-pessoal's collisions scored 0.06–0.17, same band as healthy layers) needs an LLM semantic judge with its own evals, and the `TEMAS` synonym table should become a per-section declared topic (schema change). Fires when a second contradiction slips past readiness into an eval failure.
+- **Q4 (2026-11-12)**: Julia's prod layer carries 4 near-verbatim restatements of agente-base/sdr-base sections (3 same-key, `reengajamento` vs `follow-up`). Removing them is a prompt-content change → do it inside Julia's next refinement loop (noc-iterate), one variable per round, not as a side edit.
 
 ## Decision log
 

@@ -3,7 +3,7 @@ tables -> realtime) lifted out of `social-wiring` without its Julia/chatbot/
 auto-reply/lead-intake behaviour.
 
 Public surface:
-- DDL: ``whatsapp_chats_table_ddl``, ``whatsapp_messages_table_ddl``.
+- DDL: ``whatsapp_chats_table_ddl`` (``with_agent_pause=``), ``chat_agent_pause_alter_ddl``, ``whatsapp_messages_table_ddl``.
 - Types: ``InboxChat``, ``InboxMessage``.
 - Store: ``WhatsAppChatStore`` Protocol + ``FakeWhatsAppChatStore`` +
   ``SupabaseWhatsAppChatStore`` + ``build_whatsapp_chat_store`` (fake-or-refuse).
@@ -27,6 +27,7 @@ from noctusai_lib.integrations.whatsapp.inbox.backfill import (
     run_backfill_all,
 )
 from noctusai_lib.integrations.whatsapp.inbox.ddl import (
+    chat_agent_pause_alter_ddl,
     whatsapp_chats_table_ddl,
     whatsapp_messages_table_ddl,
 )
@@ -43,6 +44,7 @@ from noctusai_lib.integrations.whatsapp.inbox.ingest import (
 )
 from noctusai_lib.integrations.whatsapp.inbox.predicates import inbound_one_to_one_only
 from noctusai_lib.integrations.whatsapp.inbox.realtime import (
+    EVENT_CHAT_DELETED,
     EVENT_CHAT_READ,
     EVENT_CHAT_UPSERT,
     EVENT_MESSAGE_ACK,
@@ -66,6 +68,7 @@ from noctusai_lib.integrations.whatsapp.inbox.types import ChatState, InboxChat,
 __all__ = [
     "BackfillReport",
     "ChatState",
+    "EVENT_CHAT_DELETED",
     "EVENT_CHAT_READ",
     "EVENT_CHAT_UPSERT",
     "EVENT_MESSAGE_ACK",
@@ -98,6 +101,7 @@ __all__ = [
     "register_inbox_backfill_job",
     "resolve_chat_identity",
     "run_backfill_all",
+    "chat_agent_pause_alter_ddl",
     "whatsapp_chats_table_ddl",
     "whatsapp_messages_table_ddl",
 ]

@@ -35,6 +35,7 @@ from app.studio.eval_mecanismo import MecanismoRequisito, PortaoMecanismo, decid
 from app.studio.especificacoes_service import config_atual, violacoes_armazenadas
 from app.studio.models import CompiledPrompt, ConfigValidacao, GateRun
 from app.studio.camada_validada import VeredictoCamada, base_nao_validada, coletar_camadas_base
+from app.studio.camada_sobreposicao import Achado, analisar as analisar_sobreposicao
 from app.studio.camadas import efetivo
 from app.studio.regras_secao import REGRA_DISCORDAR
 
@@ -202,6 +203,8 @@ class Entrada:
     camadas_base: tuple[VeredictoCamada, ...] = ()
     #: A non-template runtime agent that is neither legacy nor an instance and has no parent template.
     sem_modelo_pai: bool = False
+    #: Child sections that restate the parent chain (``app.studio.camada_sobreposicao``); advisory only.
+    sobreposicoes_camada: tuple[Achado, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -659,9 +662,25 @@ def _canonico(e: Entrada) -> list[Item]:
     return itens
 
 
+_TEXTO_SOBREPOSICAO = {
+    "secao_repete_pai": "repete a seção '{p}' do pai (texto muito parecido)",
+    "secao_papel_empilhado": "empilha um segundo papel '{p}' sobre o do pai",
+    "secao_sobrepoe_pai": "sobrepõe a seção '{p}' do pai",
+}
+
+
+def _sobreposicao(e: Entrada) -> list[Item]:
+    """Advisory: a child section restating the parent chain (two voices in one prompt). Never blocks publish."""
+    return [Item(
+        a.codigo, "conteudo", "aviso",
+        f"A seção '{a.chave_filho}' {_TEXTO_SOBREPOSICAO[a.codigo].format(p=a.chave_pai)}. Aviso: não impede a publicação.",
+        "Funda as duas (mantenha o texto no pai e deixe no filho só o que é próprio) ou renomeie a seção do filho.",
+        detalhe=a.to_dict()) for a in e.sobreposicoes_camada]
+
+
 def compor(e: Entrada) -> Prontidao:
     """The readiness items of the snapshot (blocking first, then advisory, then ok; stable within a severity)."""
-    itens = [*_compilador(e), *_padrao(e), *_avaliacao(e), *_camadas(e), *_skills(e), *_ferramentas(e), *_catalogo(e), *_periferia(e), *_atendimento(e), *_canonico(e)]
+    itens = [*_compilador(e), *_padrao(e), *_avaliacao(e), *_camadas(e), *_sobreposicao(e), *_skills(e), *_ferramentas(e), *_catalogo(e), *_periferia(e), *_atendimento(e), *_canonico(e)]
     for i in itens:
         if i.grupo not in GRUPOS:
             raise ValueError(f"item {i.codigo!r} has group {i.grupo!r}, outside GRUPOS (the panel cannot label it)")
@@ -716,6 +735,16 @@ def coletar(
         if consolidacao is None:
             raise ValueError("coletar: um agente com pai exige a store de consolidação (portão da cadeia)")
         camadas_base = coletar_camadas_base(store=store, catalog=catalog, consolidacao=consolidacao, org_id=org_id, agent=agent, draft=draft)
+
+    sobreposicoes: tuple[Achado, ...] = ()
+    if getattr(agent, "pai_agent_id", None) is not None:
+        ef_s = efetivo(store)
+        cad = ef_s.cadeia(org_id, draft.id)
+        if len(cad) > 1:
+            (po, pv) = cad[-2]
+            sobreposicoes = analisar_sobreposicao(
+                [(s.chave, s.conteudo) for s in ef_s.proprio.list_sections(org_id, draft.id) if s.ativo],
+                [(s.chave, s.conteudo) for s in ef_s.list_sections(po, pv) if s.ativo])
 
     casos = evals.list_cases(org_id, agent.id)
     ativos = [c for c in casos if c.ativo]
@@ -790,6 +819,7 @@ def coletar(
                         and getattr(agent, "conteudo_modo", "legado") != "legado"
                         and getattr(agent, "definition_scope", None) != "instancia"
                         and getattr(agent, "kind", "runtime") == "runtime"),
+        sobreposicoes_camada=sobreposicoes,
     )
 
 
