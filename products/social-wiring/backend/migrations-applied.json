@@ -81,6 +81,7 @@
     "336_vitrine_exclusivos_orgs.sql": "af1ba98fc3be53ee0c5385c5a34ee216d1de4ea5d7ebcbeb57981f6cedda25af",
     "337_vista_clientes_sync.sql": "d07d791c92f6e642741ed69228cc1089e17cb4dca60d24e7fafe3666109515a6",
     "338_roteiro_ciclo_de_vida.sql": "b46a34288180adb8a46c98e3a3eaea3f6111b52f9e0c38ae28da35c730c55e2a",
-    "339_marca_one_per_org.sql": "3c9a79209be958b322ef12a28f532359719366b85fcbab35aea786be36fb26f7"
+    "339_marca_one_per_org.sql": "3c9a79209be958b322ef12a28f532359719366b85fcbab35aea786be36fb26f7",
+    "340_transcricoes_formato_shape.sql": "3b997786d54b6b6050c0bde411e338ed4f37001d6ad5271d0553401ffb2cd15c"
   }
 }
