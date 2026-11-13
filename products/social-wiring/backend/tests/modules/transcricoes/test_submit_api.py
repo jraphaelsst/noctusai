@@ -154,10 +154,24 @@ class TestValidationOrder:
         assert r.status_code == 422 and r.json()["codigo"] == codigo
         assert rows(client) == []
 
-    def test_422_probed_codec_not_allowed(self, client):
-        client.transcriber = FakeTranscriber(default_probe=probe(5.0, "webm", "vp9"))
+    def test_422_probed_container_not_allowed(self, client):
+        client.transcriber = FakeTranscriber(default_probe=probe(5.0, "avi", "mp3"))
         r = post(client)
         assert r.status_code == 422 and r.json()["codigo"] == "formato_invalido"
+        assert rows(client) == []
+
+    @pytest.mark.parametrize(
+        "container,codec",
+        [  # the REAL worker ffprobe names (2026-11-13: all of these were refused)
+            ("wav", "pcm_s16le"),
+            ("mov,mp4,m4a,3gp,3g2,mj2", "aac"),
+            ("matroska,webm", "opus"),
+        ],
+    )
+    def test_real_ffprobe_names_accepted(self, client, container, codec):
+        client.transcriber = FakeTranscriber(default_probe=probe(5.0, container, codec))
+        r = post(client)
+        assert r.status_code == 202, r.json()
 
     def test_422_probe_rejects_corrupt_audio(self, client):
         client.transcriber = RaisingProbe(TranscriptionRejected("audio_corrompido"))
