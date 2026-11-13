@@ -73,6 +73,14 @@
     "327_finance_service_only.sql": "b0496119928d19a9e2678337dd7782d2343a2b9ce2b3a8e44db779d9b595454e",
     "328_documentos_service_only.sql": "cc7835c1935122a0a99062f785b5ca65f53bd25bbee20fa6c0dc4ad0583934a2",
     "330_esteira_card_hub_service_only.sql": "8be43f0ebee7ca502a339a8934094fa4c44e5f2c080da3c336797a7936050ce3",
+    "331_ad_lead_intake.sql": "b72d0e279698875e6d51bda25a9d5f700f0ebb6829c97a7aa5c6443cc497be1e",
+    "332_ad_lead_intake_divergencia_tipos.sql": "eed2d84c6b2fb4dceae8cd762d23c2047fe734bae1b702d67469cb28df349598",
+    "333_imovel_ref_avisos.sql": "d7482a96a992eaa793ec1bfcfb3802293ea8503a0924aa56290e01d6b1f243b1",
+    "334_corretores_vista.sql": "18fee2fd1facd16be8423df0358b5139c4870356f33f73c04fcea9323aefee11",
+    "335_lead_corretores_campos_origem.sql": "f73a7265c90e5575aab023ab6d8b992c68c455ba172e8bf0e2fd64adbbe39437",
+    "336_vitrine_exclusivos_orgs.sql": "af1ba98fc3be53ee0c5385c5a34ee216d1de4ea5d7ebcbeb57981f6cedda25af",
+    "337_vista_clientes_sync.sql": "d07d791c92f6e642741ed69228cc1089e17cb4dca60d24e7fafe3666109515a6",
+    "338_roteiro_ciclo_de_vida.sql": "b46a34288180adb8a46c98e3a3eaea3f6111b52f9e0c38ae28da35c730c55e2a",
     "339_marca_one_per_org.sql": "3c9a79209be958b322ef12a28f532359719366b85fcbab35aea786be36fb26f7"
   }
 }
