@@ -15,6 +15,30 @@ from .usage import metered_call
 from .vision_types import VisionResult
 
 
+def _vision_model(config: Any, provider: str, model: Optional[str]) -> str:
+    """The vision model to send to ``provider``.
+
+    An explicit ``model`` always wins. Without one, `LLMConfig.default_vision_model`
+    belongs to `LLMConfig.default_provider`. Handing it to a different vendor
+    (e.g. ``gpt-4o`` to Anthropic) fails one layer down with a confusing
+    "model not found", so a provider override without a model resolves that
+    provider's own ``standard`` tier through the model policy. A provider with
+    no routable model raises here, never silently sends a foreign model id.
+    """
+    if model:
+        return model
+    if provider == config.default_provider:
+        return config.default_vision_model
+    from .model_policy import resolve_model
+
+    native = resolve_model(provider, "extract")
+    if native is None:
+        raise ValueError(
+            f"No routable vision model for provider {provider!r}; pass model= explicitly."
+        )
+    return native
+
+
 async def analyze_image(
     image: Union[bytes, str, Sequence[Union[bytes, str]]],
     prompt: str,
@@ -51,7 +75,7 @@ async def analyze_image(
     """
     config = get_llm_config()
     effective_provider = provider or config.default_provider
-    effective_model = model or config.default_vision_model
+    effective_model = _vision_model(config, effective_provider, model)
     api_key = resolve_api_key(effective_provider, org_id)
     await enforce_spend_guard(org_id)
 
@@ -118,7 +142,7 @@ async def analyze_images(
     """
     config = get_llm_config()
     effective_provider = provider or config.default_provider
-    effective_model = model or config.default_vision_model
+    effective_model = _vision_model(config, effective_provider, model)
     api_key = resolve_api_key(effective_provider, org_id)
     await enforce_spend_guard(org_id)
 
