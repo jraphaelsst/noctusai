@@ -11,7 +11,7 @@
 - **M3: dev validation**: deploy wiring (S6A) and the no-leak HTTP error bodies landed through the merge queue with the merged tree CI-green; migrations 001–019 on dev; pre-live security + AI-path audit with no P0/P1 (D51 accepts password-only admin sign-in for now). ✅ reached 2026-11-12 (`264f31b67`, `5e30f5298`).
 - **M4: prod promote**: ✅ authorized 2026-11-11 by the owner in-session ("i allow all migrations to be applied, also all to go to prod and deploy live."; owner-ask tier; consent record `deploy/consent/assistant.prod.yml`). The ✅ marks the authorization; the cutover items below stay open until reached.
   - ✅ Dev validation (M3) complete.
-  - ⬜ Prod registration (compose service, tunnel ingress, config template).
-  - ⬜ `predeploy_check assistant` ready on the integrated tip; core 119 + assistant 001–019 applied; secrets set; image deployed; DNS.
+  - ✅ Prod registration (compose service, tunnel ingress, config template): ac-s6b-prod-registration landed 2026-11-12.
+  - ✅ `predeploy_check assistant` ready on the integrated tip; core 119 + assistant 001–022 applied; image deployed and healthy (deploy #4, release 5e8d982c6, 2026-11-13). Live replies stay off (`ASSISTANT_REPLY_ENABLED=false`) until the owner switches them on in M5.
   - ⬜ Live probe (curl expected codes + browser), per `feedback_security_as_build_pattern`.
 - **M5: owner pairs the personal line**: owner-hand apply in Terminal.app, QR scan on Conexão, Google redirect URI + scopes in Cloud Console. ⬜ Owner's hand only.
