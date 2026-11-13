@@ -203,5 +203,7 @@ Source: `_private-studies/imobshotai/STUDY-app.md` (outside git; nothing copied)
 ## 12 · Open questions
 
 - **Q6** Third-party app study impact (above).
-- **Q7** Music tier: recommended **A** (a fixed library generated with Stable Audio, whose terms allow end-user use + output ownership, plus hand-picked CC0), plus an Epidemic Sound Partner quote in parallel. Legal points go to `legal-advisor` first (`MUSIC-LIBRARIES.md`).
-- **Q8** Short (9:16) voice-over: TTS voice, the broker records it, or music only?
+- ~~Q7~~ → **D8 (2026-11-13): music tier A** — a fixed library generated with Stable Audio (terms allow end-user use + output ownership) plus hand-picked CC0 — and an Epidemic Sound Partner quote in parallel. The legal points in `MUSIC-LIBRARIES.md` go to `legal-advisor` before any track ships.
+- ~~Q8~~ → **D9 (2026-11-13): v1 is the TOUR WITH MUSIC** (16:9 and 9:16, no voice). The voice-over is a later evolution, to be planned: there is no VO training material, but there are clips of brokers talking that could feed it. Order: tour+music working first, then evolve.
+- **D10 (2026-11-13): vision runs on Anthropic.** Room classification, quality attributes and the fidelity gate use the Anthropic vision provider through the shared `llm_vision_provider` switch. Image *editing* (pixel generation) stays on the `photo_editing` engine's provider, because Anthropic does not generate images.
+- **Portal note (owner, 2026-11-13):** some listings deliberately embed a condominium or generic video (ONE10449, ONE8590, ONE10702, ONE9770, ONE9012, GA0117). Having a video raises the portal score and the portals don't check that it's a tour. Flagged for later: swap in the real tour when ImobShotAI produces one. Not a defect.
