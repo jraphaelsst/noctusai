@@ -7,15 +7,15 @@ holds):
 
 * the intake rows + their events, the reply events, the classifier verdicts (`ai_outputs`) and jobs -- one transaction in
   `assistant.apagar_dados_conversa` (migration 022);
-* the agent's thread in the agents product, through the channel client's own `delete_conversation_data` (skipped when no
-  agent is configured: nothing exists there).
+* the agent's thread in the agents product, through the channel client's own `delete_conversation_data` (skipped, with a warning, when the org has no
+  live agents grant: the platform channel is not connected, so there is no credential to call it with).
 
 LGPD: nothing here logs a body, a phone or a chat id.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 import anyio.to_thread
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 def build_chat_eraser(
     client_factory: Callable[[], Any], identity_key: Callable[[], str], *,
-    agents_factory: Callable[[], Any], agent_key: Callable[[], str],
+    agents_for: Callable[[Any], Awaitable[Any]],
 ):
     """`async (org_id, connection_id, chat_id, actor) -> None` -- the `on_delete_chat` hook."""
     from app.services.intake import chat_ref
@@ -41,14 +41,17 @@ def build_chat_eraser(
 
         erased = await anyio.to_thread.run_sync(_purge_intake)
         agent_erased = False
-        key = agent_key()
-        if key:
+        # The org's grant names the agent and carries the channel token; no live grant = no credential to reach agents with.
+        acesso = await agents_for(org_id)
+        if acesso is not None:
             from noctusai_lib.integrations.agents_channel import DeletionRequest
 
-            result = await agents_factory().delete_conversation_data(
-                DeletionRequest(agent_key=key, connection_id=str(connection_id), chat_id=ref)
+            result = await acesso.client.delete_conversation_data(
+                DeletionRequest(agent_key=acesso.agent_key, connection_id=str(connection_id), chat_id=ref)
             )
             agent_erased = bool(getattr(result, "deleted", False))
+        else:
+            logger.warning("chat erase: no live agents grant for org=%s -- the agent-side thread was not touched", org_id)
         logger.info("chat erased connection=%s intake_rows=%s agent_thread=%s", connection_id, erased, agent_erased)
 
     return on_delete_chat

@@ -15,6 +15,12 @@ S3 classifies it as about scheduling or not (classification only, D48: no reply,
   sends is `app/live/resposta.py` (agent turn in `agents` -> bubbles), and only after the send-seam guard re-reads the
   agent's on/off + allow-list and passes (fail closed). The seed `WahaClient` enforces the line policy (`send: enabled`
   required). Never add another send path; never construct a raw `WahaClient(`; no mark-read / typing / presence.
+- **The agents credential is a PLATFORM GRANT, never env** (KB § PATTERNS/backend/platform-grants.md). `agents` mints the personal channel token and
+  delivers it to `PUT /api/platform/grants/agents` (seed receiver; one-shot delivery token in `assistant.api_tokens`, `app/auth_context.py` is a
+  token-only `get_auth_context`: no token or a JWT = strict 401); `app/services/agents_grant.py` stores it Fernet-encrypted in `assistant.agent_grants`
+  (migration 023, tier:service, one row per org) with the agent key, `DELETE` drops it, a trigger appends `agent_grants_eventos`. The live reply, the
+  owner-message forwarder and the chat eraser call `agents_grant.acesso_do_org(org)` per use: no grant = no reply (`erro_turno / sem_grant_agents`),
+  never a Fake, never a boot failure. The base URL is `PRODUCT_URL_AGENTS`. Never reintroduce `ASSISTANT_AGENTS_TOKEN` / `ASSISTANT_AGENT_KEY`.
 - **Webhook HMAC is required.** `create_whatsapp_inbox_router(require_webhook_hmac=True)` (full inbox, admin-gated; since 2026-11-12); no secret
   => 401 to everything and a deploy refuses to boot (`required_prod_config`).
 - **Webhook base.** `webhook_base_url()` is the product URL: the personal live line (`send: enabled`; mark_online /

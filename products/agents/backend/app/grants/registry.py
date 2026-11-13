@@ -39,17 +39,25 @@ class GrantProduct:
     schema: str
     #: ``issuer`` stamped on the CHANNEL token (agents' own ``api_tokens``): the transport allowed to drive the agent.
     channel_issuer: str
-    #: Scope + label of the TOOLS token minted into the product's ``api_tokens`` (agents calls the product's read
-    #: tools with it). Mirrors the product's own constants (``julia_contexto_service.TOOLS_TOKEN_*``).
-    tools_scope: str
-    tools_label: str
-    #: The name the tools token's SECRET is stored under in agents' per-org encrypted credential store (read back by
-    #: ``resolve_julia_tools_token``).
-    tools_secret_name: str
     #: Agent keys that can be granted to this product.
     agent_keys: tuple[str, ...]
+    #: Scope + label of the TOOLS token minted into the product's ``api_tokens`` (agents calls the product's read
+    #: tools with it). Mirrors the product's own constants (``julia_contexto_service.TOOLS_TOKEN_*``). ALL THREE tools
+    #: fields are set together, or none: a product agents never calls back (the Assistant: it only RECEIVES the channel
+    #: token) mints no tools token at all -- an unused standing credential is a liability, not a convenience.
+    tools_scope: str | None = None
+    tools_label: str | None = None
+    #: The name the tools token's SECRET is stored under in agents' per-org encrypted credential store (read back by
+    #: ``resolve_julia_tools_token``).
+    tools_secret_name: str | None = None
+
+    @property
+    def has_tools(self) -> bool:
+        return self.tools_scope is not None
 
     def __post_init__(self) -> None:
+        if len({self.tools_scope is None, self.tools_label is None, self.tools_secret_name is None}) != 1:
+            raise ValueError(f"grant product {self.slug!r}: tools_scope / tools_label / tools_secret_name are all-or-none")
         # One tools scope + one stored secret per product means ONE agent per entry: a second agent's tools token must
         # never be the first one's (a token never reaches another agent). Granting a second agent to a product = a
         # separate entry with its OWN ``tools_scope`` / ``tools_secret_name`` (and the product's own receiver), not
@@ -69,6 +77,15 @@ GRANT_PRODUCTS: dict[str, GrantProduct] = {
         tools_secret_name=JULIA_TOOLS_TOKEN_KEY,
         agent_keys=("julia",),
     ),
+    # The owner's personal WhatsApp line. It only RECEIVES the channel token (receiver sink: ``assistant`` migration 023 +
+    # ``app/services/agents_grant.py``); agents never calls it back, so there is no tools token / secret.
+    "assistant": GrantProduct(
+        slug="assistant",
+        label="Assistant",
+        schema="assistant",
+        channel_issuer="assistant",
+        agent_keys=("assistente-pessoal",),
+    ),
 }
 
 
@@ -87,6 +104,6 @@ GRANT_CHANNEL_SCOPES: tuple[str, ...] = tuple(sorted(GRANT_CHANNEL_TOKEN_SCOPES)
 #: STRICT allow-list of the scopes the grant service may mint (channel + each product's tools scope + the delivery
 #: scope). The grant token admin refuses anything else (``UnknownTokenScopeError``).
 GRANT_TOKEN_SCOPES = TokenScopeAllowList(
-    [*GRANT_CHANNEL_SCOPES, GRANT_RECEIVE_SCOPE, *(p.tools_scope for p in GRANT_PRODUCTS.values())],
+    [*GRANT_CHANNEL_SCOPES, GRANT_RECEIVE_SCOPE, *(p.tools_scope for p in GRANT_PRODUCTS.values() if p.tools_scope)],
     strict=True,
 )

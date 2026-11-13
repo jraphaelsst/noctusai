@@ -1,5 +1,9 @@
 """Binds the live reply to the product: settings -> `LiveReplier`, the webhook's `on_message` seam, the boot check.
 
+The agents channel credential is NOT configuration: it is the platform grant `agents` delivered for the org
+(`app.services.agents_grant`, KB § PATTERNS/backend/platform-grants.md). The boot check therefore does not ask for it; an
+org with no live grant is a declared refusal at reply time (one `erro_turno / sem_grant_agents` event), not a boot failure.
+
 The seed ingest awaits `on_message` inside the webhook request and swallows its exceptions; an agent turn takes seconds,
 so the seam only SCHEDULES the reply (a held task) and returns -- the webhook acks WAHA at once, and the reply cannot
 fail the ack. The intake row + its `recebida` event were already committed by then (same transaction, `append_intake`)."""
@@ -12,13 +16,13 @@ from uuid import UUID
 
 import anyio.to_thread
 
-from noctusai_lib.integrations.agents_channel import make_agents_client
 from noctusai_lib.integrations.whatsapp import get_whatsapp_client, parse_line_policy
 
 from app.config import settings
 from app.live.numeros import numeros_do_dono
 from app.live.registro import RegistroResposta
 from app.live.resposta import LiveReplier, ReplyConfig
+from app.services import agents_grant
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +37,6 @@ def assert_live_reply_config(s: Any = settings) -> None:
     if not s.assistant_reply_enabled:
         return
     needed = {
-        "ASSISTANT_AGENT_KEY": s.assistant_agent_key,
-        "ASSISTANT_AGENTS_BASE_URL": s.assistant_agents_base_url,
-        "ASSISTANT_AGENTS_TOKEN": s.assistant_agents_token,
         "ASSISTANT_WAHA_BASE_URL": s.assistant_waha_base_url,
         "ASSISTANT_WAHA_LINE_POLICY": s.assistant_waha_line_policy,
         "ASSISTANT_IDENTITY_HMAC_KEY": s.assistant_identity_hmac_key,
@@ -48,6 +49,11 @@ def assert_live_reply_config(s: Any = settings) -> None:
         raise LiveReplyConfigError("ASSISTANT_REPLY_ENABLED is on but the WAHA line policy is not `send: enabled`")
 
 
+async def agents_for(org_id: UUID):
+    """The org's agents access from its platform grant (`None` = no live grant). Blocking store read off the loop."""
+    return await anyio.to_thread.run_sync(lambda: agents_grant.acesso_do_org(org_id))
+
+
 def build_replier(connection_store_factory: Callable[[], Any], admin_client_factory: Callable[[], Any]) -> LiveReplier:
     async def waha_for(org_id: UUID, connection_id: UUID):
         rec = await anyio.to_thread.run_sync(
@@ -58,14 +64,11 @@ def build_replier(connection_store_factory: Callable[[], Any], admin_client_fact
         return get_whatsapp_client(base_url=rec.base_url or None, api_key=rec.api_key, session=rec.session_name)
 
     return LiveReplier(
-        # allow_fake=False: a missing token/url means NO reply (declared refusal), never a scripted fake.
-        agents=make_agents_client(
-            token=settings.assistant_agents_token, base_url=settings.assistant_agents_base_url, allow_fake=False,
-        ),
+        agents_for=agents_for,  # never a scripted fake: no grant means NO reply (declared refusal)
         waha_for=waha_for,
         registro=RegistroResposta(admin_client_factory),
         config=ReplyConfig(
-            enabled=settings.assistant_reply_enabled, agent_key=settings.assistant_agent_key,
+            enabled=settings.assistant_reply_enabled,
             max_age_s=settings.assistant_reply_max_age_seconds,
             paragraph_delay_s=settings.assistant_reply_paragraph_delay_seconds,
             debounce_s=settings.assistant_reply_debounce_seconds,

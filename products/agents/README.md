@@ -239,3 +239,9 @@ Leak fingerprint: skill bodies/files handed to the model in a turn are added to 
 **Personal tokens.** A grant is one (agent, product, org) with its own channel token; every `/api/channels/*` request also checks the token's grant is live and names this (org, agent) (403 `grant_inativo` / `agent_not_allowed`), so a revoked grant stops turns and edits at once and a token never reaches another agent. Every grant lifecycle change (created, activated, failed, revoked, tokens rotated) appends one row to `agents.agent_product_grant_eventos` in the same transaction (migration 083, trigger-written, append-only, `tier:platform`).
 
 > Eval loop (2026-11-08): the platform-issued `studio:evals-run` token (mint via `POST /api/studio/plataforma/content-token` with `tipo: "avaliacoes"`) starts, lists, reads and cancels eval runs of both suites (a token-started run is capped at the default cost, the default model, the current draft, and a fail-closed per-org 24h spend ceiling; `studio:evals-run` is never mintable through the generic token route); see MASTER-PROMPT.
+
+## Grant targets (`app/grants/registry.py`)
+
+A product is a platform-grant target only when it has a `GrantProduct` row and its own receiver sink. Today: `social-wiring` (agent `julia`, channel
+token + tools token) and `assistant` (agent `assistente-pessoal`, the owner's personal WhatsApp line; **channel token only** -- the tools fields are
+all-or-none and `assistant` has none, so `product_token_id` is null). Connect from Studio, Conexoes da plataforma.

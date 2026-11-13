@@ -50,13 +50,13 @@ def _at(message: Any) -> datetime:
 
 def build_human_forwarder(
     *,
-    agents_factory: Callable[[], Any],
+    agents_for: Callable[[UUID], Awaitable[Any]],
     owner_user_id: Callable[[UUID, UUID], Optional[str]],
     identity_key: Callable[[], str],
     enabled: Callable[[], bool],
 ) -> Forwarder:
-    """`owner_user_id(org_id, connection_id)` is a blocking lookup (run in a worker thread). `agents_factory()` returns the
-    `AgentsClient` (built lazily, once). `enabled()` is the live-reply switch: off => the agent has no thread to inform."""
+    """`owner_user_id(org_id, connection_id)` is a blocking lookup (run in a worker thread). `agents_for(org_id)` returns the org's
+    `AgentsAccess` (its grant's client + agent key) or `None` when the org has no live grant. `enabled()` is the live-reply switch: off => the agent has no thread to inform."""
     import anyio.to_thread
 
     async def forward(org_id: UUID, connection_id: UUID, chat: Any, message: Any) -> None:
@@ -67,7 +67,11 @@ def build_human_forwarder(
             if not author:
                 logger.error("assistant: owner message not forwarded connection=%s -- no author user", connection_id)
                 return
-            client = agents_factory()
+            acesso = await agents_for(org_id)
+            if acesso is None:
+                logger.warning("assistant: owner message not forwarded connection=%s -- no live agents grant", connection_id)
+                return
+            client = acesso.client
             ref = chat_ref(identity_key(), message.chat_id)
             info = await client.buscar_thread(connection_id=str(connection_id), chat_id=ref)
             if info is None:

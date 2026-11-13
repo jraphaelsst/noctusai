@@ -75,6 +75,10 @@ products/agents/backend/app/
   only). Create = mint the channel token (agents schema, target org) + the tools token (product schema, secret kept in the
   per-org encrypted store) + a 5-minute delivery token, `GrantDelivery.deliver`, revoke the delivery token; any failure
   revokes everything minted and leaves the grant `falhou`. Rotate overlaps; revoke kills both and tells the product.
+  Grantable products are the `GRANT_PRODUCTS` registry rows: `social-wiring` (julia) and `assistant` (`assistente-pessoal`, the owner's
+  personal WhatsApp line). A `GrantProduct` has a tools token only when its three `tools_*` fields are set (all-or-none, `has_tools`): `assistant`
+  only RECEIVES the channel token (channel issuer `assistant`, in `CHANNEL_ALLOWED_ISSUERS`), so no tools token is minted, stored or revoked
+  and `product_token_id` stays null.
   Nobody pastes a token: `PUT /api/channels/ferramentas-token` is gone. Never log or return a secret. README section
   "Platform grants" has the routes. UI: `/conexoes-plataforma` (`pages/ConexoesPlataforma.tsx`, `hooks/useGrants.ts`), platform
   admin only; the old channel-token paste card AND the human `POST|DELETE /api/agents/{key}/channel-token` routes are deleted; `ChannelsTab`

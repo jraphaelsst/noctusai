@@ -133,8 +133,8 @@ def test_the_grant_registry_binds_one_agent_per_tools_token():
     """The SW tools token (scope + stored secret) is Julia's alone: a second agent needs its own registry entry."""
     from app.grants.registry import GRANT_PRODUCTS, GrantProduct
 
-    scopes = [p.tools_scope for p in GRANT_PRODUCTS.values()]
-    secrets = [p.tools_secret_name for p in GRANT_PRODUCTS.values()]
+    scopes = [p.tools_scope for p in GRANT_PRODUCTS.values() if p.has_tools]
+    secrets = [p.tools_secret_name for p in GRANT_PRODUCTS.values() if p.has_tools]
     assert len(set(scopes)) == len(scopes) and len(set(secrets)) == len(secrets)
     assert all(len(p.agent_keys) == 1 for p in GRANT_PRODUCTS.values())
     with pytest.raises(ValueError):
@@ -142,3 +142,12 @@ def test_the_grant_registry_binds_one_agent_per_tools_token():
             slug="x", label="X", schema="x", channel_issuer="x", tools_scope="x:t", tools_label="t",
             tools_secret_name="s", agent_keys=("julia", "bia"),
         )
+
+
+def test_tools_fields_of_a_grant_product_are_all_or_none():
+    from app.grants.registry import GrantProduct
+
+    ok = GrantProduct(slug="x", label="X", schema="x", channel_issuer="x", agent_keys=("a",))
+    assert not ok.has_tools
+    with pytest.raises(ValueError):
+        GrantProduct(slug="x", label="X", schema="x", channel_issuer="x", agent_keys=("a",), tools_scope="x:t")

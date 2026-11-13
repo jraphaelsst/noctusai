@@ -29,18 +29,16 @@ def test_allow_list_rules():
 
 
 def _s(**kw):
-    base = dict(assistant_reply_enabled=True, assistant_agent_key="a", assistant_agents_base_url="https://a",
-                assistant_agents_token="pk_x", assistant_waha_base_url="http://w", assistant_waha_line_policy=POLICY_ON,
+    base = dict(assistant_reply_enabled=True, assistant_waha_base_url="http://w", assistant_waha_line_policy=POLICY_ON,
                 assistant_identity_hmac_key="k", encryption_key="e")
     base.update(kw)
     return SimpleNamespace(**base)
 
 
 def test_boot_check():
-    assert_live_reply_config(_s(assistant_reply_enabled=False, assistant_agent_key=""))  # off: nothing required
+    assert_live_reply_config(_s(assistant_reply_enabled=False, assistant_waha_base_url=""))  # off: nothing required
     assert_live_reply_config(_s())
-    for missing in ("assistant_agent_key", "assistant_agents_base_url", "assistant_agents_token", "assistant_waha_base_url",
-                    "assistant_waha_line_policy", "assistant_identity_hmac_key", "encryption_key"):
+    for missing in ("assistant_waha_base_url", "assistant_waha_line_policy", "assistant_identity_hmac_key", "encryption_key"):
         with pytest.raises(LiveReplyConfigError):
             assert_live_reply_config(_s(**{missing: ""}))
     with pytest.raises(LiveReplyConfigError):

@@ -12346,6 +12346,47 @@ END;
 )
 
 
+_ASSISTANT_AGENT_GRANTS_EVENTOS_APPEND_ONLY_PROBE = GuardProbe(
+    id="assistant.agent_grants_eventos.append_only",
+    product="assistant",
+    schema="assistant",
+    guard_name="guard_agent_grants_eventos_append_only",
+    kind="write_refusal",
+    migrations=("023_agents_grant.sql",),
+    rationale=(
+        "The agents-grant event log (concedido / rotacionado / revogado: when the platform wired or unwired the owner agent) is "
+        "the measurable record of a credential lifecycle: an UPDATE or DELETE would rewrite it. Self-provisioning: the probe "
+        "stores a throwaway grant row (the trigger writes the `concedido` event, so this also proves the trigger fires) and "
+        "tries to rewrite that event, all inside the rolled-back transaction; no organization row is borrowed."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_org text := 'noc-probe-' || gen_random_uuid()::text;
+  v_ev uuid;
+BEGIN
+  INSERT INTO assistant.agent_grants (org_id, provider, encrypted_tokens, metadata)
+  VALUES (v_org, 'agents', 'x', '{"agent_key": "probe", "grant_id": "probe", "token_prefix": "noc_probe000"}'::jsonb);
+  SELECT e.id INTO v_ev FROM assistant.agent_grants_eventos e WHERE e.org_id = v_org LIMIT 1;
+  IF v_ev IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: storing a grant produced no concedido event (the event trigger did not fire)';
+  END IF;
+  BEGIN
+    UPDATE assistant.agent_grants_eventos SET event_type = 'revogado' WHERE id = v_ev;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: UPDATE on the append-only event log succeeded - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%append_only%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 def _assistant_ai_outputs_probe(probe_id: str, guard_name: str, attempt_sql: str, rationale: str) -> GuardProbe:
     """Self-provisioning (same shape as the 015 eventos probe): connection + intake row through
     `assistant.append_intake`, then the write that must be refused, all inside the rolled-back transaction."""
@@ -12518,6 +12559,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
     _ASSISTANT_RESPOSTAS_EVENTOS_APPEND_ONLY_PROBE,
     _ASSISTANT_GOOGLE_EVENTOS_APPEND_ONLY_PROBE,
+    _ASSISTANT_AGENT_GRANTS_EVENTOS_APPEND_ONLY_PROBE,
     *_ASSISTANT_AI_OUTPUTS_PROBES,
     *_ASSISTANT_FEEDBACK_EVENTS_PROBES,
     *_ASSISTANT_LINE_EVENTS_PROBES,

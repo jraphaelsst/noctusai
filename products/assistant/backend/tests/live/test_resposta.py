@@ -16,6 +16,7 @@ from noctusai_lib.integrations.whatsapp.inbox import InboxMessage
 from app.live import registro as r
 from app.live.controles import CAMPO_LISTA
 from app.live.resposta import LiveReplier, ReplyConfig
+from app.services.agents_grant import AgentsAccess
 
 ORG, CONN = uuid4(), uuid4()
 NUMERO = "5511988887777"
@@ -59,7 +60,15 @@ def _msg(chat=f"{NUMERO}@c.us", body="oi, tudo bem?", from_me=False, age_s=5):
                         media_url=None, ack=None, timestamp=ts, sender_name=None)
 
 
-def _build(agents, *, reg=None, enabled=True, policy=ENABLED, waha=None, sleep=None):
+def _grant(agents, agent_key="assistente"):
+    """`agents_for` of an org that HAS a live grant: its client + the agent key the grant names."""
+    async def agents_for(org):
+        return AgentsAccess(client=agents, agent_key=agent_key)
+
+    return agents_for
+
+
+def _build(agents, *, reg=None, enabled=True, policy=ENABLED, waha=None, sleep=None, agents_for=None):
     waha = waha or FakeWahaClient(line_policy=policy)
     reg = reg or Reg()
 
@@ -69,8 +78,8 @@ def _build(agents, *, reg=None, enabled=True, policy=ENABLED, waha=None, sleep=N
     async def nosleep(_):
         return None
 
-    rep = LiveReplier(agents=agents, waha_for=waha_for, registro=reg,
-                      config=ReplyConfig(enabled=enabled, agent_key="assistente"),
+    rep = LiveReplier(agents_for=agents_for or _grant(agents), waha_for=waha_for, registro=reg,
+                      config=ReplyConfig(enabled=enabled),
                       identity_key=lambda: "k", sleep=sleep or nosleep)
     return rep, waha, reg
 
@@ -202,10 +211,13 @@ def test_partial_delivery_is_recorded_not_retried():
     assert len(waha.sent_messages) == 1 and reg.eventos[0]["dados"] == {"remetente": "contato", "bolhas": 1, "de": 2}
 
 
-def test_missing_agents_client_is_a_declared_refusal_not_a_fake():
-    rep, waha, reg = _build(None)
+def test_an_org_without_a_grant_is_a_declared_refusal_not_a_fake():
+    async def no_grant(org):
+        return None
+
+    rep, waha, reg = _build(None, agents_for=no_grant)
     assert run(rep, _msg()) == r.ERRO_TURNO
-    assert reg.eventos[0]["motivo"] == "agents_nao_configurado" and waha.sent_messages == []
+    assert reg.eventos[0]["motivo"] == "sem_grant_agents" and waha.sent_messages == []
 
 
 def test_a_burst_is_one_turn_one_reply_and_one_event_per_message():

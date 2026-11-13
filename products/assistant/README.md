@@ -79,7 +79,7 @@ intake contract above, 1:1 only, never a group/status/broadcast, never pre-pairi
 row is committed, scheduled in the background so the webhook still acks WAHA at once - to `app.live.resposta.LiveReplier`:
 
 1. **Turn**: `AgentsClient.run_turn` (seed `noctusai_lib.integrations.agents_channel`, same shape as social-wiring's lead
-   path; `agent_key` = `ASSISTANT_AGENT_KEY`, conversation key = the HMAC'd `chat_ref`, the number rides only in the
+   path; `agent_key` = the one named by the org's platform grant (below), conversation key = the HMAC'd `chat_ref`, the number rides only in the
    request's `contact.phone_e164` so `agents` can match its own list). `agents` decides on/off and the allow-list: a
    not-served status (`agente_desligado`, `restrito_avaliacao`, limits...) means NO reply and never an error to the
    contact; a typed client error means no reply + a log + an event.
@@ -95,9 +95,17 @@ row is committed, scheduled in the background so the webhook still acks WAHA at 
    controle_indisponivel | sem_atendimento | erro_turno | erro_envio | mensagem_antiga`, a reason code and counts. No phone
    number, message text or reply text is stored. Silent no-ops (switch off, group, history) write nothing.
 
-Boot refuses (`LiveReplyConfigError`) when the switch is on and any of `ASSISTANT_AGENT_KEY`, `ASSISTANT_AGENTS_BASE_URL`,
-`ASSISTANT_AGENTS_TOKEN`, the WAHA base URL / line policy (must be `send: enabled`), the identity key or `ENCRYPTION_KEY` is
-missing. A missing agents token never falls back to a Fake. Messages older than `ASSISTANT_REPLY_MAX_AGE_SECONDS` (900)
+**The agents credential is a platform grant, not env** (KB § PATTERNS/backend/platform-grants.md). `agents` mints the agent's
+personal channel token and DELIVERS it to `PUT /api/platform/grants/agents` (one-shot delivery token minted into
+`assistant.api_tokens`, scope `platform:grant-receive`; no token = strict 401); `app/services/agents_grant.py` stores it Fernet-encrypted
+in `assistant.agent_grants` (migration 023, tier:service, one row per org) with the agent key it names, and `DELETE` of the same
+route drops it. Every change appends an event to `assistant.agent_grants_eventos` (concedido | rotacionado | revogado; token prefix
+only) from a trigger. The base URL resolves from `PRODUCT_URL_AGENTS` like social-wiring. The live reply reads the org's grant per
+message: an org with **no live grant answers nobody** (one `erro_turno / sem_grant_agents` event), never a Fake, never a boot failure.
+Connect it in `agents` Studio, Conexoes da plataforma: agent `assistente-pessoal` -> product `assistant` -> the owner's org.
+
+Boot refuses (`LiveReplyConfigError`) when the switch is on and the WAHA base URL / line policy (must be `send: enabled`), the identity
+key or `ENCRYPTION_KEY` is missing. Messages older than `ASSISTANT_REPLY_MAX_AGE_SECONDS` (900)
 are not answered. Debounce: a conversation must be quiet for `ASSISTANT_REPLY_DEBOUNCE_SECONDS` (4 s) and its whole burst becomes ONE turn and ONE reply (one event per message, same outcome, `dados.lote`); one turn at a time per conversation (in-process lock). The attempt's event is written after the send, so a crash mid-reply can leave no row (`NOC-REMEDIATE[assistant-reply-claim-before-send]`).
 
 ## Google connection (S7, migration 019)
@@ -130,8 +138,7 @@ Settings tab `/configuracoes/google` (admin): Conectar / Desconectar, the connec
 `ENCRYPTION_KEY`, `ASSISTANT_WAHA_BASE_URL`, `ASSISTANT_WAHA_SESSION`, `ASSISTANT_WAHA_LINE_POLICY`,
 `ASSISTANT_WAHA_WEBHOOK_HMAC_SECRET`, `ASSISTANT_IDENTITY_HMAC_KEY`, `ASSISTANT_EXCLUDED_NUMBERS`,
 `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI` (optional), `ASSISTANT_CLASSIFIER_ENABLED`, `ASSISTANT_CLASSIFIER_MAX_CHARS`, `LLM_SPEND_LIMITS` (enforced entry required),
-`NOCTUS_SCHEDULERS_ENABLED`; live reply: `ASSISTANT_REPLY_ENABLED` (kill switch, default off), `ASSISTANT_AGENT_KEY`,
-`ASSISTANT_AGENTS_BASE_URL`, `ASSISTANT_AGENTS_TOKEN`, `ASSISTANT_REPLY_MAX_AGE_SECONDS`, `ASSISTANT_REPLY_PARAGRAPH_DELAY_SECONDS`, `ASSISTANT_REPLY_DEBOUNCE_SECONDS`, `ASSISTANT_OWNER_NUMBERS` (optional; comma-separated E.164 of the owner's other phones: a message from one reaches agents as `remetente=dono`, every other sender as `contato`; empty = nobody is the owner; never logged).
+`NOCTUS_SCHEDULERS_ENABLED`; live reply: `ASSISTANT_REPLY_ENABLED` (kill switch, default off), `ASSISTANT_REPLY_MAX_AGE_SECONDS`, `ASSISTANT_REPLY_PARAGRAPH_DELAY_SECONDS`, `ASSISTANT_REPLY_DEBOUNCE_SECONDS`, `ASSISTANT_OWNER_NUMBERS` (optional; comma-separated E.164 of the owner's other phones: a message from one reaches agents as `remetente=dono`, every other sender as `contato`; empty = nobody is the owner; never logged).
 
 ## Running
 

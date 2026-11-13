@@ -55,10 +55,9 @@ class SeedSettings(ProductSettings):
     # agent itself and the allow-list of numbers live in `agents` (the agent's controls); this switch is the second,
     # product-side key.
     assistant_reply_enabled: bool = False
-    # The owner's assistant agent in `agents`, its base URL and the org's `pk_...` channel token (SW pattern).
-    assistant_agent_key: str = ""
-    assistant_agents_base_url: str = ""
-    assistant_agents_token: str = ""
+    # The agents channel credential + the agent key are NOT settings: `agents` delivers them as a platform grant
+    # (`PUT /api/platform/grants/agents`, stored encrypted in `assistant.agent_grants`, `app.services.agents_grant`) and
+    # the base URL resolves like social-wiring's (`PRODUCT_URL_AGENTS`). No grant = the live reply answers nobody.
     # An inbound message older than this (webhook redelivery after an outage) is NOT answered.
     assistant_reply_max_age_seconds: int = 900
     # Pause between two reply bubbles (one WhatsApp message per paragraph).
