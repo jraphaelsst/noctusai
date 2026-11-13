@@ -1005,6 +1005,15 @@ def _loop_actions(
             if not body["version_id"]:
                 raise ContentError("rascunho_ausente", "O agente nao tem rascunho (version_id indeterminado).")
         result = api.call(method, path, body)
+    except ContentError as exc:
+        # The content token (studio:content-write) can never reach an eval route: without an evals token the fallback
+        # always ends in this 403. Say how to get the right token instead of leaving a bare scope error (2026-11-13).
+        if exc.codigo == "scope_missing" and not _from_env(ENV_EVALS_TOKEN):
+            exc.mensagem = (f"{exc.mensagem} -- {ENV_EVALS_TOKEN} nao esta configurado e o token de conteudo nao roda "
+                            f"avaliacoes. Um admin da plataforma emite um token tipo 'avaliacoes' (Studio > Agentes > "
+                            f"Token de conteudo > Tipo: Avaliacoes, ou POST /api/studio/plataforma/content-token "
+                            f"{{label, tipo: 'avaliacoes'}}) e o grava em {ENV_EVALS_TOKEN}= no ~/.config/noctus/agents.env.")
+        raise
     finally:
         api.close()
     if reading:

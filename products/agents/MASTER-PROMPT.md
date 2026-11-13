@@ -380,12 +380,13 @@ before the flip; no mirror means no publish (409 `espelho_falhou`). `versao_semv
   latest definition).
   knowledge, evals and package-sync routers are platform-admin only too; the `studio:content-write` token is minted
   only via `POST /api/studio/plataforma/content-token` (issuer `noctus-platform`, platform admin, org-bound to the
-  platform org) with `expira_em_dias` 1..365 (omitted = 30, explicit `null` = never expires: a NULL `expires_at`,
-  not a far date). `GET /api/studio/plataforma/content-tokens` lists the platform org's content tokens (label, prefix,
+  platform org) with `expira_em_dias` 1..30 (omitted = 30; an explicit `null` is 422: no token never expires;
+  legacy rows minted before the cap may still carry a NULL `expires_at`, listed as "Nunca"). `GET /api/studio/plataforma/content-tokens` lists the platform org's content tokens (label, prefix,
   created/by, expiry, last use, status; never the secret) and `DELETE .../content-token/{id}` revokes (idempotent);
   mint and revoke are audited. The Studio home (`/studio`) carries the platform-admin "Token de conteúdo (MCP)"
-  section: "Gerar token" dialog (label, days or "Nunca expira" with a warning), the secret shown once with where to
-  put it (`NOCTUS_AGENTS_CONTENT_TOKEN=` in `~/.config/noctus/agents.env`), the list and a confirmed "Revogar".
+  section: "Gerar token" dialog (label, Tipo Conteúdo | Avaliações, days 1..30), the secret shown once with where to
+  put it (`NOCTUS_AGENTS_CONTENT_TOKEN=` or, for tipo Avaliações = `studio:evals-run` only, `NOCTUS_AGENTS_EVALS_TOKEN=`,
+  in `~/.config/noctus/agents.env`), the list (evals tokens badged "Avaliações") and a confirmed "Revogar".
   The mint dialog's "Permitir excluir agentes" checkbox (`permitir_exclusao`) adds scope `studio:agent-delete`;
   such tokens carry a badge in the list. The agent list (platform admins) has "Criar agente" (`CriarAgentePlataformaDialog`:
   a key -> `POST /plataforma/agents`, an empty shell; a creation-mode seam `MODOS_CRIACAO` for the coming AI-generated
