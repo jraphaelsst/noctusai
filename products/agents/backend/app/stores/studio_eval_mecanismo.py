@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from app.stores._db_errors import exec_query, exec_rpc
 from app.stores._util import utcnow, utcnow_iso
 from app.stores.errors import NotFound
+from app.studio.eval_um_por_usuario import RunEmAndamento
 from app.studio.eval_mecanismo import (
     Caso,
     MecanismoGateRun,
@@ -42,6 +43,10 @@ class MecanismoStore(Protocol):
     ) -> UUID: ...
 
     def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str) -> None: ...
+
+    def em_andamento_do_usuario(self, started_by: UUID) -> list[RunEmAndamento]:
+        """The user's mechanism runs still ``executando``, any agent (the one-run-per-user rule)."""
+        ...
 
     def fail_run(self, org_id: UUID, run_id: UUID, *, erro: str) -> None: ...
 
@@ -113,6 +118,11 @@ class FakeMecanismoStore:
         }
         self.execucoes[rid] = []
         return rid
+
+    def em_andamento_do_usuario(self, started_by: UUID) -> list[RunEmAndamento]:
+        return [
+            RunEmAndamento(r["id"], r["org_id"], r["agent_id"], "mecanismo", r["status"])
+            for r in self.runs.values() if r["started_by"] == started_by and r["status"] == "executando"]
 
     def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str) -> None:
         row = self.runs.get(run_id)
@@ -231,6 +241,13 @@ class SupabaseMecanismoStore:
         if not rows:
             raise RuntimeError("insert of mechanism run returned no row")
         return UUID(str(rows[0]["id"]))
+
+    def em_andamento_do_usuario(self, started_by: UUID) -> list[RunEmAndamento]:
+        rows = exec_query(
+            self._t("eval_mecanismo_runs").select("id, org_id, agent_id, status").eq("started_by", str(started_by))
+            .eq("status", "executando").order("started_at").limit(50)).data or []
+        return [RunEmAndamento(UUID(str(r["id"])), UUID(str(r["org_id"])), UUID(str(r["agent_id"])), "mecanismo", r["status"])
+                for r in rows]
 
     def finish_run(self, org_id: UUID, run_id: UUID, resultado: SuiteResultado, *, driver: str) -> None:
         execs = [

@@ -2,7 +2,7 @@ name: WhatsAppInbox
 path: seed/lib/frontend/src/components/whatsapp-inbox/WhatsAppInbox.tsx
 phase: pilot-seed
 registered_at: "2026-10-26"
-organ_version: "1.0"
+organ_version: "1.1"
 validation_status: emerging
 
 known_facts:
@@ -15,6 +15,9 @@ known_facts:
   - "Realtime: one fetch-based SSE stream per connection (EventSource cannot send the bearer header) patches the caches idempotently via setQueryData(ies); a chat.upsert only INSERTS into the unfiltered list (a search list would gain non-matches). While the stream is not 'open' (or no getAuthToken was given) the organ polls every fallbackPollMs (default 10s; 0 disables) so a frozen inbox is never silent."
   - "Deep link: `initialChatId` selects that chat; if it is outside the loaded pages the organ asks the server for exactly it (search q = the JID; the backend search text includes the chat id) and merges it into the list, so a lead -> conversation link never opens a blank pane. `renderChatHeaderExtra(chat)` renders in the thread header (the product puts 'ver lead' there) through ChatWindow's ThreadHeaderExtra seam."
   - "Search is server-side and debounced 300ms; chat paging is cursor-based ('Carregar mais conversas'); message paging is the ChatWindow useLoadMore seam over before=<iso>|<id>."
+  - "v1.1 (2026-11-12) lifts two SW behaviours as opt-in, product-agnostic seams: PER-CHAT AGENT PAUSE (`InboxChat.agent_paused`; backend `PATCH .../chats/{chat}/agent-paused` mounted only with `on_agent_pause`; hook `useSetChatAgentPaused` = optimistic + server row into every cached list; prop `enableAgentPause`, default off, renders a header Switch via ThreadHeaderExtra) and PER-CHAT LGPD ERASURE (`POST .../chats/{chat}/apagar-dados` mounted with `allow_chat_delete`; hook `useDeleteInboxChat` = NOT optimistic, then removeChat from every list + drop the thread cache; prop `allowDeleteChat`, default off, button + design-system `useConfirm` danger dialog - needs the ConfirmProvider the seed app mounts). The organ never says what pausing means (the product's hook does) and writes no content-bearing audit (hashed chat ref + counts only)."
+  - "Realtime: `chat.upsert` now goes through inboxCacheOps.upsertChat - same last_message_at patches IN PLACE (a pause/rename must not reorder the list), newer activity bumps to the top; new `chat.deleted` event removes the chat from every list and drops its thread cache in other tabs."
+  - "Pilot consumer monica enables ONLY allowDeleteChat: it has no agent answering on its inbox, so on_agent_pause is not passed (route absent) and enableAgentPause stays off. Its migration 022 adds the three columns anyway so the DTO is complete."
 
 errors_encountered:
   - "Tests that mock the API with STATIC data fail confusingly: useCacheWriteMutation's settle refetch brings the static answer back over the optimistic/committed write. The colocated tests use a stateful fake server (a write changes the next GET), like the real one."

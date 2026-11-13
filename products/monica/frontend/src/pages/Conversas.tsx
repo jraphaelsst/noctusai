@@ -3,7 +3,8 @@
  *
  * `?chat=<jid>` deep-links a conversation (the lead modal's "abrir conversa"); the open chat is written back to
  * the URL so a reload or a shared link lands on the same conversation. The chat header carries "Ver lead": it
- * opens the same lead modal as the funnel when the number has a lead (a deleted lead simply has no button).
+ * opens the same lead modal as the funnel when the number has a lead (a deleted lead simply has no button). "Apagar
+ * dados" erases one conversation (LGPD; admin). The agent pause switch is NOT enabled: no agent answers on this inbox.
  */
 import * as React from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -99,6 +100,7 @@ export default function Conversas() {
           connectionId={connectionId}
           initialChatId={params.get("chat")}
           onSelectChat={onSelectChat}
+          allowDeleteChat
           renderChatHeaderExtra={(chat) => <VerLead chat={chat} />}
         />
       )}

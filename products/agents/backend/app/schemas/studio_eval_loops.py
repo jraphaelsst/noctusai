@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from noctusai_lib.api import StrictHttpModel
 
-__all__ = ["LoopCreateRequest", "LoopStopRequest", "LoopOut", "LoopListOut", "RodadaOut", "OvercallOut", "CheckpointOut"]
+__all__ = ["LoopCreateRequest", "LoopStopRequest", "LoopOut", "LoopListOut", "EvalLoopConfigIn", "EvalLoopConfigOut", "RodadaOut", "OvercallOut", "CheckpointOut"]
 
 LOOP_ORCAMENTO_USD_MAX = 500.0
 
@@ -18,9 +18,10 @@ LOOP_ORCAMENTO_USD_MAX = 500.0
 class LoopCreateRequest(StrictHttpModel):
     #: ``comportamento`` (judge suite, ``eval_runs``) | ``mecanismo`` (scripted suite, ``eval_mecanismo_runs``).
     suite: str = Field(pattern="^(comportamento|mecanismo)$")
-    #: G2: the rounds the loop plans (checkpoints at 5, 10, 15 apply to those <= this).
-    rodadas_planejadas: int = Field(ge=1, le=100)
-    #: G7: omitted => ``STUDIO_EVAL_LOOP_BUDGET_USD`` (US$ 20). A token may not exceed the default.
+    #: G2: the rounds the loop plans (checkpoints at 5, 10, 15 apply to those <= this). Omitted => the config's ``rodadas_max``;
+    #: given => must be <= it (422 ``rodadas_acima_do_maximo``).
+    rodadas_planejadas: int | None = Field(default=None, ge=1, le=100)
+    #: G7: omitted => the config's ``orcamento_usd``; above it => 422 ``orcamento_acima_do_teto`` (for every caller).
     orcamento_usd: float | None = Field(default=None, gt=0, le=LOOP_ORCAMENTO_USD_MAX)
 
 
@@ -84,3 +85,20 @@ class LoopOut(BaseModel):
 
 class LoopListOut(BaseModel):
     items: list[LoopOut]
+
+
+class EvalLoopConfigIn(StrictHttpModel):
+    """PUT body of ``/api/studio/plataforma/eval-loop-config`` (full replace; bounds mirror the 086 CHECKs)."""
+
+    alvo: float = Field(gt=0, le=1)
+    orcamento_usd: float = Field(gt=0, le=LOOP_ORCAMENTO_USD_MAX)
+    rodadas_max: int = Field(ge=1, le=100)
+
+
+class EvalLoopConfigOut(BaseModel):
+    alvo: float
+    orcamento_usd: float
+    rodadas_max: int
+    #: the platform admin who last saved it / when (``None`` while the defaults have never been edited)
+    alterado_por: UUID | None = None
+    alterado_em: datetime | None = None

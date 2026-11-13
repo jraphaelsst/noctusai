@@ -272,4 +272,27 @@ describe("card tab — emission controls", () => {
     await abrir();
     expect(screen.queryByTestId("parte-voltar-automatico-c:cli-1-cnd_federal")).toBeNull();
   });
+
+  it("layout: header actions + row actions wrap left-aligned; the table never forces a min width", async () => {
+    mockGet.mockResolvedValue(resp(parte(
+      { cnd_federal: ok("a"), trf3: comErro("b", "trf3"), serasa: cel({ tipo: "serasa" }) },
+      { nao_constam: 1, pendente: 1, erros: 1 },
+    )));
+    await abrir();
+    const cab = screen.getByTestId("parte-acoes-cabecalho-c:cli-1");
+    expect(cab.className.split(/\s+/)).toEqual(expect.arrayContaining(["flex-wrap", "justify-start"]));
+    const tabela = screen.getByTestId("parte-tabela-c:cli-1");
+    expect(tabela.className.split(/\s+/)).toContain("overflow-x-auto");
+    const table = tabela.querySelector("table") as HTMLElement;
+    expect(table.className).not.toMatch(/min-w-/);
+    // Ações come right after Situação (Emissão moved after it)
+    const ths = Array.from(table.querySelectorAll("th")).map((t) => t.textContent);
+    expect(ths.indexOf("Ações")).toBe(ths.indexOf("Situação") + 1);
+    // every status row (negativa, erro, pendente) renders its action cell with a wrapping flex container
+    for (const k of ["cnd_federal", "trf3", "serasa"]) {
+      const linha = screen.getByTestId(`parte-linha-c:cli-1-${k}`);
+      expect(linha.querySelector("td .flex-wrap")).not.toBeNull();
+      expect(linha.querySelectorAll("button").length).toBeGreaterThan(0);
+    }
+  });
 });

@@ -15,18 +15,24 @@
  *   merged into the list, so the link never opens a blank pane.
  * - `renderChatHeaderExtra(chat)` renders in the open thread's header (the product
  *   puts "ver lead" there).
+ * - `enableAgentPause` (default off) shows a per-chat "pause the agent" switch in the thread header; the organ
+ *   records the flag (backend `on_agent_pause`) and the product decides what pausing means. `allowDeleteChat`
+ *   (default off) shows "Apagar dados" (LGPD erasure of that one conversation, behind the design-system confirm).
+ *   Both are admin actions server-side; a refusal is shown inline, never swallowed.
  * - Realtime: one SSE stream per connection patches the caches; while it is not
  *   open the organ polls (`pollMs`), so a frozen inbox is never silent.
  * - Loading follows the server-state rules: skeleton on the FIRST load only; a
  *   refetch over data already shown never blanks the list.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Search } from 'lucide-react';
+import { Search, Trash2 } from 'lucide-react';
 
 import { ChatWindow } from '../../design-system/chat';
 import type { ChatMessage, ChatThread, ChatWindowAdapter } from '../../design-system/chat';
 import { Button } from '../../design-system/ui/Button';
 import { Input } from '../../design-system/ui/Input';
+import { Switch } from '../../design-system/ui/switch';
+import { useConfirm } from '../confirm';
 import type { InboxChat, InboxMessage, WhatsAppInboxHooks } from '../../whatsapp-inbox';
 
 export interface WhatsAppInboxProps {
@@ -36,6 +42,10 @@ export interface WhatsAppInboxProps {
   initialChatId?: string | null;
   /** Rendered in the open thread's header, between the title and the controls. */
   renderChatHeaderExtra?: (chat: InboxChat) => ReactNode;
+  /** Show the per-chat "pause the agent" switch in the thread header. Needs the backend `on_agent_pause`. Default off. */
+  enableAgentPause?: boolean;
+  /** Show "Apagar dados" (LGPD erasure of one conversation; admin). Needs the backend `allow_chat_delete`. Default off. */
+  allowDeleteChat?: boolean;
   /** Called on every selection change (user click, back, or the deep link applying). */
   onSelectChat?: (chatId: string | null) => void;
   /** Poll interval while the realtime stream is not open. Default 10s; `0` disables polling. */
@@ -79,12 +89,81 @@ export function toChatMessage(message: InboxMessage): ChatMessage {
   };
 }
 
+/** The organ's own header controls (pause switch + erase) for the open chat; each renders only when enabled. */
+function ChatAdminControls({
+  hooks, connectionId, chat, enableAgentPause, allowDeleteChat, onDeleted,
+}: {
+  hooks: WhatsAppInboxHooks;
+  connectionId: string | null;
+  chat: InboxChat;
+  enableAgentPause: boolean;
+  allowDeleteChat: boolean;
+  onDeleted: (chatId: string) => void;
+}) {
+  const confirm = useConfirm();
+  const pause = hooks.useSetChatAgentPaused(connectionId);
+  const erase = hooks.useDeleteInboxChat(connectionId);
+  const error = pause.error ?? erase.error;
+  const name = chat.name;
+
+  async function onErase() {
+    const ok = await confirm({
+      title: 'Apagar dados desta conversa?',
+      description: `A conversa com ${name} e todas as suas mensagens serão apagadas. Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Apagar dados',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    pause.reset();
+    erase.mutate(chat.chat_id, { onSuccess: () => onDeleted(chat.chat_id) });
+  }
+
+  return (
+    <div className="flex items-center gap-3" data-testid="inbox-chat-admin">
+      {enableAgentPause && (
+        <label className="flex items-center gap-2 text-sm">
+          <Switch
+            data-testid="inbox-agent-pause"
+            aria-label="Pausar o agente nesta conversa"
+            checked={chat.agent_paused}
+            disabled={pause.isPending}
+            onCheckedChange={(paused) => {
+              erase.reset();
+              pause.mutate({ chatId: chat.chat_id, paused });
+            }}
+          />
+          <span>{chat.agent_paused ? 'Agente pausado' : 'Agente ativo'}</span>
+        </label>
+      )}
+      {allowDeleteChat && (
+        <Button
+          variant="outline"
+          size="sm"
+          data-testid="inbox-delete-chat"
+          disabled={erase.isPending}
+          onClick={() => void onErase()}
+        >
+          <Trash2 className="mr-1 h-4 w-4" aria-hidden="true" />
+          {erase.isPending ? 'Apagando…' : 'Apagar dados'}
+        </Button>
+      )}
+      {error && (
+        <span role="alert" className="text-xs text-destructive" data-testid="inbox-chat-admin-error">
+          {error.message}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function WhatsAppInbox({
   hooks,
   connectionId,
   initialChatId = null,
   renderChatHeaderExtra,
   onSelectChat,
+  enableAgentPause = false,
+  allowDeleteChat = false,
   fallbackPollMs = 10_000,
   searchPlaceholder = 'Buscar por nome ou telefone',
   emptyThreadsLabel = 'Nenhuma conversa ainda.',
@@ -119,13 +198,32 @@ export function WhatsAppInbox({
   // Latest-render refs keep the adapter's callbacks stable without stale closures.
   const renderExtraRef = useRef(renderChatHeaderExtra);
   renderExtraRef.current = renderChatHeaderExtra;
+  const selectedRef = useRef(selectedId);
+  selectedRef.current = selectedId;
+  const selectRef = useRef(select);
+  selectRef.current = select;
   const HeaderExtra = useMemo(
     () =>
-      function InboxHeaderExtra({ thread }: { scopeId: string | null; thread: ChatThread }) {
+      function InboxHeaderExtra({ scopeId, thread }: { scopeId: string | null; thread: ChatThread }) {
         const chat = thread.meta?.chat as InboxChat | undefined;
-        return chat && renderExtraRef.current ? <>{renderExtraRef.current(chat)}</> : null;
+        if (!chat) return null;
+        return (
+          <>
+            {renderExtraRef.current ? renderExtraRef.current(chat) : null}
+            {enableAgentPause || allowDeleteChat ? (
+              <ChatAdminControls
+                hooks={hooks}
+                connectionId={scopeId}
+                chat={chat}
+                enableAgentPause={enableAgentPause}
+                allowDeleteChat={allowDeleteChat}
+                onDeleted={(id) => selectedRef.current === id && selectRef.current(null)}
+              />
+            ) : null}
+          </>
+        );
       },
-    [],
+    [hooks, enableAgentPause, allowDeleteChat],
   );
 
   const adapter: ChatWindowAdapter = {
@@ -160,7 +258,7 @@ export function WhatsAppInbox({
         loadMore: () => void thread.fetchNextPage(),
       };
     },
-    ...(renderChatHeaderExtra ? { ThreadHeaderExtra: HeaderExtra } : {}),
+    ...(renderChatHeaderExtra || enableAgentPause || allowDeleteChat ? { ThreadHeaderExtra: HeaderExtra } : {}),
   };
 
   const more = hooks.useInboxChats(connectionId, { q: query, pollMs });

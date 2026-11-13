@@ -9,6 +9,9 @@ Routes (all org-scoped; the connection must belong to the caller's org, else
     POST /api/whatsapp/connections/{id}/chats/{chat_id}/messages {text}         -> InboxMessage (201)
     POST /api/whatsapp/connections/{id}/chats/{chat_id}/read                    -> 204
     POST /api/whatsapp/connections/{id}/backfill                                -> 202
+    PATCH /api/whatsapp/connections/{id}/chats/{chat_id}/agent-paused {paused}  -> InboxChat   (only with on_agent_pause)
+    POST /api/whatsapp/connections/{id}/chats/{chat_id}/apagar-dados            -> {messages_deleted, chat_deleted}
+                                                                                   (only with allow_chat_delete)
     GET  /api/whatsapp/connections/{id}/events                                  (SSE)
     POST {webhook_path_prefix}/{token}                                          (PUBLIC inbound webhook)
 
@@ -37,6 +40,16 @@ Security notes:
 * **Per-app switch**: a connection with ``app_enabled=False`` answers the webhook ``200 {"status":"disabled"}``
   (nothing stored, no ``on_new_chat`` / ``on_message``) and refuses sends with 409 ``app_disabled``. A
   ``session_role='borrower'`` line cannot backfill (409 ``session_borrowed``).
+* **Per-chat agent pause** (``on_agent_pause`` given): ``PATCH .../agent-paused`` records ``agent_paused`` on the
+  chat AFTER the product's ``on_agent_pause(org_id, connection_id, chat, paused, actor)`` hook accepted it (a
+  raising hook -> 502 and nothing recorded, so the flag never claims a pause the product did not apply). The
+  organ attaches no meaning to the flag - what pausing DOES is the product's. Pushed to every client as a
+  ``chat.upsert``.
+* **Per-chat LGPD erasure** (``allow_chat_delete=True``): ``POST .../apagar-dados`` runs the optional
+  ``on_delete_chat(org_id, connection_id, chat_id, actor)`` downstream cleanup FIRST (a raising hook -> 502, nothing
+  erased, so the call is retriable), then deletes the chat + its messages, pushes ``chat.deleted`` and writes ONE
+  audit row with NO content: who, when, which line and a hash of the chat id - never the number or a message.
+  Both routes use ``get_admin_user_org`` (default: ``get_current_user_org``) - pass an admin dependency.
 * Sending never falls back to the Fake: a connection with no ``base_url``
   yields 503 instead of a fake "Sent".
 * Outbound pacing is the seed ``whatsapp`` token bucket that every
@@ -56,10 +69,11 @@ Decoupling: imports nothing from ``app.*``; every product concern is a kwarg
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import uuid
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional, Union
 from uuid import UUID
 
 from starlette.concurrency import run_in_threadpool
@@ -67,6 +81,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.access_tiers import access_tier
+from noctusai_lib.api.audit.types import AuditActor, AuditEntry
 from noctusai_lib.api.integration_errors import integration_error
 from noctusai_lib.config.deploy_config import is_deploy_context
 from noctusai_lib.integrations.whatsapp import (
@@ -78,9 +94,11 @@ from noctusai_lib.integrations.whatsapp import (
 )
 from noctusai_lib.integrations.whatsapp.connection_store import resolve_by_webhook_token
 from noctusai_lib.integrations.whatsapp.inbox import (
+    EVENT_CHAT_DELETED,
     EVENT_CHAT_READ,
     EVENT_CHAT_UPSERT,
     EVENT_MESSAGE_NEW,
+    InboxChat,
     InboxMessage,
     InboxRealtime,
     OnMessage,
@@ -118,6 +136,7 @@ class InboxChatOut(StrictHttpModel):
     last_message_at: Optional[str] = None
     last_message_from_me: Optional[bool] = None
     unread_count: int
+    agent_paused: bool = False
 
 
 class InboxChatsPageOut(StrictHttpModel):
@@ -150,6 +169,21 @@ class BackfillStartedOut(StrictHttpModel):
     status: str  # started | already_running
 
 
+class AgentPausedIn(StrictHttpModel):
+    paused: bool
+
+
+class ChatDeletedOut(StrictHttpModel):
+    messages_deleted: int
+    chat_deleted: bool
+
+
+#: ``on_agent_pause(org_id, connection_id, chat, paused, actor)`` - the product applies the pause (sync or async).
+OnAgentPause = Callable[[UUID, UUID, InboxChat, bool, Optional[str]], Union[None, Awaitable[None]]]
+#: ``on_delete_chat(org_id, connection_id, chat_id, actor)`` - downstream cleanup before the erase (sync or async).
+OnDeleteChat = Callable[[UUID, UUID, str, Optional[str]], Union[None, Awaitable[None]]]
+
+
 def _default_resolve_org_id(raw: Any) -> UUID:
     return UUID(str(raw))
 
@@ -159,6 +193,8 @@ def _default_resolve_org_id(raw: Any) -> UUID:
 READ_ONLY_UNMOUNTED_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/{connection_id}/chats/{chat_id:path}/messages"),  # send
     ("POST", "/{connection_id}/backfill"),                      # history backfill (a read of WAHA, but a bulk one)
+    ("PATCH", "/{connection_id}/chats/{chat_id:path}/agent-paused"),  # product hook + a store write
+    ("POST", "/{connection_id}/chats/{chat_id:path}/apagar-dados"),   # per-chat erasure
 )
 
 
@@ -183,6 +219,11 @@ def create_whatsapp_inbox_router(
     webhook_only: bool = False,
     require_webhook_hmac: bool = False,
     on_session_status: Optional[Callable[[WhatsAppConnectionRecord, str], Any]] = None,
+    on_agent_pause: Optional[OnAgentPause] = None,
+    on_delete_chat: Optional[OnDeleteChat] = None,
+    allow_chat_delete: bool = False,
+    get_admin_user_org: Optional[Callable[..., Any]] = None,
+    audit_product_slug: str = "",
 ) -> APIRouter:
     """Build the inbox router (authenticated routes + the public webhook).
 
@@ -194,6 +235,11 @@ def create_whatsapp_inbox_router(
     Assistant). ``require_webhook_hmac=True`` makes the HMAC mandatory: no secret => the webhook answers 401 to
     everything, and building the router in a deploy without a secret raises ``WebhookHmacRequired`` (refuse to boot).
     ``on_session_status(record, status)`` (sync or async, best-effort) fires on each WAHA ``session.status`` event.
+
+    ``on_agent_pause`` mounts the per-chat agent-pause route; ``allow_chat_delete=True`` (optionally with
+    ``on_delete_chat``) mounts the per-chat erasure route. Both default OFF (a consumer that passes neither has the
+    exact route surface it had before). ``get_admin_user_org`` is their auth dependency (default
+    ``get_current_user_org``); ``audit_product_slug`` labels the erasure audit row.
     """
     if require_webhook_hmac and not webhook_hmac_secret and is_deploy_context():
         raise WebhookHmacRequired(
@@ -375,6 +421,114 @@ def create_whatsapp_inbox_router(
             background.add_task(_send_seen, _waha_client(record), chat_id, connection_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+    admin_dep = get_admin_user_org or get_current_user_org
+
+    async def _call(hook: Callable[..., Any], *args: Any) -> None:
+        out = await run_in_threadpool(hook, *args) if not _is_coro_fn(hook) else await hook(*args)
+        if hasattr(out, "__await__"):
+            await out
+
+    # ─── per-chat agent pause ───────────────────────────────────────────
+    if on_agent_pause is not None:
+
+        @router.patch(f"{prefix}/{{connection_id}}/chats/{{chat_id:path}}/agent-paused", response_model=InboxChatOut)
+        @access_tier('org', reason='org-scoped: the product\'s admin dependency (get_admin_user_org) gates it; connection checked against the caller org')
+        async def set_agent_paused(
+            connection_id: UUID,
+            chat_id: str,
+            body: AgentPausedIn,
+            auth: tuple = Depends(admin_dep),
+            conn_store: WhatsAppConnectionStore = Depends(_conn_store),
+            chats: WhatsAppChatStore = Depends(_chat_store),
+        ) -> InboxChatOut:
+            org_id = resolve_org_id(auth[2])
+            actor = _actor_of(auth)
+            await run_in_threadpool(lambda: _require_record(conn_store, connection_id=connection_id, org_id=org_id))
+            chat = await run_in_threadpool(
+                lambda: chats.get_chat(org_id=org_id, connection_id=connection_id, chat_id=chat_id)
+            )
+            if chat is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="chat not found")
+            try:
+                await _call(on_agent_pause, org_id, connection_id, chat, body.paused, actor)
+            except Exception as exc:  # noqa: BLE001 - the product refused / failed: record nothing
+                logger.warning("inbox agent-pause hook failed connection=%s: %s", connection_id, type(exc).__name__)
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    detail={"code": "agent_pause_failed", "message": "Could not change the agent state for this chat"},
+                ) from exc
+            saved = await run_in_threadpool(
+                lambda: chats.set_agent_paused(
+                    org_id=org_id, connection_id=connection_id, chat_id=chat_id, paused=body.paused, actor=actor
+                )
+            )
+            if saved is None:  # deleted between the read and the write
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="chat not found")
+            if realtime is not None:
+                await realtime.publish(connection_id, EVENT_CHAT_UPSERT, {"chat": saved.as_dict()})
+            return InboxChatOut(**saved.as_dict())
+
+    # ─── per-chat LGPD erasure ──────────────────────────────────────────
+    if allow_chat_delete:
+
+        @router.post(
+            f"{prefix}/{{connection_id}}/chats/{{chat_id:path}}/apagar-dados", response_model=ChatDeletedOut
+        )
+        @access_tier('org', reason='org-scoped LGPD erasure: the product\'s admin dependency (get_admin_user_org) gates it; connection checked against the caller org')
+        async def delete_chat(
+            connection_id: UUID,
+            chat_id: str,
+            request: Request,
+            auth: tuple = Depends(admin_dep),
+            conn_store: WhatsAppConnectionStore = Depends(_conn_store),
+            chats: WhatsAppChatStore = Depends(_chat_store),
+        ) -> ChatDeletedOut:
+            org_id = resolve_org_id(auth[2])
+            actor = _actor_of(auth)
+            await run_in_threadpool(lambda: _require_record(conn_store, connection_id=connection_id, org_id=org_id))
+            chat = await run_in_threadpool(
+                lambda: chats.get_chat(org_id=org_id, connection_id=connection_id, chat_id=chat_id)
+            )
+            if chat is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail="chat not found")
+            if on_delete_chat is not None:  # downstream data first: it may reference the chat being erased
+                try:
+                    await _call(on_delete_chat, org_id, connection_id, chat_id, actor)
+                except Exception as exc:  # noqa: BLE001 - nothing erased; the call is retriable
+                    logger.warning("inbox delete-chat hook failed connection=%s: %s", connection_id, type(exc).__name__)
+                    raise HTTPException(
+                        status.HTTP_502_BAD_GATEWAY,
+                        detail={"code": "delete_chat_failed", "message": "Could not erase this conversation's data"},
+                    ) from exc
+            deleted = await run_in_threadpool(
+                lambda: chats.delete_chat(org_id=org_id, connection_id=connection_id, chat_id=chat_id)
+            )
+            messages_deleted = deleted or 0
+            await _audit_erasure(request, org_id, connection_id, chat_id, actor, messages_deleted)
+            if realtime is not None:
+                await realtime.publish(connection_id, EVENT_CHAT_DELETED, {"chat_id": chat_id})
+            return ChatDeletedOut(messages_deleted=messages_deleted, chat_deleted=deleted is not None)
+
+    async def _audit_erasure(
+        request: Request, org_id: UUID, connection_id: UUID, chat_id: str, actor: Optional[str], count: int
+    ) -> None:
+        """ONE audit row, no content: the chat is identified by a salted-by-scope hash, never its JID/number."""
+        ref = hashlib.sha256(f"{org_id}:{connection_id}:{chat_id}".encode()).hexdigest()[:16]
+        logger.warning("whatsapp.chat_erased connection=%s org=%s chat_ref=%s messages=%d", connection_id, org_id, ref, count)
+        sink = getattr(request.app.state, "audit_sink", None)
+        if sink is None or not getattr(request.app.state, "audit_enabled", False):
+            return
+        await sink.record(AuditEntry(
+            product_slug=audit_product_slug,
+            method="POST",
+            route_template=f"{prefix}/{{connection_id}}/chats/{{chat_id}}/apagar-dados",
+            path_params={"connection_id": str(connection_id), "chat_ref": ref, "messages_deleted": str(count)},
+            status=200,
+            actor_kind="user",
+            client_hint="whatsapp-chat-erasure",
+            actor=AuditActor(user_id=actor or "", org_id=str(org_id), role="admin"),
+        ))
+
     # ─── backfill ───────────────────────────────────────────────────────
     @router.post(
         f"{prefix}/{{connection_id}}/backfill",
@@ -499,6 +653,18 @@ def create_whatsapp_inbox_router(
 
 class WebhookHmacRequired(RuntimeError):
     """``require_webhook_hmac=True`` in a deploy without a webhook HMAC secret: refuse to boot (fail-closed)."""
+
+
+def _is_coro_fn(fn: Callable[..., Any]) -> bool:
+    import inspect
+
+    return inspect.iscoroutinefunction(fn)
+
+
+def _actor_of(auth: tuple) -> Optional[str]:
+    user = auth[0]
+    uid = getattr(user, "id", None) or (user.get("id") if isinstance(user, dict) else None)
+    return str(uid) if uid else None
 
 
 async def _fire_session_status(callback: Callable[[WhatsAppConnectionRecord, str], Any], record: Any, body: dict) -> None:

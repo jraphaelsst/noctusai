@@ -64,6 +64,17 @@ class LoopStore(Protocol):
 
     def list_rodadas(self, org_id: UUID, loop_id: UUID) -> list[Rodada]: ...
 
+    def loops_ativos_do_usuario(self, started_by: UUID) -> list[LoopRecord]:
+        """Every ACTIVE loop the user opened, across agents, suites and orgs (the one-loop-per-user rule)."""
+        ...
+
+    def registrar_recusa(
+        self, *, org_id: UUID, started_by: UUID, codigo: str, agent_id: UUID | None, suite: str | None, loop_id: UUID | None,
+        em_andamento_run: tuple[UUID, str] | None, em_andamento_loop: UUID | None,
+    ) -> None:
+        """Append one ``eval_recusas_eventos`` row: a start refused by the one-run-per-user rule."""
+        ...
+
     def rodada_do_run(self, org_id: UUID, run_id: UUID, run_tipo: str) -> tuple[LoopRecord, Rodada] | None:
         """The loop + round a run belongs to; ``None`` = the run was started without a loop."""
         ...
@@ -116,11 +127,25 @@ class FakeLoopStore:
         self.loops: dict[UUID, LoopRecord] = {}
         self.rodadas: dict[UUID, list[Rodada]] = {}
         self.runs: dict[tuple[str, UUID], UUID] = {}
+        self.recusas: list[dict[str, Any]] = []
+
+    def loops_ativos_do_usuario(self, started_by: UUID) -> list[LoopRecord]:
+        return [l for l in self.loops.values() if l.started_by == started_by and l.status == "ativo"]
+
+    def registrar_recusa(
+        self, *, org_id: UUID, started_by: UUID, codigo: str, agent_id: UUID | None, suite: str | None, loop_id: UUID | None,
+        em_andamento_run: tuple[UUID, str] | None, em_andamento_loop: UUID | None,
+    ) -> None:
+        self.recusas.append({
+            "org_id": org_id, "started_by": started_by, "codigo": codigo, "agent_id": agent_id, "suite": suite, "loop_id": loop_id,
+            "em_andamento_run": em_andamento_run, "em_andamento_loop": em_andamento_loop, "occurred_at": utcnow()})
 
     def create_loop(
         self, org_id: UUID, agent_id: UUID, *, agente_chave: str, suite: str, rodadas_planejadas: int, alvo: float,
         piso: float, orcamento_usd: float, started_by: UUID,
     ) -> LoopRecord:
+        if self.loops_ativos_do_usuario(started_by):  # mirror of migration 087's guard_eval_um_por_usuario
+            raise StudioConflict("loop_ativo_do_usuario", "O usuário já tem um loop ativo.")
         if any(l.agent_id == agent_id and l.suite == suite and l.status == "ativo" for l in self.loops.values()):
             raise StudioConflict("loop_ativo_existente", "O agente já tem um loop ativo nesta suíte.")
         rec = LoopRecord(
@@ -213,6 +238,23 @@ class SupabaseLoopStore:
         }
         data = exec_query(self._t("eval_loops").insert(row), unique_code="loop_ativo_existente").data or []
         return _loop_de(data[0])
+
+    def loops_ativos_do_usuario(self, started_by: UUID) -> list[LoopRecord]:
+        rows = exec_query(self._t("eval_loops").select("*").eq("started_by", str(started_by)).eq("status", "ativo")
+                          .order("started_at", desc=True).limit(50)).data or []
+        return [_loop_de(r) for r in rows]
+
+    def registrar_recusa(
+        self, *, org_id: UUID, started_by: UUID, codigo: str, agent_id: UUID | None, suite: str | None, loop_id: UUID | None,
+        em_andamento_run: tuple[UUID, str] | None, em_andamento_loop: UUID | None,
+    ) -> None:
+        exec_query(self._t("eval_recusas_eventos").insert({
+            "org_id": str(org_id), "started_by": str(started_by), "codigo": codigo,
+            "agent_id": None if agent_id is None else str(agent_id), "suite": suite,
+            "loop_id": None if loop_id is None else str(loop_id),
+            "em_andamento_run_id": None if em_andamento_run is None else str(em_andamento_run[0]),
+            "em_andamento_run_tipo": None if em_andamento_run is None else em_andamento_run[1],
+            "em_andamento_loop_id": None if em_andamento_loop is None else str(em_andamento_loop)}))
 
     def get_loop(self, org_id: UUID, agent_id: UUID, loop_id: UUID) -> LoopRecord:
         rows = exec_query(self._t("eval_loops").select("*").eq("org_id", str(org_id)).eq("agent_id", str(agent_id))

@@ -32,12 +32,34 @@ MESSAGES_TABLE = "whatsapp_messages"
 CONNECTIONS_TABLE = "whatsapp_connections"
 
 
+#: Per-chat agent pause: the flag, when it was set and by whom (the actor's user id, never a name).
+_AGENT_PAUSE_COLUMNS = (
+    "    agent_paused BOOLEAN NOT NULL DEFAULT false,\n"
+    "    agent_paused_at TIMESTAMPTZ,\n"
+    "    agent_paused_by TEXT,\n"
+)
+
+
+def chat_agent_pause_alter_ddl(schema: str, *, table: str = CHATS_TABLE) -> str:
+    """Idempotent ``ALTER`` adding the per-chat agent-pause columns to a chats table that predates them."""
+    return (
+        f"ALTER TABLE {schema}.{table}\n"
+        f"    ADD COLUMN IF NOT EXISTS agent_paused BOOLEAN NOT NULL DEFAULT false,\n"
+        f"    ADD COLUMN IF NOT EXISTS agent_paused_at TIMESTAMPTZ,\n"
+        f"    ADD COLUMN IF NOT EXISTS agent_paused_by TEXT;"
+    )
+
+
 def whatsapp_chats_table_ddl(
     schema: str,
     *,
     table: str = CHATS_TABLE,
     connections_table: str = CONNECTIONS_TABLE,
+    with_agent_pause: bool = False,
 ) -> str:
+    """``with_agent_pause=True`` adds the per-chat agent-pause columns (default off: the output stays
+    byte-identical for a product whose migration already carries the original shape - that product adds the
+    columns with :func:`chat_agent_pause_alter_ddl`)."""
     select_policy = rls_subquery_policy(
         schema, table, f"{table}_select_own_org", "SELECT",
         using="org_id = current_org_id()",
@@ -59,6 +81,7 @@ def whatsapp_chats_table_ddl(
         f"    unread_count INTEGER NOT NULL DEFAULT 0,\n"
         f"    last_read_at TIMESTAMPTZ,\n"
         f"    synced_through TIMESTAMPTZ,\n"
+        f"{_AGENT_PAUSE_COLUMNS if with_agent_pause else ''}"
         f"    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n"
         f"    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n"
         f"    PRIMARY KEY (connection_id, chat_id)\n"

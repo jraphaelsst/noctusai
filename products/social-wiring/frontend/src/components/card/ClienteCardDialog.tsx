@@ -1097,7 +1097,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
     // `empresas` above: `CertidoesPartesTab` fetches its own data keyed by
     // the titular's clienteId.
     certidoes: () => (
-      <div data-testid="card-subpage-certidoes">
+      <div className="min-w-0 max-w-full" data-testid="card-subpage-certidoes">
         {props.renderCertidoes?.() ?? (
           <p className="text-sm text-muted-foreground">Certidões indisponível.</p>
         )}

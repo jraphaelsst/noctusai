@@ -25,7 +25,10 @@
  *   POST {base}/{conn}/chats/{chat}/messages { text } -> InboxMessage
  *   POST {base}/{conn}/chats/{chat}/read              -> 204
  *   POST {base}/{conn}/backfill                       -> 202 { status }
- *   GET  {base}/{conn}/events                         (SSE: message.new / chat.upsert / message.ack / chat.read / session.status)
+ *   PATCH {base}/{conn}/chats/{chat}/agent-paused { paused } -> InboxChat   (only when the backend passes on_agent_pause)
+ *   POST {base}/{conn}/chats/{chat}/apagar-dados      -> { messages_deleted, chat_deleted }   (LGPD erasure, admin;
+ *        only when the backend passes allow_chat_delete)
+ *   GET  {base}/{conn}/events                         (SSE: message.new / chat.upsert / message.ack / chat.read / chat.deleted / session.status)
  * chat ids are WhatsApp JIDs ("5511999998888@c.us") and are URL-encoded in paths.
  */
 import { useCallback, useMemo } from 'react';
@@ -53,6 +56,8 @@ export interface InboxChat {
   last_message_at: string | null;
   last_message_from_me: boolean | null;
   unread_count: number;
+  /** The product's agent is paused on this chat. The organ only records/shows it; what it means is the product's. */
+  agent_paused: boolean;
 }
 
 export interface InboxMessage {
@@ -77,6 +82,11 @@ export interface InboxChatsPage {
 export interface InboxMessagesPage {
   items: InboxMessage[];
   has_more: boolean;
+}
+
+export interface InboxChatDeletedResult {
+  messages_deleted: number;
+  chat_deleted: boolean;
 }
 
 export type InboxChatsData = InfiniteData<InboxChatsPage, string | null>;
@@ -129,6 +139,22 @@ export const inboxCacheOps = {
   bumpChatWith(old: InboxChatsData | undefined, chatId: string, patch: Partial<InboxChat>): InboxChatsData | undefined {
     const hit = old?.pages.flatMap((p) => p.items).find((c) => c.chat_id === chatId);
     return hit ? inboxCacheOps.bumpChat(old, { ...hit, ...patch }) : old;
+  },
+
+  /** Drop a chat from every cached page; no-op when absent. */
+  removeChat(old: InboxChatsData | undefined, chatId: string): InboxChatsData | undefined {
+    if (!old || !old.pages.some((p) => p.items.some((c) => c.chat_id === chatId))) return old;
+    return { ...old, pages: old.pages.map((p) => ({ ...p, items: p.items.filter((c) => c.chat_id !== chatId) })) };
+  },
+
+  /**
+   * A server-pushed chat row (`chat.upsert`): a chat whose last activity did not change (a pause flag, a rename)
+   * is patched IN PLACE - it must not jump to the top; one with new activity is bumped.
+   */
+  upsertChat(old: InboxChatsData | undefined, chat: InboxChat): InboxChatsData | undefined {
+    const hit = old?.pages.flatMap((p) => p.items).find((c) => c.chat_id === chat.chat_id);
+    if (hit && hit.last_message_at === chat.last_message_at) return inboxCacheOps.patchChat(old, chat.chat_id, chat);
+    return inboxCacheOps.bumpChat(old, chat);
   },
 
   /** Idempotent append to the NEWEST page (pages[0]); a message already cached (by id) is left alone. */
@@ -336,6 +362,46 @@ export function createWhatsAppInboxHooks(api: ApiClient, options: CreateWhatsApp
   }
 
   /**
+   * Pause / resume the product's agent on ONE chat (admin; the server enforces it). The toggle is drawn at once;
+   * the server's answer (the chat row) then replaces it in every cached list, so a failure rolls it back.
+   */
+  function useSetChatAgentPaused(connectionId: string | null) {
+    return useCacheWriteMutation<InboxChat, { chatId: string; paused: boolean }>({
+      mutationFn: ({ chatId, paused }) => api.patch<InboxChat>(`${chatPath(connectionId ?? '', chatId)}/agent-paused`, { paused }),
+      targets: ({ chatId }) => [
+        {
+          queryKey: chatsPrefix(connectionId),
+          match: 'prefix',
+          optimistic: (old: InboxChatsData | undefined, { paused }) => inboxCacheOps.patchChat(old, chatId, { agent_paused: paused }),
+          commit: (old: InboxChatsData | undefined, saved) =>
+            inboxCacheOps.patchChat(old, saved.chat_id, { agent_paused: saved.agent_paused }),
+        },
+      ],
+    });
+  }
+
+  /**
+   * Erase ONE conversation (LGPD, on the contact's request; admin). Not optimistic - a destructive write waits for
+   * the server - then the chat leaves every cached list and its thread cache is dropped.
+   */
+  function useDeleteInboxChat(connectionId: string | null) {
+    const qc = useQueryClient();
+    return useCacheWriteMutation<InboxChatDeletedResult, string>({
+      mutationFn: (chatId) => api.post<InboxChatDeletedResult>(`${chatPath(connectionId ?? '', chatId)}/apagar-dados`),
+      targets: (chatId) => [
+        {
+          queryKey: chatsPrefix(connectionId),
+          match: 'prefix',
+          commit: (old: InboxChatsData | undefined) => inboxCacheOps.removeChat(old, chatId),
+        },
+      ],
+      onSuccess: (_result, chatId) => {
+        qc.removeQueries({ queryKey: messagesKey(connectionId, chatId) });
+      },
+    });
+  }
+
+  /**
    * Subscribe the connection's event stream and patch the caches in place. Mount ONCE per
    * connection (the organ does). Returns the stream status so the caller can fall back to polling
    * while it is not `open`. Without `options.getAuthToken` there is no stream: status stays
@@ -358,12 +424,20 @@ export function createWhatsAppInboxHooks(api: ApiClient, options: CreateWhatsApp
             if (!chat) return;
             qc.setQueriesData<InboxChatsData>(
               { queryKey: chatsPrefix(connectionId), predicate: (q) => isUnfiltered(q.queryKey) },
-              (old) => inboxCacheOps.bumpChat(old, chat),
+              (old) => inboxCacheOps.upsertChat(old, chat),
             );
             qc.setQueriesData<InboxChatsData>(
               { queryKey: chatsPrefix(connectionId), predicate: (q) => !isUnfiltered(q.queryKey) },
               (old) => inboxCacheOps.patchChat(old, chat.chat_id, chat),
             );
+            break;
+          }
+          case 'chat.deleted': {
+            if (!p.chat_id) return;
+            qc.setQueriesData<InboxChatsData>({ queryKey: chatsPrefix(connectionId) }, (old) =>
+              inboxCacheOps.removeChat(old, p.chat_id),
+            );
+            qc.removeQueries({ queryKey: messagesKey(connectionId, p.chat_id) });
             break;
           }
           case 'message.ack': {
@@ -394,7 +468,7 @@ export function createWhatsAppInboxHooks(api: ApiClient, options: CreateWhatsApp
       // Required by the transport: a stream without a token 401s forever, silently.
       getAuthToken: options.getAuthToken ?? (async () => null),
       enabled: (opts.enabled ?? true) && !!options.getAuthToken,
-      events: ['message.new', 'chat.upsert', 'message.ack', 'chat.read', 'session.status'],
+      events: ['message.new', 'chat.upsert', 'message.ack', 'chat.read', 'chat.deleted', 'session.status'],
     });
     return { status: stream.status };
   }
@@ -405,6 +479,8 @@ export function createWhatsAppInboxHooks(api: ApiClient, options: CreateWhatsApp
     useSendInboxMessage,
     useMarkChatRead,
     useBackfillInbox,
+    useSetChatAgentPaused,
+    useDeleteInboxChat,
     useInboxEvents,
   };
 }

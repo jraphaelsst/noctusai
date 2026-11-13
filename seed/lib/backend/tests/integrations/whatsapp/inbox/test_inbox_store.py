@@ -7,6 +7,7 @@ from noctusai_lib.integrations.whatsapp.inbox import (
     InboxMessage,
     InboxStoreNotConfigured,
     build_whatsapp_chat_store,
+    chat_agent_pause_alter_ddl,
     whatsapp_chats_table_ddl,
     whatsapp_messages_table_ddl,
 )
@@ -223,3 +224,49 @@ def test_delete_connection_chats_removes_chats_and_messages_org_scoped(store):
     assert store.list_connection_chat_ids(org_id=ORG, connection_id=CONN) == []
     assert store.list_connection_chat_ids(org_id=OTHER_ORG, connection_id=CONN) == ["5511999990003@c.us"]
     assert store.delete_connection_chats(org_id=ORG, connection_id=CONN) == (0, 0)
+
+
+def test_agent_pause_is_recorded_with_actor_and_defaults_off(store):
+    _chat(store)
+    _add(store, "m1", "2026-10-26T10:00:00+00:00")
+    assert store.get_chat(org_id=ORG, connection_id=CONN, chat_id=CHAT).agent_paused is False
+    paused = store.set_agent_paused(org_id=ORG, connection_id=CONN, chat_id=CHAT, paused=True, actor="user-1")
+    assert paused.agent_paused is True and paused.as_dict()["agent_paused"] is True
+    assert store.get_chat(org_id=ORG, connection_id=CONN, chat_id=CHAT).agent_paused is True
+    # the flag survives new traffic (refresh never resets it) and shows in the list
+    _add(store, "m2", "2026-10-26T10:01:00+00:00")
+    assert [c.agent_paused for c in store.list_chats(org_id=ORG, connection_id=CONN)[0]] == [True]
+    assert store.set_agent_paused(org_id=ORG, connection_id=CONN, chat_id=CHAT, paused=False).agent_paused is False
+
+
+def test_agent_pause_unknown_chat_and_other_org_return_none(store):
+    _chat(store)
+    assert store.set_agent_paused(org_id=ORG, connection_id=CONN, chat_id="nope@c.us", paused=True) is None
+    assert store.set_agent_paused(org_id=OTHER_ORG, connection_id=CONN, chat_id=CHAT, paused=True) is None
+    assert store.get_chat(org_id=ORG, connection_id=CONN, chat_id=CHAT).agent_paused is False
+
+
+def test_delete_chat_erases_one_chat_and_its_messages_org_scoped(store):
+    _chat(store)
+    _chat(store, "5511999990002@c.us")
+    _add(store, "m1", "2026-10-26T10:00:00+00:00")
+    _add(store, "m2", "2026-10-26T10:01:00+00:00")
+    _add(store, "o1", "2026-10-26T10:02:00+00:00", chat="5511999990002@c.us")
+
+    assert store.delete_chat(org_id=OTHER_ORG, connection_id=CONN, chat_id=CHAT) is None  # not their chat
+    assert store.delete_chat(org_id=ORG, connection_id=CONN, chat_id=CHAT) == 2
+    assert store.get_chat(org_id=ORG, connection_id=CONN, chat_id=CHAT) is None
+    assert store.list_messages(org_id=ORG, connection_id=CONN, chat_id=CHAT)[0] == []
+    assert store.list_connection_chat_ids(org_id=ORG, connection_id=CONN) == ["5511999990002@c.us"]
+    assert len(store.list_messages(org_id=ORG, connection_id=CONN, chat_id="5511999990002@c.us")[0]) == 1
+    assert store.delete_chat(org_id=ORG, connection_id=CONN, chat_id=CHAT) is None
+
+
+def test_agent_pause_ddl_is_opt_in_and_the_alter_is_idempotent():
+    base = whatsapp_chats_table_ddl("monica")
+    assert "agent_paused" not in base  # byte-identical for products already migrated
+    full = whatsapp_chats_table_ddl("monica", with_agent_pause=True)
+    for col in ("agent_paused BOOLEAN NOT NULL DEFAULT false", "agent_paused_at TIMESTAMPTZ", "agent_paused_by TEXT"):
+        assert col in full
+    alter = chat_agent_pause_alter_ddl("monica")
+    assert alter.count("ADD COLUMN IF NOT EXISTS") == 3 and "monica.whatsapp_chats" in alter
