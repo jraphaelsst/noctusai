@@ -168,16 +168,16 @@ class TestPoll:
         fim = _poll(studio, rid)
         assert fim["status"] == "concluida" and fim["aprovado"] and fim["total_casos"] == 1 and fim["casos_aprovados"] == 1
 
-    def test_a_second_run_while_one_executes_starts_in_parallel(self, studio):
-        # 071: several runs of one version may execute at once; each has its own id and finishes on its own.
+    def test_a_second_run_by_the_same_user_while_one_executes_is_refused_then_free(self, studio):
+        # one run per user at a time (087): the second start is a 409 naming the first; once it ends the user can start again.
         _setup(studio, driver=_Lento(_ok()))
         rid = studio.post(URL).json()["run_id"]
         again = studio.post(URL)
-        assert again.status_code == 202, again.text
-        outro = again.json()["run_id"]
-        assert outro != rid
+        assert again.status_code == 409, again.text
+        assert again.json()["code"] == "execucao_em_andamento" and again.json()["em_andamento"]["run_id"] == rid
+        assert again.json()["em_andamento"]["suite"] == "mecanismo"
         assert _poll(studio, rid)["status"] == "concluida"
-        assert _poll(studio, outro)["status"] == "concluida"
+        assert studio.post(URL).status_code == 202
 
     def test_a_crashing_driver_marks_the_run_falhou_with_a_fixed_text(self, studio):
         class _Quebra(_Live):

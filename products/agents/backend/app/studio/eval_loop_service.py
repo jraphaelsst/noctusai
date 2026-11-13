@@ -112,6 +112,10 @@ class EvalLoopService:
         #: the owner's WhatsApp send — seed ``notify_owner`` (owner line L3) unless a test injects one.
         self._avisar_dono = avisar_dono
 
+    @property
+    def store(self) -> LoopStore:
+        return self._loops
+
     # ── admission (G6 / G7) ────────────────────────────────────────────────
 
     def _limite_passes(self, org_id: UUID, agent_id: UUID, suite: str) -> int:

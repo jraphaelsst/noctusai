@@ -138,7 +138,7 @@ class TestCreateRun:
         assert resp.status_code == 404
         assert resp.json()["code"] == "version_not_found"
 
-    def test_a_second_run_of_the_same_version_starts_in_parallel(self, ke_client):
+    def test_a_second_run_by_the_same_user_is_refused_one_run_per_user(self, ke_client):
         seed_org_role(ke_client, role="owner")
         agent, version_id = self._seed_agent_case_version(ke_client)
 
@@ -153,9 +153,10 @@ class TestCreateRun:
             second = ke_client.post(
                 "/api/studio/agents/isaia/evals/runs", json={"version_id": str(version_id)},
             )
-            # 071: parallel runs of one version are allowed; each is its own run.
-            assert second.status_code == 202, second.text
-            assert second.json()["id"] != first.json()["id"]
+            # 087: one run per user at a time (parallel runs of one version stay possible across users).
+            assert second.status_code == 409, second.text
+            assert second.json()["code"] == "execucao_em_andamento"
+            assert second.json()["em_andamento"]["run_id"] == first.json()["id"]
         finally:
             app.dependency_overrides.pop(get_eval_scheduler_dep, None)
 

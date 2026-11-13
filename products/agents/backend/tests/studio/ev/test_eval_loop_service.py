@@ -16,12 +16,12 @@ ORG, AGENT, OWNER = uuid4(), uuid4(), uuid4()
 
 
 class W:
-    def __init__(self, *, rodadas=30, orcamento=20.0, piso=0.8):
+    def __init__(self, *, rodadas=30, orcamento=20.0, piso=0.8, alvo=1.0):
         self.loops = FakeLoopStore()
         self.sink = FakeNotificationSink(admin_ids=["admin-1"])
         self.svc = EvalLoopService(self.loops, self.sink, FakeConsolidacaoStore())
         self.loop = self.loops.create_loop(ORG, AGENT, agente_chave="agente-base", suite="comportamento", rodadas_planejadas=rodadas,
-                                           alvo=1.0, piso=piso, orcamento_usd=orcamento, started_by=OWNER)
+                                           alvo=alvo, piso=piso, orcamento_usd=orcamento, started_by=OWNER)
 
     def rodada(self, h="h0", partes=None, *, tipo="comportamento"):
         run_id = uuid4()
@@ -215,9 +215,34 @@ def test_one_active_loop_per_agent_and_suite():
     from app.stores._db_errors import StudioConflict
 
     w = W()
-    with pytest.raises(StudioConflict) as exc:
+    with pytest.raises(StudioConflict) as exc:  # another user: the (agent, suite) slot is taken
         w.loops.create_loop(ORG, AGENT, agente_chave="agente-base", suite="comportamento", rodadas_planejadas=5, alvo=1.0, piso=0.8,
-                            orcamento_usd=5.0, started_by=OWNER)
+                            orcamento_usd=5.0, started_by=uuid4())
     assert exc.value.code == "loop_ativo_existente"
+    with pytest.raises(StudioConflict) as exc:  # the SAME user may not hold two loops, even on the other suite (migration 087)
+        w.loops.create_loop(ORG, AGENT, agente_chave="agente-base", suite="mecanismo", rodadas_planejadas=5, alvo=1.0, piso=0.8,
+                            orcamento_usd=5.0, started_by=OWNER)
+    assert exc.value.code == "loop_ativo_do_usuario"
     w.loops.create_loop(ORG, AGENT, agente_chave="agente-base", suite="mecanismo", rodadas_planejadas=5, alvo=1.0, piso=0.8,
-                        orcamento_usd=5.0, started_by=OWNER)  # the other suite is free
+                        orcamento_usd=5.0, started_by=uuid4())  # the other suite is free for another user
+
+
+def test_the_configured_target_95_stops_the_loop_and_the_message_names_95_not_100():
+    w = W(alvo=0.95, rodadas=10)
+    w.fechar(w.rodada(), 0.7)
+    d = w.fechar(w.rodada("h1"), 0.95, h="h1")
+    assert d.parada.motivo == "alvo_atingido" and w.estado()["status"] == "concluido" and w.estado()["alvo"] == 0.95
+    assert "alvo 95%" in w.sink.sent[-1]["message"] and "100%" not in w.sink.sent[-1]["message"]
+
+
+def test_just_below_the_configured_target_keeps_the_loop_going():
+    w = W(alvo=0.95)
+    assert w.fechar(w.rodada(), 0.94).parada is None and w.estado()["status"] == "ativo"
+
+
+def test_the_configured_max_rounds_stop_the_loop_and_the_message_names_the_target():
+    w = W(alvo=0.95, rodadas=3)
+    for i, sc in enumerate((0.5, 0.6, 0.7)):
+        d = w.fechar(w.rodada(f"h{i}"), sc, h=f"h{i}")
+    assert d.parada.motivo == "rodadas_esgotadas" and w.estado()["motivo_parada"] == "rodadas_esgotadas"
+    assert "3 rodadas planejadas" in w.sink.sent[-1]["message"] and "sem chegar a 95%" in w.sink.sent[-1]["message"]

@@ -248,6 +248,13 @@ def get_consolidacao_store_dep(evals=Depends(get_eval_store_dep)):
     return get_consolidacao_store(settings, evals)
 
 
+def get_eval_loop_config_store_dep():
+    """Seam over the eval-loop config (target / budget cap / max rounds, migration 086). Tests override it with a shared Fake."""
+    from app.stores.eval_loop_config import get_eval_loop_config_store
+
+    return get_eval_loop_config_store(settings)
+
+
 def get_loop_store_dep():
     """Seam over the eval-loop store (loops + rounds, migration 076). Tests override it with a shared Fake."""
     from app.stores.studio_eval_loops import get_loop_store
@@ -281,6 +288,22 @@ def actor_id(ctx: AuthContext) -> UUID:
     if actor is None:  # pragma: no cover — a product ctx always carries its token id
         raise http_error(403, "user_required", "Restricted to human users")
     return actor
+
+
+def guard_um_por_usuario(
+    ctx: AuthContext, agent: Any, *, suite: str, loop_id: UUID | None, runs: Any, mecanismo: Any, loops: Any, defs: Any,
+    abrindo_loop: bool = False, fase: str = "tudo",
+) -> None:
+    """One eval run / loop per user at a time (409 ``execucao_em_andamento`` / ``loop_ativo_do_usuario``); ``loops`` is the
+    loop store. Sync (store calls): call it from the worker thread. The DB trigger of migration 087 is the race backstop."""
+    from app.studio.eval_um_por_usuario import checar_um_por_usuario
+
+    def chave_do_agente(agent_id: UUID) -> str | None:
+        return next((a.key for a in defs.list_agents(ctx.org_id) if a.id == agent_id), None)
+
+    checar_um_por_usuario(
+        started_by=actor_id(ctx), org_id=ctx.org_id, agent_id=agent.id, suite=suite, loop_id=loop_id, abrindo_loop=abrindo_loop,
+        fase=fase, runs=runs, mecanismo=mecanismo, loops=loops, chave_do_agente=chave_do_agente)
 
 
 def require_user_or_dev_advisor(ctx: AuthContext, agent: Any, *, evals_token_ok: bool = False) -> None:
@@ -1308,6 +1331,7 @@ async def run_mecanismo_suite(
     ceiling=Depends(get_spend_ceiling_dep),
     consolidacao=Depends(get_consolidacao_store_dep),
     loops=Depends(get_loop_service_dep),
+    evals=Depends(get_eval_store_dep),
     rodar_tudo: bool = Query(False),
     loop_id: UUID | None = Query(None, description="Eval-loop gate: book this run as the next round of the loop (G1-G7)."),
 ) -> MecanismoRunIniciadaOut:
@@ -1327,12 +1351,18 @@ async def run_mecanismo_suite(
     if hasattr(driver, "definir_agente"):
         driver.definir_agente(agent.key)
     limite = settings.studio_mecanismo_run_budget_usd
+    await anyio.to_thread.run_sync(lambda: guard_um_por_usuario(
+        ctx, agent, suite="mecanismo", loop_id=loop_id, runs=evals, mecanismo=mecanismo, loops=loops.store, defs=store,
+        fase="tudo" if loop_id is None else "em_andamento"))
     if loop_id is not None:
         # G6/G7: refuses a closed loop, an open round, a spent budget and an unchanged hash with nothing to consolidate;
         # the run's cost cap is clamped to what the loop budget has left.
         limite = (await anyio.to_thread.run_sync(lambda: loops.admitir(
             ctx.org_id, agent.id, loop_id, suite="mecanismo", compiled_hash=compiled.hash, limite_usd=limite,
             ler_resumo=lambda rid: resumo_mecanismo(mecanismo, ctx.org_id, agent.id, rid)))).limite_usd
+        await anyio.to_thread.run_sync(lambda: guard_um_por_usuario(
+            ctx, agent, suite="mecanismo", loop_id=loop_id, runs=evals, mecanismo=mecanismo, loops=loops.store, defs=store,
+            fase="loop"))
     try:
         with store_errors():
             run_id, casos = iniciar_suite_mecanismo(
