@@ -109,6 +109,15 @@ _KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS: dict[str, str] = {
     "agents/runtime_settings/runtime_settings_numero_fallback_e164": (
         "key-scoped JSONB regex; refused by RuntimeSettingsService (normalize_phone, 422), DB guard probed"
     ),
+    # Reviewed 2026-11-12 (agents migration 086). Same shape as 074: key-scoped JSONB bounds (`value #>> '{}'` cast
+    # and range-checked per key), which sql_check cannot parse; not a conditional-presence shape. Refused above the
+    # DB by `EvalLoopConfigIn` (alvo gt=0 le=1, orcamento_usd gt=0 le=LOOP_ORCAMENTO_USD_MAX, rodadas_max 1..100;
+    # 422 tested in tests/studio/ke/test_studio_eval_loops_router.py); tests/test_migration_eval_loop_config.py
+    # pins that the CHECK bounds backstop the API bounds; the DB refusal is proven by the `verify_db_guards` probe
+    # `eval_loop_config.value_bounds`.
+    "agents/runtime_settings/runtime_settings_eval_loop_valores": (
+        "key-scoped JSONB bounds; refused by EvalLoopConfigIn (422), CHECK pinned to the API bounds, DB guard probed"
+    ),
     # Reviewed 2026-10-03 (migration 192). "valor OR percentual, never both"
     # has no discriminant column, so a ConditionalPresenceManifest cannot
     # express it. It is pinned three times above the DB: the request schema

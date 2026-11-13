@@ -61,6 +61,8 @@
     "082_qualificacao_identificacao_desejada.sql": "004732ea4912d073dd871ed4bf9fac9565f6644e0b204005410bcdf5c70e6f66",
     "083_agent_product_grant_eventos.sql": "cca02ed77363f7a6cbc1d3d602df580149465a52e54b0e9b38ac8db1f166fae8",
     "084_eval_mecanismo_transcricao.sql": "531dd8f62d1e8df4ed42d9896ba675f697d4ba3b4760d02e42a0d45782c248dd",
-    "085_contatos_permitidos.sql": "6dafb45980fa4746b0eaa5335d2c0403245306b2a20bca60bbd28450d2e29700"
+    "085_contatos_permitidos.sql": "6dafb45980fa4746b0eaa5335d2c0403245306b2a20bca60bbd28450d2e29700",
+    "086_eval_loop_config.sql": "c5f8b6c4db3bc83e8b9146b7f3444bd03800023549133745bbb10d61158f6faf",
+    "087_eval_um_por_usuario.sql": "bf3e98728d6b3d5159db04fc550a48954a8d1f40abe6038da55e33ea5c1c72c3"
   }
 }

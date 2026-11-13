@@ -118,16 +118,19 @@ def test_deploy_without_secret_refuses_to_boot(monkeypatch):
     _bare_inbox("secret")  # with a secret it builds
 
 
-# ── no send / read / backfill / chat-history route ──────────────────────────────────────────────
-def test_only_connections_and_webhook_are_mounted(client):
+# ── the inbox routes exist (owner decision 2026-11-12) and are ALL admin-gated ──────────────────
+def test_the_inbox_routes_are_mounted_next_to_the_connections_and_the_webhook(client):
     from app.main import app
 
     paths = {(m, r.path) for r in app.routes for m in (getattr(r, "methods", None) or ())}
-    wa = {p for _, p in paths if p.startswith("/api/whatsapp")}
-    forbidden = ("/messages", "/chats", "/read", "/backfill", "/events", "/send")
-    assert not [p for p in wa if any(f in p for f in forbidden)], sorted(wa)
-    assert "/api/whatsapp/webhook/{token}" in wa
-    assert ("POST", "/api/whatsapp/connections/{connection_id}/start") in paths  # session lifecycle is not a send
+    base = "/api/whatsapp/connections/{connection_id}"
+    for route in (
+        ("GET", f"{base}/chats"), ("GET", f"{base}/chats/{{chat_id:path}}/messages"),
+        ("POST", f"{base}/chats/{{chat_id:path}}/messages"), ("POST", f"{base}/chats/{{chat_id:path}}/read"),
+        ("POST", f"{base}/backfill"), ("POST", "/api/whatsapp/webhook/{token}"),
+    ):
+        assert route in paths, route
+    assert ("POST", f"{base}/start") in paths  # session lifecycle is not a send
 
 
 # ── the pre-store input contract ────────────────────────────────────────────────────────────────

@@ -33,7 +33,7 @@ class TestAuthBoundary:
 
 class TestStartAndRead:
     def _start(self, ke_client, **kw):
-        return ke_client.post(LOOPS, json={"suite": "comportamento", "rodadas_planejadas": 30, **kw})
+        return ke_client.post(LOOPS, json={"suite": "comportamento", "rodadas_planejadas": 10, **kw})
 
     def test_g1_g2_g7_a_loop_carries_target_floor_rounds_and_the_default_budget(self, ke_client):
         seed_org_role(ke_client, role="owner")
@@ -41,8 +41,8 @@ class TestStartAndRead:
         resp = self._start(ke_client)
         assert resp.status_code == 201, resp.text
         body = resp.json()
-        assert (body["alvo"], body["piso"], body["rodadas_planejadas"], body["orcamento_usd"], body["status"]) == (1.0, 0.8, 30, 20.0, "ativo")
-        assert [c["rodada"] for c in body["checkpoints"]] == [5, 10, 15] and body["serie"] == [] and body["gasto_usd"] == 0
+        assert (body["alvo"], body["piso"], body["rodadas_planejadas"], body["orcamento_usd"], body["status"]) == (0.95, 0.8, 10, 5.0, "ativo")
+        assert [c["rodada"] for c in body["checkpoints"]] == [5, 10] and body["serie"] == [] and body["gasto_usd"] == 0
         assert ke_client.get(f"{LOOPS}/{body['id']}").json()["id"] == body["id"]
         assert [i["id"] for i in ke_client.get(LOOPS).json()["items"]] == [body["id"]]
         assert ke_client.get(f"{LOOPS}?status=parado").json()["items"] == []
@@ -51,9 +51,10 @@ class TestStartAndRead:
         seed_org_role(ke_client, role="owner")
         seed_studio_agent(ke_client)
         assert self._start(ke_client).status_code == 201
-        dup = self._start(ke_client)
-        assert dup.status_code == 409 and dup.json()["code"] == "loop_ativo_existente"
-        assert ke_client.post(LOOPS, json={"suite": "mecanismo", "rodadas_planejadas": 5}).status_code == 201
+        dup = self._start(ke_client)  # the same user already holds a loop (087); another user hits loop_ativo_existente
+        assert dup.status_code == 409 and dup.json()["code"] == "loop_ativo_do_usuario"
+        other = ke_client.post(LOOPS, json={"suite": "mecanismo", "rodadas_planejadas": 5})
+        assert other.status_code == 409 and other.json()["code"] == "loop_ativo_do_usuario"
 
     @pytest.mark.parametrize("payload", [
         {"suite": "outra", "rodadas_planejadas": 5}, {"suite": "comportamento", "rodadas_planejadas": 0},
@@ -76,6 +77,80 @@ class TestStartAndRead:
         assert again.status_code == 409 and again.json()["code"] == "loop_ja_encerrado"
 
 
+CONFIG = "/api/studio/plataforma/eval-loop-config"
+
+
+class TestLoopConfig:
+    """Owner 2026-11-12: target 95%, cap US$ 5, max rounds -- a platform-admin config the loops read (migration 086)."""
+
+    @pytest.mark.parametrize("method", ["get", "put"])
+    def test_config_requires_auth_strict_401(self, ke_client, method):
+        resp = getattr(ke_client.raw(), method)(CONFIG, **({"json": {"alvo": 0.9, "orcamento_usd": 3, "rodadas_max": 5}} if method == "put" else {}))
+        assert resp.status_code == 401
+
+    @pytest.mark.parametrize("method", ["get", "put"])
+    def test_an_org_owner_who_is_not_a_platform_admin_is_403(self, ke_client, method):
+        seed_org_role(ke_client, role="member")
+        resp = getattr(ke_client, method)(CONFIG, **({"json": {"alvo": 0.9, "orcamento_usd": 3, "rodadas_max": 5}} if method == "put" else {}))
+        assert resp.status_code == 403 and resp.json()["code"] == "platform_admin_required"
+
+    def test_defaults_are_95_percent_us5_and_10_rounds_then_put_replaces_and_records_one_event(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        got = ke_client.get(CONFIG).json()
+        assert (got["alvo"], got["orcamento_usd"], got["rodadas_max"], got["alterado_em"]) == (0.95, 5.0, 10, None)
+        put = ke_client.put(CONFIG, json={"alvo": 0.9, "orcamento_usd": 8.5, "rodadas_max": 20})
+        assert put.status_code == 200, put.text
+        assert (put.json()["alvo"], put.json()["orcamento_usd"], put.json()["rodadas_max"]) == (0.9, 8.5, 20)
+        assert put.json()["alterado_por"] is not None and put.json()["alterado_em"] is not None
+        assert ke_client.get(CONFIG).json()["rodadas_max"] == 20
+        (evento,) = ke_client.stores.loop_config.eventos
+        assert evento[0] == "loop_config_alterada"
+        assert evento[1] == {"alvo": 0.95, "orcamento_usd": 5.0, "rodadas_max": 10}
+        assert evento[2] == {"alvo": 0.9, "orcamento_usd": 8.5, "rodadas_max": 20}
+
+    def test_an_unchanged_put_records_no_event(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        assert ke_client.put(CONFIG, json={"alvo": 0.95, "orcamento_usd": 5, "rodadas_max": 10}).status_code == 200
+        assert ke_client.stores.loop_config.eventos == []
+
+    @pytest.mark.parametrize("body", [
+        {"alvo": 0, "orcamento_usd": 5, "rodadas_max": 10}, {"alvo": 1.01, "orcamento_usd": 5, "rodadas_max": 10},
+        {"alvo": 0.9, "orcamento_usd": 0, "rodadas_max": 10}, {"alvo": 0.9, "orcamento_usd": 501, "rodadas_max": 10},
+        {"alvo": 0.9, "orcamento_usd": 5, "rodadas_max": 0}, {"alvo": 0.9, "orcamento_usd": 5, "rodadas_max": 101},
+        {"alvo": 0.9, "orcamento_usd": 5}, {"alvo": 0.9, "orcamento_usd": 5, "rodadas_max": 10, "extra": 1},
+    ])
+    def test_invalid_or_partial_or_unknown_bodies_are_422(self, ke_client, body):
+        seed_org_role(ke_client, role="owner")
+        assert ke_client.put(CONFIG, json=body).status_code == 422
+        assert ke_client.stores.loop_config.eventos == []
+
+    def test_a_loop_started_without_rounds_or_budget_takes_the_config_and_freezes_the_target(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        seed_studio_agent(ke_client)
+        ke_client.put(CONFIG, json={"alvo": 0.9, "orcamento_usd": 3, "rodadas_max": 7})
+        loop = ke_client.post(LOOPS, json={"suite": "comportamento"})
+        assert loop.status_code == 201, loop.text
+        assert (loop.json()["rodadas_planejadas"], loop.json()["orcamento_usd"], loop.json()["alvo"]) == (7, 3.0, 0.9)
+        ke_client.put(CONFIG, json={"alvo": 0.99, "orcamento_usd": 4, "rodadas_max": 9})  # a later edit never moves an open loop
+        assert ke_client.get(f"{LOOPS}/{loop.json()['id']}").json()["alvo"] == 0.9
+
+    def test_rounds_above_the_configured_max_are_422_in_pt_br(self, ke_client):
+        seed_org_role(ke_client, role="owner")
+        seed_studio_agent(ke_client)
+        resp = ke_client.post(LOOPS, json={"suite": "comportamento", "rodadas_planejadas": 11})
+        assert resp.status_code == 422 and resp.json()["code"] == "rodadas_acima_do_maximo"
+        assert "máximo configurado (10)" in resp.json()["detail"]
+        assert ke_client.post(LOOPS, json={"suite": "comportamento", "rodadas_planejadas": 10}).status_code == 201
+
+    def test_a_budget_above_the_cap_is_422_even_for_a_platform_admin(self, ke_client):
+        seed_org_role(ke_client, role="owner")  # a platform admin
+        seed_studio_agent(ke_client)
+        resp = ke_client.post(LOOPS, json={"suite": "comportamento", "orcamento_usd": 5.01})
+        assert resp.status_code == 422 and resp.json()["code"] == "orcamento_acima_do_teto"
+        assert "teto configurado (US$ 5.00)" in resp.json()["detail"]
+        assert ke_client.post(LOOPS, json={"suite": "comportamento", "orcamento_usd": 5.0}).status_code == 201
+
+
 class TestLoopRuns:
     P = {"secao:a": "1"}
 
@@ -85,7 +160,7 @@ class TestLoopRuns:
         ids = [ke_client.stores.evals.create_case(
             DEFAULT_ORG_ID, agent.id, EvalCaseInput(slug=f"c{i}", titulo=f"Caso {i}", entrada="e", criterios={"deve": ["x"], "nao_deve": []})).id
             for i in range(n)]
-        loop = ke_client.post(LOOPS, json={"suite": "comportamento", "rodadas_planejadas": 30, **loop_kw}).json()
+        loop = ke_client.post(LOOPS, json={"suite": "comportamento", "rodadas_planejadas": 10, **loop_kw}).json()
         return agent, version_id, ids, loop
 
     def _post_run(self, ke_client, version_id, **extra):
@@ -120,7 +195,8 @@ class TestLoopRuns:
         state = ke_client.get(f"{LOOPS}/{loop['id']}").json()
         assert [(s["rodada"], s["status"]) for s in state["serie"]] == [(1, "executando")]
         second = self._post_run(ke_client, version_id, loop_id=loop["id"])
-        assert second.status_code == 409 and second.json()["code"] == "rodada_em_andamento"
+        assert second.status_code == 409 and second.json()["code"] == "execucao_em_andamento"  # 087 names the run in flight
+        assert "rodada 1 do loop" in second.json()["detail"]
 
     def test_g6_an_unchanged_hash_after_failures_is_refused_with_the_failing_cases(self, ke_client):
         seed_org_role(ke_client, role="owner")
@@ -184,8 +260,10 @@ class TestLoopRuns:
     def test_a_loop_of_the_other_suite_and_an_unknown_loop(self, ke_client):
         seed_org_role(ke_client, role="owner")
         agent, version_id, ids, _ = self._seed(ke_client)
-        mec = ke_client.post(LOOPS, json={"suite": "mecanismo", "rodadas_planejadas": 5}).json()
-        wrong = self._post_run(ke_client, version_id, loop_id=mec["id"])
+        mec = ke_client.stores.loops.create_loop(  # another user's loop of the mecanismo suite (this user holds the comportamento one)
+            DEFAULT_ORG_ID, agent.id, agente_chave="isaia", suite="mecanismo", rodadas_planejadas=5, alvo=1.0, piso=0.8,
+            orcamento_usd=5.0, started_by=uuid4())
+        wrong = self._post_run(ke_client, version_id, loop_id=str(mec.id))
         assert wrong.status_code == 422 and wrong.json()["code"] == "loop_suite_invalida"
         assert self._post_run(ke_client, version_id, loop_id=str(uuid4())).status_code == 404
 
@@ -198,8 +276,10 @@ class TestLoopRuns:
         assert s["status"] == "ativo" and s["serie"][0]["status"] == "cancelada" and s["serie"][0]["score"] is None
         assert self._post_run(ke_client, version_id, loop_id=loop["id"]).status_code == 202  # the slot is free again
 
-    def test_runs_without_a_loop_are_unchanged(self, ke_client):
+    def test_a_run_without_a_loop_is_refused_while_the_user_has_an_active_loop(self, ke_client):
         seed_org_role(ke_client, role="owner")
         agent, version_id, ids, loop = self._seed(ke_client)
-        assert self._post_run(ke_client, version_id).status_code == 202
+        # 087: a single run is refused while the user has an active loop, and the loop is untouched
+        refused = self._post_run(ke_client, version_id)
+        assert refused.status_code == 409 and refused.json()["code"] == "loop_ativo_do_usuario"
         assert ke_client.get(f"{LOOPS}/{loop['id']}").json()["serie"] == []

@@ -2,9 +2,9 @@
 
 A LOOP refines one suite of one agent over planned rounds. A ROUND is one run started with the loop's id. The rules:
 
-* G1 target 100% (``alvo``), floor = the agent's ``publicacao_limiar`` (``piso``)
+* G1 target (``alvo``: the platform config, default 95%, frozen on the loop), floor = the agent's ``publicacao_limiar`` (``piso``)
 * G2 planned rounds N; checkpoints at 5, 10, 15 (those <= N)
-* G3 stop at 100%
+* G3 stop at the target
 * G4 two CONSECUTIVE scored rounds without a score improvement stop the loop (above or below the floor)
 * G5 every round that did not raise the score is an overcall, listed with its cost
 * G6 a round on an unchanged content hash is refused beyond the consolidation passes (:func:`checar_admissao`)

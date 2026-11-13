@@ -45,6 +45,7 @@ from tests.routers.conftest import (  # noqa: F401
 from app.stores.studio_definitions import FakeStudioDefinitionStore
 from app.notifications import FakeNotificationSink
 from app.stores.studio_eval_consolidacao import FakeConsolidacaoStore
+from app.stores.eval_loop_config import FakeEvalLoopConfigStore
 from app.stores.studio_eval_loops import FakeLoopStore
 from app.studio.eval_loop_service import EvalLoopService
 from app.stores.studio_evals import FakeEvalStore
@@ -57,6 +58,7 @@ def _build_local_app() -> FastAPI:
     from fastapi import HTTPException
 
     from app.routers.editorial_router import router as editorial_router
+    from app.routers.studio_eval_loops_router import config_router as loop_config_router
     from app.routers.studio_eval_loops_router import router as loops_router
     from app.routers.studio_evals_router import router as evals_router
     from app.routers.studio_knowledge_router import router as knowledge_router
@@ -74,6 +76,7 @@ def _build_local_app() -> FastAPI:
     app.include_router(knowledge_router)
     app.include_router(evals_router)
     app.include_router(loops_router)
+    app.include_router(loop_config_router)
     app.include_router(editorial_router)
     return app
 
@@ -93,6 +96,8 @@ class _Stores:
         self.consol = FakeConsolidacaoStore(self.evals)
         #: eval-loop gate (loops + rounds) and the in-app notification sink its stop notices go to
         self.loops = FakeLoopStore()
+        #: the platform eval-loop config (target / budget cap / max rounds): the defaults until a test edits it
+        self.loop_config = FakeEvalLoopConfigStore()
         self.sink = FakeNotificationSink(admin_ids=["owner-1"])
         self.loop_service = EvalLoopService(self.loops, self.sink, self.consol)
         #: version_id -> the per-part hashes the Fake compiler returns "now" (absent => None => nothing can be skipped)
@@ -118,7 +123,7 @@ def ke_client():
          patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb), \
          patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb):
         from app.routers.studio_agents_router import (
-            get_consolidacao_store_dep, get_loop_service_dep, get_loop_store_dep, get_studio_definition_store_dep,
+            get_consolidacao_store_dep, get_eval_loop_config_store_dep, get_loop_service_dep, get_loop_store_dep, get_studio_definition_store_dep,
         )
         from app.routers.studio_evals_router import get_current_hash_dep, get_current_partes_dep, get_eval_store_dep
         from app.routers.studio_knowledge_router import get_studio_knowledge_store_dep
@@ -132,6 +137,7 @@ def ke_client():
         app.dependency_overrides[get_current_partes_dep] = lambda: stores.current_partes
         app.dependency_overrides[get_consolidacao_store_dep] = lambda: stores.consol
         app.dependency_overrides[get_loop_store_dep] = lambda: stores.loops
+        app.dependency_overrides[get_eval_loop_config_store_dep] = lambda: stores.loop_config
         app.dependency_overrides[get_loop_service_dep] = lambda: stores.loop_service
 
         from app.routers.editorial_router import editorial_deps

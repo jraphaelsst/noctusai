@@ -33,6 +33,7 @@ from uuid import UUID, uuid4
 from app.stores._db_errors import StudioConflict, exec_query, exec_rpc
 from app.stores._util import utcnow, utcnow_iso
 from app.stores.errors import NotFound
+from app.studio.eval_um_por_usuario import RunEmAndamento
 from app.studio.eval_mecanismo import MecanismoRequisito
 from app.studio.models import (
     EVAL_RUN_BUDGET_USD_MAX,
@@ -333,6 +334,10 @@ class EvalStore(Protocol):
         currently pendente/executando."""
         ...
 
+    def em_andamento_do_usuario(self, started_by: UUID) -> list[RunEmAndamento]:
+        """The user's runs in flight (``pendente``/``executando``), any agent (the one-run-per-user rule)."""
+        ...
+
 
 class FakeEvalStore:
     """In-memory :class:`EvalStore` — raises the same typed errors the Real
@@ -522,6 +527,11 @@ class FakeEvalStore:
         row["finished_at"] = utcnow()
         row["updated_at"] = utcnow()
         return self._run_record(row)
+
+    def em_andamento_do_usuario(self, started_by: UUID) -> list[RunEmAndamento]:
+        return [
+            RunEmAndamento(r["id"], r["org_id"], r["agent_id"], "comportamento", r["status"])
+            for r in self._runs.values() if r["started_by"] == started_by and r["status"] in ACTIVE_RUN_STATUSES]
 
     # -- test seam: the runner's writes (BE-RT owns the real runner) ------
 
@@ -725,6 +735,13 @@ class SupabaseEvalStore:
         if not rows:
             raise NotFound(f"eval run {run_id} not found")
         return self._run_record(rows[0])
+
+    def em_andamento_do_usuario(self, started_by: UUID) -> list[RunEmAndamento]:
+        rows = exec_query(
+            self._t(_RUNS_TABLE).select("id, org_id, agent_id, status").eq("started_by", str(started_by))
+            .in_("status", list(ACTIVE_RUN_STATUSES)).order("created_at").limit(50)).data or []
+        return [RunEmAndamento(UUID(str(r["id"])), UUID(str(r["org_id"])), UUID(str(r["agent_id"])), "comportamento", r["status"])
+                for r in rows]
 
     def cancel_run(self, org_id: UUID, agent_id: UUID, run_id: UUID) -> EvalRunRecord:
         current = self.get_run(org_id, agent_id, run_id)

@@ -15,7 +15,7 @@ S3 classifies it as about scheduling or not (classification only, D48: no reply,
   sends is `app/live/resposta.py` (agent turn in `agents` -> bubbles), and only after the send-seam guard re-reads the
   agent's on/off + allow-list and passes (fail closed). The seed `WahaClient` enforces the line policy (`send: enabled`
   required). Never add another send path; never construct a raw `WahaClient(`; no mark-read / typing / presence.
-- **Webhook HMAC is required.** `create_whatsapp_inbox_router(webhook_only=True, require_webhook_hmac=True)`; no secret
+- **Webhook HMAC is required.** `create_whatsapp_inbox_router(require_webhook_hmac=True)` (full inbox, admin-gated; since 2026-11-12); no secret
   => 401 to everything and a deploy refuses to boot (`required_prod_config`).
 - **Webhook base.** `webhook_base_url()` is the product URL: the personal live line (`send: enabled`; mark_online /
   full_sync / auto_repair off) has no edge and no webhook relay, so WAHA posts direct to the product.
@@ -54,7 +54,7 @@ S3 classifies it as about scheduling or not (classification only, D48: no reply,
 backend/app/
   main.py                 create_product_app + line policy registration + required_prod_config
   config.py               ASSISTANT_* settings (all empty by default, fail loud)
-  routers/whatsapp_router.py   connections (admin) + webhook-only inbox
+  routers/whatsapp_router.py   connections (admin) + inbox (admin) + webhook; services/inbox_mirror.py, humano_para_agente.py
   routers/classificacao_router.py   admin replay + blind stratified sample
   routers/google_router.py   Conectar Google (admin) + the signed OAuth callback
   services/google_connection.py   scopes, stores, provider, status, Google clients (seed factories)
