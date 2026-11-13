@@ -328,6 +328,9 @@ class ChannelTurnRequest(StrictHttpModel):
     messages: list[ChannelInboundMessage] = Field(default_factory=list, max_length=BATCH_MAX_MESSAGES)
     #: Lais F-AG (§2.1(a)): optional; absent = page-0 behaviour.
     contexto: ChannelContexto | None = None
+    #: Who is writing on a personal line (assistant): ``dono`` = the line's owner on another phone, ``contato`` = anyone
+    #: else. Closed enum (never free text -- it is rendered into the model's context); absent = unknown.
+    remetente: Literal["dono", "contato"] | None = None
 
     @model_validator(mode="after")
     def _batch_caps(self) -> "ChannelTurnRequest":

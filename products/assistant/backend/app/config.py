@@ -65,6 +65,9 @@ class SeedSettings(ProductSettings):
     assistant_reply_paragraph_delay_seconds: float = 0.6
     # Debounce: a conversation must be quiet this long before its burst of messages becomes ONE agent turn.
     assistant_reply_debounce_seconds: float = 4.0
+    #: Comma-separated E.164 numbers of the line owner's OTHER phones: a message from one is sent to agents as
+    #: `remetente="dono"` (else "contato"). Empty = nobody is the owner. PII: never logged.
+    assistant_owner_numbers: str = ""
 
     # -- Conversas (the owner's inbox, migration 022) ------------------------------------------------------
     # Inbox realtime (SSE) bus: Redis when REDIS_URL is set; the in-process bus only as a declared single-worker choice

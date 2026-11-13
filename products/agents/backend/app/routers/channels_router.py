@@ -415,7 +415,7 @@ async def run_channel_turn(
         try:
             resultado = await turno_mod.executar(
                 svc=svc, prep=prep, agent=agent, org_id=org_id, thread=thread, runtime=runtime, slot=slot, bus=bus,
-                contexto=payload.contexto, gatilho=payload.gatilho, lote_lead=lote_lead, lote_entrada=lote_entrada,
+                contexto=payload.contexto, gatilho=payload.gatilho, remetente=payload.remetente, lote_lead=lote_lead, lote_entrada=lote_entrada,
                 ultima_resposta_em=ultima, agora=agora,
                 mensagem_entrada_id=novos[-1].id if novos else None,
                 entrada_em=min((m.at for m in batch), default=None),

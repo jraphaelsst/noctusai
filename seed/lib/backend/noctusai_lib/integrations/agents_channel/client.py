@@ -87,6 +87,12 @@ GATILHO_MENSAGEM = "mensagem"
 GATILHO_REENGAJAMENTO = "reengajamento"
 GATILHOS = (GATILHO_MENSAGEM, GATILHO_REENGAJAMENTO)
 
+#: Who is writing on a personal line (assistant): the line's owner on another phone, or a contact. Closed enum -- agents
+#: rejects any other value and renders only its own fixed wording from it.
+REMETENTE_DONO = "dono"
+REMETENTE_CONTATO = "contato"
+REMETENTES = (REMETENTE_DONO, REMETENTE_CONTATO)
+
 
 @dataclass(frozen=True)
 class TurnRequest:
@@ -108,6 +114,8 @@ class TurnRequest:
     #: `mensagem` (>= 1 message) or `reengajamento` (no lead message; needs a `contexto`, whose `estado.reengajamento`
     #: names the flow).
     gatilho: str = GATILHO_MENSAGEM
+    #: `dono` | `contato` (see REMETENTES); None = unknown, key omitted (an older agents build keeps accepting the turn).
+    remetente: Optional[str] = None
 
     def to_wire(self) -> dict[str, Any]:
         wire = self._base_wire()
@@ -129,6 +137,10 @@ class TurnRequest:
                 for m in self.messages
             ],
         }
+        if self.remetente is not None:
+            if self.remetente not in REMETENTES:
+                raise ValueError(f"remetente must be one of {REMETENTES}")
+            wire["remetente"] = self.remetente
         return wire
 
 
@@ -1806,7 +1818,7 @@ __all__ = [
     "AgentsClientError", "AgentsNotConfigured", "AgentsTimeout", "AgentsTokenInvalid", "AgentsUpstreamError",
     "AppendResult", "CapacityExceeded", "ConsentInfo", "ControleIndisponivel", "ControleInfo", "ConversationNotFound",
     "DecisaoRequest", "DecisaoResult", "EspecificacoesResposta", "DeletionRequest", "DeletionResult", "EstagioInfo", "FAKE_ESTAGIOS", "FakeAgentsClient",
-    "GATILHOS", "GATILHO_MENSAGEM", "GATILHO_REENGAJAMENTO", "HandoffAction", "HandoffNotFound", "HandoffRecord",
+    "GATILHOS", "REMETENTES", "REMETENTE_CONTATO", "REMETENTE_DONO", "GATILHO_MENSAGEM", "GATILHO_REENGAJAMENTO", "HandoffAction", "HandoffNotFound", "HandoffRecord",
     "HttpAgentsClient", "IdempotencyConflict", "JuliaAction", "LeadDesconhecido", "LeadSemQualificacao", "LlmNotConfigured",
     "MAX_BATCH_MESSAGES", "MAX_MESSAGE_CHARS", "ParticipanteInfo", "ParticipanteNotFound", "QualificacaoEstado",
     "QualificacaoResumo", "ResumoRequest", "ResumoResult", "STATUS_RESPONDEU", "STATUS_SEM_ATENDIMENTO", "STATUS_LIMITE_PARA_HUMANO",

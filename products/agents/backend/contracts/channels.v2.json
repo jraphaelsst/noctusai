@@ -584,6 +584,22 @@
         "maxItems": 20,
         "title": "Messages",
         "type": "array"
+      },
+      "remetente": {
+        "anyOf": [
+          {
+            "enum": [
+              "dono",
+              "contato"
+            ],
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Remetente"
       }
     },
     "required": [

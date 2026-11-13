@@ -33,12 +33,12 @@ import anyio.to_thread
 
 from noctusai_lib.domain.chatbot import split_reply
 from noctusai_lib.integrations.agents_channel import (
-    MAX_MESSAGE_CHARS, STATUS_RESPONDEU, MAX_BATCH_MESSAGES, AgentsClient, TurnMessage, TurnRequest,
+    MAX_MESSAGE_CHARS, REMETENTE_CONTATO, REMETENTE_DONO, STATUS_RESPONDEU, MAX_BATCH_MESSAGES, AgentsClient, TurnMessage, TurnRequest,
 )
 
 from app.live import registro as r
 from app.live.controles import ControleIlegivel, ler_controles
-from app.live.numeros import eh_conversa_individual, numero_do_chat, numero_permitido
+from app.live.numeros import eh_conversa_individual, eh_dono, numero_do_chat, numero_permitido
 from app.services.intake import chat_ref
 
 logger = logging.getLogger(__name__)
@@ -61,6 +61,8 @@ class ReplyConfig:
     paragraph_delay_s: float = 0.6
     #: Quiet window of a conversation before its burst of messages becomes ONE turn.
     debounce_s: float = 4.0
+    #: Canonical digits of the owner's other phones (`numeros_do_dono`); empty = nobody is the owner.
+    owner_numbers: frozenset = frozenset()
 
 
 def _at(message: Any) -> datetime:
@@ -161,6 +163,8 @@ class LiveReplier:
         if self._agents is None:
             return await self._evento(org_id, connection_id, msgs, r.ERRO_TURNO, "agents_nao_configurado")
 
+        remetente = REMETENTE_DONO if eh_dono(numero, self._cfg.owner_numbers) else REMETENTE_CONTATO
+        dr = {"remetente": remetente}  # measurement: who wrote (enum only, never the number)
         try:
             result = await self._agents.run_turn(TurnRequest(
                 agent_key=self._cfg.agent_key,
@@ -171,25 +175,26 @@ class LiveReplier:
                     for m in msgs[-MAX_BATCH_MESSAGES:]
                 ),
                 phone_e164=f"+{numero}" if numero else None,
+                remetente=remetente,
             ))
         except Exception as exc:  # noqa: BLE001 - typed agents errors + transport => no reply, logged, event
-            return await self._evento(org_id, connection_id, msgs, r.ERRO_TURNO, _codigo(exc))
+            return await self._evento(org_id, connection_id, msgs, r.ERRO_TURNO, _codigo(exc), dr)
 
         if result.status not in STATUS_RESPONDEU:
             if result.status in _STATUS_DESLIGADO:
-                return await self._evento(org_id, connection_id, msgs, r.AGENTE_DESLIGADO, result.status)
+                return await self._evento(org_id, connection_id, msgs, r.AGENTE_DESLIGADO, result.status, dr)
             if result.status in _STATUS_LISTA:
-                return await self._evento(org_id, connection_id, msgs, r.RECUSADA_LISTA, result.status)
-            return await self._evento(org_id, connection_id, msgs, r.SEM_ATENDIMENTO, result.status)
+                return await self._evento(org_id, connection_id, msgs, r.RECUSADA_LISTA, result.status, dr)
+            return await self._evento(org_id, connection_id, msgs, r.SEM_ATENDIMENTO, result.status, dr)
         partes = [p for p in (result.partes or ()) if p and p.strip()]
         if not partes:
-            return await self._evento(org_id, connection_id, msgs, r.SEM_ATENDIMENTO, f"{result.status}_sem_resposta")
+            return await self._evento(org_id, connection_id, msgs, r.SEM_ATENDIMENTO, f"{result.status}_sem_resposta", dr)
 
         veto = await self._guarda_de_envio(numero)
         if veto is not None:
             desfecho, motivo = veto
-            return await self._evento(org_id, connection_id, msgs, desfecho, motivo)
-        return await self._enviar(org_id, connection_id, msgs, partes)
+            return await self._evento(org_id, connection_id, msgs, desfecho, motivo, dr)
+        return await self._enviar(org_id, connection_id, msgs, partes, dr)
 
     async def _guarda_de_envio(self, numero: Optional[str]) -> Optional[tuple[str, str]]:
         """The send-seam allow-list guard: a FRESH read of agents' on/off + allow-list; fail CLOSED when unreadable."""
@@ -203,7 +208,8 @@ class LiveReplier:
             return r.RECUSADA_LISTA, "guarda_de_envio"
         return None
 
-    async def _enviar(self, org_id: UUID, connection_id: UUID, msgs: list[Any], partes: list[str]) -> str:
+    async def _enviar(self, org_id: UUID, connection_id: UUID, msgs: list[Any], partes: list[str],
+                     dados_base: Optional[dict[str, Any]] = None) -> str:
         bolhas = [b for p in partes for b in split_reply(p)]
         chat_id = msgs[-1].chat_id
         enviadas = 0
@@ -221,5 +227,5 @@ class LiveReplier:
             logger.error("assistant live reply: send failed after %s/%s bubbles (%s)", enviadas, len(bolhas), _codigo(exc))
             desfecho = r.ENVIADA_PARCIAL if enviadas else r.ERRO_ENVIO
             return await self._evento(org_id, connection_id, msgs, desfecho, _codigo(exc),
-                                      {"bolhas": enviadas, "de": len(bolhas)})
-        return await self._evento(org_id, connection_id, msgs, r.ENVIADA, None, {"bolhas": enviadas})
+                                      {**(dados_base or {}), "bolhas": enviadas, "de": len(bolhas)})
+        return await self._evento(org_id, connection_id, msgs, r.ENVIADA, None, {**(dados_base or {}), "bolhas": enviadas})

@@ -22,6 +22,9 @@ S3 classifies it as about scheduling or not (classification only, D48: no reply,
 - **Input contract before storage:** `inbound_one_to_one_only(excluded)` then `assistant.append_intake`: dedup on the
   WAHA message id, forward-only from `paired_at`, text only. Third parties are an HMAC'd `chat_ref`, never a phone.
   Never log a phone, chat id or body.
+  Owner flag: `ASSISTANT_OWNER_NUMBERS` (comma-separated E.164 of the owner's other phones, normalised by the platform phone
+  normalizer; empty = nobody) sets `TurnRequest.remetente` = `dono` | `contato` (enum; unknown/`@lid` sender = `contato`) and is
+  recorded in each reply event's `dados`. The numbers themselves are never logged.
 - **Intake + event = one transaction.** The only writers are `assistant.append_intake` / `assistant.set_intake_outcome`
   (SECURITY DEFINER, service role); the outcome enum is `pending|classified|failed|skipped_budget|skipped_excluded|skipped`.
   Only `skipped` / `skipped_excluded` clear the body and are terminal (017 redefines `set_intake_outcome`): a budget

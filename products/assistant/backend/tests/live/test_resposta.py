@@ -180,7 +180,7 @@ def test_one_bubble_per_paragraph():
     rep, waha, reg = _build(ag)
     assert run(rep, _msg()) == r.ENVIADA
     assert [m["text"] for m in waha.sent_messages] == ["um", "dois", "tres"]
-    assert reg.eventos[0]["dados"] == {"bolhas": 3}
+    assert reg.eventos[0]["dados"] == {"remetente": "contato", "bolhas": 3}
 
 
 def test_a_disabled_line_policy_refuses_the_send_and_records_it():
@@ -199,7 +199,7 @@ def test_partial_delivery_is_recorded_not_retried():
     ag = Ctl([TurnResult(conversation_id="c", partes=("a\n\nb",), status="respondido")])
     rep, waha, reg = _build(ag, waha=Flaky(line_policy=ENABLED))
     assert run(rep, _msg()) == r.ENVIADA_PARCIAL
-    assert len(waha.sent_messages) == 1 and reg.eventos[0]["dados"] == {"bolhas": 1, "de": 2}
+    assert len(waha.sent_messages) == 1 and reg.eventos[0]["dados"] == {"remetente": "contato", "bolhas": 1, "de": 2}
 
 
 def test_missing_agents_client_is_a_declared_refusal_not_a_fake():

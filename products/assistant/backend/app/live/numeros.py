@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from typing import Iterable, Optional
 
+from noctusai_lib.primitives.phone import normalize_phone
+
 #: Chat ids the Assistant never answers: groups, status, broadcast lists, channels.
 _NAO_INDIVIDUAL = ("@g.us", "@broadcast", "@newsletter")
 
@@ -45,3 +47,19 @@ def numero_permitido(numero: Optional[str], lista: Iterable[str]) -> bool:
     if not permitidos:
         return True
     return numero is not None and canonico(numero) in permitidos
+
+
+def numeros_do_dono(bruto: str) -> frozenset[str]:
+    """`ASSISTANT_OWNER_NUMBERS` (comma-separated, any spelling) -> canonical digit set via the platform phone normalizer.
+    Unset/empty -> empty set (nobody is the owner). An entry that is not a phone is dropped, never guessed."""
+    out = set()
+    for item in (bruto or "").split(","):
+        e164 = normalize_phone(item.strip()) if item.strip() else None
+        if e164:
+            out.add(canonico(e164))
+    return frozenset(out)
+
+
+def eh_dono(numero: Optional[str], donos: frozenset[str]) -> bool:
+    """True only when the sender's number is known (not an opaque @lid) and is one of the owner's numbers."""
+    return bool(donos) and numero is not None and canonico(numero) in donos
