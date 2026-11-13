@@ -834,13 +834,21 @@ def registrar_aprendizado(deps: Dependencias, agent: StudioAgentRecord, publicad
 
 def conteudo_status(deps_studio: Any, skills: Any, agent: StudioAgentRecord) -> dict[str, Any] | None:
     """``{textos_preenchidos, textos_total, obrigatorios_faltando}`` against the registry slots that apply to the
-    agent, read from its draft (else its active version); ``None`` for a ``legado`` agent or an instance."""
+    agent, read from its draft (else its active version) as the EFFECTIVE chain (parent layers merged in, like readiness);
+    ``None`` for a ``legado`` agent or an instance."""
     if agent.conteudo_modo != "linhas" or agent.definition_scope == "instancia":
         return None
     version = deps_studio.get_draft(agent.org_id, agent.id) or deps_studio.get_active_version(agent.org_id, agent.id)
     if version is None:
         return None
-    tem_skills = bool(skills.listar_refs(version.id)) or any(s.ativo for s in deps_studio.list_skills(agent.org_id, version.id))
+    # The EFFECTIVE view (parent chain merged in), exactly what readiness and the compiler judge: a child inherits
+    # its bases' texts / skills / tools, so the card must not count only its own rows.
+    from app.studio.camadas import efetivo
+
+    ef = efetivo(deps_studio)
+    tem_skills = (bool(skills.listar_refs(version.id))
+                  or any(skills.listar_refs(vid) for _, vid in ef.cadeia(agent.org_id, version.id))
+                  or any(s.ativo for s in ef.list_skills(agent.org_id, version.id)))
     canal = agent.owner_product is not None
     todos = {k: replace(s, obrigatoria=True) for k, s in TEXTOS.items()}
     kw = dict(
@@ -850,7 +858,7 @@ def conteudo_status(deps_studio: Any, skills: Any, agent: StudioAgentRecord) -> 
     )
     aplicaveis = chaves_exigidas(registro=todos, **kw)
     exigidos = chaves_exigidas(**kw)
-    preenchidos = {t.chave for t in deps_studio.list_textos(agent.org_id, version.id) if t.conteudo.strip()}
+    preenchidos = {t.chave for t in ef.list_textos(agent.org_id, version.id) if t.conteudo.strip()}
     return {
         "textos_preenchidos": len(aplicaveis & preenchidos),
         "textos_total": len(aplicaveis),
