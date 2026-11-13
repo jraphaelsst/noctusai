@@ -89,9 +89,9 @@ class GrantStore(Protocol):
         ...
 
     def activate(
-        self, grant_id: UUID, *, channel_token_id: UUID, product_token_id: UUID,
+        self, grant_id: UUID, *, channel_token_id: UUID, product_token_id: UUID | None,
     ) -> Grant:
-        """-> ``ativo`` with the token ids, ``last_delivered_at`` now, ``last_error`` cleared."""
+        """-> ``ativo`` with the token ids (``product_token_id`` is ``None`` for a product without a tools token), ``last_delivered_at`` now, ``last_error`` cleared."""
         ...
 
     def mark_failed(self, grant_id: UUID, error: str) -> Grant:
@@ -227,7 +227,8 @@ class SupabaseGrantStore:
 
     def activate(self, grant_id, *, channel_token_id, product_token_id) -> Grant:
         return self._update(grant_id, {
-            "status": "ativo", "channel_token_id": str(channel_token_id), "product_token_id": str(product_token_id),
+            "status": "ativo", "channel_token_id": str(channel_token_id),
+            "product_token_id": str(product_token_id) if product_token_id else None,
             "last_delivered_at": utcnow_iso(), "last_error": None,
         })
 

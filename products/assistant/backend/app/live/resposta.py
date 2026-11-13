@@ -33,12 +33,13 @@ import anyio.to_thread
 
 from noctusai_lib.domain.chatbot import split_reply
 from noctusai_lib.integrations.agents_channel import (
-    MAX_MESSAGE_CHARS, REMETENTE_CONTATO, REMETENTE_DONO, STATUS_RESPONDEU, MAX_BATCH_MESSAGES, AgentsClient, TurnMessage, TurnRequest,
+    MAX_MESSAGE_CHARS, REMETENTE_CONTATO, REMETENTE_DONO, STATUS_RESPONDEU, MAX_BATCH_MESSAGES, TurnMessage, TurnRequest,
 )
 
 from app.live import registro as r
 from app.live.controles import ControleIlegivel, ler_controles
 from app.live.numeros import eh_conversa_individual, eh_dono, numero_do_chat, numero_permitido
+from app.services.agents_grant import AgentsAccess
 from app.services.intake import chat_ref
 
 logger = logging.getLogger(__name__)
@@ -56,7 +57,6 @@ def _codigo(exc: BaseException) -> str:
 @dataclass(frozen=True)
 class ReplyConfig:
     enabled: bool
-    agent_key: str
     max_age_s: int = 900
     paragraph_delay_s: float = 0.6
     #: Quiet window of a conversation before its burst of messages becomes ONE turn.
@@ -77,7 +77,7 @@ class LiveReplier:
     def __init__(
         self,
         *,
-        agents: Optional[AgentsClient],
+        agents_for: Callable[[UUID], Awaitable[Optional[AgentsAccess]]],
         waha_for: Callable[[UUID, UUID], Awaitable[Any]],
         registro: Any,
         config: ReplyConfig,
@@ -85,7 +85,7 @@ class LiveReplier:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
-        self._agents = agents
+        self._agents_for = agents_for  # org -> its grant's channel client + agent key; None = no live grant
         self._waha_for = waha_for
         self._reg = registro
         self._cfg = config
@@ -160,14 +160,18 @@ class LiveReplier:
         ultima = msgs[-1]
 
         numero = (ultima.sender_phone and numero_do_chat(f"{ultima.sender_phone}@c.us")) or numero_do_chat(ultima.chat_id)
-        if self._agents is None:
-            return await self._evento(org_id, connection_id, msgs, r.ERRO_TURNO, "agents_nao_configurado")
+        try:
+            acesso = await self._agents_for(org_id)
+        except Exception as exc:  # noqa: BLE001 - the grant store is unreadable (decrypt / DB): an error, NOT "no grant"
+            return await self._evento(org_id, connection_id, msgs, r.ERRO_TURNO, f"grant_ilegivel_{_codigo(exc)}"[:80])
+        if acesso is None:  # the org has no live agents grant (declared refusal: no reply, one event, never a Fake)
+            return await self._evento(org_id, connection_id, msgs, r.ERRO_TURNO, "sem_grant_agents")
 
         remetente = REMETENTE_DONO if eh_dono(numero, self._cfg.owner_numbers) else REMETENTE_CONTATO
         dr = {"remetente": remetente}  # measurement: who wrote (enum only, never the number)
         try:
-            result = await self._agents.run_turn(TurnRequest(
-                agent_key=self._cfg.agent_key,
+            result = await acesso.client.run_turn(TurnRequest(
+                agent_key=acesso.agent_key,
                 connection_id=str(connection_id),
                 chat_id=chat_ref(self._identity_key(), ultima.chat_id),
                 messages=tuple(
@@ -190,16 +194,16 @@ class LiveReplier:
         if not partes:
             return await self._evento(org_id, connection_id, msgs, r.SEM_ATENDIMENTO, f"{result.status}_sem_resposta", dr)
 
-        veto = await self._guarda_de_envio(numero)
+        veto = await self._guarda_de_envio(numero, acesso)
         if veto is not None:
             desfecho, motivo = veto
             return await self._evento(org_id, connection_id, msgs, desfecho, motivo, dr)
         return await self._enviar(org_id, connection_id, msgs, partes, dr)
 
-    async def _guarda_de_envio(self, numero: Optional[str]) -> Optional[tuple[str, str]]:
+    async def _guarda_de_envio(self, numero: Optional[str], acesso: AgentsAccess) -> Optional[tuple[str, str]]:
         """The send-seam allow-list guard: a FRESH read of agents' on/off + allow-list; fail CLOSED when unreadable."""
         try:
-            ctl = await ler_controles(self._agents, self._cfg.agent_key)  # type: ignore[arg-type]
+            ctl = await ler_controles(acesso.client, acesso.agent_key)
         except ControleIlegivel as exc:
             return r.CONTROLE_INDISPONIVEL, str(exc)[:80]
         if not ctl.ligado:

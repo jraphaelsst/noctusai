@@ -146,11 +146,20 @@ def test_chat_tables_are_tiered_service_only_with_no_browser_policy():
 
 
 # ── the owner's own messages reach the agent's thread (no turn) ─────────────────────────────────
+def _acesso(client, agent_key="assistente"):
+    from app.services.agents_grant import AgentsAccess
+
+    async def agents_for(org):
+        return AgentsAccess(client=client, agent_key=agent_key)
+
+    return agents_for
+
+
 def _fwd(client, owner="user-1", enabled=True):
     from app.services.humano_para_agente import build_human_forwarder
 
     return build_human_forwarder(
-        agents_factory=lambda: client, owner_user_id=lambda *_: owner, identity_key=lambda: "k", enabled=lambda: enabled,
+        agents_for=_acesso(client), owner_user_id=lambda *_: owner, identity_key=lambda: "k", enabled=lambda: enabled,
     )
 
 
@@ -266,27 +275,27 @@ def test_delete_purges_the_intake_of_that_chat_only_and_the_agent_thread():
     from app.services.intake import chat_ref
 
     rpc, fake = _Rpc(), make_agents_client(token="", base_url="", allow_fake=True)
-    erase = build_chat_eraser(lambda: rpc, lambda: "k", agents_factory=lambda: fake, agent_key=lambda: "assistente")
+    erase = build_chat_eraser(lambda: rpc, lambda: "k", agents_for=_acesso(fake))
     org, conn = uuid4(), uuid4()
     asyncio.run(erase(org, conn, ME, "u1"))
     assert rpc.calls == [("apagar_dados_conversa", {"p_org_id": str(org), "p_connection_id": str(conn), "p_chat_ref": chat_ref("k", ME)})]
     assert [(d.agent_key, d.connection_id, d.chat_id) for d in fake.deletions] == [("assistente", str(conn), chat_ref("k", ME))]
 
 
-def test_delete_without_an_agent_configured_skips_the_agent_and_a_failure_propagates():
+def test_delete_without_a_live_grant_skips_the_agent_and_a_failure_propagates():
     from app.services.conversa_apagar import build_chat_eraser
 
-    def no_agents():
-        raise AssertionError("agents must not be called")
+    async def no_grant(org):
+        return None  # the org has no agents grant: nothing may be called
 
-    asyncio.run(build_chat_eraser(lambda: _Rpc(), lambda: "k", agents_factory=no_agents, agent_key=lambda: "")(uuid4(), uuid4(), ME, None))
+    asyncio.run(build_chat_eraser(lambda: _Rpc(), lambda: "k", agents_for=no_grant)(uuid4(), uuid4(), ME, None))
 
     class _Boom:
         def rpc(self, *_a):
             raise RuntimeError("db down")
 
     with pytest.raises(RuntimeError):  # the organ answers 502 and erases nothing
-        asyncio.run(build_chat_eraser(lambda: _Boom(), lambda: "k", agents_factory=no_agents, agent_key=lambda: "")(uuid4(), uuid4(), ME, None))
+        asyncio.run(build_chat_eraser(lambda: _Boom(), lambda: "k", agents_for=no_grant)(uuid4(), uuid4(), ME, None))
 
 
 def test_migration_carries_the_pause_columns_and_a_chat_scoped_erase_function():

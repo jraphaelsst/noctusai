@@ -237,7 +237,7 @@ GRANT_CHANNEL_TOKEN_SCOPES = CHANNEL_TOKEN_SCOPES | {SCOPE_CHANNEL_SPECS}
 #: Who may hold a channel token. Read off the STORED token row (`api_tokens.
 #: issuer`, set only server-side at mint) — a token minted for any other
 #: transport answers 403 `issuer_not_allowed` even with the scope.
-CHANNEL_ALLOWED_ISSUERS = frozenset({"social-wiring"})
+CHANNEL_ALLOWED_ISSUERS = frozenset({"social-wiring", "assistant"})
 #: The server-side registry of scopes an admin-initiated mint may put on a
 #: token (the union of every documented, product-honoured set).
 MINTABLE_TOKEN_SCOPES = PACKAGE_TOKEN_SCOPES | GRANT_CHANNEL_TOKEN_SCOPES

@@ -14,7 +14,7 @@ from app.live import registro as r
 def _rep(owner_raw, agents=None):
     ag = agents or Ctl()
     rep, waha, reg = _build(ag)
-    rep._cfg = ReplyConfig(enabled=True, agent_key="assistente", owner_numbers=numeros_do_dono(owner_raw))
+    rep._cfg = ReplyConfig(enabled=True, owner_numbers=numeros_do_dono(owner_raw))
     return rep, ag, reg
 
 

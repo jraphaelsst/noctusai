@@ -417,8 +417,63 @@ class TestListAndOptions:
     def test_options_list_the_server_registry_and_search_orgs(self, kit):
         _platform_admin(kit)
         body = kit.get(f"{URL}/opcoes").json()
-        assert body["produtos"] == [{"slug": "social-wiring", "label": "Social Wiring", "agent_keys": ["julia"]}]
+        assert body["produtos"] == [
+            {"slug": "assistant", "label": "Assistant", "agent_keys": ["assistente-pessoal"]},
+            {"slug": "social-wiring", "label": "Social Wiring", "agent_keys": ["julia"]},
+        ]
         assert {o["nome"] for o in body["orgs"]} == {"Imobiliária Alfa", "Beta Imóveis"}
         found = kit.get(f"{URL}/opcoes", params={"q": "beta"}).json()["orgs"]
         assert [o["id"] for o in found] == [str(OTHER_ORG)]
         assert kit.get(f"{URL}/opcoes", params={"limit": 1000}).status_code == 422
+
+
+class TestAssistantGrant:
+    """`assistente-pessoal` -> `assistant`: the product only RECEIVES the channel token, so no tools token is minted, stored
+    or revoked -- and the channel token carries the `assistant` issuer the channel gate allows."""
+
+    @pytest.fixture
+    def assistant(self, kit):
+        _platform_admin(kit)
+        kit.kit.studio.create_studio_agent(
+            TARGET_ORG, "assistente-pessoal", "Assistente", None, runtime="llm", owner_product="assistant")
+        return kit
+
+    def _grant(self, client, **kw):
+        return client.post(URL, json={"agent_key": "assistente-pessoal", "product": "assistant", "org_id": str(TARGET_ORG), **kw})
+
+    def test_create_mints_only_the_channel_token_and_delivers_it(self, assistant):
+        resp = self._grant(assistant)
+        assert resp.status_code == 201, resp.text
+        out = resp.json()
+        k = assistant.kit
+        assert out["status"] == "ativo" and out["product_token_id"] is None
+        (channel,) = k.live("agents")
+        assert channel["issuer"] == "assistant" and channel["id"] == out["channel_token_id"]
+        assert channel["principal_agent_id"] == str(k.studio.get_agent(TARGET_ORG, "assistente-pessoal").id)
+        assert k.tools_secret(TARGET_ORG) is None
+        # only the (spent) delivery token lives in the product schema: no standing credential is left there
+        assert [r for r in k.live("assistant")] == []
+        (call,) = k.delivery.calls
+        assert (call.method, call.product_slug, call.issuer) == ("PUT", "assistant", "agents")
+        assert call.payload.metadata["agent_key"] == "assistente-pessoal" and call.payload.credential.startswith("noc_")
+        assert k.admin.find_by_secret("agents", call.payload.credential).id == UUID(channel["id"])
+        assert call.payload.credential not in resp.text
+
+    def test_rotate_and_revoke_work_without_a_tools_token(self, assistant):
+        grant = self._grant(assistant).json()
+        k = assistant.kit
+        rotated = assistant.post(f"{URL}/{grant['id']}/rotate")
+        assert rotated.status_code == 200, rotated.text
+        out = rotated.json()
+        assert out["channel_token_id"] != grant["channel_token_id"] and out["product_token_id"] is None
+        (channel,) = k.live("agents")
+        assert channel["id"] == out["channel_token_id"]
+        assert assistant.delete(f"{URL}/{grant['id']}").status_code == 204
+        assert k.live("agents") == [] and k.grants.get(UUID(grant["id"])).status == "revogado"
+        assert [c.method for c in k.delivery.calls] == ["PUT", "PUT", "DELETE"]
+        assert k.delivery.calls[-1].product_slug == "assistant"
+
+    def test_a_second_agent_cannot_be_granted_to_the_assistant(self, assistant):
+        resp = assistant.post(URL, json={"agent_key": "julia", "product": "assistant", "org_id": str(TARGET_ORG)})
+        assert resp.status_code == 422 and resp.json()["code"] == "agent_not_grantable"
+        assert assistant.kit.all("agents") == []

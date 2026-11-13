@@ -40,7 +40,7 @@ from noctusai_seed.whatsapp_connections_router import create_whatsapp_connection
 from noctusai_seed.whatsapp_inbox_router import create_whatsapp_inbox_router
 
 from app.config import settings
-from app.live.wiring import build_on_message, build_replier
+from app.live.wiring import agents_for, build_on_message, build_replier
 from app.dependencies import _db, coerce_org_uuid, get_admin_client, get_current_user_org
 from app.services.humano_para_agente import build_human_forwarder
 from app.services.inbox_mirror import (
@@ -113,23 +113,9 @@ def _owner_user_id(org_id, connection_id) -> str | None:
     return str(rec.user_id) if rec is not None else None
 
 
-_agents_holder: list = []
-
-
-def _agents():
-    """ONE agents client per process (built lazily; a missing token/url is a declared refusal, never a Fake)."""
-    if not _agents_holder:
-        from noctusai_lib.integrations.agents_channel import make_agents_client
-
-        _agents_holder.append(make_agents_client(
-            token=settings.assistant_agents_token, base_url=settings.assistant_agents_base_url, allow_fake=False,
-        ))
-    return _agents_holder[0]
-
-
 def _human_forwarder():
     return build_human_forwarder(
-        agents_factory=_agents, owner_user_id=_owner_user_id,
+        agents_for=agents_for, owner_user_id=_owner_user_id,
         identity_key=lambda: settings.assistant_identity_hmac_key, enabled=lambda: settings.assistant_reply_enabled,
     )
 
@@ -137,7 +123,7 @@ def _human_forwarder():
 def _chat_eraser():
     return build_chat_eraser(
         get_admin_client, lambda: settings.assistant_identity_hmac_key,
-        agents_factory=_agents, agent_key=lambda: settings.assistant_agent_key,
+        agents_for=agents_for,
     )
 
 

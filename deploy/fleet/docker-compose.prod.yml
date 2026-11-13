@@ -707,14 +707,12 @@ services:
       ASSISTANT_WAHA_SESSION: default
       # Line policy v1 (waha-instances.yml `line_policy` + the edge relay; KB § INTEGRATIONS/whatsapp.md § 6a). Keeper-checked == declared.
       ASSISTANT_WAHA_LINE_POLICY: '{"send":"enabled","mark_online":false,"full_sync":false,"auto_repair":false}'
-      # Live reply (owner decision 2026-11-12): the product kill switch starts OFF; the agent key / agents URL / channel token come
-      # from the root .env (the token is a secret: never a literal here). With the switch on, the product refuses to boot if any is empty.
+      # Live reply (owner decision 2026-11-12): the product kill switch starts OFF. The agents channel credential and the agent key are
+      # NOT env: `agents` delivers them as a platform grant (PUT /api/platform/grants/agents -> assistant.agent_grants, KB § PATTERNS/backend/
+      # platform-grants.md); the agents URL resolves from PRODUCT_URL_AGENTS (root .env roster) like social-wiring. No grant = no reply.
       ASSISTANT_REPLY_ENABLED: ${ASSISTANT_REPLY_ENABLED:-false}
-      ASSISTANT_AGENT_KEY: ${ASSISTANT_AGENT_KEY:-}  # env-fleet-empty-ok — REVIEWED 2026-11-12: switch OFF by default; with it ON the product refuses to boot on an empty value
-      ASSISTANT_AGENTS_BASE_URL: ${ASSISTANT_AGENTS_BASE_URL:-}
       # The line owner's OTHER phones (comma-separated E.164; PII, set in the root .env): a message from one is sent to agents as remetente=dono.
       ASSISTANT_OWNER_NUMBERS: ${ASSISTANT_OWNER_NUMBERS:-}  # env-fleet-empty-ok — REVIEWED 2026-11-12: empty = nobody is the owner (every sender is a contact); optional
-      ASSISTANT_AGENTS_TOKEN: ${ASSISTANT_AGENTS_TOKEN:-}  # env-fleet-empty-ok — REVIEWED 2026-11-12: same (boot refusal when the live reply is on)
       # S3 money gate: the classifier worker refuses to start without an ENFORCED limit covering `assistant`.
       # USD 2 per rolling 24 h (conservative first cap; raise from the observed spend, KB § integrations/llm spend_guard).
       LLM_SPEND_LIMITS: '{"assistant": {"usd": 2, "mode": "enforce", "window_hours": 24}}'

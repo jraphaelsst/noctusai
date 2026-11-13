@@ -164,7 +164,7 @@ class GrantService:
             )
         except _Stage as stage:
             self._abort(grant, spec, minted, stage, prior=prior)
-        return self._grants.activate(grant.id, channel_token_id=channel.info.id, product_token_id=tools.info.id)
+        return self._grants.activate(grant.id, channel_token_id=channel.info.id, product_token_id=tools.info.id if tools else None)
 
     # ── rotate ───────────────────────────────────────────────────────────────
     def rotate(self, grant_id: UUID, *, actor: UUID | None) -> Grant:
@@ -180,7 +180,7 @@ class GrantService:
         except _Stage as stage:
             # The OLD pair is untouched and still live: keep the grant ``ativo`` and only record why.
             self._abort(grant, spec, minted, stage, prior=prior, keep_status=True)
-        updated = self._grants.activate(grant.id, channel_token_id=channel.info.id, product_token_id=tools.info.id)
+        updated = self._grants.activate(grant.id, channel_token_id=channel.info.id, product_token_id=tools.info.id if tools else None)
         failed = self._revoke_pair(grant.org_id, spec, old_channel, old_tools, actor=actor, agent_key=grant.agent_key)
         if failed:
             logger.error("agents.grants.rotate_old_pair_not_revoked grant_id=%s tokens=%s", grant.id, failed)
@@ -223,7 +223,9 @@ class GrantService:
 
     def _active(self, grant_id: UUID) -> Grant:
         grant = self._get(grant_id)
-        if grant.status != "ativo" or grant.channel_token_id is None or grant.product_token_id is None:
+        spec = get_grant_product(grant.product)
+        needs_tools = spec is None or spec.has_tools  # an unknown product keeps the strict (tools-required) reading
+        if grant.status != "ativo" or grant.channel_token_id is None or (needs_tools and grant.product_token_id is None):
             raise GrantError(409, "grant_not_active", "O grant não está ativo.")
         return grant
 
@@ -252,9 +254,9 @@ class GrantService:
     def _issue_and_deliver(
         self, *, spec: GrantProduct, grant: Grant, agent_id: UUID, actor: UUID | None, expires_at: datetime | None,
         minted: list[_Minted],
-    ) -> tuple[MintedApiToken, MintedApiToken]:
+    ) -> tuple[MintedApiToken, MintedApiToken | None]:
         """D2 steps 1-5 for ONE pair. Every minted id lands in ``minted`` as soon as it exists (the caller's
-        rollback list). Returns ``(channel, tools)``; raises :class:`_Stage`."""
+        rollback list). Returns ``(channel, tools)`` (``tools`` is ``None`` for a product without a tools token); raises :class:`_Stage`."""
         org_id = grant.org_id
         label = f"grant {spec.slug} · {grant.agent_key}"
         channel = self._mint(
@@ -268,15 +270,17 @@ class GrantService:
                                agent_key=grant.agent_key, actor_user_id=actor, status=201)
         except Exception as exc:
             raise _Stage("audit_channel") from exc
-        tools = self._mint(
-            spec.schema, minted, "tools", "mint_tools",
-            org_id=org_id, label=spec.tools_label, scopes=[spec.tools_scope], expires_at=expires_at,
-            issuer=GRANT_ISSUER, minted_by=actor,
-        )
-        try:
-            put_api_key(self._tools_store(), str(org_id), spec.tools_secret_name, tools.secret)
-        except Exception as exc:
-            raise _Stage("store_tools") from exc
+        tools: MintedApiToken | None = None
+        if spec.has_tools:
+            tools = self._mint(
+                spec.schema, minted, "tools", "mint_tools",
+                org_id=org_id, label=spec.tools_label, scopes=[spec.tools_scope], expires_at=expires_at,
+                issuer=GRANT_ISSUER, minted_by=actor,
+            )
+            try:
+                put_api_key(self._tools_store(), str(org_id), spec.tools_secret_name, tools.secret)
+            except Exception as exc:
+                raise _Stage("store_tools") from exc
         delivery_token = self._mint(
             spec.schema, minted, "delivery", "mint_delivery",
             org_id=org_id, label=f"entrega de grant · {grant.agent_key}", scopes=[GRANT_RECEIVE_SCOPE],
@@ -383,6 +387,8 @@ class GrantService:
 
     def _read_tools_secret(self, spec: GrantProduct, org_id: UUID) -> str | None:
         """The org's current stored tools secret (so a failed attempt can put it back)."""
+        if not spec.has_tools:
+            return None
         store = self._tools_store()
         try:
             stored = read_local_api_key(store, str(org_id), spec.tools_secret_name)
@@ -392,6 +398,8 @@ class GrantService:
         return (stored.tokens or {}).get("value") if stored else None
 
     def _restore_tools_secret(self, spec: GrantProduct, org_id: UUID, prior: str | None) -> None:
+        if not spec.has_tools:
+            return
         try:
             if prior:
                 put_api_key(self._tools_store(), str(org_id), spec.tools_secret_name, prior)
@@ -401,6 +409,8 @@ class GrantService:
             logger.error("agents.grants.tools_secret_restore_failed org_id=%s error=%s", org_id, type(exc).__name__)
 
     def _drop_tools_secret(self, spec: GrantProduct, org_id: UUID) -> None:
+        if not spec.has_tools:
+            return
         try:
             delete_api_key(self._tools_store(), str(org_id), spec.tools_secret_name)
         except Exception as exc:

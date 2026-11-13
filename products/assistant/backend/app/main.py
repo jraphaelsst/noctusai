@@ -14,12 +14,14 @@ from noctusai_lib.integrations.whatsapp import (
 )
 from noctusai_seed import create_product_app
 from app.config import settings
+from app.auth_context import get_auth_context
 from app.dependencies import get_admin_client
 from app.rate_limit import limiter
 from app.live.wiring import assert_live_reply_config, drain as drain_replies
 from app.routers.classificacao_router import router as classificacao_router
 from app.routers.google_router import callback_router as google_callback_router, router as google_router
 from app.routers.whatsapp_router import router as whatsapp_router
+from app.services.agents_grant import build_router as build_agents_grant_router
 from app.shadow.worker import start_worker, stop_worker
 
 # Line policy v1: declare the Assistant's own line (`ASSISTANT_WAHA_LINE_POLICY`, from waha-instances.yml; the personal
@@ -43,7 +45,8 @@ async def stop_worker_and_replies() -> None:
     await stop_worker()
 
 
-# The live reply is OFF unless ASSISTANT_REPLY_ENABLED; when on, a deploy missing any piece of it refuses to boot.
+# The live reply is OFF unless ASSISTANT_REPLY_ENABLED; when on, a deploy missing any piece of its CONFIG refuses to boot. The agents
+# credential is not config: it is the platform grant (no grant = the reply refuses to answer, declared, per org).
 assert_live_reply_config(settings)
 
 app = create_product_app(
@@ -56,7 +59,9 @@ app = create_product_app(
     # A deploy without these refuses to boot: the Fernet key (WAHA api key at rest), the webhook HMAC secret (plan
     # item 10) and the identity key (no raw third-party phone is stored).
     required_prod_config=["ENCRYPTION_KEY", "ASSISTANT_WAHA_WEBHOOK_HMAC_SECRET", "ASSISTANT_IDENTITY_HMAC_KEY"],
-    routers=[whatsapp_router, classificacao_router, google_router, google_callback_router],
+    # The platform grant receiver: `agents` delivers the owner agent's channel token here (one-shot delivery token, never pasted).
+    routers=[whatsapp_router, classificacao_router, google_router, google_callback_router,
+             build_agents_grant_router(get_auth_context)],
     lifespan_startup=start_worker,
     lifespan_shutdown=stop_worker_and_replies,
 )
