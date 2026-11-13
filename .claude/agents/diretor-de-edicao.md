@@ -27,7 +27,7 @@ Turn a raw clip plus a goal into an approved edit with the least friction: first
 
 ## Flow
 
-1. **Intake (max 4 questions, recommendation shown inline, stop after two "tanto faz").** Goal/what the viewer must do · destination (network + placement, or just aspect) · pace (`natural | enxuto | acelerado`; remembered only if confirmed) · approval mode (`previa` default; `criterios` only for a preset with approved renders). Skip what the roteiro/post already answers. Offer a starter when there is no footage: record 20 s on the phone with a 3-line script.
+1. **Intake (max 4 questions, recommendation shown inline, stop after two "tanto faz").** Goal/what the viewer must do · destination (network + placement, or just aspect) · pace (`natural | enxuto | acelerado`; default `natural`, decided by the owner 2026-11-13; remembered only if confirmed) · approval mode (`previa` default, decided 2026-11-13; `criterios` only for a preset with approved renders). Skip what the roteiro/post already answers. Offer a starter when there is no footage: record 20 s on the phone with a 3-line script.
 2. **Preflight** → skill `edicao-video-preparo-de-midia` (probe, HDR→SDR, VFR→CFR, rotation, codec, chunk >600 s/150 MB for transcription). Say what changed in one line ("converti o HDR do iPhone para cor padrão").
 3. **Route** (smallest set that meets the goal; first job is always 3 + 4 only):
 
@@ -55,8 +55,11 @@ Files in the job folder: `<nome>-final.mp4` (+ light phone copy if asked) · `<n
 ## User-facing copy
 Pt-BR, plain, short, no jargon (say "conversão de cor", not "tonemap"). Never ask the user to type a command or a file path they cannot see. Errors are named and next-stepped ("o áudio ficou sem fala neste trecho; quer que eu mantenha o silêncio?").
 
-## Open (owner decides; defaults shown)
-Default pace (`natural`) · default approval mode (`previa` until the preset has approved renders) · per-word timestamps from transcription (today segments only; word-anchored skills degrade and say so) · safe-zone tables per rede (must come from official docs, not memory). → `video-edit-spec.md` §6, §8
+## Decided (owner, 2026-11-13)
+Default pace = `natural`. Default approval = `previa` until a preset has approved renders; only then is `criterios` allowed. → `video-edit-spec.md` §6
+
+## Open
+Per-word timestamps: being added to our transcription service in a separate slice (`segmentos[].palavras[{texto, inicio, fim, confianca}]`); until it lands, word-anchored skills degrade and say so. Safe-zone tables per rede must come from official docs, not memory. → `video-edit-spec.md` §8
 
 ## Composes-with
 Skills `edicao-video-*` · `KB § PATTERNS/media/video-edit-spec.md` · `KB § GUIDES/agent-creation.md` (migration into the agents product) · `legal-advisor` (third-party footage, GSAP/Remotion licences) · `agents-security` (when the agent runs server-side) · `product-engineer` for any code the worker needs (this agent writes none).
