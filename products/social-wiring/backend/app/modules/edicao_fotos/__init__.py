@@ -114,6 +114,7 @@ def register() -> Any:
         referencias,
         regras,
         revisao,
+        uploads,
     )
     from app.modules.edicao_fotos.services import scheduler as fotos_scheduler
 
@@ -150,6 +151,7 @@ def register() -> Any:
             notificacoes.router,
             painel.router,
             processamento.router,
+            uploads.router,
         ],
         standard_routers=(),
         startup=[start_worker_hook],

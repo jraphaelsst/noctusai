@@ -281,3 +281,25 @@ __all__ = [
     "require_platform_admin",
     "require_pool_manager",
 ]
+
+
+def get_upload_service() -> Any:
+    """Seam: the resumable-upload service — parts + assembled files live in the photo bucket under `uploads/<org>/`,
+    sessions + events in `social_wiring.upload_sessions` (service-role only). One org, one object prefix."""
+    from noctusai_lib.domain.resumable_uploads import ResumableUploadService, UploadPolicy, make_upload_session_store
+    from noctusai_lib.integrations.storage import make_storage_backend
+
+    from app.dependencies import get_admin_client
+    from app.modules.edicao_fotos.services.ports import BUCKET_FOTOS, EdicaoFotosUnavailable, SCHEMA
+
+    try:
+        admin = get_admin_client()
+    except EdicaoFotosUnavailable as exc:  # pragma: no cover - mirrors get_edicao_ports
+        raise api_error(503, exc.code, str(exc)) from exc
+    return ResumableUploadService(
+        store=make_upload_session_store(kind="supabase", get_client=lambda: admin, schema=SCHEMA),
+        storage=make_storage_backend(kind="supabase", client=admin),
+        bucket=BUCKET_FOTOS,
+        prefix="uploads",
+        policy=UploadPolicy(max_bytes=100 * 1024 * 1024, allowed_types=("image/*",)),
+    )

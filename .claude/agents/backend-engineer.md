@@ -39,6 +39,7 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/startup-hook-must-not-be-fatal.md
   - CONTEXT/PATTERNS/backend/metas-seed.md
   - CONTEXT/PATTERNS/backend/photo-editing-seed.md
+  - CONTEXT/PATTERNS/backend/resumable-uploads.md
   - CONTEXT/PATTERNS/backend/migrate-product-mcp-tool.md
   - CONTEXT/PATTERNS/backend/whatsapp-chatbot-seed.md
   - CONTEXT/PATTERNS/backend/leads-organ.md
@@ -127,6 +128,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 **Domain (per product; 02/03/06/08 = asleep products)** → `KB § backend/01-CORE.md` · `KB § backend/02-ERP.md` · `KB § backend/03-PF.md` · `KB § backend/06-THERAPY.md` · `KB § backend/07-AUTH-SECURITY.md` · `KB § backend/08-DAILY-LIFE.md`.
 **Logging & observability** → `KB § PATTERNS/backend/logging.md` · `KB § PATTERNS/backend/logging-at-except.md` · `KB § PATTERNS/backend/notifications.md` · `KB § PATTERNS/backend/audit-trail.md` · `KB § PATTERNS/common/performance-analysis.md`.
 **Photo editing** → `KB § PATTERNS/backend/photo-editing-seed.md`.
+**Resumable chunked uploads** → `KB § PATTERNS/backend/resumable-uploads.md`.
 **Chatbot & organs** → `KB § PATTERNS/backend/whatsapp-chatbot-seed.md` · `KB § PATTERNS/backend/chatbot-operational-readiness.md` · `KB § PATTERNS/backend/scheduling-seed.md` · `KB § PATTERNS/backend/digest-seed.md` · `KB § PATTERNS/backend/metas-seed.md` · `KB § PATTERNS/backend/leads-organ.md` · `KB § PATTERNS/backend/assignment-organ.md` · `KB § PATTERNS/backend/activities-organ.md` · `KB § PATTERNS/backend/retrieval-organ.md`.
 **Internal/LLM-provider adapters** → `KB § INTEGRATIONS/image-gen.md` · `KB § INTEGRATIONS/image-edit.md` · `KB § INTEGRATIONS/risk-classifier.md` · `KB § GUIDES/matricula-source-recovery.md`.
 **Server-rendered slides** → `KB § PATTERNS/frontend/svg-render-mode.md`.

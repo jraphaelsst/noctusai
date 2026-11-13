@@ -19,6 +19,12 @@ class ImovelRef(StrictHttpModel):
     codigo: str = Field(min_length=1, max_length=40)
 
 
+class UploadsIngestBody(StrictHttpModel):
+    """`POST /lotes/{id}/fotos/de-upload` — completed resumable-upload sessions to turn into batch photos."""
+
+    upload_ids: list[str] = Field(min_length=1, max_length=10)
+
+
 class LoteCreateBody(StrictHttpModel):
     nome: str = Field(min_length=1, max_length=200)
     imovel: Optional[ImovelRef] = None

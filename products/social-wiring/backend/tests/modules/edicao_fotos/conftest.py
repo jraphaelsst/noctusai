@@ -46,6 +46,7 @@ from noctusai_lib.domain.photo_editing import (
 )
 from noctusai_lib.domain.photo_editing.types import AGENCY_ADMIN_ROLES
 from noctusai_lib.domain.real_estate.imovel import ImovelFoto
+from noctusai_lib.domain.resumable_uploads import FakeUploadSessionStore, ResumableUploadService, UploadPolicy
 from noctusai_lib.integrations.fx import FakeFxRateAdapter
 from noctusai_lib.integrations.image_edit import FakeImageEditAdapter, ImageEditCapabilities
 from noctusai_lib.integrations.imaging import FakeImagingAdapter
@@ -59,6 +60,7 @@ from app.modules.edicao_fotos.deps import (
     get_painel_client,
     get_preferences_repository,
     get_role_resolver,
+    get_upload_service,
     get_vista_photo_source,
 )
 from app.modules.edicao_fotos.routers.curadores import get_user_directory
@@ -136,6 +138,7 @@ class Harness:
     notifier: RecordingNotifier
     preferences: "InMemoryNotificationPreferencesRepository"
     directory: dict[str, dict] = field(default_factory=dict)
+    uploads: Any = None
     current: TestUser = USERS["admin"]
 
     def as_user(self, name: str) -> "Harness":
@@ -464,6 +467,10 @@ def edicao(client):
         grants=grants, vista=FakeVistaSource(), notifier=notifier,
         preferences=preferences,
         directory={u.id: {"nome": u.nome, "email": f"{k}@example.com"} for k, u in USERS.items()},
+        uploads=ResumableUploadService(
+            store=FakeUploadSessionStore(), storage=backend, bucket="edicao-fotos", prefix="uploads",
+            policy=UploadPolicy(max_bytes=100 * 1024 * 1024, part_size=8, min_part_size=1, allowed_types=("image/*",)),
+        ),
     )
 
     def _current_user_org():
@@ -478,6 +485,7 @@ def edicao(client):
         get_grant_repository: lambda: grants,
         get_preferences_repository: lambda: preferences,
         get_vista_photo_source: lambda: harness.vista,
+        get_upload_service: lambda: harness.uploads,
         get_user_directory: lambda: (
             lambda ids: {i: harness.directory[i] for i in ids if i in harness.directory}
         ),

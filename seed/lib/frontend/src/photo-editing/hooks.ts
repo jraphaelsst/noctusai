@@ -41,6 +41,7 @@ import { listOps, useCacheWriteMutation } from '../cache-writes';
 import { pageOps } from '../organ-kit/page-ops';
 import { handOffToPolling, jobPolling } from '../job-polling';
 import type { ApiClient } from '../api';
+import { uploadResumable } from '../resumableUpload';
 
 // ---------------------------------------------------------------------------
 // Types — mirror EDICAO-FOTOS-CONTRACT.md response/request shapes
@@ -703,7 +704,16 @@ function isOrgConfiguracoes(v: unknown): v is OrgConfiguracoes {
 const editLoteFotos = (edit: (fotos: FotoRevisao[]) => FotoRevisao[] | undefined) => (old: LoteDetalhe | undefined) =>
   old && Array.isArray(old.fotos) ? listOps.merge(old, { fotos: edit(old.fotos) ?? old.fotos }) : old;
 
-export function createEdicaoFotosHooks(api: ApiClient) {
+export interface EdicaoFotosHooksOptions {
+  /**
+   * OPT-IN: photos at/above this many bytes are sent through the resumable chunked path
+   * (`/uploads` + `/lotes/{id}/fotos/de-upload`, seed `resumable_uploads`); smaller ones keep the single multipart
+   * request. Unset = every photo takes the legacy path. The host backend must mount both routes.
+   */
+  resumableThresholdBytes?: number;
+}
+
+export function createEdicaoFotosHooks(api: ApiClient, options: EdicaoFotosHooksOptions = {}) {
   /** `GET /capacidades` — drives every FE gate for this feature. */
   function useCapacidades() {
     const query = useQuery<Capacidades>({
@@ -1192,10 +1202,44 @@ export function createEdicaoFotosHooks(api: ApiClient) {
   function useUploadFotos() {
     const queryClient = useQueryClient();
     return useMutation({ // noc-allow: invalidate-only — the answer does not carry the stored photos (ids, estado and URLs come from the server's normalisation), so the batch detail and list re-read
-      mutationFn: ({ loteId, files }: { loteId: string; files: File[] }) => {
-        const form = new FormData();
-        files.forEach((file) => form.append('fotos', file));
-        return api.upload(`/api/edicao-fotos/lotes/${loteId}/fotos`, form);
+      mutationFn: async ({
+        loteId,
+        files,
+        onProgress,
+      }: {
+        loteId: string;
+        files: File[];
+        /** Resumable path only: 0-100 over the confirmed bytes of ALL big files. */
+        onProgress?: (percent: number) => void;
+      }) => {
+        const limit = options.resumableThresholdBytes;
+        const big = limit === undefined ? [] : files.filter((f) => f.size >= limit);
+        const small = files.filter((f) => !big.includes(f));
+        const results: unknown[] = [];
+        if (small.length) {
+          const form = new FormData();
+          small.forEach((file) => form.append('fotos', file));
+          results.push(await api.upload(`/api/edicao-fotos/lotes/${loteId}/fotos`, form));
+        }
+        if (big.length) {
+          const totalBytes = big.reduce((sum, f) => sum + f.size, 0);
+          const confirmed = new Map<File, number>();
+          const ids: string[] = [];
+          for (const file of big) {
+            const done = await uploadResumable(api, file, {
+              basePath: '/api/edicao-fotos/uploads',
+              onProgress: (p) => {
+                confirmed.set(file, p.confirmedBytes);
+                let sum = 0;
+                confirmed.forEach((v) => (sum += v));
+                onProgress?.(Math.floor((sum / totalBytes) * 100));
+              },
+            });
+            ids.push(done.uploadId);
+          }
+          results.push(await api.post(`/api/edicao-fotos/lotes/${loteId}/fotos/de-upload`, { upload_ids: ids }));
+        }
+        return results.length === 1 ? results[0] : { fotos: results.flatMap((r) => (r as { fotos?: unknown[] })?.fotos ?? []) };
       },
       onSuccess: (_data, { loteId }) => {
         queryClient.invalidateQueries({ queryKey: ['edicao-fotos', 'lote', loteId] });
