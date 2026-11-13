@@ -14,6 +14,7 @@ export type {
   InboxMessage,
   InboxChatsPage,
   InboxMessagesPage,
+  InboxChatDeletedResult,
 } from '../../whatsapp-inbox';
 
 export { WhatsAppInbox } from './WhatsAppInbox';

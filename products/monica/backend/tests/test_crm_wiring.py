@@ -45,6 +45,7 @@ def auth_org_id():
         ("GET", f"/api/whatsapp/connections/{CONN}/chats"),
         ("GET", f"/api/whatsapp/connections/{CONN}/chats/{CHAT}/messages"),
         ("POST", f"/api/whatsapp/connections/{CONN}/chats/{CHAT}/messages"),
+        ("POST", f"/api/whatsapp/connections/{CONN}/chats/{CHAT}/apagar-dados"),
         ("GET", "/api/contexto"), ("PUT", "/api/contexto"),
     ],
 )
@@ -62,7 +63,8 @@ def test_connection_routes_are_admin_only(client):
     assert resp.status_code == 403, resp.text
 
 
-@pytest.mark.parametrize("method,suffix,body", [("PUT", "enabled", {"enabled": False}), ("POST", "purge", {"confirm": "x"})])
+@pytest.mark.parametrize("method,suffix,body", [("PUT", "enabled", {"enabled": False}), ("POST", "purge", {"confirm": "x"}),
+                         ("POST", f"chats/{CHAT}/apagar-dados", None)])
 def test_switch_and_purge_are_admin_only(client, method, suffix, body):
     call = client.put if method == "PUT" else client.post
     resp = call(f"/api/whatsapp/connections/{CONN}/{suffix}", json=body)
@@ -184,6 +186,28 @@ def test_purge_seam_deletes_untouched_whatsapp_leads_and_keeps_the_edited_one_de
     (kept,) = _leads(client)
     assert kept["notes"] == "cliente real" and kept["whatsapp_connection_id"] is None
     assert kept["last_message_preview"] is None
+
+
+def test_delete_chat_seam_drops_the_untouched_lead_and_detaches_the_edited_one(client):
+    from app.services.whatsapp_leads import on_delete_chat
+
+    chat_store = build_whatsapp_chat_store(None, schema="monica", allow_fake=True)
+    _ingest(chat_store, _event("m1"))
+    asyncio.run(on_delete_chat(ORG, CONN, CHAT))
+    assert _leads(client) == []  # untouched automatic lead goes with the conversation
+    asyncio.run(on_delete_chat(ORG, CONN, CHAT))  # nothing left to forget: a no-op, not an error
+    _ingest(chat_store, {**_event("m9"), "payload": {**_event("m9")["payload"], "from": "5511999990009@c.us"}})
+    (lead,) = _leads(client)
+    assert client.patch(f"/api/leads/{lead['id']}", json={"notes": "cliente real"}).status_code == 200
+    asyncio.run(on_delete_chat(ORG, CONN, "5511999990009@c.us"))
+    (kept,) = _leads(client)
+    assert kept["notes"] == "cliente real" and kept["whatsapp_chat_id"] is None
+    assert kept["last_message_preview"] is None
+
+
+def test_pause_route_is_not_mounted_in_monica_and_erasure_is_admin_only(client):
+    assert client.patch(f"/api/whatsapp/connections/{CONN}/chats/{CHAT}/agent-paused", json={"paused": True}).status_code in (404, 405)
+    assert client.raw().post(f"/api/whatsapp/connections/{CONN}/chats/{CHAT}/apagar-dados").status_code == 401
 
 
 # --- contexto proxy -----------------------------------------------------------------------------------------

@@ -8,7 +8,7 @@ CRM do consultório de psicanálise de **Mônica Tangerino** (psicanalista; fala
 |---|---|---|
 | `/` | Início: quantos leads em cada etapa do funil | `useLeadsBoard` |
 | `/leads` (Funil) · `/leads/lista` (Lista) | Kanban de leads (arrastar muda a etapa; clicar abre o lead; "abrir conversa") e a tabela com filtros (etapa, origem, data do 1º contato, busca). **Funil e Lista compartilham os filtros.** CRUD completo (a Mônica apaga números que não são leads) | `LeadsBoard`, `LeadsList`, `LeadDetailModal` |
-| `/conversas` | Conversas de WhatsApp: ler e responder, `?chat=` abre uma conversa, "Ver lead" no cabeçalho | `WhatsAppInbox` |
+| `/conversas` | Conversas de WhatsApp: ler e responder, `?chat=` abre uma conversa, "Ver lead" no cabeçalho, "Apagar dados" (LGPD, admin: apaga a conversa e o lead automático dela) | `WhatsAppInbox` |
 | `/contexto` | Quem a Mônica é, em palavras dela (abordagem, serviços, tom de voz…) — a base do futuro agente de leads | `OrgSpecsForm` via proxy `/api/contexto` |
 | `/configuracoes/conexoes` | Conexão do WhatsApp por QR (só administradores). Abas como sub-rotas; cresce com uma linha em `sections` | `SectionTabsPage`, `WhatsAppConnectionsPage` |
 | `/pacientes` (Lista) · `/pacientes/agenda` (Agenda) · `/pacientes/:id` | Pacientes: lista (busca, status, tags, próxima sessão, valor em aberto), agenda semanal de todas as sessões e a página do paciente com abas Sessões · Agenda fixa · Financeiro · Dados. Horário semanal fixo gera as próximas 8 semanas de sessões; sessão realizada ou falta com valor vira conta a receber no Financeiro; "Registrar pagamento" (Pix, dinheiro, cartão, transferência — sem gateway) dá baixa nela. `?lead=` abre o paciente de um lead | `ClientsList`, `ClientsAgenda`, `ClientDetailPage` |
