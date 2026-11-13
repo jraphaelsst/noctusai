@@ -27,7 +27,7 @@
 | 11-13 | Entity | Start on CPF (test until revenue); SLU plan prepared and parked until revenue (accountant checklist) |
 | 11-13 | Guardrails | All legal guardrails built in (re-verify, timestamp, own-history de/por, expiry bot, evidence log, CONAR label) — each with a UI toggle (owner accepts exposure when off; toggles audited as events) |
 | 11-13 | Data access | Scraping first (Apify where possible), APIs added after — owner accepted ToS/account risk flagged by legal |
-| 11-13 | Surfaces | Admin apps FIRST (CMS/CRM/ERP — the whole business inside the apps), public pages later; reuse knowledge from existing noc modules |
+| 11-13 | Surfaces | Admin apps FIRST (CMS/CRM/ERP — the whole business inside the apps), public pages later; reuse knowledge from existing noc modules — AMENDED by the Blog row (blog in Wave 1) |
 | 11-13 | Public page | Minimal public page EARLY (read-only deals feed + about/contact/disclosure) so ML/Amazon can approve affiliates; rest of public surfaces later |
 | 11-13 | Admin modules | Each product gets: CMS/editorial · Audience+channels · CRM (sponsors & affiliate programs) · ERP (money). TWO DIFFERENT BUSINESSES — no shared tables between them |
 | 11-13 | Cadence | Tech: collect continuously (in-house registry), send ONE daily bundle at 12:00 BRT on all channels. Promo: post immediately above threshold, no daily cap. All outbound via seed `noctusai_lib.rate_limit` |
@@ -39,6 +39,15 @@
 | 11-13 | TG posting | NO expiry rule for now; link previews on (tech) / off (promo); forwarding allowed |
 | 11-13 | MTProto | Dropped entirely — Telegram is publish-only (API ToS §1.5 AI clause) |
 | 11-13 | Owner enablement | Owner needs the affiliate + sponsorship business processes researched and designed together with the owner |
+| 11-13 | Approval shape | One-step: draft → owner approves/rejects with reason. Reuses seed `domain/editorial` configured with a single review stage (no new approval machine) |
+| 11-13 | Subscribers | E-mail subscribers + suppression list live PER PRODUCT schema (no shared tables); opt-in/unsubscribe MECHANISM lifted to seed (social-wiring is the 1st copy, newsletters the 2nd) |
+| 11-13 | Kill switch | Per routine AND a per-product master switch; org admin flips; every flip is an event |
+| 11-13 | Retention | Raw collected items kept FOREVER; deal evidence ≥5y |
+| 11-13 | Posts | Every post (each promo post, each news post, each issue) is its own row in that product's schema, with its full send/delivery history per channel |
+| 11-13 | Blog | One public blog PER PRODUCT, built in Wave 1: tech-newsletter blog (news posts + issues + essays); promo-finder deals site (one page per deal). Listing ordered newest first |
+| 11-13 | Channel message | Teaser + link: hook + headlines, each linking to the blog post (click data, affiliate public-site requirement) |
+| 11-13 | Content generation | Automated: every collected news item → DB save → generated blog post; every promo → DB save → generated post. Content methodology/quality NOT refined now |
+| 11-13 | Post trigger | Tuning phase: EVERY collected (deduplicated) item becomes a post. After tuning: switch to kept-items-only (score threshold) and/or daily top-5 — publication mode is a config value |
 
 ## Research facts (sources in agent reports)
 - Seed already ships: `noctusai_lib.domain.digest.BaseDigestService` (digest-seed), `integrations/{resend,mailchimp,email,whatsapp,apify,llm,outbound_webhook,quota,rate_limit}`.
