@@ -72,6 +72,7 @@ async def enviar_transcricao(
     idioma: str = Form("pt"),
     rotulo: Optional[str] = Form(None),
     segmentos: bool = Form(False),
+    palavras: bool = Form(False),
     caller: Caller = Depends(_submit_caller),
     rt: TranscricaoRuntime = Depends(get_runtime),
 ):
@@ -81,7 +82,8 @@ async def enviar_transcricao(
         raise TranscricaoErro("arquivo_grande")
     audio = await _read_capped(arquivo, max_bytes)
     result = await rt.service.submit(
-        caller, audio, idioma=idioma, rotulo=rotulo or None, segmentos=segmentos
+        caller, audio, idioma=idioma, rotulo=rotulo or None, segmentos=segmentos,
+        palavras=palavras,
     )
     return result
 

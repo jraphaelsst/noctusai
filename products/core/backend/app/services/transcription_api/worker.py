@@ -100,8 +100,11 @@ class TranscricaoJobHandler:
         duracao_s = float(row["duracao_s"])
         try:
             transcriber = s.transcriber()
+            extra = {"palavras": True} if (job.payload or {}).get("palavras") else {}
             result = await asyncio.wait_for(
-                transcriber.transcribe(blob.data, language=row.get("idioma") or "pt", max_seconds=duracao_s),
+                transcriber.transcribe(
+                    blob.data, language=row.get("idioma") or "pt", max_seconds=duracao_s, **extra
+                ),
                 timeout=L.call_timeout_s(duracao_s),
             )
         except TranscriberBusy as exc:

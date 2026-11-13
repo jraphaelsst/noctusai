@@ -49,9 +49,16 @@ class FakeTranscriber:
         return self._probes.get(audio, self._default_probe)
 
     async def transcribe(
-        self, audio: bytes, *, language: str = "pt", max_seconds: Optional[float] = None
+        self,
+        audio: bytes,
+        *,
+        language: str = "pt",
+        max_seconds: Optional[float] = None,
+        palavras: bool = False,
     ) -> TranscriptResult:
-        self.calls.append({"bytes": len(audio), "language": language, "max_seconds": max_seconds})
+        self.calls.append(
+            {"bytes": len(audio), "language": language, "max_seconds": max_seconds, "palavras": palavras}
+        )
         if self._script:
             step = self._script.pop(0)
             if isinstance(step, Exception):
@@ -60,10 +67,33 @@ class FakeTranscriber:
         else:
             text = f"transcricao-fake-{hashlib.sha256(audio).hexdigest()[:8]}"
         probe = await self.probe(audio)
+        segmentos = None
+        if palavras:
+            # One segment spanning the audio; words evenly spaced (plausible, deterministic).
+            words = text.split() or [text]
+            total = float(probe.duracao_s)
+            step = total / len(words)
+            segmentos = [
+                {
+                    "inicio": 0.0,
+                    "fim": total,
+                    "texto": text,
+                    "palavras": [
+                        {
+                            "texto": w,
+                            "inicio": round(i * step, 3),
+                            "fim": round((i + 1) * step, 3),
+                            "confianca": 0.9,
+                        }
+                        for i, w in enumerate(words)
+                    ],
+                }
+            ]
         return TranscriptResult(
             text=text,
             duracao_s=probe.duracao_s,
             idioma=language,
             modelo="fake",
             rtf=0.0,
+            segmentos=segmentos,
         )

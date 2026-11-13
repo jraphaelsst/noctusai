@@ -104,14 +104,20 @@ class LocalWhisperTranscriber:
             raise TranscriberUnavailable(f"malformed probe response: {exc}") from exc
 
     async def transcribe(
-        self, audio: bytes, *, language: str = "pt", max_seconds: Optional[float] = None
+        self,
+        audio: bytes,
+        *,
+        language: str = "pt",
+        max_seconds: Optional[float] = None,
+        palavras: bool = False,
     ) -> TranscriptResult:
         data = await self._post(
             "/v1/transcribe",
             audio,
             timeout=TRANSCRIBE_TIMEOUT,
             params={"language": language}
-            | ({"max_seconds": max_seconds} if max_seconds is not None else {}),
+            | ({"max_seconds": max_seconds} if max_seconds is not None else {})
+            | ({"palavras": "true"} if palavras else {}),
         )
         try:
             return TranscriptResult(

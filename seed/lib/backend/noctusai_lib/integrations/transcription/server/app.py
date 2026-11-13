@@ -160,6 +160,7 @@ def create_app(
         request: Request,
         language: str = Query("pt"),
         max_seconds: Optional[float] = Query(None, gt=0),
+        palavras: bool = Query(False),
     ):
         if not _authorized(request):
             return _err(401, "nao_autorizado", "token invalido")
@@ -190,7 +191,11 @@ def create_app(
             if daily.would_exceed(minutes):
                 return _err(503, "capacidade_diaria", "capacidade diaria esgotada",
                             {"Retry-After": "3600"})
-            result: Any = await asyncio.to_thread(engine.transcribe, audio, language=language)
+            # `palavras` is forwarded only when asked, so default calls are unchanged.
+            extra: dict[str, Any] = {"palavras": True} if palavras else {}
+            result: Any = await asyncio.to_thread(
+                engine.transcribe, audio, language=language, **extra
+            )
             daily.add(minutes)
             wall = time.monotonic() - started
             # never log transcript text or audio
