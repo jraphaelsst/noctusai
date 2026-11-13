@@ -1,7 +1,8 @@
 """
 Assistant configuration.
 
-The Assistant is a READ-ONLY shadow of one personal WhatsApp line (D46). Every knob that differs between dev and
+The Assistant shadows one personal WhatsApp line (D46) and, since 2026-11-12, can ANSWER it through the owner's agent
+hosted in `agents` (live reply, OFF by default, `ASSISTANT_REPLY_ENABLED`). Every knob that differs between dev and
 prod and has no safe shared default is EMPTY here and fails loud when used (a 503 / a refused boot), never a silent
 Fake or an unsigned webhook in a real deploy (KB § PATTERNS/devops/deploy-config-contract.md).
 """
@@ -22,7 +23,7 @@ class SeedSettings(ProductSettings):
     # answers 503 "WAHA server not configured".
     assistant_waha_base_url: str = ""
     assistant_waha_session: str = "default"
-    # Line policy v1 (JSON, from deploy/fleet/waha-instances.yml). The Assistant's line is `send: disabled`; without a
+    # Line policy v1 (JSON, from deploy/fleet/waha-instances.yml). The live reply needs a `send: enabled` line; without a
     # declared policy the seed refuses every write on the line anyway (fail-closed). KB § INTEGRATIONS/whatsapp.md § 6a.
     assistant_waha_line_policy: str = ""
     # REQUIRED: must equal the WAHA instance's global WHATSAPP_HOOK_HMAC_KEY. No secret => the webhook answers 401 to
@@ -48,6 +49,27 @@ class SeedSettings(ProductSettings):
     google_oauth_client_secret: str = ""
     # Optional override of the redirect URI (local dev only); default = <assistant product url>/api/google/oauth/callback.
     google_oauth_redirect_uri: str = ""
+
+    # -- Live reply (owner decision 2026-11-12) ------------------------------------------------------------
+    # Product kill switch: OFF => the webhook only shadows (intake + classifier), no turn, no send. The on/off of the
+    # agent itself and the allow-list of numbers live in `agents` (the agent's controls); this switch is the second,
+    # product-side key.
+    assistant_reply_enabled: bool = False
+    # The owner's assistant agent in `agents`, its base URL and the org's `pk_...` channel token (SW pattern).
+    assistant_agent_key: str = ""
+    assistant_agents_base_url: str = ""
+    assistant_agents_token: str = ""
+    # An inbound message older than this (webhook redelivery after an outage) is NOT answered.
+    assistant_reply_max_age_seconds: int = 900
+    # Pause between two reply bubbles (one WhatsApp message per paragraph).
+    assistant_reply_paragraph_delay_seconds: float = 0.6
+    # Debounce: a conversation must be quiet this long before its burst of messages becomes ONE agent turn.
+    assistant_reply_debounce_seconds: float = 4.0
+
+    # -- Conversas (the owner's inbox, migration 022) ------------------------------------------------------
+    # Inbox realtime (SSE) bus: Redis when REDIS_URL is set; the in-process bus only as a declared single-worker choice
+    # (outside a deploy it is always allowed). A deploy with neither refuses to boot (InboxRealtimeNotConfigured).
+    assistant_inbox_realtime_in_process: bool = False
 
     # Rate-limit for the public webhook (per-IP). Public surface -- DDOS guard.
     webhook_rate_limit: str = "60/minute"

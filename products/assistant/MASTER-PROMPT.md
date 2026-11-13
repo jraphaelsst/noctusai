@@ -1,6 +1,6 @@
 # Assistant — MASTER-PROMPT
 
-> Authoritative development guide for the Assistant product (read-only WhatsApp shadow line, D46).
+> Authoritative development guide for the Assistant product (WhatsApp shadow line, D46, that can answer through the owner's agent).
 
 ## Purpose
 
@@ -10,14 +10,15 @@ S3 classifies it as about scheduling or not (classification only, D48: no reply,
 
 ## Hard rules
 
-- **Zero writes, three layers.** Edge deny proxy (devops, S6) · this product mounts no send/mark-read/backfill/chat-read
-  routes (`whatsapp_router.py`, pinned by `test_whatsapp_shadow.py`) · the seed `WahaClient` refuses writes for a
-  `send: disabled` line. Never add a code path that sends; never construct a raw `WahaClient(`.
-- **Webhook HMAC is required.** `create_whatsapp_inbox_router(webhook_only=True, require_webhook_hmac=True)`; no secret
+- **One sender, behind a guard (live reply, owner decision 2026-11-12, OFF by default).** This product mounts no
+  send/mark-read/backfill/chat-read routes (`whatsapp_router.py`, pinned by `test_whatsapp_shadow.py`); the ONLY code that
+  sends is `app/live/resposta.py` (agent turn in `agents` -> bubbles), and only after the send-seam guard re-reads the
+  agent's on/off + allow-list and passes (fail closed). The seed `WahaClient` enforces the line policy (`send: enabled`
+  required). Never add another send path; never construct a raw `WahaClient(`; no mark-read / typing / presence.
+- **Webhook HMAC is required.** `create_whatsapp_inbox_router(require_webhook_hmac=True)` (full inbox, admin-gated; since 2026-11-12); no secret
   => 401 to everything and a deploy refuses to boot (`required_prod_config`).
-- **Webhook base = the line's edge relay.** The WAHA core is on a private network; the seed client accepts `set_webhook`
-  only under the policy's `webhook_relay`. `webhook_base_url()` returns that relay when the policy declares one, the
-  public product URL otherwise (dev/Fake). Never register the public URL on the shadow line.
+- **Webhook base.** `webhook_base_url()` is the product URL: the personal live line (`send: enabled`; mark_online /
+  full_sync / auto_repair off) has no edge and no webhook relay, so WAHA posts direct to the product.
 - **Input contract before storage:** `inbound_one_to_one_only(excluded)` then `assistant.append_intake`: dedup on the
   WAHA message id, forward-only from `paired_at`, text only. Third parties are an HMAC'd `chat_ref`, never a phone.
   Never log a phone, chat id or body.
@@ -50,7 +51,7 @@ S3 classifies it as about scheduling or not (classification only, D48: no reply,
 backend/app/
   main.py                 create_product_app + line policy registration + required_prod_config
   config.py               ASSISTANT_* settings (all empty by default, fail loud)
-  routers/whatsapp_router.py   connections (admin) + webhook-only inbox
+  routers/whatsapp_router.py   connections (admin) + inbox (admin) + webhook; services/inbox_mirror.py, humano_para_agente.py
   routers/classificacao_router.py   admin replay + blind stratified sample
   routers/google_router.py   Conectar Google (admin) + the signed OAuth callback
   services/google_connection.py   scopes, stores, provider, status, Google clients (seed factories)
