@@ -178,12 +178,30 @@ Source: `_private-studies/imobshotai/STUDY-app.md` (outside git; nothing copied)
 | Preserve input aspect and resolution; **pin the model version** + content hash on every event | engine config + events |
 | **Deterministic video baseline**: the motion cycle (push-in / pan / pull-out), eased zoom, 0.5 s crossfades, music fade in/out, x264 + faststart. The agent picks the move per room and the order; it does not generate pixels | video agent `.md` + the `video.render` job |
 | **9:16 and 16:9 from the same timeline**, with per-photo crop and pans along the long axis; upscale stills before zoompan | D4; video step 3 |
-| Story: opening card (ref, bairro, price), room captions, end card with logo + broker CTA, −14 LUFS, cuts on the beat | video framework (to be confirmed against One's real videos in `STUDY-videos.md`) |
+| ~~Story: opening card with price~~ → **overridden by One's real videos** (§13) | video framework follows `STUDY-videos.md`, not the reference app |
 | Explicit **consent naming the AI vendor** before upload | photo funnel step 2 (with an LGPD check by `legal-advisor`) |
 | Real raw broker photos + an approved "golden" per room as the **eval set** | photo agent eval; One dataset |
 | Later: **level-gated mobile capture** (auto-shutter when level, ultra-wide) fixes verticals cheaper than AI | roadmap only (no mobile app today) |
 
+## 13 · One's house style (from `_private-studies/one-imoveis/`, 2026-11-13)
+
+33/35 exclusive listings have a YouTube video (`<lite-youtube>` on the detail page; the CRM `VideoDestaque` field is empty on all 2257 listings, so the site is the source). The dataset has 419 photos from 12 properties.
+
+**Photos → photo agent / default preset**
+- Room mix: sala 57 · quarto 53 · cozinha 43 · banheiro 39 · suíte 31. No floor plans or detail shots.
+- House look: ultra-wide lens (98%), bright (median luma 154; the best ≈181), window views kept (94%), real blue sky (79%, no sky replacement seen), neutral interiors.
+- Defects worth fixing, by frequency: **tilted verticals on exteriors** (facade 14/20, pool 10/18), clutter (none in the top-rated photos), harsh sun/flare, and 5% near-duplicates (dedupe in the funnel).
+- Production levels: pro 3:2 camera (8 properties, average 3.07), phone HDR (2, average 3.56), raw broker phone (2, average 1.92). The raw broker shots are the main target of ImobShotAI.
+- Gallery order: lifestyle space first → social areas → leisure → bedrooms/bathrooms → view → **facade last** (7/12).
+
+**Video → video agent / framework**
+- One films real footage (drone 5/8, gimbal pans and push-ins), and **our video is built from stills**. So the agent copies One's **structure and branding**, not its camera work: Ken Burns moves stand in for the gimbal moves.
+- Long tour 16:9: median 98 s, about 4 s per shot, **hard cuts only**, exterior opening, yellow "CÓDIGO ONExxxxx" tag bottom-left (6/7), ONE logo bug in a corner throughout, room route social → leisure → stairs → bedrooms → closing exterior, **end card grey with logo + site (no phone, no price)**, music only.
+- Short 9:16: median 60 s, about 2 s per shot, broker walk-in + location hook in voice-over, 13–15 fast shots while the VO lists features, CTA "…Me chama." + white logo card. A photo-only Short needs a **VO** (TTS or the broker's own recording; open question Q8).
+- Loudness varies (−8 to −16.5 LUFS): we normalise to −14 LUFS.
+
 ## 12 · Open questions
 
 - **Q6** Third-party app study impact (above).
-- **Q7** Music: pick the tier once `MUSIC-LIBRARIES.md` lands (free CC0/AI-generated set vs a paid partner API).
+- **Q7** Music tier: recommended **A** (a fixed library generated with Stable Audio, whose terms allow end-user use + output ownership, plus hand-picked CC0), plus an Epidemic Sound Partner quote in parallel. Legal points go to `legal-advisor` first (`MUSIC-LIBRARIES.md`).
+- **Q8** Short (9:16) voice-over: TTS voice, the broker records it, or music only?
