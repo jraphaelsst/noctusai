@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -207,6 +208,47 @@ def load_docs(root: Path) -> list[Doc]:
     return docs
 
 
+# ── tracked-path existence (local == CI) ────────────────────────────────────────
+#: "Does a cited path exist" is judged against what git TRACKS (the index: HEAD plus staged adds), never the
+#: filesystem: an untracked / gitignored / generated file exists on the author's disk but not in CI's fresh
+#: checkout or the merge queue's composed tree, so a filesystem check is green locally and red in CI.
+#: Filesystem fallback ONLY when `root` is not a git tree -- announced loudly on stderr, never silent.
+_PATH_INDEX: dict[str, tuple[frozenset[str], frozenset[str]] | None] = {}
+
+
+def reset_path_index() -> None:
+    """Drop the cached tracked-path index (entry points call this; the tree may have changed since)."""
+    _PATH_INDEX.clear()
+
+
+def _path_index(root: Path) -> tuple[frozenset[str], frozenset[str]] | None:
+    key = str(root)
+    if key not in _PATH_INDEX:
+        r = _git(root, "ls-files", "-z")
+        if r is None or r.returncode != 0:
+            import sys
+            print(f"doc_staleness: {root} is not a git tree -- cited-path existence falls back to the FILESYSTEM "
+                  "(untracked/gitignored files count as existing; results may differ from CI).", file=sys.stderr)
+            _PATH_INDEX[key] = None
+        else:
+            files = frozenset(p for p in r.stdout.split("\0") if p)
+            dirs = frozenset("/".join(f.split("/")[:i]) for f in files for i in range(1, f.count("/") + 1))
+            _PATH_INDEX[key] = (files, dirs)
+    return _PATH_INDEX[key]
+
+
+def _exists(root: Path, rel: str) -> bool:
+    """Tracked file or directory (a directory = any tracked file below it); filesystem only outside git."""
+    idx = _path_index(root)
+    rel = rel.rstrip("/")
+    return (rel in idx[0] or rel in idx[1]) if idx is not None else (root / rel).exists()
+
+
+def _is_dir(root: Path, rel: str) -> bool:
+    idx = _path_index(root)
+    return rel.rstrip("/") in idx[1] if idx is not None else (root / rel).is_dir()
+
+
 # ── coverage ────────────────────────────────────────────────────────────────────
 def _cited_code_paths(root: Path, doc: Doc) -> tuple[list[str], list[str]]:
     """(existing, missing) repo-relative code paths cited in backticks."""
@@ -215,7 +257,7 @@ def _cited_code_paths(root: Path, doc: Doc) -> tuple[list[str], list[str]]:
         tok = _normalise_path_token(m.group(1))
         if tok and tok not in found:
             found.append(tok)
-    existing = [t for t in found if (root / t).exists()]
+    existing = [t for t in found if _exists(root, t)]
     missing = [t for t in found if t not in existing]
     return existing, missing
 
@@ -246,7 +288,7 @@ def doc_coverage(root: Path, doc: Doc) -> list[str]:
             # _PRODUCT_ROOT_RE); as a CONTRACT citation it coupled the contract to EVERY change.
             if p.endswith(".md") or _PRODUCT_ROOT_RE.fullmatch(p):
                 continue
-            g = f"{p}/**" if (root / p).is_dir() else p
+            g = f"{p}/**" if _is_dir(root, p) else p
             if g not in cov:
                 cov.append(g)
     return cov
@@ -269,7 +311,7 @@ def _relative_cited_paths(root: Path, doc: Doc) -> list[str]:
         if "/" not in tok or not re.search(r"\w$", tok):
             continue
         rel = f"{base}/{tok}"
-        if rel not in out and (root / rel).exists():
+        if rel not in out and _exists(root, rel):
             out.append(rel)
     return out
 
@@ -360,6 +402,8 @@ def check_staged_new_missing_paths(root: Path) -> list[dict]:
     citing a renamed/mistyped path committed cleanly and went red ~25 min later
     in the queue. Only citations NEW in the staged text are judged — a doc you
     touch is not blocked for pre-existing debt (the CI ratchet owns that)."""
+    reset_path_index()
+
     def out(*args: str) -> str | None:
         r = _git(root, *args)
         return r.stdout if r is not None and r.returncode == 0 else None
@@ -392,6 +436,7 @@ def check_range(root: Path, rev_range: str, message: str | None = None) -> list[
     (`rev_range == STAGED`, trailers from `message`)."""
     if rev_range != STAGED and (".." not in rev_range or "..." in rev_range):
         return [_issue("<range>", f"needs a `<base>..<tip>` range, got {rev_range!r}")]
+    reset_path_index()
     changes, all_paths, err = material_changes(root, rev_range)
     if err:
         return [_issue(rev_range, err + "; fail-closed")]
@@ -476,6 +521,7 @@ def _applied_migrations(root: Path) -> set[str]:
 
 def check_claims(root: Path, docs: list[Doc] | None = None) -> list[dict]:
     """Leg 2 -- deterministic claim checks over every living doc."""
+    reset_path_index()
     docs = docs if docs is not None else load_docs(root)
     applied = _applied_migrations(root)
     issues: list[dict] = []
@@ -537,8 +583,9 @@ def _impl_commits(root: Path, doc_rel: str) -> int:
 
 
 def _rel_exists(root: Path, doc_rel: str, p: str) -> bool:
-    d = (root / doc_rel).parent
-    return (d / p).exists() or ((root / "products" / (_product_of(doc_rel) or "_") / p).exists())
+    d = Path(doc_rel).parent
+    return (_exists(root, os.path.normpath(str(d / p)))
+            or _exists(root, f"products/{_product_of(doc_rel) or '_'}/{p}"))
 
 
 # ── age backstop ────────────────────────────────────────────────────────────────
