@@ -155,6 +155,11 @@ export interface KanbanBoardProps<TCard, TStageId extends string = string> {
   className?: string;
   columnClassName?: string;
   cardClassName?: string;
+  /**
+   * `false` renders every card non-draggable (read-only boards whose column is derived, not chosen). Cards still
+   * open via `onCardActivate`. Default `true`: no other caller changes.
+   */
+  draggable?: boolean;
 }
 
 /** Default scroll container. See the render comment for the mobile classes. */
@@ -208,6 +213,7 @@ export function KanbanBoard<TCard, TStageId extends string = string>({
   className,
   columnClassName,
   cardClassName,
+  draggable = true,
 }: KanbanBoardProps<TCard, TStageId>) {
   const [activeId, setActiveId] = useState<string | null>(null);
 
@@ -306,6 +312,7 @@ export function KanbanBoard<TCard, TStageId extends string = string>({
                 emptyState={columnEmptyState ? columnEmptyState(column.stage) : undefined}
                 className={columnClassName}
                 cardClassName={cardClassName}
+              draggable={draggable}
               />
             ))}
           </SortableContext>
@@ -321,6 +328,7 @@ export function KanbanBoard<TCard, TStageId extends string = string>({
               emptyState={columnEmptyState ? columnEmptyState(column.stage) : undefined}
               className={columnClassName}
               cardClassName={cardClassName}
+              draggable={draggable}
             />
           ))
         )}

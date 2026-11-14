@@ -49,6 +49,8 @@ export interface KanbanColumnProps<TCard, TStageId extends string = string> {
   onCardActivate?: (card: TCard) => void;
   className?: string;
   cardClassName?: string;
+  /** `false` = non-draggable cards (see `KanbanCard`). Default `true`. */
+  draggable?: boolean;
   /** Present only when the board's columns are drag-reorderable. */
   sortable?: KanbanColumnSortableBinding;
 }
@@ -73,6 +75,7 @@ export function KanbanColumn<TCard, TStageId extends string = string>({
   onCardActivate,
   className,
   cardClassName,
+  draggable = true,
   sortable,
 }: KanbanColumnProps<TCard, TStageId>) {
   const { stage, cards } = column;
@@ -122,6 +125,7 @@ export function KanbanColumn<TCard, TStageId extends string = string>({
               key={getCardId(card)}
               id={getCardId(card)}
               className={cardClassName}
+              draggable={draggable}
               onActivate={onCardActivate ? () => onCardActivate(card) : undefined}
             >
               {renderCard(card, { isDragging: false })}

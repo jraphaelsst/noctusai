@@ -4,8 +4,7 @@
  *
  * Why `KanbanBoard` and not `FunnelBoard`: `FunnelBoard` is bound to a funnel backend (`GET P/meta`, `GET P/board`,
  * `POST .../mover-etapa`) this contract does not have -- and here the etapa is a PROJECTION derived from the photos
- * (contract §6), never moved by hand. `KanbanBoard` is the presentation-only organ of that family; `onMove` is a
- * deliberate no-op, so a drag changes nothing and the card snaps back.
+ * (contract §6), never moved by hand. `KanbanBoard` is the presentation-only organ of that family; cards are rendered `draggable={false}` (`onMove` is required by the organ but never fires).
  *
  * Search is the server's `q` (prefix of the ref). Loading-state contract: `showSkeleton` / `isRefreshing` come
  * pre-computed off `useImobCards`; the board never blanks while a refetch or a new search runs.
@@ -95,7 +94,8 @@ export default function ImobShotBoard() {
             getCardId={(c) => c.id}
             getCardStage={(c) => c.etapa}
             isLoading={showSkeleton}
-            // The etapa is derived from the photos (contract §6): a drag must never move a card.
+            // The etapa is derived from the photos (contract §6): cards are not draggable at all.
+            draggable={false}
             onMove={() => {}}
             onCardActivate={(c) => navigate(`/imobshotai/imoveis/${c.id}`)}
             columnEmptyState={() => <p className="py-4 text-center text-xs text-muted-foreground">Nenhum imóvel.</p>}

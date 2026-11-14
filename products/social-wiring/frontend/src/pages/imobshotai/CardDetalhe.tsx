@@ -122,7 +122,7 @@ function FotoPar({ foto }: { foto: CardFoto }) {
           <figcaption className="text-center text-xs text-muted-foreground">Editada</figcaption>
         </figure>
       </div>
-      <Badge variant="muted">{foto.status}</Badge>
+      <Badge variant="outline">{foto.status}</Badge>
     </li>
   );
 }
