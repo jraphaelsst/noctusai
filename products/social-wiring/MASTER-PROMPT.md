@@ -81,7 +81,7 @@ migrations/    → numbered SQL, applied with noctus.dev.migrate_product; migrat
 `App.tsx` registers routes via `createProductApp()`; nav groups come from `nav/navGroups.ts`, built with the
 seed `defineModule`/`composeModules` in the canonical `MODULE_GROUP_ORDER`: CRM (Pessoas, Vendas incl. Funil,
 Campanhas, Julia from `nav/julia.ts` `JULIA_PAGES`, Atendimento, E-mail > Mailchimp) · Redes Sociais · ERP (Imóveis,
-Financeiro) · CoreStudio (incl. Edição de Imagem, ex-CMS, before Pesquisa) · Emissões · Integrações · Configurações; Dashboard is a standalone
+Financeiro) · CoreStudio (incl. ImobShotAI — Imóveis · Nova edição de fotos · Vídeo, with the former Edição de Imagem pages under its Configurações — before Pesquisa) · Emissões · Integrações · Configurações; Dashboard is a standalone
 item. URLs never move. NOC-REMEDIATE[sw-nav-extend-seed-modules]: switch to `extendModule` when seed W2-6 lands.
 A page's nav item is gated by its `status_pagina` row (`julia_<page>` keys for the Julia group).
 Julia pages live in `pages/julia/`, components in `components/julia/`, hooks `useJulia*`.

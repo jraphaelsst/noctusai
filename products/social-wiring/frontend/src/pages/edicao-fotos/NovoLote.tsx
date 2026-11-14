@@ -33,12 +33,15 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { AlertCircle, Lock, Upload, X } from "lucide-react";
+import { AlertCircle, Lock, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { UploadFotosField } from "@/components/edicao-fotos/UploadFotosField";
+import { useVelocidadeLote } from "@/components/edicao-fotos/useVelocidadeLote";
+import { VelocidadeField } from "@/components/edicao-fotos/VelocidadeField";
 import { Skeleton } from "@/components/ui/skeleton";
 
 import {
@@ -50,16 +53,11 @@ import {
   useUploadFotos,
   fotosPermissions,
 } from "@/hooks/useEdicaoFotos";
-import type { LoteVelocidade } from "@/hooks/useEdicaoFotos";
 
 type Fonte = "upload" | "vista";
 
 const DEFAULT_LIMITE_FOTOS = 100;
 const DEFAULT_LIMITE_BYTES = 25 * 1024 * 1024;
-
-function formatBytes(bytes: number): string {
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-}
 
 export default function NovoLote() {
   const navigate = useNavigate();
@@ -78,25 +76,18 @@ export default function NovoLote() {
   const [fonte, setFonte] = useState<Fonte>("upload");
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [codigoVista, setCodigoVista] = useState("");
-  const [velocidadeEscolhida, setVelocidadeEscolhida] = useState<LoteVelocidade | null>(null);
   const [etapa, setEtapa] = useState<null | "criando" | "enviando_fotos" | "puxando_vista" | "submetendo">(null);
 
   const limiteFotos = fotosPermissions.limiteFotosPorLote(capacidades) ?? DEFAULT_LIMITE_FOTOS;
   const limiteBytes = fotosPermissions.limiteBytesPorFoto(capacidades) ?? DEFAULT_LIMITE_BYTES;
-  const economicoBloqueadoMotivo = fotosPermissions.economicoBloqueadoMotivo(capacidades);
-  const economicoDisponivel = fotosPermissions.economicoDisponivel(capacidades);
-
-  const padraoEconomicoIndisponivel =
-    configuracoes?.velocidade_padrao === "economico" && !economicoDisponivel;
-  const velocidadePadrao: LoteVelocidade | null = configuracoes
-    ? padraoEconomicoIndisponivel
-      ? "urgente"
-      : configuracoes.velocidade_padrao
-    : null;
-  const velocidade: LoteVelocidade | null =
-    velocidadeEscolhida === "economico" && !economicoDisponivel
-      ? null
-      : velocidadeEscolhida ?? velocidadePadrao;
+  const {
+    velocidade,
+    escolhida: velocidadeEscolhida,
+    escolher: setVelocidadeEscolhida,
+    economicoDisponivel,
+    economicoBloqueadoMotivo,
+    padraoEconomicoIndisponivel,
+  } = useVelocidadeLote(capacidades, configuracoes);
 
   const arquivosExcedeCount = arquivos.length > limiteFotos;
   const arquivoExcedeTamanho = arquivos.find((f) => f.size > limiteBytes) ?? null;
@@ -217,56 +208,14 @@ export default function NovoLote() {
             </div>
 
             {fonte === "upload" ? (
-              <div className="space-y-2">
-                <Label htmlFor="arquivos-lote">
-                  Fotos (até {limiteFotos}, até {formatBytes(limiteBytes)} cada)
-                </Label>
-                <Input
-                  id="arquivos-lote"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  disabled={enviando}
-                  onChange={(e) => handleArquivosChange(e.target.files)}
-                />
-                {arquivos.length > 0 && (
-                  <ul className="max-h-48 space-y-1 overflow-y-auto rounded-md border border-border p-2 text-sm">
-                    {arquivos.map((file, i) => (
-                      <li key={`${file.name}-${i}`} className="flex items-center justify-between gap-2">
-                        <span className="truncate">
-                          {file.name}{" "}
-                          <span
-                            className={
-                              file.size > limiteBytes ? "text-destructive" : "text-muted-foreground"
-                            }
-                          >
-                            ({formatBytes(file.size)})
-                          </span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => removerArquivo(i)}
-                          disabled={enviando}
-                          aria-label={`Remover ${file.name}`}
-                          className="shrink-0 text-muted-foreground hover:text-foreground"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {arquivosExcedeCount && (
-                  <p role="alert" className="text-xs text-destructive">
-                    Limite de {limiteFotos} fotos por lote excedido ({arquivos.length} selecionadas).
-                  </p>
-                )}
-                {arquivoExcedeTamanho && (
-                  <p role="alert" className="text-xs text-destructive">
-                    "{arquivoExcedeTamanho.name}" excede o limite de {formatBytes(limiteBytes)} por foto.
-                  </p>
-                )}
-              </div>
+              <UploadFotosField
+                arquivos={arquivos}
+                onAdicionar={handleArquivosChange}
+                onRemover={removerArquivo}
+                limiteFotos={limiteFotos}
+                limiteBytes={limiteBytes}
+                disabled={enviando}
+              />
             ) : (
               <div className="space-y-1.5">
                 <Label htmlFor="codigo-vista">Código do imóvel no Vista</Label>
@@ -280,64 +229,16 @@ export default function NovoLote() {
               </div>
             )}
 
-            <div className="space-y-2">
-              <Label>Velocidade</Label>
-              {configuracoesCarregando ? (
-                <div data-testid="novo-lote-velocidade-loading">
-                  <Skeleton className="h-8 w-56" />
-                </div>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    variant={velocidade === "urgente" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setVelocidadeEscolhida("urgente")}
-                    disabled={enviando}
-                    aria-pressed={velocidade === "urgente"}
-                  >
-                    Urgente
-                  </Button>
-                  {economicoDisponivel ? (
-                    <Button
-                      type="button"
-                      variant={velocidade === "economico" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setVelocidadeEscolhida("economico")}
-                      disabled={enviando}
-                      aria-pressed={velocidade === "economico"}
-                    >
-                      Econômico
-                    </Button>
-                  ) : (
-                    <span
-                      className="inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold text-muted-foreground"
-                      title={economicoBloqueadoMotivo ?? "Indisponível para o modelo da organização"}
-                    >
-                      <Lock className="h-3 w-3" /> Econômico (bloqueado)
-                    </span>
-                  )}
-                </div>
-              )}
-              {velocidade === "economico" && (
-                <p className="text-xs text-muted-foreground">
-                  Econômico: processado em lote pela OpenAI, com 50% de desconto — pode levar até 24h.
-                </p>
-              )}
-              {!economicoDisponivel && economicoBloqueadoMotivo && (
-                <p className="text-xs text-muted-foreground">Motivo: {economicoBloqueadoMotivo}</p>
-              )}
-              {padraoEconomicoIndisponivel && (
-                <p role="status" className="text-xs text-warning-foreground">
-                  O padrão da organização é Econômico, mas ele está indisponível para o modelo atual — este lote usará Urgente.
-                </p>
-              )}
-              {configuracoesErro && velocidadeEscolhida === null && (
-                <p role="alert" className="text-xs text-destructive">
-                  Não foi possível carregar o padrão da organização — escolha a velocidade.
-                </p>
-              )}
-            </div>
+            <VelocidadeField
+              velocidade={velocidade}
+              onChange={setVelocidadeEscolhida}
+              carregando={configuracoesCarregando}
+              economicoDisponivel={economicoDisponivel}
+              economicoBloqueadoMotivo={economicoBloqueadoMotivo}
+              padraoEconomicoIndisponivel={padraoEconomicoIndisponivel}
+              mostrarErroPadrao={!!configuracoesErro && velocidadeEscolhida === null}
+              disabled={enviando}
+            />
 
             <Button onClick={handleCriar} disabled={!podeSubmeter}>
               <Upload className="h-4 w-4" />

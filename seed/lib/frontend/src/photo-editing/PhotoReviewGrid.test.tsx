@@ -251,3 +251,30 @@ describe('PhotoReviewGrid: decisions stay changeable', () => {
     expect(onDecidir).toHaveBeenCalledWith('foto-1', 'rejeitar', 'Mudei de ideia.');
   });
 });
+
+// ── podeDecidir (ImobShotAI D6) ──────────────────────────────────────────────
+
+describe('PhotoReviewGrid: podeDecidir=false', () => {
+  it('hides approve/reject and shows the waiting message; retry on failed photos stays', () => {
+    const onRetry = vi.fn();
+    render(
+      <PhotoReviewGrid
+        fotos={[makeFoto(), makeFoto({ id: 'foto-2', estado: 'falhou', falha_motivo: 'timeout' })]}
+        podeVerVeredito={false}
+        showSkeleton={false}
+        onDecidir={vi.fn()}
+        onRetry={onRetry}
+        podeDecidir={false}
+      />,
+    );
+    expect(screen.getByText('Aguardando aprovação de um administrador.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Aprovar foto' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Rejeitar foto' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Tentar novamente' })).toBeInTheDocument();
+  });
+
+  it('defaults to true: existing consumers still get the controls', () => {
+    render(<PhotoReviewGrid fotos={[makeFoto()]} podeVerVeredito={false} showSkeleton={false} onDecidir={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Aprovar foto' })).toBeInTheDocument();
+  });
+});

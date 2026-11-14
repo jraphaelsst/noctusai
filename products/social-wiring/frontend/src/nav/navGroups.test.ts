@@ -19,6 +19,9 @@ function allItems(groups: AnyGroup[]): any[] {
 const allGroups = (gs: AnyGroup[]): AnyGroup[] => gs.flatMap((g) => [g, ...allGroups(g.groups ?? [])]);
 const byKey = (groups: AnyGroup[], key: string) => allGroups(groups).find((g) => g.key === key);
 
+/** The ImobShotAI pages added 2026-11-14 (D2); the only hrefs allowed beyond the frozen snapshot below. */
+const IMOBSHOTAI_HREFS = ["/imobshotai", "/imobshotai/fotos/novo", "/imobshotai/video/novo"];
+
 /** Every href the sidebar listed before W3-S1 (frozen snapshot: deep links never move). */
 const PRE_EXISTING_HREFS = [
   "/",
@@ -144,7 +147,7 @@ describe.each([
   it("no orphan pages: nothing in the nav that was not already a SW page", () => {
     const hrefs = allItems(groups).map((i) => i.href);
     expect(new Set(hrefs).size).toBe(hrefs.length);
-    expect(hrefs.filter((h) => !PRE_EXISTING_HREFS.includes(h))).toEqual([]);
+    expect(hrefs.filter((h) => !PRE_EXISTING_HREFS.includes(h) && !IMOBSHOTAI_HREFS.includes(h))).toEqual([]);
   });
 
   it("Conexões is gone; its pages sit in Integrações / Redes Sociais / Atendimento", () => {
@@ -159,15 +162,23 @@ describe.each([
     expect(allItems(groups).filter((i) => i.href === "/media-creation/roteiros")).toHaveLength(1);
   });
 
-  it("Edição de Imagem sits inside CoreStudio before Pesquisa, with Operação/Configuração; cms module is gone", () => {
+  it("ImobShotAI sits inside CoreStudio before Pesquisa and absorbs Edição de Imagem under Configurações; cms module is gone", () => {
     expect(byKey(groups, "cms")).toBeUndefined();
+    expect(byKey(groups, "edicao-fotos")).toBeUndefined();
     const cs = byKey(groups, "corestudio")!;
-    expect(cs.groups!.slice(0, 2).map((g) => g.label)).toEqual(["Edição de Imagem", "Pesquisa"]);
-    const ed = cs.groups![0];
-    expect(ed.groups!.map((g) => g.label)).toEqual(["Operação", "Configuração"]);
-    expect(allItems([ed as AnyGroup]).every((i) => i.href.startsWith("/edicao-fotos"))).toBe(true);
-    expect(allItems([ed as AnyGroup])).toHaveLength(10);
+    expect(cs.groups!.slice(0, 2).map((g) => g.label)).toEqual(["ImobShotAI", "Pesquisa"]);
+    const imob = cs.groups![0];
+    expect(imob.items.map((i) => [i.name, i.href])).toEqual([
+      ["Imóveis", "/imobshotai"],
+      ["Nova edição de fotos", "/imobshotai/fotos/novo"],
+      ["Vídeo", "/imobshotai/video/novo"],
+    ]);
+    expect(imob.groups!.map((g) => g.label)).toEqual(["Configurações"]);
+    const config = imob.groups![0];
+    expect(config.items.every((i) => i.href.startsWith("/edicao-fotos"))).toBe(true);
+    expect(config.items).toHaveLength(10);
     expect(topGroupOf("/edicao-fotos/novo")).toEqual(["corestudio"]);
+    expect(topGroupOf("/imobshotai")).toEqual(["corestudio"]);
   });
 
   it("nothing links to the retired /whatsapp-chat route", () => {
@@ -215,6 +226,11 @@ describe("route keys (status_pagina gating)", () => {
     expect(route("/email-marketing/configuracao")).toBe("email_config");
     expect(route("/simec")).toBe("simec");
     expect(route("/edicao-fotos/novo")).toBe("edicao-fotos-novo-lote");
+    // ImobShotAI (status_pagina rows added by the BE migration); the card page is not a nav item
+    expect(route("/imobshotai")).toBe("imobshotai");
+    expect(route("/imobshotai/fotos/novo")).toBe("imobshotai-fotos-novo");
+    expect(route("/imobshotai/video/novo")).toBe("imobshotai-video-novo");
+    expect(route("/imobshotai/imoveis/:cardId")).toBeUndefined();
   });
 });
 

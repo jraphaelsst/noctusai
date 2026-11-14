@@ -143,6 +143,10 @@ const EdicaoFotosCuradores = lazyWithReload(() => import("@/pages/edicao-fotos/C
 const EdicaoFotosPainel = lazyWithReload(() => import("@/pages/edicao-fotos/Painel"));
 const EdicaoFotosModelos = lazyWithReload(() => import("@/pages/edicao-fotos/Modelos"));
 const EdicaoFotosProcessamento = lazyWithReload(() => import("@/pages/edicao-fotos/Processamento"));
+const ImobShotBoard = lazyWithReload(() => import("@/pages/imobshotai/Board"));
+const ImobShotCardDetalhe = lazyWithReload(() => import("@/pages/imobshotai/CardDetalhe"));
+const ImobShotFotosNovo = lazyWithReload(() => import("@/pages/imobshotai/FotosNovo"));
+const ImobShotVideoNovo = lazyWithReload(() => import("@/pages/imobshotai/VideoNovo"));
 // Maya v1 (maya-blocks CONTRACT §4) — both seeded `desenvolvimento` in status_pagina (286).
 const AtendimentoBlocos = lazyWithReload(() => import("@/pages/AtendimentoBlocos"));
 const Supervisao = lazyWithReload(() => import("@/pages/Supervisao"));
@@ -211,6 +215,10 @@ export default createProductApp({
     { path: "/edicao-fotos/painel", component: EdicaoFotosPainel },
     { path: "/edicao-fotos/modelos", component: EdicaoFotosModelos },
     { path: "/edicao-fotos/processamento", component: EdicaoFotosProcessamento },
+    { path: "/imobshotai", component: ImobShotBoard },
+    { path: "/imobshotai/fotos/novo", component: ImobShotFotosNovo },
+    { path: "/imobshotai/imoveis/:cardId", component: ImobShotCardDetalhe },
+    { path: "/imobshotai/video/novo", component: ImobShotVideoNovo },
     { path: "/clientes", component: ClientesBoard },
     // `/clientes/revisao` MUST stay declared before `/clientes/:id`.
     { path: "/clientes/revisao", component: RevisaoFila },

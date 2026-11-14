@@ -83,6 +83,11 @@ export interface ImovelCodigoPickerProps {
   disabled?: boolean;
   id?: string;
   "data-testid"?: string;
+  /**
+   * Select-only (ImobShotAI): only an EXISTING imóvel can be picked. No "cadastrar como imóvel novo" and no
+   * duplicate suggestions; an empty result just says so. Default `false` keeps every other caller unchanged.
+   */
+  somenteSelecao?: boolean;
 }
 
 /** `ONE9001 — Apartamento amplo · Pinheiros`, skipping what is unknown. */
@@ -97,6 +102,7 @@ export function ImovelCodigoPicker({
   disabled,
   id,
   "data-testid": testId = "imovel-picker",
+  somenteSelecao = false,
 }: ImovelCodigoPickerProps) {
   const [termo, setTermo] = useState("");
   const [mostrandoFormulario, setMostrandoFormulario] = useState(false);
@@ -125,7 +131,7 @@ export function ImovelCodigoPicker({
   // header for the EUROVILLE-535/ONE7515 incident). Never a hard block: a
   // real new property is the common case, so these are shown ABOVE
   // "Cadastrar…", never instead of it.
-  const duplicatas = useImoveisPossiveisDuplicatas(termoDebounced, buscaVazia);
+  const duplicatas = useImoveisPossiveisDuplicatas(termoDebounced, buscaVazia && !somenteSelecao);
   const possiveisDuplicatas = duplicatas.data?.items ?? [];
 
   function fecharFormulario() {
@@ -160,7 +166,7 @@ export function ImovelCodigoPicker({
             setTermo("");
             fecharFormulario();
           }}
-          aria-label="Remover o imóvel da negociação"
+          aria-label={somenteSelecao ? "Trocar o imóvel" : "Remover o imóvel da negociação"}
           data-testid={`${testId}-limpar`}
         >
           <X className="h-3.5 w-3.5" />
@@ -215,6 +221,10 @@ export function ImovelCodigoPicker({
             Tentar de novo
           </Button>
         </div>
+      ) : buscaVazia && somenteSelecao ? (
+        <p className="text-xs text-muted-foreground" data-testid={`${testId}-vazio`}>
+          Nenhum imóvel com esse código.
+        </p>
       ) : buscaVazia ? (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground" data-testid={`${testId}-vazio`}>
