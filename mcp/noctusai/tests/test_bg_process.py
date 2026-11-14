@@ -286,8 +286,8 @@ def test_wrapper_refuses_a_bare_loop_without_a_done_condition(world, capsys):
 
 
 # ------------------------------------------------------------------ launch guard
-def _bash(cmd, bg=True):
-    return {"tool_name": "Bash", "tool_input": {"command": cmd, "run_in_background": bg}}
+def _bash(cmd, bg=True, **extra):
+    return {"tool_name": "Bash", "tool_input": {"command": cmd, "run_in_background": bg, **extra}}
 
 
 @pytest.mark.parametrize("cmd", [
@@ -303,7 +303,7 @@ def _bash(cmd, bg=True):
     "/bin/zsh -c 'while true; do sleep 5; done'",
     'python3 scripts/bg_run.py --done "x" -- echo hi',                                   # no purpose
     'python3 scripts/bg_run.py --purpose "p p p" -- echo hi',                            # no done
-    'python3 scripts/bg_run.py --purpose "p p p" --done "d d d" -- while true; do sleep 1; done',  # loop, no done-when
+    'python3 scripts/bg_run.py --purpose "p p p" --done "d d d" -- \'while true; do work; sleep 1; done\'',  # loop, no done-when
 ])
 def test_guard_denies_open_ended_background_launches(cmd):
     verdict = guard.decide(_bash(cmd))
