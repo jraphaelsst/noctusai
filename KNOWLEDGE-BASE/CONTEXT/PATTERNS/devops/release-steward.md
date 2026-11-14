@@ -281,24 +281,33 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
 - *The CI-blocking set is derived, never listed.* From the head's own CI definition: (a) every `cli.py --check-*` step of
   `.github/workflows/test.yml` that is not `continue-on-error` and needs no CI-resolved argument (`ci_blocking_flags`);
   (b) every test in `mcp/noctusai/tests/` that asserts a `check_*` keeper returns `[]` on the live tree, found by AST
-  (`ci_keeper_test_ids`: the "real tree is clean" tests that make a pre-commit warning a CI block), always; (c) the
-  suites of what the diff touches DIRECTLY (`local_suites`): a `seed-backend-tests` matrix root the diff edits, and a
-  `product-backend-tests` matrix product the diff edits that is awake (`deploy/fleet/active-scope.txt`). The scope is
-  `ci_scope.classify` over `origin/dev...head` - the SAME module the workflow's `changes` job calls (the classifier left
-  the inline bash so the two can never disagree; base selection, which depends on the GitHub event, stays in the
-  workflow). Why (c): three deliveries went 5/5 and were ejected on suites the diff selected in CI
-  (`test_all_products_compliant[core]` - a seeded icon; the seed suite + `test_vps_exec.py` - a seed change; a product
-  FE test), 2026-11-10. **Narrowed by the owner, 2026-11-11:** running CI's FULL split locally (the toolkit shards + every
-  awake product on a shared-root change) measured **2h04m** on one heavy slot versus ~15-25 min in CI's parallel jobs, so
-  the toolkit split and the shared-root fan-out are judged by the merge queue only. Stated trade-off: a toolkit-only red
-  (the `test_all_products_compliant[core]` shape) can still eject in the queue. The run holds ONE machine-wide heavy slot
-  (`hw_admission.heavy_slot`; not admitted = `UNMEASURED`, never green). **Migration → DB-guard edge (owner, 2026-11-11):** a
+  (`ci_keeper_test_ids`), PLUS every toolkit test that READS THE LIVE REPO TREE (`live_tree_test_ids`: a test naming a
+  module-level `Path(__file__)...parents[n]` constant, so invariants like `assert not unmarked` over a tree walk are
+  included), always when the diff is heavy; (c) **ONE selector (2026-11-12)**: the suites gate_sweep would select for the diff
+  (`select_ci_suites` -> `gate_sweep._derive_scope` + `_build_gate_specs`: touched product/seed backend suites, the seed
+  fan-out to provable consumers, `CONTRACT_OF` cross-product consumers, the toolkit tests that import a changed toolkit
+  module, the replay/DB-guard suites). There is no second selector (`local_suites` is gone). Why: 185 verdicts, ONE ran a
+  suite; every ejected entry (~12, ~25 of 37.8 red runner-hours, 2026-11-07..12) had a green verdict that ran none -
+  e.g. a `merge_queue.py` change broke the guardian snapshot test and nothing selected it. What it cannot run is NAMED in
+  the verdict (`skipped`): FE gates (no `node_modules`) and the FULL toolkit suite (a core toolkit file changed: CI shards
+  it, 2h locally). **Wall-clock budget** (`NOC_ITEM5_SUITE_BUDGET_S`, default 1800s): suites not started when it is spent are
+  listed and the verdict says `PARTIAL` - never silently trimmed. Scope is still `ci_scope.classify` over `origin/dev...head`.
+  Earlier trade-off (owner 2026-11-11, full CI split = 2h04m locally) now applies only to the two named skips and the budget.
+  **It judges the MERGE, not the head (2026-11-12):** the export is the tree of `git merge-tree --write-tree origin/dev <head>`
+  (`merge_tree_sha`); a conflict is UNMEASURED. The verdict ref still binds the HEAD sha + head tree; the record adds `merge_tree`.
+  The run holds ONE machine-wide heavy slot
+  (`hw_admission.heavy_slot`; not admitted = `UNMEASURED`, never green). **Migration -> DB-guard edge (owner, 2026-11-11):** a
   diff touching `products/<p>/backend/migrations/*.sql` also runs `test_verify_db_guards.py` + that product's PGlite
-  `*replay*` tests + the generic `test_migration_*` ones (`migration_guard_suite`) - the toolkit-only red that stalled the
-  queue 2h (agents 079 → `TestAgentsStudioProbes`). PGlite is linked from the source checkout only when
+  `*replay*` tests + the generic `test_migration_*` ones (`migration_guard_suite`). PGlite is linked from the source checkout only when
   `mcp/noctusai/node/package-lock.json` is byte-identical (`link_pglite`); otherwise `UNMEASURED`. **Gap, `NOC-REMEDIATE[scoped-green-fe-and-tooling]`:**
-  FE vitest and the bespoke `tooling-tests` job stay CI-judged only (no `node_modules` in the export; tooling-tests renders
-  a template in bash) - a branch steward touching a product FE or an MCP connector server (`mcp/<connector>/tests`) runs that suite itself before filing.
+  FE vitest and the bespoke `tooling-tests` job stay CI-judged only - a branch steward touching a product FE or an MCP connector server
+  (`mcp/<connector>/tests`) runs that suite itself before filing. **Follow-ups, out of this slice:** a Linux-container leg (BSD vs
+  GNU `sed`, process start times, runner image) and `merge_buildable` against the queue tip (dev + `mq/*` refs ahead), not only dev.
+  **Telemetry (2026-11-12):** every verdict record carries `suites_ran`, `tests_ran` (pytest-summary counts), `diff_scope`,
+  `skipped`, `partial`, `warnings`; a heavy scope with 0 suites ran adds `WARNING: heavy diff scope but 0 suites ran`.
+  `release_steward action=verdicts [since=]` (read-only; CLI `--release-steward verdicts`) JOINS verdict records to drain outcomes
+  (request `verdict_ref`, else head sha, then the `ack ejected|landed`) and reports `false_green_rate` (green then ejected),
+  the zero-suite split, and the rejection rate per requester - the number that says whether item 5 is honest.
   CI's "Prime hermetic state" step is replayed first (`ci_prime_flags`).
 - *The env is scrubbed the way CI's is.* `hermetic_env`: OS basics only (`HERMETIC_BASE_ENV`) plus the toolkit job's own
   `env:` plus `CI=true`. Everything else (`CLAUDE_*`, `ANTHROPIC_*`, `OPENAI_*`, `SUPABASE_*`, `NOC*` ...) is absent, because it is

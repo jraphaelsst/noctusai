@@ -1244,8 +1244,8 @@ class TestHeadSemantics:
 class TestRefusalTelemetry:
     def test_record_verdict_stores_failing_names(self, tmp_path):
         ref = rs.record_verdict(tmp_path / "v.ndjson", head="1" * 40, tree="t", workflow_blob="w", interpreter="py",
-                                flags=["--check-x"], tests=["t"], ok=False, failing_items=["--check-x"],
-                                failing_tests=["tests/test_a.py::test_b"])
+                                flags=["--check-x"], tests=["t"], ok=False,
+                                telemetry={"failing_items": ["--check-x"], "failing_tests": ["tests/test_a.py::test_b"]})
         rec = rs.read_verdict(tmp_path / "v.ndjson", ref.split(":")[1])
         assert rec["failing_items"] == ["--check-x"] and rec["failing_tests"] == ["tests/test_a.py::test_b"]
 
