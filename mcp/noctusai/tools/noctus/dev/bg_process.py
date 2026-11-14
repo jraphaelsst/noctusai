@@ -168,6 +168,10 @@ def _run(*, action: str, pid: int | None, purpose: str, reason: str, learnings: 
     if not existing:
         rec = core.write_salvage(d, session_id=sid, dossier=dossier, reason=reason.strip(), learnings=learnings.strip(),
                                  by="bg_process.stop", now=now)
+    # Backstop telemetry: a process the sweep has to stop is one that did NOT end at runtime (bg_run / the
+    # launch guard failed to give it an end). Counted so each escape is fixed as a bug in the runtime-end legs.
+    _event("escaped-runtime-end", f"pid {root.pid} outlived its purpose and had to be stopped: {core._short(root.command, 120)}",
+           {"pid": root.pid, "age_s": int(root.age_s) if hasattr(root, "age_s") else None})
     result = core.stop_tree(root.pid, ps_text=ps_text, kill=seams.get("kill") or core._default_kill,
                             sleep=seams.get("sleep") or time.sleep, term_grace_s=term_grace_s, forbidden=own)
     row = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)), "kind": "stop", "session_id": sid,

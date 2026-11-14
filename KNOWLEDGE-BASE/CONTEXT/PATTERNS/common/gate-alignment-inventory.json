@@ -149,7 +149,7 @@
    "source": "Claude Code hooks reference (code.claude.com/docs/en/hooks: PostToolUse/UserPromptSubmit additionalContext, SubagentStop); owner rule 2026-11-07; verified against 33 real subagent transcripts+meta.json"
   },
   "guard:background-launch": {
-   "mechanism": "scripts/bg_run.py launch wrapper (purpose + done-condition, salvage on exit, tree-stop) + noctus.dev.bg_process stop tool + session_end_sweep clean_wrap leg; KB § PATTERNS/common/background-agent-lifecycle.md",
+   "mechanism": "scripts/bg_run.py launch wrapper, applied BY CONSTRUCTION: the guard rewrites every non-infra run_in_background command into it (purpose + done-condition, ends when the child exits / done-when holds / the producer is dead / the owning session dies, salvage on exit, tree-stop); structural shell judge scripts/hooks/_bg_shell.py (invoked scripts opened and scanned); noctus.dev.bg_process stop (logs escaped-runtime-end) + session_end_sweep clean_wrap leg as backstop; KB § PATTERNS/common/background-agent-lifecycle.md",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "standard": "",
@@ -159,7 +159,7 @@
     "since": "2026-11-14",
     "fires": 0,
     "fix_rate": null,
-    "promote_when": "auto-enforces 2026-11-21 (bg_launch_guard.ENFORCE_FROM); owner 2026-11-14: 7-day warn-only soak, used to refine the tool from the warn events (--gate-alignment walls)"
+    "promote_when": "enforcing since 2026-11-14 (bg_launch_guard.ENFORCE_FROM); runtime-end legs added 2026-11-14: mandatory wrapper rewrite, structural shell parsing, script scan, parent-death, escaped-runtime-end telemetry (target ~0)"
    },
    "source": "owner decision 2026-11-14 (background processes end themselves; no lifetime cap or idle timer); Claude Code hooks reference (PreToolUse deny on Bash run_in_background)"
   },
@@ -3728,11 +3728,11 @@
   },
   {
    "id": "D-bg-self-ending",
-   "decision": "Background processes end themselves: every run_in_background command declares purpose + a done-condition via scripts/bg_run.py (salvage on exit, tree-stop, orphan check); open-ended loops and bare long runs are refused at launch; NO lifetime cap or idle timer; leftovers at session end are salvaged+stopped via noctus.dev.bg_process or kept as declared long-lived",
+   "decision": "Background processes end AT RUNTIME, not at a wrap-up sweep: every run_in_background command is rewritten by the guard into scripts/bg_run.py (purpose + done-condition) which ends it when the job is done, its wait can no longer be satisfied, or its owning session dies; only loops that cannot be given an end are refused; NO lifetime cap or idle timer; the session-end sweep is a backstop and every process it must stop is logged as escaped-runtime-end",
    "home": "KB § PATTERNS/common/background-agent-lifecycle.md (Background processes)",
-   "construction": "tool:scripts/bg_run.py + noctus.dev.bg_process (stop refuses without a salvage record)",
+   "construction": "tool:scripts/bg_run.py applied by the guard rewrite (updatedInput) + scripts/hooks/_bg_shell.py structural judge + noctus.dev.bg_process (stop refuses without a salvage record)",
    "gate": "guard:background-launch + session_end_sweep clean_wrap leg",
-   "telemetry": "guard-events.ndjson (guard=background-launch|background-process) + the bg-process salvage ledger (gitignored cache)",
+   "telemetry": "guard-events.ndjson (guard=background-launch deny|rewrite|warn; guard=background-process escaped-runtime-end) + the bg-process salvage ledger (gitignored cache)",
    "branch": "feat/bg-process-lifecycle",
    "gates": [
     "guard:background-launch"
