@@ -2,16 +2,16 @@
 
 > Generated from `gate-alignment-inventory.json` by `python mcp/noctusai/cli.py --gate-alignment render`. Method and rules: `KB § PATTERNS/common/gate-methodology-sync.md`. Firing counts are measured from 943 Claude Code session transcripts (~/.claude/projects, 2026-08..2026-11-05), tool results only, one count per tool call; guard-events.ndjson for live events (upper-bound-free: tool results only, one count per tool call).
 
-Totals by class: **?** 35, **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 191 gates). Mechanism burn-down: {'gates': 191, 'declared': 74, 'declared_none_justified': 12, 'undeclared_baseline': 117}.
+Totals by class: **?** 37, **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 193 gates). Mechanism burn-down: {'gates': 193, 'declared': 76, 'declared_none_justified': 12, 'undeclared_baseline': 117}.
 
 | Gate | Standard | Construction mechanism | Owner | Firings (sessions) | Class |
 |---|---|---|---|---:|---|
 | `guard:primary-write` |  | tool:task_branch start (isolates off origin/dev) · injection: scripts/hooks/claude-session | tooling-engineer | 134 (43) | wall |
 | `keeper:check-migration-guard-has-probe` | Keeper (gate↔methodology-sync backstop for noctus.dev.verify_db_guards, 2026-09-18): a migration that defines  | tool:scaffold_migration (guard_probe_stubs) · organ guard_probes in noctusai_lib/domain/<o | backend-engineer | 85 (22) | wall |
-| `guard:heavy-run` |  | tool:hw_admission (the deny message names the wrapped command) | tooling-engineer | 72 (22) | wall |
+| `guard:heavy-run` |  | tool:hw_admission (the guard REWRITES the command into the admitted form via updatedInput: | tooling-engineer | 72 (22) | wall |
 | `keeper:check-migration-number-refs-in-tests` | Keeper (ratchet, 2026-10-10): an awake product's backend test must not reference a migration by NUMBER ("217_x | api:noctusai_lib.testing.migrations.migration_path · tool:scaffold_migration (reference_in | backend-engineer | 48 (21) | wall |
 | `keeper:check-eight-way-sync` | Keeper: the 8-way methodology surface sync (CLAUDE.md / MEMORY.md / .claude/agents/ / KB / CONTEXTUALIZE.md /  | **NONE** | tooling-engineer | 46 (24) | wall |
-| `guard:executor-dispatch` |  | tool:task_branch start (creates the worktree the guard requires) | tooling-engineer | 44 (22) | wall |
+| `guard:executor-dispatch` |  | tool:task_branch start (creates the worktree to reuse); the guard REWRITES a worktree-less | tooling-engineer | 44 (22) | wall |
 | `guard:test-seams` |  | none (a monkeypatch is an in-line choice; the write-time judge of the ADDED lines is the e | tooling-engineer | 18 (9) | wall |
 | `keeper:verify-kb-sync` | Verify CLAUDE.md pointers + KB INDEX.md are in sync | tool:kb_sync (regenerates counts; task_branch integrate runs it) | tooling-engineer | 15 (14) | wall |
 | `keeper:check-not-configured-carries-marker` | Keeper: every *NotConfigured / *NaoConfigurado exception class in the seed or an active product's backend/app/ | **NONE** | tooling-engineer | 13 (7) | wall |
@@ -67,7 +67,7 @@ Totals by class: **?** 35, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | `guard:dev-advance` |  | KB § PATTERNS/architect/orchestration-craft-canon.md §6.13 (push leg + noc-branch-dispatch | tooling-engineer | 0 (0) | ? |
 | `guard:harness-signature` |  | none (advisory PostToolUse measurement leg; it never blocks) | tooling-engineer | 0 (0) | never-fires |
 | `guard:primary-write-post` |  | none (advisory PostToolUse measurement leg; it never blocks) | tooling-engineer | 0 (0) | never-fires |
-| `guard:session-heartbeat` |  | none (advisory liveness refresh, not an enforcing gate: calls StewardStore.role_touch; the | tooling-engineer | 0 (0) | ? |
+| `guard:session-heartbeat` |  | none (advisory liveness refresh, not an enforcing gate: calls StewardStore.role_touch and  | tooling-engineer | 0 (0) | ? |
 | `keeper:check-absorption-pilot-is-canon` |  | tool:absorption_log (re-point the pilot to the canon with an append-only capability row; t | tooling-engineer | 0 (0) | ? |
 | `keeper:check-absorption-source-frozen` |  | tool:absorption_log (registry) + write-path:scripts/hooks/claude-guard-absorption-source.p | tooling-engineer | 0 (0) | ? |
 | `keeper:check-access-tier-fingerprint` | BLOCKING keeper: every prompt-derived source (compiled text, textos, tool descriptions, decisions, skill bodie | api:texto_fonte_do_prompt seam (channels/conformidade.py) | backend-engineer | 0 (0) | new (unmeasured) |
@@ -155,6 +155,7 @@ Totals by class: **?** 35, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | `keeper:check-path-references` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-phase-state` | Check §6 ↔ §11 phase-state consistency across PROJECT.md files. Exits 1 on any high-severity issue. Used by th | **NONE** | tooling-engineer | 0 (0) | never-fires |
 | `keeper:check-phase-state-consistency` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
+| `keeper:check-pii-query-params` |  | KB § PATTERNS/security/url-hygiene.md (rule 2; POST-body search convention) | tooling-engineer | 0 (0) | ? |
 | `keeper:check-postgrest-unbounded-query` | Keeper: PostgREST silently caps ANY select at `db-max-rows` (Supabase default 1 000) — no error, no warning, ` | **NONE** | backend-engineer | 0 (0) | never-fires |
 | `keeper:check-predeploy-leg-verify-or-block` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-private-accent-fold` | Keeper: no private unicodedata NFKD/NFD accent fold outside noctusai_lib.primitives.accents. Severity high; bl | **NONE** | backend-engineer | 0 (0) | never-fires |
@@ -177,6 +178,7 @@ Totals by class: **?** 35, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | `keeper:check-seed-test-root-ci-coverage` |  | **NONE** | devops-engineer | 0 (0) | unmeasured |
 | `keeper:check-seed-version-propagation` |  | **NONE** | devops-engineer | 0 (0) | unmeasured |
 | `keeper:check-settings-di-regression` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
+| `keeper:check-signed-url-ttl` |  | KB § PATTERNS/security/url-hygiene.md (rule 1; seam reason kwarg lands on feat/sec-signed- | tooling-engineer | 0 (0) | ? |
 | `keeper:check-skill-format` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-skills-listed-in-router` | Keeper sub-leg of check_eight_way_sync: every .claude/skills/<name>/ MUST be referenced in CLAUDE.md §2 'Proce | **NONE** | tooling-engineer | 0 (0) | never-fires |
 | `keeper:check-slowapi-with-pep563` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
@@ -263,3 +265,4 @@ Totals by class: **?** 35, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | D37 | A job worker's idle poll is a per-tick RPC: it backs off to a 300s cap and is woken in-process when work becomes claimable; a fixed/short idle or an unbounded gate read is refused | KB § PATTERNS/backend/polling-request-budget.md | api:noctusai_lib.domain.jobs.worker.Worker (DEFAULT_MAX_IDLE_INTERVAL_SECONDS=300 + jobs/wake.py run_at wake) | keeper:check-worker-idle-polling | noctus.dev.supabase_request_budget (rpc/claim_next_job calls/day from the edge logs) + keeper gate events | feat/w1c-claim-next-job-polling |
 | D-absorb-freeze | Absorption SOURCES (erp-imobiliario, igig, therapy-platform, community) are frozen until erased: no change/refinement/fix, never a reference or pilot; the list is DERIVED from the absorptions ledger (stage absorb_only + canon), gated at the write (PreToolUse), the commit (keeper) and the pilot field | project-history/roadmaps/crm-cms-erp-vertical-seeds-2026-11.md (Phase 5a) | noctus.dev.absorption_log stage=absorb_only canon=<product> (the registry); every gate derives from it via absorption_sources.derive_sources | guard:absorption-source + keeper:check-absorption-source-frozen + keeper:check-absorption-pilot-is-canon | guard-events.ndjson deny rows + keeper gate events + lint:absorption-source-reference warn rows; read by gate_alignment walls | feat/absorption-source-freeze-gate |
 | D-bg-self-ending | Background processes end themselves: every run_in_background command declares purpose + a done-condition via scripts/bg_run.py (salvage on exit, tree-stop, orphan check); open-ended loops and bare long runs are refused at launch; NO lifetime cap or idle timer; leftovers at session end are salvaged+stopped via noctus.dev.bg_process or kept as declared long-lived | KB § PATTERNS/common/background-agent-lifecycle.md (Background processes) | tool:scripts/bg_run.py + noctus.dev.bg_process (stop refuses without a salvage record) | guard:background-launch + session_end_sweep clean_wrap leg | guard-events.ndjson (guard=background-launch/background-process) + the bg-process salvage ledger (gitignored cache) | feat/bg-process-lifecycle |
+| D-url-hygiene | Signed URLs live <=600 s unless a reason is given; PII never rides in a URL query string. Ratcheted per-file baselines; warn-first, promote to blocking after >=7 shadow days. | KB § PATTERNS/security/url-hygiene.md | KB § PATTERNS/security/url-hygiene.md (+ seam reason kwarg on feat/sec-signed-url-ttl-clamp; POST-body search convention) | keeper:check-signed-url-ttl + keeper:check-pii-query-params | gate events (cli exit wrapper -> guard-events.ndjson) | feat/sec-keepers-ttl-pii-query |

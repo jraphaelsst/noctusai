@@ -1694,6 +1694,89 @@ def redirect_for(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# CLAIM-ONLY FAST PATH (2026-11-14) — no git subprocess on the hot path.
+#
+# 443 fail-closed timeouts in 43 sessions (finding GW-8a7e7ce8): every non-read call paid 4+ `git` processes
+# (`discover_context` x3, `decide_hook_integrity`) before the guard could say "this write is in your own worktree",
+# and under machine load that spent the 8s deadline. A session that has CLAIMED a worktree and writes INSIDE it
+# is the dominant case, and it is decidable from the claim file plus three plain file reads:
+#   claims file -> claimed worktree; `<wt>/.git` (a FILE) -> its gitdir under THIS primary's `.git/worktrees/`;
+#   `<gitdir>/HEAD` -> a non-shared branch. Anything that does not check out exactly falls through to the full
+#   (git-backed) decision, which still fails closed - this only ever turns a slow ALLOW into a fast one.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def claimed_worktree_fast(primary_root: str, session_id: str | None) -> tuple[str, str] | None:
+    """`(worktree_realpath, branch)` of this session's claim when it provably still exists, else None. No git."""
+    if not session_id:
+        return None
+    claim = read_claims(primary_root).get(session_id)
+    if not claim:
+        return None
+    wt = os.path.realpath(str(claim.get("worktree") or ""))
+    dot_git = os.path.join(wt, ".git")
+    try:
+        if not os.path.isfile(dot_git):
+            return None
+        with open(dot_git, encoding="utf-8") as fh:
+            first = fh.readline().strip()
+        if not first.startswith("gitdir:"):
+            return None
+        gitdir = os.path.realpath(first.split(":", 1)[1].strip())
+        if not _within(gitdir, os.path.join(os.path.realpath(primary_root), ".git", "worktrees")):
+            return None  # a worktree of some OTHER repo is not this primary's to vouch for
+        with open(os.path.join(gitdir, "HEAD"), encoding="utf-8") as fh:
+            head = fh.readline().strip()
+    except OSError:
+        return None
+    if not head.startswith("ref: refs/heads/"):
+        return None  # detached
+    branch = head[len("ref: refs/heads/"):]
+    if not branch or branch in SHARED_BRANCHES:
+        return None
+    return wt, branch
+
+
+def decide_claimed_fast(tool_name: str, tool_input: dict[str, Any] | None, cwd: str, session_id: str | None,
+                        primary_root: str) -> str | None:
+    """The branch name when the call is provably confined to the session's claimed worktree (=> allow), else None
+    (=> run the full decision). Pure parsing + file reads - never spawns git."""
+    claimed = claimed_worktree_fast(primary_root, session_id)
+    if claimed is None:
+        return None
+    wt, branch = claimed
+    tool_input = tool_input or {}
+    if tool_name in _FILE_PATH_TOOLS:
+        raw = tool_input.get(_FILE_PATH_TOOLS[tool_name]) or ""
+        target = _resolve(raw, cwd)
+        return branch if target and _within(os.path.realpath(target), wt) else None
+    if tool_name != "Bash":
+        return None
+    if not _within(os.path.realpath(cwd), wt):
+        return None
+    command = _strip_heredocs(tool_input.get("command") or "")
+    # Anything that can name a place the parse cannot see keeps the full decision: a `cd`/`git -C` elsewhere,
+    # `..` (reaches the primary), shell expansion (`$`, backtick, `~`), or an absolute path into the primary
+    # outside this worktree.
+    if _CD_OR_GIT_C.search(command) or ".." in command or any(ch in command for ch in ("$", "`", "~")):
+        return None
+    root = os.path.realpath(primary_root)
+    for tok in _ABS_PATH.findall(command):
+        real = os.path.realpath(tok)
+        if _within(real, root) and not _within(real, wt):
+            return None
+    # EVERY write target the parser can see, relative ones too, must resolve (symlinks followed) INSIDE the
+    # worktree: `wire_env` symlinks node_modules entries into the PRIMARY, so `echo x > node_modules/foo/bar`
+    # is a relative path that lands in the primary. An uncertain parse proves nothing -> full decision.
+    targets, uncertain = bash_write_targets(tool_input.get("command") or "", cwd)
+    if uncertain:
+        return None
+    for target in targets:
+        if not _within(os.path.realpath(target), wt):
+            return None
+    return branch
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # AUTO-CLAIM + Bash redirect (2026-11-05, owner: "fix this error by not letting
 # the agent act as they always do — this is a methodology drift").
 #

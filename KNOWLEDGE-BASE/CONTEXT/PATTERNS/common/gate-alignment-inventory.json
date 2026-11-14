@@ -194,7 +194,7 @@
     "PreToolUse"
    ],
    "standard": "",
-   "mechanism": "tool:task_branch start (creates the worktree the guard requires)",
+   "mechanism": "tool:task_branch start (creates the worktree to reuse); the guard REWRITES a worktree-less executor dispatch by adding isolation:\"worktree\" via updatedInput (outcome=rewrite logged)",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -203,7 +203,9 @@
    },
    "class": "wall",
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
-   "remediation": "NOC-REMEDIATE[gate-wall] destination: dispatch skill/template pre-fills worktree_path from task_branch start (noc-branch-dispatch)."
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: dispatch skill/template pre-fills worktree_path from task_branch start (noc-branch-dispatch).",
+   "new": false,
+   "declared": "2026-11-14"
   },
   "guard:harness-signature": {
    "severity": "",
@@ -229,7 +231,7 @@
     "PreToolUse"
    ],
    "standard": "",
-   "mechanism": "tool:hw_admission (the deny message names the wrapped command)",
+   "mechanism": "tool:hw_admission (the guard REWRITES the command into the admitted form via updatedInput: hw_admission run --job <derived> --wait-s 7200 -- bash -c; outcome=rewrite logged; refuses only local Whisper and unparseable commands)",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -238,7 +240,9 @@
    },
    "class": "wall",
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
-   "remediation": "NOC-REMEDIATE[gate-wall] destination: a wrapped-run injection (hw_admission command pre-filled in the agent start brief + test-engineer template) so the first command is already the admitted one."
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: a wrapped-run injection (hw_admission command pre-filled in the agent start brief + test-engineer template) so the first command is already the admitted one.",
+   "new": false,
+   "declared": "2026-11-14"
   },
   "guard:primary-write": {
    "severity": "",
@@ -247,7 +251,7 @@
     "PreToolUse"
    ],
    "standard": "",
-   "mechanism": "tool:task_branch start (isolates off origin/dev) · injection: scripts/hooks/claude-session-start-worktree-sweep.py",
+   "mechanism": "tool:task_branch start (isolates off origin/dev) · injection: scripts/hooks/claude-session-start-worktree-sweep.py · claim-only fast path decide_claimed_fast (a write inside the session's claimed worktree is decided from the claim file with no git subprocess) · redirect into the claimed worktree",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -256,7 +260,9 @@
    },
    "class": "wall",
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
-   "remediation": "NOC-REMEDIATE[gate-wall] destination: task_branch auto-isolation at dispatch (agents start in a worktree by injection); measure primary-dirt delta (leg already in flight, see section below)."
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: task_branch auto-isolation at dispatch (agents start in a worktree by injection); measure primary-dirt delta (leg already in flight, see section below).",
+   "new": false,
+   "declared": "2026-11-14"
   },
   "guard:primary-write-post": {
    "severity": "",
@@ -293,12 +299,12 @@
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson"
   },
   "guard:session-heartbeat": {
-   "mechanism": "none (advisory liveness refresh, not an enforcing gate: calls StewardStore.role_touch; the construction is role_touch on every release_steward action)",
+   "mechanism": "none (advisory liveness refresh, not an enforcing gate: calls StewardStore.role_touch and renew_own_lease so a live steward's own lease never ages stale between prompts; the construction is role_touch on every release_steward action)",
    "owner": "tooling-engineer",
    "placement": "warn",
    "standard": "",
    "new": true,
-   "declared": "2026-11-10",
+   "declared": "2026-11-14",
    "source": "release-steward.md (honest G3 / session liveness): dead = pid gone AND heartbeat past TTL, so a quiet alive session needs a refresh path; owner decision 2026-11-10",
    "telemetry": "_guard_failclosed.log_event error rows only (advisory hook, always exit 0)"
   },

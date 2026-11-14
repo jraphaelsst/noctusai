@@ -51,6 +51,14 @@ def _reason(out: dict) -> str:
     return h["permissionDecisionReason"]
 
 
+def _rewritten(out: dict) -> dict:
+    """The updatedInput of an `allow` REWRITE verdict (the guard produced the correct form, not a refusal)."""
+    h = out["hookSpecificOutput"]
+    assert h["permissionDecision"] == "allow", h
+    assert h["additionalContext"].startswith("[noc-guard:")
+    return h["updatedInput"]
+
+
 @pytest.mark.parametrize("script,name", [(PRIMARY, "primary-write"), (SEAMS, "test-seams")])
 class TestBadInputDenies:
     def test_empty_stdin(self, script, name):
@@ -174,19 +182,21 @@ class TestExecutorDispatch:
                         return d
         pytest.skip("no worktree directory on disk")
 
-    def test_executor_without_worktree_denied(self):
+    def test_executor_without_worktree_is_rewritten_to_isolation(self):
         code, out = _run(EXEC, self._agent("backend-engineer"))
         assert code == 0
-        r = _reason(out)
-        assert r.startswith("[noc-guard:executor-dispatch] ") and "task_branch action=start" in r
+        new = _rewritten(out)
+        assert new["isolation"] == "worktree" and new["subagent_type"] == "backend-engineer"
+        assert new["prompt"] == "do it"  # everything else is untouched
+        assert "task_branch action=start" in out["hookSpecificOutput"]["additionalContext"]
 
     def test_product_engineer_is_derived_as_executor(self):
         code, out = _run(EXEC, self._agent("product-engineer"))
-        assert "executor-dispatch" in _reason(out)
+        assert _rewritten(out)["isolation"] == "worktree"
 
-    def test_nonexistent_worktree_reference_denied(self):
+    def test_nonexistent_worktree_reference_is_rewritten(self):
         code, out = _run(EXEC, self._agent("frontend-engineer", "work in .claude/worktrees/no-such-slug-xyz"))
-        assert "executor-dispatch" in _reason(out)
+        assert _rewritten(out)["isolation"] == "worktree"
 
     def test_existing_worktree_followed_by_sentence_punctuation_passes(self):
         d = self._existing_slug()
@@ -211,7 +221,7 @@ class TestExecutorDispatch:
 
     def test_task_tool_name_also_guarded(self):
         p = json.dumps({"tool_name": "Task", "tool_input": {"subagent_type": "backend-engineer", "prompt": "x"}})
-        assert "executor-dispatch" in _reason(_run(EXEC, p)[1])
+        assert _rewritten(_run(EXEC, p)[1])["isolation"] == "worktree"
 
     def test_bad_stdin_fails_closed(self):
         code, out = _run(EXEC, "{nope")
@@ -273,13 +283,13 @@ class TestEndToEndAllowDeny:
         code, out = _run(EXEC, agent("backend-engineer", isolation="worktree"))
         assert code == 0 and out is None
         code, out = _run(EXEC, agent("backend-engineer"))
-        assert _reason(out).startswith("[noc-guard:executor-dispatch] ")
+        assert _rewritten(out)["isolation"] == "worktree"
 
     def test_heavy_run(self):
         code, out = _run(HEAVY, _bash("ls -la"))
         assert code == 0 and out is None
         code, out = _run(HEAVY, _bash("pytest some/test_file.py"))
-        assert _reason(out).startswith("[noc-guard:heavy-run] ")
+        assert "hw_admission.py" in _rewritten(out)["command"]
 
     def test_harness_signature_advisory(self):
         silent = {"tool_name": "Bash", "tool_response": {"stdout": "ok", "exit_code": 0}}

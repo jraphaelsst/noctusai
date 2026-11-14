@@ -81,6 +81,9 @@ On session start, and before any shared-lane action:
    the peers; otherwise the lease goes stale after `ttl_s` (default **7200 s**,
    `NOCTUS_STEWARD_TTL_S`; a drain + deploy is tens of minutes and every steward
    call heartbeats) or immediately when its process is gone (`claude_pid`).
+   **A live holder never reads stale (2026-11-14):** the session-heartbeat hook (SessionStart +
+   UserPromptSubmit, advisory, fail-open, throttled) renews the holder's OWN lease (heartbeat + pid) via
+   `renew_own_lease`; no other session's lease is ever touched (~15 "stale lease" denies).
 
 ## 4 · Message formats (the outbox is the record)
 
