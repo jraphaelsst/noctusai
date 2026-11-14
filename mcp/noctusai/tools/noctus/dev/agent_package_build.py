@@ -31,6 +31,8 @@ from typing import Any
 
 import yaml
 
+from .export_hygiene import ExportRefused, guard_export
+
 logger = logging.getLogger("noctus.dev.agent_package_build")
 
 PACKAGE_FORMAT = "noctus.agent-package/v1"
@@ -842,6 +844,10 @@ def build_package(root: Path, backend_dir: Path, *, now: datetime | None = None)
         files[f"agents/{key}/{rel}"] = text
     for rel, text in pkg.knowledge_files.items():
         files[f"agents/{key}/{rel}"] = text
+    try:
+        guard_export(files)  # S10, before any artifact
+    except ExportRefused as exc:
+        raise PackageError(exc.errors()) from exc
     bundle["claude"] = [{"caminho": rel, "conteudo": text} for rel, text in sorted(files.items())]
     validation = validate_bundle(bundle, studio)
     if validation["status"] == "rejected":

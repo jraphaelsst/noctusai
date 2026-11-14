@@ -140,18 +140,13 @@ class TestSubmitSistema:
         assert (e.value.codigo, e.value.status) == ("fila_biblioteca_cheia", 503)
         assert jobs_of(lane, JOB_TYPE_BIBLIOTECA) == []
 
-    def test_org_daily_budget_is_30_min(self, lane):
-        seed_lib(lane, status="concluida", dur=1790.0)
-        with pytest.raises(TranscricaoErro) as e:
-            sistema(lane)
-        assert (e.value.codigo, e.value.status) == ("cota_diaria_biblioteca_org", 429)
-
-    def test_platform_daily_budget_is_60_min(self, lane):
+    def test_no_daily_budget_for_the_library_lane(self, lane):
+        # Owner 2026-11-14: no daily usage cap. 3 h of already-transcribed library audio never blocks.
         for i in range(2):
             seed_lib(lane, status="concluida", dur=1790.0, org=f"other-{i}")
-        with pytest.raises(TranscricaoErro) as e:
-            sistema(lane)
-        assert (e.value.codigo, e.value.status) == ("capacidade_diaria_biblioteca", 503)
+        seed_lib(lane, status="concluida", dur=1790.0)
+        sistema(lane)
+        assert len(jobs_of(lane, JOB_TYPE_BIBLIOTECA)) == 1
 
     def test_library_rows_never_count_against_a_voice_answer(self, lane):
         for _ in range(5):

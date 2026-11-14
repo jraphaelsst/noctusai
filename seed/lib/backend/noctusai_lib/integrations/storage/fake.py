@@ -13,8 +13,12 @@ assertions in tests stay readable.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
+from noctusai_lib.integrations.storage.protocol import (
+    DEFAULT_SIGNED_URL_TTL_SECONDS,
+    validate_signed_url_ttl,
+)
 from noctusai_lib.integrations.storage.types import BlobMetadata, StoredBlob
 
 
@@ -85,8 +89,10 @@ class FakeStorageBackend:
         *,
         bucket: str,
         key: str,
-        expires_in_seconds: int = 3600,
+        expires_in_seconds: int = DEFAULT_SIGNED_URL_TTL_SECONDS,
+        ttl_reason: Optional[str] = None,
     ) -> str:
+        validate_signed_url_ttl(expires_in_seconds, ttl_reason)
         # Stable sentinel so tests can assert on URL shape without
         # depending on wall-clock time. We DO embed expires_in so the
         # consumer can verify the requested TTL round-trips.

@@ -46,7 +46,7 @@ TRANSCRICOES = "transcricoes"
 CONTEXTO_TIPO = "biblioteca_viral"
 #: PRIVATE bucket (migration 229): library thumbnails, never public.
 BUCKET = "sw-biblioteca"
-SIGNED_TTL_SECONDS = 900
+SIGNED_TTL_SECONDS = 600
 SYNC_MIN_INTERVAL = timedelta(hours=1)
 TRECHO_CHARS = 200
 

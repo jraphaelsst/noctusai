@@ -11,7 +11,7 @@ from app.modules.certidoes.deps import storage_for
 BRANDING_BUCKET = "social-wiring-branding"
 
 #: Signed-URL lifetime for the branding gallery / font preview.
-SIGNED_URL_TTL_SECONDS = 900
+SIGNED_URL_TTL_SECONDS = 600
 
 
 def get_branding_storage() -> StorageBackend:

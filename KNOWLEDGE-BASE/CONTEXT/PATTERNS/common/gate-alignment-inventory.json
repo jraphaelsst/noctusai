@@ -148,6 +148,21 @@
    "declared": "2026-11-07",
    "source": "Claude Code hooks reference (code.claude.com/docs/en/hooks: PostToolUse/UserPromptSubmit additionalContext, SubagentStop); owner rule 2026-11-07; verified against 33 real subagent transcripts+meta.json"
   },
+  "guard:background-launch": {
+   "mechanism": "scripts/bg_run.py launch wrapper (purpose + done-condition, salvage on exit, tree-stop) + noctus.dev.bg_process stop tool + session_end_sweep clean_wrap leg; KB § PATTERNS/common/background-agent-lifecycle.md",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-14",
+   "shadow": {
+    "since": "2026-11-14",
+    "fires": 0,
+    "fix_rate": null,
+    "promote_when": "auto-enforces 2026-11-21 (bg_launch_guard.ENFORCE_FROM); owner 2026-11-14: 7-day warn-only soak, used to refine the tool from the warn events (--gate-alignment walls)"
+   },
+   "source": "owner decision 2026-11-14 (background processes end themselves; no lifetime cap or idle timer); Claude Code hooks reference (PreToolUse deny on Bash run_in_background)"
+  },
   "guard:council-read": {
    "mechanism": "mcp/noctusai/tools/noctus/dev/council_ledger.py (neutral recorder: tool-assigned labels, seats withheld until verdict)",
    "owner": "tooling-engineer",
@@ -2229,6 +2244,16 @@
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
   },
+  "keeper:check-pii-query-params": {
+   "mechanism": "KB § PATTERNS/security/url-hygiene.md (rule 2; POST-body search convention)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-14",
+   "shadow": null,
+   "source": "Security standard S4 (no PII in URLs; audit finding P3-1, owner-approved 2026-11-14)"
+  },
   "keeper:check-piped-exit-code-pattern": {
    "severity": "",
    "kind": "keeper",
@@ -2766,6 +2791,16 @@
    },
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-signed-url-ttl": {
+   "mechanism": "KB § PATTERNS/security/url-hygiene.md (rule 1; seam reason kwarg lands on feat/sec-signed-url-ttl-clamp)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-14",
+   "shadow": null,
+   "source": "Security standard S1 (signed URLs are bearer credentials; audit finding P2-2, owner-approved 2026-11-14)"
   },
   "keeper:check-silent-refusal": {
    "severity": "",
@@ -3683,6 +3718,31 @@
     "guard:absorption-source",
     "keeper:check-absorption-source-frozen",
     "keeper:check-absorption-pilot-is-canon"
+   ]
+  },
+  {
+   "id": "D-bg-self-ending",
+   "decision": "Background processes end themselves: every run_in_background command declares purpose + a done-condition via scripts/bg_run.py (salvage on exit, tree-stop, orphan check); open-ended loops and bare long runs are refused at launch; NO lifetime cap or idle timer; leftovers at session end are salvaged+stopped via noctus.dev.bg_process or kept as declared long-lived",
+   "home": "KB § PATTERNS/common/background-agent-lifecycle.md (Background processes)",
+   "construction": "tool:scripts/bg_run.py + noctus.dev.bg_process (stop refuses without a salvage record)",
+   "gate": "guard:background-launch + session_end_sweep clean_wrap leg",
+   "telemetry": "guard-events.ndjson (guard=background-launch|background-process) + the bg-process salvage ledger (gitignored cache)",
+   "branch": "feat/bg-process-lifecycle",
+   "gates": [
+    "guard:background-launch"
+   ]
+  },
+  {
+   "id": "D-url-hygiene",
+   "decision": "Signed URLs live <=600 s unless a reason is given; PII never rides in a URL query string. Ratcheted per-file baselines; warn-first, promote to blocking after >=7 shadow days.",
+   "home": "KB § PATTERNS/security/url-hygiene.md",
+   "construction": "KB § PATTERNS/security/url-hygiene.md (+ seam reason kwarg on feat/sec-signed-url-ttl-clamp; POST-body search convention)",
+   "gate": "keeper:check-signed-url-ttl + keeper:check-pii-query-params",
+   "telemetry": "gate events (cli exit wrapper -> guard-events.ndjson)",
+   "branch": "feat/sec-keepers-ttl-pii-query",
+   "gates": [
+    "keeper:check-signed-url-ttl",
+    "keeper:check-pii-query-params"
    ]
   }
  ]

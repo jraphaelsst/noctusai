@@ -22,6 +22,7 @@ from typing import Any
 
 from . import agent_sync_client as sc
 from .agent_package_build import _SLUG_RE, _surface, _visible_files
+from .export_hygiene import ExportRefused, guard_export
 
 logger = logging.getLogger("noctus.dev.agent_export")
 
@@ -175,6 +176,10 @@ def agent_export(
     errors = verify_tree(key, files, package)
     if errors:
         return {"ok": False, "status": "invalid_tree", "key": key, "errors": errors}
+    try:
+        guard_export(files)  # S10: scan everything we would ship BEFORE any write (plan included)
+    except ExportRefused as exc:
+        return {"ok": False, "status": "export_refused", "key": key, "findings": exc.findings, "errors": exc.errors()}
     plan = plan_export(key, files, repo)
     out: dict[str, Any] = {
         "ok": True, "key": key, "versao": package.get("versao"), "version_id": package.get("version_id"),

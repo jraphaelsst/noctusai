@@ -7,7 +7,9 @@ For every commit that touched a path matching ``include_globs`` (git
 ``--follow`` per matching path, so a later rename is still traced back),
 emits one JSONL line ``{path, git_sha, git_author_raw, git_committed_at,
 git_message, content}`` — the file's content AT that commit, via
-``git show <sha>:<path>``.
+``git show <sha>:<path>``. ``git_author_raw`` is the importer's REQUIRED field
+(``app/importer/bundle.py``) but is a NON-PERSONAL pseudonymous handle
+(``author-<sha256(name)[:12]>``), never the author's name or email (S10).
 
 **Refusals (never a silent write):**
 - Any line's ``content`` trips the secret scan -> the WHOLE export is
@@ -28,6 +30,7 @@ module's docstring for the full history.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import subprocess
@@ -36,6 +39,8 @@ from pathlib import Path
 
 from noctusai_lib.security import has_secret as _content_has_secret
 from settings import REPO_ROOT
+
+from .export_hygiene import scan_text
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +129,11 @@ def _commits_for_path(repo_path: Path, path: str) -> list[_Commit]:
         sha, author, committed_at, message = line.split(sep, 3)
         commits.append(_Commit(sha=sha, author=author, committed_at=committed_at, message=message))
     return commits
+
+
+def _author_handle(author: str) -> str:
+    """Pseudonymous, stable, non-personal author handle (the raw name/email never leaves the repo)."""
+    return "author-" + hashlib.sha256(author.encode("utf-8")).hexdigest()[:12]
 
 
 def _show_content(repo_path: Path, sha: str, path: str) -> str:
@@ -222,7 +232,7 @@ def export_knowledge_bundle(
                 )
                 continue
 
-            if _content_has_secret(content):
+            if _content_has_secret(content) or scan_text(content):  # secrets + absolute home paths (S10)
                 refused_paths.append(path)
                 continue
 
@@ -231,7 +241,7 @@ def export_knowledge_bundle(
                 {
                     "path": path,
                     "git_sha": commit.sha,
-                    "git_author_raw": commit.author,
+                    "git_author_raw": _author_handle(commit.author),
                     "git_committed_at": commit.committed_at,
                     "git_message": commit.message,
                     "content": content,
@@ -241,7 +251,7 @@ def export_knowledge_bundle(
     if refused_paths:
         return ExportResult(
             ok=False,
-            error="secret(s) detected in bundle content — refusing to write",
+            error="secret(s) or absolute home path(s) detected in bundle content — refusing to write",
             paths=sorted(set(matching_paths)),
             refused_paths=sorted(set(refused_paths)),
         )

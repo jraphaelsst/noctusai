@@ -813,6 +813,14 @@ state change, not a removal.
 - **Revisit trigger:** the same as 9a's (a).
 - **Born:** the D1 merge-queue ejection on 2026-11-10 (CI shard 0). The hooks shipped without their manifest rows because the hygiene keeper is a warning in pre-commit and only blocks in CI.
 
+### 9k Background-process wrapper, launch guard and shared core retain shell (`[carve:hook]`, 2026-11-14)
+
+- **Subject:** `scripts/bg_run.py`, `scripts/hooks/claude-guard-background-launch.py` and `scripts/hooks/_bg_process_core.py`.
+- **Decision `[A]`:** all three stay scripts, in the same `[carve:hook]` bucket as 9a–9j. The launch guard runs before every Bash call, where the MCP server is not reachable; its decision lives in `tools/noctus/dev/bg_launch_guard.py` and it fails CLOSED through `_guard_failclosed.run_guard`. `bg_run.py` must start under a bare `python3` inside the harness shell before any MCP server is involved. `_bg_process_core.py` is the stdlib-only logic both share with the `noctus.dev.bg_process` tool, so the logic has one home.
+- **Why:** owner rule of 2026-11-14: background processes end themselves, salvage always happens before a stop, no maximum lifetime. → `KB § PATTERNS/common/background-agent-lifecycle.md`
+- **Scope:** the three files, each carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
+- **Revisit trigger:** identical to 9a's (a), or the harness exposing background-process lifecycle events natively.
+
 ### 9e Agent-package push hooks retain shell (`[carve:hook]`, 2026-10-03)
 
 - **Subject:** `scripts/agent-hooks/{noc-pre-push-publish.sh, consumer-pre-push.sh, agent_sync_runner.py}` — the push-time legs of the Agent Packages contract (`products/agents/projects/agent-packages/CONTRACT.md` §A5, §F, §G, §H).

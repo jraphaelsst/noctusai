@@ -500,6 +500,9 @@ def montar_mensagem(
 
 _TERMINAL = frozenset({"completo", "falha"})
 
+#: `(org_id, lote_id, state)` — pushes a batch's live state to the SSE job-progress stream. Optional.
+ProgressPublisher = Callable[[str, str, dict[str, Any]], Awaitable[None]]
+
 
 def _patch(db: Any, lote_id: str, patch: dict[str, Any]) -> None:
     db.table(LOTES).update({**patch, "updated_at": _iso()}).eq("id", lote_id).execute()
@@ -509,7 +512,9 @@ def _falhar(db: Any, lote_id: str, erro: str, extra: Optional[dict[str, Any]] = 
     _patch(db, lote_id, {"status": "falha", "erro": erro, "etapa": None, "finished_at": _iso(), **(extra or {})})
 
 
-async def executar_lote(db: Any, llm: HeadlineLlm, lote_id: str, *, cfg: Any = None) -> None:
+async def executar_lote(
+    db: Any, llm: HeadlineLlm, lote_id: str, *, cfg: Any = None, progress: Optional[ProgressPublisher] = None,
+) -> None:
     """Run (or re-run) one batch. Never leaves the row in a non-terminal state on its own failure:
     every path ends ``completo`` or ``falha``; only a missing row raises (``DeadLetterError``)."""
     if cfg is None:
@@ -522,12 +527,20 @@ async def executar_lote(db: Any, llm: HeadlineLlm, lote_id: str, *, cfg: Any = N
         return
     org_id, marca_id, origem = lote["org_id"], lote["marca_id"], lote["origem"]
     params: dict[str, Any] = lote.get("parametros") or {}
+
+    async def _push(**state: Any) -> None:
+        """Push the batch's new state to the live stream (best-effort: the row stays the truth)."""
+        if progress is not None:
+            await progress(str(org_id), lote_id, {"status": "processando", "estruturas_total": total_est, **state})
+
+    total_est = 0
     _patch(db, lote_id, {
         "status": "processando", "etapa": "Selecionando estruturas",
         "started_at": lote.get("started_at") or _iso(),
         "modelo": cfg.geracao_llm_model, "prompt_versao": PROMPT_VERSAO,
         "estruturas_processadas": 0, "estruturas_com_erro": 0,
     })
+    await _push(etapa="Selecionando estruturas", estruturas_processadas=0)
     # an interrupted earlier attempt left partial headlines: start clean, never duplicate
     db.table(HEADLINES).delete().eq("lote_id", lote_id).eq("org_id", org_id).execute()
 
@@ -560,7 +573,9 @@ async def executar_lote(db: Any, llm: HeadlineLlm, lote_id: str, *, cfg: Any = N
         )
     if sel.erro:
         _falhar(db, lote_id, sel.erro)
+        await _push(status="falha", erro=sel.erro, etapa=None)
         return
+    total_est = len(sel.estruturas)
 
     _patch(db, lote_id, {
         "estruturas_total": len(sel.estruturas), "aviso_poucas_estruturas": sel.aviso_poucas,
@@ -576,6 +591,7 @@ async def executar_lote(db: Any, llm: HeadlineLlm, lote_id: str, *, cfg: Any = N
 
     for idx, est in enumerate(sel.estruturas, start=1):
         _patch(db, lote_id, {"etapa": f"Gerando headlines — estrutura {idx} de {len(sel.estruturas)}"})
+        await _push(etapa=f"Gerando headlines — estrutura {idx} de {len(sel.estruturas)}", estruturas_processadas=idx - 1)
         itens = itens_oferecidos(est, por_slug, params)
         oferecidos = {it.id: it for it in itens}
         msg = montar_mensagem(
@@ -626,10 +642,11 @@ async def executar_lote(db: Any, llm: HeadlineLlm, lote_id: str, *, cfg: Any = N
     finished = {"etapa": None, "finished_at": _iso()}
     if n_ok:
         _patch(db, lote_id, {**finished, "status": "completo", "erro": fatal})
-    elif fatal:
-        _falhar(db, lote_id, fatal)
+        await _push(status="completo", etapa=None, estruturas_processadas=total_est)
     else:
-        _falhar(db, lote_id, MSG_DESCARTADAS if somente and n_descartadas else MSG_NADA_GERADO)
+        erro = fatal or (MSG_DESCARTADAS if somente and n_descartadas else MSG_NADA_GERADO)
+        _falhar(db, lote_id, erro)
+        await _push(status="falha", erro=erro, etapa=None)
 
 
 def reconciliar_dead_letter(db: Any, job: Job) -> None:
@@ -644,7 +661,7 @@ def reconciliar_dead_letter(db: Any, job: Job) -> None:
 
 
 def make_handler(
-    get_db: Callable[[], Any], llm: HeadlineLlm, cfg: Any = None,
+    get_db: Callable[[], Any], llm: HeadlineLlm, cfg: Any = None, progress: Optional[ProgressPublisher] = None,
 ) -> Callable[[Job], Awaitable[None]]:
     async def handle(job: Job) -> None:
         lote_id = (job.payload or {}).get("lote_id")
@@ -653,7 +670,7 @@ def make_handler(
         db = get_db()
         if db is None:
             raise RuntimeError("sem cliente admin do Supabase")  # retried by the worker policy
-        await executar_lote(db, llm, str(lote_id), cfg=cfg)
+        await executar_lote(db, llm, str(lote_id), cfg=cfg, progress=progress)
 
     return handle
 
@@ -664,7 +681,13 @@ def _admin_db() -> Any:
     return get_admin_client()
 
 
-handle_headline_gerar = make_handler(_admin_db, chat_headline_llm)
+async def _publish_progress(org_id: str, lote_id: str, state: dict[str, Any]) -> None:
+    from app.modules.media_creation.services.headline_progress import publish_lote_progress
+
+    await publish_lote_progress(org_id, lote_id, state)
+
+
+handle_headline_gerar = make_handler(_admin_db, chat_headline_llm, progress=_publish_progress)
 
 
 def register() -> None:
