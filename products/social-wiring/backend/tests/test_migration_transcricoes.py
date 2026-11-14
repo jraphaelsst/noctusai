@@ -82,7 +82,7 @@ def test_load_guards_only_no_daily_caps_in_the_current_rpcs():
     code = "\n".join(l for l in SEM_COTA.read_text(encoding="utf-8").splitlines() if not l.strip().startswith("--"))
     cur = " ".join(code.split())
     assert "v_n >= 2 THEN" in cur  # in flight per user
-    assert "v_n >= 10 THEN" in cur  # per hour per user (burst)
+    assert "v_n >= 120 THEN" in cur  # per hour per user (burst)
     assert "v_n >= 20 THEN" in cur  # global queue depth
     assert "p_duracao_s > 180" in cur and "v_n >= 5 THEN" in cur  # library: per reel + queue
     for codigo in ("limite_usuario", "fila_cheia", "reel_longo", "fila_biblioteca_cheia"):

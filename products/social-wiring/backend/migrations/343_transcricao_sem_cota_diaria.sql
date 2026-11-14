@@ -4,7 +4,7 @@
 --   reservar_transcricao          : cota_diaria_usuario (30 min/24h), cota_diaria_org (120 min/24h),
 --                                   capacidade_diaria (600 min/24h platform-wide)
 --   reservar_transcricao_biblioteca: cota_diaria_biblioteca_org, capacidade_diaria_biblioteca
--- Kept: advisory locks, per-user in-flight cap (2) and per-user hourly burst cap (10, limite_usuario),
+-- Kept: advisory locks, per-user in-flight cap (2) and per-user hourly burst cap (120, limite_usuario; raised from 10 by the owner 2026-11-14),
 -- global queue depth (20, fila_cheia), library per-reel length (180 s) and library queue (5).
 -- Same signatures, return shapes, SECURITY INVOKER, search_path and grants as 229: strictly fewer
 -- refusal codes, so the previous image keeps working.
@@ -43,7 +43,7 @@ BEGIN
     -- per user: submissions per hour
     SELECT count(*), min(criado_em) INTO v_n, v_mais_antigo FROM social_wiring.transcricoes
      WHERE user_id = p_user AND origem = 'usuario' AND NOT minutos_reembolsados AND criado_em > v_agora - interval '1 hour';
-    IF v_n >= 10 THEN
+    IF v_n >= 120 THEN
         RETURN jsonb_build_object('ok', false, 'codigo', 'limite_usuario', 'http', 429,
             'retry_after_s', GREATEST(60, ceil(extract(epoch FROM (v_mais_antigo + interval '1 hour' - v_agora)))::int));
     END IF;
