@@ -60,7 +60,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Community | 23 | 29 | 49 | 30 | 58 | 657 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 40 | 7 | 8 | 64 |
-| Monica | 2 | 1 | 15 | 0 | 8 | 39 |
+| Nosnolimiar | 2 | 1 | 15 | 0 | 8 | 39 |
 | Assistant | 3 | 7 | 18 | 0 | 19 | 186 |
 | **Total** | **362** | **443** | **918** | **544** | **1661** | **23,402** |
 <!-- kb-counts:end:inventory -->
