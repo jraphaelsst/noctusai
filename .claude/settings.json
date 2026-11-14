@@ -111,6 +111,16 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-guard-background-launch.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "Bash|mcp__noctusai__noctus_dev_(task_branch|release|release_steward|deploy_pull|deploy_image|migrate_product|record_applied_migrations|supabase_breaker)|mcp__noctusai__noctus_vps_recreate",
         "hooks": [
           {

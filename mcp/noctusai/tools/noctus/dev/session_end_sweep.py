@@ -337,8 +337,12 @@ def sweep(
     repo_root: Path | None = None,
     deliver_ledgers: bool = True,
     heal_pointers: bool = True,
+    bg_report: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Survey all worktrees + orphan branches; classify each.
+    """Survey all worktrees + orphan branches; classify each. Also lists THIS session's
+    still-running background processes (`background_processes`): `clean_wrap` is False while
+    any is neither salvaged+stopped nor declared long-lived (whoever ends the session owns its
+    leftovers; None = unmeasured, never green).
 
     Returns:
       {
@@ -498,8 +502,17 @@ def sweep(
         except Exception as e:  # noqa: BLE001 — never fail the survey over delivery
             ledger_delivery = {"status": "error", "pushed": False, "error": str(e)[:200]}
 
+    try:
+        from .bg_process import session_report  # noqa: PLC0415
+        background = (bg_report or session_report)()
+    except Exception as e:  # noqa: BLE001 - say why, never claim clean
+        background = {"status": "unmeasured", "reason": str(e)[:200], "clean_wrap": None, "processes": []}
+
     return {
         "ok": True,
+        "clean_wrap": background.get("clean_wrap"),
+        "wrap_blockers": ["background_processes"] if background.get("clean_wrap") is False else [],
+        "background_processes": background,
         "sweep_ts": _now_iso(),
         "worktrees": wt_findings,
         "orphan_branches": orphan_result,
@@ -529,6 +542,9 @@ def register(server) -> None:
             "backstop for the flip-before-merge discipline). "
             "Logs a sweep entry to project-history/worktree-salvage.ndjson. "
             "Never auto-deletes worktrees; always surfaces + suggests. "
+            "Also lists this session's still-running background processes: clean_wrap is "
+            "false (wrap_blockers=[background_processes]) until each is salvaged+stopped via "
+            "noctus.dev.bg_process or declared long-lived. "
             "KB § CONTEXT/PATTERNS/common/session-end-sweep.md · "
             "KB § CONTEXT/PATTERNS/common/learn-before-archive.md."
         ),

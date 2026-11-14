@@ -148,6 +148,21 @@
    "declared": "2026-11-07",
    "source": "Claude Code hooks reference (code.claude.com/docs/en/hooks: PostToolUse/UserPromptSubmit additionalContext, SubagentStop); owner rule 2026-11-07; verified against 33 real subagent transcripts+meta.json"
   },
+  "guard:background-launch": {
+   "mechanism": "scripts/bg_run.py launch wrapper (purpose + done-condition, salvage on exit, tree-stop) + noctus.dev.bg_process stop tool + session_end_sweep clean_wrap leg; KB § PATTERNS/common/background-agent-lifecycle.md",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-14",
+   "shadow": {
+    "since": "2026-11-14",
+    "fires": 0,
+    "fix_rate": null,
+    "waiver": "owner mandated a hard refusal at launch; no warn-only soak. Re-measure with --gate-alignment walls after 7 days."
+   },
+   "source": "owner decision 2026-11-14 (background processes end themselves; no lifetime cap or idle timer); Claude Code hooks reference (PreToolUse deny on Bash run_in_background)"
+  },
   "guard:council-read": {
    "mechanism": "mcp/noctusai/tools/noctus/dev/council_ledger.py (neutral recorder: tool-assigned labels, seats withheld until verdict)",
    "owner": "tooling-engineer",
@@ -3683,6 +3698,18 @@
     "guard:absorption-source",
     "keeper:check-absorption-source-frozen",
     "keeper:check-absorption-pilot-is-canon"
+   ]
+  },
+  {
+   "id": "D-bg-self-ending",
+   "decision": "Background processes end themselves: every run_in_background command declares purpose + a done-condition via scripts/bg_run.py (salvage on exit, tree-stop, orphan check); open-ended loops and bare long runs are refused at launch; NO lifetime cap or idle timer; leftovers at session end are salvaged+stopped via noctus.dev.bg_process or kept as declared long-lived",
+   "home": "KB § PATTERNS/common/background-agent-lifecycle.md (Background processes)",
+   "construction": "tool:scripts/bg_run.py + noctus.dev.bg_process (stop refuses without a salvage record)",
+   "gate": "guard:background-launch + session_end_sweep clean_wrap leg",
+   "telemetry": "guard-events.ndjson (guard=background-launch|background-process) + the bg-process salvage ledger (gitignored cache)",
+   "branch": "feat/bg-process-lifecycle",
+   "gates": [
+    "guard:background-launch"
    ]
   }
  ]
