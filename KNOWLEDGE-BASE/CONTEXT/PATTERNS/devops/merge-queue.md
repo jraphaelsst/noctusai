@@ -130,6 +130,7 @@ Tests: `tests/test_pre_push_queue_path.py` (the real hook in a temp repo; red ag
    still ejects as `conflict`; a failed regen ejects as `derived_regen`. Adding a
    set is one data row — never hand-resolve a derived file. Born when two slices
    ejected on these files in one batch (s1 `merge-queue/derived-ledger-coupling`).
+   Sets now also cover the `gate-walls` FINDINGS.md and `gate-alignment-inventory.md` renders (2026-11-14): the `ledger-render` merge driver regenerates them first (`KB § PATTERNS/common/auto-generated-merge-drivers.md`); these rows are the backstop for a render the driver could not derive.
 5. **The driver comes from `dev`.** The workflow checks out `dev` and runs
    *that* `merge_queue.py`, never the entry's copy.
 

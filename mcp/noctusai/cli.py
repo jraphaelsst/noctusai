@@ -421,6 +421,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-lgpd-entry-removal", action="store_true", help="Keeper (commit-msg stage, over the STAGED LGPD-WARNINGS.md vs HEAD; merge-aware): a commit must not REMOVE an unresolved `- [ ]` entry (identity = the concern+path pair; ticking `- [x]`, in-place edits and additions are fine; changing the concern/path text reads as remove+add). Override: a `LGPD-Entry-Removed: <concern or path prefix> \u2014 <reason>` trailer (read from --commit-msg-file; reason mandatory). With --lgpd-range BASE..TIP it runs the CI leg instead: every commit of the range vs its parent with its OWN message. Severity high. Born from the 2026-10-10 loss of an unresolved entry in a conflict resolution. KB § PATTERNS/common/lgpd-entry-keeper.md.")
     parser.add_argument("--lgpd-range", metavar="BASE..TIP", default=None, help="With --check-lgpd-entry-removal: check each commit of this range against its parent (CI leg).")
     parser.add_argument("--merge-gate-inventory", nargs=3, metavar=("BASE", "OURS", "THEIRS"), default=None, help="3-way merge of gate-alignment-inventory.json (pure: reads the three files, writes ONLY --out). gates = union (a key changed differently on both sides conflicts), decisions = ours + theirs' new entries (renumbered past max on id collision, duplicates dropped), output sorted + byte-stable. Exit 0 clean, 10 conflicted (ours kept in --out), 2 usage/IO error. Shell half: scripts/hooks/merge-gate-inventory.sh (merge driver `gate-inventory`). KB § PATTERNS/common/auto-generated-merge-drivers.md.")
+    parser.add_argument("--merge-ledger-render", nargs=4, metavar=("PATH", "BASE", "OURS", "THEIRS"), default=None, help="Merge a GENERATED render (project-history/*/FINDINGS.md, gate-alignment-inventory.md) by regenerating it from its source (ndjson ledger / inventory JSON, recovered from the render blobs). Pure: writes ONLY --out. Exit 0 rendered, 10 not derivable here (caller falls back to the plain 3-way merge), 2 usage/IO error. Shell half: scripts/hooks/merge-ledger-render.sh (merge driver `ledger-render`). KB § PATTERNS/common/auto-generated-merge-drivers.md.")
     parser.add_argument("--merge-lgpd-warnings", nargs=3, metavar=("BASE", "OURS", "THEIRS"), default=None, help="Entry-aware 3-way merge of LGPD-WARNINGS.md (pure: reads the three files, writes ONLY --out). Exit 0 clean, 10 conflicted (markers around just the conflicting block in --out), 2 usage/IO error. The shell half is scripts/hooks/merge-lgpd-warnings.sh (git merge driver `lgpd-warnings`). KB § PATTERNS/common/auto-generated-merge-drivers.md.")
     parser.add_argument("--check-llm-prompt-from-registry", action="store_true", help="Keeper (WARN-first shadow since 2026-11-08, never blocks): every call through the seed LLM seam (chat_completion*, chat_with_tools, run_tool_loop*, analyze_image*, digest.narrative, create_help_chat_router) or a vendor SDK (messages.create, chat.completions.create, responses.create, images.edit, ClaudeSDKClient) NOT fed by noctusai_lib.integrations.prompt_registry, plus prompt-shaped constants and repo .md files loaded as a system prompt. Owner rule: agent prompts come 100%% from the database, never from code. AST-based; shrink-only ratchet baseline mcp/noctusai/tests/llm_prompt_from_registry_baseline.json (only a NEW file or a GROWN count is flagged). `--paths` narrows reporting; --llm-prompt-log files one auto-improvement drift row per flagged file; --llm-prompt-replay lists every site ignoring the baseline (false-alarm research). KB § PATTERNS/ai/prompts-from-registry.md.")
     parser.add_argument("--refresh-llm-prompt-from-registry-baseline", action="store_true", help="Write/SHRINK the --check-llm-prompt-from-registry ratchet baseline (first run records current sites; afterwards min(current, recorded); vanished files drop out; never adds).")
@@ -3053,6 +3054,25 @@ def main():
             print(_n, file=sys.stderr)
         Path(args.out).expanduser().write_text(_merged, encoding="utf-8")
         sys.exit(10 if _conflicted else 0)
+
+    elif args.merge_ledger_render:
+        from tools.noctus.dev.ledger_render_merge import merge_render
+        if not args.out:
+            print("--merge-ledger-render requires --out FILE", file=sys.stderr)
+            sys.exit(2)
+        _rel, *_files = args.merge_ledger_render
+        try:
+            _text, _notes = merge_render(_rel, *[Path(f).expanduser() for f in _files],
+                                       root=Path(args.worktree_path).expanduser().resolve() if args.worktree_path else None)
+        except (OSError, ValueError, KeyError) as exc:
+            print(f"--merge-ledger-render: cannot render: {exc}", file=sys.stderr)
+            sys.exit(2)
+        for _n in _notes:
+            print(_n, file=sys.stderr)
+        if _text is None:
+            sys.exit(10)
+        Path(args.out).expanduser().write_text(_text, encoding="utf-8")
+        sys.exit(0)
 
     elif args.merge_lgpd_warnings:
         from tools.noctus.dev.lgpd import merge_warnings
