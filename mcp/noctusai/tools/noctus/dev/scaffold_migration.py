@@ -203,33 +203,40 @@ def _origin_dev_migration_files(
     return names, None
 
 
-def _queued_mq_migration_files(repo_root: Path, migrations_rel: str, *, dev_ref: str) -> list[tuple[str, str]]:
-    """``(filename, ref)`` for migrations that queued heads (``origin/mq/*``) add over ``dev_ref``.
+def _queued_mq_migration_claims(
+    repo_root: Path, migrations_rel: str, *, dev_ref: str,
+) -> tuple[list[tuple[str, str]], str | None]:
+    """(filename, queue-ref) for every migration a QUEUED merge-queue head adds.
 
-    A delivery sitting in the merge queue is not on ``origin/dev`` yet and is on no LOCAL branch of
-    this clone, so neither source 2 nor 3 sees its migration number. Reads the already-fetched
-    remote-tracking refs (no network). Never raises; no signal => empty.
-    """
+    A delivery sitting on ``refs/remotes/origin/mq/*`` has not landed on dev yet
+    and is not a local branch either, so neither source 2 nor 3 sees it: its
+    number looked free and the next scaffold collided with it. Never raises."""
     import subprocess
 
     try:
         refs = subprocess.run(
-            ["git", "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin/mq/"],
+            ["git", "for-each-ref", "--format=%(refname)", "refs/remotes/origin/mq/"],
             cwd=repo_root, capture_output=True, text=True, timeout=30,
-        ).stdout.split()
+        )
     except (subprocess.SubprocessError, OSError):
-        return []
+        return [], "git unavailable - queued merge-queue heads not read"
+    if refs.returncode != 0:
+        return [], "could not list refs/remotes/origin/mq/ - queued heads not read"
     out: list[tuple[str, str]] = []
-    for ref in refs:
+    for ref in refs.stdout.split():
         try:
             diff = subprocess.run(
-                ["git", "diff", "--name-only", "--diff-filter=A", f"{dev_ref}...{ref}", "--", migrations_rel],
+                ["git", "diff", "--name-only", f"{dev_ref}...{ref}", "--", migrations_rel],
                 cwd=repo_root, capture_output=True, text=True, timeout=30,
-            ).stdout.splitlines()
+            )
         except (subprocess.SubprocessError, OSError):
             continue
-        out.extend((line.rsplit("/", 1)[-1], ref) for line in diff if line.strip())
-    return out
+        if diff.returncode != 0:
+            continue
+        for line in diff.stdout.splitlines():
+            if line.strip() and line.rsplit("/", 1)[0] == migrations_rel:
+                out.append((line.rsplit("/", 1)[-1], ref.removeprefix("refs/remotes/")))
+    return out, None
 
 
 def next_migration_number(
@@ -334,11 +341,15 @@ def next_migration_number(
                 "source": f"branch:{','.join(sorted(branches))}",
             })
 
-    # ── Source 4: queued merge-queue heads (origin/mq/*) ──
-    for name, ref in _queued_mq_migration_files(repo_root, migrations_rel, dev_ref=dev_ref):
+    # ── Source 4: queued merge-queue heads (origin/mq/*), not yet on dev ──
+    mq_claims, mq_warning = _queued_mq_migration_claims(
+        repo_root, migrations_rel, dev_ref=dev_ref)
+    if mq_warning:
+        warnings.append(mq_warning)
+    for name, qref in mq_claims:
         m = _NN_RE.match(name)
         if m:
-            claims.append({"number": m.group(1), "file": name, "source": f"queued:{ref}"})
+            claims.append({"number": m.group(1), "file": name, "source": f"queue:{qref}"})
 
     if not claims:
         return {

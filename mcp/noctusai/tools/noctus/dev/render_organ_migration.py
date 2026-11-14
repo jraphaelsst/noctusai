@@ -258,6 +258,22 @@ def _load_baseline(root: Path, baseline: list[dict[str, Any]] | None) -> dict[tu
     return out
 
 
+def _frozen_violations(migrations_dir: Path) -> list[str]:
+    """Applied files (migrations-applied.json) whose bytes no longer match the recorded sha256.
+
+    An applied migration is frozen -- it ran in prod under the schema it names (e.g. `monica` before the
+    nosnolimiar cutover). A render must only ever ADD a new revision, never rewrite one of these.
+    """
+    from noctusai_lib.testing.migrations_applied import load_applied, sha256_text
+
+    bad: list[str] = []
+    for name, recorded in sorted(load_applied(migrations_dir).items()):
+        f = migrations_dir / name
+        if f.is_file() and sha256_text(f.read_text(encoding="utf-8")) != recorded:
+            bad.append(name)
+    return bad
+
+
 def render_all_consumers(
     *,
     baseline: list[dict[str, Any]] | None = None,
@@ -323,6 +339,16 @@ def render_all_consumers(
             if not any(t.startswith(header) for t in texts):
                 continue
             checked += 1
+            try:
+                frozen_bad = _frozen_violations(mig)
+            except ValueError as exc:
+                frozen_bad = [f"unreadable migrations-applied.json: {exc}"]
+            if frozen_bad:
+                errors.append({"product": slug, "organ": organ, "status": "frozen_file_modified",
+                               "error": f"applied (frozen) migration(s) differ from the recorded sha256: {frozen_bad}. "
+                                        "Restore them; ship changes as a NEW revision file, never by rewriting an applied one."})
+                continue
+
             def _run(confirm: bool, slug: str = slug, organ: str = organ) -> dict[str, Any]:
                 return render_organ_migration(
                     slug, organ, confirm=confirm, worktree_path=None,
@@ -339,6 +365,11 @@ def render_all_consumers(
             if write and st in ("would_refresh", "would_new_revision"):
                 r = _run(True)
                 st = r["status"]
+                after = _frozen_violations(mig)
+                if after:  # defence in depth: a write must never have touched an applied file
+                    errors.append({"product": slug, "organ": organ, "status": "frozen_file_modified",
+                                   "error": f"the render modified applied (frozen) file(s) {after}"})
+                    continue
             if st == "up_to_date":
                 continue
             row = {"product": slug, "organ": organ, "status": st, "path": r.get("path")}

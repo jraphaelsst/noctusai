@@ -344,35 +344,36 @@ def test_baseline_entry_without_destination_or_date_is_refused(tmp_path):
     assert r["status"] == "error" and not r["ok"]
 
 
-def _git(cwd, *a):
-    import subprocess
-    subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True,
-                   env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
-                        "GIT_COMMITTER_EMAIL": "t@t", "PATH": __import__("os").environ["PATH"], "HOME": str(cwd)})
+def test_tampered_applied_file_is_an_error_not_drift_and_never_rewritten(tmp_path):
+    """Applied files are frozen: a post-cutover render adds a NEW revision, it never rewrites one."""
+    from noctusai_lib.testing.migrations_applied import record_applied, sha256_text
+
+    products, mig = _consumer(tmp_path)
+    f = mig / "002_finance.sql"
+    record_applied(mig.parent, {f.name: sha256_text(f.read_text())})
+    assert _all(products)["status"] == "clean"
+    f.write_text(f.read_text().replace("erp", "monica"))  # an applied file edited after the fact
+    tampered = f.read_text()
+    for write in (False, True):
+        r = _all(products, write=write)
+        assert r["status"] == "error" and not r["ok"]
+        assert r["errors"][0]["status"] == "frozen_file_modified"
+        assert f.read_text() == tampered  # neither mode rewrote it
+    assert not list(mig.glob("*rev*"))
 
 
-def test_new_revision_number_follows_highest_of_tree_dev_and_queued_mq_head(tmp_path):
-    """The would-be revision number is max(disk, origin/dev, local branches, queued origin/mq/* heads)+1 -- never reused."""
-    from tools.noctus.dev.scaffold_migration import next_migration_number
+def test_applied_file_naming_the_old_schema_gets_a_new_revision_not_a_rewrite(tmp_path):
+    """The generator moved on (schema now `erp`) but the applied file stays frozen: drift => NEW revision file."""
+    from noctusai_lib.testing.migrations_applied import record_applied, sha256_text
 
-    repo = tmp_path / "repo"
-    mig = repo / "products" / "demo" / "backend" / "migrations"
-    mig.mkdir(parents=True)
-    (mig / "001_seed.sql").write_text("-- s\n")
-    (mig / "002_x.sql").write_text("-- x\n")
-    _git(repo, "init", "-q", "-b", "dev")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "base")
-    _git(repo, "update-ref", "refs/remotes/origin/dev", "HEAD")
-    assert next_migration_number("demo", products_dir=repo / "products", skip_fetch=True)["next_number"] == 3
-    # a queued merge-queue head adds 004 (origin/dev and this tree know nothing of it)
-    _git(repo, "checkout", "-q", "-b", "queued")
-    (mig / "004_queued.sql").write_text("-- q\n")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", "queued")
-    _git(repo, "update-ref", "refs/remotes/origin/mq/demo--abc1234", "HEAD")
-    _git(repo, "checkout", "-q", "dev")
-    _git(repo, "branch", "-q", "-D", "queued")
-    r = next_migration_number("demo", products_dir=repo / "products", skip_fetch=True)
-    assert r["next_number"] == 5
-    assert any(c["source"].startswith("queued:") for c in r["claims"])
+    products, mig = _consumer(tmp_path)
+    f = mig / "002_finance.sql"
+    old = organ_migration_sql("finance", "monica")  # what prod ran
+    f.write_text(old)
+    record_applied(mig.parent, {f.name: sha256_text(old)})
+    r = _all(products)
+    assert r["status"] == "drift" and r["drifted"][0]["status"] == "would_new_revision"
+    w = _all(products, write=True)
+    assert w["status"] == "rendered" and w["rendered"][0]["status"] == "new_revision"
+    assert f.read_text() == old  # frozen file untouched
+    assert len(list(mig.glob("*finance_rev2.sql"))) == 1

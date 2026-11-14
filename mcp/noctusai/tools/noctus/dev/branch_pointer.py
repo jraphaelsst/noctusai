@@ -135,7 +135,9 @@ ROLES: frozenset[str] = frozenset({"orchestrator", "engineer", "steward"})
 # way the router does were refused (2026-11-07); canonicalise, never store
 # the alias (the ledger keeps one spelling).
 ROLE_ALIASES: dict[str, str] = {"tech-lead": "orchestrator", "tech_lead": "orchestrator",
-                                "techlead": "orchestrator"}
+                                "techlead": "orchestrator",
+                                # agent-file vocabulary (.claude/agents): executors write, advisors read
+                                "executor": "engineer", "advisor": "engineer"}
 # Statuses that represent "done" — excluded from the default list view.
 TERMINAL_STATUSES: frozenset[str] = frozenset({"shipped", "canceled", "stale"})
 
