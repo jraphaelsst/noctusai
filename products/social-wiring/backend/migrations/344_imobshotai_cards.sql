@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 343 · social_wiring: ImobShotAI cards (one per imóvel), their append-only event ledger,
+-- Migration 344 · social_wiring: ImobShotAI cards (one per imóvel), their append-only event ledger,
 -- the lote -> card link and the four page-visibility rows.
 -- ============================================================================
 -- CONTRACT products/social-wiring/IMOBSHOTAI-CONTRACT.md §1-§8 (owner "go" 2026-11-14).
@@ -65,7 +65,7 @@ ALTER TABLE social_wiring.fotos_lotes
 CREATE INDEX IF NOT EXISTS ix_fotos_lotes_card ON social_wiring.fotos_lotes (card_id) WHERE card_id IS NOT NULL;
 
 COMMENT ON COLUMN social_wiring.fotos_lotes.card_id IS
-    'ImobShotAI card this lote belongs to (NULL = plain Edição de Imagem lote). Photo decisions on a card lote are admin-only (D6). Migration 343.';
+    'ImobShotAI card this lote belongs to (NULL = plain Edição de Imagem lote). Photo decisions on a card lote are admin-only (D6). Migration 344.';
 
 ALTER TABLE social_wiring.imobshot_cards ENABLE ROW LEVEL SECURITY;
 
@@ -95,9 +95,9 @@ GRANT ALL ON TABLE social_wiring.imobshot_cards TO service_role;
 
 COMMENT ON TABLE social_wiring.imobshot_cards IS 'tier:org';
 COMMENT ON COLUMN social_wiring.imobshot_cards.etapa IS
-    'Projection of the card''s lotes/photos (contract §6). Written ONLY by imobshot_aplicar_etapa(). Migration 343.';
+    'Projection of the card''s lotes/photos (contract §6). Written ONLY by imobshot_aplicar_etapa(). Migration 344.';
 COMMENT ON COLUMN social_wiring.imobshot_cards.fotos_concluidas_at IS
-    'When the card last entered fotos_aprovadas (time-to-approval metric). Migration 343.';
+    'When the card last entered fotos_aprovadas (time-to-approval metric). Migration 344.';
 
 -- ----------------------------------------------------------------------------
 -- 2. imobshot_eventos -- append-only

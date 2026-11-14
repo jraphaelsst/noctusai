@@ -6412,7 +6412,7 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Registry — social_wiring.imobshot_eventos append-only guard (migration 343).
+# Registry — social_wiring.imobshot_eventos append-only guard (migration 344).
 # ---------------------------------------------------------------------------
 #
 # Self-provisioning inside the rollback-only wrapper: each probe inserts its own throwaway card (random org, so
@@ -6421,7 +6421,7 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 # requires, so an unrelated error is `ambiguous`, never a pass.
 
 _IMOBSHOT_EVENTOS_GUARD = "imobshot_eventos_append_only"
-_IMOBSHOT_EVENTOS_MIGRATIONS = ("343_imobshotai_cards.sql",)
+_IMOBSHOT_EVENTOS_MIGRATIONS = ("344_imobshotai_cards.sql",)
 
 
 def _imobshot_eventos_probe(*, probe_id: str, op_sql: str, what: str) -> GuardProbe:
@@ -6434,7 +6434,7 @@ DECLARE
   v_ev uuid;
 BEGIN
   IF to_regclass('social_wiring.imobshot_eventos') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: social_wiring.imobshot_eventos does not exist (migration 343 not applied)';
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: social_wiring.imobshot_eventos does not exist (migration 344 not applied)';
   END IF;
   BEGIN
     INSERT INTO social_wiring.imobshot_cards (org_id, imovel_codigo) VALUES (v_org, 'NOCPROBE')

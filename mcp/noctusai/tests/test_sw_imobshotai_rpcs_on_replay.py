@@ -12,7 +12,7 @@ from pathlib import Path
 from settings import REPO_ROOT
 from tools.noctus.dev import migration_replay as mr
 
-_MIG = "products/social-wiring/backend/migrations/343_imobshotai_cards.sql"
+_MIG = "products/social-wiring/backend/migrations/344_imobshotai_cards.sql"
 
 _SCENARIOS = {
     "obter_ou_criar_idempotent": """

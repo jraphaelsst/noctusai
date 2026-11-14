@@ -1,4 +1,4 @@
-"""Persistence port of the ImobShotAI cards (`imobshot_cards` / `imobshot_eventos`, migration 343).
+"""Persistence port of the ImobShotAI cards (`imobshot_cards` / `imobshot_eventos`, migration 344).
 
 Sync by design (PostgREST is blocking): the service calls it through `asyncio.to_thread`. Two implementations:
 the Supabase one (the three atomic writes are RPCs, so a state change and its event are ONE transaction) and an
