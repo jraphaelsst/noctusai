@@ -363,6 +363,22 @@ def _owner(rel: str) -> str:
     return parts[1] if parts[0] == "products" and len(parts) > 1 else "seed"
 
 
+def _node_invocation(script: Path) -> tuple[list[str], Path | None]:
+    """How to run the scan so ``ts-morph`` resolves. The tree under check normally carries ``mcp/noctusai/node/node_modules``
+    (``npm ci`` there). A fresh checkout (the deliverable gate's scrubbed workspace) does not; its script text is then fed
+    to ``node`` on the command line with the cwd at the server tree's ``node/`` dir, so the TREE's script is judged but
+    ``ts-morph`` resolves from the installed copy -- never a silent skip, never a different script version."""
+    if script.parent.joinpath("node_modules").is_dir():
+        return ["node", str(script)], None
+    fallback = _repo_root(None).joinpath(*SCRIPT_REL[:-1])
+    if fallback.joinpath("node_modules").is_dir():
+        try:
+            return ["node", "--input-type=module", "-e", script.read_text(encoding="utf-8")], fallback
+        except OSError:
+            pass
+    return ["node", str(script)], None
+
+
 def _scan_typescript(root: Path, files: list[Path]) -> list[dict]:
     cand = []
     for f in files:
@@ -386,8 +402,9 @@ def _scan_typescript(root: Path, files: list[Path]) -> list[dict]:
         return boot("`node` not on PATH")
     if not script.exists():
         return boot(f"script_missing: {script}")
+    argv, cwd = _node_invocation(script)
     try:
-        proc = subprocess.run(["node", str(script)], input=json.dumps({"files": [str(f) for f in cand]}),
+        proc = subprocess.run(argv, input=json.dumps({"files": [str(f) for f in cand]}), cwd=cwd,
                               capture_output=True, text=True, timeout=_TS_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         return boot(f"timeout after {_TS_TIMEOUT_SECONDS}s ({len(cand)} files)")
