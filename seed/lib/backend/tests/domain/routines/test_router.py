@@ -139,3 +139,12 @@ def test_other_orgs_routine_is_404_not_leaked():
     c, store, _ = _client()
     other = store.create_routine(org_id=uuid4(), name="x", cron="0 7 * * *", mode="trigger", config={}, actor_id=ADMIN)
     assert c.get(f"/routines/{other.id}", headers=H(ADMIN)).status_code == 404
+
+
+def test_approving_a_draft_through_another_routines_url_is_404():
+    c, *_ = _client()
+    rid = _create(c).json()["data"]["id"]
+    other = _create(c, name="other").json()["data"]["id"]
+    a, _b = c.post(f"/routines/{rid}/trigger", headers=H(ADMIN)).json()["data"]["item_ids"]
+    assert c.post(f"/routines/{other}/drafts/{a}/approve", headers=H(ADMIN)).status_code == 404
+    assert c.post(f"/routines/{other}/drafts/{a}/reject", json={"reason": "off topic"}, headers=H(ADMIN)).status_code == 404

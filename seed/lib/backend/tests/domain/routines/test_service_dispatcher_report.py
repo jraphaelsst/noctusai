@@ -220,3 +220,20 @@ async def test_daily_report_counts_runs_errors_decisions_and_flags_kill_master()
     assert out.summary["master_enabled"] is False
     assert "DESLIGADA" in out.narrative and "MORTA" in out.narrative
     assert "off topic" in out.digest.text and out.digest.subject.startswith("Relatorio diario")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flip", ["master_off", "disabled"])
+async def test_a_job_skips_at_fire_time_when_master_off_or_disabled(flip):
+    from noctusai_lib.api.scheduler import SkipRun
+
+    store, svc, port, d, r = _disp(mode="routine")
+    d.reconcile()
+    _, fn = port.registered[job_name(r)]
+    if flip == "master_off":
+        store.set_master(org_id=ORG, enabled=False, actor_id=OWNER, reason="incident")
+    else:
+        store.set_enabled(org_id=ORG, routine_id=r.id, enabled=False, actor_id=OWNER, reason="pause")
+    with pytest.raises(SkipRun):
+        await fn()
+    assert "run_started" not in _kinds(store)
