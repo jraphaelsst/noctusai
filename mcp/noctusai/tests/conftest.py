@@ -274,6 +274,21 @@ def _isolate_ledger_dev_copies(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_toolkit_freshness_state(monkeypatch):
+    """`toolkit_freshness` keeps its baseline + TTL-cached verdict in module globals, and
+    `_compute_verdict` LAZILY captures a baseline the first time any freshness-guarded tool
+    (migrate_product / release / deploy_image / task_branch ...) runs with none. Without a
+    per-test reset the first such test freezes a process-wide baseline mid-suite and a cached
+    verdict outlives it, so a later test sees `toolkit_stale` (or a refusal) depending on which
+    neighbour ran first -- an order-dependent red that vanishes in isolation. `monkeypatch`
+    restores all four on teardown (2026-11-14, test-isolation-flakes)."""
+    import tools.noctus.dev.toolkit_freshness as _tf
+
+    for attr, val in (("_baseline", None), ("_loaded_at", None), ("_cached_verdict", None), ("_cached_at", 0.0)):
+        monkeypatch.setattr(_tf, attr, val)
+
+
+@pytest.fixture(autouse=True)
 def _guard_release_default_runner_never_pushes(monkeypatch):
     """Sitewide safety net (F1, compliance review of release-no-freeze,
     2026-09-24): `release()` falls back to `release._default_run_local` —
