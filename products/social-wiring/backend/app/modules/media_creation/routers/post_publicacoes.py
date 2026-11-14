@@ -32,7 +32,7 @@ def listar_publicacoes(post_id: str, auth=Depends(get_current_user_org), db=Depe
     try:
         return success_response(_svc(auth, db).listar(post_id))
     except PostAssetError as exc:
-        raise HTTPException(status_code=exc.status, detail=exc.detail)
+        raise HTTPException(status_code=exc.status, detail=exc.detail)  # detail-safe: PostAssetError.detail is a domain-authored {code, detail} dict built in our service, never exception text
 
 
 @router.post("/{post_id}/publicacoes", status_code=201)
@@ -42,7 +42,7 @@ def criar_publicacao(post_id: str, body: PublicacaoCriar, auth=Depends(get_curre
             post_id, rede=body.rede, formato=body.formato, conta_id=body.conta_id, publicar_em=body.publicar_em,
         ))
     except PostAssetError as exc:
-        raise HTTPException(status_code=exc.status, detail=exc.detail)
+        raise HTTPException(status_code=exc.status, detail=exc.detail)  # detail-safe: PostAssetError.detail is a domain-authored {code, detail} dict built in our service, never exception text
 
 
 @router.patch("/{post_id}/publicacoes/{pub_id}")
@@ -52,4 +52,4 @@ def atualizar_publicacao(
     try:
         return success_response(_svc(auth, db).atualizar(post_id, pub_id, publicar_em=body.publicar_em, status=body.status))
     except PostAssetError as exc:
-        raise HTTPException(status_code=exc.status, detail=exc.detail)
+        raise HTTPException(status_code=exc.status, detail=exc.detail)  # detail-safe: PostAssetError.detail is a domain-authored {code, detail} dict built in our service, never exception text

@@ -60,7 +60,7 @@ def _svc(auth, db) -> PostAssetsService:
 
 
 def _raise(exc: PostAssetError):
-    raise HTTPException(status_code=exc.status, detail=exc.detail)
+    raise HTTPException(status_code=exc.status, detail=exc.detail)  # detail-safe: PostAssetError.detail is a domain-authored {code, detail} dict built in our service, never exception text
 
 
 @router.get("/formatos")
