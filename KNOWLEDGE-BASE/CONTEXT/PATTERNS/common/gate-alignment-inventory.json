@@ -2229,6 +2229,16 @@
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
   },
+  "keeper:check-pii-query-params": {
+   "mechanism": "KB § PATTERNS/security/url-hygiene.md (rule 2; POST-body search convention)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-14",
+   "shadow": null,
+   "source": "Security standard S4 (no PII in URLs; audit finding P3-1, owner-approved 2026-11-14)"
+  },
   "keeper:check-piped-exit-code-pattern": {
    "severity": "",
    "kind": "keeper",
@@ -2766,6 +2776,16 @@
    },
    "class": "unmeasured",
    "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+  },
+  "keeper:check-signed-url-ttl": {
+   "mechanism": "KB § PATTERNS/security/url-hygiene.md (rule 1; seam reason kwarg lands on feat/sec-signed-url-ttl-clamp)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-14",
+   "shadow": null,
+   "source": "Security standard S1 (signed URLs are bearer credentials; audit finding P2-2, owner-approved 2026-11-14)"
   },
   "keeper:check-silent-refusal": {
    "severity": "",
@@ -3683,6 +3703,19 @@
     "guard:absorption-source",
     "keeper:check-absorption-source-frozen",
     "keeper:check-absorption-pilot-is-canon"
+   ]
+  },
+  {
+   "id": "D-url-hygiene",
+   "decision": "Signed URLs live <=600 s unless a reason is given; PII never rides in a URL query string. Ratcheted per-file baselines; warn-first, promote to blocking after >=7 shadow days.",
+   "home": "KB § PATTERNS/security/url-hygiene.md",
+   "construction": "KB § PATTERNS/security/url-hygiene.md (+ seam reason kwarg on feat/sec-signed-url-ttl-clamp; POST-body search convention)",
+   "gate": "keeper:check-signed-url-ttl + keeper:check-pii-query-params",
+   "telemetry": "gate events (cli exit wrapper -> guard-events.ndjson)",
+   "branch": "feat/sec-keepers-ttl-pii-query",
+   "gates": [
+    "keeper:check-signed-url-ttl",
+    "keeper:check-pii-query-params"
    ]
   }
  ]
