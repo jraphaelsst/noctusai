@@ -35,6 +35,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _bg_shell as shell  # noqa: E402  (structural judge of a command; stdlib-only sibling)
+
 TERM_GRACE_S = 10.0
 KILL_WAIT_S = 3.0
 MIN_LIST_AGE_S = 30  # the session-end listing ignores shells younger than this (foreground tool calls)
@@ -45,30 +48,17 @@ WRAPPER = "bg_run.py"
 LOOP_RE = re.compile(
     r"""(?:^|[;&|({\n'"]|\bdo\b|\bthen\b)\s*(?:while|until)\b"""
     r"""|\btail\s+-[a-zA-Z]*[fF]\b|\bsleep\s+\d|(?:^|[;&|({\n])\s*watch\s+\S|--watch\b""")
-# A bare long-running command (finite, but long): test/build runners, hw-admission, a CI watch.
-LONG_RE = re.compile(
-    r"\b(?:pytest|py\.test|vitest|playwright\s+test|vite\s+build)\b|hw_admission\.py\s+run|\bgh\s+run\s+watch\b"
-    r"|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|build)\b")
-
 # A FOREGROUND call is also judged (owner, 2026-11-14): the harness moves a foreground call that hits its
-# tool timeout to the background automatically, so an unbounded loop there waits forever. Narrower than
-# LOOP_RE: a bare `sleep N` is finite and stays allowed in the foreground.
-FG_LOOP_RE = re.compile(
-    r"""(?:^|[;&|({\n'"]|\bdo\b|\bthen\b)\s*(?:while|until)\b"""
-    r"""|\btail\s+-[a-zA-Z]*[fF]\b|(?:^|[;&|({\n])\s*watch\s+\S|--watch\b""")
-# `timeout N ...` (or gtimeout) in front of the loop bounds it: the shell kills it, nothing is left waiting.
-TIMEOUT_RE = re.compile(r"\bg?timeout\s+(?:-[-\w=]+\s+)*\d+(?:\.\d+)?[smhd]?\s")
+# tool timeout to the background automatically, so an unbounded loop there waits forever. Since 2026-11-14
+# (runtime-end) the judge is STRUCTURAL (`_bg_shell`: a real shell lexer, quoted text and file-bound heredocs
+# are data, scripts the command invokes are opened); the regexes above remain only for PASSIVE reads of `ps`
+# command lines (`stalled_wait`, `infer_waiting`), which are not shell source.
 
 
-def foreground_loop_unbounded(command: str) -> bool:
-    """True when a FOREGROUND command has an open-ended loop shape with no `timeout N` before it."""
-    m = FG_LOOP_RE.search(command)
-    if not m:
-        return False
-    if re.match(r"\s*\W*(?:while|until)\b", m.group(0)) and not re.search(r"\bdo\b[\s\S]*\bdone\b", command):
-        return False  # prose ("wait until ...") in a message is not a loop: a real one has `do ... done`
-    t = TIMEOUT_RE.search(command)
-    return not (t and t.start() < m.end())
+def foreground_loop_unbounded(command: str, ctx: Any = None) -> bool:
+    """True when `command` has a never-ending shape (loop / follow / watch, also inside a script it invokes) that no
+    `timeout N` or `bg_run.py --done-when` bounds."""
+    return bool(shell.open_ended(command, ctx=ctx))
 
 
 # Known infrastructure that legitimately lives long: never refused at launch, never a leftover.
@@ -340,7 +330,7 @@ def tail_text(path: Path, max_lines: int = 8, max_bytes: int = 4096) -> str:
     return "\n".join(data.splitlines()[-max_lines:])
 
 
-_PATH_RE = re.compile(r"(/[^\s'\"|;&<>()]+\.(?:log|out|output|txt))")
+_PATH_RE = shell.LOG_PATH_RE  # absolute or relative (resolved against the wrapper cwd = the command cwd)
 
 
 def referenced_files(commands: list[str]) -> list[Path]:
@@ -650,7 +640,7 @@ def validate_launch(*, purpose: str, done: str, command: str | None, done_when: 
         return "--done is required (what counts as done), or --long-lived for infrastructure that lives on purpose"
     if not command and not done_when:
         return "give a command (done = it exits) and/or --done-when (a check the process runs; exit 0 = done)"
-    if command and LOOP_RE.search(command) and not done_when:
+    if command and not done_when and shell.open_ended(command):
         return "the command is an open-ended loop/poll: it needs --done-when (a shell check, exit 0 = done)"
     return None
 
@@ -661,11 +651,14 @@ def run_wrapped(*, purpose: str, done: str = "", command: str | None = None, don
                 ps_text: Callable[[], str] | None = None, kill: Callable[[int, int], None] = _default_kill,
                 popen: Callable[..., Any] = subprocess.Popen, producer_pid: int | None = None,
                 lsof: Callable[[list[str]], str] | None = None, alive: Callable[[int], bool] | None = None,
-                confirm_checks: int = 3) -> int:
+                confirm_checks: int = 3, getppid: Callable[[], int] = os.getppid, owner_check_s: float = 5.0) -> int:
     """Run `command` with a declared end condition. Ends when the command exits OR `done_when` (a shell
     check run every interval_s) succeeds, whichever is first; then tree-stops the command's process group,
     verifies nothing is orphaned and writes its own salvage record (output tail, reason, learnings).
-    No lifetime cap and no idle timer: a process with a done condition runs as long as it needs."""
+    No lifetime cap and no idle timer: a process with a done condition runs as long as it needs.
+    It also ends when its OWNER ends (owner, 2026-11-14: "they live no longer than they were meant to"): the
+    launching Claude session's process is gone, or this wrapper was re-parented to init (its shell died), so an
+    orphan cannot exist by construction. Judged from `ps_text` (the same seam as everything else here)."""
     out = out or sys.stdout
     problem = validate_launch(purpose=purpose, done=done, command=command, done_when=done_when, long_lived=long_lived)
     if problem:
@@ -698,6 +691,13 @@ def run_wrapped(*, purpose: str, done: str = "", command: str | None = None, don
         reg[my_key] = {"purpose": purpose.strip(), "owner_session": sid, "pid": os.getpid(),
                        "command": _short(command or "", 200), "declared_ts": t0, "declared_by": "bg_run"}
         save_registry(d, reg)
+
+    ppid0, owner = getppid(), None
+    try:
+        owner = find_claude_pid(snapshot(ps_text))  # None outside a Claude session: then there is no owner to outlive
+    except ProcError:
+        pass
+    next_owner = t0 + owner_check_s
 
     child = None
     if command:
@@ -734,6 +734,18 @@ def run_wrapped(*, purpose: str, done: str = "", command: str | None = None, don
             rc = 128 + int(got["sig"])
             how = f"terminated by signal {got['sig']}"
             break
+        if owner and ppid0 != 1 and getppid() == 1:
+            how, rc = "owning session ended (this wrapper was re-parented to init: its shell is gone)", 5
+            break
+        if owner and time.time() >= next_owner:
+            next_owner = time.time() + owner_check_s
+            try:
+                owner_live = owner in snapshot(ps_text)
+            except ProcError:
+                owner_live = True  # unmeasured is never "dead"
+            if not owner_live:
+                how, rc = f"owning session ended (claude pid {owner} is gone)", 5
+                break
         if done_when and time.time() >= next_check:
             if _done_check():
                 how = "done-when condition satisfied"

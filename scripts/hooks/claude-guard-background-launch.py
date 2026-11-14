@@ -22,9 +22,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _guard_failclosed import load_module, log_event, run_guard  # noqa: E402
 
-# Cheap prefilter for FOREGROUND calls (the hook matches every Bash call): only a command mentioning a loop
-# keyword reaches the module load. Superset of core.FG_LOOP_RE, so it never hides a loop from the judge.
-_FG_PREFILTER = re.compile(r"\b(?:while|until|tail|watch)\b|--watch")
+# Cheap prefilter for FOREGROUND calls (the hook matches every Bash call): only a command that could contain a
+# never-ending shape reaches the module load, i.e. one with a loop keyword (inline, in a `-c` string, in `$(...)`)
+# or one that invokes a script the judge opens (`x.sh`, `x.py`, `./x`). Superset of what `_bg_shell` can report.
+_FG_PREFILTER = re.compile(r"\b(?:while|until|tail|watch)\b|--watch|\.(?:sh|bash|zsh|py)\b|(?:^|[\s;&|(])\./")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GUARD = REPO_ROOT / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "bg_launch_guard.py"
@@ -36,10 +37,11 @@ def _judge(payload: dict) -> dict | None:
     if verdict is None:
         return None
     if guard.mode() != "enforce":
-        log_event("background-launch", "warn", verdict["reason"], payload,
+        why = verdict.get("reason") or f"would rewrite: {verdict.get('context', '')}"
+        log_event("background-launch", "warn", why, payload,
                   extra={"kind": "guard", "owner": "tooling-engineer", "source": "shadow"})
-        print(f"[noc-guard:background-launch] WARNING (shadow until {guard.ENFORCE_FROM}, then refused): "
-              f"{verdict['reason']}", file=sys.stderr)
+        print(f"[noc-guard:background-launch] WARNING (shadow until {guard.ENFORCE_FROM}, then enforced): {why}",
+              file=sys.stderr)
         return None
     return verdict
 
