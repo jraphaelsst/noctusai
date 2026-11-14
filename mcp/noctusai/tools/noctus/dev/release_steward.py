@@ -183,7 +183,8 @@ def git_landed_check(cwd: Path | str | None = None, base: str = "origin/dev") ->
     Resolves refs/heads/<branch>, then refs/remotes/origin/<branch>, then `head_sha`; the first that
     resolves is judged with `git cherry <base> <ref>` - zero '+' lines means every commit is already
     in base (method=cherry). When cherry leaves commits unmatched, falls back to post-image blob equality
-    (method=post_image) then `git range-diff` (method=range_diff); a partial match is state=uncertain with
+    (method=post_image), then a clean re-merge onto base that yields base's own tree (method=merge_tree),
+    then `git range-diff` (method=range_diff); a partial match is state=uncertain with
     evidence, never landed. state: landed | pending | uncertain | unresolvable (never silent).
     `dev_sha` = the ref's own sha when it is an ancestor of base, else base's tip."""
     def _git(*args: str) -> subprocess.CompletedProcess:
@@ -197,6 +198,10 @@ def git_landed_check(cwd: Path | str | None = None, base: str = "origin/dev") ->
             if out.returncode == 0 and re.fullmatch(r"[0-9a-f]{7,40}", sha):
                 return sha
         return None
+
+    def _rev_tree(ref: str) -> str | None:
+        out = _git("rev-parse", "--verify", "--quiet", f"{ref}^{{tree}}")
+        return out.stdout.strip() if out.returncode == 0 and out.stdout.strip() else None
 
     def _blob(ref: str, path: str) -> str | None:
         out = _git("rev-parse", "--verify", "--quiet", f"{ref}:{path}")
@@ -217,6 +222,16 @@ def git_landed_check(cwd: Path | str | None = None, base: str = "origin/dev") ->
         unmatched = [f for f in files if f not in set(matched)]
         if files and not unmatched:
             return {"state": "landed", "dev_sha": base_tip, "method": "post_image"}
+        # A file the branch touched that base ALSO moved since (derived counters/indexes the queue regenerates:
+        # 02-LANDSCAPE.md, INDEX.md) never blob-matches, though the branch's hunks are in base. Decide by the
+        # whole tree: re-merge the branch onto base; if that merge is clean and yields base's own tree, the
+        # branch adds nothing base lacks -> landed. Any conflict or any extra change -> fall through (never landed).
+        mt = _git("merge-tree", "--write-tree", f"--merge-base={mb}", base_tip, sha)
+        merged_tree = mt.stdout.splitlines()[0].strip() if mt.returncode == 0 and mt.stdout.strip() else ""
+        base_tree = _rev_tree(base_tip)
+        if merged_tree and base_tree and merged_tree == base_tree:
+            return {"state": "landed", "dev_sha": base_tip, "method": "merge_tree",
+                    "evidence": {"unmatched_files": unmatched[:50]}}
         rd = _git("range-diff", "--no-color", f"{mb}..{sha}", f"{mb}..{base_tip}")
         marks = []
         if rd.returncode == 0:
