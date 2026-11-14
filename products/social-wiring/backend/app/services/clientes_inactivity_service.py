@@ -410,6 +410,7 @@ def configure(*, cfg: Any = None, scheduler: Any = None) -> None:
     Idempotent — `noctusai_lib.api.scheduler.register` replaces the job on
     re-registration."""
     cfg = cfg or settings
+    # poll-budget: every clientes_inactivity_sweep_interval_hours (default 6h); 1 calls/tick (one sweep run; reads are batched); worst 4/day (sweep runs); idle=fixed
     (scheduler or seed_scheduler).register(
         "clientes_inactivity_sweep",
         _run_clientes_inactivity_job,

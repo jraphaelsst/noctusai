@@ -448,6 +448,7 @@ class _BaseSlotPool:
         every pid, not a process tree), polling for up to
         ``kill_poll_seconds``. Raises if any survive the deadline."""
         deadline = self._clock.monotonic() + self._kill_poll_seconds
+        # poll-budget: 50ms tick, bounded by the 5s kill deadline per slot release; 0 Supabase calls/tick (local process scan + kill); worst 1728000/day only if a slot were being released nonstop (100 ticks per release); idle=fixed
         while True:
             live = [
                 p for p in self._scanner.scan() if p.uid == uid and not p.is_zombie
