@@ -378,3 +378,52 @@ def test_sync_failure_is_contained_by_the_call_sites(edicao) -> None:
     from app.modules.imobshotai.service import sincronizar_do_lote
 
     assert asyncio.run(sincronizar_do_lote(Quebrado(), edicao.ports, lote, ator_id=None)) is False
+
+
+# --- contract E2E shape (IMOBSHOTAI-CONTRACT.md §1, §3, §4) -----------------
+
+_CARD_RESUMO = {"id", "imovel", "etapa", "etapa_desde", "capa_url", "total_fotos", "fotos_aprovadas",
+                "total_videos", "criado_em", "atualizado_em"}
+_IMOVEL = {"org_id", "codigo", "titulo", "bairro"}
+_LOTE_RESUMO = {"id", "nome", "criado_em", "imovel", "velocidade", "estado_agregado", "total_fotos",
+                "fotos_decididas", "status"}
+_FOTO = {"id", "lote_id", "comodo", "status", "original_url", "editada_url"}
+_EVENTO = {"tipo", "etapa_de", "etapa_para", "ator_id", "em", "detalhe"}
+
+
+def test_contract_shapes_through_the_app(edicao) -> None:
+    _ready(edicao)
+    card_id, lote_id, foto_id = _enviar_e_processar(edicao)
+    edicao.as_user("admin")
+    edicao.http.post(f"/api/edicao-fotos/revisao/{lote_id}/fotos/{foto_id}/decisao", json={"decisao": "aprovar"})
+
+    # §1  POST /lotes -> {card, lote}
+    novo = _iniciar(edicao, "ONE8990", nome="Terceira")
+    assert novo.status_code == 201
+    body = novo.json()
+    assert set(body) == {"card", "lote"}
+    assert set(body["card"]) == _CARD_RESUMO and set(body["card"]["imovel"]) == _IMOVEL
+    assert set(body["lote"]) == _LOTE_RESUMO and set(body["lote"]["imovel"]) == {"org_id", "codigo"}
+
+    # §3  GET /cards -> page_out of CardResumo
+    page = edicao.http.get("/api/imobshotai/cards").json()
+    assert set(page) == {"items", "page", "page_size", "total"}
+    assert page["items"] and all(set(i) == _CARD_RESUMO and set(i["imovel"]) == _IMOVEL for i in page["items"])
+
+    # §4  GET /cards/{id} -> CardDetalhe (CardResumo + lotes/fotos/videos/eventos)
+    det = edicao.http.get(f"/api/imobshotai/cards/{card_id}").json()
+    assert set(det) == _CARD_RESUMO | {"lotes", "fotos", "videos", "eventos"}
+    assert set(det["imovel"]) == _IMOVEL and det["videos"] == []
+    assert det["lotes"] and all(set(l) == _LOTE_RESUMO for l in det["lotes"])
+    assert det["fotos"] and all(set(f) == _FOTO for f in det["fotos"])
+    assert det["eventos"] and all(set(e) == _EVENTO for e in det["eventos"])
+
+
+def test_error_body_shape_for_imovel_inexistente(edicao) -> None:
+    _ready(edicao)
+    resp = _iniciar(edicao.as_user("corretor"), "naoexiste")
+    assert resp.status_code == 422
+    # `api_error` raises HTTPException(detail={"detail": msg, "code": code}); the seed's http_exception_handler passes
+    # a machine-error dict through verbatim, so on the wire the body is FLAT: {"detail": "<pt-BR>", "code": "..."}.
+    # (IMOBSHOTAI-CONTRACT.md §0 writes it nested under an outer "detail"; the FE reads `code` from the body root.)
+    assert resp.json() == {"detail": "Nenhum imóvel com esse código.", "code": "imovel_inexistente"}
