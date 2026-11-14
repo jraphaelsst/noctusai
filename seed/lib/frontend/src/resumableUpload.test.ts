@@ -21,8 +21,8 @@ function server(opts: { failures?: Record<number, number>; hooks?: (n: number) =
     object_key: null, parts: [...parts].sort((a, b) => a - b), ...extra,
   });
   const api: UploadApi = {
-    get: async () => dto(),
-    delete: async () => ({}),
+    get: (async () => dto()) as unknown as UploadApi['get'],
+    delete: (async () => ({})) as unknown as UploadApi['delete'],
     post: (async (path: string, body?: any) => {
       if (path.endsWith('/complete')) {
         const missing = Array.from({ length: total(size) }, (_, i) => i + 1).filter((n) => !parts.has(n));
