@@ -362,3 +362,85 @@ def test_pre_existing_missing_citation_does_not_block_an_unrelated_edit(repo):
     _write(repo, "products/acme/README.md", "# acme\n\nSee `products/acme/backend/app/gone.py`. Typo fixed.\n")
     _git(repo, "add", "-A")
     assert not [i for i in ds.check_staged(repo, "") if i["kind"] == "missing_path"]
+
+
+# ── edit-time coverage map + the PostToolUse hook (2026-11-14: 476 commit-time refusals) ───────
+HOOK = Path(__file__).resolve().parents[3] / "scripts/hooks/claude-inject-doc-coverage.py"
+
+
+def test_coverage_map_is_the_set_the_commit_leg_couples_against(repo):
+    cmap = ds.coverage_map(repo)
+    assert "products/acme/README.md" in cmap and "KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md" in cmap
+    f = "products/acme/backend/app/routers/a.py"
+    assert ds.covering_docs(cmap, f) == ["KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md", "products/acme/README.md"]
+    # parity with the gate: every doc the hint names is a doc check_range would demand for a new route
+    _write(repo, "products/acme/backend/app/routers/b.py", "@router.post('/b')\ndef b(): ...\n")
+    _git(repo, "add", "-A")
+    demanded = {i["doc"] for i in ds.check_range(repo, ds.STAGED)}
+    assert demanded <= set(ds.covering_docs(cmap, "products/acme/backend/app/routers/b.py"))
+
+
+def _run_hook(tmp: Path, file_rel: str, session: str = "s1") -> str:
+    """Run a COPY of the hook inside `tmp` (the hook roots itself at its own checkout)."""
+    dest = tmp / "scripts/hooks/claude-inject-doc-coverage.py"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(HOOK.read_text(encoding="utf-8"), encoding="utf-8")
+    payload = json.dumps({"tool_input": {"file_path": str(tmp / file_rel)}, "session_id": session})
+    r = subprocess.run([sys.executable, str(dest)], input=payload, capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0, r.stderr  # fail open: ALWAYS 0
+    return r.stdout
+
+
+def test_hook_injects_covering_docs_once_per_file_and_session(repo):
+    ds.write_coverage_cache(repo)
+    out = json.loads(_run_hook(repo, "products/acme/backend/app/routers/a.py"))
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert "products/acme/README.md" in ctx and "Docs-Reviewed:" in ctx
+    assert _run_hook(repo, "products/acme/backend/app/routers/a.py") == ""          # same file+session: deduped
+    assert _run_hook(repo, "products/acme/backend/app/routers/a.py", "s2") != ""    # new session: injected again
+
+
+def test_hook_is_silent_for_uncovered_tests_docs_and_missing_cache(repo):
+    assert _run_hook(repo, "products/acme/backend/app/routers/a.py") == ""          # no cache yet: silent (rebuild detached)
+    ds.write_coverage_cache(repo)
+    _write(repo, "products/acme/backend/tests/test_a.py", "def test_a(): ...\n")
+    assert _run_hook(repo, "products/acme/backend/tests/test_a.py") == ""           # tests never couple
+    assert _run_hook(repo, "products/acme/README.md") == ""                         # a doc is not covered code
+    assert _run_hook(repo, "scripts/unrelated.py") == ""
+
+
+def test_hook_fails_open_on_garbage_input_and_corrupt_cache(repo):
+    (repo / ".claude/cache").mkdir(parents=True, exist_ok=True)
+    (repo / ".claude/cache/doc-coverage.json").write_text("{not json", encoding="utf-8")
+    assert _run_hook(repo, "products/acme/backend/app/routers/a.py") == ""
+    dest = repo / "scripts/hooks/claude-inject-doc-coverage.py"
+    r = subprocess.run([sys.executable, str(dest)], input="garbage", capture_output=True, text=True, timeout=20)
+    assert r.returncode == 0 and r.stdout == ""
+
+
+def test_hook_glob_and_code_predicates_match_the_gate():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("hook_doc_cov", HOOK)
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    for path, pat in [("products/a/backend/app/x.py", "products/a/backend/app/**"),
+                      ("products/a/backend/app/r/x.py", "products/*/backend/app/routers/*.py"),
+                      ("products/a/backend/app/routers/x.py", "products/*/backend/app/routers/*.py"),
+                      ("other/x.py", "products/a/**")]:
+        assert hook.glob_match(path, pat) == ds._glob_match(path, pat)
+    from tools.noctus.dev.compliance import _TEST_FILE_RE
+    for p in ["a/tests/x.py", "a/test_x.py", "a/conftest.py", "a/x.test.ts", "a/__init__.py", "a/x.py", "a/x.sql", "a/x.md"]:
+        material_candidate = p.endswith(ds.CODE_EXTS) and not _TEST_FILE_RE.search(p) and not p.endswith("__init__.py")
+        assert hook.is_code(p) == material_candidate, p
+
+
+def test_hook_is_registered_as_a_posttooluse_edit_hook():
+    cfg = json.loads((HOOK.parents[2] / ".claude/settings.json").read_text(encoding="utf-8"))
+    entries = [h for e in cfg["hooks"]["PostToolUse"] for h in e["hooks"] if "claude-inject-doc-coverage" in h["command"]]
+    assert entries and any(e["matcher"] == "Edit|Write|NotebookEdit" for e in cfg["hooks"]["PostToolUse"]
+                           if any("claude-inject-doc-coverage" in h["command"] for h in e["hooks"]))
+
+
+def test_pre_commit_advisory_leg_logs_warn_not_deny():
+    hook = (HOOK.parents[2] / "scripts/hooks/pre-commit").read_text(encoding="utf-8")
+    assert "NOC_GATE_ADVISORY=1" in hook[hook.index("Doc-staleness COMMIT leg"):]

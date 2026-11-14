@@ -70,7 +70,7 @@ def events_path() -> Path:
 
 def record_event(gate: str, outcome: str, *, kind: str, target: str = "",
                  reason: str = "", source: str = "", log_path: Path | None = None) -> None:
-    """Append one gate event. `outcome` is 'deny' (refusal) or 'pass'. Never raises."""
+    """Append one gate event. `outcome` is 'deny' (refusal), 'warn' (advisory, not a refusal) or 'pass'. Never raises."""
     try:
         _guard_module().log_event(
             gate, outcome, reason,
@@ -95,8 +95,11 @@ def record_cli_exit(argv: list[str], code: Any) -> None:
     for i, a in enumerate(argv):
         if a == "--paths" and i + 1 < len(argv):
             target = argv[i + 1][:200]
+    # An ADVISORY invocation (the pre-commit heads-up whose blocking twin runs in commit-msg) is a `warn`, never a
+    # `deny`: logging it as a refusal double-counted every doc-staleness block (476 denies, 2026-11-14).
+    outcome = "pass" if ok else ("warn" if os.environ.get("NOC_GATE_ADVISORY") else "deny")
     for f in flags:
-        record_event(f"keeper:{f[2:]}", "pass" if ok else "deny", kind="keeper",
+        record_event(f"keeper:{f[2:]}", outcome, kind="keeper",
                      target=target, source="cli")
 
 

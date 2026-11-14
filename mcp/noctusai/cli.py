@@ -393,6 +393,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-doc-staleness", action="store_true", help="Keeper (CI + pre-push): deterministic doc-staleness gate. With --doc-range BASE..TIP: change-coupling (covered code changed materially, covering docs untouched; ack via `Docs-Reviewed: <doc> — <reason>` trailer). Without: claim checks over every living doc (cited paths exist; 'scaffold only / nothing implemented / NOT applied' vs the code) judged against the shrink-only ratchet mcp/noctusai/tests/doc_staleness_baseline.json, plus age warnings. Severity high. KB § PATTERNS/common/doc-staleness-gate.md.")
     parser.add_argument("--doc-range", metavar="BASE..TIP", default=None, help="With --check-doc-staleness: run the change-coupling leg over this range.")
     parser.add_argument("--doc-staged", action="store_true", help="With --check-doc-staleness: the COMMIT leg -- coupling over the STAGED diff (code a doc covers staged materially without that doc staged). With --commit-msg-file the `Docs-Reviewed:` trailers are honoured (commit-msg hook, blocking); without it (pre-commit) the fix-list is printed as an early heads-up.")
+    parser.add_argument("--write-doc-coverage-cache", action="store_true", help="Rebuild .claude/cache/doc-coverage.json ({living doc: covered code globs}) that the PostToolUse hook claude-inject-doc-coverage.py reads at edit time. Honours --worktree-path. KB § PATTERNS/common/doc-staleness-gate.md.")
     parser.add_argument("--doc-baseline", choices=["init", "shrink"], default=None, help="With --check-doc-staleness: rewrite the ratchet (init = first snapshot; shrink = drop fixed entries; never grows).")
     parser.add_argument("--doc-suggest", action="store_true", help="With --check-doc-staleness: print the exact docs to update and the claims that are false.")
     parser.add_argument("--commit-msg-file", default=None, help="With --check-product-guide-cochange / --check-lgpd-entry-removal: path of the commit message file (so the Guide-Unaffected / LGPD-Entry-Removed trailer escape hatch can be read).")
@@ -2930,6 +2931,13 @@ def main():
         for c in r["claims"]:
             print(f"    [{c['status']}] {c['file']}:{c['line']} {c['kind']} {c['claim']} -> {c['live'] or '-'} {c['note']}")
         sys.exit(0 if r["ok"] else 1)
+
+    elif args.write_doc_coverage_cache:
+        from tools.noctus.dev import doc_staleness as _ds
+        _croot = Path(args.worktree_path) if getattr(args, "worktree_path", None) else _ds.REPO_ROOT
+        _cr = _ds.write_coverage_cache(_croot)
+        print(f"  doc-coverage cache: {_cr['docs']} covering docs -> {_cr['path']}")
+        sys.exit(0)
 
     elif args.check_doc_staleness:
         from tools.noctus.dev import doc_staleness as _ds

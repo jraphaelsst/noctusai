@@ -40,6 +40,10 @@ A commit trailer in any commit of the range: `Docs-Reviewed: <doc path or glob> 
 
 `--check-doc-staleness [--doc-staged [--commit-msg-file F] | --doc-range …] [--doc-suggest]` / MCP `noctus.dev.doc_staleness` print the exact docs to update and the false claims — fix-list, not just a red. Do not add to the baseline; fix the doc.
 
+## Edit-time hint — the construction leg (2026-11-14)
+
+The commit leg alone was a wall: the agent learned which docs cover a file only when `commit-msg` refused (476 denies / 18 sessions). `scripts/hooks/claude-inject-doc-coverage.py` (PostToolUse `Edit|Write|NotebookEdit`, registered in `.claude/settings.json`; UX over the gate, never a gate) injects, on the FIRST edit of a covered code file per file + session, "docs covering this file: X, Y — update them in this commit or add `Docs-Reviewed: <doc> — <why unaffected>`". The map is `doc_staleness.coverage_map` — the very set `check_range` couples against, so hint and gate cannot disagree — precomputed to `.claude/cache/doc-coverage.json` (`--write-doc-coverage-cache`); the hook does one JSON read + glob match (~15-30 ms over interpreter start, no git), serves a missing/stale cache as nothing/old and rebuilds it DETACHED (rate-limited), and always exits 0. `engineer_brief_compose` lists the same docs per target file (`covering_docs`) so the brief carries them at dispatch. The pre-commit heads-up leg runs with `NOC_GATE_ADVISORY=1`, so `record_cli_exit` logs it as `warn` — only the blocking commit-msg leg logs `deny` (it used to double-count every block).
+
 ## Composes with
 
 `doc_to_code_drift` (semantic advisory), `check_product_guide_cochange` (same trailer idiom, help-chat guide), `scan_live_state_claims` (live Supabase/prod facts), `kb_sync` (KB pointer resolution). → `KB § PATTERNS/common/doc-discipline-family-index.md`

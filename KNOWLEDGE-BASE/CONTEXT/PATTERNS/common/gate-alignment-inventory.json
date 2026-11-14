@@ -982,7 +982,7 @@
     "pre-push"
    ],
    "standard": "Keeper (CI + pre-push): deterministic doc-staleness gate. With --doc-range BASE..TIP: change-coupling (covered code changed materially, covering docs untouched; ack via `Docs-Reviewed: <doc> — <reason>` trailer). Without: claim checks over ",
-   "mechanism": "",
+   "mechanism": "injection: scripts/hooks/claude-inject-doc-coverage.py (PostToolUse Edit|Write|NotebookEdit) + engineer_brief_compose covering_docs",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -990,7 +990,9 @@
     "sessions": 0
    },
    "class": "never-fires",
-   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "new": false,
+   "declared": "2026-11-14"
   },
   "keeper:check-eight-way-sync": {
    "severity": "",
