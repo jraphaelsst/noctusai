@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from noctusai_lib.api.rate_limit_policies import DEFAULT_PORTAL_RL
+from noctusai_lib.integrations.storage import validate_signed_url_ttl
 from noctusai_lib.integrations.payments.real_asaas import ASAAS_BASE_URLS, ASAAS_SANDBOX
 
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
@@ -56,7 +57,8 @@ class CommerceConfig:
         order_expiry_hours: how long a pending order's charge stays payable.
         *_path_template: frontend paths the redirect/e-mail links point to.
         link_ttl_minutes: lifetime of an e-mailed access / verification link.
-        signed_url_ttl_seconds: lifetime of a media signed URL.
+        signed_url_ttl_seconds: lifetime of a media signed URL (> 600 s needs signed_url_ttl_reason).
+        signed_url_ttl_reason: why the media TTL exceeds 600 s (storage-seam rule; None when <= 600).
         org_id_expr: SQL expression the authenticated own-org policies (every
             organ table + `credentials`) compare `org_id` to. Unset (the default) =>
             `public.current_org_id_for('<schema>')`: the home org for everyone, the
@@ -90,6 +92,11 @@ class CommerceConfig:
     privacy_verify_path_template: str = "/privacidade/verificar?token={token}"
     link_ttl_minutes: int = 60
     signed_url_ttl_seconds: int = 3600
+    #: Required by the storage seam for any TTL > 600 s (validate_signed_url_ttl). Storefront catalog media
+    #: is public marketing imagery shown on pages shoppers keep open; a 10-minute link would break images.
+    signed_url_ttl_reason: Optional[str] = (
+        "storefront catalog media: shoppers keep product pages open; product images are public marketing content"
+    )
     org_id_expr: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -113,6 +120,8 @@ class CommerceConfig:
                 raise ValueError(f"CommerceConfig.{name} must be a non-empty limit string")
         if self.order_expiry_hours < 1 or self.link_ttl_minutes < 1 or self.signed_url_ttl_seconds < 1:
             raise ValueError("CommerceConfig durations must be >= 1")
+        # Fail at construction, not at the first media read: same rule the storage seam enforces.
+        validate_signed_url_ttl(self.signed_url_ttl_seconds, self.signed_url_ttl_reason)
         for name in ("order_path_template", "my_orders_path_template", "privacy_verify_path_template"):
             if "{token}" not in getattr(self, name):
                 raise ValueError(f"CommerceConfig.{name} must contain '{{token}}'")

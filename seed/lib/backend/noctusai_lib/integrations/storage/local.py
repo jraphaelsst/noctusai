@@ -20,9 +20,13 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import quote
 
+from noctusai_lib.integrations.storage.protocol import (
+    DEFAULT_SIGNED_URL_TTL_SECONDS,
+    validate_signed_url_ttl,
+)
 from noctusai_lib.integrations.storage.types import BlobMetadata, StoredBlob
 
 logger = logging.getLogger(__name__)
@@ -133,8 +137,10 @@ class LocalFilesystemStorageBackend:
         *,
         bucket: str,
         key: str,
-        expires_in_seconds: int = 3600,
+        expires_in_seconds: int = DEFAULT_SIGNED_URL_TTL_SECONDS,
+        ttl_reason: Optional[str] = None,
     ) -> str:
+        validate_signed_url_ttl(expires_in_seconds, ttl_reason)
         # `file://` URLs are dev-only. `expires_in_seconds` is encoded as
         # a query param so callers + tests can verify it round-trips, but
         # the local backend does NOT enforce expiry.

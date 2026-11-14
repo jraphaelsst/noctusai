@@ -269,6 +269,15 @@ export { JobPollingPausedNotice } from './components/JobPollingPausedNotice';
 export type { JobPollingOptions, JobPollingQuery, HandOffToPollingOptions, HandOffUntil, HandOffQueryClient } from './job-polling';
 
 // ─── Edição de Fotos (seed feature) ──────────────────────────────────────────
+// Resumable chunked uploads (twin of backend `noctusai_lib.domain.resumable_uploads`).
+export {
+  uploadResumable, abortResumableUpload, ResumableUploadError, isRetryableUploadError, backoffDelayMs,
+  defaultClientKey, RESUMABLE_UPLOAD_BASE_PATH, RESUMABLE_UPLOAD_CONCURRENCY,
+} from "./resumableUpload";
+export type { UploadApi, UploadSessionDto, UploadProgress, ResumableUploadOptions, ResumableUploadResult } from "./resumableUpload";
+export { useResumableUpload } from "./useResumableUpload";
+export type { ResumableUploadStatus } from "./useResumableUpload";
+
 // Seed-portable AI photo-editing organs — no Social-Wiring coupling. See
 // `projects/edicao-fotos/EDICAO-FOTOS-CONTRACT.md` for the API contract this
 // hook factory + capability guards are typed to.
