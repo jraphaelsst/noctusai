@@ -159,7 +159,7 @@
     "since": "2026-11-14",
     "fires": 0,
     "fix_rate": null,
-    "waiver": "owner mandated a hard refusal at launch; no warn-only soak. Re-measure with --gate-alignment walls after 7 days."
+    "promote_when": "auto-enforces 2026-11-21 (bg_launch_guard.ENFORCE_FROM); owner 2026-11-14: 7-day warn-only soak, used to refine the tool from the warn events (--gate-alignment walls)"
    },
    "source": "owner decision 2026-11-14 (background processes end themselves; no lifetime cap or idle timer); Claude Code hooks reference (PreToolUse deny on Bash run_in_background)"
   },
