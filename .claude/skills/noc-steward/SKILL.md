@@ -61,9 +61,26 @@ Rule: `KB § PATTERNS/devops/release-steward.md` § 7a (guardian spec, council 0
 
 After the queue drains: follow `noc-ship` (status → manifest → `predeploy_check` per active product, pinned tree → bless → promote). Apply each authorized migration BEFORE the image that needs it, then `deploy_image`, then reply `DEPLOYED`. A fleet-wide FE change needs one page per product opened by eye.
 
+## 7 · Primary-checkout care — the steward keeps the shared tree working
+
+**Why (owner, 2026-11-13).** The primary sat 108 commits behind `origin/dev` for a day, with a stale `index.lock` from the night before, a `FINDINGS.md` render byte-identical to dev's and an unpushed ledger commit whose rows had already landed. Every "run the primary's cli.py" path, every hook (they are symlinks into the primary) and `landed` ran stale code, and the steward only reported it. The owner's ask: the steward checks the tree and fixes it whenever no other session is free to.
+
+**When.** At claim, after every `landed`, and at every Monitor re-arm (so at least every 30 min while the shift runs).
+
+**How.**
+1. `python3 mcp/noctusai/primary_ff.py` (from any worktree; it resolves the primary itself). It fast-forwards to `origin/dev` and, since 2026-11-13, heals three states without losing anything:
+   - an `index.lock` older than 15 min: removed (a younger one answers `skipped_locked`; wait, never race it);
+   - unstaged edits whose bytes already equal dev's blob: restored, then fast-forwarded;
+   - local-only commits whose every added line is already on dev and every removed line is gone from it: HEAD is parked under `refs/noc/primary-landed/<sha>`, then `reset --keep` onto dev.
+2. Any other `skipped_*` (a real edit, staged work, a commit dev lacks, a non-`dev` branch) holds someone's work. Do NOT force it, and do not route around `primary_write_guard`. Find the owner of the change (`git log -1 --format=%an%n%B`, the `Noc-Branch:` trailer, ListAgents), hand it to that session; if none is alive, salvage it onto a self-branch off `origin/dev` (`noc-self-branch`) and enqueue it, then rerun step 1. Only what needs a human (a decision on unrecognised work) goes to the owner, as ONE copy-paste line.
+3. Your own worktrees: remove each one the moment its job ends (deploy pins, record branches after `landed`). Leave peers' worktrees to the SessionStart sweep.
+4. Log the result line in the shift memory file. "Reported but not fixed" is not a finished state (fix-on-contact).
+
 ## Lessons that recur (append; each cost an hour once)
 
 - argparse %-formats help text: a literal `%` in a new `--help` string crashes `cli.py --help` (write `%%`).
 - A hanging test burns its whole job timeout and reports `cancelled` with no test name.
-- `landed` reads the PRIMARY checkout's toolkit; a dirty primary skips its fast-forward, so a landed tool fix is not live until the primary can FF.
+- `landed` reads the PRIMARY checkout's toolkit; a dirty primary skips its fast-forward, so a landed tool fix is not live until the primary can FF. Run §7 after every landing.
+- A tool run that hangs keeps its hw-admission slot (2026-11-13: a migrate stuck on a dead socket held slot-1 for 80 min and starved every scoped run). Check `lsof ~/.noctus/hw-slots/*.lock` when admission waits with no visible heavy job.
+- The steward lease lasts 2 h. Run `--release-steward heartbeat` on a ~25-min loop for the whole shift, or `enqueue` starts refusing you as a stale steward.
 - The auto-mode classifier blocks `gh run cancel` on drains and force-pushes; ask the owner, never work around it.
