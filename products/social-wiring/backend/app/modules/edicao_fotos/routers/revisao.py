@@ -18,6 +18,7 @@ decision + the training-dataset row and feeds the learning loop.
 """
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -38,6 +39,9 @@ from app.modules.edicao_fotos.deps import (
 from app.modules.edicao_fotos.errors import ENGINE_ERRORS, api_error, engine_error
 from app.modules.edicao_fotos.schemas import DecisaoBody
 from app.modules.edicao_fotos.services.review import review_rows
+from app.modules.imobshotai.deps import get_imobshot_repository
+from app.modules.imobshotai.repository import ImobshotRepository
+from app.modules.imobshotai.service import sincronizar_do_lote
 
 router = APIRouter(prefix="/api/edicao-fotos/revisao", tags=["edicao-fotos"])
 
@@ -60,8 +64,16 @@ async def decide_route(
     body: DecisaoBody,
     actor: Actor = Depends(require_member),
     ports: PhotoEditingPorts = Depends(get_edicao_ports),
+    imobshot: ImobshotRepository = Depends(get_imobshot_repository),
 ) -> dict:
     batch = await load_visible_batch(ports, actor, str(lote_id))
+    # D6: on an ImobShotAI lote (one linked to a card) only org/platform admins approve or reject.
+    if not (actor.is_platform_admin or actor.is_agency_admin) and await asyncio.to_thread(
+        imobshot.card_id_do_lote, batch.id
+    ):
+        raise api_error(
+            403, "restrito_admin_organizacao", "Restrito a administradores da organização."
+        )
     photo = await ports.repo.get_photo(str(foto_id))
     if photo is None or str(photo.lote_id) != str(batch.id):
         raise api_error(404, "foto_nao_encontrada", "Foto não encontrada neste lote.")
@@ -75,5 +87,6 @@ async def decide_route(
         )
     except ENGINE_ERRORS as exc:
         raise engine_error(exc) from exc
+    await sincronizar_do_lote(imobshot, ports, batch.id, ator_id=actor.user_id)
     [row] = await review_rows(ports, batch, [outcome.photo], include_verdict=can_see_verdict(actor))
     return row

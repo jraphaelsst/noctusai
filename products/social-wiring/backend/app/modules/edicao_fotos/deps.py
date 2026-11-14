@@ -177,6 +177,19 @@ def get_edicao_ports(cfg: Any = Depends(get_settings)) -> PhotoEditingPorts:
         raise api_error(503, exc.code, str(exc)) from exc
 
 
+def get_imovel_lookup() -> Callable[[str, list[str]], dict[str, dict]]:
+    """Seam: `(org_id, codigos) -> {codigo: imóvel}` over the registry + mirror (`imovel_hub.busca_service.enriquecer`)."""
+    from uuid import UUID
+
+    from app.dependencies import get_scoped_admin_client
+    from app.modules.imovel_hub import busca_service
+
+    def lookup(org_id: str, codigos: list[str]) -> dict[str, dict]:
+        return busca_service.enriquecer(get_scoped_admin_client("social_wiring"), UUID(org_id), codigos)
+
+    return lookup
+
+
 def get_painel_client() -> Any:
     """FastAPI dependency — the `social_wiring`-scoped admin (service-role)
     client used ONLY by the dashboard RPC (`fotos_painel`, migration 133,
@@ -267,6 +280,7 @@ __all__ = [
     "get_credit_probe",
     "get_edicao_ports",
     "get_grant_repository",
+    "get_imovel_lookup",
     "get_painel_client",
     "get_platform_openai_key",
     "get_preferences_repository",
