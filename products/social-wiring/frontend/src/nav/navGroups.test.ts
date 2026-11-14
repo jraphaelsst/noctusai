@@ -30,6 +30,7 @@ const PRE_EXISTING_HREFS = [
   "/clientes",
   "/clientes/revisao",
   "/condominios",
+  "/guia-documentos",
   "/configuracoes",
   "/contatos",
   "/custos",
