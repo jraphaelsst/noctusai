@@ -1,5 +1,5 @@
 """
-Nós no Limiar -- CRM of Monica Tangerino's psychoanalysis practice (future ERP).
+Nós no Limiar -- CRM of Mônica Tangerino's psychoanalysis practice (future ERP).
 
 Run with: uvicorn app.main:app --reload --port 8020
 

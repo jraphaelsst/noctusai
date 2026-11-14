@@ -11,8 +11,8 @@
 --      of fin_settle_entry_locked / fin_reverse_settlement_locked.
 --   4. PostgREST's exposed list (authenticator `pgrst.db_schemas`): a dangling `monica` plus a missing
 --      `nosnolimiar` (ensure_schema_exposure is append-only and would leave the dangling entry).
--- INDEX NAMES (`idx_monica_*`) are deliberately NOT renamed: they are the names the frozen, applied migrations declare
--- (check_migration_guard_has_probe + verify_db_guards bind to them); an index name carries no behaviour.
+-- INDEX NAMES (`idx_monica_*`) are renamed by the NEXT file, 024_rename_monica_indexes.sql (an index name carries no
+-- behaviour, so it is a separate, metadata-only step).
 -- Everything is derived from the live catalog (pg_policies / pg_get_functiondef / pg_class), never copied, and a
 -- final guard RAISES (rolling the whole statement back) if any literal `monica` survives in the schema.
 --

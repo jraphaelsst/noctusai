@@ -161,7 +161,7 @@ def test_personal_live_refuses_a_vps_compose_off_noctus_net_or_publishing_ports(
     ("dashboard: false", "dashboard: true", "dashboard"),
 ])
 def test_personal_live_with_presence_history_repair_or_dashboard_on_is_refused(tmp_path, old, new, needle):
-    # the monica line (a non-personal one) also carries `mark_online: true` etc.: only the personal block is mutated
+    # the nosnolimiar line (a non-personal one) also carries `mark_online: true` etc.: only the personal block is mutated
     head, tail = LIVE.split("  - name: shadow\n")
     bad = head + "  - name: shadow\n" + tail.replace(old, new)
     root, vps = _root(tmp_path, bad), FakeVps(vps_yml=bad)

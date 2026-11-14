@@ -88,7 +88,7 @@ def test_connection_create_without_a_configured_waha_is_a_clear_503_not_a_fake(c
     assert resp.status_code == 503, resp.text
     # A stable catalog code, never free text naming the integration or its env var (no-leak: integration_error()).
     assert resp.json()["code"] == "not_configured"
-    assert "MONICA_WAHA" not in resp.text
+    assert "NOSNOLIMIAR_WAHA" not in resp.text and "MONICA_WAHA" not in resp.text
 
 
 # --- leads config -------------------------------------------------------------------------------------------
@@ -191,7 +191,7 @@ def test_purge_seam_deletes_untouched_whatsapp_leads_and_keeps_the_edited_one_de
 def test_delete_chat_seam_drops_the_untouched_lead_and_detaches_the_edited_one(client):
     from app.services.whatsapp_leads import on_delete_chat
 
-    chat_store = build_whatsapp_chat_store(None, schema="monica", allow_fake=True)
+    chat_store = build_whatsapp_chat_store(None, schema="nosnolimiar", allow_fake=True)
     _ingest(chat_store, _event("m1"))
     asyncio.run(on_delete_chat(ORG, CONN, CHAT))
     assert _leads(client) == []  # untouched automatic lead goes with the conversation
@@ -205,7 +205,7 @@ def test_delete_chat_seam_drops_the_untouched_lead_and_detaches_the_edited_one(c
     assert kept["last_message_preview"] is None
 
 
-def test_pause_route_is_not_mounted_in_monica_and_erasure_is_admin_only(client):
+def test_pause_route_is_not_mounted_in_nosnolimiar_and_erasure_is_admin_only(client):
     assert client.patch(f"/api/whatsapp/connections/{CONN}/chats/{CHAT}/agent-paused", json={"paused": True}).status_code in (404, 405)
     assert client.raw().post(f"/api/whatsapp/connections/{CONN}/chats/{CHAT}/apagar-dados").status_code == 401
 

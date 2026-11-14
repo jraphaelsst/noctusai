@@ -1,7 +1,7 @@
 """
 Nós no Limiar configuration.
 
-Extends the framework's ProductSettings -- the CRM of Monica Tangerino's psychoanalysis practice. Every knob
+Extends the framework's ProductSettings -- the CRM of Mônica Tangerino's psychoanalysis practice. Every knob
 that differs between dev and prod and has no safe shared default is EMPTY here and fails loud when used (a 503
 with a clear message), never a silent Fake in a real deploy (KB § PATTERNS/devops/deploy-config-contract.md).
 """

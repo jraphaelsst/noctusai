@@ -11119,14 +11119,14 @@ _ORBITY_018_PROBES: tuple[GuardProbe, ...] = (
 
 _NOSNOLIMIAR_SCHEMA = "nosnolimiar"
 
-# NB: the index keeps its original name (idx_monica_*) after the schema rename -- it is the name migration 015 declares.
+# 015 created it as idx_monica_whatsapp_connections_webhook_token; nosnolimiar 024 renamed it (product rename 2026-11-14).
 _NOSNOLIMIAR_WA_WEBHOOK_TOKEN_UNIQUE_PROBE = GuardProbe(
     id="nosnolimiar.whatsapp_connections.webhook_token_unique",
     product="nosnolimiar",
     schema=_NOSNOLIMIAR_SCHEMA,
-    guard_name="idx_monica_whatsapp_connections_webhook_token",
+    guard_name="idx_nosnolimiar_whatsapp_connections_webhook_token",
     kind="write_refusal",
-    migrations=("015_whatsapp.sql",),
+    migrations=("015_whatsapp.sql", "024_rename_monica_indexes.sql"),
     rationale="The webhook token routes an unauthenticated inbound call to an org; two connections sharing one would cross-deliver conversations between orgs.",
     sql=_do_block(f"""
 DECLARE
@@ -11144,7 +11144,7 @@ BEGIN
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
       RAISE;
-    ELSIF SQLERRM LIKE '%idx_monica_whatsapp_connections_webhook_token%' THEN
+    ELSIF SQLERRM LIKE '%idx_nosnolimiar_whatsapp_connections_webhook_token%' THEN
       RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
     ELSE
       RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
