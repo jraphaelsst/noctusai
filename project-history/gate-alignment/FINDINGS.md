@@ -2,14 +2,14 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile gate-walls`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**15 open / in-progress**, 0 fixed, 0 accepted (15 total).
+**14 open / in-progress**, 1 fixed, 0 accepted (15 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
 | backend-engineer | 1 | 0 | 0 | 1 | 0 | 0 |
 | feat/julia-turn-redesign | 4 | 0 | 0 | 4 | 0 | 0 |
 | frontend-engineer | 2 | 0 | 0 | 2 | 0 | 0 |
-| tooling-engineer | 8 | 0 | 5 | 3 | 0 | 0 |
+| tooling-engineer | 7 | 0 | 4 | 3 | 0 | 1 |
 
 ## Open / in-progress (bulk rows are summarised below; every row is in the NDJSON)
 
@@ -17,7 +17,6 @@
 |---|---|---|---|---|---|---|
 | GW-803dceed | tooling-engineer | `guard:executor-dispatch` | wall | high | open | keeper 2026-11-06 |
 | GW-68d5d731 | tooling-engineer | `guard:heavy-run` | wall | high | open | keeper 2026-11-06 |
-| GW-8a7e7ce8 | tooling-engineer | `guard:primary-write` | wall | high | open | keeper 2026-11-06 |
 | GW-49b87ec8 | tooling-engineer | `keeper:check-eight-way-sync` | wall | high | open | keeper 2026-11-06 |
 | GW-53a628ad | tooling-engineer | `release_steward deliverable scoped set` | wall | high | open | tech-lead 2026-11-12 |
 | GW-557af972 | backend-engineer | `keeper:check-upload-route-body-override` | wall | medium | open | keeper 2026-11-06 |
