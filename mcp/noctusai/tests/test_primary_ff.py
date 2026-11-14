@@ -224,3 +224,93 @@ def test_differing_untracked_collision_still_refuses_and_keeps_data(repos):
 
     assert r["status"] == "skipped_untracked_conflict" and r["files"] == ["rec.json"]
     assert (primary / "rec.json").read_text() == "mine\n"
+
+
+# --- 2026-11-13: self-healing the three states that held the primary 108 commits behind -------------
+
+def _lock(primary: Path, age_s: int) -> Path:
+    import os
+    import time
+    lock = primary / ".git" / "index.lock"
+    lock.write_text("")
+    t = time.time() - age_s
+    os.utime(lock, (t, t))
+    return lock
+
+
+def test_stale_index_lock_is_removed_then_fast_forwards(repos):
+    primary, peer = repos
+    _peer_pushes(peer)
+    lock = _lock(primary, 3600)
+    res = ff_primary_to_dev(str(primary), fetch=True)
+    assert res["status"] == "fast_forwarded"
+    assert res["removed_stale_index_lock"] >= 3600
+    assert not lock.exists()
+    assert "stale index.lock" in summary_line(res)
+
+
+def test_young_index_lock_is_left_alone(repos):
+    primary, peer = repos
+    _peer_pushes(peer)
+    lock = _lock(primary, 30)
+    res = ff_primary_to_dev(str(primary), fetch=True)
+    assert res["status"] == "skipped_locked"
+    assert lock.exists()
+
+
+def test_edit_identical_to_dev_is_restored_and_fast_forwards(repos):
+    primary, peer = repos
+    _commit(peer, "base.txt", "x\nrow-2\n")  # dev changes base.txt ...
+    _git(peer, "push", "-q", "origin", "HEAD:dev")
+    (primary / "base.txt").write_text("x\nrow-2\n")  # ... and the primary holds the same bytes, uncommitted
+    res = ff_primary_to_dev(str(primary), fetch=True)
+    assert res["status"] == "fast_forwarded"
+    assert res["restored_identical_dirty"] == ["base.txt"]
+    assert _git(primary, "status", "--porcelain", "--untracked-files=no") == ""
+
+
+def test_edit_that_differs_from_dev_still_refuses(repos):
+    primary, peer = repos
+    _commit(peer, "base.txt", "x\nrow-2\n")
+    _git(peer, "push", "-q", "origin", "HEAD:dev")
+    (primary / "base.txt").write_text("x\nmine\n")
+    res = ff_primary_to_dev(str(primary), fetch=True)
+    assert res["status"] == "skipped_dirty"
+    assert (primary / "base.txt").read_text() == "x\nmine\n"
+
+
+def test_local_commit_already_on_dev_is_dropped_with_backup_ref(repos):
+    primary, peer = repos
+    _commit(primary, "ledger.ndjson", "row-a\n")  # unpushed ledger-drain commit on the primary
+    _commit(peer, "ledger.ndjson", "row-a\nrow-b\n")  # the same row reached dev via a branch, plus more
+    _git(peer, "push", "-q", "origin", "HEAD:dev")
+    local = _git(primary, "rev-parse", "HEAD")
+    res = ff_primary_to_dev(str(primary), fetch=True)
+    assert res["status"] == "fast_forwarded"
+    assert res["dropped_landed_commits"] == 1
+    assert _git(primary, "rev-parse", "HEAD") == _git(primary, "rev-parse", "origin/dev")
+    assert _git(primary, "rev-parse", res["backup_ref"]) == local
+    assert "already on dev" in summary_line(res)
+
+
+def test_local_commit_not_on_dev_still_refuses(repos):
+    primary, peer = repos
+    _commit(primary, "ledger.ndjson", "row-only-here\n")
+    _commit(peer, "ledger.ndjson", "row-b\n")
+    _git(peer, "push", "-q", "origin", "HEAD:dev")
+    local = _git(primary, "rev-parse", "HEAD")
+    res = ff_primary_to_dev(str(primary), fetch=True)
+    assert res["status"] == "skipped_diverged"
+    assert _git(primary, "rev-parse", "HEAD") == local
+
+
+def test_cli_resolves_the_primary_from_a_worktree(repos, tmp_path):
+    primary, peer = repos
+    _peer_pushes(peer)
+    wt = tmp_path / "wt"
+    _git(primary, "worktree", "add", "-q", "--detach", str(wt))
+    script = Path(__file__).resolve().parents[1] / "primary_ff.py"
+    p = subprocess.run([sys.executable, str(script), str(wt)], capture_output=True, text=True)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "fast-forwarded" in p.stdout
+    assert _git(primary, "rev-parse", "HEAD") == _git(primary, "rev-parse", "origin/dev")
