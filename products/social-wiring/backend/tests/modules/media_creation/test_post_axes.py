@@ -23,6 +23,7 @@ from app.modules.media_creation import post_formatos as pf
 from app.modules.media_creation.post_formatos import AssetFato, validar_alvo
 from app.modules.media_creation.routers import post_assets as pa_router
 from app.modules.media_creation.services.post_assets_service import (
+    MAX_BYTES,
     MIDIA_BUCKET,
     MidiaFato,
     PostAssetError,
@@ -133,6 +134,9 @@ def ax(client, storage, probe):
     app = client._tc.app
     app.dependency_overrides[pa_router.get_midia_storage] = lambda: storage
     app.dependency_overrides[pa_router.get_midia_probe] = lambda: probe
+    app.dependency_overrides[pa_router.get_midia_stat] = lambda: (
+        lambda bucket, key: len(storage._blobs[bucket][key][1]) if key in storage._blobs.get(bucket, {}) else None
+    )
     sb = client.mock_supabase
     marca = _id()
     sb.from_("marcas").insert({"id": marca, "org_id": ORG, "name": "M"}).execute()
@@ -149,7 +153,8 @@ def ax(client, storage, probe):
 
 def _put(client, storage, probe, name, fato, post_id=None):
     key = f"org/{ORG}/posts/{post_id or client.post_id}/saidas/{name}"
-    asyncio.run(storage.put(bucket=MIDIA_BUCKET, key=key, data=b"x" * 10, content_type="video/mp4"))
+    cab = b"\x89PNG\r\n\x1a\n" if name.endswith(".png") else b"\x00\x00\x00\x18ftypmp42"
+    asyncio.run(storage.put(bucket=MIDIA_BUCKET, key=key, data=cab + b"x" * 10, content_type="video/mp4"))
     probe.fatos[key] = fato
     return key
 
@@ -189,6 +194,25 @@ class TestAssets:
         r = _registrar(ax, key)
         assert r.status_code == 422 and "caminho_invalido" in r.text
 
+    def test_oversized_object_is_413_without_reading_it(self, ax, storage, probe, monkeypatch):
+        key = _put(ax, storage, probe, "a.mp4", MidiaFato("video", 1080, 1920, 5.0))
+        # the stat seam reports a size over the limit (metadata only); the Fake's get must never be reached
+        ax._tc.app.dependency_overrides[pa_router.get_midia_stat] = lambda: (lambda bucket, k: MAX_BYTES + 1)
+
+        async def _nao_ler(**_):
+            raise AssertionError("storage.get must not be called for an oversized object")
+
+        monkeypatch.setattr(storage, "get", _nao_ler)
+        r = _registrar(ax, key)
+        assert r.status_code == 413 and "arquivo_grande_demais" in r.text
+
+    def test_header_bytes_must_match_the_extension(self, ax, storage, probe):
+        key = f"org/{ORG}/posts/{ax.post_id}/saidas/a.png"
+        asyncio.run(storage.put(bucket=MIDIA_BUCKET, key=key, data=b"not a png at all", content_type="image/png"))
+        probe.fatos[key] = MidiaFato("imagem", 10, 10, None)
+        r = _registrar(ax, key)
+        assert r.status_code == 422 and "tipo_arquivo_inconsistente" in r.text
+
     def test_missing_blob(self, ax):
         key = f"org/{ORG}/posts/{ax.post_id}/saidas/nada.mp4"
         r = _registrar(ax, key)
@@ -196,7 +220,7 @@ class TestAssets:
 
     def test_unreadable_file_is_422(self, ax, storage, probe):
         key = f"org/{ORG}/posts/{ax.post_id}/saidas/lixo.mp4"
-        asyncio.run(storage.put(bucket=MIDIA_BUCKET, key=key, data=b"x", content_type="video/mp4"))
+        asyncio.run(storage.put(bucket=MIDIA_BUCKET, key=key, data=b"\x00\x00\x00\x18ftypmp42", content_type="video/mp4"))
         r = _registrar(ax, key)
         assert r.status_code == 422 and "arquivo_ilegivel" in r.text
 
@@ -319,8 +343,13 @@ class TestMigration:
         assert "FROM PUBLIC, anon, authenticated, service_role" in SQL
         assert "DEPRECATED" in SQL and "DROP COLUMN" not in SQL.upper()
 
+    def test_the_bucket_has_size_and_mime_limits(self):
+        assert "file_size_limit" in SQL and "524288000" in SQL
+        for m in ("image/jpeg", "image/png", "image/webp", "image/heic", "video/mp4", "video/quicktime"):
+            assert f"'{m}'" in SQL
+
     def test_the_bucket_is_private(self):
-        assert "('sw-posts-midia', 'sw-posts-midia', false)" in SQL
+        assert "VALUES ('sw-posts-midia', 'sw-posts-midia', false," in SQL
 
 
 def _png(w: int, h: int) -> bytes:

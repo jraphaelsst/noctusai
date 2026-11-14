@@ -49,6 +49,41 @@ class MidiaFato:
 MidiaProbe = Callable[[bytes, str], MidiaFato]
 
 
+#: Size seam: (bucket, key) -> stored object size in bytes from storage METADATA (no download), None when absent.
+MidiaStat = Callable[[str, str], Optional[int]]
+
+
+def stat_midia(client: Any, bucket: str, key: str) -> Optional[int]:
+    """Real stat: the object size from Supabase Storage list metadata — never downloads the object."""
+    pasta, _, nome = key.rpartition("/")
+    itens = client.storage.from_(bucket).list(pasta, {"search": nome, "limit": 100}) or []
+    for it in itens:
+        if it.get("name") == nome:
+            tam = (it.get("metadata") or {}).get("size")
+            if tam is None:
+                raise PostAssetError(422, {"code": "tamanho_indisponivel", "detail": "Tamanho do arquivo indisponível"})
+            return int(tam)
+    return None
+
+
+_MAGIC_OK = {
+    ".jpg": (b"\xff\xd8\xff",), ".jpeg": (b"\xff\xd8\xff",), ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".gif": (b"GIF87a", b"GIF89a"), ".webp": (b"RIFF",), ".webm": (b"\x1a\x45\xdf\xa3",),
+}
+
+
+def checar_magic(dados: bytes, filename: str) -> None:
+    """The header bytes must match the extension's container (never trust the name); ISO-BMFF ('ftyp') for mp4/mov/m4v."""
+    ext = os.path.splitext(filename)[1].lower()
+    cab = dados[:16]
+    if ext in (".mp4", ".mov", ".m4v"):
+        ok = cab[4:8] == b"ftyp"
+    else:
+        ok = any(cab.startswith(m) for m in _MAGIC_OK.get(ext, ()))
+    if not ok:
+        raise PostAssetError(422, {"code": "tipo_arquivo_inconsistente", "detail": "O conteúdo do arquivo não corresponde à extensão"})
+
+
 def probe_midia(dados: bytes, filename: str) -> MidiaFato:
     """Real probe (ffprobe via the seed media layer): kind by container, size + duration from the stream."""
     ext = os.path.splitext(filename)[1].lower()

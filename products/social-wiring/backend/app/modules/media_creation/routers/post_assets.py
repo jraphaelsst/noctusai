@@ -22,9 +22,12 @@ from app.modules.media_creation.services.post_assets_service import (
     MAX_BYTES,
     MIDIA_BUCKET,
     MidiaProbe,
+    MidiaStat,
     PostAssetError,
     PostAssetsService,
+    checar_magic,
     probe_midia,
+    stat_midia,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,6 +43,12 @@ def get_midia_storage() -> StorageBackend:
 def get_midia_probe() -> MidiaProbe:
     """DI seam: the media reader (tests override with a deterministic probe)."""
     return probe_midia
+
+
+def get_midia_stat() -> MidiaStat:
+    """DI seam: object size from storage metadata, before any download (tests inject a Fake)."""
+    client = get_admin_client()
+    return lambda bucket, key: stat_midia(client, bucket, key)
 
 
 def get_post_assets_db() -> Any:
@@ -78,15 +87,22 @@ async def registrar_asset(
     db=Depends(get_post_assets_db),
     storage: StorageBackend = Depends(get_midia_storage),
     probe: MidiaProbe = Depends(get_midia_probe),
+    stat: MidiaStat = Depends(get_midia_stat),
 ):
     svc = _svc(auth, db)
     try:
         await run_in_threadpool(svc.validar_caminho, post_id, body.storage_path)
+        tamanho = await run_in_threadpool(stat, MIDIA_BUCKET, body.storage_path)
+        if tamanho is None:
+            raise PostAssetError(422, {"code": "arquivo_nao_encontrado", "detail": "Arquivo não encontrado no armazenamento"})
+        if tamanho > MAX_BYTES:  # checked on metadata BEFORE the object is read into memory
+            raise PostAssetError(413, {"code": "arquivo_grande_demais", "detail": "Arquivo acima do limite"})
         blob = await storage.get(bucket=MIDIA_BUCKET, key=body.storage_path)
         if blob is None:
             raise PostAssetError(422, {"code": "arquivo_nao_encontrado", "detail": "Arquivo não encontrado no armazenamento"})
         if len(blob.data) > MAX_BYTES:
             raise PostAssetError(413, {"code": "arquivo_grande_demais", "detail": "Arquivo acima do limite"})
+        checar_magic(blob.data, body.storage_path)
         fato = await run_in_threadpool(probe, blob.data, body.storage_path)
         row = await run_in_threadpool(
             lambda: svc.registrar(

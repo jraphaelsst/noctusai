@@ -247,6 +247,7 @@ COMMENT ON COLUMN social_wiring.cs_posts.formato IS
 -- ----------------------------------------------------------------------------
 -- 6. Private bucket for post media (signed URLs only)
 -- ----------------------------------------------------------------------------
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('sw-posts-midia', 'sw-posts-midia', false)
-ON CONFLICT (id) DO NOTHING;
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('sw-posts-midia', 'sw-posts-midia', false, 524288000,
+        ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'video/mp4', 'video/quicktime']::text[])
+ON CONFLICT (id) DO UPDATE SET file_size_limit = EXCLUDED.file_size_limit, allowed_mime_types = EXCLUDED.allowed_mime_types;
