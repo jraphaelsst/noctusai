@@ -277,3 +277,49 @@ def test_bad_worktree_path_is_a_loud_error(tmp_path):
     r = render("demo", "finance", worktree_path=str(tmp_path / "nope"), schema="erp", skip_fetch=True,
                live_products_fn=_live("demo"))
     assert r["status"] == "error"
+
+
+# ---- all-consumers check / write ----------------------------------------------------------------
+
+from tools.noctus.dev.render_organ_migration import render_all_consumers  # noqa: E402
+
+
+def _consumer(tmp_path, slug="demo"):
+    products, mig = _product(tmp_path, slug)
+    _call(products, confirm=True)
+    (products / slug / "backend" / "app").mkdir(parents=True)
+    return products, mig
+
+
+def _all(products, **kw):
+    # schema comes from the product's create_product_app declaration; supply it the way a product does.
+    main = products / "demo" / "backend" / "app" / "main.py"
+    main.write_text('create_product_app(schema="erp")\n')
+    return render_all_consumers(products_dir=products, slugs=["demo"], worktree_path=None, **kw)
+
+
+def test_all_consumers_clean_when_render_matches(tmp_path):
+    products, _ = _consumer(tmp_path)
+    r = _all(products)
+    assert r["status"] == "clean" and r["ok"] and r["checked"] == 1 and r["drifted"] == []
+
+
+def test_all_consumers_reports_drift_without_writing_then_write_fixes(tmp_path):
+    products, mig = _consumer(tmp_path)
+    f = mig / "002_finance.sql"
+    f.write_text(f.read_text() + "-- stale\n")
+    r = _all(products)
+    assert r["status"] == "drift" and not r["ok"]
+    assert [(d["product"], d["organ"]) for d in r["drifted"]] == [("demo", "finance")]
+    assert f.read_text().endswith("-- stale\n")
+    w = _all(products, write=True)
+    assert w["status"] == "rendered" and w["ok"]
+    assert f.read_text() == organ_migration_sql("finance", "erp")
+    assert _all(products)["status"] == "clean"
+
+
+def test_all_consumers_ignores_products_that_do_not_consume(tmp_path):
+    products, _ = _product(tmp_path)
+    (products / "demo" / "backend" / "app").mkdir(parents=True)
+    r = _all(products)
+    assert r["status"] == "clean" and r["checked"] == 0

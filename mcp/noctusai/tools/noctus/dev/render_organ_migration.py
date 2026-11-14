@@ -231,6 +231,89 @@ def render_organ_migration(
     return {**result, "status": "new_revision" if new_revision else "created"}
 
 
+def _active_slugs(root: Path) -> list[str]:
+    """Slugs of `deploy/fleet/active-scope.txt` (the set every gate checks; asleep products are out)."""
+    f = root / "deploy" / "fleet" / "active-scope.txt"
+    if not f.is_file():
+        return []
+    return [ln.strip() for ln in f.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")]
+
+
+def render_all_consumers(
+    *,
+    write: bool = False,
+    worktree_path: str | Path | None = None,
+    generator_fn: Callable[[str, str, list[int]], dict[str, Any]] | None = None,
+    products_dir: Path | None = None,
+    slugs: list[str] | None = None,
+) -> dict[str, Any]:
+    """Every active product's committed organ render vs the organ generator output of the tree.
+
+    A product is a consumer of an organ when one of its `backend/migrations/*.sql` starts with the
+    organ's generated header. `write=False` (check) lists the consumers whose render drifted;
+    `write=True` re-renders them (render_organ_migration semantics: unapplied file refreshed in
+    place, applied one => a new revision file). Cheap: generator output is memoised per
+    (organ, schema, revisions), so each organ costs one child interpreter plus one per distinct schema.
+
+    Returns ``{status, ok, checked, drifted, rendered, errors}``; status: clean | drift | rendered | error.
+    """
+    root = Path(resolve_caller_root(worktree_path)) if worktree_path is not None else Path(__file__).resolve().parents[5]
+    pdir = products_dir or root / "products"
+    cache: dict[tuple[str, str, tuple[int, ...]], dict[str, Any]] = {}
+    inner = generator_fn
+
+    def gen(organ: str, schema: str, revisions: list[int]) -> dict[str, Any]:
+        key = (organ, schema, tuple(revisions))
+        if key not in cache:
+            if inner is not None:
+                cache[key] = inner(organ, schema, revisions)
+            elif worktree_path is not None:
+                cache[key] = _generator_from_tree(root, organ, schema, revisions)
+            else:
+                cache[key] = _generator_in_process(organ, schema, revisions)
+        return cache[key]
+
+    registered = gen("", "probe_schema", [1])
+    if "error" in registered:
+        return {"status": "error", "ok": False, "checked": 0, "drifted": [], "rendered": [], "errors": [registered["error"]]}
+    headers: dict[str, str] = {}
+    for organ in registered["registered"]:
+        probe = gen(organ, "probe_schema", [1])
+        if "header" in probe:
+            headers[organ] = probe["header"]
+
+    active = slugs if slugs is not None else _active_slugs(root)
+    live = lambda: list(active)  # noqa: E731 - offline roster, never the network catalog
+    checked, drifted, rendered, errors = 0, [], [], []
+    for slug in active:
+        mig = pdir / slug / "backend" / "migrations"
+        if not mig.is_dir():
+            continue
+        texts = [p.read_text(encoding="utf-8") for p in sorted(mig.glob("*.sql"))]
+        for organ, header in headers.items():
+            if not any(t.startswith(header) for t in texts):
+                continue
+            checked += 1
+            r = render_organ_migration(
+                slug, organ, confirm=write, worktree_path=None,
+                products_dir=pdir, skip_fetch=True, live_products_fn=live, generator_fn=gen,
+            )
+            st = r["status"]
+            if st == "up_to_date":
+                continue
+            row = {"product": slug, "organ": organ, "status": st, "path": r.get("path")}
+            if st in ("would_refresh", "would_new_revision"):
+                drifted.append(row)
+            elif st in ("refreshed", "new_revision"):
+                rendered.append(row)
+            else:
+                errors.append({**row, "error": r.get("error")})
+    status = "error" if errors else ("rendered" if rendered else ("drift" if drifted else "clean"))
+    return {"status": status, "ok": status in ("clean", "rendered"), "checked": checked,
+            "drifted": drifted, "rendered": rendered, "errors": errors}
+
+
 def register(server) -> None:
     @server.tool(
         name="noctus.dev.render_organ_migration",
@@ -247,18 +330,25 @@ def register(server) -> None:
             "file path AND the organ generator code (run in a child interpreter on that tree's seed "
             "dirs) come from it; omitted => the server's own tree, flagged in `warnings`/`generator_source`. Pair the "
             "product with noctusai_lib.testing.organs.assert_organ_migration_current. "
+            "all_consumers=True (product/organ ignored): check EVERY active consumer's committed render against the "
+            "generator (confirm=False lists drift, confirm=True re-renders) -- the derived-artifact check for a seed organ generator change. "
             "KB § PATTERNS/architect/vertical-seed.md."
         ),
     )
     def _render_organ_migration(
-        product: str,
-        organ: str,
+        product: str = "",
+        organ: str = "",
         confirm: bool = False,
         schema: str | None = None,
         allow_inactive: bool = False,
         worktree_path: str | None = None,
         skip_fetch: bool = False,
+        all_consumers: bool = False,
     ) -> dict:
+        if all_consumers:
+            return render_all_consumers(write=confirm, worktree_path=worktree_path)
+        if not product or not organ:
+            return {"status": "error", "error": "product and organ are required unless all_consumers=True"}
         return render_organ_migration(
             product, organ, confirm=confirm, schema=schema, allow_inactive=allow_inactive,
             worktree_path=worktree_path, skip_fetch=skip_fetch,

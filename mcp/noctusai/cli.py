@@ -529,6 +529,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-log", action="store_true", help="With --check-merge-loss: do not write the telemetry row / finding (pure read).")
     parser.add_argument("--check-merge-debt", action="store_true", help="Unmerged-to-origin/main backlog monitor (absorbed scripts/merge-debt-monitor.sh, read-only). MCP: noctus.dev.check_merge_debt.")
     parser.add_argument("--propagate", metavar="TARGET", choices=["composes", "dockerfiles", "both"], nargs="?", const="both", help="Containerization codegen from products/seed/ (absorbed scripts/propagate-{composes,dockerfiles}.sh). Pair --check (drift gate) or --dry. MCP: noctus.dev.propagate.")
+    parser.add_argument("--render-organ-consumers", action="store_true", help="Check EVERY active product's committed organ migration render against its seed organ generator (exit 1 on drift, lists the drifted consumers); pair --write to re-render them. The derived-artifact check for a seed organ generator change (pre-commit runs it when an organ generator is staged). MCP: noctus.dev.render_organ_migration all_consumers=True. KB § PATTERNS/architect/vertical-seed.md.")
     parser.add_argument("--smoke-fleet", action="store_true", help="Post-fleet-up /api/health smoke (absorbed scripts/smoke-fleet.sh). Exit 0 healthy / 1 degraded. MCP: noctus.dev.smoke_fleet.")
     parser.add_argument("--predeploy-check", metavar="PRODUCT", help="Pre-deploy gate for a product: framework-dep parity + frontend build + backend pytest; classify failures, auto-fix the framework-dep class (with --fix), report+learn unknowns. Exit 0 ready / 1 not-ready, where status distinguishes 'blocked' (a real failure) from 'inconclusive' (the harness could not measure — e.g. pytest died at collection because the interpreter lacks a dep the product DECLARES; that is a verdict on the setup, not the code). MCP: noctus.dev.predeploy_check.")
     parser.add_argument("--fix", action="store_true", help="With --predeploy-check: auto-fix the safe (framework-dep) failure class in-process. With --check-framework-deps: borrow real version ranges from the seed's own package.json(s)/donor product; never writes \"*\".")
@@ -4270,6 +4271,12 @@ def main():
             rd = propagate_dockerfiles(dry=args.dry, check=args.check)
             print(json.dumps(rd, default=str)); codes.append(int(rd.get("exit_code", 0)))
         sys.exit(max(codes) if codes else 0)
+
+    elif args.render_organ_consumers:
+        from tools.noctus.dev.render_organ_migration import render_all_consumers
+        r = render_all_consumers(write=args.write, worktree_path=args.worktree_path)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r["ok"] else 1)
 
     elif args.smoke_fleet:
         from tools.noctus.dev.smoke_fleet import smoke_fleet
