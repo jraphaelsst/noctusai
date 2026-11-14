@@ -252,6 +252,17 @@ spec list about to run (`frontend_gate_products`), so prepared == gated. Proven
 against a real temp git repo + real dirs (marker file, dummy package, `@noctusai/*`
 pointing at the merged-tip seed).
 
+**2026-11-14 — scoped-check (`ci_parity:suite:*`) budgets are per-product defaults, never hand-set env.**
+`ci_parity:suite:<product|seed>:<x>` now resolves to the declared `pytest:<x>` row (an undeclared one rides the
+generic `pytest:` row; `db-guards:*` keeps the `ci_parity:suite:` prefix row); `NOCTUS_GATE_BUDGETS_JSON` still wins,
+on either name. Evidence for the raise (`~/.noctus/hw-runs`, gate-verdicts): the full social-wiring suite ran 684-1025 s
+quiet, 1285 s and 2208 s under load; seed/lib/backend 277-419 s quiet, 938 s loaded; before this the flat 600 s
+timed SW out 51x and seed 42x and the env was hand-set 240x. Now `pytest:social-wiring` 1800, `pytest:seed/lib/backend`
+1200, per-attempt cap 3000, overall ceiling 5400. `pytest-xdist` is NOT installed in the toolkit venv (`pytest -n`
+failed 42x): installing it is a dependency decision for the architect, not made here. The CLI also answers an
+unknown flag with "did you mean ...?" (`_DidYouMeanParser`), and `check_workflow_cli_flags_exist` now covers the
+skills / agents / KB / CLAUDE*.md docs, not only workflows (`--x-*`, `--x-<y>` and `--flag` are patterns, skipped).
+
 **2026-10-21 — gate budgets loosened ~3x + ONE retry of a timed-out gate.** The
 2026-10-19 budgets (SW 480 s, seed/lib 360 s, mcp 300/240 s) still produced
 repeated `gate_timeout` blocks on a loaded laptop for suites that pass when run

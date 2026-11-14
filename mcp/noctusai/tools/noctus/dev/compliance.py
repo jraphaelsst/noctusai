@@ -6772,17 +6772,38 @@ def check_workflow_job_timeouts(repo_root: Path | None = None) -> list[dict]:
 _CLI_FLAG_RE = re.compile(r"(?<![\w-])(--[A-Za-z0-9][\w-]*)")
 
 
+def _expand_fstring_flag(node: ast.JoinedStr, loop_vars: dict[str, list[str]]) -> list[str]:
+    """`f"--pp-{x}"` inside `for x in ("a", "b")` -> ["--pp-a", "--pp-b"]; [] when it cannot be resolved statically."""
+    names = [v.value.id for v in node.values if isinstance(v, ast.FormattedValue) and isinstance(v.value, ast.Name)]
+    if len(names) != 1 or names[0] not in loop_vars:
+        return []
+    out = []
+    for val in loop_vars[names[0]]:
+        out.append("".join(v.value if isinstance(v, ast.Constant) else val for v in node.values))
+    return [o for o in out if o.startswith("--")]
+
+
 def _cli_defined_flags(root: Path) -> set[str]:
-    """Every `--flag` string literal passed to an `add_argument(...)` call in
-    mcp/noctusai/cli.py (AST, so no import side effects)."""
+    """Every `--flag` passed to an `add_argument(...)` call in mcp/noctusai/cli.py (AST, so no import side
+    effects): string literals, and f-strings built from a `for x in (<str literals>)` loop."""
     cli = root / "mcp" / "noctusai" / "cli.py"
     tree = ast.parse(cli.read_text(encoding="utf-8"))
     flags: set[str] = {"--help"}
-    for node in ast.walk(tree):
+
+    def walk(node: ast.AST, loop_vars: dict[str, list[str]]) -> None:
+        if isinstance(node, ast.For) and isinstance(node.target, ast.Name) and isinstance(node.iter, (ast.Tuple, ast.List)):
+            vals = [e.value for e in node.iter.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            loop_vars = {**loop_vars, node.target.id: vals}
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument":
             for a in node.args:
                 if isinstance(a, ast.Constant) and isinstance(a.value, str) and a.value.startswith("--"):
                     flags.add(a.value)
+                elif isinstance(a, ast.JoinedStr):
+                    flags.update(_expand_fstring_flag(a, loop_vars))
+        for child in ast.iter_child_nodes(node):
+            walk(child, loop_vars)
+
+    walk(tree, {})
     return flags
 
 
@@ -6818,9 +6839,36 @@ def _logical_lines(script: str) -> list[str]:
     return [ln for ln in joined.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
 
 
+_CLI_DOC_GLOBS = (".claude/skills/**/*.md", ".claude/agents/**/*.md", "KNOWLEDGE-BASE/**/*.md", "CLAUDE.md", "CLAUDE/*.md")
+
+
+def _iter_cli_doc_files(root: Path):
+    """Docs that teach an agent to run `cli.py --flag` (skills, agents, KB, CLAUDE*.md)."""
+    seen: set[Path] = set()
+    for pat in _CLI_DOC_GLOBS:
+        for f in sorted(root.glob(pat)):
+            if f.is_file() and f not in seen:
+                seen.add(f)
+                yield f
+
+
+def _cli_flags_in_line(line: str) -> list[str]:
+    """Flags that follow a `cli.py` mention up to the first shell/markdown separator."""
+    out: list[str] = []
+    for m in re.finditer(r"\bcli\.py\b", line):
+        tail = re.split(r"&&|\|\||[|;)`]", line[m.end():], maxsplit=1)[0]
+        for fm in _CLI_FLAG_RE.finditer(tail):
+            flag = fm.group(1)
+            wildcard = flag.endswith("-") or tail[fm.end():fm.end() + 1] in ("*", "<", "{")
+            if not wildcard and flag != "--flag":  # `--harness-*` / `--check-<x>` / the `--flag` placeholder are patterns
+                out.append(flag)
+    return out
+
+
 def check_workflow_cli_flags_exist(repo_root: Path | None = None) -> list[dict]:
-    """Every `cli.py --<flag>` in a workflow `run:` block must be a flag
-    defined by mcp/noctusai/cli.py's argparse (derived from its AST)."""
+    """Every `cli.py --<flag>` literal in a workflow `run:` block OR in a skill / agent / KB / CLAUDE*.md doc
+    must be a flag defined by mcp/noctusai/cli.py's argparse (derived from its AST). A doc naming a flag that
+    does not exist sends the next agent into an argparse error (or an abbreviation that no longer parses)."""
     root = repo_root or REPO_ROOT
     issues: list[dict] = []
     if not (root / "mcp" / "noctusai" / "cli.py").is_file():
@@ -6831,21 +6879,35 @@ def check_workflow_cli_flags_exist(repo_root: Path | None = None) -> list[dict]:
             issues.append({"file": rel, "issue": step, "severity": "high"})
             continue
         for line in _logical_lines(step["run"]):
-            for m in re.finditer(r"\bcli\.py\b", line):
-                tail = re.split(r"&&|\|\||[|;)]", line[m.end():], maxsplit=1)[0]
-                for fm in _CLI_FLAG_RE.finditer(tail):
-                    flag = fm.group(1)
-                    if flag not in defined:
-                        label = step.get("name") or f"#{i}"
-                        issues.append({
-                            "file": rel,
-                            "issue": (
-                                f"job `{job_id}` step `{label}` runs `cli.py {flag}` but "
-                                f"mcp/noctusai/cli.py defines no such flag — the step would "
-                                f"fail only in CI. Use an existing flag or add it to cli.py."
-                            ),
-                            "severity": "high",
-                        })
+            for flag in _cli_flags_in_line(line):
+                if flag not in defined:
+                    label = step.get("name") or f"#{i}"
+                    issues.append({
+                        "file": rel,
+                        "issue": (
+                            f"job `{job_id}` step `{label}` runs `cli.py {flag}` but "
+                            f"mcp/noctusai/cli.py defines no such flag — the step would "
+                            f"fail only in CI. Use an existing flag or add it to cli.py."
+                        ),
+                        "severity": "high",
+                    })
+    for f in _iter_cli_doc_files(root):
+        try:
+            lines = f.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for n, line in enumerate(lines, 1):
+            for flag in _cli_flags_in_line(line):
+                if flag not in defined:
+                    issues.append({
+                        "file": str(f.relative_to(root)),
+                        "line": n,
+                        "issue": (
+                            f"doc line {n} tells the reader to run `cli.py {flag}` but mcp/noctusai/cli.py "
+                            f"defines no such flag (renamed, abbreviated or never existed). Use the exact flag."
+                        ),
+                        "severity": "high",
+                    })
     return issues
 
 

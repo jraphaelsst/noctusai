@@ -120,7 +120,7 @@ After all slices in §4a.1 are delivered + integrated:
 - **MCP**: `noctus.dev.proposal_template` — returns the canonical template (which now carries `**Note kind:**` field + per-kind guidance).
 - **MCP**: `noctus.dev.codify_log(stage, target, description, force?)` — append a codification event with s-stage progression enforcement (s4 requires preceding s3 same-target · s3 requires preceding s1|s2 same-target · `force=True` with rationale for backfill / same-commit s2→s3→s4 compression). Solves the bypass-the-stages slip that needed 5× manual backfill on 2026-05-26 evening. Sibling of §4a.2 — the dispatched engineer / inline-lens EMITS what §4a.2 anticipates. → `KB § PATTERNS/common/methodology-codification-pipeline.md`.
 - **Keeper**: `check_project_has_dispatch_routing` (Stage-4, severity warning, 2026-05-26 evening) — every PROJECT.md with §6 phases must carry §4a; projects whose PROJECT.md first-commit predates the rule's birthday are grandfathered via git first-commit date.
-- **CLI**: `python mcp/noctusai/cli.py --list-proposals --product <slug>` — existing listing (project-scoped listing TBD as follow-up).
+- **CLI**: `python mcp/noctusai/cli.py --proposals --product <slug>` — existing listing (project-scoped listing TBD as follow-up).
 - **CLI**: `python mcp/noctusai/cli.py --codify-log <STAGE> <TARGET> <DESCRIPTION> [--force --codify-source-ref <ref>]` — codify_log from the command line.
 - **CLI**: `python mcp/noctusai/cli.py --check-project-has-dispatch-routing` — run the dispatch-routing keeper standalone.
 

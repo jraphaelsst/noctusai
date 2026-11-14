@@ -109,3 +109,28 @@ def test_real_tree_clean():
     assert C.check_workflow_cli_flags_exist(REPO) == []
     assert C.check_workflow_mcp_requirements_path(REPO) == []
     assert all(i["severity"] == "inconclusive" for i in C.check_workflow_actionlint(REPO))
+
+
+class TestCliFlagsInDocs:
+    def _doc_repo(self, tmp_path, rel, text):
+        r = _repo(tmp_path, "python mcp/noctusai/cli.py --check-real")
+        f = r / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text, encoding="utf-8")
+        return r
+
+    @pytest.mark.parametrize("rel", [".claude/skills/noc-x/SKILL.md", ".claude/agents/a.md",
+                                     "KNOWLEDGE-BASE/CONTEXT/PATTERNS/p.md", "CLAUDE.md", "CLAUDE/backend.md"])
+    def test_stale_flag_in_every_doc_surface_flagged(self, tmp_path, rel):
+        r = self._doc_repo(tmp_path, rel, "run `python mcp/noctusai/cli.py --check-ghost` now\n")
+        out = C.check_workflow_cli_flags_exist(r)
+        assert len(out) == 1 and out[0]["file"] == rel and out[0]["line"] == 1 and "--check-ghost" in out[0]["issue"]
+
+    def test_real_flag_and_wildcard_and_placeholder_pass(self, tmp_path):
+        r = self._doc_repo(tmp_path, "CLAUDE.md",
+                           "`cli.py --check-real`, `cli.py --harness-*`, `cli.py --check-<name>`, `cli.py --flag`\n")
+        assert C.check_workflow_cli_flags_exist(r) == []
+
+    def test_fstring_loop_flags_are_known(self):
+        defined = C._cli_defined_flags(REPO)
+        assert "--pp-kind" in defined and "--source-register-query" in defined
