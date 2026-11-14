@@ -140,6 +140,7 @@ async def start_worker(
     # serves until the refresher's next tick succeeds.
     await refresh_catalog(store)
     _gate = ProcessingGate(ports, ttl_seconds=float(cfg.edicao_fotos_gate_ttl_seconds))
+    # poll-budget: claim poll, 2s base doubling to the 300s seed cap when idle, reset on work; 1 calls/tick (rpc claim_next_job); worst 288/day per idle worker (43200/day only while busy at the 2s base); idle=backoff
     _worker = Worker(
         ports.jobs,
         worker_id=worker_id(),
