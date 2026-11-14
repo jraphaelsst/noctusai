@@ -83,10 +83,12 @@ def _purpose(ti: dict[str, Any], command: str, fallback: str) -> str:
     return f"{fallback}: {' '.join(command.split())[:70]}"
 
 
-def _rewrite_finite(ti: dict[str, Any], command: str) -> dict[str, Any]:
+def rewrite_finite(ti: dict[str, Any], command: str, wrapped: str | None = None) -> dict[str, Any]:
+    """The REWRITE verdict. `command` is what the agent wrote (it names the purpose); `wrapped` is what actually runs
+    inside the wrapper when an inner rewrite already changed it (the heavy-run gate, via `bash_rewrite_chain`)."""
     q = shlex.quote
     cmd = (f"python3 {q(str(_BG_RUN))} --purpose {q(_purpose(ti, command, 'background'))} "
-           f"--done 'the command exits' --command={q(command)}")
+           f"--done 'the command exits' --command={q(wrapped if wrapped is not None else command)}")
     return {"decision": "allow", "updated_input": {**ti, "command": cmd},
             "context": "this background launch was wrapped in scripts/bg_run.py: it ends the moment the command exits, "
                        f"or its owning session ends; you are notified as before. {KB_POINTER}"}
@@ -145,5 +147,5 @@ def decide(payload: dict[str, Any]) -> dict[str, Any] | None:
             return _deny("the wrapped command is an open-ended loop/poll/follow with no --done-when check")
         return None
     if not found:
-        return _rewrite_finite(ti, command)
+        return rewrite_finite(ti, command)
     return _deny(_teach(found))

@@ -2,7 +2,7 @@
 
 > Generated from `gate-alignment-inventory.json` by `python mcp/noctusai/cli.py --gate-alignment render`. Method and rules: `KB § PATTERNS/common/gate-methodology-sync.md`. Firing counts are measured from 943 Claude Code session transcripts (~/.claude/projects, 2026-08..2026-11-05), tool results only, one count per tool call; guard-events.ndjson for live events (upper-bound-free: tool results only, one count per tool call).
 
-Totals by class: **?** 37, **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 193 gates). Mechanism burn-down: {'gates': 193, 'declared': 76, 'declared_none_justified': 12, 'undeclared_baseline': 117}.
+Totals by class: **?** 38, **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 194 gates). Mechanism burn-down: {'gates': 194, 'declared': 77, 'declared_none_justified': 12, 'undeclared_baseline': 117}.
 
 | Gate | Standard | Construction mechanism | Owner | Firings (sessions) | Class |
 |---|---|---|---|---:|---|
@@ -63,6 +63,7 @@ Totals by class: **?** 37, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | `guard:advisor-write` |  | .claude/agents/product-manager.md | tooling-engineer | 0 (0) | ? |
 | `guard:background-agent-idle` |  | KB § PATTERNS/common/background-agent-lifecycle.md (product-engineer hand-back clause + no | tooling-engineer | 0 (0) | ? |
 | `guard:background-launch` |  | scripts/bg_run.py launch wrapper, applied BY CONSTRUCTION: the guard rewrites every non-in | tooling-engineer | 0 (0) | ? |
+| `guard:bash-rewrite` |  | mcp/noctusai/tools/noctus/dev/bash_rewrite_chain.py (the ONE composed rewrite: heavy-run w | tooling-engineer | 0 (0) | ? |
 | `guard:council-read` |  | mcp/noctusai/tools/noctus/dev/council_ledger.py (neutral recorder: tool-assigned labels, s | tooling-engineer | 0 (0) | ? |
 | `guard:dev-advance` |  | KB § PATTERNS/architect/orchestration-craft-canon.md §6.13 (push leg + noc-branch-dispatch | tooling-engineer | 0 (0) | ? |
 | `guard:harness-signature` |  | none (advisory PostToolUse measurement leg; it never blocks) | tooling-engineer | 0 (0) | never-fires |
