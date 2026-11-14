@@ -23,7 +23,7 @@ from tools.noctus.dev.engineer_brief_compose import compose_brief  # noqa: E402
 from tools.noctus.dev.engineer_output_linter import lint_return  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SOURCES = {"erp-imobiliario": "social-wiring", "igig": "orbity", "therapy-platform": "monica", "community": "monica"}
+SOURCES = {"erp-imobiliario": "social-wiring", "igig": "orbity", "therapy-platform": "nosnolimiar", "community": "nosnolimiar"}
 
 
 def _row(slug, stage, ts, canon=None, **extra):

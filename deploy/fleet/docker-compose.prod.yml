@@ -659,23 +659,23 @@ services:
     tmpfs:
       - /tmp:mode=1777,size=96m
 
-  # ── monica 8020 — CRM of Mônica Tangerino's practice (prod exposure consented 2026-10-26;
-  # deploy/consent/monica.prod.yml). Only NON-SECRET config here; everything else is read from the root
-  # .env (env_file): ENCRYPTION_KEY (required — the boot refuses without it), MONICA_WAHA_BASE_URL /
-  # MONICA_WAHA_SESSION / MONICA_WAHA_WEBHOOK_HMAC_SECRET (Monica's OWN WAHA — never the shared one),
+  # ── nosnolimiar 8020 — CRM/ERP of the Nós no Limiar clinic (renamed from `monica` 2026-11-02; prod exposure
+  # consented under deploy/consent/nosnolimiar.prod.yml, history in monica.prod.yml). Only NON-SECRET config here; everything else is read from the root
+  # .env (env_file): ENCRYPTION_KEY (required — the boot refuses without it), NOSNOLIMIAR_WAHA_BASE_URL /
+  # NOSNOLIMIAR_WAHA_SESSION / NOSNOLIMIAR_WAHA_WEBHOOK_HMAC_SECRET (the clinic's OWN WAHA — never the shared one),
   # REDIS_URL (inbox realtime). Conversations are health-adjacent personal data: no message bodies in logs.
   # No mem_limit (owner decision: server protection without per-container limits).
-  monica:
+  nosnolimiar:
     <<: *prod-defaults
-    image: ghcr.io/jraphaelsst/noctus-monica:${NOCTUS_IMAGE_TAG:-latest}
-    container_name: noctus-monica
+    image: ghcr.io/jraphaelsst/noctus-nosnolimiar:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-nosnolimiar
     environment:
       <<: *prod-env
-      # Monica's OWN WAHA (waha-instances.yml -> compose.waha.yml); the HMAC secret stays in the root .env.
-      MONICA_WAHA_BASE_URL: http://waha-monica:3000
-      MONICA_WAHA_SESSION: default
+      # The clinic's OWN WAHA (waha-instances.yml -> compose.waha.yml); the HMAC secret stays in the root .env.
+      NOSNOLIMIAR_WAHA_BASE_URL: http://waha-nosnolimiar:3000
+      NOSNOLIMIAR_WAHA_SESSION: default
       # Line policy v1 (waha-instances.yml `line_policy`; KB § INTEGRATIONS/whatsapp.md § 6a). Keeper-checked == declared.
-      MONICA_WAHA_LINE_POLICY: '{"send":"enabled","mark_online":true,"full_sync":true,"auto_repair":true}'
+      NOSNOLIMIAR_WAHA_LINE_POLICY: '{"send":"enabled","mark_online":true,"full_sync":true,"auto_repair":true}'
     expose:
       - "8020"
     healthcheck:

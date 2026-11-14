@@ -162,7 +162,7 @@ excluded, pure `e.stopPropagation()` wrappers excluded), 2026-11-05:
 
 | Scope | `<div onClick>` | of which with `role=` |
 |---|---:|---:|
-| active product FEs (`core`, `social-wiring`, `agents`, `monica`) | 21 (12 · 8 · 1 · 0) | 6 |
+| active product FEs (`core`, `social-wiring`, `agents`, `nosnolimiar`) | 21 (12 · 8 · 1 · 0) | 6 |
 | all `products/*/frontend/src` (incl. asleep products) | 71 | 7 |
 | `seed/lib/frontend/src` | 11 | 6 |
 
@@ -190,7 +190,7 @@ It is the dialog of the **org picker every multi-org user sees on product entry*
 frontend-owned (`frontend-craft-canon.md` §4.2, WE1); designers spec the APG behaviour (§4.7).
 
 ### 3.5 Other measured facts
-- `<html lang="pt-BR">` in every product `index.html` checked (core, agents, monica, commerce, igig …) ✅.
+- `<html lang="pt-BR">` in every product `index.html` checked (core, agents, nosnolimiar, commerce, igig …) ✅.
 - `useTheme` defaults to light and ignores `prefers-color-scheme` (`useTheme.ts:29-32`) — not a WCAG
   failure; a design decision recorded in the canon §6.4.
 - No product runs `eslint-plugin-jsx-a11y`, axe-core or `@axe-core/playwright` (frontend canon §7).
