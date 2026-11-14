@@ -207,6 +207,27 @@ def paths_aware_keeper_flags() -> list[str]:
         if reads_paths:
             flags.update("--" + a.replace("_", "-") for a in tested)
     return sorted(flags)
+class _DidYouMeanParser(argparse.ArgumentParser):
+    """ArgumentParser whose usage error names the closest real flag(s) instead of only echoing the typo
+    (an unknown / abbreviated `--flag` is the commonest agent slip; allow_abbrev=False refuses prefixes)."""
+
+    def error(self, message: str):
+        import difflib
+        import re as _re
+        m = _re.search(r"unrecognized arguments?: (.+)$", message)
+        hints: list[str] = []
+        if m:
+            known = [o for a in self._actions for o in a.option_strings if o.startswith("--")]
+            for bad in m.group(1).split():
+                if not bad.startswith("--"):
+                    continue
+                name = bad.split("=", 1)[0]
+                close = difflib.get_close_matches(name, known, n=3, cutoff=0.6)
+                close += [k for k in known if k.startswith(name) and k not in close][:3]
+                if close:
+                    hints.append(f"{name}: did you mean {' or '.join(close[:3])}?")
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\n" + "".join(h + "\n" for h in hints))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -218,7 +239,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser, never two definitions to keep in sync."""
     # allow_abbrev=False: an unambiguous prefix (`--deploy-image-conf`) used to run as the full flag and slip past the
     # release-steward CLI gates, which match exact flags (2026-11-10).
-    parser = argparse.ArgumentParser(description="NoctusAI — platform dev toolkit", allow_abbrev=False)
+    parser = _DidYouMeanParser(description="NoctusAI — platform dev toolkit", allow_abbrev=False)
     parser.add_argument("--validate", action="store_true", help="Check seed compliance")
     parser.add_argument("--check-phase-state", action="store_true", help="Check §6 ↔ §11 phase-state consistency across PROJECT.md files. Exits 1 on any high-severity issue. Used by the pre-commit hook to block commits that ship mismatch.")
     parser.add_argument("--refs", metavar="PATTERN", help="Find every reference to PATTERN (literal string) across CLAUDE.md / KB / projects / mcp / seed / products. Replaces the manual `grep -rln` ritual.")
@@ -639,7 +660,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--steward-role", default=None, help="With --release-steward role: the role (dev-steward is derived; branch-steward:<branch>, agents, products/sw, assistant, ...).")
     parser.add_argument("--steward-role-op", default=None, choices=["set", "clear"], help="With --release-steward role: set (default) or clear.")
     parser.add_argument("--steward-verdict-ref", default=None, help="With --release-steward request|deliverable: where the scoped keepers/tests verdict lives (delivery-contract item 5).")
-    parser.add_argument("--steward-run-scoped", action="store_true", help="With --release-steward deliverable: RUN delivery-contract item 5 (the CI-blocking keeper set + real-tree keeper tests, env-scrubbed, derived from the head's test.yml). Takes minutes.")
+    parser.add_argument("--steward-run-scoped", action="store_true", help="With --release-steward deliverable OR request: RUN delivery-contract item 5 (the CI-blocking keeper set + real-tree keeper tests, env-scrubbed, derived from the head's test.yml). Takes minutes.")
     parser.add_argument("--steward-branches", default=None, help="With --release-steward request: comma-separated ORDERED branches of a split delivery (drained as ONE train + ONE enqueue).")
     parser.add_argument("--steward-question", default=None, help="With --release-steward ask: the one bounded question (kind=needs_info).")
     parser.add_argument("--steward-addressed-to", default=None, help="With --release-steward ask: a registered role (default: the requester session).")
