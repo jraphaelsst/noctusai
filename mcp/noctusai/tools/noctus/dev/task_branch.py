@@ -2951,6 +2951,7 @@ def task_branch(
     score: dict[str, Any] | None = None,
     score_writer: "Callable[..., dict] | None" = None,
     recurrence_fn: "Callable[..., list[dict]] | None" = None,
+    andon_today: "_dt.date | None" = None,
     slice_scores_reader: "Callable[[], list[dict]] | None" = None,
     merged_tip_baseline: Callable[[list[str], str], dict[str, Any]] | None = None,
     doc_staleness_check: Callable[[str, str], list[dict]] | None = None,
@@ -3225,7 +3226,7 @@ def task_branch(
             git, runner, base=base, slug=slug, branch=branch, confirm=confirm, remote=remote,
             dev_branch=dev_branch, branch_prefix=branch_prefix, pointer_fn=pointer_fn,
             accept_unscored=accept_unscored, slice_scores_reader=slice_scores_reader,
-            score=score, score_writer=score_writer, recurrence_fn=recurrence_fn,
+            score=score, score_writer=score_writer, recurrence_fn=recurrence_fn, today=andon_today,
             verdict_ref=verdict_ref if verdict_ref is not None else (
                 _request_verdict_ref(slug, branch) if run is None else None),
             deliverable_kwargs=deliverable_kwargs)

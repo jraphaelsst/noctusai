@@ -64,16 +64,25 @@ def _fake():
                    logs={"d0..b0": "c1 x", "b0..d0": ""}, head_sha="b0")
 
 
-def test_enqueue_refuses_after_the_deadline_and_pushes_nothing():
+def _enqueue(today):
     fake = _fake()
     res = T.task_branch(action="enqueue", slug="x", confirm=True, run=fake,
                         pointer_ops=FakePointerOps(latest={"feat/x": {"status": "on_going", "commit": "p", "agent": "tech-lead"}}),
-                        slice_scores_reader=lambda: [], recurrence_fn=_rows(_row("k", n=4)))
-    # (clock-dependent only through the deadline constant: assert both outcomes are the andon's)
-    if dt.date.today() >= T.ANDON_ENFORCE_FROM:
-        assert res["refused"] == "refusal_recurrence" and fake.pushes() == []
-    else:
-        assert res.get("recurrence_andon", {}).get("mode") == "warn" or res.get("deliverable")
+                        slice_scores_reader=lambda: [], recurrence_fn=_rows(_row("k", n=4)),
+                        andon_today=today)
+    return res, fake
+
+
+def test_enqueue_refuses_on_the_deadline_and_pushes_nothing():
+    res, fake = _enqueue(REFUSE_DAY)
+    assert res["refused"] == "refusal_recurrence" and res["status"] == "blocked"
+    assert fake.pushes() == []
+
+
+def test_enqueue_before_the_deadline_only_warns():
+    res, _fake_git = _enqueue(WARN_DAY)
+    assert res.get("refused") is None
+    assert res["recurrence_andon"]["mode"] == "warn"
 
 
 def test_executor_and_advisor_are_accepted_as_pointer_roles():
