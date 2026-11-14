@@ -125,6 +125,18 @@ SPECS: dict[str, Spec] = {
         theirs_clean=_inv([("a", "x"), ("n0", "x")]),
         clean_tokens=("n1", "n0"),
     ),
+    # Fixture repo carries no ledger source, so the render is NOT derivable and the driver must fall back to the
+    # plain 3-way merge (markers on a real conflict); the regenerate path is pinned in test_ledger_render_merge_driver.py.
+    "ledger-render": Spec(
+        path="project-history/gate-alignment/FINDINGS.md",
+        base=_KB_BASE,
+        ours_conflict=_KB_BASE.replace("row-a", "row-a OURS-EDIT"),
+        theirs_conflict=_KB_BASE.replace("row-a", "row-a THEIRS-EDIT"),
+        conflict_tokens=("OURS-EDIT", "THEIRS-EDIT"),
+        ours_clean="- top-ours-line\n" + _KB_BASE,
+        theirs_clean=_KB_BASE + "- bottom-theirs-line\n",
+        clean_tokens=("top-ours-line", "bottom-theirs-line"),
+    ),
 }
 
 
@@ -168,7 +180,7 @@ def _diverge(root: Path, spec: Spec, ours: str, theirs: str) -> None:
 
 # ── the contract ──────────────────────────────────────────────────────────
 def test_discovery_finds_the_known_drivers():
-    assert {"kb-counts", "lgpd-warnings", "gate-inventory"} <= set(DRIVERS)
+    assert {"kb-counts", "lgpd-warnings", "gate-inventory", "ledger-render"} <= set(DRIVERS)
 
 
 @pytest.mark.parametrize("name", sorted(DRIVERS))
