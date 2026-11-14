@@ -127,7 +127,7 @@ describe.each([
     const ranks = keys.map((k) => MODULE_GROUP_ORDER.indexOf(k as never));
     expect(ranks.every((r) => r >= 0)).toBe(true);
     expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
-    expect(keys).toEqual(["crm", "redes-sociais", "erp", "cms", "corestudio", "emissoes", "integracoes", "configuracoes"]);
+    expect(keys).toEqual(["crm", "redes-sociais", "erp", "corestudio", "emissoes", "integracoes", "configuracoes"]);
     for (const g of groups) expect(g.label).toBe(MODULE_GROUP_LABELS[g.key as keyof typeof MODULE_GROUP_LABELS]);
   });
 
@@ -157,6 +157,17 @@ describe.each([
     const headlines = allGroups(groups).find((g) => g.key === "media-creation-headlines")!;
     expect(headlines.items.map((i) => i.href)).toContain("/media-creation/roteiros");
     expect(allItems(groups).filter((i) => i.href === "/media-creation/roteiros")).toHaveLength(1);
+  });
+
+  it("Edição de Imagem sits inside CoreStudio before Pesquisa, with Operação/Configuração; cms module is gone", () => {
+    expect(byKey(groups, "cms")).toBeUndefined();
+    const cs = byKey(groups, "corestudio")!;
+    expect(cs.groups!.slice(0, 2).map((g) => g.label)).toEqual(["Edição de Imagem", "Pesquisa"]);
+    const ed = cs.groups![0];
+    expect(ed.groups!.map((g) => g.label)).toEqual(["Operação", "Configuração"]);
+    expect(allItems([ed as AnyGroup]).every((i) => i.href.startsWith("/edicao-fotos"))).toBe(true);
+    expect(allItems([ed as AnyGroup])).toHaveLength(10);
+    expect(topGroupOf("/edicao-fotos/novo")).toEqual(["corestudio"]);
   });
 
   it("nothing links to the retired /whatsapp-chat route", () => {

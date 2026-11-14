@@ -10,8 +10,8 @@
  * via `jobPolling`, so the poll keeps running in a background tab.
  */
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { api } from "@noctusai/seed/infra";
-import { jobPolling } from "@noctusai/lib";
+import { api, getAuthToken } from "@noctusai/seed/infra";
+import { jobPolling, useJobProgress, type JobProgressState } from "@noctusai/lib";
 import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 
 import { emAndamento } from "@/components/geracao/labels";
@@ -82,14 +82,40 @@ export function useLotesDoPost(marcaId: string | null, postId: string | null) {
   };
 }
 
+const loteKey = (id: string | null) => [...HEAD_KEY, "lote", id] as const;
+
+/** Fold one pushed `job.progress` frame into the cached batch detail (what the modal renders). */
+export function aplicarProgressoLote(prev: HeadlineLoteDetalhe | undefined, p: JobProgressState): HeadlineLoteDetalhe | undefined {
+  if (!prev) return prev;
+  const total = prev.estruturas_total || 0;
+  return {
+    ...prev,
+    status: p.status as HeadlineLoteDetalhe["status"],
+    etapa: p.terminal ? null : p.stage,
+    estruturas_processadas: p.terminal || p.progress == null || !total ? prev.estruturas_processadas : Math.round(p.progress * total),
+    erro: p.terminal && p.status === "falha" ? p.message : prev.erro,
+  };
+}
+
 export function useLote(id: string | null) {
   const query = useQuery({
-    queryKey: [...HEAD_KEY, "lote", id],
+    queryKey: loteKey(id),
     enabled: !!id,
     queryFn: async () =>
       unwrap(await api.get<Envelope<HeadlineLoteDetalhe>>(`${BASE}/lotes/${encodeURIComponent(id as string)}`)),
     ...jobPolling((d: HeadlineLoteDetalhe | undefined) => !!d && emAndamento(d.status), HEADLINES_POLL_MS),
     placeholderData: (prev) => (prev && prev.id === id ? prev : undefined),
+  });
+  // PUSH first (SSE, `noctusai_lib.realtime.job_progress`): while the stream is open the poll above is
+  // silenced and each frame lands in this entry; if the stream cannot be kept the hook hands the read back
+  // to the poll (the fallback). Only while the batch is running — a finished batch has nothing to stream.
+  useJobProgress({
+    jobId: id,
+    url: id ? `${BASE}/lotes/${encodeURIComponent(id)}/progress` : null,
+    getAuthToken,
+    readKey: loteKey(id),
+    enabled: !!query.data && emAndamento(query.data.status),
+    targets: [{ queryKey: loteKey(id), update: aplicarProgressoLote }],
   });
   return {
     ...query,

@@ -9971,6 +9971,27 @@ def lower_async_handler_sync_db_baseline(repo_root: Path | None = None, *, init:
 
 
 # ---------------------------------------------------------------------------
+# `check_signed_url_ttl` / `check_pii_query_params` — thin delegating shims; the
+# AST detectors live in `url_hygiene.py` (security standards S1 + S4, owner
+# approved 2026-11-14). Per-file ratchet baselines in mcp/noctusai/tests/.
+# KB § PATTERNS/security/url-hygiene.md
+# ---------------------------------------------------------------------------
+def check_signed_url_ttl(repo_root: Path | None = None) -> list[dict]:
+    """A signed URL is a bearer credential: TTL > 600 s needs a `ttl_reason=`/`reason=` kwarg (or
+    `# signed-url-ttl-ok: <why>`). Ratcheted per file. Severity `high`. KB § PATTERNS/security/url-hygiene.md."""
+    from tools.noctus.dev.url_hygiene import check_signed_url_ttl as _impl
+    return _impl(repo_root)
+
+
+def check_pii_query_params(repo_root: Path | None = None) -> list[dict]:
+    """A PII-named route parameter (email/cpf/telefone/...) must not ride in the URL query string
+    (logged by every proxy/CDN). Ratcheted per file; escape `# pii-query-ok: <why>`. Severity `high`.
+    KB § PATTERNS/security/url-hygiene.md."""
+    from tools.noctus.dev.url_hygiene import check_pii_query_params as _impl
+    return _impl(repo_root)
+
+
+# ---------------------------------------------------------------------------
 # `check_stand_in_conformance` — thin delegating shim. The real
 # implementation lives in `tools/noctus/dev/stand_in_conformance.py` (a
 # separate file by design — this detector composes a per-product subprocess

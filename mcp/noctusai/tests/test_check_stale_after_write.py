@@ -252,6 +252,19 @@ class TestCheckMutationFamilyWrite:
         assert check_mutation_family_write(tmp_path) == []
 
 
+F87_SSE_HANDED_OFF = PARTES + """
+import { handOffToJobProgress } from "@noctusai/lib";
+import type { EmissaoResponse } from "@/types/certidoes";
+export function useSolicitarEmissao(id: string) {
+  const qc = useQueryClient();
+  return useMutation({ // noc-allow: invalidate-only — queues emissions that finish asynchronously
+    mutationFn: (x: Input) => api.post<EmissaoResponse>(`/p/${id}/emissao`, x),
+    onSuccess: () => handOffToJobProgress(qc, ["sw", "clientes", id, "certidoes", "partes"]),
+  });
+}
+"""
+
+
 class TestCheckJobStartWithoutHandoff:
     def _issues(self, tmp_path: Path, hooks: str) -> list[dict]:
         _tree(tmp_path, {"hooks/useCertidoesPartes.ts": hooks, "types/certidoes.ts": TYPES})
@@ -269,6 +282,10 @@ class TestCheckJobStartWithoutHandoff:
 
     def test_handing_off_through_a_helper_is_clean(self, tmp_path: Path) -> None:
         assert self._issues(tmp_path, F87_HANDED_OFF) == []
+
+    def test_handing_off_to_the_sse_job_progress_channel_is_clean(self, tmp_path: Path) -> None:
+        # push (useJobProgress) is the primary path, polling its fallback: the SSE-aware hand-off is a valid hand-off
+        assert self._issues(tmp_path, F87_SSE_HANDED_OFF) == []
 
     def test_writing_the_polled_entry_is_clean(self, tmp_path: Path) -> None:
         assert self._issues(tmp_path, F87_WRITES_POLLED) == []
