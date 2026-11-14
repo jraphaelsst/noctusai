@@ -32,16 +32,20 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
-from noctusai_lib.domain.photo_editing import ProcessingGate, build_worker
+from noctusai_lib.domain.photo_editing import ProcessingGate, build_handlers
 from noctusai_lib.domain.jobs import Worker
 from noctusai_lib.domain.jobs.lifecycle import WorkerHandle
 from noctusai_lib.integrations.llm import ModelCatalogStore, refresh_model_overrides
 
 from app.modules.edicao_fotos.services import ports as ports_service
+from app.modules.imobshotai.deps import get_imobshot_repository
+from app.modules.imobshotai.worker_hook import wrap_lote_pronto
 
 logger = logging.getLogger(__name__)
 
 STOP_TIMEOUT_SECONDS = 10.0
+#: The seed `build_worker` default, kept explicit now that the Worker is built here.
+WORKER_LEASE_SECONDS = 600.0
 
 
 @dataclass(frozen=True)
@@ -136,10 +140,14 @@ async def start_worker(
     # serves until the refresher's next tick succeeds.
     await refresh_catalog(store)
     _gate = ProcessingGate(ports, ttl_seconds=float(cfg.edicao_fotos_gate_ttl_seconds))
-    _worker = build_worker(
-        ports,
+    _worker = Worker(
+        ports.jobs,
         worker_id=worker_id(),
+        # `fotos.lote_pronto` also syncs the ImobShotAI card of the lote (contract §6).
+        handlers=wrap_lote_pronto(build_handlers(ports), ports, get_imobshot_repository),
+        retry_policy=ports.config.retry_policy(),
         poll_interval_seconds=float(cfg.edicao_fotos_worker_poll_seconds),
+        lease_seconds=WORKER_LEASE_SECONDS,
         claim_gate=_gate,
     )
     _handle = WorkerHandle(_worker, name="edicao-fotos-worker", stop_timeout=STOP_TIMEOUT_SECONDS)

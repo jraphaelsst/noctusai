@@ -29,9 +29,7 @@ from noctusai_lib.primitives.content_disposition import attachment_disposition
 
 from noctusai_lib.domain.photo_editing import (
     Actor,
-    OrgSettings,
     PhotoEditingPorts,
-    Speed,
     add_photo_bytes,
     build_batch_zip,
     retry_photo,
@@ -42,6 +40,7 @@ from noctusai_lib.domain.photo_editing import (
 from app.modules.edicao_fotos.deps import (
     can_see_verdict,
     get_edicao_ports,
+    get_imovel_lookup,
     get_vista_photo_source,
     load_visible_batch,
     require_member,
@@ -53,7 +52,11 @@ from app.modules.edicao_fotos.presenters import (
     lote_resumo_out,
     page_out,
 )
+from app.modules.edicao_fotos.services.lotes import ImovelLookup, criar_lote, org_settings
 from app.modules.edicao_fotos.services.review import review_rows, signed_url
+from app.modules.imobshotai.deps import get_imobshot_repository
+from app.modules.imobshotai.repository import ImobshotRepository
+from app.modules.imobshotai.service import sincronizar_do_lote
 from app.modules.edicao_fotos.schemas import LoteCreateBody, VistaIngestBody
 from app.modules.edicao_fotos.services.vista_fotos import VistaPhotoSource, ingest_vista_gallery
 
@@ -64,10 +67,6 @@ router = APIRouter(prefix="/api/edicao-fotos/lotes", tags=["edicao-fotos"])
 #: `_MAX_BODY_PATH_OVERRIDES` ceiling (10 × 25 MB + multipart overhead).
 MAX_FILES_PER_REQUEST = 10
 UPLOAD_ROUTE_MAX_BODY_BYTES = 256 * 1024 * 1024
-
-
-async def _settings(ports: PhotoEditingPorts, org_id: str) -> OrgSettings:
-    return await ports.repo.get_org_settings(org_id) or OrgSettings(org_id=org_id)
 
 
 @router.get("")
@@ -94,39 +93,15 @@ async def create_lote_route(
     body: LoteCreateBody,
     actor: Actor = Depends(require_member),
     ports: PhotoEditingPorts = Depends(get_edicao_ports),
+    imovel_lookup: ImovelLookup = Depends(get_imovel_lookup),
 ) -> dict:
-    settings = await _settings(ports, actor.org_id)
-    if not settings.modelo_editor_id:
-        raise api_error(
-            422, "modelo_nao_configurado", "Nenhum modelo de edição configurado para a organização."
-        )
-    if not settings.tipos_edicao_ativos:
-        raise api_error(422, "sem_tipos_edicao", "Nenhum tipo de edição ativo.")
-    platform = await ports.repo.get_platform_settings()
-    # An explicit per-batch choice wins; otherwise the org override, then the
-    # platform default. Econômico is gated by the engine's capability port
-    # alone — never silently downgraded to Urgente.
-    speed = Speed(
-        body.velocidade or settings.velocidade_override or platform.velocidade_default
-    )
-    if speed is Speed.ECONOMICO and not ports.capabilities(
-        settings.modelo_editor_id
-    ).supports_batch:
-        raise api_error(422, "economico_indisponivel", "Modo Econômico indisponível.")
-    if body.imovel is not None and str(body.imovel.org_id) != actor.org_id:
-        raise api_error(
-            422, "imovel_outra_organizacao", "O imóvel precisa pertencer à sua organização."
-        )
-    batch = await ports.repo.create_batch(
-        org_id=actor.org_id,
-        nome=body.nome.strip(),
-        criado_por=actor.user_id,
-        # The imóvel link is what enables a Vista pull; each photo also
-        # records its own provenance in `vista_codigo`.
-        origem="vista" if body.imovel is not None else "upload",
-        velocidade=speed,
-        imovel_org_id=str(body.imovel.org_id) if body.imovel else None,
-        imovel_codigo=body.imovel.codigo.strip() if body.imovel else None,
+    batch = await criar_lote(
+        ports=ports,
+        actor=actor,
+        nome=body.nome,
+        imovel=body.imovel,
+        velocidade=body.velocidade,
+        imovel_lookup=imovel_lookup,
     )
     return lote_resumo_out(batch, [])
 
@@ -158,7 +133,7 @@ async def upload_fotos_route(
         raise api_error(
             422, "muitos_arquivos", f"Envie no máximo {MAX_FILES_PER_REQUEST} fotos por requisição."
         )
-    settings = await _settings(ports, batch.org_id)
+    settings = await org_settings(ports, batch.org_id)
     existing = await ports.repo.list_photos(batch.id)
     if len(existing) + len(files) > settings.limite_fotos_por_lote:
         raise api_error(
@@ -227,12 +202,14 @@ async def submit_lote_route(
     lote_id: UUID,
     actor: Actor = Depends(require_member),
     ports: PhotoEditingPorts = Depends(get_edicao_ports),
+    imobshot: ImobshotRepository = Depends(get_imobshot_repository),
 ) -> dict:
     batch = await load_visible_batch(ports, actor, str(lote_id))
     try:
         submitted = await submit_batch(ports, batch.id, submitted_by=actor.user_id)
     except ENGINE_ERRORS as exc:
         raise engine_error(exc) from exc
+    await sincronizar_do_lote(imobshot, ports, batch.id, ator_id=actor.user_id)
     photos = await ports.repo.list_photos(batch.id)
     return lote_resumo_out(submitted, [p.status for p in photos])
 
@@ -243,6 +220,7 @@ async def retry_foto_route(
     foto_id: UUID,
     actor: Actor = Depends(require_member),
     ports: PhotoEditingPorts = Depends(get_edicao_ports),
+    imobshot: ImobshotRepository = Depends(get_imobshot_repository),
 ) -> dict:
     batch = await load_visible_batch(ports, actor, str(lote_id))
     photo = await ports.repo.get_photo(str(foto_id))
@@ -252,6 +230,7 @@ async def retry_foto_route(
         moved = await retry_photo(ports, photo.id, requested_by=actor.user_id)
     except ENGINE_ERRORS as exc:
         raise engine_error(exc) from exc
+    await sincronizar_do_lote(imobshot, ports, batch.id, ator_id=actor.user_id)
     [row] = await review_rows(ports, batch, [moved], include_verdict=can_see_verdict(actor))
     return row
 

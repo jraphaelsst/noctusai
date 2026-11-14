@@ -6412,6 +6412,78 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — social_wiring.imobshot_eventos append-only guard (migration 343).
+# ---------------------------------------------------------------------------
+#
+# Self-provisioning inside the rollback-only wrapper: each probe inserts its own throwaway card (random org, so
+# the (org_id, imovel_codigo) unique key can never collide with real data) and one event, then attempts the
+# forbidden operation. The trigger's message carries "imobshot_eventos is append-only" — the fragment the probe
+# requires, so an unrelated error is `ambiguous`, never a pass.
+
+_IMOBSHOT_EVENTOS_GUARD = "imobshot_eventos_append_only"
+_IMOBSHOT_EVENTOS_MIGRATIONS = ("343_imobshotai_cards.sql",)
+
+
+def _imobshot_eventos_probe(*, probe_id: str, op_sql: str, what: str) -> GuardProbe:
+    fragment_lit = _sql_lit("imobshot_eventos is append-only")
+    what_lit = _sql_lit(what)
+    sql = _do_block(f"""
+DECLARE
+  v_org uuid := gen_random_uuid();
+  v_card uuid;
+  v_ev uuid;
+BEGIN
+  IF to_regclass('social_wiring.imobshot_eventos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: social_wiring.imobshot_eventos does not exist (migration 343 not applied)';
+  END IF;
+  BEGIN
+    INSERT INTO social_wiring.imobshot_cards (org_id, imovel_codigo) VALUES (v_org, 'NOCPROBE')
+    RETURNING id INTO v_card;
+    INSERT INTO social_wiring.imobshot_eventos (org_id, card_id, tipo) VALUES (v_org, v_card, 'card_criado')
+    RETURNING id INTO v_ev;
+{op_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the append-only guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name=_IMOBSHOT_EVENTOS_GUARD,
+        kind="write_refusal",
+        migrations=_IMOBSHOT_EVENTOS_MIGRATIONS,
+        sql=sql,
+        rationale=(
+            "imobshot_eventos is the ImobShotAI card history (contract §7: time-to-approval, drop-off, "
+            "approval-rate metrics read it) — a rewritable or deletable row makes every metric unprovable."
+        ),
+    )
+
+
+_IMOBSHOT_EVENTOS_PROBES: tuple[GuardProbe, ...] = (
+    _imobshot_eventos_probe(
+        probe_id="social_wiring.imobshot_eventos.update_refused",
+        op_sql="    UPDATE social_wiring.imobshot_eventos SET tipo = 'card_arquivado' WHERE id = v_ev;",
+        what="UPDATE of an imobshot_eventos row",
+    ),
+    _imobshot_eventos_probe(
+        probe_id="social_wiring.imobshot_eventos.delete_refused",
+        op_sql="    DELETE FROM social_wiring.imobshot_eventos WHERE id = v_ev;",
+        what="DELETE of an imobshot_eventos row",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — core owner-notice recipient events append-only guard (migration 118).
 # ---------------------------------------------------------------------------
 #
@@ -12656,6 +12728,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ATENDIMENTO_CONFLITO_STATUS_PROBE,
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
+    *_IMOBSHOT_EVENTOS_PROBES,
     *_OWNER_RECIPIENT_EVENTS_PROBES,
     *_CORE_AI_USAGE_PROBES,
     *_CORE_FUNNEL_PROBES,

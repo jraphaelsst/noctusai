@@ -56,12 +56,15 @@ from app.modules.edicao_fotos.deps import (
     RoleInfo,
     get_edicao_ports,
     get_grant_repository,
+    get_imovel_lookup,
     get_painel_client,
     get_preferences_repository,
     get_role_resolver,
     get_vista_photo_source,
 )
 from app.modules.edicao_fotos.routers.curadores import get_user_directory
+from app.modules.imobshotai.deps import get_imobshot_repository
+from app.modules.imobshotai.repository import InMemoryImobshotRepository
 from app.modules.edicao_fotos.services.notificacoes_preferencias import (
     InMemoryNotificationPreferencesRepository,
 )
@@ -137,6 +140,16 @@ class Harness:
     preferences: "InMemoryNotificationPreferencesRepository"
     directory: dict[str, dict] = field(default_factory=dict)
     current: TestUser = USERS["admin"]
+    imobshot: Any = None
+    #: Codes the imóvel lookup answers `fonte: "nenhuma"` for (everything else exists).
+    imoveis_inexistentes: set = field(default_factory=lambda: {"NAOEXISTE"})
+
+    def imovel_lookup(self, org_id: str, codigos: list[str]) -> dict[str, dict]:
+        return {
+            c: {"codigo": c, "fonte": "nenhuma" if c in self.imoveis_inexistentes else "imoveis",
+                "titulo": f"Imóvel {c}", "bairro": "Centro"}
+            for c in codigos
+        }
 
     def as_user(self, name: str) -> "Harness":
         self.current = USERS[name]
@@ -463,6 +476,7 @@ def edicao(client):
         http=client, app=app, ports=ports, repo=repo, backend=backend,
         grants=grants, vista=FakeVistaSource(), notifier=notifier,
         preferences=preferences,
+        imobshot=InMemoryImobshotRepository(repo),
         directory={u.id: {"nome": u.nome, "email": f"{k}@example.com"} for k, u in USERS.items()},
     )
 
@@ -482,6 +496,8 @@ def edicao(client):
             lambda ids: {i: harness.directory[i] for i in ids if i in harness.directory}
         ),
         get_painel_client: lambda: _FakePainelClient(harness),
+        get_imobshot_repository: lambda: harness.imobshot,
+        get_imovel_lookup: lambda: harness.imovel_lookup,
     }
     previous = {k: app.dependency_overrides.get(k) for k in overrides}
     app.dependency_overrides.update(overrides)
