@@ -259,3 +259,37 @@ class TestSelf:
     def test_message_cites_the_doc_and_the_fix(self, tmp_path):
         msg = _run(tmp_path, {PY: LOOP})[0]["issue"]
         assert "KB § PATTERNS/backend/polling-request-budget.md" in msg and "poll-budget:" in msg and "/day" in msg
+
+
+class TestFreshCheckoutResolvesTsMorph:
+    """The deliverable gate judges a fresh checkout that has no `mcp/noctusai/node/node_modules`: the TREE's script is fed
+    to node on the command line and ts-morph resolves from the installed copy (red before: node_crashed, ERR_MODULE_NOT_FOUND)."""
+
+    def _tree_with_script(self, tmp: Path) -> Path:
+        dest = tmp.joinpath(*SCRIPT_REL)
+        dest.parent.mkdir(parents=True)
+        dest.write_text(REPO_ROOT.joinpath(*SCRIPT_REL).read_text(encoding="utf-8"), encoding="utf-8")
+        return dest
+
+    @needs_ts
+    def test_a_tree_without_node_modules_runs_the_trees_script_via_the_installed_modules(self, tmp_path):
+        from tools.noctus.dev.polling_request_budget import _node_invocation
+
+        script = self._tree_with_script(tmp_path)
+        argv, cwd = _node_invocation(script)
+        assert argv[:3] == ["node", "--input-type=module", "-e"] and argv[3] == script.read_text(encoding="utf-8")
+        assert cwd is not None and (cwd / "node_modules").is_dir()
+
+    @needs_ts
+    def test_the_scan_still_finds_an_undeclared_poll_in_that_tree(self, tmp_path):
+        self._tree_with_script(tmp_path)
+        issues = _run(tmp_path, {TS: "export const q = { refetchInterval: 5000 };\n"})
+        assert [i["rule"] for i in issues] == ["ts_refetch_interval"], issues
+
+    def test_a_tree_that_carries_its_own_node_modules_runs_its_script_directly(self, tmp_path):
+        from tools.noctus.dev.polling_request_budget import _node_invocation
+
+        script = tmp_path.joinpath(*SCRIPT_REL)
+        script.parent.joinpath("node_modules").mkdir(parents=True)
+        script.write_text("// stub\n", encoding="utf-8")
+        assert _node_invocation(script) == (["node", str(script)], None)
