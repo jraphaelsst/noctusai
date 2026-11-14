@@ -672,6 +672,74 @@ class TestIntegratedLivePointer:
         run = wts.make_subprocess_runner(repo)
         assert wts.pointer_status_for_branch("feat/il", run) == "shipped"
 
+    def test_integrated_live_landed_reapplied_is_removed(self, repo):
+        """2026-11-14: the merge queue re-applies the branch (new SHA, same
+        patch) - no SHA ancestry, yet the work is on base. Must be removed."""
+        wt = _add_worktree(repo, "feat-rq", "feat/rq", publish_shipped_pointer=False)
+        (wt / "rq.txt").write_text("queued work\n")
+        _git(wt, "add", "rq.txt")
+        _git(wt, "commit", "-qm", "rq work")
+        sha = _git(wt, "rev-parse", "HEAD").strip()
+        _publish_pointer_row(repo, branch="feat/other", status="shipped")  # base moves on
+        _git(repo, "cherry-pick", sha)  # the queue lands it with a new SHA
+        _publish_pointer_row(repo, branch="feat/rq", status="integrated-worktree-live")
+        assert subprocess.run(["git", "merge-base", "--is-ancestor", "feat/rq", "origin/dev"],
+                              cwd=str(repo)).returncode != 0
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, respect_min_age=False,
+            min_age_minutes=0, recent_mtime_minutes=0)
+        assert not wt.exists()
+        assert result["stale_signals"][str(wt)] == "integrated_live_merged"
+
+    def test_integrated_live_with_unmerged_commit_is_kept(self, repo):
+        """A re-applied landing plus one commit made AFTER it (a `+` in git
+        cherry) is unlanded work: the worktree stays."""
+        wt = _add_worktree(repo, "feat-rx", "feat/rx", publish_shipped_pointer=False)
+        (wt / "rx.txt").write_text("landed\n")
+        _git(wt, "add", "rx.txt")
+        _git(wt, "commit", "-qm", "rx landed")
+        sha = _git(wt, "rev-parse", "HEAD").strip()
+        _publish_pointer_row(repo, branch="feat/other", status="shipped")
+        _git(repo, "cherry-pick", sha)
+        _publish_pointer_row(repo, branch="feat/rx", status="integrated-worktree-live")
+        (wt / "rx2.txt").write_text("not landed\n")
+        _git(wt, "add", "rx2.txt")
+        _git(wt, "commit", "-qm", "rx follow-up")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, respect_min_age=False,
+            min_age_minutes=0, recent_mtime_minutes=0)
+        assert wt.exists()
+        assert str(wt) in result["active"]  # unmerged work: never even a pointer question
+
+    def test_on_going_landed_reapplied_is_removed_and_closed(self, repo):
+        """2026-11-14: the queue landed it (new SHA) and the owner session was
+        closed without its end sweep - the claim must not make it immortal."""
+        wt = _add_worktree(repo, "feat-ol", "feat/ol", publish_shipped_pointer=False)
+        (wt / "ol.txt").write_text("landed\n")
+        _git(wt, "add", "ol.txt")
+        _git(wt, "commit", "-qm", "ol work")
+        sha = _git(wt, "rev-parse", "HEAD").strip()
+        _publish_pointer_row(repo, branch="feat/other", status="shipped")
+        _git(repo, "cherry-pick", sha)
+        _publish_pointer_row(repo, branch="feat/ol", status="on_going")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, respect_min_age=False,
+            min_age_minutes=0, recent_mtime_minutes=0)
+        assert not wt.exists()
+        assert result["stale_signals"][str(wt)] == "on_going_landed"
+        assert result["pointers_closed"] == ["feat/ol"]
+
+    def test_on_going_fresh_fork_without_commits_is_kept(self, repo):
+        """A claimed fork with no commits of its own has landed nothing."""
+        _publish_pointer_row(repo, branch="feat/other", status="shipped")
+        wt = _add_worktree(repo, "feat-of", "feat/of", publish_shipped_pointer=False)
+        _publish_pointer_row(repo, branch="feat/of", status="on_going")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, respect_min_age=False,
+            min_age_minutes=0, recent_mtime_minutes=0)
+        assert wt.exists()
+        assert [p["branch"] for p in result["pointer_blocked"]] == ["feat/of"]
+
     def test_on_going_plus_merged_tip_is_kept(self, repo):
         wt = _add_worktree(repo, "feat-og", "feat/og", publish_shipped_pointer=False)
         _publish_pointer_row(repo, branch="feat/og", status="on_going")
