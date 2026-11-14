@@ -1390,6 +1390,20 @@ def test_a_red_keeper_flag_carries_its_own_error_in_the_result(world):
     assert not res["ok"] and "script(s) without a manifest row" in res["detail"]
 
 
+def test_a_red_stage_without_failing_test_ids_stores_rc_tail_and_export(world):
+    """A collection error exits non-zero with NO `FAILED` line: the verdict must still say why (rc, output tail, export)."""
+    _wt, head = _ci_branch(world, extra_test="\nimport no_such_module_for_collection_error\n")
+    res = RS.export_ci_parity_check(world.repo, admit=_ADMIT, verdict_store=world.verdict_store)("feat/x", head)
+    assert not res["ok"]
+    err = res["stage_errors"][0]
+    assert err["rc"] not in (0, None) and "no_such_module_for_collection_error" in err["tail"]
+    assert err["export"].startswith(tempfile.gettempdir().rstrip("/")) or "noc-ci-parity-" in err["export"]
+    rec = RS.read_verdict(world.verdict_store, res["verdict_ref"].split(":")[1])
+    assert rec["stage_errors"] == res["stage_errors"]
+    rep = RS.verdict_report(world.verdict_store, [])
+    assert rep["red_without_test_ids"][0]["stage_errors"][0]["rc"] == err["rc"]
+
+
 # -- request(run_scoped=True) is not silently ignored ------------------------------------------------------------
 
 def test_request_run_scoped_runs_the_ci_parity_check_and_files_with_its_ref(world, tmp_path):

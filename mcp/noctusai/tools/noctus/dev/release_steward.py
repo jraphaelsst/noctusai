@@ -2399,6 +2399,8 @@ def verdict_report(store: str | Path | None, events: list[dict[str, Any]], *, si
             "false_green_rate": round(len(false_green) / len(green), 3) if green else None,
             "zero_suite_green": len(zero), "zero_suite_green_ejected": len(zero_bad),
             "zero_suite_false_green_rate": round(len(zero_bad) / len(zero), 3) if zero else None,
+            "red_without_test_ids": [{"id": r.get("id"), "head": str(r.get("head"))[:12], "stage_errors": r["stage_errors"]}
+                                     for r in recs.values() if r.get("stage_errors")][-5:],
             "legacy_verdicts_without_suites_ran": sum(1 for r in recs.values() if "suites_ran" not in r),
             "by_requester": dict(sorted(per_req.items(), key=lambda kv: -kv[1]["ejected"])), "kb": KB_POINTER}
 
@@ -2486,6 +2488,19 @@ def meaningful_tail(text: str | None, max_lines: int = 20) -> str:
     lines = [_ANSI_RE.sub("", ln).rstrip() for ln in (text or "").splitlines()]
     keep = [ln for ln in lines if ln.strip() and not _NOISE_RE.search(ln)]
     return "\n".join(keep[-max_lines:])
+
+
+STAGE_TAIL_LINES = 60
+
+
+def stage_error_record(label: str, r: Any, export: str) -> dict[str, Any]:
+    """What a red stage that names NO failing test must store so the red can be diagnosed from the verdict alone: its
+    exit code (pytest 2 = collection/usage error, 4 = bad path, 5 = nothing collected), the last STAGE_TAIL_LINES lines of
+    its output (stdout then stderr, ANSI stripped) and the hermetic export path it ran in (removed after the run)."""
+    text = _ANSI_RE.sub("", (getattr(r, "stdout", "") or "") + "\n" + (getattr(r, "stderr", "") or ""))
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    return {"stage": label, "rc": getattr(r, "returncode", None), "export": str(export),
+            "tail": "\n".join(lines[-STAGE_TAIL_LINES:])}
 
 
 def _last_line(text: str | None) -> str:
@@ -2594,6 +2609,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             failed: list[str] = []
             failed_items: list[str] = []   # keeper flags / suite labels that went red (recorded on the verdict)
             failed_tests: list[str] = []   # the failing pytest node ids
+            stage_errors: list[dict[str, Any]] = []   # a red stage that named NO failing test: rc + output tail + export
 
             def run(gate: str, argv: list[str], where: Path,
                     extra: tuple[tuple[str, str], ...] = ()) -> subprocess.CompletedProcess:
@@ -2612,6 +2628,8 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 names = re.findall(r"^FAILED (\S+)", r.stdout or "", flags=re.M)
                 failed_items.append(label)
                 failed_tests.extend(names)
+                if not names:
+                    stage_errors.append(stage_error_record(label, r, tree))
                 return [f"{label} {n}" for n in names] or [f"{label} pytest exit {r.returncode}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}"]
 
             for f in prime:
@@ -2677,7 +2695,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             telemetry = {"suites_ran": ran_suites, "tests_ran": n_executed, "diff_scope": diff_scope,
                          "skipped": skipped, "partial": bool(partial), "warnings": warnings, "merge_tree": mtree,
                          "livetree_tests": len(live), "failing_items": list(failed_items),
-                         "failing_tests": list(failed_tests)}
+                         "failing_tests": list(failed_tests), "stage_errors": list(stage_errors)}
             git = _subprocess_git(cwd)
             rc_t, head_tree, _e = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
             rc_b, wf_blob, _e = git("rev-parse", "--verify", "--quiet", f"{head}:{CI_WORKFLOW_REL}")
