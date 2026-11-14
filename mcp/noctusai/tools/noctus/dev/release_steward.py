@@ -2016,9 +2016,8 @@ def ci_keeper_test_ids(tests_dir: str | Path) -> list[str]:
 # (a seed read_only_lines change), a product's FE vitest. The owner chose "run CI's suites" over a fast proxy.
 # So the scope is CI's own classifier (`ci_scope`, which the workflow's `changes` job also calls), the suite
 # lists come from the head's workflow matrices. NARROWED the same day (owner, after a 2h04m local measurement
-# vs ~15-25 min in CI's parallel jobs): locally only the keeper tests + the seed roots / awake products the diff
-# touches directly. Trade-off, stated: a toolkit-only red (the test_all_products_compliant[core] shape) and the
-# shared-root fan-out are judged by the merge queue again, not here.
+# vs ~15-25 min in CI's parallel jobs). SUPERSEDED 2026-11-12 by `select_ci_suites` below (one selector, a budget
+# that names what it skipped): the narrowing let every toolkit/fan-out red through (185 verdicts, 1 ran a suite).
 # NOC-REMEDIATE[scoped-green-fe-and-tooling]: FE vitest (product-frontend-tests / seed-frontend-tests) and the
 # bespoke tooling-tests job are still CI-judged only - the export has no node_modules and tooling-tests renders
 # a template in bash. Destination: the item-5 section of KB § PATTERNS/devops/release-steward.md (tooling steward).
@@ -2029,45 +2028,6 @@ class CiSuite:
     cwd: str            # relative to the export root
     argv: tuple[str, ...]  # after the interpreter: `python <argv...>`
     env: tuple[tuple[str, str], ...] = ()
-
-
-def _matrix(workflow_text: str, job: str, key: str) -> list[str]:
-    import yaml  # the toolkit venv carries PyYAML; only item 5's runner needs it
-    doc = yaml.safe_load(workflow_text) or {}
-    vals = (((doc.get("jobs") or {}).get(job) or {}).get("strategy") or {}).get("matrix", {}).get(key) or []
-    return [str(v) for v in vals]
-
-
-def _active_products(tree: Path) -> set[str] | None:
-    """`deploy/fleet/active-scope.txt` at the head; None = missing = every product (CI fails toward coverage)."""
-    f = tree / "deploy" / "fleet" / "active-scope.txt"
-    if not f.is_file():
-        return None
-    return {ln.strip() for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip() and not ln.lstrip().startswith("#")}
-
-
-def local_suites(tree: str | Path, scope: Any, workflow_text: str, changed: list[str]) -> list[CiSuite]:
-    """The NARROW local share of CI's Python suites for item 5 (owner decision 2026-11-11, after the full CI
-    split measured 2h04m locally vs ~15-25 min in CI's parallel jobs): only the suites of what the diff
-    touches DIRECTLY - a seed backend root (seed-backend-tests matrix) the diff edits, and an awake product
-    backend (product-backend-tests matrix, active-scope.txt) the diff edits. The toolkit split and the
-    shared-root fan-out ("a seed change runs every product") stay CI-only: the merge queue runs them.
-    NOC-REMEDIATE[scoped-green-fe-and-tooling]. Nothing when the scope is not heavy."""
-    root = Path(tree)
-    if not scope.run_heavy:
-        return []
-    out: list[CiSuite] = []
-    for r in _matrix(workflow_text, "seed-backend-tests", "root"):
-        prefix = r.rstrip("/") + "/"
-        if (root / r).is_dir() and any(c.startswith(prefix) for c in changed):
-            out.append(CiSuite(f"seed:{r}", r, ("-m", "pytest", "--tb=short", "-q")))
-    awake = _active_products(root)
-    direct = set(getattr(scope, "changed_products", ()) or ())
-    for slug in _matrix(workflow_text, "product-backend-tests", "product"):
-        d = f"products/{slug}/backend"
-        if slug in direct and (awake is None or slug in awake) and (root / d).is_dir():
-            out.append(CiSuite(f"product:{slug}", d, ("-m", "pytest", "--tb=short", "-q")))
-    return out
 
 
 #: Migration -> DB-guard edge (owner-approved speedup 1, 2026-11-11): a toolkit-only red stalled the queue 2h
@@ -2117,6 +2077,188 @@ def link_pglite(tree: str | Path, source_repo: str | Path) -> str:
     return ""
 
 
+# ─── ONE selector (2026-11-12): item 5 asks gate_sweep what the diff can break ─────────────────────────────
+# Item 5 used to run a SECOND selector (`ci_scope` + `local_suites`) and went green on every ejected entry while
+# running 0 suites (185 verdicts, 1 ran a suite; today a merge_queue.py change broke the guardian snapshot test and
+# nothing selected it). `select_ci_suites` reuses gate_sweep's own derivation (`_derive_scope` + `_build_gate_specs`:
+# product/seed fan-out, CONTRACT_OF cross-product consumers, toolkit importers of a changed module), keeps the Python
+# (pytest) gates, and adds the toolkit tests that READ THE LIVE REPO TREE (`live_tree_test_ids`). Anything it cannot
+# run in the export is NAMED in `skipped`, never dropped; anything over the wall-clock budget likewise.
+#: wall-clock budget (seconds) for the selected suites of one verdict; override NOC_ITEM5_SUITE_BUDGET_S
+SUITE_BUDGET_ENV, SUITE_BUDGET_DEFAULT_S = "NOC_ITEM5_SUITE_BUDGET_S", 1800
+#: gates gate_sweep builds that item 5 cannot run in the export: FE (no node_modules) and non-pytest drivers
+_NODE_GATE_RE = re.compile(r"^(vitest|vite_build|e2e)\b")
+
+
+def live_tree_test_ids(tests_dir: str | Path) -> list[str]:
+    """Pytest node ids (relative to the toolkit dir) of every toolkit test that READS THE LIVE REPO TREE: a test
+    function (or `Test*` method) whose body names a module-level constant bound to a path derived from `__file__`
+    (`REPO = Path(__file__).resolve().parents[3]`). Superset of `ci_keeper_test_ids` (which only finds
+    `check_x() == []`): it also catches invariants like `assert not unmarked` over a walk of the tree
+    (test_product_scope::test_every_products_walk_declares_its_scope). Derived by AST, never hand-listed."""
+    import ast
+    root = Path(tests_dir)
+    ids: list[str] = []
+    for path in sorted(root.glob("test_*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        roots: set[str] = set()
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                src = ast.dump(node.value)
+                if "__file__" in src and ("parents" in src or "'parent'" in src):
+                    roots.add(node.targets[0].id)
+        if not roots:
+            continue
+
+        def reads(fn: ast.AST) -> bool:
+            return any(isinstance(n, ast.Name) and n.id in roots for n in ast.walk(fn))
+
+        rel = f"{root.name}/{path.name}"
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test") and reads(node):
+                ids.append(f"{rel}::{node.name}")
+            elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+                ids += [f"{rel}::{node.name}::{m.name}" for m in node.body
+                        if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name.startswith("test") and reads(m)]
+    return ids
+
+
+def select_ci_suites(tree: str | Path, changed: list[str], py: str) -> dict[str, Any]:
+    """What gate_sweep selects for `changed`, as runnable pytest suites in the export `tree`.
+
+    Returns `{"suites": [CiSuite], "skipped": [{"label", "reason"}], "scope": <gate_sweep scope summary>}`.
+    FE gates (vitest / vite_build / e2e) and non-pytest drivers are `skipped` with the reason, and so is the FULL
+    toolkit suite (`mcp_toolkit_tests`, selected when a core toolkit file changes: CI shards it - 2h locally)."""
+    from tools.noctus.dev import gate_sweep as gs  # lazy: the steward PreToolUse hook loads this module stdlib-only
+    root = Path(tree)
+    scope = gs._derive_scope(sorted(changed))
+    scope["base_ref"], scope["changed_files"] = "origin/dev", sorted(changed)
+    if scope["mcp"]:
+        scope["mcp_diffs"] = {}  # no per-symbol narrowing here: import scoping (a superset, never a narrower guess)
+    specs = gs._build_gate_specs(root, scope)
+    scope.pop("mcp_diffs", None)
+    suites: list[CiSuite] = []
+    skipped: list[dict[str, str]] = []
+    for sp in specs:
+        argv = list(sp.argv)
+        if _NODE_GATE_RE.match(sp.gate):
+            skipped.append({"label": sp.gate, "reason": "frontend gate: no node_modules in the export, CI-judged"})
+            continue
+        if "pytest" not in argv:
+            skipped.append({"label": sp.gate, "reason": "not a pytest suite (judged by CI / its own gate)"})
+            continue
+        if sp.gate == "mcp_toolkit_tests":
+            skipped.append({"label": sp.gate, "reason": "full toolkit suite (a core toolkit file changed): CI shards it, "
+                                                        "2h locally - judged by the merge queue"})
+            continue
+        with contextlib.suppress(ValueError):
+            cwd = str(Path(sp.cwd).resolve().relative_to(root.resolve())) or "."
+            suites.append(CiSuite(sp.gate, cwd, tuple(argv[1:])))
+            continue
+        skipped.append({"label": sp.gate, "reason": "its cwd is outside the export"})
+    summary = {k: scope.get(k) for k in ("products", "seed_fleet_wide", "mcp", "doc_only", "migration_files")}
+    summary.update({"seed_fanout": (scope.get("seed_fanout") or {}).get("mode"),
+                    "contract_consumers": sorted(scope.get("contract_consumers") or {}),
+                    "mcp_untested_modules": scope.get("mcp_untested_modules") or [],
+                    "unmapped_files": len(scope.get("unmapped_files") or [])})
+    return {"suites": suites, "skipped": skipped, "scope": summary}
+
+
+def merge_tree_sha(head: str, cwd: str | Path | None, base: str = "origin/dev") -> tuple[str | None, str]:
+    """The tree of `git merge-tree --write-tree <base> <head>` - what the merge queue's candidate will be (item 5
+    judges the MERGE, not the head: a keeper baseline that misses dev's newer migration cost 5h on 2026-11-11).
+    Returns `(tree_sha, "")`, or `(None, why)` on a conflict / a git without `--write-tree`."""
+    rc, out, err = _subprocess_git(cwd)("merge-tree", "--write-tree", base, head)
+    first = (out or "").splitlines()[0].strip() if (out or "").strip() else ""
+    if rc == 0 and _FULL_SHA_RE.match(first):
+        return first, ""
+    return None, _last_line(err or out) or f"git merge-tree exited {rc}"
+
+
+def _pytest_counts(text: str | None) -> int:
+    """Tests executed, from pytest's own summary line (`3 failed, 120 passed, 2 skipped in 4s`): passed+failed+errors."""
+    n = 0
+    for m in re.finditer(r"(\d+) (passed|failed|error|errors)\b", text or ""):
+        n += int(m.group(1))
+    return n
+
+
+def verdict_report(store: str | Path | None, events: list[dict[str, Any]], *, since: str | None = None) -> dict[str, Any]:
+    """Join item-5 verdict records to drain outcomes (by request verdict_ref, else by head sha) and report how often
+    a GREEN verdict was followed by an eject (`false_green_rate`) - split by whether any suite ran - plus the rejection
+    rate per requester. `events` is the outbox (`ship-requests.ndjson`) in order; `since` is an ISO prefix filter."""
+    path = Path(store) if store is not None else default_verdict_store()
+    recs: dict[str, dict[str, Any]] = {}
+    by_head: dict[str, list[dict[str, Any]]] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            with contextlib.suppress(ValueError):
+                r = json.loads(line)
+                if isinstance(r, dict) and r.get("id") and (not since or str(r.get("ts", "")) >= since):
+                    recs[r["id"]] = r
+                    by_head.setdefault(str(r.get("head")), []).append(r)
+    except OSError:
+        pass
+
+    def find(ev: dict[str, Any]) -> dict[str, Any] | None:
+        m = _VERDICT_REF_RE.match(str(ev.get("verdict_ref") or ""))
+        if m and m.group(1) in recs:
+            return recs[m.group(1)]
+        h = str(ev.get("head_sha") or "")
+        if len(h) >= 7:
+            for full, rs in by_head.items():
+                if full.startswith(h):
+                    return rs[-1]
+        return None
+
+    cur: dict[str, dict[str, Any]] = {}
+    joined: list[dict[str, Any]] = []
+    per_req: dict[str, dict[str, int]] = {}
+
+    def who(ev: dict[str, Any]) -> str:
+        rq = ev.get("requester") or {}
+        return str(rq.get("name") or rq.get("session_id") or "unknown")
+
+    for ev in events:
+        if since and str(ev.get("ts", "")) < since:
+            continue
+        slug, kind = ev.get("slug"), ev.get("event")
+        if not slug:
+            continue
+        if kind in ("request", "request_refused"):
+            cur[slug] = {"ev": ev, "rec": find(ev), "who": who(ev)}
+            row = per_req.setdefault(cur[slug]["who"], {"requests": 0, "refused": 0, "ejected": 0, "landed": 0})
+            row["requests"] += 1
+            if kind == "request_refused":
+                row["refused"] += 1
+        elif kind == "ack" and slug in cur and ev.get("outcome") in ("ejected", "landed"):
+            c = cur[slug]
+            per_req.setdefault(c["who"], {"requests": 0, "refused": 0, "ejected": 0, "landed": 0})[ev["outcome"]] += 1
+            rec = c["rec"]
+            joined.append({"slug": slug, "outcome": ev["outcome"], "verdict_id": rec.get("id") if rec else None,
+                           "verdict_ok": bool(rec.get("ok")) if rec else None,
+                           "suites_ran": len(rec.get("suites_ran") or []) if rec and "suites_ran" in rec else None,
+                           "requester": c["who"]})
+    green = [j for j in joined if j["verdict_ok"]]
+    false_green = [j for j in green if j["outcome"] == "ejected"]
+    zero = [j for j in green if j["suites_ran"] == 0]
+    zero_bad = [j for j in zero if j["outcome"] == "ejected"]
+    unlinked = [j for j in joined if j["verdict_id"] is None]
+    for row in per_req.values():
+        done = row["ejected"] + row["landed"]
+        row["rejection_rate"] = round((row["ejected"] + row["refused"]) / max(1, done + row["refused"]), 3)
+    return {"ok": True, "status": "report", "verdicts": len(recs), "joined": len(joined), "unlinked_outcomes": len(unlinked),
+            "green_then_ejected": len(false_green), "green_then_landed": len(green) - len(false_green),
+            "false_green_rate": round(len(false_green) / len(green), 3) if green else None,
+            "zero_suite_green": len(zero), "zero_suite_green_ejected": len(zero_bad),
+            "zero_suite_false_green_rate": round(len(zero_bad) / len(zero), 3) if zero else None,
+            "legacy_verdicts_without_suites_ran": sum(1 for r in recs.values() if "suites_ran" not in r),
+            "by_requester": dict(sorted(per_req.items(), key=lambda kv: -kv[1]["ejected"])), "kb": KB_POINTER}
+
+
 VERDICT_STORE_NAME = "deliverable-verdicts.ndjson"
 _VERDICT_REF_RE = re.compile(r"^ci-parity:([0-9a-f]{32})$")
 _FULL_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -2127,7 +2269,8 @@ def default_verdict_store(env: dict[str, str] | None = None) -> Path:
 
 
 def record_verdict(store: str | Path | None, *, head: str, tree: str, workflow_blob: str, interpreter: str,
-                   flags: list[str], tests: list[str], ok: bool, clock: Callable[[], float] = time.time) -> str:
+                   flags: list[str], tests: list[str], ok: bool, clock: Callable[[], float] = time.time,
+                   telemetry: dict[str, Any] | None = None) -> str:
     """Append ONE verdict record to the append-only store and return its ref (`ci-parity:<id>`).
 
     Only `export_ci_parity_check` (a run that actually executed the CI-blocking keepers + real-tree keeper
@@ -2137,7 +2280,7 @@ def record_verdict(store: str | Path | None, *, head: str, tree: str, workflow_b
     path.parent.mkdir(parents=True, exist_ok=True)
     rec = {"id": uuid.uuid4().hex, "ts": _iso(clock()), "head": head, "tree": tree, "workflow_blob": workflow_blob,
            "interpreter": interpreter, "flags": flags, "tests": tests, "ok": bool(ok),
-           "env_scrubbed": True, "ci_keepers": True}
+           "env_scrubbed": True, "ci_keepers": True, **(telemetry or {})}
     with open(path, "a", encoding="utf-8") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -2241,9 +2384,9 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
     """Real default for `deliverable(scoped_check=)`: judge the head the way CI does. Export it, prime the
     hermetic state CI primes, then - in a SCRUBBED environment - run (1) every `cli.py --check-*` keeper CI
     runs as a blocking step, (2) the real-tree keeper tests (`ci_keeper_test_ids`) and (3) the suites of the
-    seed roots / awake products the diff touches DIRECTLY (`local_suites`, scoped by `ci_scope` - the
-    classifier the workflow's `changes` job calls - over `origin/dev...head`). The toolkit split and the
-    shared-root fan-out stay CI-only (2h04m measured locally, 2026-11-11). A ledger-only diff runs no suite. Everything is
+    suites gate_sweep selects for the diff (`select_ci_suites`: the ONE selector) plus the toolkit tests that read the
+    live tree (`live_tree_test_ids`), all against the tree of the MERGE of the head into origin/dev (`merge_tree_sha`),
+    inside a wall-clock budget (what is skipped or over budget is named, never dropped). A ledger-only diff runs no suite. Everything is
     derived from the head's own workflow + tests. Runs inside ONE machine-wide heavy slot (`admit`, default
     hw_admission.heavy_slot); not admitted = UNMEASURED, never green. Minutes: the
     branch steward runs it once and files the `ci-parity:<id>` ref it returns; the run APPENDS a verdict record
@@ -2271,17 +2414,21 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                                            f"(CI's suite selection depends on it): {_last_line(diff_err or '')}"}
         changed = diff_out.splitlines()
         scope = cs.classify(changed)
+        mtree, why = merge_tree_sha(head, cwd)
+        if mtree is None:
+            return {"ok": False, "detail": f"UNMEASURED: cannot build the merge of {head[:9]} into origin/dev to judge it "
+                                           f"(item 5 judges the MERGE, not the head): {why}"}
         with slot(f"deliverable:{branch}") as adm:
             if adm is not None and not getattr(adm, "admitted", True):
                 return {"ok": False, "detail": f"UNMEASURED: no machine-wide heavy slot ({getattr(adm, 'verdict', '?')}) - "
                                                "item 5 runs CI's suites and is never judged green unrun"}
-            return _parity_run(head, scope, changed)
+            return _parity_run(head, mtree, scope, changed)
 
-    def _parity_run(head: str, scope: Any, changed: list[str]) -> dict[str, Any]:
+    def _parity_run(head: str, mtree: str, scope: Any, changed: list[str]) -> dict[str, Any]:
         tree = tempfile.mkdtemp(prefix="noc-ci-parity-")
         sandbox = tempfile.mkdtemp(prefix="noc-sandbox-home-")
         try:
-            err = _export_tree(head, tree, cwd, budget("ci_parity:export"))
+            err = _export_tree(mtree, tree, cwd, budget("ci_parity:export"))
             if err:
                 return {"ok": False, "detail": f"UNMEASURED: {err}"}
             wf = Path(tree) / CI_WORKFLOW_REL
@@ -2329,11 +2476,16 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 if r.returncode != 0:
                     failed.append(f"keeper {f}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}")
             tests = ci_keeper_test_ids(tool_dir / "tests")
+            n_executed = 0
             if tests:
                 r = run("ci_parity:pytest", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *tests], tool_dir)
+                n_executed += _pytest_counts(r.stdout)
                 if r.returncode != 0:
                     failed += pytest_failures(r, "test")
-            suites = local_suites(tree, scope, text, changed)
+            sel = select_ci_suites(tree, changed, py)
+            suites: list[CiSuite] = list(sel["suites"])
+            skipped: list[dict[str, str]] = list(sel["skipped"])
+            live = live_tree_test_ids(tool_dir / "tests") if scope.run_heavy else []
             guard = migration_guard_suite(tree, changed)
             if guard is not None:
                 why = link_pglite(tree, cwd or Path.cwd())
@@ -2341,26 +2493,53 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                     return {"ok": False, "detail": f"UNMEASURED: the diff touches migrations, so {guard.label} must run, "
                                                    f"but {why}"}
                 suites = suites + [guard]
+            if live:
+                r = run("ci_parity:livetree", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *live], tool_dir)
+                n_executed += _pytest_counts(r.stdout)
+                if r.returncode != 0:
+                    failed += pytest_failures(r, "livetree")
+            budget_s = int(os.environ.get(SUITE_BUDGET_ENV) or SUITE_BUDGET_DEFAULT_S)
+            started, ran_suites = time.monotonic(), []
             for s in suites:
+                if time.monotonic() - started >= budget_s:
+                    skipped.append({"label": s.label, "reason": f"over the {budget_s}s suite budget ({SUITE_BUDGET_ENV})"})
+                    continue
                 r = run(f"ci_parity:suite:{s.label}", [py, *s.argv], Path(tree) / s.cwd, s.env)
+                ran_suites.append(s.label)
+                n_executed += _pytest_counts(r.stdout)
                 if r.returncode != 0:
                     failed += pytest_failures(r, s.label)
             n_tests = len(tests)
-            tests = tests + [s.label for s in suites]
-            ran = (f"{len(flags)} CI-blocking keeper flag(s) + {n_tests} real-tree keeper test(s) + {len(suites)} "
-                   f"directly-touched suite(s){' incl. ' + guard.label if guard is not None else ''} "
-                   f"({cs.describe(scope)}; toolkit split + shared fan-out left to CI), env-scrubbed")
+            tests = tests + [f"livetree:{i}" for i in live] + ran_suites
+            partial = [k for k in skipped if "budget" in k["reason"]]
+            diff_scope = {"describe": cs.describe(scope), "run_heavy": bool(scope.run_heavy), "changed_files": len(changed),
+                          **sel["scope"]}
+            warnings: list[str] = []
+            if scope.run_heavy and not ran_suites and not live:
+                warnings.append("WARNING: heavy diff scope but 0 suites ran - the verdict judged only the keepers")
+            ran = (f"{len(flags)} CI-blocking keeper flag(s) + {n_tests} real-tree keeper test(s) + {len(live)} live-tree "
+                   f"toolkit test(s) + {len(ran_suites)} selected suite(s) [{n_executed} tests executed] "
+                   f"({cs.describe(scope)}; merge of {head[:9]} into origin/dev), env-scrubbed")
+            if skipped:
+                ran += "; NOT RUN (" + "; ".join(f"{k['label']}: {k['reason']}" for k in skipped[:6]) + (" ..." if len(skipped) > 6 else "") + ")"
+            if partial:
+                ran += f"; PARTIAL: {len(partial)} suite(s) over the budget"
+            ran += "".join(f"; {w}" for w in warnings)
+            telemetry = {"suites_ran": ran_suites, "tests_ran": n_executed, "diff_scope": diff_scope,
+                         "skipped": skipped, "partial": bool(partial), "warnings": warnings, "merge_tree": mtree,
+                         "livetree_tests": len(live)}
             git = _subprocess_git(cwd)
             rc_t, head_tree, _e = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
             rc_b, wf_blob, _e = git("rev-parse", "--verify", "--quiet", f"{head}:{CI_WORKFLOW_REL}")
             if rc_t != 0 or rc_b != 0:
                 return {"ok": False, "detail": "UNMEASURED: cannot resolve the head tree / test.yml blob to record the verdict"}
             ref = record_verdict(verdict_store, head=head, tree=head_tree.strip(), workflow_blob=wf_blob.strip(),
-                                 interpreter=f"{py} {sys.version.split()[0]}", flags=flags, tests=tests, ok=not failed)
+                                 interpreter=f"{py} {sys.version.split()[0]}", flags=flags, tests=tests, ok=not failed,
+                                 telemetry=telemetry)
             if failed:
                 return {"ok": False, "detail": f"{ran}; RED: {', '.join(failed[:8])}", "failed": failed,
-                        "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref}
-            return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref}
+                        "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref, **telemetry}
+            return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref, **telemetry}
         except _CiParityTimeout as exc:
             return {"ok": False, "detail": f"UNMEASURED: {exc}"}
         except (OSError, subprocess.SubprocessError) as exc:
@@ -2575,7 +2754,7 @@ def deliverable_refusal(result: dict[str, Any]) -> str:
 # -- the MCP tool + CLI entry -----------------------------------------------
 
 ACTIONS = ("status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack",
-           "role", "roles", "reconcile", "withdraw", "ask", "position", "decision", "deliverable")
+           "role", "roles", "reconcile", "withdraw", "ask", "position", "decision", "deliverable", "verdicts")
 
 
 def run_action(action: str, session_id: str | None, *, store: StewardStore | None = None,
@@ -2605,6 +2784,8 @@ def run_action(action: str, session_id: str | None, *, store: StewardStore | Non
     if action == "deliverable":
         return store.check_deliverable(kw.get("slug"), kw.get("branch"), kw.get("head_sha"), kw.get("verdict_ref"),
                                     run_scoped=bool(kw.get("run_scoped")))
+    if action == "verdicts":
+        return verdict_report(kw.get("verdict_store"), store._events(), since=kw.get("since"))
     if action == "inbox":
         return store.inbox(include_done=bool(kw.get("include_done")))
     if action == "roles":
@@ -2646,7 +2827,7 @@ def register(server) -> None:
             "requester, with the batched drain list) | ack slug= outcome=enqueued|landed|ejected|deployed|withdrawn|needs_resync [dev_sha= "
             "notes= (required for withdrawn|needs_resync)] (steward) | deliverable slug=|branch= [head_sha= verdict_ref= run_scoped=true] (READ-ONLY, open to all: the DELIVERY CONTRACT - head pushed + tree clean, merge-buildable (contains origin/dev OR merge-tree clean), migration numbers free, derived files current at the head, scoped keepers/tests green the way CI judges them - the CI-blocking keeper set + real-tree keeper tests, env-scrubbed, derived from test.yml (run_scoped=true runs it, minutes) OR a verdict_ref carrying `env-scrubbed`,`ci-keepers` and the head sha; verdict deliverable|needs_resync, failing items named; `request` runs it at filing and the guardian re-runs it before enqueue, which is then a pure push) | withdraw slug= [notes=] (the requester or steward takes a request back) | ask slug= question= [addressed_to=<role> deadline_min=30] (steward: kind=needs_info, one bounded question; unanswered past the deadline = escalate_to_owner in inbox) | position slug= notes= [ref=<ni-id>] (answer / stance) | decision slug= notes= (steward's final call) | role role=<role> [name= op=set|clear to_session_id=] (durable ROLE->session map: dev-steward "
             "is derived from the lease, also branch-steward:<branch>, agents, products/sw, ...; any session sets its own, "
-            "steward sets others') | roles (the map, stale/dead sessions flagged) | reconcile [confirm=True] (steward: ack "
+            "steward sets others') | verdicts [since=<ISO>] (READ-ONLY: joins item-5 verdict records to drain outcomes by head sha / verdict_ref - false-green rate (green then ejected), the zero-suite split, rejection rate per requester) | roles (the map, stale/dead sessions flagged) | reconcile [confirm=True] (steward: ack "
             "every inbox request already in origin/dev - `git cherry` - as landed; inbox/status list them as already_landed, "
             "not drain) ; request also takes branches=[feat/a, feat/b] (ordered; the drain emits ONE task_branch train + ONE "
             "enqueue, never separate enqueues for a split delivery). Identity = the server's CLAUDE_CODE_SESSION_ID (one MCP server per session). "
@@ -2666,7 +2847,7 @@ def register(server) -> None:
                          role: str | None = None, op: str | None = None, confirm: bool = False,
                          question: str | None = None, addressed_to: str | None = None,
                          deadline_min: float | None = None, ref: str | None = None,
-                         verdict_ref: str | None = None, run_scoped: bool = False) -> dict:
+                         verdict_ref: str | None = None, run_scoped: bool = False, since: str | None = None) -> dict:
         return run_action(
             action, os.environ.get(SESSION_ENV), claude_pid=os.getppid(),
             child_session=os.environ.get("CLAUDE_CODE_CHILD_SESSION") == "1",
@@ -2675,9 +2856,9 @@ def register(server) -> None:
             outcome=outcome, dev_sha=dev_sha, include_done=include_done,
             inline_reason=inline_reason, inline_note=inline_note, branches=branches,
             role=role, op=op, confirm=confirm, question=question, addressed_to=addressed_to,
-            deadline_min=deadline_min, ref=ref, verdict_ref=verdict_ref, run_scoped=run_scoped)
+            deadline_min=deadline_min, ref=ref, verdict_ref=verdict_ref, run_scoped=run_scoped, since=since)
 
 
 __all__ = ["deliverable", "export_derived_check", "export_ci_parity_check", "ci_blocking_flags", "ci_keeper_test_ids",
-           "hermetic_env", "export_env", "export_cli_help_check", "meaningful_tail", "seed_pythonpath", "validate_verdict_ref", "record_verdict", "read_verdict", "default_verdict_store", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
+           "hermetic_env", "export_env", "export_cli_help_check", "meaningful_tail", "seed_pythonpath", "validate_verdict_ref", "select_ci_suites", "live_tree_test_ids", "merge_tree_sha", "verdict_report", "record_verdict", "read_verdict", "default_verdict_store", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
            "tool_refusal", "run_action", "register", "REQUEST_CMD", "OVERRIDE_ENV"]
