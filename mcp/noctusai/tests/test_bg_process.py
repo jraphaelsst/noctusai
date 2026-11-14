@@ -328,7 +328,41 @@ def test_guard_only_judges_background_bash():
     assert guard.decide({"tool_name": "Edit", "tool_input": {"command": "while true"}}) is None
 
 
-def test_hook_denies_through_the_fail_closed_runner(tmp_path):
+def _load_hook():
+    sys.path.insert(0, str(HOOKS))
+    spec = importlib.util.spec_from_file_location("bg_launch_hook", HOOKS / "claude-guard-background-launch.py")
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    return hook
+
+
+def test_mode_is_shadow_before_enforce_date_and_enforce_from_it(monkeypatch):
+    import datetime as dt
+    monkeypatch.delenv("NOC_BG_LAUNCH_MODE", raising=False)
+    start = dt.date.fromisoformat(guard.ENFORCE_FROM)
+    assert guard.mode(start - dt.timedelta(days=1)) == "shadow"
+    assert guard.mode(start) == "enforce"
+    monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "shadow")
+    assert guard.mode(start) == "shadow"
+
+
+def test_hook_in_shadow_allows_and_logs_a_warn_event(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "shadow")
+    events = tmp_path / "ev.ndjson"
+    monkeypatch.setenv("NOCTUS_GUARD_EVENT_LOG", str(events))
+    hook = _load_hook()
+    from _guard_failclosed import run_guard
+    out = io.StringIO()
+    run_guard("background-launch", hook._judge, stdin=io.StringIO(json.dumps(_bash("while true; do sleep 9; done"))),
+              stdout=out, event_log=events)
+    assert out.getvalue() == ""  # no deny emitted: the launch proceeds
+    rows = [json.loads(line) for line in events.read_text().splitlines()]
+    assert [r["outcome"] for r in rows] == ["warn"] and rows[0]["source"] == "shadow"
+    assert "[noc-guard:background-launch] WARNING" in capsys.readouterr().err
+
+
+def test_hook_denies_through_the_fail_closed_runner(tmp_path, monkeypatch):
+    monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "enforce")
     sys.path.insert(0, str(HOOKS))
     spec = importlib.util.spec_from_file_location("bg_launch_hook", HOOKS / "claude-guard-background-launch.py")
     hook = importlib.util.module_from_spec(spec)

@@ -14,7 +14,7 @@ DENIED (only when run_in_background is true):
     without `--done-when`.
 ALLOWED: the wrapper with a declared end condition; known infrastructure (the steward's merge-queue
 watch and heartbeat loops, MCP servers, dev servers); anything that is not open-ended or long-running.
-No escape hatch: the deny names the wrapper form to use.
+No escape hatch: the deny names the wrapper form to use. Warn-only (shadow) until ENFORCE_FROM.
 
 DELIBERATE LIMITS: regex scanning, not a shell interpreter; a script that loops internally
 (`./poll.sh`) is not seen. The session-end sweep (`session_end_sweep`) is the safety net.
@@ -22,6 +22,8 @@ KB § PATTERNS/common/background-agent-lifecycle.md
 """
 from __future__ import annotations
 
+import datetime as _dt
+import os
 import re
 import sys
 from pathlib import Path
@@ -34,6 +36,18 @@ if str(_HOOKS) not in sys.path:
 import _bg_process_core as core  # noqa: E402
 
 KB_POINTER = "KB § PATTERNS/common/background-agent-lifecycle.md"
+
+# Warn-first soak (owner, 2026-11-14): shadow for 7 days, used to refine the tool; denies from this date.
+ENFORCE_FROM = "2026-11-21"
+
+
+def mode(today: _dt.date | None = None) -> str:
+    """'enforce' or 'shadow'. Env `NOC_BG_LAUNCH_MODE` overrides; otherwise the date decides."""
+    forced = (os.environ.get("NOC_BG_LAUNCH_MODE") or "").strip().lower()
+    if forced in {"enforce", "shadow"}:
+        return forced
+    today = today or _dt.date.today()
+    return "enforce" if today >= _dt.date.fromisoformat(ENFORCE_FROM) else "shadow"
 FORM = ('python3 scripts/bg_run.py --purpose "<what for>" --done "<what counts as done>" '
         '[--done-when "<shell check, exit 0 = done>"] -- <command>   '
         '(infrastructure that lives on purpose: --purpose "..." --long-lived -- <command>)')
