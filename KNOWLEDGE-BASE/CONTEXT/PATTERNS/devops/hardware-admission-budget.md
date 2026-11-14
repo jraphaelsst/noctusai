@@ -229,8 +229,15 @@ methodology ship together: `scripts/hooks/claude-guard-heavy-run.py` (fail-close
 - **Allowed:** a segment that runs `hw_admission.py` (the wrapped command is its argument);
   `--collect-only` / `--co` / `--version` / `--help` / `-h`; commands that merely mention the
   word (`grep pytest f`, `echo "pytest"`).
-- **Deny message** prints the exact wrapped command with a suggested `--job`
-  (`pytest:<dir>` / `vitest:<product>` / `build:<product>`).
+- **REWRITE, not deny (2026-11-14):** the guard knows the correct form, so it PRODUCES it. A heavy
+  run (anything but local Whisper or an unparseable command) is rewritten via `updatedInput` into
+  `<absolute venv python> <abs>/hw_admission.py run --job <derived> --wait-s 7200 -- bash -c '<the whole
+  original command, shlex-quoted>'`; the allow carries `additionalContext` `[noc-guard:heavy-run] REWROTE …`
+  and a guard-event row `outcome=rewrite`. The whole command travels as ONE job, so the compound "heredoc
+  writes the test, then runs pytest" works (the heredoc is inside the quoted argument). A `cd` inside it no
+  longer persists in the session shell. Why: 206 denies in 22 sessions were each a wasted round trip; a gate
+  that knows the answer should not make the agent retype it. Local Whisper (policy: server first) and an
+  unparseable command (cannot quote what cannot be parsed) are still refusals.
 - **Escape:** inline `NOC_HW_UNGATED_OK=<non-empty reason> <cmd>`; the reason is echoed to
   stderr. An empty reason is still a deny. Use it only when the gate itself is what is being
   debugged. The escape is read BEFORE parsing (2026-11-05), so it works on a command the
