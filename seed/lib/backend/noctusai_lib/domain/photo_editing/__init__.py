@@ -93,6 +93,15 @@ from noctusai_lib.domain.photo_editing.handlers import (
     handle_submit_openai_batch,
     is_retryable,
 )
+from noctusai_lib.domain.photo_editing.labeling import (
+    LABEL_PROMPT,
+    ROOM_TYPES,
+    LabelParseError,
+    PhotoLabel,
+    label_photo,
+    parse_label,
+    to_room,
+)
 from noctusai_lib.domain.photo_editing.learning import (
     Actor,
     DuplicateRuleError,
@@ -210,6 +219,13 @@ from noctusai_lib.domain.photo_editing.zipper import (
 )
 
 __all__ = [
+    "LABEL_PROMPT",
+    "ROOM_TYPES",
+    "LabelParseError",
+    "PhotoLabel",
+    "label_photo",
+    "parse_label",
+    "to_room",
     "Actor",
     "BATCH_API_DISCOUNT",
     "BackfillReport",

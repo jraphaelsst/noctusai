@@ -189,6 +189,7 @@ def register_all(server) -> None:
     from . import source_register
     from . import supabase_breaker
     from . import supabase_request_budget
+    from . import photo_label_dataset
 
     absorption_tracking.register(server)
     agent_context.register(server)
@@ -367,6 +368,7 @@ def register_all(server) -> None:
     source_register.register(server)
     supabase_breaker.register(server)
     supabase_request_budget.register(server)
+    photo_label_dataset.register(server)
 
 
 __all__ = ["register_all"]

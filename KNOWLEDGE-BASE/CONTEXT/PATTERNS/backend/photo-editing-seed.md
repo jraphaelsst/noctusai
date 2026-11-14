@@ -336,6 +336,12 @@ ready, auto-retry, expiry, overdue, resume, discount); the Supabase
 repository against `MockSupabaseClient(validate_schema=True)`, which checks
 every column against the real migrations. DI only — no monkeypatching.
 
+**Labeling (`labeling.py`):** `label_photo(image, analyze=)` returns a strict `PhotoLabel`
+(fine `ROOM_TYPES` -> coarse `Room` via `to_room`; enum attributes, `quality_score` 1-5,
+`edit_needed`). `parse_label` rejects missing keys / out-of-enum values, ignores extra keys,
+and accepts `sky: "n_a"` as `none`. Dataset runs: toolkit tool `noctus.dev.photo_label_dataset`
+(resumable CSV, Anthropic vision by default).
+
 Composes with: `KB § PATTERNS/backend/seed-fake-real-adapter.md` ·
 `KB § PATTERNS/backend/di-test-seam.md` · `KB § PATTERNS/backend/llm-usage.md` ·
 `KB § INTEGRATIONS/image-edit.md` · `KB § INTEGRATIONS/fx-ptax.md`.

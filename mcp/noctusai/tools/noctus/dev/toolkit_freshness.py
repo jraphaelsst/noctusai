@@ -511,6 +511,18 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append("--supabase-breaker-confirm")
         return argv
 
+    if tool_name == "photo_label_dataset":
+        argv = ["--photo-label-dataset"]
+        for k in ("out_csv", "csv_in", "photos_dir", "base_dir", "provider", "model", "concurrency", "limit"):
+            v = kwargs.get(k)
+            if v not in (None, ""):
+                argv.append(f"--photo-label-dataset-{k.replace('_', '-')}={v}")
+        if kwargs.get("dry_run") is False:
+            argv.append("--photo-label-dataset-run")
+        if kwargs.get("confirm"):
+            argv.append("--photo-label-dataset-confirm")
+        return argv
+
     return None
 
 
@@ -546,6 +558,7 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
         "claim", "evidence", "question", "note", "by", "events", "confirm",
     }),
     "supabase_breaker": frozenset({"action", "source", "product", "reason", "by", "ssh_host", "confirm"}),
+    "photo_label_dataset": frozenset({"out_csv", "csv_in", "photos_dir", "base_dir", "provider", "model", "concurrency", "limit", "dry_run", "confirm"}),
 }
 
 
