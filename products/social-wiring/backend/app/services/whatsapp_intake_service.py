@@ -2632,6 +2632,7 @@ class WhatsAppIntakeService:
         queue = UploadQueue(self._redis)
         max_concurrent = max(1, settings.upload_max_concurrent)
 
+        # poll-budget: interval_seconds (default 5s) while an upload job is in flight, ends when it finishes; 1 calls/tick (get_job read); worst 17280/day per upload in flight nonstop (bounded by the job); idle=fixed
         while not stop_event.is_set():
             try:
                 job = upload_svc.get_job(job_id=job_id, org_id=self._org_id)

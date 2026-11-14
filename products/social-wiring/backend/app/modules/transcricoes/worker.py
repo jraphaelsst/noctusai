@@ -186,6 +186,7 @@ def build_worker(
     async def claim_gate() -> bool:
         return await asyncio.to_thread(gate)
 
+    # poll-budget: claim poll, 2s base doubling to the 300s seed cap when idle, reset on work; 1 calls/tick (rpc claim_next_job); worst 288/day per idle worker (43200/day only while busy at the 2s base); idle=backoff
     return Worker(
         repo,
         worker_id=worker_id(),

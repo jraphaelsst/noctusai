@@ -66,6 +66,7 @@ export function useEvalLoops(agentKey: string, suite: EvalLoopSuite | null = nul
     queryFn: () =>
       api.get<EvalLoopListResponse>(`/api/studio/agents/${seg(agentKey)}/evals/loops`, suite ? { suite } : undefined),
     enabled: !!agentKey && enabled,
+    // poll-budget: 3s only while a loop round is in flight, stops when none is; 1 calls/tick (refetch of the polled GET, only while the job is in flight); worst 28800/day per open tab; hidden=paused
     refetchInterval: (q) => {
       const data = q.state.data as EvalLoopListResponse | undefined;
       return data?.items.some(hasRoundInFlight) ? POLL_MS : false;
@@ -88,6 +89,7 @@ export function useEvalLoop(agentKey: string, loopId: string | null) {
     queryKey: loopKey(agentKey, loopId ?? ""),
     queryFn: () => api.get<EvalLoop>(`/api/studio/agents/${seg(agentKey)}/evals/loops/${seg(loopId ?? "")}`),
     enabled: !!agentKey && !!loopId,
+    // poll-budget: 3s only while this loop's round is in flight, stops after; 1 calls/tick (refetch of the polled GET, only while the job is in flight); worst 28800/day per open tab; hidden=paused
     refetchInterval: (q) => (hasRoundInFlight(q.state.data as EvalLoop | undefined) ? POLL_MS : false),
   });
   useSettleOnRoundClose(agentKey, hasRoundInFlight(query.data));
