@@ -789,6 +789,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--srb-window-hours", type=float, default=1.0, help="With --supabase-request-budget: window in hours (max 24).")
     parser.add_argument("--srb-start", default=None, help="With --supabase-request-budget: ISO start (use with --srb-end).")
     parser.add_argument("--srb-end", default=None, help="With --supabase-request-budget: ISO end (use with --srb-start).")
+    parser.add_argument("--bg-process", action="store_true", help="Safety net for THIS session's own background processes (list/declare/undeclare/salvage/stop). MCP: noctus.dev.bg_process.")
+    parser.add_argument("--bg-process-action", default="list", help="With --bg-process: list|declare|undeclare|salvage|stop.")
+    parser.add_argument("--bg-process-pid", type=int, default=None, help="With --bg-process: target pid.")
+    parser.add_argument("--bg-process-purpose", default="", help="With --bg-process action=declare: what the long-lived process is for.")
+    parser.add_argument("--bg-process-reason", default="", help="With --bg-process action=salvage|stop: why it is being stopped.")
+    parser.add_argument("--bg-process-learnings", default="", help="With --bg-process action=salvage|stop: the learnings line.")
+    parser.add_argument("--bg-process-term-grace-s", type=float, default=10.0, help="With --bg-process action=stop: seconds to wait after TERM before KILL.")
+    parser.add_argument("--bg-process-session-id", default=None, help="With --bg-process: session id (default CLAUDE_CODE_SESSION_ID).")
+    parser.add_argument("--bg-process-confirm", action="store_true", help="With --bg-process: apply a write (declare/undeclare/salvage/stop). Without it, dry-run only.")
+    parser.add_argument("--bg-process-allow-stale-toolkit", action="store_true", help="With --bg-process: bypass the toolkit-staleness fresh-subprocess hop (escape hatch).")
     return parser
 
 
@@ -5021,6 +5031,16 @@ def main():
     elif args.supabase_request_budget:
         from tools.noctus.dev.supabase_request_budget import supabase_request_budget as _supabase_request_budget
         r = _supabase_request_budget(window_hours=args.srb_window_hours, start=args.srb_start, end=args.srb_end)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
+
+    elif args.bg_process:
+        from tools.noctus.dev.bg_process import bg_process as _bg_process
+        r = _bg_process(
+            action=args.bg_process_action, pid=args.bg_process_pid, purpose=args.bg_process_purpose,
+            reason=args.bg_process_reason, learnings=args.bg_process_learnings,
+            term_grace_s=args.bg_process_term_grace_s, session_id=args.bg_process_session_id,
+            confirm=bool(args.bg_process_confirm), allow_stale_toolkit=bool(args.bg_process_allow_stale_toolkit))
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 

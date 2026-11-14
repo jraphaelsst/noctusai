@@ -66,6 +66,17 @@ def test_idle_skips_agent_the_leader_already_stopped(tmp_path, monkeypatch):
     assert [c["agent_id"] for c in IDLE.find_idle(SID, str(tr))] == ["bbb"]
 
 
+def test_idle_skips_agent_whose_taskstop_said_no_task_found(tmp_path, monkeypatch):
+    """The harness already released it: a `TaskStop` error result for the id counts as stopped."""
+    _env(monkeypatch, tmp_path)
+    _agent(tmp_path, "aaa"); _agent(tmp_path, "bbb")
+    tr = tmp_path / "leader.jsonl"
+    tr.write_text(json.dumps({"type": "user", "message": {"content": [{
+        "type": "tool_result", "is_error": True,
+        "content": "<tool_use_error>No task found with ID: aaa</tool_use_error>"}]}}) + "\n")
+    assert [c["agent_id"] for c in IDLE.find_idle(SID, str(tr))] == ["bbb"]
+
+
 def test_idle_run_reports_once_logs_telemetry_and_skips_subagents(tmp_path, monkeypatch):
     _env(monkeypatch, tmp_path)
     _agent(tmp_path, "aaa")

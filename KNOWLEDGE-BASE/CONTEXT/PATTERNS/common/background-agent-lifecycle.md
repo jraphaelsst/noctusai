@@ -25,6 +25,28 @@
 - **Telemetry:** one row per reported agent in `guard-events.ndjson` (gitignored, under the primary's .claude/cache) (`guard=background-agent-idle`, `agent_id`, `idle_s`); recurrence = `jq -r 'select(.guard=="background-agent-idle")' guard-events.ndjson | wc -l`. Falling to ~0 is the success measure; a persistent count means the dispatcher step is skipped.
 - **Limits:** TaskStop outcomes are not observable beyond the leader transcript; a stopped agent is recognised only by its `TaskStop` line (the transcript path must be in the payload). Delivery of PostToolUse `additionalContext` to the leader is the documented hook contract but was not observable from inside this build; the stderr line is the fallback and the telemetry counts regardless.
 
+## Background processes - they end themselves (owner decision 2026-11-14)
+
+**Measured problem.** 8 cores / 8 GB, 5 GB of swap, load ~130: sessions left retry/poll loops (`until grep ...; sleep`), stuck deliverable checks and test runs whose owner went away. One leftover retry script ran 4 h unnoticed. The first design (an idle watcher: 45 min without CPU or output) was REJECTED by the owner: any lifetime cap or idle timer can kill long in-flight work. **There is no max lifetime, no idle timer and no auto-report of idle processes anywhere** (a test pins that).
+
+**The rule.** A background process declares its purpose and an end condition at launch and ends itself when it is met; it salvages its own output and leaves nothing behind. Scope is only this session's own `run_in_background` shells and their child trees, never a session, never a peer's processes (same boundary as leg 4 above).
+
+| Leg | Mechanism |
+|---|---|
+| Construction | `scripts/bg_run.py --purpose ".." --done ".." [--done-when "<shell check, exit 0 = done>"] -- <command>` (`--long-lived` for infrastructure: purpose only). Ends when the command exits OR `--done-when` succeeds; then tree-stops the command's process group (own session, so orphans re-parented to init are still found), verifies none survives, writes its own salvage record. A looping command without `--done-when` is refused by the wrapper itself. |
+| Refusal at launch | PreToolUse guard `claude-guard-background-launch.py` -> `bg_launch_guard.py` on Bash with `run_in_background=true`: denies `while`/`until` loops, `sleep N`, `tail -f`, `watch`, `--watch`, and bare long runs (pytest, vitest, playwright, vite build, npm test/build, `hw_admission run`, `gh run watch`) unless wrapped with `--purpose` + `--done` (or `--long-lived`). Allowed without the wrapper: known infrastructure (`core.INFRA_PATTERNS`: steward `--merge-queue watch` / `--release-steward heartbeat`, MCP servers, dev servers, Claude app, IDEs, browsers) and anything neither open-ended nor long-running. No escape hatch. Fail-closed (`[noc-guard:background-launch]`). |
+| Safety net | `noctus.dev.session_end_sweep` lists this session's still-running background processes (`background_processes`); `clean_wrap` is False and `wrap_blockers=["background_processes"]` until each is salvaged + stopped via `noctus.dev.bg_process action=stop`, or kept as declared long-lived (`action=declare`, purpose only, no lease). `clean_wrap=None` = unmeasured, never green. Whoever ends the session owns its leftovers; nobody inherits orphans. |
+| Stop tool | `noctus.dev.bg_process` (`--bg-process`): `list` (dossier: pid tree, command, age, cwd, output file + tail, what it waits on; a hw-admission slot waiter is explained, not exempted) / `declare` / `undeclare` / `salvage` / `stop`. `stop` REFUSES to signal until a salvage record exists (output tail saved outside git, in the gitignored per-machine cache dir (bg-process/salvage below .claude/cache), reason, learnings; whoever stops records it), then TERM root-first (a `while true` shell cannot respawn), wait, KILL survivors, verify no orphans (`survivors` / `orphans_remaining`). Refuses a peer's pid, infrastructure, live declarations, and its own claude chain. |
+| Telemetry | `guard-events.ndjson` rows (`guard=background-launch` denies; `guard=background-process` salvaged/stopped), salvage records (ndjson) and the wrapper run logs. |
+
+**Ownership signals (verified 2026-11-14).** Hooks and the MCP server find their session's `claude` process by walking up from their own pid; background shells are its children; a detached shell counts only when its command carries `/<session_id>/`. "Parent is pid 1" alone is never an orphan test (the steward's watchers detach on purpose). Stdout of a task shell is often a socket or `/dev/null`, so the output file is mapped only when a task `.output` is open; otherwise the dossier says so.
+
+**Limits.** The guard is regex scanning: a script that loops internally (`./poll.sh`) is not seen; the session-end net catches it. The wrapper cannot recover children it never started in its own session.
+
+**Fix-on-contact (same change).** `claude-guard-background-agent-idle.py` re-reported agents whose `TaskStop` returned `No task found with ID`; that error result now counts as stopped.
+
+Tests: `mcp/noctusai/tests/test_bg_process.py` (fake `ps` + fake kill; never a real signal).
+
 ## Construction + checks
 
 | Leg | Where |
@@ -32,7 +54,7 @@
 | Agent text | `.claude/agents/product-engineer.md` §4 (all executors inherit it) |
 | Dispatcher text | `.claude/skills/noc-branch-dispatch/SKILL.md` step 5b |
 | Backstop + telemetry | `scripts/hooks/claude-guard-background-agent-idle.py` -> `guard-events.ndjson` |
-| Tests | `mcp/noctusai/tests/test_background_agent_lifecycle_hooks.py` (fixture tasks dirs + transcripts) |
+| Tests | `mcp/noctusai/tests/test_background_agent_lifecycle_hooks.py` (fixture tasks dirs + transcripts) · `test_bg_process.py` (background processes) |
 
 The executor-dispatch guard was considered for appending an "end when done" clause to briefs and rejected: it denies/allows, it does not rewrite briefs, and the standing protocol every executor already references carries the clause once, in one place.
 

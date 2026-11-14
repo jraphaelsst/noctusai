@@ -65,14 +65,16 @@ def tasks_dirs(session_id: str) -> list[Path]:
 
 
 def stopped_ids(transcript_path: str | None, ids: list[str]) -> set[str]:
-    """Ids the leader already `TaskStop`ped (a line holding both the tool name and the id)."""
+    """Ids the leader already `TaskStop`ped (a line holding both the tool name and the id), or whose
+    `TaskStop` came back `No task found with ID: <id>` (the harness already released that agent:
+    nothing left to stop, so it must not be re-reported)."""
     if not transcript_path or not ids:
         return set()
     found: set[str] = set()
     try:
         with open(transcript_path, "rb") as fh:
             for line in fh:
-                if b"TaskStop" not in line:
+                if b"TaskStop" not in line and b"No task found with ID" not in line:
                     continue
                 for i in ids:
                     if i.encode() in line:
