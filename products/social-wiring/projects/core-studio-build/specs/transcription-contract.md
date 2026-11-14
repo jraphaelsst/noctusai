@@ -113,7 +113,7 @@ New package `seed/lib/backend/noctusai_lib/integrations/transcription/`:
 
 | Check | Limit |
 |---|---|
-| Per user | ≤ 10 submissions/hour (burst) |
+| Per user | ≤ 120 submissions/hour (burst; owner 2026-11-14) |
 | Per user in flight | ≤ 2 queued or processing |
 | Global | queue depth (queued + processing, all orgs) ≤ 20 |
 | Library lane | ≤ 180 s per reel; ≤ 5 queued or processing |

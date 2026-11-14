@@ -218,8 +218,8 @@ class TestQuotas:
         assert r.status_code == 429 and r.json()["codigo"] == "limite_usuario"
         assert int(r.headers["Retry-After"]) >= 1
 
-    def test_ten_per_hour(self, client):
-        for _ in range(10):
+    def test_120_per_hour(self, client):
+        for _ in range(120):
             seed(client, dur=5.0, ago=timedelta(minutes=30))
         r = post(client)
         assert r.status_code == 429 and r.json()["codigo"] == "limite_usuario"

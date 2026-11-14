@@ -90,7 +90,7 @@ def cs_brain_append(client: Any, params: dict) -> MockSelectBuilder:
 def reservar_transcricao(client: Any, params: dict) -> MockSelectBuilder:
     """`social_wiring.reservar_transcricao(...)` (migrations 225/229, daily caps removed by 343):
     the atomic load gate + insert. Same limits, order and codes as the SQL (transcription-contract.md
-    section 3): per user 2 in flight and 10/h; global queue depth 20 (503). No daily usage quota
+    section 3): per user 2 in flight and 120/h; global queue depth 20 (503). No daily usage quota
     (owner 2026-11-14). Refunded rows never count toward the hourly window."""
     tabela = "transcricoes"
     agora = datetime.now(timezone.utc)
@@ -114,7 +114,7 @@ def reservar_transcricao(client: Any, params: dict) -> MockSelectBuilder:
     if sum(1 for r in meus if r["status"] in ("na_fila", "processando")) >= 2:
         return nega("limite_usuario", 429, 60)
     hora = [r for r in meus if not r.get("minutos_reembolsados") and quando(r) > agora - timedelta(hours=1)]
-    if len(hora) >= 10:
+    if len(hora) >= 120:
         return nega("limite_usuario", 429, alivio(hora, 1))
     if sum(1 for r in rows if r["status"] in ("na_fila", "processando")) >= 20:
         return nega("fila_cheia", 503, 120)
