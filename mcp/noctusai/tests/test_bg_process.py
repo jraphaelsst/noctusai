@@ -393,3 +393,18 @@ def test_no_lifetime_or_idle_parameters_exist_anywhere():
     params = set(inspect.signature(tool.bg_process).parameters)
     assert not {"max_lifetime_s", "min_idle_s", "heartbeat"} & params
     assert not hasattr(core, "IDLE_S")
+
+
+def test_hook_fast_path_skips_non_background_bash_without_loading(monkeypatch, capsys):
+    hook = _load_hook()
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(_bash("while true; do sleep 1; done", bg=False))))
+    assert hook.main() == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_shadow_timeout_is_allowed_not_denied(monkeypatch):
+    hook = _load_hook()
+    monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "shadow")
+    assert hook._shadow_timeout_ok({}) is True
+    monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "enforce")
+    assert hook._shadow_timeout_ok({}) is False
