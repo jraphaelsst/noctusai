@@ -11113,37 +11113,38 @@ _ORBITY_018_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Monica migration 015 (WhatsApp connections + inbox) -- the webhook token is the routing credential of the
+# Nós no Limiar (ex-monica) migration 015 (WhatsApp connections + inbox) -- the webhook token is the routing credential of the
 # PUBLIC inbound webhook: two connections sharing one would cross-deliver messages between orgs.
 # ---------------------------------------------------------------------------
 
-_MONICA_SCHEMA = "monica"
+_NOSNOLIMIAR_SCHEMA = "nosnolimiar"
 
-_MONICA_WA_WEBHOOK_TOKEN_UNIQUE_PROBE = GuardProbe(
-    id="monica.whatsapp_connections.webhook_token_unique",
-    product="monica",
-    schema=_MONICA_SCHEMA,
-    guard_name="idx_monica_whatsapp_connections_webhook_token",
+# 015 created it as idx_monica_whatsapp_connections_webhook_token; nosnolimiar 024 renamed it (product rename 2026-11-14).
+_NOSNOLIMIAR_WA_WEBHOOK_TOKEN_UNIQUE_PROBE = GuardProbe(
+    id="nosnolimiar.whatsapp_connections.webhook_token_unique",
+    product="nosnolimiar",
+    schema=_NOSNOLIMIAR_SCHEMA,
+    guard_name="idx_nosnolimiar_whatsapp_connections_webhook_token",
     kind="write_refusal",
-    migrations=("015_whatsapp.sql",),
+    migrations=("015_whatsapp.sql", "024_rename_monica_indexes.sql"),
     rationale="The webhook token routes an unauthenticated inbound call to an org; two connections sharing one would cross-deliver conversations between orgs.",
     sql=_do_block(f"""
 DECLARE
   v_org uuid := gen_random_uuid();
 BEGIN
-  IF to_regclass('{_MONICA_SCHEMA}.whatsapp_connections') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_MONICA_SCHEMA}.whatsapp_connections does not exist (monica 015 not applied)';
+  IF to_regclass('{_NOSNOLIMIAR_SCHEMA}.whatsapp_connections') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_NOSNOLIMIAR_SCHEMA}.whatsapp_connections does not exist (nosnolimiar 015 not applied)';
   END IF;
   BEGIN
-    INSERT INTO {_MONICA_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token)
+    INSERT INTO {_NOSNOLIMIAR_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token)
     VALUES (v_org, gen_random_uuid(), 'a', 'http://x', 'k', 'noc_probe_tok');
-    INSERT INTO {_MONICA_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token)
+    INSERT INTO {_NOSNOLIMIAR_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token)
     VALUES (v_org, gen_random_uuid(), 'b', 'http://x', 'k', 'noc_probe_tok');
     RAISE EXCEPTION 'NOC_PROBE:permitted: two connections with the same webhook_token were inserted -- the unique guard did not fire';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
       RAISE;
-    ELSIF SQLERRM LIKE '%idx_monica_whatsapp_connections_webhook_token%' THEN
+    ELSIF SQLERRM LIKE '%idx_nosnolimiar_whatsapp_connections_webhook_token%' THEN
       RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
     ELSE
       RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
@@ -12719,7 +12720,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _COMMERCE_COUPON_PERCENT_PROBE,
     _COMMERCE_COUPON_CODE_UNIQUE_PROBE,
     *_ORBITY_018_PROBES,
-    _MONICA_WA_WEBHOOK_TOKEN_UNIQUE_PROBE,
+    _NOSNOLIMIAR_WA_WEBHOOK_TOKEN_UNIQUE_PROBE,
     *_AGENTS_BROWSER_LOCKDOWN_PROBES,
     *_CORE_BROWSER_LOCKDOWN_PROBES,
     *_IGIG_BROWSER_LOCKDOWN_PROBES,

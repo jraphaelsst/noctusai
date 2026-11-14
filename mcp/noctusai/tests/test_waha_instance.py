@@ -18,8 +18,8 @@ engine: NOWEB
 mem_limit: 512m
 node_heap_mb: 384
 instances:
-  - name: monica
-    product: monica
+  - name: nosnolimiar
+    product: nosnolimiar
     line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}
   - name: two-b
     product: other
@@ -52,7 +52,7 @@ def _tree(tmp_path, data=DATA, compose="render"):
 class TestRender:
     def test_one_service_volume_and_key_set_per_instance(self):
         out = wi.render_compose(wi.parse_instances(DATA))
-        for n, up in (("monica", "MONICA"), ("two-b", "TWO_B")):
+        for n, up in (("nosnolimiar", "NOSNOLIMIAR"), ("two-b", "TWO_B")):
             assert f"  waha-{n}:" in out and f"container_name: noctus-waha-{n}" in out
             assert f"${{WAHA_{up}_API_KEY:?" in out and f"${{WAHA_{up}_HMAC_SECRET:?" in out
         assert out.count("expose:") == 2 and "ports:" not in out
@@ -64,8 +64,8 @@ class TestRender:
     def test_no_secret_value_is_ever_rendered(self):
         assert "openssl" not in wi.render_compose(wi.parse_instances(DATA))
 
-    @pytest.mark.parametrize("bad", [DATA.replace("noweb-2026.9.2", "latest"), DATA.replace("monica", "Bad Name", 1),
-                                     DATA + "  - name: monica\n    product: x\n"])
+    @pytest.mark.parametrize("bad", [DATA.replace("noweb-2026.9.2", "latest"), DATA.replace("nosnolimiar", "Bad Name", 1),
+                                     DATA + "  - name: nosnolimiar\n    product: x\n"])
     def test_invalid_declarations_raise(self, bad):
         with pytest.raises(ValueError):
             wi.parse_instances(bad)
@@ -91,14 +91,14 @@ class TestWahaInstancesRenderSync:
 class TestActions:
     def test_apply_dry_run_touches_no_ssh(self, tmp_path, monkeypatch):
         monkeypatch.setattr(wi, "run_remote", lambda *a, **k: pytest.fail("ssh in dry-run"))
-        r = wi.waha_instance("apply", name="monica", repo_root=str(_tree(tmp_path)))
-        assert r["status"] == "planned" and r["env_fleet_keys_to_generate_on_vps"][0] == "WAHA_MONICA_API_KEY"
+        r = wi.waha_instance("apply", name="nosnolimiar", repo_root=str(_tree(tmp_path)))
+        assert r["status"] == "planned" and r["env_fleet_keys_to_generate_on_vps"][0] == "WAHA_NOSNOLIMIAR_API_KEY"
 
     def test_apply_blocks_when_keys_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr(wi, "run_remote", lambda *a, **k: (
             (0, DATA, "") if "waha-instances.yml" in a[1] else (0, "", "") if "label=noctus.line.personal" in a[1]
-        else (3, "MISSING:WAHA_MONICA_API_KEY", "")))
-        r = wi.waha_instance("apply", name="monica", confirm=True, repo_root=str(_tree(tmp_path)))
+        else (3, "MISSING:WAHA_NOSNOLIMIAR_API_KEY", "")))
+        r = wi.waha_instance("apply", name="nosnolimiar", confirm=True, repo_root=str(_tree(tmp_path)))
         assert r["status"] == "blocked"
 
     @staticmethod
@@ -108,13 +108,13 @@ class TestActions:
     def test_remove_refuses_working_session(self, tmp_path, monkeypatch):
         self._clean_vps(monkeypatch)
         monkeypatch.setattr(wi, "_session_status", lambda *a: "WORKING")
-        r = wi.waha_instance("remove", name="monica", confirm=True, repo_root=str(_tree(tmp_path)))
+        r = wi.waha_instance("remove", name="nosnolimiar", confirm=True, repo_root=str(_tree(tmp_path)))
         assert r["status"] == "blocked"
 
     def test_remove_dry_run_snapshots_volume_first(self, tmp_path, monkeypatch):
         self._clean_vps(monkeypatch)
         monkeypatch.setattr(wi, "_session_status", lambda *a: "STOPPED")
-        r = wi.waha_instance("remove", name="monica", repo_root=str(_tree(tmp_path)))
+        r = wi.waha_instance("remove", name="nosnolimiar", repo_root=str(_tree(tmp_path)))
         assert r["status"] == "planned" and "tar czf" in r["steps"][0]
 
     def test_unknown_instance_errors(self, tmp_path):
@@ -143,7 +143,7 @@ class TestLinePolicy:
             with pytest.raises(ValueError, match="send: disabled"):
                 wi.parse_instances(broken)
         with pytest.raises(ValueError, match="contradicts"):
-            wi.parse_instances(DATA.replace("product: monica\n", "product: monica\n    edge_deny_writes: true\n", 1))
+            wi.parse_instances(DATA.replace("product: nosnolimiar\n", "product: nosnolimiar\n    edge_deny_writes: true\n", 1))
 
     def test_env_value_matches_the_seed_as_json_byte_for_byte(self):
         import importlib.util
@@ -169,13 +169,13 @@ class TestLinePolicy:
 class TestEdgeAndDashboard:
     def test_plain_instances_render_unchanged_dashboard_on(self):
         out = wi.render_compose(wi.parse_instances(DATA))
-        assert "WAHA_DASHBOARD_PASSWORD" in out and "nginx" not in out and "waha-monica-core" not in out
+        assert "WAHA_DASHBOARD_PASSWORD" in out and "nginx" not in out and "waha-nosnolimiar-core" not in out
 
     def test_edge_instance_renders_proxy_in_front_and_dashboard_off(self):
         import yaml
         d = yaml.safe_load(wi.render_compose(wi.parse_instances(EDGE)))
         sv = d["services"]
-        assert set(sv) == {"waha-monica", "waha-two-b", "waha-probe-core", "waha-probe"}
+        assert set(sv) == {"waha-nosnolimiar", "waha-two-b", "waha-probe-core", "waha-probe"}
         core, edge = sv["waha-probe-core"], sv["waha-probe"]
         assert core["environment"]["WAHA_DASHBOARD_ENABLED"] == "false"
         assert core["environment"]["WHATSAPP_SWAGGER_ENABLED"] == "false"
@@ -235,16 +235,16 @@ class TestEdgeAndDashboard:
         for method, path in matrix:
             assert edge_denies(method, path) is lp.is_whatsapp_write(method, path), (method, path)
 
-    def test_repo_declares_monica_explicitly(self):
-        monica = [i for i in wi.load_spec(REPO)["instances"] if i["name"] == "monica"][0]
-        assert monica["line_policy"] == {"send": "enabled", "mark_online": True, "full_sync": True, "auto_repair": True}
+    def test_repo_declares_nosnolimiar_explicitly(self):
+        nosnolimiar = [i for i in wi.load_spec(REPO)["instances"] if i["name"] == "nosnolimiar"][0]
+        assert nosnolimiar["line_policy"] == {"send": "enabled", "mark_online": True, "full_sync": True, "auto_repair": True}
 
 
 class TestProdComposeCarriesThePolicy:
     def _root(self, tmp_path, prod_env):
         root = _tree(tmp_path)
         (root / "deploy/fleet/docker-compose.prod.yml").write_text(
-            "services:\n  monica:\n    environment:\n      MONICA_WAHA_BASE_URL: http://waha-monica:3000\n" + prod_env)
+            "services:\n  nosnolimiar:\n    environment:\n      NOSNOLIMIAR_WAHA_BASE_URL: http://waha-nosnolimiar:3000\n" + prod_env)
         return root
 
     def test_missing_policy_env_is_flagged(self, tmp_path):
@@ -252,9 +252,9 @@ class TestProdComposeCarriesThePolicy:
         assert [i["symbol"] for i in out] == ["waha-line-policy-env-drift"]
 
     def test_wrong_policy_env_is_flagged_and_exact_value_passes(self, tmp_path):
-        bad = "      MONICA_WAHA_LINE_POLICY: '{\"send\":\"disabled\",\"mark_online\":true,\"full_sync\":true,\"auto_repair\":true}'\n"
+        bad = "      NOSNOLIMIAR_WAHA_LINE_POLICY: '{\"send\":\"disabled\",\"mark_online\":true,\"full_sync\":true,\"auto_repair\":true}'\n"
         assert check_waha_instances_render_sync(repo_root=self._root(tmp_path / "a", bad))
-        good = "      MONICA_WAHA_LINE_POLICY: '{\"send\":\"enabled\",\"mark_online\":true,\"full_sync\":true,\"auto_repair\":true}'\n"
+        good = "      NOSNOLIMIAR_WAHA_LINE_POLICY: '{\"send\":\"enabled\",\"mark_online\":true,\"full_sync\":true,\"auto_repair\":true}'\n"
         assert check_waha_instances_render_sync(repo_root=self._root(tmp_path / "b", good)) == []
 
 
@@ -326,7 +326,7 @@ class TestRound2Edge:
         for host in ("waha-probe", "noctus-waha-probe", "waha-probe-core", "noctus-waha-probe-core"):
             for port in (3000, 3001):
                 assert rows[f"{host}:{port}"]["send"] == "disabled", (host, port)
-        assert not any(k.startswith(("waha-monica", "noctus-waha-monica")) for k in rows)  # enabled lines are not listed
+        assert not any(k.startswith(("waha-nosnolimiar", "noctus-waha-nosnolimiar")) for k in rows)  # enabled lines are not listed
         assert "READ_ONLY_LINES: dict[str, dict] = {}" in wi.render_read_only_lines(wi.parse_instances(DATA))
 
     def test_the_repo_read_only_module_is_the_render(self):

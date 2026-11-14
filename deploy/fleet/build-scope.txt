@@ -32,6 +32,6 @@
 agents
 assistant
 core
-monica
+nosnolimiar
 seed
 social-wiring
