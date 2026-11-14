@@ -1358,6 +1358,23 @@ if [[ -n "$STAGED_AHS" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies-quater-ter. URL-hygiene gates (warn-only shadow, ratchet) ──
+# Keepers `check_signed_url_ttl` + `check_pii_query_params` (security S1/S4, 2026-11-14): a signed URL
+# over 600 s needs a reason; PII never rides in a URL query string. Per-file baselines in mcp/noctusai/tests/.
+# WARN-ONLY for the shadow period (build triad: >=7 days, then record shadow precision + flip to blocking).
+STAGED_URLH=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/backend/.*\.py|seed/(lib|framework)/backend/.*\.py|mcp/noctusai/tests/(signed_url_ttl|pii_query_params)_baseline\.json)$' | grep -vE '(^|/)tests/[^/]*\.py$|/test_[^/]*\.py$' || true)
+if [[ -n "$STAGED_URLH" ]] && have_py; then
+    echo "[pre-commit] backend source staged — checking signed-URL TTLs + PII in query strings..."
+    if ! "$PY" "$CLI" --check-signed-url-ttl --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] SIGNED-URL-TTL warning (shadow period — not blocking)." >&2
+        echo "[pre-commit] Use a TTL <= 600 s or pass ttl_reason=\"why\". If you FIXED some, run --lower-signed-url-ttl-baseline. See KB § PATTERNS/security/url-hygiene.md." >&2
+    fi
+    if ! "$PY" "$CLI" --check-pii-query-params --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] PII-QUERY-PARAMS warning (shadow period — not blocking)." >&2
+        echo "[pre-commit] Move the PII param to a POST body, or '# pii-query-ok: why'. If you FIXED some, run --lower-pii-query-params-baseline. See KB § PATTERNS/security/url-hygiene.md." >&2
+    fi
+fi
+
 # ─── 6e-quinquies-ter. Agent prompt-text-in-code gate (blocking, ratchet) ──
 # Keeper `check_agent_prompt_text_in_code` (Julia v2 D3): every string a model reads is an agents DB
 # row, never code. Fires when agents backend app code under channels/studio/runtime (or the channels
