@@ -138,6 +138,7 @@ class TestAuthAndLimits:
         ("post", "/lotes", {"json": {"marca_id": MARCA, "origem": "form_me", "variaveis": ["*"]}}),
         ("get", "/lotes", {"params": {"marca_id": MARCA}}),
         ("get", f"/lotes/{uuid.uuid4()}", {}),
+        ("get", f"/lotes/{uuid.uuid4()}/progress", {}),
         ("post", f"/lotes/{uuid.uuid4()}/reprocessar", {}),
         ("post", "/lotes/excluir", {"json": {"ids": [str(uuid.uuid4())]}}),
         ("get", "", {"params": {"marca_id": MARCA, "lista": "favoritas"}}),
@@ -153,6 +154,22 @@ class TestAuthAndLimits:
     def test_unauthenticated_is_401(self, client, method, path, kw):
         r = getattr(client._tc, method)(BASE + path, **kw)
         assert r.status_code == 401, (method, path, r.status_code, r.text)
+
+
+class TestLoteProgressStream:
+    """The SSE job-progress channel (seed `create_job_progress_router`) over a batch."""
+
+    def test_terminal_batch_streams_one_snapshot_then_closes(self, hc):
+        lid = _lote_row(hc, status="completo")
+        r = hc.get(f"{BASE}/lotes/{lid}/progress")
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
+        assert r.headers["x-accel-buffering"] == "no"
+        assert '"status":"completo"' in r.text and '"terminal":true' in r.text and '"progress":1.0' in r.text
+
+    def test_unknown_foreign_and_malformed_ids_are_404(self, hc):
+        other = _lote_row(hc, org="other-org", marca=OTHER_MARCA)
+        for lid in (str(uuid.uuid4()), other, "not-a-uuid"):
+            assert hc.get(f"{BASE}/lotes/{lid}/progress").status_code == 404, lid
 
 
 class TestCreateLote:

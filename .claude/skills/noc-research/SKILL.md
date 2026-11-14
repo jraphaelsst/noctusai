@@ -24,7 +24,9 @@ version: 1.1.0
 
 ## Output contract
 
-Short answer + confidence → claims (status · confidence · sources with tier + date) → contested points → what would change it → register rows touched → open questions and who decides (OAB lawyer, CRC contador, owner). **Word limit set by the caller →** answer · one table · key claims · register rows · change-triggers; drop prose first. A report for others → artifact or doc per house rules; answer in the language of the ask.
+🔴 **Every sourced claim carries the full URL it came from** (exact page, not the host; + date read) — in the agent's hand-back AND in the deliverable to the owner, so the owner can verify it. A hand-back with a sourced claim but no URL is sent back to the agent ("claim → URL, or say it can't be recovered") before use; a URL is never reconstructed from memory.
+
+Short answer + confidence → claims (status · confidence · sources with full URL + tier + date) → contested points → what would change it → register rows touched → open questions and who decides (OAB lawyer, CRC contador, owner). **Word limit set by the caller →** answer · one table · key claims · register rows · change-triggers; drop prose first. A report for others → artifact or doc per house rules; answer in the language of the ask.
 
 ## Guardrails
 

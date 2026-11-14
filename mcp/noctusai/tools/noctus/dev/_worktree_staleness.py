@@ -87,6 +87,28 @@ def is_ancestor(run: GitRunner, branch: str, base: str) -> bool:
     return rc == 0
 
 
+def _derived_only_commit(run: GitRunner, sha: str) -> bool:
+    """True when ``sha`` touches ONLY files ``kb_sync.update_kb_counts`` regenerates.
+
+    2026-11-14: 15 landed branches kept one unlanded commit each, a
+    ``chore(kb-counts)`` regeneration of ``02-LANDSCAPE.md`` that ``dev``
+    re-derives itself, so ``git cherry`` showed ``+`` forever and the work
+    looked unlanded. Such a commit carries nothing ``base`` cannot regenerate.
+    The path list is the regenerator's own manifest (via ``_benign_stash``),
+    never a hand copy; when it cannot be read the answer is False, which keeps
+    blocking (conservative)."""
+    try:
+        from ._benign_stash import _kb_counts_regenerated_rel_paths
+        derived = set(_kb_counts_regenerated_rel_paths())
+    except Exception:  # noqa: BLE001 - unknown manifest: never treat a commit as derived
+        return False
+    if not derived or not sha:
+        return False
+    rc, out, _e = run(["git", "show", "--name-only", "--format=", sha])
+    files = {ln.strip() for ln in out.splitlines() if ln.strip()}
+    return rc == 0 and bool(files) and files <= derived
+
+
 def all_commits_cherry_picked(run: GitRunner, branch: str, base: str) -> bool:
     """Patch-id equivalence: every commit on ``branch`` is already on ``base``.
 
@@ -97,7 +119,8 @@ def all_commits_cherry_picked(run: GitRunner, branch: str, base: str) -> bool:
     rc, out, _e = run(["git", "cherry", base, branch])
     if rc != 0:
         return False
-    plus_lines = sum(1 for ln in out.splitlines() if ln.startswith("+"))
+    plus_lines = sum(1 for ln in out.splitlines()
+                     if ln.startswith("+") and not _derived_only_commit(run, ln[1:].strip()))
     _rc2, log_out, _e2 = run(
         ["git", "log", "--oneline", f"{base}..{branch}"]
     )
@@ -442,8 +465,16 @@ def integrated_live_pointer_confirms_dead(
     tip (right after the FF) is legitimate. ``on_going`` / ``blocked`` /
     unknown pointers are NOT covered - they keep blocking. The dirty / stash /
     lock / recent-mtime / min-age guards still run after this.
+
+    2026-11-14: the merge queue lands a branch RE-APPLIED (new SHA, same
+    patch), so SHA ancestry alone never fired for queue-landed branches -
+    26 merged, clean worktrees sat immortal at 94% disk. The status already
+    proves an integrate ran, so patch-id equivalence (every commit on
+    ``base`` by ``git cherry``, the shared :func:`is_merged` predicate) is
+    the same evidence; a branch with any genuinely unmerged commit (``+``)
+    still blocks.
     """
-    return status == "integrated-worktree-live" and is_ancestor(run, branch, base)
+    return status == "integrated-worktree-live" and is_merged(run, branch, base)
 
 
 #: Worktrees the Claude Code harness creates for an ``Agent`` dispatch
@@ -494,7 +525,31 @@ def pointer_override_signal(
         return None
     if integrated_live_pointer_confirms_dead(run, branch, base, status):
         return "integrated_live_merged"
+    if on_going_pointer_landed(run, branch, base, status):
+        return "on_going_landed"
     return None
+
+
+def on_going_pointer_landed(
+    run: GitRunner, branch: str, base: str, status: str | None,
+) -> bool:
+    """Fifth signal (2026-11-14): an ``on_going`` claim whose branch is PROVEN
+    landed by :func:`pointer_branch_landed` - the same predicate the pointer
+    healer (``session_end_sweep``) and the ``check_stale_branch_pointers``
+    keeper use, so the three can never disagree.
+
+    The healer that flips such claims runs only when a session runs its end
+    sweep; sessions the owner simply closes never do, and the merge queue
+    lands branches without touching their pointer. Measured 2026-11-14: 34
+    landed branches still claimed, their worktrees immortal at 94% disk. The
+    SessionStart sweep runs on every session start, so deciding it HERE makes
+    reclamation happen by construction. A branch with no commits of its own
+    (a fresh fork) or any unmerged commit is NOT landed and keeps blocking;
+    dirty / stash / lock / recent-mtime / min-age guards still run after."""
+    if status != "on_going":
+        return False
+    landed, _how = pointer_branch_landed(run, branch, "", base)
+    return landed
 
 
 def pointer_block_reason(status: str | None) -> str:

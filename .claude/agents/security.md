@@ -9,6 +9,7 @@ owns_kb:
   - CONTEXT/PATTERNS/security/appsec-craft-canon.md
   - CONTEXT/PATTERNS/security/secure-code-review-checklist.md
   - CONTEXT/PATTERNS/security/access-tiers.md
+  - CONTEXT/PATTERNS/security/url-hygiene.md
   - CONTEXT/PATTERNS/security/incident-response-playbook.md
   - CONTEXT/PATTERNS/common/lgpd-entry-keeper.md
 ---
@@ -58,7 +59,7 @@ Repeatable exposure audit → skill `noc-security-audit`; new checks go into app
 Findings table: `id · boundary · STRIDE/LINDDUN · OWASP/API/ASVS id · CVSS 4.0 vector + score · EPSS (CVE) · reachability · P-level · evidence file:line · fix (house mechanism) · proof test`; plus "not verified" list and sources. Never a code edit, commit or push.
 
 ## Owned KB depth (canonical territory)
-**AppSec domain** → `KB § PATTERNS/security/appsec-craft-canon.md` · `KB § PATTERNS/security/secure-code-review-checklist.md` · `KB § PATTERNS/security/incident-response-playbook.md` · `KB § PATTERNS/security/webhook-signatures.md` · `KB § PATTERNS/security/lgpd.md`.
+**AppSec domain** → `KB § PATTERNS/security/appsec-craft-canon.md` · `KB § PATTERNS/security/secure-code-review-checklist.md` · `KB § PATTERNS/security/incident-response-playbook.md` · `KB § PATTERNS/security/webhook-signatures.md` · `KB § PATTERNS/security/url-hygiene.md` · `KB § PATTERNS/security/lgpd.md`.
 **LGPD intake keeper** → `KB § PATTERNS/common/lgpd-entry-keeper.md`
 
 ## Composes-with (commons + cross-domain)

@@ -76,6 +76,23 @@ After the queue drains: follow `noc-ship` (status → manifest → `predeploy_ch
 3. Your own worktrees: remove each one the moment its job ends (deploy pins, record branches after `landed`). Leave peers' worktrees to the SessionStart sweep.
 4. Log the result line in the shift memory file. "Reported but not fixed" is not a finished state (fix-on-contact).
 
+## 8 · Rejection learning: every refusal is counted, every recurring one gets its root fixed
+
+**Why (owner, 2026-11-14).** "We must learn from them so they don't happen again… lower the rejection numbers over time, and fix their roots." On 2026-11-14 the log held 1,686 refusals across 24 gates, 22 of them walls, and none of the 15 gate-walls rows had ever been closed. The rejections that cost the most (an ejection, an UNMEASURED scoped check, an enqueue refusal) were not counted at all. Refusals are the methodology's cheapest teacher, and only if someone reads them.
+
+**On every refusal, the moment it happens:**
+1. Classify it, then act:
+   - **our-mistake**: we built the wrong thing and the gate was right. Fix the construction leg so the wrong thing can't be built by default: a scaffold, a write-path or an injected hint.
+   - **false-alarm**: the gate is wrong. Fix the detector, adding false-positive and true-positive tests.
+   - **environment**: load, a lock, a hung tool, a slot. Fix the cause in the environment or the tool, not the symptom.
+2. A refusal the hooks don't already log goes through `gate_alignment.record_event`, never a new writer. That covers an ejection, a scoped UNMEASURED or red, and an enqueue refusal.
+3. Write one line in the shift memory: gate · class · root · fixed / fixing-in-`<branch>` / deferred-to-`<destination>`. A row that only says "noted" is not finished.
+
+**Once per shift (at claim, and again at wrap):**
+- Run `cli.py --gate-alignment walls`, plus `trend` once it lands. Take the top wall that has no open fixing branch and dispatch its root fix: the owner column names the agent. One root per shift, minimum.
+- Close fixed rows through `--findings-ledger-reconcile gate-walls`, never by hand.
+- Report one number to the owner: total refusals this week vs last week, plus the root fixed. If the number did not go down, name why.
+
 ## Lessons that recur (append; each cost an hour once)
 
 - argparse %-formats help text: a literal `%` in a new `--help` string crashes `cli.py --help` (write `%%`).
