@@ -4569,3 +4569,20 @@ rows:
   verificado_por: accountant
   revalidar_em: null
   notas: Prazo para regularizar pendencias da opcao.
+- key: simples.par5i.itens_vii_x
+  value: vii_intermediacao_negocios;x_jornalismo_publicidade
+  unit: text
+  scope:
+    regime:
+    - simples
+  vigencia_de: 2018-01-01
+  vigencia_ate: null
+  norma: LC 123/2006 art. 18 par. 5-I itens VII (intermediacao de negocios) e X (jornalismo e publicidade)
+  fonte_url:
+  - https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp123.htm
+  tier: norma
+  verificado_em: 2026-11-13
+  verificado_por: accountant 2026-11-13
+  revalidar_em: null
+  notas: 'Atividades do par. 5-I sujeitas ao Fator R (simples.fator_r.limiar): >= limiar => Anexo III, abaixo => Anexo V. Texto lido em
+    Planalto 2026-11-13. Aplicacao a afiliados/newsletter: canon sec. 9 C; enquadramento CNAE e do CRC.'
