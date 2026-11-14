@@ -2614,6 +2614,20 @@
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-refusal-classes-owned": {
+   "mechanism": "tool: noctus.dev.gate_alignment action=refusals (upserts one auto-improvement row per class + reports open_fix); refusal_recurrence() returned to every requester",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "A refusal class that fired >=3x in 14 days with no open fix (pointer / in-progress gate-walls row / NOC-REMEDIATE[class]) is an unowned recurring mistake (warn-first).",
+   "new": true,
+   "declared": "2026-11-14",
+   "source": "KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop); owner directive 2026-11-14; Tricorder (Sadowski et al.)",
+   "shadow": {
+    "since": "2026-11-14",
+    "fires": 0,
+    "fix_rate": null
+   }
+  },
   "keeper:check-root-requirements-superset": {
    "severity": "high",
    "kind": "keeper-batch",
@@ -3743,6 +3757,18 @@
    "gates": [
     "keeper:check-signed-url-ttl",
     "keeper:check-pii-query-params"
+   ]
+  },
+  {
+   "id": "D-refusal-recurrence",
+   "decision": "Refusals are counted by class (refusal_class/refusal_recurrence over the gate event sink); a class recurring N>=2 is ONE auto-improvement row (count in place, closes on gate_quiet:<class>:7d); N>=3 with no open fix warns. Warn-first, promote after >=7 shadow days.",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop)",
+   "construction": "tool: noctus.dev.gate_alignment actions trend/refusals + refusal_recurrence() returned to requesters; harness_event upserts per class",
+   "gate": "keeper:check-refusal-classes-owned",
+   "telemetry": "gate events carry class/stage/first-finding (record_cli_exit -> guard-events.ndjson)",
+   "branch": "feat/refusal-recurrence",
+   "gates": [
+    "keeper:check-refusal-classes-owned"
    ]
   }
  ]
