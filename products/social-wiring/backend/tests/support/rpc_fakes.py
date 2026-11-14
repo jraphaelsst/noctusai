@@ -88,11 +88,10 @@ def cs_brain_append(client: Any, params: dict) -> MockSelectBuilder:
 
 
 def reservar_transcricao(client: Any, params: dict) -> MockSelectBuilder:
-    """Migration 225 `social_wiring.reservar_transcricao(...)`: the atomic quota gate
-    + insert. Same limits, order and codes as the SQL (transcription-contract.md
-    section 3): per user 2 in flight, 10/h, 1800 s rolling 24 h; per org 7200 s;
-    global queue depth 20 (503), global 36000 s (503). Refunded rows
-    (`minutos_reembolsados`) never count toward the windows."""
+    """`social_wiring.reservar_transcricao(...)` (migrations 225/229, daily caps removed by 343):
+    the atomic load gate + insert. Same limits, order and codes as the SQL (transcription-contract.md
+    section 3): per user 2 in flight and 10/h; global queue depth 20 (503). No daily usage quota
+    (owner 2026-11-14). Refunded rows never count toward the hourly window."""
     tabela = "transcricoes"
     agora = datetime.now(timezone.utc)
     # migration 229: every voice counter sees only origem = 'usuario' (library rows never 429 a voice answer)
@@ -110,7 +109,6 @@ def reservar_transcricao(client: Any, params: dict) -> MockSelectBuilder:
 
     user, org = str(params["p_user"]), str(params["p_org"])
     dur = float(params["p_duracao_s"])
-    nao_reembolsadas = [r for r in rows if not r.get("minutos_reembolsados")]
     meus = [r for r in rows if str(r["user_id"]) == user]
 
     if sum(1 for r in meus if r["status"] in ("na_fila", "processando")) >= 2:
@@ -118,17 +116,8 @@ def reservar_transcricao(client: Any, params: dict) -> MockSelectBuilder:
     hora = [r for r in meus if not r.get("minutos_reembolsados") and quando(r) > agora - timedelta(hours=1)]
     if len(hora) >= 10:
         return nega("limite_usuario", 429, alivio(hora, 1))
-    dia_user = [r for r in meus if not r.get("minutos_reembolsados") and quando(r) > agora - timedelta(hours=24)]
-    if sum(float(r["duracao_s"]) for r in dia_user) + dur > 1800:
-        return nega("cota_diaria_usuario", 429, alivio(dia_user, 24))
-    dia_org = [r for r in nao_reembolsadas if str(r["org_id"]) == org and quando(r) > agora - timedelta(hours=24)]
-    if sum(float(r["duracao_s"]) for r in dia_org) + dur > 7200:
-        return nega("cota_diaria_org", 429, alivio(dia_org, 24))
     if sum(1 for r in rows if r["status"] in ("na_fila", "processando")) >= 20:
         return nega("fila_cheia", 503, 120)
-    dia_global = [r for r in nao_reembolsadas if quando(r) > agora - timedelta(hours=24)]
-    if sum(float(r["duracao_s"]) for r in dia_global) + dur > 36000:
-        return nega("capacidade_diaria", 503, alivio(dia_global, 24))
 
     row = {
         "id": params["p_id"], "org_id": org, "user_id": user,
@@ -146,8 +135,7 @@ def reservar_transcricao(client: Any, params: dict) -> MockSelectBuilder:
 def reservar_transcricao_biblioteca(client: Any, params: dict) -> MockSelectBuilder:
     """Migration 229 `social_wiring.reservar_transcricao_biblioteca(...)`: the library lane's
     own gate + insert (geracao-contract 3.4). Counters see only origem = 'biblioteca': <= 180 s
-    per reel (422), <= 5 queued/processing (503), <= 1800 s / 24 h per org (429), <= 3600 s /
-    24 h platform-wide (503). Refunded rows never count toward the windows."""
+    per reel (422), <= 5 queued/processing (503). No daily budget (migration 343, owner 2026-11-14)."""
     tabela = "transcricoes"
     agora = datetime.now(timezone.utc)
     rows = [r for r in (client.table(tabela).select("*").execute().data or []) if r.get("origem") == "biblioteca"]
@@ -156,21 +144,10 @@ def reservar_transcricao_biblioteca(client: Any, params: dict) -> MockSelectBuil
     def nega(codigo: str, http: int, retry: int) -> MockSelectBuilder:
         return MockSelectBuilder([{"ok": False, "codigo": codigo, "http": http, "retry_after_s": retry}])
 
-    def janela(only_org: bool) -> list[dict]:
-        return [
-            r for r in rows
-            if not r.get("minutos_reembolsados") and datetime.fromisoformat(str(r["criado_em"])) > agora - timedelta(hours=24)
-            and (not only_org or str(r["org_id"]) == org)
-        ]
-
     if dur > 180:
         return nega("reel_longo", 422, 0)
     if sum(1 for r in rows if r["status"] in ("na_fila", "processando")) >= 5:
         return nega("fila_biblioteca_cheia", 503, 120)
-    if sum(float(r["duracao_s"]) for r in janela(True)) + dur > 1800:
-        return nega("cota_diaria_biblioteca_org", 429, 60)
-    if sum(float(r["duracao_s"]) for r in janela(False)) + dur > 3600:
-        return nega("capacidade_diaria_biblioteca", 503, 60)
 
     row = {
         "id": params["p_id"], "org_id": org, "user_id": str(params["p_user"]),
