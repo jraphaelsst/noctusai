@@ -37,6 +37,18 @@ def run(c):
         (b"\xff\xfbxx", "mp3"),
         (b"\xff\xf3xx", "mp3"),
         (b"RIFF\x00\x00\x00\x00WAVEfmt ", "wav"),
+        (b"\x1a\x45\xdf\xa3\x01\x00\x00\x00\x42\x82\x88matroska", "mkv"),
+        (b"fLaC\x00\x00", "flac"),
+        (b"FORM\x00\x00\x00\x00AIFF", "aiff"),
+        (b"FORM\x00\x00\x00\x00AIFC", "aiff"),
+        (b"caff\x00\x01", "caf"),
+        (b"#!AMR\n", "amr"),
+        (b"\x30\x26\xb2\x75\x8e\x66\xcf\x11\xa6\xd9\x00\xaa\x00\x62\xce\x6c..", "wma"),
+        (b"\xff\xf1\x50\x80", "aac"),  # ADTS: layer bits 00
+        (b"\xff\xf9\x50\x80", "aac"),
+        (b"\xff\xfa\x90\x00", "mp3"),  # MPEG-1 layer 3, no CRC
+        (b"\xff\xe3\x18\x00", "mp3"),  # MPEG-2.5
+        (b"\xff\xebxx", None),  # reserved MPEG version
         (b"MZ\x90\x00", None),
         (b"", None),
     ],
@@ -52,12 +64,53 @@ def test_limits_and_checks():
     assert v.check_size(lim.max_bytes) is None
     assert v.check_format(b"MZ..") == "formato_invalido"
     assert v.check_format(b"OggS....") is None
-    ok = AudioProbe(30.0, "opus", "webm")
+    ok = AudioProbe(30.0, "opus", "matroska,webm")
     assert v.check_probe(ok) is None
-    assert v.check_probe(AudioProbe(0.5, "opus", "webm")) == "audio_vazio"
-    assert v.check_probe(AudioProbe(601, "opus", "webm")) == "duracao_excedida"
-    assert v.check_probe(AudioProbe(30, "h264", "webm")) == "formato_invalido"
-    assert v.check_probe(AudioProbe(30, "opus", "mkv")) == "formato_invalido"
+    assert v.check_probe(AudioProbe(0.5, "opus", "matroska,webm")) == "audio_vazio"
+    assert v.check_probe(AudioProbe(601, "opus", "matroska,webm")) == "duracao_excedida"
+    assert v.check_probe(AudioProbe(30, "", "ogg")) == "formato_invalido"  # no audio codec
+    assert v.check_probe(AudioProbe(30, "mpeg4", "avi")) == "formato_invalido"  # not a listed container
+
+
+# The exact (format_name, codec_name) pairs ffprobe 6/7 emits for real files.
+# 2026-11-13: the old allowlist used idealized names ("pcm", "mp4", "webm") that
+# ffprobe never emits, so every wav/mp4/m4a/webm upload was refused. These pairs
+# are the regression guard; tests/integrations/transcription_server/test_media.py
+# re-derives them from a real ffprobe run.
+REAL_FFPROBE = [
+    ("wav", "pcm_s16le"),
+    ("wav", "pcm_f32le"),
+    ("mov,mp4,m4a,3gp,3g2,mj2", "aac"),
+    ("mov,mp4,m4a,3gp,3g2,mj2", "alac"),
+    ("matroska,webm", "opus"),
+    ("matroska,webm", "vorbis"),
+    ("ogg", "opus"),
+    ("ogg", "vorbis"),
+    ("mp3", "mp3"),
+    ("flac", "flac"),
+    ("aiff", "pcm_s16be"),
+    ("aac", "aac"),
+    ("asf", "wmav2"),
+    ("amr", "amr_nb"),
+    ("caf", "pcm_s16le"),
+]
+
+
+@pytest.mark.parametrize("format_name,codec", REAL_FFPROBE)
+def test_check_probe_accepts_real_ffprobe_names(format_name, codec):
+    assert v.check_probe(AudioProbe(30.0, codec, format_name)) is None
+
+
+def test_normalize_container_and_content_type():
+    assert v.normalize_container("mov,mp4,m4a,3gp,3g2,mj2") == "mp4"
+    assert v.normalize_container("matroska,webm") == "webm"
+    assert v.normalize_container("asf") == "wma"
+    assert v.normalize_container("avi") == "avi"  # unknown passes through -> refused
+    assert v.content_type_for("mp3") == "audio/mpeg"
+    assert v.content_type_for("mp4") == "audio/mp4"
+    assert v.content_type_for(None) == "application/octet-stream"
+    # every sniffed name has a content type, and every content type's name is allowed
+    assert set(v.CONTAINERS) == set(v.DEFAULT_LIMITS.allowed_containers)
 
 
 def test_fake_deterministic_and_scripted():

@@ -154,10 +154,24 @@ class TestValidationOrder:
         assert r.status_code == 422 and r.json()["codigo"] == codigo
         assert rows(client) == []
 
-    def test_422_probed_codec_not_allowed(self, client):
-        client.transcriber = FakeTranscriber(default_probe=probe(5.0, "webm", "vp9"))
+    def test_422_probed_container_not_allowed(self, client):
+        client.transcriber = FakeTranscriber(default_probe=probe(5.0, "avi", "mp3"))
         r = post(client)
         assert r.status_code == 422 and r.json()["codigo"] == "formato_invalido"
+        assert rows(client) == []
+
+    @pytest.mark.parametrize(
+        "container,codec",
+        [  # the REAL worker ffprobe names (2026-11-13: all of these were refused)
+            ("wav", "pcm_s16le"),
+            ("mov,mp4,m4a,3gp,3g2,mj2", "aac"),
+            ("matroska,webm", "opus"),
+        ],
+    )
+    def test_real_ffprobe_names_accepted(self, client, container, codec):
+        client.transcriber = FakeTranscriber(default_probe=probe(5.0, container, codec))
+        r = post(client)
+        assert r.status_code == 202, r.json()
 
     def test_422_probe_rejects_corrupt_audio(self, client):
         client.transcriber = RaisingProbe(TranscriptionRejected("audio_corrompido"))
@@ -204,39 +218,24 @@ class TestQuotas:
         assert r.status_code == 429 and r.json()["codigo"] == "limite_usuario"
         assert int(r.headers["Retry-After"]) >= 1
 
-    def test_ten_per_hour(self, client):
-        for _ in range(10):
+    def test_120_per_hour(self, client):
+        for _ in range(120):
             seed(client, dur=5.0, ago=timedelta(minutes=30))
         r = post(client)
         assert r.status_code == 429 and r.json()["codigo"] == "limite_usuario"
         assert int(r.headers["Retry-After"]) >= 60
 
-    def test_user_30_minutes_rolling_24h(self, client):
+    def test_no_daily_minute_cap_for_a_user(self, client):
+        # Owner 2026-11-14: no daily usage quota. 30+ minutes already transcribed today never blocks.
         seed(client, dur=1790.0, ago=timedelta(hours=3))
         client.transcriber = FakeTranscriber(default_probe=probe(11.0))
-        r = post(client)
-        assert r.status_code == 429 and r.json()["codigo"] == "cota_diaria_usuario"
-        assert int(r.headers["Retry-After"]) > 3600
-
-    def test_user_window_rolls_off_after_24h(self, client):
-        seed(client, dur=1790.0, ago=timedelta(hours=25))
-        client.transcriber = FakeTranscriber(default_probe=probe(11.0))
         assert post(client).status_code == 202
 
-    def test_refunded_minutes_do_not_count(self, client):
-        seed(client, dur=1790.0, status="falhou", refunded=True, ago=timedelta(hours=1))
-        client.transcriber = FakeTranscriber(default_probe=probe(60.0))
-        assert post(client).status_code == 202
-
-    def test_org_120_minutes_per_day(self, client):
-        for i in range(4):  # 4 other users x 25 min = 100 min
+    def test_no_daily_minute_cap_for_an_org(self, client):
+        for i in range(10):  # 10 other users x 25 min = 250 min in the org today
             seed(client, user=f"u{i}", dur=1500.0, ago=timedelta(hours=2))
         client.transcriber = FakeTranscriber(default_probe=probe(600.0))
-        assert post(client).status_code == 202  # 100 + 10 = 110 min <= 120
-        seed(client, user="u9", dur=1000.0, ago=timedelta(hours=2))  # 110 + 16.7 = 126.7 min
-        client.transcriber = FakeTranscriber(default_probe=probe(30.0))
-        r = post(client)
-        assert r.status_code == 429 and r.json()["codigo"] == "cota_diaria_org"
+        assert post(client).status_code == 202
 
     def test_queue_depth_20_is_503(self, client):
         for i in range(20):
@@ -244,13 +243,6 @@ class TestQuotas:
         r = post(client)
         assert r.status_code == 503 and r.json()["codigo"] == "fila_cheia"
         assert r.headers["Retry-After"]
-
-    def test_global_daily_capacity_is_503(self, client):
-        for i in range(20):
-            seed(client, user=f"g{i}", org=f"org-{i}", dur=1790.0, ago=timedelta(hours=1))  # 596 min
-        client.transcriber = FakeTranscriber(default_probe=probe(300.0))
-        r = post(client)
-        assert r.status_code == 503 and r.json()["codigo"] == "capacidade_diaria"
 
 
 class TestReadAndCancel:

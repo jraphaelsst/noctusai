@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+# NOC-REMEDIATE[sw-consume-seed-email-optin]: consume noctusai_lib.integrations.email.subscriptions (seed copy of this mechanism, 2026-11-13) instead of this local copy — 2026-11-13
 import html
 import logging
 from typing import Any, Optional

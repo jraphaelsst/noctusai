@@ -27,6 +27,7 @@ from noctusai_lib.integrations.transcription.validation import (
     check_format,
     check_probe,
     check_size,
+    content_type_for,
     sniff_container,
 )
 
@@ -168,7 +169,7 @@ class TranscricaoService:
         path = self._path(caller, tid, container)
         try:
             await self.storage.put(
-                bucket=L.BUCKET, key=path, data=audio, content_type=f"audio/{container}"
+                bucket=L.BUCKET, key=path, data=audio, content_type=content_type_for(container)
             )
             self.repo.update(
                 tid,

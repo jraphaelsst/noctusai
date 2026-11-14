@@ -19,10 +19,7 @@ CODIGOS: dict[str, tuple[int, str]] = {
     "audio_vazio": (422, "O áudio é curto demais ou está vazio."),
     "audio_corrompido": (422, "Não foi possível ler este áudio. Grave novamente."),
     "limite_usuario": (429, "Você já tem gravações demais em processamento ou enviadas na última hora. Aguarde um pouco."),
-    "cota_diaria_usuario": (429, "Você atingiu o limite diário de transcrição. Tente novamente mais tarde."),
-    "cota_diaria_org": (429, "Sua organização atingiu o limite diário de transcrição. Tente novamente mais tarde."),
     "fila_cheia": (503, "A fila de transcrição está cheia. Tente novamente em alguns minutos."),
-    "capacidade_diaria": (503, "A capacidade diária de transcrição foi atingida. Tente novamente mais tarde."),
     "transcricao_indisponivel": (503, "O serviço de transcrição está indisponível no momento. Tente novamente em instantes."),
     "transcricao_desativada": (503, "A transcrição por voz está desativada no momento."),
     "contexto_invalido": (422, "Contexto da transcrição inválido."),
@@ -32,8 +29,6 @@ CODIGOS: dict[str, tuple[int, str]] = {
     "tempo_esgotado": (422, "A transcrição demorou demais e foi cancelada. Tente novamente."),
     "reel_longo": (422, "O vídeo excede a duração máxima para transcrição da biblioteca."),
     "fila_biblioteca_cheia": (503, "A fila de transcrição da biblioteca está cheia. Tente novamente em alguns minutos."),
-    "cota_diaria_biblioteca_org": (429, "Sua organização atingiu o limite diário de transcrição da biblioteca."),
-    "capacidade_diaria_biblioteca": (503, "A capacidade diária de transcrição da biblioteca foi atingida."),
     "audio_ausente": (422, "O áudio desta gravação não está mais disponível."),
 }
 

@@ -1,0 +1,8 @@
+{
+  "_doc": "Per-file count of PII-named URL query params (check_pii_query_params). Ratchet: may only go down. KB § PATTERNS/security/url-hygiene.md",
+  "arquivos": {
+    "products/social-wiring/backend/app/modules/card_hub/partes_router.py": 1,
+    "products/social-wiring/backend/app/routers/julia_envio_router.py": 2,
+    "seed/lib/backend/noctusai_lib/domain/finance/router.py": 1
+  }
+}

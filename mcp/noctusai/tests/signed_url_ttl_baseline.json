@@ -1,0 +1,7 @@
+{
+  "_doc": "Per-file count of signed-URL calls with TTL > 600s and no reason (check_signed_url_ttl). Ratchet: may only go down. KB § PATTERNS/security/url-hygiene.md",
+  "arquivos": {
+    "products/social-wiring/backend/app/modules/edicao_fotos/services/review.py": 1,
+    "seed/lib/backend/noctusai_lib/integrations/storage/protocol.py": 1
+  }
+}

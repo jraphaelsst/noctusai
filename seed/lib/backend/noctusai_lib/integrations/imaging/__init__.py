@@ -49,6 +49,15 @@ from __future__ import annotations
 
 from noctusai_lib.integrations.imaging.fake_adapter import FakeImagingAdapter
 from noctusai_lib.integrations.imaging.real_adapter import RealImagingAdapter
+from noctusai_lib.integrations.imaging.sanitize import (
+    ImageCorruptError,
+    ImageIngestError,
+    ImageNotAllowedError,
+    ImageTooLargeError,
+    SanitizedImage,
+    sanitize_image,
+    sniff_image_format,
+)
 from noctusai_lib.integrations.imaging.types import (
     DEFAULT_JPEG_QUALITY,
     DEFAULT_WATERMARK_TEXT,
@@ -75,9 +84,16 @@ __all__ = [
     "DEFAULT_JPEG_QUALITY",
     "DEFAULT_WATERMARK_TEXT",
     "FakeImagingAdapter",
+    "ImageCorruptError",
+    "ImageIngestError",
+    "ImageNotAllowedError",
+    "ImageTooLargeError",
     "ImagingAdapter",
     "NormalizedImage",
     "RealImagingAdapter",
+    "SanitizedImage",
     "UnsupportedImageFormatError",
     "get_imaging_adapter",
+    "sanitize_image",
+    "sniff_image_format",
 ]
