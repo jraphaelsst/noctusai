@@ -326,12 +326,12 @@ describe("CerebroPerguntas", () => {
   });
 
   it("429 surfaces the server message and keeps voice available", async () => {
-    m.audio.mockRejectedValue(Object.assign(new Error("Limite diário de transcrição atingido."), { status: 429, code: "cota_diaria_minutos" }));
+    m.audio.mockRejectedValue(Object.assign(new Error("Você já tem gravações demais em processamento."), { status: 429, code: "limite_usuario" }));
     mount();
     fireEvent.click(screen.getAllByText("Prefiro falar")[0]);
     fireEvent.click(screen.getByTestId("fake-rec"));
     await tick(0);
-    expect(toast.error).toHaveBeenCalledWith("Limite diário de transcrição atingido.");
+    expect(toast.error).toHaveBeenCalledWith("Você já tem gravações demais em processamento.");
     expect(screen.getByTestId("fake-rec")).toBeTruthy();
   });
 

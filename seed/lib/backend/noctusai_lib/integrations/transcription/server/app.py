@@ -13,7 +13,6 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import FastAPI, Query, Request
@@ -38,7 +37,6 @@ log = logging.getLogger("noctus.transcriber")
 # at a 60 s floor on a cold worker). A caller that wants a length limit passes
 # `max_seconds`; a slow transcription is never cut off here.
 MIN_SECONDS = 1.0
-DAILY_BACKSTOP_MIN = 600.0
 # Platform ceiling, not a product cap: core's transcription API accepts up to 150 MB;
 # each product enforces its own lower limit (social-wiring voice answers: 15 MB)
 # BEFORE calling this internal-only worker. Small slack for multipart framing.
@@ -54,33 +52,10 @@ def _err(status: int, codigo: str, mensagem: str, headers: Optional[dict[str, st
     )
 
 
-class _DailyMinutes:
-    """In-memory UTC-day counter (backstop only; the product's Postgres quota is canonical)."""
-
-    def __init__(self, limit_min: float) -> None:
-        self.limit_min = limit_min
-        self._day = ""
-        self._used = 0.0
-
-    def _roll(self) -> None:
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if today != self._day:
-            self._day, self._used = today, 0.0
-
-    def would_exceed(self, minutes: float) -> bool:
-        self._roll()
-        return self._used + minutes > self.limit_min
-
-    def add(self, minutes: float) -> None:
-        self._roll()
-        self._used += minutes
-
-
 def create_app(
     engine: TranscriptionEngine,
     *,
     token: Optional[str] = None,
-    daily_limit_min: float = DAILY_BACKSTOP_MIN,
     load_in_background: bool = True,
     decode_fn=decode_to_float32,
     probe_fn=probe_bytes,
@@ -93,7 +68,6 @@ def create_app(
     expected = (token if token is not None else os.environ.get("TRANSCRIBER_TOKEN", "")).encode()
     busy = asyncio.Semaphore(1)
     probe_sem = asyncio.Semaphore(PROBE_CONCURRENCY)
-    daily = _DailyMinutes(daily_limit_min)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -186,12 +160,7 @@ def create_app(
                 return _err(422, "audio_vazio", "audio muito curto")
             if max_seconds is not None and duracao > max_seconds:
                 return _err(422, "duracao_excedida", "audio excede a duracao maxima")
-            minutes = duracao / 60.0
-            if daily.would_exceed(minutes):
-                return _err(503, "capacidade_diaria", "capacidade diaria esgotada",
-                            {"Retry-After": "3600"})
             result: Any = await asyncio.to_thread(engine.transcribe, audio, language=language)
-            daily.add(minutes)
             wall = time.monotonic() - started
             # never log transcript text or audio
             log.info("transcribed duracao_s=%.1f wall_s=%.1f", duracao, wall)

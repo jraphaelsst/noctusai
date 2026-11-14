@@ -212,6 +212,17 @@ def batch(src_dir: str, out_dir: str, pattern: str = "*.mp3", idioma: str = "pt"
             return resp.get("retry_after") or _FAST_POLL_S
         return None
 
+    def bloqueado(resp: dict, wait: float) -> dict | None:
+        """The server asked us to back off longer than the budget left: stop loudly, never sleep past it."""
+        if wait <= timeout_s - (_clock() - start):
+            return None
+        return {"status": "bloqueado", "codigo": resp.get("codigo"), "mensagem": resp.get("mensagem"),
+                "status_code": resp.get("status_code"), "retry_after": wait,
+                "done": done, "failed": failed, "skipped": skipped,
+                "pending": [f.stem for f in queue], "inflight": jobs,
+                "dica": "Bloqueado pelo servidor por mais tempo que o orçamento restante; "
+                        "rode de novo depois de retry_after segundos (os .txt prontos são pulados)."}
+
     while queue or jobs:
         if _clock() - start > timeout_s:
             return {"status": "timeout", "done": done, "failed": failed, "skipped": skipped,
@@ -224,6 +235,9 @@ def batch(src_dir: str, out_dir: str, pattern: str = "*.mp3", idioma: str = "pt"
                          _transport=_transport)
             wait = wait_for(job) if "codigo" in job else None
             if wait is not None:
+                blocked = bloqueado(job, wait)
+                if blocked:
+                    return blocked
                 _sleep(wait)
                 break
             queue.pop(0)
@@ -239,6 +253,9 @@ def batch(src_dir: str, out_dir: str, pattern: str = "*.mp3", idioma: str = "pt"
             if "codigo" in cur:
                 wait = wait_for(cur)
                 if wait is not None:
+                    blocked = bloqueado(cur, wait)
+                    if blocked:
+                        return blocked
                     _sleep(wait)
                     break
                 failed.append({"stem": stem, "id": job_id, **cur})

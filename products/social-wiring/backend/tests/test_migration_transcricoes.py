@@ -13,6 +13,7 @@ from noctusai_lib.testing.migrations import migration_path
 MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 # Resolved by NAME, never by number — a renumber on integrate must not break this.
 MIGRATION = migration_path(MIGRATIONS, "transcricoes")
+SEM_COTA = migration_path(MIGRATIONS, "transcricao_sem_cota_diaria")  # redefines both RPCs (owner 2026-11-14)
 
 
 @pytest.fixture(scope="module")
@@ -77,17 +78,21 @@ def test_rpc_is_locked_down_and_atomic(flat):
     assert re.search(r"GRANT EXECUTE ON FUNCTION social_wiring\.reservar_transcricao\([^)]*\) TO service_role", flat)
 
 
-def test_quota_numbers_are_the_contract(flat):
-    assert "v_n >= 2 THEN" in flat  # in flight per user
-    assert "v_n >= 10 THEN" in flat  # per hour per user
-    assert "v_soma + p_duracao_s > 1800" in flat  # user 30 min / 24 h
-    assert "v_soma + p_duracao_s > 7200" in flat  # org 120 min / day
-    assert "v_n >= 20 THEN" in flat  # global queue depth
-    assert "v_soma + p_duracao_s > 36000" in flat  # global 600 min / day
-    for codigo in ("limite_usuario", "cota_diaria_usuario", "cota_diaria_org", "fila_cheia", "capacidade_diaria"):
-        assert f"'{codigo}'" in flat
-    assert flat.count("'http', 429") == 4 and flat.count("'http', 503") == 2
-    assert flat.count("NOT minutos_reembolsados") >= 4  # refunded minutes never count
+def test_load_guards_only_no_daily_caps_in_the_current_rpcs():
+    code = "\n".join(l for l in SEM_COTA.read_text(encoding="utf-8").splitlines() if not l.strip().startswith("--"))
+    cur = " ".join(code.split())
+    assert "v_n >= 2 THEN" in cur  # in flight per user
+    assert "v_n >= 10 THEN" in cur  # per hour per user (burst)
+    assert "v_n >= 20 THEN" in cur  # global queue depth
+    assert "p_duracao_s > 180" in cur and "v_n >= 5 THEN" in cur  # library: per reel + queue
+    for codigo in ("limite_usuario", "fila_cheia", "reel_longo", "fila_biblioteca_cheia"):
+        assert f"'{codigo}'" in cur
+    for gone in ("cota_diaria_usuario", "cota_diaria_org", "capacidade_diaria", "cota_diaria_biblioteca_org",
+                 "capacidade_diaria_biblioteca", "v_soma", "interval '24 hours'"):
+        assert gone not in cur
+    # same signatures + grants as before (previous image keeps working)
+    assert cur.count("SECURITY INVOKER") == 2 and cur.count("TO service_role") == 2
+    assert re.search(r"REVOKE EXECUTE ON FUNCTION social_wiring\.reservar_transcricao_biblioteca\([^)]*\) FROM PUBLIC, anon, authenticated", cur)
 
 
 def test_bucket_is_private(flat):

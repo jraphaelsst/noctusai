@@ -15,7 +15,7 @@ This is the "platform-level queue" the SW contract §6 named as the fix for `NOC
 
 - Seed session dependency (`noctusai_lib.api.auth.session.dep`), two caller kinds:
   - **Machine:** `Authorization: Bearer pk_*` product token, resolved against `public.api_tokens` (seed SEED-1 shape; see `products/agents/backend/migrations/007_api_tokens.sql`). Required scopes: `transcription:write` for submit/cancel, `transcription:read` for reads.
-  - **User:** a normal platform session (Bearer JWT). Allowed, same quotas.
+  - **User:** a normal platform session (Bearer JWT). Allowed, same guards.
 - **Caller identity** = `(caller_kind, caller_id)`: `token` + `api_tokens.id`, or `user` + `user_id`. Every row stores it plus `org_id`.
 - A caller sees **only its own jobs**. Anything else is **404**, never 403, so ids cannot be enumerated.
 - If core has no `pk_*` resolver yet, slice A adds `public.api_tokens` + `api_token_audit` in the SEED-1 shape and slice B wires `SupabaseApiTokenResolver(schema="public")`. Minting is platform-admin only (existing token admin seam).
@@ -26,7 +26,7 @@ Error envelope is the platform standard `{codigo, mensagem}` (pt-BR messages). S
 
 | Method + path | Body / query | Success | Notes |
 |---|---|---|---|
-| `POST /api/transcriptions` | multipart `arquivo` (required), `idioma` (default `pt`), `rotulo` (≤120 chars, optional), `segmentos` (bool, default false) | **202** `{id, status:"na_fila", posicao, estimativa_s, duracao_s}` | validation order in §3; quota charged on the **probed** duration |
+| `POST /api/transcriptions` | multipart `arquivo` (required), `idioma` (default `pt`), `rotulo` (≤120 chars, optional), `segmentos` (bool, default false) | **202** `{id, status:"na_fila", posicao, estimativa_s, duracao_s}` | validation order in §3; reserved on the **probed** duration |
 | `GET /api/transcriptions/{id}` | — | 200 `{id, status, posicao?, duracao_s, idioma, rotulo?, texto?, segmentos?, modelo?, rtf?, erro?:{codigo,mensagem}, criado_em, iniciado_em?, concluido_em?, expira_em}` | `texto` only when `concluida` |
 | `GET /api/transcriptions` | `status?`, `limit` (≤100, default 20), `cursor?` | 200 `{items:[…same minus texto/segmentos…], next_cursor?}` | own jobs only |
 | `DELETE /api/transcriptions/{id}` | — | 204 | `na_fila` → cancel, refund minutes, delete audio. `concluida`/`falhou` → purge text now. `processando` → **409** `em_processamento` |
@@ -34,11 +34,11 @@ Error envelope is the platform standard `{codigo, mensagem}` (pt-BR messages). S
 
 **Statuses:** `na_fila → processando → concluida | falhou | cancelada`.
 
-**Errors:** 401 (strict, no token) · 403 `escopo_insuficiente` · 404 · 409 `em_processamento` · 413 `arquivo_grande` · 415 `formato_invalido` · 422 `duracao_excedida | audio_vazio | audio_corrompido` · 429 `limite_requisicoes | limite_envios_hora | cota_diaria_chamador | cota_diaria_org | limite_em_andamento` · 503 `fila_cheia | capacidade_diaria | transcricao_indisponivel | transcricao_desativada`. Every 429/503 carries `Retry-After`.
+**Errors:** 401 (strict, no token) · 403 `escopo_insuficiente` · 404 · 409 `em_processamento` · 413 `arquivo_grande` · 415 `formato_invalido` · 422 `duracao_excedida | audio_vazio | audio_corrompido` · 429 `limite_requisicoes | limite_em_andamento` · 503 `fila_cheia | transcricao_indisponivel | transcricao_desativada`. Every 429/503 carries `Retry-After`.
 
 **Client polling guidance:** every 5 s for the first minute, then every 30 s; `estimativa_s` is a hint, not a promise.
 
-## 3 · Safety: caps, quotas, rate limits
+## 3 · Safety: caps, load guards, rate limits
 
 Platform callers transcribe whole recordings (e.g. a 25-min video), so the file caps are larger than SW's voice-answer caps. They are constants in one place (`TranscriptionLimits` override for core) — not scattered literals.
 
@@ -50,16 +50,17 @@ Platform callers transcribe whole recordings (e.g. a 25-min video), so the file 
 | Min duration | 1 s (`audio_vazio`) |
 | Formats | magic-byte allowlist from the SW contract §1 (webm, mp4/m4a, ogg, mp3, wav) + `/v1/probe` codec allowlist |
 
-**Validation order (synchronous, before anything is queued):** Content-Length / streamed size → magic bytes → kill switch → worker `/v1/probe` (duration + codec) → quota RPC (§3 table) → store audio → enqueue.
+**Validation order (synchronous, before anything is queued):** Content-Length / streamed size → magic bytes → kill switch → worker `/v1/probe` (duration + codec) → reservation RPC (§3 table) → store audio → enqueue.
 
-**Durable quotas — Postgres, one atomic RPC** `public.reservar_transcricao_api(caller_kind, caller_id, org_id, duracao_s)` (advisory xact lock per caller; checks + insert in one transaction; returns the row or a `codigo`):
+**No daily or hourly usage quotas (owner decision 2026-11-14).** The owner asked for rate limiting and caps as a *safety* requirement and put the transcriber on its own server precisely so it can be used heavily; the earlier per-hour submission cap and the rolling-24h minute caps (per caller / org / global) were agent-chosen figures and are removed (migration 123). Safety is load protection only: Redis burst limiter (below), in-flight cap, queue depth, file caps, kill switch.
+
+**Load guards — Postgres, one atomic RPC** `public.reservar_transcricao_api(caller_kind, caller_id, org_id, duracao_s)` (advisory xact locks; checks + insert in one transaction; returns the row or a `codigo`):
 | Check | Limit |
 |---|---|
-| Per caller | ≤ 20 submissions / rolling hour; ≤ 180 min / rolling 24 h; ≤ 3 in flight (`na_fila` + `processando`) |
-| Per org | ≤ 300 min / rolling 24 h |
-| Global (this API) | ≤ 600 min / rolling 24 h; queue depth ≤ 20 |
+| Per caller | ≤ 3 in flight (`na_fila` + `processando`) → 429 `limite_em_andamento` |
+| Global (this API) | queue depth ≤ 20 → 503 `fila_cheia` |
 
-Minutes from failures **we** caused (worker crash, timeout, unavailable) are refunded (`minutos_reembolsados`), exactly as in the SW contract.
+`minutos_reembolsados` is retained on the table (no quota reads it any more).
 
 **Burst rate limits — Redis** via core's existing limiter (`app/rate_limit.py` → `create_product_limiter`, Redis-backed when `REDIS_URL` is set), keyed by caller identity: `POST` 10/min, `GET` 120/min, `DELETE` 30/min → 429 `limite_requisicoes`. Prod Redis exists (`noctus-redis`, 2026-10-10 inventory) — the SW contract's "no Redis in prod" line was wrong and is corrected. Redis connections go through the seed Redis auth seam (see roadmap R-track) once it lands.
 

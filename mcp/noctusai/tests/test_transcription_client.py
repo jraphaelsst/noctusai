@@ -88,10 +88,10 @@ def test_missing_file_refused(tmp_path):
 def test_error_envelope_with_retry_after(audio):
     def h(req):
         return httpx.Response(429, headers={"Retry-After": "17"},
-                              json={"codigo": "limite_envios_hora", "mensagem": "Muitos envios"})
+                              json={"codigo": "limite_requisicoes", "mensagem": "Muitos envios"})
 
     out = client.submit(audio, _transport=_t(h))
-    assert out == {"codigo": "limite_envios_hora", "mensagem": "Muitos envios",
+    assert out == {"codigo": "limite_requisicoes", "mensagem": "Muitos envios",
                    "status_code": 429, "retry_after": 17.0}
 
 
@@ -279,3 +279,54 @@ def test_batch_honours_submit_429_and_records_failures(tmp_path):
 def test_batch_missing_dir_is_an_error(tmp_path):
     res = client.batch(str(tmp_path / "nope"), str(tmp_path / "out"))
     assert res["codigo"] == "arquivo_invalido"
+
+
+def test_batch_retry_after_beyond_budget_returns_bloqueado_without_sleeping(tmp_path):
+    src, out = _dir(tmp_path, 2)
+    clock = Clock()
+
+    def h(req):
+        return httpx.Response(429, headers={"Retry-After": "3600"},
+                              json={"codigo": "limite_requisicoes", "mensagem": "Muitas requisicoes"})
+
+    res = client.batch(str(src), str(out), timeout_s=600, _transport=_t(h),
+                       _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "bloqueado" and res["codigo"] == "limite_requisicoes"
+    assert res["retry_after"] == 3600.0 and res["status_code"] == 429
+    assert res["mensagem"] == "Muitas requisicoes"
+    assert res["pending"] == ["r0", "r1"]
+    assert clock.sleeps == []  # never sleeps past the budget
+
+
+def test_batch_poll_429_beyond_budget_returns_bloqueado_keeping_inflight(tmp_path):
+    src, out = _dir(tmp_path, 1)
+    clock = Clock()
+
+    def h(req):
+        if req.method == "POST":
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        return httpx.Response(503, headers={"Retry-After": "900"},
+                              json={"codigo": "fila_cheia", "mensagem": "cheia"})
+
+    res = client.batch(str(src), str(out), timeout_s=600, _transport=_t(h),
+                       _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "bloqueado" and res["codigo"] == "fila_cheia"
+    assert res["inflight"] == {"j1": "r0"} and res["retry_after"] == 900.0
+    assert clock.sleeps == [5.0]  # only the normal poll gap
+
+
+def test_batch_forwards_segmentos_to_submit(tmp_path):
+    src, out = _dir(tmp_path, 1)
+    clock = Clock()
+    bodies = []
+
+    def h(req):
+        if req.method == "POST":
+            bodies.append(req.content)
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        return httpx.Response(200, json={"id": "j1", "status": "concluida", "texto": "t"})
+
+    res = client.batch(str(src), str(out), segmentos=True, _transport=_t(h),
+                       _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida"
+    assert b'name="segmentos"' in bodies[0] and b"true" in bodies[0].lower()

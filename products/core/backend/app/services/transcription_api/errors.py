@@ -18,12 +18,8 @@ CODIGOS: dict[str, tuple[int, str]] = {
     "audio_vazio": (422, "O áudio está vazio ou é curto demais."),
     "audio_corrompido": (422, "Não foi possível ler o áudio enviado."),
     "limite_requisicoes": (429, "Muitas requisições. Tente novamente em instantes."),
-    "limite_envios_hora": (429, "Limite de envios por hora atingido."),
-    "cota_diaria_chamador": (429, "Cota diária de minutos do chamador atingida."),
-    "cota_diaria_org": (429, "Cota diária de minutos da organização atingida."),
     "limite_em_andamento": (429, "Há transcrições demais em andamento para este chamador."),
     "fila_cheia": (503, "A fila de transcrição está cheia. Tente novamente em instantes."),
-    "capacidade_diaria": (503, "Capacidade diária de transcrição esgotada."),
     "transcricao_indisponivel": (503, "O serviço de transcrição está indisponível no momento."),
     "transcricao_desativada": (503, "O serviço de transcrição está desativado."),
 }
@@ -32,11 +28,7 @@ CODIGOS: dict[str, tuple[int, str]] = {
 #: outside this set is a contract break, surfaced as 503 not guessed at.
 CODIGOS_RPC = frozenset(
     {
-        "limite_envios_hora",
-        "cota_diaria_chamador",
         "limite_em_andamento",
-        "cota_diaria_org",
-        "capacidade_diaria",
         "fila_cheia",
     }
 )

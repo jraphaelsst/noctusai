@@ -339,13 +339,10 @@ class TestTranscrever:
     @pytest.mark.parametrize("codigo,expected", [
         ("arquivo_grande", "grande_demais"),
         ("duracao_excedida", "longa_demais"),
-        ("cota_diaria_org", "sem_orcamento"),
-        ("capacidade_diaria", "sem_orcamento"),
         ("fila_cheia", "sem_orcamento"),
+        ("limite_usuario", "sem_orcamento"),
         ("reel_longo", "longa_demais"),
         ("fila_biblioteca_cheia", "sem_orcamento"),
-        ("cota_diaria_biblioteca_org", "sem_orcamento"),
-        ("capacidade_diaria_biblioteca", "sem_orcamento"),
         ("audio_corrompido", "falhou"),
     ])
     def test_terminal_states_still_classify(self, codigo, expected):

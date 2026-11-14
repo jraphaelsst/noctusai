@@ -107,10 +107,11 @@ MSG_ERRO = "Não foi possível atualizar este perfil agora. Tente novamente mais
 #: ``submit_sistema`` error codes -> the viral's terminal transcription state (contract 3.3 step 5).
 _COD_GRANDE = {"arquivo_grande"}
 _COD_LONGO = {"duracao_excedida", "reel_longo"}
+# Load guards only (queue depth / burst): there is no daily usage quota (owner 2026-11-14).
 _COD_SEM_ORCAMENTO = {
-    "cota_diaria_org", "cota_diaria_usuario", "capacidade_diaria", "fila_cheia", "limite_usuario",
+    "fila_cheia", "limite_usuario",
     # BE-3's library lane (reservar_transcricao_biblioteca)
-    "fila_biblioteca_cheia", "cota_diaria_biblioteca_org", "capacidade_diaria_biblioteca",
+    "fila_biblioteca_cheia",
 }
 _COD_ADIAR = {"transcricao_desativada", "transcricao_indisponivel"}
 

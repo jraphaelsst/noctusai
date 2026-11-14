@@ -109,18 +109,20 @@ New package `seed/lib/backend/noctusai_lib/integrations/transcription/`:
 **Rate limits and quotas (Postgres, one atomic RPC)**
 `social_wiring.reservar_transcricao(user, org, duracao_s)` takes a `pg_advisory_xact_lock` per user, then checks and inserts in one transaction:
 
+**No daily usage quotas (owner decision 2026-11-14).** The per-user / per-org / global rolling-24h minute caps (and the library lane's daily budgets) were agent-chosen figures and are removed (migration 343). Only load guards remain:
+
 | Check | Limit |
 |---|---|
-| Per user | ≤ 10 submissions/hour, ≤ 30 min/day (rolling 24h) |
+| Per user | ≤ 10 submissions/hour (burst) |
 | Per user in flight | ≤ 2 queued or processing |
-| Per org | ≤ 120 min/day |
-| Global | ≤ 600 min/day; queue depth (queued + processing, all orgs) ≤ 20 |
+| Global | queue depth (queued + processing, all orgs) ≤ 20 |
+| Library lane | ≤ 180 s per reel; ≤ 5 queued or processing |
 
-Rolling 24h means `SUM(duracao_s) WHERE created_at > now()-'24h' AND status <> 'falhou_reembolsada'`. Minutes from a failure we caused are refunded.
+Minutes from a failure we caused are still marked refunded (`minutos_reembolsados`) so the hourly burst window does not count them.
 
 **Backpressure**
-- Per-user or per-org limits: **429**, `codigo` = `limite_usuario | cota_diaria_usuario | cota_diaria_org`, with `Retry-After` set to when the oldest counted row ages out.
-- Global depth, global daily cap, transcriber unhealthy, or kill switch: **503**, `codigo` = `fila_cheia | capacidade_diaria | transcricao_indisponivel | transcricao_desativada`, with `Retry-After`.
+- Per-user or per-org limits: **429**, `codigo` = `limite_usuario`, with `Retry-After` set to when the oldest counted row ages out.
+- Global depth, transcriber unhealthy, or kill switch: **503**, `codigo` = `fila_cheia | transcricao_indisponivel | transcricao_desativada`, with `Retry-After`.
 
 **Timeouts**
 - Worker: no wall-clock cap; length limited only when the caller passes `max_seconds`.
@@ -137,7 +139,7 @@ Rolling 24h means `SUM(duracao_s) WHERE created_at > now()-'24h' AND status <> '
 
 **Logging and metrics**
 - One structured line per job: `job_id, org, user, bytes, duracao_s, rtf, wait_s, status, codigo`.
-- An admin-only `GET /api/transcricoes/_stats` returns `queue_stats` (seed repo) plus daily minutes per org.
+- An admin-only `GET /api/transcricoes/_stats` returns `queue_stats` (seed repo) plus daily minutes per org (informational only; no cap).
 
 **Kill switch**
 - A DB-first setting `transcricao_habilitada` (platform_settings, then env fallback). When false, submit returns 503 `transcricao_desativada` and the worker leaves pending jobs untouched.
