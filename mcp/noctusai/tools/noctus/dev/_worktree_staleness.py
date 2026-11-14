@@ -87,6 +87,28 @@ def is_ancestor(run: GitRunner, branch: str, base: str) -> bool:
     return rc == 0
 
 
+def _derived_only_commit(run: GitRunner, sha: str) -> bool:
+    """True when ``sha`` touches ONLY files ``kb_sync.update_kb_counts`` regenerates.
+
+    2026-11-14: 15 landed branches kept one unlanded commit each, a
+    ``chore(kb-counts)`` regeneration of ``02-LANDSCAPE.md`` that ``dev``
+    re-derives itself, so ``git cherry`` showed ``+`` forever and the work
+    looked unlanded. Such a commit carries nothing ``base`` cannot regenerate.
+    The path list is the regenerator's own manifest (via ``_benign_stash``),
+    never a hand copy; when it cannot be read the answer is False, which keeps
+    blocking (conservative)."""
+    try:
+        from ._benign_stash import _kb_counts_regenerated_rel_paths
+        derived = set(_kb_counts_regenerated_rel_paths())
+    except Exception:  # noqa: BLE001 - unknown manifest: never treat a commit as derived
+        return False
+    if not derived or not sha:
+        return False
+    rc, out, _e = run(["git", "show", "--name-only", "--format=", sha])
+    files = {ln.strip() for ln in out.splitlines() if ln.strip()}
+    return rc == 0 and bool(files) and files <= derived
+
+
 def all_commits_cherry_picked(run: GitRunner, branch: str, base: str) -> bool:
     """Patch-id equivalence: every commit on ``branch`` is already on ``base``.
 
@@ -97,7 +119,8 @@ def all_commits_cherry_picked(run: GitRunner, branch: str, base: str) -> bool:
     rc, out, _e = run(["git", "cherry", base, branch])
     if rc != 0:
         return False
-    plus_lines = sum(1 for ln in out.splitlines() if ln.startswith("+"))
+    plus_lines = sum(1 for ln in out.splitlines()
+                     if ln.startswith("+") and not _derived_only_commit(run, ln[1:].strip()))
     _rc2, log_out, _e2 = run(
         ["git", "log", "--oneline", f"{base}..{branch}"]
     )
