@@ -16607,6 +16607,13 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Migration 017 unapplied — the agent_learnings write-once-content trigger has no live object to probe "
         "against yet.",
     ),
+    (
+        "products/nosnolimiar/backend/migrations/015_whatsapp.sql",
+        "idx_monica_whatsapp_connections_webhook_token",
+        "Frozen 015 declares the old name; nosnolimiar 024 renamed the index to "
+        "idx_nosnolimiar_whatsapp_connections_webhook_token, which IS probed "
+        "(nosnolimiar.whatsapp_connections.webhook_token_unique). Same object, new name.",
+    ),
 )
 
 

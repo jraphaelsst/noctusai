@@ -263,10 +263,10 @@ def test_delete_chat_erases_one_chat_and_its_messages_org_scoped(store):
 
 
 def test_agent_pause_ddl_is_opt_in_and_the_alter_is_idempotent():
-    base = whatsapp_chats_table_ddl("monica")
+    base = whatsapp_chats_table_ddl("nosnolimiar")
     assert "agent_paused" not in base  # byte-identical for products already migrated
-    full = whatsapp_chats_table_ddl("monica", with_agent_pause=True)
+    full = whatsapp_chats_table_ddl("nosnolimiar", with_agent_pause=True)
     for col in ("agent_paused BOOLEAN NOT NULL DEFAULT false", "agent_paused_at TIMESTAMPTZ", "agent_paused_by TEXT"):
         assert col in full
-    alter = chat_agent_pause_alter_ddl("monica")
-    assert alter.count("ADD COLUMN IF NOT EXISTS") == 3 and "monica.whatsapp_chats" in alter
+    alter = chat_agent_pause_alter_ddl("nosnolimiar")
+    assert alter.count("ADD COLUMN IF NOT EXISTS") == 3 and "nosnolimiar.whatsapp_chats" in alter

@@ -22,6 +22,7 @@ _ROOT = Path(REPO_ROOT)
 _RENAME = _ROOT / "products/nosnolimiar/projects/rename-2026-11"
 _M120 = "products/core/backend/migrations/120_rename_monica_to_nosnolimiar.sql"
 _M023 = "products/nosnolimiar/backend/migrations/023_rename_schema.sql"
+_M024 = "products/nosnolimiar/backend/migrations/024_rename_monica_indexes.sql"
 
 _MT = "ad6ec2e2-b470-4044-884e-6345e4fe66d4"
 _NNL = "fa80a1e0-1bcd-4c65-8a37-2162e8ffa688"
@@ -233,3 +234,26 @@ def test_023_still_refuses_two_real_schemas(pglite):
                               product="nosnolimiar"))
     res = mr._run_harness(steps, 900, None)
     assert "BOTH schemas" in _failures(res, "023_rename_schema.sql")
+
+
+# ---------------------------------------------------------------- product 024: index names ---------------------------
+_NO_OLD_INDEX = ("DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_class WHERE relnamespace = to_regnamespace('nosnolimiar')"
+                 " AND relkind = 'i' AND relname LIKE 'idx\\_monica\\_%') THEN RAISE EXCEPTION 'idx_monica_* left'; END IF;"
+                 " IF to_regclass('nosnolimiar.idx_nosnolimiar_whatsapp_connections_webhook_token') IS NULL THEN"
+                 " RAISE EXCEPTION 'webhook-token index not renamed'; END IF; END $$;")
+
+
+def test_024_renames_every_monica_index_and_rollback_restores_them(pglite):
+    """Owner 2026-11-14: monica was absorbed by nosnolimiar -- nothing keeps the old product's name, indexes included."""
+    steps = mr._steps_for(_ROOT, "nosnolimiar", {_M023, _M024}, "worktree", {})
+    steps.append(_step("assert_forward", _NO_OLD_INDEX, product="nosnolimiar"))
+    rollback = (_RENAME / "rollback-024.sql").read_text(encoding="utf-8")
+    steps.append(_step("rollback_024", rollback, product="nosnolimiar"))
+    steps.append(_step(
+        "assert_back", "DO $$ BEGIN IF to_regclass('nosnolimiar.idx_monica_whatsapp_connections_webhook_token') IS NULL"
+                       " THEN RAISE EXCEPTION 'rollback did not restore the old name'; END IF; END $$;", product="nosnolimiar"))
+    res = mr._run_harness(steps, 900, None)
+    assert _failures(res, "024_rename_monica_indexes.sql") == "", "024 must apply whole AND re-apply (twice)"
+    assert _failures(res, "assert_forward") == ""
+    assert _failures(res, "rollback_024") == ""
+    assert _failures(res, "assert_back") == ""

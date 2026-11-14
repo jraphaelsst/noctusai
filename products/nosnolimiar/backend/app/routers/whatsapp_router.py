@@ -97,11 +97,11 @@ router.include_router(
         lid_cache=InMemoryLidPhoneCache(),
         webhook_hmac_secret=settings.nosnolimiar_waha_webhook_hmac_secret or None,
         resolve_org_id=coerce_org_uuid,
-        # Per-conversation LGPD erasure (admin). No `on_agent_pause`: Monica has no agent answering on this inbox,
+        # Per-conversation LGPD erasure (admin). No `on_agent_pause`: Nós no Limiar has no agent answering on this inbox,
         # so the pause route is not mounted and the FE leaves `enableAgentPause` off.
         allow_chat_delete=True,
         on_delete_chat=on_delete_chat,
         get_admin_user_org=_organ_auth.admin,
-        audit_product_slug="monica",
+        audit_product_slug="nosnolimiar",
     )
 )
