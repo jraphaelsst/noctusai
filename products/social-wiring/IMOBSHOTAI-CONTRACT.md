@@ -119,7 +119,7 @@ It is derived from the card's lotes and photos:
 
 | Route | Page | status_pagina key | Initial status |
 |---|---|---|---|
-| `/imobshotai` | Board (seed `FunnelBoard`, columns = the 4 reachable etapas) | `imobshotai` | `producao` |
+| `/imobshotai` | Board (seed `KanbanBoard` with `draggable={false}`, columns = the 4 reachable etapas; v1.1: the etapa is a projection, so there is no drag-to-move; `FunnelBoard` needs move endpoints this contract does not have) | `imobshotai` | `producao` |
 | `/imobshotai/fotos/novo` | Photo funnel | `imobshotai-fotos-novo` | `producao` |
 | `/imobshotai/imoveis/:cardId` | Card detail | `imobshotai-card` | `producao` |
 | `/imobshotai/video/novo` | placeholder "em breve" (video is blocked) | `imobshotai-video-novo` | `desenvolvimento` |
@@ -127,9 +127,9 @@ It is derived from the card's lotes and photos:
 The BE slice owns the migration that adds these `status_pagina` rows, so there is only one migration per slice.
 
 Photo funnel steps (FE):
-1. **Imóvel:** `ImovelCodigoPicker` in **select-only** mode. Free text can never be submitted. Under 2 characters it shows "Digite ao menos 2 caracteres". An empty result shows "Nenhum imóvel com esse código". Picking a ref calls §1.
+1. **Imóvel + velocidade:** `ImovelCodigoPicker` in **select-only** mode. Free text can never be submitted. Under 2 characters it shows "Digite ao menos 2 caracteres". An empty result shows "Nenhum imóvel com esse código". Picking a ref, then choosing velocidade (urgente/econômico) and pressing "Continuar", calls §1. *(v1.1, 2026-11-14: the velocidade moved here because a lote's velocidade is fixed at creation by §1.)*
 2. **Fotos:** the existing upload (`/api/edicao-fotos/lotes/{id}/fotos`, ≤ 10 files per request, the same component/hook as NovoLote). It also offers "Puxar fotos do Vista" (`/{id}/vista`).
-3. **Estilo:** velocidade (urgente/econômico) and a read-only view of the org's active guia.
+3. **Estilo:** a read-only view of the chosen velocidade and the org's active guia.
 4. **Enviar:** `/{id}/submeter`, then progress by polling `GET /api/edicao-fotos/lotes/{id}` (seed polling; SSE comes later).
 5. **Revisão:** the existing review UI (`LoteRevisao` content) embedded; the D6 rule applies.
 6. **Pronto:** a link to `/imobshotai/imoveis/:cardId`, plus a disabled CTA "Criar vídeo (em breve)".
