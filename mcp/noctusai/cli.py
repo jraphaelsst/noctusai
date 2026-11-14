@@ -775,7 +775,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--transcription-idioma", metavar="LANG", default="pt", dest="transcription_idioma", help="With --transcription-submit/-transcribe: language (default pt).")
     parser.add_argument("--transcription-rotulo", metavar="TEXT", dest="transcription_rotulo", help="With --transcription-submit/-transcribe: optional label (<=120 chars).")
     parser.add_argument("--transcription-segmentos", action="store_true", dest="transcription_segmentos", help="With --transcription-submit: also return timed segments.")
-    parser.add_argument("--transcription-timeout", metavar="SECONDS", type=float, default=3600, dest="transcription_timeout", help="With --transcription-transcribe: client-side wait budget (default 3600).")
+    parser.add_argument("--transcription-timeout", metavar="SECONDS", type=float, default=3600, dest="transcription_timeout", help="--transcription-transcribe: client-side wait budget. --transcription-batch: NO-PROGRESS window -- stops only when nothing is accepted or finished for this long (default 3600).")
     parser.add_argument("--source-register", action="store_true", help="Source-reliability register (skill noc-research): read the folded per-source view or log one event. MCP: noctus.dev.source_register.")
     parser.add_argument("--source-register-confirm", action="store_true", help="With --source-register --source-register-action log: append (a write). Without it, dry-run only.")
     for _sr in ("action", "query", "tier-filter", "source", "outcome", "tier", "label", "claim", "evidence", "question", "note", "by", "events"):
