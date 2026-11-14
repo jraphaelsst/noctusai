@@ -26,6 +26,11 @@ def _lits(values: tuple[str, ...]) -> str:
     return ", ".join("'" + v.replace("'", "''") + "'" for v in values)
 
 
+# NOC-REMEDIATE[routines-ddl-executed-test]: the append-only guard (UPDATE/DELETE on
+# routine_events refused) and the SECURITY DEFINER grants (routines_kill as `authenticated`
+# denied) are pinned only as SQL text in tests/domain/routines/test_store_and_ddl.py.
+# Destination: the first product migration that applies routines_tables_sql (newsletters
+# Wave 1) adds a noctus.dev.migration_replay (PGlite) case that executes both — 2026-11-14.
 _SQL = """
 CREATE TABLE IF NOT EXISTS {s}.routines (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
