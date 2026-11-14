@@ -20,10 +20,9 @@ from noctusai_lib.integrations.llm import LLMBudgetExceeded, LLMNotConfigured, r
 
 from app.modules.media_creation.prompts.legenda_reel import (
     LEGENDA_REEL_SYSTEM_PROMPT,
-    LegendaParseError,
     build_legenda_user_message,
-    parse_legenda,
 )
+from app.modules.media_creation.saida_ia import SaidaIaFalha, validar_legenda
 from app.modules.media_creation.services import geracao_jobs
 from app.modules.media_creation.services.roteiro_service import make_chat_roteiro_llm
 
@@ -79,8 +78,10 @@ class LegendaService:
     def __init__(
         self, db: Any, org_id: str, user_id: str, *, cfg: Any, llm: LegendaLlm,
         ia_check: IaCheck = check_ia_configurada,
+        orcamento: Callable[[Optional[str]], Awaitable[None]] = geracao_jobs.assert_orcamento_ia,
     ):
         self.ia_check = ia_check
+        self.orcamento = orcamento
         self.db = db
         self.org_id = org_id
         self.user_id = user_id
@@ -134,7 +135,7 @@ class LegendaService:
     async def gerar(self, post_id: str) -> dict[str, Any]:
         ctx = self._contexto(post_id)
         self.ia_check(self.org_id)
-        await geracao_jobs.assert_orcamento_ia(self.org_id)
+        await self.orcamento(self.org_id)
         self._assert_cap()
         try:
             reply = await self.llm(
@@ -149,10 +150,12 @@ class LegendaService:
             raise LegendaError(502, {"code": "ia_falhou", "detail": MSG_IA_FALHOU}) from exc
         self._registrar(post_id)
         try:
-            return parse_legenda(reply)
-        except LegendaParseError as exc:
-            logger.warning("legenda: resposta inválida post=%s (%s)", post_id, exc)
-            raise LegendaError(502, {"code": "ia_resposta_invalida", "detail": MSG_IA_FALHOU}) from exc
+            return validar_legenda(reply)
+        except SaidaIaFalha as exc:
+            # Untrusted AI output: refused with a coded reason, never trimmed (saida_ia).
+            logger.warning("legenda: saída da IA recusada post=%s (%s)", post_id, exc)
+            code = "ia_resposta_invalida" if exc.codigo.startswith("saida_formato") else exc.codigo
+            raise LegendaError(502, {"code": code, "detail": MSG_IA_FALHOU, "motivo": exc.motivo}) from exc
 
 
 __all__ = [
