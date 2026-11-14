@@ -72,8 +72,7 @@ class ApSchedulerPort:
     def remove(self, name: str) -> None:
         from noctusai_lib.api import scheduler as sched
 
-        sched._drop_existing(name)
-        sched._job_specs.pop(name, None)
+        sched.unregister(name)
 
     def jobs(self) -> dict[str, str]:
         from noctusai_lib.api import scheduler as sched
