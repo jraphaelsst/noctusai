@@ -1,0 +1,14 @@
+consented_by: joaoraphaelsst@gmail.com
+consented_on: 2026-11-04
+consent_ref: 'project-history/roadmaps/nosnolimiar-rename-2026-11.md#M0: owner consent to publish nosnolimiar'
+dev_validated: true
+recorded_by: agent
+authorization:
+  phrase: "I authorize nosnolimiar to be published to production."
+  prompt_source: typed
+  tier: performative
+  evidence_rank: canonical-exact/typed
+  candidates_considered: 1
+  session_id: 37355fd2-b744-400b-8476-245463d5ea2e
+  transcript_sha256: 2ecc02a45ade3e0a3fef2caff92a1cf652449101bfbd38c6fc490362dbf3552d
+  recorded_at: 2026-11-04T11:53:32+00:00
