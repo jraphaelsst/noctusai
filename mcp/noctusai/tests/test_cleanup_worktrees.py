@@ -729,6 +729,30 @@ class TestIntegratedLivePointer:
         assert result["stale_signals"][str(wt)] == "on_going_landed"
         assert result["pointers_closed"] == ["feat/ol"]
 
+    def test_landed_plus_kb_counts_regen_commit_is_removed(self, repo):
+        """2026-11-14: 15 landed branches kept ONE unlanded commit, a kb-counts
+        regeneration of 02-LANDSCAPE.md that dev re-derives - not unlanded work."""
+        from tools.noctus.dev._benign_stash import _kb_counts_regenerated_rel_paths
+        derived = "KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md"
+        assert derived in _kb_counts_regenerated_rel_paths()
+        wt = _add_worktree(repo, "feat-kc", "feat/kc", publish_shipped_pointer=False)
+        (wt / "kc.txt").write_text("landed\n")
+        _git(wt, "add", "kc.txt")
+        _git(wt, "commit", "-qm", "kc work")
+        sha = _git(wt, "rev-parse", "HEAD").strip()
+        (wt / derived).parent.mkdir(parents=True, exist_ok=True)
+        (wt / derived).write_text("counts: 42\n")
+        _git(wt, "add", derived)
+        _git(wt, "commit", "-qm", "chore(kb-counts): regenerate derived counts")
+        _publish_pointer_row(repo, branch="feat/other", status="shipped")
+        _git(repo, "cherry-pick", sha)
+        _publish_pointer_row(repo, branch="feat/kc", status="on_going")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, respect_min_age=False,
+            min_age_minutes=0, recent_mtime_minutes=0)
+        assert not wt.exists()
+        assert result["stale_signals"][str(wt)] == "on_going_landed"
+
     def test_on_going_fresh_fork_without_commits_is_kept(self, repo):
         """A claimed fork with no commits of its own has landed nothing."""
         _publish_pointer_row(repo, branch="feat/other", status="shipped")
