@@ -230,3 +230,19 @@ def test_submission_errors_map_to_statuses(code, status) -> None:
 def test_unknown_errors_are_not_relabelled() -> None:
     with pytest.raises(KeyError):
         engine_error(KeyError("x"))
+
+
+def test_review_signed_url_declares_its_ttl_reason_to_the_seam() -> None:
+    """The review link outlives the 600 s seam default, so it must carry a
+    reason; the real seam (FakeStorageBackend) refuses it otherwise."""
+    from noctusai_lib.domain.photo_editing.ports import BucketPhotoStorage  # noqa: PLC0415
+    from noctusai_lib.integrations.storage import FakeStorageBackend  # noqa: PLC0415
+
+    from app.modules.edicao_fotos.services.review import (  # noqa: PLC0415
+        SIGNED_URL_TTL_SECONDS,
+        signed_url_in,
+    )
+
+    assert SIGNED_URL_TTL_SECONDS == 3600
+    storage = BucketPhotoStorage(FakeStorageBackend(), bucket="edicao-fotos")
+    assert asyncio.run(signed_url_in(storage, "o/l/f.jpg")).startswith("fake://storage/edicao-fotos/")

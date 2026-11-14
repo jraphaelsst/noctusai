@@ -209,5 +209,10 @@
   },
   "enabledPlugins": {
     "noc-harness@noctusai": true
+  },
+  "permissions": {
+    "allow": [
+      "Bash(python3 *mcp/noctusai/primary_ff.py*)"
+    ]
   }
 }

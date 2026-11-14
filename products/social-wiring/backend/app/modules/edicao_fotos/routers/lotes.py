@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import Response
 from noctusai_lib.primitives.content_disposition import attachment_disposition
 
+from noctusai_lib.domain.resumable_uploads import ResumableUploadService, UploadError
 from noctusai_lib.domain.photo_editing import (
     Actor,
     OrgSettings,
@@ -42,6 +43,7 @@ from noctusai_lib.domain.photo_editing import (
 from app.modules.edicao_fotos.deps import (
     can_see_verdict,
     get_edicao_ports,
+    get_upload_service,
     get_vista_photo_source,
     load_visible_batch,
     require_member,
@@ -54,7 +56,7 @@ from app.modules.edicao_fotos.presenters import (
     page_out,
 )
 from app.modules.edicao_fotos.services.review import review_rows, signed_url
-from app.modules.edicao_fotos.schemas import LoteCreateBody, VistaIngestBody
+from app.modules.edicao_fotos.schemas import LoteCreateBody, UploadsIngestBody, VistaIngestBody
 from app.modules.edicao_fotos.services.vista_fotos import VistaPhotoSource, ingest_vista_gallery
 
 router = APIRouter(prefix="/api/edicao-fotos/lotes", tags=["edicao-fotos"])
@@ -179,6 +181,61 @@ async def upload_fotos_route(
                 "arquivo_grande_demais",
                 f"{name}: acima de {settings.limite_bytes_por_foto // (1024 * 1024)} MB.",
             )
+        staged.append((data, ext))
+    try:
+        stored = [
+            await add_photo_bytes(ports, lote_id=batch.id, data=data, extension=ext)
+            for data, ext in staged
+        ]
+    except ENGINE_ERRORS as exc:
+        raise engine_error(exc) from exc
+    return {
+        "fotos": [
+            foto_revisao_out(
+                p,
+                url_antes=await signed_url(ports, p.storage_path_original),
+                url_depois=None,
+                decision=None,
+            )
+            for p in stored
+        ]
+    }
+
+
+@router.post("/{lote_id}/fotos/de-upload", status_code=201)
+async def ingest_uploads_route(
+    lote_id: UUID,
+    body: UploadsIngestBody,
+    actor: Actor = Depends(require_member),
+    ports: PhotoEditingPorts = Depends(get_edicao_ports),
+    uploads: ResumableUploadService = Depends(get_upload_service),
+) -> dict:
+    """Photos that arrived through the RESUMABLE path (`/api/edicao-fotos/uploads`). Same limits and the same engine
+    entry point as the multipart route above; the assembled file is consumed (deleted) once the photo is stored."""
+    batch = await load_visible_batch(ports, actor, str(lote_id))
+    ids = list(dict.fromkeys(body.upload_ids))
+    settings = await _settings(ports, batch.org_id)
+    existing = await ports.repo.list_photos(batch.id)
+    if len(existing) + len(ids) > settings.limite_fotos_por_lote:
+        raise api_error(
+            409, "lote_cheio", f"Limite de {settings.limite_fotos_por_lote} fotos por lote."
+        )
+    staged: list[tuple[bytes, str]] = []
+    for upload_id in ids:
+        try:
+            session, _ = await uploads.status(org_id=actor.org_id, session_id=upload_id)
+            ext = PurePath(session.filename).suffix.lstrip(".").lower()
+            if not ext:
+                raise api_error(415, "formato_nao_suportado", f"Arquivo sem extensão: {session.filename!r}.")
+            if session.size_bytes > settings.limite_bytes_por_foto:
+                raise api_error(
+                    413,
+                    "arquivo_grande_demais",
+                    f"{session.filename}: acima de {settings.limite_bytes_por_foto // (1024 * 1024)} MB.",
+                )
+            _, data = await uploads.consume(org_id=actor.org_id, session_id=upload_id)
+        except UploadError as exc:
+            raise api_error(exc.http_status, exc.code, str(exc)) from exc
         staged.append((data, ext))
     try:
         stored = [

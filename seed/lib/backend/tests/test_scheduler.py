@@ -370,3 +370,41 @@ class TestSchedulersEnabledGate:
 
         assert not any(r.levelname == "ERROR" for r in caplog.records)
         assert any(r.levelname == "INFO" for r in caplog.records)
+
+
+class TestUnregister:
+    """`unregister(name)` is the public removal path (newsletters routines
+    remove a routine's job when it is disabled or deleted); callers must
+    never reach into `_drop_existing` / `_job_specs`."""
+
+    def test_unregister_removes_job_and_spec(self):
+        async def _job():
+            return None
+
+        sched.register("routine:a", _job, cron="0 6 * * *")
+        assert sched.unregister("routine:a") is True
+        assert sched.scheduler.get_job("routine:a") is None
+        assert [s.job for s in sched.job_specs()] == []
+
+    def test_unregister_unknown_name_returns_false(self):
+        assert sched.unregister("never-registered") is False
+
+    def test_unregister_drains_duplicate_pending_entries(self):
+        async def _job():
+            return None
+
+        sched.register("dup", _job, minutes=5)
+        # a stopped scheduler's pending list tolerates repeated ids
+        sched.scheduler.add_job(_job, "interval", minutes=5, id="dup")
+        assert sched.unregister("dup") is True
+        assert sched.scheduler.get_job("dup") is None
+
+    def test_unregister_leaves_other_jobs(self):
+        async def _job():
+            return None
+
+        sched.register("keep", _job, minutes=5)
+        sched.register("drop", _job, minutes=5)
+        sched.unregister("drop")
+        assert sched.scheduler.get_job("keep") is not None
+        assert [s.job for s in sched.job_specs()] == ["keep"]

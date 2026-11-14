@@ -4783,7 +4783,8 @@ def main():
         if args.transcription_batch:
             _src, _out = args.transcription_batch
             _r = _tx.batch(_src, _out, idioma=args.transcription_idioma,
-                           timeout_s=args.transcription_timeout)
+                           timeout_s=args.transcription_timeout,
+                           segmentos=args.transcription_segmentos)
         elif args.transcription_submit:
             _r = _tx.submit(args.transcription_submit, idioma=args.transcription_idioma,
                             rotulo=args.transcription_rotulo, segmentos=args.transcription_segmentos)
