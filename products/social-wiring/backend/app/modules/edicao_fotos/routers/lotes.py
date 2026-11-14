@@ -189,7 +189,7 @@ async def ingest_uploads_route(
     entry point as the multipart route above; the assembled file is consumed (deleted) once the photo is stored."""
     batch = await load_visible_batch(ports, actor, str(lote_id))
     ids = list(dict.fromkeys(body.upload_ids))
-    settings = await _settings(ports, batch.org_id)
+    settings = await org_settings(ports, batch.org_id)
     existing = await ports.repo.list_photos(batch.id)
     if len(existing) + len(ids) > settings.limite_fotos_por_lote:
         raise api_error(
