@@ -1,0 +1,12 @@
+{
+  "_doc": "Known residue + prod-shaped fixtures of this product's chain under noctus.dev.migration_replay (PGlite + versioned Supabase stubs, core first, statement-level in order). The gate is red only on a failure NOT listed here. KB § PATTERNS/backend/migration-chain-replay.md.",
+  "stubs_version": 1,
+  "residue": [],
+  "fixtures": [
+    {
+      "before": "008_org_picker_acting_audit.sql",
+      "why": "The product was renamed monica -> nosnolimiar AFTER 001-019 were applied (core 120 renames the catalog row in place). The frozen 008 attaches the acting-audit triggers for db_schema 'monica', which the helper requires to be a registered product schema -- true in prod when 008 ran, false on a fresh replay (core runs first, 120 included). The row stands in for the one prod had at that time; 020 then renames the schema.",
+      "sql": "INSERT INTO public.products (nome, slug, descricao, icone, url_base, cor, ativo, db_schema)\nVALUES ('Monica (replay stand-in)', 'monica-replay-standin', 'stand-in for the pre-rename catalog row', 'UsersRound', 'https://monica.invalid', '#7c5c8a', true, 'monica');"
+    }
+  ]
+}

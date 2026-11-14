@@ -21,7 +21,7 @@ const CATALOG = {
   window_days: 30, sends_truncated: false,
   products: [
     { product: 'core', kinds: [kind('core', 'skill_scout_novo_skill')], enabled_count: 1, total: 1, declared: true },
-    { product: 'monica', kinds: [], enabled_count: 0, total: 0, declared: false },
+    { product: 'nosnolimiar', kinds: [], enabled_count: 0, total: 0, declared: false },
   ],
 };
 
@@ -55,9 +55,9 @@ const BASE = {
 describe('catalog covers every live product', () => {
   it('lists a live product that declares nothing, saying so, with its bulk switches disabled', async () => {
     render_(BASE);
-    expect(await screen.findByRole('heading', { name: /monica/ })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /nosnolimiar/ })).toBeInTheDocument();
     expect(screen.getByText(/não declara nenhum aviso para o dono/i)).toBeInTheDocument();
-    const section = screen.getByRole('heading', { name: /monica/ }).closest('section') as HTMLElement;
+    const section = screen.getByRole('heading', { name: /nosnolimiar/ }).closest('section') as HTMLElement;
     for (const b of section.querySelectorAll('button')) expect(b).toBeDisabled();
   });
 

@@ -1774,3 +1774,26 @@ def test_every_ci_parity_stage_has_a_declared_budget():
     for gate in ("ci_parity:export", "ci_parity:pytest", "ci_parity:keeper:--check-x", "ci_parity:prime:--stamp",
                  "ci_parity:suite:products/core/backend"):
         assert gb.declared_gate_budget(gate) is not None, gate
+
+
+def test_a_seed_module_change_selects_the_suites_of_the_products_that_import_it(tmp_path):
+    """Kind (2) reds - a SEED change breaking SIBLING products' tests: the selector (gate_sweep's import graph) fans a
+    seed/lib module out to the products that import it (and only them), not just the seed's own suite."""
+    tree = _selector_tree(tmp_path)
+    pkg = tree / "seed/lib/backend/noctusai_lib"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "foo.py").write_text("X = 1\n")
+    (pkg / "bar.py").write_text("Y = 2\n")
+    for slug, mod in (("core", "foo"), ("agents", "bar")):
+        app = tree / "products" / slug / "backend" / "app"
+        app.mkdir(parents=True)
+        (app / "main.py").write_text(f"from noctusai_lib import {mod}\n")
+    sel = RS.select_ci_suites(tree, ["seed/lib/backend/noctusai_lib/foo.py"], "py")
+    labels = {s.label for s in sel["suites"]}
+    assert sel["scope"]["seed_fanout"] == "scoped", sel["scope"]
+    assert "pytest:core" in labels and "pytest:agents" not in labels, labels
+    # a non-python seed file (a data file like channels.v2.json) is not provably narrower: the WHOLE awake fleet
+    wide = RS.select_ci_suites(tree, ["seed/lib/backend/noctusai_lib/channels.v2.json"], "py")
+    assert wide["scope"]["seed_fanout"] == "fleet"
+    assert {"pytest:core", "pytest:agents"} <= {s.label for s in wide["suites"]}

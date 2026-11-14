@@ -2,7 +2,7 @@
 
 > Supabase PostgreSQL · RLS per org/role · **7 schemas · ~232 tables** (verified 2026-04-18)
 >
-> **⚠️ Historical snapshot (flagged 2026-11-05).** This is the 2026-04 seven-schema world. Of the schemas below, `erp`, `personal-finance`, `therapy` and `daily_life` belong to products that are now ASLEEP (`deploy/fleet/active-scope.txt`, refresh 2026-11-04: active = `agents`, `core`, `monica`, `seed`, `social-wiring`). Active-product schemas (`agents`, `social_wiring`, …) are not in this table. Live truth: `noctus.dev.schema_drift` / `noctus.dev.ensure_schema_exposure`; rules: `KB § PATTERNS/backend/database-rls.md`.
+> **⚠️ Historical snapshot (flagged 2026-11-05).** This is the 2026-04 seven-schema world. Of the schemas below, `erp`, `personal-finance`, `therapy` and `daily_life` belong to products that are now ASLEEP (`deploy/fleet/active-scope.txt`, refresh 2026-11-04: active = `agents`, `core`, `nosnolimiar`, `seed`, `social-wiring`). Active-product schemas (`agents`, `social_wiring`, …) are not in this table. Live truth: `noctus.dev.schema_drift` / `noctus.dev.ensure_schema_exposure`; rules: `KB § PATTERNS/backend/database-rls.md`.
 > RLS rules and access patterns: see `../PATTERNS/backend/database-rls.md`.
 
 ## Schema Architecture
