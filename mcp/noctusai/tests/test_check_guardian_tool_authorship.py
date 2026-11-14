@@ -285,8 +285,20 @@ class TestDerivationIsLazyAndFast:
         _claim(tmp_path)
         assert len(_check(tmp_path, [RS])) == 1 and calls
 
-    def test_git_derivation_is_fast_and_equals_the_tree_read(self):
-        t = time.time()
+    def test_git_derivation_is_fast_and_equals_the_tree_read(self, tmp_path, monkeypatch):
+        """"Fast" is measured as a COUNT of git processes (deterministic), not seconds (load-flaky): a real `git`
+        shim on PATH logs each invocation, then execs the real binary. The derivation batches existence + every
+        blob into a handful of processes; per-module spawning would blow the bound."""
+        import os
+        import shutil
+        real_git = shutil.which("git")
+        log = tmp_path / "git-calls.log"
+        shim = tmp_path / "bin" / "git"
+        shim.parent.mkdir()
+        shim.write_text(f'#!/bin/sh\necho "$1" >> "{log}"\nexec "{real_git}" "$@"\n')
+        shim.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{shim.parent}{os.pathsep}{os.environ['PATH']}")
         from_git = derive_guardian_protected_files(REPO, from_git=True)
-        assert time.time() - t < 3.0
+        calls = log.read_text().split()
+        assert 1 <= len(calls) <= 5, calls  # ls-tree + ls-files + one batched cat-file (+ headroom), not 2-4 per module
         assert from_git == derive_guardian_protected_files(REPO)
