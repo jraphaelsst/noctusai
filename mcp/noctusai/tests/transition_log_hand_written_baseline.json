@@ -1,10 +1,20 @@
 {
-  "_doc": "Ratchet baseline for check_transition_log_hand_written: hand-written transition-history shapes that predate the seed primitive noctusai_lib.domain.transition_log (2026-11-07). Entries are <file>::<table>; this list only ever SHRINKS (a pilot adopting the primitive removes its entry). KB § PATTERNS/backend/transition-log.md.",
+  "_doc": "Ratchet baseline for check_transition_log_hand_written: hand-written transition-history shapes that predate the seed primitive noctusai_lib.domain.transition_log (2026-11-07). Entries are <file>::<table>; this list only ever SHRINKS (a pilot adopting the primitive removes its entry). KB § PATTERNS/backend/transition-log.md. 2026-11-14: +11 entries (agents 072/083/086/087, assistant 015/018/019/020/023, core 118, social-wiring 338) -- migrations merged to dev while this keeper was still unlanded; grandfathered, applied already. New hits after this must use the seed render or carry a waiver.",
   "legacy": [
     "products/agents/backend/migrations/018_editorial_workflow.sql::editorial_events",
     "products/agents/backend/migrations/033_julia_v2_threads.sql::thread_handoffs",
     "products/agents/backend/migrations/033_julia_v2_threads.sql::thread_participante_eventos",
+    "products/agents/backend/migrations/072_eval_consolidacao.sql::eval_case_transicoes",
+    "products/agents/backend/migrations/083_agent_product_grant_eventos.sql::agent_product_grant_eventos",
+    "products/agents/backend/migrations/086_eval_loop_config.sql::eval_loop_config_eventos",
+    "products/agents/backend/migrations/087_eval_um_por_usuario.sql::eval_recusas_eventos",
+    "products/assistant/backend/migrations/015_intake.sql::intake_messages_eventos",
+    "products/assistant/backend/migrations/018_rotulos_avaliacao.sql::ai_feedback_events",
+    "products/assistant/backend/migrations/019_google_connection.sql::google_conexao_eventos",
+    "products/assistant/backend/migrations/020_whatsapp_line_events.sql::whatsapp_line_events",
+    "products/assistant/backend/migrations/023_agents_grant.sql::agent_grants_eventos",
     "products/core/backend/migrations/107_noc_funnel.sql::pipeline_movimentos",
+    "products/core/backend/migrations/118_notification_owner_recipients.sql::notification_owner_recipient_events",
     "products/erp-imobiliario/backend/migrations/001_erp_imobiliario.sql::funil_movimentos",
     "products/erp-imobiliario/backend/migrations/042_pipeline_stages.sql::pipeline_movimentos",
     "products/igig/backend/migrations/017_igig_pipeline.sql::pipeline_movimentos",
@@ -16,6 +26,7 @@
     "products/social-wiring/backend/migrations/262_imovel_preco_historico.sql::imovel_preco_historico",
     "products/social-wiring/backend/migrations/265_condominios.sql::condominio_eventos",
     "products/social-wiring/backend/migrations/286_atendimento_blocos_supervisao.sql::atendimento_handoffs",
+    "products/social-wiring/backend/migrations/338_roteiro_ciclo_de_vida.sql::roteiro_eventos",
     "products/therapy-platform/backend/migrations/001_therapy_platform.sql::platform_settings_history"
   ]
 }
