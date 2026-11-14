@@ -25,7 +25,12 @@ from noctusai_lib.integrations.transcription import (
     TranscriptionNotConfigured,
     TranscriptionRejected,
 )
-from noctusai_lib.integrations.transcription.validation import check_format, check_probe, sniff_container
+from noctusai_lib.integrations.transcription.validation import (
+    check_format,
+    check_probe,
+    content_type_for,
+    sniff_container,
+)
 
 from app.modules.transcricoes import hooks
 from app.modules.transcricoes.deps import BUCKET, KillSwitch, TranscriberFactory
@@ -170,11 +175,6 @@ def _storage_key(org_id: str, user_id: str, transcricao_id: str, formato: str) -
     return f"{org_id}/{user_id}/{transcricao_id}.{formato}"
 
 
-_CONTENT_TYPES = {
-    "webm": "audio/webm", "ogg": "audio/ogg", "mp4": "audio/mp4", "mp3": "audio/mpeg", "wav": "audio/wav",
-}
-
-
 class TranscricaoService:
     def __init__(
         self,
@@ -263,7 +263,7 @@ class TranscricaoService:
         """Store the audio and enqueue ``job_type``; any failure releases the reservation."""
         try:
             await self.storage.put(
-                bucket=BUCKET, key=path, data=data, content_type=_CONTENT_TYPES.get(container, "application/octet-stream")
+                bucket=BUCKET, key=path, data=data, content_type=content_type_for(container)
             )
             await self.jobs.enqueue(
                 type=job_type, payload={"transcricao_id": transcricao_id},

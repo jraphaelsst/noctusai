@@ -27,6 +27,8 @@ from noctusai_lib.integrations.transcription.types import (
 from noctusai_lib.integrations.transcription.validation import (
     DEFAULT_LIMITS,
     TranscriptionLimits,
+    content_type_for,
+    normalize_container,
     sniff_container,
 )
 
@@ -45,6 +47,8 @@ __all__ = [
     "TranscriptionLimits",
     "TranscriptionNotConfigured",
     "TranscriptionRejected",
+    "content_type_for",
     "make_transcriber",
+    "normalize_container",
     "sniff_container",
 ]
