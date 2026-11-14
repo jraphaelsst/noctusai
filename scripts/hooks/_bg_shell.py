@@ -42,6 +42,7 @@ _DURATION = re.compile(r"^\d+(?:\.\d+)?[smhd]?$")
 _FOLLOW = re.compile(r"^-[a-zA-Z]*[fF]$|^--follow(?:=.*)?$")
 _HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^']*)'|\"([^\"]*)\"|([\w.-]+))")
 _SCRIPT_SUFFIX = (".sh", ".bash", ".zsh", ".py")
+LOG_PATH_RE = re.compile(r"(?<![^\s'\"=(])([^\s'\"|;&<>()=]+\.(?:log|out|output|txt))(?![\w])")  # a log-ish file, absolute or relative
 _WRAPPER_VALUE_OPTS = ("--purpose", "--done", "--done-when", "--command", "--producer-pid", "--learnings", "--interval")
 
 
