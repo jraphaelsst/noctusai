@@ -252,7 +252,7 @@ describe('useUploadFotos: opt-in resumable path', () => {
       return { fotos: [{ id: 'b' }] };
     });
     const putRaw = vi.fn().mockResolvedValue({});
-    const api = makeApi({ upload, post, putRaw });
+    const api = makeApi({ upload, post: post as unknown as ApiClient['post'], putRaw });
     const { useUploadFotos } = createEdicaoFotosHooks(api, { resumableThresholdBytes: 10 });
     const { result } = renderHook(() => useUploadFotos(), { wrapper: wrapper() });
     const percents: number[] = [];
