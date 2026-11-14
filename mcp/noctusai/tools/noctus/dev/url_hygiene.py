@@ -11,7 +11,7 @@ Two AST detectors, delegated to from ``compliance.py`` (shim functions of the sa
   Query strings are logged by every proxy and CDN; PII belongs in a POST body.
 
 Both RATCHET against per-file baselines in ``mcp/noctusai/tests/`` (a file may carry fewer, never more;
-``--lower-*-baseline`` lowers). Escapes carry a reason: ``ttl_reason=``/``reason=`` kwarg on the call;
+``--lower-*-baseline`` lowers). Escapes carry a reason: ``ttl_reason=`` kwarg on the call;
 ``# pii-query-ok: <reason>`` on the parameter line; ``# signed-url-ttl-ok: <reason>`` for TTL.
 
 KB § PATTERNS/security/url-hygiene.md
@@ -57,7 +57,7 @@ def _parse(text: str):
 # ── signed-url TTL ───────────────────────────────────────────────────────────
 _SIGN_FUNCS = frozenset({"signed_url", "create_signed_url", "create_signed_urls"})
 _TTL_KWARGS = ("expires_in_seconds", "expires_in", "ttl_seconds", "ttl", "expiry", "expires")
-_REASON_KWARGS = frozenset({"ttl_reason", "reason"})  # NOC-REMEDIATE[signed-url-reason-kwarg-name]: the seam's final kwarg name is being set on feat/sec-signed-url-ttl-clamp; both accepted until confirmed — 2026-11-14
+_REASON_KWARGS = frozenset({"ttl_reason"})  # the seam kwarg: storage/protocol.py validate_signed_url_ttl(..., ttl_reason)
 
 
 def _module_int_consts(tree: ast.Module) -> dict[str, int]:
