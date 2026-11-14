@@ -161,3 +161,26 @@ def is_timeout_summary(summary: str | None) -> bool:
     out (its own subprocess timeout, or the overall ceiling before it started)."""
     s = (summary or "").lower()
     return s.startswith("timeout after") or "time-box exceeded" in s
+
+
+def clamp_note(gate: str, overrides: dict[str, int] | None = None) -> str | None:
+    """Why a configured budget for `gate` is NOT the one that runs: it is above the per-attempt ceiling
+    (`MAX_GATE_BUDGET_S`, env NOCTUS_GATE_MAX_BUDGET_S) and is silently clamped. None when it is honoured."""
+    declared = declared_gate_budget(gate, {**env_overrides(), **(overrides or {})})
+    if declared is None:
+        return None
+    wanted = int(round(declared * _env_float("NOCTUS_GATE_BUDGET_SCALE", 1.0)))
+    if wanted <= MAX_GATE_BUDGET_S:
+        return None
+    return (f"budget {wanted}s for `{gate}` clamped to {MAX_GATE_BUDGET_S}s by NOCTUS_GATE_MAX_BUDGET_S "
+            f"(raise it, e.g. NOCTUS_GATE_MAX_BUDGET_S={wanted}, to honour the override)")
+
+
+def unknown_override_keys(gate_ids: list[str]) -> list[str]:
+    """NOCTUS_GATE_BUDGETS_JSON keys that match none of `gate_ids` (exact, or a `:`/`/`-terminated prefix): a typo'd or
+    abbreviated key is otherwise ignored without a word and the gate runs on its default budget."""
+    out = []
+    for key in env_overrides():
+        if not any(g == key or (key.endswith((":", "/")) and g.startswith(key)) for g in gate_ids):
+            out.append(key)
+    return out

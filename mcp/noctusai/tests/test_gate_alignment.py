@@ -217,3 +217,58 @@ class TestCliTelemetryWrapper:
                            capture_output=True, text=True, env=env, cwd=REAL_ROOT, timeout=300)
         rows = [json.loads(l) for l in log.read_text().splitlines()]
         assert r.returncode == 0 and rows[-1]["guard"] == "keeper:check-gate-triad" and rows[-1]["outcome"] == "pass"
+
+
+class TestRejectionTelemetryAndTrend:
+    """Rejections decided outside a hook (queue ejections, steward refusals, scoped verdicts) reach the SAME event log
+    through `record_event`, and `trend` answers "are rejections going down?" per ISO week."""
+
+    def _log(self, tmp_path, monkeypatch):
+        log = tmp_path / "ev.ndjson"
+        monkeypatch.setenv("NOCTUS_GUARD_EVENT_LOG", str(log))
+        return log
+
+    def test_record_rejection_writes_the_shared_row_shape_and_is_idempotent(self, tmp_path, monkeypatch):
+        log = self._log(tmp_path, monkeypatch)
+        assert ga.record_rejection("mq:eject", "deny", target="feat-x", reason="ci_red", source="t") is True
+        assert ga.record_rejection("mq:eject", "deny", target="feat-x", reason="ci_red", source="t") is False  # same observation
+        assert ga.record_rejection("mq:eject", "deny", target="feat-x", reason="conflict", source="t") is True  # new cause
+        rows = ga.read_events(log)
+        assert [(r["gate"], r["outcome"], r["target"]) for r in rows] == [("mq:eject", "deny", "feat-x")] * 2
+        assert rows[0]["kind"] == "rejection"
+
+    def test_a_pass_after_a_deny_makes_it_fixed_not_a_false_positive(self, tmp_path, monkeypatch):
+        log = self._log(tmp_path, monkeypatch)
+        ga.record_rejection("mq:eject", "deny", target="s", reason="ci_red", source="t")
+        ga.record_rejection("mq:eject", "pass", target="s", reason="landed", source="t")
+        st = ga.gate_stats(ga.read_events(log))["mq:eject"]
+        assert (st["denies"], st["fixed"], st["effective_fp"]) == (1, 1, 0.0)
+
+    def test_trend_counts_denies_per_iso_week_with_total_and_delta(self):
+        import datetime as dt
+        now = dt.datetime(2026, 11, 14, 12, tzinfo=dt.timezone.utc)  # ISO 2026-W46
+
+        def ev(days_ago, gate="mq:eject", outcome="deny"):
+            ts = (now - dt.timedelta(days=days_ago)).isoformat(timespec="seconds")
+            return {"ts": ts, "gate": gate, "outcome": outcome}
+
+        events = [ev(0), ev(1), ev(2),            # W46: 3 mq
+                  ev(8), ev(9, "guard:x"),        # W45: 2
+                  ev(8, outcome="pass"),          # a pass is not a rejection
+                  ev(15), ev(16), ev(17), ev(18),  # W44: 4
+                  ev(200)]                        # outside the window
+        rep = ga.trend_report(events, weeks=3, now=now)
+        assert rep["weeks"] == ["2026-W44", "2026-W45", "2026-W46"]
+        assert rep["total"]["per_week"] == {"2026-W44": 4, "2026-W45": 2, "2026-W46": 3}
+        assert rep["total"]["delta_vs_prev_week"] == 1 and rep["total"]["direction"] == "up"
+        assert rep["total"]["delta_last_complete_week"] == -2
+        assert rep["total"]["passes_per_week"]["2026-W45"] == 1
+        top = rep["gates"][0]
+        assert top["gate"] == "mq:eject" and top["per_week"]["2026-W46"] == 3 and top["delta"] == 2
+
+    def test_trend_is_an_action_of_the_existing_tool(self, tmp_path, monkeypatch):
+        self._log(tmp_path, monkeypatch)
+        ga.record_rejection("steward:enqueue:needs_resync", "deny", target="s", reason="x", source="t")
+        out = ga.run_action("trend", weeks=4)
+        assert out["ok"] and len(out["weeks"]) == 4 and out["total"]["total"] == 1
+        assert out["gates"][0]["gate"] == "steward:enqueue:needs_resync"

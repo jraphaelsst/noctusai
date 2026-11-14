@@ -640,12 +640,16 @@ class StewardStore:
                     })
                     refused = self.requests()[slug]
                 self.audit("request_refused", slug=slug, by=session_id, failing=contract.get("failing"))
+                _emit_gate_event("steward:request:needs_resync", "deny", slug, ",".join(contract.get("failing") or []),
+                                 kind="rejection", source="steward")
                 return {"ok": False, "status": "needs_resync", "request": refused, "deliverable": contract,
                         "failing": contract.get("failing") or [],
                         "error": f"{slug}: {deliverable_refusal(contract)}",
                         "next": ("fix the failing item(s) on the branch (you are its steward: the guardian never edits it), "
                                  "push, and re-run release_steward action=request. release_steward action=deliverable "
                                  f"slug={slug} re-checks read-only without filing.")}
+        if contract is not None:  # the contract ran and passed: the natural pass of the refusal above
+            _emit_gate_event("steward:request:needs_resync", "pass", slug, "", kind="rejection", source="steward")
         with self._locked("ship-requests"):
             before = self.requests().get(slug)
             self._append_event({
@@ -1492,6 +1496,9 @@ def tool_refusal(tool_name: str, args: dict[str, Any], *, store: StewardStore | 
     verdict = decide_call(gated, session_id, store=store, env=env)
     if verdict is None:
         return None
+    _lease, _state = store.holder()
+    _emit_gate_event(f"steward:{gated.kind.split()[-1]}:{'stale_lease' if _state == 'stale' else 'no_steward' if _state == 'none' else 'not_steward'}",
+                     "deny", gated.slug or "", str(verdict.get("reason") or "")[:200], kind="rejection", source="steward")
     return {"ok": False, "status": "refused_not_steward", "exit_code": 1,
             "error": verdict["reason"], "steward": verdict["steward"]}
 
@@ -1548,8 +1555,10 @@ def _subprocess_git(base_cwd: str | Path | None = None, timeout: int = 120) -> G
 
     def git(*args: str, cwd: str | Path | None = None) -> tuple[int, str, str]:
         try:
-            r = subprocess.run(["git", *args], capture_output=True, text=True, timeout=timeout, check=False,
-                               cwd=str(cwd or base_cwd) if (cwd or base_cwd) else None)
+            # --no-optional-locks on EVERY call: the deliverable/steward path only ever reads, and git's opportunistic
+            # index refresh (status, a work-tree diff) takes index.lock - a lock a timeout-killed git leaves in the primary.
+            r = subprocess.run(["git", "--no-optional-locks", *args], capture_output=True, text=True, timeout=timeout,
+                               check=False, cwd=str(cwd or base_cwd) if (cwd or base_cwd) else None)
         except (OSError, subprocess.SubprocessError) as exc:
             return 127, "", f"git {args[:1]} failed to run: {exc}"
         return r.returncode, r.stdout or "", r.stderr or ""
@@ -1565,6 +1574,11 @@ class _ReadOnlyGit:
     def __call__(self, *args: str, cwd: str | Path | None = None) -> tuple[int, str, str]:
         rest = [a for a in args if a != "--no-optional-locks" and not a.startswith("--attr-source=")]
         sub = rest[0] if rest else ""
+        if sub == "status" and "--no-optional-locks" not in args:
+            # a plain `git status` REFRESHES (writes) the index under index.lock; killed mid-refresh it leaves the lock
+            # behind in whatever checkout it ran from (the primary, 2026-11-14, 3x): refused, never "read-only"
+            raise ValueError("deliverable is read-only: `git status` must run as `git --no-optional-locks status` "
+                             "(a plain status writes the index and can leave index.lock behind)")
         if sub not in _READONLY_GIT:
             raise ValueError(f"deliverable is read-only: git {sub!r} is not allowed ({sorted(_READONLY_GIT)})")
         if sub == "worktree" and rest[1:2] != ["list"]:
@@ -1754,11 +1768,13 @@ def seed_isolation_error(py: str, tree: str | Path, env: dict[str, str]) -> str 
 CLI_REL = "mcp/noctusai/cli.py"
 
 
-def _emit_gate_event(gate: str, outcome: str, target: str = "", reason: str = "") -> None:
-    """One row in the SAME sink as every other gate event (gate_alignment.record_event). Never raises."""
+def _emit_gate_event(gate: str, outcome: str, target: str = "", reason: str = "", *,
+                     kind: str = "deliverable", source: str = "deliverable") -> None:
+    """One row in the SAME sink as every other gate event (gate_alignment.record_event). Never raises.
+    Rejections decided outside a hook use `kind="rejection"` (steward refusals, scoped verdicts)."""
     try:
         from tools.noctus.dev.gate_alignment import record_event
-        record_event(gate, outcome, kind="deliverable", target=target[:200], reason=reason[:300], source="deliverable")
+        record_event(gate, outcome, kind=kind, target=target[:200], reason=reason[:300], source=source)
     except Exception:  # noqa: BLE001 - telemetry never changes a verdict
         pass
 
@@ -2210,20 +2226,45 @@ def _git_init_export(tree: str | Path, head: str, timeout: int = 300) -> str | N
     """CI runs in a CHECKOUT: `--stamp-seed-version` needs git ('git not available - skipping stamp', exit 1 in a bare export) and
     the keeper-mirror caches live under `<git-common-dir>`. Give the export a throwaway repository: a fresh `git init` of the
     export with one commit, in the temp dir (never the requester's worktree, never the real repository, so its caches stay
-    the export's own). Global/system git config is ignored so no inherited hooks path or identity leaks in. Returns an error or None."""
-    env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+    the export's own). Global/system git config is ignored so no inherited hooks path or identity leaks in. Returns an error or None.
+
+    This is the ONLY index-WRITING git call on the scoped-deliverable path (`git add -A` + `git commit`), so it is pinned two
+    ways to the export and can never reach the checkout `deliverable` was started from (the primary, where it once left
+    `index.lock`, 2026-11-14): (1) every inherited git LOCATION variable (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_COMMON_DIR,
+    GIT_OBJECT_DIRECTORY, ...) is dropped from the child env - a process started from a hook or an editor carries them, and
+    `git add -A` then stages the export into THAT repository's index; (2) add/commit name the export's own `--git-dir` and
+    `--work-tree` explicitly, so even a variable this scrub misses loses to the command line."""
+    keep = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env = {**keep, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
            "GIT_AUTHOR_NAME": "noc-ci-parity", "GIT_AUTHOR_EMAIL": "noc-ci-parity@localhost",
            "GIT_COMMITTER_NAME": "noc-ci-parity", "GIT_COMMITTER_EMAIL": "noc-ci-parity@localhost"}
-    for argv in (["git", "init", "-q", "-b", "dev"], ["git", "add", "-A"],
-                 ["git", "commit", "-q", "-m", f"ci-parity export of {head[:12]}"]):
+    own = ["--git-dir", str(Path(tree) / ".git"), "--work-tree", str(tree)]
+    for argv in (["git", "init", "-q", "-b", "dev", str(tree)], ["git", *own, "add", "-A"],
+                 ["git", *own, "commit", "-q", "-m", f"ci-parity export of {head[:12]}"]):
         r = subprocess.run(argv, cwd=str(tree), capture_output=True, text=True, timeout=timeout, check=False, env=env)
         if r.returncode != 0:
-            return f"could not make the export a git checkout (`{' '.join(argv[:2])}`): {meaningful_tail(r.stderr or r.stdout, 5)}"
+            what = next((a for a in argv[1:] if not a.startswith("-") and a not in own and a != str(tree)), argv[1])
+            return f"could not make the export a git checkout (`git {what}`): {meaningful_tail(r.stderr or r.stdout, 5)}"
     return None
 
 
 def _hw_slot(job: str):
     return _sibling("hw_admission").heavy_slot(job)
+
+
+def _budget_notes(ran_gates: list[str]) -> list[str]:
+    """Budget overrides that did not do what the operator asked: clamped above the per-attempt ceiling, or a
+    NOCTUS_GATE_BUDGETS_JSON key that matched no stage of this run (names the valid ids that did run)."""
+    try:
+        from tools.noctus.dev import gate_budget as gb
+        notes = list(dict.fromkeys(n for n in (gb.clamp_note(g) for g in ran_gates) if n))
+        if ran_gates:
+            for key in gb.unknown_override_keys(ran_gates):
+                notes.append(f"NOCTUS_GATE_BUDGETS_JSON key `{key}` matches no stage of this run and was ignored; "
+                             f"stage ids that ran: {', '.join(sorted(ran_gates))}")
+        return notes
+    except Exception as exc:  # noqa: BLE001 - a malformed JSON override is itself the note
+        return [f"NOCTUS_GATE_BUDGETS_JSON unreadable: {type(exc).__name__}: {exc}"[:200]]
 
 
 class _CiParityTimeout(Exception):
@@ -2273,11 +2314,21 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
         scope = cs.classify(changed)
         with slot(f"deliverable:{branch}") as adm:
             if adm is not None and not getattr(adm, "admitted", True):
-                return {"ok": False, "detail": f"UNMEASURED: no machine-wide heavy slot ({getattr(adm, 'verdict', '?')}) - "
-                                               "item 5 runs CI's suites and is never judged green unrun"}
-            return _parity_run(head, scope, changed)
+                why = (f"UNMEASURED: no machine-wide heavy slot ({getattr(adm, 'verdict', '?')}) - "
+                       "item 5 runs CI's suites and is never judged green unrun")
+                _emit_gate_event("scoped:ci_parity:unmeasured", "deny", branch, why, kind="rejection", source="scoped")
+                return {"ok": False, "detail": why}
+            fired: list[str] = []
+            res = _parity_run(head, scope, changed, fired, branch)
+            notes = _budget_notes(fired)
+            if notes:  # a budget override that did not take effect must be SAID, not silently ignored/clamped
+                res = {**res, "detail": f"{res.get('detail', '')}; budget notes: {' | '.join(notes)}", "budget_notes": notes}
+            if not res.get("ok") and not fired:  # UNMEASURED before any stage ran (no export, no sandbox, no PGlite ...)
+                _emit_gate_event("scoped:ci_parity:unmeasured", "deny", branch, str(res.get("detail") or ""),
+                                 kind="rejection", source="scoped")
+            return res
 
-    def _parity_run(head: str, scope: Any, changed: list[str]) -> dict[str, Any]:
+    def _parity_run(head: str, scope: Any, changed: list[str], fired: list[str], branch: str = "") -> dict[str, Any]:
         tree = tempfile.mkdtemp(prefix="noc-ci-parity-")
         sandbox = tempfile.mkdtemp(prefix="noc-sandbox-home-")
         try:
@@ -2309,10 +2360,17 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 budgets = [first, _gate_budget.retry_budget(first)]
                 for b in budgets:
                     try:
-                        return subprocess.run(argv, capture_output=True, text=True, timeout=b, check=False, cwd=str(where),
-                                              env={**env, **dict(extra)})
+                        r = subprocess.run(argv, capture_output=True, text=True, timeout=b, check=False, cwd=str(where),
+                                           env={**env, **dict(extra)})
                     except subprocess.TimeoutExpired:
                         continue
+                    fired.append(gate)
+                    _emit_gate_event(f"scoped:{gate}", "pass" if r.returncode == 0 else "deny", branch,
+                                     "" if r.returncode == 0 else f"red: exit {r.returncode}", kind="rejection", source="scoped")
+                    return r
+                fired.append(gate)
+                _emit_gate_event(f"scoped:{gate}", "deny", branch, f"UNMEASURED: timed out after {budgets[0]}s and the x1.5 retry "
+                                 f"({budgets[-1]}s)", kind="rejection", source="scoped")
                 raise _CiParityTimeout(gate, budgets)
 
             def pytest_failures(r: subprocess.CompletedProcess, label: str) -> list[str]:

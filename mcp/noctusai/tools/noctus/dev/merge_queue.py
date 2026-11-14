@@ -1063,6 +1063,26 @@ class Queue:
         self.log(f"  EJECTED {x['slug']}: {x['kind']} - {x['why']}")
 
 
+def record_ejection(slug: str, cause: str, source: str = "mq") -> None:
+    """A merge-queue ejection is the most expensive rejection there is: count it in the gate-event log as `mq:eject`
+    (target = slug, reason = the ejection cause), through gate_alignment's one writer. Idempotent (the watch and
+    `task_branch landed` both observe the same ejection) and never raises."""
+    try:
+        from tools.noctus.dev.gate_alignment import record_rejection
+        record_rejection("mq:eject", "deny", target=slug, reason=cause, source=source)
+    except Exception:  # noqa: BLE001 - telemetry never changes a verdict (also absent on the Actions runner path)
+        pass
+
+
+def record_landing(slug: str, source: str = "mq") -> None:
+    """The natural pass of `mq:eject`: the slug landed, so an earlier ejection of it was fixed (effective_fp stays meaningful)."""
+    try:
+        from tools.noctus.dev.gate_alignment import record_rejection
+        record_rejection("mq:eject", "pass", target=slug, reason="landed", source=source)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def read_status(repo: str, sha: str, run: Runner = _default_run) -> dict[str, Any]:
     """The queue verdict for an enqueued sha: queued | pending | landed | ejected | unknown."""
     rc, out, err = run(["gh", "api", f"repos/{repo}/commits/{sha}/statuses", "--jq",
@@ -1208,8 +1228,10 @@ def watch(list_fn: Callable[[], dict[str, Any]], status_fn: Callable[[str], dict
             st = v.get("state")
             if st == "landed":
                 emit(f"MQ-LEFT {slug} {sha[:9]} -> landed {v.get('dev_sha', '')}".rstrip())
+                record_landing(slug, source="mq-watch")
             elif st == "ejected":
                 emit(f"MQ-LEFT {slug} {sha[:9]} -> ejected {v.get('description') or v.get('detail') or ''}".rstrip())
+                record_ejection(slug, str(v.get("description") or v.get("detail") or ""), source="mq-watch")
             else:
                 leaving[sha]["tries"] += 1
                 if leaving[sha]["tries"] >= left_retries:

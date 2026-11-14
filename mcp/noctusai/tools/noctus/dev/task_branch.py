@@ -2677,6 +2677,8 @@ def _enqueue(git, runner, *, base: dict[str, Any], slug: str, branch: str, confi
         git, slug=slug, branch=branch, branch_prefix=branch_prefix, dev=dev, head=head,
         pointer_fn=pointer_fn, accept_unscored=accept_unscored, slice_scores_reader=slice_scores_reader)
     if refusal:
+        _steward._emit_gate_event(f"steward:enqueue:{refusal.get('refused') or 'refused'}", "deny", slug,
+                                  str(refusal.get("error") or refusal.get("message") or "")[:200], kind="rejection", source="steward")
         return {**base, **refusal}
     behind = _commits(git, head, dev)
     plan = {**base, "dev_sha": dev, "branch_sha": head, "ahead": len(ahead), "behind": len(behind),
@@ -2694,6 +2696,8 @@ def _enqueue(git, runner, *, base: dict[str, Any], slug: str, branch: str, confi
     if not contract["ok"]:
         _write_enqueue_attestation(runner, head=head, slug=slug, branch=branch, contract=contract,
                                    ref=f"refs/heads/{qref}", ok=False, only_if_exists=True)
+        _steward._emit_gate_event("steward:enqueue:needs_resync", "deny", slug, ",".join(contract["failing"]),
+                                  kind="rejection", source="steward")
         return {**plan, "status": "needs_resync", "exit_code": 1, "failing": contract["failing"],
                 "message": (f"{branch} does not meet the delivery contract - NOT pushed, nothing in its worktree touched. "
                             f"{_steward.deliverable_refusal(contract)}. The branch steward fixes the item(s) on the branch, "
@@ -2712,8 +2716,11 @@ def _enqueue(git, runner, *, base: dict[str, Any], slug: str, branch: str, confi
         _write_enqueue_attestation(runner, head=head, slug=slug, branch=branch, contract=contract,
                                    ref=f"refs/heads/{qref}", ok=False, only_if_exists=True)
         tail = "\n".join((err or out or "").strip().splitlines()[-25:])
+        _steward._emit_gate_event("steward:enqueue:push_rejected", "deny", slug, tail[-200:], kind="rejection", source="steward")
         return {**plan, "status": "blocked", "exit_code": 1, "queue_ref": qref, "hook_output": tail,
                 "message": f"enqueue push of {branch} to {qref} was rejected; fix what it names, re-enqueue.\n{tail}"}
+    for _reason in ("slice_unscored", "needs_resync", "push_rejected"):  # the natural pass of every enqueue refusal
+        _steward._emit_gate_event(f"steward:enqueue:{_reason}", "pass", slug, "", kind="rejection", source="steward")
     return {**plan, "status": "queued", "exit_code": 0, "queue_ref": qref, "enqueued_sha": head,
             "message": (f"queued {branch} as {qref} ({head[:9]}) by a pure push. The CI merge queue tests it on top of "
                         f"dev (+ anything queued ahead) and lands it. Check: task_branch action='landed' slug='{slug}' "
@@ -2757,9 +2764,13 @@ def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_pat
         return {**out, "status": state, "exit_code": 0,
                 "message": f"{branch} not landed yet ({state}: {st.get('description') or st.get('detail', '')})."}
     if state == "ejected":
+        from tools.noctus.dev.merge_queue import record_ejection
+        record_ejection(slug, str(st.get("description") or st.get("detail") or ""), source="task_branch.landed")
         return {**out, "status": "ejected", "exit_code": 1,
                 "message": (f"{branch} was EJECTED by the merge queue: {st.get('description')} "
                             f"({st.get('url', '')}). Fix it on the branch, then enqueue again.")}
+    from tools.noctus.dev.merge_queue import record_landing
+    record_landing(slug, source="task_branch.landed")
     dev = _resolve(git, _dev_ref(remote, dev_branch))
     if not confirm:
         return {**out, "status": "landed", "exit_code": 0, "dev_sha": dev,

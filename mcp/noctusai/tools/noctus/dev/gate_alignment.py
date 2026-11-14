@@ -85,6 +85,45 @@ def record_event(gate: str, outcome: str, *, kind: str, target: str = "",
         print(f"gate_alignment: event write failed ({exc}); verdict unchanged", file=sys.stderr)
 
 
+_DEDUPE_TAIL_BYTES = 262144  # a re-observation is looked for in the last ~250KB of the log, never the whole file
+
+
+def record_rejection(gate: str, outcome: str, *, target: str, reason: str = "", source: str,
+                     kind: str = "rejection", dedupe: bool = True, log_path: Path | None = None) -> bool:
+    """The ONE entry for rejections that are decided OUTSIDE a hook (queue ejections, steward refusals, scoped
+    verdicts): a thin call into `record_event` - same sink, same row shape - plus idempotency, because the same
+    ejection is observed by several watchers (`merge_queue watch`, `task_branch action=landed`). A row with the same
+    gate+outcome+target+reason already in the log tail is not written twice. Returns True when a row was written.
+    Never raises (telemetry must not change a verdict)."""
+    try:
+        if dedupe and _seen_recently(gate, outcome, target, reason, log_path):
+            return False
+        record_event(gate, outcome, kind=kind, target=target, reason=reason, source=source, log_path=log_path)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _seen_recently(gate: str, outcome: str, target: str, reason: str, log_path: Path | None) -> bool:
+    p = log_path or events_path()
+    try:
+        size = p.stat().st_size
+        with open(p, "rb") as fh:
+            fh.seek(max(0, size - _DEDUPE_TAIL_BYTES))
+            tail = fh.read().decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    for line in reversed(tail):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if (isinstance(row, dict) and row.get("guard") == gate and row.get("outcome") == outcome
+                and row.get("target") == target[:200] and row.get("reason") == reason[:300]):
+            return True
+    return False
+
+
 def record_cli_exit(argv: list[str], code: Any) -> None:
     """Called by cli.py on exit: log a `--check-*` / `--verify-*` gate run."""
     flags = [a for a in argv if re.match(r"^--(check|verify)-[a-z0-9-]+$", a)]
@@ -522,6 +561,59 @@ def walls_report(root: Path | None = None, events: list[dict] | None = None,
             "walls": walls, "pending_matrix": pending, "ranked": rows[:25], "burn_down": burn_down(root)}
 
 
+def _iso_week(ts: str) -> str | None:
+    try:
+        d = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    y, w, _ = d.isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def _week_labels(now: _dt.datetime, weeks: int) -> list[str]:
+    """The last `weeks` ISO-week labels, oldest first, ending with the week of `now`."""
+    out = []
+    for i in range(weeks - 1, -1, -1):
+        y, w, _ = (now - _dt.timedelta(weeks=i)).isocalendar()
+        out.append(f"{y}-W{w:02d}")
+    return out
+
+
+def trend_report(events: list[dict] | None = None, weeks: int = 8, now: _dt.datetime | None = None,
+                 top: int = 15) -> dict:
+    """Are rejections going down? Denies per gate per ISO week over the last `weeks` weeks (LIVE event log only: the
+    inventory's historical firing counts have no dates), plus a TOTAL line, the delta vs the previous week and a
+    direction. `now`-week is partial: its delta is therefore reported alongside the last COMPLETE week's.
+    Passes are counted too (`passes`) so a falling deny count can be told from falling traffic."""
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    weeks = max(2, int(weeks))
+    labels = _week_labels(now, weeks)
+    idx = {w: i for i, w in enumerate(labels)}
+    denies: dict[str, list[int]] = {}
+    passes = [0] * weeks
+    for e in events if events is not None else read_events():
+        w = _iso_week(str(e.get("ts", "")))
+        if w not in idx:
+            continue
+        if e.get("outcome") == "deny":
+            denies.setdefault(e["gate"], [0] * weeks)[idx[w]] += 1
+        elif e.get("outcome") == "pass":
+            passes[idx[w]] += 1
+    rows = []
+    for gate, c in denies.items():
+        rows.append({"gate": gate, "per_week": dict(zip(labels, c)), "total": sum(c), "delta": c[-1] - c[-2]})
+    rows.sort(key=lambda r: (-r["total"], r["gate"]))
+    total = [sum(r["per_week"][w] for r in rows) for w in labels]
+    delta = total[-1] - total[-2]
+    complete = total[-2] - total[-3] if weeks >= 3 else None
+    direction = "flat" if delta == 0 else ("down" if delta < 0 else "up")
+    return {"weeks": labels, "gates": rows[:top], "gates_total": len(rows),
+            "total": {"per_week": dict(zip(labels, total)), "total": sum(total), "delta_vs_prev_week": delta,
+                      "delta_last_complete_week": complete, "direction": direction,
+                      "passes_per_week": dict(zip(labels, passes))},
+            "note": "live gate-event log only (deny counts per ISO week, UTC); the current week is partial"}
+
+
 def file_wall_findings(root: Path | None = None) -> dict:
     """Hand walls to the shared living findings ledger (`gate-walls`, `gate_wall_findings.py`): the ledger's own
     scanner decides what is still real, so this is a reconcile, never a hand-written row."""
@@ -574,20 +666,24 @@ def register(server) -> None:
             "normal flow and their effective false-positive rate; file=true appends wall findings to the ledger "
             "feed. action=sources: report-only KB docs changed without a sources section. action=triad: run the meta-gate (every gate declared with mechanism+owner). action=declare: "
             "write one inventory row (gate, mechanism, owner, placement). action=render: regenerate the inventory "
-            "markdown. action=refresh-baseline: shrink-only. Read-only except file/declare/render/refresh-baseline."
+            "markdown. action=refresh-baseline: shrink-only. action=trend [weeks=8]: denies per gate per ISO week + total + "
+            "delta vs the previous week (are rejections going down?). Read-only except file/declare/render/refresh-baseline."
         ),
     )
     def _gate_alignment(action: str = "walls", gate: str = "", mechanism: str = "", owner: str = "",
                         placement: str = "warn", file: bool = False, existing: bool = False,
-                        worktree_path: str = "") -> dict:
+                        worktree_path: str = "", weeks: int = 8) -> dict:
         return run_action(action, gate=gate, mechanism=mechanism, owner=owner, placement=placement,
-                          file=file, existing=existing, root=Path(worktree_path) if worktree_path else None)
+                          file=file, existing=existing, root=Path(worktree_path) if worktree_path else None,
+                          weeks=weeks)
 
 
 def run_action(action: str, *, gate: str = "", mechanism: str = "", owner: str = "",
                placement: str = "warn", file: bool = False, existing: bool = False,
-               root: Path | None = None) -> dict:
+               root: Path | None = None, weeks: int = 8) -> dict:
     root = root or REPO_ROOT
+    if action == "trend":
+        return {"ok": True, **trend_report(weeks=weeks)}
     if action == "walls":
         rep = walls_report(root)
         if file:
@@ -608,8 +704,8 @@ def run_action(action: str, *, gate: str = "", mechanism: str = "", owner: str =
         return {"ok": True, "path": str(RENDERED_REL)}
     if action == "refresh-baseline":
         return {"ok": True, **refresh_baseline(root)}
-    return {"ok": False, "error": f"unknown action {action!r}; one of walls|triad|matrix|sources|declare|render|refresh-baseline"}
+    return {"ok": False, "error": f"unknown action {action!r}; one of walls|trend|triad|matrix|sources|declare|render|refresh-baseline"}
 
 
-__all__ = ["record_event", "record_cli_exit", "read_events", "scan_gates", "triad_issues", "walls_report",
+__all__ = ["record_event", "record_rejection", "trend_report", "record_cli_exit", "read_events", "scan_gates", "triad_issues", "walls_report",
            "gate_stats", "declare_gate", "burn_down", "run_action", "register"]
