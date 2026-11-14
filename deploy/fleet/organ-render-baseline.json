@@ -2,6 +2,7 @@
   "_doc": "Accepted known-lag organ render drift (noctus.dev.render_organ_migration all_consumers / cli --render-organ-consumers). Each entry needs a destination and a date; baselined drift reports as accepted and exits 0, only NEW drift fails. Remove an entry when its destination lands.",
   "accepted": [
     {"product": "nosnolimiar", "organ": "leads", "destination": "steward, 025 after the 2026-11-14 cutover", "date": "2026-11-14"},
+    {"product": "nosnolimiar", "organ": "clients", "destination": "steward, same cutover render as leads (schema rename 023/024)", "date": "2026-11-14"},
     {"product": "nosnolimiar", "organ": "finance", "destination": "steward, same cutover render as leads (schema rename 023/024)", "date": "2026-11-14"}
   ]
 }
