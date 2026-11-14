@@ -44,9 +44,12 @@ class TestSignedUrlTtl:
     def test_unresolvable_ttl_clean(self):
         assert uh.signed_url_ttl_hits("s.signed_url(bucket='b', key='k', expires_in_seconds=cfg.ttl)") == []
 
-    def test_reason_kwarg_accepted_both_names(self):
-        for kw in ("ttl_reason", "reason"):
-            assert uh.signed_url_ttl_hits(f"s.signed_url(bucket='b', key='k', expires_in_seconds=3600, {kw}='export')") == []
+    def test_ttl_reason_kwarg_accepted(self):
+        assert uh.signed_url_ttl_hits("s.signed_url(bucket='b', key='k', expires_in_seconds=3600, ttl_reason='export')") == []
+
+    def test_other_reason_kwarg_not_accepted(self):
+        # Only the seam's kwarg (validate_signed_url_ttl(..., ttl_reason)) escapes; a stray `reason=` would not reach it.
+        assert uh.signed_url_ttl_hits("s.signed_url(bucket='b', key='k', expires_in_seconds=3600, reason='export')") == [(1, 3600)]
 
     def test_comment_escape(self):
         src = "s.signed_url(bucket='b', key='k', expires_in_seconds=3600)  # signed-url-ttl-ok: offline export\n"
