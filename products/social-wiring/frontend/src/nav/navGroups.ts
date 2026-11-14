@@ -4,7 +4,7 @@
  * 2026-11-08, approved).
  *
  * Canonical group order is the seed's `MODULE_GROUP_ORDER`
- * (CRM · Redes Sociais · ERP · CMS · CoreStudio · Banib · Emissões ·
+ * (CRM · Redes Sociais · ERP · CoreStudio · Banib · Emissões ·
  * Integrações · Configurações), applied by `composeModules`. Dashboard is a
  * standalone item after the groups. Existing URLs never move; a page lives in
  * exactly one group. Every `route` key is the page's existing status_pagina key,
@@ -27,6 +27,10 @@
  *
  * Banib (stub, "Em breve") is omitted: a disabled entry needs a status_pagina
  * row (unlisted pages are hidden) = a backend migration, out of this slice.
+ * "Edição de Imagem" (ex-"Edição de Fotos", ex-module `cms`, moved 2026-11-13)
+ * is a CoreStudio sub-group (Operação / Configuração) placed before Pesquisa; the
+ * `cms` module is gone (composeModules/MODULE_GROUP_ORDER tolerate an absent key).
+ * Hrefs and status_pagina `route` keys are unchanged.
  * CoreStudio keeps its literal tree (two items share one page key, which
  * `defineModule` forbids); it is a local group keyed `corestudio`.
  */
@@ -176,29 +180,6 @@ const erp = defineModule({
   ],
 });
 
-const cms = defineModule({
-  key: "cms",
-  icon: ImagePlus,
-  items: [
-    grp("edicao-fotos", "Edição de Fotos", ImagePlus, [
-      grp("edicao-fotos-operacao", "Operação", Activity, [
-        pg("Lotes", "/edicao-fotos", "edicao-fotos", ImagePlus),
-        pg("Novo Lote", "/edicao-fotos/novo", "edicao-fotos-novo-lote", Plus),
-        pg("Painel", "/edicao-fotos/painel", "edicao-fotos-painel", BarChart3),
-        pg("Processamento", "/edicao-fotos/processamento", "edicao-fotos-processamento", Activity),
-      ]),
-      grp("edicao-fotos-config", "Configuração", Settings2, [
-        pg("Configurações", "/edicao-fotos/configuracoes", "edicao-fotos-configuracoes", Settings2),
-        pg("Referências", "/edicao-fotos/referencias", "edicao-fotos-referencias", Images),
-        pg("Guias de Estilo", "/edicao-fotos/guias", "edicao-fotos-guias", BookOpen),
-        pg("Regras", "/edicao-fotos/regras", "edicao-fotos-regras", ScrollText),
-        pg("Curadores", "/edicao-fotos/curadores", "edicao-fotos-curadores", UserCog),
-        pg("Modelos", "/edicao-fotos/modelos", "edicao-fotos-modelos", Cpu),
-      ]),
-    ]),
-  ],
-});
-
 const emissoes = defineModule({
   key: "emissoes",
   icon: Stamp,
@@ -246,6 +227,38 @@ const CORESTUDIO_GROUP: NavGroupWithRoute =
     ],
     groups: [
       {
+        key: "edicao-fotos",
+        label: "Edição de Imagem",
+        icon: ImagePlus,
+        items: [],
+        groups: [
+          {
+            key: "edicao-fotos-operacao",
+            label: "Operação",
+            icon: Activity,
+            items: [
+              { name: "Lotes", href: "/edicao-fotos", icon: ImagePlus, route: "edicao-fotos" },
+              { name: "Novo Lote", href: "/edicao-fotos/novo", icon: Plus, route: "edicao-fotos-novo-lote" },
+              { name: "Painel", href: "/edicao-fotos/painel", icon: BarChart3, route: "edicao-fotos-painel" },
+              { name: "Processamento", href: "/edicao-fotos/processamento", icon: Activity, route: "edicao-fotos-processamento" },
+            ],
+          },
+          {
+            key: "edicao-fotos-config",
+            label: "Configuração",
+            icon: Settings2,
+            items: [
+              { name: "Configurações", href: "/edicao-fotos/configuracoes", icon: Settings2, route: "edicao-fotos-configuracoes" },
+              { name: "Referências", href: "/edicao-fotos/referencias", icon: Images, route: "edicao-fotos-referencias" },
+              { name: "Guias de Estilo", href: "/edicao-fotos/guias", icon: BookOpen, route: "edicao-fotos-guias" },
+              { name: "Regras", href: "/edicao-fotos/regras", icon: ScrollText, route: "edicao-fotos-regras" },
+              { name: "Curadores", href: "/edicao-fotos/curadores", icon: UserCog, route: "edicao-fotos-curadores" },
+              { name: "Modelos", href: "/edicao-fotos/modelos", icon: Cpu, route: "edicao-fotos-modelos" },
+            ],
+          },
+        ],
+      },
+      {
         key: "media-creation-pesquisa",
         label: "Pesquisa",
         icon: Search,
@@ -290,7 +303,7 @@ const CORESTUDIO_GROUP: NavGroupWithRoute =
     ],
   };
 
-export const SW_MODULES = [crm, redesSociais, erp, cms, emissoes, integracoes, configuracoes] as const;
+export const SW_MODULES = [crm, redesSociais, erp, emissoes, integracoes, configuracoes] as const;
 
 const composed = composeModules({
   modules: SW_MODULES,
