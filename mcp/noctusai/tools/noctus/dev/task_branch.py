@@ -79,6 +79,7 @@ import re
 import subprocess
 import sys
 import time
+import datetime as _dt
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -2584,11 +2585,42 @@ def _train_riders_after_integrate(
     return res
 
 
+def _record_score_now(missing: list[dict[str, str]], score: dict[str, Any],
+                      writer) -> dict[str, Any]:
+    """Write the slice-scores row for the ONE unscored slice from the caller's `score=`
+    (the same payload `dispatch_log_completion` takes) instead of refusing and asking for a
+    separate call. Returns {ok, ...}; never raises."""
+    if len(missing) != 1:
+        return {"ok": False, "error": ("score= carries one slice's score; "
+                                       f"{[m['slug'] for m in missing]} are unscored - log each via "
+                                       "dispatch_log_completion(score=...)")}
+    m = missing[0]
+    payload = dict(score)
+    duration = payload.pop("duration_minutes", 0)
+    agent = payload.pop("agent", None) or (m["agent"] if m["agent"] != "unknown" else "engineer")
+    ret = payload.pop("engineer_return", None)
+    notes = payload.pop("notes", None)
+    try:
+        if writer is None:
+            from .dispatch_token_log import log_completion as writer  # noqa: PLC0415
+        res = writer(m["slug"], agent, duration, outcome="landed", notes=notes,
+                     score=payload, engineer_return=ret)
+    except Exception as e:  # noqa: BLE001 - reported as a refusal, never a crash
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:300]}
+    if not res.get("ok"):
+        return {"ok": False, "error": str(res.get("error", "score write failed"))[:300]}
+    return {"ok": True, "slug": m["slug"], "agent": agent}
+
+
 def _slice_score_gate(git, *, slug: str, branch: str, branch_prefix: str, dev: str, head: str,
                       pointer_fn, accept_unscored: str | None,
-                      slice_scores_reader) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+                      slice_scores_reader, score: dict[str, Any] | None = None,
+                      score_writer=None, confirm: bool = False,
+                      ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
     """Engineer slices must be measured before they land (train: each rider). Returns
-    (refusal | None, accepted-override | None). READ-ONLY - shared by `integrate` and `enqueue`."""
+    (refusal | None, accepted-override | None, scored-now | None). With `score=` the row is
+    WRITTEN here (confirm=True) instead of refusing; a plan (confirm=False) reports `would_score`
+    and writes nothing. Otherwise READ-ONLY - shared by `integrate` and `enqueue`."""
     _rc_m, _m_out, _e = git("log", "--merges", "--format=%s", f"{dev}..{head}")
     _riders = _train.parse_train_riders(_m_out.splitlines() if _rc_m == 0 else []) if slug.startswith("train-") else []
     # The pointer is keyed by the REAL branch name (docs/x, fix/x ...), not feat/<slug>.
@@ -2598,13 +2630,21 @@ def _slice_score_gate(git, *, slug: str, branch: str, branch_prefix: str, dev: s
                                          reader=slice_scores_reader)
     except Exception as e:  # noqa: BLE001 - unreadable ledger must not pass
         return ({"status": "blocked", "exit_code": 1, "refused": "slice_scores_unreadable",
-                 "error": f"cannot verify slice scores: {type(e).__name__}: {e}"}, None)
+                 "error": f"cannot verify slice scores: {type(e).__name__}: {e}"}, None, None)
     if not unscored:
-        return None, None
+        return None, None, None
+    if score is not None:
+        if not confirm:
+            return None, None, {"would_score": [m["slug"] for m in unscored]}
+        done = _record_score_now(unscored, score, score_writer)
+        if done["ok"]:
+            return None, None, {"scored": done["slug"], "agent": done["agent"]}
+        return ({**_slice_unscored_refusal(unscored), "dev_sha": dev,
+                 "score_error": done["error"]}, None, None)
     why = (accept_unscored or "").strip()
     if len(why) < 10:
-        return {**_slice_unscored_refusal(unscored), "dev_sha": dev}, None
-    return None, {"reason": why, "slugs": [m["slug"] for m in unscored]}
+        return {**_slice_unscored_refusal(unscored), "dev_sha": dev}, None, None
+    return None, {"reason": why, "slugs": [m["slug"] for m in unscored]}, None
 
 
 def _write_enqueue_attestation(runner, *, head: str, slug: str, branch: str, contract: dict[str, Any],
@@ -2648,10 +2688,76 @@ def _request_verdict_ref(slug: str, branch: str | None = None, store=None) -> st
         return None
 
 
+# -- recurrence andon (steward enqueue) -------------------------------------------------
+# A refusal class that keeps recurring with nobody owning a fix is the signal the system
+# itself is wrong. The steward's enqueue WARNS first (until ANDON_ENFORCE_FROM), then refuses.
+# One findings_ledger update (in-progress <branch> | accepted <rationale>) or a NOC-REMEDIATE
+# marker names an owner and clears it; an owner branch with no commits for 72h lapses.
+# Requesters are never blocked: only the steward's enqueue calls this (request never does).
+ANDON_MIN_RECURRENCES = 3
+ANDON_ENFORCE_FROM = _dt.date(2026, 11, 21)
+ANDON_OWNERSHIP_LAPSE_S = 72 * 3600
+
+
+def _owner_branch_idle(git, open_fix: str, now: float) -> bool:
+    """True when `open_fix` names a branch (local or remote) whose tip is older than 72h.
+    A fix that is not a resolvable branch (an `accepted` rationale, a marker) never lapses."""
+    for ref in (open_fix, f"origin/{open_fix}"):
+        rc, out, _e = git("log", "-1", "--format=%ct", ref)
+        if rc == 0 and out.strip().isdigit():
+            return now - int(out.strip()) > ANDON_OWNERSHIP_LAPSE_S
+    return False
+
+
+def _recurrence_andon(git, *, recurrence_fn=None, today: _dt.date | None = None,
+                      now: float | None = None) -> dict[str, Any] | None:
+    """Classes recurring >= N times in 14d with no live owner. None when quiet or when the
+    recurrence machinery is not shipped (guarded getattr: slice C builds it in parallel).
+    Keys are every class that refused in the window (`gate_alignment.all_classes`).
+    Never raises: an unreadable ledger is not a refusal."""
+    keys: list[str] = []
+    if recurrence_fn is None:
+        try:
+            from . import gate_alignment as _ga  # noqa: PLC0415
+            recurrence_fn = getattr(_ga, "refusal_recurrence", None)
+            all_classes = getattr(_ga, "all_classes", None)
+            keys = list(all_classes(window_days=14)) if all_classes else []
+        except Exception:  # noqa: BLE001
+            recurrence_fn = None
+    if recurrence_fn is None:
+        return None
+    try:
+        rows = recurrence_fn(keys, window_days=14) or []
+    except Exception as e:  # noqa: BLE001 - advisory read, never a refusal by itself
+        logger.warning("recurrence andon: read failed: %s", e)
+        return None
+    t = now if now is not None else time.time()
+    unowned = []
+    for r in rows:
+        if int(r.get("n_14d", 0)) < ANDON_MIN_RECURRENCES:
+            continue
+        fix = r.get("open_fix")
+        if fix and not _owner_branch_idle(git, str(fix), t):
+            continue
+        unowned.append({"class": r.get("class"), "n_14d": r.get("n_14d"),
+                        "sessions": r.get("sessions"), "lapsed_owner": fix or None})
+    if not unowned:
+        return None
+    mode = "refuse" if (today or _dt.date.today()) >= ANDON_ENFORCE_FROM else "warn"
+    names = ", ".join(str(u["class"]) for u in unowned)
+    return {"mode": mode, "classes": unowned,
+            "message": (f"refusal class(es) recurring >={ANDON_MIN_RECURRENCES}x in 14d with no open fix: {names}. "
+                        "Clear with ONE findings_ledger update (new_status='in-progress <branch>' or "
+                        "'accepted <rationale>') or a NOC-REMEDIATE[<class>] marker. "
+                        + (f"This is a warning until {ANDON_ENFORCE_FROM}; after that enqueue refuses."
+                           if mode == "warn" else "Enqueue refuses until an owner is named."))}
+
+
 def _enqueue(git, runner, *, base: dict[str, Any], slug: str, branch: str, confirm: bool, remote: str,
              dev_branch: str, branch_prefix: str, pointer_fn, accept_unscored: str | None,
              slice_scores_reader, verdict_ref: str | None,
-             deliverable_kwargs: dict[str, Any] | None) -> dict[str, Any]:
+             deliverable_kwargs: dict[str, Any] | None, score: dict[str, Any] | None = None,
+             score_writer=None, recurrence_fn=None, today: _dt.date | None = None) -> dict[str, Any]:
     """`action='enqueue'` - a PURE PUSH (guardian spec, 2026-11-10).
 
     Verifies the delivery contract READ-ONLY (`release_steward.deliverable`), then pushes the exact
@@ -2673,14 +2779,21 @@ def _enqueue(git, runner, *, base: dict[str, Any], slug: str, branch: str, confi
     if not ahead and _is_ancestor(git, head, dev):
         return {**base, "status": "up_to_date", "exit_code": 0, "dev_sha": dev,
                 "message": f"{branch} has nothing {remote}/{dev_branch} lacks - nothing to enqueue."}
-    refusal, accepted = _slice_score_gate(
+    refusal, accepted, scored_now = _slice_score_gate(
         git, slug=slug, branch=branch, branch_prefix=branch_prefix, dev=dev, head=head,
-        pointer_fn=pointer_fn, accept_unscored=accept_unscored, slice_scores_reader=slice_scores_reader)
+        pointer_fn=pointer_fn, accept_unscored=accept_unscored, slice_scores_reader=slice_scores_reader,
+        score=score, score_writer=score_writer, confirm=confirm)
     if refusal:
         return {**base, **refusal}
+    andon = _recurrence_andon(git, recurrence_fn=recurrence_fn, today=today)
+    if andon and andon["mode"] == "refuse":
+        return {**base, "status": "blocked", "exit_code": 1, "refused": "refusal_recurrence",
+                "recurrence_andon": andon, "error": andon["message"]}
     behind = _commits(git, head, dev)
     plan = {**base, "dev_sha": dev, "branch_sha": head, "ahead": len(ahead), "behind": len(behind),
-            "incoming_commits": ahead[:20], **({"accepted_unscored": accepted} if accepted else {})}
+            "incoming_commits": ahead[:20], **({"accepted_unscored": accepted} if accepted else {}),
+            **({"slice_score": scored_now} if scored_now else {}),
+            **({"recurrence_andon": andon} if andon else {})}
 
     def ro_git(*args: str, cwd: str | None = None):  # deliverable carries its own read-only allowlist
         return runner(["git", *args], cwd=cwd)
@@ -2835,6 +2948,9 @@ def task_branch(
     accept_unmeasured: list[str] | None = None,
     accept_unmeasured_reason: str | None = None,
     accept_unscored: str | None = None,
+    score: dict[str, Any] | None = None,
+    score_writer: "Callable[..., dict] | None" = None,
+    recurrence_fn: "Callable[..., list[dict]] | None" = None,
     slice_scores_reader: "Callable[[], list[dict]] | None" = None,
     merged_tip_baseline: Callable[[list[str], str], dict[str, Any]] | None = None,
     doc_staleness_check: Callable[[str, str], list[dict]] | None = None,
@@ -3109,6 +3225,7 @@ def task_branch(
             git, runner, base=base, slug=slug, branch=branch, confirm=confirm, remote=remote,
             dev_branch=dev_branch, branch_prefix=branch_prefix, pointer_fn=pointer_fn,
             accept_unscored=accept_unscored, slice_scores_reader=slice_scores_reader,
+            score=score, score_writer=score_writer, recurrence_fn=recurrence_fn,
             verdict_ref=verdict_ref if verdict_ref is not None else (
                 _request_verdict_ref(slug, branch) if run is None else None),
             deliverable_kwargs=deliverable_kwargs)
@@ -3308,16 +3425,18 @@ def task_branch(
                     "message": f"{branch} has nothing {remote}/{dev_branch} lacks — nothing to integrate."}
         # Slice-score gate (engineer slices must be measured before they land).
         # Train: each rider is checked, not just the train branch.
-        _gate_refusal, _unscored_accept = _slice_score_gate(
+        _gate_refusal, _unscored_accept, _scored_now = _slice_score_gate(
             git, slug=slug, branch=branch, branch_prefix=branch_prefix, dev=dev, head=head,
             pointer_fn=pointer_fn, accept_unscored=accept_unscored,
-            slice_scores_reader=slice_scores_reader)
+            slice_scores_reader=slice_scores_reader, score=score, score_writer=score_writer,
+            confirm=confirm)
         if _gate_refusal:
             return {**base, **_gate_refusal}
         behind = _commits(git, head, dev)
         plan = {**base, "dev_sha": dev, "branch_sha": head,
                 "ahead": len(ahead), "behind": len(behind), "incoming_commits": ahead[:20],
-                **({"accepted_unscored": _unscored_accept} if _unscored_accept else {})}
+                **({"accepted_unscored": _unscored_accept} if _unscored_accept else {}),
+                **({"slice_score": _scored_now} if _scored_now else {})}
         if not confirm:
             return {**plan, "status": "planned", "exit_code": 0,
                     "message": (f"will rebase {branch} onto {remote}/{dev_branch} "
@@ -4191,7 +4310,7 @@ def register(server) -> None:
             "machine-wide heavy slot (noctus.dev.hw_admission); a gate not admitted is NOT run "
             "and the integrate returns status 'waiting_for_slot' (not pushed, no accept-anyway). "
             "status: status|planned|started|queued|needs_resync|integrated|conflict|up_to_date|"
-            "cleaned|partial|blocked|gate_timeout|waiting_for_slot|refused_stale_toolkit|error. SLICE-SCORE GATE: integrate (and each train rider) of an engineer slice with no slice-scores.ndjson row is refused (blocked, refused='slice_unscored', with the exact log_completion call); accept_unscored='<reason>' (>=10 chars) overrides, recorded as accepted_unscored."
+            "cleaned|partial|blocked|gate_timeout|waiting_for_slot|refused_stale_toolkit|error. SLICE-SCORE GATE: integrate (and each train rider) of an engineer slice with no slice-scores.ndjson row is refused (blocked, refused='slice_unscored', with the exact log_completion call); accept_unscored='<reason>' (>=10 chars) overrides, recorded as accepted_unscored. score={model, q:{Q1..Q7}, duration_minutes?, agent?, engineer_return?, ...} (the dispatch_log_completion score payload) on integrate/enqueue confirm=True WRITES the slice-scores row itself instead of refusing (plan mode reports would_score). enqueue (the steward's) also reads gate_alignment.refusal_recurrence: a refusal class recurring >=3x/14d with no open fix WARNS (recurrence_andon) until 2026-11-21, then refuses (refused='refusal_recurrence'); one findings_ledger update or a NOC-REMEDIATE marker clears it; an owner branch idle >72h lapses; requesters are never blocked."
         ),
     )
     def _task_branch(
@@ -4212,6 +4331,7 @@ def register(server) -> None:
         accept_unmeasured: list[str] | None = None,
         accept_unmeasured_reason: str | None = None,
         accept_unscored: str | None = None,
+        score: dict | None = None,
         slugs: list[str] | None = None,
         order: str = "given",
         branch: str | None = None,
@@ -4221,7 +4341,7 @@ def register(server) -> None:
         if refused is not None:
             return refused
         return task_branch(accept_unmeasured=accept_unmeasured, slugs=slugs, order=order,
-                           accept_unmeasured_reason=accept_unmeasured_reason, accept_unscored=accept_unscored, action=action, slug=slug, confirm=confirm,
+                           accept_unmeasured_reason=accept_unmeasured_reason, accept_unscored=accept_unscored, score=score, action=action, slug=slug, confirm=confirm,
                            keep_worktree=keep_worktree,
                            wire_env=wire_env, verbose=verbose,
                            wire_products=wire_products,
