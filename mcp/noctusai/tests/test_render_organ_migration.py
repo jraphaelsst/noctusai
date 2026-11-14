@@ -323,3 +323,56 @@ def test_all_consumers_ignores_products_that_do_not_consume(tmp_path):
     (products / "demo" / "backend" / "app").mkdir(parents=True)
     r = _all(products)
     assert r["status"] == "clean" and r["checked"] == 0
+
+
+def test_baselined_drift_is_accepted_not_failed_and_not_written(tmp_path):
+    products, mig = _consumer(tmp_path)
+    f = mig / "002_finance.sql"
+    f.write_text(f.read_text() + "-- stale\n")
+    base = [{"product": "demo", "organ": "finance", "destination": "steward", "date": "2026-11-14"}]
+    r = _all(products, baseline=base)
+    assert r["status"] == "accepted" and r["ok"] and r["drifted"] == []
+    assert r["accepted"][0]["destination"] == "steward"
+    assert _all(products, baseline=base, write=True)["status"] == "accepted"
+    assert f.read_text().endswith("-- stale\n")  # accepted lag is never written
+    assert _all(products, baseline=[])["status"] == "drift"  # a NEW (unbaselined) drift still fails
+
+
+def test_baseline_entry_without_destination_or_date_is_refused(tmp_path):
+    products, _ = _consumer(tmp_path)
+    r = _all(products, baseline=[{"product": "demo", "organ": "finance"}])
+    assert r["status"] == "error" and not r["ok"]
+
+
+def _git(cwd, *a):
+    import subprocess
+    subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True,
+                   env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                        "GIT_COMMITTER_EMAIL": "t@t", "PATH": __import__("os").environ["PATH"], "HOME": str(cwd)})
+
+
+def test_new_revision_number_follows_highest_of_tree_dev_and_queued_mq_head(tmp_path):
+    """The would-be revision number is max(disk, origin/dev, local branches, queued origin/mq/* heads)+1 -- never reused."""
+    from tools.noctus.dev.scaffold_migration import next_migration_number
+
+    repo = tmp_path / "repo"
+    mig = repo / "products" / "demo" / "backend" / "migrations"
+    mig.mkdir(parents=True)
+    (mig / "001_seed.sql").write_text("-- s\n")
+    (mig / "002_x.sql").write_text("-- x\n")
+    _git(repo, "init", "-q", "-b", "dev")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+    _git(repo, "update-ref", "refs/remotes/origin/dev", "HEAD")
+    assert next_migration_number("demo", products_dir=repo / "products", skip_fetch=True)["next_number"] == 3
+    # a queued merge-queue head adds 004 (origin/dev and this tree know nothing of it)
+    _git(repo, "checkout", "-q", "-b", "queued")
+    (mig / "004_queued.sql").write_text("-- q\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "queued")
+    _git(repo, "update-ref", "refs/remotes/origin/mq/demo--abc1234", "HEAD")
+    _git(repo, "checkout", "-q", "dev")
+    _git(repo, "branch", "-q", "-D", "queued")
+    r = next_migration_number("demo", products_dir=repo / "products", skip_fetch=True)
+    assert r["next_number"] == 5
+    assert any(c["source"].startswith("queued:") for c in r["claims"])

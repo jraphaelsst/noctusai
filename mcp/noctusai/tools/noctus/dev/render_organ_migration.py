@@ -240,8 +240,27 @@ def _active_slugs(root: Path) -> list[str]:
             if ln.strip() and not ln.lstrip().startswith("#")]
 
 
+_BASELINE_REL = Path("deploy") / "fleet" / "organ-render-baseline.json"
+
+
+def _load_baseline(root: Path, baseline: list[dict[str, Any]] | None) -> dict[tuple[str, str], dict[str, Any]]:
+    """Accepted known-lag drift: ``{(product, organ): entry}``. Each entry needs a destination and a date
+    (a baseline row without them is a silent deferral, so it is refused)."""
+    if baseline is None:
+        f = root / _BASELINE_REL
+        baseline = json.loads(f.read_text(encoding="utf-8")).get("accepted", []) if f.is_file() else []
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for e in baseline:
+        missing = [k for k in ("product", "organ", "destination", "date") if not e.get(k)]
+        if missing:
+            raise ValueError(f"{_BASELINE_REL}: entry {e!r} lacks {missing} -- an accepted drift needs a destination and a date")
+        out[(e["product"], e["organ"])] = e
+    return out
+
+
 def render_all_consumers(
     *,
+    baseline: list[dict[str, Any]] | None = None,
     write: bool = False,
     worktree_path: str | Path | None = None,
     generator_fn: Callable[[str, str, list[int]], dict[str, Any]] | None = None,
@@ -256,7 +275,12 @@ def render_all_consumers(
     place, applied one => a new revision file). Cheap: generator output is memoised per
     (organ, schema, revisions), so each organ costs one child interpreter plus one per distinct schema.
 
-    Returns ``{status, ok, checked, drifted, rendered, errors}``; status: clean | drift | rendered | error.
+    Drift listed in the committed baseline (``deploy/fleet/organ-render-baseline.json``, each entry with a
+    destination + date) is reported as ``accepted`` and never fails the check or gets written; only NEW
+    drift fails.
+
+    Returns ``{status, ok, checked, drifted, accepted, rendered, errors}``;
+    status: clean | accepted | drift | rendered | error.
     """
     root = Path(resolve_caller_root(worktree_path)) if worktree_path is not None else Path(__file__).resolve().parents[5]
     pdir = products_dir or root / "products"
@@ -285,7 +309,11 @@ def render_all_consumers(
 
     active = slugs if slugs is not None else _active_slugs(root)
     live = lambda: list(active)  # noqa: E731 - offline roster, never the network catalog
-    checked, drifted, rendered, errors = 0, [], [], []
+    try:
+        accepted_map = _load_baseline(root, baseline)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return {"status": "error", "ok": False, "checked": 0, "drifted": [], "accepted": [], "rendered": [], "errors": [str(exc)]}
+    checked, drifted, accepted, rendered, errors = 0, [], [], [], []
     for slug in active:
         mig = pdir / slug / "backend" / "migrations"
         if not mig.is_dir():
@@ -295,11 +323,22 @@ def render_all_consumers(
             if not any(t.startswith(header) for t in texts):
                 continue
             checked += 1
-            r = render_organ_migration(
-                slug, organ, confirm=write, worktree_path=None,
-                products_dir=pdir, skip_fetch=True, live_products_fn=live, generator_fn=gen,
-            )
+            def _run(confirm: bool, slug: str = slug, organ: str = organ) -> dict[str, Any]:
+                return render_organ_migration(
+                    slug, organ, confirm=confirm, worktree_path=None,
+                    products_dir=pdir, skip_fetch=True, live_products_fn=live, generator_fn=gen,
+                )
+
+            r = _run(False)
             st = r["status"]
+            if st in ("would_refresh", "would_new_revision") and (slug, organ) in accepted_map:
+                e = accepted_map[(slug, organ)]
+                accepted.append({"product": slug, "organ": organ, "status": st, "path": r.get("path"),
+                                 "destination": e["destination"], "date": e["date"]})
+                continue
+            if write and st in ("would_refresh", "would_new_revision"):
+                r = _run(True)
+                st = r["status"]
             if st == "up_to_date":
                 continue
             row = {"product": slug, "organ": organ, "status": st, "path": r.get("path")}
@@ -309,9 +348,10 @@ def render_all_consumers(
                 rendered.append(row)
             else:
                 errors.append({**row, "error": r.get("error")})
-    status = "error" if errors else ("rendered" if rendered else ("drift" if drifted else "clean"))
-    return {"status": status, "ok": status in ("clean", "rendered"), "checked": checked,
-            "drifted": drifted, "rendered": rendered, "errors": errors}
+    status = ("error" if errors else "rendered" if rendered else "drift" if drifted
+              else "accepted" if accepted else "clean")
+    return {"status": status, "ok": status in ("clean", "accepted", "rendered"), "checked": checked,
+            "drifted": drifted, "accepted": accepted, "rendered": rendered, "errors": errors}
 
 
 def register(server) -> None:

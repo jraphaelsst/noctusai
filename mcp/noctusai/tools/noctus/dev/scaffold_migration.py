@@ -203,6 +203,35 @@ def _origin_dev_migration_files(
     return names, None
 
 
+def _queued_mq_migration_files(repo_root: Path, migrations_rel: str, *, dev_ref: str) -> list[tuple[str, str]]:
+    """``(filename, ref)`` for migrations that queued heads (``origin/mq/*``) add over ``dev_ref``.
+
+    A delivery sitting in the merge queue is not on ``origin/dev`` yet and is on no LOCAL branch of
+    this clone, so neither source 2 nor 3 sees its migration number. Reads the already-fetched
+    remote-tracking refs (no network). Never raises; no signal => empty.
+    """
+    import subprocess
+
+    try:
+        refs = subprocess.run(
+            ["git", "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin/mq/"],
+            cwd=repo_root, capture_output=True, text=True, timeout=30,
+        ).stdout.split()
+    except (subprocess.SubprocessError, OSError):
+        return []
+    out: list[tuple[str, str]] = []
+    for ref in refs:
+        try:
+            diff = subprocess.run(
+                ["git", "diff", "--name-only", "--diff-filter=A", f"{dev_ref}...{ref}", "--", migrations_rel],
+                cwd=repo_root, capture_output=True, text=True, timeout=30,
+            ).stdout.splitlines()
+        except (subprocess.SubprocessError, OSError):
+            continue
+        out.extend((line.rsplit("/", 1)[-1], ref) for line in diff if line.strip())
+    return out
+
+
 def next_migration_number(
     product_slug: str,
     *,
@@ -305,6 +334,12 @@ def next_migration_number(
                 "source": f"branch:{','.join(sorted(branches))}",
             })
 
+    # ── Source 4: queued merge-queue heads (origin/mq/*) ──
+    for name, ref in _queued_mq_migration_files(repo_root, migrations_rel, dev_ref=dev_ref):
+        m = _NN_RE.match(name)
+        if m:
+            claims.append({"number": m.group(1), "file": name, "source": f"queued:{ref}"})
+
     if not claims:
         return {
             "error": (
@@ -323,7 +358,7 @@ def next_migration_number(
         "migrations_dir": str(migrations_dir),
         "next_number": next_n,
         "claims": sorted(claims, key=lambda c: (c["number"], c["file"], c["source"])),
-        "sources_checked": ["disk", dev_ref, "local-branches"],
+        "sources_checked": ["disk", dev_ref, "local-branches", "queued-mq-heads"],
         "warnings": warnings,
     }
 
