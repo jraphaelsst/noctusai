@@ -129,3 +129,62 @@ def ensure_llm_configured() -> bool:
     )
     _LLM_CONFIGURED = True
     return True
+
+
+_REGISTRY_ENV = ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY")
+
+
+def _registry_credentials() -> tuple[str | None, str | None]:
+    """The two core-client credentials, from os.environ else the platform `.env`.
+
+    Read into LOCALS, never into os.environ (the 2026-11-05 leak: copying the live
+    project's URL into the process made every later in-process test see prod)."""
+    found = {k: os.environ.get(k) for k in _REGISTRY_ENV}
+    for root in _env_candidate_roots():
+        if all(found.values()):
+            break
+        env_file = root / ".env"
+        if not env_file.exists():
+            continue
+        try:
+            text = env_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            k, sep, v = line.strip().partition("=")
+            k = k.strip()
+            if sep and k in found and not found[k]:
+                found[k] = v.strip().strip('"').strip("'")
+    return found["SUPABASE_URL"], found["SUPABASE_SERVICE_ROLE_KEY"]
+
+
+def ensure_prompt_registry_configured() -> bool:
+    """Idempotently give the toolkit process a prompt registry (`public.plataforma_agentes`),
+    the same wiring a product gets from `create_product_app` (service-role core client).
+
+    Returns True when a registry is in place; raises RuntimeError naming the missing
+    credentials otherwise (never a silent degrade: a registry call without one would
+    fail later with a vaguer error)."""
+    from noctusai_lib.integrations.prompt_registry import (
+        configure_prompt_registry,
+        get_prompt_registry,
+        make_prompt_registry,
+    )
+    from noctusai_lib.integrations.prompt_registry.types import RegistroIAIndisponivel
+
+    try:
+        get_prompt_registry()
+        return True
+    except RegistroIAIndisponivel:
+        pass
+    url, key = _registry_credentials()
+    if not url or not key:
+        raise RuntimeError(
+            "prompt registry not configured: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set "
+            "(export them or add them to the platform .env)"
+        )
+    from supabase import create_client
+
+    client = create_client(url, key)
+    configure_prompt_registry(make_prompt_registry(lambda: client))
+    return True

@@ -789,10 +789,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--srb-window-hours", type=float, default=1.0, help="With --supabase-request-budget: window in hours (max 24).")
     parser.add_argument("--srb-start", default=None, help="With --supabase-request-budget: ISO start (use with --srb-end).")
     parser.add_argument("--srb-end", default=None, help="With --supabase-request-budget: ISO end (use with --srb-start).")
-    parser.add_argument("--photo-label-dataset", action="store_true", help="Label real-estate photos (room type + quality/edit attributes) with the vision provider, Anthropic by default; resumable CSV. MCP: noctus.dev.photo_label_dataset.")
+    parser.add_argument("--photo-label-dataset", action="store_true", help="Label real-estate photos (room type + quality/edit attributes) with the vision registry row fotos.rotular (Anthropic); resumable CSV. MCP: noctus.dev.photo_label_dataset.")
     for _f, _h in (("out-csv", "output CSV (required; resumable)"), ("csv-in", "input CSV with a `file` column"),
                    ("photos-dir", "directory globbed recursively for jpg/jpeg/png/webp"), ("base-dir", "base for relative `file` paths"),
-                   ("provider", "vision provider override"), ("model", "vision model override"),
                    ("concurrency", "parallel calls (default 3, max 8)"), ("limit", "max photos this run")):
         parser.add_argument(f"--photo-label-dataset-{_f}", default=None, help=f"With --photo-label-dataset: {_h}.")
     parser.add_argument("--photo-label-dataset-run", action="store_true", help="With --photo-label-dataset: really label (dry_run=False). Needs --photo-label-dataset-confirm.")
@@ -5041,7 +5040,7 @@ def main():
             sys.exit(1)
         r = _photo_label_dataset(
             out_csv=_g("out_csv"), csv_in=_g("csv_in"), photos_dir=_g("photos_dir"), base_dir=_g("base_dir") or ".",
-            provider=_g("provider"), model=_g("model"), concurrency=int(_g("concurrency") or 3),
+            concurrency=int(_g("concurrency") or 3),
             limit=int(_g("limit")) if _g("limit") else None,
             dry_run=not _g("run"), confirm=bool(_g("confirm")),
             allow_stale_toolkit=bool(_g("allow_stale_toolkit")))

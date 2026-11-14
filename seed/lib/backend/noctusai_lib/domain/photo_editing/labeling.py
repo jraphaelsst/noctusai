@@ -6,8 +6,8 @@ runtime room classification of the photo-editing engine. The fine
 ``ROOM_TYPES`` taxonomy maps onto the existing coarse ``types.Room`` enum via
 ``to_room``; nothing here changes that enum or any DB constraint.
 
-IO seam: ``label_photo(..., analyze=)`` — defaults to
-``integrations.llm.vision.analyze_image``; tests pass a fake.
+The prompt is NOT here: it is the registry row ``fotos.rotular`` (vendor + model too). IO seams:
+``label_photo(..., registry=, analisar=)``; tests pass a Fake registry and a fake analyzer.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
 from noctusai_lib.domain.photo_editing.types import Room
+from noctusai_lib.integrations.prompt_registry import PromptRegistry, chamar_ia_visao
 
 ROOM_TYPES: tuple[str, ...] = (
     "sala", "sala_jantar", "cozinha", "quarto", "suite", "banheiro", "lavabo",
@@ -59,21 +60,9 @@ LABEL_FIELDS: tuple[str, ...] = (
     "staging", "framing", "lens", "quality_score", "edit_needed", "notes",
 )
 
-LABEL_PROMPT = f"""You label real-estate listing photos for a training dataset.
-Return ONLY a JSON object, no prose, with exactly these keys:
-room_type: one of {list(ROOM_TYPES)}
-exposure: under|ok|over
-white_balance: warm|neutral|cool|mixed
-verticals: straight|tilted   (vertical lines of walls/doors/facade converge or lean => tilted)
-sky: none|dull|blue|replaced   (none if no sky is visible, e.g. interiors)
-windows: blown|balanced|n_a
-staging: empty|furnished|cluttered
-framing: wide|normal|tight
-lens: ultrawide|normal
-quality_score: integer 1-5 (5 = magazine-ready listing photo)
-edit_needed: list of short strings, the edits that would most improve it (e.g. "straighten verticals", "lift shadows", "pull windows", "declutter", "neutralize WB")
-notes: one short sentence
-"""
+#: Registry key of the labeling prompt (`public.plataforma_agentes`); prompt, vendor and model live in the
+#: DB row (core migration seed), never in code. KB § PATTERNS/ai/prompts-from-registry.md.
+CHAVE = "fotos.rotular"
 
 
 class LabelParseError(ValueError):
@@ -156,19 +145,15 @@ def parse_label(text: str) -> PhotoLabel:
     )
 
 
-Analyze = Callable[..., Awaitable[str]]
-
-
 async def label_photo(
     image: bytes,
     *,
-    provider: Optional[str] = None,
-    model: Optional[str] = None,
     org_id: Optional[str] = None,
-    analyze: Optional[Analyze] = None,
+    registry: Optional[PromptRegistry] = None,
+    analisar: Optional[Callable[..., Awaitable[Any]]] = None,
 ) -> PhotoLabel:
-    """Label one photo with the vision provider (``analyze`` is the DI seam)."""
-    if analyze is None:
-        from noctusai_lib.integrations.llm.vision import analyze_image as analyze
-    text = await analyze(image, LABEL_PROMPT, model=model, provider=provider, org_id=org_id)
-    return parse_label(text)
+    """Label one photo: the registry row ``fotos.rotular`` supplies prompt, vendor and model.
+
+    ``registry`` / ``analisar`` are the DI seams (tests pass a Fake registry and a fake analyzer)."""
+    res = await chamar_ia_visao(CHAVE, image, org_id=org_id, registry=registry, analisar=analisar)
+    return parse_label(res.texto)

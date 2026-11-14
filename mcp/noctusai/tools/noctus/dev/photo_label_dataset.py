@@ -1,7 +1,8 @@
 """noctus.dev.photo_label_dataset - label real-estate photos with the vision provider.
 
-Room type + quality/edit attributes per photo (seed ``domain.photo_editing.labeling``),
-Anthropic by default (``resolve_vision_provider``). Input is a CSV with a ``file`` column
+Room type + quality/edit attributes per photo (seed ``domain.photo_editing.labeling``). The prompt,
+vendor and model are the prompt-registry row ``fotos.rotular`` (public.plataforma_agentes, seeded by core
+migration 122, Anthropic) - edited in the registry UI, never a code prompt or a tool argument. Input is a CSV with a ``file`` column
 (relative to ``base_dir``) OR a ``photos_dir`` (recursive glob; ``ref`` = parent folder).
 Output is a resumable CSV: files already in ``out_csv`` are skipped. Per-photo failures
 (after one retry) go to ``<out_csv>.errors.log`` and the result counts - never swallowed.
@@ -28,7 +29,7 @@ MAX_CONCURRENCY = 8
 #: Rough USD per photo (one image in, ~200 tokens out) - an estimate, not a meter.
 EST_USD_PER_PHOTO = 0.008
 
-Labeler = Callable[[bytes, str | None, str | None], Awaitable[Any]]
+Labeler = Callable[[bytes], Awaitable[Any]]
 
 
 def _collect(csv_in: str | None, photos_dir: str | None, base_dir: Path) -> list[dict[str, str]]:
@@ -53,15 +54,29 @@ def _done(out_csv: Path) -> set[str]:
         return {r["file"] for r in csv.DictReader(fh)}
 
 
-def _default_labeler(org_id: str | None = None) -> Labeler:
-    from noctusai_lib.domain.photo_editing.labeling import label_photo
+def require_row(registry) -> None:
+    """Fail loudly BEFORE any photo is sent when the registry row is missing (never a code-prompt fallback)."""
+    from noctusai_lib.domain.photo_editing.labeling import CHAVE
+    from noctusai_lib.integrations.prompt_registry.types import ChaveNaoEncontrada
 
-    from ._llm_bootstrap import ensure_llm_configured
+    try:
+        registry.obter(CHAVE)
+    except ChaveNaoEncontrada:
+        raise RuntimeError(f"registry row {CHAVE} not found: apply core migration 122_seed_fotos_rotular") from None
+
+
+def _default_labeler(org_id: str | None = None) -> Labeler:
+    from noctusai_lib.domain.photo_editing.labeling import CHAVE, label_photo
+    from noctusai_lib.integrations.prompt_registry import get_prompt_registry
+
+    from ._llm_bootstrap import ensure_llm_configured, ensure_prompt_registry_configured
 
     ensure_llm_configured()
+    ensure_prompt_registry_configured()
+    require_row(get_prompt_registry())
 
-    async def _label(image: bytes, provider: str | None, model: str | None):
-        return await label_photo(image, provider=provider, model=model, org_id=org_id)
+    async def _label(image: bytes):
+        return await label_photo(image, org_id=org_id)
 
     return _label
 
@@ -72,8 +87,6 @@ def _execute(
     photos_dir: str | None = None,
     base_dir: str = ".",
     out_csv: str,
-    provider: str | None = None,
-    model: str | None = None,
     concurrency: int = 3,
     limit: int | None = None,
     dry_run: bool = True,
@@ -81,7 +94,7 @@ def _execute(
     labeler: Labeler | None = None,
     org_id: str | None = None,
 ) -> dict[str, Any]:
-    from noctusai_lib.domain.photo_editing.labeling import LABEL_FIELDS
+    from noctusai_lib.domain.photo_editing.labeling import CHAVE, LABEL_FIELDS
 
     base = Path(base_dir)
     concurrency = max(1, min(int(concurrency), MAX_CONCURRENCY))
@@ -123,7 +136,7 @@ def _execute(
                 async with sem:
                     for _ in range(2):  # one retry
                         try:
-                            lab = await label((base / r["file"]).read_bytes(), provider, model)
+                            lab = await label((base / r["file"]).read_bytes())
                             err = None
                             break
                         except Exception as exc:  # recorded per photo below, never swallowed
@@ -135,7 +148,7 @@ def _execute(
                             fh.write(f"{r['file']}\t{type(err).__name__}: {err}\n")
                         return
                     w.writerow({**{k: r.get(k, "") for k in PASS_THROUGH}, **lab.as_row(),
-                                "label_method": f"vision {provider or 'default'} per photo"})
+                                "label_method": f"vision registry:{CHAVE} per photo"})
                     out.flush()
                     stats["labeled"] += 1
 
@@ -147,11 +160,10 @@ def _execute(
 
 
 def _default_executor(**params: Any) -> dict[str, Any]:
-    if params.get("provider") is None and params.get("confirm") and not params.get("dry_run", True):
-        from tools.llm.vision.analyze import resolve_vision_provider
-
-        params["provider"] = resolve_vision_provider(None, params.get("org_id"))
-    return _execute(**params)
+    try:
+        return _execute(**params)
+    except RuntimeError as exc:  # missing registry row / credentials: a named, loud failure
+        return {"ok": False, "status": "error", "error": str(exc)}
 
 
 @_toolkit_freshness.refuse_gate("photo_label_dataset")
@@ -161,8 +173,6 @@ def photo_label_dataset(
     csv_in: str | None = None,
     photos_dir: str | None = None,
     base_dir: str = ".",
-    provider: str | None = None,
-    model: str | None = None,
     concurrency: int = 3,
     limit: int | None = None,
     dry_run: bool = True,
@@ -170,10 +180,10 @@ def photo_label_dataset(
     org_id: str | None = None,
     executor: Callable[..., dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Label real-estate photos (room type + quality/edit attributes) with the vision provider (Anthropic by default); resumable CSV output."""
+    """Label real-estate photos (room type + quality/edit attributes) with the vision registry row fotos.rotular (Anthropic); resumable CSV output."""
     run = executor or _default_executor
-    return run(csv_in=csv_in, photos_dir=photos_dir, base_dir=base_dir, out_csv=out_csv, provider=provider,
-               model=model, concurrency=concurrency, limit=limit, dry_run=dry_run, confirm=confirm,
+    return run(csv_in=csv_in, photos_dir=photos_dir, base_dir=base_dir, out_csv=out_csv,
+               concurrency=concurrency, limit=limit, dry_run=dry_run, confirm=confirm,
                org_id=org_id)
 
 
@@ -182,7 +192,7 @@ def register(server) -> None:
         name="noctus.dev.photo_label_dataset",
         description=(
             "Label real-estate photos (room type + quality/edit attributes) with the vision provider "
-            "(Anthropic by default). Input: csv_in (a `file` column, relative to base_dir) OR photos_dir "
+            "through the registry row fotos.rotular (prompt/vendor/model live in the DB). Input: csv_in (a `file` column, relative to base_dir) OR photos_dir "
             "(recursive jpg/jpeg/png/webp). Output: resumable out_csv (done files skipped) + "
             "<out_csv>.errors.log. WRITE - dry_run=True (default) or confirm=False returns the plan with "
             "to_do / already_done / estimated_cost_usd and writes nothing; run with dry_run=False AND "
@@ -195,8 +205,6 @@ def register(server) -> None:
         csv_in: str | None = None,
         photos_dir: str | None = None,
         base_dir: str = ".",
-        provider: str | None = None,
-        model: str | None = None,
         concurrency: int = 3,
         limit: int | None = None,
         dry_run: bool = True,
@@ -204,8 +212,8 @@ def register(server) -> None:
         allow_stale_toolkit: bool = False,
     ) -> dict:
         return photo_label_dataset(
-            out_csv=out_csv, csv_in=csv_in, photos_dir=photos_dir, base_dir=base_dir, provider=provider,
-            model=model, concurrency=concurrency, limit=limit, dry_run=dry_run, confirm=confirm,
+            out_csv=out_csv, csv_in=csv_in, photos_dir=photos_dir, base_dir=base_dir,
+            concurrency=concurrency, limit=limit, dry_run=dry_run, confirm=confirm,
             allow_stale_toolkit=allow_stale_toolkit,
         )
 

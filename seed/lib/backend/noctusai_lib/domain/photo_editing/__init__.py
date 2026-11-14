@@ -94,7 +94,7 @@ from noctusai_lib.domain.photo_editing.handlers import (
     is_retryable,
 )
 from noctusai_lib.domain.photo_editing.labeling import (
-    LABEL_PROMPT,
+    CHAVE as LABEL_CHAVE,
     ROOM_TYPES,
     LabelParseError,
     PhotoLabel,
@@ -219,7 +219,7 @@ from noctusai_lib.domain.photo_editing.zipper import (
 )
 
 __all__ = [
-    "LABEL_PROMPT",
+    "LABEL_CHAVE",
     "ROOM_TYPES",
     "LabelParseError",
     "PhotoLabel",

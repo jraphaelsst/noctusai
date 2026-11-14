@@ -8,7 +8,7 @@ import json
 import pytest
 
 from noctusai_lib.domain.photo_editing import (
-    LABEL_PROMPT,
+    LABEL_CHAVE,
     ROOM_TYPES,
     LabelParseError,
     PhotoLabel,
@@ -59,16 +59,41 @@ def test_every_room_type_maps():
         to_room("nope")
 
 
-def test_label_photo_uses_injected_analyze():
+def _registry():
+    from noctusai_lib.integrations.prompt_registry import FakePromptRegistry, PromptEntry
+
+    return FakePromptRegistry([PromptEntry(LABEL_CHAVE, "n", "d", "anthropic", "claude-sonnet-5", "ROW PROMPT",
+                                           capacidade="vision")])
+
+
+def test_label_photo_reads_prompt_vendor_model_from_the_registry_row():
     seen = {}
 
     async def fake(image, prompt, **kw):
         seen.update(image=image, prompt=prompt, **kw)
         return json.dumps(GOOD)
 
-    lab = asyncio.run(label_photo(b"x", provider="anthropic", model="m", org_id="o", analyze=fake))
+    lab = asyncio.run(label_photo(b"x", org_id="o", registry=_registry(), analisar=fake))
     assert lab.room_type == "suite"
-    assert seen == {"image": b"x", "prompt": LABEL_PROMPT, "provider": "anthropic", "model": "m", "org_id": "o"}
+    assert seen == {"image": b"x", "prompt": "ROW PROMPT", "provider": "anthropic",
+                    "model": "claude-sonnet-5", "org_id": "o"}
+
+
+def test_missing_row_raises_not_falls_back():
+    import pytest
+    from noctusai_lib.integrations.prompt_registry import FakePromptRegistry, RegistroIAIndisponivel
+
+    async def fake(*a, **k):
+        raise AssertionError("must not be called")
+
+    with pytest.raises(RegistroIAIndisponivel):
+        asyncio.run(label_photo(b"x", registry=FakePromptRegistry(), analisar=fake))
+
+
+def test_chave_is_a_valid_registry_key():
+    from noctusai_lib.integrations.prompt_registry import chave_valida
+
+    assert LABEL_CHAVE == "fotos.rotular" and chave_valida(LABEL_CHAVE)
 
 
 def test_extra_keys_ignored_and_never_reach_row():

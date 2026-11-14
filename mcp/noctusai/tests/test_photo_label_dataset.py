@@ -23,7 +23,7 @@ GOOD = {
 def _labeler(fail: set[str] | None = None):
     calls: list[bytes] = []
 
-    async def label(image, provider, model):
+    async def label(image):
         calls.append(image)
         if fail and image.decode() in fail:
             raise RuntimeError("provider down")
@@ -127,3 +127,24 @@ class TestPhotoLabelDataset:
         mod.register(_Server())
         assert seen["name"] == "noctus.dev.photo_label_dataset"
         assert "dry_run" in seen["description"]
+
+
+class TestRegistryRow:
+    def test_missing_row_fails_loudly_naming_the_migration(self):
+        import pytest
+        from noctusai_lib.integrations.prompt_registry import FakePromptRegistry
+
+        with pytest.raises(RuntimeError, match=r"registry row fotos\.rotular not found: apply core migration 122"):
+            mod.require_row(FakePromptRegistry())
+
+    def test_present_row_passes(self):
+        from noctusai_lib.integrations.prompt_registry import FakePromptRegistry, PromptEntry
+
+        mod.require_row(FakePromptRegistry([PromptEntry("fotos.rotular", "n", "d", "anthropic", "claude-sonnet-5", "p",
+                                                         capacidade="vision")]))
+
+    def test_tool_has_no_provider_or_model_argument(self):
+        import inspect
+
+        params = inspect.signature(mod.photo_label_dataset).parameters
+        assert "provider" not in params and "model" not in params
