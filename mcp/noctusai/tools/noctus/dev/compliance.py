@@ -27114,6 +27114,19 @@ def check_gate_triad(repo_root: Path | None = None) -> list[dict]:
     return gate_alignment.triad_issues(repo_root or REPO_ROOT)
 
 
+def check_refusal_classes_owned(paths: list[Path] | None = None, repo_root: Path | None = None,
+                                events: list[dict] | None = None) -> list[dict]:
+    """Keeper (WARN-first shadow): a refusal class that fired >=3 times in 14 days with NO open fix
+    (branch-tree pointer naming it, in-progress gate-walls row, or NOC-REMEDIATE[<class>] marker) is a
+    recurring mistake nobody owns. Fix: open a fix branch whose brief/notes carry the class key, set a
+    gate-walls row in-progress/accepted, or leave a NOC-REMEDIATE[<class>] destination.
+    KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop)."""
+    from . import gate_alignment
+    return [{"file": "guard-events.ndjson", "severity": "warning",
+             "issue": f"refusal class `{r['class']}` recurred {r['n_14d']}x across {r['sessions']} session(s) in 14d with no open fix"}
+            for r in gate_alignment.unowned_classes(repo_root or REPO_ROOT, events=events)]
+
+
 def _manifest_dep_names(path: str, text: str) -> set[str]:
     names: set[str] = set()
     if path.endswith("package.json"):

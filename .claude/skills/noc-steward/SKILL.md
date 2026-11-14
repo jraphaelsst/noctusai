@@ -89,7 +89,7 @@ After the queue drains: follow `noc-ship` (status → manifest → `predeploy_ch
 3. Write one line in the shift memory: gate · class · root · fixed / fixing-in-`<branch>` / deferred-to-`<destination>`. A row that only says "noted" is not finished.
 
 **Once per shift (at claim, and again at wrap):**
-- Run `cli.py --gate-alignment walls`, plus `trend` once it lands. Take the top wall that has no open fixing branch and dispatch its root fix: the owner column names the agent. One root per shift, minimum.
+- Run `cli.py --gate-alignment refusals` (recurrence by class: `n_14d`, `sessions`, `open_fix`), `trend` (this week vs last, by class) and `walls`. Any class with `open_fix: null` and `n_14d >= 3` is yours: dispatch its root fix, and put `refusal:<class>` in that branch's brief/notes so the pointer becomes its `open_fix`. One root per shift, minimum. `--gate-alignment refusals --file-walls` upserts ONE auto-improvement row per class (count in place, closes itself after 7 quiet days). The keeper `--check-refusal-classes-owned` warns on the same set at every commit. The tool counts; you do not re-derive it by reading logs.
 - Close fixed rows through `--findings-ledger-reconcile gate-walls`, never by hand.
 - Report one number to the owner: total refusals this week vs last week, plus the root fixed. If the number did not go down, name why.
 

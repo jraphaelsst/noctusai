@@ -175,6 +175,23 @@ class TestEvent:
         assert not ai_ledger.exists()
 
 
+class TestEventUpsertsPerClass:
+    def test_repeated_denies_of_one_class_are_one_row_with_a_count(self, ai_ledger):
+        payload = {"kind": "gate_denied", "target": "primary_write_guard", "summary": "write denied", "session_id": "S1"}
+        rs = [hs.harness_event(payload) for _ in range(3)]
+        assert [r["action"] for r in rs] == ["created", "updated", "updated"] and rs[-1]["count"] == 3
+        rows = [json.loads(l) for l in ai_ledger.read_text().splitlines() if l.strip()]
+        assert len(rows) == 1 and rows[0]["count"] == 3
+        assert rows[0]["resolve_when"] == f"gate_quiet:{rs[0]['class']}:7d"
+        other = hs.harness_event({**payload, "target": "other_guard"})
+        assert other["action"] == "created"
+
+    def test_a_note_is_still_one_row_per_event(self, ai_ledger):
+        for _ in range(2):
+            hs.harness_event({"kind": "note", "target": "t", "summary": "s"})
+        assert len(ai_ledger.read_text().splitlines()) == 2
+
+
 class TestEventPublishReport:
     def test_reports_publish_outcome_not_legacy_path(self, ai_ledger):
         r = hs.harness_event({"kind": "note", "target": "t", "summary": "s"})

@@ -243,6 +243,7 @@ _pp_bounded_refresh() {
 REPO_ROOT_PP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 PY_PP="$REPO_ROOT_PP/mcp/noctusai/.venv/bin/python"
 CLI_PP="$REPO_ROOT_PP/mcp/noctusai/cli.py"
+export NOC_HOOK_STAGE="${NOC_HOOK_STAGE:-pre-push}"  # gate telemetry: where a keeper refused
 # ONE interpreter for every leg below (2026-11-11). A worktree made without `task_branch start` has no
 # .venv, and every leg here was guarded by `-x "$PY_PP"`: the branch-tree mirror keeper, stale-pointers
 # and the hard-block keepers all SKIPPED, and a push without a branch pointer went through (e1's
