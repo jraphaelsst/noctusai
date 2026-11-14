@@ -43,6 +43,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import tokenize
 from pathlib import Path
 
@@ -363,19 +364,38 @@ def _owner(rel: str) -> str:
     return parts[1] if parts[0] == "products" and len(parts) > 1 else "seed"
 
 
+def _installed_node_dirs() -> list[Path]:
+    """Dirs that may carry the installed ``mcp/noctusai/node/node_modules``, most specific first: the checkout this process
+    runs from, the checkout owning the interpreter's venv (``<repo>/mcp/noctusai/.venv`` -- the one place a scrubbed
+    deliverable workspace still points at the real install), then the primary checkout of this repo (git common dir)."""
+    rel = SCRIPT_REL[:-1]
+    cands = [_repo_root(None).joinpath(*rel)]
+    prefix = Path(sys.prefix)
+    if prefix.name == ".venv" and prefix.parent.name == "noctusai":
+        cands.append(prefix.parent / "node")
+    try:
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=_repo_root(None),
+                                capture_output=True, text=True, timeout=10, check=False).stdout.strip()
+        if common:
+            cands.append(Path(common).parent.joinpath(*rel))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return cands
+
+
 def _node_invocation(script: Path) -> tuple[list[str], Path | None]:
     """How to run the scan so ``ts-morph`` resolves. The tree under check normally carries ``mcp/noctusai/node/node_modules``
     (``npm ci`` there). A fresh checkout (the deliverable gate's scrubbed workspace) does not; its script text is then fed
-    to ``node`` on the command line with the cwd at the server tree's ``node/`` dir, so the TREE's script is judged but
-    ``ts-morph`` resolves from the installed copy -- never a silent skip, never a different script version."""
+    to ``node`` on the command line with the cwd at an installed ``node/`` dir, so the TREE's script is judged but
+    ``ts-morph`` resolves from the install -- never a silent skip, never a different script version."""
     if script.parent.joinpath("node_modules").is_dir():
         return ["node", str(script)], None
-    fallback = _repo_root(None).joinpath(*SCRIPT_REL[:-1])
-    if fallback.joinpath("node_modules").is_dir():
-        try:
-            return ["node", "--input-type=module", "-e", script.read_text(encoding="utf-8")], fallback
-        except OSError:
-            pass
+    for cand in _installed_node_dirs():
+        if cand.joinpath("node_modules").is_dir():
+            try:
+                return ["node", "--input-type=module", "-e", script.read_text(encoding="utf-8")], cand
+            except OSError:
+                break
     return ["node", str(script)], None
 
 
