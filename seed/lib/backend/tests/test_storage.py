@@ -183,7 +183,9 @@ async def test_signed_url_reflects_expires_in(backend: StorageBackend) -> None:
     asserted via the mock-call shape elsewhere.)"""
     await backend.put(bucket="b", key="k", data=b"x")
     url_short = await backend.signed_url(bucket="b", key="k", expires_in_seconds=60)
-    url_long = await backend.signed_url(bucket="b", key="k", expires_in_seconds=3600)
+    url_long = await backend.signed_url(
+        bucket="b", key="k", expires_in_seconds=3600, ttl_reason="test: long-lived link"
+    )
 
     # Both encode `expires=<int>`; long > short.
     short_ts = int(url_short.rsplit("=", 1)[1])
@@ -396,6 +398,25 @@ async def test_supabase_signed_url_returns_signedURL() -> None:
 
 
 @pytest.mark.asyncio
+async def test_supabase_signed_url_ttl_rules_enforced_before_the_sdk() -> None:
+    client, bucket_proxy = _mock_client_with_bucket()
+    bucket_proxy.create_signed_url.return_value = {"signedURL": "https://s/x"}
+    backend = SupabaseStorageBackend(client)
+    with pytest.raises(ValueError, match="ttl_reason"):
+        await backend.signed_url(bucket="docs", key="x", expires_in_seconds=601)
+    with pytest.raises(ValueError, match="hard max"):
+        await backend.signed_url(
+            bucket="docs", key="x", expires_in_seconds=3601, ttl_reason="why"
+        )
+    bucket_proxy.create_signed_url.assert_not_called()
+    await backend.signed_url(bucket="docs", key="x", expires_in_seconds=3600, ttl_reason="why")
+    bucket_proxy.create_signed_url.assert_called_once_with("x", 3600)
+    bucket_proxy.create_signed_url.reset_mock()
+    await backend.signed_url(bucket="docs", key="x")
+    bucket_proxy.create_signed_url.assert_called_once_with("x", 600)
+
+
+@pytest.mark.asyncio
 async def test_supabase_signed_url_unexpected_shape_raises() -> None:
     client, bucket_proxy = _mock_client_with_bucket()
     bucket_proxy.create_signed_url.return_value = {"weird": "shape"}
@@ -532,3 +553,44 @@ def test_public_exports_match_canonical_shape() -> None:
     assert expected.issubset(set(storage_pkg.__all__))
     # Lazy attribute access works.
     assert storage_pkg.SupabaseStorageBackend is SupabaseStorageBackend
+
+
+# ---- Signed-URL TTL rule (security S1), Fake + Local -------------------------
+
+
+@pytest.mark.asyncio
+async def test_signed_url_default_ttl_is_600(backend: StorageBackend) -> None:
+    import time
+
+    await backend.put(bucket="b", key="k", data=b"x")
+    url = await backend.signed_url(bucket="b", key="k")
+    exp = int(url.rsplit("=", 1)[1])
+    assert 600 - 5 <= exp - int(time.time()) <= 600 + 5
+
+
+@pytest.mark.asyncio
+async def test_signed_url_over_600_needs_reason(backend: StorageBackend) -> None:
+    with pytest.raises(ValueError, match="ttl_reason"):
+        await backend.signed_url(bucket="b", key="k", expires_in_seconds=601)
+    with pytest.raises(ValueError, match="ttl_reason"):
+        await backend.signed_url(
+            bucket="b", key="k", expires_in_seconds=900, ttl_reason="  "
+        )
+    url = await backend.signed_url(
+        bucket="b", key="k", expires_in_seconds=900, ttl_reason="reviewer keeps page open"
+    )
+    assert url
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ttl", [3601, 86400, 0, -5])
+async def test_signed_url_out_of_range_raises(backend: StorageBackend, ttl: int) -> None:
+    with pytest.raises(ValueError):
+        await backend.signed_url(
+            bucket="b", key="k", expires_in_seconds=ttl, ttl_reason="whatever"
+        )
+
+
+@pytest.mark.asyncio
+async def test_signed_url_600_boundary_needs_no_reason(backend: StorageBackend) -> None:
+    assert await backend.signed_url(bucket="b", key="k", expires_in_seconds=600)
