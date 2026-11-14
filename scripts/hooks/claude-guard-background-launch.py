@@ -12,6 +12,8 @@ KB § PATTERNS/common/background-agent-lifecycle.md.
 """
 from __future__ import annotations
 
+import io
+import json
 import sys
 from pathlib import Path
 
@@ -36,8 +38,23 @@ def _judge(payload: dict) -> dict | None:
     return verdict
 
 
+def _shadow_timeout_ok(_payload: dict) -> bool:
+    """A TIMEOUT during the warn-only soak must not deny: in shadow the guard only observes."""
+    return load_module(GUARD).mode() != "enforce"
+
+
 def main() -> int:
-    return run_guard("background-launch", _judge)
+    raw = sys.stdin.read()
+    # Fast path (peer review 2026-11-14, load ~200): this hook matches EVERY Bash call, so a call that is
+    # not a background launch returns before any module load, and cannot time out into a deny.
+    try:
+        quick = json.loads(raw) if raw.strip() else None
+    except ValueError:
+        quick = None  # malformed: let run_guard refuse it, fail-closed
+    if isinstance(quick, dict) and (quick.get("tool_name") != "Bash"
+                                    or not (quick.get("tool_input") or {}).get("run_in_background")):
+        return 0
+    return run_guard("background-launch", _judge, stdin=io.StringIO(raw), fail_open_when=_shadow_timeout_ok)
 
 
 if __name__ == "__main__":
