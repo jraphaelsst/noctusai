@@ -14,7 +14,12 @@ DENIED (only when run_in_background is true):
     without `--done-when`.
 ALLOWED: the wrapper with a declared end condition; known infrastructure (the steward's merge-queue
 watch and heartbeat loops, MCP servers, dev servers); anything that is not open-ended or long-running.
-No escape hatch: the deny names the wrapper form to use. Warn-only (shadow) until ENFORCE_FROM.
+No escape hatch: the deny names the wrapper form to use. Enforcing since ENFORCE_FROM (owner decision 2026-11-14, ended the warn-only soak early).
+
+FOREGROUND ESCAPE (2026-11-14): the harness moves a foreground call that hits the tool timeout (600 s) to the
+background by itself, so an unwrapped open-ended loop (`while`/`until`, `tail -f`, `watch`, `--watch`) is judged
+even without run_in_background. Bounded forms pass: a `timeout N` before the loop, or the wrapper with
+`--done-when`. A bare foreground `sleep N`, a test run or any non-loop command is not judged.
 
 DELIBERATE LIMITS: regex scanning, not a shell interpreter; a script that loops internally
 (`./poll.sh`) is not seen. The session-end sweep (`session_end_sweep`) is the safety net.
@@ -37,8 +42,9 @@ import _bg_process_core as core  # noqa: E402
 
 KB_POINTER = "KB § PATTERNS/common/background-agent-lifecycle.md"
 
-# Warn-first soak (owner, 2026-11-14): shadow for 7 days, used to refine the tool; denies from this date.
-ENFORCE_FROM = "2026-11-21"
+# Owner decision 2026-11-14 ("im tired of leftovers being held for hours or even days"): the planned 7-day
+# warn-only soak (to 2026-11-21) is ended early; the guard denies from today. NOC_BG_LAUNCH_MODE still overrides.
+ENFORCE_FROM = "2026-11-14"
 
 
 def mode(today: _dt.date | None = None) -> str:
@@ -48,6 +54,9 @@ def mode(today: _dt.date | None = None) -> str:
         return forced
     today = today or _dt.date.today()
     return "enforce" if today >= _dt.date.fromisoformat(ENFORCE_FROM) else "shadow"
+WAIT_FORM = ("to wait for a run, launch the run ITSELF with run_in_background and you are notified when it exits; "
+             "do not poll its log. If you must poll, bound it: `timeout 300 bash -c 'until ...; do sleep 5; done'` or "
+             "`python3 scripts/bg_run.py --purpose ... --done ... --done-when ... [--producer-pid N] -- ...`")
 FORM = ('python3 scripts/bg_run.py --purpose "<what for>" --done "<what counts as done>" '
         '[--done-when "<shell check, exit 0 = done>"] -- <command>   '
         '(infrastructure that lives on purpose: --purpose "..." --long-lived -- <command>)')
@@ -62,11 +71,17 @@ def decide(payload: dict[str, Any]) -> dict[str, Any] | None:
     if (payload.get("tool_name") or "") != "Bash":
         return None
     ti = payload.get("tool_input") or {}
-    if not ti.get("run_in_background"):
-        return None
     command = ti.get("command") or ""
     if not command.strip():
         return None
+    if not ti.get("run_in_background"):
+        # Foreground escape: the harness auto-backgrounds a call that outlives the tool timeout.
+        if not core.foreground_loop_unbounded(command) or core.infra_label(command):
+            return None
+        if re.search(r"\bbg_run\.py\b", command) and re.search(r"--done-when\b", command):
+            return None
+        return {"reason": "foreground loop refused: an unbounded wait/poll/follow outlives its purpose (the harness "
+                          f"moves a call that hits the tool timeout to the background, where it waits forever). {WAIT_FORM}. {KB_POINTER}"}
     if core.infra_label(command):
         return None
     if re.search(r"\bbg_run\.py\b", command):

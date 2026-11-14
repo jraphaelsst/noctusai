@@ -323,8 +323,7 @@ def test_guard_allows_wrapped_infrastructure_and_short_commands(cmd):
     assert guard.decide(_bash(cmd)) is None
 
 
-def test_guard_only_judges_background_bash():
-    assert guard.decide(_bash("while true; do sleep 1; done", bg=False)) is None
+def test_guard_only_judges_bash():
     assert guard.decide({"tool_name": "Edit", "tool_input": {"command": "while true"}}) is None
 
 
@@ -397,7 +396,7 @@ def test_no_lifetime_or_idle_parameters_exist_anywhere():
 
 def test_hook_fast_path_skips_non_background_bash_without_loading(monkeypatch, capsys):
     hook = _load_hook()
-    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(_bash("while true; do sleep 1; done", bg=False))))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(_bash("git status", bg=False))))
     assert hook.main() == 0
     assert capsys.readouterr().out == ""
 
@@ -408,3 +407,116 @@ def test_shadow_timeout_is_allowed_not_denied(monkeypatch):
     assert hook._shadow_timeout_ok({}) is True
     monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "enforce")
     assert hook._shadow_timeout_ok({}) is False
+
+
+# ------------------------------------------------------------------ foreground escape + enforce-now + producer-dead
+@pytest.mark.parametrize("cmd", [
+    "until grep -q 'HW-RUN DONE' /tmp/run.log; do sleep 5; done; tail /tmp/run.log",
+    "while true; do sleep 60; done",
+    "tail -f /tmp/x.log",
+    "vitest --watch",
+])
+def test_foreground_open_ended_loop_is_denied_and_teaches_the_right_shape(cmd):
+    v = guard.decide(_bash(cmd, bg=False))
+    assert v and "run_in_background" in v["reason"] and "timeout" in v["reason"] and "do not poll" in v["reason"]
+
+
+@pytest.mark.parametrize("cmd", [
+    "timeout 300 bash -c 'until grep -q DONE /tmp/run.log; do sleep 5; done'",
+    "gtimeout 60 bash -c 'while true; do sleep 1; done'",
+    'python3 scripts/bg_run.py --purpose "poll f" --done "DONE" --done-when "grep -q DONE f" -- tail -f f',
+    "sleep 20",                                    # finite, not a loop
+    "pytest -q tests/test_x.py",                   # long but finite
+    "git commit -m 'wait until the queue lands'",  # prose, not a loop
+    "ls -la",
+])
+def test_foreground_bounded_or_non_loop_commands_are_allowed(cmd):
+    assert guard.decide(_bash(cmd, bg=False)) is None
+
+
+def test_enforcement_is_in_effect_today_and_the_decision_is_recorded(monkeypatch):
+    import datetime as dt
+    monkeypatch.delenv("NOC_BG_LAUNCH_MODE", raising=False)
+    assert guard.ENFORCE_FROM <= "2026-11-14" and guard.mode(dt.date(2026, 11, 14)) == "enforce"
+    assert "2026-11-14" in (guard.__doc__ or "") + Path(guard.__file__).read_text()
+
+
+def test_hook_fast_path_lets_a_non_loop_foreground_call_through_without_loading(monkeypatch, capsys):
+    hook = _load_hook()
+    monkeypatch.setattr(hook, "load_module", lambda *_a: pytest.fail("module loaded on the fast path"))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(_bash("git status", bg=False))))
+    assert hook.main() == 0 and capsys.readouterr().out == ""
+
+
+def test_hook_denies_a_foreground_loop_and_logs_the_deny(tmp_path, monkeypatch):
+    monkeypatch.delenv("NOC_BG_LAUNCH_MODE", raising=False)
+    hook = _load_hook()
+    from _guard_failclosed import run_guard
+    out, events = io.StringIO(), tmp_path / "ev.ndjson"
+    run_guard("background-launch", hook._judge, stdin=io.StringIO(json.dumps(_bash("until false; do sleep 5; done", bg=False))),
+              stdout=out, event_log=events)
+    assert json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert [json.loads(line)["outcome"] for line in events.read_text().splitlines()] == ["deny"]
+
+
+class _Lsof:
+    """Fake lsof: `writers` = {path: [pids]} reported as open-for-write."""
+    def __init__(self, writers=None):
+        self.writers = writers or {}
+
+    def __call__(self, args):
+        path = args[-1]
+        return "".join(f"p{pid}\nfw\naw\n" for pid in self.writers.get(path, []))
+
+
+def test_producer_watch_ends_a_wait_whose_declared_producer_is_dead(tmp_path):
+    f = tmp_path / "run.log"
+    f.write_text("partial\n")
+    w = core.ProducerWatch(started_at=0.0, declared_pid=777, lsof=_Lsof(), alive=lambda _p: False, confirm_checks=2)
+    assert w.check([f]) is None            # debounce: first observation
+    assert "producer gone" in w.check([f]) and "777" in w.check([f])
+
+
+def test_producer_watch_never_fires_while_anything_can_still_write(tmp_path):
+    f = tmp_path / "run.log"
+    f.write_text("x")
+    alive = _Lsof({str(f): [55]})
+    w = core.ProducerWatch(started_at=0.0, lsof=alive, alive=lambda _p: True, confirm_checks=1)
+    assert w.check([f]) is None            # a live writer holds it
+    w2 = core.ProducerWatch(started_at=0.0, declared_pid=9, lsof=_Lsof(), alive=lambda p: p == 9, confirm_checks=1)
+    assert w2.check([f]) is None           # declared producer alive
+    w3 = core.ProducerWatch(started_at=0.0, lsof=_Lsof(), confirm_checks=1, mtime=lambda _p: None)
+    assert w3.check([tmp_path / "missing.log"]) is None   # a file not yet created may still appear
+
+
+def test_producer_watch_resets_when_the_file_changes(tmp_path):
+    f = tmp_path / "run.log"
+    f.write_text("x")
+    box = {"m": 100.0}
+    w = core.ProducerWatch(started_at=0.0, declared_pid=1, lsof=_Lsof(), alive=lambda _p: False,
+                           confirm_checks=2, mtime=lambda _p: box["m"])
+    assert w.check([f]) is None
+    box["m"] = 200.0                       # written to after the producer was seen dead
+    assert w.check([f]) is None and w.streak == 0
+
+
+def test_wrapped_wait_on_a_dead_producers_file_ends_with_salvage(world, tmp_path):
+    f = tmp_path / "run.log"
+    f.write_text("never says the magic word\n")
+    rc = core.run_wrapped(purpose="wait for HW-RUN DONE", done="the log says DONE", done_when=f"grep -q 'HW-RUN DONE' {f}",
+                          interval_s=0.01, out=io.StringIO(), ps_text=world.ps_text, kill=world.kill,
+                          producer_pid=424242, alive=lambda _p: False, lsof=_Lsof(), confirm_checks=2)
+    assert rc == 4
+    rec = core.salvage_rows(core.store_dir())[-1]
+    assert "can never fire" in rec["reason"] and "producer gone" in rec["reason"] and rec["by"] == "bg_run"
+
+
+def test_listing_flags_a_poll_loop_whose_target_has_no_writer_and_did_not_change(world, tmp_path):
+    f = tmp_path / "run.log"
+    f.write_text("finished long ago\n")
+    import os
+    os.utime(f, (1.0e9, 1.0e9))
+    world.add(300, CLAUDE, f"/bin/zsh -c until grep -q DONE {f}; do sleep 5; done")
+    world.add(301, 300, "sleep 5", pgid=300)
+    row = call(world, action="list")["processes"][0]
+    assert row["producer_dead"].startswith("producer gone") and any("CAN NEVER FIRE" in n for n in row["waiting_on"])

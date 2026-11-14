@@ -50,6 +50,27 @@ LONG_RE = re.compile(
     r"\b(?:pytest|py\.test|vitest|playwright\s+test|vite\s+build)\b|hw_admission\.py\s+run|\bgh\s+run\s+watch\b"
     r"|\b(?:npm|pnpm|yarn)\s+(?:run\s+)?(?:test|build)\b")
 
+# A FOREGROUND call is also judged (owner, 2026-11-14): the harness moves a foreground call that hits its
+# tool timeout to the background automatically, so an unbounded loop there waits forever. Narrower than
+# LOOP_RE: a bare `sleep N` is finite and stays allowed in the foreground.
+FG_LOOP_RE = re.compile(
+    r"""(?:^|[;&|({\n'"]|\bdo\b|\bthen\b)\s*(?:while|until)\b"""
+    r"""|\btail\s+-[a-zA-Z]*[fF]\b|(?:^|[;&|({\n])\s*watch\s+\S|--watch\b""")
+# `timeout N ...` (or gtimeout) in front of the loop bounds it: the shell kills it, nothing is left waiting.
+TIMEOUT_RE = re.compile(r"\bg?timeout\s+(?:-[-\w=]+\s+)*\d+(?:\.\d+)?[smhd]?\s")
+
+
+def foreground_loop_unbounded(command: str) -> bool:
+    """True when a FOREGROUND command has an open-ended loop shape with no `timeout N` before it."""
+    m = FG_LOOP_RE.search(command)
+    if not m:
+        return False
+    if re.match(r"\s*\W*(?:while|until)\b", m.group(0)) and not re.search(r"\bdo\b[\s\S]*\bdone\b", command):
+        return False  # prose ("wait until ...") in a message is not a loop: a real one has `do ... done`
+    t = TIMEOUT_RE.search(command)
+    return not (t and t.start() < m.end())
+
+
 # Known infrastructure that legitimately lives long: never refused at launch, never a leftover.
 # Matched against launch commands (guard) and against every command of a running tree (sweep/stop).
 INFRA_PATTERNS: tuple[tuple[str, str], ...] = (
@@ -372,6 +393,10 @@ def build_dossier(procs: dict[int, Proc], root: Proc, pids: list[int], *, sessio
                   "command": _short(procs[p].command, 160)} for p in pids[:12]],
         "tree_size": len(pids), "waiting_on": infer_waiting(commands),
     }
+    stalled = stalled_wait(commands, time.time() - root.etime_s, lsof) if detail else None
+    if stalled:
+        d["producer_dead"] = stalled
+        d["waiting_on"] = [*d["waiting_on"], "WAIT CAN NEVER FIRE: " + stalled]
     if detail:
         d["cwd"] = cwd_of(root.pid, lsof)
         d["output_file"] = str(out_file) if out_file else None
@@ -519,6 +544,101 @@ def stop_tree(root_pid: int, *, ps_text: Callable[[], str] | None = None,
             "orphans_remaining": [s for s in survivors if s["ppid"] == 1]}
 
 
+# ---------------------------------------------------------------- producer-dead wait detection
+def _default_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def writers_of(path: Path, lsof: Callable[[list[str]], str] | None = None) -> set[int]:
+    """Pids holding `path` open for write (lsof access field `w` or `u`)."""
+    out = (lsof or run_lsof)(["-F", "pa", "--", str(path)])
+    pid, found = None, set()
+    for line in out.splitlines():
+        if line.startswith("p") and line[1:].isdigit():
+            pid = int(line[1:])
+        elif line.startswith("a") and pid is not None and line[1:2] in ("w", "u"):
+            found.add(pid)
+    return found
+
+
+def _mtime(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+class ProducerWatch:
+    """Done-condition "this wait can no longer be satisfied": the file a wait watches has no writer, its
+    producer is dead and the file has not changed since. NOT a timer: it never fires while anything that
+    could still write the file is alive. Debounced over `confirm_checks` consecutive observations.
+    Producer = a declared pid, else the writers observed so far; with neither, the wait itself is the
+    reference (file unchanged since the wait began and nobody writing it)."""
+
+    def __init__(self, *, started_at: float, declared_pid: int | None = None, confirm_checks: int = 3,
+                 lsof: Callable[[list[str]], str] | None = None, alive: Callable[[int], bool] | None = None,
+                 mtime: Callable[[Path], float | None] = _mtime):
+        self.t0, self.declared, self.need = started_at, declared_pid, confirm_checks
+        self.lsof, self.alive, self.mtime = lsof, alive or _default_alive, mtime
+        self.seen: set[int] = set()
+        self.baseline: dict[str, float | None] = {}
+        self.streak = 0
+
+    def check(self, files: list[Path]) -> str | None:
+        """The reason the wait can never fire, else None."""
+        if not files:
+            self.streak = 0
+            return None
+        live: set[int] = set()
+        for f in files:
+            live |= writers_of(f, self.lsof)
+        self.seen |= live
+        if live or (self.declared and self.alive(self.declared)):
+            self.baseline, self.streak = {}, 0
+            return None
+        if any(self.alive(p) for p in self.seen):
+            self.streak = 0
+            return None
+        stat = {str(f): self.mtime(f) for f in files}
+        if any(v is None for v in stat.values()):
+            self.streak = 0  # a file that does not exist yet may still be created
+            return None
+        if self.streak == 0:
+            self.baseline = dict(stat)
+            if not self.seen and not self.declared and any(v >= self.t0 for v in stat.values()):
+                return None  # written during this wait by an unknown producer: not provably gone
+        elif stat != self.baseline:
+            self.baseline, self.streak = dict(stat), 0
+            return None
+        self.streak += 1
+        if self.streak < self.need:
+            return None
+        who = (f"declared producer pid {self.declared} is dead" if self.declared
+               else f"its writer(s) {sorted(self.seen)} are dead" if self.seen else "nothing is writing it")
+        return f"producer gone: {', '.join(stat)} has no open writer, {who}, and it is unchanged"
+
+
+def stalled_wait(commands: list[str], started_at: float, lsof: Callable[[list[str]], str] | None = None) -> str | None:
+    """Passive one-shot version for listings: a loop tree whose watched files have no writer and were not
+    modified since the loop began."""
+    if not any(LOOP_RE.search(c) for c in commands):
+        return None
+    files = referenced_files(commands)
+    if not files:
+        return None
+    for f in files:
+        m = _mtime(f)
+        if m is None or m >= started_at or writers_of(f, lsof):
+            return None
+    return "producer gone: " + ", ".join(str(f) for f in files) + " has no open writer and is unchanged since this wait began"
+
+
 # ---------------------------------------------------------------- launch wrapper
 def validate_launch(*, purpose: str, done: str, command: str | None, done_when: str | None, long_lived: bool) -> str | None:
     """The refusal text for an open-ended launch, else None. Shared by the wrapper (runtime)."""
@@ -539,7 +659,9 @@ def run_wrapped(*, purpose: str, done: str = "", command: str | None = None, don
                 long_lived: bool = False, learnings: str = "", interval_s: float = 15.0,
                 term_grace_s: float = TERM_GRACE_S, session_id: str | None = None, out=None,
                 ps_text: Callable[[], str] | None = None, kill: Callable[[int, int], None] = _default_kill,
-                popen: Callable[..., Any] = subprocess.Popen) -> int:
+                popen: Callable[..., Any] = subprocess.Popen, producer_pid: int | None = None,
+                lsof: Callable[[list[str]], str] | None = None, alive: Callable[[int], bool] | None = None,
+                confirm_checks: int = 3) -> int:
     """Run `command` with a declared end condition. Ends when the command exits OR `done_when` (a shell
     check run every interval_s) succeeds, whichever is first; then tree-stops the command's process group,
     verifies nothing is orphaned and writes its own salvage record (output tail, reason, learnings).
@@ -599,6 +721,8 @@ def run_wrapped(*, purpose: str, done: str = "", command: str | None = None, don
         except (OSError, subprocess.SubprocessError):
             return False
 
+    watch = ProducerWatch(started_at=t0, declared_pid=producer_pid, lsof=lsof, alive=alive,
+                          confirm_checks=confirm_checks) if done_when else None
     how, rc = "", 0
     next_check = time.time() + min(interval_s, 2.0)  # first done-when check soon, then every interval_s
     while True:
@@ -613,6 +737,10 @@ def run_wrapped(*, purpose: str, done: str = "", command: str | None = None, don
         if done_when and time.time() >= next_check:
             if _done_check():
                 how = "done-when condition satisfied"
+                break
+            gone = watch.check(referenced_files([done_when])) if watch else None
+            if gone:  # the wait can no longer be satisfied: end it, with salvage
+                how, rc = f"done-when can never fire ({gone})", 4
                 break
             next_check = time.time() + interval_s
         wake.wait(min(0.25, interval_s))  # short tick: a command that exits is noticed at once
@@ -661,6 +789,8 @@ def wrapper_main(argv: list[str]) -> int:
     ap.add_argument("--done", default="", help="what counts as done (human sentence)")
     ap.add_argument("--done-when", default=None, help="shell check the process runs itself; exit 0 = done")
     ap.add_argument("--long-lived", action="store_true", help="infrastructure that lives on purpose: purpose only, no end condition")
+    ap.add_argument("--producer-pid", type=int, default=None,
+                    help="pid of the process that writes the file --done-when watches; its death ends the wait")
     ap.add_argument("--learnings", default="")
     ap.add_argument("--interval", type=float, default=15.0)
     ap.add_argument("--command", default=None, help="shell string to run (or pass it after --)")
@@ -669,4 +799,5 @@ def wrapper_main(argv: list[str]) -> int:
     rest = [r for r in a.rest if r != "--"] if a.rest and a.rest[0] == "--" else a.rest
     command = a.command or (rest[0] if len(rest) == 1 else shlex.join(rest) if rest else None)
     return run_wrapped(purpose=a.purpose, done=a.done, command=command, done_when=a.done_when,
-                       long_lived=a.long_lived, learnings=a.learnings, interval_s=a.interval)
+                       long_lived=a.long_lived, learnings=a.learnings, interval_s=a.interval,
+                       producer_pid=a.producer_pid)
