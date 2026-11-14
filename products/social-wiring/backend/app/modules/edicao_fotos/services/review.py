@@ -13,6 +13,13 @@ from app.modules.edicao_fotos.errors import api_error
 from app.modules.edicao_fotos.presenters import foto_revisao_out
 
 SIGNED_URL_TTL_SECONDS = 3600
+# Above the 600 s seam default, so the seam demands a reason (security S1). The
+# review page loads each photo's URL once and has no client-side refresh; a
+# reviewer keeps it open while judging a batch, so 600 s would break images.
+SIGNED_URL_TTL_REASON = (
+    "review page holds before/after image URLs for the whole review session "
+    "(no client-side refresh)"
+)
 
 
 async def signed_url(ports: PhotoEditingPorts, path: Optional[str]) -> Optional[str]:
@@ -30,7 +37,9 @@ async def signed_url_in(storage: Any, path: Optional[str]) -> Optional[str]:
         # A storage port that cannot sign cannot serve review images; that
         # is a wiring error, not an empty preview.
         raise api_error(503, "armazenamento_sem_url", "Armazenamento não gera URLs assinadas.")
-    return await sign(path, expires_in_seconds=SIGNED_URL_TTL_SECONDS)
+    return await sign(
+        path, expires_in_seconds=SIGNED_URL_TTL_SECONDS, ttl_reason=SIGNED_URL_TTL_REASON
+    )
 
 
 async def review_rows(
