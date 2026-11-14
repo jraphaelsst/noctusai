@@ -68,7 +68,7 @@ After the queue drains: follow `noc-ship` (status → manifest → `predeploy_ch
 **When.** At claim, after every `landed`, and at every Monitor re-arm (so at least every 30 min while the shift runs).
 
 **How.**
-1. `python3 mcp/noctusai/primary_ff.py` (from any worktree; it resolves the primary itself). It fast-forwards to `origin/dev` and, since 2026-11-13, heals three states without losing anything:
+1. `python3 mcp/noctusai/primary_ff.py` (from any worktree; it resolves the primary itself). `.claude/settings.json` allows exactly this command (owner, 2026-11-13: "change the rules so u can be able to fix your own problems"), so the steward runs it unprompted. A denial here is a regression in that rule: fix the rule, never route around it. It fast-forwards to `origin/dev` and, since 2026-11-13, heals three states without losing anything:
    - an `index.lock` older than 15 min: removed (a younger one answers `skipped_locked`; wait, never race it);
    - unstaged edits whose bytes already equal dev's blob: restored, then fast-forwarded;
    - local-only commits whose every added line is already on dev and every removed line is gone from it: HEAD is parked under `refs/noc/primary-landed/<sha>`, then `reset --keep` onto dev.
