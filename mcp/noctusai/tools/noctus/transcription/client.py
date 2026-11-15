@@ -19,6 +19,11 @@ DEFAULT_URL = "https://core.noctusai.com"
 MAX_BYTES = 150 * 1024 * 1024
 TERMINAL = frozenset({"concluida", "falhou", "cancelada"})
 _FAST_POLL_S = 5.0
+#: Transient statuses: rate limit (429), capacity (503) and the GATEWAY errors a core/tunnel restart
+#: answers with (502/504). None of them is a job result -- the job keeps running server-side -- so
+#: they are retried, never recorded as a failure (2026-11-14: a core redeploy turned 31 live jobs into
+#: "failed" 502s). A long outage is still bounded by the batch's no-progress window.
+_TRANSIENT = frozenset({429, 502, 503, 504})
 _SLOW_POLL_S = 30.0
 _FAST_WINDOW_S = 60.0
 _MAX_SUBMIT_WAIT_S = 120.0
@@ -150,7 +155,7 @@ def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
         job = submit(path, idioma=idioma, rotulo=rotulo, segmentos=segmentos,
                      _transport=_transport)
         ra = job.get("retry_after") if "codigo" in job else None
-        if ra is not None and job.get("status_code") in (429, 503) \
+        if ra is not None and job.get("status_code") in _TRANSIENT \
                 and ra <= _MAX_SUBMIT_WAIT_S and remaining() > ra:
             _sleep(ra)
             continue
@@ -163,8 +168,8 @@ def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
         cur = get(job_id, _transport=_transport)
         wait: float | None = None
         if "codigo" in cur:
-            if cur.get("status_code") in (429, 503):
-                wait = cur.get("retry_after")
+            if cur.get("status_code") in _TRANSIENT:
+                wait = cur.get("retry_after") or _FAST_POLL_S
             else:
                 return {**cur, "id": job_id}
         elif cur.get("status") in TERMINAL:
@@ -230,7 +235,7 @@ def batch(src_dir: str, out_dir: str, pattern: str = "*.mp3", idioma: str = "pt"
         save_inflight()
 
     def wait_for(resp: dict) -> float | None:
-        if resp.get("status_code") in (429, 503):
+        if resp.get("status_code") in _TRANSIENT:
             return resp.get("retry_after") or _FAST_POLL_S
         return None
 

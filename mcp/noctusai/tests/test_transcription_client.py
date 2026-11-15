@@ -397,3 +397,21 @@ def test_batch_rerun_resumes_inflight_without_reuploading(tmp_path):
     assert len(posts) == 2  # r0 and r2 uploaded; r1 was NOT re-uploaded
     assert (out / "r1.txt").read_text() == "t-old-1"
     assert not (out / ".inflight.json").exists()
+
+
+def test_batch_gateway_502_during_core_restart_is_retried_not_failed(tmp_path):
+    """A core/tunnel restart answers polls with 502 for a while; the job is still alive server-side."""
+    src, out = _dir(tmp_path, 1)
+    clock = Clock()
+    polls = {"n": 0}
+
+    def h(req):
+        if req.method == "POST":
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        polls["n"] += 1
+        if polls["n"] <= 3:
+            return httpx.Response(502, text="Bad Gateway")
+        return httpx.Response(200, json={"id": "j1", "status": "concluida", "texto": "ok"})
+
+    res = client.batch(str(src), str(out), _transport=_t(h), _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida" and res["done"] == ["r0"] and res["failed"] == []
