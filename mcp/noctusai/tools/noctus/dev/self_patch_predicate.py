@@ -417,3 +417,49 @@ def _extract_patch_target(node: ast.AST) -> str | None:
     if attr_name:
         return base + attr_name
     return base.rstrip(".")
+
+
+# ── string-constant targets ───────────────────────────────────────
+# `_CRED = "app.mod.fn"` … `patch(_CRED, ...)` is the same self-patch as the literal
+# (2026-11-15, certidoes tests). ONE implementation, here in the stdlib-only leaf: the
+# commit-time keeper (`compliance.check_no_self_monkeypatch`) and the write-time guard
+# (`test_seam_guard`) both call these, so the two ends cannot disagree.
+
+def _module_string_constants(tree: ast.AST) -> dict[str, str]:
+    """Module-level ``NAME = "literal"`` / ``NAME: str = "literal"`` bindings.
+
+    Only a name bound EXACTLY ONCE counts: a reassigned name has no single static value, so
+    it stays unresolved (the old behaviour) rather than guessed - a wrong guess is a false alarm.
+    """
+    seen: dict[str, str | None] = {}
+    for stmt in getattr(tree, "body", []):
+        if isinstance(stmt, ast.Assign):
+            targets, value = list(stmt.targets), stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            targets, value = [stmt.target], stmt.value
+        else:
+            continue
+        literal = value.value if isinstance(value, ast.Constant) and isinstance(value.value, str) else None
+        for target in targets:
+            if isinstance(target, ast.Name):
+                seen[target.id] = None if target.id in seen else literal
+    return {name: val for name, val in seen.items() if val is not None}
+
+
+def _extract_patch_target_resolved(node: ast.AST, constants: dict[str, str]) -> str | None:
+    """`_extract_patch_target`, with a Name argument bound to a module-level string constant
+    read as that string: arg 0 of `patch(...)` (the dotted target), arg 1 of `setattr` /
+    `patch.object` / `setitem(sys.modules, ...)` (the attribute / module name)."""
+    if constants and isinstance(node, ast.Call):
+        func = node.func
+        is_patch = (isinstance(func, ast.Name) and func.id == "patch") or (
+            isinstance(func, ast.Attribute) and func.attr == "patch"
+        )
+        idx = 0 if is_patch else 1
+        if len(node.args) > idx and isinstance(node.args[idx], ast.Name) and node.args[idx].id in constants:
+            resolved = ast.Constant(value=constants[node.args[idx].id])
+            ast.copy_location(resolved, node.args[idx])
+            args = list(node.args)
+            args[idx] = resolved
+            node = ast.Call(func=node.func, args=args, keywords=node.keywords)
+    return _extract_patch_target(node)

@@ -142,6 +142,7 @@ export function useEvalRuns(agentKey: string, versionId?: string) {
     queryKey: runsKey(agentKey, versionId),
     queryFn: () => api.get<EvalRunListResponse>(`/api/studio/agents/${agentKey}/evals/runs`, { version_id: versionId }),
     enabled: !!agentKey,
+    // poll-budget: 3s only while an eval run is in flight, stops after; 1 calls/tick (refetch of the polled GET, only while the job is in flight); worst 28800/day per open tab; hidden=paused
     refetchInterval: (q) => {
       const data = q.state.data as EvalRunListResponse | undefined;
       return data?.items.some((r) => IN_FLIGHT.has(r.status)) ? 3000 : false;
@@ -173,6 +174,7 @@ export function useEvalRun(agentKey: string, runId: string | null) {
     queryKey: runKey(agentKey, runId ?? ""),
     queryFn: () => api.get<EvalRunDetail>(`/api/studio/agents/${agentKey}/evals/runs/${runId}`),
     enabled: !!agentKey && !!runId,
+    // poll-budget: 3s only while this eval run is in flight, stops after; 1 calls/tick (refetch of the polled GET, only while the job is in flight); worst 28800/day per open tab; hidden=paused
     refetchInterval: (q) => {
       const data = q.state.data as EvalRunDetail | undefined;
       return data && IN_FLIGHT.has(data.status) ? 3000 : false;

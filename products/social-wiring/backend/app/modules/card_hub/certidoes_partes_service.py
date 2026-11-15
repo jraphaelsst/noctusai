@@ -793,7 +793,13 @@ def _requisitos_faltantes(client: Any, org_id: UUID, partes: list[dict]) -> dict
     por_id = {str(r["id"]): r for r in rows}
     out: dict[str, dict] = {}
     for p in pf:
-        dados = {"tipo_documento": "cpf", **_campos_do_cliente(por_id.get(str(p["cliente_id"]), {}))}
+        # `nome` exactly as `_dados_consulta` writes it (TJSP/TRT2 físico
+        # declare it), so the two never disagree about a party.
+        dados = {
+            "tipo_documento": "cpf",
+            "nome": p.get("nome") or _documento_valido(p),
+            **_campos_do_cliente(por_id.get(str(p["cliente_id"]), {})),
+        }
         faltas = {
             c["tipo"]: [ROTULO_CAMPO.get(f, f) for f in campos_faltantes(c, dados)]
             for c in exigentes

@@ -3,6 +3,7 @@
  * + nome + documento + compact status summary + stale flag. Body (lazy, only
  * when open): that party's levantamento table with per-row actions.
  */
+import { CertidaoInfo } from "@/components/guia/GuiaInfo";
 import { Fragment, useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, Download, ExternalLink, FileSearch, Loader2, Pencil, RefreshCw, Trash2, Upload, XCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -386,6 +387,10 @@ export function ParteSecao(p: ParteSecaoProps) {
                       </td>
                       <td className="p-2 font-medium">
                         <span className="text-muted-foreground">{linha.linha}</span> {linha.rotulo}
+                        {/* "i": what this certidão requires (guia de documentos). */}
+                        {linha.tipo && !linha.custom && (
+                          <CertidaoInfo tipo={linha.tipo} rotulo={linha.rotulo} className="ml-1" />
+                        )}
                         {linha.custom && (
                           <span className="ml-1 inline-flex gap-0.5 align-middle">
                             <button type="button" title="Renomear" className="rounded p-0.5 hover:bg-muted" onClick={() => p.onRenomear(linha)}>

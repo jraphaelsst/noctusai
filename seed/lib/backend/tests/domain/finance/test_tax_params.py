@@ -13,6 +13,9 @@ from noctusai_lib.domain.finance.params import (
 )
 
 TODAY = date(2026, 11, 7)
+# Load date for the SHIPPED registry: on/after its newest `verificado_em` (rows verified
+# later than TODAY would otherwise be refused as future-dated).
+SHIPPED_ASOF = date(2026, 11, 13)
 POLICY = {"max_age_dias": {"norma": 365, "orgao_oficial": 180, "publicacao_tecnica": 90, "especialista": 90},
           "horizonte_vigencia_dias": 45}
 
@@ -32,12 +35,12 @@ def mk(tmp_path: Path, rows, fam="simples"):
 
 
 def test_whole_shipped_registry_loads_and_counts():
-    reg = load_registry(today=TODAY)
-    assert len(reg.rows) == 310
+    reg = load_registry(today=SHIPPED_ASOF)
+    assert len(reg.rows) == 312
 
 
 def test_shipped_yaml_values():
-    reg = load_registry(today=TODAY)
+    reg = load_registry(today=SHIPPED_ASOF)
     p = lambda k, on=TODAY, **sc: param(k, on=on, scope=sc or None, registry=reg)  # noqa: E731
     assert p("simples.fator_r.limiar").value == Decimal("0.28")
     assert p("simples.anexo_iii.faixa_1.aliquota_nominal", anexo="III").value == Decimal("0.06")

@@ -24,7 +24,8 @@ Registers this module's three routers — `router` (`/api/clientes`, the
 main one, below), `defaults_router` (`/api/negociacao/defaults` — an org
 setting, not a cliente resource, so its own prefix; see `router.py`'s own
 comment), and `proveniencia_router` (`/api/proveniencia/registro` — a
-static catalog, same reasoning) — and, explicitly, the document-retention
+static catalog, same reasoning; `guia_documentos_router`,
+`/api/guia-documentos`, likewise) — and, explicitly, the document-retention
 sweep on the seed scheduler (`documentos_service.configure()`, once, under
 its historical job id) — mirrors `app.services.clientes_backfill_job.
 configure()`'s identical "configure before `start_scheduler()` fires"
@@ -106,6 +107,7 @@ def register() -> Any:
     from app.modules.card_hub import roteiros_feedback_scheduler
     from app.modules.card_hub.cep_router import router as cep_router
     from app.modules.card_hub.favorecidos_router import router as favorecidos_router
+    from app.modules.card_hub.guia_documentos_router import router as guia_documentos_router
     from app.modules.card_hub.roteiros_router import metricas_router, pendentes_router
     from app.modules.card_hub.router import defaults_router, proveniencia_router, router
 
@@ -127,7 +129,7 @@ def register() -> Any:
     return ModuleRegistration(
         routers=[
             router, defaults_router, proveniencia_router, pendentes_router,
-            metricas_router, favorecidos_router, cep_router,
+            metricas_router, favorecidos_router, cep_router, guia_documentos_router,
         ],
         standard_routers=(),
     )

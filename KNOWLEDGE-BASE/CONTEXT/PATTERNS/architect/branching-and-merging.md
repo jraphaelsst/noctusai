@@ -1732,7 +1732,7 @@ Every agent worktree under `.claude/worktrees/agent-*/` is removable as soon as 
 
 ```bash
 python mcp/noctusai/cli.py --cleanup-stale-worktrees           # interactive
-python mcp/noctusai/cli.py --cleanup-stale-worktrees --dry-run # report only
+python mcp/noctusai/cli.py --cleanup-stale-worktrees --dry # report only
 python mcp/noctusai/cli.py --cleanup-stale-worktrees --force   # no prompt (cron / hook)
 ```
 
@@ -1782,8 +1782,8 @@ The cleanup mechanism handles RECOVERY. The monitor handles PREVENTION — warns
 
 ```bash
 python mcp/noctusai/cli.py --check-disk-usage                # status report
-python mcp/noctusai/cli.py --check-disk-usage --quiet        # exit code only (cron-friendly)
-python mcp/noctusai/cli.py --check-disk-usage --auto-clean   # if ≥70%, automatically run cleanup-stale-worktrees.sh --force
+python mcp/noctusai/cli.py --check-disk-usage                # read the exit code (cron-friendly)
+python mcp/noctusai/cli.py --check-disk-usage                # report only; clean via MCP noctus.dev.check_disk_usage auto_clean=true
 ```
 
 **Invocation triggers**:
@@ -1793,7 +1793,7 @@ python mcp/noctusai/cli.py --check-disk-usage --auto-clean   # if ≥70%, automa
 | **Orchestrator startup** | First Bash call in every orchestrator session invokes `--quiet` and reads exit code. ≥70% surfaces a CAUTION note to user (one-line, not blocking). | Surfaces pressure BEFORE engineer dispatches commit disk. |
 | **Pre-dispatch gate** | Before dispatching any new `Agent(isolation: "worktree")` engineer, check exit code. Refuse dispatch at ≥80% (WARNING) — surface to user with cleanup recipe. | Structural prevention of the disk-full lockout. |
 | **`bootstrap-worktree.sh`** | Already invokes `cleanup-stale-worktrees.sh --force` as pre-flight. The monitor adds: if post-cleanup still ≥80%, refuse hydrate. | Engineer-side guard. |
-| **Nightly cron** | `0 3 * * * python mcp/noctusai/cli.py --check-disk-usage --auto-clean` | Auto-recovers any session that left stale worktrees behind. |
+| **Nightly cron** | `0 3 * * * python mcp/noctusai/cli.py --cleanup-stale-worktrees --force` | Auto-recovers any session that left stale worktrees behind. |
 | **Manual ops check** | `python mcp/noctusai/cli.py --check-disk-usage` ad-hoc. | User-initiated health check. |
 
 **Orchestrator's responsibility (NEW)**: before dispatching, the orchestrator runs `disk-usage-monitor.sh --quiet` and surfaces severity. At CAUTION the dispatch proceeds with a note. At WARNING the dispatch is gated until cleanup. At CRITICAL the orchestrator stops dispatching entirely and surfaces full recovery recipe.

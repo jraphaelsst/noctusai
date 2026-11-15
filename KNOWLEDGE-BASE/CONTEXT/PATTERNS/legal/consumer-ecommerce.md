@@ -62,6 +62,8 @@ Consumer = natural or legal person acquiring or using a product or service **as 
 
 The offer **binds** the supplier (CDC 30) and refusal lets the consumer demand performance, an equivalent, or rescission with refund (CDC 35) [norma]; misleading advertising, including **by omission**, is forbidden (CDC 37 §1, §3) [norma]. **Store:** "Contrato Blindado" and claims of protection must not promise outcomes a generic template cannot deliver; the "não constitui assessoria jurídica" disclaimer must be visible **before** purchase, not only in the footer → lawyer reviews the copy.
 
+**Affiliate / price-comparison publisher (deal channels, newsletters, promo finders).** Automation does not remove CDC liability for a wrong price, an expired offer or a fake "de/por": liability is objective, the robot is our choice, and a bot error repeats at scale. The sponsor of the communication must prove it true (CDC 38); with more than one author of the damage liability is joint (CDC 7 sole paragraph, 25 §1) [norma]. A commissioned affiliate/comparator that carries the user to the purchase tends to be treated as part of the chain: the **Buscapé** case (comparator with commission, fine upheld, STJ 2ª Turma, Informativo 839) against "pure" classifieds sites cleared in REsp 1.836.349 [doutrina/2ª — **[re-verificar]**: the rulings were not read]. Mitigations the advisor proposed: price stamped with date/time and "pode mudar", re-check right before posting, "de" only from our own price history, an expiry/correction robot, evidence log per post (CDC 27 horizon), company identification and complaint channel (Decreto 7.962 art. 2). "Sujeito a alteração" helps show good faith but does **not** lift CDC 30; an exoneration clause is null (CDC 51 I) → lawyer decides the joint-liability exposure and contractual mitigation with marketplaces.
+
 ## 6 · Refunds and chargebacks
 
 - **Withdrawal refund:** immediate and monetarily updated (CDC 49 sole paragraph); also cancel accessory contracts (Decreto art. 5 §2).
@@ -87,6 +89,7 @@ The offer **binds** the supplier (CDC 30) and refusal lets the consumer demand p
 - Opt-in/opt-out records (`LGPD-WARNINGS.md:39`, agents migration 033) are personal data with their own retention (`lgpd-privacy-program.md` §12).
 - WhatsApp Business platform policies (Meta) add their own opt-in rules — contractual, not Brazilian law; read Meta's current policy when building a campaign feature [re-verify].
 - Unsolicited review requests after a deal (`LGPD-WARNINGS.md:48`) = marketing-adjacent: legitimate interest + opt-out in every message.
+- **CONAR 2026 labelling (affiliates and send-only channels)** [doutrina/2ª — **provisional until the official PDF is read**]: the Guia de Influenciadores (in force 2026-06-01) treats performance-based remuneration from affiliate programs as advertising, applies to non-natural persons too, and shares liability with brands and agencies; the identification must be ostensive, visible without clicking "ver mais". Conservative rule: first line of every WhatsApp/Telegram post carries a visible "#publi" / "Publicidade · link de afiliado: podemos receber comissão"; a fixed notice in the channel description and on the web page; a newsletter sponsor block labelled "PATROCINADO por <marca>" next to the block, not only in the footer. Each affiliate program may add its own notice text (e.g. Amazon Associates) — contractual, read it [aberto].
 
 ## 9 · When the lawyer decides
 
@@ -135,9 +138,25 @@ Accessed 2026-11-05.
 | LGPD, Lei 13.709/2018 | https://www.planalto.gov.br/ccivil_03/_ato2015-2018/2018/lei/l13709.htm | arts. 6 VI, 7, 8 §5, 9, 18 §2 | [norma] |
 | Lei 14.181/2021 (superendividamento) | https://www.planalto.gov.br/ccivil_03/_ato2019-2022/2021/lei/l14181.htm | CDC 51 XVII–XVIII | [norma] |
 
+Accessed 2026-11-13 (affiliate / newsletter advisory; all secondary, none is the official CONAR/CAPEM text):
+
+| Title | URL | Supports | Tier |
+|---|---|---|---|
+| Cescon Barrieu — diretrizes do CONAR | https://cesconbarrieu.com.br/marketing-de-influencia-conar/ | §8 CONAR labelling | [doutrina/2ª] |
+| UAI — afiliado é publicidade para o Conar | https://www.uai.com.br/networking-e-negocios/2026/09/23/ganha-comissao-com-link-de-afiliado-para-o-conar-isso-ja-e-publicidade/ | §8 | [doutrina/2ª] |
+| Migalhas — Guia CONAR 2026 | https://www.migalhas.com.br/depeso/456124/guia-conar-2026-o-que-todo-influenciador-precisa-saber-agora | §8 | [doutrina/2ª] |
+| Meio & Mensagem — Conar atualiza guia | https://www.meioemensagem.com.br/midia/conar-atualiza-guia-para-influenciadores-digitais | §8 | [doutrina/2ª] |
+| Dizer o Direito — sites de intermediação | https://www.dizerodireito.com.br/2024/02/nao-se-pode-impor-aos-sites-de.html?m=0 | §5 Buscapé [re-verificar] | [doutrina/2ª] |
+| Lex — REsp 1.836.349 | https://www.lex.com.br/terceira-turma-afasta-responsabilidade-de-site-de-anuncio-por-fraude-na-venda-de-veiculo/ | §5 | [doutrina/2ª] |
+| Baguete — regulamentação do e-mail marketing (CAPEM) | https://www.baguete.com.br/noticias/e-mail-marketing-regulamentacao-e-oficial | §14 CAPEM | [doutrina/2ª] |
+| GoDaddy — regras de e-mail marketing (prazo CAPEM não confirmado) | https://www.godaddy.com/resources/br/artigos/regras-para-envio-de-e-mail-marketing | §14 | [aberto] |
+
 ## 14 · Re-verify list
 
 - Price-display rules for e-commerce (Lei 10.962/2004 and Decreto 5.903/2006) — **not read in this slice**.
 - Withdrawal for downloaded digital content — current STJ position (no source read).
 - Meta WhatsApp Business messaging policy (opt-in requirements) — vendor policy, changes often.
 - Any 2025–2026 amendment to Decreto 7.962 (none seen on the Planalto page, 2026-11-05).
+- **CONAR 2026 Guia de Influenciadores — official PDF** (only secondary summaries read, 2026-11-13): confirm the affiliate-as-advertising reading, scope for legal entities and the label wording (§8).
+- **CAPEM (e-mail marketing self-regulation)** — official text not read; the "2 dias úteis" opt-out deadline attributed to it is **unconfirmed** [aberto].
+- Buscapé (STJ 2ª Turma, Informativo 839) and REsp 1.836.349 — read the judgments before relying on them (§5).

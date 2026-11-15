@@ -106,15 +106,17 @@ class TestRunnerSeam:
     def test_deadline_denies_even_through_an_inner_except_exception(self):
         out = io.StringIO()
 
+        slept_to_the_end: list[int] = []
+
         def hang(_p):
             try:
                 time.sleep(5)
+                slept_to_the_end.append(1)  # only reached if the deadline never interrupted the sleep
             except Exception:  # the timeout must NOT be swallowable here
                 return None
 
-        t0 = time.monotonic()
         runner.run_guard("g", hang, stdin=io.StringIO("{}"), stdout=out, deadline_s=0.2)
-        assert time.monotonic() - t0 < 3
+        assert slept_to_the_end == []  # deterministic: the deadline cut the sleep short (no wall-clock bound)
         reason = json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecisionReason"]
         assert "timed out (failed closed)" in reason
 

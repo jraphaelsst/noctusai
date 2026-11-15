@@ -469,3 +469,89 @@ class TestBashHeredocIsCaught:
             "EOF\n"
         )
         assert guard.decide("Bash", {"command": command}) is None
+
+
+CONST_PATCH_TARGET = '''
+from unittest.mock import patch
+
+_CRED = "app.modules.certidoes.credentials.resolve_api_key"
+
+def test_thing():
+    with patch(_CRED, return_value="k"):
+        assert True
+'''
+
+CONST_SETATTR_NAME = '''
+from app.services import clientes_service
+
+_ATTR = "resolve"
+
+def test_thing(monkeypatch):
+    monkeypatch.setattr(clientes_service, _ATTR, lambda *_: None)
+'''
+
+CONST_SYS_MODULES_KEY = '''
+import sys
+
+_MOD = "app.services.clientes_service"
+
+def test_thing(monkeypatch):
+    monkeypatch.setitem(sys.modules, _MOD, object())
+'''
+
+CONST_REASSIGNED = '''
+_CRED = "app.modules.certidoes.credentials.resolve_api_key"
+_CRED = "httpx.get"
+
+def test_thing():
+    from unittest.mock import patch
+    with patch(_CRED, return_value="k"):
+        assert True
+'''
+
+CONST_EXTERNAL = '''
+from unittest.mock import patch
+
+_TARGET = "httpx.get"
+
+def test_thing():
+    with patch(_TARGET, return_value=None):
+        assert True
+'''
+
+
+class TestStringConstantTargetsAreResolvedAtWriteTime:
+    """The commit-time keeper already resolves `NAME = "literal"` targets; the write-time
+    guard must agree, or an agent is let through here and blocked only at commit."""
+
+    def test_patch_target_constant_is_denied(self):
+        assert guard.find_self_patches(CONST_PATCH_TARGET, TEST_PATH)
+
+    def test_setattr_attribute_constant_is_denied(self):
+        assert guard.find_self_patches(CONST_SETATTR_NAME, TEST_PATH)
+
+    def test_sys_modules_key_constant_is_denied(self):
+        assert guard.find_self_patches(CONST_SYS_MODULES_KEY, TEST_PATH)
+
+    def test_reassigned_constant_stays_unresolved(self):
+        assert guard.find_self_patches(CONST_REASSIGNED, TEST_PATH) == []
+
+    def test_external_constant_target_is_allowed(self):
+        assert guard.find_self_patches(CONST_EXTERNAL, TEST_PATH) == []
+
+    def test_keeper_and_guard_share_one_implementation(self):
+        """ONE resolver: the keeper re-exports the predicate's, no second copy."""
+        import ast as _ast
+
+        pred = guard._load_compliance()
+        tree = _ast.parse(CONST_PATCH_TARGET)
+        assert pred._module_string_constants(tree) == {
+            "_CRED": "app.modules.certidoes.credentials.resolve_api_key"
+        }
+        sys.path.insert(0, str(REPO_ROOT / "mcp" / "noctusai"))
+        from tools.noctus.dev import compliance as comp
+
+        assert (
+            comp._module_string_constants.__code__.co_filename
+            == pred._module_string_constants.__code__.co_filename
+        )

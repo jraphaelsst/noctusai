@@ -50,13 +50,41 @@ Source: `https://api.infosimples.com/consultas/docs/receita-federal/pgfn.md`.
   "parâmetro obrigatório" failure (`e_erro_parametro_obrigatorio`) parks the same pendência + logs a WARNING.
   A 606 is never retried nor 2ª-via'd (the same request fails the same way). Observed: `trf3` once answered
   606 "são necessários os seguintes parâmetros adicionais: nome_mae, birthdate, tipo_documento, documento"
-  (1 of 73 calls, 29 successes) — conditional, so not declared pre-call; the guard catches it.
+  (1 of 73 calls, 29 successes) and `trf3_sp` once asked `telefone`/`endereco`/`tipo_telefone` — the TRF3
+  site's conditional "dados complementares" step, so NOT declared pre-call; instead the builder sends
+  `nome_mae`/`birthdate`/`tipo_documento=2`+`documento` (RG) whenever the consulta knows them, and the guard
+  parks the rest as a `dados_parte` pendência naming each field.
 - **Account/vendor-level refusals are not retried (2026-11-07).** `registry.falha_de_conta_ou_fonte`: 603
   (sem saldo / token recusado), 615 whose text says "API pausada" and 608 (excesso de tentativas do TRF)
   end the fetch at once — no backoff retries, no 2ª via — and the row carries a pt-BR reason
   (`MSG_SEM_SALDO`, `MSG_API_PAUSADA`, …) with the raw answer kept in `api_response`. Prod saw 257 CENPROT
   calls answered "API pausada" and 19 "sem saldo" (vendor/account side: owner action, not a code fix). A plain
   615 without "pausada" (source momentarily down) keeps the retry loop.
+- **Every tipo declares** `requer_campos` for both `cpf` and `cnpj` (empty allowed) plus a one-line
+  `requisitos_evidencia`; `test_certidoes_requisitos.TestTodoEndpointDeclara` refuses an undeclared endpoint and
+  a declared field its builder never sends. Credentials live in `registry.CREDENCIAIS` (`govbr`, `email_envio` —
+  TJSP's delivery address, pendência `credencial_email`). A CIN holder (RG == CPF) goes to TJSP as `cin` (the
+  docs: an RG filled with the CPF is not processed). `registry.requisitos_catalogo()` feeds
+  `GET /api/guia-documentos`.
+
+### 2a · Requisitos por tipo (generated)
+
+<!-- AUTOGEN:certidoes-requisitos:begin -->
+<!-- DO NOT EDIT BY HAND — regenerate via `app.modules.certidoes.registry.bloco_requisitos_kb()`. -->
+
+| Tipo | Endpoint | CPF exige | CNPJ exige | Credencial do escritório | Evidência |
+|---|---|---|---|---|---|
+| `cnd_federal` | `receita-federal/pgfn` | `data_nascimento` | — | — | docs receita-federal/pgfn: birthdate obrigatório para CPF; prod 606 'birthdate é obrigatório' (F113) |
+| `trf3_sp` | `tribunal/trf3/certidao-distr` | — | — | — | docs tribunal/trf3/certidao-distr: dados complementares só quando o TRF3 pede; prod 30/71 emitidas sem eles, 1 pedido condicional (606) |
+| `trf3` | `tribunal/trf3/certidao-distr` | — | — | — | docs tribunal/trf3/certidao-distr: dados complementares só quando o TRF3 pede; prod 29/73 emitidas sem eles, 1 pedido condicional (606) |
+| `trt2_digital` | `tribunal/trt2/ceat-digital` | — | — | — | docs tribunal/trt2/ceat-digital: só cpf/cnpj_raiz; prod sem 606 |
+| `trt2_fisico` | `tribunal/trt2/ceat` | `nome` | `nome` | — | docs tribunal/trt2/ceat: 'nome' obrigatório (cpf e cnpj) |
+| `cnd_trabalhista_tst` | `tst/cndt` | — | — | — | docs tribunal/tst/cndt: só cpf/cnpj; prod sem 606 |
+| `tjsp` | `tribunal/tjsp/pedido-certidao` | `nome`, `rg` | `nome` | `email_envio` | docs tribunal/tjsp/pedido-certidao: email_envio* + nome; prod 606 'rg não pode ser vazio caso cpf' (3x) |
+| `cenprot` | `cenprot-sp/protestos` | — | — | — | docs cenprot-sp/protestos: só cpf/cnpj; falhas em prod são 615/600 da origem |
+| `cnd_fazenda_sp` | `sefaz/sp/certidao-debitos` | — | — | `govbr` | docs + prod 606/604: login GOV.BR (login_cpf/login_senha); nenhum dado da parte |
+| `divida_ativa_sp` | `pge/sp/cndt` | — | — | `govbr` | docs + prod 606/604: login GOV.BR (login_cpf/login_senha); nenhum dado da parte |
+<!-- AUTOGEN:certidoes-requisitos:end -->
 
 ## 3 · The learned trigger
 

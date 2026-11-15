@@ -146,6 +146,8 @@ const EdicaoFotosProcessamento = lazyWithReload(() => import("@/pages/edicao-fot
 // Maya v1 (maya-blocks CONTRACT §4) — both seeded `desenvolvimento` in status_pagina (286).
 const AtendimentoBlocos = lazyWithReload(() => import("@/pages/AtendimentoBlocos"));
 const Supervisao = lazyWithReload(() => import("@/pages/Supervisao"));
+// Guia de documentos — status_pagina `guia_documentos` (migration 309).
+const GuiaDocumentos = lazyWithReload(() => import("@/pages/GuiaDocumentos"));
 
 
 const Layout = createProductLayout({
@@ -214,6 +216,7 @@ export default createProductApp({
     { path: "/clientes", component: ClientesBoard },
     // `/clientes/revisao` MUST stay declared before `/clientes/:id`.
     { path: "/clientes/revisao", component: RevisaoFila },
+    { path: "/guia-documentos", component: GuiaDocumentos },
     // ONE person page, two section orders (atendimento-partes-imoveis D3).
     // Detail routes reached from lists — no nav entry (same shape as
     // `/imoveis/:codigo` next to the `imoveis` entry).

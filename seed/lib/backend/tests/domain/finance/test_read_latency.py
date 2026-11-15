@@ -23,8 +23,12 @@ DELAY = 0.15
 class DelayDb:
     """Counts `.table()` / `.rpc()` round trips and makes each one cost DELAY seconds (a network hop)."""
 
-    def __init__(self, inner):
+    def __init__(self, inner, rendezvous: int = 0):
         self._inner = inner
+        # rendezvous=N: each hop waits (bounded) until N hops are in flight at once. A sequential
+        # implementation never reaches N, the barrier breaks and the test fails -- overlap proven by
+        # construction, not by a wall-clock bound that a starved CI machine can blow.
+        self._barrier = threading.Barrier(rendezvous) if rendezvous else None
         self.calls = 0
         self.tables: list[str] = []
         self.rpcs: list[str] = []
@@ -35,6 +39,8 @@ class DelayDb:
         with self._lock:
             self.calls += 1
             self.threads.add(threading.get_ident())
+        if self._barrier is not None:
+            self._barrier.wait(timeout=10)
         time.sleep(DELAY)
 
     def table(self, name):
@@ -68,18 +74,15 @@ def test_cashflow_totals_are_pinned_and_reads_overlap(s, db):
         "realized_in_cents": 3000, "realized_out_cents": 100, "projected_in_cents": 2000, "projected_out_cents": 2000,
     }
 
-    slow = DelayDb(db)
+    slow = DelayDb(db, rendezvous=4)  # all four independent reads must be in flight together
     ss = Scope(slow, CFG, ORG_A)
-    t0 = time.perf_counter()
     got = reports.cashflow(ss, date(2026, 2, 1), date(2026, 3, 31))
-    wall = time.perf_counter() - t0
     assert got == baseline  # identical numbers
     assert slow.calls == 4  # accounts + ledger SUM before `from` (rpc) + ledger in range + open entries
     assert slow.rpcs == ["fin_ledger_signed_sum"] and slow.tables.count("fin_ledger") == 1  # history is never read as rows
-    assert wall < DELAY * 2.5  # sequential would be >= 4 * DELAY
     assert len(slow.threads) > 1
 
-    slow_acc = DelayDb(db)
+    slow_acc = DelayDb(db, rendezvous=5)
     got_acc = reports.cashflow(Scope(slow_acc, CFG, ORG_A), date(2026, 2, 1), date(2026, 3, 31), account_id=acc["id"])
     assert got_acc == baseline_acc
     assert slow_acc.calls == 5  # + the ownership check, overlapped with the rest
@@ -88,10 +91,8 @@ def test_cashflow_totals_are_pinned_and_reads_overlap(s, db):
 def test_account_balance_overlaps_lookup_and_ledger(s, db):
     acc = _seed(s)
     want = accounts.account_balance(s, acc["id"], date(2026, 12, 31))
-    slow = DelayDb(db)
-    t0 = time.perf_counter()
+    slow = DelayDb(db, rendezvous=2)  # the lookup and the ledger SUM must be in flight together
     got = accounts.account_balance(Scope(slow, CFG, ORG_A), acc["id"], date(2026, 12, 31))
-    assert time.perf_counter() - t0 < DELAY * 1.8
     assert got == want and slow.calls == 2  # account lookup + the ledger SUM
     assert slow.rpcs == ["fin_ledger_signed_sum"] and "fin_ledger" not in slow.tables  # one number, never the rows
 

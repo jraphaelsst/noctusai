@@ -55,6 +55,8 @@ else
     PY="${PY:-${PYTHON:-python3}}"
 fi
 CLI="$REPO_ROOT/mcp/noctusai/cli.py"
+# Gate telemetry (gate_alignment.record_cli_exit) names WHERE a keeper refused, so refusals count by class.
+export NOC_HOOK_STAGE="${NOC_HOOK_STAGE:-pre-commit}"
 have_py() { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; }
 # Every keeper below is gated on `have_py`; with no usable python they would ALL skip and the hook
 # would still print "OK". Say so once, loudly (never a silent green).
@@ -443,6 +445,13 @@ if have_py && echo ",$STAGED_ALL," | grep -qE ',(\.gitattributes|scripts/hooks/r
         echo "[pre-commit] merge-drivers-registered-in-ci FAILED. Commit aborted." >&2
         exit 1
     fi
+fi
+
+# ─── 6b-ter-ter. recurring refusal classes have an owner (WARN-first SHADOW) ──
+# Keeper `check_refusal_classes_owned`: a refusal class that fired >=3x in 14d with no open fix. Reads the
+# machine-local gate event log only; warn-only until the shadow record supports blocking.
+if have_py; then
+    "$PY" "$CLI" --check-refusal-classes-owned || echo "[pre-commit] WARNING (shadow): refusal-classes-owned — a recurring refusal has no fix owner; see '--gate-alignment refusals'." >&2
 fi
 
 # ─── 6b-ter-bis. merge drivers have contract coverage (WARN-first SHADOW) ──
@@ -1285,6 +1294,20 @@ if [[ -n "$STAGED_SR" ]] && have_py; then
         exit 1
     fi
 fi
+# ─── 6e-quinquies-quater-ter-ante. Polling-request-budget gate (blocking) ──
+# Keeper `check_polling_request_budget` (2026-11-10, Supabase egress incident: ~620k REST calls/day from our own
+# pollers). Every forever-loop / periodic registration / browser poll carries `# poll-budget: ...; worst <N>/day`
+# (`//` in TS); a per-tick `select("*")` is refused outright. Scoped to the STAGED files (--paths): the full-tree
+# sweep runs in CI. Escape (R3 only, with a reason): `# poll-budget-ok: <why>`.
+STAGED_PB=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(products/[^/]+/backend/app/.*\.py|seed/lib/backend/noctusai_lib/.*\.py|products/[^/]+/frontend/src/.*\.tsx?|seed/lib/frontend/src/.*\.tsx?)$' | grep -vE '(^|/)(tests?|__tests__|testing|fixtures|_archive)/|/test_[^/]*\.py$|\.(test|spec)\.tsx?$' || true)
+if [[ -n "$STAGED_PB" ]] && have_py; then
+    echo "[pre-commit] source staged — checking polling request budget (declared cost per loop / poll)..."
+    if ! "$PY" "$CLI" --check-polling-request-budget --paths "$(echo "$STAGED_PB" | paste -sd, -)" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] POLLING-REQUEST-BUDGET check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Declare the cost next to the loop: '# poll-budget: <cadence>; <k> calls/tick; worst <N>/day; idle=<backoff|event|fixed>' ('//' + 'hidden=<paused|runs>' in TS). See KB § PATTERNS/backend/polling-request-budget.md." >&2
+        exit 1
+    fi
+fi
 # ─── 6e-quinquies-quater-ter-bis. Motion-import-boundary gate (warn-first shadow) ──────
 # Keeper `check_motion_import_boundary` (2026-11-07): `motion` / `framer-motion` is imported ONLY via
 # `@noctusai/lib/marketing` (MotionProvider hard-codes reduced-motion + LazyMotion strict; keeps motion
@@ -1605,6 +1628,10 @@ if [[ -n "$STAGED_SECURITY_MIGRATIONS" ]] && have_py; then
         echo "[pre-commit] Render it: noctusai_lib.domain.sql_templates.guc_carveout_guard_sql (or scaffold_migration with_guc_guard). See KB § PATTERNS/backend/database-rls.md § GUC carve-out guard." >&2
         exit 1
     fi
+    # Keeper: transition_log_hand_written -- WARN-first SHADOW (gate-alignment placement=warn); promote to
+    # blocking after the shadow record. KB § PATTERNS/backend/transition-log.md.
+    "$PY" "$CLI" --check-transition-log-hand-written --worktree-path "$REPO_ROOT" \
+        || echo "[pre-commit] WARNING (shadow): hand-written transition history -- render it with noctusai_lib.domain.transition_log.transition_log_migration. See KB § PATTERNS/backend/transition-log.md." >&2
     if ! "$PY" "$CLI" --check-migration-untyped-empty-array --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] MIGRATION-UNTYPED-EMPTY-ARRAY check FAILED. Commit aborted." >&2
         echo "[pre-commit] Cast the literal: ARRAY[]::text[]. See KB § PATTERNS/backend/migration-sql-security-gates.md." >&2

@@ -252,6 +252,31 @@ spec list about to run (`frontend_gate_products`), so prepared == gated. Proven
 against a real temp git repo + real dirs (marker file, dummy package, `@noctusai/*`
 pointing at the merged-tip seed).
 
+**2026-11-15 — the scoped toolkit stage is sized per run from the selected files' MEASURED cost.** `ci_parity:suite:mcp_toolkit_tests:scoped`
+fell through to the flat 600 s `ci_parity:suite:` prefix and the 230-file selection timed out at 600 s and 900 s, then needed a hand-set
+`NOCTUS_GATE_BUDGETS_JSON` of 2400 s. A first fix sized it as files x 5.1 s (a figure inferred from deliverable wall-clock): it timed a
+27-file selection out at 267 s (667 s spent), proving per-file cost is not flat. Measured instead (one `--durations=0` run of the 232-file
+selection, 4107 tests, 1704 s, rc=0, `~/.noctus/hw-runs/scoped-toolkit-durations-20261115T075842Z.log`): median file 1.75 s, mean of
+the 206 light files 2.2 s, but `test_compliance.py` alone 389 s and 26 files >= 10 s (1225 s together). Now
+`gate_budget.derived_suite_budget` = 60 s + 1.5 x sum(cost of the selected files), cost = live p90 > `SEED_FILE_S` (the 26 heavy files) >
+`DEFAULT_FILE_S` 2.2 s; the live p90 comes from `~/.noctus/ci-stage-timings.ndjson`, one row per suite stage written by
+`export_ci_parity_check` with per-file seconds (3 observations replace a seed). The integrate sweep sizes the same gate the same way,
+and the no-file-list declared row is 2600 s. A timeout is still UNMEASURED but now reports total seconds spent, the budget and its
+basis (derived vs declared), and the test items in flight when it was killed (suite stages run `-v`). Add a gate to `PER_FILE_GATES`
+for any other suite whose size varies per run; do not hand-set the env. Refresh `SEED_FILE_S` from a new `--durations=0` run when the
+toolkit grows materially.
+
+**2026-11-14 — scoped-check (`ci_parity:suite:*`) budgets are per-product defaults, never hand-set env.**
+`ci_parity:suite:<product|seed>:<x>` now resolves to the declared `pytest:<x>` row (an undeclared one rides the
+generic `pytest:` row; `db-guards:*` keeps the `ci_parity:suite:` prefix row); `NOCTUS_GATE_BUDGETS_JSON` still wins,
+on either name. Evidence for the raise (`~/.noctus/hw-runs`, gate-verdicts): the full social-wiring suite ran 684-1025 s
+quiet, 1285 s and 2208 s under load; seed/lib/backend 277-419 s quiet, 938 s loaded; before this the flat 600 s
+timed SW out 51x and seed 42x and the env was hand-set 240x. Now `pytest:social-wiring` 1800, `pytest:seed/lib/backend`
+1200, per-attempt cap 3000, overall ceiling 5400. `pytest-xdist` is NOT installed in the toolkit venv (`pytest -n`
+failed 42x): installing it is a dependency decision for the architect, not made here. The CLI also answers an
+unknown flag with "did you mean ...?" (`_DidYouMeanParser`), and `check_workflow_cli_flags_exist` now covers the
+skills / agents / KB / CLAUDE*.md docs, not only workflows (`--x-*`, `--x-<y>` and `--flag` are patterns, skipped).
+
 **2026-10-21 — gate budgets loosened ~3x + ONE retry of a timed-out gate.** The
 2026-10-19 budgets (SW 480 s, seed/lib 360 s, mcp 300/240 s) still produced
 repeated `gate_timeout` blocks on a loaded laptop for suites that pass when run
@@ -450,6 +475,8 @@ declared probes are exercised on PGlite against the organ's own DDL
 ⇒ **A structural check that a guard exists is a hypothesis about its
 behaviour, not proof of it — proof requires watching it refuse.**
 **Registry sanity at commit (2026-11-05).** verify_db_guards was the most-fixed gate since 2026-09-01 (22 fix commits), and every defect surfaced in CI. Keeper `check_db_guard_registry_static` (`--check-db-guard-registry-static`, ~0.5 s) runs the registry's offline invariants at pre-commit whenever `verify_db_guards.py` or a migration is staged: unique probe ids, every named migration resolves (repo path, bare filename under any product, or `seed:<module>.<name>`), a recognised sentinel, and a rollback-wrapped shape of BEGIN;/one DO block/ROLLBACK;.
+
+**A probe that INSERTs owns its org (2026-11-15).** Borrowing a live org (`SELECT id INTO v_org FROM public.organizations LIMIT 1`) couples the probe to whatever that org already holds: five marca probes failed setup with `uq_marcas_one_per_org` once SW 339 allowed one brand per org, and predeploy read "db_guards unclassifiable". A probe that inserts into a one-row-per-org table creates its own org (`_PROBE_ORG_SETUP`, rolled back with the probe). Mechanised in `tests/test_verify_db_guards.py::TestProbesOwnTheirOrg`: the one-row-per-org tables are DERIVED from the migrations (a UNIQUE INDEX / UNIQUE / PRIMARY KEY on `(org_id)` alone, partial indexes included), and a borrow followed by an unconditional INSERT into one of them fails the registry (an `ON CONFLICT` insert tolerates the existing row and passes). `_BORROWED_ORG_TOLERATED` lists the rest by probe id with the reason (today: `org_brand_identities.tokens.schema_check`, whose CHECK fires before the unique index) and shrinks only; a stale exemption fails. What it cannot see: a borrow whose row is read, not inserted (a wallet balance, an existing identity), and uniqueness enforced only by a trigger or a composite key that includes `org_id`; those stay a review concern.
 
 ### 9. Resolve the root from the artefact under evaluation, never from the ambient cwd
 

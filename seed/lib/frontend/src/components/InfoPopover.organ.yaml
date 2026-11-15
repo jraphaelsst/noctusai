@@ -1,0 +1,28 @@
+name: InfoPopover
+kind: component
+path: seed/lib/frontend/src/components/InfoPopover.tsx
+phase: pilot-seed
+registered_at: "2026-10-26"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Import: import { InfoPopover, InfoSecoes } from '@noctusai/lib/components'."
+  - "InfoPopover = muted Info icon button (aria-label = label, required) + Radix popover; InfoSecoes = optional title + bullet sections + nota + rodape (e.g. a 'Ver no guia' router link)."
+  - "The popover body mounts ONLY while open (Radix unmounts PopoverContent when closed) — a product wrapper may call a data hook inside the body; nothing fetches until opened, and the row carrying the icon stays renderable without a QueryClientProvider."
+  - "The trigger stops click propagation (it lives inside clickable rows/labels/cells); hit area padded via after:-inset-2 so a 14px icon is still touch-friendly without reflowing the row."
+  - "Consumers at registration: social-wiring DocumentoInfo / CertidaoInfo / DadoObrigatorioInfo (components/guia/GuiaInfo.tsx), placed in ChecklistItemRow, IdentidadeChecklistRow, DocumentoTipoSlot and certidoes/ParteSecao."
+
+errors_encountered: []
+drifts_surfaced: []
+alternatives_considered:
+  - "Extending TooltipIconButton — rejected: a tooltip is hover-only and cannot hold a list or a link; this needs a click/tap-opened, focusable panel."
+  - "HoverCard — rejected: not reachable by touch, and its content is not keyboard-operable."
+manual_validation_log: []
+integration_test_status: unit-tested (InfoPopover.test.tsx)
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

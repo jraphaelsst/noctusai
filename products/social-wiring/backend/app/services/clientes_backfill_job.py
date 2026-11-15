@@ -327,6 +327,7 @@ def configure(*, cfg: Any = None, scheduler: Any = None) -> None:
     re-registration.
     """
     cfg = cfg or settings
+    # poll-budget: every clientes_backfill_interval_hours (default 6h); 1 calls/tick (one job run; reads are per-org batches); worst 4/day (job runs); idle=fixed
     (scheduler or seed_scheduler).register(
         "clientes_backfill",
         _run_clientes_backfill_job,

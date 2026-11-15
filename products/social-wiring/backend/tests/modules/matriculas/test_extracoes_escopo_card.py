@@ -7,18 +7,26 @@ must not be returnable for this use. Auth is covered by
 """
 from __future__ import annotations
 
-from unittest.mock import patch
 from uuid import uuid4
 
 from tests.modules.matriculas.conftest import ORG_ID, extracao_row
 
 CLIENTE = str(uuid4())
-PATH = "app.modules.matriculas.router.atendimento_imoveis_svc.codigos_do_cliente"
 
 
 def _ids(resp):
     assert resp.status_code == 200, resp.text
     return {r["id"] for r in resp.json()["data"]}
+
+
+def _vincular(client, *codigos):
+    """Link `codigos` to THIS cliente through real `atendimentos` + `atendimento_imoveis` rows."""
+    at = str(uuid4())
+    client.mock_supabase.set_table_data("atendimentos", [{"id": at, "org_id": ORG_ID, "cliente_id": CLIENTE}])
+    client.mock_supabase.set_table_data("atendimento_imoveis", [
+        {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": at, "codigo": c, "deleted_at": None}
+        for c in codigos
+    ])
 
 
 def _seed(client):
@@ -31,15 +39,15 @@ def _seed(client):
 
 def test_only_the_cards_imoveis_matriculas_are_returned(client):
     meu, _outro, _orfa = _seed(client)
-    with patch(PATH, return_value=["AP1"]):
-        resp = client.get("/api/matriculas/extracoes", params={"cliente_id": CLIENTE})
+    _vincular(client, "AP1")
+    resp = client.get("/api/matriculas/extracoes", params={"cliente_id": CLIENTE})
     assert _ids(resp) == {meu["id"]}
 
 
 def test_a_card_without_a_linked_imovel_gets_an_empty_list_not_the_org_pool(client):
     _seed(client)
-    with patch(PATH, return_value=[]):
-        resp = client.get("/api/matriculas/extracoes", params={"cliente_id": CLIENTE})
+    _vincular(client)
+    resp = client.get("/api/matriculas/extracoes", params={"cliente_id": CLIENTE})
     assert _ids(resp) == set()
 
 

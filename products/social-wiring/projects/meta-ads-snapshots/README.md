@@ -12,7 +12,7 @@ hierarchy, UI, URL grammar, data wiring, metric traps, browser lessons and the p
 | `load_bundle.py` | Loads a bundle into SQLite as one `extraction_run`. Append-only facts; refuses partial bundles. |
 | `schema.sql` / `ui_columns.sql` | Snapshot schema, plus the UI-column ↔ API-field dictionary. |
 | `screens/` | Reference screenshots of every level, preset and panel (2026-10-06). |
-| `reports/` | Property reports. `ONE10449-2026-10-06.md` is the **canonical template**. |
+| `reports/` | Property reports. `ONE10449-2026-10-06.md` is the **canonical template**; `ONE10449-2026-10-14.md` is the first **weekly run-over-run** update (run #2 vs #1). |
 
 Data lives **outside git**, in `~/.noctusai/meta-ads/meta_ads.sqlite` and `raw/`.
 

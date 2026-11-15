@@ -1260,6 +1260,7 @@ def build_worker(
 ) -> Worker:
     """``claim_gate=None`` runs unconditionally (tests, one-shot drains);
     production passes a :class:`ProcessingGate`."""
+    # poll-budget: Worker claim poll, poll_interval_seconds=1.0 default; 1 calls/tick (rpc claim_next_job; claim_gate ProcessingGate when set); worst 86400/day per worker at the 1.0s base (idle backoff is the seed Worker's, domain/jobs/worker.py); idle=fixed
     return Worker(
         ports.jobs,
         worker_id=worker_id,

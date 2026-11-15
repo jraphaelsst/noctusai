@@ -176,3 +176,9 @@ export function createNotificationHooks(
     useMarcarTodasComoLidas,
   };
 }
+
+// Re-exported on the `@noctusai/lib/notifications` subpath so seed-framework modules import the live-notification
+// helpers from here, never from the `@noctusai/lib` root barrel. A product test that `vi.mock("@noctusai/lib", ...)`
+// with a partial factory would otherwise break every page reaching the framework's infra.tsx (2026-11-04: all 12
+// social-wiring Condominios tests failed with "No createOpenInProduct export is defined on the @noctusai/lib mock").
+export { useLiveNotifications, createOpenInProduct } from './live-notifications';

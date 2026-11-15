@@ -97,6 +97,13 @@ WHAT THIS CHECK CANNOT SEE (blind spots — always in the ``blind_spots`` key)
     import time rather than a string/dict literal) — the ORM extractor
     falls back to the product's own resolved schema in that case; logged
     as a blind spot, not silently assumed correct.
+  - Schema renames ARE followed (``ALTER SCHEMA x RENAME TO y``, the dynamic
+    ``EXECUTE format('ALTER SCHEMA %I RENAME TO %I', v_old, v_new)`` form with
+    literal DECLAREs, or ``-- noc-schema-alias: old -> new``): the frozen
+    ``CREATE TABLE old.*`` of earlier migrations is re-keyed onto the new
+    schema, so a renamed product (monica -> nosnolimiar) never reports
+    ``missing_table:old.*`` (2026-11-15). A rename whose names are computed
+    at runtime is NOT readable — declare the alias marker.
   - A migration whose DDL shape the regex parser cannot recognize (rare;
     ``migration_parser`` itself warns + omits the table — the SAME
     graceful-degradation ``MockSupabaseClient`` lives with).
@@ -119,6 +126,7 @@ from __future__ import annotations
 
 import ast
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -130,6 +138,65 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Source 1 — migration-declared schema (reuses noctusai_lib's own parser)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Schema renames — frozen `CREATE TABLE old.*` statements must follow them
+# ---------------------------------------------------------------------------
+
+_SQL_LINE_COMMENT = re.compile(r"--[^\n]*")
+_ALTER_SCHEMA_STATIC = re.compile(
+    r'ALTER\s+SCHEMA\s+"?(\w+)"?\s+RENAME\s+TO\s+"?(\w+)"?', re.IGNORECASE
+)
+_ALTER_SCHEMA_DYNAMIC = re.compile(
+    r"EXECUTE\s+format\(\s*'ALTER\s+SCHEMA\s+%I\s+RENAME\s+TO\s+%I'\s*,\s*(\w+)\s*,\s*(\w+)\s*\)",
+    re.IGNORECASE,
+)
+# Product-declared alias — the escape hatch for a rename this scanner cannot
+# read (a computed name): ``-- noc-schema-alias: old -> new`` in any migration.
+_SCHEMA_ALIAS_MARKER = re.compile(
+    r"^[ \t]*--[ \t]*noc-schema-alias:[ \t]*(\w+)[ \t]*->[ \t]*(\w+)", re.MULTILINE
+)
+
+
+def _resolve_sql_literal(sql: str, name: str) -> str | None:
+    """``name constant text := 'x'`` (plpgsql DECLARE) -> ``x``; None if not a literal."""
+    m = re.search(rf"\b{re.escape(name)}\s+(?:constant\s+)?text\s*:?=\s*'([^']+)'", sql, re.IGNORECASE)
+    return m.group(1) if m else None
+
+
+def _declared_schema_renames(sql_texts: list[str]) -> list[tuple[str, str]]:
+    """Ordered ``(old, new)`` schema renames the migration set performs:
+    static ``ALTER SCHEMA x RENAME TO y``, the dynamic ``EXECUTE format('ALTER
+    SCHEMA %I RENAME TO %I', v_old, v_new)`` form (variables resolved from
+    their literal DECLAREs, as nosnolimiar 023 does), and the product-declared
+    ``-- noc-schema-alias: old -> new`` marker. Comments are stripped first
+    (except the marker) so prose never counts as a rename."""
+    renames: list[tuple[str, str]] = []
+    for raw in sql_texts:
+        renames += [(m.group(1), m.group(2)) for m in _SCHEMA_ALIAS_MARKER.finditer(raw)]
+        sql = _SQL_LINE_COMMENT.sub("", raw)
+        renames += [(m.group(1), m.group(2)) for m in _ALTER_SCHEMA_STATIC.finditer(sql)]
+        for m in _ALTER_SCHEMA_DYNAMIC.finditer(sql):
+            old, new = _resolve_sql_literal(sql, m.group(1)), _resolve_sql_literal(sql, m.group(2))
+            if old and new:
+                renames.append((old, new))
+    return [(o, n) for o, n in renames if o != n]
+
+
+def _apply_schema_renames(
+    schema_map: dict[str, set[str]], renames: list[tuple[str, str]]
+) -> dict[str, set[str]]:
+    """Re-key every ``old.table`` onto ``new.table`` for each rename, in order
+    (chains follow); columns merge if both sides declared the same table."""
+    for old, new in renames:
+        moved: dict[str, set[str]] = {}
+        for qualified, cols in schema_map.items():
+            schema, _, table = qualified.partition(".")
+            key = f"{new}.{table}" if schema == old and table else qualified
+            moved.setdefault(key, set()).update(cols)
+        schema_map = moved
+    return schema_map
 
 
 def _migration_declared_schema(
@@ -156,6 +223,9 @@ def _migration_declared_schema(
     files = sorted(migrations_dir.glob("*.sql"))
     dynamic_blind_spots: list[dict[str, str | None]] = []
     schema_map = parse_files(files, blind_spots=dynamic_blind_spots)
+    renames = _declared_schema_renames([f.read_text(encoding="utf-8") for f in files])
+    if renames:
+        schema_map = _apply_schema_renames(schema_map, renames)
     return schema_map, True, dynamic_blind_spots
 
 
@@ -632,6 +702,8 @@ def register(server) -> None:
 __all__ = [
     "check_schema_drift",
     "_migration_declared_schema",
+    "_declared_schema_renames",
+    "_apply_schema_renames",
     "_orm_declared_schema",
     "_live_columns_sql",
     "_rows_to_live_schema",

@@ -6,7 +6,7 @@ With it, the login is sent in the POST body, never in a URL and never stored.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from noctusai_lib.integrations.storage import FakeStorageBackend
@@ -31,7 +31,6 @@ from tests.modules.test_certidoes_service import (
     _resultado,
 )
 
-_CRED = "app.modules.certidoes.credentials.resolve_api_key"
 CPF, SENHA = "98765432100", "s3nh4-super-secreta"
 CFG = config_for("divida_ativa_sp")
 
@@ -85,10 +84,10 @@ async def _run(db, http):
 
 class TestSemCredencial:
     @pytest.mark.asyncio
-    async def test_nao_chama_infosimples_e_fica_pendente_com_mensagem(self):
+    async def test_nao_chama_infosimples_e_fica_pendente_com_mensagem(self, credenciais):
         db, http = _seed(), _Http()
-        with patch(_CRED, side_effect=_sem_login):
-            await _run(db, http)
+        credenciais(_sem_login)
+        await _run(db, http)
         assert http.gets == [] and http.posts == []
         row = _row(db)
         assert row["status"] == "pendente"
@@ -97,26 +96,26 @@ class TestSemCredencial:
         assert e_pendencia(row)
 
     @pytest.mark.asyncio
-    async def test_meia_credencial_nao_conta(self):
+    async def test_meia_credencial_nao_conta(self, credenciais):
         db, http = _seed(), _Http()
         only_cpf = lambda n, o=None: CPF if n == "infosimples_govbr_cpf" else None  # noqa: E731
-        with patch(_CRED, side_effect=only_cpf):
-            await _run(db, http)
+        credenciais(only_cpf)
+        await _run(db, http)
         assert http.posts == [] and _row(db)["erro_mensagem"] == MSG_REQUER_GOVBR
 
     @pytest.mark.asyncio
-    async def test_consulta_nao_fica_processando_para_sempre(self):
+    async def test_consulta_nao_fica_processando_para_sempre(self, credenciais):
         db, http = _seed(), _Http()
-        with patch(_CRED, side_effect=_sem_login):
-            await _run(db, http)
+        credenciais(_sem_login)
+        await _run(db, http)
         c = db.table("certidao_consultas").select("status").eq("id", "consulta-001").execute().data[0]
         assert c["status"] != "processando"
 
     @pytest.mark.asyncio
-    async def test_resultado_travado_por_humano_nao_e_tocado(self):
+    async def test_resultado_travado_por_humano_nao_e_tocado(self, credenciais):
         db, http = _seed(status="sucesso", resultado_origem="manual", erro_mensagem=None), _Http()
-        with patch(_CRED, side_effect=_sem_login):
-            await _run(db, http)
+        credenciais(_sem_login)
+        await _run(db, http)
         row = _row(db)
         assert row["status"] == "sucesso" and row["erro_mensagem"] is None
         assert http.posts == []
@@ -140,10 +139,10 @@ class TestSemCredencial:
 
 class TestComCredencial:
     @pytest.mark.asyncio
-    async def test_login_vai_no_corpo_do_post_nunca_na_url(self):
+    async def test_login_vai_no_corpo_do_post_nunca_na_url(self, credenciais):
         db, http = _seed(), _Http()
-        with patch(_CRED, side_effect=_com_login):
-            await _run(db, http)
+        credenciais(_com_login)
+        await _run(db, http)
         assert http.gets == []
         sent = http.posts[0]
         assert sent["url"].endswith("pge/sp/cndt")
@@ -151,10 +150,10 @@ class TestComCredencial:
         assert "params" not in sent
 
     @pytest.mark.asyncio
-    async def test_segredo_nunca_persiste_na_observacao_nem_no_resultado(self):
+    async def test_segredo_nunca_persiste_na_observacao_nem_no_resultado(self, credenciais):
         db, http = _seed(), _Http()
-        with patch(_CRED, side_effect=_com_login):
-            await _run(db, http)
+        credenciais(_com_login)
+        await _run(db, http)
         gravado = db.table(aprendizado.TABELA).select("*").execute().data
         assert gravado, "the watcher must have observed the call"
         blob = repr(gravado) + repr(_row(db))
@@ -170,11 +169,11 @@ class TestCredencialNaLoja:
             spec = get_spec(k)
             assert spec.is_secret and spec.input_type == "password"
 
-    def test_govbr_login_exige_o_par(self):
-        with patch(_CRED, side_effect=_com_login):
-            assert credentials.govbr_login(ORG) == (CPF, SENHA)
-        with patch(_CRED, side_effect=_sem_login):
-            assert credentials.govbr_login(ORG) is None
+    def test_govbr_login_exige_o_par(self, credenciais):
+        credenciais(_com_login)
+        assert credentials.govbr_login(ORG) == (CPF, SENHA)
+        credenciais(_sem_login)
+        assert credentials.govbr_login(ORG) is None
 
 
 class _Http606:
@@ -204,18 +203,18 @@ class TestCnd606ClassGuard:
         assert cfg["params_fn"] == "govbr" and cfg["requer_credencial"] == "govbr"
 
     @pytest.mark.asyncio
-    async def test_cnd_fazenda_sp_sem_login_nao_chama_infosimples(self):
+    async def test_cnd_fazenda_sp_sem_login_nao_chama_infosimples(self, credenciais):
         db = _db(
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[_resultado(tipo="cnd_fazenda_sp", id="r-cnd", ordem=9, status="pendente")],
         )
         http = _Http606()
-        with patch(_CRED, side_effect=_sem_login):
-            await service._process_single_certidao(
-                config_for("cnd_fazenda_sp"), _consulta_row(), "tok", db, "r-cnd", http,
-                FakeStorageBackend(), analyze=_noop_analyze, extract_text=_noop_extract_text,
-                core_db=MockSupabaseClient(schema="public"),
-            )
+        credenciais(_sem_login)
+        await service._process_single_certidao(
+            config_for("cnd_fazenda_sp"), _consulta_row(), "tok", db, "r-cnd", http,
+            FakeStorageBackend(), analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
+        )
         row = db.table("certidao_resultados").select("*").eq("id", "r-cnd").execute().data[0]
         assert http.calls == 0
         assert row["status"] == "pendente" and row["erro_mensagem"] == MSG_REQUER_GOVBR
