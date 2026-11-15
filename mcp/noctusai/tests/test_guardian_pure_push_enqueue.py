@@ -1843,3 +1843,13 @@ def test_item5_selects_the_toolkit_wiring_tests_for_a_tool_module_plus_cli_diff_
     assert "mcp/noctusai/tests/test_other.py" not in argv
     seed = RS.select_ci_suites(tree, ["seed/lib/backend/noctusai_lib/foo.py"], "py")
     assert "mcp/noctusai/tests/test_toolkit_freshness.py" not in [a for s in seed["suites"] for a in s.argv]
+
+
+def test_a_suite_with_a_pglite_fixture_test_is_detected_so_pglite_gets_wired(tmp_path):
+    t = tmp_path / "mcp/noctusai/tests"
+    t.mkdir(parents=True)
+    (t / "test_a.py").write_text("def test_x(pglite):\n    pass\n")
+    (t / "test_b.py").write_text("def test_y():\n    pass\n")
+    mk = lambda *f: RS.CiSuite("mcp_toolkit_tests:scoped", ".", ("-m", "pytest", *f, "-q"))  # noqa: E731
+    assert RS.suite_needs_pglite(tmp_path, mk("mcp/noctusai/tests/test_a.py", "mcp/noctusai/tests/test_b.py"))
+    assert not RS.suite_needs_pglite(tmp_path, mk("mcp/noctusai/tests/test_b.py"))

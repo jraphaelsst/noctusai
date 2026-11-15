@@ -2217,6 +2217,26 @@ def migration_guard_suite(tree: str | Path, changed: list[str]) -> CiSuite | Non
     return CiSuite(f"db-guards:{','.join(products)}", ".", ("-m", "pytest", "-q", "-p", "no:cacheprovider", *files))
 
 
+def suite_needs_pglite(tree: str | Path, suite: CiSuite) -> bool:
+    """True when any test FILE named on the suite's argv takes the `pglite` fixture (needs node_modules PGlite).
+    By construction the scoped toolkit suite (`mcp_toolkit_tests:scoped`) is wired like `db-guards:*`: link PGlite,
+    never exclude the tests (an exclusion leaves them unmeasured)."""
+    import ast
+    base = Path(tree) / suite.cwd
+    for a in suite.argv:
+        p = base / a.split("::")[0]
+        if p.suffix != ".py" or not p.is_file():
+            continue
+        try:
+            mod = ast.parse(p.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        if any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(x.arg == "pglite" for x in n.args.args)
+               for n in ast.walk(mod)):
+            return True
+    return False
+
+
 def link_pglite(tree: str | Path, source_repo: str | Path) -> str:
     """Give the export the SAME PGlite CI installs (`npm ci` in mcp/noctusai/node): symlink the source checkout's
     node_modules ONLY when its package-lock.json is byte-identical to the export's. Returns "" on success, else why.
@@ -2777,6 +2797,11 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                     return {"ok": False, "detail": f"UNMEASURED: the diff touches migrations, so {guard.label} must run, "
                                                    f"but {why}"}
                 suites = suites + [guard]
+            elif any(suite_needs_pglite(tree, x) for x in suites):
+                why = link_pglite(tree, cwd or Path.cwd())
+                if why:
+                    return {"ok": False, "detail": f"UNMEASURED: a selected suite has pglite-fixture tests, so PGlite must "
+                                                   f"be wired in the export (ci_parity:link_pglite), but {why}"}
             if live:
                 r = run("ci_parity:livetree", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *live], tool_dir)
                 n_executed += _pytest_counts(r.stdout)
