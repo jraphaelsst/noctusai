@@ -477,6 +477,23 @@ def cache_path(cache_name: str, repo_root: Path | None = None) -> Path:
     return path
 
 
+def mirror_source_path(cache_name: str, repo_root: Path | None = None) -> Path:
+    """Path the prod cache MIRROR reads a cache from (deploy_pull / mirror_all).
+
+    Same as `cache_path`, except a single-slot (per-tree) cache that has no
+    private slot yet in a linked worktree falls back to the COMMON-dir slot
+    (`<common>/noctusai/cache/`, the primary tree's). Without this a deploy run
+    from a worktree reported `local SQLite cache missing: <common>/worktrees/
+    <name>/noctusai/cache/...` for a cache that exists in the common dir.
+    """
+    own = cache_path(cache_name, repo_root)
+    if own.exists() or cache_name not in _PER_TREE_CACHES:
+        return own
+    root = repo_root if repo_root is not None else REPO_ROOT
+    shared = _git_common_dir(root) / _NEW_CACHE_SUBDIR / _CACHE_FILES[cache_name]
+    return shared if shared.exists() else own
+
+
 # ── The Protocol ─────────────────────────────────────────────────────────────
 
 @runtime_checkable
