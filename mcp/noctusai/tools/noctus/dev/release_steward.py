@@ -2463,7 +2463,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 raise _CiParityTimeout(gate, budgets)
 
             def pytest_failures(r: subprocess.CompletedProcess, label: str) -> list[str]:
-                names = re.findall(r"^FAILED (\S+)", r.stdout or "", flags=re.M)
+                names = re.findall(r"^(?:FAILED|ERROR) (\S+)", r.stdout or "", flags=re.M)  # an ERROR (fixture/collection) is a red too, and is NAMED
                 return [f"{label} {n}" for n in names] or [f"{label} pytest exit {r.returncode}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}"]
 
             for f in prime:
