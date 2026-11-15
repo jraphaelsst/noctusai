@@ -18194,6 +18194,40 @@ def guardian_holds_lease(
     return True, lease, "holder"
 
 
+def _merge_inherited_paths(root: Path, paths: list[str]) -> set[str]:
+    """Staged ``paths`` whose index blob equals ``MERGE_HEAD``'s blob for that path.
+
+    During a merge commit git re-stages every file the merged branch changed; that content was
+    authored on the other branch, not by this committer. A guardian merging dev into its branch
+    must not be refused for dev's own steward tooling (2026-11-15: blocked on doc_staleness.py
+    and toolkit_freshness.py). Only an EXACT blob match is inherited - a path the merge resolved
+    differently (a conflict edit) still counts as authored here. Empty set when there is no
+    MERGE_HEAD or git cannot answer (never widens what the keeper lets through on a probe failure).
+    """
+    import subprocess
+
+    def _rev(ref: str) -> tuple[bool, str]:
+        try:
+            r = subprocess.run(["git", "rev-parse", "-q", "--verify", ref], cwd=root,
+                               capture_output=True, text=True, timeout=30, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return False, "error"
+        return (r.returncode == 0, r.stdout.strip()) if r.returncode in (0, 1) else (False, "error")
+
+    has_merge, _ = _rev("MERGE_HEAD")
+    if not has_merge:
+        return set()
+    inherited: set[str] = set()
+    for path in paths:
+        staged_ok, staged_blob = _rev(f":{path}")
+        merged_ok, merged_blob = _rev(f"MERGE_HEAD:{path}")
+        if "error" in (staged_blob, merged_blob):
+            continue
+        if (staged_ok, staged_blob) == (merged_ok, merged_blob):  # same blob, or absent on both sides
+            inherited.add(path)
+    return inherited
+
+
 def check_guardian_tool_authorship(
     repo_root: Path | None = None,
     staged: list[str] | None = None,
@@ -18262,6 +18296,11 @@ def check_guardian_tool_authorship(
                  "issue": f"cannot derive the guardian-protected tool set ({derive_error}); refusing while this session "
                           "holds the release-steward lease (fail closed). KB § PATTERNS/common/gate-methodology-sync.md"}]
     hits = sorted(p for p in staged if p in protected)
+    if hits:
+        inherited = _merge_inherited_paths(repo_root or REPO_ROOT, hits)
+        if inherited:
+            _telemetry("allow", "merge-inherited: staged blob equals MERGE_HEAD's", ",".join(sorted(inherited)))
+            hits = [p for p in hits if p not in inherited]
     if not hits:
         return []
     holder = (lease or {}).get("session_name") or str((lease or {}).get("session_id"))[:8]
