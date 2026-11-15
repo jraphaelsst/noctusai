@@ -3731,6 +3731,7 @@ class TestMergedTipGateBudgets:
 
     def test_boxed_run_gate_uses_per_gate_budget_capped_by_ceiling(self, monkeypatch):
         import tools.noctus.dev.gate_sweep as gs
+        from tools.noctus.dev import gate_budget as gb
         seen = {}
         monkeypatch.setattr(gs, "_default_run_gate",
                             lambda spec, timeout=300: seen.setdefault(spec.gate, timeout) and (0, "ok", 0.1))
@@ -3738,7 +3739,7 @@ class TestMergedTipGateBudgets:
         run = T._deadline_boxed_run_gate(3600)
         run(NS(gate="pytest:social-wiring"))
         run(NS(gate="kb_sync_verify"))
-        assert seen["pytest:social-wiring"] == 1100 and seen["kb_sync_verify"] == 300
+        assert seen["pytest:social-wiring"] == gb.GATE_BUDGETS_S["pytest:social-wiring"] and seen["kb_sync_verify"] == 300
         seen.clear()
         capped = T._deadline_boxed_run_gate(60)
         capped(NS(gate="pytest:social-wiring"))

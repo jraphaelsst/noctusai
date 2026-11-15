@@ -22,8 +22,8 @@ engine: NOWEB
 mem_limit: 512m
 node_heap_mb: 384
 instances:
-  - name: monica
-    product: monica
+  - name: nosnolimiar
+    product: nosnolimiar
     line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}
   - name: shadow
     product: assistant-x

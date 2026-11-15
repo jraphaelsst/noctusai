@@ -23,8 +23,8 @@ engine: NOWEB
 mem_limit: 512m
 node_heap_mb: 384
 instances:
-  - name: monica
-    product: monica
+  - name: nosnolimiar
+    product: nosnolimiar
     line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}
 """
 @pytest.fixture
@@ -172,7 +172,7 @@ def test_plain_reads_still_run_free(cmd):
     ("cat /app/.sessions/x", "noctus-waha-x-core"),
     ("docker exec noctus-waha-x-core cat /x", None),
     ("docker logs waha-x-core", None),
-    ("docker exec noctus-waha-monica ls", None),
+    ("docker exec noctus-waha-nosnolimiar ls", None),
 ])
 def test_any_waha_core_target_needs_the_confirm_flow_even_when_the_binary_is_a_read(cmd, container):
     assert touches_waha_core(cmd, container)
@@ -259,8 +259,8 @@ engine: NOWEB
 mem_limit: 512m
 node_heap_mb: 384
 instances:
-  - name: monica
-    product: monica
+  - name: nosnolimiar
+    product: nosnolimiar
     line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}
   - name: owner
     product: assistant
@@ -281,7 +281,7 @@ def personal_root(tmp_path):
 
 
 class PersonalInventory:
-    """Two waha containers: monica's (enabled) and the owner's personal core; id, label, IPv4, IPv6, network alias."""
+    """Two waha containers: nosnolimiar's (enabled) and the owner's personal core; id, label, IPv4, IPv6, network alias."""
 
     def __init__(self, rc=0, vps_yml=None, label=False):
         self.rc, self.cmds, self.vps_yml, self.label = rc, [], YML if vps_yml is None else vps_yml, label
@@ -293,7 +293,7 @@ class PersonalInventory:
         if "docker images" in cmd and "ancestor" in cmd and "label=com.docker.compose.project" in cmd:
             tag = "personal-line-label" if self.label else ""
             return self.rc, (
-                "1111aaaa2222bbbb /noctus-waha-monica waha-monica  172.18.0.4 fd00::4 monica-line\n"
+                "1111aaaa2222bbbb /noctus-waha-nosnolimiar waha-nosnolimiar  172.18.0.4 fd00::4 nosnolimiar-line\n"
                 f"9999ffff8888eeee /noctus-waha-owner-core waha-owner-core {tag} 172.19.0.7 fd00::7 secret-alias.internal\n"), ""
         return 0, "OUT", ""
 
@@ -317,7 +317,7 @@ def test_a_personal_core_is_refused_by_every_name_with_or_without_confirm(person
     assert not any("docker exec" in c or "curl" in c for c in inv.cmds)  # the command itself never ran
 
 
-def test_monicas_core_is_needs_confirm_not_refused_and_other_containers_are_free(personal_root):
+def test_nosnolimiar_core_is_needs_confirm_not_refused_and_other_containers_are_free(personal_root):
     inv = PersonalInventory()
     out = exec_cmd("docker logs 1111aaaa2222", run_remote=inv, repo_root=personal_root)
     assert out["status"] == "needs_confirm"
@@ -378,7 +378,7 @@ def test_the_vps_copy_alone_is_enough_even_when_the_label_is_missing_and_the_loc
 def test_if_any_source_is_unreadable_every_waha_target_is_refused_as_if_personal(root_with, tmp_path, which):
     root = str(tmp_path / "nowhere") if which == "local" else root_with(PLAIN_VPS_YML)
     inv = PersonalInventory(vps_yml=False if which == "vps" else PLAIN_VPS_YML)
-    for cmd in ("docker logs noctus-waha-monica", "docker exec noctus-waha-monica sh", "docker logs 1111aaaa2222"):
+    for cmd in ("docker logs noctus-waha-nosnolimiar", "docker exec noctus-waha-nosnolimiar sh", "docker logs 1111aaaa2222"):
         assert exec_cmd(cmd, confirm=True, run_remote=inv, repo_root=root)["status"] == "refused", (which, cmd)
     assert exec_cmd("docker logs deadbeef0000", run_remote=inv, repo_root=root)["ok"]  # unrelated containers stay free
 
@@ -388,7 +388,7 @@ def test_a_container_stamped_personal_is_refused_by_label_even_when_every_declar
     assert exec_cmd("cat /x", container="9999ffff", confirm=True, run_remote=inv,
                     repo_root=root_with(PLAIN_VPS_YML))["status"] == "refused"
     assert exec_cmd("cat /x", container="1111aaaa", confirm=True, run_remote=inv,
-                    repo_root=root_with(PLAIN_VPS_YML))["ok"]  # monica's core has no label: confirm flow only
+                    repo_root=root_with(PLAIN_VPS_YML))["ok"]  # nosnolimiar's core has no label: confirm flow only
 
 
 # -- round 6: a command that picks its container at run time names no id/IP/alias ------------------------------------------
@@ -406,7 +406,7 @@ DYNAMIC = [
     "sudo sh -c 'docker exec x sh'",
     "find / -name x -exec docker exec {} sh ;",
     "CID=abc; docker exec $CID sh",
-    "docker ps -q && docker exec monica-core id",
+    "docker ps -q && docker exec nosnolimiar-core id",
 ]
 
 
@@ -434,14 +434,14 @@ def test_dynamic_selection_is_refused_when_only_the_live_label_says_personal(roo
 
 def test_dynamic_selection_is_not_blocked_when_no_personal_line_exists_anywhere(root_with):
     inv = PersonalInventory(vps_yml=PLAIN_VPS_YML, label=False)
-    out = exec_cmd("docker exec $(docker ps -q --filter name=monica) id", confirm=True, run_remote=inv,
+    out = exec_cmd("docker exec $(docker ps -q --filter name=nosnolimiar) id", confirm=True, run_remote=inv,
                    repo_root=root_with(PLAIN_VPS_YML))
     assert out["status"] != "refused"
 
 
 def test_a_plain_explicit_docker_exec_with_confirm_stays_allowed_beside_a_personal_line(personal_root):
     inv = PersonalInventory()
-    out = exec_cmd("docker exec monica-core id", confirm=True, run_remote=inv, repo_root=personal_root)
+    out = exec_cmd("docker exec nosnolimiar-core id", confirm=True, run_remote=inv, repo_root=personal_root)
     assert out["status"] != "refused", out
     out = exec_cmd("docker exec deadbeef0000 ls /app", confirm=True, run_remote=inv, repo_root=personal_root)
     assert out["ok"] is True

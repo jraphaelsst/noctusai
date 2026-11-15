@@ -143,8 +143,8 @@ describe('enterViaCore', () => {
     const navigate = vi.fn();
     const { locks, request } = fakeLocks();
     await enterViaCore('u1', 'agents', { doc: visible, navigate, locks });
-    await enterViaCore('u2', 'monica', { doc: visible, navigate, locks });
-    expect(request.mock.calls.map((c) => c[0])).toEqual(['noctus-reentry:agents', 'noctus-reentry:monica']);
+    await enterViaCore('u2', 'nosnolimiar', { doc: visible, navigate, locks });
+    expect(request.mock.calls.map((c) => c[0])).toEqual(['noctus-reentry:agents', 'noctus-reentry:nosnolimiar']);
   });
 
   it('still works (inflight stamp only) where Web Locks do not exist', async () => {

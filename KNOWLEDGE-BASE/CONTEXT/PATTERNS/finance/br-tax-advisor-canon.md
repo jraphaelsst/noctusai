@@ -169,6 +169,19 @@ The agent always says so — the list in `dre-structure.md` §7 (bookkeeping res
 
 See `KB § PATTERNS/finance/managerial-and-saas-metrics.md` §9 — Fator R computed on NoctusAI's trailing-12-month figures, the Anexo III vs V delta, and the SaaS view next to it.
 
+### C · Afiliados / newsletter (accountant memo, 2026-11-13)
+
+**Question:** "Canal de ofertas (comissão de afiliado) + newsletter (patrocínio): PF, MEI ou PJ?"
+- **PF (carnê-leão):** legal, but costly — a PJ payer withholds IRRF on the progressive table plus INSS as contribuinte individual; foreign payers go through carnê-leão [norma: RIR/2018; Lei 8.212]. The monthly exemption of Lei 15.270/2025 is **not yet checked** against the primary text. Use PF only for a short test.
+- **MEI:** CNAE 7319-0/02 (promotor de vendas independente) appears in Res. CGSN 140 Anexo XI **in secondary sources only** (`mei.cnae_permitido.7319002`, tier publicacao_tecnica — **re-verify against the official Anexo XI**). The occupation describes field promotion, not online affiliate publishing: a stretch, the occupation/CNAE call is the CRC's. Ceiling: `mei.limite_receita_bruta_anual`. 7311-4/00, 7490-1/04 and 6319-4/00 are probably out of Anexo XI (**open, not verified**).
+- **Cheapest compliant shape:** ME on the Simples, as an SLU — both activities sit in LC 123 art. 18 §5-I, items VII (intermediação de negócios) and X (jornalismo e publicidade) (`simples.par5i.itens_vii_x`) [norma, Planalto read 2026-11-13]. That puts them under **Fator R** (`simples.fator_r.limiar`): at or above ⇒ Anexo III, below ⇒ Anexo V; pró-labore is the usual lever — CRC.
+- **Same CNPJ as NoctusAI or a separate SLU:** NoctusAI has no CNPJ yet (§13). Same company shares Fator R and the RBT12 ceiling across all revenue and puts the consumer/advertising liability on the SaaS company; a separate SLU ring-fences risk but costs a second contador and pró-labore. Memo recommendation: test as PF for a few months, then one separate SLU for media — CRC signs off.
+- **Foreign payers (AliExpress, Awin UK):** nothing withheld in Brazil; export revenue leaves the Simples base only if the money enters Brazil **and the result happens abroad** (LC 123 art. 18 §4-A IV) — a commission on a sale to a buyer in Brazil arguably has its result here (**open; CRC**). IOF on export-receipt inflows [norma, not re-read].
+- **Withholding (PJ payer → Simples PJ):** the IRRF on comissões/publicidade and the CSRF are waived for Simples companies (IN SRF 765/2007; IN SRF 459/2004) [norma, not re-read]; ISS may still be withheld by the payer's município.
+- **DRE:** commission = receita bruta de serviços, recognised when the program **approves** it (pending or clicked ≠ revenue); a clawback after approval is a cancelamento (dedução) — for the Simples only "vendas canceladas" reduces the base (LC 123 art. 3 §1). Sponsorship = receita de serviços de publicidade at the gross amount; agency discount is deduction or commercial expense (contador decides).
+- **2027:** NFS-e issue date drives the Simples base (Res. CGSN 190/2026); whether the program demands an NFS-e from a PJ affiliate is **not verified — read each contract**. IBS/CBS inside or outside the DAS matters for B2B sponsors on lucro real; the 1st-half-2027 window is 03/11 to 20/12/2026, next in March 2027 [accountant memo, not re-read].
+- **Contador (CRC):** bookkeeping/DEFIS, CNAE↔Anexo and MEI fit, pró-labore as Fator R lever, export-revenue qualification, IBS/CBS inside/outside the DAS.
+
 ## 10 · Anti-patterns
 
 - **Rate tables hard-coded in code** — rates and brackets are data with a source and a validity date.
@@ -193,6 +206,8 @@ See `KB § PATTERNS/finance/managerial-and-saas-metrics.md` §9 — Fator R comp
 | Res. CGSN 190/2026 (official, Receita normas) | https://normasinternet2.receita.fazenda.gov.br/api/consulta-externa/ato/152832/visao/vigente | §3/§4 invoice moment from 2027; art. 5 XVI IBS/CBS outside DAS | 2026-10-14 (via dre-structure §6) |
 | SC COSIT 94/2025 | https://www.normaslegais.com.br/legislacao/solucao-de-consulta-cosit-94-2025.htm | §9 A installment interest in receita bruta (mirror) | 2026-10-14 (via dre-structure §4) |
 | Fator R / Anexo III vs V practice (Agilize; Contábeis) | https://agilize.com.br/blog/gestao-fiscal/anexo-iii-fator-r-6-de-imposto/ · https://www.contabeis.com.br/noticias/51679/o-que-e-fator-r-como-calcular | §2 software CNAEs Fator-R-sensitive; first-bracket gap (`simples.anexo_iii.faixa_1.aliquota_nominal` vs `simples.anexo_v.faixa_1.aliquota_nominal`) [blog/prática — pointer only] | 2026-11-05 (search result) |
+| MEI CNAE 7319-0/02 (secondary sources) | https://tabelasfiscais.com.br/cnae/7319002 · https://contabilidade.com/blog/promotor-de-vendas-pode-ser-mei-descubra-como-abrir-empresa/ | §9 C `mei.cnae_permitido.7319002` [publicação profissional — re-verify Anexo XI] | 2026-11-13 |
+| Perguntão MEI, Receita | https://www8.receita.fazenda.gov.br/SimplesNacional/Arquivos/manual/PerguntaoMEI.pdf | §9 C MEI ceiling | 2026-11-13 |
 
 ## 12 · Re-verify list (date-watch)
 

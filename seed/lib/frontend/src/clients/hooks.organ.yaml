@@ -8,7 +8,7 @@ validation_status: emerging
 
 known_facts:
   - "TanStack Query hook factory for /api/clients: config, tags, cursor list, by-lead lookup, detail, client sessions, agenda range, schedules, finance, finance accounts (shares the finance organ's cache key) + every write a useCacheWriteMutation: sessions placed into every cached list they belong to (client list + agenda weeks), payments commit the returned finance into finance / summary / session payment_status; server-derived summary + finance settle in the background."
-  - "Part of the clients organ (backend: noctusai_lib/domain/clients; contract: recurring-session clients + leads stage tags, 2026-10-29). Seed-generic (therapists, trainers, tutors); first consumer: product monica (Pacientes)."
+  - "Part of the clients organ (backend: noctusai_lib/domain/clients; contract: recurring-session clients + leads stage tags, 2026-10-29). Seed-generic (therapists, trainers, tutors); first consumer: product nosnolimiar (Pacientes)."
   - "Vocabulary is DATA: noun_singular / noun_plural, statuses, session statuses (with billable), payment methods and the org timezone come from GET /api/clients/config; the organ never names 'Paciente'. Colours are the pipeline STAGE_COLORS tokens rendered through stageTagClasses."
   - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); never isLoading. Personal reads keyed by id carry no placeholderData."
   - "Dates and times are shown and typed in the ORG zone (format.zonedParts / zonedIso), never the browser's; instants go to the API with the zone's offset."

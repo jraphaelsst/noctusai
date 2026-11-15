@@ -6412,6 +6412,78 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — social_wiring.imobshot_eventos append-only guard (migration 344).
+# ---------------------------------------------------------------------------
+#
+# Self-provisioning inside the rollback-only wrapper: each probe inserts its own throwaway card (random org, so
+# the (org_id, imovel_codigo) unique key can never collide with real data) and one event, then attempts the
+# forbidden operation. The trigger's message carries "imobshot_eventos is append-only" — the fragment the probe
+# requires, so an unrelated error is `ambiguous`, never a pass.
+
+_IMOBSHOT_EVENTOS_GUARD = "imobshot_eventos_append_only"
+_IMOBSHOT_EVENTOS_MIGRATIONS = ("344_imobshotai_cards.sql",)
+
+
+def _imobshot_eventos_probe(*, probe_id: str, op_sql: str, what: str) -> GuardProbe:
+    fragment_lit = _sql_lit("imobshot_eventos is append-only")
+    what_lit = _sql_lit(what)
+    sql = _do_block(f"""
+DECLARE
+  v_org uuid := gen_random_uuid();
+  v_card uuid;
+  v_ev uuid;
+BEGIN
+  IF to_regclass('social_wiring.imobshot_eventos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: social_wiring.imobshot_eventos does not exist (migration 344 not applied)';
+  END IF;
+  BEGIN
+    INSERT INTO social_wiring.imobshot_cards (org_id, imovel_codigo) VALUES (v_org, 'NOCPROBE')
+    RETURNING id INTO v_card;
+    INSERT INTO social_wiring.imobshot_eventos (org_id, card_id, tipo) VALUES (v_org, v_card, 'card_criado')
+    RETURNING id INTO v_ev;
+{op_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the append-only guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name=_IMOBSHOT_EVENTOS_GUARD,
+        kind="write_refusal",
+        migrations=_IMOBSHOT_EVENTOS_MIGRATIONS,
+        sql=sql,
+        rationale=(
+            "imobshot_eventos is the ImobShotAI card history (contract §7: time-to-approval, drop-off, "
+            "approval-rate metrics read it) — a rewritable or deletable row makes every metric unprovable."
+        ),
+    )
+
+
+_IMOBSHOT_EVENTOS_PROBES: tuple[GuardProbe, ...] = (
+    _imobshot_eventos_probe(
+        probe_id="social_wiring.imobshot_eventos.update_refused",
+        op_sql="    UPDATE social_wiring.imobshot_eventos SET tipo = 'card_arquivado' WHERE id = v_ev;",
+        what="UPDATE of an imobshot_eventos row",
+    ),
+    _imobshot_eventos_probe(
+        probe_id="social_wiring.imobshot_eventos.delete_refused",
+        op_sql="    DELETE FROM social_wiring.imobshot_eventos WHERE id = v_ev;",
+        what="DELETE of an imobshot_eventos row",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — core owner-notice recipient events append-only guard (migration 118).
 # ---------------------------------------------------------------------------
 #
@@ -11113,37 +11185,38 @@ _ORBITY_018_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Monica migration 015 (WhatsApp connections + inbox) -- the webhook token is the routing credential of the
+# Nós no Limiar (ex-monica) migration 015 (WhatsApp connections + inbox) -- the webhook token is the routing credential of the
 # PUBLIC inbound webhook: two connections sharing one would cross-deliver messages between orgs.
 # ---------------------------------------------------------------------------
 
-_MONICA_SCHEMA = "monica"
+_NOSNOLIMIAR_SCHEMA = "nosnolimiar"
 
-_MONICA_WA_WEBHOOK_TOKEN_UNIQUE_PROBE = GuardProbe(
-    id="monica.whatsapp_connections.webhook_token_unique",
-    product="monica",
-    schema=_MONICA_SCHEMA,
-    guard_name="idx_monica_whatsapp_connections_webhook_token",
+# 015 created it as idx_monica_whatsapp_connections_webhook_token; nosnolimiar 024 renamed it (product rename 2026-11-14).
+_NOSNOLIMIAR_WA_WEBHOOK_TOKEN_UNIQUE_PROBE = GuardProbe(
+    id="nosnolimiar.whatsapp_connections.webhook_token_unique",
+    product="nosnolimiar",
+    schema=_NOSNOLIMIAR_SCHEMA,
+    guard_name="idx_nosnolimiar_whatsapp_connections_webhook_token",
     kind="write_refusal",
-    migrations=("015_whatsapp.sql",),
+    migrations=("015_whatsapp.sql", "024_rename_monica_indexes.sql"),
     rationale="The webhook token routes an unauthenticated inbound call to an org; two connections sharing one would cross-deliver conversations between orgs.",
     sql=_do_block(f"""
 DECLARE
   v_org uuid := gen_random_uuid();
 BEGIN
-  IF to_regclass('{_MONICA_SCHEMA}.whatsapp_connections') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_MONICA_SCHEMA}.whatsapp_connections does not exist (monica 015 not applied)';
+  IF to_regclass('{_NOSNOLIMIAR_SCHEMA}.whatsapp_connections') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_NOSNOLIMIAR_SCHEMA}.whatsapp_connections does not exist (nosnolimiar 015 not applied)';
   END IF;
   BEGIN
-    INSERT INTO {_MONICA_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token)
+    INSERT INTO {_NOSNOLIMIAR_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token)
     VALUES (v_org, gen_random_uuid(), 'a', 'http://x', 'k', 'noc_probe_tok');
-    INSERT INTO {_MONICA_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token)
+    INSERT INTO {_NOSNOLIMIAR_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token)
     VALUES (v_org, gen_random_uuid(), 'b', 'http://x', 'k', 'noc_probe_tok');
     RAISE EXCEPTION 'NOC_PROBE:permitted: two connections with the same webhook_token were inserted -- the unique guard did not fire';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
       RAISE;
-    ELSIF SQLERRM LIKE '%idx_monica_whatsapp_connections_webhook_token%' THEN
+    ELSIF SQLERRM LIKE '%idx_nosnolimiar_whatsapp_connections_webhook_token%' THEN
       RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
     ELSE
       RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
@@ -12580,6 +12653,61 @@ END;
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — social_wiring CoreStudio post axes (migration 342). Reuses the
+# migration-241 fixture (marca + esteira stage); every probe rolls back.
+# ---------------------------------------------------------------------------
+
+_SW_342_MIGRATION = "342_cs_post_axes.sql"
+
+
+def _sw342_probe(*, probe_id: str, guard_name: str, statements: str, permitted_msg: str, rationale: str) -> GuardProbe:
+    base = _sw241_refusal_probe(
+        probe_id=probe_id, guard_name=guard_name, statements=statements, permitted_msg=permitted_msg, rationale=rationale,
+    )
+    return GuardProbe(
+        id=base.id, product=base.product, schema=base.schema, guard_name=base.guard_name, kind=base.kind,
+        migrations=(_SW_342_MIGRATION,), rationale=base.rationale, sql=base.sql,
+    )
+
+
+_SW_342_PUB_INS = (
+    f"INSERT INTO {_SW_SCHEMA}.cs_post_publicacoes (org_id, post_id, rede, formato, publicar_em) "
+    "VALUES (v_org, v_post, 'instagram', 'reel', now() + interval '1 day')"
+)
+
+_SW_342_PROBES: tuple[GuardProbe, ...] = (
+    _sw342_probe(
+        probe_id="sw342_post_eventos_append_only",
+        guard_name="cs_post_eventos_imutavel",
+        statements=(
+            _sw241_stmt(_sw241_post_ins("v_marca_a")).replace(";", " RETURNING id INTO v_post;", 1)
+            + "\n"
+            + _sw241_stmt(
+                f"INSERT INTO {_SW_SCHEMA}.cs_post_eventos (org_id, post_id, tipo) VALUES (v_org, v_post, 'publicado')"
+            )
+            + "\n"
+            + _sw241_stmt(f"UPDATE {_SW_SCHEMA}.cs_post_eventos SET tipo = 'publicacao_falhou' WHERE post_id = v_post")
+        ),
+        permitted_msg="an event row was rewritten",
+        rationale="The CoreStudio event ledger is append-only: no UPDATE or DELETE for anybody, the trigger refuses even the table owner.",
+    ),
+    _sw342_probe(
+        probe_id="sw342_publicacao_alvo_unico",
+        guard_name="cs_post_publicacoes_alvo_uq",
+        statements=(
+            _sw241_stmt(_sw241_post_ins("v_marca_a")).replace(";", " RETURNING id INTO v_post;", 1)
+            + "\n"
+            + _sw241_stmt(_SW_342_PUB_INS)
+            + "\n"
+            + _sw241_stmt(_SW_342_PUB_INS)
+        ),
+        permitted_msg="the same post queued twice for the same rede x formato x conta",
+        rationale="A post is never queued twice for the same rede x formato x conta while the first is live (no double publish).",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
@@ -12656,6 +12784,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ATENDIMENTO_CONFLITO_STATUS_PROBE,
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
+    *_IMOBSHOT_EVENTOS_PROBES,
     *_OWNER_RECIPIENT_EVENTS_PROBES,
     *_CORE_AI_USAGE_PROBES,
     *_CORE_FUNNEL_PROBES,
@@ -12701,6 +12830,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,
+    *_SW_342_PROBES,
     *_SW_JULIA_ENVIO_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
     *_SW_JULIA_CREDITO_PROBES,
@@ -12719,7 +12849,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _COMMERCE_COUPON_PERCENT_PROBE,
     _COMMERCE_COUPON_CODE_UNIQUE_PROBE,
     *_ORBITY_018_PROBES,
-    _MONICA_WA_WEBHOOK_TOKEN_UNIQUE_PROBE,
+    _NOSNOLIMIAR_WA_WEBHOOK_TOKEN_UNIQUE_PROBE,
     *_AGENTS_BROWSER_LOCKDOWN_PROBES,
     *_CORE_BROWSER_LOCKDOWN_PROBES,
     *_IGIG_BROWSER_LOCKDOWN_PROBES,

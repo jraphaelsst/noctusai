@@ -732,3 +732,36 @@ class TestProposeResolveWhenCli:
         assert e.value.code == 0
         assert "DRY-RUN" in capsys.readouterr().out
         assert "resolve_when" not in json.loads(ai.LEDGER_PATH.read_text().splitlines()[0])
+
+
+class TestRefusalClassRows:
+    """ONE row per refusal class, count updated in place, closes itself when the class goes quiet."""
+
+    def _rows(self):
+        return [json.loads(l) for l in ai.LEDGER_PATH.read_text().splitlines() if l.strip()]
+
+    def test_upsert_is_one_row_with_the_count_updated_in_place(self, tmp_repo):
+        a = ai.upsert_class_row(key="g:x", count=2, sessions=1, target="g", description="d", agent="t")
+        b = ai.upsert_class_row(key="g:x", count=5, sessions=3, target="g", description="d", agent="t")
+        c = ai.upsert_class_row(key="g:x", target="g", description="d")  # no count: increments
+        assert (a["action"], b["action"], c["action"]) == ("created", "updated", "updated")
+        (row,) = self._rows()
+        assert row["class_key"] == "g:x" and row["count"] == 6 and row["sessions"] == 3
+        assert row["resolve_when"] == "gate_quiet:g:x:7d" and row["kind"] == "drift"
+
+    def test_gate_quiet_predicate_closes_when_quiet_and_holds_when_refusing(self, tmp_repo, monkeypatch):
+        from tools.noctus.dev import gate_alignment as ga
+        import datetime as dt
+        old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=10)).isoformat()
+        entry = {"ts": old, "last_seen": old, "target": "g"}
+        monkeypatch.setattr(ga, "read_events", lambda path=None: [])
+        ok, _ = ai._eval_predicate("gate_quiet:g:x:7d", [], entry, tmp_repo)
+        assert ok
+        recent = {"gate": "g", "guard": "g", "outcome": "deny", "class": "g:x",
+                  "ts": dt.datetime.now(dt.timezone.utc).isoformat()}
+        monkeypatch.setattr(ga, "read_events", lambda path=None: [recent])
+        ok, detail = ai._eval_predicate("gate_quiet:g:x:7d", [], entry, tmp_repo)
+        assert not ok and "still refusing" in detail
+        ok, _ = ai._eval_predicate("gate_quiet:g:x:7d", [], {**entry, "last_seen": recent["ts"]}, tmp_repo)
+        assert not ok  # a row touched within the window is never "quiet"
+        assert not ai._eval_predicate("gate_quiet:nowindow", [], entry, tmp_repo)[0]
