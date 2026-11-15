@@ -2221,6 +2221,17 @@ def link_pglite(tree: str | Path, source_repo: str | Path) -> str:
     return ""
 
 
+def pglite_source_repo(cwd: str | Path | None) -> Path:
+    """Where the PGlite node_modules CI's `npm ci` would produce lives: the caller's tree if it has it, else the PRIMARY
+    checkout (a worktree never runs `npm ci`; the primary's node_modules is the one install on the machine)."""
+    here = Path(cwd) if cwd else Path.cwd()
+    if (here / PGLITE_NODE_DIR / "node_modules" / "@electric-sql" / "pglite").is_dir():
+        return here
+    rc, out, _e = _subprocess_git(cwd)("rev-parse", "--path-format=absolute", "--git-common-dir")
+    primary = Path(out.strip()).parent if rc == 0 and out.strip() else here
+    return primary if (primary / PGLITE_NODE_DIR / "node_modules" / "@electric-sql" / "pglite").is_dir() else here
+
+
 # ─── ONE selector (2026-11-12): item 5 asks gate_sweep what the diff can break ─────────────────────────────
 # Item 5 used to run a SECOND selector (`ci_scope` + `local_suites`) and went green on every ejected entry while
 # running 0 suites (185 verdicts, 1 ran a suite; today a merge_queue.py change broke the guardian snapshot test and
@@ -2635,7 +2646,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 raise _CiParityTimeout(gate, budgets)
 
             def pytest_failures(r: subprocess.CompletedProcess, label: str) -> list[str]:
-                names = re.findall(r"^FAILED (\S+)", r.stdout or "", flags=re.M)
+                names = re.findall(r"^(?:FAILED|ERROR) (\S+)", r.stdout or "", flags=re.M)  # ERROR = setup/collection error
                 failed_items.append(label)
                 failed_tests.extend(names)
                 missing_mods.update(harness_missing_modules((r.stdout or "") + chr(10) + (r.stderr or "")))
@@ -2666,11 +2677,15 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             live = live_tree_test_ids(tool_dir / "tests") if scope.run_heavy else []
             guard = migration_guard_suite(tree, changed)
             if guard is not None:
-                why = link_pglite(tree, cwd or Path.cwd())
-                if why:
-                    return {"ok": False, "detail": f"UNMEASURED: the diff touches migrations, so {guard.label} must run, "
-                                                   f"but {why}"}
                 suites = suites + [guard]
+            if guard is not None or live:
+                # CI sets CI=true and installs PGlite (`npm ci`); the export has no node_modules, so a PGlite-backed
+                # live-tree test would ERROR at setup (invisible to a `FAILED` scan) for a reason that is the harness.
+                why = link_pglite(tree, pglite_source_repo(cwd))
+                if why:
+                    return {"ok": False, "detail": f"UNMEASURED: item 5 runs PGlite-backed tests ("
+                                                   f"{guard.label if guard is not None else 'live-tree toolkit tests'}) "
+                                                   f"but {why}"}
             if live:
                 r = run("ci_parity:livetree", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *live], tool_dir)
                 n_executed += _pytest_counts(r.stdout)
