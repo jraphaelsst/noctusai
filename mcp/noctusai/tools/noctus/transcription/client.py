@@ -19,6 +19,11 @@ DEFAULT_URL = "https://core.noctusai.com"
 MAX_BYTES = 150 * 1024 * 1024
 TERMINAL = frozenset({"concluida", "falhou", "cancelada"})
 _FAST_POLL_S = 5.0
+#: Transient statuses: rate limit (429), capacity (503) and the GATEWAY errors a core/tunnel restart
+#: answers with (502/504). None of them is a job result -- the job keeps running server-side -- so
+#: they are retried, never recorded as a failure (2026-11-14: a core redeploy turned 31 live jobs into
+#: "failed" 502s). A long outage is still bounded by the batch's no-progress window.
+_TRANSIENT = frozenset({429, 502, 503, 504})
 _SLOW_POLL_S = 30.0
 _FAST_WINDOW_S = 60.0
 _MAX_SUBMIT_WAIT_S = 120.0
@@ -100,7 +105,8 @@ def _preflight(path: str) -> tuple[Path | None, dict[str, Any] | None]:
 
 
 def submit(path: str, idioma: str = "pt", rotulo: str | None = None,
-           segmentos: bool = False, *, _transport: httpx.BaseTransport | None = None) -> dict:
+           segmentos: bool = False, palavras: bool = False, *,
+           _transport: httpx.BaseTransport | None = None) -> dict:
     """POST multipart to /api/transcriptions; return the 202 body or an error dict."""
     cfg = _config()
     if isinstance(cfg, dict):
@@ -109,6 +115,8 @@ def submit(path: str, idioma: str = "pt", rotulo: str | None = None,
     if err:
         return err
     data = {"idioma": idioma, "segmentos": "true" if segmentos else "false"}
+    if palavras:
+        data["palavras"] = "true"
     if rotulo:
         data["rotulo"] = rotulo
     with p.open("rb") as fh:
@@ -132,7 +140,7 @@ def get(id: str, *, _transport: httpx.BaseTransport | None = None) -> dict:
 
 
 def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
-               timeout_s: float = 3600, segmentos: bool = False, *,
+               timeout_s: float = 3600, segmentos: bool = False, palavras: bool = False, *,
                _transport: httpx.BaseTransport | None = None,
                _sleep: Callable[[float], None] = time.sleep,
                _clock: Callable[[], float] = time.monotonic) -> dict:
@@ -140,6 +148,7 @@ def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
 
     ``segmentos=True`` asks the server for timestamped segments and returns them
     under ``segmentos`` — the reason callers used to fall back to local Whisper.
+    ``palavras=True`` also adds ``palavras: [{texto, inicio, fim, confianca}]`` to each segment.
     """
     start = _clock()
 
@@ -148,9 +157,9 @@ def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
 
     while True:
         job = submit(path, idioma=idioma, rotulo=rotulo, segmentos=segmentos,
-                     _transport=_transport)
+                     palavras=palavras, _transport=_transport)
         ra = job.get("retry_after") if "codigo" in job else None
-        if ra is not None and job.get("status_code") in (429, 503) \
+        if ra is not None and job.get("status_code") in _TRANSIENT \
                 and ra <= _MAX_SUBMIT_WAIT_S and remaining() > ra:
             _sleep(ra)
             continue
@@ -163,8 +172,8 @@ def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
         cur = get(job_id, _transport=_transport)
         wait: float | None = None
         if "codigo" in cur:
-            if cur.get("status_code") in (429, 503):
-                wait = cur.get("retry_after")
+            if cur.get("status_code") in _TRANSIENT:
+                wait = cur.get("retry_after") or _FAST_POLL_S
             else:
                 return {**cur, "id": job_id}
         elif cur.get("status") in TERMINAL:
@@ -172,7 +181,7 @@ def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
                    "duracao_s": cur.get("duracao_s"), "rtf": cur.get("rtf"), "id": job_id}
             if cur.get("erro"):
                 out["erro"] = cur["erro"]
-            if segmentos:
+            if segmentos or palavras:
                 out["segmentos"] = cur.get("segmentos")
             return out
         if wait is None:
@@ -191,9 +200,15 @@ def batch(src_dir: str, out_dir: str, pattern: str = "*.mp3", idioma: str = "pt"
           _clock: Callable[[], float] = time.monotonic) -> dict:
     """Transcribe every ``pattern`` file in ``src_dir`` into ``out_dir/<stem>.txt|.json``.
 
-    Resumable: a stem whose ``.txt`` already exists is skipped. At most
-    ``max_inflight`` jobs are queued at once (the API rate-limits bursts with
-    429 + Retry-After, which is honoured on both submit and poll).
+    Resumable: a stem whose ``.txt`` already exists is skipped, and jobs still in flight are
+    recorded in ``out_dir/.inflight.json`` so a re-run resumes polling them instead of
+    re-uploading (no duplicate server work). At most ``max_inflight`` jobs are queued at once
+    (the API rate-limits bursts with 429 + Retry-After, honoured on both submit and poll).
+
+    ``timeout_s`` is a NO-PROGRESS window, not a total budget: the clock resets every time a
+    job is accepted or finishes, so a long healthy batch runs to the end in ONE call, and only
+    a real stall (nothing accepted or finished for ``timeout_s``) stops it, as
+    ``status: "sem_progresso"``.
     """
     src, out = Path(src_dir).expanduser(), Path(out_dir).expanduser()
     if not src.is_dir():
@@ -201,34 +216,52 @@ def batch(src_dir: str, out_dir: str, pattern: str = "*.mp3", idioma: str = "pt"
     out.mkdir(parents=True, exist_ok=True)
     files = sorted(src.glob(pattern))
     skipped = [f.stem for f in files if (out / f"{f.stem}.txt").exists()]
-    queue = [f for f in files if f.stem not in set(skipped)]
+    inflight_path = out / ".inflight.json"
     jobs: dict[str, str] = {}
+    if inflight_path.exists():
+        prev = json.loads(inflight_path.read_text(encoding="utf-8"))
+        jobs = {jid: stem for jid, stem in prev.items() if stem not in set(skipped)}
+    resumed = sorted(jobs.values())
+    queue = [f for f in files if f.stem not in set(skipped) and f.stem not in set(resumed)]
     done: list[str] = []
     failed: list[dict[str, Any]] = []
-    start = _clock()
+    last_progress = _clock()
+
+    def save_inflight() -> None:
+        if jobs:
+            inflight_path.write_text(json.dumps(jobs, ensure_ascii=False), encoding="utf-8")
+        else:
+            inflight_path.unlink(missing_ok=True)
+
+    def progressed() -> None:
+        nonlocal last_progress
+        last_progress = _clock()
+        save_inflight()
 
     def wait_for(resp: dict) -> float | None:
-        if resp.get("status_code") in (429, 503):
+        if resp.get("status_code") in _TRANSIENT:
             return resp.get("retry_after") or _FAST_POLL_S
         return None
 
     def bloqueado(resp: dict, wait: float) -> dict | None:
         """The server asked us to back off longer than the budget left: stop loudly, never sleep past it."""
-        if wait <= timeout_s - (_clock() - start):
+        if wait <= timeout_s - (_clock() - last_progress):
             return None
         return {"status": "bloqueado", "codigo": resp.get("codigo"), "mensagem": resp.get("mensagem"),
                 "status_code": resp.get("status_code"), "retry_after": wait,
                 "done": done, "failed": failed, "skipped": skipped,
                 "pending": [f.stem for f in queue], "inflight": jobs,
-                "dica": "Bloqueado pelo servidor por mais tempo que o orçamento restante; "
+                "resumed": resumed,
+                "dica": "Bloqueado pelo servidor por mais tempo que a janela sem progresso; "
                         "rode de novo depois de retry_after segundos (os .txt prontos são pulados)."}
 
     while queue or jobs:
-        if _clock() - start > timeout_s:
-            return {"status": "timeout", "done": done, "failed": failed, "skipped": skipped,
-                    "pending": [f.stem for f in queue], "inflight": jobs,
-                    "mensagem": "Tempo esgotado no cliente; rode de novo para retomar "
-                                "(os .txt prontos são pulados)."}
+        if _clock() - last_progress > timeout_s:
+            return {"status": "sem_progresso", "done": done, "failed": failed, "skipped": skipped,
+                    "resumed": resumed, "pending": [f.stem for f in queue], "inflight": jobs,
+                    "mensagem": (f"Nenhum job aceito ou concluído em {timeout_s:.0f}s: o servidor "
+                                 "parou de avançar. Os jobs em andamento ficam em .inflight.json; "
+                                 "rode de novo para retomar sem reenviar.")}
         while queue and len(jobs) < max_inflight:
             f = queue[0]
             job = submit(str(f), idioma=idioma, rotulo=f.stem, segmentos=segmentos,
@@ -245,6 +278,7 @@ def batch(src_dir: str, out_dir: str, pattern: str = "*.mp3", idioma: str = "pt"
                 failed.append({"stem": f.stem, **job})
             else:
                 jobs[job["id"]] = f.stem
+                progressed()
         if not jobs:
             continue
         _sleep(_FAST_POLL_S)
@@ -260,8 +294,10 @@ def batch(src_dir: str, out_dir: str, pattern: str = "*.mp3", idioma: str = "pt"
                     break
                 failed.append({"stem": stem, "id": job_id, **cur})
                 del jobs[job_id]
+                progressed()
             elif cur.get("status") in TERMINAL:
                 del jobs[job_id]
+                progressed()
                 if cur["status"] == "concluida":
                     (out / f"{stem}.txt").write_text(cur.get("texto") or "", encoding="utf-8")
                     (out / f"{stem}.json").write_text(json.dumps(cur, ensure_ascii=False),
@@ -270,8 +306,9 @@ def batch(src_dir: str, out_dir: str, pattern: str = "*.mp3", idioma: str = "pt"
                 else:
                     failed.append({"stem": stem, "id": job_id, "status": cur["status"],
                                    "erro": cur.get("erro")})
+    save_inflight()
     return {"status": "concluida" if not failed else "parcial", "done": done,
-            "failed": failed, "skipped": skipped, "out_dir": str(out)}
+            "failed": failed, "skipped": skipped, "resumed": resumed, "out_dir": str(out)}
 
 
 def register(server) -> None:
@@ -283,8 +320,10 @@ def register(server) -> None:
                      "API; returns the 202 body {id, status, posicao, estimativa_s, duracao_s}. "
                      "Needs NOCTUS_TRANSCRIPTION_TOKEN (pk_*)."),
     )
-    def _submit(path: str, idioma: str = "pt", rotulo: str = "", segmentos: bool = False) -> dict:
-        return submit(path, idioma=idioma, rotulo=rotulo or None, segmentos=segmentos)
+    def _submit(path: str, idioma: str = "pt", rotulo: str = "", segmentos: bool = False,
+                palavras: bool = False) -> dict:
+        return submit(path, idioma=idioma, rotulo=rotulo or None, segmentos=segmentos,
+                      palavras=palavras)
 
     @server.tool(
         name="noctus.transcription.get",
@@ -297,21 +336,23 @@ def register(server) -> None:
         name="noctus.transcription.transcribe",
         description=("Submit a local file and poll until terminal or timeout_s (default 3600). "
                      "Returns {status, texto, duracao_s, rtf, id}, plus segmentos "
-                     "[{start,end,text}] when segmentos=True; on timeout {status:'timeout', id} "
+                     "[{inicio,fim,texto}] when segmentos=True (palavras=True adds per-word palavras [{texto,inicio,fim,confianca}] to each segment); on timeout {status:'timeout', id} "
                      "and the job keeps running server-side (use get). The DEFAULT path for any "
                      "transcription — local Whisper is only a fallback when this server fails."),
     )
     def _transcribe(path: str, idioma: str = "pt", rotulo: str = "", timeout_s: float = 3600,
-                    segmentos: bool = False) -> dict:
+                    segmentos: bool = False, palavras: bool = False) -> dict:
         return transcribe(path, idioma=idioma, rotulo=rotulo or None, timeout_s=timeout_s,
-                          segmentos=segmentos)
+                          segmentos=segmentos, palavras=palavras)
 
     @server.tool(
         name="noctus.transcription.batch",
         description=("Transcribe every file matching pattern (default *.mp3) in src_dir into "
                      "out_dir/<stem>.txt + .json. Resumable (existing .txt skipped), at most "
                      "max_inflight (default 3) jobs queued, honours 429 Retry-After. Returns "
-                     "{status, done, failed, skipped}. Convert DASH .m4a to mp3 first — the API "
+                     "{status, done, failed, skipped}. timeout_s is a no-progress window (resets on every "
+                     "accepted/finished job); in-flight jobs persist in out_dir/.inflight.json and are "
+                     "resumed, never re-uploaded. Convert DASH .m4a to mp3 first — the API "
                      "rejects fragmented MP4 (formato_invalido)."),
     )
     def _batch(src_dir: str, out_dir: str, pattern: str = "*.mp3", idioma: str = "pt",

@@ -126,6 +126,7 @@ class TranscricaoService:
         idioma: str = "pt",
         rotulo: Optional[str] = None,
         segmentos: bool = False,
+        palavras: bool = False,
     ) -> dict:
         if idioma not in L.LANGUAGES:
             raise TranscricaoErro("formato_invalido")
@@ -180,12 +181,13 @@ class TranscricaoService:
                     "idioma": idioma,
                     "rotulo": rotulo,
                     # `segmentos` has no flag column: [] = "requested", NULL = not.
-                    "segmentos": [] if segmentos else None,
+                    "segmentos": [] if (segmentos or palavras) else None,
                 },
             )
             await self.jobs.enqueue(
                 type=L.JOB_TYPE,
-                payload={"transcricao_id": tid},
+                # No flag column for per-word timing (no migration): it rides the job payload.
+                payload={"transcricao_id": tid, **({"palavras": True} if palavras else {})},
                 max_retries=L.JOB_MAX_RETRIES,
                 dedupe_key=f"{L.JOB_TYPE}:{tid}",
             )

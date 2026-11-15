@@ -42,11 +42,41 @@ else
     fi
     PY="${PY:-${PYTHON:-python3}}"
 fi
-CLI="$REPO_ROOT/mcp/noctusai/cli.py"
+CLI="${NOCTUS_CLI:-$REPO_ROOT/mcp/noctusai/cli.py}"
 have_py() { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; }
 
 # Git passes "$1" = squash flag (0 = normal merge, 1 = squash). We don't
 # differentiate; either way, files may have changed.
+
+# ─── kb-counts after a CLEAN feature-branch merge (2026-11-14) ───
+# A clean `git merge origin/dev` runs NO pre-commit, so derived count blocks
+# (02-LANDSCAPE / 06-AGENTS / AGENT-CONTEXT) went stale and the steward's
+# `derived_current: kb-counts` failed (N=3). `pre-merge-commit` can't fix it:
+# git has already written the merge tree, so anything staged there is dropped
+# from the merge commit. So regenerate here and land a follow-up
+# `chore(kb-counts)` commit. Only on a feature branch, only when HEAD is a
+# merge commit, only for docs that were clean beforehand (never a peer's
+# in-progress edit). The regeneration is single-sourced in
+# `cli.py --update-kb-counts`; non-blocking. KB § PATTERNS/common/auto-generated-merge-drivers.md
+_BR=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+if have_py && [[ -n "$_BR" && "$_BR" != "HEAD" && "$_BR" != "dev" && "$_BR" != "main" && "$_BR" != "prod" ]] \
+   && git rev-parse -q --verify HEAD^2 >/dev/null 2>&1; then
+    _DIRTY_BEFORE=$(git diff --name-only -- KNOWLEDGE-BASE/ CLAUDE.md 2>/dev/null || true)
+    if "$PY" "$CLI" --update-kb-counts --worktree-path "$REPO_ROOT" >/dev/null 2>&1; then
+        _STALE=()
+        while IFS= read -r _doc; do
+            [[ -z "$_doc" ]] && continue
+            grep -qxF "$_doc" <<< "$_DIRTY_BEFORE" || _STALE+=("$_doc")
+        done < <(git diff --name-only -- KNOWLEDGE-BASE/ CLAUDE.md 2>/dev/null || true)
+        if [[ ${#_STALE[@]} -gt 0 ]]; then
+            git add -- "${_STALE[@]}" && git commit -q -m "chore(kb-counts): refresh derived counts after merge" \
+                && echo "[post-merge] kb-counts were stale after the merge — committed refresh: ${_STALE[*]}" \
+                || echo "[post-merge] kb-counts refresh commit failed — run: python mcp/noctusai/cli.py --update-kb-counts" >&2
+        fi
+    else
+        echo "[post-merge] kb-counts regeneration failed — run: python mcp/noctusai/cli.py --update-kb-counts" >&2
+    fi
+fi
 
 # Figure out which files changed in the merge (HEAD@{1} = old tip; HEAD = new tip).
 CHANGED=$(git diff --name-only HEAD@{1} HEAD 2>/dev/null || true)

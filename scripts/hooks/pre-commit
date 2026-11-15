@@ -55,6 +55,8 @@ else
     PY="${PY:-${PYTHON:-python3}}"
 fi
 CLI="$REPO_ROOT/mcp/noctusai/cli.py"
+# Gate telemetry (gate_alignment.record_cli_exit) names WHERE a keeper refused, so refusals count by class.
+export NOC_HOOK_STAGE="${NOC_HOOK_STAGE:-pre-commit}"
 have_py() { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; }
 # Every keeper below is gated on `have_py`; with no usable python they would ALL skip and the hook
 # would still print "OK". Say so once, loudly (never a silent green).
@@ -443,6 +445,13 @@ if have_py && echo ",$STAGED_ALL," | grep -qE ',(\.gitattributes|scripts/hooks/r
         echo "[pre-commit] merge-drivers-registered-in-ci FAILED. Commit aborted." >&2
         exit 1
     fi
+fi
+
+# ─── 6b-ter-ter. recurring refusal classes have an owner (WARN-first SHADOW) ──
+# Keeper `check_refusal_classes_owned`: a refusal class that fired >=3x in 14d with no open fix. Reads the
+# machine-local gate event log only; warn-only until the shadow record supports blocking.
+if have_py; then
+    "$PY" "$CLI" --check-refusal-classes-owned || echo "[pre-commit] WARNING (shadow): refusal-classes-owned — a recurring refusal has no fix owner; see '--gate-alignment refusals'." >&2
 fi
 
 # ─── 6b-ter-bis. merge drivers have contract coverage (WARN-first SHADOW) ──

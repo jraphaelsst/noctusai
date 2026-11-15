@@ -58,9 +58,37 @@ class AnalyzeOutput(BaseModel):
     description: str
 
 
+#: Vendors the toolkit's vision tool can route to (all three implement analyze_image).
+VISION_PROVIDERS: tuple[str, ...] = ("anthropic", "openai", "gemini")
+#: Owner decision 2026-11-13: the toolkit's vision runs on Anthropic unless the
+#: `llm_vision_provider` switch (platform_settings → env) says otherwise.
+DEFAULT_VISION_PROVIDER = "anthropic"
+
+
+def resolve_vision_provider(explicit: str | None, org_id: str | None, resolver=None) -> str:
+    """An explicit ``provider`` wins; otherwise the shared manual switch
+    (`resolve_llm_provider("vision")`), defaulting to Anthropic.
+
+    ``resolver`` is the DI seam `resolve_llm_provider` already exposes (tests pass
+    a lambda instead of the org_settings → platform_settings → env chain)."""
+    if explicit:
+        return explicit
+    from noctusai_lib.integrations.llm.provider_choice import resolve_llm_provider
+
+    kwargs = {"resolver": resolver} if resolver is not None else {}
+    return resolve_llm_provider(
+        "vision", org_id, allowed=VISION_PROVIDERS, default=DEFAULT_VISION_PROVIDER, **kwargs
+    )
+
+
 async def analyze(payload: AnalyzeInput) -> AnalyzeOutput:
-    """Analyze / describe an image via the active LLM vision provider."""
+    """Analyze / describe an image via the LLM vision provider (Anthropic by default)."""
     from noctusai_lib.integrations.llm.vision import analyze_image
+    from tools.noctus.dev._llm_bootstrap import ensure_llm_configured
+
+    # The MCP server never calls configure_llm itself; the funnel satisfies its
+    # own precondition (KB § PATTERNS/common/funnel-self-satisfies-preconditions.md).
+    ensure_llm_configured()
 
     image: bytes | str
     if payload.image_base64 is not None:
@@ -73,7 +101,7 @@ async def analyze(payload: AnalyzeInput) -> AnalyzeOutput:
         image,
         payload.prompt,
         model=payload.model,
-        provider=payload.provider,
+        provider=resolve_vision_provider(payload.provider, payload.org_id),
         org_id=payload.org_id,
     )
     return AnalyzeOutput(description=description.strip())
