@@ -36,6 +36,13 @@ COMMENT ON COLUMN social_wiring.vista_divergencias_config.vista_escrita_ativa IS
     'Owner switch (migration 349, default OFF): when ON, an owner-confirmed price/availability that Julia is certain of is '
     'PUT to Vista (/imoveis/detalhes). OFF = Vista wins and an approval opens.';
 
+-- transition-log-ok: imovel_historico cross-system action register (Vista sync, sends to Vista, approvals) with no single state column to compare-and-set
+-- WHY THE SEED transition_log (E1) DOES NOT FIT: E1 is a state row + a transition appended in the SAME row-locked transaction. This register
+-- records ACTIONS across four stores that have no common state column and are not written through one RPC: the Vista-owned mirror columns
+-- (written by the sync upsert), our overlay (captacao / imovel_dados / owner confirmation), Vista itself (the PUT) and the approval row in
+-- imovel_campo_conflitos (which carries its own status + decision trail). There is nothing for `<agg>_transition` to lock or compare.
+-- It still has the E1 guarantees that matter: intent-named events, append-only through the seed GUC carve-out guard below, no FK/CASCADE,
+-- and a gated LGPD erasure path (NOC-REMEDIATE[imovel-historico-expurgo-lgpd]). Re-evaluate when the mirror gets a lifecycle state.
 CREATE TABLE IF NOT EXISTS social_wiring.imovel_historico (
     id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id           uuid        NOT NULL,
