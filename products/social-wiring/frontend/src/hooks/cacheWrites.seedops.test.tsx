@@ -260,12 +260,12 @@ describe("infiniteOps", () => {
 
   it("useCriarConversa heads the first page of the conversas infinite list", async () => {
     const { qc, wrapper } = setup();
-    const k = [...CHAT_KEY, "conversas", "m1", "roteirista"];
+    const k = [...CHAT_KEY, "conversas", "m1"];
     qc.setQueryData(k, infinite({ items: [{ id: "c0" }], tem_mais: false }));
     mockPost.mockResolvedValue({ data: { id: "c1" } });
     const { result } = renderHook(() => useCriarConversa(), { wrapper });
     await act(async () => {
-      await result.current.mutateAsync({ marca_id: "m1", agente: "roteirista" as never });
+      await result.current.mutateAsync({ marca_id: "m1" });
     });
     expect((qc.getQueryData(k) as { pages: { items: { id: string }[] }[] }).pages[0].items.map((i) => i.id)).toEqual([
       "c1",

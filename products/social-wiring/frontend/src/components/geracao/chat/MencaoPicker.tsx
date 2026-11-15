@@ -18,6 +18,7 @@ export const ABAS_MENCAO: { tipo: MencaoTipo; rotulo: string }[] = [
   { tipo: "cerebro", rotulo: "Segundo Cérebro" },
   { tipo: "biblioteca", rotulo: "Biblioteca" },
   { tipo: "headline", rotulo: "Headlines" },
+  { tipo: "estrutura", rotulo: "Estruturas" },
 ];
 
 interface Props {
@@ -42,7 +43,7 @@ export function MencaoPicker({ open, onOpenChange, marcaId, anexados, limiteAtin
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Mencionar com @</DialogTitle>
-          <DialogDescription>Anexe pesquisas, cérebros, virais ou headlines como contexto da mensagem.</DialogDescription>
+          <DialogDescription>Anexe pesquisas, cérebros, virais, headlines ou estruturas como contexto da mensagem.</DialogDescription>
         </DialogHeader>
 
         <Tabs value={tipo} onValueChange={(v) => setTipo(v as MencaoTipo)}>
