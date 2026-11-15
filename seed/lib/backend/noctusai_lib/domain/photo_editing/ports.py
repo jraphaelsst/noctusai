@@ -31,7 +31,7 @@ import dataclasses
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Protocol, Union, runtime_checkable
+from typing import Any, Optional, Protocol, Union, runtime_checkable
 
 from noctusai_lib.domain.jobs import JobRepository, RetryPolicy
 from noctusai_lib.domain.photo_editing.repository import PhotoEditingRepository
@@ -106,9 +106,18 @@ class BucketPhotoStorage:
     async def delete(self, path: str) -> None:
         await self._backend.delete(bucket=self.bucket, key=path)
 
-    async def signed_url(self, path: str, *, expires_in_seconds: int = 3600) -> str:
+    async def signed_url(
+        self,
+        path: str,
+        *,
+        expires_in_seconds: int = 600,
+        ttl_reason: Optional[str] = None,
+    ) -> str:
         return await self._backend.signed_url(
-            bucket=self.bucket, key=path, expires_in_seconds=expires_in_seconds
+            bucket=self.bucket,
+            key=path,
+            expires_in_seconds=expires_in_seconds,
+            ttl_reason=ttl_reason,
         )
 
 

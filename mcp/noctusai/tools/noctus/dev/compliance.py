@@ -9971,6 +9971,27 @@ def lower_async_handler_sync_db_baseline(repo_root: Path | None = None, *, init:
 
 
 # ---------------------------------------------------------------------------
+# `check_signed_url_ttl` / `check_pii_query_params` — thin delegating shims; the
+# AST detectors live in `url_hygiene.py` (security standards S1 + S4, owner
+# approved 2026-11-14). Per-file ratchet baselines in mcp/noctusai/tests/.
+# KB § PATTERNS/security/url-hygiene.md
+# ---------------------------------------------------------------------------
+def check_signed_url_ttl(repo_root: Path | None = None) -> list[dict]:
+    """A signed URL is a bearer credential: TTL > 600 s needs a `ttl_reason=`/`reason=` kwarg (or
+    `# signed-url-ttl-ok: <why>`). Ratcheted per file. Severity `high`. KB § PATTERNS/security/url-hygiene.md."""
+    from tools.noctus.dev.url_hygiene import check_signed_url_ttl as _impl
+    return _impl(repo_root)
+
+
+def check_pii_query_params(repo_root: Path | None = None) -> list[dict]:
+    """A PII-named route parameter (email/cpf/telefone/...) must not ride in the URL query string
+    (logged by every proxy/CDN). Ratcheted per file; escape `# pii-query-ok: <why>`. Severity `high`.
+    KB § PATTERNS/security/url-hygiene.md."""
+    from tools.noctus.dev.url_hygiene import check_pii_query_params as _impl
+    return _impl(repo_root)
+
+
+# ---------------------------------------------------------------------------
 # `check_stand_in_conformance` — thin delegating shim. The real
 # implementation lives in `tools/noctus/dev/stand_in_conformance.py` (a
 # separate file by design — this detector composes a per-product subprocess
@@ -16412,14 +16433,14 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "firing every product's org triggers (licenses, ERP site config). Its sibling guards (platform scope "
         "trigger, scope CHECKs) are probed.",
     ),
-    # Monica 017 is NOT APPLIED (file-only until the tech-lead runs migrate_product): it adds the per-app switch
+    # nosnolimiar (ex-monica) 017 -- per-app switch; applied in prod, but its CHECK still has no GuardProbe: it adds the per-app switch
     # columns; `session_role` is a two-value vocabulary CHECK that is also enforced at the API edge (the seed
-    # create route's Literal + `SESSION_ROLES` in the store). The constraint does not exist in prod to probe yet.
-    # Replace with a real GuardProbe in the SAME change that applies it.
+    # create route's Literal + `SESSION_ROLES` in the store). The constraint now exists in prod; a real
+    # GuardProbe (verify_db_guards.py) replaces this entry.
     (
-        "products/monica/backend/migrations/017_whatsapp_app_switch.sql",
+        "products/nosnolimiar/backend/migrations/017_whatsapp_app_switch.sql",
         "whatsapp_connections_session_role_check",
-        "Migration 017 unapplied — the session_role vocabulary CHECK has no live constraint to probe yet; "
+        "Migration 017 — the session_role vocabulary CHECK has no GuardProbe yet; "
         "the API edge (Literal + SESSION_ROLES) already refuses other values and is tested.",
     ),
     # Migration 303 (social-wiring) is NOT APPLIED (file-only until the
@@ -16585,6 +16606,13 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "guard_agent_learning_content",
         "Migration 017 unapplied — the agent_learnings write-once-content trigger has no live object to probe "
         "against yet.",
+    ),
+    (
+        "products/nosnolimiar/backend/migrations/015_whatsapp.sql",
+        "idx_monica_whatsapp_connections_webhook_token",
+        "Frozen 015 declares the old name; nosnolimiar 024 renamed the index to "
+        "idx_nosnolimiar_whatsapp_connections_webhook_token, which IS probed "
+        "(nosnolimiar.whatsapp_connections.webhook_token_unique). Same object, new name.",
     ),
 )
 

@@ -26,9 +26,40 @@ routes based on the `kind` literal — see `factory.py`.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
 from noctusai_lib.integrations.storage.types import BlobMetadata, StoredBlob
+
+#: Security standard S1 (private by default, short-lived signed URLs).
+DEFAULT_SIGNED_URL_TTL_SECONDS = 600
+MAX_SIGNED_URL_TTL_SECONDS = 3600
+
+
+def validate_signed_url_ttl(
+    expires_in_seconds: int, ttl_reason: Optional[str] = None
+) -> int:
+    """The ONE TTL rule every `StorageBackend.signed_url` applies.
+
+    - `1 <= ttl <= 600`: always allowed.
+    - `600 < ttl <= 3600`: allowed only with a non-empty `ttl_reason`
+      (why a link must outlive 10 minutes).
+    - anything else: `ValueError` (never a silent clamp).
+    """
+    if isinstance(expires_in_seconds, bool) or not isinstance(expires_in_seconds, int):
+        raise ValueError(f"signed_url expires_in_seconds must be an int, got {expires_in_seconds!r}")
+    if expires_in_seconds < 1:
+        raise ValueError(f"signed_url expires_in_seconds must be >= 1, got {expires_in_seconds}")
+    if expires_in_seconds > MAX_SIGNED_URL_TTL_SECONDS:
+        raise ValueError(
+            f"signed_url expires_in_seconds={expires_in_seconds} exceeds the hard max "
+            f"{MAX_SIGNED_URL_TTL_SECONDS}s"
+        )
+    if expires_in_seconds > DEFAULT_SIGNED_URL_TTL_SECONDS and not (ttl_reason or "").strip():
+        raise ValueError(
+            f"signed_url expires_in_seconds={expires_in_seconds} > {DEFAULT_SIGNED_URL_TTL_SECONDS}s "
+            "requires an explicit ttl_reason"
+        )
+    return expires_in_seconds
 
 
 class StorageBackend(Protocol):
@@ -98,9 +129,14 @@ class StorageBackend(Protocol):
         *,
         bucket: str,
         key: str,
-        expires_in_seconds: int = 3600,
+        expires_in_seconds: int = DEFAULT_SIGNED_URL_TTL_SECONDS,
+        ttl_reason: Optional[str] = None,
     ) -> str:
         """Pre-signed URL for direct downloads.
+
+        TTL rule (`validate_signed_url_ttl`): default 600 s; a value above
+        600 s needs a non-empty `ttl_reason`; above 3600 s (or < 1) raises
+        `ValueError`. Every backend, Fake included, enforces it.
 
         Format depends on backend:
         - Fake: `fake://storage/<bucket>/<key>?expires=<unix-ts>`
@@ -117,4 +153,9 @@ class StorageBackend(Protocol):
         ...
 
 
-__all__ = ["StorageBackend"]
+__all__ = [
+    "DEFAULT_SIGNED_URL_TTL_SECONDS",
+    "MAX_SIGNED_URL_TTL_SECONDS",
+    "StorageBackend",
+    "validate_signed_url_ttl",
+]

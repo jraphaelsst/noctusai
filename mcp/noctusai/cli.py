@@ -413,6 +413,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--apply", action="store_true", help="With --async-handlers-to-def or --auto-improvement-propose-resolve-when: write the change (default is a dry-run plan).")
     parser.add_argument("--check-async-handler-sync-db", action="store_true", help="Keeper (2026-10-21): an async def route handler that calls the SYNC supabase client directly (.execute() / .auth.* / .storage ops, not awaited) blocks the event loop for the whole round-trip, so concurrent requests serialize (orbity staircase 985/1524/2081 ms). RATCHET against mcp/noctusai/tests/async_handler_sync_db_baseline.json (per file; may only go down). Fix: plain `def` when the handler awaits nothing, else `await anyio.to_thread.run_sync(...)`. Escape: '# noc-allow: sync-in-async — why' on the async def line. Severity high. KB § PATTERNS/backend/request-path-latency.md.")
     parser.add_argument("--lower-async-handler-sync-db-baseline", action="store_true", help="Lower mcp/noctusai/tests/async_handler_sync_db_baseline.json to min(current, baseline) per file after converting handlers (never raises a count).")
+    parser.add_argument("--check-signed-url-ttl", action="store_true", help="Keeper (2026-11-14, security S1): a signed-URL creation (StorageBackend.signed_url / create_signed_url, a `signed_url` def default, a *SIGNED_URL*TTL* constant) whose TTL resolves above 600 s without a `ttl_reason=`/`reason=` kwarg (kwarg name pending confirmation) or `# signed-url-ttl-ok: why`. RATCHET against mcp/noctusai/tests/signed_url_ttl_baseline.json. Severity high. KB § PATTERNS/security/url-hygiene.md.")
+    parser.add_argument("--lower-signed-url-ttl-baseline", action="store_true", help="Lower signed_url_ttl_baseline.json to min(current, baseline) per file (never raises a count).")
+    parser.add_argument("--check-pii-query-params", action="store_true", help="Keeper (2026-11-14, security S4): a FastAPI route/dependency parameter that is a URL query param (explicit Query() or plain scalar on GET/DELETE) with a PII-like name (email/cpf/cnpj/telefone/phone/celular/whatsapp/rg/endereco/documento/full_name...). RATCHET against mcp/noctusai/tests/pii_query_params_baseline.json. Escape `# pii-query-ok: why` on the param line. Severity high. KB § PATTERNS/security/url-hygiene.md.")
+    parser.add_argument("--lower-pii-query-params-baseline", action="store_true", help="Lower pii_query_params_baseline.json to min(current, baseline) per file (never raises a count).")
     parser.add_argument("--check-silent-refusal", action="store_true", help="Keeper (2026-10-24, N=4: F75b F76 F78 F86): a refusal the user never sees — a query's empty branch (rows.length === 0 / isEmpty=) reachable while the query is in ERROR (a failed search read as 'Nenhum … encontrado' + 'Cadastrar novo'), or an upload whose failure nobody observes (mutate with no onError and an unread error, a fire-and-forget onUpload, useUploadDocumento whose erro is never rendered). ts-morph AST scan (mcp/noctusai/node/silent_refusal_scan.mjs) over active products + seed frontends. Fix: QueryErrorState / !q.isError guard; useUploadDocumento + <UploadErro> from @noctusai/lib/upload-refusal. Escape: '// noc-allow: silent-refusal — why'. Severity high. KB § PATTERNS/frontend/silent-refusal.md.")
     parser.add_argument("--check-stale-after-write", action="store_true", help="Keepers (2026-10-24) check_mutation_family_write + check_job_start_without_handoff, one scan: (a) a raw useMutation that setQueryData's a key whose family (reads whose key EXTENDS it, derived from the product's own query keys) it never refreshes — setQueryData is exact, the derived reads stay stale (social-wiring F88); (b) a mutation that starts server-side async work (job/consulta id in its response type, a 202, or an invalidate-only allow saying 'queued/background') without handOffToPolling (@noctusai/lib) — the refetch races the worker and jobPolling never starts (F87). Active products + seed FE. Escapes on the useMutation line: 'noc-allow: exact-write — why' / 'noc-allow: no-job-handoff — why'. Severity high. KB § PATTERNS/frontend/mutation-cache-writes.md.")
     parser.add_argument("--check-module-page-status-rows", action="store_true", help="Keeper (WARN-first, W1-6): every page key a module declares (BE PageSpec / FE defineModule) has a status_pagina row seeded by the mounting product's migrations; a missing row hides the nav item silently. Ratchet baseline mcp/noctusai/tests/module_page_status_rows_baseline.json; phase W9 flips it to blocking. Escape: '# noc-allow: module-page-status-row — why'. KB § PATTERNS/frontend/status-pagina-dev-visibility.md.")
@@ -732,6 +736,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--surface-rationale", metavar="MD", help="With --respond-and-resume: tech-lead rationale (required, durable knowledge).")
     parser.add_argument("--surface-updated-brief", metavar="MD", help="With --respond-and-resume --surface-decision=adapt: the revised brief text.")
     parser.add_argument("--dispatch-resume-brief", metavar="SURFACE_ID", dest="dispatch_resume_brief_id", help="Compose the full dispatch-ready brief for a responded surface. Pass verbatim to Agent() brief. MCP: noctus.dev.dispatch_resume_brief. KB § PATTERNS/common/surface-and-resume-tooling.md.")
+    parser.add_argument("--usage-sync-deliveries", action="store_true", help="Ingest slice-scores + dispatch-budget (origin/ledgers) into public.dev_deliveries. Use --since/--usage-until (ISO) and --dry to preview (no DB needed). MCP: noctus.dev.usage_eval action=sync_deliveries.")
+    parser.add_argument("--usage-until", metavar="ISO", dest="usage_until", help="With --usage-sync-deliveries: exclusive upper bound (ISO timestamp).")
     parser.add_argument("--budget-slug", metavar="SLUG", dest="budget_slug", help="With --dispatch-budget-log: branch/task slug (e.g. 'feat/r1-f11').")
     parser.add_argument("--input-tokens", metavar="N", type=int, dest="input_tokens", help="With --dispatch-budget-log: input token count.")
     parser.add_argument("--output-tokens", metavar="N", type=int, dest="output_tokens", help="With --dispatch-budget-log: output token count.")
@@ -789,6 +795,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--srb-window-hours", type=float, default=1.0, help="With --supabase-request-budget: window in hours (max 24).")
     parser.add_argument("--srb-start", default=None, help="With --supabase-request-budget: ISO start (use with --srb-end).")
     parser.add_argument("--srb-end", default=None, help="With --supabase-request-budget: ISO end (use with --srb-start).")
+    parser.add_argument("--bg-process", action="store_true", help="Safety net for THIS session's own background processes (list/declare/undeclare/salvage/stop). MCP: noctus.dev.bg_process.")
+    parser.add_argument("--bg-process-action", default="list", help="With --bg-process: list|declare|undeclare|salvage|stop.")
+    parser.add_argument("--bg-process-pid", type=int, default=None, help="With --bg-process: target pid.")
+    parser.add_argument("--bg-process-purpose", default="", help="With --bg-process action=declare: what the long-lived process is for.")
+    parser.add_argument("--bg-process-reason", default="", help="With --bg-process action=salvage|stop: why it is being stopped.")
+    parser.add_argument("--bg-process-learnings", default="", help="With --bg-process action=salvage|stop: the learnings line.")
+    parser.add_argument("--bg-process-term-grace-s", type=float, default=10.0, help="With --bg-process action=stop: seconds to wait after TERM before KILL.")
+    parser.add_argument("--bg-process-session-id", default=None, help="With --bg-process: session id (default CLAUDE_CODE_SESSION_ID).")
+    parser.add_argument("--bg-process-confirm", action="store_true", help="With --bg-process: apply a write (declare/undeclare/salvage/stop). Without it, dry-run only.")
+    parser.add_argument("--bg-process-allow-stale-toolkit", action="store_true", help="With --bg-process: bypass the toolkit-staleness fresh-subprocess hop (escape hatch).")
     return parser
 
 
@@ -3122,6 +3138,25 @@ def main():
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
         sys.exit(1)
 
+    elif args.check_signed_url_ttl or args.check_pii_query_params:
+        from tools.noctus.dev import compliance as _cmp
+        _name, _fn = ("signed-url-ttl", _cmp.check_signed_url_ttl) if args.check_signed_url_ttl else ("pii-query-params", _cmp.check_pii_query_params)
+        issues = _fn()
+        if not issues:
+            print(f"  {GREEN}\u2713 {_name}: clean (no file above its baseline).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}\u2717 {len(issues)} {_name} issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} \u2014 {i['issue']}")
+        sys.exit(1)
+
+    elif args.lower_signed_url_ttl_baseline or args.lower_pii_query_params_baseline:
+        from tools.noctus.dev import url_hygiene as _uh
+        _lo = _uh.lower_signed_url_ttl_baseline if args.lower_signed_url_ttl_baseline else _uh.lower_pii_query_params_baseline
+        _bl = _lo()
+        print(f"  baseline lowered: {len(_bl)} file(s), {sum(_bl.values())} hit(s).")
+        sys.exit(0)
+
     elif args.lower_async_handler_sync_db_baseline:
         from tools.noctus.dev.compliance import lower_async_handler_sync_db_baseline
         _bl = lower_async_handler_sync_db_baseline()
@@ -4693,6 +4728,16 @@ def main():
         print(json.dumps(result, indent=2, default=str))
         sys.exit(0)
 
+    elif args.usage_sync_deliveries:
+        from tools.noctus.dev.usage_eval import DeliveriesSchemaError, parse_ts as _pts, sync_deliveries as _sd
+        try:
+            res = _sd(_pts(args.since), _pts(args.usage_until), dry_run=bool(args.dry))
+        except DeliveriesSchemaError as exc:
+            print(f"  {RED}✗ {exc}{RESET}")
+            sys.exit(1)
+        print(json.dumps(res, indent=2, default=str))
+        sys.exit(0)
+
     elif args.dispatch_budget_log:
         from tools.noctus.dev.dispatch_budget import log_dispatch as _db_log
         agent = getattr(args, "agent", None)
@@ -5022,6 +5067,16 @@ def main():
     elif args.supabase_request_budget:
         from tools.noctus.dev.supabase_request_budget import supabase_request_budget as _supabase_request_budget
         r = _supabase_request_budget(window_hours=args.srb_window_hours, start=args.srb_start, end=args.srb_end)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
+
+    elif args.bg_process:
+        from tools.noctus.dev.bg_process import bg_process as _bg_process
+        r = _bg_process(
+            action=args.bg_process_action, pid=args.bg_process_pid, purpose=args.bg_process_purpose,
+            reason=args.bg_process_reason, learnings=args.bg_process_learnings,
+            term_grace_s=args.bg_process_term_grace_s, session_id=args.bg_process_session_id,
+            confirm=bool(args.bg_process_confirm), allow_stale_toolkit=bool(args.bg_process_allow_stale_toolkit))
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 

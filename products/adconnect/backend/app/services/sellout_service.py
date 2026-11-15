@@ -78,7 +78,7 @@ async def _upload_blob(
     )
     try:
         return await storage.signed_url(
-            bucket=SELLOUT_BUCKET, key=key, expires_in_seconds=3600
+            bucket=SELLOUT_BUCKET, key=key, expires_in_seconds=600
         )
     except Exception as exc:  # pragma: no cover - best-effort URL generation
         logger.warning(

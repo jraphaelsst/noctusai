@@ -1,0 +1,65 @@
+"""The two seams between the WhatsApp inbox organ and the leads organ.
+
+* `on_new_chat` -- the inbox fires it exactly ONCE per chat first created by an inbound message to a non-group
+  number; every such number becomes a lead (stage `lead`, origin `whatsapp`). Deleting that lead does NOT bring it
+  back: the chat row persists, and the claim that fires `on_new_chat` is never re-won. That is intended -- Nós no Limiar
+  deletes numbers that are not leads.
+* `on_purge` -- the testing-phase purge of a connection: the untouched automatic leads go, the ones a person
+  worked on are DETACHED from the connection (kept, without the conversation link / preview).
+* `on_delete_chat` -- the per-conversation LGPD erasure: the chat's lead goes with it when it is an untouched
+  automatic one, and is DETACHED (kept, without the conversation link / message preview) when a person worked on it
+  -- the same rule as the purge, for one chat.
+* `on_message` -- every newly stored message, inbound AND outbound, refreshes the lead card's preview.
+  A chat without a lead (deleted, or a group) is left alone: `touch_last_message` never recreates one.
+
+Both build the leads service per call over the schema-pinned admin client (the same store the `/api/leads` router
+uses), so a test patch of the database reaches them.
+"""
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+from uuid import UUID
+
+from noctusai_lib.domain.leads import LeadsService, build_leads_store
+
+from app.crm import LEADS_CONFIG
+from app.dependencies import get_admin_client
+
+#: preview of a message that carries no text (image, audio, ...)
+MEDIA_PREVIEW = "[mídia]"
+
+
+def leads_service() -> LeadsService:
+    return LeadsService(build_leads_store(get_admin_client(), table=LEADS_CONFIG.table), LEADS_CONFIG)
+
+
+async def on_new_chat(org_id: UUID, connection_id: UUID, chat: Any) -> None:
+    await leads_service().upsert_from_whatsapp(org_id, connection_id, chat)
+
+
+async def on_message(org_id: UUID, connection_id: UUID, chat: Any, message: Any) -> None:
+    preview = (getattr(message, "body", "") or "").strip() or MEDIA_PREVIEW
+    await leads_service().touch_last_message(
+        org_id, connection_id, chat.chat_id, preview=preview, at=getattr(message, "timestamp", None)
+    )
+
+
+async def on_purge(org_id: UUID, connection_id: UUID) -> dict[str, int]:
+    return await leads_service().purge_from_whatsapp(org_id, connection_id)
+
+
+def _forget_chat_sync(org_id: str, connection_id: str, chat_id: str) -> None:
+    store = leads_service().store
+    lead = store.find_by_chat(org_id, connection_id, chat_id)
+    if lead is None:  # a deleted lead (or a group): nothing downstream references this chat
+        return
+    untouched = lead.get("origin") == LEADS_CONFIG.whatsapp_origin and not lead.get("created_by") and not lead.get("edited_at")
+    if untouched:
+        store.delete(org_id, lead["id"])
+    else:
+        store.update(org_id, lead["id"], {"whatsapp_connection_id": None, "whatsapp_chat_id": None, "last_message_preview": None})
+
+
+async def on_delete_chat(org_id: UUID, connection_id: UUID, chat_id: str, actor: Any = None) -> None:
+    await asyncio.to_thread(_forget_chat_sync, str(org_id), str(connection_id), chat_id)

@@ -91,7 +91,7 @@ The advisor orients; it never decides these, and it says so in every answer that
 **A licensed lawyer (advogado, OAB) must review or decide:**
 - The **final text of any contract** that will be signed, sold or used as a template — including every generated contract version (`revisao_juridica.aprovar` is that act in social-wiring) and the store kit's generic contracts (`projects/store/contrato/README.md` "Antes de vender").
 - **New clause families** the generator has never printed (PJ party wording beyond deal 866, joint representation, procuração, new contract types) — `contracts-br.md` §8.
-- The **legal basis** for sensitive data (art. 11) where the profession is not a regulated health profession (psychoanalysis — `products/monica/projects/clinical-tools-build/DECISIONS.md:38`), and **retention periods** set by professional rules.
+- The **legal basis** for sensitive data (art. 11) where the profession is not a regulated health profession (psychoanalysis — `products/nosnolimiar/projects/clinical-tools-build/DECISIONS.md:38`), and **retention periods** set by professional rules.
 - **International-transfer mechanism** per provider when the provider does not offer the ANPD standard clauses verbatim (`lgpd-privacy-program.md` §9).
 - Whether an **incident is "risco ou dano relevante"** when the criteria are borderline (Res. 15/2024 art. 5) — in parallel, the clock does not stop.
 - **Terms of use / privacy policy** before publication of a material change; **limitation-of-liability** and **foro** clauses in consumer texts.

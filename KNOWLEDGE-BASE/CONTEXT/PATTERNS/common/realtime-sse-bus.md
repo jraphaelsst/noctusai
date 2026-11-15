@@ -130,6 +130,22 @@ The consumer's inbound handler (e.g. the WAHA webhook's `on_message`)
 `await bus.publish(scope, "message.new", {...})`s after persisting — the bus
 is a delivery mechanism, not the source of truth; the DB row is.
 
+## Job progress — push, polling as the fallback (2026-11-13)
+
+A long job (transcription, CoreStudio geração, photo editing, video edits) used to hand off to polling: every open tab re-reads the job every 2-5 s for minutes. The same bus now carries it as one-way push (SSE, not WebSocket — the browser only listens).
+
+**Backend** (`noctusai_lib.realtime.job_progress`): the worker calls `publish_job_progress(bus, org_id, job_id, JobProgress(status, progress 0..1, stage, message, terminal))` (best-effort — a bus blip never fails the job); the product mounts `create_job_progress_router(bus, auth_dependency=…, org_resolver=…, snapshot_loader=…)` → `GET …/{job_id}`. Built with `make_router(tier="org")` (auth REQUIRED; unauthenticated is the guard's strict 401). Scope = org + job with the org taken from the AUTH context, never the URL; `snapshot_loader` reads the job row (the truth) and returns None → 404, so a foreign id never opens a stream. The seed never infers "finished" from a status word — `terminal` is an explicit flag.
+
+**Proxy / reconnect survival.** First frame is a SNAPSHOT of the row (no `id:`, so it never moves the resume cursor); then live events with heartbeat comments and `X-Accel-Buffering: no`; `Last-Event-ID`/`?since=` resumes. The stream CLOSES on the terminal event, and after `max_seconds` (10 min) so a client that missed the terminal frame reconnects and re-reads the snapshot instead of hanging on heartbeats. `sse_event_stream` gained `stop_after` and `max_seconds` for this.
+
+**Frontend** (`@noctusai/lib`): `useJobProgress({ jobId, url, getAuthToken, readKey, targets, enabled })` writes each frame into the cache entries the job touches (`targets[].update` → `setQueryData`), marks the read's stream live (`markJobStreamLive`) so its `jobPolling` stops polling, and on the terminal frame invalidates the read once for the authoritative result. If the stream is refused/dropped for `fallbackAfterMs` (8 s) it releases the mark and calls `handOffToPolling` — the old path takes over; `mode` reports `stream | polling | done | idle`. `mergeJobProgress` keeps progress monotonic and a terminal state final (a snapshot racing an older replayed event cannot move the bar backwards).
+
+**The read keeps `jobPolling`, the starting write keeps its hand-off** — the stream is an optimisation over polling, never a replacement: polling covers the gap before the stream opens and every failure. A job-starting write may call `handOffToJobProgress(qc, readKey)` (same behaviour as `handOffToPolling`; the name says "pushed first, polled only as fallback"); keeper `check_job_start_without_handoff` accepts either.
+
+**Pilot:** CoreStudio "Gerar headlines" (`headline_pipeline.executar_lote` → `headline_progress.py` → `GET /api/media-creation/headlines/lotes/{id}/progress` → `useLote`). Chosen because it is the heaviest per-tab poll with a real progress number ("estrutura 3 de 5"): a single job id, a 3 s `HEADLINES_POLL_MS` for the whole run, ~5 DB round trips per tick, and the worker already knows each step the moment it changes. Roteiros/esteira are the next consumers (same shape); a board-level read (many jobs in one list) needs a per-org list channel, not this one.
+
+**Also:** `get_shared_realtime_bus(redis_url, label=…)` is the process-wide bus cache (third copy of the shape — whatsapp, meta leads, job progress); the two older product copies should migrate to it.
+
 ## Testing
 
 `FakeRealtimeBus` needs no Redis and is full-parity — use it directly in

@@ -97,6 +97,8 @@ def register() -> Any:
         treinamentos,
         roteiros,
         esteira_legenda,
+        post_assets,
+        post_publicacoes,
     )
     from app.modules.media_creation import cerebro_scheduler
     from app.modules.media_creation.services import cerebro_transcricao
@@ -167,6 +169,8 @@ def register() -> Any:
             headlines.router,
             esteira_legenda.router,
             equipe.router,
+            post_assets.router,
+            post_publicacoes.router,
             *esteira.ROUTERS,
         ],
         # No extra standard routers — the LLM seam is auto-wired by
