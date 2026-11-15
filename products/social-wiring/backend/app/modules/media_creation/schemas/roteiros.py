@@ -90,3 +90,20 @@ class ReprocessarRequest(StrictHttpModel):
 
 class ExcluirRequest(StrictHttpModel):
     ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+
+
+class AprovarRoteiroRequest(StrictHttpModel):
+    """The versao the approver SAW (a stale one is refused 409 ``versao_obsoleta``)."""
+
+    versao: int = Field(ge=1)
+
+
+class ReprovarRoteiroRequest(StrictHttpModel):
+    versao: int = Field(ge=1)
+    motivo: str = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def _motivo_nao_vazio(self) -> "ReprovarRoteiroRequest":
+        if not self.motivo.strip():
+            raise ValueError("Informe o motivo da reprovação")
+        return self
