@@ -1653,7 +1653,8 @@ def test_live_tree_tests_are_found_by_ast_not_only_check_x_equals_empty(tmp_path
         "from pathlib import Path\nREPO = Path(__file__).resolve().parents[3]\n\n"
         "def test_walk():\n    assert not list(REPO.glob('x'))\n\n"
         "def test_pure():\n    assert 1 + 1 == 2\n\n"
-        "class TestK:\n    def test_m(self):\n        assert REPO.exists()\n")
+        "class TestK:\n    def test_m(self):\n        assert REPO.exists()\n\n"
+        "def test_needs_pglite(pglite):\n    assert REPO.exists()\n")  # PGlite absent in the export: not a live-tree verdict test
     (t / "test_b.py").write_text("def test_no_root():\n    assert True\n")
     assert RS.live_tree_test_ids(t) == ["tests/test_a.py::test_walk", "tests/test_a.py::TestK::test_m"]
 
