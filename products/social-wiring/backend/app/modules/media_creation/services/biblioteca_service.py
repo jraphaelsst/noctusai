@@ -4,16 +4,21 @@ Contract: ``projects/core-studio-build/specs/geracao-contract.md`` sections 2.3,
 ingestion pipeline (sync / transcribe / classify) lives in :mod:`.biblioteca_ingestao`; this module
 only reads, edits the allow-list and ENQUEUES jobs.
 
+Since migration 351 the library (profiles, videos) is PLATFORM-WIDE (``estruturas-contract.md`` sections 3.2 / 4):
+the library tables carry no org filter; only ``cs_biblioteca_referencias`` (a brand's selection) and the marca ownership
+check stay org-scoped. Profile writes are admin-only (the routers gate them with ``require_platform_admin``) and every
+one writes a content-free ``cs_perfil_eventos`` row.
+
 Rules every method keeps:
 
-* every query is scoped to ``org_id``; a foreign / unknown marca, profile, viral or reference is a 404
-  (ids are not enumerable);
+* a foreign / unknown marca or reference is a 404 (ids are not enumerable); library ids are platform-wide;
 * thumbnails live in the PRIVATE ``sw-biblioteca`` bucket and are only ever served as short-TTL signed
   URLs minted per request;
 * a Graph / vendor error text never reaches a client -- the stored ``erro_mensagem`` is OUR pt-BR copy.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import uuid
@@ -22,16 +27,22 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from noctusai_lib.domain.jobs import JobRepository
+from noctusai_lib.integrations.apify import ActorRunner, ApifyNotConfigured, ApifyRateLimited, ApifyRunFailed
+from noctusai_lib.integrations.media.safe_fetch import SafeFetcher
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.integrations.persistence.table_reads import batched
 from noctusai_lib.integrations.storage import StorageBackend
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 from app.modules.media_creation.geracao_taxonomias import FORMATOS_VIDEO, NICHOS, PROFISSOES
-from app.modules.media_creation.services import biblioteca_optout
+from app.modules.media_creation.services import biblioteca_fonte, biblioteca_optout
+from app.modules.media_creation.services.estruturas_service import formula_trecho
 from app.modules.media_creation.schemas.biblioteca import (
     MAX_REFERENCIAS_MARCA,
     PAGE_SIZE,
     HandleInvalido,
+    LinkInvalido,
+    extrair_shortcode,
     normalizar_handle,
 )
 
@@ -40,6 +51,8 @@ logger = logging.getLogger(__name__)
 PERFIS = "cs_perfis_monitorados"
 VIRAIS = "cs_virais"
 REFS = "cs_biblioteca_referencias"
+EVENTOS = "cs_perfil_eventos"
+ESTRUTURAS = "cs_estruturas"
 MARCA_PERFIL = "cs_marca_perfil"
 ACCOUNTS = "integration_accounts"
 TRANSCRICOES = "transcricoes"
@@ -52,7 +65,7 @@ TRECHO_CHARS = 200
 
 PERFIL_COLS = (
     "id,org_id,handle,conta_descoberta_id,ig_user_id,nome,foto_path,seguidores,media_count,status,"
-    "erro_codigo,erro_mensagem,ultima_sync_em,proxima_sync_em,metrica_base,mediana_metrica,created_by"
+    "erro_codigo,erro_mensagem,ultima_sync_em,proxima_sync_em,metrica_base,mediana_metrica,created_by,monitorar"
 )
 CARD_COLS = (
     "id,codigo,perfil_id,permalink,publicado_em,views,likes,comments,duracao_s,score_viral,e_viral,"
@@ -60,7 +73,7 @@ CARD_COLS = (
 )
 DETALHE_COLS = (
     CARD_COLS + ",transcricao_texto,transcricao_status,classificacao_status,formato_ids,nicho_ids,"
-    "profissao_ids,gatilho,blueprint,video_url,video_url_em"
+    "profissao_ids,gatilho,blueprint,video_url,video_url_em,origem_inclusao"
 )
 #: How long a scraper video URL is served to the FE (Instagram CDN URLs carry a signed expiry; ~24 h is
 #: the conservative window). Past it ``video_url`` is null and the FE falls back to the Instagram embed.
@@ -81,12 +94,17 @@ MSG_SEM_CONTA = (
 
 
 class BibliotecaError(Exception):
-    def __init__(self, status: int, detail: str, *, retry_after_s: Optional[int] = None, code: Optional[str] = None):
+    def __init__(
+        self, status: int, detail: str, *, retry_after_s: Optional[int] = None, code: Optional[str] = None,
+        extra: Optional[dict[str, Any]] = None,
+    ):
         super().__init__(detail)
         self.status = status
         self.detail = detail
         self.code = code
         self.retry_after_s = retry_after_s
+        #: Extra keys of a coded refusal (``{"estruturas_total": n}``): the client receives them flat next to ``code``.
+        self.extra = dict(extra or {})
 
 
 def _now() -> datetime:
@@ -150,17 +168,16 @@ def aplicar_filtros(
     query: Any,
     f: ViralFiltros,
     *,
-    org_id: str,
     auto: Optional[tuple[list[int], list[int]]] = None,
     pool_expr: Optional[str] = None,
 ) -> Any:
-    """Add every ``cs_virais`` filter of ``f`` to a select builder. Pure over the builder, so a test can
+    """Add every ``cs_virais`` filter of ``f`` to a select builder (the library is platform-wide: no org filter). Pure over the builder, so a test can
     read back the recorded predicates (the array-overlap / ``or`` operators are match-all in the mock
     client and are therefore asserted by predicate, not by behaviour). ``auto`` is the marca's
     ``(nichos, profissoes)`` for the automatic filter; ``pool_expr`` the ``Minha Biblioteca`` allow-list."""
-    query = query.eq("org_id", org_id)
     if f.somente_virais:
-        query = query.eq("e_viral", True)
+        # A video an admin added by link was chosen by hand: it is part of the library whatever its viral score is.
+        query = query.or_("e_viral.eq.true,origem_inclusao.eq.link_manual")
     if f.perfil_id:
         query = query.eq("perfil_id", f.perfil_id)
     if f.codigo is not None:
@@ -229,49 +246,112 @@ def pool_expression(refs: list[dict[str, Any]]) -> Optional[str]:
     return ",".join(parts) or None
 
 
-async def purgar_perfil(db: Any, storage: StorageBackend, org_id: str, perfil: dict[str, Any]) -> int:
-    """Erase a monitored profile and EVERYTHING derived from it (LGPD, contract 9.3): the thumbnails
-    and the profile picture (by row path AND by the profile's whole ``{org}/{perfil}/`` prefix), the
-    library ``transcricoes`` rows, then the profile row (its virais and video references cascade).
+def registrar_evento(
+    db: Any, *, perfil_id: Any, handle: str, tipo: str, ator_id: Optional[str], ator_tipo: str = "admin",
+    viral_id: Optional[str] = None,
+) -> None:
+    """Append ONE content-free ``cs_perfil_eventos`` row (who / when / what) for an admin write on a library profile or video.
 
-    A blob that cannot be deleted never keeps the row alive -- it is logged and counted (the return
-    value) and the orphan-prefix sweep (``biblioteca_scheduler.varrer_blobs_orfaos``) retries it: once
-    the row is gone the prefix has no owner, which is exactly what that sweep deletes. Used by the
-    endpoint (user delete) and by the retention purge, so both erase the same set."""
+    A failed insert is LOUD (logged, re-raised -- never swallowed): the audit row is part of the write.
+    NOC-REMEDIATE[cs-perfil-eventos-rpc]: the state write and its event are two PostgREST calls, not one transaction (the
+    profile writes are plain table writes, unlike the Estrutura RPCs). Destination: wrap the profile writes in SECURITY
+    DEFINER RPCs when the next migration touches this table -- 2026-12-15."""
+    try:
+        db.table(EVENTOS).insert({
+            "perfil_id": str(perfil_id), "viral_id": str(viral_id) if viral_id else None, "handle": handle,
+            "tipo": tipo, "ator_id": ator_id or None, "ator_tipo": ator_tipo,
+        }).execute()
+    except Exception:
+        logger.exception("biblioteca: evento %s do perfil %s não gravado", tipo, perfil_id)
+        raise
+
+
+def prefixo_blobs(perfil: dict[str, Any]) -> str:
+    """``platform`` for a platform profile, the org id for a row written before migration 351."""
+    return str(perfil.get("org_id") or biblioteca_fonte.PREFIXO_PLATAFORMA)
+
+
+def _rpc_estruturas_total(exc: BaseException) -> Optional[int]:
+    """The ``DETAIL`` count of a ``perfil_com_estruturas`` refusal of ``cs_perfil_purgar`` (``None`` = not that refusal)."""
+    payload = exc.args[0] if exc.args and isinstance(exc.args[0], dict) else {}
+    message = str(getattr(exc, "message", None) or payload.get("message") or "").strip()
+    if message != "perfil_com_estruturas":
+        return None
+    details = str(getattr(exc, "details", None) or payload.get("details") or "").strip()
+    return int(details) if details.isdigit() else 0
+
+
+def erro_perfil_com_estruturas(total: int) -> BibliotecaError:
+    return BibliotecaError(
+        409, "Este perfil tem estruturas na biblioteca. Apague-as junto ou arquive-as antes de excluir o perfil.",
+        code="perfil_com_estruturas", extra={"estruturas_total": int(total)},
+    )
+
+
+async def purgar_perfil(
+    db: Any, storage: StorageBackend, perfil: dict[str, Any], *, ator_id: Optional[str] = None,
+    ator_tipo: str = "admin", tipo_evento: str = "excluido", apagar_estruturas: bool = False,
+) -> dict[str, int]:
+    """Erase a library profile and EVERYTHING derived from it (LGPD, contract 9.3 / estruturas-contract 4.3 #7).
+
+    ONE database transaction (the ``cs_perfil_purgar`` RPC of migration 351) deletes the profile; its videos, brand
+    selections and -- with ``apagar_estruturas`` -- its Estruturas and their uses go through the FK cascades, and the
+    content-free events (``cs_estrutura_eventos.excluida`` per Estrutura, ``cs_perfil_eventos``) are written in the same
+    transaction. A profile that still owns Estruturas is REFUSED (``perfil_com_estruturas``) unless the flag is set: the
+    database is touched FIRST, so a refusal destroys nothing. Only then are the blobs (thumbnails, picture, the profile's
+    whole ``{org|platform}/{perfil}/`` prefix) and the library ``transcricoes`` rows removed.
+
+    A blob that cannot be deleted never keeps the row alive -- it is logged and counted and the orphan-prefix sweep
+    (``biblioteca_scheduler.varrer_blobs_orfaos``) retries it: once the row is gone the prefix has no owner, which is
+    exactly what that sweep deletes. Used by the delete endpoint, the opt-out purge and the retention purge.
+    Returns ``{blobs_falhos, estruturas, virais}``."""
     pid = str(perfil["id"])
-    org_id = str(org_id)
     virais = list(
         iter_paged_rows(
-            lambda s, e: db.table(VIRAIS).select("id,thumbnail_path").eq("org_id", org_id)
-            .eq("perfil_id", pid).order("id").range(s, e).execute().data
+            lambda s, e: db.table(VIRAIS).select("id,thumbnail_path").eq("perfil_id", pid)
+            .order("id").range(s, e).execute().data
         )
     )
     keys = {v["thumbnail_path"] for v in virais if v.get("thumbnail_path")}
     if perfil.get("foto_path"):
         keys.add(perfil["foto_path"])
     try:
-        keys.update(await storage.list_keys(bucket=BUCKET, prefix=f"{org_id}/{pid}/", limit=1000))
+        res = db.rpc("cs_perfil_purgar", {
+            "p_perfil": pid, "p_ator": ator_id, "p_ator_tipo": ator_tipo, "p_tipo": tipo_evento,
+            "p_apagar_estruturas": bool(apagar_estruturas),
+        }).execute()
+    except Exception as exc:  # noqa: BLE001 - the one coded refusal is mapped; anything else is re-raised, never swallowed
+        total = _rpc_estruturas_total(exc)
+        if total is None:
+            logger.exception("biblioteca: cs_perfil_purgar falhou perfil=%s", pid)
+            raise
+        raise erro_perfil_com_estruturas(total) from exc
+    data = getattr(res, "data", None)
+    data = data[0] if isinstance(data, list) and data else data
+    out = {"blobs_falhos": 0, "estruturas": int((data or {}).get("estruturas") or 0), "virais": len(virais)}
+    try:
+        keys.update(await storage.list_keys(bucket=BUCKET, prefix=f"{prefixo_blobs(perfil)}/{pid}/", limit=1000))
     except Exception:  # noqa: BLE001 - the row-path keys above still go; the sweep covers the rest
         logger.warning("biblioteca: list_keys falhou perfil=%s", pid, exc_info=True)
-    falhas = 0
     for key in sorted(keys):
         try:
             await storage.delete(bucket=BUCKET, key=key)
         except Exception:  # noqa: BLE001 - never leave the row alive because a blob delete failed
-            falhas += 1
+            out["blobs_falhos"] += 1
             logger.warning("biblioteca: blob delete failed key=%s (a varredura de órfãos repete)", key, exc_info=True)
     for chunk in batched([str(v["id"]) for v in virais]):
-        db.table(TRANSCRICOES).delete().eq("org_id", org_id).eq("contexto_tipo", CONTEXTO_TIPO).in_(
+        db.table(TRANSCRICOES).delete().eq("contexto_tipo", CONTEXTO_TIPO).in_(
             "contexto_ref", chunk).neq("status", "processando").execute()
-    db.table(PERFIS).delete().eq("id", pid).eq("org_id", org_id).execute()
-    return falhas
+    return out
 
 
-async def purgar_handle(db: Any, storage: StorageBackend, handle: str) -> dict[str, int]:
-    """Erase EVERY org's monitored profile for ``handle`` (an opt-out is platform-wide): each profile's
-    references (profile- and video-mode), virais, transcripts and blobs via :func:`purgar_perfil`.
-    Idempotent -- no rows left is a ``{0, 0, 0}`` no-op. Returns ``{perfis, virais, blobs_falhos}``."""
-    out = {"perfis": 0, "virais": 0, "blobs_falhos": 0}
+async def purgar_handle(
+    db: Any, storage: StorageBackend, handle: str, *, ator_id: Optional[str] = None
+) -> dict[str, int]:
+    """Erase EVERY library profile for ``handle`` (an opt-out is platform-wide, and legacy per-org rows are covered too):
+    its videos, brand selections, Estruturas, transcripts and blobs via :func:`purgar_perfil`, with the opt-out events.
+    Idempotent -- no rows left is a ``{0, 0, 0, 0}`` no-op. Returns ``{perfis, virais, estruturas, blobs_falhos}``."""
+    out = {"perfis": 0, "virais": 0, "estruturas": 0, "blobs_falhos": 0}
     perfis = list(
         iter_paged_rows(
             lambda s, e: db.table(PERFIS).select("id,org_id,foto_path").eq("handle", handle)
@@ -279,22 +359,13 @@ async def purgar_handle(db: Any, storage: StorageBackend, handle: str) -> dict[s
         )
     )
     for p in perfis:
-        pid, org_id = str(p["id"]), str(p["org_id"])
-        viral_ids = [
-            str(v["id"]) for v in iter_paged_rows(
-                lambda s, e: db.table(VIRAIS).select("id").eq("org_id", org_id).eq("perfil_id", pid)
-                .order("id").range(s, e).execute().data
-            )
-        ]
-        # The FKs cascade in Postgres; deleting the references explicitly keeps the purge complete on
-        # any backend and does not depend on the cascade for the "references die with the profile" rule.
-        db.table(REFS).delete().eq("org_id", org_id).eq("perfil_id", pid).execute()
-        for chunk in batched(viral_ids):
-            db.table(REFS).delete().eq("org_id", org_id).in_("viral_id", chunk).execute()
-        out["blobs_falhos"] += await purgar_perfil(db, storage, org_id, p)
-        db.table(VIRAIS).delete().eq("org_id", org_id).eq("perfil_id", pid).execute()
+        r = await purgar_perfil(
+            db, storage, p, ator_id=ator_id, ator_tipo="admin", tipo_evento="optout_purgado", apagar_estruturas=True,
+        )
         out["perfis"] += 1
-        out["virais"] += len(viral_ids)
+        out["virais"] += r["virais"]
+        out["estruturas"] += r["estruturas"]
+        out["blobs_falhos"] += r["blobs_falhos"]
     return out
 
 
@@ -310,20 +381,42 @@ class BibliotecaService:
         switch: Callable[[], bool],
         contato: Optional[Callable[[], str]] = None,
         max_perfis_org: int = 30,
+        max_perfis_plataforma: int = 1000,
         sync_manual_dia_org: int = 20,
         fonte: Optional[Callable[[], str]] = None,
+        is_admin: bool = False,
+        ingestao_org: Optional[Callable[[], Optional[str]]] = None,
+        runner_factory: Optional[Callable[[str], ActorRunner]] = None,
+        fetcher: Optional[SafeFetcher] = None,
+        ledger_factory: Optional[Callable[[], Any]] = None,
+        apify_resultados_dia: int = 0,
+        clock: Callable[[], datetime] = _now,
     ) -> None:
         self.db = db
+        #: The CALLER's org: used ONLY for the brand's own selection (``cs_biblioteca_referencias``), the marca ownership
+        #: check and the manual-sync cap. The library itself is platform-wide.
         self.org_id = str(org_id)
         self.user_id = user_id
         self.storage = storage
         self.jobs = jobs
         self._switch = switch
         self._contato = contato
+        #: Per-BRAND ceiling of SELECTED profiles (``biblioteca_max_perfis_org``).
         self.max_perfis_org = max_perfis_org
+        #: Library-wide ceiling of profiles (``biblioteca_max_perfis_plataforma``; an admin write).
+        self.max_perfis_plataforma = max_perfis_plataforma
         self.sync_manual_dia_org = sync_manual_dia_org
         #: ``biblioteca_fonte`` reader; ``None`` = Business Discovery (the service's original behaviour).
         self._fonte = fonte
+        #: True for a platform admin: sees profile errors / draft Estrutura counts; the routers gate every write.
+        self.is_admin = bool(is_admin)
+        #: The platform ingestion org (the NoctusAI org); ``None`` reads as "not configured".
+        self._ingestao_org = ingestao_org or (lambda: None)
+        self._runner_factory = runner_factory
+        self._fetcher = fetcher
+        self._ledger_factory = ledger_factory
+        self._apify_dia = int(apify_resultados_dia)
+        self._clock = clock
 
     # ── guards ──────────────────────────────────────────────────────────
 
@@ -350,19 +443,13 @@ class BibliotecaService:
             raise BibliotecaError(404, "Marca não encontrada")
 
     def _perfil_row(self, perfil_id: str) -> dict[str, Any]:
-        rows = (
-            self.db.table(PERFIS).select(PERFIL_COLS).eq("id", str(perfil_id)).eq("org_id", self.org_id)
-            .execute().data
-        )
+        rows = self.db.table(PERFIS).select(PERFIL_COLS).eq("id", str(perfil_id)).execute().data
         if not rows:
             raise BibliotecaError(404, "Perfil não encontrado")
         return rows[0]
 
     def _viral_row(self, viral_id: str, cols: str = DETALHE_COLS) -> dict[str, Any]:
-        rows = (
-            self.db.table(VIRAIS).select(cols).eq("id", str(viral_id)).eq("org_id", self.org_id)
-            .execute().data
-        )
+        rows = self.db.table(VIRAIS).select(cols).eq("id", str(viral_id)).execute().data
         if not rows:
             raise BibliotecaError(404, "Vídeo não encontrado")
         return rows[0]
@@ -384,7 +471,7 @@ class BibliotecaService:
         for chunk in batched(perfil_ids):
             rows = iter_paged_rows(
                 lambda s, e, chunk=chunk: self.db.table(VIRAIS).select("id,perfil_id,e_viral")
-                .eq("org_id", self.org_id).in_("perfil_id", chunk).order("id").range(s, e).execute().data
+                .in_("perfil_id", chunk).order("id").range(s, e).execute().data
             )
             for r in rows:
                 c = out.get(str(r["perfil_id"]))
@@ -401,7 +488,9 @@ class BibliotecaService:
             "foto_url": await self._signed(row.get("foto_path")),
             "seguidores": row.get("seguidores"),
             "status": row["status"],
-            "erro_mensagem": row.get("erro_mensagem"),
+            "monitorar": bool(row.get("monitorar", True)),
+            # An ingestion error names credentials / budgets of the platform: it is the admin's, not a member's.
+            "erro_mensagem": row.get("erro_mensagem") if self.is_admin else None,
             "ultima_sync_em": row.get("ultima_sync_em"),
             "metrica_base": row.get("metrica_base"),
             "mediana_metrica": float(row["mediana_metrica"]) if row.get("mediana_metrica") is not None else None,
@@ -419,10 +508,7 @@ class BibliotecaService:
     def _perfis_by_id(self, ids: list[str]) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
         for chunk in batched(sorted(set(ids))):
-            for r in (
-                self.db.table(PERFIS).select(PERFIL_COLS).eq("org_id", self.org_id).in_("id", chunk)
-                .execute().data or []
-            ):
+            for r in self.db.table(PERFIS).select(PERFIL_COLS).in_("id", chunk).execute().data or []:
                 out[str(r["id"])] = r
         return out
 
@@ -446,7 +532,7 @@ class BibliotecaService:
     async def _card(self, row: dict[str, Any], handles: dict[str, str], f: Optional[ViralFiltros] = None) -> dict[str, Any]:
         return {
             "id": row["id"],
-            "codigo": row["codigo"],
+            "codigo": row.get("codigo"),  # an identity column: always set by the database
             "perfil": {"id": str(row["perfil_id"]), "handle": handles.get(str(row["perfil_id"]), "")},
             "thumbnail_url": await self._signed(row.get("thumbnail_path")),
             "permalink": row.get("permalink") or "",
@@ -496,7 +582,7 @@ class BibliotecaService:
                 filtro_automatico = True
         cols = CARD_COLS + (",transcricao_texto" if f.buscar_em == "transcricao" and keywords(f.q) else "")
         query = self.db.table(VIRAIS).select(cols, count="exact")
-        query = aplicar_filtros(query, f, org_id=self.org_id, auto=auto, pool_expr=pool_expr)
+        query = aplicar_filtros(query, f, auto=auto, pool_expr=pool_expr)
         start = (f.page - 1) * PAGE_SIZE
         res = query.range(start, start + PAGE_SIZE - 1).execute()
         rows = res.data or []
@@ -522,6 +608,8 @@ class BibliotecaService:
             formatos=[{"id": i, "nome": _FORMATO[i]} for i in row.get("formato_ids") or [] if i in _FORMATO],
             gatilho=row.get("gatilho"),
             estrutura_utilizavel=bool(row.get("blueprint")) and row["classificacao_status"] == "concluida",
+            origem_inclusao=row.get("origem_inclusao") or "sync",
+            estruturas=self._estruturas_do_viral(str(row["id"])),
         )
         em = _parse_dt(row.get("video_url_em"))
         out["video_url"] = (
@@ -531,29 +619,83 @@ class BibliotecaService:
             out["blueprint"] = row.get("blueprint")
         return out
 
+    def _estruturas_do_viral(self, viral_id: str) -> list[dict[str, Any]]:
+        """``EstruturaRef[]`` of the Estruturas derived from this video (members: ``ativa`` only; admins: every status)."""
+        q = self.db.table(ESTRUTURAS).select("id,codigo,perfil_id,formula_headline,status").eq("viral_id", str(viral_id))
+        if not self.is_admin:
+            q = q.eq("status", "ativa")
+        rows = q.order("codigo").execute().data or []
+        perfis = self._perfis_by_id([str(r["perfil_id"]) for r in rows])
+        return [
+            {
+                "id": str(r["id"]), "codigo": r["codigo"],
+                "perfil": {
+                    "id": str(r["perfil_id"]), "handle": perfis.get(str(r["perfil_id"]), {}).get("handle", ""),
+                    "nome": perfis.get(str(r["perfil_id"]), {}).get("nome"),
+                },
+                "formula_trecho": formula_trecho(r.get("formula_headline") or ""),
+            }
+            for r in rows
+        ]
+
+    def _estruturas_total(self, perfil_id: str) -> int:
+        """Estruturas of a profile: members count the ``ativa`` ones (what they can use), admins every status."""
+        q = self.db.table(ESTRUTURAS).select("id", count="exact").eq("perfil_id", str(perfil_id))
+        if not self.is_admin:
+            q = q.eq("status", "ativa")
+        res = q.limit(1).execute()
+        return int(res.count) if getattr(res, "count", None) is not None else len(res.data or [])
+
     # ── perfis ──────────────────────────────────────────────────────────
 
-    def _org_perfis(self) -> list[dict[str, Any]]:
+    def _todos_perfis(self) -> list[dict[str, Any]]:
+        """Every library profile (bounded by ``biblioteca_max_perfis_plataforma``, so one in-memory pass is safe)."""
         return list(
             iter_paged_rows(
-                lambda s, e: self.db.table(PERFIS).select(PERFIL_COLS).eq("org_id", self.org_id)
-                .order("id").range(s, e).execute().data
+                lambda s, e: self.db.table(PERFIS).select(PERFIL_COLS).order("id").range(s, e).execute().data
             )
         )
 
-    async def list_perfis(self, q: Optional[str] = None) -> list[dict[str, Any]]:
-        rows = self._org_perfis()
+    def _selecionados(self, marca_id: str) -> set[str]:
+        return {str(r["perfil_id"]) for r in self._refs(marca_id) if r.get("modo") == "perfil" and r.get("perfil_id")}
+
+    async def list_perfis(
+        self, q: Optional[str] = None, marca_id: Optional[str] = None, limit: int = 30, offset: int = 0
+    ) -> dict[str, Any]:
+        """Library-wide, PAGED (``{items, total}``): search ``q`` over handle / name; ``marca_id`` adds
+        ``selecionado_pela_marca`` (the brand's own selection). Never an unbounded array."""
+        selecionados: Optional[set[str]] = None
+        if marca_id:
+            self.assert_marca(marca_id)
+            selecionados = self._selecionados(marca_id)
+        rows = self._todos_perfis()
         term = (q or "").strip().lower().lstrip("@")
         if term:
             rows = [r for r in rows if term in (r["handle"] or "") or term in (r.get("nome") or "").lower()]
         rows.sort(key=lambda r: r["handle"])
-        return await self.perfis_out(rows)
+        total = len(rows)
+        page = rows[offset: offset + limit]
+        items = await self.perfis_out(page)
+        if selecionados is not None:
+            for item in items:
+                item["selecionado_pela_marca"] = str(item["id"]) in selecionados
+        return {"items": items, "total": total}
+
+    async def get_perfil(self, perfil_id: str) -> dict[str, Any]:
+        row = self._perfil_row(perfil_id)
+        out = (await self.perfis_out([row]))[0]
+        out["estruturas_total"] = self._estruturas_total(str(row["id"]))
+        return out
 
     def contas_descoberta(self) -> list[dict[str, Any]]:
+        """The Meta (Facebook Login) accounts of the platform INGESTION org: the credentials discovery runs on."""
+        ingestao = self._ingestao_org()
+        if not ingestao:
+            return []
         rows = (
             self.db.table(ACCOUNTS)
             .select("id,account_label,metadata,status,is_default")
-            .eq("org_id", self.org_id).eq("provider", "meta").eq("status", "validated")
+            .eq("org_id", str(ingestao)).eq("provider", "meta").eq("status", "validated")
             .execute().data or []
         )
         rows.sort(key=lambda r: (not r.get("is_default"), str(r.get("account_label") or "")))
@@ -576,9 +718,10 @@ class BibliotecaService:
 
     def _find_perfil(self, handle: str) -> Optional[dict[str, Any]]:
         rows = (
-            self.db.table(PERFIS).select(PERFIL_COLS).eq("org_id", self.org_id).eq("rede", "instagram")
-            .eq("handle", handle).execute().data
+            self.db.table(PERFIS).select(PERFIL_COLS).eq("rede", "instagram").eq("handle", handle)
+            .execute().data or []
         )
+        rows.sort(key=lambda r: r.get("org_id") is not None)  # the platform row first (legacy per-org rows after)
         return rows[0] if rows else None
 
     def _marca_ref_perfil(self, marca_id: str, perfil_id: str) -> bool:
@@ -619,6 +762,7 @@ class BibliotecaService:
         if self._marca_ref_perfil(marca_id, perfil_id):
             return False
         self._assert_ref_capacity(marca_id, 1)
+        self._assert_perfis_da_marca(marca_id, 1)
         self.db.table(REFS).insert({
             "org_id": self.org_id, "marca_id": str(marca_id), "modo": "perfil", "perfil_id": str(perfil_id),
             "auto_atualizar": auto, "created_by": self.user_id,
@@ -631,32 +775,59 @@ class BibliotecaService:
         if have + adding > MAX_REFERENCIAS_MARCA:
             raise BibliotecaError(409, f"Limite de {MAX_REFERENCIAS_MARCA} itens na Minha Biblioteca atingido.")
 
+    def _assert_perfis_da_marca(self, marca_id: str, adding: int) -> None:
+        """``biblioteca_max_perfis_org`` now caps the SELECTED profiles of ONE brand (the library itself is platform-wide)."""
+        if len(self._selecionados(marca_id)) + adding > self.max_perfis_org:
+            raise BibliotecaError(409, f"Sua organização já monitora {self.max_perfis_org} perfis (limite).")
+
     def _assert_sem_optout(self, handle: str) -> None:
         if biblioteca_optout.esta_bloqueado(self.db, handle):
-            raise BibliotecaError(422, biblioteca_optout.MSG_OPTOUT, code=biblioteca_optout.CODIGO_OPTOUT)
+            raise BibliotecaError(409, biblioteca_optout.MSG_OPTOUT, code=biblioteca_optout.CODIGO_OPTOUT)
 
-    async def criar_perfil(self, marca_id: str, handle: str, conta_descoberta_id: Optional[str]) -> dict[str, Any]:
-        self.assert_marca(marca_id)
+    def _total_perfis(self) -> int:
+        res = self.db.table(PERFIS).select("id", count="exact").limit(1).execute()
+        return int(res.count) if getattr(res, "count", None) is not None else len(res.data or [])
+
+    def _evento(self, perfil_id: Any, handle: str, tipo: str, *, viral_id: Optional[str] = None) -> None:
+        registrar_evento(self.db, perfil_id=perfil_id, handle=handle, tipo=tipo, ator_id=self.user_id, viral_id=viral_id)
+
+    async def criar_perfil(
+        self, handle: str, conta_descoberta_id: Optional[str] = None, monitorar: bool = True
+    ) -> dict[str, Any]:
+        """ADMIN. Add a profile to the platform library (``org_id`` NULL). ``monitorar=False`` = library-only (no scrape)."""
         self._assert_sem_optout(handle)
         existing = self._find_perfil(handle)
         if existing is not None:
-            self._add_ref_perfil(marca_id, str(existing["id"]), True)
-            return (await self.perfis_out([existing]))[0]
-        if len(self._org_perfis()) >= self.max_perfis_org:
-            raise BibliotecaError(409, f"Sua organização já monitora {self.max_perfis_org} perfis (limite).")
+            raise BibliotecaError(
+                409, "Este perfil já está na biblioteca.", code="perfil_ja_existe",
+                extra={"perfil_id": str(existing["id"])},
+            )
+        if self._total_perfis() >= self.max_perfis_plataforma:
+            raise BibliotecaError(
+                409, f"A biblioteca já tem {self.max_perfis_plataforma} perfis (limite).", code="limite_perfis",
+            )
         apify = self.usa_apify()
-        conta = None if apify else self._conta_valida(conta_descoberta_id)
+        conta = None if (apify or not monitorar) else self._conta_valida(conta_descoberta_id)
         pronto = bool(conta) or apify
-        payload = {
-            "org_id": self.org_id, "rede": "instagram", "handle": handle, "conta_descoberta_id": conta,
-            "status": "aguardando" if pronto else "sem_conta", "created_by": self.user_id,
+        if not monitorar:
+            status = "ativo"  # library-only: nothing to wait for (never scraped)
+        else:
+            status = "aguardando" if pronto else "sem_conta"
+        payload: dict[str, Any] = {
+            "org_id": None, "rede": "instagram", "handle": handle, "conta_descoberta_id": conta,
+            "status": status, "monitorar": bool(monitorar), "created_by": self.user_id,
         }
-        if not pronto:
+        if monitorar and not pronto:
             payload["erro_codigo"] = "sem_conta"
             payload["erro_mensagem"] = MSG_SEM_CONTA
-        row = self.db.table(PERFIS).insert(payload).execute().data[0]
-        self._add_ref_perfil(marca_id, str(row["id"]), True)
-        if pronto:
+        try:
+            row = self.db.table(PERFIS).insert(payload).execute().data[0]
+        except Exception as exc:  # noqa: BLE001 - a concurrent admin won the UNIQUE (rede, handle): coded 409; else re-raise
+            if not is_unique_violation(exc):
+                raise
+            raise BibliotecaError(409, "Este perfil já está na biblioteca.", code="perfil_ja_existe") from exc
+        self._evento(row["id"], handle, "criado")
+        if monitorar and pronto:
             await self._enqueue_sync(str(row["id"]))
         return (await self.perfis_out([row]))[0]
 
@@ -677,7 +848,7 @@ class BibliotecaService:
         ):
             wait = int((SYNC_MIN_INTERVAL - (now - requested)).total_seconds()) + 1
             raise BibliotecaError(429, "Já há uma atualização solicitada para este perfil.", retry_after_s=wait)
-        # Spend/abuse cap: manual syncs per org per day. The org rides in the dedupe key so the count
+        # Spend/abuse cap: manual syncs per admin org per day. The org rides in the dedupe key so the count
         # needs no join (`sync:{perfil}:{YYYYMMDD}:manual:{HH}:{org}`).
         hoje = now.strftime("%Y%m%d")
         feitos = (
@@ -692,62 +863,233 @@ class BibliotecaService:
                 retry_after_s=3600,
             )
         await self._enqueue_sync(str(row["id"]), suffix=f":manual:{now.strftime('%H')}:{self.org_id}")
-        self.db.table(PERFIS).update({"proxima_sync_em": now.isoformat()}).eq("id", row["id"]).eq(
-            "org_id", self.org_id).execute()
+        self.db.table(PERFIS).update({"proxima_sync_em": now.isoformat()}).eq("id", row["id"]).execute()
         if row["status"] in ("sem_conta", "erro", "nao_encontrado", "sem_credencial", "sem_orcamento"):
             self.db.table(PERFIS).update({"status": "aguardando", "erro_codigo": None, "erro_mensagem": None}).eq(
-                "id", row["id"]).eq("org_id", self.org_id).execute()
+                "id", row["id"]).execute()
+        self._evento(row["id"], row["handle"], "sincronizacao_solicitada")
         return {"perfil_id": row["id"], "enfileirado": True, "ingestao_ativa": self.ingestao_ativa()}
 
-    async def patch_perfil(self, perfil_id: str, status: Optional[str], conta_id: Optional[str]) -> dict[str, Any]:
+    async def patch_perfil(
+        self, perfil_id: str, status: Optional[str], conta_id: Optional[str],
+        monitorar: Optional[bool] = None, nome: Optional[str] = None,
+    ) -> dict[str, Any]:
         row = self._perfil_row(perfil_id)
         patch: dict[str, Any] = {}
+        eventos: list[str] = []
         if conta_id is not None:
             patch["conta_descoberta_id"] = self._conta_valida(conta_id)
+            eventos.append("editado")
             if row["status"] == "sem_conta":
                 patch.update(status="aguardando", erro_codigo=None, erro_mensagem=None)
         enqueue = "status" in patch
         if status == "pausado":
+            if row["status"] != "pausado":
+                eventos.append("pausado")
             patch["status"] = "pausado"
             enqueue = False
         elif status == "ativo" and row["status"] == "pausado":
             patch.update(status="aguardando", erro_codigo=None, erro_mensagem=None)
+            eventos.append("retomado")
             enqueue = True
+        if monitorar is not None and bool(monitorar) != bool(row.get("monitorar", True)):
+            patch["monitorar"] = bool(monitorar)
+            eventos.append("monitorar_ligado" if monitorar else "monitorar_desligado")
+        if nome is not None and nome.strip() != (row.get("nome") or ""):
+            patch["nome"], patch["nome_editado"] = nome.strip(), True
+            eventos.append("editado")
         if patch:
             patch["updated_at"] = _now().isoformat()
-            self.db.table(PERFIS).update(patch).eq("id", row["id"]).eq("org_id", self.org_id).execute()
+            self.db.table(PERFIS).update(patch).eq("id", row["id"]).execute()
+            for tipo in dict.fromkeys(eventos):
+                self._evento(row["id"], row["handle"], tipo)
             row = self._perfil_row(perfil_id)
         if enqueue and row["status"] == "aguardando":
             await self._enqueue_sync(str(row["id"]), suffix=":ativar")
         return (await self.perfis_out([row]))[0]
 
-    async def delete_perfil(self, perfil_id: str, marca_id: Optional[str] = None) -> None:
+    async def delete_perfil(self, perfil_id: str, apagar_estruturas: bool = False) -> None:
+        """ADMIN. 409 ``perfil_com_estruturas`` (+ ``estruturas_total``) unless ``apagar_estruturas``; the refusal is
+        decided BEFORE anything is erased. The profile's thumbnails, picture, videos, brand selections and (with the flag)
+        Estruturas go with it (LGPD, contract 9.3)."""
         row = self._perfil_row(perfil_id)
         pid = str(row["id"])
-        virais = list(
-            iter_paged_rows(
-                lambda s, e: self.db.table(VIRAIS).select("id,thumbnail_path").eq("org_id", self.org_id)
-                .eq("perfil_id", pid).order("id").range(s, e).execute().data
-            )
+        if not apagar_estruturas:
+            total = self._total_estruturas_todas(pid)
+            if total:
+                raise erro_perfil_com_estruturas(total)
+        await purgar_perfil(
+            self.db, self.storage, row, ator_id=self.user_id, ator_tipo="admin", tipo_evento="excluido",
+            apagar_estruturas=bool(apagar_estruturas),
         )
-        viral_ids = [str(v["id"]) for v in virais]
-        marcas: set[str] = {
-            str(r["marca_id"]) for r in (
-                self.db.table(REFS).select("marca_id").eq("org_id", self.org_id).eq("perfil_id", pid).execute().data or []
+
+    def _total_estruturas_todas(self, perfil_id: str) -> int:
+        res = self.db.table(ESTRUTURAS).select("id", count="exact").eq("perfil_id", str(perfil_id)).limit(1).execute()
+        return int(res.count) if getattr(res, "count", None) is not None else len(res.data or [])
+
+    # ── admin: add one video by its Instagram link ──────────────────────
+
+    def _ingestao_org_ou_503(self) -> str:
+        org = self._ingestao_org()
+        if not org:
+            raise BibliotecaError(503, biblioteca_fonte.MSG_SEM_ORG, code=biblioteca_fonte.CODIGO_SEM_ORG)
+        return str(org)
+
+    def _viral_card_por_id(self, viral_id: str) -> Optional[dict[str, Any]]:
+        rows = self.db.table(VIRAIS).select(CARD_COLS).eq("id", str(viral_id)).execute().data
+        return rows[0] if rows else None
+
+    async def _card_de(self, viral_row: dict[str, Any]) -> dict[str, Any]:
+        handles = {k: v["handle"] for k, v in self._perfis_by_id([str(viral_row["perfil_id"])]).items()}
+        return await self._card(viral_row, handles)
+
+    async def adicionar_por_link(self, url: str) -> dict[str, Any]:
+        """ADMIN. Add ONE Instagram video by its post link (contract 4.2). Returns ``{viral, perfil_criado, ja_existia}``.
+
+        Order of refusals: bad link (422 ``link_invalido``) -> already in the library by shortcode (200, nothing else
+        happens) -> source cannot fetch a post (409 ``fonte_nao_suporta_link``) -> ingestion switch off (503) -> no ingestion
+        org (503 ``ingestao_sem_org_plataforma``) -> daily Apify cap (429) -> fetch (404 ``post_nao_encontrado`` / 503
+        ``sem_credencial`` / 429 / 503 ``fonte_indisponivel``) -> opted-out owner (409 ``perfil_optout``) -> profile cap (409). The video goes in
+        through the SAME row builder as the sync and is analysed regardless of the viral threshold (an admin chose it)."""
+        try:
+            shortcode, canonico = extrair_shortcode(url)
+        except LinkInvalido as exc:
+            raise BibliotecaError(422, str(exc), code="link_invalido") from None
+        existente = self._viral_por_shortcode(shortcode)
+        if existente is not None:
+            return {"viral": await self._card_de(existente), "perfil_criado": False, "ja_existia": True}
+        if not self.usa_apify() or self._runner_factory is None:
+            raise BibliotecaError(
+                409, "A fonte de dados atual não consegue buscar um post por link.", code="fonte_nao_suporta_link",
             )
-        }
-        for chunk in batched(viral_ids):
-            marcas |= {
-                str(r["marca_id"]) for r in (
-                    self.db.table(REFS).select("marca_id").eq("org_id", self.org_id).in_("viral_id", chunk)
-                    .execute().data or []
+        if not self.ingestao_ativa():
+            raise BibliotecaError(503, "A ingestão da biblioteca está desligada.", code="ingestao_desligada")
+        org = self._ingestao_org_ou_503()
+        agora = self._clock()
+        if self._apify_dia and biblioteca_fonte.resultados_hoje(self.db, org, agora) >= self._apify_dia:
+            raise BibliotecaError(429, biblioteca_fonte.MSG_SEM_ORCAMENTO, code="sem_orcamento", retry_after_s=3600)
+        try:
+            runner = self._runner_factory(org)
+            post = await asyncio.to_thread(biblioteca_fonte.buscar_post, runner, shortcode=shortcode, url=canonico)
+        except ApifyNotConfigured:
+            raise BibliotecaError(503, biblioteca_fonte.MSG_SEM_CREDENCIAL, code="sem_credencial") from None
+        except ApifyRateLimited as exc:
+            raise BibliotecaError(
+                429, "O serviço de leitura está ocupado. Tente novamente em instantes.", code="fonte_ocupada",
+                retry_after_s=int(exc.retry_after_s or 60),
+            ) from None
+        except biblioteca_fonte.PostNaoEncontrado:
+            raise BibliotecaError(404, "Post não encontrado. Confira o link — só posts públicos são lidos.",
+                                  code="post_nao_encontrado") from None
+        except ApifyRunFailed as exc:
+            logger.error("biblioteca: leitura do post por link falhou (%s)", exc)  # the message carries no token / body
+            raise BibliotecaError(503, "Não foi possível ler o post agora. Tente novamente mais tarde.",
+                                  code="fonte_indisponivel") from None
+        self._registrar_uso_post(org, post, agora)
+        try:
+            handle = normalizar_handle(post.owner)
+        except HandleInvalido:
+            raise BibliotecaError(404, "Post não encontrado. Confira o link — só posts públicos são lidos.",
+                                  code="post_nao_encontrado") from None
+        self._assert_sem_optout(handle)
+        perfil = self._find_perfil(handle)
+        perfil_criado = False
+        if perfil is None:
+            if self._total_perfis() >= self.max_perfis_plataforma:
+                raise BibliotecaError(
+                    409, f"A biblioteca já tem {self.max_perfis_plataforma} perfis (limite).", code="limite_perfis",
                 )
-            }
-        outras = marcas - ({str(marca_id)} if marca_id else set())
-        if (marca_id and outras) or (not marca_id and len(marcas) > 1):
-            raise BibliotecaError(409, "Perfil em uso por outra marca")
-        # LGPD (contract 9.3): the profile's thumbnails, picture and transcripts go with it.
-        await purgar_perfil(self.db, self.storage, self.org_id, row)
+            perfil = self._criar_perfil_so_biblioteca(handle)
+            perfil_criado = True
+        m = post.midia
+        dup = self._viral_por_media(str(perfil["id"]), str(m.id))
+        if dup is not None:  # same post under another key (a synced row without shortcode): backfill it, add nothing
+            self.db.table(VIRAIS).update({"ig_shortcode": shortcode}).eq("id", dup["id"]).execute()
+            return {"viral": await self._card_de(dup), "perfil_criado": perfil_criado, "ja_existia": True}
+        stamp = agora.isoformat()
+        linha = {
+            **biblioteca_fonte.campos_midia(m, stamp), "ig_shortcode": shortcode, "perfil_id": str(perfil["id"]),
+            "ig_media_id": str(m.id), "org_id": None, "origem_inclusao": "link_manual", "incluido_por": self.user_id,
+            "transcricao_status": "nao_aplicavel", "classificacao_status": "pendente", "e_viral": False,
+        }
+        try:
+            row = self.db.table(VIRAIS).insert(linha).execute().data[0]
+        except Exception as exc:  # noqa: BLE001 - a concurrent paste won the UNIQUE: re-read it; else re-raise
+            if not is_unique_violation(exc):
+                raise
+            vivo = self._viral_por_shortcode(shortcode)
+            if vivo is None:
+                raise
+            return {"viral": await self._card_de(vivo), "perfil_criado": perfil_criado, "ja_existia": True}
+        vid = str(row["id"])
+        thumb = m.thumbnail_url or (m.media_url if not biblioteca_fonte.e_video(m) else None)
+        if thumb and self._fetcher is not None:
+            path = await biblioteca_fonte.espelhar_imagem(
+                self._fetcher, self.storage, BUCKET, thumb,
+                f"{prefixo_blobs(perfil)}/{perfil['id']}/{m.id}",
+            )
+            if path:
+                self.db.table(VIRAIS).update({"thumbnail_path": path}).eq("id", vid).execute()
+        self._evento(perfil["id"], handle, "video_adicionado_por_link", viral_id=vid)
+        await self._enfileirar_analise(vid, m, agora)
+        row = self._viral_card_por_id(vid) or row
+        return {"viral": await self._card_de(row), "perfil_criado": perfil_criado, "ja_existia": False}
+
+    def _viral_por_shortcode(self, shortcode: str) -> Optional[dict[str, Any]]:
+        rows = self.db.table(VIRAIS).select(CARD_COLS).eq("ig_shortcode", shortcode).execute().data
+        return rows[0] if rows else None
+
+    def _viral_por_media(self, perfil_id: str, ig_media_id: str) -> Optional[dict[str, Any]]:
+        rows = (
+            self.db.table(VIRAIS).select(CARD_COLS).eq("perfil_id", str(perfil_id)).eq("ig_media_id", str(ig_media_id))
+            .execute().data
+        )
+        return rows[0] if rows else None
+
+    def _criar_perfil_so_biblioteca(self, handle: str) -> dict[str, Any]:
+        """The profile of a video added by link: a library-only row (``monitorar=false``, never scraped)."""
+        try:
+            row = self.db.table(PERFIS).insert({
+                "org_id": None, "rede": "instagram", "handle": handle, "status": "ativo", "monitorar": False,
+                "created_by": self.user_id,
+            }).execute().data[0]
+        except Exception as exc:  # noqa: BLE001 - a concurrent admin created it: use theirs; else re-raise
+            if not is_unique_violation(exc):
+                raise
+            vivo = self._find_perfil(handle)
+            if vivo is None:
+                raise
+            return vivo
+        self._evento(row["id"], handle, "criado")
+        return row
+
+    def _registrar_uso_post(self, org: str, post: biblioteca_fonte.PostBuscado, now: datetime) -> None:
+        ledger_db = None
+        if self._ledger_factory is not None:
+            try:
+                ledger_db = self._ledger_factory()
+            except Exception as exc:  # noqa: BLE001 - booking is best-effort
+                logger.warning("biblioteca: cliente do cost_ledger indisponível (%s)", type(exc).__name__)
+        biblioteca_fonte.registrar_uso(
+            self.db, ledger_db, org_id=org, perfil_id=None, results=post.results, usd=post.usd, run_id=post.run_id,
+            now=now, step="biblioteca.por_link", reference_type=biblioteca_fonte.LEDGER_REFERENCE_POST,
+        )
+
+    async def _enfileirar_analise(self, viral_id: str, m: Any, now: datetime) -> None:
+        """The SAME analysis a synced viral video gets (transcribe a reel, then classify; classify straight away otherwise)
+        -- enqueued unconditionally: the viral threshold gates the SYNC, never an admin's explicit choice."""
+        dia = now.strftime("%Y%m%d")
+        if biblioteca_fonte.e_video(m) and m.media_url:
+            self.db.table(VIRAIS).update({"transcricao_status": "pendente"}).eq("id", viral_id).execute()
+            await self.jobs.enqueue(
+                type="biblioteca.transcrever", payload={"viral_id": viral_id, "media_url": m.media_url},
+                max_retries=2, dedupe_key=f"transcrever:{viral_id}:{dia}",
+            )
+        else:
+            await self.jobs.enqueue(
+                type="biblioteca.classificar", payload={"viral_id": viral_id}, max_retries=2,
+                dedupe_key=f"classificar:{viral_id}:{dia}",
+            )
 
     # ── Minha Biblioteca ────────────────────────────────────────────────
 
@@ -758,9 +1100,7 @@ class BibliotecaService:
         viral_ids = [str(r["viral_id"]) for r in refs if r.get("viral_id")]
         virais: dict[str, dict[str, Any]] = {}
         for chunk in batched(sorted(set(viral_ids))):
-            for v in (
-                self.db.table(VIRAIS).select(CARD_COLS).eq("org_id", self.org_id).in_("id", chunk).execute().data or []
-            ):
+            for v in self.db.table(VIRAIS).select(CARD_COLS).in_("id", chunk).execute().data or []:
                 virais[str(v["id"])] = v
         vperfis = self._perfis_by_id([str(v["perfil_id"]) for v in virais.values()])
         handles = {k: v["handle"] for k, v in {**vperfis, **perfis}.items()}
@@ -809,7 +1149,7 @@ class BibliotecaService:
         ids = list(dict.fromkeys(str(v) for v in viral_ids))
         found = {
             str(r["id"]) for chunk in batched(ids) for r in (
-                self.db.table(VIRAIS).select("id").eq("org_id", self.org_id).in_("id", chunk).execute().data or []
+                self.db.table(VIRAIS).select("id").in_("id", chunk).execute().data or []
             )
         }
         if len(found) != len(ids):
@@ -867,7 +1207,12 @@ class BibliotecaService:
 
 __all__ = [
     "BUCKET",
+    "EVENTOS",
+    "prefixo_blobs",
+    "purgar_handle",
     "purgar_perfil",
+    "registrar_evento",
+    "erro_perfil_com_estruturas",
     "BibliotecaError",
     "BibliotecaService",
     "CONTEXTO_TIPO",

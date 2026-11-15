@@ -1,12 +1,12 @@
 """Biblioteca schedules (contract geracao 3.3 step 7).
 
-* **Daily sync** (03:20 BRT): enqueue ``biblioteca.sync_perfil`` for every ``ativo`` profile that at
-  least one marca references with ``auto_atualizar``; ``dedupe_key = sync:{perfil}:{YYYYMMDD}`` so a
-  re-run the same day is a no-op. The ``biblioteca`` worker's claim gate keeps the queue idle while
-  ``biblioteca_ingestao_habilitada`` is off, so enqueueing is always safe.
+* **Daily sync** (03:20 BRT): the library is PLATFORM-WIDE (migration 351): enqueue ``biblioteca.sync_perfil`` for every
+  platform profile with ``monitorar = true`` that is ``ativo`` (or waiting on a budget / credential);
+  ``dedupe_key = sync:{perfil}:{YYYYMMDD}`` so a re-run the same day is a no-op. The ``biblioteca`` worker's claim gate keeps
+  the queue idle while ``biblioteca_ingestao_habilitada`` is off, so enqueueing is always safe.
 * **Pending sweep** (every 10 min), the delivery path the synchronous transcription hook cannot be:
-  - a viral whose transcription settled (or never applied) but whose classification is still
-    ``pendente`` gets its ``biblioteca.classificar`` job (``classificar:{id}:{YYYYMMDD}``);
+  - a viral (``e_viral``, or one an admin added by link) whose transcription settled (or never applied) but whose
+    classification is still ``pendente`` gets its ``biblioteca.classificar`` job (``classificar:{id}:{YYYYMMDD}``);
   - a viral stuck in ``na_fila`` whose shared ``transcricoes`` row failed or was cancelled becomes
     ``falhou`` (and is then classified from the caption).
 
@@ -14,11 +14,14 @@
   third party whose posts, voice and picture we hold, so data nobody uses is erased.
   - A profile that is ``pausado`` or referenced by no marca (neither a ``perfil`` reference nor a
     ``video`` reference to one of its virais) is stamped ``inativo_desde`` the first sweep that sees
-    it so; the stamp is cleared the moment it is in use again.
-  - After ``biblioteca_retencao_dias`` (config, default 90 -- the owner validates the number) it is
-    PURGED through the same :func:`purgar_perfil` the delete endpoint uses: caption, transcript,
+    it so; the stamp is cleared the moment it is in use again -- UNLESS it is RETAINED: it has >= 1 non-``arquivada``
+    Estrutura (the curated derived data) or ``monitorar = false`` (a library-only profile). A retained profile is never
+    purged as a profile, but its viral media / transcripts / thumbnails are still erased by age
+    (:func:`purgar_virais_antigos`), except the videos a marca selected.
+  - After ``biblioteca_retencao_dias`` (config, default 90 -- the owner validates the number) an unused,
+    non-retained profile is PURGED through the same :func:`purgar_perfil` the delete endpoint uses: caption, transcript,
     blueprint, thumbnails, profile picture / name / followers -- rows and blobs.
-  - The orphan sweep deletes every ``sw-biblioteca/{org}/{perfil}/`` prefix whose profile no longer
+  - The orphan sweep deletes every ``sw-biblioteca/{org|platform}/{perfil}/`` prefix whose profile no longer
     exists. It is the RETRY for a blob delete that failed (logged, never fatal) and the cleanup for a
     sync that was still uploading when its profile was deleted.
 
@@ -40,11 +43,14 @@ from app.dependencies import get_admin_client, get_scoped_admin_client
 from app.modules.media_creation.services import geracao_jobs
 from app.modules.media_creation.services.biblioteca_service import (
     BUCKET,
+    CONTEXTO_TIPO,
+    ESTRUTURAS,
     PERFIS,
     REFS,
     TRANSCRICOES,
     VIRAIS,
     purgar_perfil,
+    registrar_evento,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,21 +76,19 @@ def _day(now: Optional[datetime] = None) -> str:
 
 
 async def enqueue_daily_syncs(db: Any, repo: JobRepository, *, now: Optional[datetime] = None) -> int:
-    """Enqueue today's sync for every active, auto-updated profile. Returns how many were targeted."""
-    refs = iter_paged_rows(
-        lambda s, e: db.table(REFS).select("id,perfil_id").eq("modo", "perfil").eq("auto_atualizar", True)
-        .order("id").range(s, e).execute().data
+    """Enqueue today's sync for every platform profile with ``monitorar = true`` that is active (or only waiting on a
+    budget / credential). Returns how many were targeted."""
+    rows = iter_paged_rows(
+        lambda s, e: db.table(PERFIS).select("id").eq("monitorar", True)
+        .in_("status", ["ativo", "sem_orcamento", "sem_credencial"]).order("id").range(s, e).execute().data
     )
-    perfil_ids = sorted({str(r["perfil_id"]) for r in refs if r.get("perfil_id")})
     targeted = 0
-    for chunk in batched(perfil_ids):
-        rows = db.table(PERFIS).select("id").in_("status", ["ativo", "sem_orcamento", "sem_credencial"]).in_("id", chunk).execute().data or []
-        for r in rows:
-            await repo.enqueue(
-                type="biblioteca.sync_perfil", payload={"perfil_id": str(r["id"])}, max_retries=2,
-                dedupe_key=f"sync:{r['id']}:{_day(now)}",
-            )
-            targeted += 1
+    for r in rows:
+        await repo.enqueue(
+            type="biblioteca.sync_perfil", payload={"perfil_id": str(r["id"])}, max_retries=2,
+            dedupe_key=f"sync:{r['id']}:{_day(now)}",
+        )
+        targeted += 1
     return targeted
 
 
@@ -110,10 +114,17 @@ async def sweep_pendentes(db: Any, repo: JobRepository, *, now: Optional[datetim
                 "transcricao_status", "na_fila").execute()
             falhas += 1
     # 2. classification still waiting although its transcription settled
-    pend = iter_paged_rows(
-        lambda s, e: db.table(VIRAIS).select("id").eq("e_viral", True).eq("classificacao_status", "pendente")
-        .in_("transcricao_status", list(CLASSIFICAVEL)).order("id").range(s, e).execute().data
-    )
+    # Two plain equality queries (not one `or`): a viral video, and a video an admin added by link (chosen by hand, so
+    # analysed whatever its viral score). Deduped by id.
+    pend_ids: dict[str, None] = {}
+    for coluna, valor in (("e_viral", True), ("origem_inclusao", "link_manual")):
+        for v in iter_paged_rows(
+            lambda s, e, coluna=coluna, valor=valor: db.table(VIRAIS).select("id").eq(coluna, valor)
+            .eq("classificacao_status", "pendente").in_("transcricao_status", list(CLASSIFICAVEL))
+            .order("id").range(s, e).execute().data
+        ):
+            pend_ids[str(v["id"])] = None
+    pend = [{"id": i} for i in pend_ids]
     classificar = 0
     for v in pend:
         await repo.enqueue(
@@ -139,7 +150,7 @@ def _parse_ts(value: Any) -> Optional[datetime]:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-def _perfis_referenciados(db: Any) -> set[str]:
+def _perfis_de_marcas(db: Any) -> set[str]:
     """Profile ids some marca still uses: a ``perfil`` reference, or a ``video`` reference to one of its virais."""
     usados: set[str] = set()
     video_ids: list[str] = []
@@ -156,14 +167,93 @@ def _perfis_referenciados(db: Any) -> set[str]:
     return usados
 
 
+def _perfis_selecionados(db: Any) -> set[str]:
+    """Profiles a marca selected AS A WHOLE (``perfil`` reference): their videos never expire by age."""
+    return {
+        str(r["perfil_id"]) for r in iter_paged_rows(
+            lambda s, e: db.table(REFS).select("id,perfil_id").eq("modo", "perfil").order("id").range(s, e).execute().data
+        ) if r.get("perfil_id")
+    }
+
+
+def _perfis_retidos(db: Any) -> set[str]:
+    """Profiles exempt from the unreferenced purge (estruturas-contract 4.3 #5): those with >= 1 non-``arquivada``
+    Estrutura (the curated derived data the library keeps) and the library-only ones (``monitorar = false``)."""
+    retidos: set[str] = set()
+    for r in iter_paged_rows(
+        lambda s, e: db.table(ESTRUTURAS).select("id,perfil_id").neq("status", "arquivada")
+        .order("id").range(s, e).execute().data
+    ):
+        retidos.add(str(r["perfil_id"]))
+    for r in iter_paged_rows(
+        lambda s, e: db.table(PERFIS).select("id").eq("monitorar", False).order("id").range(s, e).execute().data
+    ):
+        retidos.add(str(r["id"]))
+    return retidos
+
+
+def _perfis_referenciados(db: Any) -> set[str]:
+    """Profile ids that are NOT purge candidates: referenced by a marca, OR retained (has Estruturas / ``monitorar=false``)."""
+    return _perfis_de_marcas(db) | _perfis_retidos(db)
+
+
+def _viral_ids_selecionados(db: Any) -> set[str]:
+    return {
+        str(r["viral_id"]) for r in iter_paged_rows(
+            lambda s, e: db.table(REFS).select("id,viral_id").eq("modo", "video").order("id").range(s, e).execute().data
+        ) if r.get("viral_id")
+    }
+
+
+async def purgar_virais_antigos(
+    db: Any, storage: StorageBackend, perfil: dict[str, Any], *, dias: int, protegidos: set[str],
+    now: Optional[datetime] = None,
+) -> dict[str, int]:
+    """For a RETAINED profile: erase the videos stored longer than ``dias`` ago (thumbnail blob, library transcript, row; the
+    Estruturas derived from them keep living -- ``cs_estruturas.viral_id`` is ``ON DELETE SET NULL``), except the videos a
+    marca selected. Each erased video leaves a content-free ``excluido`` event. Returns ``{virais, blobs_falhos}``."""
+    agora = now or datetime.now(timezone.utc)
+    corte = (agora - timedelta(days=dias)).isoformat()
+    pid = str(perfil["id"])
+    velhos = [
+        v for v in iter_paged_rows(
+            lambda s, e: db.table(VIRAIS).select("id,thumbnail_path").eq("perfil_id", pid).lt("created_at", corte)
+            .order("id").range(s, e).execute().data
+        ) if str(v["id"]) not in protegidos
+    ]
+    out = {"virais": 0, "blobs_falhos": 0}
+    if not velhos:
+        return out
+    handle = (db.table(PERFIS).select("handle").eq("id", pid).execute().data or [{}])[0].get("handle", "")
+    for v in velhos:
+        if v.get("thumbnail_path"):
+            try:
+                await storage.delete(bucket=BUCKET, key=v["thumbnail_path"])
+            except Exception:  # noqa: BLE001 - the row goes anyway; the orphan sweep retries the prefix listing
+                out["blobs_falhos"] += 1
+                logger.warning("biblioteca: thumbnail antigo não apagado key=%s", v["thumbnail_path"], exc_info=True)
+    for chunk in batched([str(v["id"]) for v in velhos]):
+        db.table(TRANSCRICOES).delete().eq("contexto_tipo", CONTEXTO_TIPO).in_(
+            "contexto_ref", chunk).neq("status", "processando").execute()
+        db.table(VIRAIS).delete().in_("id", chunk).execute()
+    for v in velhos:
+        registrar_evento(db, perfil_id=pid, handle=handle, tipo="excluido", ator_id=None, ator_tipo="sistema",
+                         viral_id=str(v["id"]))
+        out["virais"] += 1
+    return out
+
+
 async def purgar_expirados(
     db: Any, storage: StorageBackend, *, dias: int, now: Optional[datetime] = None
 ) -> dict[str, int]:
-    """Stamp / clear ``inativo_desde`` and purge the profiles idle for ``dias`` days. Returns
-    ``{marcados, reativados, purgados, blobs_falhos}``."""
+    """Stamp / clear ``inativo_desde`` and purge the profiles idle for ``dias`` days; erase the old videos of retained
+    profiles. Returns ``{marcados, reativados, purgados, blobs_falhos, virais_antigos}``."""
     agora = now or datetime.now(timezone.utc)
-    usados = _perfis_referenciados(db)
-    out = {"marcados": 0, "reativados": 0, "purgados": 0, "blobs_falhos": 0}
+    de_marcas = _perfis_de_marcas(db)
+    retidos = _perfis_retidos(db)
+    selecionados = _viral_ids_selecionados(db)
+    inteiros = _perfis_selecionados(db)
+    out = {"marcados": 0, "reativados": 0, "purgados": 0, "blobs_falhos": 0, "virais_antigos": 0}
     perfis = list(
         iter_paged_rows(
             lambda s, e: db.table(PERFIS).select("id,org_id,status,foto_path,inativo_desde")
@@ -171,17 +261,32 @@ async def purgar_expirados(
         )
     )
     for p in perfis:
-        inativo = p.get("status") == "pausado" or str(p["id"]) not in usados
+        pid = str(p["id"])
+        retido = pid in retidos
+        inativo = not retido and (p.get("status") == "pausado" or pid not in de_marcas)
         desde = _parse_ts(p.get("inativo_desde"))
+        if retido and pid not in inteiros:
+            # Retained (Estruturas / library-only) and not selected whole by a marca: its media still expires by age
+            # (the videos a marca selected one by one are protected inside).
+            r = await purgar_virais_antigos(db, storage, p, dias=dias, protegidos=selecionados, now=agora)
+            out["virais_antigos"] += r["virais"]
+            out["blobs_falhos"] += r["blobs_falhos"]
         if not inativo:
             if desde is not None:
-                db.table(PERFIS).update({"inativo_desde": None}).eq("id", str(p["id"])).execute()
+                db.table(PERFIS).update({"inativo_desde": None}).eq("id", pid).execute()
                 out["reativados"] += 1
         elif desde is None:
-            db.table(PERFIS).update({"inativo_desde": agora.isoformat()}).eq("id", str(p["id"])).execute()
+            db.table(PERFIS).update({"inativo_desde": agora.isoformat()}).eq("id", pid).execute()
             out["marcados"] += 1
         elif agora - desde >= timedelta(days=dias):
-            out["blobs_falhos"] += await purgar_perfil(db, storage, str(p["org_id"]), p)
+            # Re-check right before the destructive step: a non-archived Estrutura created since the scan keeps the profile.
+            tem = db.table(ESTRUTURAS).select("id").eq("perfil_id", pid).neq("status", "arquivada").limit(1).execute().data
+            if tem:
+                continue
+            r = await purgar_perfil(
+                db, storage, p, ator_tipo="sistema", tipo_evento="excluido", apagar_estruturas=True,
+            )
+            out["blobs_falhos"] += r["blobs_falhos"]
             out["purgados"] += 1
     return out
 

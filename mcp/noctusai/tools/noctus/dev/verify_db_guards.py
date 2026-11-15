@@ -13000,6 +13000,192 @@ _SW_350_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — social_wiring library -> PLATFORM scope (migration 351, M2 of estruturas-contract.md section 3.2).
+# Self-provisioning like the 350 probes: every probe builds its OWN platform profile (org_id NULL -- which itself proves
+# the DROP NOT NULL) / video / Estrutura inside the rolled-back transaction. `statements` is the write under test.
+# ---------------------------------------------------------------------------
+
+_SW_351_MIGRATION = "351_cs_library_platform_scope.sql"
+
+
+def _sw351_probe(
+    *, probe_id: str, guard_name: str, statements: str, permitted_msg: str, rationale: str,
+    kind: str = "write_refusal", fragment: str | None = None, after_ok: str = "",
+) -> GuardProbe:
+    """Probe on a migration-351 guard (same contract as ``_sw350_probe``): ``write_refusal`` = ``statements`` must be
+    refused by ``guard_name``; ``write_allowed`` = a SANCTIONED write whose success is the pass (``after_ok`` re-checks the
+    resulting state and RAISEs ``NOC_PROBE:blocked:`` when wrong)."""
+    fragment_lit = _sql_lit(fragment or guard_name)
+    pass_branch = (
+        f"    RAISE EXCEPTION 'NOC_PROBE:permitted: {_sql_lit(permitted_msg)} - the guard did not fire';"
+        if kind == "write_refusal"
+        else f"{after_ok}\n    RAISE EXCEPTION 'NOC_PROBE:allowed: {_sql_lit(permitted_msg)}';"
+    )
+    ok_marker, bad_marker = (
+        ("NOC_PROBE:permitted:", "refused") if kind == "write_refusal" else ("NOC_PROBE:allowed:", "blocked")
+    )
+    return GuardProbe(
+        id=probe_id, product="social-wiring", schema=_SW_SCHEMA, guard_name=guard_name, kind=kind,
+        migrations=(_SW_351_MIGRATION,), rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_perfil uuid; v_viral uuid; v_est uuid; v_ev uuid; v_pev uuid;
+BEGIN
+  IF to_regclass('{_SW_SCHEMA}.cs_perfil_eventos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:pending: {_SW_SCHEMA}.cs_perfil_eventos does not exist (migration 351 not applied)';
+  END IF;
+  INSERT INTO {_SW_SCHEMA}.cs_perfis_monitorados (handle, monitorar) VALUES ('noc.probe.plat', false) RETURNING id INTO v_perfil;
+  INSERT INTO {_SW_SCHEMA}.cs_virais (perfil_id, ig_media_id, ig_shortcode, origem_inclusao)
+  VALUES (v_perfil, 'noc-probe-351', 'NOCPROBE351', 'link_manual') RETURNING id INTO v_viral;
+  INSERT INTO {_SW_SCHEMA}.cs_estruturas (perfil_id, viral_id, formula_headline, formato, objetivos, status, origem)
+  VALUES (v_perfil, v_viral, 'noc probe', 'reels', ARRAY['alcance']::text[], 'ativa', 'manual') RETURNING id INTO v_est;
+  INSERT INTO {_SW_SCHEMA}.cs_estrutura_eventos (estrutura_id, tipo, ator_tipo, versao) VALUES (v_est, 'criada', 'admin', 1) RETURNING id INTO v_ev;
+  INSERT INTO {_SW_SCHEMA}.cs_perfil_eventos (perfil_id, handle, tipo, ator_tipo) VALUES (v_perfil, 'noc.probe.plat', 'criado', 'admin') RETURNING id INTO v_pev;
+  BEGIN
+{statements}
+{pass_branch}
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE '{ok_marker}%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:{bad_marker}: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_SW_351_TABLES = "'cs_perfis_monitorados', 'cs_virais', 'cs_perfil_eventos'"
+_SW_351_PROBES: tuple[GuardProbe, ...] = (
+    _sw351_probe(
+        probe_id="sw351_perfil_eventos_update_refused", guard_name="cs_perfil_eventos_imutavel",
+        statements=f"    UPDATE {_SW_SCHEMA}.cs_perfil_eventos SET tipo = 'excluido' WHERE id = v_pev;",
+        permitted_msg="a profile event was rewritten",
+        rationale="Who did what to a library profile is append-only history: a rewritten row would falsify the audit of admin writes.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_eventos_delete_refused", guard_name="cs_perfil_eventos_imutavel",
+        statements=f"    DELETE FROM {_SW_SCHEMA}.cs_perfil_eventos WHERE id = v_pev;",
+        permitted_msg="a profile event was deleted",
+        rationale="A deleted event would silently shorten the audit; the table is content-free, so nothing needs erasing.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_eventos_truncate_refused", guard_name="cs_estruturas_recusa_truncate",
+        statements=f"    TRUNCATE {_SW_SCHEMA}.cs_perfil_eventos;",
+        permitted_msg="the profile event ledger was truncated",
+        rationale="Row triggers never fire on TRUNCATE; a statement-level refusal keeps the ledger append-only for a bulk wipe too.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_eventos_tipo_valido", guard_name="cs_perfil_eventos_tipo_check",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_perfil_eventos (perfil_id, handle, tipo, ator_tipo) VALUES (v_perfil, 'noc.probe.plat', 'inventado', 'admin');",
+        permitted_msg="a profile event of an unknown type was recorded",
+        rationale="Event types are a closed enum so every metric over them has one definition.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_eventos_ator_valido", guard_name="cs_perfil_eventos_ator_tipo_check",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_perfil_eventos (perfil_id, handle, tipo, ator_tipo) VALUES (v_perfil, 'noc.probe.plat', 'criado', 'inventado');",
+        permitted_msg="a profile event of an unknown actor kind was recorded",
+        rationale="Actor kinds are a closed enum: an admin write and a system write are told apart.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_plataforma_handle_unico", guard_name="cs_perfis_monitorados_plataforma_handle_uq",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_perfis_monitorados (handle, monitorar) VALUES ('noc.probe.plat', false);",
+        permitted_msg="the same handle was registered twice in the platform library",
+        rationale="NULL org_id rows are distinct to the old (org, rede, handle) index: the platform handle needs its own unique key, or two admins create the same profile twice.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_viral_shortcode_unico", guard_name="cs_virais_ig_shortcode_uq",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_virais (perfil_id, ig_media_id, ig_shortcode, origem_inclusao) VALUES (v_perfil, 'noc-probe-351-b', 'NOCPROBE351', 'link_manual');",
+        permitted_msg="the same Instagram post was added twice by link",
+        rationale="The add-by-link dedupe: one Instagram shortcode is one video in the library, whichever profile or path added it.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_viral_codigo_unico", guard_name="cs_virais_codigo_uq",
+        statements=(f"    INSERT INTO {_SW_SCHEMA}.cs_virais (perfil_id, ig_media_id, codigo) OVERRIDING SYSTEM VALUE "
+                    f"SELECT v_perfil, 'noc-probe-351-c', codigo FROM {_SW_SCHEMA}.cs_virais WHERE id = v_viral;"),
+        permitted_msg="two library videos shared the same codigo",
+        rationale="`codigo` is the global handle of a video once the library is platform-wide (the per-org unique no longer scopes it).",
+    ),
+    _sw351_probe(
+        probe_id="sw351_viral_origem_valida", guard_name="cs_virais_origem_inclusao_valida",
+        statements=f"    UPDATE {_SW_SCHEMA}.cs_virais SET origem_inclusao = 'inventada' WHERE id = v_viral;",
+        permitted_msg="a video was given an unknown inclusion origin",
+        rationale="origem_inclusao is a closed enum (sync | link_manual): the share of manually added videos is a metric.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_estrutura_evento_ator_valido", guard_name="cs_estrutura_eventos_ator_tipo_valido",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_estrutura_eventos (estrutura_id, tipo, ator_tipo, versao) VALUES (v_est, 'excluida', 'inventado', 2);",
+        permitted_msg="an Estrutura event of an unknown actor kind was recorded",
+        rationale="The 351 rewrite of the ator_tipo CHECK must still refuse a value outside the closed set.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_estrutura_evento_ator_retencao_permitido", guard_name="cs_estrutura_eventos_ator_tipo_valido",
+        kind="write_allowed",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_estrutura_eventos (estrutura_id, tipo, ator_tipo, versao) VALUES (v_est, 'excluida', 'sistema_retencao', 2);",
+        permitted_msg="the retention sweep recorded an Estrutura erasure",
+        rationale="Retention erases the archived Estruturas of an unused profile; its event must be writable as sistema_retencao.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_purga_recusa_estruturas", guard_name="perfil_com_estruturas",
+        statements=f"    PERFORM {_SW_SCHEMA}.cs_perfil_purgar(v_perfil, NULL, 'admin', 'excluido', false);",
+        permitted_msg="a profile that owns Estruturas was erased without the explicit flag",
+        rationale="An ordinary profile delete must refuse while Estruturas exist (the admin sees the count first); only the opt-out passes the flag.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_purga_optout_cascata_permitida", guard_name="cs_perfil_purgar", kind="write_allowed",
+        statements=f"    PERFORM {_SW_SCHEMA}.cs_perfil_purgar(v_perfil, NULL, 'admin', 'optout_purgado', true);",
+        permitted_msg="the opt-out purge erased the profile, its video and its Estrutura",
+        after_ok=(
+            f"    IF EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_perfis_monitorados WHERE id = v_perfil)\n"
+            f"       OR EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_virais WHERE id = v_viral)\n"
+            f"       OR EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_estruturas WHERE id = v_est) THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the purge left the profile, its video or its Estrutura behind';\n"
+            "    END IF;\n"
+            f"    IF NOT EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_estrutura_eventos WHERE estrutura_id = v_est AND tipo = 'excluida')\n"
+            f"       OR NOT EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_perfil_eventos WHERE perfil_id = v_perfil AND tipo = 'optout_purgado') THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the purge left no content-free event';\n"
+            "    END IF;"
+        ),
+        rationale="LGPD opt-out: the erasure of a profile must take its videos and Estruturas with it in ONE transaction and leave only content-free events.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_plataforma_criar_idempotente", guard_name="cs_perfil_plataforma_criar", kind="write_allowed",
+        statements=(f"    PERFORM {_SW_SCHEMA}.cs_perfil_plataforma_criar('noc.probe.novo', 'Nome', 'import', 'sistema_import', NULL, NULL);\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_perfil_plataforma_criar('noc.probe.novo', 'Nome', 'import', 'sistema_import', NULL, NULL);"),
+        permitted_msg="the load created a profile twice-called, once",
+        after_ok=(
+            f"    IF (SELECT count(*) FROM {_SW_SCHEMA}.cs_perfis_monitorados WHERE handle = 'noc.probe.novo' AND org_id IS NULL AND monitorar = false) <> 1\n"
+            f"       OR (SELECT count(*) FROM {_SW_SCHEMA}.cs_perfil_eventos WHERE handle = 'noc.probe.novo' AND tipo IN ('criado', 'importado') AND ator_tipo = 'sistema_import') <> 2 THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the profile create is not idempotent or wrote the wrong events';\n"
+            "    END IF;"
+        ),
+        rationale="The Estruturas load re-runs: creating the same library profile twice must yield one profile and one criado + importado pair.",
+    ),
+    GuardProbe(
+        id="sw351_biblioteca_sem_grant_navegador", product="social-wiring", schema=_SW_SCHEMA,
+        guard_name="cs_library_platform_tier", kind="state_assertion", migrations=(_SW_351_MIGRATION,),
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                "SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+                f" WHERE n.nspname = '{_SW_SCHEMA}' AND c.relname IN ({_SW_351_TABLES})"
+                " AND (c.relacl::text LIKE '%authenticated=%' OR c.relacl::text LIKE '%anon=%'))"
+                " + (SELECT count(*) FROM pg_policies"
+                f" WHERE schemaname = '{_SW_SCHEMA}' AND tablename IN ({_SW_351_TABLES})"
+                " AND (roles::text LIKE '%authenticated%' OR roles::text LIKE '%anon%' OR roles::text LIKE '%public%'))"
+                " INTO v_count;"
+            ),
+            clean_message="the platform library tables hold no browser grant and no browser policy",
+            violation_message_prefix="browser grant(s) / policies LIVE on the platform library tables -",
+        ),
+        rationale="The library is Platform IP (tier:platform): the API (service role) is the only door -- a browser grant or policy would let any member read or write the corpus straight through PostgREST.",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
@@ -13124,6 +13310,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_241_PROBES,
     *_SW_342_PROBES,
     *_SW_350_PROBES,
+    *_SW_351_PROBES,
     *_SW_JULIA_ENVIO_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
     *_SW_JULIA_CREDITO_PROBES,

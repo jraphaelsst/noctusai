@@ -1,7 +1,7 @@
 """Biblioteca ingestion -- the three ``biblioteca.*`` job handlers (contract section 3.3, 9.2).
 
-``biblioteca.sync_perfil`` reads a monitored profile through Business Discovery (the org's own
-``provider='meta'`` Facebook-Login connection, official API only), upserts its posts, mirrors
+``biblioteca.sync_perfil`` reads a monitored profile through Apify (or Business Discovery, the platform
+ingestion org's own ``provider='meta'`` Facebook-Login connection), upserts its posts, mirrors
 thumbnails into the PRIVATE ``sw-biblioteca`` bucket and recomputes the viral metric.
 ``biblioteca.transcrever`` downloads a viral Reel (SSRF-safe) and hands it to the shared transcription
 layer's LOW-PRIORITY library lane (``TranscricaoService.submit_sistema``). ``biblioteca.classificar``
@@ -18,6 +18,14 @@ stored for display -- the profile's ``erro_mensagem`` is our own pt-BR copy.
 
 The ``biblioteca`` worker's claim gate (``geracao_jobs``) keeps all of this idle while
 ``biblioteca_ingestao_habilitada`` is off (default).
+
+Since migration 351 the library is PLATFORM-WIDE: every credential, cap, cost-ledger row and transcription-lane slot is
+keyed on the ONE platform ingestion org (``corestudio_biblioteca_org_id``, the NoctusAI org) and the lane's system user
+(``corestudio_biblioteca_user_id``), never on a customer org. A missing org is a visible, coded failure
+(``ingestao_sem_org_plataforma``) on the profile / video, never a silent skip.
+
+``depois_de_classificar`` is the seam the auto-draft of Estruturas (EST-5) registers into from its own file: a callback
+registry fired ONCE per successful classification; a callback failure never fails the job and is recorded.
 """
 from __future__ import annotations
 
@@ -39,10 +47,7 @@ from noctusai_lib.integrations.apify import (
     InstagramScraper,
 )
 from noctusai_lib.integrations.media.safe_fetch import (
-    MAGIC_JPEG,
     MAGIC_MP4,
-    MAGIC_PNG,
-    MAGIC_WEBP,
     SafeFetchError,
     SafeFetcher,
     make_safe_fetcher,
@@ -69,7 +74,9 @@ from app.modules.media_creation.services.biblioteca_service import (
     SYNC_MIN_INTERVAL,
     VIDEO_URL_FRESCA,
     VIRAIS,
+    prefixo_blobs,
     purgar_perfil,
+    registrar_evento,
 )
 from app.services.integration_account_service import IntegrationAccountNotFound
 
@@ -84,16 +91,11 @@ METRIC_WINDOW_POSTS = 50
 MIN_POSTS_FOR_MEDIAN = 10
 VIEWS_COVERAGE = 0.8
 VIRAL_MIN_AGE = timedelta(hours=48)
-THUMB_MAX_BYTES = 2 * 1024 * 1024
 VIDEO_MAX_BYTES = 15 * 1024 * 1024
 RATE_LIMIT_DELAY_S = 900
 SYNC_INTERVAL = timedelta(days=1)
-THUMB_TYPES = ("image/jpeg", "image/png", "image/webp")
-THUMB_MAGIC = (MAGIC_JPEG, MAGIC_PNG, MAGIC_WEBP)
 VIDEO_TYPES = ("video/mp4",)
 VIDEO_MAGIC = (MAGIC_MP4,)
-_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
-VIDEO_PRODUCT_TYPES = ("REELS",)
 
 MSG_NAO_ENCONTRADO = (
     "Perfil não encontrado. Só é possível monitorar contas profissionais (comercial ou criador) e públicas."
@@ -234,6 +236,10 @@ class IngestaoPorts:
     fonte_reader: Callable[[], str] = biblioteca_fonte.read_biblioteca_fonte
     #: ``() -> public client`` for ``cost_ledger`` (best-effort; ``None`` = not booked, logged).
     ledger_factory: Optional[Callable[[], Any]] = None
+    #: ``() -> str | None`` -- the platform ingestion org (``corestudio_biblioteca_org_id``). ``None`` = not configured.
+    ingestao_org: Callable[[], Optional[str]] = biblioteca_fonte.read_ingestao_org
+    #: ``() -> str | None`` -- the system user of the library transcription lane (``corestudio_biblioteca_user_id``).
+    ingestao_user: Callable[[], Optional[str]] = biblioteca_fonte.read_ingestao_user
 
 
 async def _chat_llm(system: str, user: str, org_id: Optional[str]) -> str:
@@ -289,6 +295,8 @@ def default_ports() -> IngestaoPorts:
         scraper_factory=_apify_scraper,
         fonte_reader=lambda: biblioteca_fonte.read_biblioteca_fonte(default=settings.biblioteca_fonte),
         ledger_factory=_ledger_client,
+        ingestao_org=lambda: biblioteca_fonte.read_ingestao_org(default=settings.corestudio_biblioteca_org_id),
+        ingestao_user=lambda: biblioteca_fonte.read_ingestao_user(default=settings.corestudio_biblioteca_user_id),
     )
 
 
@@ -343,18 +351,9 @@ async def _fetch(ports: IngestaoPorts, url: str, **kw: Any):
 
 
 async def _put_image(ports: IngestaoPorts, url: str, key_base: str) -> Optional[str]:
-    """Mirror an image into the private bucket. ``None`` (logged) on any fetch problem: a missing
-    thumbnail never fails a sync."""
-    try:
-        res = await _fetch(
-            ports, url, max_bytes=THUMB_MAX_BYTES, allowed_content_types=THUMB_TYPES, expect_magic=THUMB_MAGIC
-        )
-    except SafeFetchError as exc:
-        logger.warning("biblioteca: imagem não baixada (%s)", exc.code)
-        return None
-    key = f"{key_base}.{_EXT.get(res.content_type, 'jpg')}"
-    await ports.storage.put(bucket=BUCKET, key=key, data=res.data, content_type=res.content_type)
-    return key
+    """Mirror an image into the private bucket (``None``, logged, on any fetch problem: a missing thumbnail never
+    fails a sync). The one implementation is :func:`biblioteca_fonte.espelhar_imagem` (shared with add-by-link)."""
+    return await biblioteca_fonte.espelhar_imagem(ports.fetcher, ports.storage, BUCKET, url, key_base)
 
 
 async def _enqueue(ports: IngestaoPorts, type_: str, payload: dict[str, Any], key: str) -> None:
@@ -379,21 +378,77 @@ def _assert_perfil_vivo(ports: IngestaoPorts, pid: str) -> None:
 # ── biblioteca.sync_perfil ──────────────────────────────────────────────────
 
 
-def _is_video(m: Any) -> bool:
-    return (m.media_product_type or "").upper() in VIDEO_PRODUCT_TYPES or (m.media_type or "").upper() == "VIDEO"
+_is_video = biblioteca_fonte.e_video
+
+
+# ── depois_de_classificar: the seam EST-5 registers into ────────────────────
+
+#: ``async (ports, viral_id) -> None``. Registered from the CONSUMER's own file (idempotent by identity); fired once per
+#: successful classification, after the result is stored. A callback that raises never fails the job (see below).
+DepoisDeClassificar = Callable[["IngestaoPorts", str], Awaitable[None]]
+_DEPOIS_DE_CLASSIFICAR: list[DepoisDeClassificar] = []
+
+
+def registrar_depois_de_classificar(callback: DepoisDeClassificar) -> None:
+    """Register ``callback`` to run after every successful classification. Idempotent (the same function twice = once)."""
+    if callback not in _DEPOIS_DE_CLASSIFICAR:
+        _DEPOIS_DE_CLASSIFICAR.append(callback)
+
+
+def callbacks_depois_de_classificar() -> tuple[DepoisDeClassificar, ...]:
+    return tuple(_DEPOIS_DE_CLASSIFICAR)
+
+
+async def _disparar_depois_de_classificar(ports: "IngestaoPorts", viral: dict[str, Any]) -> None:
+    """Fire the registered callbacks for one classified video. NEVER raises: a failing callback is logged at ERROR and
+    recorded as a content-free ``pos_classificacao_falhou`` event on the video's profile (so the failure rate is a
+    metric and an admin can find the video), and the other callbacks still run. The classification itself is already
+    stored -- a callback cannot undo or fail it."""
+    for cb in callbacks_depois_de_classificar():
+        try:
+            await cb(ports, str(viral["id"]))
+        except Exception:  # noqa: BLE001 - recorded below; the classification job must not fail because of a consumer
+            logger.exception("biblioteca: depois_de_classificar %s falhou viral=%s", getattr(cb, "__name__", cb), viral["id"])
+            try:
+                perfil = ports.db.table(PERFIS).select("id,handle").eq("id", str(viral["perfil_id"])).execute().data
+                registrar_evento(
+                    ports.db, perfil_id=viral["perfil_id"], handle=(perfil[0]["handle"] if perfil else ""),
+                    tipo="pos_classificacao_falhou", ator_id=None, ator_tipo="sistema", viral_id=str(viral["id"]),
+                )
+            except Exception:  # noqa: BLE001 - recording is best-effort here: already logged above, never fatal
+                logger.exception("biblioteca: falha do callback não registrada viral=%s", viral["id"])
+
+
+async def _sem_org_plataforma(ports: IngestaoPorts, *, perfil_id: Optional[str] = None, viral_id: Optional[str] = None) -> None:
+    """Make the missing platform ingestion org VISIBLE (coded, pt-BR) on the row the job was about -- never a silent skip."""
+    logger.error("biblioteca: %s não configurado (%s)", biblioteca_fonte.ORG_KEY, biblioteca_fonte.CODIGO_SEM_ORG)
+    if perfil_id:
+        _set_perfil(ports, perfil_id, status="erro", erro_codigo=biblioteca_fonte.CODIGO_SEM_ORG,
+                    erro_mensagem=biblioteca_fonte.MSG_SEM_ORG)
+    if viral_id:
+        _set_viral(ports, viral_id, classificacao_status="falhou", classificacao_erro=biblioteca_fonte.CODIGO_SEM_ORG)
 
 
 async def sync_perfil(ports: IngestaoPorts, job: Job) -> None:
     perfil = _load_perfil(ports, (job.payload or {}).get("perfil_id"))
-    pid, org_id = str(perfil["id"]), str(perfil["org_id"])
+    pid = str(perfil["id"])
     if biblioteca_optout.esta_bloqueado(ports.db, str(perfil["handle"])):
         # Belt and braces: the opt-out endpoint already purged this handle, so a surviving row means a
-        # registration raced the opt-out. Erase it instead of syncing a creator who asked not to be monitored.
+        # registration raced the opt-out. Erase it (with its Estruturas) instead of syncing a creator who asked not
+        # to be monitored.
         logger.info("biblioteca: perfil=%s em opt-out; apagado sem sincronizar", pid)
-        await purgar_perfil(ports.db, ports.storage, org_id, perfil)
+        await purgar_perfil(
+            ports.db, ports.storage, perfil, ator_tipo="sistema", tipo_evento="optout_purgado", apagar_estruturas=True,
+        )
         return
     if perfil["status"] == "pausado":
         return
+    org_id = ports.ingestao_org()
+    if not org_id:
+        await _sem_org_plataforma(ports, perfil_id=pid)
+        return
+    org_id = str(org_id)
+    prefixo = prefixo_blobs(perfil)
     now = ports.clock()
     # L4: jobs that piled up while the kill switch was OFF all wake at once; every one after the first
     # finds a profile synced moments ago. The same 1 h floor the manual endpoint enforces.
@@ -408,7 +463,7 @@ async def sync_perfil(ports: IngestaoPorts, job: Job) -> None:
     adapter: Any = None
     caller_ig: Optional[str] = None
     if not apify:
-        # Business Discovery runs on the org's own Meta (Facebook Login) connection; Apify needs none.
+        # Business Discovery runs on the platform ingestion org's Meta (Facebook Login) connection; Apify needs none.
         conta = perfil.get("conta_descoberta_id") or _default_conta(ports, org_id)
         if not conta:
             _set_perfil(ports, pid, status="sem_conta", erro_codigo="sem_conta", erro_mensagem=MSG_SEM_CONTA)
@@ -443,7 +498,7 @@ async def sync_perfil(ports: IngestaoPorts, job: Job) -> None:
     cutoff = now - timedelta(days=REFRESH_WINDOW_DAYS)
 
     if apify:
-        fetched = await _buscar_apify(ports, perfil, first=first)
+        fetched = await _buscar_apify(ports, perfil, org_id, first=first)
     else:
         fetched = await _buscar_business_discovery(
             ports, adapter, caller_ig, perfil, cap=cap, first=first, by_media=by_media, cutoff=cutoff
@@ -456,37 +511,30 @@ async def sync_perfil(ports: IngestaoPorts, job: Job) -> None:
         header_patch: dict[str, Any] = {}
         if header is not None:
             header_patch = {
-                "ig_user_id": header.ig_user_id, "nome": header.name, "seguidores": header.followers_count,
+                "ig_user_id": header.ig_user_id, "seguidores": header.followers_count,
                 "media_count": header.media_count,
             }
+            if not perfil.get("nome_editado"):  # an admin's display-name override outlives the source's name
+                header_patch["nome"] = header.name
             if header.profile_picture_url and not perfil.get("foto_path"):
                 _assert_perfil_vivo(ports, pid)
-                foto = await _put_image(ports, header.profile_picture_url, f"{org_id}/{pid}/foto")
+                foto = await _put_image(ports, header.profile_picture_url, f"{prefixo}/{pid}/foto")
                 if foto:
                     header_patch["foto_path"] = foto
 
         stamp = _iso(now)
         for m in media:
-            base = {
-                "permalink": m.permalink, "media_type": m.media_type, "media_product_type": m.media_product_type,
-                "caption": (m.caption or "")[:5000] or None,
-                "publicado_em": _iso(m.timestamp) if m.timestamp else None,
-                "likes": m.like_count, "comments": m.comments_count, "views": m.views, "metricas_em": stamp,
-            }
-            if getattr(m, "from_apify", False):
-                base["duracao_s"] = m.duracao_s
-                if m.media_url and _is_video(m):
-                    base["video_url"], base["video_url_em"] = m.media_url, stamp
+            base = biblioteca_fonte.campos_midia(m, stamp)  # the ONE normaliser (also used by admin add-by-link)
             existing = by_media.get(str(m.id))
             if existing is None:
                 _assert_perfil_vivo(ports, pid)
                 row = ports.db.table(VIRAIS).insert({
-                    **base, "org_id": org_id, "perfil_id": pid, "ig_media_id": str(m.id),
+                    **base, "org_id": perfil.get("org_id"), "perfil_id": pid, "ig_media_id": str(m.id),
                     "transcricao_status": "nao_aplicavel", "classificacao_status": "pendente", "e_viral": False,
                 }).execute().data[0]
                 thumb = m.thumbnail_url or (m.media_url if not _is_video(m) else None)
                 if thumb:
-                    path = await _put_image(ports, thumb, f"{org_id}/{pid}/{row['id']}")
+                    path = await _put_image(ports, thumb, f"{prefixo}/{pid}/{m.id}")
                     if path:
                         _set_viral(ports, row["id"], thumbnail_path=path)
             else:
@@ -597,11 +645,12 @@ async def _buscar_business_discovery(
 
 
 async def _buscar_apify(
-    ports: IngestaoPorts, perfil: dict[str, Any], *, first: bool
+    ports: IngestaoPorts, perfil: dict[str, Any], org_id: str, *, first: bool
 ) -> Optional[tuple[Any, list[Any]]]:
     """Apify path: ONE ``scrape_profile`` call -> ``(header, media)`` in the shared shape, or ``None``
-    after setting a visible status (``sem_credencial`` / ``sem_orcamento`` / ``nao_encontrado``)."""
-    pid, org_id = str(perfil["id"]), str(perfil["org_id"])
+    after setting a visible status (``sem_credencial`` / ``sem_orcamento`` / ``nao_encontrado``). ``org_id`` is the
+    platform ingestion org: it owns the Apify token, the daily cap and the cost ledger."""
+    pid = str(perfil["id"])
     now = ports.clock()
     cfg = ports.cfg
     teto_dia = int(cfg.biblioteca_apify_resultados_dia_org)
@@ -687,29 +736,37 @@ def _video_url_vigente(viral: dict[str, Any], now: datetime) -> Optional[str]:
 async def transcrever(ports: IngestaoPorts, job: Job) -> None:
     payload = job.payload or {}
     viral = _load_viral(ports, payload.get("viral_id"))
-    vid, org_id = str(viral["id"]), str(viral["org_id"])
+    vid = str(viral["id"])
     if viral["transcricao_status"] != "pendente":
         return  # already settled (a retried / duplicated job)
     day = _day(ports)
-    # L2: one org must not fill every slot of the shared library lane. Enforced here, before the
-    # download, so a busy org costs no bandwidth; the lane's own RPC still caps the platform.
+
+    async def terminal(status: str, erro: Optional[str] = None) -> None:
+        _set_viral(ports, vid, transcricao_status=status, **({"classificacao_erro": erro} if erro else {}))
+        await _enqueue(ports, "biblioteca.classificar", {"viral_id": vid}, f"classificar:{vid}:{day}")
+
+    org_id, user_id = ports.ingestao_org(), ports.ingestao_user()
+    if not org_id:
+        logger.error("biblioteca: %s não configurado (%s)", biblioteca_fonte.ORG_KEY, biblioteca_fonte.CODIGO_SEM_ORG)
+        await terminal("falhou", biblioteca_fonte.CODIGO_SEM_ORG)
+        return
+    if not user_id:
+        logger.error("biblioteca: %s não configurado; transcrição da biblioteca não pode ser atribuída", biblioteca_fonte.USER_KEY)
+        await terminal("falhou", "ingestao_sem_usuario_plataforma")
+        return
+    org_id = str(org_id)
+    # L2: the library lane's queue is capped (it is ONE platform lane now): enforced here, before the download, so a
+    # full lane costs no bandwidth; the lane's own RPC still caps the platform.
     ocupadas = (
-        ports.db.table(VIRAIS).select("id", count="exact").eq("org_id", org_id)
-        .eq("transcricao_status", "na_fila").limit(1).execute()
+        ports.db.table(VIRAIS).select("id", count="exact").eq("transcricao_status", "na_fila").limit(1).execute()
     )
     na_fila = ocupadas.count if getattr(ocupadas, "count", None) is not None else len(ocupadas.data or [])
     if na_fila >= int(ports.cfg.biblioteca_transcricao_max_fila_org):
-        raise RescheduleLater(600, "fila de transcrição da organização cheia")
-
-    async def terminal(status: str) -> None:
-        _set_viral(ports, vid, transcricao_status=status)
-        await _enqueue(ports, "biblioteca.classificar", {"viral_id": vid}, f"classificar:{vid}:{day}")
+        raise RescheduleLater(600, "fila de transcrição da biblioteca cheia")
 
     url = payload.get("media_url") or _video_url_vigente(viral, ports.clock())
-    perfil = _load_perfil(ports, str(viral["perfil_id"]))
-    user_id = perfil.get("created_by")
-    if not url or not user_id:
-        logger.warning("biblioteca: transcrição sem url/usuário viral=%s", vid)
+    if not url:
+        logger.warning("biblioteca: transcrição sem url viral=%s", vid)
         await terminal("falhou")
         return
     try:
@@ -756,19 +813,27 @@ async def transcrever(ports: IngestaoPorts, job: Job) -> None:
 
 async def classificar(ports: IngestaoPorts, job: Job) -> None:
     viral = _load_viral(ports, (job.payload or {}).get("viral_id"))
-    vid, org_id = str(viral["id"]), str(viral["org_id"])
+    vid = str(viral["id"])
+    # NOTE (EST-2 verification): this handler has NO viral-threshold gate -- it classifies whatever was enqueued. The gate
+    # lives in the SYNC (it enqueues only ``e_viral`` rows) and in the pending sweep; a video an admin added by link is
+    # enqueued directly (and swept by ``origem_inclusao``), so it is analysed regardless of the threshold.
     if viral["classificacao_status"] == "concluida":
         return
     if viral.get("transcricao_status") in ("pendente", "na_fila"):
         raise RescheduleLater(300, "aguardando a transcrição")
+    org_id = ports.ingestao_org()
+    if not org_id:
+        await _sem_org_plataforma(ports, viral_id=vid)
+        return
+    org_id = str(org_id)
     start_of_day = ports.clock().replace(hour=0, minute=0, second=0, microsecond=0)
     done_today = (
-        ports.db.table(VIRAIS).select("id", count="exact").eq("org_id", org_id)
+        ports.db.table(VIRAIS).select("id", count="exact")
         .gte("classificado_em", _iso(start_of_day)).limit(1).execute()
     )
     count = done_today.count if getattr(done_today, "count", None) is not None else len(done_today.data or [])
     if count >= int(ports.cfg.biblioteca_classificacoes_dia_org):
-        raise RescheduleLater(3600, "limite diário de classificações da organização")
+        raise RescheduleLater(3600, "limite diário de classificações da biblioteca")
     _set_viral(ports, vid, classificacao_status="processando")
 
     reply = await ports.llm(
@@ -791,6 +856,8 @@ async def classificar(ports: IngestaoPorts, job: Job) -> None:
         blueprint_slots=parsed.blueprint_slots, formato_ids=parsed.formato_ids, nicho_ids=parsed.nicho_ids,
         profissao_ids=parsed.profissao_ids, gatilho=parsed.gatilho,
     )
+    # Once per classification: a retried job returns above (status already `concluida`), so this never double-fires.
+    await _disparar_depois_de_classificar(ports, viral)
 
 
 # ── dead-letter reconcilers (sync: the sweep calls them with the service-role client) ───
@@ -847,6 +914,9 @@ __all__ = [
     "calcular_virais",
     "classificar",
     "default_ports",
+    "DepoisDeClassificar",
+    "callbacks_depois_de_classificar",
+    "registrar_depois_de_classificar",
     "escolher_base",
     "metrica",
     "reconcile_classificar",

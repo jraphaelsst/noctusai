@@ -30,7 +30,8 @@ from app.modules.media_creation.services import biblioteca_transcricao as bt
 from app.modules.transcricoes import hooks
 from app.modules.transcricoes.errors import TranscricaoErro
 
-ORG = "test-org-123"
+ORG = "test-org-123"  # the platform INGESTION org (the NoctusAI org): it owns the Meta account / Apify token / caps
+SYS_USER = "sys-user-1"  # the lane's system user (corestudio_biblioteca_user_id)
 NOW = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
 JPEG = b"\xff\xd8\xff\xe0" + b"0" * 64
 MP4 = b"\x00\x00\x00\x18ftypmp42" + b"0" * 64
@@ -88,8 +89,8 @@ def _db(*, conta: bool = True, perfil_status: str = "aguardando", **perfil_extra
             "account_label": "Minha conta", "metadata": {"channel_title": "eu"},
         }).execute()
     db.from_("cs_perfis_monitorados").insert({
-        "id": PID, "org_id": ORG, "rede": "instagram", "handle": "alvo", "status": perfil_status,
-        "created_by": "user-1", "conta_descoberta_id": None, **perfil_extra,
+        "id": PID, "org_id": None, "rede": "instagram", "handle": "alvo", "status": perfil_status,
+        "created_by": "user-1", "conta_descoberta_id": None, "monitorar": True, **perfil_extra,
     }).execute()
     return db
 
@@ -104,7 +105,8 @@ def _adapter(page=None, error=None, accounts=True):
     return ad
 
 
-def _ports(db, *, adapter=None, fetcher=None, llm=None, transcricao=None, jobs=None, storage=None, cfg=CFG):
+def _ports(db, *, adapter=None, fetcher=None, llm=None, transcricao=None, jobs=None, storage=None, cfg=CFG,
+           org=ORG, user=SYS_USER):
     async def no_llm(system, user, org):
         raise AssertionError("LLM not expected")
 
@@ -116,7 +118,7 @@ def _ports(db, *, adapter=None, fetcher=None, llm=None, transcricao=None, jobs=N
         db=db, jobs=jobs or FakeJobRepository(), storage=storage or FakeStorageBackend(),
         fetcher=fetcher or FakeSafeFetcher(), llm=llm or no_llm, adapter_factory=make_adapter,
         transcricao_factory=lambda org, user: transcricao or FakeTranscricao(), cfg=cfg, clock=lambda: NOW,
-        fonte_reader=lambda: "business_discovery",
+        fonte_reader=lambda: "business_discovery", ingestao_org=lambda: org, ingestao_user=lambda: user,
     )
 
 
@@ -165,7 +167,7 @@ class TestSync:
         assert rows["m20"]["e_viral"] and rows["m21"]["e_viral"] and not rows["m0"]["e_viral"]
         assert rows["m20"]["score_viral"] == 5.0
         # thumbnails mirrored into the private bucket; the video's poster (not the mp4) was fetched
-        assert rows["m0"]["thumbnail_path"].startswith(f"{ORG}/{PID}/") and rows["m0"]["thumbnail_path"].endswith(".jpg")
+        assert rows["m0"]["thumbnail_path"].startswith(f"platform/{PID}/") and rows["m0"]["thumbnail_path"].endswith(".jpg")
         assert rows["m20"]["thumbnail_path"]
         assert not any(u.endswith(".mp4") for u in ports.fetcher.calls)
         # a viral Reel goes to transcription; a viral image straight to classification
@@ -303,7 +305,7 @@ class TestSync:
 
 def _viral(db, *, status="pendente", **extra):
     row = {
-        "id": "v1", "org_id": ORG, "perfil_id": PID, "ig_media_id": "m1", "caption": "legenda",
+        "id": "v1", "org_id": None, "perfil_id": PID, "ig_media_id": "m1", "caption": "legenda",
         "e_viral": True, "transcricao_status": status, "classificacao_status": "pendente", **extra,
     }
     db.from_("cs_virais").insert(row).execute()
@@ -325,7 +327,7 @@ class TestTranscrever:
     def _fetch(self, **kw):
         return FakeSafeFetcher({f"{CDN}/v1.mp4": kw.get("res") or FetchResult(f"{CDN}/v1.mp4", 200, "video/mp4", MP4)})
 
-    def test_success_submits_as_the_system_for_the_profile_owner(self):
+    def test_success_submits_as_the_platform_system_user(self):
         db = _db()
         _viral(db)
         tr = FakeTranscricao()
@@ -333,7 +335,7 @@ class TestTranscrever:
         _transcrever(ports)
         v = _vstatus(db)
         assert v["transcricao_status"] == "na_fila" and v["transcricao_id"] == "tr-1" and v["duracao_s"] == 42.5
-        assert tr.calls == [(len(MP4), "v1", "user-1")]
+        assert tr.calls == [(len(MP4), "v1", SYS_USER)]
         assert _queued(ports, "biblioteca.classificar") == []  # classification waits for the hook
 
     @pytest.mark.parametrize("codigo,expected", [
@@ -466,11 +468,11 @@ class TestClassificar:
         db.from_("cs_virais").update({"classificacao_status": "concluida"}).eq("id", "v1").execute()
         _classificar(_ports(db))  # the default LLM raises if called
 
-    def test_org_daily_cap_defers(self):
+    def test_platform_daily_cap_defers(self):
         db = _db()
         _viral(db, status="nao_aplicavel")
         db.from_("cs_virais").insert({
-            "id": "v2", "org_id": ORG, "perfil_id": PID, "ig_media_id": "m2", "classificado_em": NOW.isoformat(),
+            "id": "v2", "org_id": None, "perfil_id": PID, "ig_media_id": "m2", "classificado_em": NOW.isoformat(),
             "classificacao_status": "concluida", "transcricao_status": "nao_aplicavel",
         }).execute()
         cfg = SimpleNamespace(**{**CFG.__dict__, "biblioteca_classificacoes_dia_org": 1})
@@ -483,15 +485,34 @@ class TestTranscricaoHook:
         bt.register_contexto()
         assert hooks.get_contexto("biblioteca_viral") is not None
 
-    def test_validar_scopes_to_the_org(self):
+    def test_validar_is_system_only_the_ingestion_org_and_its_system_user(self):
         db = _db()
         _viral(db)
-        bt.validar(db, ORG, "u", "v1")
-        with pytest.raises(TranscricaoErro) as ei:
-            bt.validar(db, "other-org", "u", "v1")
-        assert ei.value.status == 404
-        with pytest.raises(TranscricaoErro):
-            bt.validar(db, ORG, "u", "ghost")
+        bt.register_contexto(ingestao=lambda: (ORG, SYS_USER))
+        try:
+            bt.validar(db, ORG, SYS_USER, "v1")
+            # the library is platform-wide: a customer org (or a member of the ingestion org) must NOT be able to attach a
+            # transcript to a library video through the user-facing endpoint
+            for org, user in (("other-org", SYS_USER), (ORG, "a-human-member"), ("other-org", "u")):
+                with pytest.raises(TranscricaoErro) as ei:
+                    bt.validar(db, org, user, "v1")
+                assert ei.value.status == 404
+            with pytest.raises(TranscricaoErro):
+                bt.validar(db, ORG, SYS_USER, "ghost")
+        finally:
+            bt.register_contexto()
+
+    def test_validar_fails_closed_when_the_lane_is_not_configured(self):
+        db = _db()
+        _viral(db)
+        for lane in ((None, SYS_USER), (ORG, None), (None, None)):
+            bt.register_contexto(ingestao=lambda lane=lane: lane)
+            try:
+                with pytest.raises(TranscricaoErro) as ei:
+                    bt.validar(db, ORG, SYS_USER, "v1")
+                assert ei.value.status == 404
+            finally:
+                bt.register_contexto()
 
     def test_aplicar_writes_transcript_and_is_idempotent(self):
         db = _db()
@@ -511,12 +532,6 @@ class TestTranscricaoHook:
 
     def test_aplicar_for_a_deleted_viral_is_a_logged_noop(self):
         bt.aplicar(_db(), {"id": "t", "org_id": ORG, "contexto_ref": "gone", "texto": "x"})
-
-    def test_aplicar_never_writes_into_another_orgs_viral(self):
-        db = _db()
-        _viral(db, status="na_fila")
-        bt.aplicar(db, {"id": "t", "org_id": "other-org", "contexto_ref": "v1", "texto": "invadido"})
-        assert _vstatus(db).get("transcricao_texto") is None
 
 
 class TestReconcilers:
@@ -557,42 +572,45 @@ class TestReconcilers:
 
 
 class TestScheduler:
-    def test_daily_sync_targets_only_active_auto_updated_profiles(self):
+    def test_daily_sync_targets_only_monitored_active_platform_profiles(self):
         db = _db(perfil_status="ativo")
-        for pid, status in (("p2", "pausado"), ("p3", "ativo"), ("p4", "sem_conta")):
-            db.from_("cs_perfis_monitorados").insert({"id": pid, "org_id": ORG, "handle": pid, "status": status}).execute()
-        for rid, pid, auto in (("r1", PID, True), ("r2", "p2", True), ("r3", "p3", False), ("r4", "p4", True)):
-            db.from_("cs_biblioteca_referencias").insert(
-                {"id": rid, "org_id": ORG, "marca_id": "m", "modo": "perfil", "perfil_id": pid, "auto_atualizar": auto}
-            ).execute()
+        for pid, status, monitorar in (("p2", "pausado", True), ("p3", "ativo", False), ("p4", "sem_conta", True),
+                                       ("p5", "sem_orcamento", True)):
+            db.from_("cs_perfis_monitorados").insert(
+                {"id": pid, "org_id": None, "handle": pid, "status": status, "monitorar": monitorar}).execute()
         jobs = FakeJobRepository()
         n = anyio.run(lambda: sched.enqueue_daily_syncs(db, jobs, now=NOW))
-        assert n == 1
-        assert [j.payload for j in jobs._jobs.values()] == [{"perfil_id": PID}]
-        assert anyio.run(lambda: sched.enqueue_daily_syncs(db, jobs, now=NOW)) == 1
-        assert len(jobs._jobs) == 1  # same day: deduped
+        # no brand reference is needed any more: the library is platform-wide. Library-only (monitorar=false) is skipped.
+        assert n == 2
+        assert sorted(j.payload["perfil_id"] for j in jobs._jobs.values()) == sorted([PID, "p5"])
+        assert anyio.run(lambda: sched.enqueue_daily_syncs(db, jobs, now=NOW)) == 2
+        assert len(jobs._jobs) == 2  # same day: deduped
 
     def test_sweep_enqueues_classification_for_settled_transcriptions_only(self):
         db = _db()
         for vid, status in (("a", "concluida"), ("b", "na_fila"), ("c", "pendente"), ("d", "nao_aplicavel")):
             db.from_("cs_virais").insert({
-                "id": vid, "org_id": ORG, "perfil_id": PID, "ig_media_id": vid, "e_viral": True,
+                "id": vid, "org_id": None, "perfil_id": PID, "ig_media_id": vid, "e_viral": True,
                 "transcricao_status": status, "classificacao_status": "pendente",
             }).execute()
         db.from_("cs_virais").insert({  # not viral: never classified
-            "id": "e", "org_id": ORG, "perfil_id": PID, "ig_media_id": "e", "e_viral": False,
+            "id": "e", "org_id": None, "perfil_id": PID, "ig_media_id": "e", "e_viral": False,
             "transcricao_status": "nao_aplicavel", "classificacao_status": "pendente",
+        }).execute()
+        db.from_("cs_virais").insert({  # not viral, but an admin added it by link: chosen by hand, so analysed
+            "id": "f", "org_id": None, "perfil_id": PID, "ig_media_id": "f", "e_viral": False,
+            "origem_inclusao": "link_manual", "transcricao_status": "nao_aplicavel", "classificacao_status": "pendente",
         }).execute()
         jobs = FakeJobRepository()
         out = anyio.run(lambda: sched.sweep_pendentes(db, jobs, now=NOW))
-        assert sorted(j.payload["viral_id"] for j in jobs._jobs.values()) == ["a", "d"]
-        assert out["classificar"] == 2
+        assert sorted(j.payload["viral_id"] for j in jobs._jobs.values()) == ["a", "d", "f"]
+        assert out["classificar"] == 3
 
     def test_sweep_settles_a_transcription_that_failed_without_the_hook(self):
         db = _db()
         for vid, tid in (("a", "t-failed"), ("b", "t-cancelled"), ("c", "t-live")):
             db.from_("cs_virais").insert({
-                "id": vid, "org_id": ORG, "perfil_id": PID, "ig_media_id": vid, "e_viral": True,
+                "id": vid, "org_id": None, "perfil_id": PID, "ig_media_id": vid, "e_viral": True,
                 "transcricao_status": "na_fila", "transcricao_id": tid, "classificacao_status": "pendente",
             }).execute()
         for tid, st in (("t-failed", "falhou"), ("t-cancelled", "cancelada"), ("t-live", "na_fila")):
