@@ -25434,8 +25434,14 @@ def check_branch_tree_mirror(
                 # AND neither matches.
                 if recorded_parent and recorded_parent != "origin/dev":
                     # parent should be a branch and base should resolve near it.
-                    parent_rc, parent_sha = _git("rev-parse", "--verify", recorded_parent)
-                    base_rc, base_sha = _git("rev-parse", "--verify", recorded_base)
+                    # `X` and `origin/X` are one branch; the remote-tracking ref is the shared truth and
+                    # the local branch may carry local-only commits (a primary checkout's `dev` does), so a
+                    # local `dev` is never compared against `origin/dev`.
+                    _parent_name = recorded_parent[len("origin/"):] if recorded_parent.startswith("origin/") else recorded_parent
+                    parent_rc, parent_sha = _git("rev-parse", "--verify", f"refs/remotes/origin/{_parent_name}")
+                    if parent_rc != 0:
+                        parent_rc, parent_sha = _git("rev-parse", "--verify", recorded_parent)
+                    base_rc, base_sha = _git("rev-parse", "--verify", _split_pinned(recorded_base)[0])
                     if parent_rc == 0 and base_rc == 0 and parent_sha and base_sha:
                         # Check if base is an ancestor of or equal to parent — normal.
                         anc_rc, _ = _git("merge-base", "--is-ancestor", base_sha, parent_sha)

@@ -84,7 +84,7 @@ Totals by class: **?** 39, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | `keeper:check-auth-dep-anti-pattern` | route auth dependency anti-patterns | api:make_get_current_user_org factory (KB § PATTERNS/backend/backend.md Auth canonical pat | backend-engineer | 0 (0) | unmeasured |
 | `keeper:check-auto-improvement-cache-freshness` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-branch-orphan` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
-| `keeper:check-branch-tree-mirror` | Keeper (pre-push HARD-BLOCK): for the given branch (or all non-terminal branches when omitted) verify the bran | write-path: branch_pointer._write_row writes both files | tooling-engineer | 0 (0) | never-fires |
+| `keeper:check-branch-tree-mirror` | Keeper (pre-push HARD-BLOCK): for the given branch (or all non-terminal branches when omitted) verify the bran | mcp/noctusai/tools/noctus/dev/branch_pointer.py ensure_for_push (cli --ensure-branch-point | tooling-engineer | 0 (0) | never-fires |
 | `keeper:check-cache-uses-locking-helper` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-canonical-organ-consumption` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-card-hub-service-only` |  | seed/lib/backend/noctusai_lib/domain/card_hub/sql.py card_hub_migration emits the service- | backend-engineer | 0 (0) | ? |

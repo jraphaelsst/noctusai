@@ -530,6 +530,96 @@ def update(
     return result
 
 
+# A pointer more than this far behind its branch tip is refreshed by the pre-push hook. The mirror keeper
+# (check_branch_tree_mirror) refuses at 72h; refreshing at 24h leaves a day of margin, so a push never
+# lands on the edge of the keeper's threshold.
+ENSURE_REFRESH_HOURS = 24
+_ENSURE_PATH_CAP = 200
+
+
+def ensure_for_push(*, branch: str, root: Path | str, push_dev: bool = True, runner=None) -> dict[str, Any]:
+    """Make the branch-tree pointer of a branch about to be pushed exist and be fresh - BY CONSTRUCTION.
+
+    The pre-push mirror keeper refused 72 pushes in 11 sessions because a branch had no pointer or one
+    older than 72h, and every engineer hand-appended one and re-pushed. The hook now calls this first;
+    the keeper stays the backstop and still refuses (naming why) when this cannot write.
+
+    Reuses ``append`` / ``update`` (the one writer, the same ledger store) - never a second writer.
+    Returns ``{"ok": bool, "action": "unchanged"|"appended"|"updated", ...}``; ``ok=False`` carries ``error``.
+    A fresh pointer is a no-op that writes nothing, so a push costs no ledger traffic in the common case.
+    """
+    run = runner or _run
+    root_s = str(root)
+
+    def git(*args: str) -> tuple[int, str]:
+        rc, out, _err = run(["git", "-C", root_s, *args])
+        return rc, out.strip()
+
+    rc, tip = git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}^{{commit}}")
+    if rc != 0 or not tip:
+        return {"ok": False, "branch": branch,
+                "error": f"branch '{branch}' is not a local branch of {root_s}; cannot derive its pointer"}
+    _rc, tip_date = git("log", "-1", "--format=%aI", tip)
+    try:
+        tip_dt = datetime.fromisoformat(tip_date)
+    except ValueError:
+        return {"ok": False, "branch": branch, "error": f"cannot read the author date of {tip[:9]}"}
+    if tip_dt.tzinfo is None:
+        tip_dt = tip_dt.replace(tzinfo=timezone.utc)
+
+    prev = _latest_per_branch(_read_local_ledger()).get(branch)
+    if prev is None:
+        rc, mb = git("merge-base", "origin/dev", tip)
+        base = f"origin/dev@{mb[:9]}" if rc == 0 and mb else "origin/dev"
+        paths: list[str] = []
+        if rc == 0 and mb:
+            rc, names = git("diff", "--name-only", f"{mb}..{tip}")
+            paths = [n for n in names.splitlines() if n][:_ENSURE_PATH_CAP] if rc == 0 else []
+        res = append(branch=branch, base=base, commit=tip, role="engineer", agent="pre-push-hook",
+                     parent="dev", paths=paths, status="on_going",
+                     brief=f"auto-written by the pre-push hook: {branch} had no pointer",
+                     notes="written by branch_pointer.ensure_for_push", worktree=root_s, push_dev=push_dev)
+        return _ensure_result(res, "appended", branch, tip)
+
+    prev_commit = str(prev.get("commit") or "").strip()
+    prev_status = str(prev.get("status") or "").strip()
+    reasons: list[str] = []
+    rc, _ = git("cat-file", "-e", f"{prev_commit}^{{commit}}") if prev_commit else (1, "")
+    if rc != 0:
+        reasons.append("recorded commit missing or unresolvable")
+    if prev_status in TERMINAL_STATUSES and prev_commit != tip:
+        reasons.append(f"status {prev_status!r} but the branch has moved on")
+    try:
+        ptr_dt = datetime.fromisoformat(str(prev.get("ts") or ""))
+        if ptr_dt.tzinfo is None:
+            ptr_dt = ptr_dt.replace(tzinfo=timezone.utc)
+        lag_h = (tip_dt - ptr_dt).total_seconds() / 3600
+        if lag_h > ENSURE_REFRESH_HOURS:
+            reasons.append(f"pointer {lag_h:.0f}h behind the branch tip")
+    except ValueError:
+        reasons.append("pointer timestamp unreadable")
+    if not reasons:
+        return {"ok": True, "action": "unchanged", "branch": branch, "commit": prev_commit}
+
+    status = "on_going" if prev_status in TERMINAL_STATUSES else prev_status
+    res = update(branch=branch, commit=tip, status=status, from_dev=False, push_dev=push_dev,
+                 notes="refreshed by the pre-push hook: " + "; ".join(reasons))
+    out = _ensure_result(res, "updated", branch, tip)
+    out["reasons"] = reasons
+    return out
+
+
+def _ensure_result(res: dict[str, Any], action: str, branch: str, tip: str) -> dict[str, Any]:
+    if not res.get("ok"):
+        return {"ok": False, "branch": branch, "error": res.get("error", "pointer write failed")}
+    push = res.get("push") or {}
+    out: dict[str, Any] = {"ok": True, "action": action, "branch": branch, "commit": tip,
+                           "published": bool(push.get("ok", True))}
+    if not out["published"]:
+        out["publish_error"] = str(push.get("error", "publish failed"))[:200]
+    return out
+
+
 def query(
     *,
     from_dev: bool = True,
