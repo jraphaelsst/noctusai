@@ -2651,15 +2651,15 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
     if timing_store is None and verdict_store is not None:  # a hermetic verdict store gets a hermetic timing store beside it
         timing_store = Path(verdict_store).parent / STAGE_TIMING_STORE_NAME
 
-    def budget(gate: str, files: int | None = None) -> int:
+    def budget(gate: str, files: list[str] | None = None) -> int:
         # Lazy, at RUN time: the steward PreToolUse hook loads this module by path with only the stdlib on sys.path and
         # builds this closure eagerly, so a `tools.` import here (or at module top) crashes every steward-class call closed.
         from tools.noctus.dev import gate_budget as _gate_budget
         if timeout is not None:
             return timeout
-        per_file = (_gate_budget.p90_per_file_s(read_stage_timings(timing_store), gate[len("ci_parity:suite:"):])
+        measured = (_gate_budget.measured_file_costs(read_stage_timings(timing_store), gate[len("ci_parity:suite:"):])
                     if _gate_budget.per_file_gate(gate) else None)
-        return _gate_budget.resolve_gate_budget(gate, files=files, per_file_s=per_file)
+        return _gate_budget.resolve_gate_budget(gate, files=files, measured=measured)
 
     def check(branch: str, head: str) -> dict[str, Any]:
         rc_d, diff_out, diff_err = _subprocess_git(cwd)("diff", "--name-only", f"origin/dev...{head}")
@@ -2711,13 +2711,13 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             def run(gate: str, argv: list[str], where: Path,
                     extra: tuple[tuple[str, str], ...] = ()) -> subprocess.CompletedProcess:
                 from tools.noctus.dev import gate_budget as _gate_budget
-                files = _gate_budget.count_test_files(argv) if _gate_budget.per_file_gate(gate) else None
+                files = _gate_budget.test_files(argv) if _gate_budget.per_file_gate(gate) else None
                 first = budget(gate, files)
                 budgets = [first, _gate_budget.retry_budget(first)]
-                if files is not None and "-q" in argv:  # `-v`: the partial output of a killed stage names the running tests
-                    argv = [a for a in argv if a != "-q"] + ["-v"]
-                basis = (f"derived ({_gate_budget.PER_FILE_FIXED_S}s + {files} files x per-file cost x {_gate_budget.PER_FILE_HEADROOM})"
-                         if files is not None and timeout is None else "declared row")
+                if files is not None:  # `-v` names the running tests of a killed stage; `--durations` measures each file
+                    argv = [a for a in argv if a != "-q"] + ["-v", "--durations=0", "--durations-min=0.5"]
+                basis = (f"derived ({_gate_budget.PER_FILE_FIXED_S}s + {_gate_budget.PER_FILE_HEADROOM} x measured seconds of "
+                         f"{len(files)} selected files)" if files is not None and timeout is None else "declared row")
                 spent, partial = 0.0, None
                 for b in budgets:
                     t0 = time.monotonic()
@@ -2729,12 +2729,13 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                         partial = exc.stdout if exc.stdout is not None else exc.output
                         continue
                     if files is not None:
-                        record_stage_timing(timing_store, {"gate": gate[len("ci_parity:suite:"):], "files": files,
+                        record_stage_timing(timing_store, {"gate": gate[len("ci_parity:suite:"):], "files": len(files),
                                                            "elapsed_s": round(time.monotonic() - t0, 1), "budget_s": b,
-                                                           "completed": True, "rc": r.returncode})
+                                                           "completed": True, "rc": r.returncode,
+                                                           "file_s": _gate_budget.parse_file_durations(r.stdout)})
                     return r
                 if files is not None:
-                    record_stage_timing(timing_store, {"gate": gate[len("ci_parity:suite:"):], "files": files,
+                    record_stage_timing(timing_store, {"gate": gate[len("ci_parity:suite:"):], "files": len(files),
                                                        "elapsed_s": round(spent, 1), "budget_s": budgets[-1],
                                                        "completed": False, "rc": None})
                 raise _CiParityTimeout(gate, budgets, spent, basis, running_tests(partial))
