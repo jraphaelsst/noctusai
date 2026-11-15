@@ -2217,23 +2217,37 @@ def migration_guard_suite(tree: str | Path, changed: list[str]) -> CiSuite | Non
     return CiSuite(f"db-guards:{','.join(products)}", ".", ("-m", "pytest", "-q", "-p", "no:cacheprovider", *files))
 
 
+def suite_needs_pglite(tree: str | Path, suite: CiSuite) -> bool:
+    """True when any test FILE named on the suite's argv takes the `pglite` fixture (needs node_modules PGlite).
+    By construction the scoped toolkit suite (`mcp_toolkit_tests:scoped`) is wired like `db-guards:*`: link PGlite,
+    never exclude the tests (an exclusion leaves them unmeasured)."""
+    import ast
+    base = Path(tree) / suite.cwd
+    for a in suite.argv:
+        p = base / a.split("::")[0]
+        if p.suffix != ".py" or not p.is_file():
+            continue
+        try:
+            mod = ast.parse(p.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        if any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(x.arg == "pglite" for x in n.args.args)
+               for n in ast.walk(mod)):
+            return True
+    return False
+
+
 def link_pglite(tree: str | Path, source_repo: str | Path) -> str:
     """Give the export the SAME PGlite CI installs (`npm ci` in mcp/noctusai/node): symlink the source checkout's
     node_modules ONLY when its package-lock.json is byte-identical to the export's. Returns "" on success, else why.
     In the export CI=true, so a missing PGlite FAILS the replay tests - a false red; mismatch = UNMEASURED instead."""
-    dst, src = Path(tree) / PGLITE_NODE_DIR, Path(source_repo) / PGLITE_NODE_DIR
-    lock_d, lock_s = dst / "package-lock.json", src / "package-lock.json"
-    mods = (src / "node_modules").resolve()
-    if not (mods / "@electric-sql" / "pglite").is_dir():
-        return f"PGlite is not installed in {src} (run `npm ci` there)"
-    try:
-        if lock_d.read_bytes() != lock_s.read_bytes():
-            return f"{PGLITE_NODE_DIR}/package-lock.json differs between the head and {src} - its node_modules is not what CI installs"
-    except OSError as exc:
-        return f"cannot compare {PGLITE_NODE_DIR}/package-lock.json: {exc}"
-    if not (dst / "node_modules").exists():
-        (dst / "node_modules").symlink_to(mods, target_is_directory=True)
-    return ""
+    import sys
+    _toolkit = str(Path(__file__).resolve().parents[3])
+    if _toolkit not in sys.path:
+        sys.path.insert(0, _toolkit)
+    import node_toolchain
+    tc = node_toolchain.resolve(tree, require=("@electric-sql/pglite",), sources=[source_repo])
+    return "" if tc.ok else tc.reason
 
 
 # ─── ONE selector (2026-11-12): item 5 asks gate_sweep what the diff can break ─────────────────────────────
@@ -2434,6 +2448,63 @@ def default_verdict_store(env: dict[str, str] | None = None) -> Path:
     return default_root(env) / VERDICT_STORE_NAME
 
 
+#: append-only per-STAGE wall-clock of the CI-parity run (one row per suite stage that produced a verdict or timed out):
+#: the measured evidence `gate_budget.p90_per_file_s` sizes the per-file-derived suite budgets from (never a guess).
+STAGE_TIMING_STORE_NAME = "ci-stage-timings.ndjson"
+
+
+def default_stage_timing_store(env: dict[str, str] | None = None) -> Path:
+    return default_root(env) / STAGE_TIMING_STORE_NAME
+
+
+def record_stage_timing(store: str | Path | None, rec: dict[str, Any], clock: Callable[[], float] = time.time) -> None:
+    """Append one stage-timing row. Best-effort telemetry: an unwritable store never changes a verdict."""
+    path = Path(store) if store is not None else default_stage_timing_store()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            fh.write(json.dumps({"ts": _iso(clock()), **rec}, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def read_stage_timings(store: str | Path | None) -> list[dict[str, Any]]:
+    path = Path(store) if store is not None else default_stage_timing_store()
+    out: list[dict[str, Any]] = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            with contextlib.suppress(ValueError):
+                r = json.loads(line)
+                if isinstance(r, dict):
+                    out.append(r)
+    except OSError:
+        pass
+    return out
+
+
+_PYTEST_ITEM_RE = re.compile(r"^(\S+\.py::\S+)")
+_PYTEST_RESULT_RE = re.compile(r"\b(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b")
+
+
+def running_tests(partial: str | bytes | None, limit: int = 5) -> list[str]:
+    """The pytest items IN FLIGHT when a stage was killed, from its partial `-v` output: `-v` prints `path::test ` BEFORE
+    the test runs and the verdict after it, so a trailing item line with no verdict word is running. Empty when the
+    output carries no such line (the caller says "unknown", never guesses)."""
+    text = partial.decode("utf-8", "replace") if isinstance(partial, bytes) else (partial or "")
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    running: list[str] = []
+    for ln in reversed(lines[-50:]):
+        m = _PYTEST_ITEM_RE.match(ln)
+        if m and not _PYTEST_RESULT_RE.search(ln):
+            running.append(m.group(1))
+        elif m:
+            break
+        if len(running) >= limit:
+            break
+    return list(reversed(running))
+
+
 def record_verdict(store: str | Path | None, *, head: str, tree: str, workflow_blob: str, interpreter: str,
                    flags: list[str], tests: list[str], ok: bool, clock: Callable[[], float] = time.time,
                    telemetry: dict[str, Any] | None = None) -> str:
@@ -2558,17 +2629,26 @@ def _hw_slot(job: str):
 
 
 class _CiParityTimeout(Exception):
-    """A CI-parity stage exhausted its budget and its one x1.5 retry: no verdict (UNMEASURED), never a pass."""
+    """A CI-parity stage exhausted its budget and its one x1.5 retry: no verdict (UNMEASURED), never a pass. Carries the
+    evidence a reader needs to fix the budget instead of guessing: wall-clock actually spent, the budget and where it came
+    from, and which tests were still running when the stage was killed."""
 
-    def __init__(self, gate: str, budgets: list[int]) -> None:
-        super().__init__(f"stage `{gate}` timed out after {budgets[0]}s and again after the x1.5 retry ({budgets[-1]}s); "
-                         "no verdict. Retry on a quieter machine, or set NOCTUS_GATE_BUDGETS_JSON='{\"%s\": <seconds>}'." % gate)
+    def __init__(self, gate: str, budgets: list[int], elapsed_s: float = 0.0, basis: str = "",
+                 running: list[str] | None = None) -> None:
+        self.gate, self.budgets, self.elapsed_s, self.basis, self.running = gate, budgets, elapsed_s, basis, running or []
+        still = ("; still running when killed: " + ", ".join(self.running)) if self.running else \
+                "; still running: unknown (no per-test output captured for this stage)"
+        super().__init__(
+            f"stage `{gate}` timed out after {budgets[0]}s and again after the x1.5 retry ({budgets[-1]}s); "
+            f"{elapsed_s:.0f}s spent in total, budget {basis or 'declared row'}{still}; no verdict. Retry on a quieter machine, "
+            "or set NOCTUS_GATE_BUDGETS_JSON='{\"%s\": <seconds>}'." % gate)
 
 
 def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None = None, timeout: int | None = None,
                            base_env: dict[str, str] | None = None,
                            verdict_store: str | Path | None = None,
-                           admit: Callable[[str], Any] | None = None) -> Callable[[str, str], dict[str, Any]]:
+                           admit: Callable[[str], Any] | None = None,
+                           timing_store: str | Path | None = None) -> Callable[[str, str], dict[str, Any]]:
     """Real default for `deliverable(scoped_check=)`: judge the head the way CI does. Export it, prime the
     hermetic state CI primes, then - in a SCRUBBED environment - run (1) every `cli.py --check-*` keeper CI
     runs as a blocking step, (2) the real-tree keeper tests (`ci_keeper_test_ids`) and (3) the suites of the
@@ -2588,12 +2668,18 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
     py = python or sys.executable
     slot = admit or _hw_slot
     cs = _sibling("ci_scope")
+    if timing_store is None and verdict_store is not None:  # a hermetic verdict store gets a hermetic timing store beside it
+        timing_store = Path(verdict_store).parent / STAGE_TIMING_STORE_NAME
 
-    def budget(gate: str) -> int:
+    def budget(gate: str, files: list[str] | None = None) -> int:
         # Lazy, at RUN time: the steward PreToolUse hook loads this module by path with only the stdlib on sys.path and
         # builds this closure eagerly, so a `tools.` import here (or at module top) crashes every steward-class call closed.
         from tools.noctus.dev import gate_budget as _gate_budget
-        return timeout if timeout is not None else _gate_budget.resolve_gate_budget(gate)
+        if timeout is not None:
+            return timeout
+        measured = (_gate_budget.measured_file_costs(read_stage_timings(timing_store), gate[len("ci_parity:suite:"):])
+                    if _gate_budget.per_file_gate(gate) else None)
+        return _gate_budget.resolve_gate_budget(gate, files=files, measured=measured)
 
     def check(branch: str, head: str) -> dict[str, Any]:
         rc_d, diff_out, diff_err = _subprocess_git(cwd)("diff", "--name-only", f"origin/dev...{head}")
@@ -2645,15 +2731,34 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             def run(gate: str, argv: list[str], where: Path,
                     extra: tuple[tuple[str, str], ...] = ()) -> subprocess.CompletedProcess:
                 from tools.noctus.dev import gate_budget as _gate_budget
-                first = budget(gate)
+                files = _gate_budget.test_files(argv) if _gate_budget.per_file_gate(gate) else None
+                first = budget(gate, files)
                 budgets = [first, _gate_budget.retry_budget(first)]
+                if files is not None:  # `-v` names the running tests of a killed stage; `--durations` measures each file
+                    argv = [a for a in argv if a != "-q"] + ["-v", "--durations=0", "--durations-min=0.5"]
+                basis = (f"derived ({_gate_budget.PER_FILE_FIXED_S}s + {_gate_budget.PER_FILE_HEADROOM} x measured seconds of "
+                         f"{len(files)} selected files)" if files is not None and timeout is None else "declared row")
+                spent, partial = 0.0, None
                 for b in budgets:
+                    t0 = time.monotonic()
                     try:
-                        return subprocess.run(argv, capture_output=True, text=True, timeout=b, check=False, cwd=str(where),
-                                              env={**env, **dict(extra)})
-                    except subprocess.TimeoutExpired:
+                        r = subprocess.run(argv, capture_output=True, text=True, timeout=b, check=False, cwd=str(where),
+                                           env={**env, **dict(extra)})
+                    except subprocess.TimeoutExpired as exc:
+                        spent += time.monotonic() - t0
+                        partial = exc.stdout if exc.stdout is not None else exc.output
                         continue
-                raise _CiParityTimeout(gate, budgets)
+                    if files is not None:
+                        record_stage_timing(timing_store, {"gate": gate[len("ci_parity:suite:"):], "files": len(files),
+                                                           "elapsed_s": round(time.monotonic() - t0, 1), "budget_s": b,
+                                                           "completed": True, "rc": r.returncode,
+                                                           "file_s": _gate_budget.parse_file_durations(r.stdout)})
+                    return r
+                if files is not None:
+                    record_stage_timing(timing_store, {"gate": gate[len("ci_parity:suite:"):], "files": len(files),
+                                                       "elapsed_s": round(spent, 1), "budget_s": budgets[-1],
+                                                       "completed": False, "rc": None})
+                raise _CiParityTimeout(gate, budgets, spent, basis, running_tests(partial))
 
             def pytest_failures(r: subprocess.CompletedProcess, label: str) -> list[str]:
                 names = re.findall(r"^(?:FAILED|ERROR) (\S+)", r.stdout or "", flags=re.M)  # ERROR = setup/collection error
@@ -2692,6 +2797,11 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                     return {"ok": False, "detail": f"UNMEASURED: the diff touches migrations, so {guard.label} must run, "
                                                    f"but {why}"}
                 suites = suites + [guard]
+            elif any(suite_needs_pglite(tree, x) for x in suites):
+                why = link_pglite(tree, cwd or Path.cwd())
+                if why:
+                    return {"ok": False, "detail": f"UNMEASURED: a selected suite has pglite-fixture tests, so PGlite must "
+                                                   f"be wired in the export (ci_parity:link_pglite), but {why}"}
             if live:
                 r = run("ci_parity:livetree", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *live], tool_dir)
                 n_executed += _pytest_counts(r.stdout)

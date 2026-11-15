@@ -41,6 +41,7 @@ from typing import Any
 
 from settings import REPO_ROOT  # noqa: E402  (path constants)
 from workspace import resolve_caller_root  # noqa: E402
+import node_toolchain as _node_toolchain  # noqa: E402  (ONE node/ts-morph/PGlite resolver)
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,9 @@ def _run_harness(steps: list[dict], timeout_s: int, node_bin: str | None) -> dic
     harness = toolkit / HARNESS
     if not harness.exists():
         return {"ok": False, "error": f"{HARNESS} missing"}
+    tc = _node_toolchain.resolve(toolkit, require=("@electric-sql/pglite",))
+    if not tc.ok:
+        return {"ok": False, "error": tc.reason}
     payload = json.dumps({"stubs": (toolkit / STUBS).read_text(encoding="utf-8"), "steps": steps})
     try:
         proc = subprocess.run(

@@ -50,7 +50,6 @@ from tests.modules.test_certidoes_service import (
     _resultado,
 )
 
-_CRED = "app.modules.certidoes.credentials.resolve_api_key"
 
 # ---- verbatim prod answers (masked) ---------------------------------------
 
@@ -195,15 +194,15 @@ class TestRequisicaoPorTipo:
         assert msg and "data de nascimento" in msg
 
     @pytest.mark.parametrize("tipo", ["cnd_fazenda_sp", "divida_ativa_sp"])
-    def test_govbr_sem_login_nao_chama_e_com_login_vai_no_corpo(self, tipo):
+    def test_govbr_sem_login_nao_chama_e_com_login_vai_no_corpo(self, tipo, credenciais):
         cfg = config_for(tipo)
-        with patch(_CRED, return_value=None):
-            assert pendencia_pre_chamada(cfg, _consulta_row()) is not None
+        credenciais(None)
+        assert pendencia_pre_chamada(cfg, _consulta_row()) is not None
         creds = {"infosimples_govbr_cpf": "00000000000", "infosimples_govbr_senha": "x"}
-        with patch(_CRED, side_effect=lambda n, org_id=None: creds.get(n)):
-            c = _consulta_row()
-            assert pendencia_pre_chamada(cfg, c) is None
-            p = PARAM_BUILDERS[cfg["params_fn"]](c, "tok")
+        credenciais(lambda n, org_id=None: creds.get(n))
+        c = _consulta_row()
+        assert pendencia_pre_chamada(cfg, c) is None
+        p = PARAM_BUILDERS[cfg["params_fn"]](c, "tok")
         assert {"login_cpf", "login_senha"} <= set(p) and set(p) & set(SEGREDOS_DE_PARAMS)
 
     def test_todo_tipo_automatico_esta_coberto(self):

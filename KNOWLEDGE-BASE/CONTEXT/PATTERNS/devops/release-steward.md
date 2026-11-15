@@ -306,7 +306,7 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
   (`hw_admission.heavy_slot`; not admitted = `UNMEASURED`, never green). **Migration -> DB-guard edge (owner, 2026-11-11):** a
   diff touching `products/<p>/backend/migrations/*.sql` also runs `test_verify_db_guards.py` + that product's PGlite
   `*replay*` tests + the generic `test_migration_*` ones (`migration_guard_suite`). PGlite is linked from the source checkout only when
-  `mcp/noctusai/node/package-lock.json` is byte-identical (`link_pglite`); otherwise `UNMEASURED`. **Gap, `NOC-REMEDIATE[scoped-green-fe-and-tooling]`:**
+  `mcp/noctusai/node/package-lock.json` is byte-identical (`link_pglite`, now a thin call to the shared `node_toolchain.resolve`); otherwise `UNMEASURED`. **Gap, `NOC-REMEDIATE[scoped-green-fe-and-tooling]`:**
   FE vitest and the bespoke `tooling-tests` job stay CI-judged only - a branch steward touching a product FE or an MCP connector server
   (`mcp/<connector>/tests`) runs that suite itself before filing. **Follow-ups, out of this slice:** a Linux-container leg (BSD vs
   GNU `sed`, process start times, runner image) and `merge_buildable` against the queue tip (dev + `mq/*` refs ahead), not only dev.
@@ -406,6 +406,11 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
 - Failures, takeover and prod consent (ejection -> `ejected{reason, conflict, url}` and requeue, 2 ejections -> `blocked_on_steward`;
   stale-guardian takeover that may only resume or roll back; one plan hash per deploy window) are the ratified spec and are
   tracked as follow-ups; this section records what is built.
+
+## 8c · Lessons that recur (the full append list lives in skill `noc-steward` § Lessons that recur)
+
+- **A known false alarm with live evidence never re-blocks a cut.** `predeploy_check` may BLOCK on a check whose output the steward has already proven to be a harness or tooling defect (2026-11-15: `schema_drift` reported `missing_table:monica.*` for `nosnolimiar` - live had 25 tables in `nosnolimiar`, 0 in `monica`; two prod cuts stalled on re-measuring it). Then: record the live evidence (the query and its rows) in the shift memory, file the tooling fix on its own branch, and ship the cut. Do not keep re-measuring. Only a DIFFERENT output re-opens it; "still red" does not.
+- **A `schema_drift` that lists ONLY tables created by migrations pending in this same cut is expected pre-state, not a block.** Predeploy runs before the cut's migrations are applied, so exactly those tables are absent live. Compare the `missing_table` list against the pending migrations (`migrate_product` dry-run, `earlier_pending`); anything outside that set is real drift and blocks.
 
 ## 9 · Related
 

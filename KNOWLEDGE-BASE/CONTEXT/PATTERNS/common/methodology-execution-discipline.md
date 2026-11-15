@@ -252,6 +252,20 @@ spec list about to run (`frontend_gate_products`), so prepared == gated. Proven
 against a real temp git repo + real dirs (marker file, dummy package, `@noctusai/*`
 pointing at the merged-tip seed).
 
+**2026-11-15 — the scoped toolkit stage is sized per run from the selected files' MEASURED cost.** `ci_parity:suite:mcp_toolkit_tests:scoped`
+fell through to the flat 600 s `ci_parity:suite:` prefix and the 230-file selection timed out at 600 s and 900 s, then needed a hand-set
+`NOCTUS_GATE_BUDGETS_JSON` of 2400 s. A first fix sized it as files x 5.1 s (a figure inferred from deliverable wall-clock): it timed a
+27-file selection out at 267 s (667 s spent), proving per-file cost is not flat. Measured instead (one `--durations=0` run of the 232-file
+selection, 4107 tests, 1704 s, rc=0, `~/.noctus/hw-runs/scoped-toolkit-durations-20261115T075842Z.log`): median file 1.75 s, mean of
+the 206 light files 2.2 s, but `test_compliance.py` alone 389 s and 26 files >= 10 s (1225 s together). Now
+`gate_budget.derived_suite_budget` = 60 s + 1.5 x sum(cost of the selected files), cost = live p90 > `SEED_FILE_S` (the 26 heavy files) >
+`DEFAULT_FILE_S` 2.2 s; the live p90 comes from `~/.noctus/ci-stage-timings.ndjson`, one row per suite stage written by
+`export_ci_parity_check` with per-file seconds (3 observations replace a seed). The integrate sweep sizes the same gate the same way,
+and the no-file-list declared row is 2600 s. A timeout is still UNMEASURED but now reports total seconds spent, the budget and its
+basis (derived vs declared), and the test items in flight when it was killed (suite stages run `-v`). Add a gate to `PER_FILE_GATES`
+for any other suite whose size varies per run; do not hand-set the env. Refresh `SEED_FILE_S` from a new `--durations=0` run when the
+toolkit grows materially.
+
 **2026-11-14 — scoped-check (`ci_parity:suite:*`) budgets are per-product defaults, never hand-set env.**
 `ci_parity:suite:<product|seed>:<x>` now resolves to the declared `pytest:<x>` row (an undeclared one rides the
 generic `pytest:` row; `db-guards:*` keeps the `ci_parity:suite:` prefix row); `NOCTUS_GATE_BUDGETS_JSON` still wins,

@@ -302,3 +302,60 @@ class TestDerivationIsLazyAndFast:
         calls = log.read_text().split()
         assert 1 <= len(calls) <= 5, calls  # ls-tree + ls-files + one batched cat-file (+ headroom), not 2-4 per module
         assert from_git == derive_guardian_protected_files(REPO)
+
+
+
+class TestMergeCommitInheritedContent:
+    """2026-11-15: a merge commit re-stages dev's own doc_staleness.py / toolkit_freshness.py; the keeper
+    refused the guardian for content the MERGED BRANCH authored. Only an exact MERGE_HEAD blob is inherited."""
+
+    def _merge_setup(self, tmp_path: Path) -> tuple[Path, str]:
+        repo = _repo_with_tooling(tmp_path / "w")
+        extra = f"{_DEV}/extra_gate.py"
+        repo.joinpath(extra).write_text("x = 1\n")
+        repo.joinpath(RS).write_text("from tools.noctus.dev import extra_gate\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "wire extra_gate")
+        _git(repo, "branch", "feat")
+        # dev (the merged branch) edits the protected module
+        repo.joinpath(extra).write_text("x = 2  # authored on dev\n")
+        _git(repo, "commit", "-q", "-am", "dev edits extra_gate")
+        _git(repo, "checkout", "-q", "feat")
+        repo.joinpath("feature.txt").write_text("the guardian's own work\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "feature work")
+        return repo, extra
+
+    def _run(self, repo, tmp_path):
+        os.environ["NOCTUS_GUARD_EVENT_LOG"] = str(tmp_path / "ev-merge.ndjson")
+        try:
+            return check_guardian_tool_authorship(repo_root=repo, session_id="sess-guardian-1", lease_root=tmp_path)
+        finally:
+            os.environ.pop("NOCTUS_GUARD_EVENT_LOG", None)
+
+    def test_content_merged_from_the_other_branch_is_not_the_guardians(self, tmp_path):
+        repo, extra = self._merge_setup(tmp_path)
+        _claim(tmp_path)
+        _git(repo, "merge", "--no-commit", "--no-ff", "dev")
+        staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=repo, capture_output=True,
+                                text=True, check=True).stdout.split()
+        assert extra in staged  # the premise: the merge really re-staged the protected path
+        assert self._run(repo, tmp_path) == []
+
+    def test_the_same_path_without_a_merge_is_still_refused(self, tmp_path):
+        """Red/green pair: identical staged content, no MERGE_HEAD -> authored here -> refused."""
+        repo, extra = self._merge_setup(tmp_path)
+        _claim(tmp_path)
+        repo.joinpath(extra).write_text("x = 2  # authored on dev\n")
+        _git(repo, "add", extra)
+        issues = self._run(repo, tmp_path)
+        assert len(issues) == 1 and extra in issues[0]["file"]
+
+    def test_a_guardian_edit_layered_on_the_merge_is_still_refused(self, tmp_path):
+        repo, extra = self._merge_setup(tmp_path)
+        _claim(tmp_path)
+        _git(repo, "merge", "--no-commit", "--no-ff", "dev")
+        repo.joinpath(extra).write_text("x = 3  # the guardian's own edit\n")
+        _git(repo, "add", extra)
+        issues = self._run(repo, tmp_path)
+        assert len(issues) == 1 and extra in issues[0]["file"]

@@ -153,3 +153,32 @@ def _restore_seed_singletons():
     _restore()
     yield
     _restore()
+
+
+@pytest.fixture
+def credenciais(monkeypatch):
+    """Set the credentials the product resolves, through the REAL chain's last tier.
+
+    `api_keys_store.resolve_api_key` ends in the process environment (`name.upper()`), which
+    is external config - setting it exercises our resolver instead of replacing it. Patching
+    `credentials.resolve_api_key` / `registry.resolve_key` neuters our own logic and trips
+    `check_no_self_monkeypatch` (high for social-wiring).
+
+    `definir(valor)`: a string sets every managed key to it, `None` clears them all, and a
+    callable `name -> value|None` decides per key (what `side_effect=` used to do).
+    """
+    from app.services.api_keys_store import MANAGED_API_KEYS
+
+    # Credentials only - never the provider-choice / flag keys (`llm_*_provider`, ...), which must
+    # keep resolving to a valid option whatever secret a test stands in.
+    secretos = [n for n in MANAGED_API_KEYS if n.endswith(("_api_key", "_token", "_cpf", "_senha", "_envio"))]
+
+    def definir(valor):
+        for name in secretos:
+            v = valor(name) if callable(valor) else valor
+            if v:
+                monkeypatch.setenv(name.upper(), v)
+            else:
+                monkeypatch.delenv(name.upper(), raising=False)
+
+    return definir

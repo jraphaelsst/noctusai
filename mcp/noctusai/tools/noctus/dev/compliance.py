@@ -48,6 +48,7 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
+import node_toolchain as _node_toolchain  # noqa: E402  (ONE node/ts-morph resolver for every AST-scan keeper)
 
 
 def env_state_keeper(fn):
@@ -1751,6 +1752,57 @@ from tools.noctus.dev.self_patch_predicate import (  # noqa: E402
 )
 
 
+# ── string-constant targets ───────────────────────────────────────
+# `_CRED = "app.mod.fn"` … `patch(_CRED, ...)` is the same self-patch as the literal
+# (2026-11-15, certidoes tests). The shared predicate above only reads literals and is
+# guardian-protected steward tooling, so the resolution lives HERE (compliance.py is exempt):
+# a name bound exactly once to a module-level string is substituted into the call before the
+# predicate runs. This is the COMMIT-time backstop only; the write-time twin
+# (`test_seam_guard`) loads the stdlib-only predicate leaf, which a guardian cannot edit.
+# NOC-REMEDIATE[self-patch-constants-write-time]: port `module_string_constants` +
+# `extract_patch_target_resolved` into `self_patch_predicate.py` (tooling-branch steward, a
+# session that does not hold the release-steward lease), then call them from `test_seam_guard`
+# — destination: a tooling-branch steward branch, 2026-11-15
+def _module_string_constants(tree: ast.AST) -> dict[str, str]:
+    """Module-level ``NAME = "literal"`` / ``NAME: str = "literal"`` bindings.
+
+    Only a name bound EXACTLY ONCE counts: a reassigned name has no single static value, so
+    it stays unresolved (the old behaviour) rather than guessed - a wrong guess is a false alarm.
+    """
+    seen: dict[str, str | None] = {}
+    for stmt in getattr(tree, "body", []):
+        if isinstance(stmt, ast.Assign):
+            targets, value = list(stmt.targets), stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            targets, value = [stmt.target], stmt.value
+        else:
+            continue
+        literal = value.value if isinstance(value, ast.Constant) and isinstance(value.value, str) else None
+        for target in targets:
+            if isinstance(target, ast.Name):
+                seen[target.id] = None if target.id in seen else literal
+    return {name: val for name, val in seen.items() if val is not None}
+
+
+def _extract_patch_target_resolved(node: ast.AST, constants: dict[str, str]) -> str | None:
+    """`_extract_patch_target`, with a Name argument bound to a module-level string constant
+    read as that string: arg 0 of `patch(...)` (the dotted target), arg 1 of `setattr` /
+    `patch.object` / `setitem(sys.modules, ...)` (the attribute / module name)."""
+    if constants and isinstance(node, ast.Call):
+        func = node.func
+        is_patch = (isinstance(func, ast.Name) and func.id == "patch") or (
+            isinstance(func, ast.Attribute) and func.attr == "patch"
+        )
+        idx = 0 if is_patch else 1
+        if len(node.args) > idx and isinstance(node.args[idx], ast.Name) and node.args[idx].id in constants:
+            resolved = ast.Constant(value=constants[node.args[idx].id])
+            ast.copy_location(resolved, node.args[idx])
+            args = list(node.args)
+            args[idx] = resolved
+            node = ast.Call(func=node.func, args=args, keywords=node.keywords)
+    return _extract_patch_target(node)
+
+
 # Severity ratchet: products that have reached 0 self-monkeypatches get the
 # detector at severity `high` so new violations block CI; the rest stay at
 # `warning` while their historical debt drains. Per `KB § PATTERNS/compliance/testing.md
@@ -1841,6 +1893,9 @@ def check_no_self_monkeypatch(repo_root: Path | None = None) -> list[dict]:
             logger.warning("compliance: cannot parse test file %s (%s), skipping", path, exc)
             continue
         import_map = _build_import_map(tree)
+        # `_CRED = "app.mod.fn"` … `patch(_CRED)`: a string constant is the same
+        # target as the literal it names (2026-11-15, certidoes tests).
+        string_constants = _module_string_constants(tree)
         try:
             relative = str(path.relative_to(root))
         except ValueError:
@@ -1853,7 +1908,7 @@ def check_no_self_monkeypatch(repo_root: Path | None = None) -> list[dict]:
         )
 
         for node in ast.walk(tree):
-            raw_target = _extract_patch_target(node)
+            raw_target = _extract_patch_target_resolved(node, string_constants)
             if raw_target is None:
                 continue
             target_str = _resolve_target_via_imports(raw_target, import_map)
@@ -9424,40 +9479,8 @@ def _silent_refusal_files(root: Path) -> dict[str, list[Path]]:
 def silent_refusal_scan(files: list[Path], root: Path | None = None) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
     """Run the ts-morph scan over ``files``. Returns ``(results, per_file_errors, bootstrap_error)``;
     ``bootstrap_error`` is set when the scan could not run at all (never a silent zero)."""
-    base = root or REPO_ROOT
-    script = base.joinpath(*_SILENT_REFUSAL_SCRIPT_REL)
-    if not script.exists():
-        script = REPO_ROOT.joinpath(*_SILENT_REFUSAL_SCRIPT_REL)
-    if not files:
-        return {}, {}, None
-    if shutil.which("node") is None:
-        return {}, {}, "node_unavailable: `node` not on PATH — the silent-refusal AST scan cannot run"
-    if not script.exists():
-        return {}, {}, f"script_missing: {script}"
-    try:
-        proc = subprocess.run(
-            ["node", str(script)],
-            input=json.dumps({"files": [str(f) for f in files]}),
-            capture_output=True,
-            text=True,
-            timeout=_SILENT_REFUSAL_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        return {}, {}, f"timeout: the silent-refusal scan exceeded {_SILENT_REFUSAL_TIMEOUT_SECONDS}s ({len(files)} files)"
-    except OSError as exc:
-        return {}, {}, f"spawn_failed: {exc}"
-    if proc.returncode != 0:
-        tail = (proc.stderr or "")[-600:]
-        if "Cannot find module" in tail or "ERR_MODULE_NOT_FOUND" in tail:
-            return {}, {}, f"ts_morph_not_installed: run `cd mcp/noctusai/node && npm ci` — {tail.strip()[:300]}"
-        return {}, {}, f"node_crashed (exit {proc.returncode}): {tail}"
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {}, {}, f"non_json_stdout: {exc}; stdout={proc.stdout[:300]!r}"
-    if not parsed.get("ok"):
-        return {}, {}, f"bad_request: {parsed.get('error')}"
-    return parsed.get("results", {}), parsed.get("errors", {}), None
+    return _node_toolchain.run_files_scan(_SILENT_REFUSAL_SCRIPT_REL, files, root=root or REPO_ROOT,
+                                         timeout=_SILENT_REFUSAL_TIMEOUT_SECONDS, label="silent-refusal AST scan")
 
 
 def check_silent_refusal(repo_root: Path | None = None) -> list[dict]:
@@ -9558,34 +9581,8 @@ def _motion_import_files(root: Path) -> dict[str, list[Path]]:
 
 def _motion_import_scan(files: list[Path]) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
     """ts-morph scan over `files` -> (results, per_file_errors, bootstrap_error)."""
-    if not files:
-        return {}, {}, None
-    script = REPO_ROOT.joinpath(*_MOTION_SCRIPT_REL)
-    if shutil.which("node") is None:
-        return {}, {}, "node_unavailable: `node` not on PATH"
-    if not script.exists():
-        return {}, {}, f"script_missing: {script}"
-    try:
-        proc = subprocess.run(
-            ["node", str(script)], input=json.dumps({"files": [str(f) for f in files]}),
-            capture_output=True, text=True, timeout=_MOTION_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        return {}, {}, f"timeout: exceeded {_MOTION_TIMEOUT_SECONDS}s ({len(files)} files)"
-    except OSError as exc:
-        return {}, {}, f"spawn_failed: {exc}"
-    if proc.returncode != 0:
-        tail = (proc.stderr or "")[-600:]
-        if "Cannot find module" in tail or "ERR_MODULE_NOT_FOUND" in tail:
-            return {}, {}, f"ts_morph_not_installed: run `cd mcp/noctusai/node && npm ci` — {tail.strip()[:300]}"
-        return {}, {}, f"node_crashed (exit {proc.returncode}): {tail}"
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {}, {}, f"non_json_stdout: {exc}; stdout={proc.stdout[:300]!r}"
-    if not parsed.get("ok"):
-        return {}, {}, f"bad_request: {parsed.get('error')}"
-    return parsed.get("results", {}), parsed.get("errors", {}), None
+    return _node_toolchain.run_files_scan(_MOTION_SCRIPT_REL, files, root=REPO_ROOT, timeout=_MOTION_TIMEOUT_SECONDS,
+                                         label="motion-import AST scan")
 
 
 def check_motion_import_boundary(repo_root: Path | None = None) -> list[dict]:
@@ -12013,39 +12010,9 @@ def _run_lying_loading_modeb_scan_one_product(
     docstring for why the scan is now split per product ("GAP 3"). Returns
     ``(results, per_file_errors, bootstrap_error)`` scoped to `product`.
     """
-    payload = {"files": [str(p) for p in files]}
-    try:
-        proc = subprocess.run(
-            ["node", str(_LYING_LOADING_MODEB_SCRIPT)],
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            timeout=_LYING_LOADING_MODEB_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        return {}, {}, (
-            f"timeout: Mode B AST scan for `{product}` exceeded "
-            f"{_LYING_LOADING_MODEB_TIMEOUT_SECONDS}s ({len(files)} files)"
-        )
-    except OSError as exc:
-        return {}, {}, f"spawn_failed: {exc}"
-    if proc.returncode != 0:
-        stderr_tail = (proc.stderr or "")[-800:]
-        # `Cannot find module 'ts-morph'` is the specific, actionable case
-        # (node_modules/ is gitignored — `npm install` was never run here).
-        if "Cannot find module" in stderr_tail or "ERR_MODULE_NOT_FOUND" in stderr_tail:
-            return {}, {}, (
-                "ts_morph_not_installed: run `cd mcp/noctusai/node && npm install` "
-                f"— {stderr_tail.strip()[:300]}"
-            )
-        return {}, {}, f"node_crashed (exit {proc.returncode}): {stderr_tail}"
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {}, {}, f"non_json_stdout: {exc}; stdout={proc.stdout[:300]!r}"
-    if not parsed.get("ok"):
-        return {}, {}, f"bad_request: {parsed.get('error')}"
-    return parsed.get("results", {}), parsed.get("errors", {}), None
+    return _node_toolchain.run_files_scan(
+        ("mcp", "noctusai", "node", "lying_loading_scan.mjs"), files, root=REPO_ROOT,
+        timeout=_LYING_LOADING_MODEB_TIMEOUT_SECONDS, label=f"Mode B AST scan for `{product}`")
 
 
 def _run_lying_loading_modeb_scan(
@@ -13953,6 +13920,44 @@ class TransitionLogPrimitiveMissing(RuntimeError):
     """`noctusai_lib.domain.transition_log` is not importable from the tree the scan runs in."""
 
 
+_TL_DROP_TABLE_RE = re.compile(r"\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?P<name>[\w.\"]+)", re.IGNORECASE)
+
+
+def _tl_migration_order(path: Path) -> tuple[int, str]:
+    m = re.match(r"(\d+)", path.name)
+    return (int(m.group(1)) if m else -1, path.name)
+
+
+def _tl_drop_superseded(root: Path, found: list[tuple[str, int, str, str]]) -> list[tuple[str, int, str, str]]:
+    """Drop the hits whose table a LATER migration of the same product DROPs.
+
+    A migration chain is immutable history: the CREATE of a hand-written history table stays in its file for good,
+    but once a later migration has copied its rows into the seed primitive and dropped it, the table is no longer a
+    live hand-written shape (the effective schema has none). Ordering is the numeric file prefix."""
+    drops: dict[Path, list[tuple[tuple[int, str], set[str]]]] = {}
+    out: list[tuple[str, int, str, str]] = []
+    for hit in found:
+        rel, _line, table, _why = hit
+        path = root / rel
+        siblings = drops.get(path.parent)
+        if siblings is None:
+            siblings = []
+            for sib in path.parent.glob("*.sql"):
+                try:
+                    text = _sql_strip_comments(sib.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError) as exc:
+                    logger.debug("compliance: cannot read %s (%s)", sib, exc)
+                    continue
+                names = {m.group("name").replace('"', "").split(".")[-1].lower() for m in _TL_DROP_TABLE_RE.finditer(text)}
+                if names:
+                    siblings.append((_tl_migration_order(sib), names))
+            drops[path.parent] = siblings
+        if any(order > _tl_migration_order(path) and table in names for order, names in siblings):
+            continue
+        out.append(hit)
+    return out
+
+
 def transition_log_hand_written_scan(root: Path) -> list[tuple[str, int, str, str]]:
     """`(relpath, line, table, why)` for every hand-written transition-history shape in migration SQL --
     baseline NOT applied. `why` = `transition-columns <from>/<to>` or `append-only-trigger <name>` (a
@@ -14021,7 +14026,7 @@ def transition_log_hand_written_scan(root: Path) -> list[tuple[str, int, str, st
                 if table in rendered or table in waived or t.group("trig") in guc_triggers or not _TL_HISTORY_NAME_RE.search(table):
                     continue  # immutable VERSION tables / audit logs are other shapes: only history tables count
                 found.append((rel, line_no, table, f"append-only-trigger {t.group('trig')}"))
-    return found
+    return _tl_drop_superseded(root, found)
 
 
 def check_transition_log_hand_written(repo_root: Path | None = None) -> list[dict]:
@@ -18189,6 +18194,40 @@ def guardian_holds_lease(
     return True, lease, "holder"
 
 
+def _merge_inherited_paths(root: Path, paths: list[str]) -> set[str]:
+    """Staged ``paths`` whose index blob equals ``MERGE_HEAD``'s blob for that path.
+
+    During a merge commit git re-stages every file the merged branch changed; that content was
+    authored on the other branch, not by this committer. A guardian merging dev into its branch
+    must not be refused for dev's own steward tooling (2026-11-15: blocked on doc_staleness.py
+    and toolkit_freshness.py). Only an EXACT blob match is inherited - a path the merge resolved
+    differently (a conflict edit) still counts as authored here. Empty set when there is no
+    MERGE_HEAD or git cannot answer (never widens what the keeper lets through on a probe failure).
+    """
+    import subprocess
+
+    def _rev(ref: str) -> tuple[bool, str]:
+        try:
+            r = subprocess.run(["git", "rev-parse", "-q", "--verify", ref], cwd=root,
+                               capture_output=True, text=True, timeout=30, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return False, "error"
+        return (r.returncode == 0, r.stdout.strip()) if r.returncode in (0, 1) else (False, "error")
+
+    has_merge, _ = _rev("MERGE_HEAD")
+    if not has_merge:
+        return set()
+    inherited: set[str] = set()
+    for path in paths:
+        staged_ok, staged_blob = _rev(f":{path}")
+        merged_ok, merged_blob = _rev(f"MERGE_HEAD:{path}")
+        if "error" in (staged_blob, merged_blob):
+            continue
+        if (staged_ok, staged_blob) == (merged_ok, merged_blob):  # same blob, or absent on both sides
+            inherited.add(path)
+    return inherited
+
+
 def check_guardian_tool_authorship(
     repo_root: Path | None = None,
     staged: list[str] | None = None,
@@ -18257,6 +18296,11 @@ def check_guardian_tool_authorship(
                  "issue": f"cannot derive the guardian-protected tool set ({derive_error}); refusing while this session "
                           "holds the release-steward lease (fail closed). KB § PATTERNS/common/gate-methodology-sync.md"}]
     hits = sorted(p for p in staged if p in protected)
+    if hits:
+        inherited = _merge_inherited_paths(repo_root or REPO_ROOT, hits)
+        if inherited:
+            _telemetry("allow", "merge-inherited: staged blob equals MERGE_HEAD's", ",".join(sorted(inherited)))
+            hits = [p for p in hits if p not in inherited]
     if not hits:
         return []
     holder = (lease or {}).get("session_name") or str((lease or {}).get("session_id"))[:8]
@@ -28226,27 +28270,7 @@ def _mpsr_seeded_keys(product_dir: Path) -> set[str]:
 
 def _mpsr_fe_scan(files: list[Path]) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
     """ts-morph `defineModule` page keys over ``files`` -> (results, per_file_errors, bootstrap_error)."""
-    if not files:
-        return {}, {}, None
-    script = REPO_ROOT.joinpath(*_MPSR_SCRIPT_REL)
-    if shutil.which("node") is None:
-        return {}, {}, "node_unavailable: `node` not on PATH"
-    if not script.exists():
-        return {}, {}, f"script_missing: {script}"
-    try:
-        proc = subprocess.run(
-            ["node", str(script)], input=json.dumps({"files": [str(f) for f in files]}),
-            capture_output=True, text=True, timeout=120,
-        )
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        return {}, {}, f"scan_failed: {exc}"
-    if proc.returncode != 0:
-        return {}, {}, f"node_crashed (exit {proc.returncode}): {(proc.stderr or '')[-300:]}"
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {}, {}, f"non_json_stdout: {exc}"
-    return parsed.get("results", {}), parsed.get("errors", {}), None
+    return _node_toolchain.run_files_scan(_MPSR_SCRIPT_REL, files, root=REPO_ROOT, timeout=120, label="module-page-keys AST scan")
 
 
 def module_page_status_row_gaps(root: Path) -> tuple[dict[str, dict[str, str]], list[str]]:

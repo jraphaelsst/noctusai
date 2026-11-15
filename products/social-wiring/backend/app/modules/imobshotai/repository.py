@@ -1,4 +1,4 @@
-"""Persistence port of the ImobShotAI cards (`imobshot_cards` / `imobshot_eventos`, migration 344).
+"""Persistence port of the ImobShotAI cards (`imobshot_cards` + the seed transition_log `imobshot_card_events`, migrations 344/345).
 
 Sync by design (PostgREST is blocking): the service calls it through `asyncio.to_thread`. Two implementations:
 the Supabase one (the three atomic writes are RPCs, so a state change and its event are ONE transaction) and an
@@ -11,13 +11,17 @@ from datetime import datetime, timezone
 from typing import Any, Optional, Protocol
 from uuid import uuid4
 
+from noctusai_lib.domain.transition_log import FakeTransitionLog, TransitionLogConfig
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
 CARDS = "imobshot_cards"
-EVENTOS = "imobshot_eventos"
+EVENTOS = "imobshot_card_events"
 LOTES = "fotos_lotes"
 FOTOS = "fotos_fotos"
 _IN_BATCH = 100
+CARD_LOG = TransitionLogConfig(
+    schema="social_wiring", aggregate="imobshot_card", state_table="imobshot_cards", state_column="etapa",
+)  # == the config marker of migration 345 (a test pins it)
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,34 @@ def _prefix_pattern(q: str) -> Optional[str]:
     """`q` as an ilike prefix. Only code characters survive, so a wildcard or a PostgREST separator can't be injected."""
     clean = re.sub(r"[^A-Za-z0-9._-]", "", q or "")
     return f"{clean}%" if clean else None
+
+
+_LEGACY_KEYS = frozenset({"legacy_tipo", "migrated_from"})
+
+
+def _actor_kind(actor_id: Optional[str]) -> str:
+    """A request's user is a `user`; the worker/sync path carries no actor and is the `system`."""
+    return "user" if actor_id else "system"
+
+
+def _evento_from_event(row: dict) -> Evento:
+    """An `imobshot_card_events` row (or a Fake history row) as the API's `Evento`, the shape the FE already reads.
+
+    created / imported_initial_state -> `card_criado` (no etapa_de); lote_vinculado carries no etapa (a link moves no
+    stage); every other event keeps its type with from/to as the etapa pair."""
+    event_type = row["event_type"]
+    if event_type in ("created", "imported_initial_state"):
+        tipo, de, para = "card_criado", None, row.get("to_state")
+    elif event_type == "lote_vinculado":
+        tipo, de, para = event_type, None, None
+    else:
+        tipo, de, para = event_type, row.get("from_state"), row.get("to_state")
+    return Evento(
+        tipo, de, para,
+        str(row["actor_id"]) if row.get("actor_id") else None,
+        _dt(row["occurred_at"]),
+        {k: v for k, v in (row.get("data") or {}).items() if k not in _LEGACY_KEYS},
+    )
 
 
 class SupabaseImobshotRepository:
@@ -189,20 +221,14 @@ class SupabaseImobshotRepository:
     def eventos(self, card_id: str, limit: int) -> list[Evento]:
         rows = (
             self._c.table(EVENTOS)
-            .select("tipo, etapa_de, etapa_para, actor_id, at, detalhe")
-            .eq("card_id", card_id)
-            .order("at", desc=True)
+            .select("event_type, from_state, to_state, actor_id, occurred_at, data")
+            .eq("entity_id", card_id)
+            .order("seq", desc=True)
             .limit(limit)
             .execute()
             .data
         )
-        return [
-            Evento(
-                r["tipo"], r.get("etapa_de"), r.get("etapa_para"),
-                str(r["actor_id"]) if r.get("actor_id") else None, _dt(r["at"]), r.get("detalhe") or {},
-            )
-            for r in rows or []
-        ]
+        return [_evento_from_event(r) for r in rows or []]
 
     def aplicar_etapa(self, card_id: str, etapa: str, capa_foto_id: Optional[str], actor_id: Optional[str]) -> bool:
         return bool(
@@ -219,16 +245,26 @@ class InMemoryImobshotRepository:
     def __init__(self, photo_repo: Any) -> None:
         self._photos = photo_repo
         self.cards: dict[str, Card] = {}
-        self.events: list[tuple[str, Evento]] = []  # (card_id, evento)
         self.lote_card: dict[str, str] = {}
+        # The card history is the seed primitive (Fake == the SQL, proven by its conformance suite), never a local list.
+        self._log = FakeTransitionLog(CARD_LOG)
 
     @staticmethod
     def _now() -> datetime:
         return datetime.now(timezone.utc)
 
-    def _emit(self, card_id: str, tipo: str, actor_id: Optional[str], **kw: Any) -> None:
-        self.events.append((card_id, Evento(tipo, kw.get("etapa_de"), kw.get("etapa_para"), actor_id, self._now(),
-                                            kw.get("detalhe") or {})))
+    @property
+    def events(self) -> list[tuple[str, Evento]]:
+        """(card_id, evento) in card order then seq order: the primitive's history, in the API's shape."""
+        return [
+            (card.id, _evento_from_event(e))
+            for card in self.cards.values()
+            for e in self._log.history(card.org_id, card.id)
+        ]
+
+    def _record(self, outcome: Any) -> None:
+        if not outcome.ok:
+            raise RuntimeError(f"imobshot_card transition refused: {outcome.code}")
 
     def obter_ou_criar_card(self, org_id: str, codigo: str, actor_id: str) -> tuple[Card, bool]:
         for card in self.cards.values():
@@ -237,7 +273,8 @@ class InMemoryImobshotRepository:
         now = self._now()
         card = Card(str(uuid4()), org_id, codigo, "fotos_enviadas", now, now, now)
         self.cards[card.id] = card
-        self._emit(card.id, "card_criado", actor_id, etapa_para="fotos_enviadas")
+        self._log.put_state_row(org_id, {"id": card.id, "imovel_codigo": codigo, "etapa": card.etapa})
+        self._record(self._log.record_created(org_id, card.id, actor_id=actor_id, actor_kind=_actor_kind(actor_id)))
         return card, True
 
     def vincular_lote(self, card_id: str, lote_id: str, actor_id: str) -> bool:
@@ -246,7 +283,10 @@ class InMemoryImobshotRepository:
         if card is None or batch is None or batch.org_id != card.org_id or self.lote_card.get(lote_id) == card_id:
             return False
         self.lote_card[lote_id] = card_id
-        self._emit(card_id, "lote_vinculado", actor_id, detalhe={"lote_id": lote_id})
+        self._record(self._log.transition(
+            card.org_id, card_id, from_state=card.etapa, to_state=card.etapa, event_type="lote_vinculado",
+            data={"lote_id": lote_id}, actor_id=actor_id, actor_kind=_actor_kind(actor_id),
+        ))
         return True
 
     def get_card(self, org_id: str, card_id: str) -> Optional[Card]:
@@ -293,7 +333,10 @@ class InMemoryImobshotRepository:
         ]
 
     def eventos(self, card_id: str, limit: int) -> list[Evento]:
-        return [e for cid, e in reversed(self.events) if cid == card_id][:limit]
+        card = self.cards.get(card_id)
+        if card is None:
+            return []
+        return [_evento_from_event(e) for e in reversed(self._log.history(card.org_id, card_id))][:limit]
 
     def aplicar_etapa(self, card_id: str, etapa: str, capa_foto_id: Optional[str], actor_id: Optional[str]) -> bool:
         card = self.cards[card_id]
@@ -303,7 +346,10 @@ class InMemoryImobshotRepository:
         if card.etapa == etapa:
             self.cards[card_id] = card
             return False
-        self._emit(card_id, "etapa_mudou", actor_id, etapa_de=card.etapa, etapa_para=etapa)
+        self._record(self._log.transition(
+            card.org_id, card_id, from_state=card.etapa, to_state=etapa, event_type="etapa_mudou",
+            actor_id=actor_id, actor_kind=_actor_kind(actor_id),
+        ))
         self.cards[card_id] = replace(
             card, etapa=etapa, etapa_desde=now, updated_at=now,
             fotos_concluidas_at=now if etapa == "fotos_aprovadas" else card.fotos_concluidas_at,
