@@ -230,6 +230,19 @@ class _DidYouMeanParser(argparse.ArgumentParser):
         self.exit(2, f"{self.prog}: error: {message}\n" + "".join(h + "\n" for h in hints))
 
 
+def _task_branch_score_arg(raw: "str | None") -> "dict | None":
+    """`--task-branch-score` JSON -> the score dict; a malformed value is a loud error, never dropped."""
+    if raw is None:
+        return None
+    try:
+        val = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"--task-branch-score must be a JSON object: {exc}")
+    if not isinstance(val, dict):
+        raise SystemExit("--task-branch-score must be a JSON object")
+    return val
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the full `argparse.ArgumentParser` — split out from `main()`
     (2026-09-24, F3 compliance review of release-no-freeze) so the R4
@@ -674,6 +687,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-branch-accept-unmeasured", default=None, help="With --task-branch integrate: comma-separated in-scope merged-tip gates that TIMED OUT and that you knowingly accept as unmeasured (requires --task-branch-accept-unmeasured-reason). Without it a timed-out in-scope gate blocks the integrate (status gate_timeout).")
     parser.add_argument("--task-branch-accept-unmeasured-reason", default=None, help="With --task-branch-accept-unmeasured: the audited reason (recorded in the integrate result and the branch pointer).")
     parser.add_argument("--task-branch-accept-unscored", default=None, metavar="REASON", help="With --task-branch integrate: land an engineer slice that has no slice-scores.ndjson row, with this audited reason (>=10 chars; recorded in the result). Without it an unscored engineer slice is refused (refused=slice_unscored).")
+    parser.add_argument("--task-branch-score", default=None, metavar="JSON", help="With --task-branch integrate|enqueue: the slice-score payload as a JSON object ({model, q:{Q1..Q7}, duration_minutes?, agent?, engineer_return?, ...}, the dispatch_log_completion score shape). With --task-branch-confirm it WRITES the slice-scores row instead of refusing slice_unscored (plan mode reports would_score). Carries the MCP score= across the fresh-subprocess hop.")
     parser.add_argument("--task-branch-keep-worktree", action="store_true", help="With --task-branch integrate: do NOT auto-clean the worktree after a successful integrate (default: integrate tears down its worktree + merged branch).")
     parser.add_argument("--task-branch-allow-stale-toolkit", action="store_true", help="With --task-branch: bypass the toolkit-staleness refusal on a mutating action for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; mirrors the MCP tool's own escape hatch). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
@@ -4554,6 +4568,7 @@ def main():
             accept_unmeasured=accept_unmeasured,
             accept_unmeasured_reason=getattr(args, "task_branch_accept_unmeasured_reason", None),
             accept_unscored=getattr(args, "task_branch_accept_unscored", None),
+            score=_task_branch_score_arg(getattr(args, "task_branch_score", None)),
             slug=getattr(args, "task_branch_slug", None),
             branch=getattr(args, "task_branch_branch", None),
             verdict_ref=getattr(args, "task_branch_verdict_ref", None),
