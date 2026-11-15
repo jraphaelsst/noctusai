@@ -69,8 +69,15 @@ def events_path() -> Path:
 
 
 def record_event(gate: str, outcome: str, *, kind: str, target: str = "",
-                 reason: str = "", source: str = "", log_path: Path | None = None) -> None:
-    """Append one gate event. `outcome` is 'deny' (refusal), 'warn' (advisory, not a refusal) or 'pass'. Never raises."""
+                 reason: str = "", source: str = "", log_path: Path | None = None,
+                 class_key: str = "") -> None:
+    """Append one gate event. `outcome` is 'deny' (refusal), 'warn' (advisory, not a refusal) or 'pass'. Never raises.
+
+    `class_key` (a `refusal_class(...)` key) is stored as `class` so recurrence counting
+    is exact; absent, a deny's class is derived at read time (`event_class`)."""
+    extra = {"kind": kind, "source": source}
+    if class_key:
+        extra["class"] = class_key
     try:
         _guard_module().log_event(
             gate, outcome, reason,
@@ -78,15 +85,61 @@ def record_event(gate: str, outcome: str, *, kind: str, target: str = "",
              "session_id": os.environ.get("CLAUDE_CODE_SESSION_ID") or None},
             log_path=log_path or Path(os.environ["NOCTUS_GUARD_EVENT_LOG"])
             if os.environ.get("NOCTUS_GUARD_EVENT_LOG") else log_path,
-            extra={"kind": kind, "source": source},
+            extra=extra,
         )
     except Exception as exc:  # telemetry must never change a verdict
         import sys
         print(f"gate_alignment: event write failed ({exc}); verdict unchanged", file=sys.stderr)
 
 
-def record_cli_exit(argv: list[str], code: Any) -> None:
-    """Called by cli.py on exit: log a `--check-*` / `--verify-*` gate run."""
+_FINDING_RE = re.compile(r"\[(?:critical|high|medium|warning|error)\]\s*(.+)")
+_first_finding: list[str] = []
+
+
+def first_finding_code(text: str) -> str:
+    """Stable slug of the first `[severity] <file> - <issue>` line in a keeper's output ('' if none)."""
+    for line in text.splitlines():
+        m = _FINDING_RE.search(re.sub(r"\x1b\[[0-9;]*m", "", line))
+        if m:
+            body = m.group(1).split(" \u2014 ", 1)[-1]
+            return _slug(body, words=5)
+    return ""
+
+
+class _Tee:
+    """stdout wrapper that remembers the first finding line (cli.main installs it; verdict-neutral)."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def write(self, data: str) -> int:
+        if not _first_finding:
+            code = first_finding_code(data)
+            if code:
+                _first_finding.append(code)
+        return self._inner.write(data)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def capture_first_finding() -> None:
+    """Install the tee so `record_cli_exit` can name the first finding code. Idempotent; never raises."""
+    import sys
+    try:
+        if not any(re.match(r"^--(check|verify)-", a) for a in sys.argv[1:]):
+            return
+        if not isinstance(sys.stdout, _Tee):
+            sys.stdout = _Tee(sys.stdout)
+    except Exception:  # pragma: no cover - telemetry only
+        pass
+
+
+def record_cli_exit(argv: list[str], code: Any, *, finding: str = "") -> None:
+    """Called by cli.py on exit: log a `--check-*` / `--verify-*` gate run.
+
+    A deny carries WHERE it fired (`NOC_HOOK_STAGE`: pre-commit|pre-push|ci|...) and WHAT it
+    found (the first finding code) as `reason`/`target`, so refusals can be counted by class."""
     flags = [a for a in argv if re.match(r"^--(check|verify)-[a-z0-9-]+$", a)]
     if not flags:
         return
@@ -95,12 +148,18 @@ def record_cli_exit(argv: list[str], code: Any) -> None:
     for i, a in enumerate(argv):
         if a == "--paths" and i + 1 < len(argv):
             target = argv[i + 1][:200]
+    stage = os.environ.get("NOC_HOOK_STAGE", "").strip() or "manual"
     # An ADVISORY invocation (the pre-commit heads-up whose blocking twin runs in commit-msg) is a `warn`, never a
     # `deny`: logging it as a refusal double-counted every doc-staleness block (476 denies, 2026-11-14).
     outcome = "pass" if ok else ("warn" if os.environ.get("NOC_GATE_ADVISORY") else "deny")
+    if not ok:
+        finding = finding or (_first_finding[0] if _first_finding else "")
+        target = target or f"stage:{stage}"
     for f in flags:
-        record_event(f"keeper:{f[2:]}", outcome, kind="keeper",
-                     target=target, source="cli")
+        gate = f"keeper:{f[2:]}"
+        record_event(gate, outcome, kind="keeper", target=target,
+                     reason="" if ok else f"stage={stage} code={finding or 'unknown'}", source="cli",
+                     class_key="" if ok else refusal_class(gate, stage, finding or "unknown"))
 
 
 def read_events(path: Path | None = None) -> list[dict]:
@@ -119,6 +178,181 @@ def read_events(path: Path | None = None) -> list[dict]:
             row["gate"] = gate if ":" in gate else f"guard:{gate}"
             rows.append(row)
     return rows
+
+
+# --------------------------------------------------------- refusal classes
+_CLASS_MAX = 60
+
+
+def _slug(text: str, *, words: int | None = None) -> str:
+    """Stable, volatile-free slug: lowercase, hex shas / numbers / paths' numeric tails dropped."""
+    t = re.sub(r"\b[0-9a-f]{7,40}\b", " ", str(text).lower())
+    t = re.sub(r"\d+", " ", t)
+    toks = [w for w in re.split(r"[^a-z0-9_*./:-]+", t) if w.strip("-:./")]
+    if words:
+        toks = toks[:words]
+    return "-".join(toks).strip("-")[:_CLASS_MAX]
+
+
+def refusal_class(gate: str, item: str, detail: str) -> str:
+    """A stable key for a KIND of refusal, so the same wall is counted as one thing across sessions:
+    `deliverable:head_pushed_clean:stale-request-head`, `mq:eject:conflict:<path-glob>`,
+    `ci-parity:timeout:suite:product:social-wiring`, `guard:<name>:<first finding code>`.
+    Empty parts are dropped; volatile tokens (shas, counts) never enter the key."""
+    parts = [p for p in (str(gate).strip(), str(item).strip(), _slug(detail)) if p]
+    return ":".join(parts)
+
+
+def event_class(row: dict) -> str:
+    """The class of a deny event: the stored `class`, else derived from gate + reason."""
+    if row.get("class"):
+        return str(row["class"])
+    reason = str(row.get("reason") or "")
+    m = re.search(r"stage=(\S+) code=(\S+)", reason)
+    if m:
+        return refusal_class(row.get("gate", ""), m.group(1), m.group(2))
+    return refusal_class(row.get("gate", ""), "", re.sub(r"^\[noc-guard:[^\]]*\]\s*", "", reason))
+
+
+def _parse_ts(ts: Any) -> _dt.datetime | None:
+    try:
+        d = _dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=_dt.timezone.utc)
+
+
+def class_events(key: str, *, window_days: float, events: list[dict] | None = None,
+                 now: _dt.datetime | None = None) -> list[dict]:
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    cutoff = now - _dt.timedelta(days=window_days)
+    out = []
+    for e in events if events is not None else read_events():
+        if e.get("outcome") != "deny":
+            continue
+        t = _parse_ts(e.get("ts"))
+        if t is not None and t >= cutoff and event_class(e) == key:
+            out.append(e)
+    return out
+
+
+def gate_quiet(key: str, days: float = 7, *, events: list[dict] | None = None,
+               now: _dt.datetime | None = None) -> bool:
+    """True when the class has had no refusal for `days` (the `gate_quiet:<class>:7d` predicate)."""
+    return not class_events(key, window_days=days, events=events, now=now)
+
+
+def _open_fix(key: str, root: Path) -> str | None:
+    """A live fix owner for the class: branch-tree pointer naming it, an in-progress gate-walls
+    row, or a NOC-REMEDIATE[<key>] marker. None = nobody owns it."""
+    import subprocess
+    try:
+        from tools.noctus.dev import branch_pointer as bp
+        for branch, row in bp._latest_per_branch(bp._read_local_ledger()).items():
+            if row.get("status") in bp.TERMINAL_STATUSES:
+                continue
+            if key in f"{row.get('brief', '')} {row.get('notes', '')}":
+                return f"pointer:{branch}"
+    except Exception:  # noqa: BLE001 - ownership lookup must not break the count
+        pass
+    gate = key.split(":", 1)[0]
+    try:
+        from tools.noctus.dev import findings_ledger as gl
+        from tools.noctus.dev import gate_wall_findings  # noqa: F401  (registers the ledger)
+        for r in gl.load(gl.get("gate-walls"), root).values():
+            if r.get("status") == "in-progress" and (key in json.dumps(r) or r.get("target") == gate):
+                return f"findings:{r.get('id', 'gate-walls')}"
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        r = subprocess.run(["git", "grep", "-lF", f"NOC-REMEDIATE[{key}]"], cwd=root,
+                           capture_output=True, text=True, timeout=30)
+        hit = (r.stdout.split() or [""])[0]
+        if hit:
+            return f"marker:{hit}"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
+def refusal_recurrence(keys: list[str], *, window_days: int = 14, root: Path | None = None,
+                       events: list[dict] | None = None) -> list[dict]:
+    """For each class key: how often it refused in the window, across how many sessions, and who (if
+    anyone) owns the fix. `open_fix` is None when the class recurs with no live fix."""
+    root = root or REPO_ROOT
+    evs = events if events is not None else read_events()
+    out = []
+    for key in dict.fromkeys(keys):
+        hits = class_events(key, window_days=window_days, events=evs)
+        out.append({"class": key, "n_14d": len(hits),
+                    "sessions": len({h.get("session") for h in hits if h.get("session")}),
+                    "open_fix": _open_fix(key, root)})
+    return out
+
+
+def all_classes(*, window_days: int = 14, events: list[dict] | None = None) -> list[str]:
+    evs = events if events is not None else read_events()
+    seen: dict[str, None] = {}
+    for e in class_events_all(evs, window_days):
+        seen[event_class(e)] = None
+    return list(seen)
+
+
+def class_events_all(events: list[dict], window_days: float) -> list[dict]:
+    cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=window_days)
+    return [e for e in events if e.get("outcome") == "deny"
+            and (t := _parse_ts(e.get("ts"))) is not None and t >= cutoff]
+
+
+def unowned_classes(root: Path | None = None, *, min_n: int = 3, window_days: int = 14,
+                    events: list[dict] | None = None) -> list[dict]:
+    """Classes refused >= `min_n` times in the window with no open fix (keeper `check_refusal_classes_owned`)."""
+    evs = events if events is not None else read_events()
+    rows = refusal_recurrence(all_classes(window_days=window_days, events=evs), window_days=window_days,
+                              root=root, events=evs)
+    return [r for r in rows if r["n_14d"] >= min_n and not r["open_fix"]]
+
+
+def trend(*, days: int = 7, events: list[dict] | None = None,
+          now: _dt.datetime | None = None) -> dict:
+    """Refusals this window vs the previous one, by class (worst delta first)."""
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    evs = events if events is not None else read_events()
+    this: dict[str, int] = {}
+    last: dict[str, int] = {}
+    for e in evs:
+        if e.get("outcome") != "deny":
+            continue
+        t = _parse_ts(e.get("ts"))
+        if t is None:
+            continue
+        age = (now - t).total_seconds() / 86400
+        bucket = this if 0 <= age < days else last if days <= age < 2 * days else None
+        if bucket is not None:
+            c = event_class(e)
+            bucket[c] = bucket.get(c, 0) + 1
+    rows = [{"class": c, "this": this.get(c, 0), "last": last.get(c, 0), "delta": this.get(c, 0) - last.get(c, 0)}
+            for c in set(this) | set(last)]
+    rows.sort(key=lambda r: (-r["delta"], -r["this"], r["class"]))
+    return {"window_days": days, "this_total": sum(this.values()), "last_total": sum(last.values()), "classes": rows[:30]}
+
+
+def sync_refusal_rows(root: Path | None = None, *, min_n: int = 2, window_days: int = 14,
+                      events: list[dict] | None = None) -> dict:
+    """One auto-improvement row per recurring class (N>=min_n), count updated in place, self-closing on quiet."""
+    from tools.noctus.dev import auto_improvement as ai
+    evs = events if events is not None else read_events()
+    synced = []
+    for r in refusal_recurrence(all_classes(window_days=window_days, events=evs), window_days=window_days,
+                                root=root, events=evs):
+        if r["n_14d"] >= min_n:
+            res = ai.upsert_class_row(key=r["class"], count=r["n_14d"], sessions=r["sessions"],
+                                      target=r["class"].split(":", 1)[0] or "gate",
+                                      description=f"Refusal class `{r['class']}` recurs: no fix owner yet." if not r["open_fix"]
+                                      else f"Refusal class `{r['class']}` recurs; fix owner: {r['open_fix']}.",
+                                      agent="gate_alignment")
+            synced.append({"class": r["class"], "n": r["n_14d"], "action": res.get("action")})
+    return {"synced": synced}
 
 
 # --------------------------------------------------------------- inventory
@@ -577,7 +811,9 @@ def register(server) -> None:
             "normal flow and their effective false-positive rate; file=true appends wall findings to the ledger "
             "feed. action=sources: report-only KB docs changed without a sources section. action=triad: run the meta-gate (every gate declared with mechanism+owner). action=declare: "
             "write one inventory row (gate, mechanism, owner, placement). action=render: regenerate the inventory "
-            "markdown. action=refresh-baseline: shrink-only. Read-only except file/declare/render/refresh-baseline."
+            "markdown. action=refresh-baseline: shrink-only. action=trend: refusals this week vs last, by class. "
+            "action=refusals: recurrence by class (n_14d, sessions, open_fix); file=true upserts ONE auto-improvement row per "
+            "class at N>=2 (self-closing on gate_quiet). Read-only except file/declare/render/refresh-baseline."
         ),
     )
     def _gate_alignment(action: str = "walls", gate: str = "", mechanism: str = "", owner: str = "",
@@ -611,8 +847,17 @@ def run_action(action: str, *, gate: str = "", mechanism: str = "", owner: str =
         return {"ok": True, "path": str(RENDERED_REL)}
     if action == "refresh-baseline":
         return {"ok": True, **refresh_baseline(root)}
-    return {"ok": False, "error": f"unknown action {action!r}; one of walls|triad|matrix|sources|declare|render|refresh-baseline"}
+    if action == "trend":
+        return {"ok": True, **trend()}
+    if action == "refusals":
+        recur = refusal_recurrence(all_classes(), root=root)
+        out = {"ok": True, "classes": sorted(recur, key=lambda r: -r["n_14d"])[:30],
+               "unowned": [r["class"] for r in recur if r["n_14d"] >= 3 and not r["open_fix"]]}
+        if file:
+            out["synced"] = sync_refusal_rows(root)["synced"]
+        return out
+    return {"ok": False, "error": f"unknown action {action!r}; one of walls|triad|matrix|sources|declare|render|refresh-baseline|trend|refusals"}
 
 
 __all__ = ["record_event", "record_cli_exit", "read_events", "scan_gates", "triad_issues", "walls_report",
-           "gate_stats", "declare_gate", "burn_down", "run_action", "register"]
+           "gate_stats", "refusal_class", "refusal_recurrence", "unowned_classes", "trend", "declare_gate", "burn_down", "run_action", "register"]

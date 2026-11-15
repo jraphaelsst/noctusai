@@ -1,0 +1,23 @@
+{
+  "_doc": "Accepted known-lag organ render drift (noctus.dev.render_organ_migration all_consumers / cli --render-organ-consumers). Each entry needs a destination and a date; baselined drift reports as accepted and exits 0, only NEW drift fails. Remove an entry when its destination lands. APPLIED FILES ARE FROZEN: nosnolimiar's 012/014/018/020/021 name schema `monica` by design (they ran in prod under it); the post-cutover render emits a NEW 025 revision targeting `nosnolimiar`, never a rewrite of a frozen file -- the check reports a modified applied file as an error (frozen_file_modified), not drift.",
+  "accepted": [
+    {
+      "product": "nosnolimiar",
+      "organ": "leads",
+      "destination": "steward, 025 after the 2026-11-14 cutover",
+      "date": "2026-11-14"
+    },
+    {
+      "product": "nosnolimiar",
+      "organ": "clients",
+      "destination": "steward, same cutover render as leads (schema rename 023/024)",
+      "date": "2026-11-14"
+    },
+    {
+      "product": "nosnolimiar",
+      "organ": "finance",
+      "destination": "steward, same cutover render as leads (schema rename 023/024)",
+      "date": "2026-11-14"
+    }
+  ]
+}

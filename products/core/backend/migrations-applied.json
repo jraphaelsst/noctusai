@@ -36,7 +36,9 @@
     "117_notification_catalog.sql": "d7057d43eefc4320e572af179f4a61c6ecaf142a67178e245ba9c1c8d42d3865",
     "118_notification_owner_recipients.sql": "404ce350d5f5739788c92693f3d3ea6d49450345352e91215a246ddf70bb52d9",
     "119_seed_assistant_product.sql": "4351ef9bea2d7f49adae7fec8cb3ab0ed12b8876e5f3c9d1bf71bd85a291fd2c",
+    "120_rename_monica_to_nosnolimiar.sql": "44aa7463ca099f4b4d221aa084a37758b9687e23ff4376e38eae413a73380426",
     "121_owner_number_one_source.sql": "7f3f5da4d9c9c54ced6583f4b729f3f548b628f5dcf8fd3eb409bc60258512c1",
+    "122_seed_fotos_rotular.sql": "e38d81c517c98b8c167d400732dccc7601966139bb9b05d46a908710e139bdf8",
     "123_transcription_api_no_quotas.sql": "7f1641c497c5cec7f87d4da943ad19fd115778d1c5c3b972f1bcd2f8130e50ff"
   }
 }

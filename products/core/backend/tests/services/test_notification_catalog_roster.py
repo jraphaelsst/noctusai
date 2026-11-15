@@ -25,12 +25,12 @@ def _db(products: list[dict], kinds: list[dict]) -> MockSupabaseClient:
 
 def test_live_product_without_kinds_is_listed_empty():
     db = _db(
-        [{"slug": "agents", "ativo": True, "deploy_scope": "live"}, {"slug": "monica", "ativo": True, "deploy_scope": "live"}],
+        [{"slug": "agents", "ativo": True, "deploy_scope": "live"}, {"slug": "nosnolimiar", "ativo": True, "deploy_scope": "live"}],
         [_kind("agents", "eval_loop_parada")],
     )
     out = {p["product"]: p for p in svc.list_catalog(db, NOW)["products"]}
-    assert set(out) == {"agents", "monica", "core"}  # core is the platform shell: always on the roster
-    assert out["monica"]["kinds"] == [] and out["monica"]["total"] == 0 and out["monica"]["declared"] is False
+    assert set(out) == {"agents", "nosnolimiar", "core"}  # core is the platform shell: always on the roster
+    assert out["nosnolimiar"]["kinds"] == [] and out["nosnolimiar"]["total"] == 0 and out["nosnolimiar"]["declared"] is False
     assert out["agents"]["declared"] is True and out["agents"]["total"] == 1
 
 

@@ -479,6 +479,9 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append(f"--task-branch-accept-unmeasured-reason={kwargs['accept_unmeasured_reason']}")
         if kwargs.get("accept_unscored"):
             argv.append(f"--task-branch-accept-unscored={kwargs['accept_unscored']}")
+        if kwargs.get("score"):
+            sc = kwargs["score"]
+            argv.append(f"--task-branch-score={sc if isinstance(sc, str) else json.dumps(sc)}")
         if kwargs.get("branch"):
             argv.append(f"--task-branch-branch={kwargs['branch']}")
         if kwargs.get("verdict_ref"):
@@ -509,6 +512,18 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
                 argv.append(f"--supabase-breaker-{k.replace('_', '-')}={v}")
         if kwargs.get("confirm"):
             argv.append("--supabase-breaker-confirm")
+        return argv
+
+    if tool_name == "photo_label_dataset":
+        argv = ["--photo-label-dataset"]
+        for k in ("out_csv", "csv_in", "photos_dir", "base_dir", "concurrency", "limit"):
+            v = kwargs.get(k)
+            if v not in (None, ""):
+                argv.append(f"--photo-label-dataset-{k.replace('_', '-')}={v}")
+        if kwargs.get("dry_run") is False:
+            argv.append("--photo-label-dataset-run")
+        if kwargs.get("confirm"):
+            argv.append("--photo-label-dataset-confirm")
         return argv
 
     if tool_name == "bg_process":
@@ -548,7 +563,7 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
     "task_branch": frozenset({
         "action", "slug", "confirm", "project", "brief", "paths", "agent",
         "role", "parent", "wire_env", "verbose", "keep_worktree",
-        "wire_products", "accept_unmeasured", "accept_unmeasured_reason", "accept_unscored",
+        "wire_products", "accept_unmeasured", "accept_unmeasured_reason", "accept_unscored", "score",
         "slugs", "order", "branch", "verdict_ref",
     }),
     "source_register": frozenset({
@@ -556,6 +571,7 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
         "claim", "evidence", "question", "note", "by", "events", "confirm",
     }),
     "supabase_breaker": frozenset({"action", "source", "product", "reason", "by", "ssh_host", "confirm"}),
+    "photo_label_dataset": frozenset({"out_csv", "csv_in", "photos_dir", "base_dir", "concurrency", "limit", "dry_run", "confirm"}),
     "bg_process": frozenset({
         "action", "pid", "purpose", "reason", "learnings", "term_grace_s", "session_id", "confirm",
     }),

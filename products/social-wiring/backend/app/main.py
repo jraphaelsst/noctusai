@@ -350,6 +350,7 @@ from app.modules.youtube import register as _youtube
 from app.modules.instagram import register as _instagram
 from app.modules.simec import register as _simec
 from app.modules.edicao_fotos import register as _edicao_fotos
+from app.modules.imobshotai import register as _imobshotai
 from app.modules.empresas import register as _empresas
 from app.modules.transcricoes import register as _transcricoes
 from app.modules.atendimento_blocos import register as _atendimento_blocos
@@ -425,6 +426,9 @@ MODULES = [
     # app/lifespan.py (EDICAO_FOTOS_WORKER_ENABLED = kill switch; the live
     # pause is the `processamento_ativo` platform setting).
     _edicao_fotos,
+    # ImobShotAI (IMOBSHOTAI-CONTRACT.md). `/api/imobshotai/{lotes,cards}` -- unique literal prefix, literal first
+    # segments only, no upload route, no scheduler job. Position is free.
+    _imobshotai,
     # P0c (`sw-drive-extraction`). `/api/empresas` is a unique literal
     # prefix — `{empresa_id}` is not a 1-segment path at the router's own
     # root the `clientes_router` hazard could shadow, so position is free.

@@ -401,6 +401,7 @@ def configure() -> None:
     ``app/lifespan.py``. Idempotent — ``noctusai_lib.api.scheduler.register``
     replaces the job on re-registration.
     """
+    # poll-budget: every whatsapp_backfill_interval_hours (default 6h); 1 calls/tick (one backfill run; reads are batched); worst 4/day (job runs); idle=fixed
     seed_scheduler.register(
         "whatsapp_backfill",
         _run_backfill_job,

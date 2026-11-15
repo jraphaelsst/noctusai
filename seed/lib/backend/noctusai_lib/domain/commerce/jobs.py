@@ -219,6 +219,7 @@ async def commerce_dispute_poll(db: Any, *, deps: MoneyDeps) -> int:
     """Re-read every `disputed` order against its gateway (the only way to see a lost Asaas dispute). Returns the count checked."""
     disputed = _scan(
         "commerce_dispute_poll",
+        # poll-budget-ok: runs every 6h (4/day), only over `disputed` orders (paged via _scan); the gateway sync needs the whole order row
         lambda c: tbl(c, _ORDERS).select("*").eq("status", OrderStatus.DISPUTED.value),
         db,
     )
@@ -269,8 +270,11 @@ def register_commerce_jobs(
     async def fiscal_purge() -> None:
         commerce_fiscal_purge(get_db())
 
+    # poll-budget: commerce_expire_orders, hours=1; 1 calls/tick (paged scan of pending_payment orders past expires_at); worst 24/day ticks; idle=fixed
     register("commerce_expire_orders", expire, hours=1)
+    # poll-budget: commerce_expiry_reminders, hours=1; 1 calls/tick (paged scan + at most one send per order); worst 24/day ticks; idle=fixed
     register("commerce_expiry_reminders", reminders, hours=1)
+    # poll-budget: commerce_dispute_poll, hours=6; 1 calls/tick (paged scan of disputed orders + one gateway read per order); worst 4/day ticks; idle=fixed
     register("commerce_dispute_poll", dispute_poll, hours=6)
     register("commerce_fiscal_purge", fiscal_purge, cron="30 3 * * *")
     return ("commerce_expire_orders", "commerce_expiry_reminders", "commerce_dispute_poll", "commerce_fiscal_purge")

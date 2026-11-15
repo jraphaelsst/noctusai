@@ -223,6 +223,8 @@ dependencies = [
 # gate work-around.
 testing = [
     "pytest>=7.0",
+    # Per-test hang guard (see [tool.pytest.ini_options] below); the root requirements.txt carries it for CI.
+    "pytest-timeout>=2.3.0",
     # `noctusai_lib.testing.d4sign_sandbox.serve()` runs the D4Sign sandbox
     # as a real local HTTP server for a human driving it manually
     # (curl/Postman) — an EXTRA for the same reason pytest is above: every
@@ -268,3 +270,13 @@ include = ["noctusai_lib*"]
 # product `from app.main import app as _app` line in `tests/conftest.py`.
 [project.entry-points.pytest11]
 noctusai-product-bootstrap = "noctusai_lib.testing.pytest_plugin"
+
+# Per-test hang guard (2026-11-15, merge-queue batch 43678624568): a test that blocks forever (two connections
+# waiting on each other's lock) used to run to the 25-minute JOB timeout and cancel the whole queue batch with no
+# name. Now it FAILS at 120 s naming itself, and faulthandler dumps every thread's stack first. `thread` method:
+# SIGALRM cannot interrupt a psycopg2 call blocked in libpq. A test that legitimately needs longer carries
+# `@pytest.mark.timeout(<s>)`. pytest-timeout is declared in the `testing` extra above and the root requirements.txt.
+[tool.pytest.ini_options]
+timeout = 120
+timeout_method = "thread"
+faulthandler_timeout = 100

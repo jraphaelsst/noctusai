@@ -2273,6 +2273,28 @@
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-polling-request-budget": {
+   "mechanism": "seed/lib/backend/noctusai_lib/domain/jobs/worker.py (idle backoff + wake-on-enqueue, branch feat/supabase-egress-polling) · KB § PATTERNS/backend/polling-request-budget.md (the declaration IS the construction: the author multiplies cadence x calls x 86400 before writing the loop)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "standard": "every forever-loop / periodic registration / browser poll declares its per-day cost (`poll-budget: ...; worst <N>/day`); a per-tick select(\"*\") / limit>1000 is refused",
+   "new": true,
+   "declared": "2026-11-10",
+   "shadow": {
+    "since": "2026-11-10",
+    "fires": 0,
+    "true_positives": 94,
+    "effective_fp": 0.0,
+    "promote_when": "waived to blocking at birth by owner directive 2026-11-10: AST-only predicate, no baseline; every hit at birth is a real undeclared loop/poll (inventory handed to the fixing branches); demote if any effective FP"
+   },
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit",
+    "ci:commit-range-keepers"
+   ],
+   "source": "KB § PATTERNS/backend/polling-request-budget.md (2026-11-09 Supabase egress incident: ~620k REST calls/day polling an empty queue); owner directive 2026-11-10 \"guarantee nothing like that is set platform-wide\"",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson; request-volume truth: noctus.dev.supabase_request_budget (being built)"
+  },
   "keeper:check-postgrest-schema-qualified-table": {
    "severity": "",
    "kind": "keeper",
@@ -2615,6 +2637,20 @@
    },
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-refusal-classes-owned": {
+   "mechanism": "tool: noctus.dev.gate_alignment action=refusals (upserts one auto-improvement row per class + reports open_fix); refusal_recurrence() returned to every requester",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "A refusal class that fired >=3x in 14 days with no open fix (pointer / in-progress gate-walls row / NOC-REMEDIATE[class]) is an unowned recurring mistake (warn-first).",
+   "new": true,
+   "declared": "2026-11-14",
+   "source": "KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop); owner directive 2026-11-14; Tricorder (Sadowski et al.)",
+   "shadow": {
+    "since": "2026-11-14",
+    "fires": 0,
+    "fix_rate": null
+   }
   },
   "keeper:check-root-requirements-superset": {
    "severity": "high",
@@ -3070,6 +3106,15 @@
    "wired_in": [
     "pre-commit"
    ]
+  },
+  "keeper:check-transition-log-hand-written": {
+   "mechanism": "template: seed/lib/backend/noctusai_lib/domain/transition_log/sql.py",
+   "owner": "backend-engineer",
+   "placement": "warn",
+   "standard": "Keeper: a NEW migration may not hand-write transition history (from/to state column pair, or BEFORE UPDATE OR DELETE trigger on a history-named table); render it with noctusai_lib.domain.transition_log.transition_log_migration. Shrink-only baseline.",
+   "new": true,
+   "declared": "2026-11-07",
+   "source": "KB § PATTERNS/backend/transition-log.md (Sources): PostgreSQL docs (explicit row locking SELECT ... FOR UPDATE; trigger behaviour incl. TRUNCATE statement triggers), Fowler 'Event Sourcing' / 'Audit Log', LGPD Lei 13.709 art. 18 VI (erasure)"
   },
   "keeper:check-tunnel-ingress-snapshot-sync": {
    "severity": "",
@@ -3745,6 +3790,42 @@
    "gates": [
     "keeper:check-signed-url-ttl",
     "keeper:check-pii-query-params"
+   ]
+  },
+  {
+   "id": "D38",
+   "decision": "State transitions are recorded by the seed transition-log primitive (state row + append-only events in one row-locked transaction, one gated LGPD erasure) -- never a hand-written history table",
+   "home": "KB § PATTERNS/backend/transition-log.md",
+   "construction": "template: seed/lib/backend/noctusai_lib/domain/transition_log/sql.py (transition_log_migration + make_transition_log)",
+   "gate": "keeper:check-transition-log-hand-written (shadow) + verify_db_guards derived transition-log probes",
+   "telemetry": "pre-commit shadow WARN lines; verify_db_guards probe results",
+   "branch": "feat/transition-log-primitive",
+   "gates": [
+    "keeper:check-transition-log-hand-written"
+   ]
+  },
+  {
+   "id": "D-refusal-recurrence",
+   "decision": "Refusals are counted by class (refusal_class/refusal_recurrence over the gate event sink); a class recurring N>=2 is ONE auto-improvement row (count in place, closes on gate_quiet:<class>:7d); N>=3 with no open fix warns. Warn-first, promote after >=7 shadow days.",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop)",
+   "construction": "tool: noctus.dev.gate_alignment actions trend/refusals + refusal_recurrence() returned to requesters; harness_event upserts per class",
+   "gate": "keeper:check-refusal-classes-owned",
+   "telemetry": "gate events carry class/stage/first-finding (record_cli_exit -> guard-events.ndjson)",
+   "branch": "feat/refusal-recurrence",
+   "gates": [
+    "keeper:check-refusal-classes-owned"
+   ]
+  },
+  {
+   "id": "D39",
+   "decision": "A loop that runs forever declares its cost per day next to it, and a per-tick read never fetches whole rows; Supabase request volume is measured, not assumed",
+   "home": "KB § PATTERNS/backend/polling-request-budget.md",
+   "construction": "seed Worker idle backoff + wake-on-enqueue (feat/supabase-egress-polling); the `poll-budget:` declaration (cadence x calls x 86400 written down before the loop ships)",
+   "gate": "keeper:check-polling-request-budget",
+   "telemetry": "noctus.dev.supabase_request_budget (calls per product per minute vs quota; being built)",
+   "branch": "feat/polling-budget-keeper",
+   "gates": [
+    "keeper:check-polling-request-budget"
    ]
   }
  ]

@@ -121,6 +121,7 @@ async def sse_event_stream(
     started = last_heartbeat = time.monotonic()
     next_task: asyncio.Task[RealtimeEvent] | None = None
     try:
+        # poll-budget: per open SSE stream, wait(timeout=tick=min(heartbeat 20s, disconnect_poll 1s)=1s) + is_disconnected() check; 0 DB calls/tick (in-process request state); worst 86400/day per open stream (in-process only); idle=event
         while True:
             if max_seconds is not None and time.monotonic() - started >= max_seconds:
                 return

@@ -493,6 +493,78 @@ async def test_calibration_re_arms_once_the_grant_lands() -> None:
     assert len(fields) > 1, "expected the candidate set, not the floor"
 
 
+# ============================================================================
+# Detail calibration with an EMPTY /imoveis/listar (live 2026-11-04)
+#
+# `oneconsu-rest` began answering every listar with "A pesquisa não retornou
+# resultados." — the calibrator had no sample Codigo, returned the ["Codigo"]
+# floor, and every get_imovel came back with no condo/bairro/price.
+# ============================================================================
+
+_EMPTY_LISTAR = {"status": 200, "message": "A pesquisa não retornou resultados."}
+
+
+def _detail_transport(
+    detalhes_body: dict,
+) -> tuple[list[httpx.Request], httpx.MockTransport]:
+    seen: list[httpx.Request] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/imoveis/listar"):
+            return httpx.Response(200, json=_EMPTY_LISTAR)
+        return httpx.Response(200, json=detalhes_body)
+
+    return seen, httpx.MockTransport(_handler)
+
+
+@pytest.mark.asyncio
+async def test_detail_calibration_uses_caller_codigo_when_listar_is_empty() -> None:
+    from noctusai_lib.integrations.vista.calibration import FLOOR_FIELDS, Calibrator
+
+    calib = Calibrator()
+    seen, transport = _detail_transport(
+        {"Codigo": "ONE8627", "Empreendimento": "Reserva do Moinho", "ValorVenda": "3980000"}
+    )
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = VistaClient("https://t.example.com", SECRET, http_client=http)
+        fields = await calib.get_imovel_detail_fields(client, sample_codigo="ONE8627")
+
+    assert fields != FLOOR_FIELDS, "empty listar must not degrade detalhes to the floor"
+    assert "imoveis_detail" in calib.snapshot()
+    detalhes = [r for r in seen if r.url.path.endswith("/imoveis/detalhes")]
+    assert detalhes and detalhes[0].url.params["imovel"] == "ONE8627"
+
+
+@pytest.mark.asyncio
+async def test_detail_calibration_without_any_sample_returns_uncached_floor() -> None:
+    from noctusai_lib.integrations.vista.calibration import FLOOR_FIELDS, Calibrator
+
+    calib = Calibrator()
+    _, transport = _detail_transport({"Codigo": "X"})
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = VistaClient("https://t.example.com", SECRET, http_client=http)
+        fields = await calib.get_imovel_detail_fields(client)
+
+    assert fields == FLOOR_FIELDS
+    assert "imoveis_detail" not in calib.snapshot(), "no-sample floor must stay re-armable"
+
+
+@pytest.mark.asyncio
+async def test_detail_calibration_does_not_cache_on_an_unpublished_sample() -> None:
+    """An unpublished sample proves nothing — caching would freeze the superset."""
+    from noctusai_lib.integrations.vista.calibration import FLOOR_FIELDS, Calibrator
+
+    calib = Calibrator()
+    _, transport = _detail_transport({"Corretor": {"1": {"Nome": "x"}}})
+    async with httpx.AsyncClient(transport=transport) as http:
+        client = VistaClient("https://t.example.com", SECRET, http_client=http)
+        fields = await calib.get_imovel_detail_fields(client, sample_codigo="ONE9688")
+
+    assert fields == FLOOR_FIELDS
+    assert "imoveis_detail" not in calib.snapshot()
+
+
 def test_fake_client_and_real_client_signatures_agree() -> None:
     """Mechanical Fake↔Real parity for the CLIENT (the adapter already has one).
 

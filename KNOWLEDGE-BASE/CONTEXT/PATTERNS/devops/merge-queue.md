@@ -130,6 +130,7 @@ Tests: `tests/test_pre_push_queue_path.py` (the real hook in a temp repo; red ag
    still ejects as `conflict`; a failed regen ejects as `derived_regen`. Adding a
    set is one data row — never hand-resolve a derived file. Born when two slices
    ejected on these files in one batch (s1 `merge-queue/derived-ledger-coupling`).
+   Sets now also cover the `gate-walls` FINDINGS.md and `gate-alignment-inventory.md` renders (2026-11-14): the `ledger-render` merge driver regenerates them first (`KB § PATTERNS/common/auto-generated-merge-drivers.md`); these rows are the backstop for a render the driver could not derive.
 5. **The driver comes from `dev`.** The workflow checks out `dev` and runs
    *that* `merge_queue.py`, never the entry's copy.
 
@@ -353,6 +354,13 @@ The slowest `MCP Toolkit Tests` shard gates every batch. Round-robin by file cou
 the median). Predicted 540s per shard. `test_compliance.py` stays isolated. Refresh the table from a run's shard
 logs (recipe in the module docstring) when a shard drifts more than ~2x from the others. The coverage-proof job
 uses the same splitter, so a file can never be dropped or run twice. Owner-approved speedup 5.
+
+## 6e · Enqueue records what it can instead of refusing (2026-11-14)
+
+- **`score=` on enqueue/integrate.** An engineer slice with no slice-scores row used to be refused and the steward asked for a separate `dispatch_log_completion` call (66 denies in two weeks). `task_branch` now takes the same `score={model, q, duration_minutes?, agent?, engineer_return?}` payload and, on `confirm=True`, writes the row itself (plan mode reports `would_score`). A bad payload still refuses with the reason (`score_error`).
+- **Migration numbers include queued heads.** `next_migration_number` also reads `refs/remotes/origin/mq/*` (fetched), so a number held by a delivery waiting in the queue is not free (source `queue:<ref>`, listed in `sources_checked` as `queued-mq-heads`).
+- **Recurrence andon (steward enqueue only).** A refusal class recurring >=3 times in 14 days with no open fix (`gate_alignment.refusal_recurrence`, read behind a guarded `getattr`) is reported as `recurrence_andon`: a warning until 2026-11-21, a refusal (`refused='refusal_recurrence'`) after. One `findings_ledger` update (`in-progress <branch>` or `accepted <rationale>`) or a `NOC-REMEDIATE` marker clears it; an owner branch with no commits for 72h lapses. Requesters are never blocked: `request` does not call it.
+- **Pointer roles.** `executor` and `advisor` (the agent-file vocabulary) are accepted aliases for the `engineer` pointer role.
 
 ## 7 · Limits and options
 

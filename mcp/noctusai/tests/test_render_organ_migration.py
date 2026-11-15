@@ -277,3 +277,103 @@ def test_bad_worktree_path_is_a_loud_error(tmp_path):
     r = render("demo", "finance", worktree_path=str(tmp_path / "nope"), schema="erp", skip_fetch=True,
                live_products_fn=_live("demo"))
     assert r["status"] == "error"
+
+
+# ---- all-consumers check / write ----------------------------------------------------------------
+
+from tools.noctus.dev.render_organ_migration import render_all_consumers  # noqa: E402
+
+
+def _consumer(tmp_path, slug="demo"):
+    products, mig = _product(tmp_path, slug)
+    _call(products, confirm=True)
+    (products / slug / "backend" / "app").mkdir(parents=True)
+    return products, mig
+
+
+def _all(products, **kw):
+    # schema comes from the product's create_product_app declaration; supply it the way a product does.
+    main = products / "demo" / "backend" / "app" / "main.py"
+    main.write_text('create_product_app(schema="erp")\n')
+    return render_all_consumers(products_dir=products, slugs=["demo"], worktree_path=None, **kw)
+
+
+def test_all_consumers_clean_when_render_matches(tmp_path):
+    products, _ = _consumer(tmp_path)
+    r = _all(products)
+    assert r["status"] == "clean" and r["ok"] and r["checked"] == 1 and r["drifted"] == []
+
+
+def test_all_consumers_reports_drift_without_writing_then_write_fixes(tmp_path):
+    products, mig = _consumer(tmp_path)
+    f = mig / "002_finance.sql"
+    f.write_text(f.read_text() + "-- stale\n")
+    r = _all(products)
+    assert r["status"] == "drift" and not r["ok"]
+    assert [(d["product"], d["organ"]) for d in r["drifted"]] == [("demo", "finance")]
+    assert f.read_text().endswith("-- stale\n")
+    w = _all(products, write=True)
+    assert w["status"] == "rendered" and w["ok"]
+    assert f.read_text() == organ_migration_sql("finance", "erp")
+    assert _all(products)["status"] == "clean"
+
+
+def test_all_consumers_ignores_products_that_do_not_consume(tmp_path):
+    products, _ = _product(tmp_path)
+    (products / "demo" / "backend" / "app").mkdir(parents=True)
+    r = _all(products)
+    assert r["status"] == "clean" and r["checked"] == 0
+
+
+def test_baselined_drift_is_accepted_not_failed_and_not_written(tmp_path):
+    products, mig = _consumer(tmp_path)
+    f = mig / "002_finance.sql"
+    f.write_text(f.read_text() + "-- stale\n")
+    base = [{"product": "demo", "organ": "finance", "destination": "steward", "date": "2026-11-14"}]
+    r = _all(products, baseline=base)
+    assert r["status"] == "accepted" and r["ok"] and r["drifted"] == []
+    assert r["accepted"][0]["destination"] == "steward"
+    assert _all(products, baseline=base, write=True)["status"] == "accepted"
+    assert f.read_text().endswith("-- stale\n")  # accepted lag is never written
+    assert _all(products, baseline=[])["status"] == "drift"  # a NEW (unbaselined) drift still fails
+
+
+def test_baseline_entry_without_destination_or_date_is_refused(tmp_path):
+    products, _ = _consumer(tmp_path)
+    r = _all(products, baseline=[{"product": "demo", "organ": "finance"}])
+    assert r["status"] == "error" and not r["ok"]
+
+
+def test_tampered_applied_file_is_an_error_not_drift_and_never_rewritten(tmp_path):
+    """Applied files are frozen: a post-cutover render adds a NEW revision, it never rewrites one."""
+    from noctusai_lib.testing.migrations_applied import record_applied, sha256_text
+
+    products, mig = _consumer(tmp_path)
+    f = mig / "002_finance.sql"
+    record_applied(mig.parent, {f.name: sha256_text(f.read_text())})
+    assert _all(products)["status"] == "clean"
+    f.write_text(f.read_text().replace("erp", "monica"))  # an applied file edited after the fact
+    tampered = f.read_text()
+    for write in (False, True):
+        r = _all(products, write=write)
+        assert r["status"] == "error" and not r["ok"]
+        assert r["errors"][0]["status"] == "frozen_file_modified"
+        assert f.read_text() == tampered  # neither mode rewrote it
+    assert not list(mig.glob("*rev*"))
+
+
+def test_applied_file_naming_the_old_schema_gets_a_new_revision_not_a_rewrite(tmp_path):
+    """The generator moved on (schema now `erp`) but the applied file stays frozen: drift => NEW revision file."""
+    from noctusai_lib.testing.migrations_applied import record_applied, sha256_text
+
+    products, mig = _consumer(tmp_path)
+    f = mig / "002_finance.sql"
+    old = organ_migration_sql("finance", "monica")  # what prod ran
+    f.write_text(old)
+    record_applied(mig.parent, {f.name: sha256_text(old)})
+    r = _all(products)
+    assert r["status"] == "drift" and r["drifted"][0]["status"] == "would_new_revision"
+    w = _all(products, write=True)
+    assert w["status"] == "rendered" and w["rendered"][0]["status"] == "new_revision"
+    assert f.read_text() == old  # frozen file untouched
+    assert len(list(mig.glob("*finance_rev2.sql"))) == 1

@@ -631,3 +631,23 @@ def test_supabase_repo_reservar_and_scoped_get():
     client.set_rpc_data("reservar_transcricao_api", None)
     with pytest.raises(RuntimeError):
         repo.reservar(caller_kind="token", caller_id=USER, org_id=ORG, duracao_s=30.0)
+
+
+def test_palavras_flag_rides_job_payload_and_reaches_transcriber():
+    env = Env(transcriber=FakeTranscriber(default_probe=PROBE_OK, script=["ola mundo"]))
+    tid = env.post(palavras="true").json()["id"]
+    assert env.repo.rows[tid]["segmentos"] == []  # palavras implies segments are kept
+    assert env.work() is True
+    assert env.transcriber.calls[0]["palavras"] is True
+    body = env.client.get(f"/api/transcriptions/{tid}", headers=env.write_token).json()
+    words = body["segmentos"][0]["palavras"]
+    assert [w["texto"] for w in words] == ["ola", "mundo"]
+    assert set(words[0]) == {"texto", "inicio", "fim", "confianca"}
+
+
+def test_palavras_default_off_leaves_payload_and_call_unchanged():
+    env = Env(transcriber=FakeTranscriber(default_probe=PROBE_OK, script=["ola"]))
+    tid = env.post().json()["id"]
+    claimed = asyncio.run(env.jobs.claim_next(worker_id="t", job_types=[L.JOB_TYPE]))
+    assert claimed.payload == {"transcricao_id": tid}
+    assert env.repo.rows[tid]["segmentos"] is None

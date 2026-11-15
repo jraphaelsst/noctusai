@@ -985,3 +985,112 @@ class TestCheckDbGuardRegistryStatic:
         symbols = {i["symbol"] for i in compliance.check_db_guard_registry_static(tmp_path)}
         assert {"db-guard-registry-duplicate-id", "db-guard-registry-missing-migration",
                 "db-guard-registry-no-sentinel", "db-guard-registry-shape"} <= symbols
+
+
+# ---------------------------------------------------------------------------
+# A probe that INSERTs owns its org (2026-11-15)
+# ---------------------------------------------------------------------------
+# SW 339 allows ONE marca per org: five probes that borrowed `FROM public.organizations LIMIT 1` and then
+# inserted a marca failed setup the moment the borrowed org already had its brand, and predeploy read
+# "db_guards unclassifiable". The same coupling hides in ANY probe that borrows a live org and inserts into
+# a table some migration limits to one row per org. This derives the org-unique tables from the migrations
+# themselves (nothing hand-listed) and refuses a borrow followed by an INSERT into one of them.
+
+import re as _re
+from pathlib import Path as _Path
+
+_BORROW_RE = _re.compile(r"FROM\s+public\.organizations(?:\s+\w+)?\s+(?:ORDER\s+BY\s+created_at\s+)?LIMIT\s+1", _re.I)
+_OWN_ORG_RE = _re.compile(r"INSERT\s+INTO\s+public\.organizations\b", _re.I)
+_INSERT_STMT_RE = _re.compile(r"INSERT\s+INTO\s+([\w\".]+)([^;]*);", _re.I | _re.S)
+_UNIQUE_INDEX_RE = _re.compile(
+    r"CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\w+\s+ON\s+([\w\".]+)\s*(?:USING\s+\w+\s*)?\(([^)]*)\)", _re.I
+)
+_CREATE_TABLE_RE = _re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w\".]+)\s*\((.*?)\n\)\s*;", _re.I | _re.S)
+
+#: probe id -> why a borrowed-org INSERT into an org-unique table is still correct. Shrinks only: the test
+#: below fails when an entry stops being flagged, so a fixed probe has to leave this list.
+_BORROWED_ORG_TOLERATED: dict[str, str] = {
+    "org_brand_identities.tokens.schema_check": (
+        "the CHECK on `tokens` is evaluated before the unique index is touched, so the row never reaches "
+        "ux_org_brand_identities_active_org; `_insert_check_probe` builds its row with INSERT ... SELECT FROM the fixture"
+    ),
+}
+
+
+def _org_unique_tables(products_dir: _Path) -> set[str]:
+    """`schema.table` for every table a migration limits to one row per org: a UNIQUE INDEX / UNIQUE / PRIMARY KEY on
+    `(org_id)` alone (a partial index counts - its predicate still collides on a live org)."""
+    found: set[str] = set()
+    # product-scope: all — a one-row-per-org rule is a property of the schema, awake product or not
+    for path in products_dir.glob("*/backend/migrations/*.sql"):
+        sql = _re.sub(r"--[^\n]*", "", path.read_text(encoding="utf-8"))
+        for m in _UNIQUE_INDEX_RE.finditer(sql):
+            if [c.strip().strip('"') for c in m.group(2).split(",")] == ["org_id"]:
+                found.add(m.group(1).replace('"', ""))
+        for m in _CREATE_TABLE_RE.finditer(sql):
+            body = m.group(2)
+            if (
+                _re.search(r"^\s*org_id\s+\w+[^,\n]*\b(UNIQUE|PRIMARY\s+KEY)\b", body, _re.I | _re.M)
+                or _re.search(r"(UNIQUE|PRIMARY\s+KEY)\s*\(\s*org_id\s*\)", body, _re.I)
+            ):
+                found.add(m.group(1).replace('"', ""))
+    return found
+
+
+def _borrowed_org_inserts(sql: str, org_unique: set[str]) -> list[str]:
+    """Org-unique tables `sql` INSERTs into after borrowing a live org (empty when it makes its own org).
+    An INSERT carrying `ON CONFLICT` already tolerates an existing row, so it does not count."""
+    if not _BORROW_RE.search(sql) or _OWN_ORG_RE.search(sql):
+        return []
+    hits = []
+    for m in _INSERT_STMT_RE.finditer(sql):
+        table = m.group(1).replace('"', "")
+        if table in org_unique and not _re.search(r"ON\s+CONFLICT", m.group(2), _re.I):
+            hits.append(table)
+    return sorted(set(hits))
+
+
+class TestProbesOwnTheirOrg:
+    _PRODUCTS = _Path(__file__).resolve().parents[3] / "products"
+
+    def test_no_probe_borrows_an_org_then_inserts_into_an_org_unique_table(self):
+        org_unique = _org_unique_tables(self._PRODUCTS)
+        assert "social_wiring.marcas" in org_unique  # the premise (SW 339) is really derived
+        offenders = {
+            p.id: hits
+            for p in DEFAULT_REGISTRY
+            if p.id not in _BORROWED_ORG_TOLERATED and (hits := _borrowed_org_inserts(p.sql, org_unique))
+        }
+        assert not offenders, (
+            f"probes that borrow a live org and INSERT into a one-row-per-org table: {offenders}. "
+            "Create the org (`_PROBE_ORG_SETUP`, rolled back with the probe) instead of borrowing one."
+        )
+
+    def test_every_tolerated_probe_still_needs_its_exemption(self):
+        org_unique = _org_unique_tables(self._PRODUCTS)
+        by_id = {p.id: p for p in DEFAULT_REGISTRY}
+        for pid, reason in _BORROWED_ORG_TOLERATED.items():
+            assert pid in by_id, f"{pid} left the registry: drop its exemption"
+            assert reason.strip()
+            assert _borrowed_org_inserts(by_id[pid].sql, org_unique), f"{pid} no longer borrows: drop its exemption"
+
+    # red / green fixtures for the detector itself
+    def test_detector_red_borrow_then_insert(self):
+        sql = "SELECT id INTO v_org FROM public.organizations LIMIT 1;\nINSERT INTO sw.marcas (org_id) VALUES (v_org);"
+        assert _borrowed_org_inserts(sql, {"sw.marcas"}) == ["sw.marcas"]
+
+    def test_detector_red_ordered_borrow_and_insert_select(self):
+        sql = "INSERT INTO sw.marcas (org_id) SELECT id FROM public.organizations ORDER BY created_at LIMIT 1;"
+        assert _borrowed_org_inserts(sql, {"sw.marcas"}) == ["sw.marcas"]
+
+    def test_detector_green_own_org(self):
+        sql = (
+            "INSERT INTO public.organizations (nome, slug) VALUES ('p', 'p') RETURNING id INTO v_org;\n"
+            "SELECT id INTO v_x FROM public.organizations LIMIT 1;\nINSERT INTO sw.marcas (org_id) VALUES (v_org);"
+        )
+        assert _borrowed_org_inserts(sql, {"sw.marcas"}) == []
+
+    def test_detector_green_on_conflict_and_non_unique_table(self):
+        borrow = "SELECT id INTO v_org FROM public.organizations LIMIT 1;\n"
+        assert _borrowed_org_inserts(borrow + "INSERT INTO sw.w (org_id) VALUES (v_org) ON CONFLICT (org_id) DO NOTHING;", {"sw.w"}) == []
+        assert _borrowed_org_inserts(borrow + "INSERT INTO sw.log (org_id) VALUES (v_org);", {"sw.w"}) == []

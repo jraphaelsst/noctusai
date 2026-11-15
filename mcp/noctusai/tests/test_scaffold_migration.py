@@ -776,6 +776,34 @@ class TestNextMigrationNumberUnpushedSiblingBranch:
         assert any("feat/sibling" in c["source"] for c in branch_claims), result
 
 
+class TestNextMigrationNumberQueuedMqHead:
+    """A delivery waiting on refs/remotes/origin/mq/* holds its migration number:
+    it is on neither dev nor a local branch, so the number looked free."""
+
+    def test_number_taken_by_a_queued_head_is_not_free(self, tmp_path):
+        repo = tmp_path
+        if not _init_repo(repo):
+            import pytest
+            pytest.skip("git unavailable in this environment")
+        _write_migration(repo, "core", "040_base.sql")
+        assert _git_ok("add", "-A", cwd=repo) and _git_ok("commit", "-qm", "base", cwd=repo)
+        assert _git_ok("update-ref", "refs/remotes/origin/dev", "HEAD", cwd=repo)
+        assert _git_ok("checkout", "-q", "-b", "scratch-queued", cwd=repo)
+        _write_migration(repo, "core", "041_queued_work.sql")
+        assert _git_ok("add", "-A", cwd=repo) and _git_ok("commit", "-qm", "queued 041", cwd=repo)
+        assert _git_ok("update-ref", "refs/remotes/origin/mq/queued--abc1234", "HEAD", cwd=repo)
+        # the queued work's branch is gone locally: only the queue ref remembers it
+        assert _git_ok("checkout", "-q", "dev", cwd=repo)
+        assert _git_ok("branch", "-D", "scratch-queued", cwd=repo)
+
+        result = sm.next_migration_number("core", products_dir=repo / "products", skip_fetch=True)
+
+        assert result.get("next_number") == 42, result
+        queued = [c for c in result["claims"] if c["source"].startswith("queue:")]
+        assert [c["file"] for c in queued] == ["041_queued_work.sql"], result
+        assert "queued-mq-heads" in result["sources_checked"]
+
+
 class TestNextMigrationNumberErrorsAndDegradation:
     def test_missing_product_matches_scaffold_migration_error_text(self, tmp_path):
         """Same resolver, same wording — a caller must not see two different

@@ -38,7 +38,7 @@ def test_a_down_read_only_edge_does_not_take_a_resolvable_shared_host_down():
     assert resolvable, "the generated set must say which aliases are edge names"
     set_host_resolver(lambda h: None if h in resolvable or h.endswith("-core") else ["10.0.0.30"])
     assert resolve_line_policy("http://waha:3000", "default").send_enabled
-    assert resolve_line_policy("http://waha-monica:3000", "default").send_enabled
+    assert resolve_line_policy("http://waha-nosnolimiar:3000", "default").send_enabled
 
 
 def test_a_down_edge_still_fails_closed_for_an_ip_literal_and_an_unresolvable_host():

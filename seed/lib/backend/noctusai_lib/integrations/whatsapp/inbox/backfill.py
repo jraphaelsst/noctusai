@@ -260,4 +260,5 @@ def register_inbox_backfill_job(
         except Exception:  # noqa: BLE001
             logger.error("whatsapp inbox backfill job failed", exc_info=True)
 
+    # poll-budget: whatsapp inbox backfill, hours=6 default; 1 calls/tick (runner pages the WAHA history; scales with chats); worst 4/day ticks; idle=fixed
     seed_scheduler.register(name, _job, hours=hours)

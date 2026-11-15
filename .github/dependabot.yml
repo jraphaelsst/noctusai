@@ -514,10 +514,10 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
-  # monica — added automatically by noctus.dev.refresh_dependabot_coverage
+  # nosnolimiar — added automatically by noctus.dev.refresh_dependabot_coverage (renamed from monica 2026-11-02)
   # (missing npm block detected on 2026-10-26).
   - package-ecosystem: "npm"
-    directory: "/products/monica/frontend"
+    directory: "/products/nosnolimiar/frontend"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 2

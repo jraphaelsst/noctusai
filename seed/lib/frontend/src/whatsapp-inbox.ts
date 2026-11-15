@@ -245,7 +245,7 @@ export function createWhatsAppInboxHooks(api: ApiClient, options: CreateWhatsApp
       },
       getNextPageParam: (last) => last.next_cursor ?? undefined,
       enabled: !!connectionId && (opts.enabled ?? true),
-      // poll-budget: opt-in (default off), caller-set; ~4 calls/tick; worst 4/tick; hidden=paused
+      // poll-budget: opt-in, caller-set opts.pollMs (off by default); ~4 calls/tick (the polled inbox GETs); worst 0/day when unset, 86400/day at a 1s poll per open tab; hidden=paused
       refetchInterval: opts.pollMs || false,
     });
     const chats = useMemo(() => flattenChats(query.data), [query.data]);
@@ -276,7 +276,7 @@ export function createWhatsAppInboxHooks(api: ApiClient, options: CreateWhatsApp
       },
       getNextPageParam: olderCursor,
       enabled: !!connectionId && !!chatId,
-      // poll-budget: opt-in (default off), caller-set; ~4 calls/tick; worst 4/tick; hidden=paused
+      // poll-budget: opt-in, caller-set opts.pollMs (off by default); ~4 calls/tick (the polled thread GETs); worst 0/day when unset, 86400/day at a 1s poll per open tab; hidden=paused
       refetchInterval: opts.pollMs || false,
     });
     const messages = useMemo(() => flattenMessages(query.data), [query.data]);

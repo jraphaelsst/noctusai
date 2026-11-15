@@ -50,6 +50,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -304,6 +305,7 @@ def log_entry(
     resolve_to: str | None = None,
     trial: dict | None = None,
     source: dict | None = None,
+    extra: dict | None = None,
 ) -> dict:
     """Append one entry to the ndjson + invalidate the cache.
 
@@ -360,6 +362,8 @@ def log_entry(
         entry["trial"] = trial
     if source is not None:
         entry["source"] = {"tool": source["tool"], "ref": source["ref"]}
+    if extra:  # additive row fields (e.g. class_key/count for refusal classes); never overrides a core key
+        entry.update({k: v for k, v in extra.items() if k not in entry})
     publish = _ledger().append(
         [json.dumps(entry, ensure_ascii=False)],
         message=f"auto-improvement {scope}/{kind} {status} — {target}"[:160],
@@ -395,6 +399,44 @@ def log_entry(
     except ValueError:
         ledger_path = str(LEDGER_PATH)
     return {"ok": True, "entry": entry, "ledger_path": ledger_path, "publish": publish}
+
+
+def upsert_class_row(*, key: str, count: int | None = None, sessions: int = 0, target: str,
+                     description: str, agent: str | None = None, kind: str = "drift",
+                     status: str = "s1-emergent", source_ref: str | None = None) -> dict:
+    """ONE live row per refusal class `key`; a repeat updates `count`/`last_seen` IN PLACE instead of
+    appending (the 786 duplicate s1 rows). `count=None` increments. The row closes itself via
+    `resolve_when: gate_quiet:<key>:7d` once the class has been quiet for 7 days.
+    Returns `{ok, action: created|updated, count}`."""
+    now = _now_iso()
+    live = [e for e in _load_entries()
+            if e.get("class_key") == key and e.get("status") not in TERMINAL_STATUSES]
+    if live:
+        target_key = _entry_key(live[-1])
+        seen: dict = {}
+
+        def _mutate(entry: dict) -> dict:
+            if _entry_key(entry) != target_key:
+                return entry
+            n = int(count) if count is not None else int(entry.get("count", 1)) + 1
+            seen["n"] = n
+            entry.update({"count": n, "sessions": max(int(entry.get("sessions", 0)), int(sessions)),
+                          "last_seen": now})
+            return entry
+
+        _rewrite_ledger(_mutate)
+        try:
+            refresh()
+        except Exception as exc:  # noqa: BLE001 - lazy rebuild remains the fallback
+            logging.getLogger(__name__).warning("upsert_class_row: eager refresh skipped (%s)", exc)
+        return {"ok": True, "action": "updated", "count": seen.get("n"), "publish": {"ok": True}}
+    n = int(count) if count is not None else 1
+    r = log_entry(scope="scoped", kind=kind, target=target, description=description, agent=agent,
+                  status=status, source_ref=source_ref, resolve_when=f"gate_quiet:{key}:7d",
+                  extra={"class_key": key, "count": n, "sessions": int(sessions), "last_seen": now})
+    if not r.get("ok"):
+        return r
+    return {"ok": True, "action": "created", "count": n, "publish": r.get("publish") or {}}
 
 
 def refresh(force: bool = False, worktree_path: str | None = None) -> dict:
@@ -726,6 +768,7 @@ def _eval_predicate(pred: str, all_entries: list[dict], this_entry: dict, repo_r
                                           stale today (re-verified, or a successor row exists)
       · `llm_prompt_registry_clean:<relpath>` the file no longer exists or has no LLM call site outside
                                           the prompt registry (check_llm_prompt_from_registry)
+      · `gate_quiet:<class>:<N>d`        no refusal of that class (gate_alignment.refusal_class) for N days
       · `inline_reason_recorded:<branch>` that branch's latest pointer carries a valid
                                           inline_reason + inline_note (orchestrator inline cutoff)
 
@@ -777,6 +820,20 @@ def _eval_predicate(pred: str, all_entries: list[dict], this_entry: dict, repo_r
             return False, f"finance_param_fresh: registry unreadable ({rep.get('error')})"
         stale = any(r["key"] == key for rows in rep["grouped"].values() for r in rows)
         return (not stale), f"finance param {key} {'still stale' if stale else 'fresh'}"
+    if pred.startswith("gate_quiet:"):
+        key, _, window = pred[len("gate_quiet:"):].strip().rpartition(":")
+        m = re.fullmatch(r"(\d+)d", window)
+        if not key or not m:
+            return False, f"gate_quiet: bad grammar {pred!r} (want gate_quiet:<class>:<N>d)"
+        try:
+            from tools.noctus.dev import gate_alignment as ga
+            days = int(m.group(1))
+            last = ga._parse_ts(this_entry.get("last_seen") or this_entry.get("ts"))
+            fresh_row = last is not None and (datetime.now(timezone.utc) - last).days < days
+            quiet = ga.gate_quiet(key, days) and not fresh_row
+        except Exception as exc:  # noqa: BLE001 - loud, never silently True
+            return False, f"gate_quiet: event log unreadable ({exc})"
+        return quiet, f"class {key} {'quiet' if quiet else 'still refusing'} for {days}d"
     if pred.startswith("inline_reason_recorded:"):
         branch = pred[len("inline_reason_recorded:"):].strip()
         try:

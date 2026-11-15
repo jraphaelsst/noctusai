@@ -35,6 +35,8 @@ EVENT_KINDS = frozenset({
     "gate_denied", "gate_timeout", "guard_error", "harness_invalid",
     "compaction_capture", "note",
 })
+# Kinds that are a refusal/failure of a gate: upserted per class, never one row per event.
+CLASS_UPSERT_KINDS = frozenset({"gate_denied", "gate_timeout", "guard_error", "harness_invalid"})
 _FULL_KEYS = ("caches", "auto_improvement", "branch_pointers", "worktrees", "dispatcher_pending")
 _GIT_TIMEOUT = 20
 
@@ -285,6 +287,23 @@ def harness_event(payload: Any) -> dict:
     if payload.get("detail"):
         desc += f"\n\n{payload['detail']}"
     from tools.noctus.dev import auto_improvement as ai
+    if kind in CLASS_UPSERT_KINDS:
+        # A per-deny friction event is ONE row per class, count updated in place (never a new
+        # row per refusal): the 786-duplicate-s1-rows failure. Closes itself via gate_quiet.
+        from tools.noctus.dev import gate_alignment as ga
+        key = ga.refusal_class("guard", payload["target"].strip(), payload["summary"])
+        try:
+            r = ai.upsert_class_row(
+                key=key, target=payload["target"], description=desc, agent=source,
+                source_ref=(f"session:{payload['session_id']}" if payload.get("session_id") else source))
+        except Exception as exc:  # noqa: BLE001 — reported, exit 1 by the CLI
+            return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+        if not r.get("ok"):
+            return {"status": "error", "error": r.get("error", "auto_improvement.upsert_class_row refused")}
+        return {"status": "logged", "id": hashlib.sha1(key.encode()).hexdigest()[:12], "class": key,
+                "action": r["action"], "count": r["count"], "ts": ai._now_iso(),
+                "published_to": "origin/ledgers" if (r.get("publish") or {}).get("ok") else None,
+                "spooled": not (r.get("publish") or {}).get("ok")}
     try:
         r = ai.log_entry(
             scope="scoped",

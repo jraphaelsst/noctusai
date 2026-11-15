@@ -1268,6 +1268,23 @@ END;
 )
 
 
+# A probe that INSERTs owns its org: a borrowed one can already hold a row some product invariant
+# (one marca / one destination / one active identity per org) forbids a second of.
+def _table_fixture_check(qualified: str) -> str:
+    return (
+        f"  IF to_regclass('{qualified}') IS NULL THEN\n"
+        f"    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_sql_lit(qualified)} does not exist (migrations not applied)';\n"
+        "  END IF;\n"
+    )
+
+
+_PROBE_ORG_SETUP = _table_fixture_check("public.organizations") + """
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_org;
+"""
+
+
 _JULIA_RELATORIO_DESTINO_USUARIO_PROBE = GuardProbe(
     id="julia_relatorio_destino.usuario_obrigatorio.check",
     product="social-wiring",
@@ -1281,14 +1298,10 @@ _JULIA_RELATORIO_DESTINO_USUARIO_PROBE = GuardProbe(
     ),
     sql=_do_block(f"""
 DECLARE
-  v_org_id uuid;
+  v_org uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe destination';
-  END IF;
-  BEGIN
-    INSERT INTO {_SW_SCHEMA}.julia_relatorio_destino (org_id, modo, usuario_id) VALUES (v_org_id, 'usuario', NULL);
+{_PROBE_ORG_SETUP}  BEGIN
+    INSERT INTO {_SW_SCHEMA}.julia_relatorio_destino (org_id, modo, usuario_id) VALUES (v_org, 'usuario', NULL);
     RAISE EXCEPTION 'NOC_PROBE:permitted: a usuario destination with no usuario_id was accepted — the check did not fire';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
@@ -1724,10 +1737,14 @@ DECLARE
   v_org_id uuid;
   v_marca_id uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
+  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
+  IF to_regclass('public.organizations') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
   END IF;
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_org_id;
   INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
   VALUES (v_org_id, 'noc-probe-pesquisa', 'noc-probe-pesquisa')
   RETURNING id INTO v_marca_id;
@@ -1771,10 +1788,14 @@ DECLARE
   v_job_id uuid;
   v_topic_id uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
+  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
+  IF to_regclass('public.organizations') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
   END IF;
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_org_id;
   INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
   VALUES (v_org_id, 'noc-probe-pesquisa-w2', 'noc-probe-pesquisa-w2')
   RETURNING id INTO v_marca_id;
@@ -1911,10 +1932,14 @@ DECLARE
   v_perfil_id uuid;
   v_viral_id uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
+  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
+  IF to_regclass('public.organizations') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
   END IF;
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_org_id;
   INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
   VALUES (v_org_id, 'noc-probe-geracao', 'noc-probe-geracao')
   RETURNING id INTO v_marca_id;
@@ -6412,6 +6437,78 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — social_wiring.imobshot_eventos append-only guard (migration 344).
+# ---------------------------------------------------------------------------
+#
+# Self-provisioning inside the rollback-only wrapper: each probe inserts its own throwaway card (random org, so
+# the (org_id, imovel_codigo) unique key can never collide with real data) and one event, then attempts the
+# forbidden operation. The trigger's message carries "imobshot_eventos is append-only" — the fragment the probe
+# requires, so an unrelated error is `ambiguous`, never a pass.
+
+_IMOBSHOT_EVENTOS_GUARD = "imobshot_eventos_append_only"
+_IMOBSHOT_EVENTOS_MIGRATIONS = ("344_imobshotai_cards.sql",)
+
+
+def _imobshot_eventos_probe(*, probe_id: str, op_sql: str, what: str) -> GuardProbe:
+    fragment_lit = _sql_lit("imobshot_eventos is append-only")
+    what_lit = _sql_lit(what)
+    sql = _do_block(f"""
+DECLARE
+  v_org uuid := gen_random_uuid();
+  v_card uuid;
+  v_ev uuid;
+BEGIN
+  IF to_regclass('social_wiring.imobshot_eventos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: social_wiring.imobshot_eventos does not exist (migration 344 not applied)';
+  END IF;
+  BEGIN
+    INSERT INTO social_wiring.imobshot_cards (org_id, imovel_codigo) VALUES (v_org, 'NOCPROBE')
+    RETURNING id INTO v_card;
+    INSERT INTO social_wiring.imobshot_eventos (org_id, card_id, tipo) VALUES (v_org, v_card, 'card_criado')
+    RETURNING id INTO v_ev;
+{op_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the append-only guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name=_IMOBSHOT_EVENTOS_GUARD,
+        kind="write_refusal",
+        migrations=_IMOBSHOT_EVENTOS_MIGRATIONS,
+        sql=sql,
+        rationale=(
+            "imobshot_eventos is the ImobShotAI card history (contract §7: time-to-approval, drop-off, "
+            "approval-rate metrics read it) — a rewritable or deletable row makes every metric unprovable."
+        ),
+    )
+
+
+_IMOBSHOT_EVENTOS_PROBES: tuple[GuardProbe, ...] = (
+    _imobshot_eventos_probe(
+        probe_id="social_wiring.imobshot_eventos.update_refused",
+        op_sql="    UPDATE social_wiring.imobshot_eventos SET tipo = 'card_arquivado' WHERE id = v_ev;",
+        what="UPDATE of an imobshot_eventos row",
+    ),
+    _imobshot_eventos_probe(
+        probe_id="social_wiring.imobshot_eventos.delete_refused",
+        op_sql="    DELETE FROM social_wiring.imobshot_eventos WHERE id = v_ev;",
+        what="DELETE of an imobshot_eventos row",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — core owner-notice recipient events append-only guard (migration 118).
 # ---------------------------------------------------------------------------
 #
@@ -7529,20 +7626,6 @@ BEGIN
 END;
 """)
 
-
-def _table_fixture_check(qualified: str) -> str:
-    return (
-        f"  IF to_regclass('{qualified}') IS NULL THEN\n"
-        f"    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_sql_lit(qualified)} does not exist (migrations not applied)';\n"
-        "  END IF;\n"
-    )
-
-
-_PROBE_ORG_SETUP = _table_fixture_check("public.organizations") + """
-  INSERT INTO public.organizations (nome, slug)
-  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
-  RETURNING id INTO v_org;
-"""
 
 _LICENSES_ONE_ACTIVE_PROBE = GuardProbe(
     id="licenses.one_active_per_org_product",
@@ -10239,10 +10322,14 @@ DECLARE
   v_marca uuid;
   v_brain uuid;
 BEGIN
-  SELECT id INTO v_org FROM public.organizations LIMIT 1;
-  IF v_org IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
+  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
+  IF to_regclass('public.organizations') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
   END IF;
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_org;
   INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
   VALUES (v_org, 'noc-probe-cerebro', 'noc-probe-cerebro')
   RETURNING id INTO v_marca;
@@ -10573,10 +10660,14 @@ DECLARE
 """
 
 _SW_241_FIXTURE = f"""
-  SELECT id INTO v_org FROM public.organizations LIMIT 1;
-  IF v_org IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
+  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
+  IF to_regclass('public.organizations') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
   END IF;
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_org;
   INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
   VALUES (v_org, 'noc-probe-esteira-a', 'noc-probe-esteira-a') RETURNING id INTO v_marca_a;
   INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
@@ -11113,37 +11204,38 @@ _ORBITY_018_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Monica migration 015 (WhatsApp connections + inbox) -- the webhook token is the routing credential of the
+# Nós no Limiar (ex-monica) migration 015 (WhatsApp connections + inbox) -- the webhook token is the routing credential of the
 # PUBLIC inbound webhook: two connections sharing one would cross-deliver messages between orgs.
 # ---------------------------------------------------------------------------
 
-_MONICA_SCHEMA = "monica"
+_NOSNOLIMIAR_SCHEMA = "nosnolimiar"
 
-_MONICA_WA_WEBHOOK_TOKEN_UNIQUE_PROBE = GuardProbe(
-    id="monica.whatsapp_connections.webhook_token_unique",
-    product="monica",
-    schema=_MONICA_SCHEMA,
-    guard_name="idx_monica_whatsapp_connections_webhook_token",
+# 015 created it as idx_monica_whatsapp_connections_webhook_token; nosnolimiar 024 renamed it (product rename 2026-11-14).
+_NOSNOLIMIAR_WA_WEBHOOK_TOKEN_UNIQUE_PROBE = GuardProbe(
+    id="nosnolimiar.whatsapp_connections.webhook_token_unique",
+    product="nosnolimiar",
+    schema=_NOSNOLIMIAR_SCHEMA,
+    guard_name="idx_nosnolimiar_whatsapp_connections_webhook_token",
     kind="write_refusal",
-    migrations=("015_whatsapp.sql",),
+    migrations=("015_whatsapp.sql", "024_rename_monica_indexes.sql"),
     rationale="The webhook token routes an unauthenticated inbound call to an org; two connections sharing one would cross-deliver conversations between orgs.",
     sql=_do_block(f"""
 DECLARE
   v_org uuid := gen_random_uuid();
 BEGIN
-  IF to_regclass('{_MONICA_SCHEMA}.whatsapp_connections') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_MONICA_SCHEMA}.whatsapp_connections does not exist (monica 015 not applied)';
+  IF to_regclass('{_NOSNOLIMIAR_SCHEMA}.whatsapp_connections') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_NOSNOLIMIAR_SCHEMA}.whatsapp_connections does not exist (nosnolimiar 015 not applied)';
   END IF;
   BEGIN
-    INSERT INTO {_MONICA_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token)
+    INSERT INTO {_NOSNOLIMIAR_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token)
     VALUES (v_org, gen_random_uuid(), 'a', 'http://x', 'k', 'noc_probe_tok');
-    INSERT INTO {_MONICA_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token)
+    INSERT INTO {_NOSNOLIMIAR_SCHEMA}.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token)
     VALUES (v_org, gen_random_uuid(), 'b', 'http://x', 'k', 'noc_probe_tok');
     RAISE EXCEPTION 'NOC_PROBE:permitted: two connections with the same webhook_token were inserted -- the unique guard did not fire';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
       RAISE;
-    ELSIF SQLERRM LIKE '%idx_monica_whatsapp_connections_webhook_token%' THEN
+    ELSIF SQLERRM LIKE '%idx_nosnolimiar_whatsapp_connections_webhook_token%' THEN
       RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
     ELSE
       RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
@@ -12077,12 +12169,7 @@ def _brand_double_insert_probe(*, id: str, guard_name: str, rationale: str, firs
                                second_sql: str) -> GuardProbe:
     """Two inserts where the SECOND must trip ``guard_name`` (if the FIRST already
     trips it — an existing row occupies the slot — the guard refused too)."""
-    fixture = (
-        "  SELECT id INTO v_org FROM public.organizations LIMIT 1;\n"
-        "  IF v_org IS NULL THEN\n"
-        "    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row in public.organizations to borrow an org from';\n"
-        "  END IF;\n"
-    )
+    fixture = _PROBE_ORG_SETUP  # an OWN org: ux_org_brand_identities_active_org is one-active-per-org
     return GuardProbe(
         id=id, product="core", schema="public", guard_name=guard_name, kind="write_refusal",
         migrations=("089_org_brand_identities.sql",), rationale=rationale,
@@ -12580,6 +12667,61 @@ END;
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — social_wiring CoreStudio post axes (migration 342). Reuses the
+# migration-241 fixture (marca + esteira stage); every probe rolls back.
+# ---------------------------------------------------------------------------
+
+_SW_342_MIGRATION = "342_cs_post_axes.sql"
+
+
+def _sw342_probe(*, probe_id: str, guard_name: str, statements: str, permitted_msg: str, rationale: str) -> GuardProbe:
+    base = _sw241_refusal_probe(
+        probe_id=probe_id, guard_name=guard_name, statements=statements, permitted_msg=permitted_msg, rationale=rationale,
+    )
+    return GuardProbe(
+        id=base.id, product=base.product, schema=base.schema, guard_name=base.guard_name, kind=base.kind,
+        migrations=(_SW_342_MIGRATION,), rationale=base.rationale, sql=base.sql,
+    )
+
+
+_SW_342_PUB_INS = (
+    f"INSERT INTO {_SW_SCHEMA}.cs_post_publicacoes (org_id, post_id, rede, formato, publicar_em) "
+    "VALUES (v_org, v_post, 'instagram', 'reel', now() + interval '1 day')"
+)
+
+_SW_342_PROBES: tuple[GuardProbe, ...] = (
+    _sw342_probe(
+        probe_id="sw342_post_eventos_append_only",
+        guard_name="cs_post_eventos_imutavel",
+        statements=(
+            _sw241_stmt(_sw241_post_ins("v_marca_a")).replace(";", " RETURNING id INTO v_post;", 1)
+            + "\n"
+            + _sw241_stmt(
+                f"INSERT INTO {_SW_SCHEMA}.cs_post_eventos (org_id, post_id, tipo) VALUES (v_org, v_post, 'publicado')"
+            )
+            + "\n"
+            + _sw241_stmt(f"UPDATE {_SW_SCHEMA}.cs_post_eventos SET tipo = 'publicacao_falhou' WHERE post_id = v_post")
+        ),
+        permitted_msg="an event row was rewritten",
+        rationale="The CoreStudio event ledger is append-only: no UPDATE or DELETE for anybody, the trigger refuses even the table owner.",
+    ),
+    _sw342_probe(
+        probe_id="sw342_publicacao_alvo_unico",
+        guard_name="cs_post_publicacoes_alvo_uq",
+        statements=(
+            _sw241_stmt(_sw241_post_ins("v_marca_a")).replace(";", " RETURNING id INTO v_post;", 1)
+            + "\n"
+            + _sw241_stmt(_SW_342_PUB_INS)
+            + "\n"
+            + _sw241_stmt(_SW_342_PUB_INS)
+        ),
+        permitted_msg="the same post queued twice for the same rede x formato x conta",
+        rationale="A post is never queued twice for the same rede x formato x conta while the first is live (no double publish).",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
@@ -12656,6 +12798,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ATENDIMENTO_CONFLITO_STATUS_PROBE,
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
+    *_IMOBSHOT_EVENTOS_PROBES,
     *_OWNER_RECIPIENT_EVENTS_PROBES,
     *_CORE_AI_USAGE_PROBES,
     *_CORE_FUNNEL_PROBES,
@@ -12701,6 +12844,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_231_PROBES,
     *_SW_240_PROBES,
     *_SW_241_PROBES,
+    *_SW_342_PROBES,
     *_SW_JULIA_ENVIO_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
     *_SW_JULIA_CREDITO_PROBES,
@@ -12719,7 +12863,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _COMMERCE_COUPON_PERCENT_PROBE,
     _COMMERCE_COUPON_CODE_UNIQUE_PROBE,
     *_ORBITY_018_PROBES,
-    _MONICA_WA_WEBHOOK_TOKEN_UNIQUE_PROBE,
+    _NOSNOLIMIAR_WA_WEBHOOK_TOKEN_UNIQUE_PROBE,
     *_AGENTS_BROWSER_LOCKDOWN_PROBES,
     *_CORE_BROWSER_LOCKDOWN_PROBES,
     *_IGIG_BROWSER_LOCKDOWN_PROBES,
@@ -12853,9 +12997,118 @@ def derive_organ_probes(*, products_dir: Any = None, registry: Any = None) -> tu
     return tuple(probes)
 
 
+# ---------------------------------------------------------------------------
+# Transition-log-derived probes -- `noctusai_lib.domain.transition_log` renders the events table + guard +
+# erasure function per AGGREGATE (several per product, several per file), so it is found by its config
+# marker (`-- transition-log-config: {...}`), not an organ header. Each marker re-derives the full config
+# and so the guard probes; the erasure path gets an inverse-polarity `write_allowed` probe (the ONE gated
+# delete MUST work: an erasure that silently deletes nothing is an LGPD finding). Fail-closed like the organs.
+# KB § PATTERNS/backend/transition-log.md.
+# ---------------------------------------------------------------------------
+
+_TL_PROBE_PREFIX = "transition_log"
+
+
+def _transition_log_erasure_probe(probe_id: str, product: str, cfg: Any, migrations: tuple[str, ...]) -> GuardProbe:
+    from noctusai_lib.domain.transition_log.guards import erasure_probe_parts
+    from noctusai_lib.domain.transition_log.sql import ERASURES_TABLE
+
+    parts = erasure_probe_parts(cfg)
+    fn = f"{cfg.schema}.{cfg.rpc('erase_subject')}"
+    pending = "\n".join(
+        f"  IF to_regclass('{_sql_lit(cfg.schema)}.{_sql_lit(t)}') IS NULL THEN\n"
+        f"    RAISE EXCEPTION 'NOC_PROBE:pending: {_sql_lit(cfg.schema)}.{_sql_lit(t)} does not exist (transition log not applied)';\n"
+        "  END IF;"
+        for t in (cfg.events_table, ERASURES_TABLE)
+    )
+    sql = _do_block(f"""
+DECLARE
+  v_org uuid := gen_random_uuid();
+  {parts['declare']}
+BEGIN
+{pending}
+  BEGIN
+{parts['setup']}
+{parts['erase']}
+    v_left := {parts['remaining']};
+    IF v_left = 0 AND (v_res->>'deleted')::int = 1 THEN
+      RAISE EXCEPTION 'NOC_PROBE:allowed: {_sql_lit(fn)} erased the subject under its flag (1 row, 0 left)';
+    END IF;
+    RAISE EXCEPTION 'NOC_PROBE:blocked: {_sql_lit(fn)} answered % and left % row(s) of the subject', v_res, v_left;
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:allowed:%' OR SQLERRM LIKE 'NOC_PROBE:blocked:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{_sql_lit(cfg.events_table)} is append-only%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:blocked: the guard refused the gated erasure: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the erasure path under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id, product=product, schema=cfg.schema, guard_name=cfg.rpc("erase_subject"), kind="write_allowed",
+        migrations=migrations, sql=sql,
+        rationale=(f"{fn} is the ONE gated delete of {cfg.events_table} (LGPD erasure, owner decision 2026-11-07): "
+                   "it must actually delete the subject's rows under its transaction-local flag."),
+    )
+
+
+def derive_transition_log_probes(*, products_dir: Any = None) -> tuple[GuardProbe, ...]:
+    """The guard + erasure probes of every transition-log aggregate rendered into any product's migrations."""
+    from settings import PRODUCTS_DIR
+
+    root = products_dir or PRODUCTS_DIR
+    try:
+        from noctusai_lib.domain.transition_log import configs_in_migration, transition_log_guard_probes
+        from noctusai_lib.domain.transition_log.sql import CONFIG_MARKER
+    except ImportError as exc:
+        return (_unverifiable_probe(
+            f"{_TL_PROBE_PREFIX}.unavailable", "<platform>", "public",
+            f"cannot import noctusai_lib.domain.transition_log ({exc}): transition-log probes cannot be derived",
+        ),)
+    latest: dict[tuple[str, str, str], tuple[Any, str]] = {}
+    for sql_file in sorted(root.glob("*/backend/migrations/*.sql")):
+        try:
+            text = sql_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if CONFIG_MARKER not in text:
+            continue
+        product = sql_file.parents[2].name
+        try:
+            cfgs = configs_in_migration(text)
+        except ValueError as exc:
+            latest[(product, sql_file.name, "<unparseable>")] = (exc, sql_file.name)
+            continue
+        for cfg in cfgs:
+            latest[(product, cfg.schema, cfg.aggregate)] = (cfg, sql_file.name)  # sorted walk: the last render wins
+    probes: dict[str, GuardProbe] = {}
+    for (product, schema, aggregate), (cfg, fname) in sorted(latest.items()):
+        if aggregate == "<unparseable>":
+            pid = f"{_TL_PROBE_PREFIX}.{product}.{schema}.marker"
+            probes[pid] = _unverifiable_probe(pid, product, "public", f"{fname}: {cfg}")
+            continue
+        for op in transition_log_guard_probes(cfg):
+            # the shared erasure-log guards repeat per aggregate of a schema: probe them once
+            scope = cfg.schema if op.guard_name.startswith("transition_log_erasures") else cfg.aggregate
+            pid = f"{_TL_PROBE_PREFIX}.{product}.{scope}.{op.probe_key}"
+            probes.setdefault(pid, GuardProbe(
+                id=pid, product=product, schema=cfg.schema, guard_name=op.guard_name, kind="write_refusal",
+                migrations=(fname,), rationale=op.rationale, sql=_organ_probe_sql(cfg.schema, op),
+            ))
+        pid = f"{_TL_PROBE_PREFIX}.{product}.{cfg.aggregate}.erase_subject"
+        probes[pid] = _transition_log_erasure_probe(pid, product, cfg, (fname,))
+    return tuple(probes.values())
+
+
 def full_registry(*, products_dir: Any = None, registry: Any = None) -> tuple[GuardProbe, ...]:
-    """`DEFAULT_REGISTRY` (hand-written, per-product) + the organ-derived probes: what a run actually executes."""
-    return (*DEFAULT_REGISTRY, *derive_organ_probes(products_dir=products_dir, registry=registry))
+    """`DEFAULT_REGISTRY` (hand-written, per-product) + the organ- and transition-log-derived probes: what a run executes."""
+    return (
+        *DEFAULT_REGISTRY,
+        *derive_organ_probes(products_dir=products_dir, registry=registry),
+        *derive_transition_log_probes(products_dir=products_dir),
+    )
 
 
 
@@ -13065,6 +13318,7 @@ __all__ = [
     "DEFAULT_REGISTRY",
     "REGISTERED_GUARD_NAMES",
     "derive_organ_probes",
+    "derive_transition_log_probes",
     "full_registry",
     "wrap_rollback_only",
     "run_probe",

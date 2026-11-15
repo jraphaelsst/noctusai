@@ -58,6 +58,7 @@ def test_contract_citing_its_product_root_does_not_cover_the_whole_product(repo)
     _write(repo, "products/acme/backend/app/services/b.py", "x = 1\n")
     _write(repo, "products/acme/projects/p/CONTRACT.md",
            "Paths are relative to `products/acme/`.\n\nThe service `backend/app/services/b.py`.\n")
+    _git(repo, "add", "-A")  # existence is judged against what git tracks (local == CI)
     cov = ds.doc_coverage(repo, ds.Doc(rel="products/acme/projects/p/CONTRACT.md",
                                        text=(repo / "products/acme/projects/p/CONTRACT.md").read_text()))
     assert "products/acme/**" not in cov
@@ -444,3 +445,33 @@ def test_hook_is_registered_as_a_posttooluse_edit_hook():
 def test_pre_commit_advisory_leg_logs_warn_not_deny():
     hook = (HOOK.parents[2] / "scripts/hooks/pre-commit").read_text(encoding="utf-8")
     assert "NOC_GATE_ADVISORY=1" in hook[hook.index("Doc-staleness COMMIT leg"):]
+
+
+# ── cited-path existence is TRACKED, not on-disk (local == CI) ──────────────────
+def test_doc_citing_a_gitignored_file_is_stale_locally(repo):
+    """Red-first reproduction: the file exists on the author's disk but is not in CI's checkout."""
+    _write(repo, ".gitignore", "generated/\n")
+    _write(repo, "products/acme/backend/generated/cache.py", "X = 1\n")        # gitignored, on disk
+    _write(repo, "products/acme/README.md", "# acme\n\n`products/acme/backend/generated/cache.py` and "
+           "`products/acme/backend/app/routers/a.py`\n")
+    _commit(repo, "doc cites a gitignored file")
+    issues = [i["id"] for i in ds.check_claims(repo)]
+    assert any("generated/cache.py" in i for i in issues), issues
+    assert not any("routers/a.py" in i for i in issues)     # tracked: fine
+
+
+def test_staged_add_counts_as_tracked_for_the_staged_leg(repo):
+    _write(repo, "products/acme/backend/app/new_mod.py", "N = 1\n")
+    _write(repo, "products/acme/README.md", "# acme\n\n`products/acme/backend/app/new_mod.py`\n")
+    _git(repo, "add", "products/acme/README.md")
+    assert [i for i in ds.check_staged_new_missing_paths(repo)] != []      # new_mod.py on disk but NOT staged
+    _git(repo, "add", "products/acme/backend/app/new_mod.py")
+    assert ds.check_staged_new_missing_paths(repo) == []                   # staged add is tracked
+
+
+def test_outside_a_git_tree_existence_falls_back_to_the_filesystem_loudly(tmp_path, capsys):
+    ds.reset_path_index()
+    _write(tmp_path, "a/b.py", "x = 1\n")
+    assert ds._exists(tmp_path, "a/b.py") and ds._is_dir(tmp_path, "a")
+    assert "falls back to the FILESYSTEM" in capsys.readouterr().err
+    ds.reset_path_index()

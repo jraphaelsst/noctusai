@@ -365,7 +365,7 @@ export function useUltimaAtualizacaoVista() {
   const query = useQuery({
     queryKey: ULTIMA_ATUALIZACAO_KEY,
     queryFn: () => api.get<UltimaAtualizacaoVista>("/api/imoveis/sync/ultimo"),
-    // poll-budget: 5s only while a Vista sync runs, stops when em_andamento=false; ~5 calls/tick; worst 5/tick (bounded by the run); hidden=paused
+    // poll-budget: 5s only while a Vista sync runs, stops when em_andamento=false; 1 calls/tick (refetch of the polled GET, only while the job is in flight); worst 17280/day per open tab; hidden=paused
     refetchInterval: (q) => (q.state.data?.em_andamento ? POLL_MS : false),
   });
   return {

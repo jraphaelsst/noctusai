@@ -21,10 +21,10 @@ import { createProductSupabase } from "@noctusai/lib/supabase";
 import { createAuthStore } from "@noctusai/lib/stores";
 import { createApiClient } from "@noctusai/lib/api";
 import { createDeadSessionHandler, createSupabaseTokenRefresher } from "@noctusai/lib/auth";
-import { createNotificationHooks } from "@noctusai/lib/notifications";
+import { createNotificationHooks, createOpenInProduct } from "@noctusai/lib/notifications";
 import { createAuthProvider } from "@noctusai/lib/components";
 import { NotificationBell as SharedNotificationBell } from "@noctusai/lib/design-system";
-import { env, createOpenInProduct } from "@noctusai/lib";
+import { env } from "@noctusai/lib";
 
 interface ProductInfraConfig {
   /** Database schema name. Optional — auto-detected from VITE_PRODUCT_SCHEMA

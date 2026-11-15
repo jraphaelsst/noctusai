@@ -1,6 +1,7 @@
 """Tests for ``noctus.transcription.*`` — injected httpx.MockTransport, no network."""
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -330,3 +331,87 @@ def test_batch_forwards_segmentos_to_submit(tmp_path):
                        _sleep=clock.sleep, _clock=clock.now)
     assert res["status"] == "concluida"
     assert b'name="segmentos"' in bodies[0] and b"true" in bodies[0].lower()
+
+
+def test_batch_long_but_progressing_runs_to_the_end_in_one_call(tmp_path):
+    """timeout_s is a no-progress window: 20 jobs x ~10 min each (far past a 1 h total) still finish
+    in ONE call, because every finished job resets the window (2026-11-14: the old wall budget
+    stopped a healthy 87-part batch with status 'timeout' every hour)."""
+    src, out = _dir(tmp_path, 20)
+    clock = Clock()
+    born: dict[str, float] = {}
+
+    def h(req):
+        if req.method == "POST":
+            jid = f"j{len(born)}"
+            born[jid] = clock.t
+            return httpx.Response(202, json={"id": jid, "status": "na_fila"})
+        jid = req.url.path.rsplit("/", 1)[1]
+        if clock.t - born[jid] < 600:
+            return httpx.Response(200, json={"id": jid, "status": "processando"})
+        return httpx.Response(200, json={"id": jid, "status": "concluida", "texto": "ok"})
+
+    res = client.batch(str(src), str(out), max_inflight=3, timeout_s=3600, _transport=_t(h),
+                       _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida" and len(res["done"]) == 20
+    assert clock.t > 3600  # ran past what the old total budget allowed
+    assert not (out / ".inflight.json").exists()
+
+
+def test_batch_real_stall_stops_as_sem_progresso_and_keeps_inflight(tmp_path):
+    src, out = _dir(tmp_path, 2)
+    clock = Clock()
+    n = {"post": 0}
+
+    def h(req):
+        if req.method == "POST":
+            n["post"] += 1
+            return httpx.Response(202, json={"id": f"j{n['post']}", "status": "na_fila"})
+        jid = req.url.path.rsplit("/", 1)[1]
+        return httpx.Response(200, json={"id": jid, "status": "processando"})  # never finishes
+
+    res = client.batch(str(src), str(out), max_inflight=2, timeout_s=300, _transport=_t(h),
+                       _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "sem_progresso" and len(res["inflight"]) == 2
+    saved = json.loads((out / ".inflight.json").read_text())
+    assert sorted(saved.values()) == ["r0", "r1"]
+
+
+def test_batch_rerun_resumes_inflight_without_reuploading(tmp_path):
+    src, out = _dir(tmp_path, 3)
+    out.mkdir()
+    (out / ".inflight.json").write_text(json.dumps({"old-1": "r1"}))
+    clock = Clock()
+    posts: list[str] = []
+
+    def h(req):
+        if req.method == "POST":
+            jid = f"new-{len(posts)}"
+            posts.append(jid)
+            return httpx.Response(202, json={"id": jid, "status": "na_fila"})
+        jid = req.url.path.rsplit("/", 1)[1]
+        return httpx.Response(200, json={"id": jid, "status": "concluida", "texto": f"t-{jid}"})
+
+    res = client.batch(str(src), str(out), _transport=_t(h), _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida" and res["resumed"] == ["r1"]
+    assert len(posts) == 2  # r0 and r2 uploaded; r1 was NOT re-uploaded
+    assert (out / "r1.txt").read_text() == "t-old-1"
+    assert not (out / ".inflight.json").exists()
+
+
+def test_batch_gateway_502_during_core_restart_is_retried_not_failed(tmp_path):
+    """A core/tunnel restart answers polls with 502 for a while; the job is still alive server-side."""
+    src, out = _dir(tmp_path, 1)
+    clock = Clock()
+    polls = {"n": 0}
+
+    def h(req):
+        if req.method == "POST":
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        polls["n"] += 1
+        if polls["n"] <= 3:
+            return httpx.Response(502, text="Bad Gateway")
+        return httpx.Response(200, json={"id": "j1", "status": "concluida", "texto": "ok"})
+
+    res = client.batch(str(src), str(out), _transport=_t(h), _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida" and res["done"] == ["r0"] and res["failed"] == []

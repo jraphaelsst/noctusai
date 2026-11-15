@@ -658,6 +658,7 @@ class EvalRunner:
 
     async def _reserve_slot(self, runtime: Any) -> Any:
         deadline = time.monotonic() + self._slot_wait
+        # poll-budget: 2s tick, bounded by the 600s slot wait per waiting eval case; 0 Supabase calls/tick (in-memory try_reserve); worst 43200/day per case waiting nonstop (300 ticks per wait); idle=fixed
         while True:
             slot = runtime.try_reserve()
             if slot is not None:

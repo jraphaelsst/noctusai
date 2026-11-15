@@ -70,6 +70,16 @@ if _WORKTREE_SEED_LIB.exists():
     if str(_WORKTREE_SEED_LIB) not in sys.path:
         sys.path.insert(0, str(_WORKTREE_SEED_LIB))
 
+    # Same redirect for the seed FRAMEWORK (noctusai_seed): without it a worktree's
+    # tests read the PRIMARY checkout's organ registry, so an organ registered only in
+    # the worktree raises KeyError in test_organ_guard_probes (2026-11-07, event_store).
+    _WORKTREE_SEED_FW = _WORKTREE_ROOT / "seed" / "framework" / "backend"
+    if _WORKTREE_SEED_FW.exists():
+        for _k in [k for k in sys.modules if k.startswith("noctusai_seed")]:
+            del sys.modules[_k]
+        if str(_WORKTREE_SEED_FW) not in sys.path:
+            sys.path.insert(0, str(_WORKTREE_SEED_FW))
+
     # Legacy per-module redirect kept for extract_mined (the original worktree
     # change) as a belt-and-suspenders check — it's now a no-op since the
     # evict+prepend above handles it, but keep to avoid regressions.
@@ -271,6 +281,21 @@ def _isolate_ledger_dev_copies(tmp_path, monkeypatch):
     vcal = importlib.import_module("tools.noctus.dev.vector_calibration")
     monkeypatch.setattr(vcal, "SIGNALS_PATH", iso / "vector-signals.ndjson")
     monkeypatch.setattr(vcal, "DECISIONS_PATH", iso / "vector-calibration.ndjson")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_toolkit_freshness_state(monkeypatch):
+    """`toolkit_freshness` keeps its baseline + TTL-cached verdict in module globals, and
+    `_compute_verdict` LAZILY captures a baseline the first time any freshness-guarded tool
+    (migrate_product / release / deploy_image / task_branch ...) runs with none. Without a
+    per-test reset the first such test freezes a process-wide baseline mid-suite and a cached
+    verdict outlives it, so a later test sees `toolkit_stale` (or a refusal) depending on which
+    neighbour ran first -- an order-dependent red that vanishes in isolation. `monkeypatch`
+    restores all four on teardown (2026-11-14, test-isolation-flakes)."""
+    import tools.noctus.dev.toolkit_freshness as _tf
+
+    for attr, val in (("_baseline", None), ("_loaded_at", None), ("_cached_verdict", None), ("_cached_at", 0.0)):
+        monkeypatch.setattr(_tf, attr, val)
 
 
 @pytest.fixture(autouse=True)

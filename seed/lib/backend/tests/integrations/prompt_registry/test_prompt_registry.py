@@ -183,10 +183,10 @@ class TestChamarIa:
 
 
 class TestChaveFormat:
-    @pytest.mark.parametrize("ruim", ["Agents.Eval", "monica", "agents-eval", "agents..x", "1agents.x", "a/b"])
+    @pytest.mark.parametrize("ruim", ["Agents.Eval", "nosnolimiar", "agents-eval", "agents..x", "1agents.x", "a/b"])
     def test_non_logical_ids_are_refused_before_any_read(self, ruim):
         reg = FakePromptRegistry([_row(chave=ruim)])
-        if ruim == "monica":  # a single lowercase segment is a valid id shape
+        if ruim == "nosnolimiar":  # a single lowercase segment is a valid id shape
             assert prompt_e_modelo(ruim, registry=reg)
             return
         with pytest.raises(RegistroIAIndisponivel, match="logical id"):

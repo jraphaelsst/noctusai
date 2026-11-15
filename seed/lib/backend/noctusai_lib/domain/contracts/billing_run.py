@@ -217,6 +217,7 @@ def register_contracts_billing(cfg: ContractsConfig, *, get_db: Callable[[], Any
         except Exception:
             logger.error("contracts billing job %s failed", job_id, exc_info=True)
 
+    # poll-budget: contracts billing run, hours=24 default; 1 calls/tick (books each due contract; scales with contract count); worst 1/day tick; idle=fixed
     (scheduler or seed_scheduler).register(job_id, _job, hours=hours)
     return job_id
 

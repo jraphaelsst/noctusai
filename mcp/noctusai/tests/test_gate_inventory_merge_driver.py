@@ -105,8 +105,10 @@ def repo(tmp_path, monkeypatch):
     root = tmp_path / "r"
     (root / "scripts/hooks").mkdir(parents=True)
     (root / "mcp/noctusai/tools/noctus/dev").mkdir(parents=True)
-    for f in ("merge-kb-counts.sh", "merge-lgpd-warnings.sh", "merge-gate-inventory.sh", "register-merge-drivers.sh"):
-        shutil.copy(HOOKS / f, root / "scripts/hooks" / f)
+    # Derived, never hand-listed: register-merge-drivers.sh chmods every driver it
+    # registers, so the fixture must carry every merge-*.sh the real script names.
+    for src in [*sorted(HOOKS.glob("merge-*.sh")), HOOKS / "register-merge-drivers.sh"]:
+        shutil.copy(src, root / "scripts/hooks" / src.name)
     # thin cli: the real flag handler needs the whole toolkit; exercise the real pure function
     (root / "mcp/noctusai/cli.py").write_text(
         "import sys\nsys.path.insert(0, %r)\n"
