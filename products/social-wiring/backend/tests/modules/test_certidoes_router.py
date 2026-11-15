@@ -34,7 +34,6 @@ _app.include_router(_certidoes_router_mod.router)
 #: `noctusai_lib`'s `resolve_credential`) is the point of
 #: `credentials.resolve_key`: the store behind it moved to the product-local
 #: encrypted one and these tests did not have to follow it into two tiers.
-_CRED = "app.modules.certidoes.credentials.resolve_api_key"
 
 #: `coerce_org_uuid("test-org-123")` — the org the shared `client` fixture
 #: authenticates as (`uuid5(NAMESPACE_OID, "test-org-123")`). Fixtures seed THIS
@@ -352,12 +351,12 @@ class TestCriarConsulta:
         body.update(overrides)
         return body
 
-    def test_cria_consulta_cpf(self, client, certidoes_db, override_service):
+    def test_cria_consulta_cpf(self, client, certidoes_db, override_service, credenciais):
         db, _ = certidoes_db
         _seed(db)
         override_service(processar_consulta=AsyncMock())
-        with patch(_CRED, return_value="tok"):
-            resp = client.post(f"{BASE}/consultas", json=self._payload())
+        credenciais("tok")
+        resp = client.post(f"{BASE}/consultas", json=self._payload())
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["tipo_documento"] == "cpf"
@@ -365,18 +364,18 @@ class TestCriarConsulta:
         assert data["total_certidoes"] == 9
         assert data["org_id"] == CALLER_ORG
 
-    def test_documento_de_um_unico_cliente_vincula_sozinho(self, client, certidoes_db, override_service):
+    def test_documento_de_um_unico_cliente_vincula_sozinho(self, client, certidoes_db, override_service, credenciais):
         db, _ = certidoes_db
         _seed(db)
         db.set_table_data("clientes", [{"id": "cli-1", "org_id": CALLER_ORG, "cpf": "123.456.789-01"}])
         override_service(processar_consulta=AsyncMock())
-        with patch(_CRED, return_value="tok"):
-            resp = client.post(f"{BASE}/consultas", json=self._payload())
+        credenciais("tok")
+        resp = client.post(f"{BASE}/consultas", json=self._payload())
         assert resp.status_code == 200
         assert resp.json()["data"]["cliente_id"] == "cli-1"
         assert db.table("certidao_consultas").inserted_payloads[0]["cliente_id"] == "cli-1"
 
-    def test_documento_de_clientes_duplicados_fica_sem_vinculo(self, client, certidoes_db, override_service):
+    def test_documento_de_clientes_duplicados_fica_sem_vinculo(self, client, certidoes_db, override_service, credenciais):
         db, _ = certidoes_db
         _seed(db)
         db.set_table_data("clientes", [
@@ -384,48 +383,48 @@ class TestCriarConsulta:
             {"id": "cli-2", "org_id": CALLER_ORG, "cpf": "123.456.789-01"},
         ])
         override_service(processar_consulta=AsyncMock())
-        with patch(_CRED, return_value="tok"):
-            resp = client.post(f"{BASE}/consultas", json=self._payload())
+        credenciais("tok")
+        resp = client.post(f"{BASE}/consultas", json=self._payload())
         assert resp.status_code == 200
         assert "cliente_id" not in db.table("certidao_consultas").inserted_payloads[0]
 
-    def test_cnpj_de_uma_unica_empresa_vincula_sozinho(self, client, certidoes_db, override_service):
+    def test_cnpj_de_uma_unica_empresa_vincula_sozinho(self, client, certidoes_db, override_service, credenciais):
         db, _ = certidoes_db
         _seed(db)
         db.set_table_data("empresas", [{"id": "emp-1", "org_id": CALLER_ORG, "cnpj": "12345678000190"}])
         override_service(processar_consulta=AsyncMock())
-        with patch(_CRED, return_value="tok"):
-            resp = client.post(f"{BASE}/consultas", json=self._payload(
-                tipo_documento="cnpj", documento="12.345.678/0001-90", nome="Empresa XPTO"))
+        credenciais("tok")
+        resp = client.post(f"{BASE}/consultas", json=self._payload(
+            tipo_documento="cnpj", documento="12.345.678/0001-90", nome="Empresa XPTO"))
         assert resp.status_code == 200
         assert resp.json()["data"]["empresa_id"] == "emp-1"
 
-    def test_documento_sem_dono_fica_sem_vinculo(self, client, certidoes_db, override_service):
+    def test_documento_sem_dono_fica_sem_vinculo(self, client, certidoes_db, override_service, credenciais):
         db, _ = certidoes_db
         _seed(db)
         override_service(processar_consulta=AsyncMock())
-        with patch(_CRED, return_value="tok"):
-            resp = client.post(f"{BASE}/consultas", json=self._payload())
+        credenciais("tok")
+        resp = client.post(f"{BASE}/consultas", json=self._payload())
         assert resp.status_code == 200
         payload = db.table("certidao_consultas").inserted_payloads[0]
         assert "cliente_id" not in payload and "empresa_id" not in payload
 
-    def test_cria_consulta_cnpj(self, client, certidoes_db, override_service):
+    def test_cria_consulta_cnpj(self, client, certidoes_db, override_service, credenciais):
         db, _ = certidoes_db
         _seed(db)
         override_service(processar_consulta=AsyncMock())
-        with patch(_CRED, return_value="tok"):
-            resp = client.post(f"{BASE}/consultas", json=self._payload(
-                tipo_documento="cnpj", documento="12345678000190", nome="Empresa XPTO"
-            ))
+        credenciais("tok")
+        resp = client.post(f"{BASE}/consultas", json=self._payload(
+            tipo_documento="cnpj", documento="12345678000190", nome="Empresa XPTO"
+        ))
         assert resp.status_code == 200
 
-    def test_fan_out_grava_um_resultado_por_tipo(self, client, certidoes_db, override_service):
+    def test_fan_out_grava_um_resultado_por_tipo(self, client, certidoes_db, override_service, credenciais):
         db, _ = certidoes_db
         _seed(db)
         override_service(processar_consulta=AsyncMock())
-        with patch(_CRED, return_value="tok"):
-            client.post(f"{BASE}/consultas", json=self._payload(incluir_tjsp=True))
+        credenciais("tok")
+        client.post(f"{BASE}/consultas", json=self._payload(incluir_tjsp=True))
         # `inserted_payloads` FLATTENS a list-insert into one row per element.
         inserted = db.table("certidao_resultados").inserted_payloads
         assert len(inserted) == 10
@@ -437,13 +436,13 @@ class TestCriarConsulta:
         assert all(r["status"] == "pendente" for r in inserted)
 
     def test_tjsp_desativado_por_padrao_nao_cria_resultado_tjsp(
-        self, client, certidoes_db, override_service
-    ):
+        self, client, certidoes_db, override_service, 
+    credenciais):
         db, _ = certidoes_db
         _seed(db)
         override_service(processar_consulta=AsyncMock())
-        with patch(_CRED, return_value="tok"):
-            resp = client.post(f"{BASE}/consultas", json=self._payload())
+        credenciais("tok")
+        resp = client.post(f"{BASE}/consultas", json=self._payload())
         assert resp.status_code == 200
         inserted = db.table("certidao_resultados").inserted_payloads
         assert len(inserted) == 9
@@ -453,47 +452,47 @@ class TestCriarConsulta:
         assert all("incluir_tjsp" not in r for r in consulta_rows)
         assert resp.json()["data"]["total_certidoes"] == 9
 
-    def test_tjsp_ativado_cria_resultado_tjsp(self, client, certidoes_db, override_service):
+    def test_tjsp_ativado_cria_resultado_tjsp(self, client, certidoes_db, override_service, credenciais):
         db, _ = certidoes_db
         _seed(db)
         override_service(processar_consulta=AsyncMock())
-        with patch(_CRED, return_value="tok"):
-            resp = client.post(f"{BASE}/consultas", json=self._payload(incluir_tjsp=True))
+        credenciais("tok")
+        resp = client.post(f"{BASE}/consultas", json=self._payload(incluir_tjsp=True))
         assert resp.status_code == 200
         inserted = db.table("certidao_resultados").inserted_payloads
         assert "tjsp" in {r["tipo"] for r in inserted}
         assert resp.json()["data"]["total_certidoes"] == 10
 
-    def test_dispara_o_processamento_em_background(self, client, certidoes_db, override_service):
+    def test_dispara_o_processamento_em_background(self, client, certidoes_db, override_service, credenciais):
         db, _ = certidoes_db
         _seed(db)
         proc = AsyncMock()
         override_service(processar_consulta=proc)
-        with patch(_CRED, return_value="tok"):
-            client.post(f"{BASE}/consultas", json=self._payload())
+        credenciais("tok")
+        client.post(f"{BASE}/consultas", json=self._payload())
         proc.assert_awaited_once()
 
-    def test_campos_opcionais_sao_persistidos(self, client, certidoes_db, override_service):
+    def test_campos_opcionais_sao_persistidos(self, client, certidoes_db, override_service, credenciais):
         db, _ = certidoes_db
         _seed(db)
         override_service(processar_consulta=AsyncMock())
-        with patch(_CRED, return_value="tok"):
-            resp = client.post(f"{BASE}/consultas", json=self._payload(
-                data_nascimento="1990-01-15", genero="M", rg="123456789",
-                nome_mae="Maria", nome_pai="José",
-            ))
+        credenciais("tok")
+        resp = client.post(f"{BASE}/consultas", json=self._payload(
+            data_nascimento="1990-01-15", genero="M", rg="123456789",
+            nome_mae="Maria", nome_pai="José",
+        ))
         data = resp.json()["data"]
         assert data["rg"] == "123456789"
         assert data["nome_mae"] == "Maria"
 
-    def test_recusa_sem_token_infosimples_antes_de_gravar(self, client, certidoes_db):
+    def test_recusa_sem_token_infosimples_antes_de_gravar(self, client, certidoes_db, credenciais):
         """🔴 Pre-flight, not post-mortem. Without this the consulta is created,
         ten resultados fan out, and all ten fail with the same message — a row
         the user now has to delete to learn something we knew up front."""
         db, _ = certidoes_db
         _seed(db)
-        with patch(_CRED, return_value=None):
-            resp = client.post(f"{BASE}/consultas", json=self._payload())
+        credenciais(None)
+        resp = client.post(f"{BASE}/consultas", json=self._payload())
         assert resp.status_code == 422
         assert "InfoSimples" in _msg(resp)
         # VERBATIM the sentence `matriculas` + `settings_router` use. One
@@ -501,14 +500,14 @@ class TestCriarConsulta:
         assert _msg(resp).endswith("Configure em Configurações → Chaves de API.")
         assert db.table("certidao_consultas").inserted_payloads == []
 
-    def test_insert_sem_retorno_vira_500(self, client, certidoes_db):
+    def test_insert_sem_retorno_vira_500(self, client, certidoes_db, credenciais):
         db, _ = certidoes_db
         _seed(db)
         db.set_sequential_responses(
             "certidao_consultas", [MockSupabaseResponse(data=[])]
         )
-        with patch(_CRED, return_value="tok"):
-            resp = client.post(f"{BASE}/consultas", json=self._payload())
+        credenciais("tok")
+        resp = client.post(f"{BASE}/consultas", json=self._payload())
         assert resp.status_code == 500
 
     # ── inbound validation (StrictHttpModel) ───────────────────────────
@@ -566,7 +565,7 @@ class TestCriarConsultaManual:
         return body
 
     def test_cria_sem_token_infosimples(self, client, certidoes_db):
-        """🔴 THE point of this endpoint: no `_CRED` patch anywhere in this
+        """🔴 THE point of this endpoint: no credential patch anywhere in this
         test — a missing/absent InfoSimples token must never block it,
         unlike `TestCriarConsulta.test_recusa_sem_token_infosimples_antes_
         de_gravar`."""
