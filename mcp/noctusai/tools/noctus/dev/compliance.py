@@ -13949,6 +13949,10 @@ def _tl_transition_pair(columns: dict[str, str]) -> tuple[str, str] | None:
     return None
 
 
+class TransitionLogPrimitiveMissing(RuntimeError):
+    """`noctusai_lib.domain.transition_log` is not importable from the tree the scan runs in."""
+
+
 def transition_log_hand_written_scan(root: Path) -> list[tuple[str, int, str, str]]:
     """`(relpath, line, table, why)` for every hand-written transition-history shape in migration SQL --
     baseline NOT applied. `why` = `transition-columns <from>/<to>` or `append-only-trigger <name>` (a
@@ -13961,9 +13965,15 @@ def transition_log_hand_written_scan(root: Path) -> list[tuple[str, int, str, st
     try:
         from noctusai_lib.domain.transition_log import configs_in_migration
         from noctusai_lib.domain.transition_log.sql import ERASURES_TABLE
-    except ImportError as exc:  # never silently green: without the primitive nothing is "rendered"
-        logger.warning("compliance: transition_log primitive unimportable (%s) -- every history shape is hand-written", exc)
-        configs_in_migration, ERASURES_TABLE = (lambda _t: []), "transition_log_erasures"
+    except ImportError as exc:  # never a fallback: without the primitive every render reads as hand-written
+        import sys as _sys
+
+        lib_file = getattr(_sys.modules.get("noctusai_lib"), "__file__", "?")
+        raise TransitionLogPrimitiveMissing(
+            f"cannot import `{exc.name or 'noctusai_lib.domain.transition_log'}` ({exc}); the scan needs the seed's "
+            f"transition_log primitive to know which tables are rendered. noctusai_lib resolved to "
+            f"{lib_file} -- point it at this tree's seed/lib/backend."
+        ) from exc
     found: list[tuple[str, int, str, str]] = []
     for path in _migration_sql_files(root):
         try:
@@ -14038,7 +14048,12 @@ def check_transition_log_hand_written(repo_root: Path | None = None) -> list[dic
         logger.warning("compliance: transition-log baseline unreadable (%s) -- treating as empty", exc)
         legacy = set()
     issues: list[dict] = []
-    for rel, line_no, table, why in transition_log_hand_written_scan(root):
+    try:
+        hits = transition_log_hand_written_scan(root)
+    except TransitionLogPrimitiveMissing as exc:  # unmeasurable is loud, never green and never "every table is hand-written"
+        return [{"product": "<platform>", "file": "seed/lib/backend/noctusai_lib/domain/transition_log",
+                 "issue": f"transition-log scan could not run: {exc}", "severity": "high"}]
+    for rel, line_no, table, why in hits:
         if f"{rel}::{table}" in legacy:
             continue
         issues.append({

@@ -1,5 +1,5 @@
 {
-  "_doc": "Ratchet baseline for check_transition_log_hand_written: hand-written transition-history shapes that predate the seed primitive noctusai_lib.domain.transition_log (2026-11-07). Entries are <file>::<table>; this list only ever SHRINKS (a pilot adopting the primitive removes its entry). KB § PATTERNS/backend/transition-log.md. 2026-11-14: +11 entries (agents 072/083/086/087, assistant 015/018/019/020/023, core 118, social-wiring 338) -- migrations merged to dev while this keeper was still unlanded; grandfathered, applied already. New hits after this must use the seed render or carry a waiver.",
+  "_doc": "Ratchet baseline for check_transition_log_hand_written: hand-written transition-history shapes that predate the seed primitive noctusai_lib.domain.transition_log (2026-11-07). Entries are <file>::<table>; this list only ever SHRINKS (a pilot adopting the primitive removes its entry). KB § PATTERNS/backend/transition-log.md. 2026-11-14: +11 entries (agents 072/083/086/087, assistant 015/018/019/020/023, core 118, social-wiring 338) -- migrations merged to dev while this keeper was still unlanded; grandfathered, applied already. New hits after this must use the seed render or carry a waiver. 2026-11-15: +2 entries (social-wiring 342 cs_post_eventos, 344 imobshot_eventos) -- merged to dev after the 2026-11-14 cut while this keeper was still unlanded; grandfathered, destination: social-wiring owners adopt the seed transition_log render (finding logged in the auto-improvement ledger, target this file).",
   "legacy": [
     "products/agents/backend/migrations/018_editorial_workflow.sql::editorial_events",
     "products/agents/backend/migrations/033_julia_v2_threads.sql::thread_handoffs",
@@ -27,6 +27,8 @@
     "products/social-wiring/backend/migrations/265_condominios.sql::condominio_eventos",
     "products/social-wiring/backend/migrations/286_atendimento_blocos_supervisao.sql::atendimento_handoffs",
     "products/social-wiring/backend/migrations/338_roteiro_ciclo_de_vida.sql::roteiro_eventos",
+    "products/social-wiring/backend/migrations/342_cs_post_axes.sql::cs_post_eventos",
+    "products/social-wiring/backend/migrations/344_imobshotai_cards.sql::imobshot_eventos",
     "products/therapy-platform/backend/migrations/001_therapy_platform.sql::platform_settings_history"
   ]
 }

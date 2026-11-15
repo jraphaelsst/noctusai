@@ -4,6 +4,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "seed/lib/backend"))
@@ -12,6 +14,7 @@ from noctusai_lib.domain.sql_templates import guc_carveout_guard_sql  # noqa: E4
 from noctusai_lib.domain.transition_log import TransitionLogConfig, transition_log_migration  # noqa: E402
 from tools.noctus.dev.compliance import (  # noqa: E402
     check_transition_log_hand_written,
+    TransitionLogPrimitiveMissing,
     transition_log_hand_written_scan,
 )
 
@@ -79,3 +82,21 @@ class TestTransitionLogHandWritten:
         legacy = set(json.loads((REPO_ROOT / "mcp/noctusai/tests/transition_log_hand_written_baseline.json").read_text())["legacy"])
         live = {f"{rel}::{table}" for rel, _l, table, _w in transition_log_hand_written_scan(REPO_ROOT)}
         assert legacy <= live, sorted(legacy - live)
+
+
+class TestPrimitiveMissingIsLoud:
+    """An un-importable primitive must raise / report naming the module -- never read every table as hand-written."""
+
+    def _break_import(self, monkeypatch):
+        # Simulates a tree whose noctusai_lib lacks the primitive (the environment, not our own code).
+        monkeypatch.setitem(sys.modules, "noctusai_lib.domain.transition_log", None)
+
+    def test_scan_raises_naming_the_module(self, tmp_path, monkeypatch):
+        self._break_import(monkeypatch)
+        with pytest.raises(TransitionLogPrimitiveMissing, match="transition_log"):
+            transition_log_hand_written_scan(_repo(tmp_path, HAND_PAIR))
+
+    def test_check_returns_one_high_issue_not_a_hit_per_table(self, tmp_path, monkeypatch):
+        self._break_import(monkeypatch)
+        issues = check_transition_log_hand_written(repo_root=_repo(tmp_path, HAND_PAIR))
+        assert len(issues) == 1 and issues[0]["severity"] == "high" and "transition_log" in issues[0]["issue"]

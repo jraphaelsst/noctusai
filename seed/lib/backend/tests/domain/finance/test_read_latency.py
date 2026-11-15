@@ -74,18 +74,15 @@ def test_cashflow_totals_are_pinned_and_reads_overlap(s, db):
         "realized_in_cents": 3000, "realized_out_cents": 100, "projected_in_cents": 2000, "projected_out_cents": 2000,
     }
 
-    slow = DelayDb(db)
+    slow = DelayDb(db, rendezvous=4)  # all four independent reads must be in flight together
     ss = Scope(slow, CFG, ORG_A)
-    t0 = time.perf_counter()
     got = reports.cashflow(ss, date(2026, 2, 1), date(2026, 3, 31))
-    wall = time.perf_counter() - t0
     assert got == baseline  # identical numbers
     assert slow.calls == 4  # accounts + ledger SUM before `from` (rpc) + ledger in range + open entries
     assert slow.rpcs == ["fin_ledger_signed_sum"] and slow.tables.count("fin_ledger") == 1  # history is never read as rows
-    assert wall < DELAY * 2.5  # sequential would be >= 4 * DELAY
     assert len(slow.threads) > 1
 
-    slow_acc = DelayDb(db)
+    slow_acc = DelayDb(db, rendezvous=5)
     got_acc = reports.cashflow(Scope(slow_acc, CFG, ORG_A), date(2026, 2, 1), date(2026, 3, 31), account_id=acc["id"])
     assert got_acc == baseline_acc
     assert slow_acc.calls == 5  # + the ownership check, overlapped with the rest
