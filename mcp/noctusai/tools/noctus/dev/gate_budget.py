@@ -32,6 +32,7 @@ from __future__ import annotations
 #   NOCTUS_GATE_OVERALL_CEILING_S int, default 3600 - whole merged-tip phase
 import json as _json
 import os as _os
+import re as _re
 
 
 def _env_float(name: str, default: float) -> float:
@@ -69,7 +70,8 @@ GATE_BUDGETS_S: dict[str, int] = {
     "vitest:seed/": 300,
     # toolkit: observed timing out at 240 under load (was 300 / 240).
     "mcp_toolkit_tests": 900,
-    "mcp_toolkit_tests:scoped": 720,
+    # no-file-count fallback only (a caller that knows the files uses `derived_suite_budget`): 100-file selection
+    "mcp_toolkit_tests:scoped": 1000,
     # wiring tests by name when the full toolkit split is CI-only (item 5): freshness + CLI + the module's own tests
     "mcp_toolkit_wiring": 720,
     # non-suite gates gate_sweep can emit (declared, so none rides the default)
@@ -128,8 +130,13 @@ def _suite_alias(gate: str) -> str | None:
     prefix = "ci_parity:suite:"
     if not gate.startswith(prefix):
         return None
-    kind, _, name = gate[len(prefix):].partition(":")
-    return f"pytest:{name}" if kind in ("product", "seed") and name else None
+    label = gate[len(prefix):]
+    kind, _, name = label.partition(":")
+    if kind in ("product", "seed") and name:
+        return f"pytest:{name}"
+    # a scoped-check label that IS a declared gate row (`mcp_toolkit_tests:scoped`) follows that row, never the flat
+    # `ci_parity:suite:` 600 s prefix (2026-11-15: the 230-file scoped toolkit stage timed out at 600 s then 900 s).
+    return label if label in GATE_BUDGETS_S else None
 
 
 def declared_gate_budget(gate: str, overrides: dict[str, int] | None = None) -> int | None:
@@ -151,11 +158,65 @@ def declared_gate_budget(gate: str, overrides: dict[str, int] | None = None) -> 
     return None
 
 
-def resolve_gate_budget(gate: str, overrides: dict[str, int] | None = None) -> int:
-    """Budget in seconds for `gate` (explicit `overrides`, then env JSON, then the
-    table; DEFAULT_BUDGET_S only when undeclared), x NOCTUS_GATE_BUDGET_SCALE,
+# ── Per-file derived budgets (2026-11-15) ──────────────────────────────────────────────────────────────────────
+# A suite whose size VARIES per run (the scoped toolkit suite = every test file that imports a changed module: 1 to
+# 230+ files) cannot be sized by a constant: 720 s was too small for the 230-file selection and 600 s (the generic
+# `ci_parity:suite:` row) timed it out twice. Its budget is DERIVED per run: FIXED + files x per-file cost x headroom.
+#: seconds per test FILE, MEASURED. mcp_toolkit_tests:scoped = 5.1: the 230-file scoped stage of `feat/keeper-node-toolchain`
+#: (head e2d33579e) took > 900 s (it timed out at 600 s and again at 900 s: 1919.7 s deliverable = ~420 s of the other stages
+#: + 1500 s) and finished in <= 1170 s in the re-run (1593.4 s deliverable - ~420 s), i.e. <= 1170 / 230 = 5.1 s/file on a loaded
+#: laptop (load 24-28, 4 claude sessions; ~/.noctus/hw-admission.ndjson `deliverable:*` duration_s). It is the SEED: a
+#: deliverable that records its own stage timing (`ci-stage-timings.ndjson`) replaces it with the measured p90.
+PER_FILE_S: dict[str, float] = {"mcp_toolkit_tests:scoped": 5.1}
+PER_FILE_FIXED_S = 60      # collection + conftest + interpreter start, paid once per pytest invocation
+PER_FILE_HEADROOM = 1.5    # the same x1.5 over the observed value every row of GATE_BUDGETS_S carries
+_TEST_FILE_RE = _re.compile(r"(?:^|/)(test_[^/\s:]+\.py)(?:::|$)")
+
+
+def per_file_gate(gate: str) -> str | None:
+    """The `PER_FILE_S` key `gate` is sized by (`ci_parity:suite:<label>` -> `<label>`), or None."""
+    label = gate[len("ci_parity:suite:"):] if gate.startswith("ci_parity:suite:") else gate
+    return label if label in PER_FILE_S else None
+
+
+def count_test_files(argv: list[str]) -> int:
+    """Distinct pytest test files named in `argv` (`tests/test_x.py` or `tests/test_x.py::T::t`)."""
+    return len({a.split("::", 1)[0] for a in argv if _TEST_FILE_RE.search(a)})
+
+
+def derived_suite_budget(gate: str, files: int, per_file_s: float | None = None) -> int | None:
+    """Wall-clock budget for a per-file-sized suite: FIXED + files x per-file x HEADROOM; `per_file_s` is the measured
+    p90 (else the seeded `PER_FILE_S`). None when `gate` is not per-file sized or no file is named."""
+    key = per_file_gate(gate)
+    if key is None or files <= 0:
+        return None
+    cost = per_file_s if per_file_s and per_file_s > 0 else PER_FILE_S[key]
+    return int(round(PER_FILE_FIXED_S + files * cost * PER_FILE_HEADROOM))
+
+
+def p90_per_file_s(records: list[dict[str, object]], gate: str, min_files: int = 20, last: int = 20) -> float | None:
+    """p90 of elapsed/files over the last `last` COMPLETED stage records of `gate` with >= `min_files` files (smaller
+    runs are dominated by the fixed cost); None below 3 such records, so the seed stands until there is evidence."""
+    vals = []
+    for r in records:
+        if r.get("gate") == gate and r.get("completed") and int(r.get("files") or 0) >= min_files:
+            vals.append((float(r["elapsed_s"]) - PER_FILE_FIXED_S) / int(r["files"]))
+    vals = sorted(v for v in vals[-last:] if v > 0)
+    if len(vals) < 3:
+        return None
+    return round(vals[min(len(vals) - 1, int(len(vals) * 0.9))], 2)
+
+
+def resolve_gate_budget(gate: str, overrides: dict[str, int] | None = None, *, files: int | None = None,
+                        per_file_s: float | None = None) -> int:
+    """Budget in seconds for `gate` (explicit `overrides`, then env JSON, then - for a per-file-sized suite with `files`
+    known - the DERIVED budget, then the table; DEFAULT_BUDGET_S only when undeclared), x NOCTUS_GATE_BUDGET_SCALE,
     capped at MAX_GATE_BUDGET_S."""
-    declared = declared_gate_budget(gate, {**env_overrides(), **(overrides or {})})
+    merged = {**env_overrides(), **(overrides or {})}
+    declared = declared_gate_budget(gate, merged)
+    derived = derived_suite_budget(gate, files or 0, per_file_s)
+    if derived is not None and gate not in merged and per_file_gate(gate) not in merged:
+        declared = derived
     base = DEFAULT_BUDGET_S if declared is None else declared
     scaled = int(round(base * _env_float("NOCTUS_GATE_BUDGET_SCALE", 1.0)))
     return max(1, min(scaled, MAX_GATE_BUDGET_S))
