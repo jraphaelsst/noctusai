@@ -301,3 +301,23 @@ rows:
   verificado_por: accountant
   revalidar_em: 2027-01-31
   notas: 'Idem 6201501. Para contraste: 9511-8/00 (tecnico de manutencao de computador) CONSTA no Anexo XI.'
+- key: mei.cnae_permitido.7319002
+  value: sim
+  unit: text
+  scope:
+    regime:
+    - mei
+    cnae: 7319-0/02
+  vigencia_de: 2018-08-01
+  vigencia_ate: null
+  norma: Res. CGSN 140/2018 Anexo XI (promotor(a) de vendas independente) - lido so em fonte secundaria
+  fonte_url:
+  - https://tabelasfiscais.com.br/cnae/7319002
+  - https://contabilidade.com/blog/promotor-de-vendas-pode-ser-mei-descubra-como-abrir-empresa/
+  tier: publicacao_tecnica
+  verificado_em: 2026-11-13
+  verificado_por: accountant 2026-11-13
+  revalidar_em: 2027-01-31
+  notas: 'RE-VERIFICAR contra o Anexo XI oficial (consolidado nao relido). A ocupacao descreve promocao de vendas em campo, nao publicacao
+    de afiliados online: uso para canal de ofertas/newsletter e uma extensao; enquadramento CNAE/ocupacao e do CRC. 7311-4/00, 7490-1/04
+    e 6319-4/00 provavelmente fora do Anexo XI (nao verificado). Limite MEI: mei.limite_receita_bruta_anual.'

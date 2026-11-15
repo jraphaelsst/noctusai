@@ -85,6 +85,10 @@ git creates `.merge_file_XXXXXX` scratch for a custom driver in the **cwd of the
 
 `merge=union` audit (2026-11-10): applied only to `project-history/*.ndjson` (append-only logs; `ledger.ndjson` is deduped-by-slug-keep-latest on read). A row edited in place on both sides would duplicate, which readers tolerate; no file with structure (JSON/markdown) uses union.
 
+## A clean merge never runs pre-commit — `post-merge` lands the counts (2026-11-14)
+
+Merge drivers fix CONFLICTS; a clean `git merge origin/dev` into a feature branch has none and ran no commit hook at all, so kb-counts blocks (02-LANDSCAPE / 06-AGENTS / AGENT-CONTEXT) went stale and the steward's `derived_current: kb-counts` failed (N=3 in one session). `pre-merge-commit` is NOT a fix: git has already written the merge tree, so anything it stages is silently dropped from the merge commit (tested). `scripts/hooks/post-merge` therefore regenerates via the single-sourced `cli.py --update-kb-counts` and, when a doc went stale, lands one `chore(kb-counts)` follow-up commit (feature branches only, merge commits only, only docs clean beforehand; non-blocking). Test: `mcp/noctusai/tests/test_post_merge_kb_counts.py` (real git; `NOCTUS_CLI` seam for the regeneration command).
+
 ## Merge-loss detector (shadow) — judge the RESULT, not the driver
 
 The contract pins the drivers we know. `noctus.dev.merge_loss_check` (`cli.py --check-merge-loss [--merge-sha SHA] [--no-log]`) judges what actually landed, so it also catches a driver nobody has written yet or a hand resolution.

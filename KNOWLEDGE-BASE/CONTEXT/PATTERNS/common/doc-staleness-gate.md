@@ -36,6 +36,10 @@ Owner order 2026-11-04: *"make sure all documentations referring to anything in 
 
 A commit trailer in any commit of the range: `Docs-Reviewed: <doc path or glob> — <reason>` (reason mandatory; sibling of `Guide-Unaffected:`). `Docs-Reviewed` also resets the **age** clock for that doc.
 
+## Cited-path existence is tracked, not on-disk (2026-11-14)
+
+The claims leg and the staged new-citation leg judge "a cited path exists" against what git tracks (the index: HEAD plus staged adds), never the filesystem — an untracked, gitignored or generated file exists on the author's disk but not in CI's checkout or the merge queue's composed tree, so a disk check was green locally and red in CI. Only outside a git tree does it fall back to the filesystem, announced on stderr.
+
 ## Compliance by construction
 
 `--check-doc-staleness [--doc-staged [--commit-msg-file F] | --doc-range …] [--doc-suggest]` / MCP `noctus.dev.doc_staleness` print the exact docs to update and the false claims — fix-list, not just a red. Do not add to the baseline; fix the doc.

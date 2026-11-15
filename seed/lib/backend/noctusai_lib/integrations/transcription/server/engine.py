@@ -21,7 +21,9 @@ class TranscriptionEngine(Protocol):
     @property
     def loaded(self) -> bool: ...
 
-    def transcribe(self, audio: Any, *, language: str) -> EngineResult:
+    def transcribe(
+        self, audio: Any, *, language: str, palavras: bool = False
+    ) -> EngineResult:
         """`audio` = float32 mono 16 kHz numpy array. Runs to completion — no deadline."""
         ...
 
@@ -49,16 +51,31 @@ class FasterWhisperEngine:
     def loaded(self) -> bool:
         return self._model is not None
 
-    def transcribe(self, audio: Any, *, language: str) -> EngineResult:
+    def transcribe(
+        self, audio: Any, *, language: str, palavras: bool = False
+    ) -> EngineResult:
         if self._model is None:
             raise RuntimeError("model not loaded")
+        # word_timestamps is passed ONLY when asked: default-off calls are byte-identical.
+        extra: dict[str, Any] = {"word_timestamps": True} if palavras else {}
         segments, _info = self._model.transcribe(
-            audio, language=language, vad_filter=True, beam_size=5
+            audio, language=language, vad_filter=True, beam_size=5, **extra
         )
         parts: list[str] = []
         segs: list[dict[str, Any]] = []
         # `segments` is a lazy generator: decoding happens as we iterate.
         for seg in segments:
             parts.append(seg.text.strip())
-            segs.append({"inicio": seg.start, "fim": seg.end, "texto": seg.text.strip()})
+            item: dict[str, Any] = {"inicio": seg.start, "fim": seg.end, "texto": seg.text.strip()}
+            if palavras:
+                item["palavras"] = [
+                    {
+                        "texto": w.word.strip(),
+                        "inicio": w.start,
+                        "fim": w.end,
+                        "confianca": w.probability,
+                    }
+                    for w in (seg.words or [])
+                ]
+            segs.append(item)
         return EngineResult(text=" ".join(p for p in parts if p).strip(), segmentos=segs)
