@@ -252,6 +252,18 @@ spec list about to run (`frontend_gate_products`), so prepared == gated. Proven
 against a real temp git repo + real dirs (marker file, dummy package, `@noctusai/*`
 pointing at the merged-tip seed).
 
+**2026-11-15 — the scoped toolkit stage is sized per run from MEASURED per-file cost.** `ci_parity:suite:mcp_toolkit_tests:scoped`
+fell through to the flat 600 s `ci_parity:suite:` prefix (the product/seed alias did not cover it) and the 230-file selection
+timed out at 600 s and 900 s, then needed a hand-set `NOCTUS_GATE_BUDGETS_JSON` of 2400 s. Evidence (`~/.noctus/hw-admission.ndjson`,
+`deliverable:feat/keeper-node-toolchain`, head e2d33579e): the failed run took 1919.7 s (~420 s of other stages + 1500 s of the
+stage), the re-run 1593.4 s, so the stage needed 900-1170 s = <= 5.1 s/file on a loaded laptop. Now
+`gate_budget.derived_suite_budget` = 60 s + files x per-file cost x 1.5 (230 files: 1820 s, retry 2730 s, under the 3000 s cap); the
+seed `PER_FILE_S` is replaced by the measured p90 once `~/.noctus/ci-stage-timings.ndjson` (one row per suite stage, written by
+`export_ci_parity_check`) holds >= 3 completed runs of >= 20 files; the integrate sweep sizes the same gate the same way. A
+timeout is still UNMEASURED but now reports total seconds spent, the budget and its basis (derived vs declared), and the test
+items in flight when it was killed (suite stages run `-v` so the partial output names them). Add a per-file row to
+`PER_FILE_S` for any other suite whose size varies per run; do not hand-set the env.
+
 **2026-11-14 — scoped-check (`ci_parity:suite:*`) budgets are per-product defaults, never hand-set env.**
 `ci_parity:suite:<product|seed>:<x>` now resolves to the declared `pytest:<x>` row (an undeclared one rides the
 generic `pytest:` row; `db-guards:*` keeps the `ci_parity:suite:` prefix row); `NOCTUS_GATE_BUDGETS_JSON` still wins,

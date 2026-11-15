@@ -1866,7 +1866,7 @@ def _deadline_boxed_run_gate(timeout: int, budgets: dict[str, int] | None = None
         remaining = ceiling - active.elapsed()
         if remaining <= 0:
             return (None, "merged-tip verification time-box exceeded before this gate ran", 0.0)
-        budget = _gate_budget.resolve_gate_budget(spec.gate, budgets)
+        budget = _gate_budget.resolve_gate_budget(spec.gate, budgets, files=_gate_budget.count_test_files(list(getattr(spec, "argv", None) or [])))
         res = None
         for attempt in (1, 2):
             if attempt == 2:
