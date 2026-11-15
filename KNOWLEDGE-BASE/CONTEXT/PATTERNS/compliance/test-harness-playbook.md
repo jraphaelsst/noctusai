@@ -577,6 +577,8 @@ describe('useFoo', () => {
 
 **Symptom:** a test passes in isolation but fails when the full suite is run. The classic shape of mutable-shared-state leakage across tests — a *polluter test* mutates state that the *polluted test* reads, with the polluter being upstream in the test-collection order.
 
+**Lazy module-global state is a polluter (2026-11-14):** a module that captures a baseline/cache on first use (`toolkit_freshness._baseline` + its TTL-cached verdict) freezes whatever the FIRST caller in the shard saw. Reset every such global per test in an autouse fixture via `monkeypatch.setattr` (see `_isolate_toolkit_freshness_state`, `mcp/noctusai/tests/conftest.py`), never rely on neighbours' order.
+
 **Hallmark check (every triage):**
 ```bash
 # 1. Full-suite failure (reproduces the manifestation)

@@ -145,6 +145,19 @@ Measured over 943 session transcripts (tool results only, one count per tool cal
 
 The release-steward lease holder (the guardian) must not author the tools that define its role. Keeper `check_guardian_tool_authorship` (`--check-guardian-tool-authorship`, pre-commit step 0-pre-b) refuses a commit staging `release_steward.py` or `task_branch.py` when the committing session (`CLAUDE_CODE_SESSION_ID`) holds a LIVE lease; remedy: hand the change to the tooling branch steward. Construction leg: `guardian_holds_lease` (reuses `StewardStore.holder()`, so liveness means what the steward tools mean). No lease, expired lease, or unknown session passes, and each pass-through is logged as an `allow` row (reason names why) in the gate event log via `gate_alignment.record_event`; refusals log `deny`. Ratified in council 09340534.
 
+## Refusals counted by class (2026-11-14): a mistake that recurs is owned by construction
+
+**Why.** The owner had to point out a repeated mistake that was already in the logs: refusals were captured per event but never counted by KIND, keeper denies carried an empty reason/target, and every per-deny friction event appended a new s1 row (786 duplicates). A recurrence you can only see by reading is a recurrence you will miss.
+
+**The mechanism** (`gate_alignment`, one event sink, `guard-events.ndjson`):
+- `refusal_class(gate, item, detail)` is a stable key (`deliverable:derived_current:kb-counts`, `mq:eject:conflict:<glob>`, `guard:<name>:<first finding code>`); shas and counts never enter it. `record_event(..., class_key=)` stores it; a deny without one derives it (`event_class`).
+- `record_cli_exit` now writes `stage=<NOC_HOOK_STAGE> code=<first finding code>` as the reason (the hooks export the stage; `cli.main` tees stdout to capture the first finding) instead of empty strings.
+- `refusal_recurrence(keys, window_days=14)` returns `{class, n_14d, sessions, open_fix}`. `open_fix` is a live branch-tree pointer whose brief/notes carry the class key, an in-progress gate-walls row, or a `NOC-REMEDIATE[<class>]` marker; `None` means nobody owns it.
+- `auto_improvement.upsert_class_row` keeps ONE row per class (count/sessions/last_seen updated in place) with `resolve_when: gate_quiet:<class>:7d`, so it closes itself when the class goes quiet. `harness_event` uses it for the per-deny kinds. `--gate-alignment refusals --file-walls` syncs rows at N>=2.
+- `--gate-alignment trend` shows refusals this week vs last, by class. Keeper `check_refusal_classes_owned` (warn-first) flags a class at N>=3 with no `open_fix`.
+
+**Fixing one:** open a branch whose brief/notes carry `refusal:<class>` (or set the gate-walls row in-progress / accepted, or leave a `NOC-REMEDIATE[<class>]` destination). The steward procedure is `noc-steward` section 8.
+
 ## How to apply (the authoring checklist)
 
 When a rule/standard is worth enforcing:

@@ -55,15 +55,16 @@ def _env_float(name: str, default: float) -> float:
 # (exact gate name | name prefix ending in ":" or "/") -> seconds.
 # Exact names win over prefixes; longest prefix wins among prefixes.
 GATE_BUDGETS_S: dict[str, int] = {
-    # social-wiring pytest: p90 ~370 s -> 3x ~1100 s (was 480).
-    "pytest:social-wiring": 1100,
+    # social-wiring pytest: full suite measured 684-1025 s quiet and 1285 s / 2208 s under load
+    # (~/.noctus/hw-runs, 2026-11-06..14) -> 1800 (was 1100, which timed it out 51x as a scoped check).
+    "pytest:social-wiring": 1800,
     # scoped CONTRACT_OF consumer files only (contract_of.py)
     "pytest:social-wiring:contract": 300,
     # e2e: p90 ~52 s but page.goto load-timeouts under load -> 600 (was 480).
     "e2e:social-wiring": 600,
     "vite_build:social-wiring": 300,
-    # seed roots: seed/lib/backend p90 ~233 s -> 700 (was 360).
-    "pytest:seed/lib/backend": 700,
+    # seed roots: seed/lib/backend 277-419 s quiet, 938 s loaded (gate-verdicts) -> 1200 (was 700; 42x timeouts).
+    "pytest:seed/lib/backend": 1200,
     "pytest:seed/": 450,
     "vitest:seed/": 300,
     # toolkit: observed timing out at 240 under load (was 300 / 240).
@@ -79,10 +80,11 @@ GATE_BUDGETS_S: dict[str, int] = {
     # of one 1500 s cap on a stage (2026-11-11: a loaded box timed the real-tree keeper pytest out three times).
     "ci_parity:export": 300,
     "ci_parity:pytest": 1100,
+    "ci_parity:livetree": 1100,
     "ci_parity:keeper:": 600,
     "ci_parity:prime:": 300,
-    # item 5's directly-touched suites (`local_suites` + `migration_guard_suite`): a product / seed backend suite,
-    # the same generic 600 s the `pytest:` product legs use.
+    # item 5's directly-touched suites (`local_suites` + `migration_guard_suite`). `suite:product:<x>` / `suite:seed:<x>`
+    # resolve to the declared `pytest:<x>` row (see `_suite_alias`); this prefix row only covers `db-guards:*`.
     "ci_parity:suite:": 600,
     # generic product legs: pytest:agents p90 ~123 s -> 3x ~370, rounded up.
     "pytest:": 600,
@@ -100,12 +102,12 @@ DEFAULT_BUDGET_S = 300
 # Retry-once-on-TIMEOUT (never on failure): second attempt gets budget x factor.
 RETRY_FACTOR = _env_float("NOCTUS_GATE_RETRY_FACTOR", 1.5)
 # Hard per-attempt ceiling after scale/retry.
-MAX_GATE_BUDGET_S = int(_env_float("NOCTUS_GATE_MAX_BUDGET_S", 1800))
+MAX_GATE_BUDGET_S = int(_env_float("NOCTUS_GATE_MAX_BUDGET_S", 3000))
 
 # Upper bound on the whole merged-tip phase (parallel gates + any queued behind
-# max_workers, incl. retries). Worst single gate = 1100 + 1650 s, so 3600 keeps
+# max_workers, incl. retries). Worst single gate = 1800 + 2700 s, so 5400 keeps
 # the wall-clock bounded yet lets a double-attempt of the longest gate finish.
-DEFAULT_OVERALL_CEILING_S = int(_env_float("NOCTUS_GATE_OVERALL_CEILING_S", 3600))
+DEFAULT_OVERALL_CEILING_S = int(_env_float("NOCTUS_GATE_OVERALL_CEILING_S", 5400))
 
 
 def env_overrides() -> dict[str, int]:
@@ -119,8 +121,21 @@ def env_overrides() -> dict[str, int]:
     return {str(k): int(v) for k, v in data.items()}
 
 
+def _suite_alias(gate: str) -> str | None:
+    """`ci_parity:suite:product:<x>` / `ci_parity:suite:seed:<x>` -> the declared `pytest:<x>` gate name."""
+    prefix = "ci_parity:suite:"
+    if not gate.startswith(prefix):
+        return None
+    kind, _, name = gate[len(prefix):].partition(":")
+    return f"pytest:{name}" if kind in ("product", "seed") and name else None
+
+
 def declared_gate_budget(gate: str, overrides: dict[str, int] | None = None) -> int | None:
-    """Declared budget (overrides, then exact row, then longest prefix) or None."""
+    """Declared budget (overrides, then exact row, then longest prefix) or None. A scoped-check suite name
+    (`ci_parity:suite:<kind>:<x>`) with no override of its own follows the declared `pytest:<x>` row."""
+    alias = _suite_alias(gate)
+    if alias is not None and gate not in (overrides or {}):
+        return declared_gate_budget(alias, overrides)
     for table in (overrides or {}, GATE_BUDGETS_S):
         if gate in table:
             return int(table[gate])

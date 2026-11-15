@@ -113,6 +113,14 @@ DERIVED_SETS: tuple[dict[str, Any], ...] = (
                "project-history/access-tiers/findings.ndjson",
                "project-history/access-tiers/metrics.ndjson"),
      "regen": ("mcp/noctusai/cli.py", "--findings-ledger-reconcile", "access-tier", "--found-by", "merge-queue")},
+    # Backstop for the `ledger-render` merge driver (which regenerates these locally): a render the driver could not
+    # derive still conflicts, and is a pure function of its source, so it is re-derived here, never ejected.
+    {"name": "gate-walls",
+     "paths": ("project-history/gate-alignment/FINDINGS.md",),
+     "regen": ("mcp/noctusai/cli.py", "--findings-ledger-reconcile", "gate-walls", "--found-by", "merge-queue")},
+    {"name": "gate-inventory-render",
+     "paths": ("KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/gate-alignment-inventory.md",),
+     "regen": ("mcp/noctusai/cli.py", "--gate-alignment", "render")},
 )
 REDERIVE_MAX_STOPS = 50  # a linear entry replays commit by commit; each can stop on the derived files
 

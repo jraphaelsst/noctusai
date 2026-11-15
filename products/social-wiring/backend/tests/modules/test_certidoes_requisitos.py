@@ -18,6 +18,7 @@ from noctusai_lib.integrations.storage import FakeStorageBackend
 from noctusai_lib.testing import MockSupabaseClient
 
 from app.modules.card_hub import certidoes_partes_service as partes
+from app.modules.certidoes.credentials import INFOSIMPLES_EMAIL_ENVIO
 from app.modules.certidoes import service
 from app.modules.certidoes.registry import (
     MSG_REQUER_GOVBR,
@@ -99,7 +100,7 @@ async def _run(cfg, consulta, db, http, rid="r-1"):
 
 class TestDeclaracao:
     def test_cnd_federal_declara_data_de_nascimento_so_para_cpf(self):
-        assert config_for("cnd_federal")["requer_campos"] == {"cpf": ("data_nascimento",)}
+        assert config_for("cnd_federal")["requer_campos"] == {"cpf": ("data_nascimento",), "cnpj": ()}
 
     def test_cnpj_nao_precisa_de_data_de_nascimento(self):
         consulta = {"tipo_documento": "cnpj", "org_id": "o", "nome": NOME}
@@ -205,3 +206,105 @@ class TestReconhecimentoDePendencia:
 
     def test_mensagem_qualquer_nao_e_pendencia(self):
         assert tipo_de_pendencia({"status": "pendente", "erro_mensagem": "Falta algo"}) is None
+
+
+# ─── Every endpoint declares its requirements (class guard) ────────────────
+
+from pathlib import Path  # noqa: E402
+
+from app.modules.certidoes import registry  # noqa: E402
+
+_KB_DOC = (
+    Path(__file__).resolve().parents[5]
+    / "KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/infosimples-certidoes.md"
+)
+
+
+class TestTodoEndpointDeclara:
+    """A new InfoSimples tipo cannot ship without saying what it needs: an
+    undeclared requirement is a billed 606 per party (F113)."""
+
+    @pytest.mark.parametrize("config", registry.CERTIDOES_CONFIG, ids=lambda c: c["tipo"])
+    def test_requer_campos_explicito_para_cpf_e_cnpj(self, config):
+        assert "requer_campos" in config, f"{config['tipo']}: declare requer_campos (empty is fine)"
+        assert set(config["requer_campos"]) == set(registry.TIPOS_DOCUMENTO_CONSULTA)
+        assert config.get("requisitos_evidencia", "").strip(), (
+            f"{config['tipo']}: requisitos_evidencia (docs/prod) is mandatory"
+        )
+
+    @pytest.mark.parametrize("config", registry.CERTIDOES_CONFIG, ids=lambda c: c["tipo"])
+    def test_campo_exigido_tem_rotulo_e_o_builder_o_envia(self, config):
+        builder = registry.PARAM_BUILDERS[config["params_fn"]]
+        for doc, campos in config["requer_campos"].items():
+            for campo in campos:
+                assert campo in registry.ROTULO_CAMPO
+                consulta = {"tipo_documento": doc, "documento": "00000000000", "org_id": None,
+                            campo: "valor-sintetico"}
+                params = builder(consulta, "tok")
+                assert "valor-sintetico" in params.values(), (
+                    f"{config['tipo']} declares {campo} for {doc} but never sends it"
+                )
+
+    @pytest.mark.parametrize("config", registry.CERTIDOES_CONFIG, ids=lambda c: c["tipo"])
+    def test_credencial_conhecida(self, config):
+        if config.get("requer_credencial"):
+            assert config["requer_credencial"] in registry.CREDENCIAIS
+
+
+class TestTjspEmailEnvio:
+    # The e-mail de envio is read through the real credential chain; its last
+    # tier is the process environment, so the test sets the env var (external
+    # config) instead of patching our own resolver.
+    def test_sem_email_e_pendencia_de_credencial(self, monkeypatch):
+        monkeypatch.delenv(INFOSIMPLES_EMAIL_ENVIO.upper(), raising=False)
+        msg = pendencia_pre_chamada(
+            config_for("tjsp"), {"tipo_documento": "cnpj", "org_id": "o", "nome": NOME},
+        )
+        assert msg == registry.MSG_REQUER_EMAIL_ENVIO
+        assert tipo_de_pendencia({"status": "pendente", "erro_mensagem": msg}) == (
+            registry.PENDENCIA_CREDENCIAL_EMAIL
+        )
+
+    def test_cpf_sem_rg_nomeia_o_rg(self, monkeypatch):
+        monkeypatch.setenv(INFOSIMPLES_EMAIL_ENVIO.upper(), "fila@example.com")
+        msg = pendencia_pre_chamada(
+            config_for("tjsp"), {"tipo_documento": "cpf", "org_id": "o", "nome": NOME},
+        )
+        assert msg == f"Falta RG de {NOME} — preencha no cadastro ou envie um documento"
+
+    def test_trt2_fisico_sem_nome(self):
+        msg = pendencia_pre_chamada(config_for("trt2_fisico"), {"tipo_documento": "cnpj", "org_id": "o"})
+        assert msg == "Falta nome — preencha no cadastro ou envie um documento"
+
+
+class TestCatalogo:
+    def test_toda_certidao_esta_no_catalogo_com_requisitos(self):
+        catalogo = registry.requisitos_catalogo()
+        tipos = [c["tipo"] for c in catalogo]
+        esperados = [c["tipo"] for c in registry.CERTIDOES_CONFIG + registry.MANUAL_TIPOS_CONFIG]
+        assert sorted(tipos) == sorted(esperados)
+        for c in catalogo:
+            assert c["requisitos"], c["tipo"]
+            assert c["fonte"] in ("infosimples", "manual")
+            assert set(c) == {"tipo", "linha", "rotulo", "fonte", "requisitos", "credencial", "observacao"}
+
+    def test_requisitos_espelham_a_declaracao(self):
+        por_tipo = {c["tipo"]: c for c in registry.requisitos_catalogo()}
+        cpf = next(r for r in por_tipo["cnd_federal"]["requisitos"] if r["documento"] == "cpf")
+        assert cpf["campos"] == [{"campo": "data_nascimento", "rotulo": "Data de nascimento"}]
+        assert por_tipo["divida_ativa_sp"]["credencial"] == "govbr"
+        assert por_tipo["fgts_regularidade"]["requisitos"] == [{"documento": "cnpj", "campos": []}]
+
+    def test_ordem_segue_a_matriz(self):
+        tipos = [c["tipo"] for c in registry.requisitos_catalogo()]
+        assert tipos[: len(registry.MATRIZ_LINHAS)] == [l["tipo"] for l in registry.MATRIZ_LINHAS]
+
+
+def test_tabela_do_kb_bate_com_o_registry():
+    texto = _KB_DOC.read_text(encoding="utf-8")
+    inicio = texto.index(registry.MARCADOR_REQUISITOS_INICIO)
+    fim = texto.index(registry.MARCADOR_REQUISITOS_FIM) + len(registry.MARCADOR_REQUISITOS_FIM)
+    assert texto[inicio:fim] == registry.bloco_requisitos_kb(), (
+        "infosimples-certidoes.md requirements table drifted — regenerate with "
+        "registry.bloco_requisitos_kb()"
+    )

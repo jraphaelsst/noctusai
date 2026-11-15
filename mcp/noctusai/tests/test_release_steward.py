@@ -809,6 +809,46 @@ class TestReconcile:
         assert chk("feat/ghost", None)["state"] == "unresolvable"
         assert chk("feat/ghost", sha)["state"] == "landed"  # falls back to head_sha
 
+    def _rewritten_queue_repo(self, tmp_path):
+        """dev: base -> the queue's REWRITTEN copy of feat/x squashed with a counter regen on the shared INDEX.md.
+        Patch-ids and post-image blobs both miss; only the tree-level check can see it landed."""
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+
+        def g(*a):
+            return subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True,
+                                  text=True, env=env).stdout.strip()
+        g("init", "-q", "-b", "dev")
+        (tmp_path / "INDEX.md").write_text("count: 1\n\n\n\n\nentries\n")
+        (tmp_path / "f").write_text("1"); g("add", "."); g("commit", "-qm", "base")
+        g("checkout", "-qb", "feat/x")
+        (tmp_path / "INDEX.md").write_text("count: 1\n\n\n\n\nentries\nx-entry\n")
+        (tmp_path / "g").write_text("2"); g("add", "."); g("commit", "-qm", "x")
+        sha = g("rev-parse", "HEAD")
+        g("checkout", "-q", "dev")
+        # the queue's rewrite: x's hunks squashed with a counter regen -> a new patch-id, INDEX.md blob differs
+        (tmp_path / "g").write_text("2")
+        (tmp_path / "INDEX.md").write_text("count: 2\n\n\n\n\nentries\nx-entry\n")
+        g("add", "."); g("commit", "-qm", "x (queue rewrite) + kb-counts")
+        g("update-ref", "refs/remotes/origin/dev", "HEAD")
+        return g, sha
+
+    def test_rewritten_entry_with_shared_file_moved_on_is_landed(self, tmp_path):
+        """False-alarm (the 2026-11-14 seed-resumable-uploads / transcription-no-daily-caps refusals): the queue
+        landed the branch under new shas and a later kb-counts commit moved INDEX.md -> was `uncertain`."""
+        _g, sha = self._rewritten_queue_repo(tmp_path)
+        res = rs.git_landed_check(cwd=tmp_path)("feat/x", sha)
+        assert res["state"] == "landed" and res["method"] == "merge_tree"
+        assert res["evidence"]["unmatched_files"] == ["INDEX.md"]
+
+    def test_branch_with_work_missing_from_dev_is_not_landed(self, tmp_path):
+        """True positive: the same shape plus one commit dev never got must NOT read as landed."""
+        g, _sha = self._rewritten_queue_repo(tmp_path)
+        g("checkout", "-q", "feat/x")
+        (tmp_path / "h").write_text("3"); g("add", "h"); g("commit", "-qm", "unlanded follow-up")
+        res = rs.git_landed_check(cwd=tmp_path)("feat/x", g("rev-parse", "HEAD"))
+        assert res["state"] != "landed"
+
 
 class TestMultiBranch:
     def test_request_stores_ordered_branches(self, store):

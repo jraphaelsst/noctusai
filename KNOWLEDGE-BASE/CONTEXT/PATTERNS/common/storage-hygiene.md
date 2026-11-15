@@ -250,13 +250,13 @@ docker ps -q | xargs -I{} docker inspect {} --format '{{range .Mounts}}{{if eq .
 
 ```bash
 python mcp/noctusai/cli.py --mole scan             # all three scopes, read-only, JSON-ish report
-python mcp/noctusai/cli.py --mole scan --artifacts   # only artifacts scope
-python mcp/noctusai/cli.py --mole scan --environments
-python mcp/noctusai/cli.py --mole scan --worktrees
+python mcp/noctusai/cli.py --mole scan   # all scopes (narrow with MCP noctus.dev.mole scope=artifacts|environments|worktrees)
+python mcp/noctusai/cli.py --mole scan
+python mcp/noctusai/cli.py --mole scan
 
 python mcp/noctusai/cli.py --mole sweep            # dry-run by default; --force to act
-python mcp/noctusai/cli.py --mole sweep --artifacts --force
-python mcp/noctusai/cli.py --mole sweep --worktrees --force
+python mcp/noctusai/cli.py --mole sweep --force
+python mcp/noctusai/cli.py --mole sweep --force
 
 python mcp/noctusai/cli.py --mole report           # machine-readable summary (next_action, sizes, counts)
 ```
@@ -308,11 +308,11 @@ Before any `Agent(isolation: "worktree")` call, the orchestrator runs `python mc
 
 ### 4.2 · Pre-commit hook (repo-side)
 
-`scripts/hooks/pre-commit` calls `python mcp/noctusai/cli.py --mole scan --artifacts` (cheap — only counts pycache/pytest_cache sizes). If artifact total exceeds **2 GB**, prints a `WARNING` to stderr (doesn't block the commit — just informs). The pre-commit's role is to surface bloat trending up, not block work.
+`scripts/hooks/pre-commit` calls `python mcp/noctusai/cli.py --mole scan` (cheap — only counts pycache/pytest_cache sizes). If artifact total exceeds **2 GB**, prints a `WARNING` to stderr (doesn't block the commit — just informs). The pre-commit's role is to surface bloat trending up, not block work.
 
 ### 4.3 · Bootstrap pre-flight (engineer-side)
 
-`scripts/bootstrap/bootstrap-worktree.sh` already calls `cleanup-stale-worktrees.sh`. Migrate that call to `python mcp/noctusai/cli.py --mole sweep --worktrees --force` so the worktree-scope sweep happens automatically when each new engineer worktree is created. Effect: stale worktrees never accumulate across more than one dispatch cycle.
+`scripts/bootstrap/bootstrap-worktree.sh` already calls `cleanup-stale-worktrees.sh`. Migrate that call to `python mcp/noctusai/cli.py --mole sweep --force` so the worktree-scope sweep happens automatically when each new engineer worktree is created. Effect: stale worktrees never accumulate across more than one dispatch cycle.
 
 ### 4.4 · Post-cherry-pick (orchestrator-side) — **MUST**, not MAY
 

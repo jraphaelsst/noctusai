@@ -120,6 +120,7 @@ const crm = defineModule({
       pg("Contatos", "/contatos", "contatos", UserRound),
       pg("Clientes", "/clientes", "clientes", UserCheck),
       pg("Revisão de Duplicados", "/clientes/revisao", "clientes_revisao", GitMerge),
+      pg("Guia de documentos", "/guia-documentos", "guia_documentos", BookOpen),
     ]),
     grp("vendas", "Vendas", Target, [
       pg("Leads", "/leads", "leads", Target),

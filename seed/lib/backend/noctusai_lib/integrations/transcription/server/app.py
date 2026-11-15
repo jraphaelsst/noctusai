@@ -134,6 +134,7 @@ def create_app(
         request: Request,
         language: str = Query("pt"),
         max_seconds: Optional[float] = Query(None, gt=0),
+        palavras: bool = Query(False),
     ):
         if not _authorized(request):
             return _err(401, "nao_autorizado", "token invalido")
@@ -160,7 +161,11 @@ def create_app(
                 return _err(422, "audio_vazio", "audio muito curto")
             if max_seconds is not None and duracao > max_seconds:
                 return _err(422, "duracao_excedida", "audio excede a duracao maxima")
-            result: Any = await asyncio.to_thread(engine.transcribe, audio, language=language)
+            # `palavras` is forwarded only when asked, so default calls are unchanged.
+            extra: dict[str, Any] = {"palavras": True} if palavras else {}
+            result: Any = await asyncio.to_thread(
+                engine.transcribe, audio, language=language, **extra
+            )
             wall = time.monotonic() - started
             # never log transcript text or audio
             log.info("transcribed duracao_s=%.1f wall_s=%.1f", duracao, wall)

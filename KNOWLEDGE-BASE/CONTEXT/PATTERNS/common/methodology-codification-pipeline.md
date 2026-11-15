@@ -254,8 +254,8 @@ If a row references a keeper detector by name (`check_*`), confirm it currently 
 | Symptom you see | Tool / script | Invocation | Stage |
 |---|---|---|---|
 | Stale archive folders (older than today + yesterday) | `check_archive_staleness` + `archive-clean.sh` | `noctus.dev.review` (detect) → `python mcp/noctusai/cli.py --archive-clean --force` (execute) | Stage 4 detect → script execute |
-| Stale agent worktrees on disk | `mole.sh` worktree scope (now aligned scan↔sweep enumeration) | `python mcp/noctusai/cli.py --mole scan --worktrees` reports STALE / STALE_LOCKED / STALE_DIRTY / ACTIVE / ORPHAN / PHANTOM categories; `python mcp/noctusai/cli.py --mole sweep --worktrees --force` removes STALE + ORPHAN + PHANTOM only | Stage 4-equivalent custodial |
-| Disk artifacts (caches, builds) bloating repo | `mole.sh` artifact scope | `python mcp/noctusai/cli.py --mole scan --artifacts` / `... sweep --artifacts --force` | Stage 4-equivalent custodial |
+| Stale agent worktrees on disk | `mole.sh` worktree scope (now aligned scan↔sweep enumeration) | `python mcp/noctusai/cli.py --mole scan` reports STALE / STALE_LOCKED / STALE_DIRTY / ACTIVE / ORPHAN / PHANTOM categories; `python mcp/noctusai/cli.py --mole sweep --force` removes STALE + ORPHAN + PHANTOM only | Stage 4-equivalent custodial |
+| Disk artifacts (caches, builds) bloating repo | `mole.sh` artifact scope | `python mcp/noctusai/cli.py --mole scan` / `... sweep --force` | Stage 4-equivalent custodial |
 | Dispatcher inbox/outbox entries piling up | `check_dispatcher_staleness` | `noctus.dev.review` (detect); manual prune of `.claude/dispatcher.md` `## Completed` section; consider archiving to `.claude/dispatcher-archive/<date>.md` | Stage 4 detect → manual execute |
 | Merged branches still hanging around | `check_branch_orphan` | `noctus.dev.review` (detect); `git branch -d <name>` (local) / `git push origin --delete <name>` (remote) | Stage 4 detect → git execute |
 | Transient log/coordination files not gitignored | `check_gitignore_drift` | `noctus.dev.review` (detect); `.gitignore` patch + `git rm --cached <file>` if tracked | Stage 4 detect → gitignore patch |

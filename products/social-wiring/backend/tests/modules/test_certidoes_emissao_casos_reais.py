@@ -137,8 +137,14 @@ async def _emitir(tipo: str, http, **consulta):
 #: endpoints REJECT unknown params, so this is the contract, not a sample.
 PARAMS_CPF = {
     "cnd_federal": {"token", "cpf", "birthdate", "preferencia_emissao"},
-    "trf3_sp": {"token", "cpf", "tipo", "abrangencia", "nome_social"},
-    "trf3": {"token", "cpf", "tipo", "abrangencia", "nome_social"},
+    # TRF3 (CPF) sends the complementary data the consulta already holds
+    # (nome_mae, birthdate, RG as tipo_documento+documento) so the site's
+    # conditional "dados complementares" step does not end in a billed 606 —
+    # see `_build_params_trf3_civel`. `_consulta_row()` holds all of them.
+    "trf3_sp": {"token", "cpf", "tipo", "abrangencia", "nome_social",
+                "nome_mae", "birthdate", "tipo_documento", "documento"},
+    "trf3": {"token", "cpf", "tipo", "abrangencia", "nome_social",
+             "nome_mae", "birthdate", "tipo_documento", "documento"},
     "trt2_digital": {"token", "cpf"},
     "trt2_fisico": {"token", "cpf", "nome"},
     "cnd_trabalhista_tst": {"token", "cpf"},
@@ -172,6 +178,16 @@ class TestRequisicaoPorTipo:
         )
         assert pendencia_pre_chamada(cfg, c) is None
         assert set(PARAM_BUILDERS[cfg["params_fn"]](c, "tok")) == PARAMS_CNPJ[tipo]
+
+    @pytest.mark.parametrize("tipo", ["trf3_sp", "trf3"])
+    def test_trf3_cpf_sem_dados_complementares_envia_so_o_minimo(self, tipo):
+        # Nothing complementary is required up front: a consulta without it
+        # still calls, with only the CPF search fields.
+        cfg = config_for(tipo)
+        c = _consulta_row(nome_mae=None, data_nascimento=None, rg=None)
+        assert pendencia_pre_chamada(cfg, c) is None
+        assert set(PARAM_BUILDERS[cfg["params_fn"]](c, "tok")) == {
+            "token", "cpf", "tipo", "abrangencia", "nome_social"}
 
     def test_cnd_federal_cpf_sem_nascimento_nao_chama(self):
         # The F113 class: a billed 606 is never bought.
