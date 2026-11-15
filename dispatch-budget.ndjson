@@ -266,3 +266,4 @@
 {"ts": "2026-11-15T03:50:26.575915+00:00", "slug": "kb-counts-on-merge", "agent": "tooling-engineer", "duration_minutes": 90.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
 {"ts": "2026-11-15T03:50:31.612959+00:00", "slug": "refusal-recurrence", "agent": "tooling-engineer", "duration_minutes": 120.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
 {"ts": "2026-11-15T03:50:36.423333+00:00", "slug": "gate-budget-cli-flags", "agent": "tooling-engineer", "duration_minutes": 120.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
+{"ts": "2026-11-15T03:50:41.519027+00:00", "slug": "test-isolation-flakes", "agent": "test-engineer", "duration_minutes": 90.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
