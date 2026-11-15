@@ -263,3 +263,4 @@
 {"ts": "2026-11-14T20:13:56.690737+00:00", "slug": "corestudio-edicao-imagem-nav", "agent": "frontend-engineer", "duration_minutes": 45.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
 {"ts": "2026-11-14T20:14:08.222074+00:00", "slug": "seed-sse-job-progress", "agent": "product-engineer", "duration_minutes": 90.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
 {"ts": "2026-11-15T01:07:52.581145+00:00", "slug": "imobshotai-be", "agent": "backend-engineer", "duration_minutes": 180.0, "estimated_tokens": null, "outcome": "landed", "notes": "Retroactive score to clear check-engineer-slice-scored at pre-push (blocking feat/event-store-seed-baseline push). Duration estimated."}
+{"ts": "2026-11-15T03:50:26.575915+00:00", "slug": "kb-counts-on-merge", "agent": "tooling-engineer", "duration_minutes": 90.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
