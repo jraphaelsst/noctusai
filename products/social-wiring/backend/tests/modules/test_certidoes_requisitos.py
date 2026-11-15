@@ -18,6 +18,7 @@ from noctusai_lib.integrations.storage import FakeStorageBackend
 from noctusai_lib.testing import MockSupabaseClient
 
 from app.modules.card_hub import certidoes_partes_service as partes
+from app.modules.certidoes.credentials import INFOSIMPLES_EMAIL_ENVIO
 from app.modules.certidoes import service
 from app.modules.certidoes.registry import (
     MSG_REQUER_GOVBR,
@@ -251,25 +252,24 @@ class TestTodoEndpointDeclara:
 
 
 class TestTjspEmailEnvio:
-    def test_sem_email_e_pendencia_de_credencial(self):
-        from unittest.mock import patch
-
-        with patch("app.modules.certidoes.credentials.resolve_api_key", return_value=None):
-            msg = pendencia_pre_chamada(
-                config_for("tjsp"), {"tipo_documento": "cnpj", "org_id": "o", "nome": NOME},
-            )
+    # The e-mail de envio is read through the real credential chain; its last
+    # tier is the process environment, so the test sets the env var (external
+    # config) instead of patching our own resolver.
+    def test_sem_email_e_pendencia_de_credencial(self, monkeypatch):
+        monkeypatch.delenv(INFOSIMPLES_EMAIL_ENVIO.upper(), raising=False)
+        msg = pendencia_pre_chamada(
+            config_for("tjsp"), {"tipo_documento": "cnpj", "org_id": "o", "nome": NOME},
+        )
         assert msg == registry.MSG_REQUER_EMAIL_ENVIO
         assert tipo_de_pendencia({"status": "pendente", "erro_mensagem": msg}) == (
             registry.PENDENCIA_CREDENCIAL_EMAIL
         )
 
-    def test_cpf_sem_rg_nomeia_o_rg(self):
-        from unittest.mock import patch
-
-        with patch("app.modules.certidoes.credentials.resolve_api_key", return_value="fila@example.com"):
-            msg = pendencia_pre_chamada(
-                config_for("tjsp"), {"tipo_documento": "cpf", "org_id": "o", "nome": NOME},
-            )
+    def test_cpf_sem_rg_nomeia_o_rg(self, monkeypatch):
+        monkeypatch.setenv(INFOSIMPLES_EMAIL_ENVIO.upper(), "fila@example.com")
+        msg = pendencia_pre_chamada(
+            config_for("tjsp"), {"tipo_documento": "cpf", "org_id": "o", "nome": NOME},
+        )
         assert msg == f"Falta RG de {NOME} — preencha no cadastro ou envie um documento"
 
     def test_trt2_fisico_sem_nome(self):
