@@ -39,13 +39,11 @@ from __future__ import annotations
 
 import ast
 import io
-import json
 import re
-import shutil
-import subprocess
-import sys
 import tokenize
 from pathlib import Path
+
+import node_toolchain as _node_toolchain
 
 SCRIPT_REL = ("mcp", "noctusai", "node", "polling_budget_scan.mjs")
 _TS_TIMEOUT_SECONDS = 300
@@ -364,41 +362,6 @@ def _owner(rel: str) -> str:
     return parts[1] if parts[0] == "products" and len(parts) > 1 else "seed"
 
 
-def _installed_node_dirs() -> list[Path]:
-    """Dirs that may carry the installed ``mcp/noctusai/node/node_modules``, most specific first: the checkout this process
-    runs from, the checkout owning the interpreter's venv (``<repo>/mcp/noctusai/.venv`` -- the one place a scrubbed
-    deliverable workspace still points at the real install), then the primary checkout of this repo (git common dir)."""
-    rel = SCRIPT_REL[:-1]
-    cands = [_repo_root(None).joinpath(*rel)]
-    prefix = Path(sys.prefix)
-    if prefix.name == ".venv" and prefix.parent.name == "noctusai":
-        cands.append(prefix.parent / "node")
-    try:
-        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=_repo_root(None),
-                                capture_output=True, text=True, timeout=10, check=False).stdout.strip()
-        if common:
-            cands.append(Path(common).parent.joinpath(*rel))
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return cands
-
-
-def _node_invocation(script: Path) -> tuple[list[str], Path | None]:
-    """How to run the scan so ``ts-morph`` resolves. The tree under check normally carries ``mcp/noctusai/node/node_modules``
-    (``npm ci`` there). A fresh checkout (the deliverable gate's scrubbed workspace) does not; its script text is then fed
-    to ``node`` on the command line with the cwd at an installed ``node/`` dir, so the TREE's script is judged but
-    ``ts-morph`` resolves from the install -- never a silent skip, never a different script version."""
-    if script.parent.joinpath("node_modules").is_dir():
-        return ["node", str(script)], None
-    for cand in _installed_node_dirs():
-        if cand.joinpath("node_modules").is_dir():
-            try:
-                return ["node", "--input-type=module", "-e", script.read_text(encoding="utf-8")], cand
-            except OSError:
-                break
-    return ["node", str(script)], None
-
-
 def _scan_typescript(root: Path, files: list[Path]) -> list[dict]:
     cand = []
     for f in files:
@@ -410,40 +373,17 @@ def _scan_typescript(root: Path, files: list[Path]) -> list[dict]:
             cand.append(f)
     if not cand:
         return []
-    script = root.joinpath(*SCRIPT_REL)
-    if not script.exists():
-        script = _repo_root(None).joinpath(*SCRIPT_REL)
-
-    def boot(msg: str) -> list[dict]:
+    results, errors, boot_error = _node_toolchain.run_files_scan(SCRIPT_REL, cand, root=root, timeout=_TS_TIMEOUT_SECONDS,
+                                                                 label="polling-budget TypeScript scan")
+    if boot_error is not None:
         return [{"product": "*", "file": "/".join(SCRIPT_REL), "severity": SEVERITY, "rule": "ts_scan_failed",
-                 "issue": f"polling-budget TypeScript scan could not run -- {msg}. {KB_REF}"}]
-
-    if shutil.which("node") is None:
-        return boot("`node` not on PATH")
-    if not script.exists():
-        return boot(f"script_missing: {script}")
-    argv, cwd = _node_invocation(script)
-    try:
-        proc = subprocess.run(argv, input=json.dumps({"files": [str(f) for f in cand]}), cwd=cwd,
-                              capture_output=True, text=True, timeout=_TS_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
-        return boot(f"timeout after {_TS_TIMEOUT_SECONDS}s ({len(cand)} files)")
-    except OSError as exc:
-        return boot(f"spawn_failed: {exc}")
-    if proc.returncode != 0:
-        tail = (proc.stderr or "")[-400:]
-        hint = "run `cd mcp/noctusai/node && npm ci`; " if "Cannot find module" in tail or "ERR_MODULE_NOT_FOUND" in tail else ""
-        return boot(f"node_crashed (exit {proc.returncode}): {hint}{tail.strip()}")
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return boot(f"non_json_stdout: {exc}")
+                 "issue": f"polling-budget TypeScript scan could not run -- {boot_error}. {KB_REF}"}]
     issues: list[dict] = []
-    for path, message in sorted(parsed.get("errors", {}).items()):
+    for path, message in sorted(errors.items()):
         rel = Path(path).relative_to(root).as_posix() if path.startswith(str(root)) else path
         issues.append({"product": _owner(rel), "file": rel, "severity": SEVERITY, "rule": "ts_unparsed",
                        "issue": f"polling-budget scan could not read this file ({message[:200]}) -- a skipped file is not a clean one. {KB_REF}"})
-    for path, findings in sorted(parsed.get("results", {}).items()):
+    for path, findings in sorted(results.items()):
         rel = Path(path).relative_to(root).as_posix() if path.startswith(str(root)) else path
         for x in findings:
             issues.append({"product": _owner(rel), "file": rel, "line": x["line"], "rule": x["rule"], "severity": SEVERITY,

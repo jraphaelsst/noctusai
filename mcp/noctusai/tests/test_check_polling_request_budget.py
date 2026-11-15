@@ -262,34 +262,28 @@ class TestSelf:
 
 
 class TestFreshCheckoutResolvesTsMorph:
-    """The deliverable gate judges a fresh checkout that has no `mcp/noctusai/node/node_modules`: the TREE's script is fed
-    to node on the command line and ts-morph resolves from the installed copy (red before: node_crashed, ERR_MODULE_NOT_FOUND)."""
+    """The deliverable gate judges a fresh checkout that has no `mcp/noctusai/node/node_modules`: `node_toolchain.resolve`
+    gives it the matching install (byte-identical package-lock.json) so the TREE's script runs; a lockfile that differs is a
+    loud `ts_scan_failed`, never a silent skip and never a borrowed mismatched install."""
 
-    def _tree_with_script(self, tmp: Path) -> Path:
+    def _tree_with_script(self, tmp: Path, lock: str | None = None) -> Path:
         dest = tmp.joinpath(*SCRIPT_REL)
         dest.parent.mkdir(parents=True)
         dest.write_text(REPO_ROOT.joinpath(*SCRIPT_REL).read_text(encoding="utf-8"), encoding="utf-8")
+        real_lock = REPO_ROOT.joinpath(*SCRIPT_REL).parent / "package-lock.json"
+        (dest.parent / "package-lock.json").write_text(lock if lock is not None else real_lock.read_text(encoding="utf-8"),
+                                                       encoding="utf-8")
         return dest
 
     @needs_ts
-    def test_a_tree_without_node_modules_runs_the_trees_script_via_the_installed_modules(self, tmp_path):
-        from tools.noctus.dev.polling_request_budget import _node_invocation
-
-        script = self._tree_with_script(tmp_path)
-        argv, cwd = _node_invocation(script)
-        assert argv[:3] == ["node", "--input-type=module", "-e"] and argv[3] == script.read_text(encoding="utf-8")
-        assert cwd is not None and (cwd / "node_modules").is_dir()
-
-    @needs_ts
-    def test_the_scan_still_finds_an_undeclared_poll_in_that_tree(self, tmp_path):
+    def test_the_scan_still_finds_an_undeclared_poll_in_a_tree_without_node_modules(self, tmp_path):
         self._tree_with_script(tmp_path)
         issues = _run(tmp_path, {TS: "export const q = { refetchInterval: 5000 };\n"})
         assert [i["rule"] for i in issues] == ["ts_refetch_interval"], issues
 
-    def test_a_tree_that_carries_its_own_node_modules_runs_its_script_directly(self, tmp_path):
-        from tools.noctus.dev.polling_request_budget import _node_invocation
-
-        script = tmp_path.joinpath(*SCRIPT_REL)
-        script.parent.joinpath("node_modules").mkdir(parents=True)
-        script.write_text("// stub\n", encoding="utf-8")
-        assert _node_invocation(script) == (["node", str(script)], None)
+    @needs_ts
+    def test_a_lockfile_mismatch_is_a_loud_scan_failure_naming_the_fix(self, tmp_path):
+        self._tree_with_script(tmp_path, lock='{"different": true}\n')
+        issues = _run(tmp_path, {TS: "export const q = { refetchInterval: 5000 };\n"})
+        assert [i["rule"] for i in issues] == ["ts_scan_failed"], issues
+        assert "npm ci --prefix" in issues[0]["issue"] and "differs" in issues[0]["issue"]

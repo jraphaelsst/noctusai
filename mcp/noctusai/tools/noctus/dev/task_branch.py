@@ -99,6 +99,7 @@ from tools.noctus.dev._benign_stash import (
     strip_status_code as _strip_status_code,
 )
 from node_env import is_transient_node_modules_entry as _is_transient_nm_entry
+import node_toolchain
 from tools.noctus.dev import toolkit_freshness as _toolkit_freshness
 from tools.noctus.dev import release_steward as _steward
 from tools.noctus.dev import gate_budget as _gate_budget
@@ -917,6 +918,16 @@ class FsOps:
         Path(p).write_text(content, encoding="utf-8")
 
 
+def _toolkit_lock_mismatch(primary_root: str, wt_root: str) -> str:
+    """"" unless BOTH trees carry `mcp/noctusai/node/package-lock.json` and they differ (the shared
+    `node_toolchain.lockfile_verdict` rule; an absent lockfile on either side is not a verdict here)."""
+    a = Path(wt_root, "mcp", "noctusai", "node")
+    b = Path(primary_root, "mcp", "noctusai", "node")
+    if not (a / "package-lock.json").is_file() or not (b / "package-lock.json").is_file():
+        return ""
+    return node_toolchain.lockfile_verdict(a, b)
+
+
 def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps,
                      products: set[str] | None = None) -> tuple[list[dict], list[dict]]:
     """Pure (read-only) planner. Returns (wire, skipped): `wire` = symlink/dir
@@ -985,6 +996,11 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps,
             return
         if fs.is_dir(link) and not fs.is_symlink(link):
             skipped.append({"link": link, "reason": "real node_modules already present in worktree"})
+            return
+        mismatch = _toolkit_lock_mismatch(primary_root, wt_root)
+        if mismatch:  # never borrow an install that is not what CI's `npm ci` would give this tree (node_toolchain)
+            skipped.append({"link": link, "reason": (
+                f"{mismatch}; run `npm ci --prefix {os.path.join(wt_root, 'mcp', 'noctusai', 'node')}`")})
             return
         wire.append({"link": link, "target": src, "kind": "node_modules"})
 
@@ -1850,7 +1866,7 @@ def _deadline_boxed_run_gate(timeout: int, budgets: dict[str, int] | None = None
         remaining = ceiling - active.elapsed()
         if remaining <= 0:
             return (None, "merged-tip verification time-box exceeded before this gate ran", 0.0)
-        budget = _gate_budget.resolve_gate_budget(spec.gate, budgets)
+        budget = _gate_budget.resolve_gate_budget(spec.gate, budgets, files=_gate_budget.test_files(list(getattr(spec, "argv", None) or [])))
         res = None
         for attempt in (1, 2):
             if attempt == 2:

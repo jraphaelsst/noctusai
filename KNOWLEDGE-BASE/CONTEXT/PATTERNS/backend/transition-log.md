@@ -121,27 +121,12 @@ because the probes are declared by `transition_log_guard_probes(cfg)`.
    (shrink-only ratchet).
 4. A delete-by-subject flow calls `erase_subject` before the state-row delete.
 
-## 7. Keeper
-
-`check_transition_log_hand_written` (`--check-transition-log-hand-written`, pre-commit shadow
-→ blocking after the shadow record): flags a `CREATE TABLE` with a from/to state-column pair
-(`de_*`/`para_*`, `*_anterior`/`*_novo`, `from_*`/`to_*`, … — temporal ranges and two-entity
-pairs excluded) or a `BEFORE UPDATE OR DELETE` trigger on a history-named table. Seed renders
-pass; legacy copies are baselined; a reasoned non-fit carries
-`-- transition-log-ok: <table> <reason>`.
-
-## Sources
-
-- PostgreSQL 16 docs — *Explicit Locking* § Row-Level Locks (`SELECT ... FOR UPDATE` serialises
-  concurrent transitions on one entity); *CREATE TRIGGER* (`BEFORE TRUNCATE` is statement-level
-  only — why the render adds its own TRUNCATE trigger); *SET CONSTRAINTS* (deferrable FKs);
-  *CREATE FUNCTION* § Writing SECURITY DEFINER Functions Safely (pinned `search_path`, revoked
-  `EXECUTE`). <https://www.postgresql.org/docs/16/>
-- Martin Fowler, *Event Sourcing* (2005) and *Audit Log* — the distinction between a log that
-  explains state (this primitive) and a log that IS the state (the event store).
-  <https://martinfowler.com/eaaDev/EventSourcing.html>
-- LGPD, Lei 13.709/2018, art. 18 VI (eliminação dos dados) and art. 16 (retention exceptions) —
-  why the erasure is a real, logged delete and not crypto-shredding.
-- Verified in-tree: the conformance suite and the PGlite proofs
-  (`seed/lib/backend/tests/domain/transition_log/`) run the rendered SQL on PG16; nothing above
-  is relied on unverified.
+Adopted: social-wiring `imobshot_card` (migration 345, 2026-11-15) -- the worked example of retiring a hand-written
+table by expand -> migrate -> contract: 345 renders the primitive, copies every legacy row in as an event (same id,
+timestamps, actor; `data.legacy_tipo` keeps the old intent; an unmappable row, a chain that does not end at the current
+state or a count mismatch RAISES, so the whole migration aborts with nothing copied), re-points the product's existing
+atomic functions at `<agg>_transition` / `<agg>_record_created` (same names and signatures, so the repository and API
+contract do not move) and leaves the legacy table read-only. A LATER migration drops it one release after prod verified
+345 (`NOC-REMEDIATE[imobshot-eventos-contract]`), which keeps a rollback path. The keeper keeps flagging the old `CREATE`
+(the chain is immutable history) until then via the baseline entry; once a later migration of the same product DROPs the
+table the keeper retires the hit by itself and the baseline entry is removed in that contract migration.

@@ -67,6 +67,7 @@ logger = logging.getLogger(__name__)
 
 from settings import REPO_ROOT  # noqa: E402  (path constant)
 from workspace import resolve_caller_root  # noqa: E402
+import node_toolchain as _node_toolchain  # noqa: E402  (ONE node/ts-morph/PGlite resolver)
 
 # Per `feedback_mcp_path_constants_from_settings.md` — resolve off the
 # `REPO_ROOT` settings constant, never `Path(__file__).parents[N]` (that
@@ -118,8 +119,13 @@ def _run_node_op(payload: dict) -> tuple[bool, dict, str]:
     still returns ``process_ok=True`` with that JSON as ``result_dict``,
     since the subprocess itself ran fine and reported honestly.
     """
+    tc = _node_toolchain.resolve(REPO_ROOT)
+    if not tc.ok:
+        return False, {}, tc.reason
+    argv, cwd = tc.invocation(_TS_AST_EDIT_SCRIPT)
     proc = subprocess.run(
-        ["node", str(_TS_AST_EDIT_SCRIPT)],
+        argv,
+        cwd=cwd,
         input=json.dumps(payload),
         capture_output=True,
         text=True,
