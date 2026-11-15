@@ -13866,6 +13866,44 @@ class TransitionLogPrimitiveMissing(RuntimeError):
     """`noctusai_lib.domain.transition_log` is not importable from the tree the scan runs in."""
 
 
+_TL_DROP_TABLE_RE = re.compile(r"\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?P<name>[\w.\"]+)", re.IGNORECASE)
+
+
+def _tl_migration_order(path: Path) -> tuple[int, str]:
+    m = re.match(r"(\d+)", path.name)
+    return (int(m.group(1)) if m else -1, path.name)
+
+
+def _tl_drop_superseded(root: Path, found: list[tuple[str, int, str, str]]) -> list[tuple[str, int, str, str]]:
+    """Drop the hits whose table a LATER migration of the same product DROPs.
+
+    A migration chain is immutable history: the CREATE of a hand-written history table stays in its file for good,
+    but once a later migration has copied its rows into the seed primitive and dropped it, the table is no longer a
+    live hand-written shape (the effective schema has none). Ordering is the numeric file prefix."""
+    drops: dict[Path, list[tuple[tuple[int, str], set[str]]]] = {}
+    out: list[tuple[str, int, str, str]] = []
+    for hit in found:
+        rel, _line, table, _why = hit
+        path = root / rel
+        siblings = drops.get(path.parent)
+        if siblings is None:
+            siblings = []
+            for sib in path.parent.glob("*.sql"):
+                try:
+                    text = _sql_strip_comments(sib.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError) as exc:
+                    logger.debug("compliance: cannot read %s (%s)", sib, exc)
+                    continue
+                names = {m.group("name").replace('"', "").split(".")[-1].lower() for m in _TL_DROP_TABLE_RE.finditer(text)}
+                if names:
+                    siblings.append((_tl_migration_order(sib), names))
+            drops[path.parent] = siblings
+        if any(order > _tl_migration_order(path) and table in names for order, names in siblings):
+            continue
+        out.append(hit)
+    return out
+
+
 def transition_log_hand_written_scan(root: Path) -> list[tuple[str, int, str, str]]:
     """`(relpath, line, table, why)` for every hand-written transition-history shape in migration SQL --
     baseline NOT applied. `why` = `transition-columns <from>/<to>` or `append-only-trigger <name>` (a
@@ -13934,7 +13972,7 @@ def transition_log_hand_written_scan(root: Path) -> list[tuple[str, int, str, st
                 if table in rendered or table in waived or t.group("trig") in guc_triggers or not _TL_HISTORY_NAME_RE.search(table):
                     continue  # immutable VERSION tables / audit logs are other shapes: only history tables count
                 found.append((rel, line_no, table, f"append-only-trigger {t.group('trig')}"))
-    return found
+    return _tl_drop_superseded(root, found)
 
 
 def check_transition_log_hand_written(repo_root: Path | None = None) -> list[dict]:

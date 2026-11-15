@@ -72,6 +72,17 @@ class TestTransitionLogHandWritten:
         bare = "-- transition-log-ok: deal_movimentos\n" + HAND_PAIR
         assert len(check_transition_log_hand_written(repo_root=_repo(tmp_path, bare, "100_y.sql"))) == 1  # the waiver is per file
 
+    def test_a_table_a_later_migration_drops_is_not_live(self, tmp_path):
+        """The chain is immutable (the old CREATE stays), but a LATER migration that drops the table retires the hit."""
+        repo = _repo(tmp_path, HAND_PAIR, "099_x.sql")
+        assert len(check_transition_log_hand_written(repo_root=repo)) == 1
+        _repo(tmp_path, "DROP TABLE IF EXISTS demo.deal_movimentos;\n", "098_before.sql")
+        assert len(check_transition_log_hand_written(repo_root=repo)) == 1  # a drop BEFORE the create is no retirement
+        _repo(tmp_path, "-- DROP TABLE demo.deal_movimentos (a comment is not a drop)\n", "100_comment.sql")
+        assert len(check_transition_log_hand_written(repo_root=repo)) == 1
+        _repo(tmp_path, "DROP TABLE IF EXISTS demo.deal_movimentos;\n", "101_drop.sql")
+        assert check_transition_log_hand_written(repo_root=repo) == []
+
     def test_real_repo_is_clean_against_the_baseline(self):
         assert check_transition_log_hand_written(repo_root=REPO_ROOT) == []
 
