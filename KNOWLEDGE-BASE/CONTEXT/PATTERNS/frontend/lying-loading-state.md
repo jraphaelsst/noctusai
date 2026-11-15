@@ -404,8 +404,9 @@ comment (genuinely non-TanStack `isLoading`/`isFetching`, e.g. a `Fake` test
 double). Applies to all five shapes.
 
 **Tooling dependency (Shapes 4/5 only):** the AST scan needs `node` +
-the `node_modules` of `mcp/noctusai/node` (`cd mcp/noctusai/node && npm install` —
-gitignored, not provisioned by any CI step today, a real gap; see this
+the `node_modules` of `mcp/noctusai/node` (gitignored; resolved by the shared
+`node_toolchain.resolve` — own install, else the primary's when `package-lock.json` is
+byte-identical, else a loud `npm ci --prefix mcp/noctusai/node`; see this
 pattern's Codification history). When either is missing, `check_lying_
 loading_state` does NOT silently skip Shapes 4/5 — it appends ONE explicit
 finding naming the failure (`node_unavailable` / `ts_morph_not_installed` /

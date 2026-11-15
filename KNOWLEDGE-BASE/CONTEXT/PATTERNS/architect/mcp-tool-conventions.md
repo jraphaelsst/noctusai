@@ -488,3 +488,20 @@ Future candidates: any upstream MCP whose typical response exceeds the
 tool-result cap on real data. File a filter-proxy follow-up project when
 an in-flight project hits the cap (the symmetric of how
 `projects/noctus-supabase-advisors-proxy/` was filed).
+
+---
+
+## 10. Node toolchain — ONE resolver (`node_toolchain.resolve`)
+
+The toolkit node dir's `node_modules` is gitignored, so every fresh worktree and scrubbed export lacks it and each ts-morph / PGlite keeper
+failed on its own (N>=4 on 2026-11-14/15: the silent-refusal scanner refused two merge commits, polling-budget went red on a never-installed primary).
+Do not resolve it per keeper. `mcp/noctusai/node_toolchain.py` (stdlib only) is the single answer:
+
+1. the worktree's own `node_modules` when it carries every required package (`require=`, default `ts-morph`);
+2. else another checkout's install (the primary via git-common-dir, the checkout owning the interpreter's venv, this toolkit's own tree, or explicit `sources=`) **only when its `package-lock.json` is byte-identical** - symlinked in (gitignored) or, if the link cannot be made, borrowed through `Toolchain.invocation`;
+3. else a loud `Toolchain.reason` naming the exact `npm ci --prefix <worktree>/mcp/noctusai/node`. The caller reports UNMEASURED or refuses with it; a mismatched install is never borrowed silently.
+
+Consumers: the four `compliance.py` AST scans (silent-refusal, motion-import, lying-loading Mode B, module-page-keys) and `polling_request_budget` via
+`node_toolchain.run_files_scan`; `ts_ast_edit`, `migration_replay` (`require=@electric-sql/pglite`) and `release_steward.link_pglite` via `resolve`;
+`task_branch` `wire_env` refuses to link a toolkit install whose lockfile differs (`node_toolchain.lockfile_verdict`). A new node-backed keeper calls the resolver; a hand-rolled `subprocess.run(["node", ...])` is the shape this section retires (test: `test_node_toolchain.py::TestEveryKeeperUsesTheSharedResolver`).
+

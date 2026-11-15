@@ -299,7 +299,7 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
   (`hw_admission.heavy_slot`; not admitted = `UNMEASURED`, never green). **Migration -> DB-guard edge (owner, 2026-11-11):** a
   diff touching `products/<p>/backend/migrations/*.sql` also runs `test_verify_db_guards.py` + that product's PGlite
   `*replay*` tests + the generic `test_migration_*` ones (`migration_guard_suite`). PGlite is linked from the source checkout only when
-  `mcp/noctusai/node/package-lock.json` is byte-identical (`link_pglite`); otherwise `UNMEASURED`. **Gap, `NOC-REMEDIATE[scoped-green-fe-and-tooling]`:**
+  `mcp/noctusai/node/package-lock.json` is byte-identical (`link_pglite`, now a thin call to the shared `node_toolchain.resolve`); otherwise `UNMEASURED`. **Gap, `NOC-REMEDIATE[scoped-green-fe-and-tooling]`:**
   FE vitest and the bespoke `tooling-tests` job stay CI-judged only - a branch steward touching a product FE or an MCP connector server
   (`mcp/<connector>/tests`) runs that suite itself before filing. **Follow-ups, out of this slice:** a Linux-container leg (BSD vs
   GNU `sed`, process start times, runner image) and `merge_buildable` against the queue tip (dev + `mq/*` refs ahead), not only dev.

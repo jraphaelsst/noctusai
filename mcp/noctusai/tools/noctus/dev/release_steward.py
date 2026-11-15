@@ -2221,19 +2221,13 @@ def link_pglite(tree: str | Path, source_repo: str | Path) -> str:
     """Give the export the SAME PGlite CI installs (`npm ci` in mcp/noctusai/node): symlink the source checkout's
     node_modules ONLY when its package-lock.json is byte-identical to the export's. Returns "" on success, else why.
     In the export CI=true, so a missing PGlite FAILS the replay tests - a false red; mismatch = UNMEASURED instead."""
-    dst, src = Path(tree) / PGLITE_NODE_DIR, Path(source_repo) / PGLITE_NODE_DIR
-    lock_d, lock_s = dst / "package-lock.json", src / "package-lock.json"
-    mods = (src / "node_modules").resolve()
-    if not (mods / "@electric-sql" / "pglite").is_dir():
-        return f"PGlite is not installed in {src} (run `npm ci` there)"
-    try:
-        if lock_d.read_bytes() != lock_s.read_bytes():
-            return f"{PGLITE_NODE_DIR}/package-lock.json differs between the head and {src} - its node_modules is not what CI installs"
-    except OSError as exc:
-        return f"cannot compare {PGLITE_NODE_DIR}/package-lock.json: {exc}"
-    if not (dst / "node_modules").exists():
-        (dst / "node_modules").symlink_to(mods, target_is_directory=True)
-    return ""
+    import sys
+    _toolkit = str(Path(__file__).resolve().parents[3])
+    if _toolkit not in sys.path:
+        sys.path.insert(0, _toolkit)
+    import node_toolchain
+    tc = node_toolchain.resolve(tree, require=("@electric-sql/pglite",), sources=[source_repo])
+    return "" if tc.ok else tc.reason
 
 
 # ─── ONE selector (2026-11-12): item 5 asks gate_sweep what the diff can break ─────────────────────────────
