@@ -14,7 +14,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[3]
 TOOL = REPO / "mcp/noctusai/tools/noctus/dev/heavy_run_guard.py"
-HOOK = REPO / "scripts/hooks/claude-guard-heavy-run.py"
+HOOK = REPO / "scripts/hooks/claude-guard-bash-rewrite.py"
 
 
 def _load(name: str, path: Path):
@@ -146,9 +146,10 @@ def test_unparseable_with_heavy_word_still_denies():
     assert verdict and "reason" in verdict and "updated_input" not in verdict
 
 
-def test_hook_wrapper_rewrites_and_allows(tmp_path):
+def test_hook_wrapper_rewrites_and_allows(tmp_path, monkeypatch):
     hook = _load("hrg_hook_under_test", HOOK)
     out, log = io.StringIO(), tmp_path / "events.ndjson"
+    monkeypatch.setenv("NOCTUS_GUARD_EVENT_LOG", str(log))  # the composed hook logs each member guard's event itself
     assert hook.run_guard("heavy-run", hook._judge, stdin=io.StringIO(json.dumps(_bash("pytest"))), stdout=out,
                           event_log=log) == 0
     body = json.loads(out.getvalue())["hookSpecificOutput"]

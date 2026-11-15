@@ -1,7 +1,7 @@
 """noctus.dev.bg_process - lifecycle of THIS session's own background processes.
 
 Design (owner, 2026-11-14): background processes end themselves (launch wrapper `scripts/bg_run.py`,
-refusal at launch by `claude-guard-background-launch.py`). This tool is the safety net: what is still
+refusal at launch by `claude-guard-bash-rewrite.py`). This tool is the safety net: what is still
 running at session end is salvaged and stopped here, or kept because it is declared long-lived.
 NO lifetime cap and NO idle timer exist anywhere.
 

@@ -214,8 +214,8 @@ The wrap rule used to be discipline-only (one agent file + this doc), so on 2026
 sessions ran suites ungated (1,253 + 273 + 568 tests) and the 8 GB machine swapped. Gate and
 methodology ship together: the heavy-run judge, wired since 2026-11-14 through the ONE Bash rewrite hook
 `scripts/hooks/claude-guard-bash-rewrite.py` (composed with the background wrapper, hw_admission innermost,
-`bg_run.py` outermost: `KB § PATTERNS/common/background-agent-lifecycle.md` Rewrite chain; the standalone
-`claude-guard-heavy-run.py` is kept for tests, not wired; fail-closed via
+`bg_run.py` outermost: `KB § PATTERNS/common/background-agent-lifecycle.md` Rewrite chain; the former standalone
+hook script was retired into it; fail-closed via
 `_guard_failclosed`, marker `[noc-guard:heavy-run]`, PreToolUse on `Bash`) over the pure
 `mcp/noctusai/tools/noctus/dev/heavy_run_guard.py::decide`.
 

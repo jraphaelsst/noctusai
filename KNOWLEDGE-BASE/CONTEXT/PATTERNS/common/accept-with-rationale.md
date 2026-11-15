@@ -773,7 +773,7 @@ state change, not a removal.
 
 ### 9h Heavy-run guard retains shell (`[carve:hook]`, 2026-11-04)
 
-- **Subject:** `scripts/hooks/claude-guard-heavy-run.py` (PreToolUse `Bash`): denies a heavy test/build command that does not go through the machine-wide hardware admission gate (`hw_admission.py run`).
+- **Subject:** `scripts/hooks/claude-guard-bash-rewrite.py` (PreToolUse `Bash`): denies a heavy test/build command that does not go through the machine-wide hardware admission gate (`hw_admission.py run`).
 - **Decision `[A]`:** stays a script, same `[carve:hook]` bucket and structural reason as 9a–9f — the harness invokes guard adapters as processes on the pre-tool path, where the MCP server is not reachable. The decision lives in `tools/noctus/dev/heavy_run_guard.py`; the adapter loads it through `_guard_failclosed.load_module` and runs under `run_guard` (fail-closed).
 - **Why:** on 2026-11-04 heavy suites ran ungated while 7–9 sessions shared an 8 GB machine, contributing to swapping that slowed every session. A rule in the agent docs alone did not stop it; the gate makes the gated path the only path. → `KB § PATTERNS/devops/hardware-admission-budget.md`
 - **Scope:** the one file, carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
@@ -815,7 +815,7 @@ state change, not a removal.
 
 ### 9k Background-process wrapper, launch guard and shared core retain shell (`[carve:hook]`, 2026-11-14)
 
-- **Subject:** `scripts/bg_run.py`, `scripts/hooks/claude-guard-background-launch.py` and `scripts/hooks/_bg_process_core.py`.
+- **Subject:** `scripts/bg_run.py`, `scripts/hooks/claude-guard-bash-rewrite.py` and `scripts/hooks/_bg_process_core.py`.
 - **Decision `[A]`:** all three stay scripts, in the same `[carve:hook]` bucket as 9a–9j. The launch guard runs before every Bash call, where the MCP server is not reachable; its decision lives in `tools/noctus/dev/bg_launch_guard.py` and it fails CLOSED through `_guard_failclosed.run_guard`. `bg_run.py` must start under a bare `python3` inside the harness shell before any MCP server is involved. `_bg_process_core.py` is the stdlib-only logic both share with the `noctus.dev.bg_process` tool, so the logic has one home.
 - **Why:** owner rule of 2026-11-14: background processes end themselves, salvage always happens before a stop, no maximum lifetime. → `KB § PATTERNS/common/background-agent-lifecycle.md`
 - **Scope:** the three files, each carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.

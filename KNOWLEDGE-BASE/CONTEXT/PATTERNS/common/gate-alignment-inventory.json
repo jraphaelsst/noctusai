@@ -164,7 +164,7 @@
    "source": "owner decision 2026-11-14 (background processes end themselves; no lifetime cap or idle timer); Claude Code hooks reference (PreToolUse deny on Bash run_in_background)"
   },
   "guard:bash-rewrite": {
-   "mechanism": "mcp/noctusai/tools/noctus/dev/bash_rewrite_chain.py (the ONE composed rewrite: heavy-run wrap innermost via hw_admission, bg_run outermost, idempotent, a deny from either member guard wins, one rewrite event per guard); KB § PATTERNS/common/background-agent-lifecycle.md",
+   "mechanism": "mcp/noctusai/tools/noctus/dev/bash_rewrite_chain.py (the ONE composed rewrite: heavy-run wrap innermost via hw_admission, bg_run outermost, idempotent, a deny from either member guard wins, one rewrite event per guard; deadline overrun: shadow allows a non-heavy command, enforce denies, heavy stays fail-closed); KB § PATTERNS/common/background-agent-lifecycle.md",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "standard": "",

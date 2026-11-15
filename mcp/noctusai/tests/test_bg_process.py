@@ -357,7 +357,7 @@ def test_guard_only_judges_bash():
 
 def _load_hook():
     sys.path.insert(0, str(HOOKS))
-    spec = importlib.util.spec_from_file_location("bg_launch_hook", HOOKS / "claude-guard-background-launch.py")
+    spec = importlib.util.spec_from_file_location("bg_launch_hook", HOOKS / "claude-guard-bash-rewrite.py")
     hook = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hook)
     return hook
@@ -391,7 +391,7 @@ def test_hook_in_shadow_allows_and_logs_a_warn_event(tmp_path, monkeypatch, caps
 def test_hook_denies_through_the_fail_closed_runner(tmp_path, monkeypatch):
     monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "enforce")
     sys.path.insert(0, str(HOOKS))
-    spec = importlib.util.spec_from_file_location("bg_launch_hook", HOOKS / "claude-guard-background-launch.py")
+    spec = importlib.util.spec_from_file_location("bg_launch_hook", HOOKS / "claude-guard-bash-rewrite.py")
     hook = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hook)
     from _guard_failclosed import run_guard
@@ -430,11 +430,31 @@ def test_hook_fast_path_skips_non_background_bash_without_loading(monkeypatch, c
 
 
 def test_shadow_timeout_is_allowed_not_denied(monkeypatch):
+    """Moved to the composed hook (claude-guard-bash-rewrite.py): shadow allows a deadline overrun, enforce denies,
+    and a command that could be a heavy run stays fail-closed in either mode."""
     hook = _load_hook()
     monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "shadow")
-    assert hook._shadow_timeout_ok({}) is True
+    assert hook._shadow_timeout_ok(_bash("echo hi && sleep 1")) is True
+    assert hook._shadow_timeout_ok(_bash("pytest tests/x.py")) is False
     monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "enforce")
-    assert hook._shadow_timeout_ok({}) is False
+    assert hook._shadow_timeout_ok(_bash("echo hi && sleep 1")) is False
+
+
+def test_composed_hook_deadline_overrun_shadow_allows_enforce_denies(tmp_path, monkeypatch):
+    from _guard_failclosed import run_guard
+    hook = _load_hook()
+
+    import time
+
+    def sleeper(_payload):
+        time.sleep(1.0)
+
+    for mode, expect_deny in (("shadow", False), ("enforce", True)):
+        monkeypatch.setenv("NOC_BG_LAUNCH_MODE", mode)
+        out = io.StringIO()
+        run_guard("bash-rewrite", sleeper, stdin=io.StringIO(json.dumps(_bash("echo hi && sleep 1"))), stdout=out,
+                  deadline_s=0.05, event_log=tmp_path / f"{mode}.ndjson", fail_open_when=hook._shadow_timeout_ok)
+        assert ("deny" in out.getvalue()) is expect_deny
 
 
 # ------------------------------------------------------------------ foreground escape + enforce-now + producer-dead
@@ -704,6 +724,6 @@ def test_hook_rewrites_through_the_fail_closed_runner_and_shadow_does_not(tmp_pa
     assert body["permissionDecision"] == "allow" and "bg_run.py" in body["updatedInput"]["command"]
     monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "shadow")
     out2 = io.StringIO()
-    run_guard("background-launch", hook._judge, stdin=io.StringIO(json.dumps(_bash("pytest -q tests/x.py"))), stdout=out2,
+    run_guard("background-launch", hook._judge, stdin=io.StringIO(json.dumps(_bash("echo hi && sleep 1"))), stdout=out2,
               event_log=tmp_path / "ev2.ndjson")
     assert out2.getvalue() == ""

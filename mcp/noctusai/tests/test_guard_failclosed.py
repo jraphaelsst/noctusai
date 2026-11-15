@@ -230,7 +230,7 @@ class TestExecutorDispatch:
 
 # ── shared `load_module` (the one importlib idiom all six guards use) ──────────
 
-HEAVY = HOOKS / "claude-guard-heavy-run.py"
+HEAVY = HOOKS / "claude-guard-bash-rewrite.py"
 SIGNATURE = HOOKS / "claude-guard-harness-signature.py"
 POST = HOOKS / "claude-guard-primary-write-post.py"
 
