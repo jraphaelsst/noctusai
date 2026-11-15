@@ -1116,18 +1116,19 @@ _WIRING_REGISTRY_MODULE = "toolkit_freshness"
 _CLI_TEST_PREFIXES = ("test_cli_", "test_toolkit_cli")
 
 
-def _mcp_wiring_tests(root: Path, mcp_files: list[str]) -> list[str]:
+def _mcp_wiring_tests(root: Path, mcp_files: list[str], module_tests: bool = True) -> list[str]:
     """Wiring tests a diff to a tool module / `cli.py` / the freshness registry must also run, or `[]`.
 
     Trigger: `cli.py` or a non-test `.py` under `tools/noctus/` (a `register()` wrapper lives there). Selected:
     `test_<registry module>*.py`, the CLI flag/parse tests (`test_cli_*.py`, `test_toolkit_cli*.py`) and the changed
-    module's own tests (`test_<stem>*.py`). Repo-relative, sorted, existing files only."""
+    module's own tests (`test_<stem>*.py`; only when `module_tests`: the scoped selection narrows those itself by import
+    graph + symbol scope, so it passes False and keeps that narrowing). Repo-relative, sorted, existing files only."""
     changed_modules = [Path(f).stem for f in mcp_files
                        if f.startswith(_MCP_TOOLS_PREFIX) and f.endswith(".py")
                        and "/tests/" not in f and Path(f).name != "__init__.py"]
     if not changed_modules and _MCP_CLI_REL not in mcp_files:
         return []
-    stems = [_WIRING_REGISTRY_MODULE, *changed_modules]
+    stems = [_WIRING_REGISTRY_MODULE, *(changed_modules if module_tests else [])]
     out: set[str] = set()
     tests_dir = root / _MCP_PKG / "tests"
     for test in sorted(tests_dir.glob("test_*.py")):
@@ -1582,7 +1583,7 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
                 specs.append(GateSpec("mcp_toolkit_wiring", [py, "-m", "pytest", *wiring, "-q"], root))
         else:
             tests, untested = scoped
-            wiring = _mcp_wiring_tests(root, scope.get("mcp_files", []))
+            wiring = _mcp_wiring_tests(root, scope.get("mcp_files", []), module_tests=False)
             if wiring:
                 scope["mcp_wiring_tests"] = wiring
                 tests = sorted({*tests, *wiring})
