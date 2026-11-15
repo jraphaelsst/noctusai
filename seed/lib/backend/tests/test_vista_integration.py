@@ -600,6 +600,7 @@ def test_fake_client_and_real_client_signatures_agree() -> None:
         "listar_conteudo_clientes",
         "listar_campos",
         "cadastrar_fotos_imovel",
+        "atualizar_imovel",
         "enviar_lead",
         "probe_write_permission",
     ):

@@ -26,6 +26,22 @@
 
 ---
 
+## RULE 2026-11-04 — never edit Vista without a reason and a note (owner, binding)
+
+> "we shall never edit vista data without a reason and without leaving a note behind."
+
+- **Update route:** `PUT /imoveis/detalhes?imovel=<codigo>` with `cadastro={"fields":{…}}` (probe 2026-11-04, non-mutating: `Allow: GET, POST, PUT, DELETE`; an empty PUT on a non-existent code answers 401 "deve informar … cadastro" = permitted). `/imoveis/prontuario` (history) is GET-only; `update`/`alterar`/`cadastrar` are 404; creating a listing is unconfirmed.
+- **Every write carries a `motivo` (non-empty) and an author label** — the seed refuses without them (`VistaClient.atualizar_imovel`, the adapter, Fake and Real alike). In the SAME PUT, the property's internal observations field is rewritten with our note: `ObsVenda` for sale (`ObsLocacao` for rental — presumed twin, no sample seen: verify with `listarcampos`/`detalhes`). Root `Observacoes` was empty on every sample.
+- **The team's pattern:** HEADER lines first (lote/quadra/address, partner code, owner contact), then a dated log, **newest first**, one line each: `DD/MM/YY <fonte> informa <o quê>. (<autor>)`. Variants exist (`DD/MM/YYYY - texto (CY)`, `DD/MM/YY: texto`), so a dated line is any line starting `\d{2}/\d{2}/\d{2,4}`.
+- **Our line:** `DD/MM/YY <fonte> informa via <canal>: <campo> <antes> → <depois>. <motivo>. Conversa: <url> (<autor>)` — one line, no phone, no e-mail. It goes just BEFORE the first dated line; with no dated line, after the header with one blank line between; an empty field becomes just the line. The header is never modified.
+- **Read-modify-write:** the CURRENT `ObsVenda` is read via `/imoveis/detalhes` immediately before the PUT so the team's latest lines are never lost; if that read fails, NOTHING is written. (`/imoveis/listar` answers "no results" even with a Codigo filter — only `detalhes` per code works.)
+- **Anonymized examples** (the shape, not real data):
+  - `22/08/26 Parceiro informa alterações de valores. (Atendente)`
+  - `18/09/26 Parceiro informa Venda SUSPENSA em 11/09/2026. (Atendente)`
+  - `04/11/26 Proprietário informa via WhatsApp (Julia): valor de venda 900000 → 850000. proprietário confirmou o valor e o Vista estava diferente. Conversa: https://app.example/julia/conversas?contato=ID (NoctusAI)`
+- **Client (cliente) edits — same rule, docs only (probe 2026-11-04, owner-approved, empty request on a non-existent code, no write):** `PUT /clientes/detalhes?cliente=<codigo>` → `401 "Você deve informar os dados em json no parâmetro \"cadastro\""` = past the permission check, so editing clients is **PERMITTED** for key `…644c`. `POST /clientes/detalhes` → `400 "informar os dados no indice fields"` is a READ, not a create. Creating a client/lead stays `POST /lead` (permitted). The reason + note rule applies to client edits too: the note field is clientes **`Observacoes`**, same dated-line pattern (header first, newest-first dated log, our line before the first dated line, read the current value right before the PUT, a failed read writes nothing). No client-edit code exists yet (`NOC-REMEDIATE[vista-clientes-escrita-nota]`).
+- **MCP:** the `vista.imoveis.add_photos` and `vista.leads.submit` tools do NOT yet take a required `motivo` nor leave the note (`NOC-REMEDIATE[vista-mcp-escrita-motivo-nota]`). Until fixed, do not call them without adding the dated line yourself ("Acrescentado novas fotos" is literally a line the team writes).
+
 ## UPDATE 2026-10-26/27 — read before §4 (supersedes the conflicting rows below)
 
 A fresh live probe (tenant `oneconsu-rest`, non-mutating: GETs + empty POSTs)

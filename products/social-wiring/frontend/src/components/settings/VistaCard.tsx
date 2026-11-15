@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DivergenciasAvisos } from "@/components/settings/DivergenciasAvisos";
+import { VistaSincronizacao } from "@/components/settings/VistaSincronizacao";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -179,6 +180,7 @@ export function VistaCard() {
               </div>
             </form>
 
+            {data?.configurado && <VistaSincronizacao />}
             {data?.configurado && <DivergenciasAvisos />}
 
             {teste && (

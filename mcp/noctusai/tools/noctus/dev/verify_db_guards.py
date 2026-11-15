@@ -9451,6 +9451,64 @@ _SW_CONDOMINIOS_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+
+_M_IMOVEL_HISTORICO = "349_imovel_historico_vista_escrita.sql"
+_T_IMOVEL_HISTORICO = f"{_S}.imovel_historico"
+
+
+def _imovel_historico_append_only_probe(op: str, attack_sql: str, what: str) -> GuardProbe:
+    """Insert one history row (rolled back), then try `attack_sql` on it WITHOUT the erasure GUC."""
+    return GuardProbe(
+        id=f"imovel_historico.append_only_{op.lower()}",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="guard_imovel_historico_append_only",
+        kind="write_refusal",
+        migrations=(_M_IMOVEL_HISTORICO,),
+        rationale=("The imóvel action register is the audit of every Vista sync change and every value sent to "
+                   "Vista (owner 2026-11-04): a rewritable history proves nothing. Only a future LGPD erasure "
+                   "(GUC social_wiring.imovel_historico_expurgo) may DELETE."),
+        sql=_do_block(
+            "DECLARE\n  v_org uuid;\n  v_codigo text;\nBEGIN\n"
+            + _table_fixture_check(_T_IMOVEL_HISTORICO)
+            + "".join(
+                f"  {select_sql.replace(' FROM ', ' INTO ' + into_vars + ' FROM ', 1)};\n"
+                f"  IF {into_vars.split(',')[-1].strip()} IS NULL THEN\n"
+                "    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row for the registry fixture';\n"
+                "  END IF;\n"
+                for select_sql, into_vars in (_SW_FIXTURES["registry"],)
+            )
+            + "  BEGIN\n"
+            f"    INSERT INTO {_T_IMOVEL_HISTORICO} (org_id, codigo_canonical, origem, acao, campo)\n"
+            "    VALUES (v_org, 'NOC_PROBE', 'sistema', 'campo_atualizado', 'noc_probe');\n"
+            f"    {attack_sql}\n"
+            f"    RAISE EXCEPTION 'NOC_PROBE:permitted: {what} succeeded -- the trigger did not fire';\n"
+            "  EXCEPTION WHEN OTHERS THEN\n"
+            "    IF SQLERRM LIKE 'NOC_PROBE:%' THEN\n      RAISE;\n"
+            "    ELSIF SQLERRM LIKE '%imovel_historico is append-only%' THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;\n"
+            "    ELSE\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;\n"
+            "    END IF;\n  END;\nEND;\n"
+        ),
+    )
+
+
+#: Migration 349 -- imóvel action register. Unapplied reads `no_fixture`; applied must read `refused`.
+_SW_IMOVEL_HISTORICO_PROBES: tuple[GuardProbe, ...] = (
+    _imovel_historico_append_only_probe(
+        "UPDATE",
+        f"UPDATE {_T_IMOVEL_HISTORICO} SET detalhe = 'reescrito' WHERE org_id = v_org AND codigo_canonical = 'NOC_PROBE';",
+        "rewriting a history row",
+    ),
+    _imovel_historico_append_only_probe(
+        "DELETE",
+        f"DELETE FROM {_T_IMOVEL_HISTORICO} WHERE org_id = v_org AND codigo_canonical = 'NOC_PROBE';",
+        "deleting a history row without the erasure GUC",
+    ),
+)
+
+
 _SW_IMOVEL_MANUAL_PROBES: tuple[GuardProbe, ...] = (
     _sw_junction_probe(
         probe_id="imovel_captacao.valores_positivos",
@@ -12832,6 +12890,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_IMOVEL_MANUAL_PROBES,
     *_SW_TRANSACOES_PROBES,
     *_SW_CONDOMINIOS_PROBES,
+    *_SW_IMOVEL_HISTORICO_PROBES,
     *_SW_JULIA_PROBES,
     *_SW_PERGUNTAS_PROBES,
     *_SW_JULIA_VISITAS_PROBES,

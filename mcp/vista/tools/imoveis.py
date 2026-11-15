@@ -191,6 +191,10 @@ async def list_imoveis_filters(args: dict) -> dict:
 
 
 async def add_imovel_fotos(args: dict) -> dict:
+    # NOC-REMEDIATE[vista-mcp-escrita-motivo-nota]: this write must take a REQUIRED `motivo` and leave a dated line in the property's
+    # `ObsVenda` ("Acrescentado novas fotos" is literally a line the team writes) via `noctusai_lib.integrations.vista.observacoes` --
+    # owner rule 2026-11-04 ("never edit vista data without a reason and without leaving a note behind"). Deferred: widening the MCP
+    # input schema + the read-modify-write of ObsVenda is outside the Vista-sync slice -- 2026-11-04
     """Attach photos by URL. Deliberately no update/delete tool: `/imoveis/fotos`
     also accepts DELETE on live listings, and nothing here needs it."""
     inp = AddImovelFotosInput(**args)

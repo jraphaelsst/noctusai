@@ -1,49 +1,69 @@
-"""Vista-vs-ours DIVERGENCE review -- TRANSITIONAL, removable (owner 2026-11-04).
+"""Vista sync with HISTORY -- what the Vista refresh does with a difference between Vista and what we hold (owner 2026-11-04).
 
 NOC-REMEDIATE[transicao-vista-divergencias]: delete this module (and its hooks) when the owner moves the catalog off
 Vista -- removal recipe: KNOWLEDGE-BASE/CONTEXT/INTEGRATIONS/vista.md § 6c -- 2026-11-04
 
-Owner: "lets make our data count. the system recognizes divergencies from vista and warns us, so we human decide which
-data is true. [...] with a notification via whatsapp on divergence. notes mapping the drift so we can check both systems
-and the conversation that triggered it."
+AMENDED (2026-11-15, owner option 1): the WhatsApp DIGEST of the approvals a run opens is KEPT, switchable per kind on the core
+Notificações page (`KIND_DIGEST`) and aimed at `vista_divergencias_config.destino_user_id`; everything else below stands.
 
-WHAT IT DOES
-  During every Vista refresh (listar OR per-code), for each imóvel it compares Vista's value with OUR owned value, for the
-  fields where both exist, and opens a PENDING `imovel_campo_conflitos` row (migration 154 -- the existing conflict
-  machinery, no parallel store) with `origem_proposto='vista_sync'`:
+DECISION REVERSED (2026-11-04). The first version of this module only RECORDED a pending divergence and sent a WhatsApp
+digest to a chosen user ("we human decide which data is true"). The owner reversed it: "no one receives the alert, we update
+our database to the Vista data and history gets an action register [...] in-app notification only. no whatsapp, no email."
+and "if julia is certain on a owner-confirmation, we edit vista [...] i need a switch to vista editing on and off default
+off [...] if we cant edit/create on vista, vista wins for now and get an approval with link to the conversation."
+So: no digest, no destination user, no phone, no hourly cap. Every case below writes an `imovel_historico` row.
 
-    valor_anterior = OUR value, origem_anterior = where it lives, valor_proposto = Vista's, `notas` = the drift note.
-
-  OUR value never changes here -- the sync does not write the owned layer, and a human decides:
-  `POST /api/imoveis/{codigo}/divergencias/{id}/resolver` ('vista' writes Vista's value into our overlay or clears our
-  override; 'nosso' keeps ours and records the decision so the same pair never alerts again; 'manual' types a third value).
-
-OUR OWNED LAYER (the audit): `imovel_captacao` (manual captação, `atualizar_manual`), `imovel_dados` (the manual address and
-  `empreendimento_manual`), and the owner's WhatsApp confirmation (`julia_proprietarios_contatos`, read through
-  `julia_imovel_confirmado`: price and availability). Everything else on `imoveis` is Vista's.
+WHAT THE SYNC DOES (`verificar`, per refreshed imóvel; `imovel_notas`, documents, owners and duplicates have no Vista
+counterpart and are never touched):
+  1. A MIRROR column changed (`CAMPOS_ESPELHO`; the upsert already applied it): history `campo_atualizado` (old -> new). The
+     price columns are NOT repeated here -- migration 262's trigger records them (`imovel_preco_historico`, kind `preco`).
+  2. An OVERLAY field (captação, `imovel_dados` manual address / empreendimento / areas) differs and is not owner-confirmed:
+     Vista wins -- Vista's value goes into the overlay through `_escrever_nosso` (captação gets the value; `imovel_dados`
+     is cleared so Vista shows through): history `vista_prevaleceu`.
+  3. An OWNER-CONFIRMED price/availability (`julia_imovel_confirmado`) differs from Vista:
+       a. CERTAIN (an explicit, recorded owner confirmation: `confirmado_at` set -- `julia_proprietarios_service.confirmar`
+          only stores one after the owner answered a Cloud template) AND the org switch `vista_escrita_ativa` is on AND the
+          PUT is permitted (cached probe) AND the field is pushable (`CAMPO_VISTA`: the two prices) => `PUT /imoveis/detalhes`
+          sets Vista to our value; history `enviado_ao_vista` with the conversation {id, url}. A failed send => history
+          `envio_vista_falhou` and the approval below.
+       b. otherwise (switch off / not permitted / not certain / not pushable / failed) => Vista wins (`vista_prevaleceu`)
+          AND an approval opens: a PENDING `imovel_campo_conflitos` row (origem_proposto `vista_sync`) carrying the
+          conversation link + history `aprovacao_pendente` + an in-app notice `imovel_aprovacao_pendente` to the org admins.
+     Resolving (`resolver`): `aprovar` pushes our value to Vista when the switch is on and the PUT is permitted, else records
+     "atualizar manualmente no Vista"; `recusar` keeps Vista. Both write `aprovacao_decidida`.
+  PER RUN: ONE in-app notice `imoveis_vista_sincronizado` to the admins when Vista changed >= 1 imóvel (`notificar_sincronizado`).
 
 NORMALISATION first: money -> 2-decimals, counts -> int, text -> accent/case/whitespace-folded, CEP -> digits, UF -> 2 upper
-  letters; formatting noise is never a divergence. A side that is empty is not a divergence ("where both exist").
+letters; formatting noise is never a difference. A side that is empty is not a difference ("where both exist").
 
-NOTIFICATION: ONE WhatsApp digest per refresh run to the org's destination USER (`vista_divergencias_config.destino_user_id`;
-  the phone is read from core `noctus_users.telefone`, never stored here), capped per hour; no destination/phone/line =>
-  an in-app notice to the org admins. Never silent.
+SWITCHES (`vista_divergencias_config`, per org; missing row = everything OFF; the One org is seeded `ativa` ON by 317):
+  `ativa`               keep the imóveis in line with Vista (history + overlay + notices). Off => the sync touches nothing here.
+  `vista_escrita_ativa` (default OFF) edit Vista when the owner confirmed. Needs the key's PUT grant (probe 2026-11-04: granted).
 
-FLAG: `vista_divergencias_config.ativa` (`divergencia_vista_ativa`), per org; missing row = OFF (the One org is seeded ON).
+NOTE IN VISTA (owner 2026-11-04, binding: never edit Vista without a reason and a note): every send carries a `motivo` and writes
+our dated line into the property's `ObsVenda`/`ObsLocacao` in the same PUT (seed `observacoes`: before the first dated line, header
+untouched, read just before the PUT, a failed read writes nothing); the history `detalhe` mirrors that line. `ObsLocacao` is presumed
+(unverified).
+NOC-REMEDIATE[vista-escrita-disponibilidade]: availability is NOT pushed (the tenant's `Status` vocabulary for sold/suspended is
+unproven); it takes the Vista-wins + approval path -- 2026-11-04
+NOC-REMEDIATE[notificacoes-destinatarios-seed]: recipients (org owners + admins) come from `julia_notificacoes_service.admins_da_org`;
+move to the seed `noctusai_lib.domain.notifications` recipients helper once the parallel branch lands it -- 2026-11-04
 """
 from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Awaitable, Callable, Optional
+from urllib.parse import quote
 from uuid import UUID
 
 from noctusai_lib.primitives.accents import fold_accents
 
-from app.services import campo_conflitos, julia_imovel_confirmado
+from app.services import campo_conflitos, imovel_historico_service as hist, julia_imovel_confirmado
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +73,25 @@ T_CONFIG = "vista_divergencias_config"
 T_CAPTACAO = "imovel_captacao"
 T_DADOS = "imovel_dados"
 T_MENSAGENS = "conversation_messages"
+T_MIRROR = "imoveis"
+KIND_SINCRONIZADO = "imoveis_vista_sincronizado"
+KIND_APROVACAO = "imovel_aprovacao_pendente"
 LIMITE_LINHAS_DIGEST = 15
 DIGESTS_POR_HORA = 4
 KIND_AVISO = "imoveis_vista_divergencia"
-#: Catalog kind of the WhatsApp digest (core Notificações page switch).
+#: Catalog kind of the WhatsApp digest of the approvals a run opened (core Notificações page switch).
 KIND_DIGEST = "vista_divergencias"
+#: Mirror columns whose change is written to the history (prices are NOT: the 262 trigger records them as kind `preco`).
+CAMPOS_ESPELHO = (
+    "status", "exibir_no_site", "categoria", "valor_condominio", "valor_iptu", "area_total", "area_privativa", "area_construida",
+    "dormitorios", "suites", "vagas", "cep", "logradouro", "numero", "complemento", "bairro", "cidade", "uf", "empreendimento",
+)
+#: Our field -> the Vista field `PUT /imoveis/detalhes` sets. Only the two prices are pushed (see NOC-REMEDIATE[vista-escrita-disponibilidade]).
+CAMPO_VISTA = {"valor_venda": "ValorVenda", "valor_locacao": "ValorLocacao"}
+#: How long a write-permission verdict is trusted (one probe is one Vista call).
+PERMISSAO_TTL_S = 900
+PERMISSAO_TTL_DESCONHECIDA_S = 60
+ENVIO_REPETIDO_H = 24
 
 # Origin labels of OUR value (what the review screen shows).
 O_CAPTACAO = "captacao_manual"
@@ -67,6 +101,7 @@ ROTULO_ORIGEM = {
     O_CAPTACAO: "captação manual", O_DADOS: "cadastro manual do imóvel", O_PROPRIETARIO: "confirmação do proprietário (WhatsApp)",
 }
 ROTULO_CAMPO = {
+    "exibir_no_site": "exibir no site", "categoria": "categoria",
     "valor_venda": "valor de venda", "valor_locacao": "valor de locação", "valor_condominio": "condomínio", "valor_iptu": "IPTU",
     "area_total": "área total", "area_privativa": "área privativa", "dormitorios": "dormitórios", "suites": "suítes",
     "vagas": "vagas", "status": "status", "disponibilidade": "disponibilidade", "area_terreno_m2": "área do terreno",
@@ -155,56 +190,85 @@ class Divergencia:
 
 @dataclass
 class Execucao:
-    """One refresh run's divergence context: the flag, the loaded overlay, the rows opened so far."""
+    """One refresh run's context: the switches, the loaded overlay, the mirror rows as they were BEFORE the upsert, and what the
+    run did (the history rows to write, the approvals opened, the counts the per-run notice reports)."""
 
     db: Any
     org_id: UUID
+    adapter: Any = None
+    escrita_ativa: bool = False
     captacao: dict[str, dict] = field(default_factory=dict)
     dados: dict[str, dict] = field(default_factory=dict)
-    novas: list[dict] = field(default_factory=list)
+    antes: dict[str, dict] = field(default_factory=dict)
+    novas: list[dict] = field(default_factory=list)  # approvals opened this run (pending `imovel_campo_conflitos` rows)
     erros: list[str] = field(default_factory=list)
     comparadas: int = 0
+    imoveis_atualizados: set = field(default_factory=set)
+    campos_atualizados: int = 0
+    enviados: int = 0
+    _permitida: Optional[bool] = None
+    _permitida_lida: bool = False
 
 
 def config(db: Any, org_id: UUID | str) -> dict:
-    """`{ativa, destino_user_id}`; a missing row or an unreadable table = OFF (logged)."""
+    """`{ativa, vista_escrita_ativa, destino_user_id}`; a missing row or an unreadable table = both switches OFF (logged)."""
     try:
         rows = db.table(T_CONFIG).select("*").eq("org_id", str(org_id)).limit(1).execute().data or []
     except Exception as exc:
-        logger.error("vista divergences: config unreadable for org=%s (%s) -- treating as OFF", org_id, type(exc).__name__)
-        return {"ativa": False, "destino_user_id": None}
+        logger.error("vista sync: config unreadable for org=%s (%s) -- treating as OFF", org_id, type(exc).__name__)
+        return {"ativa": False, "vista_escrita_ativa": False, "destino_user_id": None}
     row = rows[0] if rows else {}
-    return {"ativa": bool(row.get("ativa")), "destino_user_id": row.get("destino_user_id")}
+    return {"ativa": bool(row.get("ativa")), "vista_escrita_ativa": bool(row.get("vista_escrita_ativa")), "destino_user_id": row.get("destino_user_id")}
 
 
-def salvar_config(db: Any, org_id: UUID | str, *, ativa: Optional[bool], destino_user_id: Any, user_id: Any, mudar_destino: bool) -> dict:
+def salvar_config(
+    db: Any, org_id: UUID | str, *, ativa: Optional[bool] = None, vista_escrita_ativa: Optional[bool] = None, user_id: Any = None,
+    destino_user_id: Any = None, mudar_destino: bool = False,
+) -> dict:
     atual = db.table(T_CONFIG).select("org_id").eq("org_id", str(org_id)).limit(1).execute().data or []
     patch: dict[str, Any] = {"updated_by": str(user_id) if user_id else None, "updated_at": datetime.now(timezone.utc).isoformat()}
     if ativa is not None:
         patch["ativa"] = bool(ativa)
+    if vista_escrita_ativa is not None:
+        patch["vista_escrita_ativa"] = bool(vista_escrita_ativa)
     if mudar_destino:
         patch["destino_user_id"] = str(destino_user_id) if destino_user_id else None
     if atual:
         db.table(T_CONFIG).update(patch).eq("org_id", str(org_id)).execute()
     else:
-        db.table(T_CONFIG).insert({"org_id": str(org_id), "ativa": bool(ativa), **{k: v for k, v in patch.items() if k != "ativa"}}).execute()
+        db.table(T_CONFIG).insert({"org_id": str(org_id), "ativa": False, "vista_escrita_ativa": False, **patch}).execute()
     return config(db, org_id)
 
 
-def iniciar(db: Any, org_id: UUID | str) -> Optional[Execucao]:
-    """Open the run's context, or None when the flag is off (the single early-out: flag off => nothing happens)."""
-    if not config(db, org_id)["ativa"]:
+def iniciar(db: Any, org_id: UUID | str, adapter: Any = None) -> Optional[Execucao]:
+    """Open the run's context, or None when `ativa` is off (the single early-out: switch off => nothing happens)."""
+    cfg = config(db, org_id)
+    if not cfg["ativa"]:
         return None
-    ex = Execucao(db=db, org_id=UUID(str(org_id)))
+    ex = Execucao(db=db, org_id=UUID(str(org_id)), adapter=adapter, escrita_ativa=cfg["vista_escrita_ativa"])
     try:
         for r in _todas(db, T_CAPTACAO, org_id):
             ex.captacao[str(r.get("codigo_canonical") or "").upper()] = r
         for r in _todas(db, T_DADOS, org_id):
             ex.dados[str(r.get("codigo") or "").strip().upper()] = r
     except Exception as exc:
-        logger.error("vista divergences: overlay unreadable for org=%s (%s) -- skipping this run", org_id, type(exc).__name__)
+        logger.error("vista sync: overlay unreadable for org=%s (%s) -- skipping this run", org_id, type(exc).__name__)
         return None
     return ex
+
+
+def capturar_antes(ex: Execucao, imoveis: list[Any]) -> None:
+    """Read the mirror columns as they are NOW (call BEFORE the upsert) so `verificar` can tell what the upsert changed. Never raises."""
+    alvo = sorted({i.codigo for i in imoveis if getattr(i, "codigo", None)})
+    colunas = "codigo, " + ", ".join(CAMPOS_ESPELHO)
+    try:
+        for i in range(0, len(alvo), 100):
+            rows = (ex.db.table(T_MIRROR).select(colunas).eq("org_id", str(ex.org_id)).in_("codigo", alvo[i:i + 100]).limit(1000).execute().data or [])
+            for r in rows:
+                ex.antes[str(r["codigo"]).strip().upper()] = r
+    except Exception as exc:
+        ex.erros.append(f"antes: {type(exc).__name__}")
+        logger.error("vista sync: the mirror 'before' read failed org=%s (%s) -- no field history for this batch", ex.org_id, type(exc).__name__)
 
 
 def _todas(db: Any, tabela: str, org_id: Any) -> list[dict]:
@@ -364,25 +428,33 @@ def montar_notas(db: Any, org_id: Any, d: Divergencia, imovel: Any, *, link_site
     }
 
 
-# ── registering ─────────────────────────────────────────────────────────────
-def _campo_db(d: Divergencia) -> str:
-    return d.campo
-
-
-def _decidido_igual(db: Any, org_id: Any, d: Divergencia) -> bool:
-    """A human already decided THIS exact pair (Vista value x our value): never alert again."""
-    rows = (db.table(T_CONFLITOS).select("valor_proposto,valor_anterior,decidido_por,status").eq("org_id", str(org_id))
-            .eq("codigo", d.codigo).eq("campo", d.campo).eq("origem_proposto", ORIGEM).in_("status", ["aceito", "rejeitado"]).execute().data or [])
-    return any(
-        r.get("decidido_por") and iguais(d.campo, r.get("valor_proposto"), d.vista) and iguais(d.campo, r.get("valor_anterior"), d.nosso)
-        for r in rows
-    )
-
-
-def registrar(db: Any, org_id: Any, d: Divergencia, notas: dict) -> Optional[dict]:
-    """Open (or refresh) the pending divergence. None when nothing new: the same pair is already pending or was decided."""
-    if _decidido_igual(db, org_id, d):
+# ── the conversation behind an owner-confirmed value ────────────────────────
+def link_conversa(conversa: Optional[dict]) -> Optional[dict]:
+    """`{id, url}` of the conversation a drift note cites (the Julia contact when known, else the chat), or None."""
+    if not conversa:
         return None
+    contato, thread = conversa.get("contato_id"), conversa.get("thread_id")
+    if contato:
+        url: Optional[str] = f"/julia/conversas?contato={contato}"
+    elif thread:
+        url = f"/julia/conversas?chat={quote(str(thread), safe='')}"
+    else:
+        url = None
+    ident = contato or thread or conversa.get("proprietario_contato_id")
+    return {"id": str(ident), "url": url} if ident else None
+
+
+def _certo(d: Divergencia) -> bool:
+    """Is Julia CERTAIN of this owner confirmation? -- an explicit, recorded confirmation: the row exists and carries
+    `confirmado_at` (`_confirmacoes` only returns rows that do, and `julia_proprietarios_service.confirmar` only stores one after the
+    owner answered a Cloud template). There is no finer-grained confidence in the data, so nothing weaker counts."""
+    return d.origem == O_PROPRIETARIO and bool(d.conversa and d.conversa.get("proprietario_contato_id")) and d.nosso_em is not None
+
+
+# ── registering ─────────────────────────────────────────────────────────────
+def registrar(db: Any, org_id: Any, d: Divergencia, notas: dict) -> Optional[dict]:
+    """Open the APPROVAL (a pending `imovel_campo_conflitos` row, `origem_proposto='vista_sync'`). None when nothing new: the same
+    pair is already pending, or an extraction conflict owns this (codigo, campo)."""
     existente = campo_conflitos.conflito_pendente_existente(db, campo_conflitos.IMOVEL, org_id, d.codigo, d.campo)
     if existente is not None and existente.get("origem_proposto") != ORIGEM:
         return None  # an extraction conflict owns this (codigo, campo): never touched from here
@@ -393,7 +465,7 @@ def registrar(db: Any, org_id: Any, d: Divergencia, notas: dict) -> Optional[dic
         campo_conflitos._t(db, T_CONFLITOS).update({"status": "rejeitado", "decidido_por": None, "decidido_em": datetime.now(timezone.utc).isoformat()}).eq(
             "id", existente["id"]).execute()
     linha = campo_conflitos.registrar_conflito(
-        db, campo_conflitos.IMOVEL, org_id, d.codigo, _campo_db(d),
+        db, campo_conflitos.IMOVEL, org_id, d.codigo, d.campo,
         valor_anterior=para_json(d.campo, d.nosso), origem_anterior=d.origem,
         valor_proposto=para_json(d.campo, d.vista), origem_proposto=ORIGEM,
         fonte_tabela="imoveis", fonte_id=None, igual=lambda a, b: iguais(d.campo, a, b),
@@ -420,25 +492,180 @@ def _confirmacoes(db: Any, org_id: Any, codigos: list[str]) -> dict[str, list[di
     return saida
 
 
-def verificar(ex: Execucao, imoveis: list[Any], *, link_site: Optional[Callable[[str], Optional[str]]] = None) -> None:
-    """THE call site of the sync: compare each refreshed imóvel and open the pending divergences. Never raises."""
+# ── writing to Vista ────────────────────────────────────────────────────────
+def _valor_vista(valor: Any) -> str:
+    n = _num(valor)
+    if n is None:
+        raise ValueError("valor sem número")
+    return str(int(n)) if n == n.to_integral_value() else f"{n:.2f}"
+
+
+def _url_absoluta(link: Optional[str]) -> Optional[str]:
+    """The conversation link as Vista's readers can open it: the frontend base URL + our relative path (relative when unset)."""
+    if not link or link.startswith("http"):
+        return link
+    try:
+        from app.config import settings
+
+        base = (settings.frontend_base_url or "").rstrip("/")
+    except Exception:
+        base = ""
+    return f"{base}{link}" if base else link
+
+
+_FINALIDADE = {"valor_venda": "venda", "valor_locacao": "locacao"}
+
+
+async def enviar_ao_vista(
+    adapter: Any, codigo: str, campo: str, valor: Any, *, motivo: str, conversa: Optional[dict] = None, canal: str = "WhatsApp (Julia)",
+    fonte: str = "Proprietário", autor: str = "NoctusAI",
+) -> tuple[Optional[str], Optional[str]]:
+    """Set `campo` to `valor` on Vista (`PUT /imoveis/detalhes`) AND leave the note in its internal observations (rule: never edit Vista
+    without a reason and a note). Returns `(erro, nota)`: `(None, line)` = sent; `(failure's class name, None)` otherwise (never a body: a
+    401 body embeds the key). Never raises."""
+    if adapter is None:
+        return "sem_adaptador", None
+    if campo not in CAMPO_VISTA:
+        return "campo_nao_enviavel", None
+    try:
+        nota = await adapter.atualizar_imovel(
+            codigo, {CAMPO_VISTA[campo]: _valor_vista(valor)}, motivo=motivo, autor=autor, canal=canal, fonte=fonte, finalidade=_FINALIDADE[campo],
+            conversa_url=_url_absoluta((conversa or {}).get("url")), rotulos={CAMPO_VISTA[c]: ROTULO_CAMPO[c] for c in CAMPO_VISTA},
+        )
+    except Exception as exc:
+        logger.warning("vista sync: PUT of %s/%s failed (%s)", codigo, campo, type(exc).__name__)
+        return type(exc).__name__, None
+    return None, nota
+
+
+_PERMISSAO: dict[str, tuple[float, Optional[bool]]] = {}
+
+
+async def escrita_disponivel(org_id: Any, provider: Callable[[], Any], *, forcar: bool = False) -> Optional[bool]:
+    """May this org's Vista key `PUT /imoveis/detalhes`? Cached probe (non-mutating: empty PUT on a non-existent code):
+    True permitted / False denied / None unknown (no credential, timeout, ...). `provider()` returns the adapter or raises."""
+    chave = str(org_id)
+    agora = time.monotonic()
+    em_cache = _PERMISSAO.get(chave)
+    if em_cache and not forcar and em_cache[0] > agora:
+        return em_cache[1]
+    try:
+        veredito: Optional[bool] = await provider().pode_atualizar_imovel()
+    except Exception as exc:
+        logger.info("vista sync: write-permission probe unavailable org=%s (%s)", org_id, type(exc).__name__)
+        veredito = None
+    _PERMISSAO[chave] = (agora + (PERMISSAO_TTL_S if veredito is not None else PERMISSAO_TTL_DESCONHECIDA_S), veredito)
+    return veredito
+
+
+async def _permitida(ex: Execucao) -> Optional[bool]:
+    if not ex._permitida_lida:
+        ex._permitida = await escrita_disponivel(ex.org_id, lambda: ex.adapter) if ex.adapter is not None else None
+        ex._permitida_lida = True
+    return ex._permitida
+
+
+# ── handling one difference ─────────────────────────────────────────────────
+def _enviado_recentemente(db: Any, org_id: Any, d: Divergencia) -> bool:
+    """We already sent THIS value for this field in the last day (Vista has not reflected it yet): do not send again."""
+    rows = (db.table(hist.T_HISTORICO).select("valor_novo, ocorrido_em").eq("org_id", str(org_id)).eq("codigo_canonical", d.codigo.strip().upper())
+            .eq("campo", d.campo).eq("acao", "enviado_ao_vista").order("ocorrido_em", desc=True).limit(1).execute().data or [])
+    if not rows or not iguais(d.campo, rows[0].get("valor_novo"), d.nosso):
+        return False
+    instante = julia_imovel_confirmado._instante(rows[0].get("ocorrido_em"))
+    return instante is not None and (datetime.now(timezone.utc) - instante).total_seconds() < ENVIO_REPETIDO_H * 3600
+
+
+def _vista_prevalece(ex: Execucao, d: Divergencia) -> bool:
+    """Vista wins: Vista's value goes into OUR layer (`_escrever_nosso`). False when the owned layer refused (reported, logged)."""
+    row = {"campo": d.campo, "codigo": d.codigo, "origem_anterior": d.origem, "notas": {"nosso": {"conversa": d.conversa}}}
+    try:
+        _escrever_nosso(ex.db, ex.org_id, row, para_json(d.campo, d.vista), None, limpar=d.origem in (O_DADOS, O_PROPRIETARIO))
+    except ResolucaoImpossivel as exc:
+        ex.erros.append(f"{d.codigo}/{d.campo}: {exc}")
+        return False
+    return True
+
+
+async def _tratar(ex: Execucao, d: Divergencia, notas: dict, historico: list[dict]) -> None:
+    conversa = link_conversa((notas.get("nosso") or {}).get("conversa"))
+    antes, depois = para_json(d.campo, d.nosso), para_json(d.campo, d.vista)
+    rotulo = ROTULO_CAMPO.get(d.campo, d.campo)
+    if d.origem != O_PROPRIETARIO:
+        if _vista_prevalece(ex, d):
+            historico.append(hist.montar_linha(ex.org_id, d.codigo, origem="vista_sync", acao="vista_prevaleceu", campo=d.campo, anterior=antes, novo=depois,
+                                               detalhe=f"Vista prevaleceu em {rotulo} sobre o valor de {ROTULO_ORIGEM.get(d.origem, d.origem)}."))
+            ex.imoveis_atualizados.add(d.codigo)
+            ex.campos_atualizados += 1
+        return
+    # an owner-confirmed value
+    if _enviado_recentemente(ex.db, ex.org_id, d):
+        return
+    motivo = "escrita_desligada" if not ex.escrita_ativa else ("campo_nao_enviavel" if d.campo not in CAMPO_VISTA else ("sem_certeza" if not _certo(d) else None))
+    if motivo is None:
+        permitida = await _permitida(ex)
+        if permitida:
+            erro, nota = await enviar_ao_vista(
+                ex.adapter, d.codigo, d.campo, d.nosso, conversa=conversa,
+                motivo=f"proprietário confirmou {rotulo} e o valor estava diferente no Vista")
+            if erro is None:
+                historico.append(hist.montar_linha(  # `detalhe` mirrors the note written into Vista's ObsVenda/ObsLocacao
+                    ex.org_id, d.codigo, origem="julia", acao="enviado_ao_vista", campo=d.campo, anterior=depois, novo=antes, conversa=conversa,
+                    detalhe=nota))
+                ex.enviados += 1
+                return
+            historico.append(hist.montar_linha(ex.org_id, d.codigo, origem="julia", acao="envio_vista_falhou", campo=d.campo, anterior=depois, novo=antes,
+                                               conversa=conversa, detalhe=f"Não foi possível enviar ao Vista ({erro}). Vista prevaleceu e abriu aprovação."))
+            motivo = "falha_envio"
+        else:
+            motivo = "sem_permissao" if permitida is False else "permissao_desconhecida"
+    linha = registrar(ex.db, ex.org_id, d, notas)
+    if linha is None:
+        return  # the same approval is already pending
+    ex.novas.append(linha)
+    _vista_prevalece(ex, d)
+    ex.imoveis_atualizados.add(d.codigo)
+    ex.campos_atualizados += 1
+    historico.append(hist.montar_linha(ex.org_id, d.codigo, origem="vista_sync", acao="vista_prevaleceu", campo=d.campo, anterior=antes, novo=depois,
+                                       conversa=conversa, detalhe=f"Vista prevaleceu em {rotulo} (envio ao Vista: {motivo})."))
+    historico.append(hist.montar_linha(ex.org_id, d.codigo, origem="julia", acao="aprovacao_pendente", campo=d.campo, anterior=depois, novo=antes,
+                                       conversa=conversa, conflito_id=linha["id"], detalhe="Valor confirmado pelo proprietário aguardando aprovação."))
+
+
+async def verificar(ex: Execucao, imoveis: list[Any], *, link_site: Optional[Callable[[str], Optional[str]]] = None) -> None:
+    """THE call site of the sync (after the upsert): for each refreshed imóvel write the history of what changed, let Vista win over
+    our overlay, and send or approve an owner-confirmed value. Never raises."""
     codigos = [i.codigo for i in imoveis]
     try:
         conf = _confirmacoes(ex.db, ex.org_id, codigos)
     except Exception as exc:
         conf = {}
         ex.erros.append(f"confirmacoes: {type(exc).__name__}")
-        logger.error("vista divergences: owner confirmations unreadable (%s) -- skipping that source", type(exc).__name__)
+        logger.error("vista sync: owner confirmations unreadable (%s) -- skipping that source", type(exc).__name__)
     for imovel in imoveis:
+        historico: list[dict] = []
         try:
-            for d in comparar(imovel, ex, conf.get(imovel.codigo.strip().upper(), [])):
+            for campo in CAMPOS_ESPELHO:  # 1. what the upsert changed on the mirror
+                velho = (ex.antes.get(imovel.codigo.strip().upper()) or {})
+                if campo not in velho:
+                    continue
+                novo = getattr(imovel, campo, None)
+                if normalizar(campo, novo) is not None and not iguais(campo, velho.get(campo), novo):
+                    historico.append(hist.montar_linha(ex.org_id, imovel.codigo, origem="vista_sync", acao="campo_atualizado", campo=campo,
+                                                       anterior=para_json(campo, velho.get(campo)), novo=para_json(campo, novo)))
+                    ex.imoveis_atualizados.add(imovel.codigo)
+                    ex.campos_atualizados += 1
+            for d in comparar(imovel, ex, conf.get(imovel.codigo.strip().upper(), [])):  # 2. + 3. our layer vs Vista
                 notas = montar_notas(ex.db, ex.org_id, d, imovel, link_site=link_site(d.codigo) if link_site else None)
-                linha = registrar(ex.db, ex.org_id, d, notas)
-                if linha is not None:
-                    ex.novas.append(linha)
+                await _tratar(ex, d, notas, historico)
         except Exception as exc:
             ex.erros.append(f"{imovel.codigo}: {type(exc).__name__}")
-            logger.error("vista divergences: %s failed (%s)", imovel.codigo, type(exc).__name__, exc_info=True)
+            logger.error("vista sync: %s failed (%s)", imovel.codigo, type(exc).__name__, exc_info=True)
+        try:
+            hist.registrar_varias(ex.db, historico)
+        except Exception as exc:
+            ex.erros.append(f"{imovel.codigo}: historico {type(exc).__name__}")
+            logger.error("vista sync: the history of %s could not be written (%s)", imovel.codigo, type(exc).__name__, exc_info=True)
 
 
 # ── the digest ──────────────────────────────────────────────────────────────
@@ -584,6 +811,52 @@ def _aviso_in_app(core: Any, org_id: Any, novas: list[dict], texto: str) -> None
         logger.error("vista divergences: the in-app divergence notice failed org=%s (%s)", org_id, type(exc).__name__)
 
 
+# ── the in-app notices (operational class; never WhatsApp / e-mail) ─────────
+def _metadata(link: Optional[str], codigo: Optional[str] = None) -> dict:
+    return {"categoria": "operacional", "link": link, "produto": "social-wiring",
+            "entidade": {"tipo": "imovel", "id": codigo} if codigo else None}
+
+
+def _avisar(core: Any, org_id: Any, kind: str, title: str, message: str, metadata: dict) -> int:
+    """One in-app row per org owner/admin. An empty recipient set is logged at WARNING and returns 0; never raises."""
+    from noctusai_lib.domain.notifications import write_in_app
+
+    from app.services.julia_notificacoes_service import admins_da_org
+
+    try:
+        admins = admins_da_org(core, org_id) if core is not None else []
+        if not admins:
+            logger.warning("vista sync: notice %s for org=%s has no recipients (no owner/admin)", kind, org_id)
+            return 0
+        return write_in_app(core, user_ids=admins, kind=kind, org_id=org_id, title=title[:60], message=message[:160], metadata=metadata)
+    except Exception as exc:
+        logger.error("vista sync: notice %s failed org=%s (%s)", kind, org_id, type(exc).__name__)
+        return 0
+
+
+def notificar_sincronizado(core: Any, org_id: Any, imoveis: int, campos: int) -> int:
+    """ONE notice per run, only when Vista changed at least one imóvel."""
+    if imoveis <= 0:
+        return 0
+    plural = "imóvel" if imoveis == 1 else "imóveis"
+    campo = "campo" if campos == 1 else "campos"
+    return _avisar(core, org_id, KIND_SINCRONIZADO, f"Vista atualizou {imoveis} {plural}", f"Vista atualizou {imoveis} {plural} ({campos} {campo}).", _metadata("/imoveis"))
+
+
+def notificar_aprovacoes(core: Any, org_id: Any, linhas: list[dict], *, maximo: int = 10) -> int:
+    """One notice per approval opened (the first `maximo`; the rest folded into one), each linking to its imóvel."""
+    total = 0
+    for r in linhas[:maximo]:
+        campo = r["campo"]
+        rotulo = ROTULO_CAMPO.get(campo, campo)
+        total += _avisar(core, org_id, KIND_APROVACAO, f"Aprovação pendente · {r['codigo']}",
+                         f"O proprietário confirmou {rotulo} {exibir(campo, r.get('valor_anterior'))}; o Vista tem {exibir(campo, r.get('valor_proposto'))}.",
+                         _metadata(f"/imoveis/{r['codigo']}", r["codigo"]))
+    if len(linhas) > maximo:
+        total += _avisar(core, org_id, KIND_APROVACAO, "Aprovações pendentes", f"Mais {len(linhas) - maximo} aprovações de imóveis aguardam decisão.", _metadata("/imoveis"))
+    return total
+
+
 # ── resolving (a human decides) ─────────────────────────────────────────────
 class ResolucaoInvalida(ValueError):
     """`valor` missing/invalid for the chosen escolha (422)."""
@@ -707,9 +980,39 @@ def listar_do_imovel(db: Any, core: Any, org_id: Any, codigo: str) -> dict:
     return {"items": [para_api(r, nomes) for r in rows]}
 
 
-def resolver(db: Any, core: Any, org_id: Any, codigo: str, conflito_id: Any, escolha: str, valor: Any, user_id: Any) -> dict:
-    """A human decides one pending divergence. 'vista' writes Vista's value into our overlay (or clears our override), 'nosso'
-    keeps ours and records the decision (the same pair never alerts again), 'manual' types a third value. First decision wins."""
+#: `empurrar(codigo, campo, valor, conversa) -> (reason, nota)`: sends our value to Vista (with its note) when the org switch is on and the
+#: PUT is permitted; `(None, line)` = sent, else a reason (`escrita_desligada`, `sem_permissao`, `campo_nao_enviavel`, a failure's class name).
+Empurrar = Callable[[str, str, Any, Optional[dict]], tuple[Optional[str], Optional[str]]]
+
+
+def _historico_decisao(db: Any, org_id: Any, row: dict, user_id: Any, *, detalhe: str, enviado: Optional[str], erro: Optional[str]) -> None:
+    """The `aprovacao_decidida` row (+ `enviado_ao_vista` / `envio_vista_falhou` when a send was attempted). A failed history write is
+    logged at ERROR: the decision itself is already stored."""
+    n = row.get("notas") or {}
+    conversa = link_conversa((n.get("nosso") or {}).get("conversa"))
+    campo, codigo = row["campo"], row["codigo"]
+    linhas = []
+    if enviado is not None:
+        linhas.append(hist.montar_linha(org_id, codigo, origem="usuario", acao="enviado_ao_vista", campo=campo, anterior=row.get("valor_proposto"),
+                                        novo=row.get("valor_anterior"), ator=user_id, conversa=conversa, detalhe=enviado))
+    if erro is not None:
+        linhas.append(hist.montar_linha(org_id, codigo, origem="usuario", acao="envio_vista_falhou", campo=campo, anterior=row.get("valor_proposto"),
+                                        novo=row.get("valor_anterior"), ator=user_id, conversa=conversa, detalhe=erro))
+    linhas.append(hist.montar_linha(org_id, codigo, origem="usuario", acao="aprovacao_decidida", campo=campo, anterior=row.get("valor_proposto"),
+                                    novo=row.get("valor_anterior"), ator=user_id, conversa=conversa, conflito_id=row["id"], detalhe=detalhe))
+    try:
+        hist.registrar_varias(db, linhas)
+    except Exception as exc:
+        logger.error("vista sync: the approval decision of %s/%s could not be written to the history (%s)", codigo, campo, type(exc).__name__)
+
+
+def resolver(
+    db: Any, core: Any, org_id: Any, codigo: str, conflito_id: Any, escolha: str, valor: Any, user_id: Any, empurrar: Optional[Empurrar] = None,
+) -> dict:
+    """A person decides one pending approval. `aprovar` = our (owner-confirmed) value is right: pushed to Vista through `empurrar` when
+    the switch is on and the PUT is permitted, else recorded as "atualizar manualmente no Vista" (the link stays). `recusar` = keep
+    Vista (already applied for an owner value; for an older overlay row it is written into our layer now). The legacy `vista | nosso |
+    manual` choices of the first version still resolve rows opened by it. Every decision writes `aprovacao_decidida`. First decision wins."""
     rows = (db.table(T_CONFLITOS).select("*").eq("org_id", str(org_id)).in_("codigo", sorted({codigo, codigo.upper()}))
             .eq("id", str(conflito_id)).eq("origem_proposto", ORIGEM).limit(1).execute().data or [])
     if not rows:
@@ -718,24 +1021,42 @@ def resolver(db: Any, core: Any, org_id: Any, codigo: str, conflito_id: Any, esc
     if row.get("status") != "pendente":
         raise ResolucaoImpossivel("Esta divergência já foi decidida.")
     agora = datetime.now(timezone.utc).isoformat()
-    if escolha == "vista":
+    enviado = erro = None
+    if escolha == "aprovar":
+        conversa_link = link_conversa((((row.get("notas") or {}).get("nosso") or {}).get("conversa")))
+        motivo_envio, nota = empurrar(row["codigo"], row["campo"], row["valor_anterior"], conversa_link) if empurrar is not None else ("escrita_desligada", None)
+        if motivo_envio is None:
+            enviado = nota  # the note line written into Vista
+            detalhe = "Aprovado e enviado ao Vista."
+        else:
+            if motivo_envio not in ("escrita_desligada", "sem_permissao", "campo_nao_enviavel", "permissao_desconhecida"):
+                erro = f"Não foi possível enviar ao Vista ({motivo_envio})."
+            detalhe = "Aprovado — atualizar manualmente no Vista" + (f" ({motivo_envio})." if motivo_envio != "escrita_desligada" else ".")
+        status, motivo = "aceito", "aprovar"
+    elif escolha == "recusar":
+        if row.get("origem_anterior") in (O_CAPTACAO, O_DADOS):
+            _escrever_nosso(db, org_id, row, row["valor_proposto"], user_id, limpar=row.get("origem_anterior") == O_DADOS)
+        status, motivo, detalhe = "rejeitado", "recusar", "Mantido o valor do Vista."
+    elif escolha == "vista":
         _escrever_nosso(db, org_id, row, row["valor_proposto"], user_id, limpar=row.get("origem_anterior") in (O_DADOS, O_PROPRIETARIO))
-        status, motivo = "aceito", "vista"
+        status, motivo, detalhe = "aceito", "vista", "Mantido o valor do Vista."
     elif escolha == "manual":
         tipado = _valor_manual(row["campo"], valor)
         _escrever_nosso(db, org_id, row, tipado, user_id, limpar=False)
-        status, motivo = "aceito", f"manual:{tipado}"
+        status, motivo, detalhe = "aceito", f"manual:{tipado}", f"Valor digitado: {tipado}."
     else:
-        status, motivo = "rejeitado", "nosso"
+        status, motivo, detalhe = "rejeitado", "nosso", "Mantido o nosso valor."
     db.table(T_CONFLITOS).update({"status": status, "decidido_por": str(user_id) if user_id else None, "decidido_em": agora, "motivo_resolucao": motivo}).eq(
         "id", row["id"]).execute()
     logger.info("audit: vista_divergencia resolvida org=%s codigo=%s campo=%s escolha=%s ator=%s", org_id, row["codigo"], row["campo"], escolha, user_id)
+    _historico_decisao(db, org_id, row, user_id, detalhe=detalhe, enviado=enviado, erro=erro)
     atualizada = {**row, "status": status, "decidido_por": str(user_id) if user_id else None, "decidido_em": agora, "motivo_resolucao": motivo}
     por = (((row.get("notas") or {}).get("nosso") or {}).get("por"))
     return para_api(atualizada, _nomes(core, org_id, {str(user_id) if user_id else "", str(por) if por else ""}))
 
 
 __all__ = [
-    "Divergencia", "Execucao", "ORIGEM", "comparar", "config", "enviar_digest", "iguais", "iniciar", "montar_notas", "normalizar",
-    "enviador_padrao", "ResolucaoImpossivel", "ResolucaoInvalida", "listar_do_imovel", "para_api", "registrar", "resolver", "salvar_config", "sanitizar_para_staff", "telefone_do_usuario", "texto_digest", "verificar",
+    "Divergencia", "Execucao", "ORIGEM", "ResolucaoImpossivel", "ResolucaoInvalida", "capturar_antes", "comparar", "config", "enviar_ao_vista",
+    "escrita_disponivel", "iguais", "iniciar", "link_conversa", "listar_do_imovel", "montar_notas", "normalizar", "notificar_aprovacoes",
+    "notificar_sincronizado", "para_api", "registrar", "resolver", "salvar_config", "sanitizar_para_staff", "verificar",
 ]

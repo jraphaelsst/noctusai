@@ -49,11 +49,14 @@ from .client import (
     VistaNotFound,
     VistaPermissionDenied,
     _assert_detalhes_describes_record,
+    unwrap_keyed_record,
     validate_fotos_payload,
+    validate_imovel_update_payload,
     validate_lead_payload,
     validate_listarcampos_family,
     validate_negocios_scope,
 )
+from .observacoes import campo_obs, compor_campos, exigir_motivo
 
 
 class FakeVistaClient:
@@ -80,6 +83,8 @@ class FakeVistaClient:
         self._configured = configured
         self._base_url = base_url.rstrip("/")
         self.calls: list[tuple[str, list[str]]] = []
+        #: every `atualizar_imovel` that would have reached Vista: `(codigo, campos)`.
+        self.updates: list[tuple[str, dict[str, Any]]] = []
 
     # ─── Parity properties (mirror VistaClient) ─────────────────────────
 
@@ -271,11 +276,33 @@ class FakeVistaClient:
         validate_fotos_payload(codigo, fotos)
         return self._resolve("/imoveis/fotos", ["cadastro", "imovel", "key"])
 
+    async def atualizar_imovel(
+        self, codigo: str, campos: Mapping[str, Any], *, motivo: str, autor: str, canal: str = "NoctusAI", fonte: str = "NoctusAI",
+        finalidade: str = "venda", conversa_url: Optional[str] = None, rotulos: Optional[Mapping[str, str]] = None,
+    ) -> str:
+        # Same validators + same note composition as the Real; the write is RECORDED (`self.updates`), never sent anywhere. The CURRENT
+        # record is read from the seeded `/imoveis/detalhes` response (a seeded error there => nothing is written, like the Real).
+        validate_imovel_update_payload(codigo, campos)
+        exigir_motivo(motivo, autor)
+        obs = campo_obs(finalidade)
+        lido = await self.detalhes_imovel(codigo, fields=["Codigo", obs, *campos.keys()])
+        atual = unwrap_keyed_record(lido.data, codigo) or {}
+        a_enviar, linha = compor_campos(
+            campos, atual, finalidade=finalidade, fonte=fonte, canal=canal, motivo=motivo, autor=autor, conversa_url=conversa_url, rotulos=rotulos)
+        escrita = self._errors.get("PUT /imoveis/detalhes")  # seed THIS to fail only the write (a read error stops before it)
+        if escrita is not None:
+            raise escrita
+        self._resolve("/imoveis/detalhes", ["cadastro", "imovel", "key"])
+        self.updates.append((codigo, a_enviar))
+        return linha
+
     async def enviar_lead(self, lead: Mapping[str, Any]) -> VistaCallResult:
         validate_lead_payload(lead)
         return self._resolve("/lead", ["cadastro", "key"])
 
-    async def probe_write_permission(self, endpoint: str) -> dict:
+    async def probe_write_permission(
+        self, endpoint: str, method: str = "POST", extra_params: Optional[Mapping[str, Any]] = None
+    ) -> dict:
         """Verdict from the seeded errors: a `VistaPermissionDenied` seeded
         for `endpoint` reads as denied, anything unseeded as permitted."""
         if not self._configured:
