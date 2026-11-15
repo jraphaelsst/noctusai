@@ -329,6 +329,17 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
   carries its last error line. `request run_scoped=true` is never ignored: it runs this check on the branch head, files with the `ci-parity:<id>`
   it mints (red -> `needs_resync` via item 5; an UNMEASURED run -> `needs_resync` naming the reason) and refuses what it cannot honour
   (no runner configured, a multi-branch train: one record judges ONE head).
+- *Filing runs the scoped check BY DEFAULT.* A single-branch `request` with no `verdict_ref` runs the check itself (a verdict-less
+  filing was 65 of 91 refusals): under a wall-clock deadline (`NOCTUS_STEWARD_SCOPED_DEADLINE_S`, default 3600) with a progress line
+  every minute on stderr. A crash, an overrun or an UNMEASURED run mints no record and the request is REFUSED (`ok:false`, CLI exit 1,
+  failing `scoped_green`) - never filed on nothing.
+- *Head semantics.* `deliverable` pins a head only when the caller passes `head_sha` explicitly; otherwise it judges the branch's CURRENT
+  tip. "head moved since filing" is a `notes[]` entry, not a failure, and a stored `verdict_ref` is reused only when its record judged
+  this very tip.
+- *Refusals are counted by class.* `deliverable()` records one gate event per failing item (`gate=deliverable`, `source`=the refusal-class
+  key when `gate_alignment.refusal_class` exists); the verdict record stores `failing_items` + `failing_tests`. `request` /
+  `deliverable` return `recurrence[]` (`gate_alignment.refusal_recurrence`, 14 days) and print "class X has recurred N times across S
+  sessions with no open fix branch" - both hooks are optional until the gate-alignment slice lands.
 
 ### Enqueue, cleanup and the pre-push hook
 

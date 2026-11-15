@@ -70,6 +70,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -146,6 +147,90 @@ def default_ttl(env: dict[str, str] | None = None) -> int:
         return max(60, int(e.get("NOCTUS_STEWARD_TTL_S") or DEFAULT_TTL_S))
     except ValueError:
         return DEFAULT_TTL_S
+
+
+SCOPED_DEADLINE_ENV = "NOCTUS_STEWARD_SCOPED_DEADLINE_S"
+SCOPED_DEADLINE_DEFAULT_S = 3600.0
+SCOPED_PROGRESS_EVERY_S = 60.0
+
+
+def _stderr_progress(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
+
+
+def _scoped_deadline_s(env: dict[str, str] | None = None) -> float:
+    raw = (env if env is not None else os.environ).get(SCOPED_DEADLINE_ENV, "")
+    try:
+        v = float(raw)
+    except ValueError:
+        return SCOPED_DEADLINE_DEFAULT_S
+    return v if v > 0 else SCOPED_DEADLINE_DEFAULT_S
+
+
+def _refusal_telemetry():
+    """The gate_alignment module when importable (the steward hook loads this file by path with only the stdlib
+    on sys.path), else None. Telemetry and the recurrence hook never change a verdict."""
+    try:
+        from tools.noctus.dev import gate_alignment as _ga
+        return _ga
+    except Exception:  # noqa: BLE001 - optional layer
+        return None
+
+
+def _failing_keys(items: list[dict[str, Any]], ga: Any = None) -> dict[str, str]:
+    """{refusal-class key: item name} for every failing delivery-contract item (needs `gate_alignment.refusal_class`)."""
+    ga = ga if ga is not None else _refusal_telemetry()
+    build = getattr(ga, "refusal_class", None)
+    if build is None:
+        return {}
+    out: dict[str, str] = {}
+    for i in items:
+        if i.get("ok"):
+            continue
+        with contextlib.suppress(Exception):
+            out[str(build("deliverable", i.get("name") or "", str(i.get("detail") or "")))] = i.get("name") or ""
+    return out
+
+
+def refusal_recurrence_report(items: list[dict[str, Any]], *, ga: Any = None,
+                              say: Callable[[str], None] | None = None) -> list[dict[str, Any]]:
+    """`recurrence[]` for the failing items (14-day window) when slice C's `refusal_recurrence` exists, else [].
+    Prints one line per class that keeps recurring with no open fix. Never raises."""
+    ga = ga if ga is not None else _refusal_telemetry()
+    fn = getattr(ga, "refusal_recurrence", None)
+    if fn is None:
+        return []
+    try:
+        keys = list(_failing_keys(items, ga))
+        rows = list(fn(keys, window_days=14)) if keys else []
+    except Exception:  # noqa: BLE001
+        return []
+    say = say or _stderr_progress
+    for r in rows:
+        if r.get("open_fix") is None and int(r.get("n_14d") or 0) >= 2:
+            say(f"class {r.get('class')} has recurred {r.get('n_14d')} times across {r.get('sessions')} sessions "
+                "with no open fix branch")
+    return rows
+
+
+def _record_failing_items(branch: str, items: list[dict[str, Any]], ga: Any = None) -> None:
+    """One gate event per failing delivery-contract item (so refusals are counted by class). Never raises."""
+    ga = ga if ga is not None else _refusal_telemetry()
+    rec = getattr(ga, "record_event", None)
+    if rec is None:
+        return
+    keys = {v: k for k, v in _failing_keys(items, ga).items()}
+    for i in items:
+        if i.get("ok"):
+            continue
+        key = keys.get(i.get("name") or "", "")
+        kw: dict[str, Any] = {"kind": "release_steward", "target": branch, "source": key,
+                              "reason": f"{i.get('name')}: {str(i.get('detail') or '')[:200]}"}
+        with contextlib.suppress(Exception):
+            try:
+                rec("deliverable", "deny", class_key=key, **kw)  # slice C: the exact refusal_class key
+            except TypeError:  # record_event without class_key yet: `source` still carries it
+                rec("deliverable", "deny", **kw)
 
 
 def _err(msg: str) -> dict[str, Any]:
@@ -296,8 +381,11 @@ class StewardStore:
                  deliverable_check: Callable[[str, str | None, str | None], dict[str, Any]] | None = None,
                  resolve_branch: Callable[[str], dict[str, Any]] | None = None,
                  scoped_check: Callable[[str, str], dict[str, Any]] | None = None,
-                 repo_cwd: str | Path | None = None) -> None:
+                 repo_cwd: str | Path | None = None, scoped_deadline_s: float | None = None,
+                 progress: Callable[[str], None] | None = None) -> None:
         self.root = Path(root) if root is not None else default_root()
+        self.scoped_deadline_s = scoped_deadline_s if scoped_deadline_s is not None else _scoped_deadline_s()
+        self.progress = progress if progress is not None else _stderr_progress
         # Same posture as inline_gate/landed_check: production runs the real delivery-contract preflight
         # (`deliverable`) at filing; a store built on an explicit root (tests) skips it unless it injects one.
         self._deliverable_check = deliverable_check if deliverable_check is not None else (
@@ -620,7 +708,11 @@ class StewardStore:
                                 "enqueues the right commit")
         contract: dict[str, Any] | None = None
         scoped_run: dict[str, Any] | None = None
-        if run_scoped:
+        # No verdict handed over => RUN the scoped check now (by construction: a verdict-less filing used to be refused
+        # after the fact, 65/91 refusals). Only possible for one branch with a runner configured.
+        auto_scoped = (not run_scoped and not (verdict_ref or "").strip() and self._scoped_check is not None
+                       and not (branches and len(branches) > 1))
+        if run_scoped or auto_scoped:
             # NEVER silently ignored: run it, or refuse with the reason.
             if branches and len(branches) > 1:
                 return _err("run_scoped=true is per branch: file each branch of a split delivery with its own run_scoped request "
@@ -631,7 +723,7 @@ class StewardStore:
             if not full_head:
                 return _err(f"run_scoped=true: cannot resolve {branch}'s head to judge (is the branch local?)")
             head_sha = full_head
-            scoped_run = self._scoped_check(branch, full_head)
+            scoped_run = self._run_scoped(branch, full_head)
             if scoped_run.get("verdict_ref"):
                 verdict_ref = scoped_run["verdict_ref"]  # green OR red: item 5 resolves the record and judges it
             else:  # UNMEASURED run: no record was minted - needs_resync naming item 5 with the reason
@@ -642,25 +734,26 @@ class StewardStore:
                 contract = self._deliverable_check(b, head_sha if b == branch else None, verdict_ref)
                 if not contract.get("ok"):
                     break
-            if contract is not None and not contract.get("ok"):
-                requester = {"session_id": session_id, "name": name or _short(session_id)}
-                with self._locked("ship-requests"):
-                    self._append_event({
-                        "ts": _iso(self.clock()), "event": "request_refused", "slug": slug, "branch": branch,
-                        "head_sha": contract.get("head_sha") or head_sha, "products": products or [],
-                        "migrations": bool(migrations), "notes": notes, "verdict_ref": verdict_ref,
-                        "requester": requester, "branches": branches,
-                        "failing": contract.get("failing") or [],
-                        "items": [{k: i[k] for k in ("n", "name", "ok", "detail")} for i in contract.get("items", [])],
-                    })
-                    refused = self.requests()[slug]
-                self.audit("request_refused", slug=slug, by=session_id, failing=contract.get("failing"))
-                return {"ok": False, "status": "needs_resync", "request": refused, "deliverable": contract,
-                        "failing": contract.get("failing") or [],
-                        "error": f"{slug}: {deliverable_refusal(contract)}",
-                        "next": ("fix the failing item(s) on the branch (you are its steward: the guardian never edits it), "
-                                 "push, and re-run release_steward action=request. release_steward action=deliverable "
-                                 f"slug={slug} re-checks read-only without filing.")}
+        if contract is not None and not contract.get("ok"):
+            requester = {"session_id": session_id, "name": name or _short(session_id)}
+            with self._locked("ship-requests"):
+                self._append_event({
+                    "ts": _iso(self.clock()), "event": "request_refused", "slug": slug, "branch": branch,
+                    "head_sha": contract.get("head_sha") or head_sha, "products": products or [],
+                    "migrations": bool(migrations), "notes": notes, "verdict_ref": verdict_ref,
+                    "requester": requester, "branches": branches,
+                    "failing": contract.get("failing") or [],
+                    "items": [{k: i[k] for k in ("n", "name", "ok", "detail")} for i in contract.get("items", [])],
+                })
+                refused = self.requests()[slug]
+            self.audit("request_refused", slug=slug, by=session_id, failing=contract.get("failing"))
+            return {"ok": False, "status": "needs_resync", "request": refused, "deliverable": contract,
+                    "failing": contract.get("failing") or [],
+                    "recurrence": refusal_recurrence_report(contract.get("items") or []),
+                    "error": f"{slug}: {deliverable_refusal(contract)}",
+                    "next": ("fix the failing item(s) on the branch (you are its steward: the guardian never edits it), "
+                             "push, and re-run release_steward action=request. release_steward action=deliverable "
+                             f"slug={slug} re-checks read-only without filing.")}
         with self._locked("ship-requests"):
             before = self.requests().get(slug)
             self._append_event({
@@ -749,6 +842,40 @@ class StewardStore:
         except Exception as exc:  # noqa: BLE001 - fail closed, say why
             return False, f"could not verify ({type(exc).__name__}: {str(exc)[:120]})"
 
+    def _run_scoped(self, branch: str, head: str) -> dict[str, Any]:
+        """Run the injected scoped check under a WALL-CLOCK deadline with a progress line every minute. A runner that
+        raises or overruns yields an UNMEASURED result without a verdict_ref (the request is then refused loudly,
+        never filed on nothing). The runner's own subprocess stages carry their per-stage budgets."""
+        out: list[dict[str, Any]] = []
+        err: list[BaseException] = []
+
+        def work() -> None:
+            try:
+                out.append(self._scoped_check(branch, head))  # type: ignore[misc]
+            except BaseException as exc:  # noqa: BLE001 - surfaced as UNMEASURED below
+                err.append(exc)
+
+        t = threading.Thread(target=work, name=f"scoped-{branch}", daemon=True)
+        started = time.monotonic()
+        self.progress(f"scoped check for {branch}@{head[:9]} started (CI-blocking keepers + real-tree tests + touched suites; "
+                      f"deadline {int(self.scoped_deadline_s)}s)")
+        t.start()
+        while t.is_alive():
+            left = self.scoped_deadline_s - (time.monotonic() - started)
+            if left <= 0:
+                return {"ok": False, "timed_out": True,
+                        "detail": f"UNMEASURED: no verdict within the {int(self.scoped_deadline_s)}s wall-clock deadline "
+                                  f"({SCOPED_DEADLINE_ENV} overrides); nothing was filed"}
+            t.join(min(SCOPED_PROGRESS_EVERY_S, left))
+            if t.is_alive():
+                self.progress(f"scoped check for {branch} still running ({int(time.monotonic() - started)}s elapsed)")
+        if err:
+            return {"ok": False, "detail": f"UNMEASURED: scoped check crashed: {type(err[0]).__name__}: {str(err[0])[:200]}"}
+        res = out[0] if out else {"ok": False, "detail": "UNMEASURED: scoped check returned nothing"}
+        self.progress(f"scoped check for {branch} finished in {int(time.monotonic() - started)}s "
+                      f"({'green' if res.get('ok') else 'not green'})")
+        return res
+
     def check_deliverable(self, slug: str | None = None, branch: str | None = None, head_sha: str | None = None,
                           verdict_ref: str | None = None, run_scoped: bool = False) -> dict[str, Any]:
         """READ-ONLY, open to every session: run the delivery contract on a branch without filing anything.
@@ -765,15 +892,32 @@ class StewardStore:
             branch = res.get("branch")
         if not branch:
             return _err("deliverable needs slug=<slug> or branch=<branch>")
-        head_sha = head_sha or (req or {}).get("head_sha")
-        verdict_ref = verdict_ref or (req or {}).get("verdict_ref")
+        # Head is pinned ONLY when the caller passes it. Otherwise judge the branch's CURRENT tip: a stored request head
+        # that the branch has since moved past is a NOTE ("head moved since filing"), never a failure - and a stored
+        # verdict is reused only when it judged this very tip.
+        notes: list[str] = []
+        tip = self.resolve_head(branch) if self.resolve_head else None
+        stored_head = (req or {}).get("head_sha")
+        if stored_head and tip and not tip.startswith(stored_head) and not stored_head.startswith(tip):
+            notes.append(f"head moved since filing: the request recorded {stored_head[:9]}, {branch} is now at {tip[:9]} "
+                         "(judging the current tip)")
+        if not verdict_ref:
+            stored_ref = ((req or {}).get("verdict_ref") or "").strip()
+            m = _VERDICT_REF_RE.match(stored_ref)
+            rec = read_verdict(self.root / VERDICT_STORE_NAME, m.group(1)) if m else None
+            if stored_ref and tip and rec is not None and rec.get("head") != tip:
+                notes.append(f"stored verdict {stored_ref} judged {str(rec.get('head'))[:9]}, not the current tip "
+                             f"{tip[:9]}: not reused (re-run run_scoped=true)")
+            elif stored_ref:
+                verdict_ref = stored_ref
         if run_scoped:  # minutes: judge the head the way CI does (CI-blocking keepers + real-tree tests, env-scrubbed)
             res = deliverable(branch, head_sha=head_sha, verdict_ref=verdict_ref, scoped_check=export_ci_parity_check())
         else:
             check = self._deliverable_check or (lambda b, h, v: deliverable(b, head_sha=h, verdict_ref=v))
             res = check(branch, head_sha, verdict_ref)
+        recurrence = refusal_recurrence_report(res.get("items") or []) if not res.get("ok") else []
         return {"ok": True, "status": res.get("verdict", "needs_resync"), "deliverable": res,
-                "failing": res.get("failing") or [],
+                "failing": res.get("failing") or [], "notes": notes, "recurrence": recurrence,
                 "next": ("deliverable: the guardian can enqueue (pure push)" if res.get("ok")
                          else "needs_resync: the branch steward fixes the failing item(s) on the branch, pushes, re-requests")}
 
@@ -2275,6 +2419,8 @@ def verdict_report(store: str | Path | None, events: list[dict[str, Any]], *, si
             "false_green_rate": round(len(false_green) / len(green), 3) if green else None,
             "zero_suite_green": len(zero), "zero_suite_green_ejected": len(zero_bad),
             "zero_suite_false_green_rate": round(len(zero_bad) / len(zero), 3) if zero else None,
+            "red_without_test_ids": [{"id": r.get("id"), "head": str(r.get("head"))[:12], "stage_errors": r["stage_errors"]}
+                                     for r in recs.values() if r.get("stage_errors")][-5:],
             "legacy_verdicts_without_suites_ran": sum(1 for r in recs.values() if "suites_ran" not in r),
             "by_requester": dict(sorted(per_req.items(), key=lambda kv: -kv[1]["ejected"])), "kb": KB_POINTER}
 
@@ -2362,6 +2508,28 @@ def meaningful_tail(text: str | None, max_lines: int = 20) -> str:
     lines = [_ANSI_RE.sub("", ln).rstrip() for ln in (text or "").splitlines()]
     keep = [ln for ln in lines if ln.strip() and not _NOISE_RE.search(ln)]
     return "\n".join(keep[-max_lines:])
+
+
+STAGE_TAIL_LINES = 60
+
+
+def stage_error_record(label: str, r: Any, export: str) -> dict[str, Any]:
+    """What a red stage that names NO failing test must store so the red can be diagnosed from the verdict alone: its
+    exit code (pytest 2 = collection/usage error, 4 = bad path, 5 = nothing collected), the last STAGE_TAIL_LINES lines of
+    its output (stdout then stderr, ANSI stripped) and the hermetic export path it ran in (removed after the run)."""
+    text = _ANSI_RE.sub("", (getattr(r, "stdout", "") or "") + "\n" + (getattr(r, "stderr", "") or ""))
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    return {"stage": label, "rc": getattr(r, "returncode", None), "export": str(export),
+            "tail": "\n".join(lines[-STAGE_TAIL_LINES:])}
+
+
+_MISSING_MOD_RE = re.compile(r"No module named '([\w.]+)'|toolkit deps \((\w+)\) not importable")
+
+
+def harness_missing_modules(text: str | None) -> set[str]:
+    """Module names an interpreter could not import, read from a stage's output: the signature of an invalid harness
+    (the interpreter is not the toolkit venv), which must read UNMEASURED, never red."""
+    return {(a or b).split(".")[0] for a, b in _MISSING_MOD_RE.findall(text or "")}
 
 
 def _last_line(text: str | None) -> str:
@@ -2468,6 +2636,10 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             flags, prime = ci_blocking_flags(text), ci_prime_flags(text)
             tool_dir = Path(tree) / "mcp" / "noctusai"
             failed: list[str] = []
+            failed_items: list[str] = []   # keeper flags / suite labels that went red (recorded on the verdict)
+            failed_tests: list[str] = []   # the failing pytest node ids
+            missing_mods: set[str] = set()   # modules the INTERPRETER lacks: a harness problem, never a red on the code
+            stage_errors: list[dict[str, Any]] = []   # a red stage that named NO failing test: rc + output tail + export
 
             def run(gate: str, argv: list[str], where: Path,
                     extra: tuple[tuple[str, str], ...] = ()) -> subprocess.CompletedProcess:
@@ -2483,7 +2655,12 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 raise _CiParityTimeout(gate, budgets)
 
             def pytest_failures(r: subprocess.CompletedProcess, label: str) -> list[str]:
-                names = re.findall(r"^(?:FAILED|ERROR) (\S+)", r.stdout or "", flags=re.M)  # an ERROR (fixture/collection) is a red too, and is NAMED
+                names = re.findall(r"^(?:FAILED|ERROR) (\S+)", r.stdout or "", flags=re.M)  # ERROR = setup/collection error
+                failed_items.append(label)
+                failed_tests.extend(names)
+                missing_mods.update(harness_missing_modules((r.stdout or "") + chr(10) + (r.stderr or "")))
+                if not names:
+                    stage_errors.append(stage_error_record(label, r, tree))
                 return [f"{label} {n}" for n in names] or [f"{label} pytest exit {r.returncode}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}"]
 
             for f in prime:
@@ -2495,6 +2672,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 r = run(f"ci_parity:keeper:{f}", [py, "mcp/noctusai/cli.py", f], Path(tree))
                 if r.returncode != 0:
                     failed.append(f"keeper {f}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}")
+                    failed_items.append(f)
             tests = ci_keeper_test_ids(tool_dir / "tests")
             n_executed = 0
             if tests:
@@ -2547,7 +2725,8 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             ran += "".join(f"; {w}" for w in warnings)
             telemetry = {"suites_ran": ran_suites, "tests_ran": n_executed, "diff_scope": diff_scope,
                          "skipped": skipped, "partial": bool(partial), "warnings": warnings, "merge_tree": mtree,
-                         "livetree_tests": len(live)}
+                         "livetree_tests": len(live), "failing_items": list(failed_items),
+                         "failing_tests": list(failed_tests), "stage_errors": list(stage_errors)}
             git = _subprocess_git(cwd)
             rc_t, head_tree, _e = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
             rc_b, wf_blob, _e = git("rev-parse", "--verify", "--quiet", f"{head}:{CI_WORKFLOW_REL}")
@@ -2556,6 +2735,11 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             ref = record_verdict(verdict_store, head=head, tree=head_tree.strip(), workflow_blob=wf_blob.strip(),
                                  interpreter=f"{py} {sys.version.split()[0]}", flags=flags, tests=tests, ok=not failed,
                                  telemetry=telemetry)
+            if failed and missing_mods:
+                return {"ok": False, "detail": f"UNMEASURED: the interpreter {py} lacks {sorted(missing_mods)}, so the red "
+                                               f"judges the SETUP, not the code (run through the toolkit venv: "
+                                               f"mcp/noctusai/.venv/bin/python, or install requirements.txt); {ran}",
+                        "failed": failed, "missing_modules": sorted(missing_mods), "verdict_ref": ref, **telemetry}
             if failed:
                 return {"ok": False, "detail": f"{ran}; RED: {', '.join(failed[:8])}", "failed": failed,
                         "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref, **telemetry}
@@ -2761,6 +2945,8 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
         items.append(_unmeasured(5, DELIVERABLE_ITEMS[4], exc))
 
     failing = [i["name"] for i in items if not i["ok"]]
+    if failing:
+        _record_failing_items(branch, items)
     return {**out, "ok": not failing, "verdict": "deliverable" if not failing else "needs_resync",
             "items": items, "failing": failing, "kb": KB_POINTER}
 

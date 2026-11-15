@@ -1157,3 +1157,172 @@ class TestSessionState:
         alive[77], alive[99] = False, True
         rs.run_action("mine", PEER, store=store, claude_pid=99)
         assert store.roles()["roles"]["agents"]["claude_pid"] == 99
+
+
+# -- filing path: scoped by default, head semantics, telemetry, recurrence -----------------
+
+class _Ga:
+    """Fake gate_alignment seam: records events, answers recurrence."""
+    def __init__(self, rows=None):
+        self.events, self.rows = [], rows or []
+
+    def refusal_class(self, gate, item, detail):
+        return f"{gate}:{item}"
+
+    def record_event(self, gate, outcome, class_key="", **kw):
+        self.events.append((gate, outcome, {**kw, "class_key": class_key}))
+
+    def refusal_recurrence(self, keys, *, window_days=14):
+        self.asked = (keys, window_days)
+        return [r for r in self.rows if r["class"] in keys]
+
+
+def _scoped_store(tmp_path, clock, scoped, **kw):
+    return rs.StewardStore(tmp_path, clock=clock, resolve_head=lambda b: "a" * 40, default_ttl_s=7200,
+                           scoped_check=scoped, deliverable_check=kw.pop("deliverable_check", None),
+                           progress=lambda m: None, **kw)
+
+
+def _ok_contract(branch, head, ref):
+    return {"ok": True, "verdict": "deliverable", "head_sha": head, "failing": [],
+            "items": [{"n": 5, "name": "scoped_green", "ok": True, "detail": "x"}]}
+
+
+class TestFilingRunsScopedByDefault:
+    def test_verdictless_request_runs_the_scoped_check(self, tmp_path, clock):
+        calls = []
+
+        def scoped(branch, head):
+            calls.append((branch, head))
+            return {"ok": True, "detail": "green", "verdict_ref": "ci-parity:" + "b" * 32}
+
+        seen = []
+        s = _scoped_store(tmp_path, clock, scoped,
+                          deliverable_check=lambda b, h, v: (seen.append(v), _ok_contract(b, h, v))[1])
+        r = s.request(PEER, "alpha")
+        assert r["ok"] and calls == [("feat/alpha", "a" * 40)]
+        assert seen == ["ci-parity:" + "b" * 32] and r["scoped"]["ok"] is True
+
+    def test_a_handed_over_verdict_skips_the_run(self, tmp_path, clock):
+        calls = []
+        s = _scoped_store(tmp_path, clock, lambda b, h: calls.append(1) or {"ok": True},
+                          deliverable_check=_ok_contract)
+        assert s.request(PEER, "alpha", verdict_ref="ci-parity:" + "c" * 32)["ok"]
+        assert calls == []
+
+    def test_overrun_is_refused_loudly_and_nothing_is_filed(self, tmp_path, clock):
+        gate = threading.Event()
+        try:
+            s = _scoped_store(tmp_path, clock, lambda b, h: (gate.wait(5), {"ok": True})[1],
+                              deliverable_check=_ok_contract, scoped_deadline_s=0.2)
+            r = s.request(PEER, "alpha")
+        finally:
+            gate.set()
+        assert r["ok"] is False and r["status"] == "needs_resync" and "scoped_green" in r["failing"]
+        assert "deadline" in r["error"] and "alpha" not in s.requests() or s.requests()["alpha"]["status"] != "pending"
+
+    def test_a_crashing_runner_is_refused_not_filed(self, tmp_path, clock):
+        def boom(b, h):
+            raise RuntimeError("kaboom")
+        s = _scoped_store(tmp_path, clock, boom, deliverable_check=lambda b, h, v: {
+            "ok": False, "verdict": "needs_resync", "head_sha": h, "failing": ["scoped_green"],
+            "items": [{"n": 5, "name": "scoped_green", "ok": False, "detail": "UNMEASURED"}]})
+        r = s.request(PEER, "alpha")
+        assert r["ok"] is False and r["status"] == "needs_resync"
+
+    def test_progress_lines_are_emitted(self, tmp_path, clock):
+        lines = []
+        s = rs.StewardStore(tmp_path, clock=clock, resolve_head=lambda b: "a" * 40, default_ttl_s=7200,
+                            scoped_check=lambda b, h: {"ok": True, "verdict_ref": "ci-parity:" + "d" * 32},
+                            deliverable_check=_ok_contract, progress=lines.append)
+        s.request(PEER, "alpha")
+        assert any("started" in x for x in lines) and any("finished" in x for x in lines)
+
+
+class TestHeadSemantics:
+    def _seed_request(self, tmp_path, clock, head, ref=None):
+        s = rs.StewardStore(tmp_path, clock=clock, resolve_head=lambda b: head, default_ttl_s=7200)
+        s.request(PEER, "alpha", head_sha="1" * 40, verdict_ref=ref)
+        return s
+
+    def test_stored_head_is_not_pinned_when_the_branch_moved(self, tmp_path, clock):
+        s = self._seed_request(tmp_path, clock, "2" * 40)
+        got = {}
+        s._deliverable_check = lambda b, h, v: (got.update(head=h), _ok_contract(b, h, v))[1]
+        r = s.check_deliverable("alpha")
+        assert got["head"] is None and r["status"] == "deliverable"
+        assert any("head moved since filing" in n for n in r["notes"])
+
+    def test_explicit_head_is_pinned(self, tmp_path, clock):
+        s = self._seed_request(tmp_path, clock, "2" * 40)
+        got = {}
+        s._deliverable_check = lambda b, h, v: (got.update(head=h), _ok_contract(b, h, v))[1]
+        s.check_deliverable("alpha", head_sha="3" * 40)
+        assert got["head"] == "3" * 40
+
+    def test_stored_verdict_of_another_head_is_not_reused(self, tmp_path, clock):
+        vstore = tmp_path / rs.VERDICT_STORE_NAME
+        ref = rs.record_verdict(vstore, head="1" * 40, tree="t", workflow_blob="w", interpreter="py", flags=[],
+                                tests=[], ok=True)
+        s = self._seed_request(tmp_path, clock, "2" * 40, ref=ref)
+        got = {}
+        s._deliverable_check = lambda b, h, v: (got.update(ref=v), _ok_contract(b, h, v))[1]
+        r = s.check_deliverable("alpha")
+        assert got["ref"] is None and any("not reused" in n for n in r["notes"])
+
+    def test_same_head_keeps_the_stored_verdict(self, tmp_path, clock):
+        vstore = tmp_path / rs.VERDICT_STORE_NAME
+        ref = rs.record_verdict(vstore, head="2" * 40, tree="t", workflow_blob="w", interpreter="py", flags=[],
+                                tests=[], ok=True)
+        s = self._seed_request(tmp_path, clock, "2" * 40, ref=ref)
+        got = {}
+        s._deliverable_check = lambda b, h, v: (got.update(ref=v), _ok_contract(b, h, v))[1]
+        s.check_deliverable("alpha")
+        assert got["ref"] == ref
+
+
+class TestRefusalTelemetry:
+    def test_record_verdict_stores_failing_names(self, tmp_path):
+        ref = rs.record_verdict(tmp_path / "v.ndjson", head="1" * 40, tree="t", workflow_blob="w", interpreter="py",
+                                flags=["--check-x"], tests=["t"], ok=False,
+                                telemetry={"failing_items": ["--check-x"], "failing_tests": ["tests/test_a.py::test_b"]})
+        rec = rs.read_verdict(tmp_path / "v.ndjson", ref.split(":")[1])
+        assert rec["failing_items"] == ["--check-x"] and rec["failing_tests"] == ["tests/test_a.py::test_b"]
+
+    def test_one_event_per_failing_item(self):
+        ga = _Ga()
+        items = [{"n": 1, "name": "head_pushed_clean", "ok": False, "detail": "unpushed"},
+                 {"n": 2, "name": "merge_buildable", "ok": True, "detail": ""},
+                 {"n": 4, "name": "derived_current", "ok": False, "detail": "kb-counts"}]
+        rs._record_failing_items("feat/x", items, ga)
+        assert [e[2]["source"] for e in ga.events] == ["deliverable:head_pushed_clean", "deliverable:derived_current"]
+        assert all(e[1] == "deny" and e[2]["target"] == "feat/x" for e in ga.events)
+        assert [e[2]["class_key"] for e in ga.events] == ["deliverable:head_pushed_clean", "deliverable:derived_current"]
+
+    def test_deliverable_logs_failing_items_to_the_guard_log(self):
+        def no_git(*a, **k):
+            return 1, "", "no git"
+        res = rs.deliverable("feat/nope", git=no_git, fetch=False)
+        assert not res["ok"]
+        log = Path(os.environ["NOCTUS_GUARD_EVENT_LOG"])
+        rows = [json.loads(x) for x in log.read_text().splitlines()]
+        assert {r.get("reason", "").split(":")[0] for r in rows if r.get("guard") == "deliverable"} >= {"head_pushed_clean"}
+
+    def test_recurrence_reported_when_the_hook_exists(self):
+        ga = _Ga([{"class": "deliverable:derived_current", "n_14d": 4, "sessions": 3, "open_fix": None}])
+        said = []
+        items = [{"n": 4, "name": "derived_current", "ok": False, "detail": "kb-counts"}]
+        rows = rs.refusal_recurrence_report(items, ga=ga, say=said.append)
+        assert rows[0]["n_14d"] == 4 and ga.asked == (["deliverable:derived_current"], 14)
+        assert said == ["class deliverable:derived_current has recurred 4 times across 3 sessions with no open fix branch"]
+
+    def test_recurrence_silent_when_an_open_fix_exists(self):
+        ga = _Ga([{"class": "deliverable:derived_current", "n_14d": 4, "sessions": 3, "open_fix": "feat/fix"}])
+        said = []
+        rs.refusal_recurrence_report([{"n": 4, "name": "derived_current", "ok": False, "detail": ""}], ga=ga, say=said.append)
+        assert said == []
+
+    def test_recurrence_absent_hook_is_a_noop(self):
+        class Bare:
+            pass
+        assert rs.refusal_recurrence_report([{"n": 1, "name": "x", "ok": False, "detail": ""}], ga=Bare()) == []
