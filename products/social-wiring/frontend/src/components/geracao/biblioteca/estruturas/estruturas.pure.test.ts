@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import { bloco, detalheAdmin, membro } from "@/test/estruturasFixtures";
-import { codigoDoErro, dadoDoErro, ehConflitoDeVersao, mensagemEstruturas } from "./erros";
+import { codigoDoErro, dadoDoErro, ehConflitoDeVersao, ehRascunhoIncompleto, mensagemEstruturas } from "./erros";
 import { contarFiltros, FILTROS_ESTRUTURAS_VAZIOS, filtrosDeParams, filtrosParaParams } from "./filtros";
 import { normalizarLinkInstagram } from "./link";
 import {
@@ -130,6 +130,22 @@ describe("erros", () => {
     expect(dadoDoErro(e, "faltando")).toEqual(["formato"]);
     expect(ehConflitoDeVersao(apiErr("versao_desatualizada"))).toBe(true);
     expect(ehConflitoDeVersao(null)).toBe(false);
+  });
+  it("maps the codes EST-1 answers with beyond the §5 catalogue (each a pt-BR sentence)", () => {
+    for (const c of ["estrutura_incompleta", "formula_invalida", "blocos_invalidos", "campo_desconhecido", "tipo_invalido", "tipo_nome_duplicado", "estrutura_ja_importada", "viral_ja_tem_rascunho"]) {
+      const m = mensagemEstruturas(apiErr(c), "fallback");
+      expect(m).not.toBe("fallback");
+      expect(m).not.toContain("[409]");
+    }
+    expect(ehRascunhoIncompleto(apiErr("estrutura_incompleta", { faltando: ["blocos"] }, 422))).toBe(true);
+    expect(ehRascunhoIncompleto(apiErr("rascunho_incompleto", {}, 422))).toBe(true);
+    expect(ehRascunhoIncompleto(apiErr("estrutura_inativa"))).toBe(false);
+  });
+  it("reads extras from a FLAT body ({code, detail, faltando}) and from a nested one, without field()", () => {
+    expect(dadoDoErro({ body: { code: "estrutura_incompleta", detail: "x", faltando: ["formato"] } }, "faltando")).toEqual(["formato"]);
+  });
+  it("a plain-string refusal ({error:{code:'FORBIDDEN'}}, 403) still gets the admin sentence", () => {
+    expect(mensagemEstruturas({ status: 403, code: "FORBIDDEN", message: "Restrito" }, "f")).toBe("Somente administradores da plataforma podem fazer isso.");
   });
   it("reads extras from a raw FastAPI body when the error has no field()", () => {
     expect(dadoDoErro({ body: { detail: { code: "x", estruturas_total: 4 } } }, "estruturas_total")).toBe(4);

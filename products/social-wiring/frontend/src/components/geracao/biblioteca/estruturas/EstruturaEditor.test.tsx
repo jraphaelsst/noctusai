@@ -191,9 +191,9 @@ describe("publish a rascunho", () => {
     await rtl.waitFor(() => expect(m.publicar).toHaveBeenCalledWith({ id: "e1", expected_versao: 3 }));
   });
 
-  it("422 rascunho_incompleto lists what is missing, inline", async () => {
+  it.each(["estrutura_incompleta", "rascunho_incompleto"])("422 %s lists what is missing, inline", async (codigo) => {
     renderEditor(rascunho());
-    m.publicar.mockRejectedValueOnce(apiErr("rascunho_incompleto", { faltando: ["formato", "blocos"] }, 422));
+    m.publicar.mockRejectedValueOnce(apiErr(codigo, { faltando: ["formato", "blocos"] }, 422));
     await userEvent.click(rtl.screen.getByRole("button", { name: "Publicar" }));
     const alerta = await rtl.screen.findByRole("alert");
     expect(alerta.textContent).toContain("o formato");
@@ -251,6 +251,13 @@ describe("archive / delete", () => {
     await userEvent.click(rtl.screen.getByRole("button", { name: "Arquivar" }));
     await userEvent.click((await dialogo()).getByRole("button", { name: "Arquivar" }));
     await rtl.waitFor(() => expect(m.arquivar).toHaveBeenCalledWith({ id: "e1", acao: "arquivar" }));
+  });
+
+  it("restore says where the Estrutura landed: rascunho when it was never published", async () => {
+    m.arquivar.mockResolvedValueOnce(detalheAdmin({ status: "rascunho" }));
+    renderEditor(detalheAdmin({ status: "arquivada" }));
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Restaurar" }));
+    await rtl.waitFor(() => expect(toast.success).toHaveBeenCalledWith("Estrutura restaurada como rascunho (ela nunca foi publicada)."));
   });
 
   it("an archived estrutura is read-only with a Restaurar path (no confirmation needed)", async () => {

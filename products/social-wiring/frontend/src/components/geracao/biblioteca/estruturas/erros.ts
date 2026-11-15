@@ -3,8 +3,9 @@
  * A refusal is never silent (KB § PATTERNS/frontend/silent-refusal.md): the caller gets a sentence
  * (`mensagemEstruturas`) and, where the server attached data, the data (`dadoDoErro`).
  *
- * Duck-typed on the seed `ApiError` (`code`, `status`, `field()`) so it reads the error whichever
- * module instance built it.
+ * Two body shapes exist (EST-1, verified): a coded refusal is FLAT `{code, detail, ...extra}` and a plain-string
+ * one (e.g. require_platform_admin's 403) is `{error: {code: "FORBIDDEN", message}}`. The seed `ApiError`
+ * (`code`, `status`, `field()`) reads both; this is duck-typed so it works whichever module instance built it.
  */
 type ErroApi = {
   code?: unknown;
@@ -31,11 +32,26 @@ const MENSAGENS: Record<string, string> = {
   tipo_em_uso: "Este tipo de bloco está em uso. Desative-o em vez de excluir.",
   tipo_protegido: 'O tipo "Outro" é do sistema e não pode ser alterado.',
   rascunho_incompleto: "Para publicar, informe formato, ao menos um objetivo e ao menos um bloco.",
+  // The codes EST-1 really answers with (flat `{code, detail, ...extra}` body), beyond the contract's §5 catalogue.
+  estrutura_incompleta: "Para publicar, informe formato, ao menos um objetivo e ao menos um bloco.",
+  formula_invalida: "Informe a fórmula da headline.",
+  blocos_invalidos: "A lista de blocos é inválida: use de 1 a 60 blocos, sem repetir ids.",
+  campo_desconhecido: "Este campo não pode ser confirmado.",
+  tipo_invalido: "Informe o nome e a instrução do tipo de bloco.",
+  tipo_nome_duplicado: "Já existe um tipo de bloco com este nome.",
+  estrutura_ja_importada: "Esta estrutura já existe na biblioteca.",
+  viral_ja_tem_rascunho: "Este vídeo já tem uma estrutura automática.",
   ingestao_sem_org_plataforma: "A organização de ingestão da biblioteca não está configurada.",
   viral_sem_conteudo: "Este vídeo ainda não tem conteúdo para gerar uma estrutura.",
   ia_nao_configurada: "A IA ainda não está configurada para esta organização.",
   orcamento_ia_excedido: "O orçamento de IA do período acabou. Tente novamente mais tarde.",
   geracao_indisponivel: "A geração está indisponível no momento. Tente novamente em instantes.",
+};
+
+/** The two codes that mean "cannot publish yet" (`faltando` carries what is missing). */
+export const ehRascunhoIncompleto = (e: unknown) => {
+  const c = codigoDoErro(e);
+  return c === "estrutura_incompleta" || c === "rascunho_incompleto";
 };
 
 /** The server's `code`, wherever the envelope put it (nested, flat or `{detail:{code}}`). */
@@ -55,8 +71,11 @@ export function dadoDoErro(e: unknown, chave: string): unknown {
   if (!e || typeof e !== "object") return undefined;
   const x = e as ErroApi;
   if (typeof x.field === "function") return x.field(chave);
-  const body = x.body as { detail?: unknown } | undefined;
-  const det = body && typeof body === "object" ? body.detail : undefined;
+  const body = x.body as Record<string, unknown> | undefined;
+  if (!body || typeof body !== "object") return undefined;
+  // Flat `{code, detail, ...extra}` (what EST-1 answers) first, then a nested `{detail: {...}}`.
+  if (chave in body) return body[chave];
+  const det = body.detail;
   if (det && typeof det === "object" && chave in (det as object)) return (det as Record<string, unknown>)[chave];
   return undefined;
 }

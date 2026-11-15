@@ -29,7 +29,7 @@ import {
 import type { EstruturaDetalhe, EstruturaFormato, EstruturaObjetivo, TipoBloco } from "@/types/estruturas";
 import { BlocosEditor } from "./BlocosEditor";
 import { ConfirmarBar } from "./ConfirmarBar";
-import { codigoDoErro, dadoDoErro, ehConflitoDeVersao, mensagemEstruturas } from "./erros";
+import { dadoDoErro, ehConflitoDeVersao, ehRascunhoIncompleto, mensagemEstruturas } from "./erros";
 import { ProvenienciaBadge } from "./ProvenienciaBadge";
 import { PublicarBar } from "./PublicarBar";
 import {
@@ -161,7 +161,7 @@ export function EstruturaEditor({ detalhe, tipos, onRecarregar, onExcluida }: Pr
       await publicar.mutateAsync({ id: detalhe.id, expected_versao: detalhe.versao });
       toast.success("Estrutura publicada. Já pode ser usada pelas organizações.");
     } catch (e) {
-      if (codigoDoErro(e) === "rascunho_incompleto") {
+      if (ehRascunhoIncompleto(e)) {
         const f = dadoDoErro(e, "faltando");
         setFaltando(Array.isArray(f) ? f.map(String) : []);
         toast.error(mensagemEstruturas(e, "Rascunho incompleto."));
@@ -182,8 +182,15 @@ export function EstruturaEditor({ detalhe, tipos, onRecarregar, onExcluida }: Pr
     )
       return;
     try {
-      await arquivar.mutateAsync({ id: detalhe.id, acao });
-      toast.success(arquivada ? "Estrutura restaurada." : "Estrutura arquivada.");
+      const salva = await arquivar.mutateAsync({ id: detalhe.id, acao });
+      // `restaurar` returns to `ativa` only for an Estrutura that was ever published; otherwise to `rascunho`.
+      toast.success(
+        !arquivada
+          ? "Estrutura arquivada."
+          : salva?.status === "rascunho"
+            ? "Estrutura restaurada como rascunho (ela nunca foi publicada)."
+            : "Estrutura restaurada e ativa.",
+      );
     } catch (e) {
       toast.error(mensagemEstruturas(e, arquivada ? "Não foi possível restaurar." : "Não foi possível arquivar."));
     }
