@@ -3105,6 +3105,15 @@
     "pre-commit"
    ]
   },
+  "keeper:check-transition-log-hand-written": {
+   "mechanism": "template: seed/lib/backend/noctusai_lib/domain/transition_log/sql.py",
+   "owner": "backend-engineer",
+   "placement": "warn",
+   "standard": "Keeper: a NEW migration may not hand-write transition history (from/to state column pair, or BEFORE UPDATE OR DELETE trigger on a history-named table); render it with noctusai_lib.domain.transition_log.transition_log_migration. Shrink-only baseline.",
+   "new": true,
+   "declared": "2026-11-07",
+   "source": "KB § PATTERNS/backend/transition-log.md (Sources): PostgreSQL docs (explicit row locking SELECT ... FOR UPDATE; trigger behaviour incl. TRUNCATE statement triggers), Fowler 'Event Sourcing' / 'Audit Log', LGPD Lei 13.709 art. 18 VI (erasure)"
+  },
   "keeper:check-tunnel-ingress-snapshot-sync": {
    "severity": "",
    "kind": "keeper",
@@ -3782,6 +3791,18 @@
    ]
   },
   {
+   "id": "D38",
+   "decision": "State transitions are recorded by the seed transition-log primitive (state row + append-only events in one row-locked transaction, one gated LGPD erasure) -- never a hand-written history table",
+   "home": "KB § PATTERNS/backend/transition-log.md",
+   "construction": "template: seed/lib/backend/noctusai_lib/domain/transition_log/sql.py (transition_log_migration + make_transition_log)",
+   "gate": "keeper:check-transition-log-hand-written (shadow) + verify_db_guards derived transition-log probes",
+   "telemetry": "pre-commit shadow WARN lines; verify_db_guards probe results",
+   "branch": "feat/transition-log-primitive",
+   "gates": [
+    "keeper:check-transition-log-hand-written"
+   ]
+  },
+  {
    "id": "D-refusal-recurrence",
    "decision": "Refusals are counted by class (refusal_class/refusal_recurrence over the gate event sink); a class recurring N>=2 is ONE auto-improvement row (count in place, closes on gate_quiet:<class>:7d); N>=3 with no open fix warns. Warn-first, promote after >=7 shadow days.",
    "home": "KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop)",
@@ -3794,7 +3815,7 @@
    ]
   },
   {
-   "id": "D38",
+   "id": "D39",
    "decision": "A loop that runs forever declares its cost per day next to it, and a per-tick read never fetches whole rows; Supabase request volume is measured, not assumed",
    "home": "KB § PATTERNS/backend/polling-request-budget.md",
    "construction": "seed Worker idle backoff + wake-on-enqueue (feat/supabase-egress-polling); the `poll-budget:` declaration (cadence x calls x 86400 written down before the loop ships)",

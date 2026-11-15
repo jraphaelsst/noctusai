@@ -2640,6 +2640,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             failed_tests: list[str] = []   # the failing pytest node ids
             missing_mods: set[str] = set()   # modules the INTERPRETER lacks: a harness problem, never a red on the code
             stage_errors: list[dict[str, Any]] = []   # a red stage that named NO failing test: rc + output tail + export
+            unmeasured: list[str] = []   # real-Postgres proofs that SKIPPED (not run), named in the detail
 
             def run(gate: str, argv: list[str], where: Path,
                     extra: tuple[tuple[str, str], ...] = ()) -> subprocess.CompletedProcess:
@@ -2707,6 +2708,9 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 n_executed += _pytest_counts(r.stdout)
                 if r.returncode != 0:
                     failed += pytest_failures(r, s.label)
+                m = re.search(r"^REAL-PG-UNMEASURED: (\d+) ", r.stdout or "", flags=re.M)
+                if m:  # a skipped real-Postgres proof is not a pass (the queue hung on tests that never ran locally)
+                    unmeasured.append(f"{s.label}: {m.group(1)} real-Postgres test(s) skipped")
             n_tests = len(tests)
             tests = tests + [f"livetree:{i}" for i in live] + ran_suites
             partial = [k for k in skipped if "budget" in k["reason"]]
@@ -2735,15 +2739,17 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             ref = record_verdict(verdict_store, head=head, tree=head_tree.strip(), workflow_blob=wf_blob.strip(),
                                  interpreter=f"{py} {sys.version.split()[0]}", flags=flags, tests=tests, ok=not failed,
                                  telemetry=telemetry)
+            if unmeasured:
+                ran += f"; UNMEASURED (skipped, not green): {'; '.join(unmeasured)} -- CI runs them with NOC_REQUIRE_REAL_PG=1"
             if failed and missing_mods:
                 return {"ok": False, "detail": f"UNMEASURED: the interpreter {py} lacks {sorted(missing_mods)}, so the red "
                                                f"judges the SETUP, not the code (run through the toolkit venv: "
                                                f"mcp/noctusai/.venv/bin/python, or install requirements.txt); {ran}",
-                        "failed": failed, "missing_modules": sorted(missing_mods), "verdict_ref": ref, **telemetry}
+                        "failed": failed, "missing_modules": sorted(missing_mods), "unmeasured": unmeasured, "verdict_ref": ref, **telemetry}
             if failed:
                 return {"ok": False, "detail": f"{ran}; RED: {', '.join(failed[:8])}", "failed": failed,
-                        "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref, **telemetry}
-            return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref, **telemetry}
+                        "ran": {"flags": flags, "tests": tests}, "unmeasured": unmeasured, "verdict_ref": ref, **telemetry}
+            return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": tests}, "unmeasured": unmeasured, "verdict_ref": ref, **telemetry}
         except _CiParityTimeout as exc:
             return {"ok": False, "detail": f"UNMEASURED: {exc}"}
         except (OSError, subprocess.SubprocessError) as exc:
