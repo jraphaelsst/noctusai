@@ -471,6 +471,10 @@ def _projections(cfg: EventStoreConfig) -> list[str]:
     VALUES (p_projection, p_handler, p_target, p_stream_types, p_mode)
     ON CONFLICT (projection) DO UPDATE SET handler = EXCLUDED.handler, target = EXCLUDED.target,
         stream_types = EXCLUDED.stream_types, mode = EXCLUDED.mode, registered_at = now();
+    -- the checkpoint row exists (committed) BEFORE any runner starts: a runner that had to INSERT it on its first
+    -- run would make a concurrent second runner WAIT on that uncommitted insert (INSERT .. ON CONFLICT DO NOTHING
+    -- blocks on an in-flight conflicting insert) instead of answering `busy` via FOR UPDATE SKIP LOCKED.
+    INSERT INTO {s}.{CHECKPOINTS_TABLE} (projection) VALUES (p_projection) ON CONFLICT DO NOTHING;
     RETURN jsonb_build_object('status', 'ok');
 END;""",
     )
@@ -489,11 +493,20 @@ BEGIN
     IF v_p.mode <> 'async' THEN
         RETURN {_refused('not_async')};
     END IF;
-    INSERT INTO {s}.{CHECKPOINTS_TABLE} (projection) VALUES (p_projection) ON CONFLICT DO NOTHING;
-    -- one runner per projection: a second concurrent runner answers `busy` instead of double-applying
+    -- one runner per projection: a second concurrent runner answers `busy` instead of double-applying.
+    -- Take the row lock FIRST: `INSERT .. ON CONFLICT DO NOTHING` WAITS on a conflicting row another transaction has
+    -- inserted or updated and not yet committed (the open runner's checkpoint), so inserting before locking turned
+    -- `busy` into a wait that never ended when the first runner's transaction stays open (merge-queue hang 2026-11-15).
     SELECT * INTO v_cp FROM {s}.{CHECKPOINTS_TABLE} WHERE projection = p_projection FOR UPDATE SKIP LOCKED;
     IF NOT FOUND THEN
-        RETURN jsonb_build_object('status', 'busy');
+        IF EXISTS (SELECT 1 FROM {s}.{CHECKPOINTS_TABLE} WHERE projection = p_projection) THEN  -- plain MVCC read: never waits
+            RETURN jsonb_build_object('status', 'busy');
+        END IF;
+        INSERT INTO {s}.{CHECKPOINTS_TABLE} (projection) VALUES (p_projection) ON CONFLICT DO NOTHING;
+        SELECT * INTO v_cp FROM {s}.{CHECKPOINTS_TABLE} WHERE projection = p_projection FOR UPDATE SKIP LOCKED;
+        IF NOT FOUND THEN
+            RETURN jsonb_build_object('status', 'busy');
+        END IF;
     END IF;
     v_b := {s}.es_batch(v_cp.tx_id, v_cp.position, LEAST(COALESCE(p_limit, 500), 5000), v_p.stream_types, true);
     IF (v_b->>'count')::integer = 0 THEN
