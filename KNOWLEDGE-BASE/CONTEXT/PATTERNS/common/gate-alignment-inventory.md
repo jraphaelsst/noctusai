@@ -2,7 +2,7 @@
 
 > Generated from `gate-alignment-inventory.json` by `python mcp/noctusai/cli.py --gate-alignment render`. Method and rules: `KB § PATTERNS/common/gate-methodology-sync.md`. Firing counts are measured from 943 Claude Code session transcripts (~/.claude/projects, 2026-08..2026-11-05), tool results only, one count per tool call; guard-events.ndjson for live events (upper-bound-free: tool results only, one count per tool call).
 
-Totals by class: **?** 41, **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 197 gates). Mechanism burn-down: {'gates': 197, 'declared': 80, 'declared_none_justified': 12, 'undeclared_baseline': 117}.
+Totals by class: **?** 41, **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 197 gates). Mechanism burn-down: {'gates': 197, 'declared': 81, 'declared_none_justified': 12, 'undeclared_baseline': 116}.
 
 | Gate | Standard | Construction mechanism | Owner | Firings (sessions) | Class |
 |---|---|---|---|---:|---|
@@ -102,7 +102,7 @@ Totals by class: **?** 41, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | `keeper:check-decision-log-schema` |  | tool: noctus.dev.decision_log (the only write path; refuses a tier below the floor its cri | tooling-engineer | 0 (0) | ? |
 | `keeper:check-dependabot-product-coverage` | Keeper: .github/dependabot.yml must carry an npm block for every products/<slug>/frontend with a package.json, | **NONE** | devops-engineer | 0 (0) | never-fires |
 | `keeper:check-detector-has-regression-test` | Keeper: every check_* detector in compliance.py has a `class Test<DetectorCamel>` regression test. Exits 1 on  | tool:scaffold_keeper (emits the Test<Detector> class) | devops-engineer | 0 (0) | never-fires |
-| `keeper:check-doc-staleness` | Keeper (CI + pre-push): deterministic doc-staleness gate. With --doc-range BASE..TIP: change-coupling (covered | **NONE** | tooling-engineer | 0 (0) | never-fires |
+| `keeper:check-doc-staleness` | Keeper (CI + pre-push): deterministic doc-staleness gate. With --doc-range BASE..TIP: change-coupling (covered | injection: scripts/hooks/claude-inject-doc-coverage.py (PostToolUse Edit/Write/NotebookEdi | tooling-engineer | 0 (0) | never-fires |
 | `keeper:check-embed-funnel-self-configures` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-engineer-slice-scored` | Backstop for the task_branch integrate slice-score gate: landed engineer slices (branch-tree pointer) with no  | write-path: task_branch integrate refuses slice_unscored | tooling-engineer | 0 (0) | never-fires |
 | `keeper:check-every-test-file-is-gated` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
