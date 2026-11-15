@@ -254,7 +254,7 @@ class TestTjspEmailEnvio:
     def test_sem_email_e_pendencia_de_credencial(self):
         from unittest.mock import patch
 
-        with patch("app.modules.certidoes.registry.resolve_key", return_value=None):
+        with patch("app.modules.certidoes.credentials.resolve_api_key", return_value=None):
             msg = pendencia_pre_chamada(
                 config_for("tjsp"), {"tipo_documento": "cnpj", "org_id": "o", "nome": NOME},
             )
@@ -266,7 +266,7 @@ class TestTjspEmailEnvio:
     def test_cpf_sem_rg_nomeia_o_rg(self):
         from unittest.mock import patch
 
-        with patch("app.modules.certidoes.registry.resolve_key", return_value="fila@example.com"):
+        with patch("app.modules.certidoes.credentials.resolve_api_key", return_value="fila@example.com"):
             msg = pendencia_pre_chamada(
                 config_for("tjsp"), {"tipo_documento": "cpf", "org_id": "o", "nome": NOME},
             )
