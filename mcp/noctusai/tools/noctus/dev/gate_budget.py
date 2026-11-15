@@ -80,6 +80,7 @@ GATE_BUDGETS_S: dict[str, int] = {
     # of one 1500 s cap on a stage (2026-11-11: a loaded box timed the real-tree keeper pytest out three times).
     "ci_parity:export": 300,
     "ci_parity:pytest": 1100,
+    "ci_parity:livetree": 1100,
     "ci_parity:keeper:": 600,
     "ci_parity:prime:": 300,
     # item 5's directly-touched suites (`local_suites` + `migration_guard_suite`). `suite:product:<x>` / `suite:seed:<x>`
