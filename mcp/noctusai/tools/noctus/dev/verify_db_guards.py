@@ -1268,6 +1268,23 @@ END;
 )
 
 
+# A probe that INSERTs owns its org: a borrowed one can already hold a row some product invariant
+# (one marca / one destination / one active identity per org) forbids a second of.
+def _table_fixture_check(qualified: str) -> str:
+    return (
+        f"  IF to_regclass('{qualified}') IS NULL THEN\n"
+        f"    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_sql_lit(qualified)} does not exist (migrations not applied)';\n"
+        "  END IF;\n"
+    )
+
+
+_PROBE_ORG_SETUP = _table_fixture_check("public.organizations") + """
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_org;
+"""
+
+
 _JULIA_RELATORIO_DESTINO_USUARIO_PROBE = GuardProbe(
     id="julia_relatorio_destino.usuario_obrigatorio.check",
     product="social-wiring",
@@ -1281,14 +1298,10 @@ _JULIA_RELATORIO_DESTINO_USUARIO_PROBE = GuardProbe(
     ),
     sql=_do_block(f"""
 DECLARE
-  v_org_id uuid;
+  v_org uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe destination';
-  END IF;
-  BEGIN
-    INSERT INTO {_SW_SCHEMA}.julia_relatorio_destino (org_id, modo, usuario_id) VALUES (v_org_id, 'usuario', NULL);
+{_PROBE_ORG_SETUP}  BEGIN
+    INSERT INTO {_SW_SCHEMA}.julia_relatorio_destino (org_id, modo, usuario_id) VALUES (v_org, 'usuario', NULL);
     RAISE EXCEPTION 'NOC_PROBE:permitted: a usuario destination with no usuario_id was accepted — the check did not fire';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
@@ -7614,20 +7627,6 @@ END;
 """)
 
 
-def _table_fixture_check(qualified: str) -> str:
-    return (
-        f"  IF to_regclass('{qualified}') IS NULL THEN\n"
-        f"    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_sql_lit(qualified)} does not exist (migrations not applied)';\n"
-        "  END IF;\n"
-    )
-
-
-_PROBE_ORG_SETUP = _table_fixture_check("public.organizations") + """
-  INSERT INTO public.organizations (nome, slug)
-  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
-  RETURNING id INTO v_org;
-"""
-
 _LICENSES_ONE_ACTIVE_PROBE = GuardProbe(
     id="licenses.one_active_per_org_product",
     product="core",
@@ -12170,12 +12169,7 @@ def _brand_double_insert_probe(*, id: str, guard_name: str, rationale: str, firs
                                second_sql: str) -> GuardProbe:
     """Two inserts where the SECOND must trip ``guard_name`` (if the FIRST already
     trips it — an existing row occupies the slot — the guard refused too)."""
-    fixture = (
-        "  SELECT id INTO v_org FROM public.organizations LIMIT 1;\n"
-        "  IF v_org IS NULL THEN\n"
-        "    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row in public.organizations to borrow an org from';\n"
-        "  END IF;\n"
-    )
+    fixture = _PROBE_ORG_SETUP  # an OWN org: ux_org_brand_identities_active_org is one-active-per-org
     return GuardProbe(
         id=id, product="core", schema="public", guard_name=guard_name, kind="write_refusal",
         migrations=("089_org_brand_identities.sql",), rationale=rationale,
