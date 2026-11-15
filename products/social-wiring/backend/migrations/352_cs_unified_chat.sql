@@ -109,6 +109,8 @@ CREATE TABLE IF NOT EXISTS social_wiring.cs_chat_propostas (
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT cs_chat_propostas_mensagem_ordem_uq UNIQUE (mensagem_id, ordem)
 );
+-- measurable[cs_chat_propostas]: every status/fluxo_etapa transition is a row of the append-only cs_fluxo_eventos ledger
+-- (migration 352, section 4), written in the SAME transaction by the RPCs below -- the table keeps only the current state.
 CREATE INDEX IF NOT EXISTS cs_chat_propostas_conversa_idx ON social_wiring.cs_chat_propostas (conversa_id, created_at);
 CREATE INDEX IF NOT EXISTS cs_chat_propostas_org_idx ON social_wiring.cs_chat_propostas (org_id);
 CREATE INDEX IF NOT EXISTS cs_chat_propostas_headline_idx
@@ -120,6 +122,7 @@ CREATE TABLE IF NOT EXISTS social_wiring.cs_chat_proposta_estruturas (
     -- max 3 per proposta: ordem 1..3 + the PK (proposta_id, estrutura_id)
     ordem        SMALLINT NOT NULL CONSTRAINT cs_chat_proposta_estruturas_ordem_check CHECK (ordem BETWEEN 1 AND 3),
     principal    BOOLEAN NOT NULL DEFAULT false,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (proposta_id, estrutura_id)
 );
 -- at most one principal per proposta; one Estrutura per slot

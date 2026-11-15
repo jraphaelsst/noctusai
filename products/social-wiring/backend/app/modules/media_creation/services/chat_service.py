@@ -54,7 +54,6 @@ from app.modules.media_creation.services.chat_contexto import (
     ContextoMontado,
     ReferenciaResolvida,
     eh_uuid,
-    modo_de_selecao,
 )
 from app.modules.media_creation.services.fluxo_service import FluxoService
 
@@ -64,6 +63,7 @@ CONVERSAS = "cs_chat_conversas"
 MENSAGENS = "cs_chat_mensagens"
 MEMORIAS = "cs_memorias"
 MARCAS = "marcas"
+FLUXO_EVENTOS = "cs_fluxo_eventos"
 
 TITULO_PADRAO = "Nova conversa"
 MAX_TITULO_AUTO = 60
@@ -200,17 +200,15 @@ def _agente_do_contexto(conversa: dict[str, Any]) -> str:
     return conversa["agente"] if conversa["agente"] in ("headline", "roteiro") else "headline"
 
 
-def mapa_citavel(contexto: ContextoMontado) -> Optional[Mapping[str, Any]]:
-    """The ``{codigo: EstruturaCitavel}`` the context put in front of the model (EST-4a), or ``None`` for a context that
-    carries no Estrutura catalogue (the pre-Estruturas ``list[int]`` shape): nothing to validate citations against."""
-    codigos = contexto.codigos_permitidos
-    return codigos if isinstance(codigos, Mapping) else None
+def mapa_citavel(contexto: ContextoMontado) -> Mapping[str, Any]:
+    """The ``{codigo: EstruturaCitavel}`` the context put in front of the model (``ContextoMontado.citaveis``, EST-4a):
+    what ``propostas.extrair_propostas`` validates the model's citations against."""
+    return contexto.citaveis
 
 
 def codigos_para_meta(contexto: ContextoMontado) -> list[int]:
     """``meta.codigos_permitidos``: the Estrutura ``codigo`` numbers the model was allowed to cite."""
-    codigos = contexto.codigos_permitidos
-    return [int(k) for k in codigos] if isinstance(codigos, Mapping) else list(codigos)
+    return list(contexto.codigos_permitidos)
 
 
 @dataclass
@@ -481,16 +479,30 @@ class ChatService:
                 self.db.table(MENSAGENS).select("id").eq("conversa_id", conversa_id)
                 .eq("org_id", self.org_id).limit(1).execute().data
             )
-            montado = self.contexto.montar({**conversa, "agente": _agente_do_contexto(conversa)}, resolvidas)
-            refs_dict = [r.como_dict() for r in resolvidas]
+            # the typed text turns on the free-text profile resolution (8.3); the profiles it resolved are stored on the
+            # message `referencias` (each carries via="texto") next to the explicit mentions
+            montado = self.contexto.montar({**conversa, "agente": _agente_do_contexto(conversa)}, resolvidas, texto=conteudo)
+            refs_dict = [r.como_dict() for r in [*resolvidas, *montado.referencias_via_texto]]
             msg = self._gravar_mensagem(conversa_id, "user", conteudo, referencias=refs_dict)
+            self._gravar_eventos_do_contexto(conversa, msg["id"], montado.eventos)
             titulo = conteudo[:MAX_TITULO_AUTO].strip() if eh_primeira and conversa["titulo"] == TITULO_PADRAO else None
             self._tocar_conversa(conversa_id, titulo)
         except Exception:
             liberar_stream(self.user_id)
             raise
         return {"conversa": conversa, "historico": historico, "montado": montado,
-                "msg_id": msg["id"], "refs": refs_dict, "modo": modo_de_selecao(resolvidas)}
+                "msg_id": msg["id"], "refs": refs_dict}
+
+    def _gravar_eventos_do_contexto(self, conversa: dict[str, Any], mensagem_id: str, eventos: list[dict[str, Any]]) -> None:
+        """The name-resolution outcomes (``perfil_resolvido|perfil_ambiguo|perfil_nao_encontrado`` + ``contagem``) of this
+        turn, as ``cs_fluxo_eventos`` rows (no content: counts only)."""
+        if not eventos:
+            return
+        self.db.table(FLUXO_EVENTOS).insert([
+            {"id": novo_id(), "org_id": self.org_id, "marca_id": conversa["marca_id"], "conversa_id": conversa["id"],
+             "mensagem_id": mensagem_id, "ator_id": self.user_id, "tipo": e["tipo"], "contagem": int(e.get("contagem") or 0)}
+            for e in eventos
+        ]).execute()
 
     async def preparar_envio(
         self, conversa_id: str, conteudo: str, referencias: list[Any], stream_fn: ChatStreamFn,
@@ -532,9 +544,8 @@ class ChatService:
             conversa=conversa, mensagens=prep["historico"], sistema=sistema, contexto=prep["montado"],
             mensagem_usuario_id=prep["msg_id"], referencias=prep["refs"], stream_fn=stream_fn,
             primeira=primeira, rodada=agen, outcome=outcome, modelo=modelo, extrair=extrair,
-            # EST-4a's context states the mode / name-resolution outcome itself; until then derive the mode from the mentions
-            modo_estrutura=getattr(prep["montado"], "modo_estrutura", None) or prep["modo"],
-            resolucao_perfis=getattr(prep["montado"], "resolucao_perfis", None),
+            modo_estrutura=prep["montado"].modo_estrutura,
+            resolucao_perfis=prep["montado"].resolucao.como_dict() if prep["montado"].resolucao is not None else None,
         )
 
     # ── the stream ───────────────────────────────────────────────────────
@@ -558,7 +569,7 @@ class ChatService:
         ``(mensagem_id, Proposta[])``. A text with no parsable headline is saved the plain way, ``propostas: []``."""
         mapa = mapa_citavel(envio.contexto)
         try:
-            resultado = envio.extrair(texto, mapa) if mapa is not None else None
+            resultado = envio.extrair(texto, mapa)
         except Exception:
             # a parser bug must never cost the user the answer: keep the text, lose (loudly) its propostas
             logger.exception("chat: o parser de propostas falhou conversa=%s", envio.conversa["id"])

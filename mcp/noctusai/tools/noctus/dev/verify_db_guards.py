@@ -13046,8 +13046,8 @@ BEGIN
   VALUES (v_perfil, 'noc probe 1', 'rascunho', 'manual') RETURNING id INTO v_est;
   INSERT INTO {_SW_SCHEMA}.cs_estruturas (perfil_id, formula_headline, status, origem)
   VALUES (v_perfil, 'noc probe 2', 'rascunho', 'manual') RETURNING id INTO v_est2;
-  INSERT INTO {_SW_SCHEMA}.cs_chat_conversas (org_id, marca_id, user_id, agente)
-  VALUES (v_org, v_marca, gen_random_uuid(), 'unificado') RETURNING id INTO v_conv;
+  INSERT INTO {_SW_SCHEMA}.cs_chat_conversas (org_id, marca_id, user_id, agente, titulo)
+  VALUES (v_org, v_marca, gen_random_uuid(), 'unificado', 'noc probe') RETURNING id INTO v_conv;
   INSERT INTO {_SW_SCHEMA}.cs_chat_mensagens (org_id, conversa_id, role, conteudo)
   VALUES (v_org, v_conv, 'assistant', 'noc probe') RETURNING id INTO v_msg;
   INSERT INTO {_SW_SCHEMA}.cs_chat_mensagens (org_id, conversa_id, role, conteudo)
@@ -13201,15 +13201,15 @@ _SW_352_PROBES: tuple[GuardProbe, ...] = (
     # the widened CHECKs on the existing tables
     _sw352_probe(
         probe_id="sw352_conversa_agente_valido", guard_name="cs_chat_conversas_agente_check",
-        statements=(f"    INSERT INTO {_SW352}.cs_chat_conversas (org_id, marca_id, user_id, agente) "
-                    "VALUES (v_org, v_marca, gen_random_uuid(), 'outro');"),
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_conversas (org_id, marca_id, user_id, agente, titulo) "
+                    "VALUES (v_org, v_marca, gen_random_uuid(), 'outro', 'noc probe');"),
         permitted_msg="a conversation got an unknown agente",
         rationale="The vocabulary is headline | roteiro (legacy rows) | unificado; anything else is a write by code that predates the contract.",
     ),
     _sw352_probe(
         probe_id="sw352_conversa_agente_unificado_allowed", guard_name="cs_chat_conversas_agente_check", kind="write_allowed",
-        statements=(f"    INSERT INTO {_SW352}.cs_chat_conversas (org_id, marca_id, user_id, agente) "
-                    "VALUES (v_org, v_marca, gen_random_uuid(), 'unificado');"),
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_conversas (org_id, marca_id, user_id, agente, titulo) "
+                    "VALUES (v_org, v_marca, gen_random_uuid(), 'unificado', 'noc probe');"),
         permitted_msg="a unified conversation was created, as it must",
         rationale="The N code writes `unificado`; the widened CHECK must accept it (and keep the legacy values the N-1 image writes).",
     ),

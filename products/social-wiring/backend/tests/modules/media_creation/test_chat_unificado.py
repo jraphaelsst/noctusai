@@ -161,12 +161,15 @@ def fake_extrair(texto, codigos_permitidos):
 class _ContextoComCatalogo(ChatContexto):
     """A context that carries the Estrutura catalogue (the ``{codigo: EstruturaCitavel}`` EST-4a puts on its result)."""
 
-    def __init__(self, base: ChatContexto, mapa: dict):
+    def __init__(self, base: ChatContexto, mapa: dict, **extra):
         self.__dict__.update(base.__dict__)
-        self._mapa = mapa
+        self._mapa, self._extra, self.textos = mapa, extra, []
 
-    def montar(self, conversa, refs):
-        return ContextoMontado(texto="<material/>", chars=11, truncado=False, codigos_permitidos=self._mapa)
+    def montar(self, conversa, refs, texto=None):
+        self.textos.append(texto)  # the service must pass the typed text: it turns on the name resolution
+        return ContextoMontado(
+            texto="<material/>", chars=11, truncado=False, codigos_permitidos=[int(k) for k in self._mapa],
+            citaveis=self._mapa, **self._extra)
 
 
 def _agora(minutos=0):
@@ -461,11 +464,11 @@ TEXTO_COM_HEADLINES = (
 )
 
 
-def _svc_com_catalogo(st, mapa=None):
+def _svc_com_catalogo(st, mapa=None, **extra):
     svc = ChatService(st.db, TEST_ORG_ID, TEST_USER_ID)
     mapa = mapa if mapa is not None else {
         "101": _Citavel(E1, "101", "reels"), "102": _Citavel(E2, "102", "reels"), "103": _Citavel(E3, "103", "reels")}
-    svc.contexto = _ContextoComCatalogo(svc.contexto, mapa)
+    svc.contexto = _ContextoComCatalogo(svc.contexto, mapa, **extra)
     return svc
 
 
@@ -588,19 +591,46 @@ def test_falha_do_parser_ou_do_rpc_nao_custa_a_resposta_ao_usuario_e_e_logada(ch
     assert salvos == ["1. a (estrutura #101)"] * 2  # the user kept both answers
 
 
-def test_contexto_sem_catalogo_de_estruturas_nao_valida_nada(ch):
-    """The pre-Estruturas context shape (``list[int]``): nothing to validate citations against, so the parser is not
-    even called and ``meta.codigos_permitidos`` keeps its numbers."""
+def test_o_contexto_real_do_est_4a_alimenta_o_parser_e_o_meta(ch):
+    """No fake context here: the REAL ``ChatContexto`` (EST-4a) offers the three seeded active Estruturas as the pool;
+    the parser receives exactly that catalogue and ``meta.codigos_permitidos`` carries the same numbers."""
     cid = _conversa(ch)
-    chamadas = []
+    vistos = []
 
     def espia(texto, mapa):
-        chamadas.append(1)
+        vistos.append({k: (str(v.id), v.formato) for k, v in mapa.items()})
         return _Resultado((), ())
 
     svc = ChatService(ch.db, TEST_ORG_ID, TEST_USER_ID)
     frames = asyncio.run(_stream(svc, ch, cid, "1. a (estrutura #101)", extrair=espia))
-    assert chamadas == [] and frames[0]["meta"]["codigos_permitidos"] == [] and frames[-1]["done"]["propostas"] == []
+    assert vistos == [{"101": (E1, "reels"), "102": (E2, "reels"), "103": (E3, "reels")}]
+    assert sorted(frames[0]["meta"]["codigos_permitidos"]) == [101, 102, 103]
+    assert frames[0]["meta"]["modo_estrutura"] == "auto" and frames[-1]["done"]["propostas"] == []
+    assert ch.rpc.calls == []
+
+
+def test_resolucao_de_perfil_no_texto_vira_referencia_via_texto_eventos_e_meta(ch):
+    """EST-4a's context resolves the typed profile name; the service passes the text, stores the resolved mentions on
+    the user message (``via: "texto"``), writes the outcome events and puts mode + resolution in ``meta``."""
+    from app.modules.media_creation.services.chat_contexto import ReferenciaResolvida
+    from app.modules.media_creation.services.estruturas_retrieval import ResolucaoPerfis
+
+    cid = _conversa(ch)
+    via = ReferenciaResolvida("biblioteca", f"perfil:{PERFIL}", "@psifernandosegredo — Todos os vídeos", {}, via="texto")
+    svc = _svc_com_catalogo(
+        ch, modo_estrutura="mencoes", resolucao=ResolucaoPerfis(), referencias_via_texto=[via],
+        eventos=[{"tipo": "perfil_resolvido", "contagem": 1}, {"tipo": "perfil_ambiguo", "contagem": 2}])
+    frames = asyncio.run(_stream(svc, ch, cid, "ok"))
+    assert svc.contexto.textos == ["me dê headlines"]
+    assert frames[0]["meta"]["modo_estrutura"] == "mencoes"
+    assert frames[0]["meta"]["resolucao_perfis"] == {"resolvidos": [], "ambiguos": [], "nao_encontrados": []}
+    user = next(m for m in ch.rows("cs_chat_mensagens") if m["role"] == "user")
+    assert user["referencias"] == [{"tipo": "biblioteca", "id": f"perfil:{PERFIL}",
+                                    "rotulo": "@psifernandosegredo — Todos os vídeos", "via": "texto"}]
+    ev = ch.rows("cs_fluxo_eventos")
+    assert sorted((e["tipo"], e["contagem"]) for e in ev) == [("perfil_ambiguo", 2), ("perfil_resolvido", 1)]
+    assert {e["mensagem_id"] for e in ev} == {user["id"]} and {e["ator_id"] for e in ev} == {TEST_USER_ID}
+    assert {e["conversa_id"] for e in ev} == {cid} and {e["marca_id"] for e in ev} == {MARCA}
 
 
 def test_envio_http_inclui_o_frame_meta_novo_e_done_com_propostas(ch):

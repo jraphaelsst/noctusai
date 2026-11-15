@@ -65,7 +65,7 @@ CREATE TABLE cs_chat_conversas (
   marca_id uuid NOT NULL REFERENCES marcas (id) ON DELETE CASCADE,
   user_id uuid NOT NULL,
   agente text NOT NULL CHECK (agente IN ('headline', 'roteiro')),
-  titulo text NOT NULL DEFAULT 'Nova conversa', last_message_at timestamptz NOT NULL DEFAULT now());
+  titulo text NOT NULL, last_message_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE cs_chat_mensagens (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id uuid NOT NULL REFERENCES public.organizations (id) ON DELETE CASCADE,
@@ -80,9 +80,9 @@ CREATE TABLE status_pagina (nome_pagina text PRIMARY KEY, status text NOT NULL);
 -- two legacy conversations (the prod 7 headline + 1 roteiro) that exist BEFORE the migration
 INSERT INTO public.organizations (id, nome, slug) VALUES ('00000000-0000-0000-0000-0000000000f0', 'legacy', 'legacy');
 INSERT INTO marcas (id, org_id, name) VALUES ('00000000-0000-0000-0000-0000000000f1', '00000000-0000-0000-0000-0000000000f0', 'm');
-INSERT INTO cs_chat_conversas (org_id, marca_id, user_id, agente)
-  VALUES ('00000000-0000-0000-0000-0000000000f0', '00000000-0000-0000-0000-0000000000f1', gen_random_uuid(), 'headline'),
-         ('00000000-0000-0000-0000-0000000000f0', '00000000-0000-0000-0000-0000000000f1', gen_random_uuid(), 'roteiro');
+INSERT INTO cs_chat_conversas (org_id, marca_id, user_id, agente, titulo)
+  VALUES ('00000000-0000-0000-0000-0000000000f0', '00000000-0000-0000-0000-0000000000f1', gen_random_uuid(), 'headline', 't'),
+         ('00000000-0000-0000-0000-0000000000f0', '00000000-0000-0000-0000-0000000000f1', gen_random_uuid(), 'roteiro', 't');
 INSERT INTO cs_posts (org_id, marca_id) VALUES ('00000000-0000-0000-0000-0000000000f0', '00000000-0000-0000-0000-0000000000f1');
 """
 
@@ -102,7 +102,7 @@ BEGIN
   INSERT INTO cs_estruturas (perfil_id, formula_headline, status, origem) VALUES (pf, 'f2', 'rascunho', 'manual') RETURNING id INTO e2;
   INSERT INTO cs_estruturas (perfil_id, formula_headline, status, origem) VALUES (pf, 'f3', 'rascunho', 'manual') RETURNING id INTO e3;
   INSERT INTO cs_estruturas (perfil_id, formula_headline, status, origem) VALUES (pf, 'f4', 'rascunho', 'manual') RETURNING id INTO e4;
-  INSERT INTO cs_chat_conversas (org_id, marca_id, user_id, agente) VALUES (o, m, u, 'unificado') RETURNING id INTO c;
+  INSERT INTO cs_chat_conversas (org_id, marca_id, user_id, agente, titulo) VALUES (o, m, u, 'unificado', 'c') RETURNING id INTO c;
   INSERT INTO cs_chat_mensagens (org_id, conversa_id, role, conteudo) VALUES (o, c, 'user', 'me dê headlines') RETURNING id INTO mu;
   {body}
 END $$;
@@ -162,7 +162,7 @@ SCENARIOS: dict[str, str] = {
     "legacy conversations survive untouched; 'unificado' is accepted; anything else is refused": (
         expect("count(*) FROM cs_chat_conversas WHERE agente IN ('headline', 'roteiro')", "2", "legacy rows kept")
         + expect("count(*) FROM cs_chat_conversas WHERE id = c AND agente = 'unificado'", "1", "unificado")
-        + sqlstate("INSERT INTO cs_chat_conversas (org_id, marca_id, user_id, agente) VALUES (o, m, u, 'outro')", "check_violation")
+        + sqlstate("INSERT INTO cs_chat_conversas (org_id, marca_id, user_id, agente, titulo) VALUES (o, m, u, 'outro', 'c')", "check_violation")
     ),
     "cs_posts.formato: reel/carrossel/story/feed are accepted, anything else refused; existing rows keep their value": (
         "INSERT INTO cs_posts (org_id, marca_id, formato) VALUES (o, m, 'carrossel'), (o, m, 'story'), (o, m, 'feed'), (o, m, 'reel');"
