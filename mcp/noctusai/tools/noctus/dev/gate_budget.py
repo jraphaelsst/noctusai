@@ -70,6 +70,8 @@ GATE_BUDGETS_S: dict[str, int] = {
     # toolkit: observed timing out at 240 under load (was 300 / 240).
     "mcp_toolkit_tests": 900,
     "mcp_toolkit_tests:scoped": 720,
+    # wiring tests by name when the full toolkit split is CI-only (item 5): freshness + CLI + the module's own tests
+    "mcp_toolkit_wiring": 720,
     # non-suite gates gate_sweep can emit (declared, so none rides the default)
     "keeper_meta": 400,
     "keeper_delta": 300,

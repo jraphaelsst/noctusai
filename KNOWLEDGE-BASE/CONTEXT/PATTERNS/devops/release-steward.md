@@ -293,6 +293,13 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
   it, 2h locally). **Wall-clock budget** (`NOC_ITEM5_SUITE_BUDGET_S`, default 1800s): suites not started when it is spent are
   listed and the verdict says `PARTIAL` - never silently trimmed. Scope is still `ci_scope.classify` over `origin/dev...head`.
   Earlier trade-off (owner 2026-11-11, full CI split = 2h04m locally) now applies only to the two named skips and the budget.
+  **Toolkit wiring tests by name (2026-11-15):** a diff touching `cli.py` or a non-test `.py` under `mcp/noctusai/tools/noctus/`
+  (where a `register()` wrapper lives) ALSO selects `test_toolkit_freshness*`, the CLI flag/parse tests (`test_cli_*`,
+  `test_toolkit_cli*`) and the changed module's own `test_<stem>*` tests (`gate_sweep._mcp_wiring_tests`, derived from file names,
+  never a hand list), merged into `mcp_toolkit_tests:scoped` (or a separate `mcp_toolkit_wiring` gate when the full split is
+  the selection). The full toolkit split stays CI-only. Why: `enqueue-score-mq-migrations` added a `score` param to a
+  `register()` wrapper without `toolkit_freshness._MAPPED_PARAMS`; no import graph points at that registry test, the scoped verdict
+  selected "0 suites" and the queue ejected the batch. A seed-only diff selects none of these.
   **It judges the MERGE, not the head (2026-11-12):** the export is the tree of `git merge-tree --write-tree origin/dev <head>`
   (`merge_tree_sha`); a conflict is UNMEASURED. The verdict ref still binds the HEAD sha + head tree; the record adds `merge_tree`.
   The run holds ONE machine-wide heavy slot

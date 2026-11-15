@@ -1825,3 +1825,21 @@ def test_a_seed_module_change_selects_the_suites_of_the_products_that_import_it(
     wide = RS.select_ci_suites(tree, ["seed/lib/backend/noctusai_lib/channels.v2.json"], "py")
     assert wide["scope"]["seed_fanout"] == "fleet"
     assert {"pytest:core", "pytest:agents"} <= {s.label for s in wide["suites"]}
+
+
+def test_item5_selects_the_toolkit_wiring_tests_for_a_tool_module_plus_cli_diff_not_for_seed(tmp_path):
+    """2026-11-15: a diff confined to mcp/noctusai/** selected 0 suites and the queue ejected it on
+    test_toolkit_freshness. The wiring tests are added by NAME (full toolkit split stays CI-only)."""
+    tree = _selector_tree(tmp_path)
+    tests = tree / "mcp/noctusai/tests"
+    for n in ("test_toolkit_freshness", "test_cli_paths_help", "test_widgetmod", "test_other"):
+        (tests / f"{n}.py").write_text("import json\n")
+    (tree / "mcp/noctusai/tools/noctus/dev").mkdir(parents=True)
+    (tree / "mcp/noctusai/tools/noctus/dev/widgetmod.py").write_text("x = 1\n")
+    sel = RS.select_ci_suites(tree, ["mcp/noctusai/tools/noctus/dev/widgetmod.py", "mcp/noctusai/cli.py"], "py")
+    argv = [a for s in sel["suites"] for a in s.argv]
+    assert {"mcp/noctusai/tests/test_toolkit_freshness.py", "mcp/noctusai/tests/test_cli_paths_help.py",
+            "mcp/noctusai/tests/test_widgetmod.py"} <= set(argv)
+    assert "mcp/noctusai/tests/test_other.py" not in argv
+    seed = RS.select_ci_suites(tree, ["seed/lib/backend/noctusai_lib/foo.py"], "py")
+    assert "mcp/noctusai/tests/test_toolkit_freshness.py" not in [a for s in seed["suites"] for a in s.argv]

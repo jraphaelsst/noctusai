@@ -1105,6 +1105,38 @@ _KEEPER_META_TESTS = (
 )
 
 
+#: Toolkit WIRING (2026-11-15): a tool module's `register()` signature, `cli.py`'s flags and the freshness mapping
+#: (`toolkit_freshness._MAPPED_PARAMS`) must agree, but only a test that reads the registry notices - and no import
+#: graph points at it, so a diff confined to `mcp/noctusai/**` selected "0 suites" while the merge queue ejected it
+#: (`test_toolkit_freshness::test_every_register_wrapper_param_is_in_mapped_params`, enqueue-score-mq-migrations).
+#: These cheap tests are added BY NAME (the full toolkit split stays CI-only), derived from file names, never listed.
+_MCP_TOOLS_PREFIX = "mcp/noctusai/tools/noctus/"
+_MCP_CLI_REL = "mcp/noctusai/cli.py"
+_WIRING_REGISTRY_MODULE = "toolkit_freshness"
+_CLI_TEST_PREFIXES = ("test_cli_", "test_toolkit_cli")
+
+
+def _mcp_wiring_tests(root: Path, mcp_files: list[str]) -> list[str]:
+    """Wiring tests a diff to a tool module / `cli.py` / the freshness registry must also run, or `[]`.
+
+    Trigger: `cli.py` or a non-test `.py` under `tools/noctus/` (a `register()` wrapper lives there). Selected:
+    `test_<registry module>*.py`, the CLI flag/parse tests (`test_cli_*.py`, `test_toolkit_cli*.py`) and the changed
+    module's own tests (`test_<stem>*.py`). Repo-relative, sorted, existing files only."""
+    changed_modules = [Path(f).stem for f in mcp_files
+                       if f.startswith(_MCP_TOOLS_PREFIX) and f.endswith(".py")
+                       and "/tests/" not in f and Path(f).name != "__init__.py"]
+    if not changed_modules and _MCP_CLI_REL not in mcp_files:
+        return []
+    stems = [_WIRING_REGISTRY_MODULE, *changed_modules]
+    out: set[str] = set()
+    tests_dir = root / _MCP_PKG / "tests"
+    for test in sorted(tests_dir.glob("test_*.py")):
+        name = test.stem
+        if name.startswith(_CLI_TEST_PREFIXES) or any(name == f"test_{s}" or name.startswith(f"test_{s}_") for s in stems):
+            out.add(str(test.relative_to(root)))
+    return sorted(out)
+
+
 def _mcp_module_name(rel: str) -> str:
     """`tools/noctus/dev/x.py` → `tools.noctus.dev.x` (tests put `mcp/noctusai`
     on sys.path); a package `__init__.py` maps to the package."""
@@ -1544,8 +1576,16 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
             specs.append(
                 GateSpec("mcp_toolkit_tests", [py, "-m", "pytest", "mcp/noctusai/tests/", "-q"], root)
             )
+            wiring = _mcp_wiring_tests(root, scope.get("mcp_files", []))
+            if wiring:  # the full suite is skipped by item 5 (CI shards it): the wiring tests still run, by name
+                scope["mcp_wiring_tests"] = wiring
+                specs.append(GateSpec("mcp_toolkit_wiring", [py, "-m", "pytest", *wiring, "-q"], root))
         else:
             tests, untested = scoped
+            wiring = _mcp_wiring_tests(root, scope.get("mcp_files", []))
+            if wiring:
+                scope["mcp_wiring_tests"] = wiring
+                tests = sorted({*tests, *wiring})
             scope["mcp_scoped_tests"] = tests
             scope["mcp_untested_modules"] = untested
             if tests:
