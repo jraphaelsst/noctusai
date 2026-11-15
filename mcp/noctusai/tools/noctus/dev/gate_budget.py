@@ -70,8 +70,8 @@ GATE_BUDGETS_S: dict[str, int] = {
     "vitest:seed/": 300,
     # toolkit: observed timing out at 240 under load (was 300 / 240).
     "mcp_toolkit_tests": 900,
-    # no-file-count fallback only (a caller that knows the files uses `derived_suite_budget`): 100-file selection
-    "mcp_toolkit_tests:scoped": 1000,
+    # no-file-list fallback only (a caller that knows the files uses `derived_suite_budget`): measured 232-file selection 1704 s x1.5
+    "mcp_toolkit_tests:scoped": 2600,
     # wiring tests by name when the full toolkit split is CI-only (item 5): freshness + CLI + the module's own tests
     "mcp_toolkit_wiring": 720,
     # non-suite gates gate_sweep can emit (declared, so none rides the default)
@@ -160,61 +160,93 @@ def declared_gate_budget(gate: str, overrides: dict[str, int] | None = None) -> 
 
 # ── Per-file derived budgets (2026-11-15) ──────────────────────────────────────────────────────────────────────
 # A suite whose size VARIES per run (the scoped toolkit suite = every test file that imports a changed module: 1 to
-# 230+ files) cannot be sized by a constant: 720 s was too small for the 230-file selection and 600 s (the generic
-# `ci_parity:suite:` row) timed it out twice. Its budget is DERIVED per run: FIXED + files x per-file cost x headroom.
-#: seconds per test FILE, MEASURED. mcp_toolkit_tests:scoped = 5.1: the 230-file scoped stage of `feat/keeper-node-toolchain`
-#: (head e2d33579e) took > 900 s (it timed out at 600 s and again at 900 s: 1919.7 s deliverable = ~420 s of the other stages
-#: + 1500 s) and finished in <= 1170 s in the re-run (1593.4 s deliverable - ~420 s), i.e. <= 1170 / 230 = 5.1 s/file on a loaded
-#: laptop (load 24-28, 4 claude sessions; ~/.noctus/hw-admission.ndjson `deliverable:*` duration_s). It is the SEED: a
-#: deliverable that records its own stage timing (`ci-stage-timings.ndjson`) replaces it with the measured p90.
-PER_FILE_S: dict[str, float] = {"mcp_toolkit_tests:scoped": 5.1}
+# 230+ files) cannot be sized by a constant: 720 s was too small for the 230-file selection, 600 s (the generic
+# `ci_parity:suite:` row) timed it out twice, and a flat s/file figure is wrong too - one file (test_compliance.py)
+# costs 389 s, the median file 1.75 s. The budget is DERIVED per run from the SELECTED FILES' measured cost:
+#   FIXED + HEADROOM x sum(cost(file)),  cost = live p90 (ci-stage-timings.ndjson) > SEED_FILE_S > DEFAULT_FILE_S.
+#: gates sized this way (`ci_parity:suite:<label>` -> `<label>`).
+PER_FILE_GATES = frozenset({"mcp_toolkit_tests:scoped"})
 PER_FILE_FIXED_S = 60      # collection + conftest + interpreter start, paid once per pytest invocation
 PER_FILE_HEADROOM = 1.5    # the same x1.5 over the observed value every row of GATE_BUDGETS_S carries
+#: cost of a file with no seed and no live measurement: the mean of the 206 light files measured below.
+DEFAULT_FILE_S = 2.2
+#: MEASURED seconds (setup+call+teardown, `pytest --durations=0`) of every toolkit test file that cost >= 10 s, from ONE run
+#: of the 232-file scoped selection (4107 tests, 1704 s wall, rc=0; ~/.noctus/hw-runs/scoped-toolkit-durations-20261115T075842Z.log).
+#: Sum 1225 s over 26 files; the other 206 files sum 448 s (mean 2.2 s, median 1.75 s). A live measurement replaces a seed.
+SEED_FILE_S: dict[str, float] = {
+    "test_compliance.py": 389, "test_guardian_pure_push_enqueue.py": 136, "test_eight_way_sync.py": 107,
+    "test_access_tiers_keeper.py": 94, "test_gate_alignment.py": 58, "test_migration_replay.py": 44,
+    "test_cache_backend.py": 43, "test_agents_camadas_probes_on_replay.py": 42, "test_task_branch.py": 32,
+    "test_http_detail_echo_keeper.py": 29, "test_task_branch_cleanup_ownership.py": 25,
+    "test_git_hook_file_tampering_detector.py": 19, "test_agents_browser_lockdown_probes_on_replay.py": 19,
+    "test_git_hooks_bypass_detector.py": 19, "test_kb_vector_canonical.py": 18, "test_check_guardian_tool_authorship.py": 18,
+    "test_lying_loading_state_detector.py": 16, "test_check_motion_import_boundary.py": 15, "test_primary_ff.py": 15,
+    "test_check_silent_refusal.py": 14, "test_nosnolimiar_rename_on_replay.py": 14, "test_core_078_probes_on_replay.py": 13,
+    "test_sw_240_probes_on_replay.py": 12, "test_sw_249_probes_on_replay.py": 12, "test_doc_staleness.py": 11,
+    "test_compliance_hygiene.py": 10,
+}
 _TEST_FILE_RE = _re.compile(r"(?:^|/)(test_[^/\s:]+\.py)(?:::|$)")
+_DURATION_RE = _re.compile(r"^\s*([\d.]+)s (?:call|setup|teardown)\s+(?:\S*/)?(test_[^/\s:]+\.py)::")
 
 
 def per_file_gate(gate: str) -> str | None:
-    """The `PER_FILE_S` key `gate` is sized by (`ci_parity:suite:<label>` -> `<label>`), or None."""
+    """The `PER_FILE_GATES` label `gate` is sized by (`ci_parity:suite:<label>` -> `<label>`), or None."""
     label = gate[len("ci_parity:suite:"):] if gate.startswith("ci_parity:suite:") else gate
-    return label if label in PER_FILE_S else None
+    return label if label in PER_FILE_GATES else None
 
 
-def count_test_files(argv: list[str]) -> int:
-    """Distinct pytest test files named in `argv` (`tests/test_x.py` or `tests/test_x.py::T::t`)."""
-    return len({a.split("::", 1)[0] for a in argv if _TEST_FILE_RE.search(a)})
+def test_files(argv: list[str]) -> list[str]:
+    """Distinct pytest test file BASENAMES named in `argv` (`tests/test_x.py` or `tests/test_x.py::T::t`), in order."""
+    out: list[str] = []
+    for a in argv:
+        m = _TEST_FILE_RE.search(a)
+        if m and m.group(1) not in out:
+            out.append(m.group(1))
+    return out
 
 
-def derived_suite_budget(gate: str, files: int, per_file_s: float | None = None) -> int | None:
-    """Wall-clock budget for a per-file-sized suite: FIXED + files x per-file x HEADROOM; `per_file_s` is the measured
-    p90 (else the seeded `PER_FILE_S`). None when `gate` is not per-file sized or no file is named."""
-    key = per_file_gate(gate)
-    if key is None or files <= 0:
+def parse_file_durations(output: str | None, min_s: float = 5.0) -> dict[str, float]:
+    """Per-file seconds (setup+call+teardown) from `pytest --durations=0` output; files under `min_s` are dropped (they ride
+    DEFAULT_FILE_S)."""
+    tot: dict[str, float] = {}
+    for line in (output or "").splitlines():
+        m = _DURATION_RE.match(line)
+        if m:
+            tot[m.group(2)] = tot.get(m.group(2), 0.0) + float(m.group(1))
+    return {k: round(v, 1) for k, v in tot.items() if v >= min_s}
+
+
+def measured_file_costs(records: list[dict[str, object]], gate: str, last: int = 20, min_obs: int = 3) -> dict[str, float]:
+    """Live per-file p90 seconds from the last `last` COMPLETED stage records of `gate` that carry `file_s`; a file needs
+    `min_obs` observations before it replaces its seed."""
+    obs: dict[str, list[float]] = {}
+    for r in [r for r in records if r.get("gate") == gate and r.get("completed") and isinstance(r.get("file_s"), dict)][-last:]:
+        for f, v in r["file_s"].items():  # type: ignore[union-attr]
+            obs.setdefault(f, []).append(float(v))
+    return {f: sorted(v)[min(len(v) - 1, int(len(v) * 0.9))] for f, v in obs.items() if len(v) >= min_obs}
+
+
+def estimate_files_s(files: list[str], measured: dict[str, float] | None = None) -> float:
+    """Expected seconds for `files`: live p90 > seed > DEFAULT_FILE_S, per file."""
+    return sum((measured or {}).get(f, SEED_FILE_S.get(f, DEFAULT_FILE_S)) for f in files)
+
+
+def derived_suite_budget(gate: str, files: list[str], measured: dict[str, float] | None = None) -> int | None:
+    """Wall-clock budget for a per-file-sized suite: FIXED + HEADROOM x estimated seconds of the selected files. None when
+    `gate` is not per-file sized or names no file."""
+    if per_file_gate(gate) is None or not files:
         return None
-    cost = per_file_s if per_file_s and per_file_s > 0 else PER_FILE_S[key]
-    return int(round(PER_FILE_FIXED_S + files * cost * PER_FILE_HEADROOM))
+    return int(round(PER_FILE_FIXED_S + PER_FILE_HEADROOM * estimate_files_s(files, measured)))
 
 
-def p90_per_file_s(records: list[dict[str, object]], gate: str, min_files: int = 20, last: int = 20) -> float | None:
-    """p90 of elapsed/files over the last `last` COMPLETED stage records of `gate` with >= `min_files` files (smaller
-    runs are dominated by the fixed cost); None below 3 such records, so the seed stands until there is evidence."""
-    vals = []
-    for r in records:
-        if r.get("gate") == gate and r.get("completed") and int(r.get("files") or 0) >= min_files:
-            vals.append((float(r["elapsed_s"]) - PER_FILE_FIXED_S) / int(r["files"]))
-    vals = sorted(v for v in vals[-last:] if v > 0)
-    if len(vals) < 3:
-        return None
-    return round(vals[min(len(vals) - 1, int(len(vals) * 0.9))], 2)
-
-
-def resolve_gate_budget(gate: str, overrides: dict[str, int] | None = None, *, files: int | None = None,
-                        per_file_s: float | None = None) -> int:
-    """Budget in seconds for `gate` (explicit `overrides`, then env JSON, then - for a per-file-sized suite with `files`
-    known - the DERIVED budget, then the table; DEFAULT_BUDGET_S only when undeclared), x NOCTUS_GATE_BUDGET_SCALE,
+def resolve_gate_budget(gate: str, overrides: dict[str, int] | None = None, *, files: list[str] | None = None,
+                        measured: dict[str, float] | None = None) -> int:
+    """Budget in seconds for `gate` (explicit `overrides`, then env JSON, then - for a per-file-sized suite with its test
+    `files` known - the DERIVED budget, then the table; DEFAULT_BUDGET_S only when undeclared), x NOCTUS_GATE_BUDGET_SCALE,
     capped at MAX_GATE_BUDGET_S."""
     merged = {**env_overrides(), **(overrides or {})}
     declared = declared_gate_budget(gate, merged)
-    derived = derived_suite_budget(gate, files or 0, per_file_s)
+    derived = derived_suite_budget(gate, files or [], measured)
     if derived is not None and gate not in merged and per_file_gate(gate) not in merged:
         declared = derived
     base = DEFAULT_BUDGET_S if declared is None else declared
