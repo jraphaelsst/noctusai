@@ -407,6 +407,11 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
   stale-guardian takeover that may only resume or roll back; one plan hash per deploy window) are the ratified spec and are
   tracked as follow-ups; this section records what is built.
 
+## 8c · Lessons that recur (the full append list lives in skill `noc-steward` § Lessons that recur)
+
+- **A known false alarm with live evidence never re-blocks a cut.** `predeploy_check` may BLOCK on a check whose output the steward has already proven to be a harness or tooling defect (2026-11-15: `schema_drift` reported `missing_table:monica.*` for `nosnolimiar` - live had 25 tables in `nosnolimiar`, 0 in `monica`; two prod cuts stalled on re-measuring it). Then: record the live evidence (the query and its rows) in the shift memory, file the tooling fix on its own branch, and ship the cut. Do not keep re-measuring. Only a DIFFERENT output re-opens it; "still red" does not.
+- **A `schema_drift` that lists ONLY tables created by migrations pending in this same cut is expected pre-state, not a block.** Predeploy runs before the cut's migrations are applied, so exactly those tables are absent live. Compare the `missing_table` list against the pending migrations (`migrate_product` dry-run, `earlier_pending`); anything outside that set is real drift and blocks.
+
 ## 9 · Related
 
 `KB § PATTERNS/devops/merge-queue.md` (the queue this role feeds; §4 session
