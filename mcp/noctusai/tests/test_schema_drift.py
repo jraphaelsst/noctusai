@@ -601,3 +601,69 @@ class TestRegistration:
         sd.register(FakeServer())
         assert calls
         assert calls[0]["name"] == "noctus.dev.schema_drift"
+
+
+# ---------------------------------------------------------------------------
+# Schema renames — the frozen CREATE TABLE old.* must follow the rename
+# ---------------------------------------------------------------------------
+
+_CREATE_OLD = "CREATE TABLE IF NOT EXISTS monica.pessoas (id UUID PRIMARY KEY, nome TEXT);\n"
+
+
+class TestSchemaRenameFollowed:
+    def test_static_alter_schema_rename(self, tmp_path):
+        pd = tmp_path / "products"
+        _make_migrations(pd, "p", [
+            ("001.sql", _CREATE_OLD),
+            ("002.sql", "ALTER SCHEMA monica RENAME TO nosnolimiar;\n"),
+        ])
+        declared, _, _ = _migration_declared_schema("p", pd)
+        assert "nosnolimiar.pessoas" in declared and "monica.pessoas" not in declared
+
+    def test_dynamic_execute_rename_with_literal_declares(self, tmp_path):
+        pd = tmp_path / "products"
+        _make_migrations(pd, "p", [
+            ("001.sql", _CREATE_OLD),
+            ("002.sql", (
+                "DO $m$ DECLARE v_old constant text := 'monica'; v_new constant text := 'nosnolimiar';\n"
+                "BEGIN EXECUTE format('ALTER SCHEMA %I RENAME TO %I', v_old, v_new); END $m$;\n"
+            )),
+        ])
+        declared, _, _ = _migration_declared_schema("p", pd)
+        assert set(declared) == {"nosnolimiar.pessoas"}
+
+    def test_product_declared_alias_marker(self, tmp_path):
+        pd = tmp_path / "products"
+        _make_migrations(pd, "p", [
+            ("001.sql", _CREATE_OLD),
+            ("002.sql", "-- noc-schema-alias: monica -> nosnolimiar\nSELECT 1;\n"),
+        ])
+        declared, _, _ = _migration_declared_schema("p", pd)
+        assert set(declared) == {"nosnolimiar.pessoas"}
+
+    def test_commented_rename_is_not_a_rename(self, tmp_path):
+        pd = tmp_path / "products"
+        _make_migrations(pd, "p", [
+            ("001.sql", _CREATE_OLD),
+            ("002.sql", "-- ALTER SCHEMA monica RENAME TO nosnolimiar;\nSELECT 1;\n"),
+        ])
+        declared, _, _ = _migration_declared_schema("p", pd)
+        assert set(declared) == {"monica.pessoas"}
+
+    def test_no_missing_table_for_old_schema_end_to_end(self, tmp_path):
+        pd = tmp_path / "products"
+        _make_main_py(pd, "p", "nosnolimiar")
+        _make_migrations(pd, "p", [
+            ("001.sql", _CREATE_OLD),
+            ("002.sql", "ALTER SCHEMA monica RENAME TO nosnolimiar;\n"),
+        ])
+        live = [{"table_name": "pessoas", "column_name": c} for c in ("id", "nome")]
+        r = check_schema_drift("p", executor=_live_executor(live), products_dir=pd)
+        assert r["status"] == "in_sync", r["findings"]
+
+    def test_real_nosnolimiar_migrations_declare_no_monica_tables(self):
+        repo = Path(__file__).resolve().parents[3]
+        declared, found, _ = _migration_declared_schema("nosnolimiar", repo / "products")
+        assert found and declared
+        assert not [t for t in declared if t.startswith("monica.")], sorted(declared)[:5]
+        assert any(t.startswith("nosnolimiar.") for t in declared)
