@@ -32,6 +32,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from tools.noctus.dev._primary_ledger_guard import ensure_not_shared_primary
+
 REPO_ROOT = Path(__file__).resolve().parents[5]
 _PATTERN_DIR = Path("KNOWLEDGE-BASE/CONTEXT/PATTERNS/common")
 INVENTORY_REL = _PATTERN_DIR / "gate-alignment-inventory.json"
@@ -508,6 +510,7 @@ def burn_down(root: Path | None = None) -> dict:
 def refresh_baseline(root: Path | None = None) -> dict:
     """Shrink-only: drops baseline rows that now declare a mechanism or vanished. Never adds."""
     root = root or REPO_ROOT
+    ensure_not_shared_primary(root, 'gate_alignment.refresh_baseline')
     inv = load_inventory(root).get("gates", {})
     base = load_baseline(root).get("undeclared_mechanism", [])
     kept = [g for g in base if g in inv and not mechanism_ok(inv[g].get("mechanism"))]
@@ -542,6 +545,7 @@ def declare_gate(gate: str, mechanism: str, owner: str, *, standard: str = "",
 
 
 def _write_inventory(root: Path, inv: dict) -> None:
+    ensure_not_shared_primary(root, 'gate_alignment.declare')
     inv["gates"] = dict(sorted(inv["gates"].items()))
     (root / INVENTORY_REL).write_text(json.dumps(inv, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -840,6 +844,7 @@ def run_action(action: str, *, gate: str = "", mechanism: str = "", owner: str =
         fails, findings = matrix_issues(root)
         return {"ok": not fails, "issues": fails, "pending_findings": findings, "table": render_matrix(root)}
     if action == "render":
+        ensure_not_shared_primary(root, 'gate_alignment.render')
         (root / RENDERED_REL).write_text(render_markdown(root) + "\n## Decision coverage matrix\n\n" + render_matrix(root), encoding="utf-8")
         return {"ok": True, "path": str(RENDERED_REL)}
     if action == "refresh-baseline":

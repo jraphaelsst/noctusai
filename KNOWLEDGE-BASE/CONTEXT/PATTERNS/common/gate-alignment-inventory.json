@@ -240,6 +240,14 @@
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
    "remediation": "NOC-REMEDIATE[gate-wall] destination: a wrapped-run injection (hw_admission command pre-filled in the agent start brief + test-engineer template) so the first command is already the admitted one."
   },
+  "guard:ledger-primary-write": {
+   "mechanism": "mcp/noctusai/tools/noctus/dev/findings_ledger.py (append/update ship through ledger_store; reconcile/inventory/catalog write the caller's worktree)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": false,
+   "declared": "2026-11-15"
+  },
   "guard:primary-write": {
    "severity": "",
    "kind": "guard",
