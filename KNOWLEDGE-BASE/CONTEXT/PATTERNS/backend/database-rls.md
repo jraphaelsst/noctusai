@@ -193,6 +193,18 @@ vs. migrations — offline, no live DB needed). A product with NEITHER a
 migrations dir NOR ORM models is `undeterminable` — a finding, never a
 silent pass (fail-closed).
 
+**Schema renames are followed (2026-11-15).** Earlier migrations are frozen:
+`CREATE TABLE monica.*` stays in 001-022 after nosnolimiar's `023` renames the
+schema, and reading those literally reported `missing_table:monica.*` against a
+live DB that holds 25 tables in `nosnolimiar` and 0 in `monica` (a false alarm
+that blocked two prod cuts). `schema_drift` now re-keys the declared map through
+every rename it can read, in order: `ALTER SCHEMA x RENAME TO y`, the dynamic
+`EXECUTE format('ALTER SCHEMA %I RENAME TO %I', v_old, v_new)` form (variables
+resolved from literal `DECLARE`s, as 023 does), or the product-declared marker
+`-- noc-schema-alias: old -> new` for a rename it cannot read (computed names).
+Comments never count as a rename. A product that renames its schema ships the
+rename in a migration the scanner can read, or the marker.
+
 **Blind spot, by construction:** a column the code writes that NO migration
 (and no ORM model) ever declared — bug #1's own shape — agrees with itself
 on both sides of a migrations-vs-live diff, so `schema_drift` cannot see it.
