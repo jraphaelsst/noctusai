@@ -1754,57 +1754,6 @@ from tools.noctus.dev.self_patch_predicate import (  # noqa: E402
 )
 
 
-# ── string-constant targets ───────────────────────────────────────
-# `_CRED = "app.mod.fn"` … `patch(_CRED, ...)` is the same self-patch as the literal
-# (2026-11-15, certidoes tests). The shared predicate above only reads literals and is
-# guardian-protected steward tooling, so the resolution lives HERE (compliance.py is exempt):
-# a name bound exactly once to a module-level string is substituted into the call before the
-# predicate runs. This is the COMMIT-time backstop only; the write-time twin
-# (`test_seam_guard`) loads the stdlib-only predicate leaf, which a guardian cannot edit.
-# NOC-REMEDIATE[self-patch-constants-write-time]: port `module_string_constants` +
-# `extract_patch_target_resolved` into `self_patch_predicate.py` (tooling-branch steward, a
-# session that does not hold the release-steward lease), then call them from `test_seam_guard`
-# — destination: a tooling-branch steward branch, 2026-11-15
-def _module_string_constants(tree: ast.AST) -> dict[str, str]:
-    """Module-level ``NAME = "literal"`` / ``NAME: str = "literal"`` bindings.
-
-    Only a name bound EXACTLY ONCE counts: a reassigned name has no single static value, so
-    it stays unresolved (the old behaviour) rather than guessed - a wrong guess is a false alarm.
-    """
-    seen: dict[str, str | None] = {}
-    for stmt in getattr(tree, "body", []):
-        if isinstance(stmt, ast.Assign):
-            targets, value = list(stmt.targets), stmt.value
-        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
-            targets, value = [stmt.target], stmt.value
-        else:
-            continue
-        literal = value.value if isinstance(value, ast.Constant) and isinstance(value.value, str) else None
-        for target in targets:
-            if isinstance(target, ast.Name):
-                seen[target.id] = None if target.id in seen else literal
-    return {name: val for name, val in seen.items() if val is not None}
-
-
-def _extract_patch_target_resolved(node: ast.AST, constants: dict[str, str]) -> str | None:
-    """`_extract_patch_target`, with a Name argument bound to a module-level string constant
-    read as that string: arg 0 of `patch(...)` (the dotted target), arg 1 of `setattr` /
-    `patch.object` / `setitem(sys.modules, ...)` (the attribute / module name)."""
-    if constants and isinstance(node, ast.Call):
-        func = node.func
-        is_patch = (isinstance(func, ast.Name) and func.id == "patch") or (
-            isinstance(func, ast.Attribute) and func.attr == "patch"
-        )
-        idx = 0 if is_patch else 1
-        if len(node.args) > idx and isinstance(node.args[idx], ast.Name) and node.args[idx].id in constants:
-            resolved = ast.Constant(value=constants[node.args[idx].id])
-            ast.copy_location(resolved, node.args[idx])
-            args = list(node.args)
-            args[idx] = resolved
-            node = ast.Call(func=node.func, args=args, keywords=node.keywords)
-    return _extract_patch_target(node)
-
-
 # Severity ratchet: products that have reached 0 self-monkeypatches get the
 # detector at severity `high` so new violations block CI; the rest stay at
 # `warning` while their historical debt drains. Per `KB § PATTERNS/compliance/testing.md
