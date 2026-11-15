@@ -76,3 +76,38 @@ def test_train_checks_each_rider():
 
 def test_no_pointer_ops_skips_gate():
     assert T.slice_unscored_riders(["a"], ops=None, branch_prefix="feat/", reader=lambda: []) == []
+
+
+# -- score= writes the row itself (no refuse-and-ask) --------------------------------------
+def _scorer(calls):
+    def w(slug, agent, duration, **kw):
+        calls.append((slug, agent, duration, kw))
+        return {"ok": True}
+    return w
+
+
+def test_score_payload_is_written_by_integrate_instead_of_refusing():
+    calls: list = []
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=_fake(),
+                        pointer_ops=_ops("backend-engineer"), slice_scores_reader=lambda: [],
+                        score={"model": "m", "q": {"Q1": 3}, "duration_minutes": 12},
+                        score_writer=_scorer(calls))
+    assert res["status"] == "integrated"
+    assert res["slice_score"] == {"scored": "x", "agent": "backend-engineer"}
+    assert calls[0][0] == "x" and calls[0][2] == 12 and calls[0][3]["score"] == {"model": "m", "q": {"Q1": 3}}
+
+
+def test_score_in_plan_mode_writes_nothing():
+    calls: list = []
+    res = T.task_branch(action="integrate", slug="x", confirm=False, run=_fake(),
+                        pointer_ops=_ops("backend-engineer"), slice_scores_reader=lambda: [],
+                        score={"model": "m", "q": {}}, score_writer=_scorer(calls))
+    assert res["status"] == "planned" and res["slice_score"] == {"would_score": ["x"]}
+    assert calls == []
+
+
+def test_failed_score_write_still_refuses_with_the_reason():
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=_fake(),
+                        pointer_ops=_ops("backend-engineer"), slice_scores_reader=lambda: [],
+                        score={"model": "m"}, score_writer=lambda *a, **k: {"ok": False, "error": "bad q"})
+    assert res["refused"] == "slice_unscored" and res["score_error"] == "bad q"
