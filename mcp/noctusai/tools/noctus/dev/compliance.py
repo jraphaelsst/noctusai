@@ -48,6 +48,7 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
+import node_toolchain as _node_toolchain  # noqa: E402  (ONE node/ts-morph resolver for every AST-scan keeper)
 
 
 def env_state_keeper(fn):
@@ -9424,40 +9425,8 @@ def _silent_refusal_files(root: Path) -> dict[str, list[Path]]:
 def silent_refusal_scan(files: list[Path], root: Path | None = None) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
     """Run the ts-morph scan over ``files``. Returns ``(results, per_file_errors, bootstrap_error)``;
     ``bootstrap_error`` is set when the scan could not run at all (never a silent zero)."""
-    base = root or REPO_ROOT
-    script = base.joinpath(*_SILENT_REFUSAL_SCRIPT_REL)
-    if not script.exists():
-        script = REPO_ROOT.joinpath(*_SILENT_REFUSAL_SCRIPT_REL)
-    if not files:
-        return {}, {}, None
-    if shutil.which("node") is None:
-        return {}, {}, "node_unavailable: `node` not on PATH — the silent-refusal AST scan cannot run"
-    if not script.exists():
-        return {}, {}, f"script_missing: {script}"
-    try:
-        proc = subprocess.run(
-            ["node", str(script)],
-            input=json.dumps({"files": [str(f) for f in files]}),
-            capture_output=True,
-            text=True,
-            timeout=_SILENT_REFUSAL_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        return {}, {}, f"timeout: the silent-refusal scan exceeded {_SILENT_REFUSAL_TIMEOUT_SECONDS}s ({len(files)} files)"
-    except OSError as exc:
-        return {}, {}, f"spawn_failed: {exc}"
-    if proc.returncode != 0:
-        tail = (proc.stderr or "")[-600:]
-        if "Cannot find module" in tail or "ERR_MODULE_NOT_FOUND" in tail:
-            return {}, {}, f"ts_morph_not_installed: run `cd mcp/noctusai/node && npm ci` — {tail.strip()[:300]}"
-        return {}, {}, f"node_crashed (exit {proc.returncode}): {tail}"
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {}, {}, f"non_json_stdout: {exc}; stdout={proc.stdout[:300]!r}"
-    if not parsed.get("ok"):
-        return {}, {}, f"bad_request: {parsed.get('error')}"
-    return parsed.get("results", {}), parsed.get("errors", {}), None
+    return _node_toolchain.run_files_scan(_SILENT_REFUSAL_SCRIPT_REL, files, root=root or REPO_ROOT,
+                                         timeout=_SILENT_REFUSAL_TIMEOUT_SECONDS, label="silent-refusal AST scan")
 
 
 def check_silent_refusal(repo_root: Path | None = None) -> list[dict]:
@@ -9558,34 +9527,8 @@ def _motion_import_files(root: Path) -> dict[str, list[Path]]:
 
 def _motion_import_scan(files: list[Path]) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
     """ts-morph scan over `files` -> (results, per_file_errors, bootstrap_error)."""
-    if not files:
-        return {}, {}, None
-    script = REPO_ROOT.joinpath(*_MOTION_SCRIPT_REL)
-    if shutil.which("node") is None:
-        return {}, {}, "node_unavailable: `node` not on PATH"
-    if not script.exists():
-        return {}, {}, f"script_missing: {script}"
-    try:
-        proc = subprocess.run(
-            ["node", str(script)], input=json.dumps({"files": [str(f) for f in files]}),
-            capture_output=True, text=True, timeout=_MOTION_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        return {}, {}, f"timeout: exceeded {_MOTION_TIMEOUT_SECONDS}s ({len(files)} files)"
-    except OSError as exc:
-        return {}, {}, f"spawn_failed: {exc}"
-    if proc.returncode != 0:
-        tail = (proc.stderr or "")[-600:]
-        if "Cannot find module" in tail or "ERR_MODULE_NOT_FOUND" in tail:
-            return {}, {}, f"ts_morph_not_installed: run `cd mcp/noctusai/node && npm ci` — {tail.strip()[:300]}"
-        return {}, {}, f"node_crashed (exit {proc.returncode}): {tail}"
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {}, {}, f"non_json_stdout: {exc}; stdout={proc.stdout[:300]!r}"
-    if not parsed.get("ok"):
-        return {}, {}, f"bad_request: {parsed.get('error')}"
-    return parsed.get("results", {}), parsed.get("errors", {}), None
+    return _node_toolchain.run_files_scan(_MOTION_SCRIPT_REL, files, root=REPO_ROOT, timeout=_MOTION_TIMEOUT_SECONDS,
+                                         label="motion-import AST scan")
 
 
 def check_motion_import_boundary(repo_root: Path | None = None) -> list[dict]:
@@ -12013,39 +11956,9 @@ def _run_lying_loading_modeb_scan_one_product(
     docstring for why the scan is now split per product ("GAP 3"). Returns
     ``(results, per_file_errors, bootstrap_error)`` scoped to `product`.
     """
-    payload = {"files": [str(p) for p in files]}
-    try:
-        proc = subprocess.run(
-            ["node", str(_LYING_LOADING_MODEB_SCRIPT)],
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            timeout=_LYING_LOADING_MODEB_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        return {}, {}, (
-            f"timeout: Mode B AST scan for `{product}` exceeded "
-            f"{_LYING_LOADING_MODEB_TIMEOUT_SECONDS}s ({len(files)} files)"
-        )
-    except OSError as exc:
-        return {}, {}, f"spawn_failed: {exc}"
-    if proc.returncode != 0:
-        stderr_tail = (proc.stderr or "")[-800:]
-        # `Cannot find module 'ts-morph'` is the specific, actionable case
-        # (node_modules/ is gitignored — `npm install` was never run here).
-        if "Cannot find module" in stderr_tail or "ERR_MODULE_NOT_FOUND" in stderr_tail:
-            return {}, {}, (
-                "ts_morph_not_installed: run `cd mcp/noctusai/node && npm install` "
-                f"— {stderr_tail.strip()[:300]}"
-            )
-        return {}, {}, f"node_crashed (exit {proc.returncode}): {stderr_tail}"
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {}, {}, f"non_json_stdout: {exc}; stdout={proc.stdout[:300]!r}"
-    if not parsed.get("ok"):
-        return {}, {}, f"bad_request: {parsed.get('error')}"
-    return parsed.get("results", {}), parsed.get("errors", {}), None
+    return _node_toolchain.run_files_scan(
+        ("mcp", "noctusai", "node", "lying_loading_scan.mjs"), files, root=REPO_ROOT,
+        timeout=_LYING_LOADING_MODEB_TIMEOUT_SECONDS, label=f"Mode B AST scan for `{product}`")
 
 
 def _run_lying_loading_modeb_scan(
@@ -28226,27 +28139,7 @@ def _mpsr_seeded_keys(product_dir: Path) -> set[str]:
 
 def _mpsr_fe_scan(files: list[Path]) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
     """ts-morph `defineModule` page keys over ``files`` -> (results, per_file_errors, bootstrap_error)."""
-    if not files:
-        return {}, {}, None
-    script = REPO_ROOT.joinpath(*_MPSR_SCRIPT_REL)
-    if shutil.which("node") is None:
-        return {}, {}, "node_unavailable: `node` not on PATH"
-    if not script.exists():
-        return {}, {}, f"script_missing: {script}"
-    try:
-        proc = subprocess.run(
-            ["node", str(script)], input=json.dumps({"files": [str(f) for f in files]}),
-            capture_output=True, text=True, timeout=120,
-        )
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        return {}, {}, f"scan_failed: {exc}"
-    if proc.returncode != 0:
-        return {}, {}, f"node_crashed (exit {proc.returncode}): {(proc.stderr or '')[-300:]}"
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {}, {}, f"non_json_stdout: {exc}"
-    return parsed.get("results", {}), parsed.get("errors", {}), None
+    return _node_toolchain.run_files_scan(_MPSR_SCRIPT_REL, files, root=REPO_ROOT, timeout=120, label="module-page-keys AST scan")
 
 
 def module_page_status_row_gaps(root: Path) -> tuple[dict[str, dict[str, str]], list[str]]:
