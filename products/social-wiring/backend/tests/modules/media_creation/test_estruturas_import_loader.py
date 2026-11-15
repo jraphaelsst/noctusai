@@ -60,6 +60,40 @@ def test_each_invalid_reference_row_is_ignored_with_its_code(row, esperado):
     assert motivo(row) == esperado
 
 
+@pytest.mark.parametrize("row,esperado", [
+    # (a) a nested [placeholder] inside a (nota) cut the note at the first ]: the name is left with a stray )
+    (linha_ref(1, blocos=[bloco_ref(1, nome="Intensificador do Mistério vive e quase ninguém entende)")]), imp.M_BLOCO),
+    (linha_ref(1, blocos=[bloco_ref(1, nome="Abertura (nota aberta")]), imp.M_BLOCO),
+    (linha_ref(1, blocos=[bloco_ref(1, nome="Abertura [x)")]), imp.M_BLOCO),
+    (linha_ref(1, blocos=[bloco_ref(1, nota="nota com [placeholder cortado")]), imp.M_BLOCO),
+    (linha_ref(1, blocos=[bloco_ref(1, nota="fecha demais]")]), imp.M_BLOCO),
+    (linha_ref(1, formula_headline="Como [x faz y"), imp.M_FORMULA_INVALIDA),
+    (linha_ref(1, formula_headline="Como x) faz y"), imp.M_FORMULA_INVALIDA),
+    # (b) `Headline (nota)` glued at the end of a formula
+    (linha_ref(1, formula_headline="Como [x] faz y Headline"), imp.M_FORMULA_INVALIDA),
+    (linha_ref(1, formula_headline="Como [x] faz y Headline (a nota do vídeo)"), imp.M_FORMULA_INVALIDA),
+    (linha_ref(1, formula_headline="Headline"), imp.M_FORMULA_INVALIDA),
+    # (c) an annotation-only segment produced a nameless block
+    (linha_ref(1, blocos=[bloco_ref(1, nome="   ")]), imp.M_BLOCO),
+])
+def test_the_extraction_defect_class_can_never_load_silently(row, esperado):
+    assert motivo(row) == esperado
+
+
+@pytest.mark.parametrize("formula,nome,nota", [
+    ("Como [x] faz [y] em (z)", "Abertura", "nota (com [placeholder] aninhado) ok"),
+    ("A palavra Headline no meio de [tema] e mais texto", "Headline", ""),
+    ("Fórmula terminando em headline minúsculo", "Abertura [a] (b)", ""),
+])
+def test_balanced_brackets_and_a_headline_word_inside_a_formula_are_valid(formula, nome, nota):
+    assert motivo(linha_ref(1, formula_headline=formula, blocos=[bloco_ref(1, nome=nome, nota=nota)])) is None
+
+
+def test_the_bracket_balance_and_marker_helpers():
+    assert imp.balanceado("a (b [c] d) e") and imp.balanceado("") and not imp.balanceado("a ]") and not imp.balanceado("([)]") and not imp.balanceado("(")
+    assert imp.marcador_headline("x Headline") and imp.marcador_headline("x Headline (n)") and not imp.marcador_headline("x Headlines") and not imp.marcador_headline("Headline x")
+
+
 def test_a_valid_reference_row_maps_every_field_with_the_stated_provenance():
     row = linha_ref(1, perfil="@Criador.Um", formula_herdada_de="77") | {"blocos": [bloco_ref(2, tipo="Revelação", nota="uma nota"), bloco_ref(1, tipo="Outro")]}
     (l,) = imp.parse_documento("referencia", [row], TIPOS_CATALOGO).linhas
@@ -77,58 +111,31 @@ def test_a_non_inherited_reference_formula_is_fonte():
     assert l.formula_origem == "fonte" and l.formula_herdada_de is None
 
 
-def test_maquina_mapping_name_match_else_outro_and_pending_formula():
-    p = imp.parse_documento("maquina_de_roteiros", corpus_maquina(2), TIPOS_CATALOGO)
-    assert p.linhas_total == 2 and not p.ignoradas
-    l = p.linhas[0]
-    assert (l.fonte_externa, l.ref_externa, l.handle, l.perfil_nome) == ("maquina_de_roteiros", "molde-1", "criador.sintetico0", "Criador Sintético Zero")
-    assert [b.tipo_nome for b in l.blocos] == ["Headline", "Revelação", "Outro"]     # '  revelacao ' matched without accent/case/space
-    assert all(b.repeticoes == 1 and b.nota is None for b in l.blocos)
-    assert (l.formato_origem, l.objetivos_origem) == ("fonte", "fonte")
-    assert all(b.nome_origem == b.tipo_origem == b.tempo_origem == b.instrucao_origem == "fonte" for b in l.blocos)
-    assert l.formula_origem == "referencia" and l.rotulo == imp.ROTULO_MAQUINA        # the molde name stands in, flagged pending review
-
-
-@pytest.mark.parametrize("mutacao,esperado", [
-    (lambda m: m["colecoes"]["moldes"][0].__setitem__("perfilId", "nao-existe"), imp.M_PERFIL_AUSENTE),
-    (lambda m: m["colecoes"]["perfis"][0].__setitem__("handle", "@@@"), imp.M_HANDLE),
-    (lambda m: m["colecoes"]["moldes"][0].__setitem__("id", ""), imp.M_ID),
-    (lambda m: m["colecoes"]["moldes"][0].__setitem__("nome", ""), imp.M_FORMULA_AUSENTE),
-    (lambda m: m["colecoes"]["moldes"][0].__setitem__("formato", "x"), imp.M_FORMATO),
-    (lambda m: m["colecoes"]["moldes"][0].__setitem__("objetivos", []), imp.M_OBJETIVOS),
-    (lambda m: m["colecoes"]["moldes"][0].__setitem__("blocos", []), imp.M_BLOCOS_AUSENTES),
-    (lambda m: m["colecoes"]["moldes"][0]["blocos"][0].__setitem__("nome", ""), imp.M_BLOCO),
-])
-def test_each_invalid_maquina_row_is_ignored_with_its_code(mutacao, esperado):
-    m = copia(corpus_maquina(1))
-    mutacao(m)
-    p = imp.parse_documento("maquina_de_roteiros", m, TIPOS_CATALOGO)
-    assert [x[1] for x in p.ignoradas] == [esperado] and not p.linhas
-
-
 def test_a_duplicate_id_inside_the_file_is_ignored_not_double_counted():
     p = imp.parse_documento("referencia", [linha_ref(1), linha_ref(1, perfil="outro.perfil")], TIPOS_CATALOGO)
     assert len(p.linhas) == 1 and p.ignoradas == ((1, imp.M_ID_DUP),)
 
 
 @pytest.mark.parametrize("fonte,conteudo", [
-    ("referencia", {"a": 1}), ("referencia", "x"), ("maquina_de_roteiros", []),
-    ("maquina_de_roteiros", {"colecoes": {"perfis": []}}), ("nao_existe", []),
+    ("referencia", {"a": 1}), ("referencia", "x"), ("maquina_de_roteiros", corpus_maquina(2)), ("maquina_de_edicao", []),
+    ("nao_existe", []),
 ])
 def test_a_bad_top_level_shape_is_arquivo_invalido(fonte, conteudo):
     with pytest.raises(imp.ArquivoInvalido):
         imp.parse_documento(fonte, conteudo, TIPOS_CATALOGO)
 
 
+def test_any_other_source_is_fonte_nao_suportada_and_the_reference_is_the_only_one():
+    assert imp.FONTES == ("referencia",)
+    for fonte in ("maquina_de_roteiros", "maquina_de_edicao", "x"):
+        with pytest.raises(imp.ArquivoInvalido) as exc:
+            imp.parse_documento(fonte, corpus_maquina(1), TIPOS_CATALOGO)
+        assert exc.value.motivo == "fonte_nao_suportada"
+
+
 def test_the_catalog_must_carry_the_system_type():
     with pytest.raises(imp.ArquivoInvalido):
         imp.parse_documento("referencia", [linha_ref(1)], ("Headline",))
-
-
-def test_every_maquina_field_the_owner_left_out_is_reported_in_every_plan():
-    p = imp.parse_documento("maquina_de_roteiros", corpus_maquina(1), TIPOS_CATALOGO)
-    assert {"quandoUsar", "quandoNaoUsar", "validacao", "exemplo", "aprovado", "criadoEm", "marcas", "roteiros"} <= set(p.campos_nao_importados)
-    assert imp.parse_documento("referencia", [], TIPOS_CATALOGO).campos_nao_importados == ()
 
 
 def test_handle_normalisation():
@@ -165,27 +172,20 @@ def test_the_same_file_twice_is_all_unchanged_and_writes_no_estrutura_the_second
     assert [n for n, _ in store.calls[antes:] if n.startswith("cs_estrutura")] == []  # no estrutura write at all
 
 
-def test_maquina_twice_is_all_unchanged_and_profiles_are_merged_by_handle_across_both_files():
+def test_profiles_are_merged_by_normalised_handle_and_new_ones_are_library_only_with_criado_then_importado():
     store = FakeStore()
-    run(store, "referencia", corpus_ref(8))                     # creates criador.sintetico0..3
-    c = run(store, "maquina_de_roteiros", corpus_maquina(6))   # criador.sintetico0 exists; criador.maquina is new
-    assert (c.perfis_criados, c.perfis_mesclados, c.estruturas_criadas) == (1, 1, 6)
-    assert set(store.perfis_) == {"criador.sintetico0", "criador.sintetico1", "criador.sintetico2", "criador.sintetico3", "criador.maquina"}
-    c2 = run(store, "maquina_de_roteiros", corpus_maquina(6))
-    assert (c2.estruturas_inalteradas, c2.perfis_criados) == (6, 0)
-
-
-def test_new_profiles_are_library_only_and_get_criado_then_importado_events_with_the_maquina_name():
-    store = FakeStore()
-    run(store, "maquina_de_roteiros", corpus_maquina(2))
-    assert store.perfil_nomes["criador.maquina"] == "Criador Máquina"
-    assert ("criador.maquina", "criado") in store.eventos_perfil and ("criador.maquina", "importado") in store.eventos_perfil
+    c = run(store, "referencia", [linha_ref(1, perfil="@Criador.Um"), linha_ref(2, perfil="criador.um"), linha_ref(3, perfil="outro.perfil")])
+    assert (c.perfis_criados, c.perfis_mesclados, c.estruturas_criadas) == (2, 0, 3)
+    assert set(store.perfis_) == {"criador.um", "outro.perfil"}
+    assert ("criador.um", "criado") in store.eventos_perfil and ("criador.um", "importado") in store.eventos_perfil
+    c2 = run(store, "referencia", [linha_ref(4, perfil="criador.um")])
+    assert (c2.perfis_criados, c2.perfis_mesclados) == (0, 1)
 
 
 def test_an_existing_profile_is_left_untouched():
     store = FakeStore()
     store.perfis_["criador.sintetico0"] = "pf-existente"
-    run(store, "maquina_de_roteiros", corpus_maquina(2))
+    run(store, "referencia", [linha_ref(4, perfil="criador.sintetico0")])
     assert ("criador.sintetico0", "criado") not in store.eventos_perfil and ("criador.sintetico0", "importado") in store.eventos_perfil
     assert "criador.sintetico0" not in store.perfil_nomes
 
@@ -194,8 +194,6 @@ def test_an_opted_out_handle_is_skipped_for_both_files_and_creates_no_profile():
     store = FakeStore(optouts={"criador.sintetico0"})
     c = run(store, "referencia", [linha_ref(1, perfil="criador.sintetico0"), linha_ref(2, perfil="criador.livre")])
     assert c.ignoradas_motivos == {imp.M_OPTOUT: 1} and c.estruturas_criadas == 1 and "criador.sintetico0" not in store.perfis_
-    c2 = run(FakeStore(optouts={"criador.sintetico0"}), "maquina_de_roteiros", corpus_maquina(4))
-    assert c2.ignoradas_motivos == {imp.M_OPTOUT: 2} and c2.fechado()
 
 
 def test_the_profile_ceiling_ignores_rows_of_new_profiles_beyond_it():
@@ -356,7 +354,7 @@ def test_the_loader_imports_no_llm_client_no_prompt_and_no_saida_ia():
 
 
 def test_the_mapper_never_stamps_ai_provenance():
-    for fonte, doc in (("referencia", corpus_ref(5)), ("maquina_de_roteiros", corpus_maquina(5))):
+    for fonte, doc in (("referencia", corpus_ref(5)),):
         for l in imp.parse_documento(fonte, doc, TIPOS_CATALOGO).linhas:
             origens = {l.formula_origem, l.formato_origem, l.objetivos_origem} | {
                 o for b in l.blocos for o in (b.nome_origem, b.tipo_origem, b.tempo_origem, b.instrucao_origem)

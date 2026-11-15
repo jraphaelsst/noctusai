@@ -1,6 +1,6 @@
 """Estruturas library -- the PURE LOADER (estruturas-contract.md section 7, EST-3).
 
-Reads a parsed JSON document of one of two vendor-shaped files, validates it row by row, maps it to library
+Reads a parsed JSON document of the CoreStudio reference dataset (the ONLY source; other tools are their own modules), validates it row by row, maps it to library
 Estruturas and upserts them idempotently ONLY through the EST-1 SECURITY DEFINER RPCs (``cs_estrutura_criar`` /
 ``cs_estrutura_atualizar`` / ``cs_estrutura_substituir_blocos``): the RPC mutates and writes the event row in ONE
 transaction. There is NO model call, NO prompt, NO ``saida_ia`` and no AI provenance in this module (a test greps its
@@ -31,30 +31,21 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional, Protocol, Sequence
 
 from noctusai_lib.integrations.persistence.table_reads import batched
-from noctusai_lib.primitives.accents import fold_accents
 
 from app.modules.media_creation import estruturas_formatos as fmt
 from app.modules.media_creation.estruturas_tipos_bloco import NOME_OUTRO
 
 logger = logging.getLogger(__name__)
 
-FONTES: tuple[str, ...] = ("referencia", "maquina_de_roteiros")
-FONTE_EXTERNA: dict[str, str] = {"referencia": "corestudio", "maquina_de_roteiros": "maquina_de_roteiros"}
-ORIGEM_ESTRUTURA: dict[str, str] = {"referencia": "import_corestudio", "maquina_de_roteiros": "import_maquina"}
+#: ONE source: the CoreStudio reference dataset. Other tools (Máquina de Roteiros, Máquina de Edição, ...) are their own modules
+#: with their own libraries (owner 2026-11-15); a file of another source is refused ``arquivo_invalido`` / ``fonte_nao_suportada``.
+FONTES: tuple[str, ...] = ("referencia",)
+FONTE_EXTERNA: dict[str, str] = {"referencia": "corestudio"}
+ORIGEM_ESTRUTURA: dict[str, str] = {"referencia": "import_corestudio"}
 _ORIGEM_POR_FONTE_EXTERNA: dict[str, str] = {FONTE_EXTERNA[f]: ORIGEM_ESTRUTURA[f] for f in FONTES}
 
 MAX_LINHAS = 20_000
-#: Fields of the Maquina file the owner kept OUT of the library (contract 7.2): reported in every plan so nothing is
-#: lost silently.
-CAMPOS_NAO_IMPORTADOS: dict[str, tuple[str, ...]] = {
-    "referencia": (),
-    "maquina_de_roteiros": (
-        "quandoUsar", "quandoNaoUsar", "validacao", "exemplo", "aprovado", "criadoEm", "perfis.dna", "perfis.ganchos",
-        "perfis.nuncaFaz", "perfis.pilares", "perfis.publico", "perfis.tom", "marcas", "roteiros",
-    ),
-}
-#: The Maquina molde has no formula field; its ``nome`` stands in (required, non-empty) and is flagged PENDING review.
-ROTULO_MAQUINA = "maquina-de-roteiros: nome do molde usado como fórmula"
+CAMPOS_NAO_IMPORTADOS: dict[str, tuple[str, ...]] = {"referencia": ()}
 
 # ── coded ignore reasons (never silent) ───────────────────────────────────────────────────────────────────
 M_HANDLE = "handle_invalido"
@@ -69,7 +60,6 @@ M_TIPO = "tipo_desconhecido"
 M_FORMATO = "formato_invalido"
 M_OBJETIVOS = "objetivos_invalidos"
 M_OPTOUT = "perfil_optout"
-M_PERFIL_AUSENTE = "perfil_ausente"
 M_LINHA = "linha_invalida"
 M_INATIVA = "estrutura_inativa"
 M_CONFLITO = "conflito_versao"
@@ -77,12 +67,11 @@ M_GRAVACAO = "erro_gravacao"
 M_LIMITE = "limite_perfis"
 MOTIVOS: tuple[str, ...] = (
     M_HANDLE, M_ID, M_ID_DUP, M_FORMULA_AUSENTE, M_FORMULA_INVALIDA, M_BLOCOS_AUSENTES, M_ORDEM, M_BLOCO, M_TIPO,
-    M_FORMATO, M_OBJETIVOS, M_OPTOUT, M_PERFIL_AUSENTE, M_LINHA, M_INATIVA, M_CONFLITO, M_GRAVACAO, M_LIMITE,
+    M_FORMATO, M_OBJETIVOS, M_OPTOUT, M_LINHA, M_INATIVA, M_CONFLITO, M_GRAVACAO, M_LIMITE,
 )
 
 _HANDLE_RE = re.compile(r"^[a-z0-9._]{1,30}$")
 _ID_NUM_RE = re.compile(r"^\d+$")
-_ID_MAQUINA_RE = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
 
 
 class ArquivoInvalido(Exception):
@@ -102,11 +91,6 @@ def normalizar_handle(valor: Any) -> Optional[str]:
         return None
     h = valor.strip().lstrip("@").strip().lower()
     return h if _HANDLE_RE.match(h) else None
-
-
-def normalizar_nome(valor: str) -> str:
-    """Accent-, case- and whitespace-insensitive key for matching a block name to a catalog type."""
-    return " ".join(fold_accents(valor).casefold().split())
 
 
 def json_canonico(valor: Any) -> str:
@@ -168,6 +152,29 @@ class Parseado:
     campos_nao_importados: tuple[str, ...]
 
 
+_MARCADOR_HEADLINE_RE = re.compile(r"(?:^|\s)Headline(?:\s*\(.*\))?\s*$")
+
+
+def balanceado(texto: str) -> bool:
+    """True when every ``(`` / ``[`` is closed by its own kind in order (and none is left open or closed twice).
+
+    The class of extraction defect this catches: a nested ``[placeholder]`` inside a ``(nota)`` cut the note at the
+    first ``]``, leaving a block name like ``Nome vive e quase ninguém entende)``."""
+    pilha: list[str] = []
+    for c in texto:
+        if c in "([":
+            pilha.append(c)
+        elif c in ")]":
+            if not pilha or pilha.pop() != ("(" if c == ")" else "["):
+                return False
+    return not pilha
+
+
+def marcador_headline(formula: str) -> bool:
+    """True when the formula ENDS with a bare ``Headline`` marker (optionally followed by ``(...)``): a glued block label."""
+    return bool(_MARCADOR_HEADLINE_RE.search(formula))
+
+
 def _texto(valor: Any, maximo: int, *, obrigatorio: bool = False) -> tuple[bool, Optional[str]]:
     """``(ok, normalised)``: ``None`` for an empty optional text; not ok when it is not a string or too long."""
     if valor is None and not obrigatorio:
@@ -196,6 +203,8 @@ def _bloco(raw: Any, *, nome_key: str, tipo_nome: Optional[str], origens: tuple[
         ok_o, nota, rep, ok_r = True, None, 1, True
     if not (ok_n and ok_t and ok_i and ok_o and ok_r) or nome is None or tipo_nome is None:
         return None
+    if not balanceado(nome) or (nota is not None and not balanceado(nota)):  # motivo colchetes_desbalanceados
+        return None
     return BlocoPlano(nome, tipo_nome, tempo, instrucao, nota, int(rep), *origens)
 
 
@@ -212,7 +221,9 @@ def _formula(valor: Any) -> tuple[Optional[str], Optional[str]]:
     if not isinstance(valor, str) or not valor.strip():
         return None, M_FORMULA_AUSENTE
     texto = valor.strip()
-    return (texto, None) if len(texto) <= fmt.FORMULA_MAX else (None, M_FORMULA_INVALIDA)
+    if len(texto) > fmt.FORMULA_MAX or not balanceado(texto) or marcador_headline(texto):
+        return None, M_FORMULA_INVALIDA  # too long | unbalanced () [] (motivo colchetes_desbalanceados) | glued `Headline` (motivo marcador_headline)
+    return texto, None
 
 
 def _linha_referencia(i: int, raw: Any, tipos: frozenset[str]) -> LinhaPlano | str:
@@ -269,76 +280,24 @@ def _linha_referencia(i: int, raw: Any, tipos: frozenset[str]) -> LinhaPlano | s
     )
 
 
-def _linha_maquina(i: int, raw: Any, perfis: Mapping[str, tuple[Optional[str], Optional[str]]], tipos_norm: Mapping[str, str]) -> LinhaPlano | str:
-    if not isinstance(raw, dict):
-        return M_LINHA
-    ref = raw.get("id")
-    if not isinstance(ref, str) or not _ID_MAQUINA_RE.match(ref):
-        return M_ID
-    perfil_id = raw.get("perfilId")
-    if not isinstance(perfil_id, str) or perfil_id not in perfis:
-        return M_PERFIL_AUSENTE
-    handle, nome_perfil = perfis[perfil_id]
-    if handle is None:
-        return M_HANDLE
-    formula, motivo = _formula(raw.get("nome"))
-    if formula is None:
-        return motivo or M_FORMULA_AUSENTE
-    formato = raw.get("formato")
-    if not isinstance(formato, str) or formato not in fmt.FORMATOS:
-        return M_FORMATO
-    objetivos = _objetivos(raw.get("objetivos"))
-    if objetivos is None:
-        return M_OBJETIVOS
-    blocos_raw = raw.get("blocos")
-    if not isinstance(blocos_raw, list) or not 1 <= len(blocos_raw) <= fmt.BLOCOS_MAX:
-        return M_BLOCOS_AUSENTES
-    blocos: list[BlocoPlano] = []
-    for b in blocos_raw:
-        nome_bruto = b.get("nome") if isinstance(b, dict) else None
-        tipo = tipos_norm.get(normalizar_nome(nome_bruto), NOME_OUTRO) if isinstance(nome_bruto, str) else NOME_OUTRO
-        plano = _bloco(b, nome_key="nome", tipo_nome=tipo, origens=("fonte", "fonte", "fonte", "fonte"), completo=False)
-        if plano is None:
-            return M_BLOCO
-        blocos.append(plano)
-    return LinhaPlano(
-        indice=i, fonte_externa=FONTE_EXTERNA["maquina_de_roteiros"], ref_externa=ref, handle=handle, perfil_nome=nome_perfil,
-        formula=formula, formula_origem="referencia", formula_herdada_de=None, formato=formato, formato_origem="fonte",
-        objetivos=objetivos, objetivos_origem="fonte", rotulo=ROTULO_MAQUINA, blocos=tuple(blocos),
-    )
-
-
 def parse_documento(fonte: str, conteudo: Any, tipos: Iterable[str]) -> Parseado:
     """Validate + map the whole document. ``tipos`` = the catalog type NAMES. Raises :class:`ArquivoInvalido` on a bad
     top-level shape; every row problem is a coded ignore (a row is never dropped silently)."""
     if fonte not in FONTES:
-        raise ArquivoInvalido("fonte_desconhecida")
+        raise ArquivoInvalido("fonte_nao_suportada")
     nomes = frozenset(tipos)
     if NOME_OUTRO not in nomes:
         raise ArquivoInvalido("catalogo_sem_outro")
-    if fonte == "referencia":
-        if not isinstance(conteudo, list):
-            raise ArquivoInvalido("esperado_array")
-        rows: list[Any] = conteudo
-        perfis: dict[str, tuple[Optional[str], Optional[str]]] = {}
-    else:
-        colecoes = conteudo.get("colecoes") if isinstance(conteudo, dict) else None
-        if not isinstance(colecoes, dict) or not isinstance(colecoes.get("perfis"), list) or not isinstance(colecoes.get("moldes"), list):
-            raise ArquivoInvalido("esperado_colecoes_perfis_moldes")
-        rows = colecoes["moldes"]
-        perfis = {}
-        for p in colecoes["perfis"]:
-            if isinstance(p, dict) and isinstance(p.get("id"), str) and p["id"] not in perfis:
-                nome = p.get("nome")
-                perfis[p["id"]] = (normalizar_handle(p.get("handle")), nome.strip()[:200] or None if isinstance(nome, str) else None)
+    if not isinstance(conteudo, list):
+        raise ArquivoInvalido("esperado_array")
+    rows: list[Any] = conteudo
     if len(rows) > MAX_LINHAS:
         raise ArquivoInvalido("linhas_demais")
-    tipos_norm = {normalizar_nome(n): n for n in nomes}
     linhas: list[LinhaPlano] = []
     ignoradas: list[tuple[int, str]] = []
     vistos: set[str] = set()
     for i, raw in enumerate(rows):
-        res = _linha_referencia(i, raw, nomes) if fonte == "referencia" else _linha_maquina(i, raw, perfis, tipos_norm)
+        res = _linha_referencia(i, raw, nomes)
         if isinstance(res, str):
             ignoradas.append((i, res))
         elif res.ref_externa in vistos:
@@ -929,5 +888,5 @@ register()
 __all__ = [
     "ArquivoInvalido", "BlocoPlano", "ImportacaoError", "ImportacaoService", "JOB_TYPE", "apresentar_relatorio", "chave_blob", "executar_job", "handle_importar", "reconciliar_dead_letter", "register", "CAMPOS_NAO_IMPORTADOS", "Contadores", "FONTES", "ImportStore", "LinhaPlano", "MOTIVOS",
     "Parseado", "SupabaseImportStore", "blocos_iguais", "executar", "json_canonico", "montar_blocos", "montar_patch",
-    "normalizar_handle", "normalizar_nome", "parse_documento", "payload_criar", "sha256_documento",
+    "normalizar_handle", "parse_documento", "payload_criar", "sha256_documento",
 ]

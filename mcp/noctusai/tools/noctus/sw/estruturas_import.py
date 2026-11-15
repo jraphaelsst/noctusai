@@ -7,7 +7,7 @@
                    Returns the run id; the job ``estruturas.importar`` does the writing.
   action="status"  GET the run (``importacao_id``) or, without one, the latest runs. Poll until status is concluida / falhou.
 
-``fonte`` = "referencia" | "maquina_de_roteiros"; ``arquivo`` = a local path (default: the owner's private directory, see ``DIRETORIO_PADRAO``).
+``fonte`` = "referencia" (the only source; any other is refused locally with the server's code, arquivo_invalido / fonte_nao_suportada); ``arquivo`` = a local path (default: the owner's private directory, see ``DIRETORIO_PADRAO``).
 Idempotent by construction (the same file twice is all ``estruturas_inalteradas``).
 
 PRIVACY (contract 12.3): the two files are vendor-derived. This tool reads the file locally, sends the parsed JSON to the platform API and returns ONLY
@@ -28,8 +28,8 @@ from typing import Any
 import httpx
 
 ACOES = ("plan", "apply", "status")
-FONTES = ("referencia", "maquina_de_roteiros")
-ARQUIVO_PADRAO = {"referencia": "estruturas-referencia.json", "maquina_de_roteiros": "maquina-de-roteiros-*.json"}
+FONTES = ("referencia",)
+ARQUIVO_PADRAO = {"referencia": "estruturas-referencia.json"}
 DIRETORIO_PADRAO = Path.home() / "Documents/repository/NoctusAI/_private-studies/core-studio/estruturas-import"
 MAX_BYTES = 16 * 1024 * 1024  # the API's 16 MiB body override on this one route
 _BASE = "/api/media-creation/estruturas/importacoes"
@@ -107,7 +107,7 @@ def estruturas_import(
     if action not in ACOES:
         return _error("acao_invalida", f"action deve ser um de {ACOES}.")
     if fonte not in FONTES:
-        return _error("fonte_invalida", f"fonte deve ser um de {FONTES}.")
+        return _error("arquivo_invalido", "Esta fonte não é carregada na biblioteca de Estruturas.", motivo="fonte_nao_suportada", http_status=422)
     if action == "apply" and not confirm:
         return _error("confirmacao_obrigatoria", "apply precisa de confirm=True (e de um plan do mesmo arquivo nas últimas 24 h).")
     cfg = _config()
@@ -154,10 +154,10 @@ def estruturas_import(
 def register(server) -> None:
     @server.tool(
         name="noctus.sw.estruturas_import",
-        description=("Load the CoreStudio reference dataset / Máquina de Roteiros export into the platform Estruturas library (a pure loader: no model call). "
+        description=("Load the CoreStudio reference dataset into the platform Estruturas library (a pure loader: no model call). "
                      "action=plan = SIMULATION (server writes only the `simulada` lote), returns counts + coded ignore reasons only; action=apply needs confirm=True "
                      "AND a plan of the SAME file within 24 h (server-enforced 409 simulacao_obrigatoria), runs as job estruturas.importar; action=status polls "
-                     "(importacao_id) or lists the latest runs. fonte=referencia|maquina_de_roteiros, arquivo=local path (default: the owner's private dir). "
+                     "(importacao_id) or lists the latest runs. fonte=referencia (the only source), arquivo=local path (default: the owner's private dir). "
                      "Never returns or logs row text. Needs NOCTUS_SW_URL + NOCTUS_SW_TOKEN (a platform admin's bearer)."),
     )
     def _estruturas_import(action: str = "plan", fonte: str = "referencia", arquivo: str = "", confirm: bool = False, importacao_id: str = "") -> dict:

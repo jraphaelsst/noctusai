@@ -51,7 +51,7 @@ def test_the_file_identity_matches_the_api_golden_vector():
 
 
 def test_not_configured_and_bad_arguments_are_typed_errors(monkeypatch):
-    assert tool.estruturas_import("status", fonte="x")["error"]["codigo"] == "fonte_invalida"
+    assert tool.estruturas_import("plan", fonte="x")["error"]["codigo"] == "arquivo_invalido"
     assert tool.estruturas_import("nope")["error"]["codigo"] == "acao_invalida"
     monkeypatch.delenv("NOCTUS_SW_TOKEN")
     assert tool.estruturas_import("plan")["error"]["codigo"] == "nao_configurado"
@@ -139,13 +139,17 @@ def test_an_unreadable_file_reports_only_the_error_class(tmp_path):
     assert out["error"]["codigo"] == "arquivo_ilegivel" and SENTINELA not in json.dumps(out)
 
 
-def test_a_missing_file_and_a_maquina_default_are_resolved(tmp_path, arquivo):
+def test_a_missing_file_is_typed(tmp_path, arquivo):
     assert tool.estruturas_import("plan", arquivo=str(tmp_path / "nao-existe.json"))["error"]["codigo"] == "arquivo_nao_encontrado"
-    assert tool.estruturas_import("plan", "maquina_de_roteiros")["error"]["codigo"] == "arquivo_nao_encontrado"  # none in the dir
-    (tmp_path / "maquina-de-roteiros-2026-11-15.json").write_text(json.dumps({"colecoes": {"perfis": [], "moldes": []}}), encoding="utf-8")
-    seen = []
-    tool.estruturas_import("plan", "maquina_de_roteiros", _transport=_t(lambda r: (seen.append(json.loads(r.content)), httpx.Response(200, json={"data": RELATORIO}))[1]))
-    assert seen[0]["fonte"] == "maquina_de_roteiros" and seen[0]["arquivo_nome"] == "maquina-de-roteiros-2026-11-15.json"
+
+
+def test_any_other_source_is_refused_with_the_servers_code_and_nothing_is_sent(arquivo):
+    def handler(req):
+        raise AssertionError("no request may be made")
+
+    for fonte in ("maquina_de_roteiros", "x"):
+        out = tool.estruturas_import("plan", fonte, _transport=_t(handler))
+        assert out["error"]["codigo"] == "arquivo_invalido" and out["error"]["motivo"] == "fonte_nao_suportada"
 
 
 def test_it_is_registered_in_the_sw_package():

@@ -120,15 +120,21 @@ class TestSimulacao:
         assert SENTINELA not in r.text and SENTINELA not in json.dumps(est.lotes(), default=str)
         assert r.json()["data"]["ignoradas_motivos"] == {"handle_invalido": 1}
 
-    def test_the_maquina_plan_lists_the_fields_the_owner_left_out(self, est, client):
-        r = client.post(BASE, json=body("maquina_de_roteiros", corpus_maquina(4)))
-        d = r.json()["data"]
-        assert r.status_code == 200 and "quandoUsar" in d["campos_nao_importados"] and d["linhas_total"] == 4
+    @pytest.mark.parametrize("fonte", ["maquina_de_roteiros", "maquina_de_edicao", "qualquer"])
+    @pytest.mark.parametrize("dry_run", [True, False])
+    def test_any_other_source_is_a_coded_422_arquivo_invalido_fonte_nao_suportada(self, est, client, fonte, dry_run):
+        r = client.post(BASE, json=body(fonte, corpus_maquina(3), dry_run=dry_run))
+        assert r.status_code == 422 and r.json()["code"] == "arquivo_invalido" and r.json()["motivo"] == "fonte_nao_suportada"
+        assert est.lotes() == [] and est.store.calls == [] and est.jobs.enqueued == []
 
-    @pytest.mark.parametrize("fonte,conteudo,motivo", [
-        ("referencia", {"colecoes": {}}, "esperado_array"),
-        ("maquina_de_roteiros", [1, 2], "esperado_colecoes_perfis_moldes"),
-    ])
+    def test_a_reference_row_with_unbalanced_brackets_is_ignored_with_a_code_in_the_report(self, est, client):
+        conteudo = corpus_ref(6)
+        conteudo[0]["blocos"][0]["nome_original"] = f"{SENTINELA} nome cortado)"
+        conteudo[1]["formula_headline"] = f"{SENTINELA} fórmula Headline (nota)"
+        d = client.post(BASE, json=body(conteudo=conteudo)).json()["data"]
+        assert d["ignoradas_motivos"] == {"bloco_invalido": 1, "formula_invalida": 1} and d["estruturas_criadas"] == 4 and SENTINELA not in json.dumps(d)
+
+    @pytest.mark.parametrize("fonte,conteudo,motivo", [("referencia", {"colecoes": {}}, "esperado_array")])
     def test_a_file_of_the_wrong_shape_is_422_arquivo_invalido_flat(self, est, client, fonte, conteudo, motivo):
         r = client.post(BASE, json=body(fonte, conteudo))
         assert r.status_code == 422 and r.json()["code"] == "arquivo_invalido" and r.json()["motivo"] == motivo
@@ -152,10 +158,6 @@ class TestAplicacao:
         assert client.post(BASE, json=body()).status_code == 200
         r = client.post(BASE, json=body(conteudo=corpus_ref(7), dry_run=False))
         assert r.status_code == 409 and r.json()["code"] == "simulacao_obrigatoria"
-
-    def test_a_simulation_of_the_other_fonte_does_not_authorise_the_apply(self, est, client):
-        assert client.post(BASE, json=body("maquina_de_roteiros", corpus_maquina(3))).status_code == 200
-        assert client.post(BASE, json=body("referencia", corpus_maquina(3), dry_run=False)).status_code == 422  # shape first
 
     def test_a_simulation_older_than_24_hours_does_not_authorise_the_apply(self, est, client):
         assert client.post(BASE, json=body()).status_code == 200
