@@ -1021,6 +1021,7 @@ def _org_unique_tables(products_dir: _Path) -> set[str]:
     """`schema.table` for every table a migration limits to one row per org: a UNIQUE INDEX / UNIQUE / PRIMARY KEY on
     `(org_id)` alone (a partial index counts - its predicate still collides on a live org)."""
     found: set[str] = set()
+    # product-scope: all — a one-row-per-org rule is a property of the schema, awake product or not
     for path in products_dir.glob("*/backend/migrations/*.sql"):
         sql = _re.sub(r"--[^\n]*", "", path.read_text(encoding="utf-8"))
         for m in _UNIQUE_INDEX_RE.finditer(sql):
