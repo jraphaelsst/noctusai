@@ -231,6 +231,160 @@ def render_organ_migration(
     return {**result, "status": "new_revision" if new_revision else "created"}
 
 
+def _active_slugs(root: Path) -> list[str]:
+    """Slugs of `deploy/fleet/active-scope.txt` (the set every gate checks; asleep products are out)."""
+    f = root / "deploy" / "fleet" / "active-scope.txt"
+    if not f.is_file():
+        return []
+    return [ln.strip() for ln in f.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")]
+
+
+_BASELINE_REL = Path("deploy") / "fleet" / "organ-render-baseline.json"
+
+
+def _load_baseline(root: Path, baseline: list[dict[str, Any]] | None) -> dict[tuple[str, str], dict[str, Any]]:
+    """Accepted known-lag drift: ``{(product, organ): entry}``. Each entry needs a destination and a date
+    (a baseline row without them is a silent deferral, so it is refused)."""
+    if baseline is None:
+        f = root / _BASELINE_REL
+        baseline = json.loads(f.read_text(encoding="utf-8")).get("accepted", []) if f.is_file() else []
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for e in baseline:
+        missing = [k for k in ("product", "organ", "destination", "date") if not e.get(k)]
+        if missing:
+            raise ValueError(f"{_BASELINE_REL}: entry {e!r} lacks {missing} -- an accepted drift needs a destination and a date")
+        out[(e["product"], e["organ"])] = e
+    return out
+
+
+def _frozen_violations(migrations_dir: Path) -> list[str]:
+    """Applied files (migrations-applied.json) whose bytes no longer match the recorded sha256.
+
+    An applied migration is frozen -- it ran in prod under the schema it names (e.g. `monica` before the
+    nosnolimiar cutover). A render must only ever ADD a new revision, never rewrite one of these.
+    """
+    from noctusai_lib.testing.migrations_applied import load_applied, sha256_text
+
+    bad: list[str] = []
+    for name, recorded in sorted(load_applied(migrations_dir).items()):
+        f = migrations_dir / name
+        if f.is_file() and sha256_text(f.read_text(encoding="utf-8")) != recorded:
+            bad.append(name)
+    return bad
+
+
+def render_all_consumers(
+    *,
+    baseline: list[dict[str, Any]] | None = None,
+    write: bool = False,
+    worktree_path: str | Path | None = None,
+    generator_fn: Callable[[str, str, list[int]], dict[str, Any]] | None = None,
+    products_dir: Path | None = None,
+    slugs: list[str] | None = None,
+) -> dict[str, Any]:
+    """Every active product's committed organ render vs the organ generator output of the tree.
+
+    A product is a consumer of an organ when one of its `backend/migrations/*.sql` starts with the
+    organ's generated header. `write=False` (check) lists the consumers whose render drifted;
+    `write=True` re-renders them (render_organ_migration semantics: unapplied file refreshed in
+    place, applied one => a new revision file). Cheap: generator output is memoised per
+    (organ, schema, revisions), so each organ costs one child interpreter plus one per distinct schema.
+
+    Drift listed in the committed baseline (``deploy/fleet/organ-render-baseline.json``, each entry with a
+    destination + date) is reported as ``accepted`` and never fails the check or gets written; only NEW
+    drift fails.
+
+    Returns ``{status, ok, checked, drifted, accepted, rendered, errors}``;
+    status: clean | accepted | drift | rendered | error.
+    """
+    root = Path(resolve_caller_root(worktree_path)) if worktree_path is not None else Path(__file__).resolve().parents[5]
+    pdir = products_dir or root / "products"
+    cache: dict[tuple[str, str, tuple[int, ...]], dict[str, Any]] = {}
+    inner = generator_fn
+
+    def gen(organ: str, schema: str, revisions: list[int]) -> dict[str, Any]:
+        key = (organ, schema, tuple(revisions))
+        if key not in cache:
+            if inner is not None:
+                cache[key] = inner(organ, schema, revisions)
+            elif worktree_path is not None:
+                cache[key] = _generator_from_tree(root, organ, schema, revisions)
+            else:
+                cache[key] = _generator_in_process(organ, schema, revisions)
+        return cache[key]
+
+    registered = gen("", "probe_schema", [1])
+    if "error" in registered:
+        return {"status": "error", "ok": False, "checked": 0, "drifted": [], "rendered": [], "errors": [registered["error"]]}
+    headers: dict[str, str] = {}
+    for organ in registered["registered"]:
+        probe = gen(organ, "probe_schema", [1])
+        if "header" in probe:
+            headers[organ] = probe["header"]
+
+    active = slugs if slugs is not None else _active_slugs(root)
+    live = lambda: list(active)  # noqa: E731 - offline roster, never the network catalog
+    try:
+        accepted_map = _load_baseline(root, baseline)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return {"status": "error", "ok": False, "checked": 0, "drifted": [], "accepted": [], "rendered": [], "errors": [str(exc)]}
+    checked, drifted, accepted, rendered, errors = 0, [], [], [], []
+    for slug in active:
+        mig = pdir / slug / "backend" / "migrations"
+        if not mig.is_dir():
+            continue
+        texts = [p.read_text(encoding="utf-8") for p in sorted(mig.glob("*.sql"))]
+        for organ, header in headers.items():
+            if not any(t.startswith(header) for t in texts):
+                continue
+            checked += 1
+            try:
+                frozen_bad = _frozen_violations(mig)
+            except ValueError as exc:
+                frozen_bad = [f"unreadable migrations-applied.json: {exc}"]
+            if frozen_bad:
+                errors.append({"product": slug, "organ": organ, "status": "frozen_file_modified",
+                               "error": f"applied (frozen) migration(s) differ from the recorded sha256: {frozen_bad}. "
+                                        "Restore them; ship changes as a NEW revision file, never by rewriting an applied one."})
+                continue
+
+            def _run(confirm: bool, slug: str = slug, organ: str = organ) -> dict[str, Any]:
+                return render_organ_migration(
+                    slug, organ, confirm=confirm, worktree_path=None,
+                    products_dir=pdir, skip_fetch=True, live_products_fn=live, generator_fn=gen,
+                )
+
+            r = _run(False)
+            st = r["status"]
+            if st in ("would_refresh", "would_new_revision") and (slug, organ) in accepted_map:
+                e = accepted_map[(slug, organ)]
+                accepted.append({"product": slug, "organ": organ, "status": st, "path": r.get("path"),
+                                 "destination": e["destination"], "date": e["date"]})
+                continue
+            if write and st in ("would_refresh", "would_new_revision"):
+                r = _run(True)
+                st = r["status"]
+                after = _frozen_violations(mig)
+                if after:  # defence in depth: a write must never have touched an applied file
+                    errors.append({"product": slug, "organ": organ, "status": "frozen_file_modified",
+                                   "error": f"the render modified applied (frozen) file(s) {after}"})
+                    continue
+            if st == "up_to_date":
+                continue
+            row = {"product": slug, "organ": organ, "status": st, "path": r.get("path")}
+            if st in ("would_refresh", "would_new_revision"):
+                drifted.append(row)
+            elif st in ("refreshed", "new_revision"):
+                rendered.append(row)
+            else:
+                errors.append({**row, "error": r.get("error")})
+    status = ("error" if errors else "rendered" if rendered else "drift" if drifted
+              else "accepted" if accepted else "clean")
+    return {"status": status, "ok": status in ("clean", "accepted", "rendered"), "checked": checked,
+            "drifted": drifted, "accepted": accepted, "rendered": rendered, "errors": errors}
+
+
 def register(server) -> None:
     @server.tool(
         name="noctus.dev.render_organ_migration",
@@ -247,18 +401,25 @@ def register(server) -> None:
             "file path AND the organ generator code (run in a child interpreter on that tree's seed "
             "dirs) come from it; omitted => the server's own tree, flagged in `warnings`/`generator_source`. Pair the "
             "product with noctusai_lib.testing.organs.assert_organ_migration_current. "
+            "all_consumers=True (product/organ ignored): check EVERY active consumer's committed render against the "
+            "generator (confirm=False lists drift, confirm=True re-renders) -- the derived-artifact check for a seed organ generator change. "
             "KB § PATTERNS/architect/vertical-seed.md."
         ),
     )
     def _render_organ_migration(
-        product: str,
-        organ: str,
+        product: str = "",
+        organ: str = "",
         confirm: bool = False,
         schema: str | None = None,
         allow_inactive: bool = False,
         worktree_path: str | None = None,
         skip_fetch: bool = False,
+        all_consumers: bool = False,
     ) -> dict:
+        if all_consumers:
+            return render_all_consumers(write=confirm, worktree_path=worktree_path)
+        if not product or not organ:
+            return {"status": "error", "error": "product and organ are required unless all_consumers=True"}
         return render_organ_migration(
             product, organ, confirm=confirm, schema=schema, allow_inactive=allow_inactive,
             worktree_path=worktree_path, skip_fetch=skip_fetch,
