@@ -2114,6 +2114,11 @@ def live_tree_test_ids(tests_dir: str | Path) -> list[str]:
             continue
 
         def reads(fn: ast.AST) -> bool:
+            # A test taking the `pglite` fixture needs PGlite (node_modules) - absent in the hermetic export, so it would
+            # ERROR on the SETUP, not judge the code (harness-invalid). Those run via `migration_guard_suite` (which links
+            # PGlite) when the diff touches migrations; CI judges them otherwise.
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(a.arg == "pglite" for a in fn.args.args):
+                return False
             return any(isinstance(n, ast.Name) and n.id in roots for n in ast.walk(fn))
 
         rel = f"{root.name}/{path.name}"
