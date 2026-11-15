@@ -60,7 +60,11 @@ CERTIDOES_CONFIG = [
         # CPF") — billed, and retried as 2ª via, billed again: prod F113
         # (2026-10-26, 5.1 of an antigo proprietário with no birth date).
         # CNPJ needs nothing extra. See `pendencia_pre_chamada`.
-        "requer_campos": {"cpf": ("data_nascimento",)},
+        "requer_campos": {"cpf": ("data_nascimento",), "cnpj": ()},
+        "requisitos_evidencia": (
+            "docs receita-federal/pgfn: birthdate obrigatório para CPF; prod 606 "
+            "'birthdate é obrigatório' (F113)"
+        ),
         "parse_fn": "padrao",
         "response_format": "pdf",
         # Holders of a "positiva com efeitos de negativa" cannot get a NEW
@@ -75,6 +79,16 @@ CERTIDOES_CONFIG = [
         "endpoint": "tribunal/trf3/certidao-distr",
         "ordem": 2,
         "params_fn": "trf3_sp",
+        # Nothing up front: the docs mark nome_mae/birthdate/tipo_documento/
+        # documento/endereco/telefone "caso seja necessário dados
+        # complementares" and prod emitted 30/71 without them; ONE 606 asked
+        # for 'telefone', 'endereco', 'tipo_telefone' (2026-10). The builder
+        # sends what the consulta knows; the class guard parks the rest.
+        "requer_campos": {"cpf": (), "cnpj": ()},
+        "requisitos_evidencia": (
+            "docs tribunal/trf3/certidao-distr: dados complementares só quando o "
+            "TRF3 pede; prod 30/71 emitidas sem eles, 1 pedido condicional (606)"
+        ),
         "parse_fn": "padrao",
         "response_format": "html",
     },
@@ -84,6 +98,15 @@ CERTIDOES_CONFIG = [
         "endpoint": "tribunal/trf3/certidao-distr",
         "ordem": 3,
         "params_fn": "trf3",
+        # Same endpoint as `trf3_sp`: 29/73 emitted with none of the
+        # complementary data; ONE 606 asked 'nome_mae', 'birthdate',
+        # 'tipo_documento', 'documento' (2026-10) — conditional (the TRF3
+        # site's own "dados complementares" step), so never blocked up front.
+        "requer_campos": {"cpf": (), "cnpj": ()},
+        "requisitos_evidencia": (
+            "docs tribunal/trf3/certidao-distr: dados complementares só quando o "
+            "TRF3 pede; prod 29/73 emitidas sem eles, 1 pedido condicional (606)"
+        ),
         "parse_fn": "padrao",
         "response_format": "html",
     },
@@ -93,6 +116,10 @@ CERTIDOES_CONFIG = [
         "endpoint": "tribunal/trt2/ceat-digital",
         "ordem": 4,
         "params_fn": "trt2_digital",
+        "requer_campos": {"cpf": (), "cnpj": ()},
+        "requisitos_evidencia": (
+            "docs tribunal/trt2/ceat-digital: só cpf/cnpj_raiz; prod sem 606"
+        ),
         "parse_fn": "padrao",
         "response_format": "html",
     },
@@ -102,6 +129,9 @@ CERTIDOES_CONFIG = [
         "endpoint": "tribunal/trt2/ceat",
         "ordem": 5,
         "params_fn": "trt2_fisico",
+        # `nome*` is the endpoint's one required parameter besides the token.
+        "requer_campos": {"cpf": ("nome",), "cnpj": ("nome",)},
+        "requisitos_evidencia": "docs tribunal/trt2/ceat: 'nome' obrigatório (cpf e cnpj)",
         "parse_fn": "padrao",
         "response_format": "pdf",
     },
@@ -111,6 +141,8 @@ CERTIDOES_CONFIG = [
         "endpoint": "tst/cndt",
         "ordem": 6,
         "params_fn": "simples",
+        "requer_campos": {"cpf": (), "cnpj": ()},
+        "requisitos_evidencia": "docs tribunal/tst/cndt: só cpf/cnpj; prod sem 606",
         "parse_fn": "padrao",
         "response_format": "pdf",
     },
@@ -120,6 +152,19 @@ CERTIDOES_CONFIG = [
         "endpoint": "tribunal/tjsp/pedido-certidao",
         "ordem": 7,
         "params_fn": "tjsp",
+        # modelo 4 (Cível em geral): nome_completo (PF) / razao_social (PJ)
+        # identify the pedido; prod 606 "O parâmetro 'rg' não pode ser vazio
+        # caso o parâmetro 'cpf' seja preenchido" (3/3 CPF consultas without
+        # an RG; 6/6 with one emitted). birthdate/genero/nome_mae are modelo 6
+        # only (docs) — sent when known, never required here.
+        "requer_campos": {"cpf": ("nome", "rg"), "cnpj": ("nome",)},
+        # `email_envio*`: TJSP delivers by e-mail, the org's own address.
+        "requer_credencial": "email_envio",
+        "requisitos_evidencia": (
+            "docs tribunal/tjsp/pedido-certidao: email_envio* + nome; prod 606 "
+            "'rg não pode ser vazio caso cpf' (3x)"
+        ),
+        "observacao": "TJSP entrega por e-mail (e-mail de envio do escritório, 1 pedido a cada 30 min)",
         "parse_fn": "padrao",
         "response_format": "pdf",
     },
@@ -129,6 +174,10 @@ CERTIDOES_CONFIG = [
         "endpoint": "cenprot-sp/protestos",
         "ordem": 8,
         "params_fn": "simples",
+        "requer_campos": {"cpf": (), "cnpj": ()},
+        "requisitos_evidencia": (
+            "docs cenprot-sp/protestos: só cpf/cnpj; falhas em prod são 615/600 da origem"
+        ),
         "parse_fn": "cenprot",
         "response_format": "html",
     },
@@ -143,6 +192,10 @@ CERTIDOES_CONFIG = [
         # "Débitos não inscritos"). Same contract as `divida_ativa_sp`.
         "params_fn": "govbr",
         "requer_credencial": "govbr",
+        "requer_campos": {"cpf": (), "cnpj": ()},
+        "requisitos_evidencia": (
+            "docs + prod 606/604: login GOV.BR (login_cpf/login_senha); nenhum dado da parte"
+        ),
         "parse_fn": "padrao",
         "response_format": "pdf",
     },
@@ -157,6 +210,10 @@ CERTIDOES_CONFIG = [
         # `pendencia_pre_chamada`.
         "params_fn": "govbr",
         "requer_credencial": "govbr",
+        "requer_campos": {"cpf": (), "cnpj": ()},
+        "requisitos_evidencia": (
+            "docs + prod 606/604: login GOV.BR (login_cpf/login_senha); nenhum dado da parte"
+        ),
         "parse_fn": "padrao",
         "response_format": "pdf",
     },
@@ -218,7 +275,14 @@ MANUAL_TIPOS_CONFIG = [
     # it exists. The contract prints it as ONE line in place of the two
     # legacy ones (`contrato_gerador.derivacao.tipos_exigidos`). NOT a
     # `MATRIZ_LINHAS` row: the matriz's 5.1-5.13 are owner-fixed.
-    {"tipo": "certidao_unica_sp", "nome": "Certidão Única de Débitos (SP)", "ordem": 15},
+    {
+        "tipo": "certidao_unica_sp",
+        "nome": "Certidão Única de Débitos (SP)",
+        "ordem": 15,
+        "observacao": (
+            "Substitui CND Fazenda SP + Dívida Ativa SP (Resolução Conjunta SFP/PGE nº 1/2026)"
+        ),
+    },
 ]
 
 MANUAL_CONFIG_BY_TIPO: dict[str, dict] = {c["tipo"]: c for c in MANUAL_TIPOS_CONFIG}
@@ -269,22 +333,53 @@ def _build_params_cnd_federal(consulta: dict, token: str) -> dict:
 TRF3_TIPO_CIVEL = "1"
 TRF3_ABRANGENCIA_SAO_PAULO = "2"
 TRF3_ABRANGENCIA_TRIBUNAL_REGIONAL = "3"
+#: `tipo_documento` of the complementary identification (1 = não informado,
+#: 2 = RG, 3 = Passaporte) — NOT the CPF/CNPJ key.
+TRF3_DOCUMENTO_RG = "2"
+
+
+def _so_digitos(valor: Any) -> str:
+    return re.sub(r"\D", "", str(valor or ""))
+
+
+def _rg_e_o_cpf(consulta: dict) -> bool:
+    """The party's "RG" is its CPF — a CIN holder (the CIN prints the CPF as
+    the identity number, owner directive 2026-09-23). Sources that refuse an
+    RG equal to the CPF (TJSP) get the CIN instead."""
+    rg = _so_digitos(consulta.get("rg"))
+    return consulta.get("tipo_documento") == "cpf" and bool(rg) and rg == _so_digitos(consulta.get("documento"))
 
 
 def _build_params_trf3_civel(consulta: dict, token: str, abrangencia: str) -> dict:
     """TRF3 Cível at one `abrangencia`: token + cpf/cnpj + tipo + abrangencia
-    (+ nome_social for CPF).
+    (+ nome_social for CPF) + the complementary data the consulta knows.
 
-    Deliberately NOT sent: `tipo_documento` is this endpoint's
-    supplementary-ID type (1=não informado, 2=RG, 3=Passaporte), not CPF/CNPJ;
-    `nome`/`razao_social` switch the search to by-name; `nome_social` is
-    CPF-only per the docs.
+    Complementary data (CPF only): the TRF3 site asks for `nome_mae`,
+    `birthdate`, `tipo_documento`+`documento` (or `endereco`/`telefone`)
+    ONLY when it cannot settle the identity by CPF alone — the docs' "caso
+    seja necessário dados complementares"; prod 2026-10: 1 such 606 per
+    endpoint against ~30 emissions without them. So nothing is required up
+    front (`requer_campos` empty), but whatever the consulta already holds is
+    sent, so the conditional step succeeds instead of a billed 606.
+    `tipo_documento` here is the supplementary-ID type (`TRF3_DOCUMENTO_RG`),
+    never CPF/CNPJ; an RG that IS the CPF (a CIN) is not sent as an RG.
+
+    Deliberately NOT sent: `nome`/`razao_social` switch the search to
+    by-name; `nome_social` is CPF-only per the docs.
     """
     params = _token_and_doc(consulta, token)
     params["tipo"] = TRF3_TIPO_CIVEL
     params["abrangencia"] = abrangencia
-    if consulta["tipo_documento"] == "cpf" and consulta.get("nome"):
-        params["nome_social"] = consulta["nome"]
+    if consulta["tipo_documento"] == "cpf":
+        if consulta.get("nome"):
+            params["nome_social"] = consulta["nome"]
+        if consulta.get("nome_mae"):
+            params["nome_mae"] = consulta["nome_mae"]
+        if consulta.get("data_nascimento"):
+            params["birthdate"] = consulta["data_nascimento"]
+        if consulta.get("rg") and not _rg_e_o_cpf(consulta):
+            params["tipo_documento"] = TRF3_DOCUMENTO_RG
+            params["documento"] = consulta["rg"]
     return params
 
 
@@ -333,7 +428,11 @@ def _build_params_tjsp(consulta: dict, token: str) -> dict:
     email = resolve_key(INFOSIMPLES_EMAIL_ENVIO, org_id) if org_id else None
     if email:
         params["email_envio"] = email
-    if consulta.get("rg"):
+    # "Não serão processadas as análises de pedidos que tiverem o campo RG
+    # preenchido com o número do CPF" (docs): a CIN holder goes as `cin`.
+    if _rg_e_o_cpf(consulta):
+        params["cin"] = consulta["documento"]
+    elif consulta.get("rg"):
         params["rg"] = consulta["rg"]
     if consulta.get("genero"):
         params["genero"] = consulta["genero"]
@@ -363,6 +462,8 @@ def _build_params_govbr(consulta: dict, token: str) -> dict:
 SEGREDOS_DE_PARAMS = ("login_cpf", "login_senha", "pkcs12_cert", "pkcs12_pass")
 
 CREDENCIAL_GOVBR = "govbr"
+#: TJSP's `email_envio*` — the org's own delivery address (`infosimples_email_envio`).
+CREDENCIAL_EMAIL_ENVIO = "email_envio"
 
 # --------------- Pre-call requirements (pendências) ---------------
 #
@@ -371,9 +472,13 @@ CREDENCIAL_GOVBR = "govbr"
 # InfoSimples — the call is guaranteed to fail and is billed anyway. The cell
 # parks as `pendente` with a pt-BR, actionable `erro_mensagem` (never `erro`),
 # and stays uploadable. Two declarations feed it:
-#   `requer_credencial`: an org credential (GOV.BR login) — F112.
+#   `requer_credencial`: an org credential (`CREDENCIAIS`: GOV.BR login — F112;
+#                    TJSP delivery e-mail).
 #   `requer_campos`: `{tipo_documento: (consulta field, ...)}` — party data the
-#                    endpoint refuses to run without — F113.
+#                    endpoint refuses to run without — F113. MANDATORY on every
+#                    entry (both `cpf` and `cnpj`, empty allowed) together with
+#                    a one-line `requisitos_evidencia`; a test refuses an
+#                    undeclared endpoint (`test_certidoes_requisitos`).
 # Each has a provider-side class guard (`e_erro_login_govbr`,
 # `e_erro_parametro_obrigatorio`) for the day the endpoint starts demanding
 # something the config does not declare.
@@ -385,6 +490,12 @@ MSG_REQUER_GOVBR = (
     "ou envie o PDF manualmente"
 )
 PENDENCIA_CREDENCIAL_GOVBR = "credencial_govbr"
+#: The cell/resultado message while the org has no TJSP delivery e-mail.
+MSG_REQUER_EMAIL_ENVIO = (
+    "Requer o e-mail de envio do TJSP — configure em Configurações → Chaves "
+    "de API ou envie o PDF manualmente"
+)
+PENDENCIA_CREDENCIAL_EMAIL = "credencial_email"
 #: A party field the endpoint requires is empty (birth date for CND Federal).
 PENDENCIA_DADOS_PARTE = "dados_parte"
 
@@ -403,6 +514,8 @@ ROTULO_CAMPO = {
     "genero": "gênero",
     "nome": "nome",
     "documento_identificacao": "documento de identificação (RG ou passaporte)",
+    "endereco": "endereço",
+    "telefone": "telefone",
 }
 
 #: InfoSimples parameter → the consulta field that feeds it, so a provider
@@ -418,6 +531,10 @@ PARAM_PARA_CAMPO = {
     "razao_social": "nome",
     "tipo_documento": "documento_identificacao",
     "documento": "documento_identificacao",
+    "cin": "rg",
+    "endereco": "endereco",
+    "telefone": "telefone",
+    "tipo_telefone": "telefone",
 }
 
 #: The GOV.BR login pairs are exactly the secret params.
@@ -443,12 +560,30 @@ def msg_falta_dados(campos: list[str], nome: Optional[str]) -> str:
     return f"{_FALTA_PREFIXO}{_juntar(rotulos)}{alvo}{_FALTA_SUFIXO}"
 
 
+def _tem_email_envio(org_id: Optional[str]) -> bool:
+    return bool(org_id and resolve_key(INFOSIMPLES_EMAIL_ENVIO, org_id))
+
+
+#: `requer_credencial` value → (is it configured for the org?, the cell
+#: message, the pendência kind). ONE table: the pre-call check, the cell's
+#: `tipo_de_pendencia` and the guia catalog all read it.
+CREDENCIAIS: dict[str, tuple[Any, str, str]] = {
+    CREDENCIAL_GOVBR: (
+        lambda org_id: govbr_login(org_id) is not None, MSG_REQUER_GOVBR, PENDENCIA_CREDENCIAL_GOVBR,
+    ),
+    CREDENCIAL_EMAIL_ENVIO: (_tem_email_envio, MSG_REQUER_EMAIL_ENVIO, PENDENCIA_CREDENCIAL_EMAIL),
+}
+
+
 def pendencia_pre_chamada(config: dict, consulta: dict) -> Optional[str]:
     """The pt-BR message when `config`'s tipo cannot be emitted for this
     consulta — an org credential or a party field it declares is missing —
     so InfoSimples must NOT be called. `None` = go ahead."""
-    if config.get("requer_credencial") == CREDENCIAL_GOVBR and not govbr_login(consulta.get("org_id")):
-        return MSG_REQUER_GOVBR
+    credencial = config.get("requer_credencial")
+    if credencial:
+        configurada, mensagem, _ = CREDENCIAIS[credencial]
+        if not configurada(consulta.get("org_id")):
+            return mensagem
     faltam = campos_faltantes(config, consulta)
     if faltam:
         return msg_falta_dados(faltam, consulta.get("nome"))
@@ -557,13 +692,14 @@ def campos_do_erro(raw_response: Any) -> list[str]:
 
 def tipo_de_pendencia(row: Optional[dict]) -> Optional[str]:
     """Which pendência this resultado row is parked on (`credencial_govbr` |
-    `dados_parte`), or `None`. Pending for a reason a human fixes — never an
+    `credencial_email` | `dados_parte`), or `None`. Pending for a reason a human fixes — never an
     error. Recognised by the status + the message shape this module writes."""
     if not row or row.get("status") != "pendente":
         return None
     msg = row.get("erro_mensagem") or ""
-    if msg == MSG_REQUER_GOVBR:
-        return PENDENCIA_CREDENCIAL_GOVBR
+    for _, mensagem, pendencia in CREDENCIAIS.values():
+        if msg == mensagem:
+            return pendencia
     if msg.startswith(_FALTA_PREFIXO) and msg.endswith(_FALTA_SUFIXO):
         return PENDENCIA_DADOS_PARTE
     return None
@@ -878,6 +1014,118 @@ def manual_config_for(tipo: str) -> Optional[dict]:
     return MANUAL_CONFIG_BY_TIPO.get(tipo)
 
 
+# --------------- Requirements catalog (guia de documentos) ---------------
+
+#: The two consulta document kinds every requirement is declared for.
+TIPOS_DOCUMENTO_CONSULTA: tuple[str, ...] = ("cpf", "cnpj")
+
+FONTE_INFOSIMPLES = "infosimples"
+FONTE_MANUAL = "manual"
+
+
+def rotulo_campo(campo: str) -> str:
+    """`ROTULO_CAMPO`, capitalised for a standalone label ("Data de nascimento")."""
+    rotulo = ROTULO_CAMPO.get(campo, campo)
+    return rotulo[:1].upper() + rotulo[1:]
+
+
+def _requisitos_de(config: dict, documentos: tuple[str, ...]) -> list[dict]:
+    exigidos = config.get("requer_campos") or {}
+    return [
+        {
+            "documento": doc,
+            "campos": [{"campo": c, "rotulo": rotulo_campo(c)} for c in exigidos.get(doc, ())],
+        }
+        for doc in documentos
+    ]
+
+
+def _observacao(config: dict) -> Optional[str]:
+    partes = []
+    if config.get("requer_credencial") == CREDENCIAL_GOVBR:
+        partes.append("Requer login GOV.BR do escritório")
+    if config.get("observacao"):
+        partes.append(config["observacao"])
+    if config.get("segunda_via_fallback"):
+        partes.append("Se a origem recusar a emissão nova, busca a 2ª via ainda válida")
+    return " · ".join(partes) or None
+
+
+def requisitos_catalogo() -> list[dict]:
+    """Every certidão type — automatic (`CERTIDOES_CONFIG`) and manual
+    (`MANUAL_TIPOS_CONFIG`) — with what it needs before it can be requested:
+    per `cpf`/`cnpj`, the party fields (`requer_campos`, the SAME declaration
+    `pendencia_pre_chamada` enforces) and the org credential. Ordered like the
+    matriz (`MATRIZ_LINHAS`), then the remaining types by `ordem`. A manual
+    type has no fields: its PDF is sent by hand. `linha` is `None` for a type
+    outside the fixed matriz (`certidao_unica_sp`)."""
+    linhas = {l["tipo"]: l for l in MATRIZ_LINHAS}
+    automaticos = [(c, FONTE_INFOSIMPLES, TIPOS_DOCUMENTO_CONSULTA) for c in CERTIDOES_CONFIG]
+    manuais = [
+        (c, FONTE_MANUAL, tuple(c.get("aplicavel_a", TIPOS_DOCUMENTO_CONSULTA))) for c in MANUAL_TIPOS_CONFIG
+    ]
+    ordem_matriz = {l["tipo"]: i for i, l in enumerate(MATRIZ_LINHAS)}
+    todos = sorted(
+        automaticos + manuais,
+        key=lambda t: (ordem_matriz.get(t[0]["tipo"], len(ordem_matriz)), t[0]["ordem"]),
+    )
+    saida = []
+    for config, fonte, documentos in todos:
+        linha = linhas.get(config["tipo"])
+        credencial = config.get("requer_credencial")
+        observacao = _observacao(config)
+        if fonte == FONTE_MANUAL:
+            observacao = " · ".join(filter(None, ["Envio manual do PDF (sem emissão automática)", observacao]))
+        saida.append({
+            "tipo": config["tipo"],
+            "linha": linha["linha"] if linha else None,
+            "rotulo": linha["rotulo"] if linha else config["nome"],
+            "fonte": fonte,
+            "requisitos": _requisitos_de(config, documentos),
+            # The contract's `credencial` names only the GOV.BR login; TJSP's
+            # delivery e-mail is said in `observacao` (its `observacao` key).
+            "credencial": CREDENCIAL_GOVBR if credencial == CREDENCIAL_GOVBR else None,
+            "observacao": observacao,
+        })
+    return saida
+
+
+MARCADOR_REQUISITOS_INICIO = "<!-- AUTOGEN:certidoes-requisitos:begin -->"
+MARCADOR_REQUISITOS_FIM = "<!-- AUTOGEN:certidoes-requisitos:end -->"
+
+
+def renderizar_tabela_requisitos() -> str:
+    """The per-tipo requirements table of `KB § INTEGRATIONS/infosimples-
+    certidoes.md`, generated from `CERTIDOES_CONFIG` (pinned byte-for-byte by
+    `tests/modules/test_certidoes_requisitos.py`)."""
+    def campos(config: dict, doc: str) -> str:
+        exigidos = (config.get("requer_campos") or {}).get(doc, ())
+        return ", ".join(f"`{c}`" for c in exigidos) or "—"
+
+    linhas = [
+        "| Tipo | Endpoint | CPF exige | CNPJ exige | Credencial do escritório | Evidência |",
+        "|---|---|---|---|---|---|",
+    ]
+    for c in CERTIDOES_CONFIG:
+        linhas.append(
+            f"| `{c['tipo']}` | `{c['endpoint']}` | {campos(c, 'cpf')} | {campos(c, 'cnpj')} | "
+            f"{('`' + c['requer_credencial'] + '`') if c.get('requer_credencial') else '—'} | "
+            f"{c['requisitos_evidencia']} |"
+        )
+    return "\n".join(linhas)
+
+
+def bloco_requisitos_kb() -> str:
+    """The marker-delimited block the KB doc carries verbatim."""
+    return (
+        f"{MARCADOR_REQUISITOS_INICIO}\n"
+        "<!-- DO NOT EDIT BY HAND — regenerate via `app.modules.certidoes.registry."
+        "bloco_requisitos_kb()`. -->\n\n"
+        f"{renderizar_tabela_requisitos()}\n"
+        f"{MARCADOR_REQUISITOS_FIM}"
+    )
+
+
 __all__ = [
     "CERTIDOES_CONFIG",
     "CONFIG_BY_TIPO",
@@ -897,4 +1145,6 @@ __all__ = [
     "get_manual_tipos",
     "manual_config_for",
     "parse_resultado",
+    "requisitos_catalogo",
+    "rotulo_campo",
 ]
