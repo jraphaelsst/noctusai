@@ -795,6 +795,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--srb-window-hours", type=float, default=1.0, help="With --supabase-request-budget: window in hours (max 24).")
     parser.add_argument("--srb-start", default=None, help="With --supabase-request-budget: ISO start (use with --srb-end).")
     parser.add_argument("--srb-end", default=None, help="With --supabase-request-budget: ISO end (use with --srb-start).")
+    parser.add_argument("--photo-label-dataset", action="store_true", help="Label real-estate photos (room type + quality/edit attributes) with the vision registry row fotos.rotular (Anthropic); resumable CSV. MCP: noctus.dev.photo_label_dataset.")
+    for _f, _h in (("out-csv", "output CSV (required; resumable)"), ("csv-in", "input CSV with a `file` column"),
+                   ("photos-dir", "directory globbed recursively for jpg/jpeg/png/webp"), ("base-dir", "base for relative `file` paths"),
+                   ("concurrency", "parallel calls (default 3, max 8)"), ("limit", "max photos this run")):
+        parser.add_argument(f"--photo-label-dataset-{_f}", default=None, help=f"With --photo-label-dataset: {_h}.")
+    parser.add_argument("--photo-label-dataset-run", action="store_true", help="With --photo-label-dataset: really label (dry_run=False). Needs --photo-label-dataset-confirm.")
+    parser.add_argument("--photo-label-dataset-confirm", action="store_true", help="With --photo-label-dataset: apply (a write). Without it, dry-run only.")
+    parser.add_argument("--photo-label-dataset-allow-stale-toolkit", action="store_true", help="With --photo-label-dataset: bypass the toolkit-staleness fresh-subprocess hop (escape hatch).")
     parser.add_argument("--bg-process", action="store_true", help="Safety net for THIS session's own background processes (list/declare/undeclare/salvage/stop). MCP: noctus.dev.bg_process.")
     parser.add_argument("--bg-process-action", default="list", help="With --bg-process: list|declare|undeclare|salvage|stop.")
     parser.add_argument("--bg-process-pid", type=int, default=None, help="With --bg-process: target pid.")
@@ -5070,6 +5078,20 @@ def main():
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 
+    elif args.photo_label_dataset:
+        from tools.noctus.dev.photo_label_dataset import photo_label_dataset as _photo_label_dataset
+        _g = lambda k: getattr(args, f"photo_label_dataset_{k}", None)  # noqa: E731
+        if not _g("out_csv"):
+            print(json.dumps({"ok": False, "status": "error", "error": "--photo-label-dataset-out-csv is required"}))
+            sys.exit(1)
+        r = _photo_label_dataset(
+            out_csv=_g("out_csv"), csv_in=_g("csv_in"), photos_dir=_g("photos_dir"), base_dir=_g("base_dir") or ".",
+            concurrency=int(_g("concurrency") or 3),
+            limit=int(_g("limit")) if _g("limit") else None,
+            dry_run=not _g("run"), confirm=bool(_g("confirm")),
+            allow_stale_toolkit=bool(_g("allow_stale_toolkit")))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
     elif args.bg_process:
         from tools.noctus.dev.bg_process import bg_process as _bg_process
         r = _bg_process(
