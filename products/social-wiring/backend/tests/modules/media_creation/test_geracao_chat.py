@@ -170,12 +170,13 @@ def test_rota_de_envio_tem_default_ai_rl():
 
 def test_conversas_crud_e_privacidade(ch):
     c = _conversa(ch, titulo="Minha")
-    assert c["titulo"] == "Minha" and c["agente"] == "headline"
+    assert c["titulo"] == "Minha" and c["agente"] == "unificado"  # ONE chat: the created conversation is unified
     r = ch.get(f"{BASE}/conversas", params={"marca_id": MARCA, "agente": "headline"})
     assert [i["id"] for i in r.json()["data"]["items"]] == [c["id"]]
     assert r.json()["data"]["tem_mais"] is False
-    # other agent is a different rail
-    assert ch.get(f"{BASE}/conversas", params={"marca_id": MARCA, "agente": "roteiro"}).json()["data"]["items"] == []
+    # the deprecated `agente` filter is accepted and IGNORED: there is one rail per (user, marca)
+    r = ch.get(f"{BASE}/conversas", params={"marca_id": MARCA, "agente": "roteiro"})
+    assert [i["id"] for i in r.json()["data"]["items"]] == [c["id"]]
     r = ch.patch(f"{BASE}/conversas/{c['id']}", json={"titulo": "  Renomeada  "})
     assert r.status_code == 200 and r.json()["data"]["titulo"] == "Renomeada"
     assert ch.patch(f"{BASE}/conversas/{c['id']}", json={"titulo": "x" * 101}).status_code == 422
@@ -224,12 +225,17 @@ def test_sequencia_de_frames_meta_delta_done_e_persistencia(ch):
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
     f = _frames(r)
     assert [list(x)[0] for x in f] == ["meta", "delta", "delta", "done"]
-    assert set(f[0]["meta"]) == {"mensagem_usuario_id", "contexto_chars", "codigos_permitidos"}
+    assert set(f[0]["meta"]) == {
+        "mensagem_usuario_id", "contexto_chars", "codigos_permitidos", "modo_estrutura", "resolucao_perfis",
+    }
+    assert f[0]["meta"]["resolucao_perfis"] == {"resolvidos": [], "ambiguos": [], "nao_encontrados": []}
     assert f[1] == {"delta": "Olá, "} and f[2] == {"delta": "mundo."}
     msgs = ch.get(f"{BASE}/conversas/{c['id']}/mensagens").json()["data"]["items"]
     assert [m["role"] for m in msgs] == ["user", "assistant"]
     assert msgs[0]["id"] == f[0]["meta"]["mensagem_usuario_id"]
     assert msgs[1]["id"] == f[3]["done"]["mensagem_id"]
+    assert f[3]["done"] == {"mensagem_id": msgs[1]["id"], "propostas": []}  # no Estrutura catalogue in this context
+    assert msgs[1]["tipo"] == "texto" and msgs[1]["propostas"] == [] and msgs[1]["fluxo"] is None
     assert msgs[1]["conteudo"] == "Olá, mundo." and msgs[1]["status"] == "completa" and msgs[1]["truncada"] is False
     call = ch.fake.calls[0]
     assert call["provider"] == "anthropic" and call["model"] == "claude-opus-5" and call["org_id"] == TEST_ORG_ID
@@ -276,7 +282,7 @@ def test_continuacao_quando_truncado_e_depois_flag_truncated(ch):
 
 def test_desconexao_salva_parcial_e_libera_o_lock(ch):
     svc = ChatService(ch.mock_supabase, TEST_ORG_ID, TEST_USER_ID)
-    conversa = svc.create_conversa(MARCA, "headline", None)
+    conversa = svc.create_conversa(MARCA, None)
     ch.fake = FakeStream({"chunks": ["um ", "dois ", "três"]})
 
     async def cenario():
@@ -551,11 +557,16 @@ def test_roteiro_usa_elementos_para_conteudo_dos_cerebros_de_sistema(ch):
         "id": str(uuid.uuid4()), "org_id": TEST_ORG_ID, "marca_id": MARCA, "name": "Núcleo de Influência",
         "kind": "sistema", "template_slug": "nucleo-de-influencia",
         "content": "# Núcleo\nlongo texto que NÃO deve entrar\n### Elementos para conteúdo\n- Inimigo: \"o dentista barato\"\n"}).execute()
-    c = _conversa(ch, "roteiro")
+    # a LEGACY roteiro conversation (prod has one): listed/read as unified, its context unchanged until EST-4a
+    cid = str(uuid.uuid4())
+    ch.mock_supabase.from_("cs_chat_conversas").insert({
+        "id": cid, "org_id": TEST_ORG_ID, "marca_id": MARCA, "user_id": TEST_USER_ID, "agente": "roteiro",
+        "titulo": "Legada", "last_message_at": _agora()}).execute()
+    c = {"id": cid}
     _enviar(ch, c["id"])
     sistema = _sistema(ch.fake)
     assert 'Inimigo: "o dentista barato"' in sistema and "NÃO deve entrar" not in sistema
-    assert "agente ROTEIRO" in sistema
+    assert "assistente do Criação de Mídia" in sistema  # the ONE unified system prompt
 
 
 def test_teto_de_contexto_respeita_a_prioridade():
