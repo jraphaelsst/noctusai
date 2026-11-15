@@ -2503,6 +2503,15 @@ def stage_error_record(label: str, r: Any, export: str) -> dict[str, Any]:
             "tail": "\n".join(lines[-STAGE_TAIL_LINES:])}
 
 
+_MISSING_MOD_RE = re.compile(r"No module named '([\w.]+)'|toolkit deps \((\w+)\) not importable")
+
+
+def harness_missing_modules(text: str | None) -> set[str]:
+    """Module names an interpreter could not import, read from a stage's output: the signature of an invalid harness
+    (the interpreter is not the toolkit venv), which must read UNMEASURED, never red."""
+    return {(a or b).split(".")[0] for a, b in _MISSING_MOD_RE.findall(text or "")}
+
+
 def _last_line(text: str | None) -> str:
     tail = meaningful_tail(text, 1)
     return tail[:200]
@@ -2609,6 +2618,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             failed: list[str] = []
             failed_items: list[str] = []   # keeper flags / suite labels that went red (recorded on the verdict)
             failed_tests: list[str] = []   # the failing pytest node ids
+            missing_mods: set[str] = set()   # modules the INTERPRETER lacks: a harness problem, never a red on the code
             stage_errors: list[dict[str, Any]] = []   # a red stage that named NO failing test: rc + output tail + export
 
             def run(gate: str, argv: list[str], where: Path,
@@ -2628,6 +2638,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 names = re.findall(r"^FAILED (\S+)", r.stdout or "", flags=re.M)
                 failed_items.append(label)
                 failed_tests.extend(names)
+                missing_mods.update(harness_missing_modules((r.stdout or "") + chr(10) + (r.stderr or "")))
                 if not names:
                     stage_errors.append(stage_error_record(label, r, tree))
                 return [f"{label} {n}" for n in names] or [f"{label} pytest exit {r.returncode}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}"]
@@ -2704,6 +2715,11 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             ref = record_verdict(verdict_store, head=head, tree=head_tree.strip(), workflow_blob=wf_blob.strip(),
                                  interpreter=f"{py} {sys.version.split()[0]}", flags=flags, tests=tests, ok=not failed,
                                  telemetry=telemetry)
+            if failed and missing_mods:
+                return {"ok": False, "detail": f"UNMEASURED: the interpreter {py} lacks {sorted(missing_mods)}, so the red "
+                                               f"judges the SETUP, not the code (run through the toolkit venv: "
+                                               f"mcp/noctusai/.venv/bin/python, or install requirements.txt); {ran}",
+                        "failed": failed, "missing_modules": sorted(missing_mods), "verdict_ref": ref, **telemetry}
             if failed:
                 return {"ok": False, "detail": f"{ran}; RED: {', '.join(failed[:8])}", "failed": failed,
                         "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref, **telemetry}

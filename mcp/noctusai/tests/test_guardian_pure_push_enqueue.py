@@ -1404,6 +1404,13 @@ def test_a_red_stage_without_failing_test_ids_stores_rc_tail_and_export(world):
     assert rep["red_without_test_ids"][0]["stage_errors"][0]["rc"] == err["rc"]
 
 
+def test_a_stage_red_from_an_interpreter_missing_a_module_is_unmeasured_not_red(world):
+    _wt, head = _ci_branch(world, extra_test="\n\ndef test_needs_a_dep():\n    import no_such_dep_for_harness\n")
+    res = RS.export_ci_parity_check(world.repo, admit=_ADMIT, verdict_store=world.verdict_store)("feat/x", head)
+    assert not res["ok"] and res["detail"].startswith("UNMEASURED") and "no_such_dep_for_harness" in res["detail"]
+    assert res["missing_modules"] == ["no_such_dep_for_harness"]
+
+
 # -- request(run_scoped=True) is not silently ignored ------------------------------------------------------------
 
 def test_request_run_scoped_runs_the_ci_parity_check_and_files_with_its_ref(world, tmp_path):
