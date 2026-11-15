@@ -1724,10 +1724,14 @@ DECLARE
   v_org_id uuid;
   v_marca_id uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
+  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
+  IF to_regclass('public.organizations') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
   END IF;
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_org_id;
   INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
   VALUES (v_org_id, 'noc-probe-pesquisa', 'noc-probe-pesquisa')
   RETURNING id INTO v_marca_id;
@@ -1771,10 +1775,14 @@ DECLARE
   v_job_id uuid;
   v_topic_id uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
+  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
+  IF to_regclass('public.organizations') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
   END IF;
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_org_id;
   INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
   VALUES (v_org_id, 'noc-probe-pesquisa-w2', 'noc-probe-pesquisa-w2')
   RETURNING id INTO v_marca_id;
@@ -1911,10 +1919,14 @@ DECLARE
   v_perfil_id uuid;
   v_viral_id uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
+  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
+  IF to_regclass('public.organizations') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
   END IF;
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_org_id;
   INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
   VALUES (v_org_id, 'noc-probe-geracao', 'noc-probe-geracao')
   RETURNING id INTO v_marca_id;
@@ -10311,10 +10323,14 @@ DECLARE
   v_marca uuid;
   v_brain uuid;
 BEGIN
-  SELECT id INTO v_org FROM public.organizations LIMIT 1;
-  IF v_org IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
+  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
+  IF to_regclass('public.organizations') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
   END IF;
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_org;
   INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
   VALUES (v_org, 'noc-probe-cerebro', 'noc-probe-cerebro')
   RETURNING id INTO v_marca;
@@ -10645,10 +10661,14 @@ DECLARE
 """
 
 _SW_241_FIXTURE = f"""
-  SELECT id INTO v_org FROM public.organizations LIMIT 1;
-  IF v_org IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
+  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
+  IF to_regclass('public.organizations') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
   END IF;
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
+  RETURNING id INTO v_org;
   INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
   VALUES (v_org, 'noc-probe-esteira-a', 'noc-probe-esteira-a') RETURNING id INTO v_marca_a;
   INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
