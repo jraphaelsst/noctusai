@@ -55,6 +55,7 @@
     "306_imovel_campos_manuais.sql": "98759bd37a0319ae50bf91ecfbf3109062915b016155e29a8733321c08bf429b",
     "307_certidao_consulta_manual_sem_documento.sql": "07bd6d537a5ccf58b59a9b4477e26a739cb60bd14ddc41e9ce83e1696c66c4ee",
     "308_contrato_especificacoes.sql": "af4fc4895274a2c922dff78e5ced190f6cbfacd443175aa77ed0c5ad4e451cdb",
+    "309_status_pagina_guia_documentos.sql": "940089c4deb2b6aabef05b4be5c7a13beea81424912ab5d76a702833afd8c805",
     "310_permuta_matches_motivo_rejeicao.sql": "d15d5dfd46f3e29f8c179fff0f012f7a8c4936cf0ea7dc26087f4aeb4d2ba8e0",
     "311_status_pagina_leftovers.sql": "ed85f17f0f9f7649a09210747a05ae1635a0fbf919ba5b9d0f0301591e1015bb",
     "312_leads_meta_external_key_backfill.sql": "b0c742c07a4ea1e00b04e11a91e183bc845025658fb0fc431d464ff9e61299c6",
@@ -84,6 +85,8 @@
     "339_marca_one_per_org.sql": "3c9a79209be958b322ef12a28f532359719366b85fcbab35aea786be36fb26f7",
     "340_transcricoes_formato_shape.sql": "3b997786d54b6b6050c0bde411e338ed4f37001d6ad5271d0553401ffb2cd15c",
     "341_resumable_uploads.sql": "6265f5d305742b7862d8b63dc65416b69402e734055632ff01af08eac3a80ec7",
-    "343_transcricao_sem_cota_diaria.sql": "f94f774aff40b8ba792fc8c1c8866f2b87c86825b351227e75b0eaa9b8d841d9"
+    "342_cs_post_axes.sql": "839cd028554c6cd8fd3c497d6146f13fae4cd254280df06d206d04b628a1fb5c",
+    "343_transcricao_sem_cota_diaria.sql": "f94f774aff40b8ba792fc8c1c8866f2b87c86825b351227e75b0eaa9b8d841d9",
+    "344_imobshotai_cards.sql": "039c941e22bb8d2f55e3048b7fcaa38e63e740b982088baef4d65dd7f61aed66"
   }
 }
