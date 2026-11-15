@@ -416,6 +416,25 @@ class SocialWiringSettings(ProductSettings):
     # LGPD retention (section 9.3, NOC-REMEDIATE closed 2026-10-10; the owner validates the number):
     # virais of a profile that is paused, or that no marca references, for this many days are purged.
     biblioteca_retencao_dias: int = 90
+    # ─── Estruturas: platform-wide library (estruturas-contract.md section 13, collision class C3) ───
+    # The library tables have no org_id; ingestion, the Apify / Meta credentials, the daily caps above, the cost
+    # ledger and the transcription lane are keyed on ONE org: the NoctusAI platform org (owner decision D10). Read
+    # DB first (platform_settings) then env by the EST-2 resolver; empty = "not configured" -> a visible
+    # `ingestao_sem_org_plataforma` failure, never a silent skip. The caps `biblioteca_apify_resultados_dia_org`,
+    # `biblioteca_classificacoes_dia_org` and `biblioteca_transcricao_*` keep their names and now mean "per platform
+    # ingestion org".
+    corestudio_biblioteca_org_id: str = ""
+    # The SYSTEM user id the library transcription lane (origem='biblioteca') and the auto-draft attribute to.
+    corestudio_biblioteca_user_id: str = ""
+    # Library-wide ceiling on monitored profiles (an admin write; `biblioteca_max_perfis_org` is now the per-BRAND
+    # ceiling of SELECTED profiles).
+    biblioteca_max_perfis_plataforma: int = 1000
+    # Model of the admin / auto-draft Estrutura derivation (EST-5). Same default as `biblioteca_llm_model`; must be
+    # a model registered in the seed catalog (llm/models.py): an unregistered one is recorded as costing 0 and
+    # silently disarms `enforce_budget` (a test pins both).
+    estruturas_ia_model: str = "claude-haiku-4-5"
+    # Auto-drafts (a newly analysed video -> one DRAFT Estrutura) per UTC day, finite: the AI spend cap of that path.
+    estruturas_autodraft_dia: int = 100
     # Hard switch of the `geracao` worker: off => not started AND submit returns 503
     # `geracao_indisponivel`. (The `biblioteca` worker's switch is the platform setting
     # `biblioteca_ingestao_habilitada`, DB first then env, default OFF -- not a field here.)
