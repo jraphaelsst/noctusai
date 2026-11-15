@@ -9,6 +9,7 @@ generates are carried as ``@@TOKEN@@`` placeholders substituted in SQL.
 """
 from __future__ import annotations
 
+import copy
 import json
 import shutil
 import subprocess
@@ -18,7 +19,7 @@ import pytest
 from app.modules.media_creation.services import estruturas_import as imp
 
 from ...test_migration_cs_estruturas import HARNESS, MIGRATION, NODE_DIR, PRELUDE, STUBS, _BASE
-from ._estruturas_import_fixtures import TIPOS_CATALOGO, bloco_ref, corpus_ref, linha_ref
+from ._estruturas_import_fixtures import TIPOS_CATALOGO, bloco_ref, linha_ref
 
 pytestmark = pytest.mark.skipif(
     shutil.which("node") is None or not HARNESS.exists() or not (NODE_DIR / "node_modules" / "@electric-sql").exists(),
@@ -75,32 +76,54 @@ def _update_calls(row_novo, existente_estrutura, existentes_blocos):
     return blocos, patch
 
 
+_SEQ = iter(range(5000, 6000))
+EX_ESTRUTURA = {"formula_origem": "referencia", "formato_origem": "referencia", "objetivos_origem": "referencia"}
+
+
+class Ctx:
+    """One scenario's own source row: the scenarios share ONE database, so every one needs its own ``(fonte, ref)`` key."""
+
+    def __init__(self):
+        self.ref = str(next(_SEQ))
+        self.row = linha_ref(1, perfil="criador.um", formula_herdada_de="77", corestudio_id=self.ref)
+        self.criar = _criar_payload(self.row)
+        self.cria = f"r := cs_estrutura_criar({sql_json(self.criar)}); e := (r->>'id')::uuid;"
+        self.existentes = _existente_tokens(self.criar["blocos"])
+
+    def alterado(self):
+        novo = copy.deepcopy(self.row)
+        novo["formula_headline"] = "ZZ nova fórmula [tema]"
+        novo["objetivos"] = ["autoridade"]
+        novo["blocos"][0]["nome_original"] = "ZZ novo nome"
+        novo["blocos"][0]["instrucao"] = "ZZ nova instrução"
+        novo["blocos"].append(bloco_ref(4, tipo="Headline"))
+        return novo
+
+
 def _scenarios() -> dict[str, str]:
-    base_row = linha_ref(1, perfil="criador.um", formula_herdada_de="77")
-    criar = _criar_payload(base_row)
-    cria = f"r := cs_estrutura_criar({sql_json(criar)}); e := (r->>'id')::uuid;"
     sc: dict[str, str] = {}
 
+    c = Ctx()
     sc["create: provenance as mapped, an importada event by sistema_import carrying the lote id, status ativa, codigo issued"] = (
-        TOK + cria + """
+        TOK + c.cria + f"""
   IF (SELECT (formula_origem, formato_origem, objetivos_origem, origem, status, fonte_externa, ref_externa, referencia_rotulo, formula_herdada_de)::text FROM cs_estruturas WHERE id = e)
-     <> '(referencia,referencia,referencia,import_corestudio,ativa,corestudio,1001,referencia-sintetica,77)' THEN RAISE EXCEPTION 'estrutura %', (SELECT row_to_json(x)::text FROM cs_estruturas x WHERE id = e); END IF;
+     <> '(referencia,referencia,referencia,import_corestudio,ativa,corestudio,{c.ref},referencia-sintetica,77)' THEN RAISE EXCEPTION 'estrutura %', (SELECT row_to_json(x)::text FROM cs_estruturas x WHERE id = e); END IF;
   IF (SELECT count(*) FROM cs_estrutura_blocos WHERE estrutura_id = e AND nome_origem = 'fonte' AND tipo_origem = 'referencia' AND tempo_origem = 'referencia' AND instrucao_origem = 'referencia') <> 3 THEN RAISE EXCEPTION 'block provenance'; END IF;
   IF (SELECT nota FROM cs_estrutura_blocos WHERE estrutura_id = e AND ordem = 1) IS NOT NULL THEN RAISE EXCEPTION 'empty nota must be NULL'; END IF;
-  IF (SELECT count(*) FROM cs_estrutura_eventos WHERE estrutura_id = e AND tipo = 'importada' AND ator_tipo = 'sistema_import' AND importacao_id = '""" + LOTE + """') <> 1 THEN RAISE EXCEPTION 'importada event'; END IF;
+  IF (SELECT count(*) FROM cs_estrutura_eventos WHERE estrutura_id = e AND tipo = 'importada' AND ator_tipo = 'sistema_import' AND importacao_id = '{LOTE}') <> 1 THEN RAISE EXCEPTION 'importada event'; END IF;
   IF (SELECT count(*) FROM cs_estrutura_eventos WHERE estrutura_id = e AND tipo = 'ia_preenchida') <> 0 THEN RAISE EXCEPTION 'the load must never record AI provenance'; END IF;
-  IF (SELECT (formula_origem IN ('referencia', 'ia_sugerido'))::int + 0 FROM cs_estruturas_resumo WHERE id = e) <> 1 THEN RAISE EXCEPTION 'pending view'; END IF;""")
+  IF (SELECT campos_pendentes FROM cs_estruturas_resumo WHERE id = e) <> 3 + 3 * 3 THEN RAISE EXCEPTION 'pending count: %', (SELECT campos_pendentes FROM cs_estruturas_resumo WHERE id = e); END IF;""")
 
+    c = Ctx()
     sc["the same key created twice is refused by the unique index (the loader reads first, so this is the race backstop)"] = (
-        TOK + cria + """
-  BEGIN PERFORM cs_estrutura_criar(""" + sql_json(criar) + """); RAISE EXCEPTION 'no refusal'; EXCEPTION WHEN unique_violation THEN NULL; END;""")
+        TOK + c.cria + """
+  BEGIN PERFORM cs_estrutura_criar(""" + sql_json(c.criar) + """); RAISE EXCEPTION 'no refusal'; EXCEPTION WHEN unique_violation THEN NULL; END;""")
 
     # an UNCHANGED re-send: same hash/patch/blocks => nothing changes (the loader skips these via the hash, this is defence in depth)
-    existentes = _existente_tokens(criar["blocos"])
-    ex_estrutura = {"formula_origem": "referencia", "formato_origem": "referencia", "objetivos_origem": "referencia"}
-    blocos_igual, patch_igual = _update_calls(base_row, ex_estrutura, existentes)
+    c = Ctx()
+    blocos_igual, patch_igual = _update_calls(c.row, EX_ESTRUTURA, c.existentes)
     sc["a re-send of the same file changes nothing: no version bump, no event"] = (
-        TOK + cria + f"""
+        TOK + c.cria + f"""
   r := cs_estrutura_substituir_blocos(e, 1, {sql_json({"blocos": blocos_igual, "ator_tipo": "sistema_import", "evento": "atualizada_import", "importacao_id": LOTE_2})}, '{ATOR}');
   IF (r->>'alterada')::boolean OR (r->>'versao')::int <> 1 THEN RAISE EXCEPTION 'blocks changed: %', r; END IF;
   r := cs_estrutura_atualizar(e, 1, {sql_json(patch_igual)}, '{ATOR}');
@@ -108,33 +131,32 @@ def _scenarios() -> dict[str, str]:
   IF (SELECT count(*) FROM cs_estrutura_eventos WHERE estrutura_id = e) <> 1 THEN RAISE EXCEPTION 'events written by a no-op'; END IF;""")
 
     # a CHANGED file: new formula/objetivos/block text + an extra block
-    novo = linha_ref(1, perfil="criador.um", formula_herdada_de="77")
-    novo["formula_headline"] = "ZZ nova fórmula [tema]"
-    novo["objetivos"] = ["autoridade"]
-    novo["blocos"][0]["nome_original"] = "ZZ novo nome"
-    novo["blocos"][0]["instrucao"] = "ZZ nova instrução"
-    novo["blocos"].append(bloco_ref(4, tipo="Headline"))
-    blocos_novo, patch_novo = _update_calls(novo, ex_estrutura, existentes)
+    c = Ctx()
+    novo = c.alterado()
+    blocos_novo, patch_novo = _update_calls(novo, EX_ESTRUTURA, c.existentes)
     sc["a changed file updates fonte/referencia fields, adds the block, stamps the hash last and writes atualizada_import events with the lote id"] = (
-        TOK + cria + f"""
+        TOK + c.cria + f"""
   r := cs_estrutura_substituir_blocos(e, 1, {sql_json({"blocos": blocos_novo, "ator_tipo": "sistema_import", "evento": "atualizada_import", "importacao_id": LOTE_2})}, '{ATOR}');
   IF NOT (r->>'alterada')::boolean OR (r->>'versao')::int <> 2 THEN RAISE EXCEPTION 'blocks: %', r; END IF;
   r := cs_estrutura_atualizar(e, 2, {sql_json(patch_novo)}, '{ATOR}');
   IF NOT (r->>'alterada')::boolean OR (r->>'versao')::int <> 3 THEN RAISE EXCEPTION 'estrutura: %', r; END IF;
-  IF (SELECT (formula_headline, objetivos::text, fonte_hash)::text FROM cs_estruturas WHERE id = e) NOT LIKE '(%ZZ nova fórmula%autoridade%' THEN RAISE EXCEPTION 'content'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM cs_estruturas WHERE id = e AND formula_headline = 'ZZ nova fórmula [tema]' AND objetivos = ARRAY['autoridade'] AND fonte_hash = '{_linha(novo).hash}') THEN RAISE EXCEPTION 'content'; END IF;
   IF (SELECT count(*) FROM cs_estrutura_blocos WHERE estrutura_id = e) <> 4 THEN RAISE EXCEPTION 'block count'; END IF;
   IF (SELECT count(*) FROM cs_estrutura_eventos WHERE estrutura_id = e AND importacao_id = '{LOTE_2}' AND ator_tipo = 'sistema_import') < 4 THEN RAISE EXCEPTION 'update events'; END IF;
   IF EXISTS (SELECT 1 FROM cs_estrutura_eventos WHERE estrutura_id = e AND importacao_id = '{LOTE_2}' AND tipo NOT IN ('atualizada_import', 'bloco_adicionado')) THEN RAISE EXCEPTION 'unexpected event kinds'; END IF;""")
 
     # admin-touched fields survive: an admin edits the formula, objetivos and block 1's nome/instrucao/nota BEFORE the changed file arrives
-    admin_existentes = [dict(b) for b in existentes]
+    c = Ctx()
+    novo = c.alterado()
+    admin_existentes = [dict(b) for b in c.existentes]
     admin_existentes[0].update(nome="NOME DO ADMIN", nome_origem="admin", instrucao="INSTRUCAO DO ADMIN", instrucao_origem="admin", nota="NOTA DO ADMIN", repeticoes=3)
     ex_admin = {"formula_origem": "admin", "formato_origem": "referencia", "objetivos_origem": "admin"}
     blocos_adm, patch_adm = _update_calls(novo, ex_admin, admin_existentes)
-    admin_edit = [{"id": "@@B1@@", "nome": "NOME DO ADMIN", "tipo_id": "@@TIPO:Headline@@", "tempo": criar["blocos"][0]["tempo"], "instrucao": "INSTRUCAO DO ADMIN", "nota": "NOTA DO ADMIN", "repeticoes": 3,
-                   "nome_origem": "admin", "instrucao_origem": "admin"}] + [{"id": f"@@B{i}@@", **{k: v for k, v in criar["blocos"][i - 1].items()}} for i in (2, 3)]
+    admin_edit = [{"id": "@@B1@@", "nome": "NOME DO ADMIN", "tipo_id": "@@TIPO:Headline@@", "tempo": c.criar["blocos"][0]["tempo"], "instrucao": "INSTRUCAO DO ADMIN",
+                   "nota": "NOTA DO ADMIN", "repeticoes": 3, "nome_origem": "admin", "instrucao_origem": "admin"}] + [
+        {"id": f"@@B{i}@@", **{k: v for k, v in c.criar["blocos"][i - 1].items()}} for i in (2, 3)]
     sc["an admin-origin field is never overwritten by a changed file (formula, objetivos, block nome/instrucao/nota/repeticoes)"] = (
-        TOK + cria + f"""
+        TOK + c.cria + f"""
   PERFORM cs_estrutura_atualizar(e, 1, '{{"formula_headline": "FORMULA DO ADMIN", "objetivos": ["venda"]}}'::jsonb, '{ATOR}');
   PERFORM cs_estrutura_substituir_blocos(e, 2, {sql_json(admin_edit)}, '{ATOR}');
   r := cs_estrutura_substituir_blocos(e, 3, {sql_json({"blocos": blocos_adm, "ator_tipo": "sistema_import", "evento": "atualizada_import", "importacao_id": LOTE_2})}, '{ATOR}');
@@ -147,26 +169,27 @@ def _scenarios() -> dict[str, str]:
   IF (SELECT count(*) FROM cs_estrutura_blocos WHERE estrutura_id = e) <> 4 THEN RAISE EXCEPTION 'the new block must still arrive'; END IF;
   IF (SELECT fonte_hash FROM cs_estruturas WHERE id = e) IS DISTINCT FROM '{_linha(novo).hash}' THEN RAISE EXCEPTION 'the hash must be stamped even when admin fields are skipped'; END IF;""")
 
+    c = Ctx()
+    _, patch_arq = _update_calls(c.alterado(), EX_ESTRUTURA, c.existentes)
     sc["an archived estrutura refuses the loader's writes (estrutura_inativa) and a missing block type is tipo_nao_encontrado"] = (
-        TOK + cria + f"""
+        TOK + c.cria + f"""
   PERFORM cs_estrutura_arquivar(e, '{ATOR}');
-  BEGIN PERFORM cs_estrutura_atualizar(e, 2, {sql_json(patch_novo)}, '{ATOR}'); RAISE EXCEPTION 'no refusal'; EXCEPTION WHEN OTHERS THEN IF SQLERRM <> 'estrutura_inativa' THEN RAISE; END IF; END;
-  BEGIN PERFORM cs_estrutura_criar(jsonb_set(jsonb_set({sql_json(criar)}, '{{ref_externa}}', '"9999"'), '{{blocos,0,tipo_id}}', to_jsonb(gen_random_uuid()::text))); RAISE EXCEPTION 'no refusal';
+  BEGIN PERFORM cs_estrutura_atualizar(e, 2, {sql_json(patch_arq)}, '{ATOR}'); RAISE EXCEPTION 'no refusal'; EXCEPTION WHEN OTHERS THEN IF SQLERRM <> 'estrutura_inativa' THEN RAISE; END IF; END;
+  BEGIN PERFORM cs_estrutura_criar(jsonb_set(jsonb_set({sql_json(c.criar)}, '{{ref_externa}}', '"9999"'), '{{blocos,0,tipo_id}}', to_jsonb(gen_random_uuid()::text))); RAISE EXCEPTION 'no refusal';
   EXCEPTION WHEN OTHERS THEN IF SQLERRM <> 'tipo_nao_encontrado' THEN RAISE; END IF; END;""")
 
-    # the full 20-row synthetic corpus through the real RPC: every row creates; a second pass has nothing to do (hash equality)
-    corpus = [_linha(r) for r in corpus_ref(20)[:6]]
-    chamadas = []
-    for i, l in enumerate(corpus):
-        p = imp.payload_criar(l, perfil_id="@@PERFIL@@", tipo_ids=TIPO_TOKENS, importacao_id=LOTE, ator_id=ATOR)
-        chamadas.append(f"PERFORM cs_estrutura_criar({sql_json(p)});")
-    # only criador.sintetico1 is a different perfil in the corpus; the scenario stores them all under one perfil (the RPC only needs it to exist)
+    # the synthetic corpus through the real RPC: every row creates with a unique codigo, its blocks and its lote-stamped event
+    corpus = [_linha(r) for r in (linha_ref(i, perfil="criador.um", corestudio_id=str(7000 + i)) for i in range(1, 7))]
+    chamadas = [
+        f"PERFORM cs_estrutura_criar({sql_json(imp.payload_criar(l, perfil_id='@@PERFIL@@', tipo_ids=TIPO_TOKENS, importacao_id=LOTE, ator_id=ATOR))});"
+        for l in corpus
+    ]
     sc["a synthetic corpus creates one estrutura per row with a unique codigo and its blocks, every event carrying the lote"] = (
         TOK + "e := NULL;\n  " + "\n  ".join(chamadas) + f"""
-  IF (SELECT count(*) FROM cs_estruturas WHERE fonte_externa = 'corestudio') <> {len(corpus)} THEN RAISE EXCEPTION 'rows'; END IF;
-  IF (SELECT count(DISTINCT codigo) FROM cs_estruturas) <> {len(corpus)} THEN RAISE EXCEPTION 'codigo'; END IF;
-  IF (SELECT count(*) FROM cs_estrutura_blocos) <> {3 * len(corpus)} THEN RAISE EXCEPTION 'blocks'; END IF;
-  IF (SELECT count(*) FROM cs_estrutura_eventos WHERE tipo = 'importada' AND importacao_id = '{LOTE}') <> {len(corpus)} THEN RAISE EXCEPTION 'events'; END IF;""")
+  IF (SELECT count(*) FROM cs_estruturas WHERE ref_externa LIKE '70%') <> {len(corpus)} THEN RAISE EXCEPTION 'rows'; END IF;
+  IF (SELECT count(DISTINCT codigo) FROM cs_estruturas WHERE ref_externa LIKE '70%') <> {len(corpus)} THEN RAISE EXCEPTION 'codigo'; END IF;
+  IF (SELECT count(*) FROM cs_estrutura_blocos b JOIN cs_estruturas e2 ON e2.id = b.estrutura_id WHERE e2.ref_externa LIKE '70%') <> {3 * len(corpus)} THEN RAISE EXCEPTION 'blocks'; END IF;
+  IF (SELECT count(*) FROM cs_estrutura_eventos v JOIN cs_estruturas e2 ON e2.id = v.estrutura_id WHERE e2.ref_externa LIKE '70%' AND v.tipo = 'importada' AND v.importacao_id = '{LOTE}') <> {len(corpus)} THEN RAISE EXCEPTION 'events'; END IF;""")
     return sc
 
 
