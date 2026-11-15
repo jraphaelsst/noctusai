@@ -70,6 +70,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -146,6 +147,90 @@ def default_ttl(env: dict[str, str] | None = None) -> int:
         return max(60, int(e.get("NOCTUS_STEWARD_TTL_S") or DEFAULT_TTL_S))
     except ValueError:
         return DEFAULT_TTL_S
+
+
+SCOPED_DEADLINE_ENV = "NOCTUS_STEWARD_SCOPED_DEADLINE_S"
+SCOPED_DEADLINE_DEFAULT_S = 3600.0
+SCOPED_PROGRESS_EVERY_S = 60.0
+
+
+def _stderr_progress(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
+
+
+def _scoped_deadline_s(env: dict[str, str] | None = None) -> float:
+    raw = (env if env is not None else os.environ).get(SCOPED_DEADLINE_ENV, "")
+    try:
+        v = float(raw)
+    except ValueError:
+        return SCOPED_DEADLINE_DEFAULT_S
+    return v if v > 0 else SCOPED_DEADLINE_DEFAULT_S
+
+
+def _refusal_telemetry():
+    """The gate_alignment module when importable (the steward hook loads this file by path with only the stdlib
+    on sys.path), else None. Telemetry and the recurrence hook never change a verdict."""
+    try:
+        from tools.noctus.dev import gate_alignment as _ga
+        return _ga
+    except Exception:  # noqa: BLE001 - optional layer
+        return None
+
+
+def _failing_keys(items: list[dict[str, Any]], ga: Any = None) -> dict[str, str]:
+    """{refusal-class key: item name} for every failing delivery-contract item (needs `gate_alignment.refusal_class`)."""
+    ga = ga if ga is not None else _refusal_telemetry()
+    build = getattr(ga, "refusal_class", None)
+    if build is None:
+        return {}
+    out: dict[str, str] = {}
+    for i in items:
+        if i.get("ok"):
+            continue
+        with contextlib.suppress(Exception):
+            out[str(build("deliverable", i.get("name") or "", str(i.get("detail") or "")))] = i.get("name") or ""
+    return out
+
+
+def refusal_recurrence_report(items: list[dict[str, Any]], *, ga: Any = None,
+                              say: Callable[[str], None] | None = None) -> list[dict[str, Any]]:
+    """`recurrence[]` for the failing items (14-day window) when slice C's `refusal_recurrence` exists, else [].
+    Prints one line per class that keeps recurring with no open fix. Never raises."""
+    ga = ga if ga is not None else _refusal_telemetry()
+    fn = getattr(ga, "refusal_recurrence", None)
+    if fn is None:
+        return []
+    try:
+        keys = list(_failing_keys(items, ga))
+        rows = list(fn(keys, window_days=14)) if keys else []
+    except Exception:  # noqa: BLE001
+        return []
+    say = say or _stderr_progress
+    for r in rows:
+        if r.get("open_fix") is None and int(r.get("n_14d") or 0) >= 2:
+            say(f"class {r.get('class')} has recurred {r.get('n_14d')} times across {r.get('sessions')} sessions "
+                "with no open fix branch")
+    return rows
+
+
+def _record_failing_items(branch: str, items: list[dict[str, Any]], ga: Any = None) -> None:
+    """One gate event per failing delivery-contract item (so refusals are counted by class). Never raises."""
+    ga = ga if ga is not None else _refusal_telemetry()
+    rec = getattr(ga, "record_event", None)
+    if rec is None:
+        return
+    keys = {v: k for k, v in _failing_keys(items, ga).items()}
+    for i in items:
+        if i.get("ok"):
+            continue
+        key = keys.get(i.get("name") or "", "")
+        kw: dict[str, Any] = {"kind": "release_steward", "target": branch, "source": key,
+                              "reason": f"{i.get('name')}: {str(i.get('detail') or '')[:200]}"}
+        with contextlib.suppress(Exception):
+            try:
+                rec("deliverable", "deny", class_key=key, **kw)  # slice C: the exact refusal_class key
+            except TypeError:  # record_event without class_key yet: `source` still carries it
+                rec("deliverable", "deny", **kw)
 
 
 def _err(msg: str) -> dict[str, Any]:
@@ -296,8 +381,11 @@ class StewardStore:
                  deliverable_check: Callable[[str, str | None, str | None], dict[str, Any]] | None = None,
                  resolve_branch: Callable[[str], dict[str, Any]] | None = None,
                  scoped_check: Callable[[str, str], dict[str, Any]] | None = None,
-                 repo_cwd: str | Path | None = None) -> None:
+                 repo_cwd: str | Path | None = None, scoped_deadline_s: float | None = None,
+                 progress: Callable[[str], None] | None = None) -> None:
         self.root = Path(root) if root is not None else default_root()
+        self.scoped_deadline_s = scoped_deadline_s if scoped_deadline_s is not None else _scoped_deadline_s()
+        self.progress = progress if progress is not None else _stderr_progress
         # Same posture as inline_gate/landed_check: production runs the real delivery-contract preflight
         # (`deliverable`) at filing; a store built on an explicit root (tests) skips it unless it injects one.
         self._deliverable_check = deliverable_check if deliverable_check is not None else (
@@ -620,7 +708,11 @@ class StewardStore:
                                 "enqueues the right commit")
         contract: dict[str, Any] | None = None
         scoped_run: dict[str, Any] | None = None
-        if run_scoped:
+        # No verdict handed over => RUN the scoped check now (by construction: a verdict-less filing used to be refused
+        # after the fact, 65/91 refusals). Only possible for one branch with a runner configured.
+        auto_scoped = (not run_scoped and not (verdict_ref or "").strip() and self._scoped_check is not None
+                       and not (branches and len(branches) > 1))
+        if run_scoped or auto_scoped:
             # NEVER silently ignored: run it, or refuse with the reason.
             if branches and len(branches) > 1:
                 return _err("run_scoped=true is per branch: file each branch of a split delivery with its own run_scoped request "
@@ -631,7 +723,7 @@ class StewardStore:
             if not full_head:
                 return _err(f"run_scoped=true: cannot resolve {branch}'s head to judge (is the branch local?)")
             head_sha = full_head
-            scoped_run = self._scoped_check(branch, full_head)
+            scoped_run = self._run_scoped(branch, full_head)
             if scoped_run.get("verdict_ref"):
                 verdict_ref = scoped_run["verdict_ref"]  # green OR red: item 5 resolves the record and judges it
             else:  # UNMEASURED run: no record was minted - needs_resync naming item 5 with the reason
@@ -642,25 +734,26 @@ class StewardStore:
                 contract = self._deliverable_check(b, head_sha if b == branch else None, verdict_ref)
                 if not contract.get("ok"):
                     break
-            if contract is not None and not contract.get("ok"):
-                requester = {"session_id": session_id, "name": name or _short(session_id)}
-                with self._locked("ship-requests"):
-                    self._append_event({
-                        "ts": _iso(self.clock()), "event": "request_refused", "slug": slug, "branch": branch,
-                        "head_sha": contract.get("head_sha") or head_sha, "products": products or [],
-                        "migrations": bool(migrations), "notes": notes, "verdict_ref": verdict_ref,
-                        "requester": requester, "branches": branches,
-                        "failing": contract.get("failing") or [],
-                        "items": [{k: i[k] for k in ("n", "name", "ok", "detail")} for i in contract.get("items", [])],
-                    })
-                    refused = self.requests()[slug]
-                self.audit("request_refused", slug=slug, by=session_id, failing=contract.get("failing"))
-                return {"ok": False, "status": "needs_resync", "request": refused, "deliverable": contract,
-                        "failing": contract.get("failing") or [],
-                        "error": f"{slug}: {deliverable_refusal(contract)}",
-                        "next": ("fix the failing item(s) on the branch (you are its steward: the guardian never edits it), "
-                                 "push, and re-run release_steward action=request. release_steward action=deliverable "
-                                 f"slug={slug} re-checks read-only without filing.")}
+        if contract is not None and not contract.get("ok"):
+            requester = {"session_id": session_id, "name": name or _short(session_id)}
+            with self._locked("ship-requests"):
+                self._append_event({
+                    "ts": _iso(self.clock()), "event": "request_refused", "slug": slug, "branch": branch,
+                    "head_sha": contract.get("head_sha") or head_sha, "products": products or [],
+                    "migrations": bool(migrations), "notes": notes, "verdict_ref": verdict_ref,
+                    "requester": requester, "branches": branches,
+                    "failing": contract.get("failing") or [],
+                    "items": [{k: i[k] for k in ("n", "name", "ok", "detail")} for i in contract.get("items", [])],
+                })
+                refused = self.requests()[slug]
+            self.audit("request_refused", slug=slug, by=session_id, failing=contract.get("failing"))
+            return {"ok": False, "status": "needs_resync", "request": refused, "deliverable": contract,
+                    "failing": contract.get("failing") or [],
+                    "recurrence": refusal_recurrence_report(contract.get("items") or []),
+                    "error": f"{slug}: {deliverable_refusal(contract)}",
+                    "next": ("fix the failing item(s) on the branch (you are its steward: the guardian never edits it), "
+                             "push, and re-run release_steward action=request. release_steward action=deliverable "
+                             f"slug={slug} re-checks read-only without filing.")}
         with self._locked("ship-requests"):
             before = self.requests().get(slug)
             self._append_event({
@@ -749,6 +842,40 @@ class StewardStore:
         except Exception as exc:  # noqa: BLE001 - fail closed, say why
             return False, f"could not verify ({type(exc).__name__}: {str(exc)[:120]})"
 
+    def _run_scoped(self, branch: str, head: str) -> dict[str, Any]:
+        """Run the injected scoped check under a WALL-CLOCK deadline with a progress line every minute. A runner that
+        raises or overruns yields an UNMEASURED result without a verdict_ref (the request is then refused loudly,
+        never filed on nothing). The runner's own subprocess stages carry their per-stage budgets."""
+        out: list[dict[str, Any]] = []
+        err: list[BaseException] = []
+
+        def work() -> None:
+            try:
+                out.append(self._scoped_check(branch, head))  # type: ignore[misc]
+            except BaseException as exc:  # noqa: BLE001 - surfaced as UNMEASURED below
+                err.append(exc)
+
+        t = threading.Thread(target=work, name=f"scoped-{branch}", daemon=True)
+        started = time.monotonic()
+        self.progress(f"scoped check for {branch}@{head[:9]} started (CI-blocking keepers + real-tree tests + touched suites; "
+                      f"deadline {int(self.scoped_deadline_s)}s)")
+        t.start()
+        while t.is_alive():
+            left = self.scoped_deadline_s - (time.monotonic() - started)
+            if left <= 0:
+                return {"ok": False, "timed_out": True,
+                        "detail": f"UNMEASURED: no verdict within the {int(self.scoped_deadline_s)}s wall-clock deadline "
+                                  f"({SCOPED_DEADLINE_ENV} overrides); nothing was filed"}
+            t.join(min(SCOPED_PROGRESS_EVERY_S, left))
+            if t.is_alive():
+                self.progress(f"scoped check for {branch} still running ({int(time.monotonic() - started)}s elapsed)")
+        if err:
+            return {"ok": False, "detail": f"UNMEASURED: scoped check crashed: {type(err[0]).__name__}: {str(err[0])[:200]}"}
+        res = out[0] if out else {"ok": False, "detail": "UNMEASURED: scoped check returned nothing"}
+        self.progress(f"scoped check for {branch} finished in {int(time.monotonic() - started)}s "
+                      f"({'green' if res.get('ok') else 'not green'})")
+        return res
+
     def check_deliverable(self, slug: str | None = None, branch: str | None = None, head_sha: str | None = None,
                           verdict_ref: str | None = None, run_scoped: bool = False) -> dict[str, Any]:
         """READ-ONLY, open to every session: run the delivery contract on a branch without filing anything.
@@ -765,15 +892,32 @@ class StewardStore:
             branch = res.get("branch")
         if not branch:
             return _err("deliverable needs slug=<slug> or branch=<branch>")
-        head_sha = head_sha or (req or {}).get("head_sha")
-        verdict_ref = verdict_ref or (req or {}).get("verdict_ref")
+        # Head is pinned ONLY when the caller passes it. Otherwise judge the branch's CURRENT tip: a stored request head
+        # that the branch has since moved past is a NOTE ("head moved since filing"), never a failure - and a stored
+        # verdict is reused only when it judged this very tip.
+        notes: list[str] = []
+        tip = self.resolve_head(branch) if self.resolve_head else None
+        stored_head = (req or {}).get("head_sha")
+        if stored_head and tip and not tip.startswith(stored_head) and not stored_head.startswith(tip):
+            notes.append(f"head moved since filing: the request recorded {stored_head[:9]}, {branch} is now at {tip[:9]} "
+                         "(judging the current tip)")
+        if not verdict_ref:
+            stored_ref = ((req or {}).get("verdict_ref") or "").strip()
+            m = _VERDICT_REF_RE.match(stored_ref)
+            rec = read_verdict(self.root / VERDICT_STORE_NAME, m.group(1)) if m else None
+            if stored_ref and tip and rec is not None and rec.get("head") != tip:
+                notes.append(f"stored verdict {stored_ref} judged {str(rec.get('head'))[:9]}, not the current tip "
+                             f"{tip[:9]}: not reused (re-run run_scoped=true)")
+            elif stored_ref:
+                verdict_ref = stored_ref
         if run_scoped:  # minutes: judge the head the way CI does (CI-blocking keepers + real-tree tests, env-scrubbed)
             res = deliverable(branch, head_sha=head_sha, verdict_ref=verdict_ref, scoped_check=export_ci_parity_check())
         else:
             check = self._deliverable_check or (lambda b, h, v: deliverable(b, head_sha=h, verdict_ref=v))
             res = check(branch, head_sha, verdict_ref)
+        recurrence = refusal_recurrence_report(res.get("items") or []) if not res.get("ok") else []
         return {"ok": True, "status": res.get("verdict", "needs_resync"), "deliverable": res,
-                "failing": res.get("failing") or [],
+                "failing": res.get("failing") or [], "notes": notes, "recurrence": recurrence,
                 "next": ("deliverable: the guardian can enqueue (pure push)" if res.get("ok")
                          else "needs_resync: the branch steward fixes the failing item(s) on the branch, pushes, re-requests")}
 
@@ -2031,9 +2175,8 @@ def ci_keeper_test_ids(tests_dir: str | Path) -> list[str]:
 # (a seed read_only_lines change), a product's FE vitest. The owner chose "run CI's suites" over a fast proxy.
 # So the scope is CI's own classifier (`ci_scope`, which the workflow's `changes` job also calls), the suite
 # lists come from the head's workflow matrices. NARROWED the same day (owner, after a 2h04m local measurement
-# vs ~15-25 min in CI's parallel jobs): locally only the keeper tests + the seed roots / awake products the diff
-# touches directly. Trade-off, stated: a toolkit-only red (the test_all_products_compliant[core] shape) and the
-# shared-root fan-out are judged by the merge queue again, not here.
+# vs ~15-25 min in CI's parallel jobs). SUPERSEDED 2026-11-12 by `select_ci_suites` below (one selector, a budget
+# that names what it skipped): the narrowing let every toolkit/fan-out red through (185 verdicts, 1 ran a suite).
 # NOC-REMEDIATE[scoped-green-fe-and-tooling]: FE vitest (product-frontend-tests / seed-frontend-tests) and the
 # bespoke tooling-tests job are still CI-judged only - the export has no node_modules and tooling-tests renders
 # a template in bash. Destination: the item-5 section of KB § PATTERNS/devops/release-steward.md (tooling steward).
@@ -2044,45 +2187,6 @@ class CiSuite:
     cwd: str            # relative to the export root
     argv: tuple[str, ...]  # after the interpreter: `python <argv...>`
     env: tuple[tuple[str, str], ...] = ()
-
-
-def _matrix(workflow_text: str, job: str, key: str) -> list[str]:
-    import yaml  # the toolkit venv carries PyYAML; only item 5's runner needs it
-    doc = yaml.safe_load(workflow_text) or {}
-    vals = (((doc.get("jobs") or {}).get(job) or {}).get("strategy") or {}).get("matrix", {}).get(key) or []
-    return [str(v) for v in vals]
-
-
-def _active_products(tree: Path) -> set[str] | None:
-    """`deploy/fleet/active-scope.txt` at the head; None = missing = every product (CI fails toward coverage)."""
-    f = tree / "deploy" / "fleet" / "active-scope.txt"
-    if not f.is_file():
-        return None
-    return {ln.strip() for ln in f.read_text(encoding="utf-8").splitlines() if ln.strip() and not ln.lstrip().startswith("#")}
-
-
-def local_suites(tree: str | Path, scope: Any, workflow_text: str, changed: list[str]) -> list[CiSuite]:
-    """The NARROW local share of CI's Python suites for item 5 (owner decision 2026-11-11, after the full CI
-    split measured 2h04m locally vs ~15-25 min in CI's parallel jobs): only the suites of what the diff
-    touches DIRECTLY - a seed backend root (seed-backend-tests matrix) the diff edits, and an awake product
-    backend (product-backend-tests matrix, active-scope.txt) the diff edits. The toolkit split and the
-    shared-root fan-out ("a seed change runs every product") stay CI-only: the merge queue runs them.
-    NOC-REMEDIATE[scoped-green-fe-and-tooling]. Nothing when the scope is not heavy."""
-    root = Path(tree)
-    if not scope.run_heavy:
-        return []
-    out: list[CiSuite] = []
-    for r in _matrix(workflow_text, "seed-backend-tests", "root"):
-        prefix = r.rstrip("/") + "/"
-        if (root / r).is_dir() and any(c.startswith(prefix) for c in changed):
-            out.append(CiSuite(f"seed:{r}", r, ("-m", "pytest", "--tb=short", "-q")))
-    awake = _active_products(root)
-    direct = set(getattr(scope, "changed_products", ()) or ())
-    for slug in _matrix(workflow_text, "product-backend-tests", "product"):
-        d = f"products/{slug}/backend"
-        if slug in direct and (awake is None or slug in awake) and (root / d).is_dir():
-            out.append(CiSuite(f"product:{slug}", d, ("-m", "pytest", "--tb=short", "-q")))
-    return out
 
 
 #: Migration -> DB-guard edge (owner-approved speedup 1, 2026-11-11): a toolkit-only red stalled the queue 2h
@@ -2132,6 +2236,195 @@ def link_pglite(tree: str | Path, source_repo: str | Path) -> str:
     return ""
 
 
+# ─── ONE selector (2026-11-12): item 5 asks gate_sweep what the diff can break ─────────────────────────────
+# Item 5 used to run a SECOND selector (`ci_scope` + `local_suites`) and went green on every ejected entry while
+# running 0 suites (185 verdicts, 1 ran a suite; today a merge_queue.py change broke the guardian snapshot test and
+# nothing selected it). `select_ci_suites` reuses gate_sweep's own derivation (`_derive_scope` + `_build_gate_specs`:
+# product/seed fan-out, CONTRACT_OF cross-product consumers, toolkit importers of a changed module), keeps the Python
+# (pytest) gates, and adds the toolkit tests that READ THE LIVE REPO TREE (`live_tree_test_ids`). Anything it cannot
+# run in the export is NAMED in `skipped`, never dropped; anything over the wall-clock budget likewise.
+#: wall-clock budget (seconds) for the selected suites of one verdict; override NOC_ITEM5_SUITE_BUDGET_S
+SUITE_BUDGET_ENV, SUITE_BUDGET_DEFAULT_S = "NOC_ITEM5_SUITE_BUDGET_S", 1800
+#: gates gate_sweep builds that item 5 cannot run in the export: FE (no node_modules) and non-pytest drivers
+_NODE_GATE_RE = re.compile(r"^(vitest|vite_build|e2e)\b")
+
+
+def live_tree_test_ids(tests_dir: str | Path) -> list[str]:
+    """Pytest node ids (relative to the toolkit dir) of every toolkit test that READS THE LIVE REPO TREE: a test
+    function (or `Test*` method) whose body names a module-level constant bound to a path derived from `__file__`
+    (`REPO = Path(__file__).resolve().parents[3]`). Superset of `ci_keeper_test_ids` (which only finds
+    `check_x() == []`): it also catches invariants like `assert not unmarked` over a walk of the tree
+    (test_product_scope::test_every_products_walk_declares_its_scope). Derived by AST, never hand-listed."""
+    import ast
+    root = Path(tests_dir)
+    ids: list[str] = []
+    for path in sorted(root.glob("test_*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        roots: set[str] = set()
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                src = ast.dump(node.value)
+                if "__file__" in src and ("parents" in src or "'parent'" in src):
+                    roots.add(node.targets[0].id)
+        if not roots:
+            continue
+
+        def reads(fn: ast.AST) -> bool:
+            # A test taking the `pglite` fixture needs PGlite (node_modules) - absent in the hermetic export, so it would
+            # ERROR on the SETUP, not judge the code (harness-invalid). Those run via `migration_guard_suite` (which links
+            # PGlite) when the diff touches migrations; CI judges them otherwise.
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(a.arg == "pglite" for a in fn.args.args):
+                return False
+            return any(isinstance(n, ast.Name) and n.id in roots for n in ast.walk(fn))
+
+        rel = f"{root.name}/{path.name}"
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test") and reads(node):
+                ids.append(f"{rel}::{node.name}")
+            elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+                ids += [f"{rel}::{node.name}::{m.name}" for m in node.body
+                        if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name.startswith("test") and reads(m)]
+    return ids
+
+
+def select_ci_suites(tree: str | Path, changed: list[str], py: str) -> dict[str, Any]:
+    """What gate_sweep selects for `changed`, as runnable pytest suites in the export `tree`.
+
+    Returns `{"suites": [CiSuite], "skipped": [{"label", "reason"}], "scope": <gate_sweep scope summary>}`.
+    FE gates (vitest / vite_build / e2e) and non-pytest drivers are `skipped` with the reason, and so is the FULL
+    toolkit suite (`mcp_toolkit_tests`, selected when a core toolkit file changes: CI shards it - 2h locally)."""
+    from tools.noctus.dev import gate_sweep as gs  # lazy: the steward PreToolUse hook loads this module stdlib-only
+    root = Path(tree)
+    scope = gs._derive_scope(sorted(changed))
+    scope["base_ref"], scope["changed_files"] = "origin/dev", sorted(changed)
+    if scope["mcp"]:
+        scope["mcp_diffs"] = {}  # no per-symbol narrowing here: import scoping (a superset, never a narrower guess)
+    specs = gs._build_gate_specs(root, scope)
+    scope.pop("mcp_diffs", None)
+    suites: list[CiSuite] = []
+    skipped: list[dict[str, str]] = []
+    for sp in specs:
+        argv = list(sp.argv)
+        if _NODE_GATE_RE.match(sp.gate):
+            skipped.append({"label": sp.gate, "reason": "frontend gate: no node_modules in the export, CI-judged"})
+            continue
+        if "pytest" not in argv:
+            skipped.append({"label": sp.gate, "reason": "not a pytest suite (judged by CI / its own gate)"})
+            continue
+        if sp.gate == "mcp_toolkit_tests":
+            skipped.append({"label": sp.gate, "reason": "full toolkit suite (a core toolkit file changed): CI shards it, "
+                                                        "2h locally - judged by the merge queue"})
+            continue
+        with contextlib.suppress(ValueError):
+            cwd = str(Path(sp.cwd).resolve().relative_to(root.resolve())) or "."
+            suites.append(CiSuite(sp.gate, cwd, tuple(argv[1:])))
+            continue
+        skipped.append({"label": sp.gate, "reason": "its cwd is outside the export"})
+    summary = {k: scope.get(k) for k in ("products", "seed_fleet_wide", "mcp", "doc_only", "migration_files")}
+    summary.update({"seed_fanout": (scope.get("seed_fanout") or {}).get("mode"),
+                    "contract_consumers": sorted(scope.get("contract_consumers") or {}),
+                    "mcp_untested_modules": scope.get("mcp_untested_modules") or [],
+                    "unmapped_files": len(scope.get("unmapped_files") or [])})
+    return {"suites": suites, "skipped": skipped, "scope": summary}
+
+
+def merge_tree_sha(head: str, cwd: str | Path | None, base: str = "origin/dev") -> tuple[str | None, str]:
+    """The tree of `git merge-tree --write-tree <base> <head>` - what the merge queue's candidate will be (item 5
+    judges the MERGE, not the head: a keeper baseline that misses dev's newer migration cost 5h on 2026-11-11).
+    Returns `(tree_sha, "")`, or `(None, why)` on a conflict / a git without `--write-tree`."""
+    rc, out, err = _subprocess_git(cwd)("merge-tree", "--write-tree", base, head)
+    first = (out or "").splitlines()[0].strip() if (out or "").strip() else ""
+    if rc == 0 and _FULL_SHA_RE.match(first):
+        return first, ""
+    return None, _last_line(err or out) or f"git merge-tree exited {rc}"
+
+
+def _pytest_counts(text: str | None) -> int:
+    """Tests executed, from pytest's own summary line (`3 failed, 120 passed, 2 skipped in 4s`): passed+failed+errors."""
+    n = 0
+    for m in re.finditer(r"(\d+) (passed|failed|error|errors)\b", text or ""):
+        n += int(m.group(1))
+    return n
+
+
+def verdict_report(store: str | Path | None, events: list[dict[str, Any]], *, since: str | None = None) -> dict[str, Any]:
+    """Join item-5 verdict records to drain outcomes (by request verdict_ref, else by head sha) and report how often
+    a GREEN verdict was followed by an eject (`false_green_rate`) - split by whether any suite ran - plus the rejection
+    rate per requester. `events` is the outbox (`ship-requests.ndjson`) in order; `since` is an ISO prefix filter."""
+    path = Path(store) if store is not None else default_verdict_store()
+    recs: dict[str, dict[str, Any]] = {}
+    by_head: dict[str, list[dict[str, Any]]] = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            with contextlib.suppress(ValueError):
+                r = json.loads(line)
+                if isinstance(r, dict) and r.get("id") and (not since or str(r.get("ts", "")) >= since):
+                    recs[r["id"]] = r
+                    by_head.setdefault(str(r.get("head")), []).append(r)
+    except OSError:
+        pass
+
+    def find(ev: dict[str, Any]) -> dict[str, Any] | None:
+        m = _VERDICT_REF_RE.match(str(ev.get("verdict_ref") or ""))
+        if m and m.group(1) in recs:
+            return recs[m.group(1)]
+        h = str(ev.get("head_sha") or "")
+        if len(h) >= 7:
+            for full, rs in by_head.items():
+                if full.startswith(h):
+                    return rs[-1]
+        return None
+
+    cur: dict[str, dict[str, Any]] = {}
+    joined: list[dict[str, Any]] = []
+    per_req: dict[str, dict[str, int]] = {}
+
+    def who(ev: dict[str, Any]) -> str:
+        rq = ev.get("requester") or {}
+        return str(rq.get("name") or rq.get("session_id") or "unknown")
+
+    for ev in events:
+        if since and str(ev.get("ts", "")) < since:
+            continue
+        slug, kind = ev.get("slug"), ev.get("event")
+        if not slug:
+            continue
+        if kind in ("request", "request_refused"):
+            cur[slug] = {"ev": ev, "rec": find(ev), "who": who(ev)}
+            row = per_req.setdefault(cur[slug]["who"], {"requests": 0, "refused": 0, "ejected": 0, "landed": 0})
+            row["requests"] += 1
+            if kind == "request_refused":
+                row["refused"] += 1
+        elif kind == "ack" and slug in cur and ev.get("outcome") in ("ejected", "landed"):
+            c = cur[slug]
+            per_req.setdefault(c["who"], {"requests": 0, "refused": 0, "ejected": 0, "landed": 0})[ev["outcome"]] += 1
+            rec = c["rec"]
+            joined.append({"slug": slug, "outcome": ev["outcome"], "verdict_id": rec.get("id") if rec else None,
+                           "verdict_ok": bool(rec.get("ok")) if rec else None,
+                           "suites_ran": len(rec.get("suites_ran") or []) if rec and "suites_ran" in rec else None,
+                           "requester": c["who"]})
+    green = [j for j in joined if j["verdict_ok"]]
+    false_green = [j for j in green if j["outcome"] == "ejected"]
+    zero = [j for j in green if j["suites_ran"] == 0]
+    zero_bad = [j for j in zero if j["outcome"] == "ejected"]
+    unlinked = [j for j in joined if j["verdict_id"] is None]
+    for row in per_req.values():
+        done = row["ejected"] + row["landed"]
+        row["rejection_rate"] = round((row["ejected"] + row["refused"]) / max(1, done + row["refused"]), 3)
+    return {"ok": True, "status": "report", "verdicts": len(recs), "joined": len(joined), "unlinked_outcomes": len(unlinked),
+            "green_then_ejected": len(false_green), "green_then_landed": len(green) - len(false_green),
+            "false_green_rate": round(len(false_green) / len(green), 3) if green else None,
+            "zero_suite_green": len(zero), "zero_suite_green_ejected": len(zero_bad),
+            "zero_suite_false_green_rate": round(len(zero_bad) / len(zero), 3) if zero else None,
+            "red_without_test_ids": [{"id": r.get("id"), "head": str(r.get("head"))[:12], "stage_errors": r["stage_errors"]}
+                                     for r in recs.values() if r.get("stage_errors")][-5:],
+            "legacy_verdicts_without_suites_ran": sum(1 for r in recs.values() if "suites_ran" not in r),
+            "by_requester": dict(sorted(per_req.items(), key=lambda kv: -kv[1]["ejected"])), "kb": KB_POINTER}
+
+
 VERDICT_STORE_NAME = "deliverable-verdicts.ndjson"
 _VERDICT_REF_RE = re.compile(r"^ci-parity:([0-9a-f]{32})$")
 _FULL_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -2142,7 +2435,8 @@ def default_verdict_store(env: dict[str, str] | None = None) -> Path:
 
 
 def record_verdict(store: str | Path | None, *, head: str, tree: str, workflow_blob: str, interpreter: str,
-                   flags: list[str], tests: list[str], ok: bool, clock: Callable[[], float] = time.time) -> str:
+                   flags: list[str], tests: list[str], ok: bool, clock: Callable[[], float] = time.time,
+                   telemetry: dict[str, Any] | None = None) -> str:
     """Append ONE verdict record to the append-only store and return its ref (`ci-parity:<id>`).
 
     Only `export_ci_parity_check` (a run that actually executed the CI-blocking keepers + real-tree keeper
@@ -2152,7 +2446,7 @@ def record_verdict(store: str | Path | None, *, head: str, tree: str, workflow_b
     path.parent.mkdir(parents=True, exist_ok=True)
     rec = {"id": uuid.uuid4().hex, "ts": _iso(clock()), "head": head, "tree": tree, "workflow_blob": workflow_blob,
            "interpreter": interpreter, "flags": flags, "tests": tests, "ok": bool(ok),
-           "env_scrubbed": True, "ci_keepers": True}
+           "env_scrubbed": True, "ci_keepers": True, **(telemetry or {})}
     with open(path, "a", encoding="utf-8") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -2216,6 +2510,28 @@ def meaningful_tail(text: str | None, max_lines: int = 20) -> str:
     return "\n".join(keep[-max_lines:])
 
 
+STAGE_TAIL_LINES = 60
+
+
+def stage_error_record(label: str, r: Any, export: str) -> dict[str, Any]:
+    """What a red stage that names NO failing test must store so the red can be diagnosed from the verdict alone: its
+    exit code (pytest 2 = collection/usage error, 4 = bad path, 5 = nothing collected), the last STAGE_TAIL_LINES lines of
+    its output (stdout then stderr, ANSI stripped) and the hermetic export path it ran in (removed after the run)."""
+    text = _ANSI_RE.sub("", (getattr(r, "stdout", "") or "") + "\n" + (getattr(r, "stderr", "") or ""))
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    return {"stage": label, "rc": getattr(r, "returncode", None), "export": str(export),
+            "tail": "\n".join(lines[-STAGE_TAIL_LINES:])}
+
+
+_MISSING_MOD_RE = re.compile(r"No module named '([\w.]+)'|toolkit deps \((\w+)\) not importable")
+
+
+def harness_missing_modules(text: str | None) -> set[str]:
+    """Module names an interpreter could not import, read from a stage's output: the signature of an invalid harness
+    (the interpreter is not the toolkit venv), which must read UNMEASURED, never red."""
+    return {(a or b).split(".")[0] for a, b in _MISSING_MOD_RE.findall(text or "")}
+
+
 def _last_line(text: str | None) -> str:
     tail = meaningful_tail(text, 1)
     return tail[:200]
@@ -2256,9 +2572,9 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
     """Real default for `deliverable(scoped_check=)`: judge the head the way CI does. Export it, prime the
     hermetic state CI primes, then - in a SCRUBBED environment - run (1) every `cli.py --check-*` keeper CI
     runs as a blocking step, (2) the real-tree keeper tests (`ci_keeper_test_ids`) and (3) the suites of the
-    seed roots / awake products the diff touches DIRECTLY (`local_suites`, scoped by `ci_scope` - the
-    classifier the workflow's `changes` job calls - over `origin/dev...head`). The toolkit split and the
-    shared-root fan-out stay CI-only (2h04m measured locally, 2026-11-11). A ledger-only diff runs no suite. Everything is
+    suites gate_sweep selects for the diff (`select_ci_suites`: the ONE selector) plus the toolkit tests that read the
+    live tree (`live_tree_test_ids`), all against the tree of the MERGE of the head into origin/dev (`merge_tree_sha`),
+    inside a wall-clock budget (what is skipped or over budget is named, never dropped). A ledger-only diff runs no suite. Everything is
     derived from the head's own workflow + tests. Runs inside ONE machine-wide heavy slot (`admit`, default
     hw_admission.heavy_slot); not admitted = UNMEASURED, never green. Minutes: the
     branch steward runs it once and files the `ci-parity:<id>` ref it returns; the run APPENDS a verdict record
@@ -2286,17 +2602,21 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                                            f"(CI's suite selection depends on it): {_last_line(diff_err or '')}"}
         changed = diff_out.splitlines()
         scope = cs.classify(changed)
+        mtree, why = merge_tree_sha(head, cwd)
+        if mtree is None:
+            return {"ok": False, "detail": f"UNMEASURED: cannot build the merge of {head[:9]} into origin/dev to judge it "
+                                           f"(item 5 judges the MERGE, not the head): {why}"}
         with slot(f"deliverable:{branch}") as adm:
             if adm is not None and not getattr(adm, "admitted", True):
                 return {"ok": False, "detail": f"UNMEASURED: no machine-wide heavy slot ({getattr(adm, 'verdict', '?')}) - "
                                                "item 5 runs CI's suites and is never judged green unrun"}
-            return _parity_run(head, scope, changed)
+            return _parity_run(head, mtree, scope, changed)
 
-    def _parity_run(head: str, scope: Any, changed: list[str]) -> dict[str, Any]:
+    def _parity_run(head: str, mtree: str, scope: Any, changed: list[str]) -> dict[str, Any]:
         tree = tempfile.mkdtemp(prefix="noc-ci-parity-")
         sandbox = tempfile.mkdtemp(prefix="noc-sandbox-home-")
         try:
-            err = _export_tree(head, tree, cwd, budget("ci_parity:export"))
+            err = _export_tree(mtree, tree, cwd, budget("ci_parity:export"))
             if err:
                 return {"ok": False, "detail": f"UNMEASURED: {err}"}
             wf = Path(tree) / CI_WORKFLOW_REL
@@ -2316,6 +2636,10 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
             flags, prime = ci_blocking_flags(text), ci_prime_flags(text)
             tool_dir = Path(tree) / "mcp" / "noctusai"
             failed: list[str] = []
+            failed_items: list[str] = []   # keeper flags / suite labels that went red (recorded on the verdict)
+            failed_tests: list[str] = []   # the failing pytest node ids
+            missing_mods: set[str] = set()   # modules the INTERPRETER lacks: a harness problem, never a red on the code
+            stage_errors: list[dict[str, Any]] = []   # a red stage that named NO failing test: rc + output tail + export
 
             def run(gate: str, argv: list[str], where: Path,
                     extra: tuple[tuple[str, str], ...] = ()) -> subprocess.CompletedProcess:
@@ -2331,7 +2655,12 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 raise _CiParityTimeout(gate, budgets)
 
             def pytest_failures(r: subprocess.CompletedProcess, label: str) -> list[str]:
-                names = re.findall(r"^FAILED (\S+)", r.stdout or "", flags=re.M)
+                names = re.findall(r"^(?:FAILED|ERROR) (\S+)", r.stdout or "", flags=re.M)  # ERROR = setup/collection error
+                failed_items.append(label)
+                failed_tests.extend(names)
+                missing_mods.update(harness_missing_modules((r.stdout or "") + chr(10) + (r.stderr or "")))
+                if not names:
+                    stage_errors.append(stage_error_record(label, r, tree))
                 return [f"{label} {n}" for n in names] or [f"{label} pytest exit {r.returncode}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}"]
 
             for f in prime:
@@ -2343,12 +2672,18 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 r = run(f"ci_parity:keeper:{f}", [py, "mcp/noctusai/cli.py", f], Path(tree))
                 if r.returncode != 0:
                     failed.append(f"keeper {f}: {_last_line((r.stdout or '') + chr(10) + (r.stderr or ''))}")
+                    failed_items.append(f)
             tests = ci_keeper_test_ids(tool_dir / "tests")
+            n_executed = 0
             if tests:
                 r = run("ci_parity:pytest", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *tests], tool_dir)
+                n_executed += _pytest_counts(r.stdout)
                 if r.returncode != 0:
                     failed += pytest_failures(r, "test")
-            suites = local_suites(tree, scope, text, changed)
+            sel = select_ci_suites(tree, changed, py)
+            suites: list[CiSuite] = list(sel["suites"])
+            skipped: list[dict[str, str]] = list(sel["skipped"])
+            live = live_tree_test_ids(tool_dir / "tests") if scope.run_heavy else []
             guard = migration_guard_suite(tree, changed)
             if guard is not None:
                 why = link_pglite(tree, cwd or Path.cwd())
@@ -2356,26 +2691,59 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                     return {"ok": False, "detail": f"UNMEASURED: the diff touches migrations, so {guard.label} must run, "
                                                    f"but {why}"}
                 suites = suites + [guard]
+            if live:
+                r = run("ci_parity:livetree", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *live], tool_dir)
+                n_executed += _pytest_counts(r.stdout)
+                if r.returncode != 0:
+                    failed += pytest_failures(r, "livetree")
+            budget_s = int(os.environ.get(SUITE_BUDGET_ENV) or SUITE_BUDGET_DEFAULT_S)
+            started, ran_suites = time.monotonic(), []
             for s in suites:
+                if time.monotonic() - started >= budget_s:
+                    skipped.append({"label": s.label, "reason": f"over the {budget_s}s suite budget ({SUITE_BUDGET_ENV})"})
+                    continue
                 r = run(f"ci_parity:suite:{s.label}", [py, *s.argv], Path(tree) / s.cwd, s.env)
+                ran_suites.append(s.label)
+                n_executed += _pytest_counts(r.stdout)
                 if r.returncode != 0:
                     failed += pytest_failures(r, s.label)
             n_tests = len(tests)
-            tests = tests + [s.label for s in suites]
-            ran = (f"{len(flags)} CI-blocking keeper flag(s) + {n_tests} real-tree keeper test(s) + {len(suites)} "
-                   f"directly-touched suite(s){' incl. ' + guard.label if guard is not None else ''} "
-                   f"({cs.describe(scope)}; toolkit split + shared fan-out left to CI), env-scrubbed")
+            tests = tests + [f"livetree:{i}" for i in live] + ran_suites
+            partial = [k for k in skipped if "budget" in k["reason"]]
+            diff_scope = {"describe": cs.describe(scope), "run_heavy": bool(scope.run_heavy), "changed_files": len(changed),
+                          **sel["scope"]}
+            warnings: list[str] = []
+            if scope.run_heavy and not ran_suites and not live:
+                warnings.append("WARNING: heavy diff scope but 0 suites ran - the verdict judged only the keepers")
+            ran = (f"{len(flags)} CI-blocking keeper flag(s) + {n_tests} real-tree keeper test(s) + {len(live)} live-tree "
+                   f"toolkit test(s) + {len(ran_suites)} selected suite(s) [{n_executed} tests executed] "
+                   f"({cs.describe(scope)}; merge of {head[:9]} into origin/dev), env-scrubbed")
+            if skipped:
+                ran += "; NOT RUN (" + "; ".join(f"{k['label']}: {k['reason']}" for k in skipped[:6]) + (" ..." if len(skipped) > 6 else "") + ")"
+            if partial:
+                ran += f"; PARTIAL: {len(partial)} suite(s) over the budget"
+            ran += "".join(f"; {w}" for w in warnings)
+            telemetry = {"suites_ran": ran_suites, "tests_ran": n_executed, "diff_scope": diff_scope,
+                         "skipped": skipped, "partial": bool(partial), "warnings": warnings, "merge_tree": mtree,
+                         "livetree_tests": len(live), "failing_items": list(failed_items),
+                         "failing_tests": list(failed_tests), "stage_errors": list(stage_errors)}
             git = _subprocess_git(cwd)
             rc_t, head_tree, _e = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
             rc_b, wf_blob, _e = git("rev-parse", "--verify", "--quiet", f"{head}:{CI_WORKFLOW_REL}")
             if rc_t != 0 or rc_b != 0:
                 return {"ok": False, "detail": "UNMEASURED: cannot resolve the head tree / test.yml blob to record the verdict"}
             ref = record_verdict(verdict_store, head=head, tree=head_tree.strip(), workflow_blob=wf_blob.strip(),
-                                 interpreter=f"{py} {sys.version.split()[0]}", flags=flags, tests=tests, ok=not failed)
+                                 interpreter=f"{py} {sys.version.split()[0]}", flags=flags, tests=tests, ok=not failed,
+                                 telemetry=telemetry)
+            if failed and missing_mods:
+                return {"ok": False, "detail": f"UNMEASURED: the interpreter {py} lacks {sorted(missing_mods)}, so the red "
+                                               f"judges the SETUP, not the code (run through the toolkit venv: "
+                                               f"mcp/noctusai/.venv/bin/python, or install requirements.txt); {ran}",
+                        "failed": failed, "missing_modules": sorted(missing_mods), "verdict_ref": ref, **telemetry}
             if failed:
                 return {"ok": False, "detail": f"{ran}; RED: {', '.join(failed[:8])}", "failed": failed,
-                        "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref}
-            return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref}
+                        "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref, **telemetry}
+            return {"ok": True, "detail": f"{ran}; green", "ran": {"flags": flags, "tests": tests}, "verdict_ref": ref, **telemetry}
         except _CiParityTimeout as exc:
             return {"ok": False, "detail": f"UNMEASURED: {exc}"}
         except (OSError, subprocess.SubprocessError) as exc:
@@ -2577,6 +2945,8 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
         items.append(_unmeasured(5, DELIVERABLE_ITEMS[4], exc))
 
     failing = [i["name"] for i in items if not i["ok"]]
+    if failing:
+        _record_failing_items(branch, items)
     return {**out, "ok": not failing, "verdict": "deliverable" if not failing else "needs_resync",
             "items": items, "failing": failing, "kb": KB_POINTER}
 
@@ -2590,7 +2960,7 @@ def deliverable_refusal(result: dict[str, Any]) -> str:
 # -- the MCP tool + CLI entry -----------------------------------------------
 
 ACTIONS = ("status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack",
-           "role", "roles", "reconcile", "withdraw", "ask", "position", "decision", "deliverable")
+           "role", "roles", "reconcile", "withdraw", "ask", "position", "decision", "deliverable", "verdicts")
 
 
 def run_action(action: str, session_id: str | None, *, store: StewardStore | None = None,
@@ -2620,6 +2990,8 @@ def run_action(action: str, session_id: str | None, *, store: StewardStore | Non
     if action == "deliverable":
         return store.check_deliverable(kw.get("slug"), kw.get("branch"), kw.get("head_sha"), kw.get("verdict_ref"),
                                     run_scoped=bool(kw.get("run_scoped")))
+    if action == "verdicts":
+        return verdict_report(kw.get("verdict_store"), store._events(), since=kw.get("since"))
     if action == "inbox":
         return store.inbox(include_done=bool(kw.get("include_done")))
     if action == "roles":
@@ -2661,7 +3033,7 @@ def register(server) -> None:
             "requester, with the batched drain list) | ack slug= outcome=enqueued|landed|ejected|deployed|withdrawn|needs_resync [dev_sha= "
             "notes= (required for withdrawn|needs_resync)] (steward) | deliverable slug=|branch= [head_sha= verdict_ref= run_scoped=true] (READ-ONLY, open to all: the DELIVERY CONTRACT - head pushed + tree clean, merge-buildable (contains origin/dev OR merge-tree clean), migration numbers free, derived files current at the head, scoped keepers/tests green the way CI judges them - the CI-blocking keeper set + real-tree keeper tests, env-scrubbed, derived from test.yml (run_scoped=true runs it, minutes) OR a verdict_ref carrying `env-scrubbed`,`ci-keepers` and the head sha; verdict deliverable|needs_resync, failing items named; `request` runs it at filing and the guardian re-runs it before enqueue, which is then a pure push) | withdraw slug= [notes=] (the requester or steward takes a request back) | ask slug= question= [addressed_to=<role> deadline_min=30] (steward: kind=needs_info, one bounded question; unanswered past the deadline = escalate_to_owner in inbox) | position slug= notes= [ref=<ni-id>] (answer / stance) | decision slug= notes= (steward's final call) | role role=<role> [name= op=set|clear to_session_id=] (durable ROLE->session map: dev-steward "
             "is derived from the lease, also branch-steward:<branch>, agents, products/sw, ...; any session sets its own, "
-            "steward sets others') | roles (the map, stale/dead sessions flagged) | reconcile [confirm=True] (steward: ack "
+            "steward sets others') | verdicts [since=<ISO>] (READ-ONLY: joins item-5 verdict records to drain outcomes by head sha / verdict_ref - false-green rate (green then ejected), the zero-suite split, rejection rate per requester) | roles (the map, stale/dead sessions flagged) | reconcile [confirm=True] (steward: ack "
             "every inbox request already in origin/dev - `git cherry` - as landed; inbox/status list them as already_landed, "
             "not drain) ; request also takes branches=[feat/a, feat/b] (ordered; the drain emits ONE task_branch train + ONE "
             "enqueue, never separate enqueues for a split delivery). Identity = the server's CLAUDE_CODE_SESSION_ID (one MCP server per session). "
@@ -2681,7 +3053,7 @@ def register(server) -> None:
                          role: str | None = None, op: str | None = None, confirm: bool = False,
                          question: str | None = None, addressed_to: str | None = None,
                          deadline_min: float | None = None, ref: str | None = None,
-                         verdict_ref: str | None = None, run_scoped: bool = False) -> dict:
+                         verdict_ref: str | None = None, run_scoped: bool = False, since: str | None = None) -> dict:
         return run_action(
             action, os.environ.get(SESSION_ENV), claude_pid=os.getppid(),
             child_session=os.environ.get("CLAUDE_CODE_CHILD_SESSION") == "1",
@@ -2690,9 +3062,9 @@ def register(server) -> None:
             outcome=outcome, dev_sha=dev_sha, include_done=include_done,
             inline_reason=inline_reason, inline_note=inline_note, branches=branches,
             role=role, op=op, confirm=confirm, question=question, addressed_to=addressed_to,
-            deadline_min=deadline_min, ref=ref, verdict_ref=verdict_ref, run_scoped=run_scoped)
+            deadline_min=deadline_min, ref=ref, verdict_ref=verdict_ref, run_scoped=run_scoped, since=since)
 
 
 __all__ = ["deliverable", "export_derived_check", "export_ci_parity_check", "ci_blocking_flags", "ci_keeper_test_ids",
-           "hermetic_env", "export_env", "export_cli_help_check", "meaningful_tail", "seed_pythonpath", "validate_verdict_ref", "record_verdict", "read_verdict", "default_verdict_store", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
+           "hermetic_env", "export_env", "export_cli_help_check", "meaningful_tail", "seed_pythonpath", "validate_verdict_ref", "select_ci_suites", "live_tree_test_ids", "merge_tree_sha", "verdict_report", "record_verdict", "read_verdict", "default_verdict_store", "resolve_branch_name", "trial_merge_tree", "StewardStore", "Gated", "classify_tool", "classify_bash", "decide", "decide_call",
            "tool_refusal", "run_action", "register", "REQUEST_CMD", "OVERRIDE_ENV"]

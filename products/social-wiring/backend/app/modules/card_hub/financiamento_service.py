@@ -705,6 +705,7 @@ def _job_varrer_retencao(*, run_fn: Any = None) -> None:
 def configure(*, scheduler: Any = None) -> None:
     """Register the sweep on the seed scheduler, at import time — before
     `start_scheduler()` fires in `app/lifespan.py`."""
+    # poll-budget: every 24h; 1 calls/tick (one job run; its reads are per-org batches, not a poll); worst 1/day (job runs); idle=fixed
     (scheduler or seed_scheduler).register(
         "card_hub_financiamento_retention_sweep",
         _job_varrer_retencao,

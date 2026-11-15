@@ -53,6 +53,7 @@ class BrandRuntime:
 
 
 def build_worker(service: BrandService, *, worker_id: str = "core-brand-1") -> Worker:
+    # poll-budget: claim poll, 2s base doubling to the 300s seed cap when idle, reset on work; 1 calls/tick (rpc claim_next_job); worst 288/day per idle worker (43200/day only while busy at the 2s base); idle=backoff
     return Worker(
         service.jobs,
         worker_id=worker_id,
@@ -88,6 +89,7 @@ class BrandWorker:
 
     async def _supervise(self) -> None:
         """Restart a crashed loop (logged with traceback) instead of dying silent."""
+        # poll-budget: supervisor re-enters only when the worker loop crashed, then waits 10s; 0 Supabase calls/tick of its own (the Worker above owns the claim polling); worst 8640/day in a crash loop, 0/day healthy; idle=event
         while not self._stop.is_set():
             try:
                 await self.worker.run_forever(stop_event=self._stop)

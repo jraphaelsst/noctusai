@@ -479,6 +479,9 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append(f"--task-branch-accept-unmeasured-reason={kwargs['accept_unmeasured_reason']}")
         if kwargs.get("accept_unscored"):
             argv.append(f"--task-branch-accept-unscored={kwargs['accept_unscored']}")
+        if kwargs.get("score"):
+            sc = kwargs["score"]
+            argv.append(f"--task-branch-score={sc if isinstance(sc, str) else json.dumps(sc)}")
         if kwargs.get("branch"):
             argv.append(f"--task-branch-branch={kwargs['branch']}")
         if kwargs.get("verdict_ref"):
@@ -560,7 +563,7 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
     "task_branch": frozenset({
         "action", "slug", "confirm", "project", "brief", "paths", "agent",
         "role", "parent", "wire_env", "verbose", "keep_worktree",
-        "wire_products", "accept_unmeasured", "accept_unmeasured_reason", "accept_unscored",
+        "wire_products", "accept_unmeasured", "accept_unmeasured_reason", "accept_unscored", "score",
         "slugs", "order", "branch", "verdict_ref",
     }),
     "source_register": frozenset({

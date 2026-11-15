@@ -286,13 +286,17 @@ class TestRequisitosFaltantes:
         cid, _aid, [vid] = _card(scoped)
         out = svc.montar(scoped, ORG_ID, cid, hoje=HOJE)
         vend = next(p for p in out["partes"] if p["cliente_id"] == vid)
-        assert vend["requisitos_faltantes"] == {"cnd_federal": ["data de nascimento"]}
+        # TJSP refuses a CPF without RG (prod 606) — declared too.
+        assert vend["requisitos_faltantes"] == {
+            "cnd_federal": ["data de nascimento"], "tjsp": ["RG"],
+        }
 
-    def test_pf_com_data_de_nascimento_nao_lista_nada(self, scoped):
+    def test_pf_com_data_de_nascimento_e_rg_nao_lista_nada(self, scoped):
         cid, _aid, [vid] = _card(scoped)
         clientes = _dados(scoped, "clientes")
         for c in clientes:
             c["data_nascimento"] = "1980-02-03"
+            c["rg"] = "112223334"
         scoped.set_table_data("clientes", clientes)
         out = svc.montar(scoped, ORG_ID, cid, hoje=HOJE)
         vend = next(p for p in out["partes"] if p["cliente_id"] == vid)

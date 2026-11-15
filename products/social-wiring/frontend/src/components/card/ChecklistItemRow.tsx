@@ -58,6 +58,7 @@ import type { DocumentoChecklistItem } from "@/types/cardHub";
 
 import { GENEROS, type DadosPessoais } from "./DadosPessoaisForm";
 import { TokenCheckbox, TooltipIconButton, formatarDataISO } from "@noctusai/lib/components";
+import { DadoObrigatorioInfo } from "@/components/guia/GuiaInfo";
 
 type CampoTipo = "texto" | "email" | "tel" | "data" | "select";
 
@@ -162,6 +163,8 @@ export function ChecklistItemRow({
       >
         {item.label}
       </span>
+      {/* "i": which documents supply this item (guia de documentos). */}
+      <DadoObrigatorioInfo chave={item.key} rotulo={item.label} />
 
       {editando && campo ? (
         <div className="flex min-w-0 flex-1 items-center gap-1.5">

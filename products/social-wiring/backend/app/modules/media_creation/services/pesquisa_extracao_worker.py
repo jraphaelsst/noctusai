@@ -57,6 +57,7 @@ def build_handler(db, llm: PesquisaLlm, cfg: Any) -> Callable[[Job], Any]:
 
 
 def build_worker(repo: JobRepository, db, cfg: Any, llm: PesquisaLlm = chat_pesquisa_llm) -> Worker:
+    # poll-budget: claim poll, 2s base doubling to the 300s seed cap when idle, reset on work; 1 calls/tick (rpc claim_next_job); worst 288/day per idle worker (43200/day only while busy at the 2s base); idle=backoff
     return Worker(
         repo,
         worker_id=worker_id(),

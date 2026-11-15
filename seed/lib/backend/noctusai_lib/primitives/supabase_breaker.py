@@ -831,6 +831,7 @@ class Breaker:
 
             def _loop() -> None:
                 delay = 30.0
+                # poll-budget: alert-retry thread, 30s doubling to 900s, ends when no alert is pending; 0 Supabase calls/tick (Redis + alert webhook); worst 2880/day (the 30s start, only while an alert is pending); idle=backoff
                 while True:
                     time.sleep(delay)
                     if self.flush_pending_alerts() == 0:
@@ -1201,8 +1202,8 @@ async def refresh_loop(stop_event: Any = None, *, interval_s: float = 10.0) -> N
     import asyncio
 
     breaker = get_breaker()
+    # poll-budget: 10s; 1 calls/tick (one Redis MGET per process, never Supabase); worst 8640/day; idle=fixed
     while stop_event is None or not stop_event.is_set():
-        # poll-budget: 10s; 1 calls/tick; worst 8640/day; idle=same (one Redis MGET per process, never Supabase)
         await asyncio.to_thread(breaker.refresh)
         if stop_event is None:
             await asyncio.sleep(interval_s)
