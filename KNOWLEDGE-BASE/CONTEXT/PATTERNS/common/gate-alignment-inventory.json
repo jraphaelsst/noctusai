@@ -149,7 +149,7 @@
    "source": "Claude Code hooks reference (code.claude.com/docs/en/hooks: PostToolUse/UserPromptSubmit additionalContext, SubagentStop); owner rule 2026-11-07; verified against 33 real subagent transcripts+meta.json"
   },
   "guard:background-launch": {
-   "mechanism": "scripts/bg_run.py launch wrapper (purpose + done-condition, salvage on exit, tree-stop) + noctus.dev.bg_process stop tool + session_end_sweep clean_wrap leg; KB § PATTERNS/common/background-agent-lifecycle.md",
+   "mechanism": "scripts/bg_run.py launch wrapper, applied BY CONSTRUCTION: the guard rewrites every non-infra run_in_background command into it (purpose + done-condition, ends when the child exits / done-when holds / the producer is dead / the owning session dies, salvage on exit, tree-stop); structural shell judge scripts/hooks/_bg_shell.py (invoked scripts opened and scanned); noctus.dev.bg_process stop (logs escaped-runtime-end) + session_end_sweep clean_wrap leg as backstop; KB § PATTERNS/common/background-agent-lifecycle.md",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "standard": "",
@@ -159,9 +159,17 @@
     "since": "2026-11-14",
     "fires": 0,
     "fix_rate": null,
-    "promote_when": "auto-enforces 2026-11-21 (bg_launch_guard.ENFORCE_FROM); owner 2026-11-14: 7-day warn-only soak, used to refine the tool from the warn events (--gate-alignment walls)"
+    "promote_when": "enforcing since 2026-11-14 (bg_launch_guard.ENFORCE_FROM); runtime-end legs added 2026-11-14: mandatory wrapper rewrite, structural shell parsing, script scan, parent-death, escaped-runtime-end telemetry (target ~0)"
    },
    "source": "owner decision 2026-11-14 (background processes end themselves; no lifetime cap or idle timer); Claude Code hooks reference (PreToolUse deny on Bash run_in_background)"
+  },
+  "guard:bash-rewrite": {
+   "mechanism": "mcp/noctusai/tools/noctus/dev/bash_rewrite_chain.py (the ONE composed rewrite: heavy-run wrap innermost via hw_admission, bg_run outermost, idempotent, a deny from either member guard wins, one rewrite event per guard; deadline overrun: shadow allows a non-heavy command, enforce denies, heavy stays fail-closed); KB § PATTERNS/common/background-agent-lifecycle.md",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": false,
+   "declared": "2026-11-14"
   },
   "guard:council-read": {
    "mechanism": "mcp/noctusai/tools/noctus/dev/council_ledger.py (neutral recorder: tool-assigned labels, seats withheld until verdict)",
@@ -194,7 +202,7 @@
     "PreToolUse"
    ],
    "standard": "",
-   "mechanism": "tool:task_branch start (creates the worktree the guard requires)",
+   "mechanism": "tool:task_branch start (creates the worktree to reuse); the guard REWRITES a worktree-less executor dispatch by adding isolation:\"worktree\" via updatedInput (outcome=rewrite logged)",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -203,7 +211,9 @@
    },
    "class": "wall",
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
-   "remediation": "NOC-REMEDIATE[gate-wall] destination: dispatch skill/template pre-fills worktree_path from task_branch start (noc-branch-dispatch)."
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: dispatch skill/template pre-fills worktree_path from task_branch start (noc-branch-dispatch).",
+   "new": false,
+   "declared": "2026-11-14"
   },
   "guard:harness-signature": {
    "severity": "",
@@ -229,7 +239,7 @@
     "PreToolUse"
    ],
    "standard": "",
-   "mechanism": "tool:hw_admission (the deny message names the wrapped command)",
+   "mechanism": "tool:hw_admission (the guard REWRITES the command into the admitted form via updatedInput: hw_admission run --job <derived> --wait-s 7200 -- bash -c; outcome=rewrite logged; refuses only local Whisper and unparseable commands)",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -238,7 +248,9 @@
    },
    "class": "wall",
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
-   "remediation": "NOC-REMEDIATE[gate-wall] destination: a wrapped-run injection (hw_admission command pre-filled in the agent start brief + test-engineer template) so the first command is already the admitted one."
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: a wrapped-run injection (hw_admission command pre-filled in the agent start brief + test-engineer template) so the first command is already the admitted one.",
+   "new": false,
+   "declared": "2026-11-14"
   },
   "guard:primary-write": {
    "severity": "",
@@ -247,7 +259,7 @@
     "PreToolUse"
    ],
    "standard": "",
-   "mechanism": "tool:task_branch start (isolates off origin/dev) · injection: scripts/hooks/claude-session-start-worktree-sweep.py",
+   "mechanism": "tool:task_branch start (isolates off origin/dev) · injection: scripts/hooks/claude-session-start-worktree-sweep.py · claim-only fast path decide_claimed_fast (a write inside the session's claimed worktree is decided from the claim file with no git subprocess) · redirect into the claimed worktree",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -256,7 +268,9 @@
    },
    "class": "wall",
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
-   "remediation": "NOC-REMEDIATE[gate-wall] destination: task_branch auto-isolation at dispatch (agents start in a worktree by injection); measure primary-dirt delta (leg already in flight, see section below)."
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: task_branch auto-isolation at dispatch (agents start in a worktree by injection); measure primary-dirt delta (leg already in flight, see section below).",
+   "new": false,
+   "declared": "2026-11-14"
   },
   "guard:primary-write-post": {
    "severity": "",
@@ -293,12 +307,12 @@
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson"
   },
   "guard:session-heartbeat": {
-   "mechanism": "none (advisory liveness refresh, not an enforcing gate: calls StewardStore.role_touch; the construction is role_touch on every release_steward action)",
+   "mechanism": "none (advisory liveness refresh, not an enforcing gate: calls StewardStore.role_touch and renew_own_lease so a live steward's own lease never ages stale between prompts; the construction is role_touch on every release_steward action)",
    "owner": "tooling-engineer",
    "placement": "warn",
    "standard": "",
    "new": true,
-   "declared": "2026-11-10",
+   "declared": "2026-11-14",
    "source": "release-steward.md (honest G3 / session liveness): dead = pid gone AND heartbeat past TTL, so a quiet alive session needs a refresh path; owner decision 2026-11-10",
    "telemetry": "_guard_failclosed.log_event error rows only (advisory hook, always exit 0)"
   },
@@ -984,7 +998,7 @@
     "pre-push"
    ],
    "standard": "Keeper (CI + pre-push): deterministic doc-staleness gate. With --doc-range BASE..TIP: change-coupling (covered code changed materially, covering docs untouched; ack via `Docs-Reviewed: <doc> — <reason>` trailer). Without: claim checks over ",
-   "mechanism": "",
+   "mechanism": "injection: scripts/hooks/claude-inject-doc-coverage.py (PostToolUse Edit|Write|NotebookEdit) + engineer_brief_compose covering_docs",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -992,7 +1006,9 @@
     "sessions": 0
    },
    "class": "never-fires",
-   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "new": false,
+   "declared": "2026-11-14"
   },
   "keeper:check-eight-way-sync": {
    "severity": "",
@@ -3769,11 +3785,11 @@
   },
   {
    "id": "D-bg-self-ending",
-   "decision": "Background processes end themselves: every run_in_background command declares purpose + a done-condition via scripts/bg_run.py (salvage on exit, tree-stop, orphan check); open-ended loops and bare long runs are refused at launch; NO lifetime cap or idle timer; leftovers at session end are salvaged+stopped via noctus.dev.bg_process or kept as declared long-lived",
+   "decision": "Background processes end AT RUNTIME, not at a wrap-up sweep: every run_in_background command is rewritten by the guard into scripts/bg_run.py (purpose + done-condition) which ends it when the job is done, its wait can no longer be satisfied, or its owning session dies; only loops that cannot be given an end are refused; NO lifetime cap or idle timer; the session-end sweep is a backstop and every process it must stop is logged as escaped-runtime-end",
    "home": "KB § PATTERNS/common/background-agent-lifecycle.md (Background processes)",
-   "construction": "tool:scripts/bg_run.py + noctus.dev.bg_process (stop refuses without a salvage record)",
+   "construction": "tool:scripts/bg_run.py applied by the guard rewrite (updatedInput) + scripts/hooks/_bg_shell.py structural judge + noctus.dev.bg_process (stop refuses without a salvage record)",
    "gate": "guard:background-launch + session_end_sweep clean_wrap leg",
-   "telemetry": "guard-events.ndjson (guard=background-launch|background-process) + the bg-process salvage ledger (gitignored cache)",
+   "telemetry": "guard-events.ndjson (guard=background-launch deny|rewrite|warn; guard=background-process escaped-runtime-end) + the bg-process salvage ledger (gitignored cache)",
    "branch": "feat/bg-process-lifecycle",
    "gates": [
     "guard:background-launch"

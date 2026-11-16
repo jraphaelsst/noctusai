@@ -1608,3 +1608,165 @@ def test_only_the_exact_scratch_shape_is_exempt():
     assert is_git_merge_scratch(".merge_file_4i9A2x")
     for bad in (".merge_file_", ".merge_file_x", "sub/.merge_file_4i9A2x", ".merge_file_4i9A2x.py", "merge_file_4i9A2x"):
         assert not is_git_merge_scratch(bad)
+
+
+# ── claim-only fast path (2026-11-14, GW-8a7e7ce8): decided from the claim file, never spawning git ─────────────
+import json  # noqa: E402
+import os  # noqa: E402
+import time  # noqa: E402
+
+from tools.noctus.dev.primary_write_guard import (  # noqa: E402
+    CLAIMS_REL,
+    claimed_worktree_fast,
+    decide_claimed_fast,
+)
+
+SID = "sess-fast"
+
+
+@pytest.fixture
+def claimed(tmp_path, monkeypatch):
+    """A real on-disk layout (primary `.git/worktrees/<n>`, a worktree whose `.git` FILE points at it, a claim),
+    and an EMPTY PATH: any `git` subprocess the fast path spawned would fail, so a passing allow proves none ran."""
+    primary = tmp_path / "primary"
+    wt = primary / ".claude" / "worktrees" / "my-slice"
+    gitdir = primary / ".git" / "worktrees" / "my-slice"
+    gitdir.mkdir(parents=True)
+    wt.mkdir(parents=True)
+    (gitdir / "HEAD").write_text("ref: refs/heads/feat/my-slice\n")
+    (wt / ".git").write_text(f"gitdir: {gitdir}\n")
+    (primary / ".claude" / "cache").mkdir(parents=True)
+
+    def claim(worktree=wt, session=SID):
+        (primary / CLAIMS_REL).write_text(json.dumps({session: {"worktree": str(worktree), "branch": "feat/my-slice"}}))
+
+    claim()
+    monkeypatch.setenv("PATH", "")
+    return primary, wt, gitdir, claim
+
+
+def _fast(tool, tool_input, primary, cwd, sid=SID):
+    return decide_claimed_fast(tool, tool_input, str(cwd), sid, str(primary))
+
+
+def test_fast_path_allows_an_edit_inside_the_claimed_worktree(claimed):
+    primary, wt, *_ = claimed
+    assert _fast("Edit", {"file_path": str(wt / "a.py")}, primary, primary) == "feat/my-slice"
+    assert _fast("Write", {"file_path": "rel/b.py"}, primary, wt) == "feat/my-slice"
+
+
+def test_fast_path_does_not_vouch_for_the_primary_or_other_paths(claimed):
+    primary, wt, *_ = claimed
+    assert _fast("Edit", {"file_path": str(primary / "a.py")}, primary, primary) is None
+    assert _fast("Edit", {"file_path": str(wt / ".." / ".." / "a.py")}, primary, primary) is None
+    assert _fast("Edit", {"file_path": ""}, primary, wt) is None
+
+
+def test_fast_path_requires_a_claim_for_this_session(claimed):
+    primary, wt, *_ = claimed
+    assert _fast("Edit", {"file_path": str(wt / "a.py")}, primary, wt, sid="someone-else") is None
+    assert _fast("Edit", {"file_path": str(wt / "a.py")}, primary, wt, sid=None) is None
+
+
+def test_fast_path_refuses_a_claim_on_a_shared_branch_or_detached_or_foreign_gitdir(claimed, tmp_path):
+    primary, wt, gitdir, _ = claimed
+    for head in ("ref: refs/heads/dev\n", "ref: refs/heads/main\n", "a" * 40 + "\n"):
+        (gitdir / "HEAD").write_text(head)
+        assert claimed_worktree_fast(str(primary), SID) is None, head
+    (gitdir / "HEAD").write_text("ref: refs/heads/feat/my-slice\n")
+    assert claimed_worktree_fast(str(primary), SID) is not None
+    foreign = tmp_path / "elsewhere" / ".git" / "worktrees" / "x"
+    foreign.mkdir(parents=True)
+    (foreign / "HEAD").write_text("ref: refs/heads/feat/x\n")
+    (wt / ".git").write_text(f"gitdir: {foreign}\n")
+    assert claimed_worktree_fast(str(primary), SID) is None
+
+
+def test_fast_path_refuses_a_claim_whose_worktree_is_gone_or_claims_unreadable(claimed):
+    primary, wt, gitdir, claim = claimed
+    (wt / ".git").unlink()
+    assert claimed_worktree_fast(str(primary), SID) is None
+    (primary / CLAIMS_REL).write_text("{not json")
+    assert claimed_worktree_fast(str(primary), SID) is None
+
+
+@pytest.mark.parametrize("command", [
+    "git add -A && git commit -m x",
+    "echo hi > out.txt",
+    "cat > f <<'EOF'\nprice $5 and `x` ~ ..\nEOF\nls",
+    "python -m pytest -q",
+])
+def test_fast_path_allows_bash_confined_to_the_worktree(claimed, command):
+    primary, wt, *_ = claimed
+    assert _fast("Bash", {"command": command}, primary, wt) == "feat/my-slice"
+
+
+@pytest.mark.parametrize("command", [
+    "echo hi > ../../../x",
+    "cd /somewhere && touch f",
+    "git -C /x add f",
+    'echo "$HOME" > f',
+    "echo `pwd` > f",
+    "cp a ~/b",
+])
+def test_fast_path_falls_through_on_anything_it_cannot_prove(claimed, command):
+    primary, wt, *_ = claimed
+    assert _fast("Bash", {"command": command}, primary, wt) is None
+
+
+def test_fast_path_bash_needs_the_cwd_in_the_worktree_and_no_primary_path(claimed):
+    primary, wt, *_ = claimed
+    assert _fast("Bash", {"command": "touch f"}, primary, primary) is None  # cwd is the primary
+    assert _fast("Bash", {"command": f"touch {primary}/f"}, primary, wt) is None
+    assert _fast("Bash", {"command": f"touch {wt}/f"}, primary, wt) == "feat/my-slice"
+    # a write target outside the worktree is not proven harmless here: the full decision judges it
+    assert _fast("Bash", {"command": "touch /tmp/outside"}, primary, wt) is None
+
+
+def test_fast_path_is_fast_under_an_empty_path(claimed):
+    primary, wt, *_ = claimed
+    t0 = time.monotonic()
+    for _ in range(200):
+        _fast("Edit", {"file_path": str(wt / "a.py")}, primary, wt)
+    assert (time.monotonic() - t0) / 200 < 0.005  # file reads only: well under 5 ms per decision
+
+
+# ── review hardening: symlinks out of the worktree + hook-integrity targets never ride the fast path ─────────────
+def test_fast_path_follows_symlinks_for_relative_bash_targets(claimed):
+    """`wire_env` symlinks node_modules entries into the PRIMARY: a RELATIVE write through one lands there."""
+    primary, wt, *_ = claimed
+    vendor = primary / "products" / "p" / "frontend" / "node_modules"
+    vendor.mkdir(parents=True)
+    (wt / "node_modules").symlink_to(vendor, target_is_directory=True)
+    assert _fast("Bash", {"command": "echo x > node_modules/foo"}, primary, wt) is None
+    assert _fast("Bash", {"command": "cp a.txt node_modules/foo"}, primary, wt) is None
+    assert _fast("Bash", {"command": "echo x > plain.txt"}, primary, wt) == "feat/my-slice"  # control: same shape, inside
+
+
+def test_fast_path_follows_symlinks_for_edit_targets(claimed):
+    primary, wt, *_ = claimed
+    (primary / "real").mkdir()
+    (wt / "link").symlink_to(primary / "real", target_is_directory=True)
+    assert _fast("Write", {"file_path": str(wt / "link" / "f.py")}, primary, wt) is None
+
+
+def test_fast_path_declines_an_uncertain_write_parse(claimed):
+    primary, wt, *_ = claimed
+    assert _fast("Bash", {"command": "python -c \"open('f','w').write('x')\""}, primary, wt) is None
+
+
+@pytest.mark.parametrize("how", ["absolute-edit", "absolute-bash", "symlink", "git-dash-c"])
+def test_hook_integrity_targets_never_ride_the_fast_path(claimed, how):
+    """A write into the primary's `.git/hooks` or `.git/config` is left to `decide_hook_integrity` (git-backed)."""
+    primary, wt, *_ = claimed
+    hooks = primary / ".git" / "hooks"
+    hooks.mkdir(exist_ok=True)
+    (wt / "hk").symlink_to(hooks, target_is_directory=True)
+    cases = {
+        "absolute-edit": ("Edit", {"file_path": str(hooks / "pre-commit")}),
+        "absolute-bash": ("Bash", {"command": f"echo x > {primary}/.git/config"}),
+        "symlink": ("Write", {"file_path": str(wt / "hk" / "pre-commit")}),
+        "git-dash-c": ("Bash", {"command": f"git -C {primary} config core.hooksPath /x"}),
+    }
+    tool, tin = cases[how]
+    assert _fast(tool, tin, primary, wt) is None

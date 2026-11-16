@@ -545,6 +545,22 @@ becomes the thing someone deletes. So the decision lives in a **stdlib-only**
 module the hook loads **by path** (not as a package), and the whole hook runs in
 ~60 ms.
 
+### Claim-only fast path — no git on the hot path (2026-11-14, finding GW-8a7e7ce8)
+
+443 fail-closed timeouts in 43 sessions: every non-read call spent 4+ `git` processes (`discover_context` x3,
+`decide_hook_integrity`) before the guard could say "this is your own worktree", and machine load burned the
+8 s deadline. `decide_claimed_fast` (`primary_write_guard.py`) decides the dominant case from the claim file
+plus three plain file reads: the claim -> `<wt>/.git` (a FILE) -> its gitdir under THIS primary's
+`.git/worktrees/` -> `HEAD` names a non-shared branch. An Edit/Write whose realpath is inside the claimed
+worktree, or a Bash call whose cwd is inside it and that carries no `cd` / `git -C`, no `..`, no shell
+expansion (`$`, backtick, `~`; heredoc bodies excluded), no absolute path into the primary outside the
+worktree, and EVERY write target `bash_write_targets` can see (relative ones too, symlinks followed -- `wire_env`
+links node_modules into the primary) resolving inside the worktree with a certain parse, is allowed with zero subprocesses (the hook measures ~2 ms vs several seconds under load).
+Anything unproven (incl. every write into the primary's `.git/hooks` / `.git/config` by absolute path, symlink or
+`git -C`) falls through to the full git-backed decision incl. `decide_hook_integrity`, which still fails closed: the fast path only
+ever turns a slow allow into a fast one. The hook runs it after the pure-string bypass check and the
+node_modules-overlay check, and before the git-backed integrity check.
+
 ### Redirect into a claimed worktree (owner-approved 2026-10-06)
 
 A refused **Edit / Write / MultiEdit / NotebookEdit** is rewritten into the session's worktree instead of being refused, when that session has **claimed** one. The guard then answers `allow` with `updatedInput` (the same input, path rebased from `<primary>/<rel>` to `<worktree>/<rel>`) and `additionalContext` beginning `[noc-guard:primary-write] REDIRECTED <from> → <to>`. The model is told, never silently moved.
@@ -616,11 +632,12 @@ PreToolUse guard script MUST use `run_guard` and `load_module`; tests in
 `mcp/noctusai/tests/test_guard_failclosed.py`.
 
 **Dispatch-time gate for executors.** `claude-guard-executor-dispatch.py`
-(matcher `Agent|Task`; logic `executor_dispatch_guard.py`) denies dispatching an
-EXECUTOR subagent unless `isolation == "worktree"` or the brief names an
-EXISTING `.claude/worktrees/<slug>` directory (absolute or repo-relative); deny
-reason `[noc-guard:executor-dispatch] ...` points at
-`noctus.dev.task_branch action=start`. The EXECUTOR set is derived from the
+(matcher `Agent|Task`; logic `executor_dispatch_guard.py`) **rewrites** the dispatch of an
+EXECUTOR subagent (2026-11-14; it used to deny, 37 times) unless `isolation == "worktree"` or the
+brief names an EXISTING `.claude/worktrees/<slug>` directory (absolute or repo-relative): the
+Agent input gets `isolation: "worktree"` added via `updatedInput`, the allow carries
+`[noc-guard:executor-dispatch] REWROTE …` (pointing at `noctus.dev.task_branch action=start`
+for reusing an existing worktree) and a guard-event row `outcome=rewrite`. The EXECUTOR set is derived from the
 `description` frontmatter of `.claude/agents/*.md` (the word `EXECUTOR`) — a new
 executor agent must carry it; never a hand-listed constant. Activation is a
 `.claude/settings.json` PreToolUse entry: `{"matcher": "Agent|Task", "hooks":

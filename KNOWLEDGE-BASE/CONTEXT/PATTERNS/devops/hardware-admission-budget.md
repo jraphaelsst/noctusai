@@ -212,7 +212,10 @@ then change detection, then alerts.
 
 The wrap rule used to be discipline-only (one agent file + this doc), so on 2026-11-04 several
 sessions ran suites ungated (1,253 + 273 + 568 tests) and the 8 GB machine swapped. Gate and
-methodology ship together: `scripts/hooks/claude-guard-heavy-run.py` (fail-closed via
+methodology ship together: the heavy-run judge, wired since 2026-11-14 through the ONE Bash rewrite hook
+`scripts/hooks/claude-guard-bash-rewrite.py` (composed with the background wrapper, hw_admission innermost,
+`bg_run.py` outermost: `KB § PATTERNS/common/background-agent-lifecycle.md` Rewrite chain; the former standalone
+hook script was retired into it; fail-closed via
 `_guard_failclosed`, marker `[noc-guard:heavy-run]`, PreToolUse on `Bash`) over the pure
 `mcp/noctusai/tools/noctus/dev/heavy_run_guard.py::decide`.
 
@@ -229,8 +232,15 @@ methodology ship together: `scripts/hooks/claude-guard-heavy-run.py` (fail-close
 - **Allowed:** a segment that runs `hw_admission.py` (the wrapped command is its argument);
   `--collect-only` / `--co` / `--version` / `--help` / `-h`; commands that merely mention the
   word (`grep pytest f`, `echo "pytest"`).
-- **Deny message** prints the exact wrapped command with a suggested `--job`
-  (`pytest:<dir>` / `vitest:<product>` / `build:<product>`).
+- **REWRITE, not deny (2026-11-14):** the guard knows the correct form, so it PRODUCES it. A heavy
+  run (anything but local Whisper or an unparseable command) is rewritten via `updatedInput` into
+  `<absolute venv python> <abs>/hw_admission.py run --job <derived> --wait-s 7200 -- bash -c '<the whole
+  original command, shlex-quoted>'`; the allow carries `additionalContext` `[noc-guard:heavy-run] REWROTE …`
+  and a guard-event row `outcome=rewrite`. The whole command travels as ONE job, so the compound "heredoc
+  writes the test, then runs pytest" works (the heredoc is inside the quoted argument). A `cd` inside it no
+  longer persists in the session shell. Why: 206 denies in 22 sessions were each a wasted round trip; a gate
+  that knows the answer should not make the agent retype it. Local Whisper (policy: server first) and an
+  unparseable command (cannot quote what cannot be parsed) are still refusals.
 - **Escape:** inline `NOC_HW_UNGATED_OK=<non-empty reason> <cmd>`; the reason is echoed to
   stderr. An empty reason is still a deny. Use it only when the gate itself is what is being
   debugged. The escape is read BEFORE parsing (2026-11-05), so it works on a command the
