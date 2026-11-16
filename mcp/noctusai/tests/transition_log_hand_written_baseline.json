@@ -28,7 +28,6 @@
     "products/social-wiring/backend/migrations/286_atendimento_blocos_supervisao.sql::atendimento_handoffs",
     "products/social-wiring/backend/migrations/338_roteiro_ciclo_de_vida.sql::roteiro_eventos",
     "products/social-wiring/backend/migrations/342_cs_post_axes.sql::cs_post_eventos",
-    "products/social-wiring/backend/migrations/344_imobshotai_cards.sql::imobshot_eventos",
     "products/therapy-platform/backend/migrations/001_therapy_platform.sql::platform_settings_history"
   ]
 }

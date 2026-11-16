@@ -2907,10 +2907,16 @@ def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_pat
     new_head = _resolve(git, _head_ref(branch))
     result = {**out, "status": "integrated", "exit_code": 0, "dev_sha": dev,
               "message": f"{branch} landed via the merge queue ({st.get('description')})."}
+    # The pointer is flipped HERE, at the moment of landing, and published at once (a spooled row is flushed by a
+    # detached best-effort job and may never be). A worktree already gone (removed by its steward or the harness before
+    # the queue landed) has no teardown left to close the lifecycle, so the branch is `shipped` now; with the worktree
+    # still on disk it stays `integrated-worktree-live` until cleanup closes it.
+    worktree_gone = not os.path.isdir(abs_wt)
     result["pointer"] = _pointer_transition(
-        pointer_fn, branch=branch, status="integrated-worktree-live",
-        commit=(new_head or "")[:9] or None,
-        notes=f"merge-queue landed → {dev_branch}@{(dev or '')[:9]} (enqueued {head[:9]})")
+        pointer_fn, branch=branch, status="shipped" if worktree_gone else "integrated-worktree-live",
+        commit=(new_head or "")[:9] or None, publish=True,
+        notes=(f"merge-queue landed → {dev_branch}@{(dev or '')[:9]} (enqueued {head[:9]})"
+               + ("; worktree already gone" if worktree_gone else "")))
     result["primary_ff"] = _ff_primary_after_integrate(
         runner, _resolve_primary_root(primary_root), dev_branch, remote)
     if auto_cleanup:
