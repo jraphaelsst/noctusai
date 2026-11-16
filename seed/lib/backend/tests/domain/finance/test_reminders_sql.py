@@ -12,6 +12,7 @@ import pytest
 
 from noctusai_lib.domain.finance import FinanceConfig, finance_migration
 from noctusai_lib.domain.finance.reminders import REMINDER_TABLES, finance_reminders_guard_probes, finance_reminders_migration
+from noctusai_lib.testing.pglite import pglite_replay_skipif
 
 CFG = FinanceConfig(schema="finx")
 SQL = finance_reminders_migration(CFG, "finx")
@@ -47,10 +48,7 @@ ROOT = Path(__file__).resolve().parents[6]
 NODE_DIR = ROOT / "mcp" / "noctusai" / "node"
 HARNESS = NODE_DIR / "migration_replay" / "replay.mjs"
 STUBS = NODE_DIR / "migration_replay" / "stubs.sql"
-needs_pg = pytest.mark.skipif(
-    shutil.which("node") is None or not HARNESS.exists() or not (NODE_DIR / "node_modules" / "@electric-sql").exists(),
-    reason="PGlite replay harness unavailable (needs `node` and mcp/noctusai/node/node_modules)",
-)
+needs_pg = pytest.mark.skipif(**pglite_replay_skipif())
 
 PRELUDE = """
 CREATE SCHEMA IF NOT EXISTS finx;

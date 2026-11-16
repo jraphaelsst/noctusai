@@ -87,6 +87,7 @@ _load_repo_root_dotenv()
 
 from mcp.server.fastmcp import FastMCP
 
+from tool_output_cap import install_output_cap
 from tools import register_all
 
 
@@ -295,6 +296,8 @@ def build_server() -> FastMCP:
     # AFTER register_all — the registry is built from what each tool actually
     # advertises, so it can never drift from the published schema.
     install_strict_tool_arguments(server)
+    # Outermost: no tool result may exceed the client's window (full JSON goes to ~/.noctus/tool-output).
+    install_output_cap(server)
     return server
 
 

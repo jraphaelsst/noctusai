@@ -25,6 +25,12 @@ Local Whisper (2026-11-07): `whisper`/`faster-whisper`/`whisperx` CLIs, `python 
 `python <…whisper….py>`, including behind `uv run [opts]`. The refusal points to the server
 (`noctus.transcription.*`) FIRST; the gate wrapper is offered only for a real server failure.
 
+Leading wrappers are stripped before the decision (2026-11-16): `timeout`/`gtimeout` (with `-k`, `-s`, `--signal=`,
+`--kill-after=` and the duration), `env`, `nice`, `nohup`, `caffeinate`, `time`, `ionice`, `stdbuf`, `setsid`, `arch`,
+`taskpolicy`. The interpreter is judged by basename, so any path counts (`venv/bin/python`, `.venv/bin/python3.11`),
+and `-m pytest`, `pytest`, `py.test` and `-m unittest` are heavy under any of them. The REWRITE keeps the whole
+original command (the `timeout` included) INSIDE the admitted `bash -c` job.
+
 WHAT IS ALLOWED
 ===============
 * a segment that runs `hw_admission.py` (the wrapped command is its argument);
@@ -70,7 +76,17 @@ GATE = "python mcp/noctusai/tools/noctus/dev/hw_admission.py run"
 
 _OPS = {"&&", "||", ";", "|", "&", "(", ")", "|&", ";;", "\n"}
 _ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-_WRAPPERS = {"env", "sudo", "time", "nohup", "command", "exec", "nice", "caffeinate", "builtin"}
+# Leading wrapper words that run the REST of the command line, and the options of each that take a VALUE (so the
+# value is not mistaken for the command). 2026-11-16: a `timeout`-prefixed bare-venv pytest ran outside the slot.
+_WRAPPER_VALUED: dict[str, set[str]] = {
+    "env": {"-u", "-C", "-S"}, "sudo": {"-u", "-g", "-C", "-h", "-p", "-r", "-t", "-U"}, "time": {"-o", "-f"},
+    "nohup": set(), "command": set(), "exec": {"-a"}, "nice": {"-n"}, "caffeinate": {"-t", "-w"}, "builtin": set(),
+    "ionice": {"-c", "-n", "-p", "-P", "-u"}, "taskpolicy": {"-c", "-d", "-g"}, "arch": set(), "stdbuf": set(),
+    "setsid": set(),
+}
+_WRAPPERS = set(_WRAPPER_VALUED)
+_TIMEOUTS = {"timeout", "gtimeout"}
+_TIMEOUT_VALUED = {"-s", "-k", "--signal", "--kill-after"}
 _RUNNERS = {"npx", "pnpx", "bunx"}
 _PKG = {"npm", "pnpm", "yarn", "bun"}
 _SHELLS = {"bash", "sh", "zsh"}
@@ -195,13 +211,18 @@ def _strip_prefix(seg: list[str]) -> tuple[list[str], dict[str, str]]:
             env[k] = v
             i += 1
         elif os.path.basename(t) in _WRAPPERS:
+            valued = _WRAPPER_VALUED[os.path.basename(t)]
             i += 1
             # The wrapper's own flags (`nice -n 10`, `env -i`) are not the command;
             # without this `nice -n 10 pytest` read `-n` as the command and slipped through.
             while i < len(seg) and seg[i].startswith("-"):
-                i += 2 if seg[i] in {"-n", "-u", "-C", "-S"} and i + 1 < len(seg) else 1
-        elif os.path.basename(t) == "timeout":
-            i += 2 if i + 1 < len(seg) else 1
+                i += 2 if seg[i] in valued and i + 1 < len(seg) else 1
+        elif os.path.basename(t) in _TIMEOUTS:
+            # `timeout [OPTION]... DURATION COMMAND`: options (`-k 10`, `--signal=KILL`, `--foreground`), then the duration.
+            i += 1
+            while i < len(seg) and seg[i].startswith("-"):
+                i += 2 if seg[i] in _TIMEOUT_VALUED and i + 1 < len(seg) else 1
+            i += 1 if i < len(seg) else 0  # the DURATION
         else:
             break
     return seg[i:], env
@@ -236,7 +257,7 @@ def _heavy_kind(words: list[str]) -> str | None:
         return _heavy_kind(args[i:])
     if re.fullmatch(r"python[\d.]*", cmd):
         for a, b in zip(args, args[1:]):
-            if a == "-m" and b in {"pytest", "py.test"}:
+            if a == "-m" and b in {"pytest", "py.test", "unittest"}:
                 return "pytest"
             if a == "-m" and "whisper" in b:
                 return "whisper"
