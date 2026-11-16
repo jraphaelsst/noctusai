@@ -222,6 +222,7 @@ const CORESTUDIO_GROUP: NavGroupWithRoute =
     items: [
       { name: "Dashboard", href: "/media-creation/dashboard", icon: LayoutDashboard, route: "media-creation-dashboard" },
       { name: "Criar Headlines e Roteiros", href: "/media-creation/chat", icon: MessagesSquare, route: "media-creation-chat" },
+      { name: "Headlines e Roteiros", href: "/media-creation/headlines-roteiros", icon: Clapperboard, route: "media-creation-headlines-roteiros" },
       { name: "Esteira", href: "/media-creation/esteira", icon: KanbanSquare, route: "media-creation-esteira" },
       { name: "Carrosséis", href: "/media-creation/carrosseis", icon: GalleryHorizontal, route: "media-creation-carrosseis" },
       { name: "Biblioteca", href: "/media-creation/biblioteca", icon: Library, route: "media-creation-biblioteca" },

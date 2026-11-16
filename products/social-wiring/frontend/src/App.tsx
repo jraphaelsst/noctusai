@@ -115,6 +115,13 @@ const CerebroPerguntas = lazyWithReload(() => import("@/pages/cerebro/CerebroPer
 const GeracaoDashboard = lazyWithReload(() => import("@/pages/geracao/Dashboard"));
 const GeracaoChat = lazyWithReload(() => import("@/pages/geracao/Chat"));
 const GeracaoBiblioteca = lazyWithReload(() => import("@/pages/geracao/Biblioteca"));
+// Biblioteca platform-wide (cs-estruturas CONTRACT §11.3) — subpages ride the `media-creation-biblioteca` key.
+const GeracaoBibliotecaPerfil = lazyWithReload(() => import("@/pages/geracao/BibliotecaPerfil"));
+const GeracaoEstruturaDetalhe = lazyWithReload(() => import("@/pages/geracao/EstruturaDetalhe"));
+const GeracaoBibliotecaImportacoes = lazyWithReload(() => import("@/pages/geracao/BibliotecaImportacoes"));
+const GeracaoBibliotecaTiposBloco = lazyWithReload(() => import("@/pages/geracao/BibliotecaTiposBloco"));
+// Headlines e Roteiros — status_pagina `media-creation-headlines-roteiros` (migration 352).
+const GeracaoHeadlinesRoteiros = lazyWithReload(() => import("@/pages/geracao/HeadlinesRoteiros"));
 const GeracaoMeuPerfil = lazyWithReload(() => import("@/pages/geracao/MeuPerfil"));
 const GeracaoMinhaBiblioteca = lazyWithReload(() => import("@/pages/geracao/MinhaBiblioteca"));
 const GeracaoTreinamentos = lazyWithReload(() => import("@/pages/geracao/Treinamentos"));
@@ -175,6 +182,11 @@ export default createProductApp({
     { path: "/media-creation/dashboard", component: GeracaoDashboard },
     { path: "/media-creation/chat", component: GeracaoChat },
     { path: "/media-creation/biblioteca", component: GeracaoBiblioteca },
+    { path: "/media-creation/biblioteca/perfis/:perfilId", component: GeracaoBibliotecaPerfil },
+    { path: "/media-creation/biblioteca/estruturas/:id", component: GeracaoEstruturaDetalhe },
+    { path: "/media-creation/biblioteca/importacoes", component: GeracaoBibliotecaImportacoes },
+    { path: "/media-creation/biblioteca/tipos-de-bloco", component: GeracaoBibliotecaTiposBloco },
+    { path: "/media-creation/headlines-roteiros", component: GeracaoHeadlinesRoteiros },
     { path: "/media-creation/perfil", component: GeracaoMeuPerfil },
     { path: "/media-creation/minha-biblioteca", component: GeracaoMinhaBiblioteca },
     { path: "/media-creation/treinamentos", component: GeracaoTreinamentos },
