@@ -198,8 +198,136 @@ def validar_legenda(saida: Any, *, rede: str = REDE_PADRAO) -> dict[str, Any]:
     return {"legenda": legenda, "hashtags": tags, "primeiro_comentario": comentario}
 
 
+# --- roteiro per formato (estruturas-contract.md section 8.7) ----------------------------------
+# ADDITIVE: reels keep ``validar_roteiro``. carrossel / post / stories are markdown grammars; an
+# invalid shape is a coded ``SaidaIaFalha`` and nothing is ever trimmed. Callers pass the script
+# WITHOUT the ``=== ESTRUTURAS_USADAS ===`` trailer (``prompts.roteiro_formatos.separar_sentinela``).
+FORMATOS_ROTEIRO = ("reels", "carrossel", "post", "stories")
+MAX_SLIDES, MAX_SLIDE_CHARS = 20, 400
+MAX_TELAS, MAX_TELA_CHARS = 8, 200
+MAX_QUADROS, MAX_QUADRO_CHARS = 15, 300
+MAX_LEGENDA_POST = 2200
+HEADLINE_AUSENTE = "saida_headline_ausente"
+
+_HTML = re.compile(r"<\s*/?\s*[A-Za-z!][^>]*>|&(?:#\d+|#x[0-9a-f]+|[a-z]{2,8});", re.I)
+_SEP = r"[\u2014\u2013-]"
+_RX_SLIDE = re.compile(rf"^\*\*Slide\s+(\d+)(?:\s*{_SEP}\s*(.*?))?\s*\*\*\s*$", re.I)
+_RX_QUADRO = re.compile(rf"^\*\*Quadro\s+(\d+)(?:\s*{_SEP}\s*(.*?))?\s*\*\*\s*$", re.I)
+_RX_TELA = re.compile(r"^\*\*Tela\s+(\d+)\*\*\s*[:\u2014\u2013-]?\s*(.*)$", re.I)
+_H_TELA, _H_LEGENDA = "### texto na tela", "### legenda"
+
+
+def _sem_html(texto: str, campo: str) -> None:
+    if _HTML.search(texto):
+        raise SaidaIaFalha(CONTEUDO_PROIBIDO, "contém HTML", campo)
+
+
+def _unidades(texto: str, rx: "re.Pattern[str]", rotulo: str, *, maximo: int, max_chars: int,
+              inline: bool = False) -> list[dict[str, Any]]:
+    """Split ``texto`` into numbered units (headers matched by ``rx``) and validate each one."""
+    antes: list[str] = []
+    brutas: list[tuple[int, str, list[str]]] = []
+    for linha in texto.splitlines():
+        m = rx.match(linha.strip())
+        if m:
+            resto = (m.group(2) or "") if inline else ""
+            brutas.append((int(m.group(1)), "" if inline else (m.group(2) or "").strip(), [resto] if resto else []))
+        elif brutas:
+            brutas[-1][2].append(linha)
+        else:
+            antes.append(linha)
+    if not brutas:
+        raise SaidaIaFalha(CAMPO_AUSENTE, f"nenhum {rotulo} encontrado", rotulo)
+    if "".join(antes).strip():
+        raise SaidaIaFalha(FORMATO_INVALIDO, f"texto antes do primeiro {rotulo}", rotulo)
+    if len(brutas) > maximo:
+        raise SaidaIaFalha(LIMITE_EXCEDIDO, f"{len(brutas)} itens ({rotulo}); o máximo é {maximo}", rotulo)
+    unidades: list[dict[str, Any]] = []
+    for pos, (n, nome, linhas) in enumerate(brutas, 1):
+        campo = f"{rotulo} {pos}"
+        if n != pos:
+            raise SaidaIaFalha(FORMATO_INVALIDO, f"numeração fora de ordem: esperado {pos}, veio {n}", campo)
+        corpo = "\n".join(linhas).strip()
+        _sem_html(corpo, campo)
+        _texto_seguro(corpo, campo, maximo=max_chars)
+        if nome:
+            _sem_html(nome, campo)
+            _texto_seguro(nome, campo, maximo=120)
+        unidades.append({"n": pos, "nome": nome, "texto": corpo})
+    return unidades
+
+
+def _checar_headline(headline: Optional[str], primeiro: str, campo: str) -> None:
+    if headline and headline.strip():
+        norm = lambda t: " ".join(t.casefold().split())  # noqa: E731
+        if norm(headline) not in norm(primeiro):
+            raise SaidaIaFalha(HEADLINE_AUSENTE, "a primeira unidade não traz a headline", campo)
+
+
+def validar_roteiro_formato(formato: str, texto: Any, *, headline: Optional[str] = None) -> dict[str, Any]:
+    """Validate the script of ``formato`` (carrossel | post | stories) per section 8.7.
+
+    Returns ``{"conteudo": <script as received, stripped>, "unidades": [{n, nome, texto}], "legenda": str|None}``
+    (``legenda`` only for ``post``). ``reels`` is handled by :func:`validar_roteiro` and refused here so a caller
+    cannot silently skip the beat checks. ``headline`` (optional) must appear in carrossel slide 1."""
+    if formato == "reels":
+        raise SaidaIaFalha(FORMATO_INVALIDO, "reels usa validar_roteiro", "formato")
+    if formato not in FORMATOS_ROTEIRO:
+        raise SaidaIaFalha(FORMATO_INVALIDO, f"formato desconhecido: {formato}", "formato")
+    if not isinstance(texto, str):
+        raise SaidaIaFalha(CAMPO_AUSENTE if texto is None else FORMATO_INVALIDO, "o roteiro deve ser texto", "conteudo")
+    corpo = texto.strip()
+    if not corpo:
+        raise SaidaIaFalha(CAMPO_AUSENTE, "campo vazio", "conteudo")
+    if len(corpo) > MAX_ROTEIRO:
+        raise SaidaIaFalha(LIMITE_EXCEDIDO, f"{len(corpo)} caracteres; o máximo é {MAX_ROTEIRO}", "conteudo")
+    if formato == "carrossel":
+        un = _unidades(corpo, _RX_SLIDE, "slide", maximo=MAX_SLIDES, max_chars=MAX_SLIDE_CHARS)
+        _checar_headline(headline, un[0]["texto"], "slide 1")
+        return {"conteudo": corpo, "unidades": un, "legenda": None}
+    if formato == "stories":
+        un = _unidades(corpo, _RX_QUADRO, "quadro", maximo=MAX_QUADROS, max_chars=MAX_QUADRO_CHARS)
+        return {"conteudo": corpo, "unidades": un, "legenda": None}
+    secoes: dict[str, list[str]] = {}
+    atual: Optional[str] = None
+    for linha in corpo.splitlines():
+        h = linha.strip().casefold()
+        if h in (_H_TELA, _H_LEGENDA):
+            if h in secoes:
+                raise SaidaIaFalha(FORMATO_INVALIDO, f"seção repetida: {linha.strip()}", "post")
+            atual = h
+            secoes[h] = []
+        elif atual is None:
+            if linha.strip():
+                raise SaidaIaFalha(FORMATO_INVALIDO, "texto antes de `### Texto na tela`", "post")
+        else:
+            secoes[atual].append(linha)
+    if _H_TELA not in secoes:
+        raise SaidaIaFalha(CAMPO_AUSENTE, "falta a seção `### Texto na tela`", "texto na tela")
+    if _H_LEGENDA not in secoes:
+        raise SaidaIaFalha(CAMPO_AUSENTE, "falta a seção `### Legenda`", "legenda")
+    if list(secoes) != [_H_TELA, _H_LEGENDA]:
+        raise SaidaIaFalha(FORMATO_INVALIDO, "`### Legenda` deve vir depois de `### Texto na tela`", "post")
+    un = _unidades("\n".join(secoes[_H_TELA]), _RX_TELA, "tela", maximo=MAX_TELAS, max_chars=MAX_TELA_CHARS,
+                   inline=True)
+    legenda_txt = "\n".join(secoes[_H_LEGENDA]).strip()
+    _sem_html(legenda_txt, "legenda")
+    legenda = validar_legenda({"legenda": legenda_txt})["legenda"]  # cap = LIMITES_REDE[instagram] = 2200
+    return {"conteudo": corpo, "unidades": un, "legenda": legenda}
+
+
+def extrair_legenda_do_post(texto: str) -> Optional[str]:
+    """The validated ``### Legenda`` of a stored ``post`` roteiro, or ``None`` when absent/invalid (the caption
+    service then falls back to its own model path). Never raises."""
+    try:
+        return validar_roteiro_formato("post", texto)["legenda"]
+    except SaidaIaFalha:
+        return None
+
+
 __all__ = [
     "CAMPOS_ROTEIRO", "CampoRoteiro", "LIMITES_REDE", "SaidaIaFalha", "detectar_proibido",
-    "validar_legenda", "validar_roteiro",
+    "validar_legenda", "validar_roteiro", "validar_roteiro_formato", "extrair_legenda_do_post",
+    "FORMATOS_ROTEIRO", "HEADLINE_AUSENTE",
     "FORMATO_INVALIDO", "CAMPO_AUSENTE", "LIMITE_EXCEDIDO", "CONTEUDO_PROIBIDO",
 ]
