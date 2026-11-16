@@ -85,7 +85,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Supabase | All | Database, auth, storage |
 | OpenAI | ERP, Therapy | AI descriptions, embeddings, scoring, transcription, summaries |
 | Stripe | Core, Therapy | Billing, subscriptions, marketplace payments |
-| WAHA | ERP, Therapy | WhatsApp messaging (self-hosted at `waha.noctusai.com`) |
+| WAHA | ERP, Therapy | WhatsApp messaging (self-hosted, internal-only `http://waha:3000`) |
 | Meta Business API | ERP | Facebook Lead Ads + campaign sync |
 | Resend | All | Email delivery |
 | LiveKit | Therapy | Video sessions (self-hosted) |

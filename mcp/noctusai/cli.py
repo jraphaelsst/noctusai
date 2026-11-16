@@ -406,6 +406,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-motion-import-boundary", action="store_true", help="Keeper: Motion (`motion`/`motion/*`/`framer-motion`) may be imported ONLY via `@noctusai/lib/marketing` — never in products/*/frontend/src, templates/product-seed/frontend/src, or seed/lib/frontend/src outside marketing/. ts-morph AST scan, active products only. Escape: `// noc-allow: motion-import — why`. Severity high. KB § PATTERNS/frontend/marketing-organs-and-motion.md.")
     parser.add_argument("--check-tailwind-v4-class-names", action="store_true", help="Keeper (2026-11-09, Tailwind 4 + lucide 1.x): no v3-only names that changed what they render (`shadow-sm` -> use `shadow-xs`, `outline-none` -> use `outline-hidden`) and no `Facebook`/`Instagram`/`Youtube` import from lucide-react (gone in 1.x; use @noctusai/lib/brand-icons) in seed/lib, seed/framework and ACTIVE products' frontend/src. Comment lines skipped. Escape: `noc-allow: tailwind-v3-class — why` on the line. WARN-first shadow. Severity high. KB § PATTERNS/frontend/frontend.md.")
     parser.add_argument("--check-worker-idle-polling", action="store_true", help="Keeper: a job worker's idle poll is a per-tick RPC. Refuses Worker(max_idle_interval_seconds < 120 or == poll_interval), DEFAULT_MAX_IDLE_INTERVAL_SECONDS < 300, a fixed short sleep or an unbounded .select( inside run_forever / claim_gate*. Prod saw 56k claim_next_job/24h at a 30s cap (W1-C 2026-11-12). Escape: `# poll-ok: <reason>`. Severity high. KB § PATTERNS/backend/polling-request-budget.md.")
+    parser.add_argument("--check-supply-chain-pin", action="store_true", help="Keeper: every third-party GitHub Action is pinned to a full commit SHA and every prod-surface compose image (deploy/{fleet,services,legacy,tunnel}) to a digest or an x.y[.z] version tag - never :latest / a bare major / no tag (tj-actions 2025, trivy-action 2026-03: a mutable tag is a re-pointable supply chain). Escape for images: `# pin-ok: <reason>`. Severity high. KB § PATTERNS/devops/ci-security-gates.md.")
     parser.add_argument("--check-override-is-range", action="store_true", help="Keeper: every npm `overrides` entry must be a RANGE (^/~/>=), never an exact version. An exact override wins over every peer range and direct dep, can never be upgraded by npm install, and is invisible in the dependency list — while adding NO reproducibility, because package-lock.json already pins the resolution for npm ci. The seed copies overrides into 12 products, so one pin freezes the fleet (postcss, ws, react-router, 2026-08-11). Opt-out: a `pin-ok`/`deliberate-freeze` rationale comment. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-hardcoded-product-slug-set", action="store_true", help="Keeper: a literal collection of >=3 live product slugs (seed/lib/backend/tests/*.py, AST) or a hardcoded bash array (scripts/infra/*.sh, e.g. `ALL_SLUGS=(...)`) must derive from parse_products_registry() / the live fleet compose file instead — a frozen literal goes stale the moment the fleet changes (product added/removed/consolidated/never-deployed) and can silently misattribute failures OR abort an entire build. Opt-out: a `slug-literal-ok`/`registry-exempt`/`not-a-product-set` rationale comment. Severity warning. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-product-lockfile-dep-sync", action="store_true", help="Keeper: a product's package-lock.json must carry a `node_modules/<dep>` entry for every dep its package.json declares (FRAMEWORK_DEPS + the live seed-organ transitive-dep scan) — a stale lockfile snapshot passes `check_framework_deps` (package.json declaration) yet still breaks a clean `npm ci` (Rollup/Vite import-resolution failure), invisible in dev where an already-populated node_modules masks the gap. N=3 in one week: @dnd-kit, recharts/@radix-ui-react-tabs, the ALL_SLUGS sibling. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
@@ -632,6 +633,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tunnel-config", metavar="ACTION", choices=["render", "check", "apply"], help="Make deploy/tunnel/ingress.yml canonical for the cloudflared tunnel: render = offline ingress block; check = read-only drift diff vs the LIVE VPS config; apply = backup + rewrite + restart (DRY-RUN unless --tunnel-config-confirm). MCP: noctus.dev.tunnel_config. KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md.")
     parser.add_argument("--tunnel-config-confirm", action="store_true", help="With --tunnel-config=apply: actually write the live config + restart the tunnel (production mutation).")
     parser.add_argument("--redis-acl", metavar="ACTION", choices=["check", "render"], help="Prod Redis ACL lockdown, derived from the live roster: check = the override (host-local, gitignored, written by render --services) and the cutover marker are consistent, pass-file modes reported (offline); render = plan (add --redis-acl-write to write the gitignored aclfiles/env/pass files from REDIS_ACL_MASTER_SECRET; --redis-acl-services writes the override + cutover marker). Never touches the VPS. MCP: noctus.dev.redis_acl. KB § PATTERNS/devops/redis-acl-lockdown.md.")
+    parser.add_argument("--ghcr-access", metavar="ACTION", choices=["status", "install"], help="Private-GHCR access for the VPS in the one safe order. status = per-package visibility (anonymous probe) + VPS login (read-only). install = write the classic read:packages PAT to the VPS .env.fleet (0600, over ssh stdin), `docker login ghcr.io` there, verify, and only then print the package-settings URLs for the owner's visibility flip; DRY-RUN unless --ghcr-access-confirm. Token from the GHCR_READ_TOKEN env var, or one line on stdin with --ghcr-access-token-stdin; never an argument, never printed. MCP: noctus.dev.ghcr_access.")
+    parser.add_argument("--ghcr-access-confirm", action="store_true", help="With --ghcr-access=install: perform the install (otherwise a plan).")
+    parser.add_argument("--ghcr-access-token-stdin", action="store_true", help="With --ghcr-access=install: read the token from one line of stdin instead of the GHCR_READ_TOKEN env var.")
+    parser.add_argument("--image-pin", metavar="ACTION", choices=["check", "pin", "bump"], help="Construction half of the supply-chain pin keeper: check = list unpinned images on deploy/{fleet,services,legacy,tunnel} (offline); pin = resolve+write a digest for each (dry-run unless --image-pin-write); bump = move --image-pin-image to --image-pin-tag at its current digest. MCP: noctus.dev.image_pin.")
+    parser.add_argument("--image-pin-write", action="store_true", help="With --image-pin=pin|bump: rewrite the compose files.")
+    parser.add_argument("--image-pin-image", default=None, help="With --image-pin=bump: the image name (e.g. n8nio/n8n).")
+    parser.add_argument("--image-pin-tag", default=None, help="With --image-pin=bump: the target tag.")
     parser.add_argument("--redis-acl-write", action="store_true", help="With --redis-acl=render: write the files (needs REDIS_ACL_MASTER_SECRET in env or deploy/fleet/.env.fleet).")
     parser.add_argument("--redis-acl-services", metavar="SVC,SVC", default=None, help="With --redis-acl=render --redis-acl-write: the services to CUT OVER (written to the host-local compose.redis-auth.prod.yml). Re-render without a service to roll it back; an empty value removes the override.")
     parser.add_argument("--merge-queue-interval", type=float, default=60, help="With --merge-queue=watch: poll interval in seconds.")
@@ -2808,6 +2816,16 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} \u2014 {i['issue']}")
         sys.exit(1)
+    elif args.check_supply_chain_pin:
+        from tools.noctus.dev.compliance import check_supply_chain_pin
+        issues = check_supply_chain_pin()
+        if not issues:
+            print(f"  {GREEN}\u2713 supply-chain-pin: clean (every Action SHA-pinned, every prod image pinned).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}\u2717 {len(issues)} unpinned supply-chain ref(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} \u2014 {i['issue']}")
+        sys.exit(1)
     elif args.check_override_is_range:
         from tools.noctus.dev.compliance import check_override_is_range
         issues = check_override_is_range()
@@ -4556,6 +4574,20 @@ def main():
         from tools.noctus.dev.redis_acl import redis_acl as _redis_acl
         r = _redis_acl(args.redis_acl, write=bool(args.redis_acl_write), services=args.redis_acl_services,
                        worktree_path=args.worktree_path)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
+
+    elif getattr(args, "ghcr_access", None):
+        from tools.noctus.dev.ghcr_access import ghcr_access as _ghcr_access
+        _tok = (sys.stdin.readline().strip() or None) if args.ghcr_access_token_stdin else None
+        r = _ghcr_access(args.ghcr_access, confirm=bool(args.ghcr_access_confirm), worktree_path=args.worktree_path, token=_tok)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
+
+    elif getattr(args, "image_pin", None):
+        from tools.noctus.dev.image_pin import image_pin as _image_pin
+        r = _image_pin(args.image_pin, write=bool(args.image_pin_write), image=args.image_pin_image,
+                       tag=args.image_pin_tag, worktree_path=args.worktree_path)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 
