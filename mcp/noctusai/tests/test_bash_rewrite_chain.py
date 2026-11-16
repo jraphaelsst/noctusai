@@ -120,3 +120,14 @@ def test_settings_wires_exactly_one_bash_rewriting_hook():
     cmds = [h["command"] for e in s["hooks"]["PreToolUse"] for h in e["hooks"]]
     assert sum("claude-guard-bash-rewrite.py" in c for c in cmds) == 1
     assert not any("claude-guard-heavy-run.py" in c or "claude-guard-background-launch.py" in c for c in cmds)
+
+
+def test_importing_the_chain_never_puts_the_toolkit_dev_dir_on_sys_path():
+    """The dev dir holds a context.py; on sys.path it shadows mcp/noctusai/context.py for every later import (2026-11-16).
+    Hermetic: a fresh interpreter, so it judges the chain alone, not whatever earlier tests left in this process."""
+    code = ("import sys; sys.path.insert(0, sys.argv[1]); "
+            "from tools.noctus.dev import bash_rewrite_chain as c; from pathlib import Path; "
+            "dev = str(Path(c.__file__).resolve().parent); "
+            "sys.exit(1 if dev in sys.path else 0)")
+    r = subprocess.run([sys.executable, "-c", code, str(REPO / "mcp" / "noctusai")], capture_output=True, text=True, cwd=str(REPO))
+    assert r.returncode == 0, r.stderr[-400:]

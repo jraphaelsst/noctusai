@@ -1853,3 +1853,54 @@ def test_a_suite_with_a_pglite_fixture_test_is_detected_so_pglite_gets_wired(tmp
     mk = lambda *f: RS.CiSuite("mcp_toolkit_tests:scoped", ".", ("-m", "pytest", *f, "-q"))  # noqa: E731
     assert RS.suite_needs_pglite(tmp_path, mk("mcp/noctusai/tests/test_a.py", "mcp/noctusai/tests/test_b.py"))
     assert not RS.suite_needs_pglite(tmp_path, mk("mcp/noctusai/tests/test_b.py"))
+
+
+# =================================================================================================
+# item 5 by a GitHub run (`gh-run:<id>`) on a branch that is BEHIND dev: the verdict binds to the HEAD, the queue composes the rest
+# =================================================================================================
+def _gh(world, head, *, repo_head=None, conclusion="success"):
+    """A Fake GitHub holding ONE completed test.yml run (judged on `repo_head` or `head`) and its `gh-run:` ref."""
+    import importlib.util as _u
+    spec = _u.spec_from_file_location("noc_ci_verdict_pp", Path(RS.__file__).parent / "ci_verdict.py")
+    cv = _u.module_from_spec(spec)
+    sys.modules[spec.name] = cv
+    spec.loader.exec_module(cv)
+    client = cv.FakeGithubClient(runs={"4242": cv.make_run(4242, repo_head or head, conclusion=conclusion)})
+    return client, "gh-run:4242"
+
+
+def _behind_branch(world, *, conflict: bool):
+    wt = world.worktree()
+    if conflict:
+        (wt / "src" / "a.txt").write_text("branch edit\n")
+    else:
+        (wt / "src" / "b.txt").write_text("b\n")
+        world.set_counts(wt)
+    world.commit(wt, "feat: change")
+    world.push(wt, "feat/x")
+    world.dev_commit("src/a.txt", "dev edit\n") if conflict else world.dev_commit("other/file.txt")
+    return sh(world.repo, "git", "rev-parse", "feat/x")
+
+
+def test_gh_run_green_on_the_exact_head_accepts_a_branch_behind_dev_with_a_clean_merge(world):
+    head = _behind_branch(world, conflict=False)
+    client, ref = _gh(world, head)
+    d = world.deliverable(verdict_ref=ref, ci_client=client)
+    assert d["ok"], d["items"]
+    assert "behind origin/dev" in item(d, "merge_buildable")["detail"] and item(d, "scoped_green")["ok"]
+
+
+def test_gh_run_green_but_a_conflicting_merge_is_needs_resync_naming_the_file(world):
+    head = _behind_branch(world, conflict=True)
+    client, ref = _gh(world, head)
+    d = world.deliverable(verdict_ref=ref, ci_client=client)
+    assert d["verdict"] == "needs_resync" and "merge_buildable" in d["failing"] and "scoped_green" not in d["failing"]
+    assert item(d, "merge_buildable")["conflicts"] == ["src/a.txt"] and item(d, "scoped_green")["ok"]
+
+
+def test_gh_run_green_on_an_older_head_is_needs_resync_head_moved(world):
+    head = _behind_branch(world, conflict=False)
+    client, ref = _gh(world, head, repo_head="e" * 40)
+    d = world.deliverable(verdict_ref=ref, ci_client=client)
+    five = item(d, "scoped_green")
+    assert d["verdict"] == "needs_resync" and not five["ok"] and "not " + head[:9] in five["detail"]

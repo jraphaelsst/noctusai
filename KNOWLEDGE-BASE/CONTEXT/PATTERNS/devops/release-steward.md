@@ -266,7 +266,7 @@ objects from `merge-tree`, and the shared verdict store / enqueue attestation be
 | 3 | `migrations_free` | no migration number the branch adds is claimed by a different file in the composed tree (the head, or the merge-tree result). Reuses `task_branch._MIGRATION_NUM_RE` and the keeper's accepted-duplicates set via `migration_number_collisions` |
 | 4 | `derived_current` | every derived artifact is already current AT the head: `--update-kb-counts --check`, `--render-project-history --check`, `--gen-promotions-index --check` against an export of the head (table `DERIVED_ARTIFACTS`; a missing regenerator is UNMEASURED, never green). The export must equal `git ls-tree -r <head>` (an `export-ignore` difference is UNMEASURED) and runs in the hermetic env with `PYTHONPATH` = the HEAD's seed packages (derived from its `requirements.txt` `-e` lines; EVERY top-level seed package under those paths, plus `noctusai_lib` and `noctusai_seed` when the
 head ships them, must import from inside the export, else UNMEASURED), so it never judges the primary's seed lib |
-| 5 | `scoped_green` | the scoped suites are green **the way CI judges them** (below) |
+| 5 | `scoped_green` | a GitHub Actions `test.yml` run on the exact head is green (`gh-run:<id>`, default, below), or a local CI-parity record is green **the way CI judges them** (`ci-parity:<id>`, `run_scoped=true`) |
 
 Not measurable is never green: an item that cannot run fails as `UNMEASURED`.
 
@@ -277,7 +277,25 @@ every `cli.py --<flag>` gate with it (merge-loss-gate was ejected on exactly tha
 noc-steward skill). The result lists a `cli-help` artifact: `skipped: true` (and the detail says so) when the delivery does not touch
 `cli.py`; when it runs, a `deliverable:cli-help` row (`pass`/`deny`) lands in the same gate-event sink as the other gates.
 
-**Item 5 runs what CI blocks on, in the environment CI has (D1, merge-queue run 42753204233).** Two things passed locally and
+**Item 5 by GitHub CI (`gh-run:<id>`, default since 2026-11-16).** The local CI-parity run needs a machine-wide heavy slot on a
+shared 8 GB laptop and came back UNMEASURED or timed out on every filing, so the filing's test run moved to GitHub
+(`tools/noctus/dev/ci_verdict.py`; the GitHub access is a Protocol seam: Real shells `gh`, Fake for tests). `request` with no
+`verdict_ref` and no `run_scoped` finds a `test.yml` run on the exact head (push-triggered counts) or dispatches one
+(`gh workflow run test.yml --ref <branch> -f base=<merge-base with origin/dev>`; the branch tip must equal the head) and files with
+`verdict_ref=gh-run:<id>` AT ONCE - non-blocking. `validate_verdict_ref` judges the id against GitHub itself (this repo, workflow
+`.github/workflows/test.yml`, FULL head sha, completed+success = green): not forgeable. A still-running run is item 5 PENDING
+(`verdict: pending_ci`, detail `CI running: <url>`): the filing is accepted, and the guardian's pre-enqueue re-check
+(`task_branch enqueue`) answers `pending_ci` - leave it queued for the next drain round, never a resync; a red run is `needs_resync`
+naming the run URL. `gh` missing/unauthenticated fails the request loudly (no silent local fallback); `run_scoped=true` keeps the local
+run as an explicit opt-in. Telemetry: each request event records `verdict_kind` (`gh-run` | `ci-parity`) and
+`release_steward action=verdicts` reports `by_verdict_kind`.
+A `gh-run:` verdict binds to the EXACT head, not to being 0-behind: item 2 already accepts a branch behind `origin/dev` when the
+driver-aware `compose_merge` against CURRENT `origin/dev` is clean (the merge queue's CI then judges the composed tree), so a landing
+elsewhere does not invalidate a green run. `needs_resync` remains only for (a) a conflicting composed merge (item 2 names the files)
+or (b) the head moved since the run (item 5: the run's `head_sha` != the branch tip). Item 4 is judged at the head itself (it does not
+depend on dev), so it is unaffected by dev moving. The merge queue's own CI still judges the composed tree.
+
+**The local CI-parity path (`run_scoped=true`) runs what CI blocks on, in the environment CI has (D1, merge-queue run 42753204233).** Two things passed locally and
 failed in CI: keepers that only WARN in pre-commit but BLOCK in CI (the mcp-first-scripts manifest rows, `check_gate_triad`'s
 inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was set. So:
 

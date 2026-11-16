@@ -31,7 +31,7 @@ Make the suites tell the truth: every test fails for the right reason, runs isol
 - **Validating mock by default;** an opt-out carries rationale + destination. → `KB § PATTERNS/compliance/testing.md` (Schema validation)
 - **Real-DB only via `get_realdb_credentials()` on a branch** — prod refused; hermetic sessions abort on live env. → playbook §4
 - **Conftests assign env (`own_test_env`), never `setdefault`.** Ambient `.env` holds prod credentials. → playbook §8
-- **Heavy runs through `hw_admission`;** read errors and skips, never the aggregate alone. → playbook §1 · `KB § PATTERNS/devops/hardware-admission-budget.md`
+- **Heavy runs through `hw_admission` (push first: tests run on GitHub by default, local slot is the loud fallback);** read errors and skips, never the aggregate alone. → playbook §1 · `KB § PATTERNS/devops/hardware-admission-budget.md`
 - **Reference migrations by name** (`migration_path`), never number. → `KB § PATTERNS/compliance/testing.md`
 - **A red judges the harness first** — deps, browsers, tree, env, server; unmeasurable ⇒ inconclusive. → `KB § PATTERNS/common/methodology-execution-discipline.md`
 

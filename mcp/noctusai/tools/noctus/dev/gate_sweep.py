@@ -1747,7 +1747,7 @@ def _resolve_admit(admit: Any, run_gate: Any) -> Any:
     2026-11-04: it didn't, so every merged-tip gate bypassed the slot."""
     if admit is not _AUTO_ADMIT:
         return admit
-    return _hw.heavy_slot if run_gate is None else None
+    return _hw.queued_heavy_slot if run_gate is None else None
 
 
 def _heavy_cap() -> int:
