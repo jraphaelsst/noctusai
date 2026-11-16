@@ -109,8 +109,14 @@ def resolve(worktree: Path | str | None = None, *, require: Sequence[str] = DEFA
     node_dir = wt.joinpath(*NODE_REL)
     fix = f"run `npm ci --prefix {node_dir}`"
     own_missing = _missing(node_dir, require)
-    if not own_missing:
-        return Toolchain(True, node_dir, "own", node_dir)
+    nm_own = node_dir / "node_modules"
+    # A node_modules that is a SYMLINK is another checkout's install: it is ours only while the two lockfiles agree.
+    # A stale link (the lockfile moved on this branch) must fall through to re-link or install, never pass as "own".
+    stale_link = nm_own.is_symlink() and not own_missing and lockfile_verdict(node_dir, nm_own.resolve().parent)
+    if not own_missing and not stale_link:
+        return Toolchain(True, node_dir, "own", node_dir)  # "own" = already wired; callers report only new links
+    if stale_link:
+        own_missing = [f"node_modules (a link to {nm_own.resolve()} whose lockfile differs)"]
     why: list[str] = []
     for src_root in _candidate_sources(wt, sources):
         src = src_root.joinpath(*NODE_REL)

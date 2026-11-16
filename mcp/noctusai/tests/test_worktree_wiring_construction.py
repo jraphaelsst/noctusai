@@ -146,9 +146,16 @@ def test_the_session_hook_is_loud_when_it_cannot_provision(tmp_path, monkeypatch
     assert "LOUD" in out["additionalContext"] and "npm ci --prefix" in out["additionalContext"]
 
 
-def test_the_session_hook_does_nothing_in_the_primary(tmp_path):
-    repo, _ = _repo_with_agent_worktree(tmp_path, wt_lock="P")
-    assert _run_wire_hook(repo, repo) == {}
+def test_the_session_hook_never_provisions_the_primary_itself(tmp_path):
+    """From the primary the hook only link-wires the clone's agent worktrees (documented behaviour); the primary's
+    own install is never relinked or reinstalled."""
+    repo, wt = _repo_with_agent_worktree(tmp_path, wt_lock="P")
+    out = _run_wire_hook(repo, repo)
+    primary_nm = repo / "mcp/noctusai/node/node_modules"
+    assert primary_nm.is_dir() and not primary_nm.is_symlink()
+    assert out["additionalContext"] == "[noc-node-toolchain] linked the primary's node toolchain into 1 other worktree(s)."
+    assert (wt / "mcp/noctusai/node/node_modules").is_symlink()
+    assert _run_wire_hook(repo, repo) == {}  # every tree wired: nothing left to say
 
 
 # ── the stale installed pre-push ────────────────────────────────────────────────────────────────────────────────
