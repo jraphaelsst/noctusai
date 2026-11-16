@@ -2276,16 +2276,18 @@ class TestLockTimeoutAndDirectives:
         _, fake = _run(tmp_path, [("001_a.sql", "-- noc:no-transaction\n-- noc:lock-timeout 2s\nSELECT 1;")])
         assert "SET LOCAL lock_timeout = '2s';\nSELECT 1" in fake.executed
 
-    def test_schema_rename_ledger_warning_stays_non_fatal(self, tmp_path):
-        """c3: a migration that renames the schema itself makes the ledger INSERT fail; that
-        stays a WARNING (status applied), with schema= overriding the ledger schema."""
+    def test_schema_rename_ledger_failure_is_typed_not_silent(self, tmp_path):
+        """c3: a migration that renames the schema itself makes the ledger INSERT fail. The DDL is live,
+        so it is `ledger_record_failed` (exit 1, record_command) - never a silent `applied` (2026-11-16);
+        schema= still overrides the ledger schema."""
         products = _make_products_dir(tmp_path)
         _make_migration_files(products, "nosnolimiar", [("001_rename.sql", "ALTER SCHEMA monica RENAME TO nosnolimiar;")])
         fake = FakeSqlExecutor(fail_on={'INSERT INTO "monica".schema_migrations'})
         res = migrate_product("nosnolimiar", schema="monica", confirm=True, executor=fake, products_dir=products,
                               git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("nosnolimiar"),
                               record_persister=lambda p, f: {"status": "recorded", "path": None, "error": None})
-        assert res["status"] == "applied" and res["applied"] == ["001_rename.sql"]
+        assert res["status"] == "ledger_record_failed" and res["applied"] == ["001_rename.sql"]
+        assert res["exit_code"] == 1 and res["ledger_unrecorded"] == ["001_rename.sql"] and res["record_command"]
         assert res["schema"] == "monica"
         ex = fake.executed
         ddl = [k for k, s in enumerate(ex) if "RENAME TO nosnolimiar" in s][0]
