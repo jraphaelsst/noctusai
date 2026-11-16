@@ -109,8 +109,20 @@ class TestComposeBriefShape:
         result = _compose()
         assert set(result.keys()) == {
             "brief", "suggested_agent", "auto_improvement_context",
-            "kb_references", "recent_misses", "open_findings", "source_warnings", "degraded",
+            "kb_references", "recent_misses", "open_findings", "source_warnings", "covering_docs", "degraded",
         }
+
+    def test_brief_lists_the_docs_covering_the_target_files(self):
+        from tools.noctus.dev import doc_staleness
+        # real tree: the landscape roster covers every product router, so the section must name it
+        res = _compose(target_files=["products/agents/backend/app/routers/studio_prontidao_router.py"])
+        assert "### Docs covering your target files" in res["brief"]
+        assert "KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md" in res["covering_docs"][res["covering_docs"].__iter__().__next__()]
+        assert "Docs-Reviewed" in res["brief"] and doc_staleness.COVERAGE_CACHE_REL
+
+    def test_brief_omits_the_docs_section_when_nothing_covers_the_targets(self):
+        res = _compose(target_files=["scripts/some_unmapped_helper.sh"])
+        assert res["covering_docs"] == {} and "### Docs covering" not in res["brief"]
 
     def test_brief_contains_required_sections(self):
         brief = _compose()["brief"]

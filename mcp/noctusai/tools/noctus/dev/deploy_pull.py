@@ -77,7 +77,14 @@ _RUNTIME_CONFIG = re.compile(r"(?:^|/)(?:docker-compose[^/]*\.ya?ml|config\.yml)
 # a no-op — excluded from the rebuild trigger. The pre-commit stamps
 # `_version_static.py` (the git-sha version string) on every commit, so without
 # this every deploy_pull would false-flag a fleet rebuild.
-_COSMETIC_NONRUNTIME = re.compile(r"_version_static\.py$")
+# `migrations-applied.json` is the in-repo LEDGER of migrations applied to prod
+# (noctusai_lib.testing.migrations_applied) — written by migrate_product AFTER
+# a deploy, read only by tests, by no app/framework code and by no image-time
+# script. Counting it as a build input made every recorded migration read as
+# drift and forced a no-op image rebuild (social-wiring, release 3).
+_COSMETIC_NONRUNTIME = re.compile(
+    r"_version_static\.py$|^products/[^/]+/backend/migrations-applied\.json$"
+)
 # Paths that LOOK like fleet build inputs but belong to a NON-fleet app.
 # `deploy/legacy/` is the standalone one-permutas Django app (legacy.noctusai.com):
 # its own Dockerfile header states it "is NOT a noctus-fleet product — it has its

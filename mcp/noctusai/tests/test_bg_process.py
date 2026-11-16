@@ -286,27 +286,59 @@ def test_wrapper_refuses_a_bare_loop_without_a_done_condition(world, capsys):
 
 
 # ------------------------------------------------------------------ launch guard
-def _bash(cmd, bg=True):
-    return {"tool_name": "Bash", "tool_input": {"command": cmd, "run_in_background": bg}}
+def _bash(cmd, bg=True, **extra):
+    return {"tool_name": "Bash", "tool_input": {"command": cmd, "run_in_background": bg, **extra}}
 
 
 @pytest.mark.parametrize("cmd", [
     "while true; do sleep 60; done",
-    "until grep -q DONE run.log; do sleep 30; done",
     "tail -f /tmp/x.log",
+    "watch -n 5 ls",
+    "vitest --watch",
+    "until curl -s localhost:1; do sleep 2; done",
+    "until grep -q DONE /tmp/run.log; do sleep 30; done",                                # a poll, background or not
+    "/bin/zsh -c 'until grep -q DONE f.log; do sleep 5; done'",
+    "timeout 590 bash -c 'until [ -s /tmp/tasks/x.output ]; do sleep 10; done'",         # `timeout` does not make a poll acceptable
+    "until [ -s $F ]; do sleep 10; done; tail $F",
+    "/bin/zsh -c 'while true; do sleep 5; done'",
+    'python3 scripts/bg_run.py --done "x" -- echo hi',                                   # no purpose
+    'python3 scripts/bg_run.py --purpose "p p p" -- echo hi',                            # no done
+    'python3 scripts/bg_run.py --purpose "p p p" --done "d d d" -- \'while true; do work; sleep 1; done\'',  # loop, no done-when
+])
+def test_guard_denies_open_ended_background_launches(cmd):
+    verdict = guard.decide(_bash(cmd))
+    assert verdict and "reason" in verdict and "bg_run.py" in verdict["reason"]
+
+
+@pytest.mark.parametrize("cmd", [
     "sleep 600 && echo done",
     "gh run watch 123",
     "pytest mcp/noctusai/tests/",
     "npm run build",
     "python3 hw_admission.py run --job x -- pytest",
-    "/bin/zsh -c 'until grep -q DONE f; do sleep 5; done'",
-    'python3 scripts/bg_run.py --done "x" -- echo hi',                                   # no purpose
-    'python3 scripts/bg_run.py --purpose "p p p" -- echo hi',                            # no done
-    'python3 scripts/bg_run.py --purpose "p p p" --done "d d d" -- while true; do sleep 1; done',  # loop, no done-when
+    "git push origin feat/x",
+    "ls -la",
 ])
-def test_guard_denies_open_ended_background_launches(cmd):
-    verdict = guard.decide(_bash(cmd))
-    assert verdict and "bg_run.py" in verdict["reason"]
+def test_guard_rewrites_every_other_background_launch_into_the_wrapper(cmd):
+    verdict = guard.decide(_bash(cmd, description="run the thing for the owner"))
+    ti = verdict["updated_input"]
+    assert verdict["decision"] == "allow" and ti["run_in_background"] is True and ti["description"] == "run the thing for the owner"
+    assert "bg_run.py" in ti["command"] and "--purpose 'run the thing for the owner'" in ti["command"]
+    assert "--done 'the command exits'" in ti["command"]
+    assert guard.decide({"tool_name": "Bash", "tool_input": ti}) is None            # idempotent: the rewrite is itself allowed
+
+
+def test_the_rewritten_command_runs_the_original_and_ends_with_it(world, tmp_path):
+    v = guard.decide(_bash("echo ran-by-the-wrapper"))
+    import subprocess
+    r = subprocess.run(["/bin/sh", "-c", v["updated_input"]["command"]], capture_output=True, text=True, timeout=30,
+                       env={"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "NOCTUS_BG_PROCESS_DIR": str(tmp_path / "s2")})
+    assert r.returncode == 0 and "ran-by-the-wrapper" in r.stdout and "command exited rc=0" in r.stderr
+
+
+def test_infrastructure_is_left_untouched_not_rewritten():
+    assert guard.decide(_bash("python cli.py --merge-queue watch")) is None
+    assert guard.decide(_bash("npm run dev")) is None
 
 
 @pytest.mark.parametrize("cmd", [
@@ -314,23 +346,18 @@ def test_guard_denies_open_ended_background_launches(cmd):
     'python3 scripts/bg_run.py --purpose "poll file" --done "DONE" --done-when "grep -q DONE f" -- tail -f f',
     'python3 scripts/bg_run.py --purpose "dev server" --long-lived -- npm run dev',
     "while true; do sleep 1500; .venv/bin/python cli.py --release-steward heartbeat >/dev/null 2>&1; done",
-    "python cli.py --merge-queue watch",
-    "npm run dev",
-    "git push origin feat/x",
-    "ls -la",
 ])
-def test_guard_allows_wrapped_infrastructure_and_short_commands(cmd):
+def test_guard_allows_wrapped_and_infrastructure_launches_unchanged(cmd):
     assert guard.decide(_bash(cmd)) is None
 
 
-def test_guard_only_judges_background_bash():
-    assert guard.decide(_bash("while true; do sleep 1; done", bg=False)) is None
+def test_guard_only_judges_bash():
     assert guard.decide({"tool_name": "Edit", "tool_input": {"command": "while true"}}) is None
 
 
 def _load_hook():
     sys.path.insert(0, str(HOOKS))
-    spec = importlib.util.spec_from_file_location("bg_launch_hook", HOOKS / "claude-guard-background-launch.py")
+    spec = importlib.util.spec_from_file_location("bg_launch_hook", HOOKS / "claude-guard-bash-rewrite.py")
     hook = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hook)
     return hook
@@ -364,7 +391,7 @@ def test_hook_in_shadow_allows_and_logs_a_warn_event(tmp_path, monkeypatch, caps
 def test_hook_denies_through_the_fail_closed_runner(tmp_path, monkeypatch):
     monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "enforce")
     sys.path.insert(0, str(HOOKS))
-    spec = importlib.util.spec_from_file_location("bg_launch_hook", HOOKS / "claude-guard-background-launch.py")
+    spec = importlib.util.spec_from_file_location("bg_launch_hook", HOOKS / "claude-guard-bash-rewrite.py")
     hook = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hook)
     from _guard_failclosed import run_guard
@@ -397,14 +424,306 @@ def test_no_lifetime_or_idle_parameters_exist_anywhere():
 
 def test_hook_fast_path_skips_non_background_bash_without_loading(monkeypatch, capsys):
     hook = _load_hook()
-    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(_bash("while true; do sleep 1; done", bg=False))))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(_bash("git status", bg=False))))
     assert hook.main() == 0
     assert capsys.readouterr().out == ""
 
 
 def test_shadow_timeout_is_allowed_not_denied(monkeypatch):
+    """Moved to the composed hook (claude-guard-bash-rewrite.py): shadow allows a deadline overrun, enforce denies,
+    and a command that could be a heavy run stays fail-closed in either mode."""
     hook = _load_hook()
     monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "shadow")
-    assert hook._shadow_timeout_ok({}) is True
+    assert hook._shadow_timeout_ok(_bash("echo hi && sleep 1")) is True
+    assert hook._shadow_timeout_ok(_bash("pytest tests/x.py")) is False
     monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "enforce")
-    assert hook._shadow_timeout_ok({}) is False
+    assert hook._shadow_timeout_ok(_bash("echo hi && sleep 1")) is False
+
+
+def test_composed_hook_deadline_overrun_shadow_allows_enforce_denies(tmp_path, monkeypatch):
+    from _guard_failclosed import run_guard
+    hook = _load_hook()
+
+    import time
+
+    def sleeper(_payload):
+        time.sleep(1.0)
+
+    for mode, expect_deny in (("shadow", False), ("enforce", True)):
+        monkeypatch.setenv("NOC_BG_LAUNCH_MODE", mode)
+        out = io.StringIO()
+        run_guard("bash-rewrite", sleeper, stdin=io.StringIO(json.dumps(_bash("echo hi && sleep 1"))), stdout=out,
+                  deadline_s=0.05, event_log=tmp_path / f"{mode}.ndjson", fail_open_when=hook._shadow_timeout_ok)
+        assert ("deny" in out.getvalue()) is expect_deny
+
+
+# ------------------------------------------------------------------ foreground escape + enforce-now + producer-dead
+@pytest.mark.parametrize("cmd", [
+    "until grep -q 'HW-RUN DONE' /tmp/run.log; do sleep 5; done; tail /tmp/run.log",
+    "while true; do sleep 60; done",
+    "tail -f /tmp/x.log",
+    "vitest --watch",
+    "timeout 590 bash -c 'until [ -s /tmp/tasks/x.output ]; do sleep 10; done'",
+    "gtimeout 60 bash -c 'while ! pgrep -f foo; do sleep 1; done'",
+    "until [ -s $F ]; do sleep 10; done",
+])
+def test_foreground_open_ended_loop_is_denied_and_teaches_the_right_shape(cmd):
+    v = guard.decide(_bash(cmd, bg=False))
+    assert v and "run_in_background" in v["reason"] and "never in a loop" in v["reason"] and "notification resumes you" in v["reason"]
+
+
+@pytest.mark.parametrize("cmd", [
+    "timeout 300 tail -f /tmp/x.log",
+    "gtimeout 60 bash -c 'for f in a b; do sleep 1; done'",
+    "for f in a b c; do echo $f; sleep 1; done",
+    'python3 scripts/bg_run.py --purpose "poll f" --done "DONE" --done-when "grep -q DONE f" -- tail -f f',
+    "sleep 20",                                    # finite, not a loop
+    "pytest -q tests/test_x.py",                   # long but finite
+    "git commit -m 'wait until the queue lands'",  # prose, not a loop
+    "ls -la",
+])
+def test_foreground_bounded_or_non_loop_commands_are_allowed(cmd):
+    assert guard.decide(_bash(cmd, bg=False)) is None
+
+
+def test_enforcement_is_in_effect_today_and_the_decision_is_recorded(monkeypatch):
+    import datetime as dt
+    monkeypatch.delenv("NOC_BG_LAUNCH_MODE", raising=False)
+    assert guard.ENFORCE_FROM <= "2026-11-14" and guard.mode(dt.date(2026, 11, 14)) == "enforce"
+    assert "2026-11-14" in (guard.__doc__ or "") + Path(guard.__file__).read_text()
+
+
+def test_hook_fast_path_lets_a_non_loop_foreground_call_through_without_loading(monkeypatch, capsys):
+    hook = _load_hook()
+    monkeypatch.setattr(hook, "load_module", lambda *_a: pytest.fail("module loaded on the fast path"))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(_bash("git status", bg=False))))
+    assert hook.main() == 0 and capsys.readouterr().out == ""
+
+
+def test_hook_denies_a_foreground_loop_and_logs_the_deny(tmp_path, monkeypatch):
+    monkeypatch.delenv("NOC_BG_LAUNCH_MODE", raising=False)
+    hook = _load_hook()
+    from _guard_failclosed import run_guard
+    out, events = io.StringIO(), tmp_path / "ev.ndjson"
+    run_guard("background-launch", hook._judge, stdin=io.StringIO(json.dumps(_bash("until false; do sleep 5; done", bg=False))),
+              stdout=out, event_log=events)
+    assert json.loads(out.getvalue())["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert [json.loads(line)["outcome"] for line in events.read_text().splitlines()] == ["deny"]
+
+
+class _Lsof:
+    """Fake lsof: `writers` = {path: [pids]} reported as open-for-write."""
+    def __init__(self, writers=None):
+        self.writers = writers or {}
+
+    def __call__(self, args):
+        path = args[-1]
+        return "".join(f"p{pid}\nfw\naw\n" for pid in self.writers.get(path, []))
+
+
+def test_producer_watch_ends_a_wait_whose_declared_producer_is_dead(tmp_path):
+    f = tmp_path / "run.log"
+    f.write_text("partial\n")
+    w = core.ProducerWatch(started_at=0.0, declared_pid=777, lsof=_Lsof(), alive=lambda _p: False, confirm_checks=2)
+    assert w.check([f]) is None            # debounce: first observation
+    assert "producer gone" in w.check([f]) and "777" in w.check([f])
+
+
+def test_producer_watch_never_fires_while_anything_can_still_write(tmp_path):
+    f = tmp_path / "run.log"
+    f.write_text("x")
+    alive = _Lsof({str(f): [55]})
+    w = core.ProducerWatch(started_at=0.0, lsof=alive, alive=lambda _p: True, confirm_checks=1)
+    assert w.check([f]) is None            # a live writer holds it
+    w2 = core.ProducerWatch(started_at=0.0, declared_pid=9, lsof=_Lsof(), alive=lambda p: p == 9, confirm_checks=1)
+    assert w2.check([f]) is None           # declared producer alive
+    w3 = core.ProducerWatch(started_at=0.0, lsof=_Lsof(), confirm_checks=1, mtime=lambda _p: None)
+    assert w3.check([tmp_path / "missing.log"]) is None   # a file not yet created may still appear
+
+
+def test_producer_watch_resets_when_the_file_changes(tmp_path):
+    f = tmp_path / "run.log"
+    f.write_text("x")
+    box = {"m": 100.0}
+    w = core.ProducerWatch(started_at=0.0, declared_pid=1, lsof=_Lsof(), alive=lambda _p: False,
+                           confirm_checks=2, mtime=lambda _p: box["m"])
+    assert w.check([f]) is None
+    box["m"] = 200.0                       # written to after the producer was seen dead
+    assert w.check([f]) is None and w.streak == 0
+
+
+def test_wrapped_wait_on_a_dead_producers_file_ends_with_salvage(world, tmp_path):
+    f = tmp_path / "run.log"
+    f.write_text("never says the magic word\n")
+    rc = core.run_wrapped(purpose="wait for HW-RUN DONE", done="the log says DONE", done_when=f"grep -q 'HW-RUN DONE' {f}",
+                          interval_s=0.01, out=io.StringIO(), ps_text=world.ps_text, kill=world.kill,
+                          producer_pid=424242, alive=lambda _p: False, lsof=_Lsof(), confirm_checks=2)
+    assert rc == 4
+    rec = core.salvage_rows(core.store_dir())[-1]
+    assert "can never fire" in rec["reason"] and "producer gone" in rec["reason"] and rec["by"] == "bg_run"
+
+
+def test_listing_flags_a_poll_loop_whose_target_has_no_writer_and_did_not_change(world, tmp_path):
+    f = tmp_path / "run.log"
+    f.write_text("finished long ago\n")
+    import os
+    os.utime(f, (1.0e9, 1.0e9))
+    world.add(300, CLAUDE, f"/bin/zsh -c until grep -q DONE {f}; do sleep 5; done")
+    world.add(301, 300, "sleep 5", pgid=300)
+    row = call(world, action="list")["processes"][0]
+    assert row["producer_dead"].startswith("producer gone") and any("CAN NEVER FIRE" in n for n in row["waiting_on"])
+
+
+# ------------------------------------------------------------------ runtime-end legs (owner 2026-11-14): structure, scripts, rewrite, parent-death
+def _scripted(tmp_path, name, body, mode=0o755):
+    (tmp_path / ".git").mkdir(exist_ok=True)       # a repo root: the only place (besides the scratchpad) scripts are opened
+    f = tmp_path / name
+    f.write_text(body)
+    f.chmod(mode)
+    return f
+
+
+POLL_SH = "#!/bin/sh\nuntil grep -q DONE run.log; do sleep 5; done\n"
+POLL_PY = "import time\nwhile True:\n    time.sleep(5)\n"
+
+
+@pytest.mark.parametrize("cmd", ["./poll.sh", "bash poll.sh", "sh ./poll.sh", "python3 poll.py", "cd . && ./poll.sh"])
+@pytest.mark.parametrize("bg", [True, False])
+def test_a_loop_inside_an_invoked_script_is_judged_foreground_and_background(tmp_path, cmd, bg):
+    _scripted(tmp_path, "poll.sh", POLL_SH)
+    _scripted(tmp_path, "poll.py", POLL_PY, 0o644)
+    v = guard.decide({**_bash(cmd, bg=bg), "cwd": str(tmp_path)})
+    assert v and "reason" in v and "poll." in v["reason"] and "script" in v["reason"]
+
+
+def test_a_script_without_an_endless_loop_is_not_judged(tmp_path):
+    _scripted(tmp_path, "ok.sh", "#!/bin/sh\nwhile read l; do echo $l; done < in.txt\nfor i in 1 2; do sleep 1; done\n")
+    _scripted(tmp_path, "ok.py", "import time\nwhile True:\n    time.sleep(1)\n    if done():\n        break\n", 0o644)
+    assert guard.decide({**_bash("./ok.sh", bg=False), "cwd": str(tmp_path)}) is None
+    assert guard.decide({**_bash("python ok.py", bg=False), "cwd": str(tmp_path)}) is None
+    assert "updated_input" in guard.decide({**_bash("./ok.sh"), "cwd": str(tmp_path)})  # background: wrapped, not refused
+
+
+def test_script_reading_is_bounded_to_the_repo_and_scratchpad_and_to_size(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    _scripted(outside, "poll.sh", POLL_SH)
+    (outside / ".git").rmdir()
+    assert guard.decide({**_bash(f"{outside}/poll.sh", bg=False), "cwd": str(tmp_path / "elsewhere")}) is None  # not a root: not read
+    big = _scripted(tmp_path, "big.sh", POLL_SH + "# " + "x" * (core.shell.MAX_SCRIPT_BYTES + 10) + "\n")
+    assert guard.decide({**_bash("./big.sh", bg=False), "cwd": str(tmp_path)}) is None                         # too large: not read
+
+
+def test_a_non_poll_script_loop_bounded_by_timeout_or_the_wrapper_is_allowed_but_a_poll_script_never_is(tmp_path):
+    _scripted(tmp_path, "work.sh", "#!/bin/sh\nwhile true; do ./step; sleep 5; done\n")
+    _scripted(tmp_path, "poll.sh", POLL_SH)
+    ctx = {"cwd": str(tmp_path)}
+    assert guard.decide({**_bash("timeout 120 ./work.sh", bg=False), **ctx}) is None
+    assert guard.decide({**_bash("./work.sh", bg=False), **ctx})                      # unbounded: refused
+    assert guard.decide({**_bash('python3 scripts/bg_run.py --purpose "run work" --done "DONE" --done-when "test -f ok" -- ./work.sh'), **ctx}) is None
+    assert guard.decide({**_bash("timeout 120 ./poll.sh", bg=False), **ctx})          # a poll: `timeout` does not help
+
+
+def test_a_poll_is_denied_bounded_or_not_foreground_or_background_and_a_bounded_non_poll_loop_passes():
+    sh = core.shell
+    for poll in ("until [ -s /t/x.output ]; do sleep 10; done", "while ! pgrep -f foo; do sleep 1; done",
+                 "timeout 590 bash -c 'until [ -s /t/x.output ]; do sleep 10; done'"):
+        assert [f.kind for f in sh.open_ended(poll)] == ["poll"]
+        for bg in (False, True):
+            v = guard.decide(_bash(poll, bg=bg))
+            assert v and "never in a loop" in v["reason"] and "notification resumes you" in v["reason"]
+    for ok in ("for f in a b c; do echo $f; sleep 1; done", "timeout 30 bash -c 'for f in 1 2; do sleep 1; done'"):
+        assert not sh.open_ended(ok) and guard.decide(_bash(ok, bg=False)) is None
+
+
+def test_shell_structure_not_text_decides_what_is_a_loop():
+    sh = core.shell
+    assert not sh.open_ended("git commit -m 'wait; until x; do y; done'")                          # quoted prose
+    assert not sh.open_ended("cat > /tmp/p.sh <<'EOF'\nuntil false; do sleep 1; done\nEOF\nchmod +x /tmp/p.sh")
+    assert not sh.open_ended("git commit -m \"$(cat <<'EOF'\nuntil x; do y; done (z)\nEOF\n)\"")
+    assert not sh.open_ended("echo wait until the queue lands")
+    assert not sh.open_ended("while read l; do echo $l; done < f")
+    assert not sh.open_ended("while true; do sleep 1")                                                # never closed: not a loop
+    assert sh.open_ended("bash -c 'until false; do sleep 1; done'")                                  # quoted, but EXECUTED
+    assert sh.open_ended("bash <<EOF\nwhile true; do sleep 1; done\nEOF")   # heredoc fed to a shell
+    assert sh.open_ended("echo $(while true; do sleep 1; done)")
+    assert sh.open_ended("eval 'tail -f x'")
+    assert sh.open_ended("timeout 30 bash -c 'until false; do sleep 1; done'")                      # a poll, even bounded
+    assert not sh.open_ended("timeout 30 bash -c 'while true; do work; sleep 1; done'")            # bounded, not a poll
+    assert not sh.open_ended("nohup timeout -s KILL 30 tail -f x")
+
+
+def test_the_session_end_sweep_stop_is_logged_as_an_escape_from_runtime_end(world, tmp_path, monkeypatch):
+    events = tmp_path / "ev.ndjson"
+    monkeypatch.setenv("NOCTUS_GUARD_EVENT_LOG", str(events))
+    pid = poll_loop(world)
+    out = call(world, action="stop", pid=pid + 1, reason="leftover found by the sweep", learnings="should have been wrapped", confirm=True)
+    assert out["ok"]
+    rows = [json.loads(line) for line in events.read_text().splitlines()]
+    assert [r["outcome"] for r in rows if r["outcome"] == "escaped-runtime-end"] == ["escaped-runtime-end"]
+    assert rows[0]["guard"] == "background-process" and rows[0]["pid"] == pid
+
+
+class _Hung:
+    """A child that never exits by itself (the thing a wrapper must not outlive its owner for)."""
+    pid = 4242
+    returncode = None
+    stdout = io.BytesIO(b"")
+
+    def poll(self):
+        return None
+
+
+def _wrap_hung(world, **kw):
+    world.add(4242, 1, "sleep 9999", pgid=4242)
+    return core.run_wrapped(purpose="a long wait for nothing", done="never", command="sleep 9999", interval_s=0.01,
+                            out=io.StringIO(), ps_text=world.ps_text, kill=world.kill, popen=lambda *a, **k: _Hung(),
+                            owner_check_s=0.0, **kw)
+
+
+def test_wrapper_ends_its_tree_when_the_owning_session_process_is_gone(world):
+    ticks = {"n": 0}
+    real_ps = world.ps_text
+
+    def ps_then_claude_dies():
+        ticks["n"] += 1
+        if ticks["n"] > 3:
+            world.procs.pop(CLAUDE, None)       # the session was closed
+        return real_ps()
+    world.ps_text = ps_then_claude_dies
+    assert _wrap_hung(world) == 5
+    assert "owning session ended" in core.salvage_rows(core.store_dir())[-1]["reason"] and 4242 not in world.procs
+
+
+def test_wrapper_ends_when_re_parented_to_init_but_not_when_it_started_detached(world):
+    seq = iter([777] + [1] * 50)
+    assert _wrap_hung(world, getppid=lambda: next(seq)) == 5
+    assert "re-parented" in core.salvage_rows(core.store_dir())[-1]["reason"]
+    world2_ticks = {"n": 0}
+
+    class _Child(_Hung):
+        def poll(self):
+            world2_ticks["n"] += 1
+            return 0 if world2_ticks["n"] > 30 else None
+        returncode = 0
+    world.add(4243, 1, "sleep 1", pgid=4243)
+    rc = core.run_wrapped(purpose="detached on purpose", done="exits", command="sleep 1", interval_s=0.01, out=io.StringIO(),
+                          ps_text=world.ps_text, kill=world.kill, popen=lambda *a, **k: _Child(), owner_check_s=0.0,
+                          getppid=lambda: 1)
+    assert rc == 0                                                    # started with ppid 1: only the owner pid decides
+
+
+def test_hook_rewrites_through_the_fail_closed_runner_and_shadow_does_not(tmp_path, monkeypatch):
+    from _guard_failclosed import run_guard
+    hook = _load_hook()
+    monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "enforce")
+    out = io.StringIO()
+    run_guard("background-launch", hook._judge, stdin=io.StringIO(json.dumps(_bash("pytest -q tests/x.py"))), stdout=out,
+              event_log=tmp_path / "ev.ndjson")
+    body = json.loads(out.getvalue())["hookSpecificOutput"]
+    assert body["permissionDecision"] == "allow" and "bg_run.py" in body["updatedInput"]["command"]
+    monkeypatch.setenv("NOC_BG_LAUNCH_MODE", "shadow")
+    out2 = io.StringIO()
+    run_guard("background-launch", hook._judge, stdin=io.StringIO(json.dumps(_bash("echo hi && sleep 1"))), stdout=out2,
+              event_log=tmp_path / "ev2.ndjson")
+    assert out2.getvalue() == ""
