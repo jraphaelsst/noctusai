@@ -2768,7 +2768,7 @@ def read_verdict(store: str | Path | None, vid: str) -> dict[str, Any] | None:
 
 
 def validate_verdict_ref(ref: str | None, head: str | None, store: str | Path | None = None,
-                         tree: str | None = None) -> tuple[bool, str]:
+                         tree: str | None = None, ci_client: Any = None) -> tuple[bool, str]:
     """A verdict pointer counts for item 5 only if it RESOLVES to a record in the verdict store written by a
     CI-parity run (`export_ci_parity_check`) for EXACTLY this head (full sha; the head tree too when known),
     with `ok` true and the env-scrubbed + CI-keeper markers set by that run. Free-form strings, short shas and
@@ -2778,7 +2778,7 @@ def validate_verdict_ref(ref: str | None, head: str | None, store: str | Path | 
         return False, ("no verdict_ref and no scoped check ran: run `release_steward action=deliverable run_scoped=true` "
                        "(CI-blocking keepers + real-tree keeper tests, env-scrubbed) and file the `ci-parity:<id>` it returns")
     if _GH_RUN_RE.match(ref):  # judged against GitHub itself (repo, workflow, full head sha, conclusion): not forgeable
-        _state, detail = _sibling("ci_verdict").judge(ref, head)
+        _state, detail = _sibling("ci_verdict").judge(ref, head, ci_client)
         return _state == "green", detail
     m = _VERDICT_REF_RE.match(ref)
     if not m:
@@ -3151,7 +3151,8 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
                 derived_check: Callable[[str], dict[str, Any]] | None = None,
                 scoped_check: Callable[[str, str], dict[str, Any]] | None = None,
                 verdict_store: str | Path | None = None,
-                cli_help_check: Callable[[str], dict[str, Any]] | None = None) -> dict[str, Any]:
+                cli_help_check: Callable[[str], dict[str, Any]] | None = None,
+                ci_client: Any = None) -> dict[str, Any]:
     """The delivery contract: five read-only checks, `verdict` deliverable | needs_resync.
 
     1 head_pushed_clean - local head == origin/<branch> AND the branch's worktree has no real dirt.
@@ -3330,7 +3331,7 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
             if head:
                 rc5, o5, _e5 = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
                 tree5 = o5.strip() if rc5 == 0 and o5.strip() else None
-            ok5, why5 = validate_verdict_ref(verdict_ref, head, verdict_store, tree5)
+            ok5, why5 = validate_verdict_ref(verdict_ref, head, verdict_store, tree5, ci_client)
             items.append(_item(5, DELIVERABLE_ITEMS[4], ok5, why5,
                                **({"pending": True} if not ok5 and why5.startswith(_sibling("ci_verdict").PENDING_PREFIX) else {})))
     except Exception as exc:  # noqa: BLE001

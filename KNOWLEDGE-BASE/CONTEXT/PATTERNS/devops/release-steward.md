@@ -288,7 +288,12 @@ shared 8 GB laptop and came back UNMEASURED or timed out on every filing, so the
 (`task_branch enqueue`) answers `pending_ci` - leave it queued for the next drain round, never a resync; a red run is `needs_resync`
 naming the run URL. `gh` missing/unauthenticated fails the request loudly (no silent local fallback); `run_scoped=true` keeps the local
 run as an explicit opt-in. Telemetry: each request event records `verdict_kind` (`gh-run` | `ci-parity`) and
-`release_steward action=verdicts` reports `by_verdict_kind`. The merge queue's own CI still judges the composed tree.
+`release_steward action=verdicts` reports `by_verdict_kind`.
+A `gh-run:` verdict binds to the EXACT head, not to being 0-behind: item 2 already accepts a branch behind `origin/dev` when the
+driver-aware `compose_merge` against CURRENT `origin/dev` is clean (the merge queue's CI then judges the composed tree), so a landing
+elsewhere does not invalidate a green run. `needs_resync` remains only for (a) a conflicting composed merge (item 2 names the files)
+or (b) the head moved since the run (item 5: the run's `head_sha` != the branch tip). Item 4 is judged at the head itself (it does not
+depend on dev), so it is unaffected by dev moving. The merge queue's own CI still judges the composed tree.
 
 **The local CI-parity path (`run_scoped=true`) runs what CI blocks on, in the environment CI has (D1, merge-queue run 42753204233).** Two things passed locally and
 failed in CI: keepers that only WARN in pre-commit but BLOCK in CI (the mcp-first-scripts manifest rows, `check_gate_triad`'s
