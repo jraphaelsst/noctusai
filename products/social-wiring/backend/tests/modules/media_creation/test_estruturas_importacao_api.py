@@ -265,8 +265,9 @@ class TestJob:
     def test_an_unexpected_failure_keeps_the_lote_running_for_the_retry_and_the_document_stays(self, est):
         lote_id = _lote_pronto(est, corpus_ref(3))
         est.store.fail_with["cs_estrutura_criar"] = ConnectionError(f"{SENTINELA} boom")
-        with pytest.raises(ConnectionError):
+        with pytest.raises(imp.ImportacaoFalhou) as exc:
             _rodar(est, lote_id, ultima=False)
+        assert str(exc.value) == "ConnectionError" and SENTINELA not in repr(exc.value) and exc.value.__cause__ is None  # F5
         (lote,) = [l for l in est.lotes() if l["id"] == lote_id]
         assert lote["status"] == "em_andamento"
         assert asyncio.run(est.storage.get(bucket=BIBLIOTECA_BUCKET, key=imp.chave_blob(lote_id))) is not None
@@ -274,8 +275,9 @@ class TestJob:
     def test_on_the_last_attempt_the_lote_fails_with_the_exception_class_only_and_the_document_is_deleted(self, est):
         lote_id = _lote_pronto(est, corpus_ref(3))
         est.store.fail_with["cs_estrutura_criar"] = ConnectionError(f"{SENTINELA} boom")
-        with pytest.raises(ConnectionError):
+        with pytest.raises(imp.ImportacaoFalhou) as exc:
             _rodar(est, lote_id, ultima=True)
+        assert str(exc.value) == "ConnectionError" and SENTINELA not in repr(exc.value)  # F5: the class name only
         (lote,) = [l for l in est.lotes() if l["id"] == lote_id]
         assert lote["status"] == "falhou" and lote["erro"] == "erro:ConnectionError" and SENTINELA not in json.dumps(lote, default=str)
         assert asyncio.run(est.storage.get(bucket=BIBLIOTECA_BUCKET, key=imp.chave_blob(lote_id))) is None

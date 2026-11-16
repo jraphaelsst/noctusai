@@ -34,6 +34,7 @@ ADMIN_FORBIDDEN = {
     "proveniencia", "ref_externa", "referencia_rotulo", "formula_herdada_de", "pendente_revisao", "origem",
     "fonte_externa", "fonte_hash", "formula_origem", "formato_origem", "objetivos_origem", "nome_origem",
     "tipo_origem", "tempo_origem", "instrucao_origem", "campos_pendentes", "created_by", "updated_by", "sistema",
+    "revisao_por_desuso", "revisao_desuso_em", "foto_url", "foto_path",
 }
 
 
@@ -233,9 +234,8 @@ class TestList:
         item = d["items"][0]
         assert set(item) == {"id", "codigo", "perfil", "formula_headline", "formato", "objetivos", "blocos_total", "viral", "status", "updated_at"}
         assert item["codigo"] == 101 and item["formato"] == "reels" and item["blocos_total"] == 2 and item["status"] == "ativa"
-        assert item["perfil"] == {"id": P1, "handle": "psifernandosegredo", "nome": "Fernando Segredo",
-                                  "foto_url": item["perfil"]["foto_url"]}
-        assert item["perfil"]["foto_url"].startswith(f"fake://storage/sw-biblioteca/platform/{P1}/foto.jpg")
+        # a client org sees the creator as handle + name ONLY: no photo key at all (owner decision 2026-11-15)
+        assert item["perfil"] == {"id": P1, "handle": "psifernandosegredo", "nome": "Fernando Segredo"}
         assert item["viral"]["codigo"] == 77 and item["viral"]["permalink"].endswith("AAA/")
         assert item["viral"]["thumbnail_url"].startswith(f"fake://storage/sw-biblioteca/platform/{P1}/AAA.jpg")
         assert d["items"][1]["viral"] is None and d["items"][1]["perfil"]["nome"] is None
@@ -285,10 +285,26 @@ class TestList:
         items = {i["id"]: i for i in _items(client.get(f"{BASE}?marca_id={MARCA}"))}
         assert items[E2]["selecionada_pela_marca"] is True
 
-    def test_a_missing_thumbnail_never_fails_the_page(self, est, client):
+    def test_a_missing_photo_never_fails_the_admin_page_and_a_member_has_none_to_miss(self, est, client):
         est.db.from_("cs_perfis_monitorados").update({"foto_path": None}).eq("id", P1).execute()
+        assert "foto_url" not in next(i for i in _items(client.get(BASE)) if i["id"] == E1)["perfil"]
+        est.admin = True
+        assert next(i for i in _items(client.get(BASE)) if i["id"] == E1)["perfil"]["foto_url"] is None
+
+    def test_an_admin_still_gets_the_signed_photo_and_the_review_flag_a_member_never_does(self, est, client):
         item = next(i for i in _items(client.get(BASE)) if i["id"] == E1)
-        assert item["perfil"]["foto_url"] is None
+        assert "revisao_por_desuso" not in item
+        est.admin = True
+        item = next(i for i in _items(client.get(BASE)) if i["id"] == E1)
+        assert item["perfil"]["foto_url"].startswith(f"fake://storage/sw-biblioteca/platform/{P1}/foto.jpg")
+        assert "revisao_por_desuso" in item
+
+    def test_the_unused_review_filter_is_admin_only_and_lists_the_flagged(self, est, client):
+        est.db.from_("cs_estruturas_resumo").update({"revisao_desuso_em": "2026-11-15T00:00:00+00:00"}).eq("id", E2).execute()
+        assert {i["id"] for i in _items(client.get(f"{BASE}?revisao=pendente"))} == {E1, E2}  # ignored for a member
+        est.admin = True
+        assert [i["id"] for i in _items(client.get(f"{BASE}?revisao=pendente"))] == [E2]
+        assert client.get(f"{BASE}?revisao=outra").status_code == 422
 
 
 class _Spy:
@@ -296,6 +312,11 @@ class _Spy:
 
     def __init__(self, calls):
         self.calls = calls
+
+    @property
+    def not_(self):
+        self.calls.append(("not_", (), {}))
+        return self
 
     def __getattr__(self, name):
         def _record(*args, **kwargs):
@@ -343,6 +364,12 @@ class TestPredicates:
         assert not any(c[0] == "gt" for c in member) and ("eq", ("status", "ativa"), {}) in member
         admin = [c for c in self._admin_calls(somente_pendentes_revisao=True, status="todas")]
         assert ("gt", ("campos_pendentes", 0), {}) in admin and not any(c[0] == "eq" and c[1][0] == "status" for c in admin)
+
+    def test_the_unused_review_filter_is_a_not_null_on_the_flag_and_admin_only(self):
+        admin = self._admin_calls(revisao="pendente")
+        assert admin.index(("not_", (), {})) + 1 == admin.index(("is_", ("revisao_desuso_em", "null"), {}))
+        member = self._calls(revisao="pendente")
+        assert not any(c[0] == "is_" for c in member)
 
     def _admin_calls(self, **kw):
         db = _SpyDB()

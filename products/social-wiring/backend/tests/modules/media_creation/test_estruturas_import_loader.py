@@ -190,6 +190,24 @@ def test_an_existing_profile_is_left_untouched():
     assert "criador.sintetico0" not in store.perfil_nomes
 
 
+def test_an_opt_out_registered_during_the_run_is_rechecked_before_the_profile_is_written():
+    """F3: the plan-time read does not see it; the per-profile re-check does -- no profile, no Estrutura."""
+    store = FakeStore()
+    store.optouts_ja_registrados = {"criador.sintetico0"}
+    c = run(store, "referencia", [linha_ref(1, perfil="criador.sintetico0"), linha_ref(2, perfil="criador.livre")])
+    assert "criador.sintetico0" not in store.perfis_ and "criador.livre" in store.perfis_
+    assert (c.estruturas_criadas, c.estruturas_ignoradas, c.perfis_criados) == (1, 1, 1)
+    assert c.ignoradas_motivos == {"perfil_optout": 1}
+
+
+def test_an_opt_out_that_wins_the_race_inside_the_creation_rpc_ignores_the_rows_and_never_counts_the_profile():
+    store = FakeStore()
+    store.optouts_tardios = {"criador.sintetico0"}
+    c = run(store, "referencia", [linha_ref(1, perfil="criador.sintetico0"), linha_ref(2, perfil="criador.sintetico0")])
+    assert store.perfis_ == {} and (c.perfis_criados, c.estruturas_criadas, c.estruturas_ignoradas) == (0, 0, 2)
+    assert c.fechado()
+
+
 def test_an_opted_out_handle_is_skipped_for_both_files_and_creates_no_profile():
     store = FakeStore(optouts={"criador.sintetico0"})
     c = run(store, "referencia", [linha_ref(1, perfil="criador.sintetico0"), linha_ref(2, perfil="criador.livre")])

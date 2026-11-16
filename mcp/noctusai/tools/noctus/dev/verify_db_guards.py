@@ -13041,7 +13041,7 @@ BEGIN
   INSERT INTO {_SW_SCHEMA}.cs_estruturas (perfil_id, viral_id, formula_headline, formato, objetivos, status, origem)
   VALUES (v_perfil, v_viral, 'noc probe', 'reels', ARRAY['alcance']::text[], 'ativa', 'manual') RETURNING id INTO v_est;
   INSERT INTO {_SW_SCHEMA}.cs_estrutura_eventos (estrutura_id, tipo, ator_tipo, versao) VALUES (v_est, 'criada', 'admin', 1) RETURNING id INTO v_ev;
-  INSERT INTO {_SW_SCHEMA}.cs_perfil_eventos (perfil_id, handle, tipo, ator_tipo) VALUES (v_perfil, 'noc.probe.plat', 'criado', 'admin') RETURNING id INTO v_pev;
+  INSERT INTO {_SW_SCHEMA}.cs_perfil_eventos (perfil_id, tipo, ator_tipo) VALUES (v_perfil, 'criado', 'admin') RETURNING id INTO v_pev;
   BEGIN
 {statements}
 {pass_branch}
@@ -13081,13 +13081,13 @@ _SW_351_PROBES: tuple[GuardProbe, ...] = (
     ),
     _sw351_probe(
         probe_id="sw351_perfil_eventos_tipo_valido", guard_name="cs_perfil_eventos_tipo_check",
-        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_perfil_eventos (perfil_id, handle, tipo, ator_tipo) VALUES (v_perfil, 'noc.probe.plat', 'inventado', 'admin');",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_perfil_eventos (perfil_id, tipo, ator_tipo) VALUES (v_perfil, 'inventado', 'admin');",
         permitted_msg="a profile event of an unknown type was recorded",
         rationale="Event types are a closed enum so every metric over them has one definition.",
     ),
     _sw351_probe(
         probe_id="sw351_perfil_eventos_ator_valido", guard_name="cs_perfil_eventos_ator_tipo_check",
-        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_perfil_eventos (perfil_id, handle, tipo, ator_tipo) VALUES (v_perfil, 'noc.probe.plat', 'criado', 'inventado');",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_perfil_eventos (perfil_id, tipo, ator_tipo) VALUES (v_perfil, 'criado', 'inventado');",
         permitted_msg="a profile event of an unknown actor kind was recorded",
         rationale="Actor kinds are a closed enum: an admin write and a system write are told apart.",
     ),
@@ -13159,11 +13159,74 @@ _SW_351_PROBES: tuple[GuardProbe, ...] = (
         permitted_msg="the load created a profile twice-called, once",
         after_ok=(
             f"    IF (SELECT count(*) FROM {_SW_SCHEMA}.cs_perfis_monitorados WHERE handle = 'noc.probe.novo' AND org_id IS NULL AND monitorar = false) <> 1\n"
-            f"       OR (SELECT count(*) FROM {_SW_SCHEMA}.cs_perfil_eventos WHERE handle = 'noc.probe.novo' AND tipo IN ('criado', 'importado') AND ator_tipo = 'sistema_import') <> 2 THEN\n"
+            f"       OR (SELECT count(*) FROM {_SW_SCHEMA}.cs_perfil_eventos ev JOIN {_SW_SCHEMA}.cs_perfis_monitorados pf ON pf.id = ev.perfil_id"
+            " WHERE pf.handle = 'noc.probe.novo' AND ev.tipo IN ('criado', 'importado') AND ev.ator_tipo = 'sistema_import') <> 2 THEN\n"
             "      RAISE EXCEPTION 'NOC_PROBE:blocked: the profile create is not idempotent or wrote the wrong events';\n"
             "    END IF;"
         ),
         rationale="The Estruturas load re-runs: creating the same library profile twice must yield one profile and one criado + importado pair.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_plataforma_criar_recusa_optout", guard_name="perfil_optout",
+        statements=(f"    INSERT INTO {_SW_SCHEMA}.cs_biblioteca_optouts (handle, origem) VALUES ('noc.probe.optout', 'admin');\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_perfil_plataforma_criar('noc.probe.optout', 'Nome', 'manual', 'admin', NULL, NULL, true, 'ativo');"),
+        permitted_msg="a library profile was created for a creator who opted out",
+        rationale="F3: the opt-out registry is checked INSIDE the creation transaction, so a registration racing an admin add / the load can never be written past.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_minimizar_zera_foto_e_seguidores", guard_name="cs_perfil_minimizar", kind="write_allowed",
+        statements=(f"    UPDATE {_SW_SCHEMA}.cs_perfis_monitorados SET foto_path = 'platform/noc/foto.jpg', seguidores = 1234 WHERE id = v_perfil;\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_perfil_minimizar(v_perfil, NULL, 'sistema');\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_perfil_minimizar(v_perfil, NULL, 'sistema');"),
+        permitted_msg="a retained profile was minimised once",
+        after_ok=(
+            f"    IF EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_perfis_monitorados WHERE id = v_perfil AND (foto_path IS NOT NULL OR seguidores IS NOT NULL))\n"
+            f"       OR (SELECT count(*) FROM {_SW_SCHEMA}.cs_perfil_eventos WHERE perfil_id = v_perfil AND tipo = 'minimizado') <> 1 THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the profile kept its photo / followers or the minimisation was not recorded exactly once';\n"
+            "    END IF;"
+        ),
+        rationale="Owner decision 2026-11-15 (#4): a profile retained only for its Estruturas drops photo + follower count, once, with an event.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_revisao_desuso_sinaliza_uma_vez", guard_name="cs_estruturas_revisao_desuso", kind="write_allowed",
+        statements=(f"    UPDATE {_SW_SCHEMA}.cs_estruturas SET created_at = now() - interval '30 months', updated_at = now() - interval '30 months' WHERE id = v_est;\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_estruturas_revisao_desuso(24);\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_estruturas_revisao_desuso(24);"),
+        permitted_msg="an Estrutura unused for 30 months was flagged for review once",
+        after_ok=(
+            f"    IF NOT EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_estruturas WHERE id = v_est AND status = 'ativa' AND revisao_desuso_em IS NOT NULL)\n"
+            f"       OR (SELECT count(*) FROM {_SW_SCHEMA}.cs_estrutura_eventos WHERE estrutura_id = v_est AND tipo = 'revisao_por_desuso_sinalizada') <> 1 THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the review flag is missing, repeated, or the Estrutura was archived';\n"
+            "    END IF;"
+        ),
+        rationale="Owner decision 2026-11-15 (#2): 24 months unused = flagged for ADMIN review, once per window, never auto-archived.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_rascunho_automatico_expira", guard_name="cs_estruturas_rascunhos_expirar", kind="write_allowed",
+        statements=(f"    UPDATE {_SW_SCHEMA}.cs_estruturas SET status = 'rascunho', origem = 'viral_auto', created_at = now() - interval '100 days', updated_at = now() - interval '100 days' WHERE id = v_est;\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_estruturas_rascunhos_expirar(90);"),
+        permitted_msg="an unpublished auto-draft older than the retention window was deleted with its event",
+        after_ok=(
+            f"    IF EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_estruturas WHERE id = v_est)\n"
+            f"       OR (SELECT count(*) FROM {_SW_SCHEMA}.cs_estrutura_eventos WHERE estrutura_id = v_est AND tipo = 'rascunho_expirado') <> 1 THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the stale auto-draft survived or left no content-free event';\n"
+            "    END IF;"
+        ),
+        rationale="EST-5 legal review: an AI draft nobody published within the retention window is third-party-derived text with no curator; it is erased, content-free event left.",
+    ),
+    GuardProbe(
+        id="sw351_perfil_eventos_sem_handle", product="social-wiring", schema=_SW_SCHEMA,
+        guard_name="cs_perfil_eventos_no_handle", kind="state_assertion", migrations=(_SW_351_MIGRATION,),
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                "SELECT count(*) FROM information_schema.columns"
+                f" WHERE table_schema = '{_SW_SCHEMA}' AND table_name = 'cs_perfil_eventos' AND column_name = 'handle'"
+                " INTO v_count;"
+            ),
+            clean_message="cs_perfil_eventos carries no handle column",
+            violation_message_prefix="cs_perfil_eventos still has a handle column -",
+        ),
+        rationale="Owner decision 2026-11-15 (#1): a purged profile's history must not say who it was.",
     ),
     GuardProbe(
         id="sw351_biblioteca_sem_grant_navegador", product="social-wiring", schema=_SW_SCHEMA,

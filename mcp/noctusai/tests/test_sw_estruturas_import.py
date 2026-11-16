@@ -15,6 +15,7 @@ if str(MCP_ROOT) not in sys.path:
 from tools.noctus.sw import estruturas_import as tool  # noqa: E402
 
 TOKEN = "platform_admin_session_token_value"
+LOTE = "00000000-0000-4000-8000-0000000000a1"
 SENTINELA = "ZZ-SENTINELA-TEXTO"
 DOC = [{"corestudio_id": "1", "perfil": "criador", "formula_headline": f"{SENTINELA} fórmula", "formato": "reels", "objetivos": ["alcance"],
         "blocos": [{"ordem": 1, "nome_original": f"{SENTINELA} bloco", "nota": "", "repeticoes": 1, "tipo": "Headline", "tempo": "0–3s", "instrucao": f"{SENTINELA} i"}],
@@ -55,6 +56,39 @@ def test_not_configured_and_bad_arguments_are_typed_errors(monkeypatch):
     assert tool.estruturas_import("nope")["error"]["codigo"] == "acao_invalida"
     monkeypatch.delenv("NOCTUS_SW_TOKEN")
     assert tool.estruturas_import("plan")["error"]["codigo"] == "nao_configurado"
+
+
+@pytest.mark.parametrize("url", ["http://sw.test", "http://evil.example", "ftp://sw.test", "https://user:pw@sw.test", "sw.test", "//sw.test"])
+def test_a_non_https_base_url_is_refused_before_any_request_leaves_with_the_token(monkeypatch, arquivo, url):
+    """F8: the admin's bearer travels in every request; only https (http only to loopback) is accepted."""
+    monkeypatch.setenv("NOCTUS_SW_URL", url)
+    out = tool.estruturas_import("status", _transport=_t(lambda r: pytest.fail("a request was sent")))
+    assert out["error"]["codigo"] == "url_insegura"
+
+
+@pytest.mark.parametrize("url", ["https://sw.test", "http://localhost:8011", "http://127.0.0.1:8011"])
+def test_https_and_loopback_http_base_urls_are_accepted(monkeypatch, url):
+    monkeypatch.setenv("NOCTUS_SW_URL", url)
+    out = tool.estruturas_import("status", _transport=_t(lambda r: httpx.Response(200, json={"data": {"items": []}})))
+    assert out == {"status": "ok", "importacoes": []}
+
+
+@pytest.mark.parametrize("bad", ["../../admin", "lote-1", "123", "00000000-0000-4000-8000-00000000000g", "a/b", "?x=1"])
+def test_importacao_id_must_be_a_uuid_before_it_reaches_the_path(bad):
+    out = tool.estruturas_import("status", importacao_id=bad, _transport=_t(lambda r: pytest.fail("a request was sent")))
+    assert out["error"]["codigo"] == "importacao_id_invalido"
+
+
+def test_a_uuid_importacao_id_is_requested_by_path():
+    seen = []
+    ident = "00000000-0000-4000-8000-000000000001"
+
+    def handler(req):
+        seen.append(req.url.path)
+        return httpx.Response(200, json={"data": {**RELATORIO, "id": ident}})
+
+    assert tool.estruturas_import("status", importacao_id=ident, _transport=_t(handler))["status"] == "ok"
+    assert seen == [f"/api/media-creation/estruturas/importacoes/{ident}"]
 
 
 def test_plan_posts_a_dry_run_with_the_parsed_document_and_returns_counts_only(arquivo):
@@ -123,14 +157,14 @@ def test_status_polls_one_run_or_lists_the_latest(arquivo):
 
     def handler(req):
         paths.append(req.url.path)
-        if req.url.path.endswith("lote-1"):
+        if req.url.path.endswith(LOTE):
             return httpx.Response(200, json={"data": {**RELATORIO, "status": "concluida", "dry_run": False}})
         return httpx.Response(200, json={"data": {"items": [RELATORIO, RELATORIO], "total": 2}})
 
-    um = tool.estruturas_import("status", importacao_id="lote-1", _transport=_t(handler))
+    um = tool.estruturas_import("status", importacao_id=LOTE, _transport=_t(handler))
     assert um["relatorio"]["status"] == "concluida"
     lista = tool.estruturas_import("status", _transport=_t(handler))
-    assert len(lista["importacoes"]) == 2 and paths == ["/api/media-creation/estruturas/importacoes/lote-1", "/api/media-creation/estruturas/importacoes"]
+    assert len(lista["importacoes"]) == 2 and paths == [f"/api/media-creation/estruturas/importacoes/{LOTE}", "/api/media-creation/estruturas/importacoes"]
 
 
 def test_an_unreadable_file_reports_only_the_error_class(tmp_path):

@@ -204,6 +204,7 @@ class TestDepoisDeClassificar:
         assert v["classificacao_status"] == "concluida" and v["gancho"]  # the classification stands
         assert calls == ["v1"]
         ev = db.from_("cs_perfil_eventos").select("*").execute().data
-        assert [(e["tipo"], e["perfil_id"], e["viral_id"], e["ator_tipo"], e["handle"]) for e in ev] == [
-            ("pos_classificacao_falhou", PID, "v1", "sistema", "alvo")]
+        assert [(e["tipo"], e["perfil_id"], e["viral_id"], e["ator_tipo"]) for e in ev] == [
+            ("pos_classificacao_falhou", PID, "v1", "sistema")]
+        assert all("handle" not in e for e in ev)  # the event row keeps no handle (owner decision 2026-11-15)
         assert "SEGREDO" not in json.dumps(ev)  # the event is content-free: no exception text

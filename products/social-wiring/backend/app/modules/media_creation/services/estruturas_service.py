@@ -40,10 +40,13 @@ PERFIS = "cs_perfis_monitorados"
 VIRAIS = "cs_virais"
 REFERENCIAS = "cs_biblioteca_referencias"
 
-LIST_COLS = "id,codigo,perfil_id,viral_id,formula_headline,formato,objetivos,status,updated_at,blocos_total,campos_pendentes"
+LIST_COLS = (
+    "id,codigo,perfil_id,viral_id,formula_headline,formato,objetivos,status,updated_at,blocos_total,campos_pendentes,"
+    "revisao_desuso_em"
+)
 ESTRUTURA_COLS = (
     "id,codigo,perfil_id,viral_id,formula_headline,formato,objetivos,status,origem,ref_externa,formula_herdada_de,"
-    "referencia_rotulo,formula_origem,formato_origem,objetivos_origem,versao,updated_at"
+    "referencia_rotulo,formula_origem,formato_origem,objetivos_origem,versao,updated_at,revisao_desuso_em"
 )
 BLOCO_COLS = (
     "id,ordem,tipo_id,nome,tempo,instrucao,nota,repeticoes,nome_origem,tipo_origem,tempo_origem,instrucao_origem"
@@ -197,13 +200,14 @@ class EstruturasService:
         virais = {str(v["id"]): v for v in self._rows(VIRAIS, VIRAL_COLS, (r.get("viral_id") for r in rows))}
         return perfis, virais
 
-    @staticmethod
-    def _perfil_ref(p: Optional[dict[str, Any]], perfil_id: Any) -> dict[str, Any]:
+    def _perfil_ref(self, p: Optional[dict[str, Any]], perfil_id: Any) -> dict[str, Any]:
+        """A client org sees the creator as handle + name ONLY (owner decision 2026-11-15, LGPD): the member shape has no
+        photo key at all. An admin also gets the (to-be-signed) photo."""
         p = p or {}
-        return {
-            "id": str(perfil_id), "handle": p.get("handle") or "", "nome": p.get("nome"), "foto_url": None,
-            _PATH: p.get("foto_path"),
-        }
+        out: dict[str, Any] = {"id": str(perfil_id), "handle": p.get("handle") or "", "nome": p.get("nome")}
+        if self.is_admin:
+            out.update({"foto_url": None, _PATH: p.get("foto_path")})
+        return out
 
     @staticmethod
     def _viral_ref(v: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -234,6 +238,7 @@ class EstruturasService:
     def listar(
         self, *, marca_id: Optional[str], perfil_id: Optional[str], q: Optional[str], formatos: list[str],
         objetivos: list[str], status: Optional[str], somente_pendentes_revisao: bool, limit: int, offset: int,
+        revisao: Optional[str] = None,
     ) -> dict[str, Any]:
         selecionados: Optional[set[str]] = None
         if marca_id:
@@ -252,6 +257,8 @@ class EstruturasService:
             query = query.overlaps("objetivos", list(objetivos))
         if somente_pendentes_revisao and self.is_admin:
             query = query.gt("campos_pendentes", 0)
+        if revisao == "pendente" and self.is_admin:  # the 24-month-unused review queue (admin-only; ignored for members)
+            query = query.not_.is_("revisao_desuso_em", "null")
         if q and q.strip():
             query = query.text_search("busca", q.strip(), options={"config": "portuguese", "type": "websearch"})
         res = query.order("updated_at", desc=True).order("codigo", desc=True).range(offset, offset + limit - 1).execute()
@@ -276,6 +283,7 @@ class EstruturasService:
             out["selecionada_pela_marca"] = str(row["perfil_id"]) in selecionados
         if self.is_admin:
             out["pendente_revisao"] = int(row.get("campos_pendentes") or 0) > 0
+            out["revisao_por_desuso"] = row.get("revisao_desuso_em")
         return out
 
     def detalhe(self, estrutura_id: str) -> dict[str, Any]:
@@ -473,7 +481,8 @@ async def assinar_urls(data: Any, storage: Optional[StorageBackend]) -> Any:
     for item in items:
         perfil = item.get("perfil")
         if isinstance(perfil, dict):
-            perfil["foto_url"] = await sign_thumbnail(storage, perfil.pop(_PATH, None))
+            if _PATH in perfil:  # the member shape carries no photo key: nothing to sign (and nothing to add)
+                perfil["foto_url"] = await sign_thumbnail(storage, perfil.pop(_PATH, None))
         viral = item.get("viral")
         if isinstance(viral, dict):
             viral["thumbnail_url"] = await sign_thumbnail(storage, viral.pop(_PATH, None))

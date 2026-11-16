@@ -6,6 +6,7 @@ Contract: ``projects/core-studio-build/specs/geracao-contract.md`` 2.3, 3.3, 3.4
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import timedelta
 
 import anyio
@@ -298,6 +299,10 @@ class TestLibraryLaneQueueShare:
 # ── M2: retention + L1 orphan sweep ─────────────────────────────────────────
 
 DIAS = 90
+#: Real profile ids are UUIDs: the orphan sweep only treats a UUID segment as a profile prefix (security review F1).
+UP = "00000000-0000-4000-8000-0000000000a1"
+UMORTO = "00000000-0000-4000-8000-0000000000d1"
+UORG = "00000000-0000-4000-8000-0000000000f1"
 
 
 def _seed_perfil(db, pid, *, org=None, status="ativo", inativo_desde=None, foto=None, monitorar=True):
@@ -316,8 +321,10 @@ def _seed_viral(db, vid, pid, *, org=None, thumb=None, created_at=None):
     }).execute()
 
 
-def _seed_estrutura(db, eid, pid, status="ativa"):
-    db.from_("cs_estruturas").insert({"id": eid, "perfil_id": pid, "status": status, "formula_headline": "x"}).execute()
+def _seed_estrutura(db, eid, pid, status="ativa", origem="manual", created_at=None, updated_at=None):
+    db.from_("cs_estruturas").insert({"id": eid, "perfil_id": pid, "status": status, "formula_headline": "x", "origem": origem,
+                                      **({"created_at": created_at} if created_at else {}),
+                                      **({"updated_at": updated_at or created_at} if (updated_at or created_at) else {})}).execute()
 
 
 def _mock():
@@ -400,10 +407,10 @@ class TestRetention:
                 return await super().delete(bucket=bucket, key=key)
 
         st = Flaky()
-        _seed_perfil(db, "p1", inativo_desde=(NOW - timedelta(days=DIAS + 1)).isoformat(), foto="platform/p1/foto.jpg")
-        _seed_viral(db, "v1", "p1", thumb="platform/p1/v1.jpg")
-        _put(st, f"platform/p1/foto.jpg")
-        _put(st, "platform/p1/v1.jpg")
+        _seed_perfil(db, UP, inativo_desde=(NOW - timedelta(days=DIAS + 1)).isoformat(), foto=f"platform/{UP}/foto.jpg")
+        _seed_viral(db, "v1", UP, thumb=f"platform/{UP}/v1.jpg")
+        _put(st, f"platform/{UP}/foto.jpg")
+        _put(st, f"platform/{UP}/v1.jpg")
         out = _purgar(db, st)
         assert out["purgados"] == 1 and out["blobs_falhos"] == 2
         assert _perfis(db) == {} and len(_keys(st)) == 2  # rows gone, blobs survived the outage
@@ -428,15 +435,92 @@ class TestRetentionExemptions:
     def test_a_profile_with_a_live_estrutura_is_never_purged_as_a_profile(self):
         db, st = _mock(), FakeStorageBackend()
         self._idle(db, "p1")
-        _seed_estrutura(db, "e1", "p1", "rascunho")
+        _seed_estrutura(db, "e1", "p1", "ativa")
         out = _purgar(db, st)
         assert out["purgados"] == 0 and "p1" in _perfis(db)
         assert _perfis(db)["p1"]["inativo_desde"] is None  # the idle stamp is cleared: it is retained, not idle
 
-    def test_a_library_only_profile_is_never_purged_as_a_profile(self):
+    def test_a_profile_whose_only_estrutura_is_an_unpublished_auto_draft_is_purged(self):
+        """EST-5 legal review: only ``ativa`` exempts. The draft goes with the profile (cascade, content-free event)."""
+        db, st = _mock(), FakeStorageBackend()
+        self._idle(db, "p1")
+        _seed_estrutura(db, "e1", "p1", "rascunho", origem="viral_auto")
+        out = _purgar(db, st)
+        assert out["purgados"] == 1 and _perfis(db) == {} and db.from_("cs_estruturas").select("*").execute().data == []
+        assert [e["tipo"] for e in db.from_("cs_estrutura_eventos").select("*").execute().data] == ["excluida"]
+
+    def test_any_draft_and_an_archived_estrutura_do_not_exempt_but_a_published_one_does(self):
+        for status, purged in (("rascunho", 1), ("arquivada", 1), ("ativa", 0)):
+            db, st = _mock(), FakeStorageBackend()
+            self._idle(db, "p1")
+            _seed_estrutura(db, "e1", "p1", status)
+            assert _purgar(db, st)["purgados"] == purged, status
+
+    def test_an_old_unpublished_auto_draft_is_deleted_with_a_content_free_event_and_a_fresh_or_curated_one_stays(self):
+        db = _mock()
+        _seed_perfil(db, "p1")
+        old = (NOW - timedelta(days=DIAS + 5)).isoformat()
+        fresh = (NOW - timedelta(days=3)).isoformat()
+        _seed_estrutura(db, "velho", "p1", "rascunho", origem="viral_auto", created_at=old)
+        _seed_estrutura(db, "novo", "p1", "rascunho", origem="viral_auto", created_at=fresh)
+        _seed_estrutura(db, "manual", "p1", "rascunho", origem="manual", created_at=old)
+        _seed_estrutura(db, "publicada", "p1", "ativa", origem="viral_auto", created_at=old)
+        # created long ago but an admin touched it on day 89: a draft under review is never lost (keyed on updated_at)
+        _seed_estrutura(db, "em_revisao", "p1", "rascunho", origem="viral_auto", created_at=old,
+                        updated_at=(NOW - timedelta(days=1)).isoformat())
+        assert sched.expirar_rascunhos_automaticos(db, dias=DIAS) == {"expiradas": 1, "erros": 0}
+        assert sorted(e["id"] for e in db.from_("cs_estruturas").select("id").execute().data) == ["em_revisao", "manual", "novo", "publicada"]
+        ev = db.from_("cs_estrutura_eventos").select("*").execute().data
+        assert [(e["estrutura_id"], e["tipo"], e["ator_tipo"]) for e in ev] == [("velho", "rascunho_expirado", "sistema_retencao")]
+        assert "formula" not in str(ev)  # content-free
+
+    def test_a_failing_expiry_is_logged_counted_and_the_other_sweeps_still_run(self, caplog):
+        """The RPC can fail (351 not applied yet): never a silent pass, and never a skipped orphan / import sweep."""
+        import logging
+
+        db, st = _mock(), FakeStorageBackend()
+
+        def boom(name, params=None):
+            if name == "cs_estruturas_rascunhos_expirar":
+                raise RuntimeError("function does not exist SEGREDO")
+            return db_rpc(name, params)
+
+        db_rpc = db.rpc
+        db.rpc = boom
+        _put(st, f"platform/{UMORTO}/a.jpg")
+        _put(st, f"importacoes/{UMORTO}.json")
+        with caplog.at_level(logging.ERROR):
+            assert sched.expirar_rascunhos_automaticos(db, dias=DIAS) == {"expiradas": 0, "erros": 1}
+            anyio.run(lambda: sched.run_retencao(client=lambda: db, storage=st, dias=DIAS))
+        assert any("RuntimeError" in r.getMessage() and r.levelno == logging.ERROR for r in caplog.records)
+        assert "SEGREDO" not in caplog.text  # only the exception type is logged
+        assert _keys(st) == []  # the orphan-prefix and import-document sweeps ran despite the failure
+
+    def test_monitorar_false_alone_no_longer_exempts_a_profile(self):
+        """Owner decision 2026-11-15 (#4): only a non-archived Estrutura (or a brand selection) references a profile."""
         db, st = _mock(), FakeStorageBackend()
         self._idle(db, "p1", monitorar=False)
-        assert _purgar(db, st)["purgados"] == 0 and "p1" in _perfis(db)
+        assert _purgar(db, st)["purgados"] == 1 and _perfis(db) == {}
+
+    def test_a_retained_library_only_profile_is_minimised_photo_and_followers_dropped_once(self):
+        db, st = _mock(), FakeStorageBackend()
+        self._idle(db, "p1", monitorar=False, foto="platform/p1/foto.jpg")
+        _seed_estrutura(db, "e1", "p1", "ativa")
+        _put(st, "platform/p1/foto.jpg")
+        out = _purgar(db, st)
+        assert out["minimizados"] == 1 and out["purgados"] == 0
+        p = _perfis(db)["p1"]
+        assert p["foto_path"] is None and p["seguidores"] is None and p["handle"] == "hp1"
+        assert _keys(st) == []  # the photo blob went with it
+        assert [e["tipo"] for e in db.from_("cs_perfil_eventos").select("*").execute().data] == ["minimizado"]
+        assert _purgar(db, st)["minimizados"] == 0  # idempotent: nothing left to drop, no second event
+        assert len(db.from_("cs_perfil_eventos").select("*").execute().data) == 1
+
+    def test_a_monitored_profile_with_an_estrutura_keeps_its_photo(self):
+        db, st = _mock(), FakeStorageBackend()
+        self._idle(db, "p1", monitorar=True, foto="platform/p1/foto.jpg")
+        _seed_estrutura(db, "e1", "p1", "ativa")
+        assert _purgar(db, st)["minimizados"] == 0 and _perfis(db)["p1"]["foto_path"] == "platform/p1/foto.jpg"
 
     def test_a_profile_with_only_archived_estruturas_is_purged_and_they_go_with_a_system_event(self):
         db, st = _mock(), FakeStorageBackend()
@@ -451,23 +535,29 @@ class TestRetentionExemptions:
 
     def test_old_videos_of_a_retained_profile_expire_and_their_media_with_them(self):
         db, st = _mock(), FakeStorageBackend()
-        _seed_perfil(db, "p1", monitorar=False, foto="platform/p1/foto.jpg")
+        _seed_perfil(db, "p1", monitorar=True, foto="platform/p1/foto.jpg")
+        _seed_estrutura(db, "e1", "p1", "ativa")
         _seed_viral(db, "velho", "p1", thumb="platform/p1/velho.jpg", created_at=self.OLD)
         _seed_viral(db, "novo", "p1", thumb="platform/p1/novo.jpg", created_at=self.FRESH)
-        db.from_("transcricoes").insert({"id": "t1", "contexto_tipo": "biblioteca_viral", "contexto_ref": "velho", "status": "concluida"}).execute()
+        db.from_("transcricoes").insert({"id": "t1", "contexto_tipo": "biblioteca_viral", "contexto_ref": "velho", "status": "concluida",
+                                         "storage_path": "org/user/t1.mp3", "texto": "voz"}).execute()
         for k in ("platform/p1/foto.jpg", "platform/p1/velho.jpg", "platform/p1/novo.jpg"):
             _put(st, k)
+        anyio.run(lambda: st.put(bucket="sw-transcricoes", key="org/user/t1.mp3", data=b"audio"))
         out = _purgar(db, st)
         assert out["virais_antigos"] == 1 and out["purgados"] == 0
         assert [r["id"] for r in db.from_("cs_virais").select("id").execute().data] == ["novo"]
         assert db.from_("transcricoes").select("*").execute().data == []
+        assert anyio.run(lambda: st.list_keys(bucket="sw-transcricoes", prefix="", limit=10)) == []  # the recording went too
         assert sorted(_keys(st)) == ["platform/p1/foto.jpg", "platform/p1/novo.jpg"]
         assert [(e["tipo"], e["viral_id"], e["ator_tipo"]) for e in db.from_("cs_perfil_eventos").select("*").execute().data] == [
             ("excluido", "velho", "sistema")]
+        assert all("handle" not in e for e in db.from_("cs_perfil_eventos").select("*").execute().data)
 
     def test_a_video_a_marca_selected_is_kept_even_when_old(self):
         db, st = _mock(), FakeStorageBackend()
         _seed_perfil(db, "p1", monitorar=False)
+        _seed_estrutura(db, "e1", "p1", "ativa")
         _seed_viral(db, "escolhido", "p1", created_at=self.OLD)
         _seed_viral(db, "outro", "p1", created_at=self.OLD)
         _seed_ref(db, "r1", "m1", viral="escolhido")
@@ -486,21 +576,36 @@ class TestRetentionExemptions:
 class TestOrphanSweep:
     def test_deletes_only_prefixes_whose_profile_is_gone(self):
         db, st = _mock(), FakeStorageBackend()
-        _seed_perfil(db, "vivo")
-        for k in ("platform/vivo/a.jpg", "platform/morto/a.jpg", "platform/morto/b.jpg", "outra-org/fantasma/a.jpg",
-                  f"{ORG}/legado/a.jpg"):
+        vivo, legado = "00000000-0000-4000-8000-0000000000b1", "00000000-0000-4000-8000-0000000000b2"
+        _seed_perfil(db, vivo)
+        for k in (f"platform/{vivo}/a.jpg", f"platform/{UMORTO}/a.jpg", f"platform/{UMORTO}/b.jpg", f"{UORG}/{UMORTO}/a.jpg",
+                  f"{UORG}/{legado}/a.jpg"):
             _put(st, k)
-        _seed_perfil(db, "legado", org=ORG)  # a LEGACY per-org prefix is swept by the same rule
+        _seed_perfil(db, legado, org=UORG)  # a LEGACY per-org prefix is swept by the same rule
         out = anyio.run(lambda: sched.varrer_blobs_orfaos(db, st))
-        assert out["orfaos"] == 2 and out["blobs_apagados"] == 3
-        assert sorted(_keys(st)) == sorted([f"{ORG}/legado/a.jpg", "platform/vivo/a.jpg"])
+        assert out["orfaos"] == 2 and out["blobs_apagados"] == 3 and out["segmentos_ignorados"] == 0
+        assert sorted(_keys(st)) == sorted([f"{UORG}/{legado}/a.jpg", f"platform/{vivo}/a.jpg"])
 
-    def test_run_retencao_never_raises_and_does_both_jobs(self):
+    def test_a_non_uuid_segment_is_skipped_and_counted_never_cast_to_a_uuid_column(self):
+        """F1: ``importacoes/{lote}.json`` (and any stray object) used to crash the sweep with 22P02 when its segment was cast
+        to a UUID column. Only a UUID (or ``platform``) segment is a profile prefix; the rest is skipped AND counted."""
+        db, st = _mock(), FakeStorageBackend()
+        for k in (f"importacoes/{UMORTO}.json", "importacoes/lixo.json", "solto.txt", f"platform/nao-uuid/a.jpg",
+                  f"platform/{UMORTO}/a.jpg"):
+            _put(st, k)
+        out = anyio.run(lambda: sched.varrer_blobs_orfaos(db, st))
+        assert out["orfaos"] == 1 and out["blobs_apagados"] == 1
+        assert out["segmentos_ignorados"] == 2  # `solto.txt` at the root and `nao-uuid` under platform/ (importacoes/ is its own sweep)
+        assert sorted(_keys(st)) == sorted([f"importacoes/{UMORTO}.json", "importacoes/lixo.json", "solto.txt", "platform/nao-uuid/a.jpg"])
+
+    def test_run_retencao_never_raises_and_does_all_the_jobs(self):
         db, st = _mock(), FakeStorageBackend()
         _seed_perfil(db, "p1", inativo_desde=(NOW - timedelta(days=DIAS + 1)).isoformat())
-        _put(st, "platform/zumbi/a.jpg")
+        _put(st, f"platform/{UMORTO}/a.jpg")
         anyio.run(lambda: sched.run_retencao(client=lambda: db, storage=st, dias=DIAS))
         assert _perfis(db) == {} and _keys(st) == []
+        assert db.rpc.revisao_calls == [{"p_meses": 24}]  # the 24-month review runs with the nightly retention
+        assert db.rpc.rascunhos_calls == [{"p_dias": DIAS}]  # ... and so does the auto-draft expiry
 
         def boom():
             raise RuntimeError("db down")

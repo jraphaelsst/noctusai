@@ -18,6 +18,7 @@ from noctusai_lib.integrations.media.safe_fetch import FakeSafeFetcher, FetchRes
 from noctusai_lib.integrations.storage import FakeStorageBackend
 
 from app.dependencies import get_platform_admin_check
+from app.modules.media_creation.services import biblioteca_service as svc
 from app.modules.media_creation.routers import biblioteca as router_mod
 from app.modules.media_creation.routers.biblioteca import (
     get_biblioteca_fetcher,
@@ -73,6 +74,7 @@ class State:
 def bib(client):
     st = State(client)
     db = st.db
+    db.rpc = _PurgeRpc(db)  # the 351 RPC doubles (profile create / purge / minimise / review)
     for mid, org in ((MARCA, ORG), (MARCA_B, ORG), (FOREIGN_MARCA, "other-org")):
         db.from_("marcas").insert({"id": mid, "org_id": org, "name": f"M {mid[:4]}"}).execute()
     db.from_("integration_accounts").insert({
@@ -251,7 +253,7 @@ class TestDetalhe:
         assert d["nichos"][0]["id"] == 1 and d["profissoes"][0]["id"] == 2 and d["formatos"][0]["id"] == 8
         assert d["gatilho"] == "misterio" and d["estrutura_utilizavel"] is True
         assert d["transcricao_status"] == "concluida" and d["caption"] == "legenda longa"
-        assert d["origem_inclusao"] == "sync" and d["estruturas"] == []
+        assert "origem_inclusao" not in d and d["estruturas"] == []  # how a video entered the library is an admin fact (F9)
 
     def test_detail_lists_the_estruturas_of_the_video_active_only_for_a_member(self, bib, client):
         for eid, codigo, status in (("e1", 5, "ativa"), ("e2", 6, "rascunho")):
@@ -308,13 +310,36 @@ class _Exec:
 
 
 class _PurgeRpc:
-    """A double of the ``cs_perfil_purgar`` SQL function (its real behaviour is proven on PGlite by the 351 probes): same
-    arguments, same refusal, same cascade over the mock tables."""
+    """A double of the 351 library RPCs (their real behaviour is proven on PGlite by the 351 probes): same arguments, same
+    refusals, same cascades over the mock tables. ``calls`` = the ``cs_perfil_purgar`` calls; the other RPCs log into
+    ``criar_calls`` / ``minimizar_calls`` / ``revisao_calls``. NO event row carries a handle (owner decision 2026-11-15)."""
 
     def __init__(self, db):
-        self.db, self.calls = db, []
+        self.db, self.calls, self.criar_calls, self.minimizar_calls, self.revisao_calls, self.rascunhos_calls = db, [], [], [], [], []
+        self.revisao_resposta = {"sinalizadas": 0, "liberadas": 0}
+
+    def _perfil(self, pid):
+        return next((r for r in self.db.from_("cs_perfis_monitorados").select("*").execute().data if r["id"] == pid), None)
 
     def __call__(self, name, params=None):
+        if name == "cs_perfil_plataforma_criar":
+            return self._criar(dict(params))
+        if name == "cs_perfil_minimizar":
+            return self._minimizar(dict(params))
+        if name == "cs_estruturas_rascunhos_expirar":
+            self.rascunhos_calls.append(dict(params))
+            corte = (datetime.now(timezone.utc) - timedelta(days=params["p_dias"])).isoformat()
+            vel = [e for e in self.db.from_("cs_estruturas").select("*").execute().data
+                   if e.get("status") == "rascunho" and e.get("origem") == "viral_auto"
+                   and (e.get("updated_at") or e.get("created_at") or "9") < corte]
+            for e in vel:
+                self.db.from_("cs_estrutura_eventos").insert({"estrutura_id": e["id"], "perfil_id": e["perfil_id"],
+                                                              "tipo": "rascunho_expirado", "ator_tipo": "sistema_retencao"}).execute()
+                self.db.from_("cs_estruturas").delete().eq("id", e["id"]).execute()
+            return _Exec(data={"expiradas": len(vel)})
+        if name == "cs_estruturas_revisao_desuso":
+            self.revisao_calls.append(dict(params))
+            return _Exec(data=dict(self.revisao_resposta))
         assert name == "cs_perfil_purgar", name
         p = dict(params)
         self.calls.append(p)
@@ -329,7 +354,7 @@ class _PurgeRpc:
             self.db.from_("cs_estrutura_eventos").insert({"estrutura_id": e["id"], "perfil_id": pid, "tipo": "excluida",
                                                           "ator_tipo": "admin" if p["p_ator_tipo"] == "admin" else "sistema_retencao"}).execute()
             self.db.from_("cs_estruturas").delete().eq("id", e["id"]).execute()
-        self.db.from_("cs_perfil_eventos").insert({"perfil_id": pid, "handle": perfil["handle"], "tipo": p["p_tipo"],
+        self.db.from_("cs_perfil_eventos").insert({"perfil_id": pid, "tipo": p["p_tipo"],
                                                    "ator_id": p["p_ator"], "ator_tipo": p["p_ator_tipo"]}).execute()
         # the FK cascades of the real table: videos, and every brand selection of the profile or of one of its videos
         virais = [v["id"] for v in self.db.from_("cs_virais").select("id").eq("perfil_id", pid).execute().data]
@@ -339,6 +364,37 @@ class _PurgeRpc:
         self.db.from_("cs_biblioteca_referencias").delete().eq("perfil_id", pid).execute()
         self.db.from_("cs_perfis_monitorados").delete().eq("id", pid).execute()
         return _Exec(data={"perfil": True, "estruturas": len(ests), "virais": len(virais)})
+
+    def _criar(self, p):
+        self.criar_calls.append(p)
+        h = p["p_handle"]
+        if any(o["handle"] == h for o in self.db.from_("cs_biblioteca_optouts").select("*").execute().data):
+            return _Exec(exc=FakeApiError("perfil_optout"))
+        ja = next((r for r in self.db.from_("cs_perfis_monitorados").select("*").execute().data
+                   if r.get("org_id") is None and r["handle"] == h), None)
+        if ja is not None:
+            return _Exec(data={"id": ja["id"], "handle": h, "criado": False})
+        pid = str(uuid.uuid4())
+        self.db.from_("cs_perfis_monitorados").insert({
+            "id": pid, "org_id": None, "rede": "instagram", "handle": h, "nome": p["p_nome"], "status": p["p_status"],
+            "monitorar": p["p_monitorar"], "conta_descoberta_id": p["p_conta"], "erro_codigo": p["p_erro_codigo"],
+            "erro_mensagem": p["p_erro_mensagem"], "created_by": p["p_ator"], "metrica_base": "engajamento",
+        }).execute()
+        for tipo in ("criado",) + (("importado",) if p["p_origem"] == "import" else ()):
+            self.db.from_("cs_perfil_eventos").insert({"perfil_id": pid, "tipo": tipo, "ator_id": p["p_ator"],
+                                                       "ator_tipo": p["p_ator_tipo"], "importacao_id": p["p_importacao"]}).execute()
+        return _Exec(data={"id": pid, "handle": h, "criado": True})
+
+    def _minimizar(self, p):
+        self.minimizar_calls.append(p)
+        perfil = self._perfil(p["p_perfil"])
+        if perfil is None or (not perfil.get("foto_path") and perfil.get("seguidores") is None):
+            return _Exec(data={"minimizado": False, "foto_path": None})
+        foto = perfil.get("foto_path")  # read BEFORE the update (the mock hands out live row dicts)
+        self.db.from_("cs_perfis_monitorados").update({"foto_path": None, "seguidores": None}).eq("id", p["p_perfil"]).execute()
+        self.db.from_("cs_perfil_eventos").insert({"perfil_id": p["p_perfil"], "tipo": "minimizado", "ator_id": p["p_ator"],
+                                                   "ator_tipo": p["p_ator_tipo"]}).execute()
+        return _Exec(data={"minimizado": True, "foto_path": foto})
 
 
 class TestPerfisLeitura:
@@ -350,7 +406,8 @@ class TestPerfisLeitura:
         assert [p["handle"] for p in d["items"]] == ["alvo1", "alvo2", "legado"]
         p1 = d["items"][0]
         assert (p1["virais"], p1["posts"]) == (1, 1) and p1["ingestao_ativa"] is True and p1["optout_contato"]
-        assert p1["monitorar"] is True and p1["metrica_base"] == "engajamento" and p1["mediana_metrica"] == 100.0
+        # a client org sees handle + name ONLY (owner decision 2026-11-15; security review F9)
+        assert set(p1) == {"id", "handle", "nome", "virais", "posts", "ingestao_ativa", "optout_contato"}
         assert "selecionado_pela_marca" not in p1  # only when marca_id is given
         assert [p["handle"] for p in client.get(f"{BASE}/perfis?q=ALVO2").json()["data"]["items"]] == ["alvo2"]
 
@@ -369,7 +426,7 @@ class TestPerfisLeitura:
 
     def test_a_member_never_sees_an_ingestion_error_an_admin_does(self, bib, client):
         item = lambda: next(p for p in client.get(f"{BASE}/perfis").json()["data"]["items"] if p["id"] == P2)
-        assert item()["erro_mensagem"] is None
+        assert "erro_mensagem" not in item()
         bib.admin = True
         assert item()["erro_mensagem"] == "Configure a chave do Apify"
 
@@ -385,6 +442,28 @@ class TestPerfisLeitura:
         body = client.get(f"{BASE}/perfis/{P1}").text
         for forbidden in ("created_by", "conta_descoberta_id", "org_id", "nome_editado", "ig_user_id"):
             assert forbidden not in body
+
+
+    def test_a_member_response_carries_handle_and_name_only_serialise_and_grep(self, bib, client):
+        """Owner decision 2026-11-15 + security review F9: no photo, follower count, status, monitoring flag, sync metrics
+        or inclusion origin reaches a client org, on ANY route that embeds a creator."""
+        bib.db.from_("cs_perfis_monitorados").update({"foto_path": f"platform/{P1}/foto.jpg", "seguidores": 98765}).eq("id", P1).execute()
+        _add_ref(bib, MARCA, modo="perfil", perfil_id=P1)
+        _add_ref(bib, MARCA, modo="video", viral_id=V1)
+        bodies = [
+            client.get(f"{BASE}/perfis").text, client.get(f"{BASE}/perfis/{P1}").text,
+            client.get(f"{BASE}/perfis?marca_id={MARCA}").text, client.get(f"{BASE}/referencias?marca_id={MARCA}").text,
+            client.get(f"{BASE}/virais/{V1}?marca_id={MARCA}").text, client.get(f"{BASE}/virais?marca_id={MARCA}").text,
+        ]
+        for body in bodies:
+            for forbidden in ("foto_url", "foto_path", "seguidores", "98765", "monitorar", "metrica_base", "mediana_metrica",
+                              "ultima_sync_em", "origem_inclusao", "erro_mensagem", "\"status\""):
+                assert forbidden not in body, forbidden
+            assert "alvo1" in body  # the handle IS what a member gets
+        bib.admin = True  # an admin keeps everything
+        d = client.get(f"{BASE}/perfis/{P1}").json()["data"]
+        assert d["seguidores"] == 98765 and d["monitorar"] is True and d["status"] == "ativo" and "foto_url" in d
+        assert client.get(f"{BASE}/virais/{V1}?marca_id={MARCA}").json()["data"]["origem_inclusao"] == "sync"
 
 
 class TestPerfisAdmin:
@@ -419,8 +498,8 @@ class TestPerfisAdmin:
         assert [j.payload["perfil_id"] for j in bib.queued("biblioteca.sync_perfil")] == [d["id"]]
         row = _perfil_row(bib, d["id"])
         assert row["org_id"] is None and row["conta_descoberta_id"] == ACC and row["monitorar"] is True
-        assert [(e["tipo"], e["handle"], e["ator_tipo"], e["perfil_id"]) for e in _eventos(bib, "criado")] == [
-            ("criado", "novo.perfil", "admin", d["id"])]
+        assert [(e["tipo"], e["ator_tipo"], e["perfil_id"]) for e in _eventos(bib, "criado")] == [("criado", "admin", d["id"])]
+        assert all("handle" not in e for e in _eventos(bib))  # the event row keeps no handle (owner decision 2026-11-15)
         assert _refs(bib) == []  # a library profile is not a brand's selection
 
     def test_criar_library_only_is_never_synced(self, bib, client):
@@ -540,14 +619,17 @@ class TestPerfisAdmin:
         anyio.run(lambda: bib.storage.put(bucket="sw-biblioteca", key=f"platform/{P1}/{V1}.jpg", data=b"x"))
         anyio.run(lambda: bib.storage.put(bucket="sw-biblioteca", key=f"platform/{P1}/foto.jpg", data=b"x"))
         bib.db.from_("cs_perfis_monitorados").update({"foto_path": f"platform/{P1}/foto.jpg"}).eq("id", P1).execute()
-        bib.db.from_("transcricoes").insert({"id": "t1", "org_id": ORG, "contexto_tipo": "biblioteca_viral", "contexto_ref": V1, "status": "concluida"}).execute()
+        bib.db.from_("transcricoes").insert({"id": "t1", "org_id": ORG, "contexto_tipo": "biblioteca_viral", "contexto_ref": V1,
+                                             "status": "processando", "storage_path": "o/u/t1.mp3", "texto": "fala"}).execute()
         bib.db.from_("transcricoes").insert({"id": "t2", "org_id": ORG, "contexto_tipo": "cerebro_resposta", "contexto_ref": V1, "status": "concluida"}).execute()
+        anyio.run(lambda: bib.storage.put(bucket="sw-transcricoes", key="o/u/t1.mp3", data=b"audio"))
         assert client.delete(f"{BASE}/perfis/{P1}").status_code == 204
         assert anyio.run(lambda: bib.storage.list_keys(bucket="sw-biblioteca")) == []
         ids = {r["id"] for r in bib.db.from_("transcricoes").select("*").execute().data}
-        assert ids == {"t2"}  # only the library's transcript went; another context's stays
+        assert ids == {"t2"}  # the library's transcript went, even a job still `processando` (F2); another context's stays
+        assert anyio.run(lambda: bib.storage.list_keys(bucket="sw-transcricoes")) == []  # ... and its recording with it
         assert P1 not in {r["id"] for r in bib.db.from_("cs_perfis_monitorados").select("*").execute().data}
-        assert [(e["tipo"], e["handle"]) for e in _eventos(bib)] == [("excluido", "alvo1")]
+        assert [e["tipo"] for e in _eventos(bib)] == ["excluido"] and all("handle" not in e for e in _eventos(bib))
 
     def test_delete_with_estruturas_is_409_with_the_count_and_destroys_nothing(self, bib, client):
         anyio.run(lambda: bib.storage.put(bucket="sw-biblioteca", key=f"platform/{P1}/{V1}.jpg", data=b"x"))
@@ -726,6 +808,23 @@ class TestPorLink:
         assert bib.queued("biblioteca.sync_perfil") == []  # library-only: never scraped
         assert [(e["tipo"], e["ator_tipo"]) for e in _eventos(bib)] == [("criado", "admin"), ("video_adicionado_por_link", "admin")]
         assert _eventos(bib, "video_adicionado_por_link")[0]["viral_id"] == v["id"]
+
+    def test_the_stored_permalink_is_the_canonical_one_never_what_the_scraper_returned(self, bib, client):
+        """F10: the scraper's own ``url`` is untrusted; the stored permalink is re-composed from the validated shortcode."""
+        bib.runner = FakeActorRunner({ACTOR: [_apify_item(url="javascript:alert(1)")]})
+        assert self._post(client, "https://instagram.com/reels/CODE12345/?igsh=abc").status_code == 201
+        v = next(x for x in self._virais(bib) if x.get("ig_shortcode") == "CODE12345")
+        assert v["permalink"] == "https://www.instagram.com/reel/CODE12345/"
+        assert v["permalink"].startswith(svc.PERMALINK_PREFIXO)
+
+    def test_the_creation_door_maps_the_rpcs_opt_out_refusal_to_a_409(self, bib):
+        """F3: the registry is read INSIDE ``cs_perfil_plataforma_criar`` (proven on PGlite by probe
+        ``sw351_perfil_plataforma_criar_recusa_optout``); the service maps that refusal, whatever its own pre-check saw."""
+        bib.db.from_("cs_biblioteca_optouts").insert({"id": str(uuid.uuid4()), "handle": "criador.novo", "origem": "dpo"}).execute()
+        with pytest.raises(svc.BibliotecaError) as exc:
+            svc.criar_perfil_plataforma(bib.db, handle="criador.novo", ator_id="u")
+        assert exc.value.status == 409 and exc.value.code == "perfil_optout"
+        assert [p for p in bib.db.from_("cs_perfis_monitorados").select("*").execute().data if p["handle"] == "criador.novo"] == []
 
     def test_a_post_that_is_not_a_video_goes_straight_to_classification(self, bib, client):
         bib.runner = FakeActorRunner({ACTOR: [_apify_item(reel=False)]})

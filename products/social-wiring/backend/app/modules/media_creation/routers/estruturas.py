@@ -65,6 +65,7 @@ async def listar_estruturas(
     objetivo: list[Objetivo] = Query(default=[], max_length=4),
     status: Optional[Literal["ativa", "rascunho", "arquivada", "todas"]] = None,
     somente_pendentes_revisao: bool = False,
+    revisao: Optional[Literal["pendente"]] = None,
     limit: int = Query(default=20, ge=1, le=50),
     offset: int = Query(default=0, ge=0, le=100_000),
     auth=Depends(get_current_user_org),
@@ -76,7 +77,7 @@ async def listar_estruturas(
         data = await run_blocking(
             svc.listar, marca_id=str(marca_id) if marca_id else None, perfil_id=str(perfil_id) if perfil_id else None,
             q=q, formatos=list(formato), objetivos=list(objetivo), status=status,
-            somente_pendentes_revisao=somente_pendentes_revisao, limit=limit, offset=offset,
+            somente_pendentes_revisao=somente_pendentes_revisao, limit=limit, offset=offset, revisao=revisao,
         )
     except EstruturaError as exc:
         raise_http(exc)

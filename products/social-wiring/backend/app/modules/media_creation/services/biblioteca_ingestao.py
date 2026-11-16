@@ -375,6 +375,20 @@ def _assert_perfil_vivo(ports: IngestaoPorts, pid: str) -> None:
         raise _PerfilRemovido(pid)
 
 
+async def _perfil_do_viral_em_optout(ports: IngestaoPorts, viral: dict[str, Any]) -> bool:
+    """F3: re-check the creator's opt-out at the START of every per-video job (transcribe, classify) -- a creator who opted
+    out after the video was queued must cost no download, no transcription and no model call. A blocked profile is erased
+    through :func:`purgar_perfil` (video, Estruturas, blobs, transcripts), exactly like the sync does. ``True`` = stop."""
+    rows = ports.db.table(PERFIS).select("*").eq("id", str(viral["perfil_id"])).execute().data
+    if not rows or not biblioteca_optout.esta_bloqueado(ports.db, str(rows[0]["handle"])):
+        return False
+    logger.info("biblioteca: perfil=%s em opt-out; apagado sem processar o vídeo %s", rows[0]["id"], viral["id"])
+    await purgar_perfil(
+        ports.db, ports.storage, rows[0], ator_tipo="sistema", tipo_evento="optout_purgado", apagar_estruturas=True,
+    )
+    return True
+
+
 # ── biblioteca.sync_perfil ──────────────────────────────────────────────────
 
 
@@ -410,9 +424,8 @@ async def _disparar_depois_de_classificar(ports: "IngestaoPorts", viral: dict[st
         except Exception:  # noqa: BLE001 - recorded below; the classification job must not fail because of a consumer
             logger.exception("biblioteca: depois_de_classificar %s falhou viral=%s", getattr(cb, "__name__", cb), viral["id"])
             try:
-                perfil = ports.db.table(PERFIS).select("id,handle").eq("id", str(viral["perfil_id"])).execute().data
                 registrar_evento(
-                    ports.db, perfil_id=viral["perfil_id"], handle=(perfil[0]["handle"] if perfil else ""),
+                    ports.db, perfil_id=viral["perfil_id"],
                     tipo="pos_classificacao_falhou", ator_id=None, ator_tipo="sistema", viral_id=str(viral["id"]),
                 )
             except Exception:  # noqa: BLE001 - recording is best-effort here: already logged above, never fatal
@@ -739,6 +752,8 @@ async def transcrever(ports: IngestaoPorts, job: Job) -> None:
     vid = str(viral["id"])
     if viral["transcricao_status"] != "pendente":
         return  # already settled (a retried / duplicated job)
+    if await _perfil_do_viral_em_optout(ports, viral):
+        return
     day = _day(ports)
 
     async def terminal(status: str, erro: Optional[str] = None) -> None:
@@ -818,6 +833,8 @@ async def classificar(ports: IngestaoPorts, job: Job) -> None:
     # lives in the SYNC (it enqueues only ``e_viral`` rows) and in the pending sweep; a video an admin added by link is
     # enqueued directly (and swept by ``origem_inclusao``), so it is analysed regardless of the threshold.
     if viral["classificacao_status"] == "concluida":
+        return
+    if await _perfil_do_viral_em_optout(ports, viral):
         return
     if viral.get("transcricao_status") in ("pendente", "na_fila"):
         raise RescheduleLater(300, "aguardando a transcrição")

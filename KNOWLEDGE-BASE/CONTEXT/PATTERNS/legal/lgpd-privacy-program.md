@@ -31,7 +31,7 @@
 
 | Artifact | Legal anchor | Status 2026-11-05 | Next step / owner |
 |---|---|---|---|
-| Privacy policy + terms | arts. 6 VI, 9; Marco Civil art. 7 VIII | ✅ live, seed-mounted (`consent.ts`, v1.1, 11/10/2026) | gaps in §2, §9, §11 — legal-advisor drafts, lawyer approves |
+| Privacy policy + terms | arts. 6 VI, 9; Marco Civil art. 7 VIII | ✅ live, seed-mounted (`consent.ts`, v1.3, 16/11/2026) | gaps in §2, §9, §11 — legal-advisor drafts, lawyer approves |
 | Controller/operator map per product | arts. 5 VI–VII, 37, 39 | ❌ — the policy names one controller for everything | §2 — owner confirms per product |
 | Legal basis per processing | arts. 7, 11 | ⚠️ partial (consent catalog; register entries in `lgpd.md` §§10–11) | §3 |
 | ROPA | art. 37; Res. 2/2022 art. 9 (simplified) | ❌ | §4 template; one row per processing |
