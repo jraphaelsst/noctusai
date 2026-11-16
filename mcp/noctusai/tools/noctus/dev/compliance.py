@@ -25435,8 +25435,14 @@ def check_branch_tree_mirror(
                 # AND neither matches.
                 if recorded_parent and recorded_parent != "origin/dev":
                     # parent should be a branch and base should resolve near it.
-                    parent_rc, parent_sha = _git("rev-parse", "--verify", recorded_parent)
-                    base_rc, base_sha = _git("rev-parse", "--verify", recorded_base)
+                    # `X` and `origin/X` are one branch; the remote-tracking ref is the shared truth and
+                    # the local branch may carry local-only commits (a primary checkout's `dev` does), so a
+                    # local `dev` is never compared against `origin/dev`.
+                    _parent_name = recorded_parent[len("origin/"):] if recorded_parent.startswith("origin/") else recorded_parent
+                    parent_rc, parent_sha = _git("rev-parse", "--verify", f"refs/remotes/origin/{_parent_name}")
+                    if parent_rc != 0:
+                        parent_rc, parent_sha = _git("rev-parse", "--verify", recorded_parent)
+                    base_rc, base_sha = _git("rev-parse", "--verify", _split_pinned(recorded_base)[0])
                     if parent_rc == 0 and base_rc == 0 and parent_sha and base_sha:
                         # Check if base is an ancestor of or equal to parent — normal.
                         anc_rc, _ = _git("merge-base", "--is-ancestor", base_sha, parent_sha)
@@ -25489,8 +25495,15 @@ def check_stale_branch_pointers(
     session: str | None = None,
     repo_root: Path | None = None,
     run=None,
+    heal=None,
+    healed_out: list[str] | None = None,
 ) -> list[dict]:
     """SAFETY NET behind the pointer-lifecycle mechanism (2026-09-23).
+
+    `heal(branch, note) -> {"ok": bool, ...}` (optional): a pointer whose branch is PROVABLY landed on origin/dev with
+    its worktree gone is flipped to `shipped` by it instead of being reported (a blocked unrelated push is the cost
+    the safety net used to charge for the lifecycle's miss). A heal that fails leaves the issue as before; healed
+    branches are appended to `healed_out`.
 
     The mechanism is `task_branch`: start claims `on_going`, integrate writes
     `integrated-worktree-live`, cleanup writes `shipped`; `session_end_sweep`
@@ -25554,6 +25567,15 @@ def check_stale_branch_pointers(
             fork_sha=wts.fork_sha_from_pointer_base(row.get("base", "")))
         if not landed:
             continue
+        if heal is not None:
+            try:
+                healed = heal(branch, f"healed by check_stale_branch_pointers: branch landed on {base} ({how}), worktree gone")
+            except Exception as exc:  # noqa: BLE001 - a failed heal falls back to reporting the pointer
+                healed = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            if healed.get("ok"):
+                if healed_out is not None:
+                    healed_out.append(branch)
+                continue
         own = bool(me) and row.get("session") == me
         issues.append({
             "product": "<platform>",

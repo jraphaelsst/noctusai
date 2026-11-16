@@ -619,9 +619,13 @@ class Admission:
 def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] | None = None,
                probe_fn: Callable[[float], dict[str, Any]] = probe,
                sleep: Callable[[float], None] = time.sleep,
-               job_workers: Any = _AUTO) -> Iterator[Admission]:
+               job_workers: Any = _AUTO,
+               progress: Callable[[str], None] | None = None,
+               progress_every_s: float = 60.0) -> Iterator[Admission]:
     """Admit one heavy job. Yields an Admission; the caller MUST NOT run the job
-    when ``admitted`` is False (report it as waiting_for_slot / inconclusive)."""
+    when ``admitted`` is False (report it as waiting_for_slot / inconclusive).
+    ``progress`` (optional) receives one line while queued - first at once, then every
+    ``progress_every_s`` - naming the wait so far, the time left and the holders."""
     if os.environ.get(_HELD_ENV):
         yield Admission(job, True, "inherited")
         return
@@ -644,6 +648,7 @@ def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] 
     held_by_suspend = False
     pos: int | None = None
     unit = None
+    last_progress = float("-inf")
     try:
         while True:
             if suspended():          # switched off while we waited: leave the line now
@@ -674,6 +679,11 @@ def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] 
                 why = [f"queued: {ahead} waiter(s) ahead (FIFO)"]
             else:
                 why = ["no free slot: " + ", ".join(f"{h.get('job')}(pid {h.get('pid')})" for h in holders())]
+            if progress is not None and time.monotonic() < deadline \
+                    and time.monotonic() - last_progress >= progress_every_s:
+                last_progress = time.monotonic()
+                progress(f"waiting for the machine-wide heavy slot for {job}: {int(time.monotonic() - t0)}s so far, "
+                         f"{int(max(0.0, deadline - time.monotonic()))}s left - {'; '.join(why)}")
             if time.monotonic() >= deadline:
                 adm = Admission(job, False, "waiting_for_slot", round(time.monotonic() - t0, 1),
                                 last, why, advisories(last, b) if last else [], b["phase"],

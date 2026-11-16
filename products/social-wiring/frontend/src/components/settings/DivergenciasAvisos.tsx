@@ -2,15 +2,15 @@
  * `<DivergenciasAvisos/>` — "Avisos de divergência" block of the Vista card. TRANSITIONAL
  * (NOC-REMEDIATE[transicao-vista-divergencias]): self-contained; delete with the divergence mechanism.
  *
- * Toggle = WhatsApp digest of Vista-vs-ours divergences on/off for the org; picker = which org member receives it
- * (phone comes from their platform profile). Nobody picked ⇒ the notices stay in the app only.
+ * Picker = which org member receives the WhatsApp digest of the APPROVALS a Vista sync opens (phone comes from their platform
+ * profile). Nobody picked ⇒ the notice stays in the app only. The digest's on/off is the core Notificações page switch (kind
+ * `vista_divergencias`), not here (owner 2026-11-15, option 1: the switchable digest is kept).
  * Each change saves at once; a refused save is shown inline (and the optimistic draw is rolled back).
  */
 import { Loader2, RotateCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { useUsuariosDaOrg } from "@/hooks/useJuliaEquipeWhatsapp";
 import { useDivergenciasConfig, useSalvarDivergenciasConfig } from "@/hooks/useVistaDivergenciasConfig";
 import { mensagemErroServidor } from "@/lib/erroServidor";
@@ -45,27 +45,18 @@ export function DivergenciasAvisos() {
   const nomeAtual = atual?.nome || (destino ? "usuário que não está mais na equipe" : null);
 
   return (
-    <section className="space-y-3 rounded-md border p-3" data-testid="divergencias-avisos">
+    <section className="space-y-3 rounded-md border p-3" data-testid="divergencias-destino-bloco">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h4 className="text-sm font-medium">Avisos de divergência</h4>
+          <h4 className="text-sm font-medium">Resumo de aprovações por WhatsApp</h4>
           <p className="text-xs text-muted-foreground">
-            Quando o Vista e o nosso cadastro discordam sobre um imóvel, avisamos por WhatsApp para uma pessoa decidir
-            qual dado vale.
+            Quando o proprietário confirma um valor diferente do Vista e uma aprovação é aberta, um resumo vai por WhatsApp
+            para uma pessoa decidir. Liga e desliga em Notificações.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {(isRefreshing || salvar.isPending) && (
-            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" data-testid="divergencias-refreshing" />
-          )}
-          <Switch
-            checked={!!data?.ativa}
-            disabled={salvar.isPending}
-            aria-label="Avisar divergências por WhatsApp"
-            data-testid="divergencias-toggle"
-            onCheckedChange={(ativa) => salvar.mutate({ ativa })}
-          />
-        </div>
+        {(isRefreshing || salvar.isPending) && (
+          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" data-testid="divergencias-refreshing" />
+        )}
       </div>
 
       <div className="space-y-1">

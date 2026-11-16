@@ -6437,78 +6437,6 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Registry — social_wiring.imobshot_eventos append-only guard (migration 344).
-# ---------------------------------------------------------------------------
-#
-# Self-provisioning inside the rollback-only wrapper: each probe inserts its own throwaway card (random org, so
-# the (org_id, imovel_codigo) unique key can never collide with real data) and one event, then attempts the
-# forbidden operation. The trigger's message carries "imobshot_eventos is append-only" — the fragment the probe
-# requires, so an unrelated error is `ambiguous`, never a pass.
-
-_IMOBSHOT_EVENTOS_GUARD = "imobshot_eventos_append_only"
-_IMOBSHOT_EVENTOS_MIGRATIONS = ("344_imobshotai_cards.sql",)
-
-
-def _imobshot_eventos_probe(*, probe_id: str, op_sql: str, what: str) -> GuardProbe:
-    fragment_lit = _sql_lit("imobshot_eventos is append-only")
-    what_lit = _sql_lit(what)
-    sql = _do_block(f"""
-DECLARE
-  v_org uuid := gen_random_uuid();
-  v_card uuid;
-  v_ev uuid;
-BEGIN
-  IF to_regclass('social_wiring.imobshot_eventos') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: social_wiring.imobshot_eventos does not exist (migration 344 not applied)';
-  END IF;
-  BEGIN
-    INSERT INTO social_wiring.imobshot_cards (org_id, imovel_codigo) VALUES (v_org, 'NOCPROBE')
-    RETURNING id INTO v_card;
-    INSERT INTO social_wiring.imobshot_eventos (org_id, card_id, tipo) VALUES (v_org, v_card, 'card_criado')
-    RETURNING id INTO v_ev;
-{op_sql}
-    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the append-only guard did not fire';
-  EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
-      RAISE;
-    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
-      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
-    ELSE
-      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
-    END IF;
-  END;
-END;
-""")
-    return GuardProbe(
-        id=probe_id,
-        product="social-wiring",
-        schema=_SW_SCHEMA,
-        guard_name=_IMOBSHOT_EVENTOS_GUARD,
-        kind="write_refusal",
-        migrations=_IMOBSHOT_EVENTOS_MIGRATIONS,
-        sql=sql,
-        rationale=(
-            "imobshot_eventos is the ImobShotAI card history (contract §7: time-to-approval, drop-off, "
-            "approval-rate metrics read it) — a rewritable or deletable row makes every metric unprovable."
-        ),
-    )
-
-
-_IMOBSHOT_EVENTOS_PROBES: tuple[GuardProbe, ...] = (
-    _imobshot_eventos_probe(
-        probe_id="social_wiring.imobshot_eventos.update_refused",
-        op_sql="    UPDATE social_wiring.imobshot_eventos SET tipo = 'card_arquivado' WHERE id = v_ev;",
-        what="UPDATE of an imobshot_eventos row",
-    ),
-    _imobshot_eventos_probe(
-        probe_id="social_wiring.imobshot_eventos.delete_refused",
-        op_sql="    DELETE FROM social_wiring.imobshot_eventos WHERE id = v_ev;",
-        what="DELETE of an imobshot_eventos row",
-    ),
-)
-
-
-# ---------------------------------------------------------------------------
 # Registry — core owner-notice recipient events append-only guard (migration 118).
 # ---------------------------------------------------------------------------
 #
@@ -9447,6 +9375,64 @@ _SW_CONDOMINIOS_PROBES: tuple[GuardProbe, ...] = (
             "      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;\n"
             "    END IF;\n  END;\nEND;\n"
         ),
+    ),
+)
+
+
+
+_M_IMOVEL_HISTORICO = "349_imovel_historico_vista_escrita.sql"
+_T_IMOVEL_HISTORICO = f"{_S}.imovel_historico"
+
+
+def _imovel_historico_append_only_probe(op: str, attack_sql: str, what: str) -> GuardProbe:
+    """Insert one history row (rolled back), then try `attack_sql` on it WITHOUT the erasure GUC."""
+    return GuardProbe(
+        id=f"imovel_historico.append_only_{op.lower()}",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="guard_imovel_historico_append_only",
+        kind="write_refusal",
+        migrations=(_M_IMOVEL_HISTORICO,),
+        rationale=("The imóvel action register is the audit of every Vista sync change and every value sent to "
+                   "Vista (owner 2026-11-04): a rewritable history proves nothing. Only a future LGPD erasure "
+                   "(GUC social_wiring.imovel_historico_expurgo) may DELETE."),
+        sql=_do_block(
+            "DECLARE\n  v_org uuid;\n  v_codigo text;\nBEGIN\n"
+            + _table_fixture_check(_T_IMOVEL_HISTORICO)
+            + "".join(
+                f"  {select_sql.replace(' FROM ', ' INTO ' + into_vars + ' FROM ', 1)};\n"
+                f"  IF {into_vars.split(',')[-1].strip()} IS NULL THEN\n"
+                "    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row for the registry fixture';\n"
+                "  END IF;\n"
+                for select_sql, into_vars in (_SW_FIXTURES["registry"],)
+            )
+            + "  BEGIN\n"
+            f"    INSERT INTO {_T_IMOVEL_HISTORICO} (org_id, codigo_canonical, origem, acao, campo)\n"
+            "    VALUES (v_org, 'NOC_PROBE', 'sistema', 'campo_atualizado', 'noc_probe');\n"
+            f"    {attack_sql}\n"
+            f"    RAISE EXCEPTION 'NOC_PROBE:permitted: {what} succeeded -- the trigger did not fire';\n"
+            "  EXCEPTION WHEN OTHERS THEN\n"
+            "    IF SQLERRM LIKE 'NOC_PROBE:%' THEN\n      RAISE;\n"
+            "    ELSIF SQLERRM LIKE '%imovel_historico is append-only%' THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;\n"
+            "    ELSE\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;\n"
+            "    END IF;\n  END;\nEND;\n"
+        ),
+    )
+
+
+#: Migration 349 -- imóvel action register. Unapplied reads `no_fixture`; applied must read `refused`.
+_SW_IMOVEL_HISTORICO_PROBES: tuple[GuardProbe, ...] = (
+    _imovel_historico_append_only_probe(
+        "UPDATE",
+        f"UPDATE {_T_IMOVEL_HISTORICO} SET detalhe = 'reescrito' WHERE org_id = v_org AND codigo_canonical = 'NOC_PROBE';",
+        "rewriting a history row",
+    ),
+    _imovel_historico_append_only_probe(
+        "DELETE",
+        f"DELETE FROM {_T_IMOVEL_HISTORICO} WHERE org_id = v_org AND codigo_canonical = 'NOC_PROBE';",
+        "deleting a history row without the erasure GUC",
     ),
 )
 
@@ -12798,7 +12784,6 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ATENDIMENTO_CONFLITO_STATUS_PROBE,
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
-    *_IMOBSHOT_EVENTOS_PROBES,
     *_OWNER_RECIPIENT_EVENTS_PROBES,
     *_CORE_AI_USAGE_PROBES,
     *_CORE_FUNNEL_PROBES,
@@ -12832,6 +12817,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_IMOVEL_MANUAL_PROBES,
     *_SW_TRANSACOES_PROBES,
     *_SW_CONDOMINIOS_PROBES,
+    *_SW_IMOVEL_HISTORICO_PROBES,
     *_SW_JULIA_PROBES,
     *_SW_PERGUNTAS_PROBES,
     *_SW_JULIA_VISITAS_PROBES,

@@ -660,7 +660,7 @@
     "pre-push"
    ],
    "standard": "Keeper (pre-push HARD-BLOCK): for the given branch (or all non-terminal branches when omitted) verify the branch-tree mirror — pointer exists + non-stale + git↔claude mirror intact + valid status + no shipped-but-ahead contradiction. Severi",
-   "mechanism": "write-path: branch_pointer._write_row writes both files",
+   "mechanism": "mcp/noctusai/tools/noctus/dev/branch_pointer.py ensure_for_push (cli --ensure-branch-pointer, called by scripts/hooks/pre-push before the keeper; construction leg, 2026-11-15)",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -668,7 +668,9 @@
     "sessions": 0
    },
    "class": "never-fires",
-   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "new": false,
+   "declared": "2026-11-15"
   },
   "keeper:check-cache-uses-locking-helper": {
    "severity": "high",

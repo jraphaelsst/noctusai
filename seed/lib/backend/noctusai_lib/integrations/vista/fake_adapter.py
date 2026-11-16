@@ -19,9 +19,15 @@ integration tests against a live tenant, which is the failure
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
-from noctusai_lib.integrations.vista.client import VistaNotFound, VistaRecordUnpublished
+from noctusai_lib.integrations.vista.client import (
+    VistaNotFound,
+    VistaPermissionDenied,
+    VistaRecordUnpublished,
+    validate_imovel_update_payload,
+)
+from noctusai_lib.integrations.vista.observacoes import campo_obs, compor_campos, exigir_motivo
 from noctusai_lib.domain.real_estate import (
     Imovel,
     ImovelFoto,
@@ -110,6 +116,11 @@ class FakeVistaAdapter:
         # Vista's client list, Vista's own dict shape (`Codigo`, `Nome`, `Celular`, ...), paged like `/clientes/listar`.
         self._clientes: list[dict[str, Any]] = [dict(c) for c in (clientes or [])]
         self.clientes_fields_asked: list[Optional[list[str]]] = []
+        self._escrita_permitida: Optional[bool] = True
+        self._erro_escrita: Optional[Exception] = None
+        self._atualizacoes: list[tuple[str, dict[str, Any]]] = []
+        self._registros: dict[str, dict[str, Any]] = {}
+        self._erro_leitura: Optional[Exception] = None
 
     # ── PropertyData surface ──
 
@@ -179,6 +190,49 @@ class FakeVistaAdapter:
     async def list_imovel_fotos(self, codigo: str) -> list[ImovelFoto]:
         """Read-only photo gallery for one imóvel; ``[]`` when unseeded."""
         return parse_imovel_fotos(self._fotos.get(codigo, {}))
+
+    def permitir_escrita(self, permitido: Optional[bool], erro: Optional[Exception] = None) -> None:
+        """Seed the write side: the probe verdict (`True`/`False`/`None`) and an optional error every `atualizar_imovel` raises."""
+        self._escrita_permitida = permitido
+        self._erro_escrita = erro
+
+    @property
+    def atualizacoes(self) -> list[tuple[str, dict[str, Any]]]:
+        """Every `atualizar_imovel` that would have reached Vista: `(code, campos)`."""
+        return self._atualizacoes
+
+    def set_registro(self, code: str, registro: Mapping[str, Any]) -> None:
+        """Seed the CURRENT `/imoveis/detalhes` record (Vista field names, e.g. `ObsVenda`, `ValorVenda`) an update reads before it writes."""
+        self._registros[code] = dict(registro)
+
+    def falhar_leitura(self, erro: Optional[Exception]) -> None:
+        """Make the pre-write read of the current record fail with `erro` (a failed read must write nothing)."""
+        self._erro_leitura = erro
+
+    async def atualizar_imovel(
+        self, code: str, campos: Mapping[str, Any], *, motivo: str, autor: str, canal: str = "NoctusAI", fonte: str = "NoctusAI",
+        finalidade: str = "venda", conversa_url: Optional[str] = None, rotulos: Optional[Mapping[str, str]] = None,
+    ) -> str:
+        validate_imovel_update_payload(code, campos)  # same validators as the Real
+        exigir_motivo(motivo, autor)
+        obs = campo_obs(finalidade)
+        if self._erro_escrita is not None:
+            raise self._erro_escrita
+        if self._escrita_permitida is False:
+            raise VistaPermissionDenied(401, "Permissão Negada", "/imoveis/detalhes")
+        if code not in self._imoveis:
+            raise VistaNotFound(404, f"imovel {code!r} does not exist", "/imoveis/detalhes")
+        if self._erro_leitura is not None:
+            raise self._erro_leitura
+        atual = self._registros.get(code, {})
+        a_enviar, linha = compor_campos(
+            campos, atual, finalidade=finalidade, fonte=fonte, canal=canal, motivo=motivo, autor=autor, conversa_url=conversa_url, rotulos=rotulos)
+        self._registros[code] = {**atual, **a_enviar}
+        self._atualizacoes.append((code, a_enviar))
+        return linha
+
+    async def pode_atualizar_imovel(self) -> Optional[bool]:
+        return self._escrita_permitida
 
     def set_destaques(self, codes: list[str]) -> None:
         self._destaques = list(codes)
