@@ -90,7 +90,7 @@ def _remover_termo(texto: str, termo: Optional[str]) -> str:
     if len(termo) < 3:
         return texto
     partes = [re.escape(p) for p in re.split(r"[._\s-]+", termo) if p]
-    padrao = re.compile(r"@?" + r"[._\s-]?".join(partes), re.IGNORECASE)
+    padrao = re.compile(r"(?<!\w)@?" + r"[._\s-]?".join(partes) + r"(?!\w)", re.IGNORECASE)
     dobrado = fold_accents(texto)
     alvo = dobrado if len(dobrado) == len(texto) else texto  # an accent fold that moves offsets is not used
     saida, ultimo = [], 0

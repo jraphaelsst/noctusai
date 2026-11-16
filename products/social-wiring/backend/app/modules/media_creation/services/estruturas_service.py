@@ -423,11 +423,12 @@ class EstruturasService:
         return self.detalhe(estrutura_id)
 
     def _ia_nao_revisado(self, estrutura_id: str) -> bool:
-        """True when an ``origem='viral_auto'`` rascunho still carries an ``ia_sugerido`` field (estrutura or block level).
+        """True when the Estrutura still carries an ``ia_sugerido`` field (estrutura or block level), WHATEVER its origem
+        (an ``a-partir-do-viral`` draft is ``manual`` but just as unreviewed).
         NOC-REMEDIATE[publicar-ia-gate-in-rpc]: enforce the same gate inside ``cs_estrutura_publicar`` in the next
         migration (this service check can be bypassed by anything calling the RPC directly) -- before switch-on, 2026-11-16."""
-        rows = self.db.table(ESTRUTURAS).select("origem,formula_origem,formato_origem,objetivos_origem").eq("id", str(estrutura_id)).execute().data
-        if not rows or rows[0].get("origem") != "viral_auto":
+        rows = self.db.table(ESTRUTURAS).select("formula_origem,formato_origem,objetivos_origem").eq("id", str(estrutura_id)).execute().data
+        if not rows:
             return False
         if any(rows[0].get(k) == "ia_sugerido" for k in ("formula_origem", "formato_origem", "objetivos_origem")):
             return True

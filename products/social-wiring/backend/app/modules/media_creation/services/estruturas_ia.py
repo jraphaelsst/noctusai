@@ -280,8 +280,8 @@ def exigir_habilitada(ports: IaPorts) -> None:
         raise coded(503, BIBLIOTECA_DESLIGADA, "A biblioteca está desligada no momento.")
 
 
-def _preparar(ports: IaPorts, viral_id: str, origem: str, ator_id: Optional[str]) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], str]:
-    """Every synchronous check, in the contract's order. Returns ``(viral, perfil, tipos, org_id)``."""
+def _preparar(ports: IaPorts, viral_id: str, origem: str, ator_id: Optional[str]) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], str, Optional[str]]:
+    """Every synchronous check, in the contract's order. Returns ``(viral, perfil, tipos, org_id, user_id)``."""
     exigir_habilitada(ports)
     verificar_limite_diario(ports)
     org_id = ports.ingestao_org()
@@ -317,7 +317,8 @@ def _preparar(ports: IaPorts, viral_id: str, origem: str, ator_id: Optional[str]
     tipos = tipos_ativos(ports.db)
     if NOME_OUTRO not in {t["nome"] for t in tipos}:
         raise coded(503, CATALOGO_INVALIDO, "O catálogo de tipos de bloco não tem o tipo \"Outro\".")
-    return viral, perfil[0], tipos, str(org_id)
+    user_id = ports.ingestao_user()  # a settings read: resolved here, in the worker thread
+    return viral, perfil[0], tipos, str(org_id), (str(user_id) if user_id else None)
 
 
 def _checar_vendor(ports: IaPorts) -> None:
@@ -348,6 +349,7 @@ def _erro_ia(exc: BaseException) -> EstruturaError:
 
 async def derivar(
     ports: IaPorts, viral: dict[str, Any], tipos: list[dict[str, Any]], org_id: str, perfil: Optional[dict[str, Any]] = None,
+    user_id: Optional[str] = None,
 ) -> saida.EstruturaDerivada:
     """One model call + strict validation. Raises :class:`EstruturaError` (``ia_*``, ``orcamento_ia_excedido``) or
     ``saida_ia_invalida`` carrying the failure ``codigo`` + ``campo`` (never the model's text)."""
@@ -369,7 +371,7 @@ async def derivar(
             logger.error("estruturas_ia: orçamento da org de ingestão não lido (%s)", type(exc).__name__)
     extra: dict[str, Any] = {"chat": ports.chat} if ports.chat is not None else {}
     try:
-        with attribution.llm_usage_context(feature=FEATURE, org_id=org_id, user_id=ports.ingestao_user()):
+        with attribution.llm_usage_context(feature=FEATURE, org_id=org_id, user_id=user_id):
             resposta = await ports.chamar(
                 prompt.CHAVE, [{"role": "user", "content": mensagem}], org_id=org_id, registry=ports.registry,
                 temperature=0, cache=False, purpose="extract", **extra,
@@ -438,9 +440,9 @@ async def criar_rascunho(
     :data:`VIRAL_JA_TEM_ESTRUTURA` (409). ``origem='manual'`` (the admin endpoint): only an existing non-archived
     ``viral_auto`` blocks (:data:`VIRAL_JA_TEM_RASCUNHO`, 409, contract 6.2), plus the recent-duplicate and per-admin
     daily guards. Both: the kill switch first, then the attempt cap."""
-    viral, perfil, tipos, org_id = await _bloq(_preparar, ports, viral_id, origem, ator_id)
+    viral, perfil, tipos, org_id, user_id = await _bloq(_preparar, ports, viral_id, origem, ator_id)
     await _bloq(_checar_vendor, ports)
-    derivada = await derivar(ports, viral, tipos, org_id, perfil)
+    derivada = await derivar(ports, viral, tipos, org_id, perfil, user_id)
     tipo_ids = {t["nome"]: str(t["id"]) for t in tipos}
     payload = montar_payload(derivada, viral, tipo_ids, origem=origem, ator_id=ator_id, ator_tipo=ator_tipo)
     return await _bloq(_rpc_criar, ports.db, payload)

@@ -921,6 +921,15 @@ class TestPublicarGate:
             self._svc(db).publicar(eid, 1)
         assert _codigo(e.value) == "rascunho_ia_nao_revisado"
 
+    def test_an_a_partir_do_viral_draft_origem_manual_is_gated_too(self):
+        db = _db()
+        eid = str(uuid.uuid4())
+        _estrutura(db, eid, perfil=PERFIL, codigo=951, status="rascunho", origem="manual",
+                   origins={"formula": "ia_sugerido", "formato": "ia_sugerido", "objetivos": "ia_sugerido"})
+        with pytest.raises(EstruturaError) as e:
+            self._svc(db).publicar(eid, 1)
+        assert e.value.status == 409 and _codigo(e.value) == "rascunho_ia_nao_revisado" and db.rpc.calls == []
+
     def test_once_every_field_is_confirmed_it_publishes(self):
         db = _db()
         eid = self._draft(db)  # all `admin` (what `confirmar todos` leaves)
@@ -939,3 +948,44 @@ class TestRenderingOfStoredContent:
         texto = renderizar_estrutura(e)
         assert "\n" not in texto and "\r" not in texto and "\t" not in texto
         assert "faça isto" in texto and "Pare # de [x]" in texto
+
+
+# ── 11. second-review residuals ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestResiduals:
+    @pytest.mark.parametrize("ch", ["\u2028", "\u2029"])
+    def test_line_and_paragraph_separators_are_refused(self, ch):
+        with pytest.raises(SaidaIaFalha) as e:
+            _validar(_com(bloco0_instrucao=f"Abra{ch}com pergunta"))
+        assert e.value.codigo == CONTEUDO_PROIBIDO
+
+    def test_a_short_handle_matches_whole_words_only_on_the_input_side(self):
+        assert prompt.minimizar("Ana disse que banana e bananal fazem bem. @ana também.", handle="ana").split() == [
+            "disse", "que", "banana", "e", "bananal", "fazem", "bem.", "também."]
+        assert "banana" in prompt.minimizar("comi banana", nome="Ana")
+
+    def test_the_usage_user_is_resolved_in_the_worker_thread(self):
+        vistos: list[int] = []
+
+        def usuario():
+            vistos.append(threading.get_ident())
+            return "sys-user"
+
+        ports = _ports(_db())
+        ports.ingestao_user = usuario
+        run(ia.criar_rascunho(ports, VIRAL, origem="viral_auto", ator_id=None, ator_tipo="sistema_ia"))
+        assert vistos and threading.get_ident() not in vistos
+
+    def test_an_unmeasurable_cap_reschedules_instead_of_dead_lettering(self):
+        ports = _ports(_db(), jitter=10.0)
+        ports.core_db = None
+        with pytest.raises(RescheduleLater) as e:
+            run(auto.executar(ports, _job()))
+        assert e.value.delay_s == 12 * 3600 + 10.0
+
+    def test_failed_jobs_waiting_to_retry_count_as_pending(self):
+        db = _db()
+        for st in ("pending", "running", "failed", "completed", "dead_letter"):
+            db.from_("jobs").insert({"id": str(uuid.uuid4()), "type": auto.JOB_TYPE, "status": st}).execute()
+        assert auto._pendentes_padrao(SimpleNamespace(db=db)) == 3

@@ -147,12 +147,12 @@ def _lcs(a: list[str], b: list[str]) -> int:
 
 
 def _normalizar(valor: Any, campo: str) -> Any:
-    """NFKC, then refuse any Cc/Cf character (newline and tab included: every field is a single line) and any
+    """NFKC, then refuse any Cc/Cf/Zl/Zp character (newline and tab included: every field is a single line) and any
     angle-bracket look-alike. A non-string is returned untouched for the type check that follows."""
     if not isinstance(valor, str):
         return valor
     texto = unicodedata.normalize("NFKC", valor)
-    if any(unicodedata.category(c) in ("Cc", "Cf") for c in texto):
+    if any(unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") for c in texto):
         raise SaidaIaFalha(CONTEUDO_PROIBIDO, "contém caractere de controle ou invisível", campo)
     if _ANGULOS_RE.search(texto):
         raise SaidaIaFalha(CONTEUDO_PROIBIDO, "contém marcação", campo)

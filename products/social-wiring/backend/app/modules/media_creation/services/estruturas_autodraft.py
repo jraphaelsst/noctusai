@@ -28,7 +28,7 @@ refusals to the queue's vocabulary:
 refusal                                        outcome
 =============================================  ============================================================
 already has a non-archived Estrutura           return (idempotent: a redelivery or a manual draft won)
-switch off / daily cap / AI budget gate        ``RescheduleLater`` to the next UTC midnight + jitter
+switch off / daily cap / AI budget gate /      ``RescheduleLater`` to the next UTC midnight + jitter
 invalid model output (``saida_ia_invalida``)   ``DeadLetterError("saida_ia_invalida:<codigo>:<campo>")`` -- the
                                                coded failure IS the record; no Estrutura, no retry (no re-spend)
 provider out of credit / job older than 7 d    ``DeadLetterError(<code>)``
@@ -63,7 +63,7 @@ IDADE_MAXIMA = timedelta(days=7)
 
 _JA_FEITO = {ia.VIRAL_JA_TEM_ESTRUTURA, ia.VIRAL_JA_TEM_RASCUNHO}
 #: The gate is closed for today: wait for the next UTC day (+ jitter), consuming no retry.
-_ADIAR = {ia.LIMITE_DIARIO, ia.ORCAMENTO, ia.BIBLIOTECA_DESLIGADA}
+_ADIAR = {ia.LIMITE_DIARIO, ia.ORCAMENTO, ia.BIBLIOTECA_DESLIGADA, ia.LIMITE_NAO_VERIFICAVEL}
 _PERMANENTES = {
     ia.VIRAL_NAO_ENCONTRADO, ia.VIRAL_SEM_CONTEUDO, ia.PERFIL_OPTOUT, ia.SEM_ORG, ia.CATALOGO_INVALIDO, ia.SEM_CREDITO_PROVEDOR,
 }
@@ -75,9 +75,9 @@ def _codigo(exc: EstruturaError) -> str:
 
 
 def _pendentes_padrao(ports: Any) -> int:
-    """Queued + running derivation jobs (the ``jobs`` table of the product schema)."""
+    """Queued, running and failed-awaiting-retry derivation jobs (the ``jobs`` table of the product schema)."""
     res = (
-        ports.db.table("jobs").select("id", count="exact").eq("type", JOB_TYPE).in_("status", ["pending", "running"])
+        ports.db.table("jobs").select("id", count="exact").eq("type", JOB_TYPE).in_("status", ["pending", "running", "failed"])
         .limit(1).execute()
     )
     return res.count if getattr(res, "count", None) is not None else len(res.data or [])
@@ -149,7 +149,7 @@ async def executar(ports: ia.IaPorts, job: Job) -> None:
             raise DeadLetterError(f"{ia.SAIDA_INVALIDA}:{d.get('motivo', '')}:{d.get('campo') or ''}") from exc
         if codigo in _PERMANENTES:
             raise DeadLetterError(codigo) from exc
-        raise  # ia_indisponivel / ia_nao_configurada / ia_falhou / limite_nao_verificavel: transient -> the retry policy
+        raise  # ia_indisponivel / ia_nao_configurada / ia_falhou: transient -> the retry policy
 
 
 async def handle_rascunho(job: Job) -> None:
