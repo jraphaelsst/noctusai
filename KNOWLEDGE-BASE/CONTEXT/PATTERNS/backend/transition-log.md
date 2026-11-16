@@ -126,7 +126,7 @@ table by expand -> migrate -> contract: 345 renders the primitive, copies every 
 timestamps, actor; `data.legacy_tipo` keeps the old intent; an unmappable row, a chain that does not end at the current
 state or a count mismatch RAISES, so the whole migration aborts with nothing copied), re-points the product's existing
 atomic functions at `<agg>_transition` / `<agg>_record_created` (same names and signatures, so the repository and API
-contract do not move) and leaves the legacy table read-only. A LATER migration drops it one release after prod verified
-345 (`NOC-REMEDIATE[imobshot-eventos-contract]`), which keeps a rollback path. The keeper keeps flagging the old `CREATE`
-(the chain is immutable history) until then via the baseline entry; once a later migration of the same product DROPs the
-table the keeper retires the hit by itself and the baseline entry is removed in that contract migration.
+contract do not move) and leaves the legacy table read-only. The contract step, 346 (`346_imobshot_eventos_contract.sql`),
+then dropped it one release after prod verified 345, behind a guard that RAISES if any legacy id is missing from the
+events table. The keeper retires the old `CREATE` hit by itself once a later migration of the same product DROPs the
+table, and the baseline entry was removed in that contract migration.

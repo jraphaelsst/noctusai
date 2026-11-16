@@ -122,10 +122,23 @@ def _judge_timed(payload: dict, stages: dict[str, float]) -> dict | None:
     cwd = payload.get("cwd") or os.getcwd()
     verdict = guard.decide_git_bypass(tool_name, tool_input)
     if verdict is None:
-        verdict = guard.decide_hook_integrity(tool_name, tool_input, cwd)
+        verdict = guard.decide_wired_worktree_npm(tool_name, tool_input, cwd)  # plain file reads, no git
+    lap("bypass+npm")
     if verdict is None:
-        verdict = guard.decide_wired_worktree_npm(tool_name, tool_input, cwd)
-    lap("bypass+integrity")
+        # CLAIM-ONLY FAST PATH (2026-11-14, finding GW-8a7e7ce8): a write confined to this session's own claimed
+        # worktree is decided from the claim file + three file reads - no git subprocess - so machine load can no
+        # longer burn the deadline on the dominant, harmless case. Anything unproven falls through to the full
+        # (git-backed, still fail-closed) decision below.
+        from _guard_failclosed import _primary_root
+        primary = str(_primary_root())
+        if guard.decide_claimed_fast(tool_name, tool_input, cwd, payload.get("session_id"), primary) is not None:
+            if tool_name == "Bash":  # nothing to diff against afterwards: the write cannot have hit the primary
+                guard.discard_pretool_baseline(guard.GuardContext(primary, "", ()), payload.get("session_id"))
+            lap("claimed-fastpath")
+            return None
+    if verdict is None:
+        verdict = guard.decide_hook_integrity(tool_name, tool_input, cwd)
+    lap("integrity")
     ctx = None
     if verdict is None:
         ctx = guard.discover_context(cwd)
