@@ -445,7 +445,7 @@ class TestWatchPolling:
         assert cv.quota_pause_s(low, now=lambda: 400.0)[0] == 605.0
 
 
-class TestGhCallsViaSeamKeeper:
+class TestGhCallsViaSeam:
     def _scan(self, tmp_path, src, name="mcp/x/tools/a.py"):
         from tools.noctus.dev.compliance import check_gh_calls_via_seam
         f = tmp_path / name
