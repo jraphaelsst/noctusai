@@ -18146,37 +18146,34 @@ def guardian_holds_lease(
 
 
 def _merge_inherited_paths(root: Path, paths: list[str]) -> set[str]:
-    """Staged ``paths`` whose index blob equals ``MERGE_HEAD``'s blob for that path.
+    """The ONE definition of "inherited from MERGE_HEAD": staged ``paths`` whose index blob equals ``MERGE_HEAD``'s.
 
-    During a merge commit git re-stages every file the merged branch changed; that content was
-    authored on the other branch, not by this committer. A guardian merging dev into its branch
-    must not be refused for dev's own steward tooling (2026-11-15: blocked on doc_staleness.py
-    and toolkit_freshness.py). Only an EXACT blob match is inherited - a path the merge resolved
-    differently (a conflict edit) still counts as authored here. Empty set when there is no
-    MERGE_HEAD or git cannot answer (never widens what the keeper lets through on a probe failure).
+    During a merge commit git re-stages every file the merged-in branch changed; that content was authored (and
+    reviewed, and gated) on the other branch, not by this committer. Every keeper that judges the STAGED diff
+    (guardian-tool-authorship, prod-exposure-consent isolation, absorption-source-frozen) must ignore it, or a
+    resync merge is refused for someone else's work (2026-11-15: doc_staleness.py / toolkit_freshness.py; a landed
+    deploy/consent/*.prod.yml). Only an EXACT blob match is inherited - a path the merge resolved differently (a
+    conflict edit, a change layered on the merge) still counts as authored here. Computed in ONE git call
+    (``git diff --cached MERGE_HEAD``: a path absent from it is identical to MERGE_HEAD, absent-on-both included).
+    Empty set when there is no MERGE_HEAD or git cannot answer (never widens what a keeper lets through on a probe
+    failure).
     """
     import subprocess
 
-    def _rev(ref: str) -> tuple[bool, str]:
+    def _git(*args: str) -> subprocess.CompletedProcess | None:
         try:
-            r = subprocess.run(["git", "rev-parse", "-q", "--verify", ref], cwd=root,
-                               capture_output=True, text=True, timeout=30, check=False)
+            return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=60, check=False)
         except (OSError, subprocess.SubprocessError):
-            return False, "error"
-        return (r.returncode == 0, r.stdout.strip()) if r.returncode in (0, 1) else (False, "error")
+            return None
 
-    has_merge, _ = _rev("MERGE_HEAD")
-    if not has_merge:
+    probe = _git("rev-parse", "-q", "--verify", "MERGE_HEAD")
+    if probe is None or probe.returncode != 0:
         return set()
-    inherited: set[str] = set()
-    for path in paths:
-        staged_ok, staged_blob = _rev(f":{path}")
-        merged_ok, merged_blob = _rev(f"MERGE_HEAD:{path}")
-        if "error" in (staged_blob, merged_blob):
-            continue
-        if (staged_ok, staged_blob) == (merged_ok, merged_blob):  # same blob, or absent on both sides
-            inherited.add(path)
-    return inherited
+    diff = _git("diff", "--cached", "--no-renames", "--name-only", "MERGE_HEAD")
+    if diff is None or diff.returncode != 0:
+        return set()
+    differing = {ln.strip() for ln in diff.stdout.splitlines() if ln.strip()}
+    return {p for p in paths if p not in differing}
 
 
 def check_guardian_tool_authorship(
@@ -18321,6 +18318,7 @@ from tools.noctus.dev.primary_write_guard import (  # noqa: E402
     _CHMOD_KNOWN_FLAGS,
     _git_config_env_injection,
     _git_hooks_bypass_reason,
+    _git_ref_forge_reason,
     _mode_removes_exec,
     _normalize as _hooks_bypass_normalize,
     _segments as _hooks_bypass_segments,
@@ -18382,6 +18380,9 @@ def check_absorption_source_frozen(
         staged = [(ln.split("\t", 1)[0][:1], ln.split("\t", 1)[1]) for ln in proc.stdout.splitlines() if "\t" in ln]
     hits = [(st, p, _abs.source_of_path(p, sources)) for st, p in staged]
     hits = [(st, p, s) for st, p, s in hits if s and st != "D"]
+    if hits:  # a merge re-stages what the other side already landed; only what this commit adds counts
+        inherited = _merge_inherited_paths(root, [p for _, p, _ in hits])
+        hits = [h for h in hits if h[1] not in inherited]
     if not hits:
         return []
     if branch is None:
@@ -18497,6 +18498,27 @@ def _hooks_bypass_argv_text(node: ast.Call) -> str | None:
     return _hooks_bypass_string_from_expr(first)
 
 
+def _ref_forge_reason_for_command(command_text: str) -> str | None:
+    """Backstop leg of the commit-tree/update-ref bypass: a tracked file that SPAWNS `git commit-tree` or
+    `git update-ref refs/heads/...` as literal command text. No tmp exemption here (a tracked file is not a
+    fixture repo): tests are skipped by the caller, and the toolkit's own plumbing runs through Python
+    wrappers (`self._git("commit-tree", ...)`), never a literal git command string."""
+    for segment in _hooks_bypass_segments(_hooks_bypass_normalize(command_text)):
+        seg = segment.strip()
+        if not seg or _MESSAGE_LEADER_RE.match(seg):
+            continue
+        reason = _git_ref_forge_reason(_hooks_bypass_strip_redirections(_hooks_bypass_tokens(seg)), None)
+        if reason is not None:
+            return reason
+    return None
+
+
+def _is_fixture_surface(rel: str) -> bool:
+    """Test code builds throwaway repos; it is not an executable surface for the ref-forge leg."""
+    name = rel.rsplit("/", 1)[-1]
+    return "/tests/" in rel or name.startswith("test_") or name == "conftest.py"
+
+
 def _hooks_bypass_reason_for_command(command_text: str) -> str | None:
     """The ONE reason-lookup shared by every file kind below — reuses the
     exact predicate the PreToolUse gate runs at write-time, so a file scan
@@ -18536,7 +18558,7 @@ def _python_hooks_bypass_hits(source: str) -> list[tuple[int, str]]:
         text = _hooks_bypass_argv_text(node)
         if not text:
             continue
-        reason = _hooks_bypass_reason_for_command(text)
+        reason = _hooks_bypass_reason_for_command(text) or _ref_forge_reason_for_command(text)
         if reason is not None:
             out.append((getattr(node, "lineno", 0) or 0, reason))
     return out
@@ -18560,7 +18582,7 @@ def _shell_hooks_bypass_hits(text: str) -> list[tuple[int, str]]:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        reason = _hooks_bypass_reason_for_command(stripped)
+        reason = _hooks_bypass_reason_for_command(stripped) or _ref_forge_reason_for_command(stripped)
         if reason is not None:
             out.append((lineno, reason))
     return out
@@ -18698,6 +18720,8 @@ def check_git_hooks_bypass(
 
     candidates = _tracked_candidates(root, paths)
     for rel, path, is_py, text in _iter_executable_surface_files(root, candidates):
+        if _is_fixture_surface(rel):
+            continue
         hits = _python_hooks_bypass_hits(text) if is_py else _shell_hooks_bypass_hits(text)
         if not hits:
             continue
@@ -26876,6 +26900,13 @@ def _check_consent_commit_isolated(root: Path) -> list[dict]:
         f for f in staged
         if f.startswith(f"{_PROD_CONSENT_DIR_REL}/") and f.endswith(".prod.yml")
     ]
+    if not consent_files:
+        return []
+    # A merge re-stages whatever the merged-in branch already landed (incl. its consent record): that is not an
+    # authored diff here. Only what THIS commit adds on top of MERGE_HEAD is judged for isolation.
+    inherited = _merge_inherited_paths(root, staged)
+    staged = [p for p in staged if p not in inherited]
+    consent_files = [f for f in consent_files if f not in inherited]
     if not consent_files or len(consent_files) == len(staged):
         return []
     other = sorted(set(staged) - set(consent_files))

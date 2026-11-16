@@ -354,6 +354,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gate", default=None, help="With --gate-alignment declare: the gate id (keeper:check-x | guard:x | ci:x).")
     parser.add_argument("--mechanism", default=None, help="With --gate-alignment declare: pointer to the construction leg, or 'none (reason)'.")
     parser.add_argument("--owner", default=None, help="With --gate-alignment declare: the agent/file that owns the gate.")
+    parser.add_argument("--gate-source", default="", help="With --gate-alignment declare: the standard/rule read BEFORE codifying (a NEW gate must cite it).")
+    parser.add_argument("--decision", default="", help="With --gate-alignment declare: one-line rule the gate serves; appends its decision-matrix row (a NEW gate needs one).")
+    parser.add_argument("--decision-branch", default="", help="With --gate-alignment declare --decision: the row's owning branch (default pending:<gate>).")
     parser.add_argument("--existing", action="store_true", help="With --gate-alignment declare: the gate already lives on dev (landed by another branch): declare its row without the new-gate shadow/source/matrix requirements.")
     parser.add_argument("--placement", default="warn", help="With --gate-alignment declare: blocking|warn|report (new gates start warn = shadow).")
     parser.add_argument("--check-refusal-classes-owned", action="store_true", help="Keeper (WARN-first shadow): a refusal class that fired >=3 times in 14 days with no open fix (pointer / in-progress gate-walls row / NOC-REMEDIATE[<class>]) is a recurring mistake nobody owns. Reads the machine-local gate event log. Fix: `--gate-alignment refusals`. KB § PATTERNS/common/gate-methodology-sync.md.")
@@ -2368,7 +2371,8 @@ def main():
     elif args.gate_alignment is not None:
         from tools.noctus.dev.gate_alignment import run_action
         _ga = run_action(args.gate_alignment, gate=args.gate or "", mechanism=args.mechanism or "",
-                         owner=args.owner or "", placement=args.placement, file=args.file_walls, existing=args.existing)
+                         owner=args.owner or "", placement=args.placement, file=args.file_walls, existing=args.existing,
+                         source=args.gate_source, decision=args.decision, branch=args.decision_branch)
         print(json.dumps(_ga, indent=1, ensure_ascii=False))
         sys.exit(0 if _ga.get("ok", True) else 1)
     elif args.check_refusal_classes_owned:
