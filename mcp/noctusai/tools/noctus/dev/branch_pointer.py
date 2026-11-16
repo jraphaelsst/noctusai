@@ -138,6 +138,25 @@ ROLE_ALIASES: dict[str, str] = {"tech-lead": "orchestrator", "tech_lead": "orche
                                 "techlead": "orchestrator",
                                 # agent-file vocabulary (.claude/agents): executors write, advisors read
                                 "executor": "engineer", "advisor": "engineer"}
+def _specialist_names() -> frozenset[str]:
+    """Agent names derived from `.claude/agents/*.md` (never hand-listed: a new specialist maps by construction)."""
+    agents = Path(__file__).resolve().parents[5] / ".claude" / "agents"
+    return frozenset(p.stem for p in agents.glob("*.md")) if agents.is_dir() else frozenset()
+
+
+def canonical_role(role: str) -> str:
+    """The stored spelling of a role: the router's aliases, and every specialist agent name (tooling-engineer,
+    backend-engineer, ...) is an `engineer` - the pointer ROLE is the claude-tree kind, the agent NAME stays in `agent`."""
+    r = role.strip().lower()
+    if r in ROLE_ALIASES:
+        return ROLE_ALIASES[r]
+    if r in ROLES:
+        return r
+    if r.endswith("-engineer") or r in _specialist_names():
+        return "engineer"
+    return role
+
+
 # Statuses that represent "done" — excluded from the default list view.
 TERMINAL_STATUSES: frozenset[str] = frozenset({"shipped", "canceled", "stale"})
 
@@ -369,7 +388,7 @@ def append(
     if status not in STATUSES:
         return {"ok": False, "error": f"status must be one of {sorted(STATUSES)}; got {status!r}"}
     if isinstance(role, str):
-        role = ROLE_ALIASES.get(role.strip().lower(), role)
+        role = canonical_role(role)
     if role not in ROLES:
         return {"ok": False, "error": f"role must be one of {sorted(ROLES)}; got {role!r}"}
 
