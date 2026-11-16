@@ -18,14 +18,20 @@ The steward is the ONE session that enqueues, runs `landed`, withdraws, blesses,
 
 ## 2 · Watch — one feed, every terminal state
 
-Arm ONE Monitor (30-min max; **re-arm on every expiry**, never let it lapse):
+ONE command, under `bg_run.py --done-when` so it ends itself (it exits 0 on `MQ-IDLE`: queue empty and no handed run pending); if armed as a Monitor instead (30-min cap), **re-arm on every expiry**:
 
 ```
-cd mcp/noctusai && .venv/bin/python cli.py --merge-queue watch --merge-queue-interval 60 2>&1 \
-  | grep -E --line-buffered "^MQ-LEFT|^MQ-BATCH|^MQ-WATCH-ERROR|Traceback"
+cd mcp/noctusai && .venv/bin/python cli.py --merge-queue watch --merge-queue-interval 60 --merge-queue-idle-exit 2>&1 \
+  | grep -E --line-buffered "^RUN |^ENQ |^LANDED-|^MQ-LEFT|^MQ-BATCH|^MQ-SUPERSEDED|^MQ-IDLE|^MQ-WATCH-ERROR|^HEARTBEAT-FAILED|Traceback"
 ```
 
-- `MQ-BATCH <candidate> -> success|failure|cancelled <url>`: one line per finished candidate batch (since 2026-11-09). `cancelled` usually means a job hit its timeout: a hang, not a green.
+**Each handoff = ONE append, never a new loop:** `cli.py --steward-feed register --feed-slug S --feed-run <gh run id> --feed-sha <full sha that run tested> [--feed-after <slug>]`. The feed polls the run (>=120s, conditional GET via the seam; 300s when `rate_remaining` < 500), and on green heartbeats your lease, enqueues, and later runs `task_branch landed` itself.
+
+- `RUN <slug> <run> -> success|failure|cancelled <sha> rate_remaining=<n>`: a red adds `jobs=<failing jobs> first='<first FAILED/error line>'` from one log fetch: no manual `--log-failed`.
+- `ENQ <slug> -> queued | refused:<why> | needs_resync:<item>`: one line (top-level status, never the JSON). `needs_resync` goes back to the branch steward.
+- `LANDED-RECORDED <slug> <dev sha>`: the feed already ran `task_branch landed`; `LANDED-ERROR` means it did not, do it by hand.
+- `MQ-SUPERSEDED <slug> <sha> -> superseded (patch-equivalent|content-equal)`: a `conflict` ejection whose content is already on dev: nothing to re-enqueue.
+- `MQ-BATCH <candidate> -> success|failure|cancelled <url>`: one line per finished candidate batch. `cancelled` usually means a job hit its timeout: a hang, not a green.
 - `MQ-LEFT <slug> <sha> -> landed <dev> | ejected <why> | unknown`: `unknown` after a withdrawal is expected.
 - Off-host backstop: `.github/workflows/merge-queue-watchdog.yml` (every 10 min) alerts the owner on WhatsApp/email with or without a session (`noctus.dev.mq_watchdog`).
 - **Owner rule (2026-11-09):** if a drift goes unnoticed again, add a 20-minute timer (`ScheduleWakeup`/`CronCreate`) that checks the queue even when no event arrives.

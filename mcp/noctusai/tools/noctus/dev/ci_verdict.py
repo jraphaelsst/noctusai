@@ -142,6 +142,38 @@ class RealGithubClient:
             timer.cancel()
         return proc.returncode is not None and proc.returncode >= 0
 
+    def run_cached(self, run_id: str) -> dict[str, Any] | None:
+        """`run` as a CONDITIONAL GET (If-None-Match): an unchanged run answers 304, which does not spend core quota
+        (the steward feed polls every handed run every >=120s; 2026-11-16 the shared 5000/h ran dry)."""
+        etags = self.__dict__.setdefault("_etags", {})
+        key = str(run_id)
+        cmd = ["gh", "api", "-i", f"repos/{self.repo()}/actions/runs/{run_id}"]
+        if key in etags:
+            cmd[3:3] = ["-H", f"If-None-Match: {etags[key][0]}"]
+        rc, out, err = self._sh(cmd, self.cwd)
+        if "304" in (err or "")[:200] + out[:40] and key in etags:
+            return etags[key][1]
+        if rc != 0:
+            raise CiVerdictError(f"gh api runs/{run_id} failed (rc={rc}): {(err or out).strip()[-300:]}")
+        head, _sep, body = out.partition("\r\n\r\n") if "\r\n\r\n" in out else out.partition("\n\n")
+        run = json.loads(body) if body.strip() else None
+        m = re.search(r"(?im)^etag:\s*(\S+)", head)
+        if m and run is not None:
+            etags[key] = (m.group(1), run)
+        return run
+
+    def rate_remaining(self) -> int | None:
+        """Core API quota left (the `rate_limit` endpoint is free); None when unreadable."""
+        rc, out, _e = self._sh(["gh", "api", "rate_limit", "--jq", ".resources.core.remaining"], self.cwd)
+        return int(out.strip()) if rc == 0 and out.strip().isdigit() else None
+
+    def failed_log(self, run_id: str) -> str:
+        """The failing steps' log, ONE fetch (`gh run view --log-failed`): `job<TAB>step<TAB>line` rows."""
+        rc, out, err = self._sh(["gh", "run", "view", str(run_id), "--log-failed", "-R", self.repo()], self.cwd, timeout=300)
+        if rc != 0:
+            raise CiVerdictError(f"gh run view --log-failed failed (rc={rc}): {(err or out).strip()[-300:]}")
+        return out
+
     def run_log(self, run_id: str) -> str:
         rc, out, err = self._sh(["gh", "run", "view", str(run_id), "--log", "-R", self.repo()], self.cwd, timeout=300)
         if rc != 0:
@@ -159,6 +191,9 @@ class FakeGithubClient:
     dispatched: list[tuple[str, str | None]] = field(default_factory=list)
     next_id: int = 1000
     fail: str | None = None
+    rate: int | None = 4000
+    logs: dict[str, str] = field(default_factory=dict)
+    polls: list[str] = field(default_factory=list)
 
     def repo(self) -> str:
         if self.fail:
@@ -178,6 +213,17 @@ class FakeGithubClient:
     def runs_for_head(self, head: str) -> list[dict[str, Any]]:
         self.repo()
         return [r for r in self.runs.values() if r.get("head_sha") == head]
+
+    def run_cached(self, run_id: str) -> dict[str, Any] | None:
+        self.polls.append(str(run_id))
+        return self.run(run_id)
+
+    def rate_remaining(self) -> int | None:
+        return self.rate
+
+    def failed_log(self, run_id: str) -> str:
+        self.repo()
+        return self.logs.get(str(run_id), "")
 
     def dispatch(self, branch: str, base: str | None) -> None:
         self.repo()
