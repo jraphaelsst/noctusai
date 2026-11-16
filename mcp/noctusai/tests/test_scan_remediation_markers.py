@@ -327,3 +327,55 @@ class TestDeclarationVsCitation:
         assert len(res["on_except"]) == 1
         assert res["on_except"][0]["class"] == "err"
         assert res["exit_code"] == 1
+
+
+class TestMarkerInAppliedFrozenMigration:
+    """345 (applied, frozen) carried the contract-step marker 346 resolved; it could never be edited away."""
+
+    MIG = "products/p/backend/migrations/"
+    OLD = "-- NOC-REMEDIATE[contract-step]: drop legacy table in a later migration — 2026-11-01\nSELECT 1;\n"
+
+    def _applied(self, *names: str) -> str:
+        import json
+        return json.dumps({"applied": {n: "x" for n in names}})
+
+    def _scan(self, tmp_path, files):
+        return scan_remediation_markers(repo_root=_repo(tmp_path, files))
+
+    def test_marker_stays_open_without_a_resolution(self, tmp_path):
+        res = self._scan(tmp_path, {self.MIG + "345_a.sql": self.OLD, self.MIG + "../migrations-applied.json": self._applied("345_a.sql")})
+        assert res["by_class"] == {"contract-step": 1}
+
+    def test_later_migration_header_resolves_an_applied_marker(self, tmp_path):
+        res = self._scan(tmp_path, {
+            self.MIG + "345_a.sql": self.OLD,
+            self.MIG + "346_b.sql": "-- Resolves: NOC-REMEDIATE[contract-step]\nSELECT 2;\n",
+            "products/p/backend/migrations-applied.json": self._applied("345_a.sql"),
+        })
+        assert res["total"] == 0 and res["status"] == "clean"
+
+    def test_header_of_another_class_or_an_earlier_migration_does_not_resolve(self, tmp_path):
+        res = self._scan(tmp_path, {
+            self.MIG + "345_a.sql": self.OLD,
+            self.MIG + "346_b.sql": "-- Resolves: NOC-REMEDIATE[other-class]\nSELECT 2;\n",
+            self.MIG + "344_c.sql": "-- Resolves: NOC-REMEDIATE[contract-step]\nSELECT 0;\n",
+            "products/p/backend/migrations-applied.json": self._applied("345_a.sql"),
+        })
+        assert res["by_class"] == {"contract-step": 1}
+
+    def test_header_does_not_resolve_a_marker_in_an_unapplied_migration(self, tmp_path):
+        res = self._scan(tmp_path, {
+            self.MIG + "345_a.sql": self.OLD,
+            self.MIG + "346_b.sql": "-- Resolves: NOC-REMEDIATE[contract-step]\nSELECT 2;\n",
+            "products/p/backend/migrations-applied.json": self._applied(),
+        })
+        assert res["by_class"] == {"contract-step": 1}
+
+    def test_resolution_file_resolves_when_the_resolver_is_itself_applied(self, tmp_path):
+        res = self._scan(tmp_path, {
+            self.MIG + "345_a.sql": self.OLD,
+            self.MIG + "346_b.sql": "SELECT 2;\n",
+            self.MIG + "remediation-resolved.txt": "345_a.sql NOC-REMEDIATE[contract-step] -- dropped by 346_b.sql\n",
+            "products/p/backend/migrations-applied.json": self._applied("345_a.sql", "346_b.sql"),
+        })
+        assert res["total"] == 0

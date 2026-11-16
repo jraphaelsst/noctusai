@@ -1,3 +1,4 @@
+-- Resolves: NOC-REMEDIATE[imobshot-eventos-contract]
 -- 346 — ImobShotAI: CONTRACT step. Drops the legacy hand-written `imobshot_eventos` (344) now that 345 moved the card
 -- history onto the seed transition_log (`imobshot_card_events`) and prod verified it (0 legacy rows, INSERT revoked).
 --

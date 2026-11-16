@@ -29,6 +29,10 @@
 # Carve-out: [carve:hook] — git-hook entry; logic is git-native + thin.
 # See KB § PATTERNS/branching-and-merging.md § 0.2 and § PATTERNS/branching-dispatch.md.
 # ──────────────────────────────────────────────────────────────
+# NOC-HOOK-STAMP: 1
+# NOC-HOOK-LEGS: protected-branches mq-guard embed-refresh branch-pointer-ensure branch-tree-mirror stale-pointers ledger-drain doc-staleness hook-dispatch
+# ^ BUMP the stamp (and list the leg) with every new leg: a worktree push runs whichever hook copy .git/hooks points at
+#   (the PRIMARY's), which can be older than this tree's - the dispatch block below compares the two.
 set -euo pipefail
 # Quiet the toolkit CLI's banner + INFO logs for every call this hook makes
 # (verdict lines still print). NOCTUS_HOOK_VERBOSE=1 restores them.
@@ -43,6 +47,34 @@ blocked=0
 # Capture upfront — the refresh-gate needs the pushed range; the protection
 # loop reuses the captured lines (git provides stdin exactly once).
 PUSH_LINES="$(cat)"
+
+# ─── stale hook copy: dispatch to THIS tree's hook, or say loudly which legs are absent ──────────────────────────
+# (NOC-REMEDIATE[hook-leg-absent-loud], 2026-11-15.) .git/hooks/pre-push is shared by every worktree of the clone, so a
+# worktree push ran the PRIMARY's copy; when that is older than the worktree's own scripts/hooks/pre-push, the new
+# legs (e.g. branch-pointer-ensure) were silently absent. Construction: when the tree's hook carries a higher
+# NOC-HOOK-STAMP, hand the push to it (once - NOC_HOOK_REEXEC guards the loop) so the CURRENT logic runs; when that is
+# impossible, print the missing legs and the fix instead of passing quietly.
+_hk_stamp() { sed -n 's/^# NOC-HOOK-STAMP: *\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | head -1; }
+_hk_legs()  { sed -n 's/^# NOC-HOOK-LEGS: *//p' "$1" 2>/dev/null | head -1; }
+_hk_real()  { ( cd "$(dirname "$1")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$1")" ); }
+_hk_top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+_hk_self="$(_hk_real "${BASH_SOURCE[0]}")"
+_hk_tree="${_hk_top:+$_hk_top/scripts/hooks/pre-push}"
+if [[ -n "$_hk_tree" && -f "$_hk_tree" && "$(_hk_real "$_hk_tree")" != "$_hk_self" ]]; then
+    _hk_own="$(_hk_stamp "$_hk_self")"; _hk_theirs="$(_hk_stamp "$_hk_tree")"
+    if (( ${_hk_theirs:-0} > ${_hk_own:-0} )); then
+        _hk_missing=""
+        for _l in $(_hk_legs "$_hk_tree"); do
+            [[ " $(_hk_legs "$_hk_self") " == *" $_l "* ]] || _hk_missing="$_hk_missing $_l"
+        done
+        _hk_missing="${_hk_missing# }"
+        if [[ -x "$_hk_tree" && -z "${NOC_HOOK_REEXEC:-}" ]]; then
+            echo "[pre-push] ⚠ the installed hook ($_hk_self, stamp ${_hk_own:-0}) is older than this tree's ($_hk_tree, stamp $_hk_theirs) - running THIS tree's hook; legs the installed copy lacked: ${_hk_missing:-none listed}. Fix: fast-forward the primary checkout (git -C <primary> merge --ff-only origin/dev)." >&2
+            NOC_HOOK_REEXEC=1 exec "$_hk_tree" "$@" <<<"$PUSH_LINES"
+        fi
+        echo "[pre-push] 🔴 NOC-REMEDIATE[hook-leg-absent-loud]: the installed hook ($_hk_self, stamp ${_hk_own:-0}) is OLDER than this tree's ($_hk_tree, stamp $_hk_theirs) and could not hand over to it. Legs this push is NOT being checked by: ${_hk_missing:-none listed}. Fix: fast-forward the primary checkout (git -C <primary> merge --ff-only origin/dev) so .git/hooks/pre-push is current." >&2
+    fi
+fi
 
 # ─── the merge-queue path (guardian spec, 2026-11-10) ────────────────────────
 # Code reaches dev through `git push origin <sha>:refs/heads/mq/<slug>--<sha7>`: a PURE PUSH of

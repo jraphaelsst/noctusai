@@ -250,3 +250,47 @@ def test_whisper_escape_after_server_failure(capsys):
                                  "uv run pytest -q", "uv run --with x pytest"])
 def test_wrapper_and_uv_flags_do_not_hide_a_suite(cmd):
     _rewrite(cmd)
+
+
+# ── 2026-11-16: a `timeout`-prefixed bare-venv pytest ran outside the hardware slot (3 concurrent runs, swap 8.7/9.2G) ──
+_REAL_BYPASS = ("timeout 300 /Users/rapha/Documents/repository/NoctusAI/noctusai/venv/bin/python -m pytest "
+                "tests/modules/media_creation -q")
+WRAPPED_FORMS = [
+    _REAL_BYPASS,
+    f"cd products/p-studio/backend && {_REAL_BYPASS} 2>&1 | tail -20",
+    "timeout -k 10 300 /a/venv/bin/python -m pytest tests -q",
+    "timeout --signal=KILL 300 python -m pytest tests",
+    "timeout --kill-after=5s --foreground 300 python -m pytest tests",
+    "gtimeout 300 .venv/bin/python3.11 -m pytest tests",
+    "PYTHONPATH=. timeout 300 venv/bin/pytest tests",
+    "caffeinate -i timeout 300 venv/bin/python -m pytest tests",
+    "nice -n 10 timeout 300 venv/bin/python -m pytest tests",
+    "time timeout 300s venv/bin/python -m pytest tests",
+    "ionice -c 3 stdbuf -oL venv/bin/py.test tests",
+    "/a/venv/bin/python -m unittest discover",
+]
+
+
+@pytest.mark.parametrize("cmd", WRAPPED_FORMS)
+def test_wrapped_and_bare_venv_pytest_is_rewritten_into_the_gate_keeping_the_wrapper_inside(cmd):
+    verdict = guard.decide(_bash(cmd))
+    assert verdict is not None and verdict["decision"] == "allow", cmd
+    rewritten = verdict["updated_input"]["command"]
+    assert "hw_admission.py" in rewritten and f" -- bash -c " in rewritten
+    assert shlex.split(rewritten)[-1] == cmd  # the whole original (timeout included) runs INSIDE the admitted job
+
+
+def test_the_exact_bypass_command_names_a_pytest_job():
+    verdict = guard.decide(_bash(_REAL_BYPASS))
+    assert "--job pytest:" in verdict["updated_input"]["command"]
+
+
+@pytest.mark.parametrize("cmd", ["timeout 5 git status", "timeout 300 ls tests", "gtimeout -k 1 5 echo pytest",
+                                 "nice -n 10 git log --oneline"])
+def test_a_wrapped_command_that_is_not_heavy_is_allowed_untouched(cmd):
+    assert guard.decide(_bash(cmd)) is None
+
+
+def test_an_already_gated_timeout_pytest_is_not_wrapped_twice():
+    gated = guard.gated_command(_REAL_BYPASS, "pytest:media_creation")
+    assert guard.decide(_bash(gated)) is None

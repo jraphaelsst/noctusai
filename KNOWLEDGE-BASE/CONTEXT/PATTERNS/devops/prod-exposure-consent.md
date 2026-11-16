@@ -69,6 +69,8 @@ Any failure → **severity `high`**, hard-block at pre-commit, with a self-expla
 
 `_check_consent_commit_isolated` refuses a `deploy/consent/*.prod.yml` staged alongside **any other path** — independent of the set-difference, so it fires even when `new` is empty. This closes the "slip consent past review inside an unrelated diff" hole: the consent record must be its own commit, reviewable on its own, before the registration commit can even be attempted.
 
+**A merge commit inherits, it does not author (2026-11-15).** Merging `dev` re-stages the consent record `dev` already landed together with `dev`'s other files, which used to trip the isolation rule. Paths whose index blob equals `MERGE_HEAD`'s blob are ignored (`_merge_inherited_paths`, shared with `check_guardian_tool_authorship`); anything this commit adds or edits on top of the merge still counts, so a consent record slipped in alongside other work is still refused.
+
 ## Failure message contract
 
 The message an agent sees is deliberately self-explanatory, not just a violation name — it states which three surfaces are affected, that registration **is** the promotion decision, that there is **no later gate**, and **both** routes to a valid record (user hand-authors, or user types the canonical phrase and an agent transcribes it). It ends with:

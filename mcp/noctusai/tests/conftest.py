@@ -352,6 +352,9 @@ def pglite():
 
     node_dir = _MCP_ROOT / "node"
     if shutil.which("node") is None or not (node_dir / "node_modules" / "@electric-sql" / "pglite").is_dir():
-        if os.environ.get("CI"):
-            pytest.fail("PGlite not installed in CI - the mcp job's `npm ci` in mcp/noctusai/node must provide it")
+        from noctusai_lib.testing.pglite import REQUIRE_REAL_PG_ENV, real_pg_required
+
+        if os.environ.get("CI") or real_pg_required():
+            pytest.fail(f"PGlite not installed ({'CI' if os.environ.get('CI') else REQUIRE_REAL_PG_ENV + '=1'}) - the mcp job's "
+                        f"`npm ci` in mcp/noctusai/node must provide it (node on PATH + {node_dir}/node_modules/@electric-sql/pglite)")
         pytest.skip("node + PGlite not installed (run `npm ci` in mcp/noctusai/node)")

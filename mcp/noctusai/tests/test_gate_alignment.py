@@ -312,3 +312,43 @@ class TestUnownedKeeper:
         issues = compliance.check_refusal_classes_owned(repo_root=tmp_path, events=[mk(1), mk(2), mk(3)])
         assert [i["severity"] for i in issues] == ["warning"] and "g:x" in issues[0]["issue"]
         assert compliance.check_refusal_classes_owned(repo_root=tmp_path, events=[mk(1), mk(2)]) == []
+
+
+class TestScaffoldKeeperOutputPassesItsOwnTriad:
+    """NOC-REMEDIATE[scaffold-keeper-triad-prefix] closed: the scaffold's own declare command used to omit the source
+    and the decision-matrix row, so the triad refused the output of the tool that exists to satisfy it."""
+
+    def _scaffold(self):
+        from tools.noctus.dev.scaffold_keeper import scaffold_keeper
+        return scaffold_keeper("files_xyz", "xyz", mechanism="scaffold: noctus.dev.scaffold_keeper",
+                               owner="tooling-engineer", source="KB § PATTERNS/common/gate-methodology-sync.md")
+
+    def test_unedited_scaffold_declaration_satisfies_the_triad(self, tmp_path):
+        out = self._scaffold()
+        root = _tree(tmp_path, {"gates": {}, "decisions": []}, hook_flags=("check-xyz",))
+        assert any("not declared" in i["issue"] for i in ga.triad_issues(root))  # the premise: red before declaring
+        args = dict(out["declare_args"])
+        res = ga.run_action(args.pop("action"), gate=args["gate"], mechanism=args["mechanism"], owner=args["owner"],
+                            placement=args["placement"], source=args["source"], decision=args["decision"],
+                            branch=args["branch"], root=root)
+        assert res["ok"] and res["decision_row"]["gates"] == ["keeper:check-xyz"]
+        assert ga.triad_issues(root) == []
+
+    def test_declare_command_carries_every_leg_the_triad_checks(self):
+        import shlex
+        toks = shlex.split(self._scaffold()["declare_command"])
+        for flag in ("--gate", "--mechanism", "--owner", "--gate-source", "--decision"):
+            assert flag in toks
+        assert toks[toks.index("--mechanism") + 1].startswith(ga.MECHANISM_PREFIXES)
+
+    def test_without_source_or_decision_the_triad_still_refuses(self, tmp_path):
+        root = _tree(tmp_path, {"gates": {}, "decisions": []}, hook_flags=("check-xyz",))
+        ga.declare_gate("keeper:check-xyz", "scaffold: t", "tooling-engineer", root=root)
+        msgs = " ".join(i["issue"] for i in ga.triad_issues(root))
+        assert "cites no `source`" in msgs and "no decision-matrix row" in msgs
+
+    def test_declare_decision_is_idempotent(self, tmp_path):
+        root = _tree(tmp_path, {"gates": {}, "decisions": []}, hook_flags=("check-xyz",))
+        for _ in range(2):
+            ga.declare_gate("keeper:check-xyz", "scaffold: t", "o", source="KB § x", decision="d", root=root)
+        assert len(json.loads((root / ga.INVENTORY_REL).read_text())["decisions"]) == 1

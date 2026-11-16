@@ -18,11 +18,14 @@ declaration (the meta-gate `check_gate_triad` fails without it), a WARN-first
 """
 from __future__ import annotations
 
+import shlex
+
 from .gate_alignment import mechanism_ok
 
 
 def scaffold_keeper(name: str, flag: str, severity: str = "high", *,
-                    mechanism: str = "", owner: str = "", source: str = "") -> dict:
+                    mechanism: str = "", owner: str = "", source: str = "", decision: str = "",
+                    branch: str = "") -> dict:
     """`name` = snake detector noun (no `check_` prefix); `flag` = the
     cli `--check-<flag>`. Returns detector/test/cli/precommit code plus the
     triad declaration. Refuses without mechanism + owner + source."""
@@ -86,14 +89,25 @@ if [[ -n "$STAGED_X" ]]; then
     "$PY" "$REPO_ROOT/mcp/noctusai/cli.py" --check-{flag} || echo "[pre-commit] WARNING (shadow): {name} — see the fix it names." >&2
 fi'''
     gate_id = f"keeper:check-{flag}"
+    # ONE command declares the gate complete (mechanism with an accepted prefix, owner, source, decision-matrix
+    # row), so the triad meta-gate accepts the scaffold's own output unedited. `decision` defaults to a stub naming
+    # the gate; reword it, never drop it.
+    decision = decision.strip() or f"TODO one-line rule that {fn} enforces (source: {source.strip()[:80]})"
+    declare_args = {"action": "declare", "gate": gate_id, "mechanism": mechanism.strip(),
+                    "owner": owner.strip(), "placement": "warn", "source": source.strip(),
+                    "decision": decision, "branch": branch.strip()}
     declare_command = (
-        f"python mcp/noctusai/cli.py --gate-alignment declare --gate {gate_id} "
-        f"--mechanism {mechanism!r} --owner {owner!r} --placement warn"
+        "python mcp/noctusai/cli.py --gate-alignment declare "
+        f"--gate {shlex.quote(gate_id)} --mechanism {shlex.quote(declare_args['mechanism'])} "
+        f"--owner {shlex.quote(declare_args['owner'])} --placement warn "
+        f"--gate-source {shlex.quote(declare_args['source'])} --decision {shlex.quote(decision)}"
+        + (f" --decision-branch {shlex.quote(declare_args['branch'])}" if declare_args["branch"] else "")
     )
     return {
         "ok": True,
         "gate_id": gate_id,
         "declare_command": declare_command,
+        "declare_args": declare_args,
         "inventory_entry": {"mechanism": mechanism, "owner": owner, "source": source,
                             "placement": "warn", "new": True,
                             "shadow": {"since": "<YYYY-MM-DD>", "fires": 0, "fix_rate": None}},
@@ -108,7 +122,7 @@ fi'''
             f"Paste detector before `def register` in compliance.py; add "
             f"argparse line + dispatch block to cli.py; add the pre-commit "
             f"block to scripts/hooks/pre-commit (shadow = warn-only); RUN `declare_command` "
-            f"(check_gate_triad fails otherwise) and add a decision-matrix row; promote to blocking only "
+            f"(check_gate_triad fails otherwise; it also writes the decision-matrix row - reword its `decision`); promote to blocking only "
             f"after >=7 shadow days with effective-FP <=10% (gate_alignment walls); "
             f"three-way-sync the rule (KB+CLAUDE+memory) per the codification pipeline."
         ),
@@ -125,12 +139,13 @@ def register(server) -> None:
             "tool not a ritual. REQUIRES mechanism (the construction leg that makes "
             "compliance the default, or 'none (reason)'), owner and source - a gate never ships "
             "alone (build triad). Returns code + the gate-inventory declaration + a WARN-first "
-            "shadow pre-commit block; agent pastes, fills the predicate, runs declare_command."
+            "shadow pre-commit block + a declare_command that writes the inventory row (mechanism, owner, source) AND its decision-matrix row in one call, so the triad accepts the scaffold output unedited; agent pastes, fills the predicate, runs declare_command."
         ),
     )
     def _scaffold_keeper(name: str, flag: str, severity: str = "high", mechanism: str = "",
-                         owner: str = "", source: str = "") -> dict:
-        return scaffold_keeper(name, flag, severity=severity, mechanism=mechanism, owner=owner, source=source)
+                         owner: str = "", source: str = "", decision: str = "", branch: str = "") -> dict:
+        return scaffold_keeper(name, flag, severity=severity, mechanism=mechanism, owner=owner, source=source,
+                               decision=decision, branch=branch)
 
 
 __all__ = ["scaffold_keeper", "register"]

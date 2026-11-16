@@ -49,3 +49,36 @@ def test_with_the_flag_a_missing_server_raises(no_harness):
     with pytest.raises(RealPgUnavailable, match="no Postgres server"):
         with disposable_postgres():
             pass
+
+
+def test_replay_skipif_without_the_flag_is_a_visible_skip(no_harness):
+    from noctusai_lib.testing.pglite import pglite_replay_skipif
+
+    no_harness.delenv(REQUIRE_REAL_PG_ENV, raising=False)
+    kw = pglite_replay_skipif()
+    assert kw["condition"] is True and "PGlite harness unavailable" in kw["reason"] and "did not run" in kw["reason"]
+
+
+def test_replay_skipif_with_the_flag_fails_instead_of_skipping(no_harness):
+    """The 12+ modules that drive replay.mjs directly used to skip whatever the flag said (2 'skipped' with
+    NOC_REQUIRE_REAL_PG=1, 2026-11-15). Now evaluating the marker raises, naming what is missing."""
+    from noctusai_lib.testing.pglite import pglite_replay_skipif
+
+    no_harness.setenv(REQUIRE_REAL_PG_ENV, "1")
+    with pytest.raises(RealPgUnavailable, match=r"PGlite harness unavailable.*replay\.mjs"):
+        pglite_replay_skipif()
+
+
+def test_replay_skipif_when_the_harness_is_there_does_not_skip(tmp_path, monkeypatch):
+    from noctusai_lib.testing.pglite import pglite_replay_skipif
+
+    node = tmp_path / "node"
+    (node / "node_modules" / "@electric-sql").mkdir(parents=True)
+    (node / "migration_replay").mkdir()
+    (node / "migration_replay" / "stubs.sql").write_text("")
+    (node / "migration_replay" / "replay.mjs").write_text("")
+    monkeypatch.setenv("NOCTUS_PGLITE_NODE_DIR", str(node))
+    monkeypatch.delenv(REQUIRE_REAL_PG_ENV, raising=False)
+    import shutil
+
+    assert pglite_replay_skipif()["condition"] is (shutil.which("node") is None)  # only `node` itself can still be missing

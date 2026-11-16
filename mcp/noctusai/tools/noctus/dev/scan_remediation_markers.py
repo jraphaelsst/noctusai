@@ -79,6 +79,10 @@ class (``[<class>]``, pre-existing rule) OR a class that is a bare ellipsis (``.
 descriptive text that is itself an angle-bracket / ellipsis placeholder (``<rationale> —
 <date>``, `` …)`` `` inside a quoted worked-example commit message) are never counted.
 
+Markers inside an APPLIED (frozen) migration cannot be edited away once the follow-up migration lands; they are
+resolved by a later migration's ``-- Resolves: NOC-REMEDIATE[<class>]`` header or a line in the product's
+``migrations/remediation-resolved.txt`` (see ``_resolved_in_frozen_migration``).
+
 Multi-line markers: the "what" text and the trailing ``— <date>`` frequently continue
 past the marker's own physical line (a wrapped sentence, an indented explanation block).
 Once a declaration is found, the surrounding block is read forward — the rest of the
@@ -495,8 +499,81 @@ def _iter_markers(root: Path) -> list[dict]:
     out: list[dict] = []
     for path, hits in by_file.items():
         out.extend(_classify_file_hits(root, path, hits))
+    out = [m for m in out if not _resolved_in_frozen_migration(root, m)]
     out.sort(key=lambda m: (m["path"], m["line"]))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Markers inside APPLIED (frozen) migrations - resolved by a later migration or a resolution file.
+# ---------------------------------------------------------------------------
+# An applied migration is frozen (its sha is in migrations-applied.json), so the marker it carries can never be
+# edited away once the follow-up lands (344/345 -> 346: 345 still declared the contract step it had deferred).
+# Two documented, explicit ways to close it:
+#   1. a LATER migration of the same product (higher numeric prefix) with a header line
+#        -- Resolves: NOC-REMEDIATE[<class>]
+#   2. products/<slug>/backend/migrations/remediation-resolved.txt, one line per resolution (used when the resolving
+#      migration is itself already applied, so its header can no longer be added):
+#        <NNN_file.sql> NOC-REMEDIATE[<class>] -- <why / pointer to the resolving change>
+# Only a marker in a file listed in migrations-applied.json is eligible (an unapplied migration is still editable:
+# delete the marker). A header resolves exactly the class it names, in migrations numbered BEFORE it.
+RESOLUTION_FILE = "remediation-resolved.txt"
+_MIGRATION_PATH_RE = re.compile(r"^(?P<dir>products/(?P<product>[^/]+)/backend/migrations)/(?P<name>(?P<num>\d+)_[^/]*\.sql)$")
+_RESOLVES_RE = re.compile(r"^\s*--\s*Resolves:\s*NOC-REMEDIATE\[(?P<cls>[^\]<>\s][^\]<>]*)\]", re.MULTILINE)
+_RESOLUTION_LINE_RE = re.compile(r"^\s*(?P<file>\d+_\S+\.sql)\s+NOC-REMEDIATE\[(?P<cls>[^\]<>\s][^\]<>]*)\]", re.MULTILINE)
+
+
+def _applied_migrations(root: Path, product: str) -> set[str]:
+    import json
+
+    try:
+        data = json.loads((root / "products" / product / "backend" / "migrations-applied.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    applied = data.get("applied") if isinstance(data, dict) else None
+    return set(applied) if isinstance(applied, dict) else set()
+
+
+def _resolutions_for_dir(root: Path, mig_dir: str) -> tuple[dict[int, set[str]], set[tuple[str, str]]]:
+    """({migration number: classes its `Resolves:` header closes}, {(file, class) from the resolution file})."""
+    headers: dict[int, set[str]] = {}
+    base = root / mig_dir
+    try:
+        files = sorted(base.glob("*.sql"))
+    except OSError:
+        files = []
+    for f in files:
+        m = re.match(r"(\d+)_", f.name)
+        if not m:
+            continue
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        found = {h.group("cls").strip() for h in _RESOLVES_RE.finditer(text)}
+        if found:
+            headers.setdefault(int(m.group(1)), set()).update(found)
+    listed: set[tuple[str, str]] = set()
+    try:
+        text = (base / RESOLUTION_FILE).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    for r in _RESOLUTION_LINE_RE.finditer(text):
+        listed.add((r.group("file"), r.group("cls").strip()))
+    return headers, listed
+
+
+def _resolved_in_frozen_migration(root: Path, marker: dict) -> bool:
+    m = _MIGRATION_PATH_RE.match(marker["path"])
+    if not m:
+        return False
+    if m.group("name") not in _applied_migrations(root, m.group("product")):
+        return False  # not frozen yet: delete the marker instead
+    headers, listed = _resolutions_for_dir(root, m.group("dir"))
+    if (m.group("name"), marker["class"]) in listed:
+        return True
+    own = int(m.group("num"))
+    return any(num > own and marker["class"] in classes for num, classes in headers.items())
 
 
 def scan_remediation_markers(
@@ -564,4 +641,4 @@ def register(server) -> None:
         return scan_remediation_markers(worktree_path=worktree_path)
 
 
-__all__ = ["scan_remediation_markers", "markers_of_class", "register"]
+__all__ = ["scan_remediation_markers", "markers_of_class", "register", "RESOLUTION_FILE"]
