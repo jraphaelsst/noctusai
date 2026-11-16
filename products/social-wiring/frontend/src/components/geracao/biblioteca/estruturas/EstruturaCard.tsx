@@ -43,7 +43,7 @@ export function EstruturaCard({ estrutura: e }: { estrutura: EstruturaResumo }) 
         ))}
         <span className="text-xs text-muted-foreground">{e.blocos_total === 1 ? "1 bloco" : `${e.blocos_total} blocos`}</span>
       </div>
-      {(e.status !== "ativa" || e.pendente_revisao || e.revisao_por_desuso || e.origem === "viral_auto" || e.selecionada_pela_marca) && (
+      {(e.status !== "ativa" || e.pendente_revisao || e.revisao_por_desuso || e.gerada_por_ia || e.selecionada_pela_marca) && (
         <div className="flex flex-wrap items-center gap-1.5">
           {e.status !== "ativa" && <Badge variant={e.status === "rascunho" ? "default" : "secondary"}>{ROTULO_STATUS[e.status]}</Badge>}
           {e.pendente_revisao && (
@@ -52,7 +52,7 @@ export function EstruturaCard({ estrutura: e }: { estrutura: EstruturaResumo }) 
             </Badge>
           )}
           <RevisaoDesusoBadge desde={e.revisao_por_desuso} />
-          <AtribuicaoIAChip origem={e.origem} handle={e.perfil.handle} />
+          <AtribuicaoIAChip gerada={e.gerada_por_ia} handle={e.perfil.handle} />
           {e.selecionada_pela_marca && <Badge variant="outline">Na sua biblioteca</Badge>}
         </div>
       )}

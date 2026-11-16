@@ -42,6 +42,7 @@ export const resumo = (over: Partial<EstruturaResumo> = {}): EstruturaResumo => 
   blocos_total: 2,
   viral: null,
   status: "ativa",
+  gerada_por_ia: false,
   updated_at: "2026-11-10T12:00:00Z",
   ...over,
 });

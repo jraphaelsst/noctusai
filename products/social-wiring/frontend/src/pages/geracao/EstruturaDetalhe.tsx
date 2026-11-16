@@ -115,7 +115,7 @@ export default function EstruturaDetalhePage() {
         </section>
       )}
 
-      <AtribuicaoIAFrase origem={e.origem} handle={e.perfil.handle} />
+      <AtribuicaoIAFrase gerada={e.gerada_por_ia} handle={e.perfil.handle} />
 
       {isAdmin && e.origem && (
         <p className="text-xs text-muted-foreground" data-testid="estrutura-origem">

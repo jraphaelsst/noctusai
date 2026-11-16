@@ -112,8 +112,8 @@ def _estrutura(db, eid, *, perfil, codigo, status="ativa", formula="Como [x] faz
     # the derived view (never stored in SQL; a table in the mock)
     db.from_("cs_estruturas_resumo").insert({
         "id": eid, "codigo": codigo, "perfil_id": perfil, "viral_id": viral, "formula_headline": formula, "formato": formato,
-        "objetivos": list(objetivos), "status": status, "updated_at": updated_at, "blocos_total": len(blocos),
-        "campos_pendentes": pend,
+        "objetivos": list(objetivos), "status": status, "origem": origem, "updated_at": updated_at,
+        "blocos_total": len(blocos), "campos_pendentes": pend,
     }).execute()
 
 
@@ -232,13 +232,30 @@ class TestList:
         assert set(d) == {"items", "total"} and d["total"] == 2
         assert [i["id"] for i in d["items"]] == [E1, E2]  # newest update first
         item = d["items"][0]
-        assert set(item) == {"id", "codigo", "perfil", "formula_headline", "formato", "objetivos", "blocos_total", "viral", "status", "updated_at"}
+        assert set(item) == {"id", "codigo", "perfil", "formula_headline", "formato", "objetivos", "blocos_total", "viral", "status",
+                             "updated_at", "gerada_por_ia"}
+        assert item["gerada_por_ia"] is False
         assert item["codigo"] == 101 and item["formato"] == "reels" and item["blocos_total"] == 2 and item["status"] == "ativa"
         # a client org sees the creator as handle + name ONLY: no photo key at all (owner decision 2026-11-15)
         assert item["perfil"] == {"id": P1, "handle": "psifernandosegredo", "nome": "Fernando Segredo"}
         assert item["viral"]["codigo"] == 77 and item["viral"]["permalink"].endswith("AAA/")
         assert item["viral"]["thumbnail_url"].startswith(f"fake://storage/sw-biblioteca/platform/{P1}/AAA.jpg")
         assert d["items"][1]["viral"] is None and d["items"][1]["perfil"]["nome"] is None
+
+    def test_every_role_is_told_an_ai_draft_is_ai_generated_but_only_an_admin_sees_the_raw_origem(self, est, client):
+        """Legal attribution (EST-5 amendment item 9): a published auto-draft carries `gerada_por_ia` for members too;
+        the raw `origem` (it names the import source) never reaches a client org."""
+        e_ia = str(uuid.uuid4())
+        _estrutura(est.db, e_ia, perfil=P1, codigo=105, origem="viral_auto", updated_at="2026-11-16T10:00:00+00:00")
+        member = {i["id"]: i for i in _items(client.get(BASE))}
+        assert member[e_ia]["gerada_por_ia"] is True and member[E1]["gerada_por_ia"] is False
+        assert all("origem" not in i for i in member.values())
+        d = client.get(f"{BASE}/{e_ia}").json()["data"]
+        assert d["gerada_por_ia"] is True and "origem" not in d
+        est.admin = True
+        admin = {i["id"]: i for i in _items(client.get(f"{BASE}?status=todas"))}
+        assert admin[e_ia]["origem"] == "viral_auto" and admin[E_DRAFT]["gerada_por_ia"] is True
+        assert admin[E1]["origem"] == "import_corestudio" and admin[E1]["gerada_por_ia"] is False
 
     def test_a_member_can_never_widen_the_status_filter(self, est, client):
         for q in ("status=todas", "status=rascunho", "status=arquivada", "somente_pendentes_revisao=true"):

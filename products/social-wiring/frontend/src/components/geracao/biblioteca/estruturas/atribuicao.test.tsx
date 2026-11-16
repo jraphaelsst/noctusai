@@ -16,7 +16,7 @@ describe("AI attribution", () => {
     expect(fraseAtribuicaoIA("criador.exemplo")).toBe(
       "Estrutura gerada por IA a partir de um vídeo público de @criador.exemplo; não é texto do criador.",
     );
-    rtl.render(<AtribuicaoIAFrase origem="viral_auto" handle="criador.exemplo" />);
+    rtl.render(<AtribuicaoIAFrase gerada handle="criador.exemplo" />);
     expect(rtl.screen.getByTestId("atribuicao-ia-frase").textContent).toContain("de @criador.exemplo;");
   });
 
@@ -25,29 +25,30 @@ describe("AI attribution", () => {
     expect(fraseAtribuicaoIA("")).not.toContain("@");
   });
 
-  it("chip on the card for viral_auto, with the sentence as accessible name; absent for other origens", () => {
+  it("chip on the card when gerada_por_ia (every role), the sentence as accessible name; absent otherwise", () => {
     const { rerender } = rtl.render(
       <MemoryRouter>
-        <EstruturaCard estrutura={resumo({ origem: "viral_auto" })} />
+        <EstruturaCard estrutura={resumo({ gerada_por_ia: true })} />
       </MemoryRouter>,
     );
     const chip = rtl.screen.getByTestId("atribuicao-ia-chip");
     expect(chip.textContent).toBe("Gerada por IA");
     expect(chip.getAttribute("aria-label")).toContain("de @criador.exemplo; não é texto do criador.");
-    for (const origem of ["manual", "import_corestudio", "import_maquina", undefined] as const) {
+    // the admin-only raw origem never drives the label: only the all-roles flag does
+    for (const extra of [{ gerada_por_ia: false }, { gerada_por_ia: false, origem: "viral_auto" as const }]) {
       rerender(
         <MemoryRouter>
-          <EstruturaCard estrutura={resumo({ origem })} />
+          <EstruturaCard estrutura={resumo(extra)} />
         </MemoryRouter>,
       );
       expect(rtl.screen.queryByTestId("atribuicao-ia-chip")).toBeNull();
     }
   });
 
-  it("renders nothing for non-viral_auto on chip and sentence", () => {
-    const a = rtl.render(<AtribuicaoIAChip origem="manual" handle="x" />);
+  it("renders nothing when not AI-generated, on chip and sentence", () => {
+    const a = rtl.render(<AtribuicaoIAChip gerada={false} handle="x" />);
     expect(a.container.textContent).toBe("");
-    const b = rtl.render(<AtribuicaoIAFrase origem={undefined} handle="x" />);
+    const b = rtl.render(<AtribuicaoIAFrase gerada={undefined} handle="x" />);
     expect(b.container.textContent).toBe("");
   });
 });

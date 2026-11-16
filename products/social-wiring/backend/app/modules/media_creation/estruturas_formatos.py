@@ -18,6 +18,9 @@ OBJETIVOS: tuple[str, ...] = ("alcance", "autoridade", "conexao", "venda")
 MAX_OBJETIVOS = len(OBJETIVOS)
 STATUS: tuple[str, ...] = ("rascunho", "ativa", "arquivada")
 ORIGENS: tuple[str, ...] = ("manual", "import_corestudio", "import_maquina", "viral_auto")
+#: The origem of an AI-derived draft (the EST-5 auto-draft). Every role is told an Estrutura is AI-generated
+#: (`gerada_por_ia`, the legal attribution label), while the raw `origem` stays admin-only.
+ORIGEM_GERADA_POR_IA = "viral_auto"
 
 #: Per-field provenance (DC2). ``fonte`` = typed by the source system; ``referencia`` = filled by the owner's
 #: reference dataset; ``ia_sugerido`` = filled by the app's AI (auto-draft / "a partir do video" only, NEVER the

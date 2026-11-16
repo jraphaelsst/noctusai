@@ -18,7 +18,7 @@ export type Bloco = { id: string; ordem: number; nome: string; tipo: { id: strin
 export type EstruturaResumo = { id: string; codigo: number; perfil: EstruturaPerfilRef; formula_headline: string; formato: EstruturaFormato | null;
   objetivos: EstruturaObjetivo[]; blocos_total: number; viral: { id: string; codigo: number; permalink: string; thumbnail_url: string | null } | null;
   status: EstruturaStatus; selecionada_pela_marca?: boolean; updated_at: string; pendente_revisao?: boolean /* admin only */;
-  origem?: EstruturaOrigem /* admin only; absent for members and in lists today */; revisao_por_desuso?: string | null /* admin only */ }
+  gerada_por_ia: boolean /* every role: the legal AI-attribution flag */; origem?: EstruturaOrigem /* admin only */; revisao_por_desuso?: string | null /* admin only */ }
 export type EstruturaDetalhe = EstruturaResumo & { blocos: Bloco[]; versao: number;
   ref_externa?: string | null; referencia_rotulo?: string | null; formula_herdada_de?: string | null;
   proveniencia?: { formula_headline: OrigemCampo; formato: OrigemCampo; objetivos: OrigemCampo } /* admin only */ }
