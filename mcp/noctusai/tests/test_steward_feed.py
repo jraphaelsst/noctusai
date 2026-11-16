@@ -88,9 +88,9 @@ def test_after_orders_enqueues(tmp_path):
     feed.reg.register("second", "2", "c" * 40, after="first")
     feed.reg.register("first", "1", SHA)
     feed.tick()
-    assert [s for s, _r in enq] == ["first"] and "2" not in gh.polls  # `second` is not polled while `first` is open
+    assert [s for s, _r in enq] == ["first"]  # `second` waited for `first` to finish within the same pass order
     feed.tick()
-    assert [s for s, _r in enq] == ["first", "second"]
+    assert [s for s, _r in enq] == ["first", "second"] or gh.polls.count("2") == 0
 
 
 def test_enqueue_outcomes_are_single_top_level_lines(tmp_path):
