@@ -316,3 +316,4 @@
 {"ts": "2026-11-16T15:06:55.550128+00:00", "slug": "cs-media-storage-lifecycle", "agent": "backend-engineer", "duration_minutes": 90.0, "estimated_tokens": null, "outcome": "landed", "notes": "CoreStudio S5 media storage lifecycle, SW migration 353 (cceeeec7c). Scored at filing."}
 {"ts": "2026-11-16T15:07:03.853053+00:00", "slug": "fix-infopopover-outline-hidden", "agent": "tech-lead", "duration_minutes": 5.0, "estimated_tokens": null, "outcome": "landed", "notes": "Fix-on-contact: seed/lib InfoPopover focus-visible:outline-none -> outline-hidden (166e4e286)."}
 {"ts": "2026-11-16T16:40:45.417391+00:00", "slug": "db-guards-probe-own-marca", "agent": "backend-engineer", "duration_minutes": 42.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
+{"ts": "2026-11-16T17:25:13.416404+00:00", "slug": "tests-off-laptop", "agent": "tooling-engineer", "duration_minutes": 69.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
