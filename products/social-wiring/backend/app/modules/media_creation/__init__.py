@@ -90,6 +90,7 @@ def register() -> Any:
         esteira_origem,
         estruturas,
         estruturas_admin,
+        estruturas_ia,
         estruturas_importacao,
         estruturas_resolver,
         generation,
@@ -137,6 +138,10 @@ def register() -> Any:
     biblioteca_ingestao.register_handlers()
     biblioteca_transcricao.register_contexto()
     biblioteca_scheduler.configure()
+    # Estruturas auto-draft (EST-5): the `estruturas.rascunho_do_viral` handler + the `depois_de_classificar` callback.
+    from app.modules.media_creation.services import estruturas_autodraft
+
+    estruturas_autodraft.register()
 
     async def start_pesquisa_extracao_hook() -> None:
         """Its OWN seed Worker (types ["pesquisa.extrair"]), NOT the fotos one (that one's claim
@@ -180,6 +185,7 @@ def register() -> Any:
             esteira_origem.router,
             # Estruturas library (EST-1): the admin WRITE router first, then the READ router (its static paths
             # /admin and /tipos-bloco precede /{id}); EST-3/EST-4a routers (importacoes, resolver-perfil) go BEFORE both.
+            estruturas_ia.router,
             estruturas_importacao.router,
             estruturas_resolver.router,
             estruturas_admin.router,
