@@ -2,7 +2,7 @@
 
 > Generated from `gate-alignment-inventory.json` by `python mcp/noctusai/cli.py --gate-alignment render`. Method and rules: `KB § PATTERNS/common/gate-methodology-sync.md`. Firing counts are measured from 943 Claude Code session transcripts (~/.claude/projects, 2026-08..2026-11-05), tool results only, one count per tool call; guard-events.ndjson for live events (upper-bound-free: tool results only, one count per tool call).
 
-Totals by class: **?** 41, **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 197 gates). Mechanism burn-down: {'gates': 197, 'declared': 81, 'declared_none_justified': 12, 'undeclared_baseline': 116}.
+Totals by class: **?** 42, **never-fires** 41, **new (shadow)** 2, **new (unmeasured)** 7, **real-drift-catch** 35, **unmeasured** 59, **wall** 12 (of 198 gates). Mechanism burn-down: {'gates': 198, 'declared': 82, 'declared_none_justified': 12, 'undeclared_baseline': 116}.
 
 | Gate | Standard | Construction mechanism | Owner | Firings (sessions) | Class |
 |---|---|---|---|---:|---|
@@ -203,6 +203,7 @@ Totals by class: **?** 41, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | `keeper:check-workflow-actionlint` |  | none (hand-written workflow YAML or CI config; no scaffold constrains it, the linter is th | devops-engineer | 0 (0) | ? |
 | `keeper:check-workflow-cli-flags-exist` |  | none (hand-written workflow YAML or CI config; no scaffold constrains it, the linter is th | devops-engineer | 0 (0) | ? |
 | `keeper:check-workflow-mcp-requirements-path` |  | none (hand-written workflow YAML or CI config; no scaffold constrains it, the linter is th | devops-engineer | 0 (0) | ? |
+| `remote_test_default` |  | tool:noctus.dev.hw_admission (mcp/noctusai/tools/noctus/dev/remote_test.py try_remote; hea | tooling-engineer | 0 (0) | ? |
 
 ## Route auth / exposure gates re-judged for a publicly documented API
 
@@ -273,3 +274,4 @@ Totals by class: **?** 41, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | D38 | State transitions are recorded by the seed transition-log primitive (state row + append-only events in one row-locked transaction, one gated LGPD erasure) -- never a hand-written history table | KB § PATTERNS/backend/transition-log.md | template: seed/lib/backend/noctusai_lib/domain/transition_log/sql.py (transition_log_migration + make_transition_log) | keeper:check-transition-log-hand-written (shadow) + verify_db_guards derived transition-log probes | pre-commit shadow WARN lines; verify_db_guards probe results | feat/transition-log-primitive |
 | D-refusal-recurrence | Refusals are counted by class (refusal_class/refusal_recurrence over the gate event sink); a class recurring N>=2 is ONE auto-improvement row (count in place, closes on gate_quiet:<class>:7d); N>=3 with no open fix warns. Warn-first, promote after >=7 shadow days. | KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop) | tool: noctus.dev.gate_alignment actions trend/refusals + refusal_recurrence() returned to requesters; harness_event upserts per class | keeper:check-refusal-classes-owned | gate events carry class/stage/first-finding (record_cli_exit -> guard-events.ndjson) | feat/refusal-recurrence |
 | D39 | A loop that runs forever declares its cost per day next to it, and a per-tick read never fetches whole rows; Supabase request volume is measured, not assumed | KB § PATTERNS/backend/polling-request-budget.md | seed Worker idle backoff + wake-on-enqueue (feat/supabase-egress-polling); the `poll-budget:` declaration (cadence x calls x 86400 written down before the loop ships) | keeper:check-polling-request-budget | noctus.dev.supabase_request_budget (calls per product per minute vs quota; being built) | feat/polling-budget-keeper |
+| D40 | Heavy test runs execute on GitHub runners at the pushed sha, never queue on the shared laptop slot; the local slot is a loud, reasoned fallback | KB § PATTERNS/devops/hardware-admission-budget.md | hw_admission.py run -> remote_test.try_remote (single entry; heavy_run_guard rewrites bare commands into it; briefs say push then run) | remote_test_default | hw-admission.ndjson remote_run / remote_fallback rows; hw_admission action=report -> backends | feat/tests-off-laptop |

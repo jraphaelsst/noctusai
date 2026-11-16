@@ -3282,6 +3282,15 @@
    "class": "wall",
    "telemetry": "cli exit wrapper -> guard-events.ndjson",
    "remediation": "NOC-REMEDIATE[gate-wall] destination: kb_sync already runs at integrate; add it to the pre-commit auto-fix path (regenerate + restage, then verify)."
+  },
+  "remote_test_default": {
+   "mechanism": "tool:noctus.dev.hw_admission (mcp/noctusai/tools/noctus/dev/remote_test.py try_remote; heavy_run_guard rewrite funnels bare commands into it)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-16",
+   "source": "Owner directive 2026-11-16 (the single laptop heavy slot slows all work); KB § PATTERNS/devops/hardware-admission-budget.md § 2a; GitHub Actions workflow_dispatch + gh run watch docs"
   }
  },
  "decisions": [
@@ -3840,6 +3849,18 @@
    "branch": "feat/polling-budget-keeper",
    "gates": [
     "keeper:check-polling-request-budget"
+   ]
+  },
+  {
+   "id": "D40",
+   "decision": "Heavy test runs execute on GitHub runners at the pushed sha, never queue on the shared laptop slot; the local slot is a loud, reasoned fallback",
+   "home": "KB § PATTERNS/devops/hardware-admission-budget.md",
+   "construction": "hw_admission.py run -> remote_test.try_remote (single entry; heavy_run_guard rewrites bare commands into it; briefs say push then run)",
+   "gate": "remote_test_default",
+   "telemetry": "hw-admission.ndjson remote_run / remote_fallback rows; hw_admission action=report -> backends",
+   "branch": "feat/tests-off-laptop",
+   "gates": [
+    "remote_test_default"
    ]
   }
  ]
