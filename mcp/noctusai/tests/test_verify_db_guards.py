@@ -16,6 +16,8 @@ Postgres would have said.
 """
 from __future__ import annotations
 
+import ast
+import re
 import sys
 from pathlib import Path
 
@@ -41,6 +43,7 @@ from tools.noctus.dev.verify_db_guards import (  # noqa: E402
     DEFAULT_REGISTRY,
     REGISTERED_GUARD_NAMES,
     GuardProbe,
+    _classify_setup_failure,
     run_probe,
     verify_db_guards,
     wrap_rollback_only,
@@ -1094,3 +1097,94 @@ class TestProbesOwnTheirOrg:
         borrow = "SELECT id INTO v_org FROM public.organizations LIMIT 1;\n"
         assert _borrowed_org_inserts(borrow + "INSERT INTO sw.w (org_id) VALUES (v_org) ON CONFLICT (org_id) DO NOTHING;", {"sw.w"}) == []
         assert _borrowed_org_inserts(borrow + "INSERT INTO sw.log (org_id) VALUES (v_org);", {"sw.w"}) == []
+
+
+class TestSetupFailedTelemetry:
+    """A probe whose SETUP fails (raw Postgres error, no sentinel) is `setup_failed` with the
+    SQLSTATE + constraint, never folded into the guard's verdict (2026-11-16: sw241 red on
+    uq_marcas_one_per_org read as a generic unclassifiable failure)."""
+
+    _DUP = (
+        'ERROR: 23505: duplicate key value violates unique constraint "uq_marcas_one_per_org" '
+        "DETAIL: Key (org_id)=(1b1c7682) already exists."
+    )
+
+    def test_unique_violation_in_setup_is_setup_failed_with_sqlstate_and_constraint(self):
+        result = run_probe(_ANY_PROBE, _CannedExecutor(ok=False, error=self._DUP))
+        assert result["status"] == "failure"
+        assert result["outcome"] == "setup_failed"
+        assert result["sqlstate"] == "23505"
+        assert result["constraint"] == "uq_marcas_one_per_org"
+        assert "NOT exercised" in result["detail"] and "uq_marcas_one_per_org" in result["detail"]
+
+    def test_explicit_sqlstate_in_the_error_body_is_read(self):
+        err = '{"message":"insert or update on table violates foreign key constraint \\"x_fk\\"","code":"23503"}'
+        out = _classify_setup_failure(err)
+        assert out and out["sqlstate"] == "23503" and out["outcome"] == "setup_failed"
+
+    def test_setup_failed_is_never_a_finding_or_a_pass(self):
+        result = run_probe(_ANY_PROBE, _CannedExecutor(ok=False, error=self._DUP))
+        assert result["status"] not in ("pass", "finding")
+
+    def test_a_sentinel_wins_over_the_setup_classifier(self):
+        err = "NOC_PROBE:refused: duplicate key value violates unique constraint \"cs_posts_roteiro_uq\""
+        assert run_probe(_ANY_PROBE, _CannedExecutor(ok=False, error=err))["outcome"] == "refused"
+
+    def test_non_postgres_text_stays_the_generic_unclassifiable(self):
+        result = run_probe(_ANY_PROBE, _CannedExecutor(ok=False, error="connection reset by peer"))
+        assert result["outcome"] is None and result["status"] == "failure"
+
+    def test_surfaces_in_the_verify_failures_list(self):
+        out = verify_db_guards(registry=(_ANY_PROBE,), executor=_CannedExecutor(ok=False, error=self._DUP))
+        assert out["status"] == "unverified"
+        assert out["failures"][0]["outcome"] == "setup_failed"
+
+
+class TestProbeOrgFixture:
+    """Backstop: no probe borrows a prod org or builds its own org/marca by hand."""
+
+    _SRC = REPO_ROOT / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "verify_db_guards.py"
+    _MARCA_INSERT = re.compile(r"INSERT INTO \{?_?[A-Za-z_.]*\}?\.?marcas\b|INSERT INTO social_wiring\.marcas\b")
+    _ORG_INSERT = re.compile(r"INSERT INTO public\.organizations \(nome, slug\)\s+VALUES \('NOC probe org \(guard\)'")
+
+    def _strings_by_function(self):
+        """AST walk: (enclosing function name, string text) for every string literal."""
+        tree = ast.parse(self._SRC.read_text(encoding="utf-8"))
+        out = []
+
+        def visit(node, fn):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fn = node.name
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                out.append((fn, node.value))
+            for child in ast.iter_child_nodes(node):
+                visit(child, fn)
+
+        visit(tree, "<module>")
+        return out
+
+    def test_only_the_helper_inserts_the_probe_org_or_a_marca(self):
+        offenders = [
+            (fn, text[:70])
+            for fn, text in self._strings_by_function()
+            if (self._ORG_INSERT.search(text) or "INSERT INTO {_SW_SCHEMA}.marcas" in text) and fn != "_probe_own_org_sql"
+        ]
+        assert not offenders, f"probe org/marca setup must go through _probe_own_org_sql: {offenders}"
+
+    def test_no_registered_probe_borrows_an_org_row_to_insert_under(self):
+        # `SELECT id INTO v FROM public.organizations ... LIMIT 1` with no property predicate = a borrowed prod org.
+        borrow = re.compile(r"INTO\s+\w+\s+FROM\s+public\.organizations\s+(?:ORDER BY \w+\s+)?LIMIT 1")
+        bad = [p.id for p in DEFAULT_REGISTRY if borrow.search(p.sql)]
+        assert not bad, f"probes borrowing an existing organization: {bad}"
+
+    def test_a_marca_insert_always_targets_a_probe_owned_org_once(self):
+        marca = re.compile(r"INSERT INTO \w+\.marcas \(org_id, slug, name\)\s+VALUES \((\w+),")
+        own = re.compile(r"noc-probe:own-org (\w+):")
+        for p in DEFAULT_REGISTRY:
+            orgs = marca.findall(p.sql)
+            assert len(orgs) == len(set(orgs)), f"{p.id}: two marcas in one org (uq_marcas_one_per_org)"
+            assert set(orgs) <= set(own.findall(p.sql)), f"{p.id}: marca inserted under a non-probe-owned org"
+
+    def test_the_sw241_fixture_uses_two_orgs_for_two_marcas(self):
+        p = next(x for x in DEFAULT_REGISTRY if x.id == "sw241_roteiro_unico_por_post")
+        assert "noc-probe:own-org v_org:" in p.sql and "noc-probe:own-org v_org_b:" in p.sql
