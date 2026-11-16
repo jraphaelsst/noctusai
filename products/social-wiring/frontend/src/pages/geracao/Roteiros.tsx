@@ -1,5 +1,5 @@
 /**
- * Meus roteiros (P10, `/media-creation/roteiros`, `?open=<id>`) — contract §7.8.
+ * Meus roteiros (P10, `/media-creation/chat/meus-roteiros`, `?open=<id>`) — contract §7.8.
  * Table ☐ · Data · Nome · H. Origem · Status · 👁 · 🗑, search, "Excluir
  * Selecionados", "Criar roteiro" (RoteiroAvancadoModal with an empty headline).
  * Real status from the 3 s poll (hook); loading = two signals off `data`.
@@ -29,11 +29,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ROTEIROS_PAGE_SIZE, useExcluirRoteiros, useRoteiros } from "@/hooks/geracao/useRoteiros";
+import { PaginaCabecalho, usePaginaPadding } from "@/components/geracao/PaginaCabecalho";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useMarcaPesquisa } from "@/hooks/useMarcaPesquisa";
 import { useMarcas } from "@/hooks/useMarcas";
 
-const FAVORITAS = "/media-creation/headlines/favoritas";
+const FAVORITAS = "/media-creation/chat/favoritas";
 
 function dataCurta(iso: string): string {
   const d = new Date(iso);
@@ -41,6 +42,7 @@ function dataCurta(iso: string): string {
 }
 
 export default function Roteiros() {
+  const padding = usePaginaPadding();
   const [params, setParams] = useSearchParams();
   const marcasQ = useMarcas();
   const marcas = marcasQ.data ?? [];
@@ -100,21 +102,13 @@ export default function Roteiros() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Meus roteiros</h1>
-          <p className="text-sm text-muted-foreground">
-            Edite suas headlines favoritas ou crie roteiros a partir delas.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
-          <Button onClick={() => setCriarAberto(true)} disabled={!marcaId}>
-            <Plus className="mr-1 h-4 w-4" /> Criar roteiro
-          </Button>
-        </div>
-      </header>
+    <div className={`space-y-6 ${padding}`}>
+      <PaginaCabecalho titulo="Meus roteiros" descricao="Edite suas headlines favoritas ou crie roteiros a partir delas.">
+        <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
+        <Button onClick={() => setCriarAberto(true)} disabled={!marcaId}>
+          <Plus className="mr-1 h-4 w-4" /> Criar roteiro
+        </Button>
+      </PaginaCabecalho>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Input

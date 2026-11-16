@@ -48,7 +48,7 @@ describe("FluxoCard", () => {
     expect(rtl.screen.getByTestId("fluxo-etapa").textContent).toMatch(/Escrevendo o roteiro/);
     expect(rtl.screen.getByText("Carrossel")).toBeTruthy();
     expect(rtl.screen.getByText(/Gancho · Prova/)).toBeTruthy();
-    expect(rtl.screen.getByRole("link", { name: /Abrir roteiro/ }).getAttribute("href")).toBe("/media-creation/headlines-roteiros");
+    expect(rtl.screen.getByRole("link", { name: /Abrir roteiro/ }).getAttribute("href")).toBe("/media-creation/chat/headlines-e-roteiros");
     expect(rtl.screen.getByRole("link", { name: /Ver card/ }).getAttribute("href")).toBe("/media-creation/esteira?post=post1");
     expect(rtl.screen.queryByTestId("roteiro-preview")).toBeNull();
   });

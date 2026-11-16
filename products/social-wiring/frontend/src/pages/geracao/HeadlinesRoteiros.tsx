@@ -1,5 +1,5 @@
 /**
- * Headlines e Roteiros (`/media-creation/headlines-roteiros`, estruturas-contract §11.3, FE-3): one row per
+ * Headlines e Roteiros (`/media-creation/chat/headlines-e-roteiros`, estruturas-contract §11.3, FE-3): one row per
  * saved headline + its roteiro (and roteiros without a headline), with the Estruturas used, the source
  * conversation and the card. It folds Headlines Favoritas + Meus roteiros; the actions reuse their mutations.
  * Route + nav are wired by the tech-lead (FE-Z).
@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { AlertCircle, Plus } from "lucide-react";
 import { toast } from "sonner";
 
+import { PaginaCabecalho, usePaginaPadding } from "@/components/geracao/PaginaCabecalho";
 import { EditarHeadlineModal } from "@/components/geracao/headlines/EditarHeadlineModal";
 import { FiltrosHR, type FiltrosHRValor } from "@/components/geracao/headlines-roteiros/FiltrosHR";
 import { ItemLinha } from "@/components/geracao/headlines-roteiros/ItemLinha";
@@ -42,6 +43,7 @@ import { useMarcas } from "@/hooks/useMarcas";
 import type { HeadlineRoteiroItem } from "@/types/estruturas";
 
 export default function HeadlinesRoteiros() {
+  const padding = usePaginaPadding();
   const marcasQ = useMarcas();
   const marcas = marcasQ.data ?? [];
   const { marcaId, escolherMarca } = useMarcaPesquisa(marcas);
@@ -108,21 +110,16 @@ export default function HeadlinesRoteiros() {
   const excluindoPendente = excluirHeadlines.isPending || excluirRoteiros.isPending;
 
   return (
-    <div className="space-y-6 p-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Headlines e Roteiros</h1>
-          <p className="text-sm text-muted-foreground">
-            Suas headlines salvas e os roteiros criados a partir delas, com as estruturas usadas.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
-          <Button onClick={() => setCriar({ aberto: true, item: null })} disabled={!marcaId}>
-            <Plus className="mr-1 h-4 w-4" /> Criar roteiro
-          </Button>
-        </div>
-      </header>
+    <div className={`space-y-6 ${padding}`}>
+      <PaginaCabecalho
+        titulo="Headlines e Roteiros"
+        descricao="Suas headlines salvas e os roteiros criados a partir delas, com as estruturas usadas."
+      >
+        <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
+        <Button onClick={() => setCriar({ aberto: true, item: null })} disabled={!marcaId}>
+          <Plus className="mr-1 h-4 w-4" /> Criar roteiro
+        </Button>
+      </PaginaCabecalho>
 
       <FiltrosHR valor={filtros} onChange={setFiltros} estruturas={estruturasQ.data?.items ?? []} />
 

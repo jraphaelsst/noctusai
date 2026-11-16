@@ -25,7 +25,7 @@ import { estruturaUrl } from "./PropostaCard";
 import { previewRoteiro } from "./roteiroPreview";
 import { erroDoFluxo, ETAPA_ROTULO, FORMATO_ROTULO, LEGENDA_ROTULO } from "./rotulos";
 
-export const HEADLINES_ROTEIROS_ROUTE = "/media-creation/headlines-roteiros";
+export const HEADLINES_ROTEIROS_ROUTE = "/media-creation/chat/headlines-e-roteiros";
 
 interface Props {
   fluxo: Fluxo;

@@ -35,6 +35,7 @@ import {
   useRenomearConversa,
 } from "@/hooks/geracao/useChat";
 import { usePerfisMonitorados } from "@/hooks/geracao/useBiblioteca";
+import { PaginaCabecalho, usePaginaPadding } from "@/components/geracao/PaginaCabecalho";
 import { useMarcaPesquisa } from "@/hooks/useMarcaPesquisa";
 import { useMarcas } from "@/hooks/useMarcas";
 import type { Mencao } from "@/types/geracao";
@@ -43,6 +44,7 @@ const msg = (e: unknown, fallback: string) =>
   e instanceof Error && e.message ? e.message.replace(/^\[\d+\]\s*/, "") : fallback;
 
 export default function Chat() {
+  const padding = usePaginaPadding();
   const [params, setParams] = useSearchParams();
   const marcasQ = useMarcas();
   const marcas = marcasQ.data ?? [];
@@ -202,26 +204,21 @@ export default function Chat() {
   const erroMensagens = mensagensQ.isError && !mensagensQ.data;
 
   return (
-    <div className="flex flex-col gap-4 p-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Criar Headlines e Roteiros</h1>
-          <p className="text-sm text-muted-foreground">
-            Converse com a IA: ela propõe headlines a partir das estruturas da Biblioteca e, ao escolher uma, escreve o roteiro.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
-          <Button asChild variant="outline" size="sm">
-            <Link to="/media-creation/cerebro">
-              <Brain className="mr-1 h-4 w-4" /> Segundo cérebro
-            </Link>
-          </Button>
-          <Button type="button" variant="outline" size="sm" disabled={!marcaId} onClick={() => setMemoriaAberta(true)}>
-            <BookMarked className="mr-1 h-4 w-4" /> Memória
-          </Button>
-        </div>
-      </header>
+    <div className={`flex flex-col gap-4 ${padding}`}>
+      <PaginaCabecalho
+        titulo="Roteiro"
+        descricao="Converse com a IA: ela propõe headlines a partir das estruturas da Biblioteca e, ao escolher uma, escreve o roteiro."
+      >
+        <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
+        <Button asChild variant="outline" size="sm">
+          <Link to="/media-creation/cerebro">
+            <Brain className="mr-1 h-4 w-4" /> Segundo cérebro
+          </Link>
+        </Button>
+        <Button type="button" variant="outline" size="sm" disabled={!marcaId} onClick={() => setMemoriaAberta(true)}>
+          <BookMarked className="mr-1 h-4 w-4" /> Memória
+        </Button>
+      </PaginaCabecalho>
 
       {semMarca ? (
         <p className="text-sm text-muted-foreground">Cadastre uma marca para conversar com a IA.</p>

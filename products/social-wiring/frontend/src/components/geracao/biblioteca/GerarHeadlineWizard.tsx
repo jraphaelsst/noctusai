@@ -98,7 +98,7 @@ export function GerarHeadlineWizard({ open, onOpenChange, marcaId, viralId, hand
             </DialogHeader>
             <DialogFooter>
               <Button asChild>
-                <Link to="/media-creation/headlines/sugeridas">Ver Headlines Sugeridas</Link>
+                <Link to="/media-creation/chat/sugeridas">Ver Headlines Sugeridas</Link>
               </Button>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 Continuar na Biblioteca

@@ -380,7 +380,7 @@ describe("Roteiros (página)", () => {
     expect(screen.getByText("Processando")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "H A" })).toHaveAttribute(
       "href",
-      "/media-creation/headlines/favoritas?hid=h1",
+      "/media-creation/chat/favoritas?hid=h1",
     );
   });
 

@@ -95,14 +95,10 @@ const PRE_EXISTING_HREFS = [
   "/media-creation/chat",
   "/media-creation/dashboard",
   "/media-creation/esteira",
-  "/media-creation/headlines/favoritas",
-  "/media-creation/headlines/gerar",
-  "/media-creation/headlines/sugeridas",
   "/media-creation/minha-biblioteca",
   "/media-creation/perfil",
   "/media-creation/pesquisa",
   "/media-creation/pesquisa/extrair",
-  "/media-creation/roteiros",
   "/media-creation/treinamentos",
   "/meta",
   "/monitor",
@@ -154,10 +150,14 @@ describe.each([
     expect(byKey(groups, "redes-sociais")!.items.map((i) => i.href)).toEqual(["/meta", "/youtube", "/simec"]);
   });
 
-  it("Roteiros sits under CoreStudio › Headlines, and only there", () => {
-    const headlines = allGroups(groups).find((g) => g.key === "media-creation-headlines")!;
-    expect(headlines.items.map((i) => i.href)).toContain("/media-creation/roteiros");
-    expect(allItems(groups).filter((i) => i.href === "/media-creation/roteiros")).toHaveLength(1);
+  it("Roteiros is ONE CoreStudio link; every headline/roteiro page is a tab of it, not a nav item", () => {
+    const cs = byKey(groups, "corestudio")!;
+    expect(cs.items.map((i) => [i.name, i.href])).toContainEqual(["Roteiros", "/media-creation/chat"]);
+    expect(allGroups(groups).some((g) => g.key === "media-creation-headlines")).toBe(false);
+    const hrefs = allItems(groups).map((i) => i.href);
+    for (const gone of ["/media-creation/headlines-roteiros", "/media-creation/roteiros", "/media-creation/headlines/gerar"]) {
+      expect(hrefs).not.toContain(gone);
+    }
   });
 
   it("Edição de Imagem sits inside CoreStudio before Pesquisa, with Operação/Configuração; cms module is gone", () => {
@@ -227,7 +227,7 @@ describe("deep links", () => {
 
   it("every pre-existing nav URL (and Dashboard) is still a declared route in App.tsx", () => {
     for (const href of PRE_EXISTING_HREFS) {
-      const wild = href === "/financeiro" ? "/financeiro/*" : href;
+      const wild = href === "/financeiro" || href === "/media-creation/chat" ? `${href}/*` : href;
       expect(declared.has(href) || declared.has(wild), href).toBe(true);
     }
   });

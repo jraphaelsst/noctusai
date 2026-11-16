@@ -23,6 +23,13 @@ import { JULIA_PAGES } from "@/nav/julia";
 import { Share2 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
+import {
+  RedirectHeadlinesFavoritas,
+  RedirectHeadlinesGerar,
+  RedirectHeadlinesRoteiros,
+  RedirectHeadlinesSugeridas,
+  RedirectMeusRoteiros,
+} from "@/pages/geracao/redirectsRoteiros";
 
 // Pages
 const Landing = lazyWithReload(() => import("@/pages/Landing"));
@@ -113,23 +120,19 @@ const CerebroLista = lazyWithReload(() => import("@/pages/cerebro/CerebroLista")
 const CerebroEditor = lazyWithReload(() => import("@/pages/cerebro/CerebroEditor"));
 const CerebroPerguntas = lazyWithReload(() => import("@/pages/cerebro/CerebroPerguntas"));
 const GeracaoDashboard = lazyWithReload(() => import("@/pages/geracao/Dashboard"));
-const GeracaoChat = lazyWithReload(() => import("@/pages/geracao/Chat"));
 const GeracaoBiblioteca = lazyWithReload(() => import("@/pages/geracao/Biblioteca"));
 // Biblioteca platform-wide (cs-estruturas CONTRACT §11.3) — subpages ride the `media-creation-biblioteca` key.
 const GeracaoBibliotecaPerfil = lazyWithReload(() => import("@/pages/geracao/BibliotecaPerfil"));
 const GeracaoEstruturaDetalhe = lazyWithReload(() => import("@/pages/geracao/EstruturaDetalhe"));
 const GeracaoBibliotecaImportacoes = lazyWithReload(() => import("@/pages/geracao/BibliotecaImportacoes"));
 const GeracaoBibliotecaTiposBloco = lazyWithReload(() => import("@/pages/geracao/BibliotecaTiposBloco"));
-// Headlines e Roteiros — status_pagina `media-creation-headlines-roteiros` (migration 352).
-const GeracaoHeadlinesRoteiros = lazyWithReload(() => import("@/pages/geracao/HeadlinesRoteiros"));
+// Roteiros — ONE page with tabs (chat, headlines, meus roteiros, headlines e roteiros); each tab keeps its own
+// status_pagina key (`media-creation-chat`, `-headlines-*`, `-roteiros`, `-headlines-roteiros` — migration 352).
+const GeracaoRoteirosHub = lazyWithReload(() => import("@/pages/geracao/RoteirosHub"));
 const GeracaoMeuPerfil = lazyWithReload(() => import("@/pages/geracao/MeuPerfil"));
 const GeracaoMinhaBiblioteca = lazyWithReload(() => import("@/pages/geracao/MinhaBiblioteca"));
 const GeracaoTreinamentos = lazyWithReload(() => import("@/pages/geracao/Treinamentos"));
-const GeracaoHeadlinesGerar = lazyWithReload(() => import("@/pages/geracao/HeadlinesGerar"));
 const GeracaoHeadlines = lazyWithReload(() => import("@/pages/geracao/Headlines"));
-const GeracaoHeadlinesFavoritas = lazyWithReload(() => import("@/pages/geracao/HeadlinesFavoritas"));
-const GeracaoHeadlinesSugeridas = lazyWithReload(() => import("@/pages/geracao/HeadlinesSugeridas"));
-const GeracaoRoteiros = lazyWithReload(() => import("@/pages/geracao/Roteiros"));
 const GeracaoEsteira = lazyWithReload(() => import("@/pages/geracao/Esteira"));
 const GeracaoBranding = lazyWithReload(() => import("@/pages/geracao/Branding"));
 const GeracaoCarrosseis = lazyWithReload(() => import("@/pages/geracao/Carrosseis"));
@@ -180,21 +183,21 @@ export default createProductApp({
     { path: "/media-creation/cerebro/:brainId", component: CerebroEditor },
     { path: "/media-creation/cerebro/:brainId/perguntas", component: CerebroPerguntas },
     { path: "/media-creation/dashboard", component: GeracaoDashboard },
-    { path: "/media-creation/chat", component: GeracaoChat },
+    { path: "/media-creation/chat/*", component: GeracaoRoteirosHub },
     { path: "/media-creation/biblioteca", component: GeracaoBiblioteca },
     { path: "/media-creation/biblioteca/perfis/:perfilId", component: GeracaoBibliotecaPerfil },
     { path: "/media-creation/biblioteca/estruturas/:id", component: GeracaoEstruturaDetalhe },
     { path: "/media-creation/biblioteca/importacoes", component: GeracaoBibliotecaImportacoes },
     { path: "/media-creation/biblioteca/tipos-de-bloco", component: GeracaoBibliotecaTiposBloco },
-    { path: "/media-creation/headlines-roteiros", component: GeracaoHeadlinesRoteiros },
+    { path: "/media-creation/headlines-roteiros", component: RedirectHeadlinesRoteiros },
     { path: "/media-creation/perfil", component: GeracaoMeuPerfil },
     { path: "/media-creation/minha-biblioteca", component: GeracaoMinhaBiblioteca },
     { path: "/media-creation/treinamentos", component: GeracaoTreinamentos },
-    { path: "/media-creation/headlines/gerar", component: GeracaoHeadlinesGerar },
+    { path: "/media-creation/headlines/gerar", component: RedirectHeadlinesGerar },
     { path: "/media-creation/headlines", component: GeracaoHeadlines },
-    { path: "/media-creation/headlines/favoritas", component: GeracaoHeadlinesFavoritas },
-    { path: "/media-creation/headlines/sugeridas", component: GeracaoHeadlinesSugeridas },
-    { path: "/media-creation/roteiros", component: GeracaoRoteiros },
+    { path: "/media-creation/headlines/favoritas", component: RedirectHeadlinesFavoritas },
+    { path: "/media-creation/headlines/sugeridas", component: RedirectHeadlinesSugeridas },
+    { path: "/media-creation/roteiros", component: RedirectMeusRoteiros },
     { path: "/media-creation/esteira", component: GeracaoEsteira },
     { path: "/media-creation/carrosseis", component: GeracaoCarrosseis },
     { path: "/media-creation/branding", component: GeracaoBranding },

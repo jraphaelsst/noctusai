@@ -80,7 +80,7 @@ export function EstruturasSecao({ post }: { post: PostDetalhe }) {
         <h3 className="font-medium">Roteiro</h3>
         {o.roteiro ? (
           <div className="flex flex-wrap items-center gap-2">
-            <Link className="underline" to={`/media-creation/headlines-roteiros`} data-testid="origem-roteiro-link">
+            <Link className="underline" to={`/media-creation/chat/headlines-e-roteiros`} data-testid="origem-roteiro-link">
               {o.roteiro.nome}
             </Link>
             <StatusBadge status={o.roteiro.status} />
