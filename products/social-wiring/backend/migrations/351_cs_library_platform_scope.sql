@@ -346,14 +346,14 @@ BEGIN
   SELECT c.conname INTO v_name
     FROM pg_constraint c
    WHERE c.conrelid = 'social_wiring.cs_estrutura_eventos'::regclass AND c.contype = 'c'
-     AND pg_get_constraintdef(c.oid) LIKE '%''excluida''%' AND pg_get_constraintdef(c.oid) NOT LIKE '%revisao_por_desuso_sinalizada%'
+     AND pg_get_constraintdef(c.oid) LIKE '%''excluida''%' AND pg_get_constraintdef(c.oid) NOT LIKE '%rascunho_expirado%'
    LIMIT 1;
   IF v_name IS NOT NULL THEN
     EXECUTE format('ALTER TABLE social_wiring.cs_estrutura_eventos DROP CONSTRAINT %I', v_name);
     ALTER TABLE social_wiring.cs_estrutura_eventos ADD CONSTRAINT cs_estrutura_eventos_tipo_valido CHECK (tipo IN (
         'criada', 'criada_automatica', 'importada', 'atualizada_import', 'ia_preenchida', 'campo_editado',
         'campo_confirmado', 'bloco_adicionado', 'bloco_removido', 'blocos_reordenados', 'publicada', 'arquivada',
-        'restaurada', 'excluida', 'revisao_por_desuso_sinalizada'));
+        'restaurada', 'excluida', 'revisao_por_desuso_sinalizada', 'rascunho_expirado'));
   END IF;
 END
 $tipo$;
@@ -396,6 +396,42 @@ BEGIN
     RETURN jsonb_build_object('sinalizadas', v_sinalizadas, 'liberadas', v_liberadas, 'meses', p_meses);
 END;
 $fn$;
+-- ----------------------------------------------------------------------------
+-- 5e. Unpublished AI auto-drafts expire (EST-5 legal review 2026-11-16): a `viral_auto` rascunho never published NOR TOUCHED
+-- within p_dias days (keyed on updated_at: every admin edit / confirmation RPC bumps it, so a draft under review is never
+-- lost on the day its clock would have run out; blocks and uses go with it by FK cascade) is DELETED with a content-free `rascunho_expirado` event, in one transaction. Only `ativa` Estruturas exempt a
+-- profile from the unreferenced purge, so a draft nobody curated must not keep third-party-derived text forever.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION social_wiring.cs_estruturas_rascunhos_expirar(p_dias INTEGER)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = social_wiring, pg_catalog, pg_temp
+AS $fn$
+DECLARE
+    r record;
+    v_expiradas INTEGER := 0;
+BEGIN
+    IF p_dias IS NULL OR p_dias < 1 THEN
+        RAISE EXCEPTION 'tipo_invalido';
+    END IF;
+    FOR r IN
+        SELECT e.id, e.perfil_id, e.versao FROM social_wiring.cs_estruturas e
+         WHERE e.status = 'rascunho' AND e.origem = 'viral_auto'
+           AND e.updated_at < now() - make_interval(days => p_dias)
+         ORDER BY e.id FOR UPDATE OF e
+    LOOP
+        PERFORM social_wiring.cs_estrutura_evento(r.id, r.perfil_id, 'rascunho_expirado', NULL, NULL, NULL,
+                                                  NULL, 'sistema_retencao', NULL, r.versao);
+        DELETE FROM social_wiring.cs_estruturas WHERE id = r.id;
+        v_expiradas := v_expiradas + 1;
+    END LOOP;
+    RETURN jsonb_build_object('expiradas', v_expiradas, 'dias', p_dias);
+END;
+$fn$;
+REVOKE ALL ON FUNCTION social_wiring.cs_estruturas_rascunhos_expirar(INTEGER) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION social_wiring.cs_estruturas_rascunhos_expirar(INTEGER) TO service_role;
+
 REVOKE ALL ON FUNCTION social_wiring.cs_estruturas_revisao_desuso(INTEGER) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION social_wiring.cs_estruturas_revisao_desuso(INTEGER) TO service_role;
 

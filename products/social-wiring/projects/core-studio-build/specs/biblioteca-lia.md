@@ -43,7 +43,8 @@ Not processed: private accounts, stories, comments' authors, DMs, follower lists
   - classifier output is validated against the source text (H1 fix);
   - audio is never stored after transcription;
   - per-reel limit of 3 minutes;
-  - daily caps on transcription minutes, syncs and classifications.
+  - daily caps on transcription minutes, syncs and classifications;
+  - AI derivation of Estruturas sends only caption, a bounded transcript (opening only when a blueprint exists) and the stored hook/blueprint, after server-side removal of @mentions, contacts, URLs and the creator's handle and display name; the output is validated as an abstract structure (no literal runs, no names).
 - A less intrusive alternative (captions only, no transcripts) was considered. It is kept as a fallback: transcription can be turned off independently, through the shared `transcricao_habilitada` and the library lane's own caps.
 
 ## 4. Balancing test
@@ -72,19 +73,21 @@ Not processed: private accounts, stories, comments' authors, DMs, follower lists
    - **a retained profile is minimised**: photo and follower count dropped, with a `minimizado` event;
    - its videos' media, transcripts and thumbnails still expire by age, except the videos a brand selected;
    - **24 months unused ⇒ administrator review**: an `ativa` Estrutura with no use, edit or publication in 24 months is flagged (event `revisao_por_desuso_sinalizada`, once per window) for a platform administrator to keep, archive or delete; nothing is archived automatically;
+   - a `viral_auto` draft never published within `biblioteca_retencao_dias` is deleted; drafts do not exempt a profile from the purge;
    - immediate purge on delete or opt-out; orphan-blob sweep; uploaded load documents deleted after the run and swept if stranded; transcription-layer copy kept 7 days.
 3. **Transparency.**
    - Minha Biblioteca tells the org that only public accounts are in the library, and that creators can opt out through the contact in §6.
-   - The platform privacy notice, section 18, version 1.2 (2026-11-15), describes the platform-wide library, the recipients and the retention.
+   - The platform privacy notice, section 18, version 1.3 (2026-11-16), describes the platform-wide library, the recipients and the retention.
 4. **Security:** the review fixes are H1 (stored prompt injection), M1 (bounded pagination), M2 (retention), M3 (grants), L1–L4, and the 2026-11-15 platform review: the migration refuses to apply over legacy org-owned rows; worker errors carry only the exception class name; the add-by-link permalink is stored canonical and validated; the toolkit loader only talks to `https`. Media is fetched only through the SSRF-safe `safe_fetch`, from the Instagram CDN allow-list. Known deferred item: the service role still holds table-level writes on the library tables (destination EST-RO, `NOC-REMEDIATE[cs-service-role-writes]`).
-5. **Sub-processor and international transfer (Art. 33):** captions and transcripts are sent to Anthropic (US) for classification and generation. Recorded in the ROPA and in the sub-processor list.
-6. **Kill switch:** `biblioteca_ingestao_habilitada` defaults OFF and fails closed, so processing can be stopped at once.
+5. **Sub-processor and international transfer (Art. 33):** captions and transcripts are sent to Anthropic (US) for classification and for the AI derivation of draft Estruturas (registry keys pinned to Anthropic). The Art. 33 mechanism is open until the ANPD standard clauses (Res. 19/2024 Annex II) or another mechanism chosen by counsel are in place; the vendor keeps API data up to 30 days.
+6. **Kill switch:** `biblioteca_ingestao_habilitada` defaults OFF and fails closed, so processing can be stopped at once. It also stops the AI derivation of Estruturas, automatic and manual.
+7. **Derived, not copied:** server-side refusal of literal runs, of headline formulas without placeholders and of names/handles/hashtags; published AI drafts are labelled as AI-generated, not authored by the creator (label planned before switch-on).
 
 ## 6. Owner / controller actions
 
 - [x] (2026-10-10) **Opt-out contact:** `joaoraphaelsst@gmail.com`, configurable via `biblioteca_optout_contato`.
 - [x] (2026-10-10) **Privacy notice v1.1** (section 18) and **ROPA** entry.
-- [x] (2026-11-15) **Privacy notice v1.2** (section 18, platform-wide library) written; ROPA amended.
+- [x] (2026-11-15) **Privacy notice v1.3** (section 18, platform-wide library, AI derivation sub-processor) written; ROPA amended (EST-5 amendment 2026-11-16).
 - [ ] **Review of this v2 draft by `legal-advisor` / the DPO, then signature below.** Until signed, v1 governs.
 
 ## 7. Review

@@ -13201,6 +13201,19 @@ _SW_351_PROBES: tuple[GuardProbe, ...] = (
         ),
         rationale="Owner decision 2026-11-15 (#2): 24 months unused = flagged for ADMIN review, once per window, never auto-archived.",
     ),
+    _sw351_probe(
+        probe_id="sw351_rascunho_automatico_expira", guard_name="cs_estruturas_rascunhos_expirar", kind="write_allowed",
+        statements=(f"    UPDATE {_SW_SCHEMA}.cs_estruturas SET status = 'rascunho', origem = 'viral_auto', created_at = now() - interval '100 days', updated_at = now() - interval '100 days' WHERE id = v_est;\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_estruturas_rascunhos_expirar(90);"),
+        permitted_msg="an unpublished auto-draft older than the retention window was deleted with its event",
+        after_ok=(
+            f"    IF EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_estruturas WHERE id = v_est)\n"
+            f"       OR (SELECT count(*) FROM {_SW_SCHEMA}.cs_estrutura_eventos WHERE estrutura_id = v_est AND tipo = 'rascunho_expirado') <> 1 THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the stale auto-draft survived or left no content-free event';\n"
+            "    END IF;"
+        ),
+        rationale="EST-5 legal review: an AI draft nobody published within the retention window is third-party-derived text with no curator; it is erased, content-free event left.",
+    ),
     GuardProbe(
         id="sw351_perfil_eventos_sem_handle", product="social-wiring", schema=_SW_SCHEMA,
         guard_name="cs_perfil_eventos_no_handle", kind="state_assertion", migrations=(_SW_351_MIGRATION,),

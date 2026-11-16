@@ -26,8 +26,8 @@ export const CONSENT_META = {
   email: "joaoraphaelsst@gmail.com",
   phone: "+55 (11) 97469-3365",
   canonicalBase: "https://noctusai.com/consent",
-  lastUpdated: "15/11/2026",
-  version: "1.2",
+  lastUpdated: "16/11/2026",
+  version: "1.3",
 } as const;
 
 /** A content block: a paragraph (`p`) or an unordered list (`ul`). */
@@ -374,7 +374,7 @@ export const PRIVACY_POLICY: ConsentDoc = {
             "Finalidade: estudar a estrutura do conteúdo para a criação de conteúdo original. Não republicamos o material, não contatamos os criadores e não construímos perfis dos criadores.",
             "Base legal: legítimo interesse (LGPD, art. 7º, IX), com avaliação de impacto documentada e salvaguardas de minimização.",
             "Retenção: em caso de oposição do criador, a eliminação é imediata e abrange o perfil, as publicações, as transcrições e as estruturas derivadas. Os dados são eliminados 90 dias após o perfil deixar de ser usado; um perfil mantido apenas por suas estruturas perde a foto e o número de seguidores. Estruturas sem uso, edição ou publicação por 24 meses são sinalizadas para revisão por um administrador.",
-            "Sub-processador: Anthropic (Estados Unidos), para classificação e análise das transcrições, com transferência internacional nos termos da seção 11. A hospedagem é feita pela Supabase.",
+            "Sub-processador: Anthropic (Estados Unidos), para classificar o conteúdo e para sugerir estruturas de roteiro a partir da legenda e da transcrição (sem nome de usuário, menções ou contatos), com transferência internacional nos termos da seção 11. A Anthropic pode manter esses dados por até 30 dias. A hospedagem é feita pela Supabase.",
           ],
         },
         {

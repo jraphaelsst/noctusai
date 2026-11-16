@@ -321,8 +321,10 @@ def _seed_viral(db, vid, pid, *, org=None, thumb=None, created_at=None):
     }).execute()
 
 
-def _seed_estrutura(db, eid, pid, status="ativa"):
-    db.from_("cs_estruturas").insert({"id": eid, "perfil_id": pid, "status": status, "formula_headline": "x"}).execute()
+def _seed_estrutura(db, eid, pid, status="ativa", origem="manual", created_at=None, updated_at=None):
+    db.from_("cs_estruturas").insert({"id": eid, "perfil_id": pid, "status": status, "formula_headline": "x", "origem": origem,
+                                      **({"created_at": created_at} if created_at else {}),
+                                      **({"updated_at": updated_at or created_at} if (updated_at or created_at) else {})}).execute()
 
 
 def _mock():
@@ -433,10 +435,66 @@ class TestRetentionExemptions:
     def test_a_profile_with_a_live_estrutura_is_never_purged_as_a_profile(self):
         db, st = _mock(), FakeStorageBackend()
         self._idle(db, "p1")
-        _seed_estrutura(db, "e1", "p1", "rascunho")
+        _seed_estrutura(db, "e1", "p1", "ativa")
         out = _purgar(db, st)
         assert out["purgados"] == 0 and "p1" in _perfis(db)
         assert _perfis(db)["p1"]["inativo_desde"] is None  # the idle stamp is cleared: it is retained, not idle
+
+    def test_a_profile_whose_only_estrutura_is_an_unpublished_auto_draft_is_purged(self):
+        """EST-5 legal review: only ``ativa`` exempts. The draft goes with the profile (cascade, content-free event)."""
+        db, st = _mock(), FakeStorageBackend()
+        self._idle(db, "p1")
+        _seed_estrutura(db, "e1", "p1", "rascunho", origem="viral_auto")
+        out = _purgar(db, st)
+        assert out["purgados"] == 1 and _perfis(db) == {} and db.from_("cs_estruturas").select("*").execute().data == []
+        assert [e["tipo"] for e in db.from_("cs_estrutura_eventos").select("*").execute().data] == ["excluida"]
+
+    def test_any_draft_and_an_archived_estrutura_do_not_exempt_but_a_published_one_does(self):
+        for status, purged in (("rascunho", 1), ("arquivada", 1), ("ativa", 0)):
+            db, st = _mock(), FakeStorageBackend()
+            self._idle(db, "p1")
+            _seed_estrutura(db, "e1", "p1", status)
+            assert _purgar(db, st)["purgados"] == purged, status
+
+    def test_an_old_unpublished_auto_draft_is_deleted_with_a_content_free_event_and_a_fresh_or_curated_one_stays(self):
+        db = _mock()
+        _seed_perfil(db, "p1")
+        old = (NOW - timedelta(days=DIAS + 5)).isoformat()
+        fresh = (NOW - timedelta(days=3)).isoformat()
+        _seed_estrutura(db, "velho", "p1", "rascunho", origem="viral_auto", created_at=old)
+        _seed_estrutura(db, "novo", "p1", "rascunho", origem="viral_auto", created_at=fresh)
+        _seed_estrutura(db, "manual", "p1", "rascunho", origem="manual", created_at=old)
+        _seed_estrutura(db, "publicada", "p1", "ativa", origem="viral_auto", created_at=old)
+        # created long ago but an admin touched it on day 89: a draft under review is never lost (keyed on updated_at)
+        _seed_estrutura(db, "em_revisao", "p1", "rascunho", origem="viral_auto", created_at=old,
+                        updated_at=(NOW - timedelta(days=1)).isoformat())
+        assert sched.expirar_rascunhos_automaticos(db, dias=DIAS) == {"expiradas": 1, "erros": 0}
+        assert sorted(e["id"] for e in db.from_("cs_estruturas").select("id").execute().data) == ["em_revisao", "manual", "novo", "publicada"]
+        ev = db.from_("cs_estrutura_eventos").select("*").execute().data
+        assert [(e["estrutura_id"], e["tipo"], e["ator_tipo"]) for e in ev] == [("velho", "rascunho_expirado", "sistema_retencao")]
+        assert "formula" not in str(ev)  # content-free
+
+    def test_a_failing_expiry_is_logged_counted_and_the_other_sweeps_still_run(self, caplog):
+        """The RPC can fail (351 not applied yet): never a silent pass, and never a skipped orphan / import sweep."""
+        import logging
+
+        db, st = _mock(), FakeStorageBackend()
+
+        def boom(name, params=None):
+            if name == "cs_estruturas_rascunhos_expirar":
+                raise RuntimeError("function does not exist SEGREDO")
+            return db_rpc(name, params)
+
+        db_rpc = db.rpc
+        db.rpc = boom
+        _put(st, f"platform/{UMORTO}/a.jpg")
+        _put(st, f"importacoes/{UMORTO}.json")
+        with caplog.at_level(logging.ERROR):
+            assert sched.expirar_rascunhos_automaticos(db, dias=DIAS) == {"expiradas": 0, "erros": 1}
+            anyio.run(lambda: sched.run_retencao(client=lambda: db, storage=st, dias=DIAS))
+        assert any("RuntimeError" in r.getMessage() and r.levelno == logging.ERROR for r in caplog.records)
+        assert "SEGREDO" not in caplog.text  # only the exception type is logged
+        assert _keys(st) == []  # the orphan-prefix and import-document sweeps ran despite the failure
 
     def test_monitorar_false_alone_no_longer_exempts_a_profile(self):
         """Owner decision 2026-11-15 (#4): only a non-archived Estrutura (or a brand selection) references a profile."""
@@ -547,6 +605,7 @@ class TestOrphanSweep:
         anyio.run(lambda: sched.run_retencao(client=lambda: db, storage=st, dias=DIAS))
         assert _perfis(db) == {} and _keys(st) == []
         assert db.rpc.revisao_calls == [{"p_meses": 24}]  # the 24-month review runs with the nightly retention
+        assert db.rpc.rascunhos_calls == [{"p_dias": DIAS}]  # ... and so does the auto-draft expiry
 
         def boom():
             raise RuntimeError("db down")

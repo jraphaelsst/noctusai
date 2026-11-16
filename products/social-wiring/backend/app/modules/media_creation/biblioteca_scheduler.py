@@ -14,9 +14,9 @@
   third party whose posts, voice and picture we hold, so data nobody uses is erased.
   - A profile that is ``pausado`` or referenced by no marca (neither a ``perfil`` reference nor a
     ``video`` reference to one of its virais) is stamped ``inativo_desde`` the first sweep that sees
-    it so; the stamp is cleared the moment it is in use again -- UNLESS it is RETAINED: it has >= 1 non-``arquivada``
-    Estrutura (the curated derived data the library keeps; owner decision 2026-11-15 -- ``monitorar = false`` alone no
-    longer exempts a profile). A retained profile is never purged as a profile, but its viral media / transcripts /
+    it so; the stamp is cleared the moment it is in use again -- UNLESS it is RETAINED: it has >= 1 
+    ``ativa`` Estrutura (the published, curated derived data; EST-5 legal review 2026-11-16 -- a draft never exempts, and
+    ``monitorar = false`` alone no longer does either). A retained profile is never purged as a profile, but its viral media / transcripts /
     thumbnails are still erased by age (:func:`purgar_virais_antigos`), except the videos a marca selected, and a retained
     library-only profile (``monitorar = false``) is MINIMISED: photo + follower count dropped (:func:`minimizar_perfil`).
   - After ``biblioteca_retencao_dias`` (config, default 90 -- the owner validates the number) an unused,
@@ -195,12 +195,16 @@ def _perfis_selecionados(db: Any) -> set[str]:
 
 
 def _perfis_retidos(db: Any) -> set[str]:
-    """Profiles exempt from the unreferenced purge: those with >= 1 non-``arquivada`` Estrutura (the curated derived data
-    the library keeps). A brand selection is handled by :func:`_perfis_de_marcas`; ``monitorar = false`` alone exempts
-    nothing any more (owner decision 2026-11-15, #4)."""
+    """Profiles exempt from the unreferenced purge: those with >= 1 ``ativa`` (PUBLISHED, curated) Estrutura.
+
+    Only ``ativa`` exempts (EST-5 legal review 2026-11-16): a ``rascunho`` -- above all an AI ``viral_auto`` draft -- is
+    uncurated text derived from a third party's video and must not keep the creator's profile alive; ``arquivada`` never did.
+    (The alternative "anything but an auto-draft" would let an unpublished admin draft pin a profile forever and would not
+    match the ROPA/LIA wording, which says only ``ativa``.) A brand selection is handled by :func:`_perfis_de_marcas`;
+    ``monitorar = false`` alone exempts nothing (owner decision 2026-11-15, #4)."""
     return {
         str(r["perfil_id"]) for r in iter_paged_rows(
-            lambda s, e: db.table(ESTRUTURAS).select("id,perfil_id").neq("status", "arquivada")
+            lambda s, e: db.table(ESTRUTURAS).select("id,perfil_id").eq("status", "ativa")
             .order("id").range(s, e).execute().data
         ) if r.get("perfil_id")
     }
@@ -292,8 +296,8 @@ async def purgar_expirados(
             db.table(PERFIS).update({"inativo_desde": agora.isoformat()}).eq("id", pid).execute()
             out["marcados"] += 1
         elif agora - desde >= timedelta(days=dias):
-            # Re-check right before the destructive step: a non-archived Estrutura created since the scan keeps the profile.
-            tem = db.table(ESTRUTURAS).select("id").eq("perfil_id", pid).neq("status", "arquivada").limit(1).execute().data
+            # Re-check right before the destructive step: an Estrutura published since the scan keeps the profile.
+            tem = db.table(ESTRUTURAS).select("id").eq("perfil_id", pid).eq("status", "ativa").limit(1).execute().data
             if tem:
                 continue
             r = await purgar_perfil(
@@ -409,6 +413,25 @@ async def varrer_blobs_importacao(
     return out
 
 
+def expirar_rascunhos_automaticos(db: Any, *, dias: int) -> dict[str, int]:
+    """EST-5 legal review: a ``viral_auto`` draft neither published nor edited for ``dias`` (``biblioteca_retencao_dias``;
+    keyed on ``updated_at``, so a draft an admin is reviewing is never lost) is deleted by ``cs_estruturas_rascunhos_expirar``
+    with a content-free ``rascunho_expirado`` event each. Always logs the count.
+
+    Its failure (e.g. migration 351 not applied yet) must not skip the other nightly sweeps: it is logged at ERROR with the
+    exception type and counted (``erros``) in the run summary -- never a silent pass. Returns ``{expiradas, erros}``."""
+    try:
+        res = db.rpc("cs_estruturas_rascunhos_expirar", {"p_dias": int(dias)}).execute()
+    except Exception as exc:  # noqa: BLE001 - counted + logged at ERROR; the orphan / import sweeps still run
+        logger.error("biblioteca: expiração de rascunhos automáticos falhou (%s)", type(exc).__name__)
+        return {"expiradas": 0, "erros": 1}
+    data = getattr(res, "data", None)
+    data = data[0] if isinstance(data, list) and data else data
+    out = {"expiradas": int((data or {}).get("expiradas") or 0), "erros": 0}
+    logger.info("biblioteca: %d rascunho(s) automático(s) expirado(s) (> %d dias sem publicar)", out["expiradas"], dias)
+    return out
+
+
 def sinalizar_revisao_por_desuso(db: Any, *, meses: int = REVISAO_DESUSO_MESES) -> dict[str, int]:
     """The 24-month-unused review (owner decision 2026-11-15): ONE ``cs_estruturas_revisao_desuso`` call flags every ``ativa``
     Estrutura with no use / edit / publication for ``meses`` months -- once per window, an event each, never an auto-archive.
@@ -474,11 +497,13 @@ async def run_retencao(
 
         st = storage or _storage()
         purga = await purgar_expirados(db, st, dias=int(dias if dias is not None else settings.biblioteca_retencao_dias))
+        dias_ret = int(dias if dias is not None else settings.biblioteca_retencao_dias)
+        rascunhos = expirar_rascunhos_automaticos(db, dias=dias_ret)
         orfaos = await varrer_blobs_orfaos(db, st)
         importacoes = await varrer_blobs_importacao(db, st)
         revisao = sinalizar_revisao_por_desuso(db)
-        if any(purga.values()) or any(orfaos.values()) or any(importacoes.values()) or any(revisao.values()):
-            logger.info("biblioteca retenção: %s órfãos: %s importações: %s revisão: %s", purga, orfaos, importacoes, revisao)
+        if any(purga.values()) or any(orfaos.values()) or any(importacoes.values()) or any(revisao.values()) or any(rascunhos.values()):
+            logger.info("biblioteca retenção: %s rascunhos: %s órfãos: %s importações: %s revisão: %s", purga, rascunhos, orfaos, importacoes, revisao)
     except Exception as exc:  # noqa: BLE001
         logger.error("biblioteca retenção falhou: %s", exc, exc_info=True)
 
@@ -499,6 +524,7 @@ __all__ = [
     "RETENCAO_JOB_ID",
     "IMPORTACAO_BLOB_TTL_DIAS",
     "REVISAO_DESUSO_MESES",
+    "expirar_rascunhos_automaticos",
     "purgar_expirados",
     "run_retencao",
     "sinalizar_revisao_por_desuso",

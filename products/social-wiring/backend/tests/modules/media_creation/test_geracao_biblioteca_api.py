@@ -315,7 +315,7 @@ class _PurgeRpc:
     ``criar_calls`` / ``minimizar_calls`` / ``revisao_calls``. NO event row carries a handle (owner decision 2026-11-15)."""
 
     def __init__(self, db):
-        self.db, self.calls, self.criar_calls, self.minimizar_calls, self.revisao_calls = db, [], [], [], []
+        self.db, self.calls, self.criar_calls, self.minimizar_calls, self.revisao_calls, self.rascunhos_calls = db, [], [], [], [], []
         self.revisao_resposta = {"sinalizadas": 0, "liberadas": 0}
 
     def _perfil(self, pid):
@@ -326,6 +326,17 @@ class _PurgeRpc:
             return self._criar(dict(params))
         if name == "cs_perfil_minimizar":
             return self._minimizar(dict(params))
+        if name == "cs_estruturas_rascunhos_expirar":
+            self.rascunhos_calls.append(dict(params))
+            corte = (datetime.now(timezone.utc) - timedelta(days=params["p_dias"])).isoformat()
+            vel = [e for e in self.db.from_("cs_estruturas").select("*").execute().data
+                   if e.get("status") == "rascunho" and e.get("origem") == "viral_auto"
+                   and (e.get("updated_at") or e.get("created_at") or "9") < corte]
+            for e in vel:
+                self.db.from_("cs_estrutura_eventos").insert({"estrutura_id": e["id"], "perfil_id": e["perfil_id"],
+                                                              "tipo": "rascunho_expirado", "ator_tipo": "sistema_retencao"}).execute()
+                self.db.from_("cs_estruturas").delete().eq("id", e["id"]).execute()
+            return _Exec(data={"expiradas": len(vel)})
         if name == "cs_estruturas_revisao_desuso":
             self.revisao_calls.append(dict(params))
             return _Exec(data=dict(self.revisao_resposta))
