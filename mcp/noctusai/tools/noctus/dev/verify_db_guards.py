@@ -1401,7 +1401,7 @@ _CS_POST_EVENTO_TIPO_PROBE = GuardProbe(
     schema=_SW_SCHEMA,
     guard_name="cs_post_eventos_tipo_check",
     kind="write_refusal",
-    migrations=("346_cs_post_insumos_apagados.sql",),
+    migrations=("353_cs_post_insumos_apagados.sql",),
     rationale=(
         "`tipo` is the closed vocabulary of the CoreStudio post event ledger (EOA): the lifecycle metrics (publish, raw-input "
         "deletion `insumos_apagados`) group by it, so a free-text value must error where it is written. The ledger has no FK "

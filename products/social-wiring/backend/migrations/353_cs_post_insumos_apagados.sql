@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 346 · social_wiring: CoreStudio S5 -- raw inputs deleted at publish are a recorded, dated fact
+-- Migration 353 · social_wiring: CoreStudio S5 -- raw inputs deleted at publish are a recorded, dated fact
 -- ============================================================================
 -- WHY: owner rule Q5 (2026-11-13) -- raw video inputs (``.../posts/<post>/insumos/``) are deleted when the post is fully
 -- published (LGPD data minimisation). The deletion must be MEASURABLE: ``cs_post_assets.apagado_em`` is the dated fact and

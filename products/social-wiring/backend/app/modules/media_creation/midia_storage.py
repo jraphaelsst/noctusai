@@ -11,7 +11,7 @@ Key convention (one private bucket, ``MIDIA_BUCKET``)::
     await apagar_insumos(db, storage, org_id=..., post_id=..., ator_id=None) -> InsumosApagados
 
 It deletes only blobs under the post's ``insumos/`` prefix, marks the matching ``cs_post_assets`` rows
-``apagado_em`` (migration 346's trigger writes the ``insumos_apagados`` event in the same transaction as each UPDATE),
+``apagado_em`` (migration 353's trigger writes the ``insumos_apagados`` event in the same transaction as each UPDATE),
 is idempotent (a second call deletes/marks nothing) and re-runnable after a partial failure (blobs first, rows second).
 """
 from __future__ import annotations

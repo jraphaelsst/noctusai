@@ -1,6 +1,6 @@
 """CoreStudio S5: key convention, signed download URLs, upload adoption, ``apagar_insumos`` (owner rule Q5).
 
-Real seams: a ``FakeStorageBackend`` + the mock Supabase client; the event row is written by migration 346's AFTER
+Real seams: a ``FakeStorageBackend`` + the mock Supabase client; the event row is written by migration 353's AFTER
 trigger (same transaction by construction), so it is asserted on the migration SQL.
 """
 from __future__ import annotations
@@ -152,7 +152,7 @@ class TestAdotarUpload:
         assert run(storage.get(bucket=MIDIA_BUCKET, key=key)).data == b"bytes"
 
 
-class TestMigration346:
+class TestMigration353:
     def test_event_is_written_by_the_trigger_in_the_same_statement(self):
         assert "'insumos_apagados'" in SQL
         assert "OLD.apagado_em IS NULL AND NEW.apagado_em IS NOT NULL" in SQL
