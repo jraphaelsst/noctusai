@@ -25,13 +25,23 @@ def _marca(sb, *, bio="Eu sou X", nichos=(3,), org=ORG):
     return mid
 
 
-def _viral(sb, *, nichos=(3,), score=5.0, org=ORG, e_viral=True):
+ESTRUTURA_DO_VIDEO: dict[str, str] = {}
+
+
+def _viral(sb, *, nichos=(3,), score=5.0, e_viral=True, estrutura_status="ativa"):
+    """A source video of the PLATFORM library (no ``org_id``) with its Estrutura."""
     vid = str(uuid.uuid4())
     sb.from_("cs_virais").insert({
-        "id": vid, "org_id": org, "perfil_id": "p1", "classificacao_status": "concluida", "blueprint": "BP",
-        "blueprint_slots": [], "nicho_ids": list(nichos), "formato_ids": [], "score_viral": score,
+        "id": vid, "perfil_id": "p1", "classificacao_status": "concluida", "blueprint": "BP",
+        "nicho_ids": list(nichos), "formato_ids": [], "score_viral": score,
         "e_viral": e_viral, "publicado_em": (NOW - timedelta(days=2)).isoformat(),
     }).execute()
+    eid = str(uuid.uuid4())
+    sb.from_("cs_estruturas").insert({
+        "id": eid, "codigo": len(sb.from_("cs_estruturas").select("id").execute().data) + 1, "perfil_id": "p1",
+        "viral_id": vid, "formula_headline": "BP", "formato": "reels", "objetivos": ["autoridade"], "status": estrutura_status,
+    }).execute()
+    ESTRUTURA_DO_VIDEO[vid] = eid
     return vid
 
 
@@ -66,20 +76,20 @@ class TestDailyRun:
         assert out == {"criados": 2, "ignorados": 0, "falhas": 0}
         rows = _lotes(sb)
         assert {r["marca_id"] for r in rows} == {a, b} and {r["origem"] for r in rows} == {"sugestao_auto"}
-        assert all(len(r["parametros"]["viral_ids"]) == 5 and r["created_by"] is None for r in rows)
+        assert all(len(r["parametros"]["estrutura_ids"]) == 5 and r["created_by"] is None for r in rows)
         assert len(repo._jobs) == 2
 
-    def test_skips_marcas_without_bio_or_niche_and_other_org_virals_never_leak(self):
+    def test_skips_marcas_without_bio_or_niche_and_only_ativa_estruturas_are_suggested(self):
         sb = MockSupabaseClient()
         ok = _marca(sb)
         _marca(sb, bio="  ")
         _marca(sb, nichos=())
         mine = _viral(sb)
-        _viral(sb, org="other-org")
+        _viral(sb, estrutura_status="rascunho")  # a draft is never suggested
         out, _ = _run(sb)
         assert out == {"criados": 1, "ignorados": 2, "falhas": 0}
         [row] = _lotes(sb)
-        assert row["marca_id"] == ok and row["parametros"]["viral_ids"] == [mine]
+        assert row["marca_id"] == ok and row["parametros"]["estrutura_ids"] == [ESTRUTURA_DO_VIDEO[mine]]
 
     def test_a_second_run_the_same_day_creates_nothing(self):
         sb = MockSupabaseClient()
