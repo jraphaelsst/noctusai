@@ -11,18 +11,23 @@
  * Streaming (#45) is a `fetch` + the seed `readSseStream`; frames:
  * `meta` -> `delta`... -> (`truncated`) -> `done` | `error`. Pre-stream refusals
  * (409 / 429 / 503) are plain HTTP and surface as a pt-BR message.
+ *
+ * Unified chat (Estruturas contract §6.5, §9.2): one conversation per (user, marca);
+ * the `done` frame carries the server-parsed `propostas`; `POST …/escolher` turns one
+ * into a saved headline + roteiro + card (a resumable saga on the server), and the
+ * `roteiro_gerado` message it creates is written straight into the messages cache.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { readSseStream } from "@noctusai/lib";
+import { keepPreviousData, useInfiniteQuery, type InfiniteData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ApiError, jobPolling, readSseStream } from "@noctusai/lib";
 import { infiniteOps, listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api, getAuthToken } from "@noctusai/seed/infra";
 
-import { FILTROS_VAZIOS } from "@/components/geracao/biblioteca/filtros";
 import { apiUrl } from "@/lib/apiBase";
 import { uploadMultipart } from "@/hooks/useCardHub";
-import type { Agente, Conversa, Headline, Memoria, Mencao, MencaoTipo, Mensagem, ViralCard } from "@/types/geracao";
-import { viraisParams, type ViraisPage } from "./useBiblioteca";
+import type { Fluxo, Proposta, ResolucaoPerfis } from "@/types/estruturas";
+import type { Conversa, Headline, Memoria, Mencao, MencaoTipo, Mensagem } from "@/types/geracao";
+import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
 import { GERACAO_KEY } from "@/lib/geracaoKeys";
 
 interface Envelope<T> {
@@ -43,15 +48,15 @@ export type ReferenciaEnvio = { tipo: MencaoTipo; id: string };
 
 // ─── Conversas ──────────────────────────────────────────────────────────────
 
-export function useConversas(marcaId: string | null, agente: Agente) {
+export function useConversas(marcaId: string | null) {
   const query = useInfiniteQuery({
-    queryKey: [...CHAT_KEY, "conversas", marcaId, agente],
+    queryKey: [...CHAT_KEY, "conversas", marcaId],
     enabled: !!marcaId,
     initialPageParam: 0,
     queryFn: async ({ pageParam }) =>
       unwrap(
         await api.get<Envelope<{ items: Conversa[]; tem_mais: boolean }>>(
-          `${BASE}/conversas?marca_id=${enc(marcaId as string)}&agente=${agente}&limit=${CONVERSAS_POR_PAGINA}&offset=${pageParam}`,
+          `${BASE}/conversas?marca_id=${enc(marcaId as string)}&limit=${CONVERSAS_POR_PAGINA}&offset=${pageParam}`,
         ),
       ),
     getNextPageParam: (last, all) => (last.tem_mais ? all.length * CONVERSAS_POR_PAGINA : undefined),
@@ -69,12 +74,12 @@ type ConversasCache = { pages: { items: Conversa[]; tem_mais: boolean }[]; pageP
 const CONVERSAS_KEY = [...CHAT_KEY, "conversas"] as const;
 
 export function useCriarConversa() {
-  return useCacheWriteMutation<Conversa, { marca_id: string; agente: Agente; titulo?: string }>({
+  return useCacheWriteMutation<Conversa, { marca_id: string; titulo?: string }>({
     mutationFn: async (v) => unwrap(await api.post<Envelope<Conversa>>(`${BASE}/conversas`, v)),
     // The list is newest-activity first: the new conversa heads the first page.
     targets: (v) => [
       {
-        queryKey: [...CONVERSAS_KEY, v.marca_id, v.agente],
+        queryKey: [...CONVERSAS_KEY, v.marca_id],
         commit: (old: ConversasCache | undefined, saved) => infiniteOps.prepend(old, saved),
       },
     ],
@@ -115,6 +120,22 @@ export function useApagarConversa() {
 
 // ─── Mensagens (older pages via the `antes` cursor) ─────────────────────────
 
+type MensagensPage = { items: Mensagem[]; tem_mais: boolean };
+type MensagensCache = { pages: MensagensPage[]; pageParams: unknown[] };
+const MENSAGENS_KEY = [...CHAT_KEY, "mensagens"] as const;
+export const FLUXO_POLL_MS = 3000;
+
+/**
+ * A `roteiro_gerado` message whose flow is still moving but has no roteiro row yet (the
+ * saga is between headline and roteiro): nothing else can tell us it advanced, so the
+ * messages read polls. Once the roteiro exists the card polls the roteiro itself.
+ */
+export function fluxoAguardandoRoteiro(data: { pages: MensagensPage[] } | undefined): boolean {
+  return !!data?.pages.some((p) =>
+    p.items.some((m) => m.fluxo && !m.fluxo.roteiro && (m.fluxo.etapa === "headline_salva" || m.fluxo.etapa === "roteiro_gerando")),
+  );
+}
+
 export function useMensagens(conversaId: string | null) {
   const query = useInfiniteQuery({
     queryKey: [...CHAT_KEY, "mensagens", conversaId],
@@ -130,7 +151,9 @@ export function useMensagens(conversaId: string | null) {
       ),
     // Items come oldest-first within a page; the cursor is the oldest id of the page.
     getNextPageParam: (last) => (last.tem_mais && last.items.length > 0 ? last.items[0].id : undefined),
-    placeholderData: keepPreviousData,
+    // Never carry another conversation's messages over: the unified chat shares one cache family.
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[3] === conversaId ? prev : undefined),
+    ...jobPolling<InfiniteData<MensagensPage, string | null>>(fluxoAguardandoRoteiro, FLUXO_POLL_MS),
   });
   // pages[0] is the newest page; older pages come after it.
   const mensagens = (query.data?.pages ?? [])
@@ -226,23 +249,6 @@ export function useRemoverMemoria() {
   });
 }
 
-// ─── Citação `(estrutura #N)` -> viral ─────────────────────────────────────
-
-/**
- * Resolves a cited structure code to its viral through the Biblioteca list
- * (`codigo` filter, #7). The endpoint is scoped to the marca's allow-list, so a
- * code outside the user's library resolves to `null` — a citation can never open
- * a viral the user cannot see.
- */
-export async function resolverViralPorCodigo(marcaId: string, codigo: number): Promise<ViralCard | null> {
-  const page = await unwrap(
-    await api.get<Envelope<ViraisPage>>(
-      `/api/media-creation/biblioteca/virais?${viraisParams(marcaId, { ...FILTROS_VAZIOS, codigo, verTodos: true, somenteVirais: false })}`,
-    ),
-  );
-  return page.items.find((v) => v.codigo === codigo) ?? null;
-}
-
 // ─── Salvar headline (#29) ──────────────────────────────────────────────────
 
 export function useSalvarHeadline() {
@@ -262,13 +268,34 @@ export function useSalvarHeadline() {
 
 // ─── Streaming (#45) ────────────────────────────────────────────────────────
 
+export type ModoEstrutura = "post" | "mencoes" | "auto" | "perfil_ambiguo" | "perfil_nao_encontrado";
+
 export type FrameChat = {
-  meta?: { mensagem_usuario_id?: string; contexto_chars?: number; codigos_permitidos?: number[] };
+  meta?: {
+    mensagem_usuario_id?: string;
+    contexto_chars?: number;
+    /** Estrutura `codigo`s the answer may cite as `(estrutura #N)`. */
+    codigos_permitidos?: number[];
+    modo_estrutura?: ModoEstrutura;
+    resolucao_perfis?: ResolucaoPerfis;
+  };
   delta?: string;
   truncated?: boolean;
-  done?: { mensagem_id?: string };
+  done?: { mensagem_id?: string; propostas?: Proposta[] };
   error?: { code?: string; message?: string };
 };
+
+/**
+ * Profile names the server could not resolve by itself (`meta.resolucao_perfis`): the user
+ * picks one and the SAME message is sent again with that profile as a `perfil:<uuid>`
+ * reference. Kept after the stream ends (until the next send / conversation change).
+ */
+export interface PerfilPendente {
+  modo: "perfil_ambiguo" | "perfil_nao_encontrado";
+  grupos: { trecho: string; candidatos: { perfil_id: string; handle: string; nome: string | null }[] }[];
+  conteudo: string;
+  referencias: ReferenciaEnvio[];
+}
 
 export interface EstadoStream {
   ativo: boolean;
@@ -278,7 +305,7 @@ export interface EstadoStream {
   truncada: boolean;
   erro: string | null;
   contextoChars: number | null;
-  /** Viral codes the server allows as `(estrutura #N)` links for this answer, when sent. */
+  /** Estrutura codes the server allows as `(estrutura #N)` links for this answer, when sent. */
   codigosPermitidos: number[] | null;
 }
 
@@ -296,7 +323,23 @@ const ERROS_PRE_STREAM: Record<string, string> = {
   stream_em_andamento: "Já existe uma resposta sendo gerada. Aguarde ela terminar.",
   ia_nao_configurada: "A IA ainda não está configurada para a sua organização.",
   orcamento_ia_excedido: "O orçamento de IA do período foi atingido. Tente novamente mais tarde.",
+  geracao_indisponivel: "A geração está indisponível no momento. Tente novamente em instantes.",
+  limite_de_mensagens: "Limite de mensagens do chat atingido. Tente novamente mais tarde.",
+  estrutura_inativa: "Esta estrutura não está ativa.",
+  perfil_optout: "Este criador pediu para não ser monitorado.",
 };
+
+/**
+ * A refusal body in either shape the server uses: flat `{code, detail, ...}` (a coded
+ * refusal) or `{error: {code, message}}` (a plain-string `detail`, e.g. 403).
+ */
+export function lerErroCorpo(body: unknown): { code: string | null; message: string | null } {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const e = (b.error && typeof b.error === "object" ? b.error : b) as Record<string, unknown>;
+  const code = typeof e.code === "string" ? e.code : null;
+  const msg = [e.message, e.detail, b.detail].find((v) => typeof v === "string" && v) as string | undefined;
+  return { code, message: msg ?? null };
+}
 
 export function mensagemPreStream(status: number, code: string | null, message: string | null): string {
   if (code && ERROS_PRE_STREAM[code]) return ERROS_PRE_STREAM[code];
@@ -309,6 +352,7 @@ export function mensagemPreStream(status: number, code: string | null, message: 
 export function useEnviarMensagem() {
   const qc = useQueryClient();
   const [estado, setEstado] = useState<EstadoStream>(ESTADO_INICIAL);
+  const [perfilPendente, setPerfilPendente] = useState<PerfilPendente | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -321,6 +365,7 @@ export function useEnviarMensagem() {
       const controller = new AbortController();
       abortRef.current = controller;
       setEstado({ ...ESTADO_INICIAL, ativo: true, usuario: conteudo });
+      setPerfilPendente(null);
       let erro: string | null = null;
       let enviou = false;
       try {
@@ -336,11 +381,8 @@ export function useEnviarMensagem() {
           signal: controller.signal,
         });
         if (!res.ok) {
-          const body = await res.json().catch(() => null);
-          const e = body?.error ?? body;
-          throw new Error(
-            mensagemPreStream(res.status, e?.code ?? e?.codigo ?? null, e?.message ?? e?.mensagem ?? null),
-          );
+          const e = lerErroCorpo(await res.json().catch(() => null));
+          throw new Error(mensagemPreStream(res.status, e.code, e.message));
         }
         enviou = true;
         for await (const f of readSseStream<FrameChat>(res, { signal: controller.signal })) {
@@ -351,6 +393,8 @@ export function useEnviarMensagem() {
               contextoChars: m.contexto_chars ?? s.contextoChars,
               codigosPermitidos: m.codigos_permitidos ?? s.codigosPermitidos,
             }));
+            const pendente = perfilPendenteDoMeta(m, conteudo, referencias);
+            if (pendente) setPerfilPendente(pendente);
           }
           if (f.delta) {
             const d = f.delta;
@@ -382,7 +426,113 @@ export function useEnviarMensagem() {
     [qc],
   );
 
-  return { estado, enviar, parar };
+  const limparPerfilPendente = useCallback(() => setPerfilPendente(null), []);
+  return { estado, enviar, parar, perfilPendente, limparPerfilPendente };
+}
+
+/** `meta` → the profile-choice prompt, or null when every name resolved (pure; exported for tests). */
+export function perfilPendenteDoMeta(
+  meta: NonNullable<FrameChat["meta"]>,
+  conteudo: string,
+  referencias: ReferenciaEnvio[],
+): PerfilPendente | null {
+  const r = meta.resolucao_perfis;
+  if (meta.modo_estrutura === "perfil_ambiguo") {
+    const grupos = (r?.ambiguos ?? []).map((a) => ({ trecho: a.trecho, candidatos: a.candidatos }));
+    return grupos.length ? { modo: "perfil_ambiguo", grupos, conteudo, referencias } : null;
+  }
+  if (meta.modo_estrutura === "perfil_nao_encontrado") {
+    const grupos = (r?.nao_encontrados ?? []).map((a) => ({ trecho: a.trecho, candidatos: a.sugestoes }));
+    return grupos.length ? { modo: "perfil_nao_encontrado", grupos, conteudo, referencias } : null;
+  }
+  return null;
+}
+
+// ─── Escolher uma proposta (§6.5 / §9.2) ────────────────────────────────────
+
+export type EscolherInput = { conversaId: string } & ({ proposta_id: string } | { headline_id: string });
+export type EscolherResposta = {
+  proposta: Proposta;
+  fluxo: Fluxo;
+  mensagem_id: string;
+  ja_existia: boolean;
+  em_andamento: boolean;
+};
+
+export const TEXTO_ROTEIRO_GERADO = "Criei o roteiro desta headline e o card na Esteira.";
+
+const ERROS_ESCOLHER: Record<string, string> = {
+  proposta_nao_encontrada: "Esta headline não foi encontrada. Atualize a conversa e tente de novo.",
+  limite_diario_roteiros: "Você atingiu o limite diário de roteiros. Tente novamente amanhã.",
+  ia_nao_configurada: ERROS_PRE_STREAM.ia_nao_configurada,
+  orcamento_ia_excedido: ERROS_PRE_STREAM.orcamento_ia_excedido,
+  geracao_indisponivel: ERROS_PRE_STREAM.geracao_indisponivel,
+  headline_ja_em_post: "Esta headline já está em um card da Esteira.",
+  roteiro_ja_em_post: "Este roteiro já está em um card da Esteira.",
+};
+
+/** pt-BR message for a refused `escolher` (never silent; the headline stays saved on the server). */
+export function mensagemEscolher(e: unknown): string {
+  if (e instanceof ApiError) {
+    if (e.code && ERROS_ESCOLHER[e.code]) return ERROS_ESCOLHER[e.code];
+    if (e.status === 404) return ERROS_ESCOLHER.proposta_nao_encontrada;
+    if (e.status === 429) return ERROS_ESCOLHER.limite_diario_roteiros;
+    if (e.status === 503) return ERROS_ESCOLHER.geracao_indisponivel;
+  }
+  return "Não foi possível criar o roteiro. Tente novamente.";
+}
+
+const mapMensagens = (old: MensagensCache | undefined, fn: (m: Mensagem) => Mensagem): MensagensCache | undefined =>
+  old && Array.isArray(old.pages)
+    ? { ...old, pages: old.pages.map((p) => ({ ...p, items: p.items.map(fn) })) }
+    : old;
+
+/** The newest page's tail gets the `roteiro_gerado` message (idempotent: a known id is replaced). */
+function anexarMensagem(old: MensagensCache | undefined, nova: Mensagem): MensagensCache | undefined {
+  if (!old || !Array.isArray(old.pages) || old.pages.length === 0) return old;
+  const existe = old.pages.some((p) => p.items.some((m) => m.id === nova.id));
+  if (existe) return mapMensagens(old, (m) => (m.id === nova.id ? nova : m));
+  const [primeira, ...resto] = old.pages;
+  return { ...old, pages: [{ ...primeira, items: [...primeira.items, nova] }, ...resto] };
+}
+
+/**
+ * Clicking a proposta: the server saves the headline, creates the roteiro and the card, and
+ * posts the `roteiro_gerado` message. We write what the answer carries into the messages cache
+ * (proposta marked `escolhida` + the new message with its `fluxo`) and settle the families the
+ * saga touched in the background: headline lists, roteiros, the Esteira board and card origin.
+ */
+export function useEscolherProposta() {
+  return useCacheWriteMutation<EscolherResposta, EscolherInput>({
+    mutationFn: async ({ conversaId, ...corpo }) =>
+      unwrap(await api.post<Envelope<EscolherResposta>>(`${BASE}/conversas/${enc(conversaId)}/escolher`, corpo)),
+    targets: (v) => [
+      {
+        queryKey: [...MENSAGENS_KEY, v.conversaId],
+        commit: (old: MensagensCache | undefined, saved) => {
+          const marcada = mapMensagens(old, (m) =>
+            m.propostas.some((p) => p.id === saved.proposta.id)
+              ? { ...m, propostas: m.propostas.map((p) => (p.id === saved.proposta.id ? { ...p, ...saved.proposta } : p)) }
+              : m,
+          );
+          return anexarMensagem(marcada, {
+            id: saved.mensagem_id,
+            role: "assistant",
+            conteudo: TEXTO_ROTEIRO_GERADO,
+            referencias: [],
+            status: "completa",
+            truncada: false,
+            created_at: new Date().toISOString(),
+            tipo: "roteiro_gerado",
+            propostas: [],
+            fluxo: saved.fluxo,
+          });
+        },
+      },
+    ],
+    // The saga created: a favorite headline, a roteiro, a card + its origin. Settled in the background.
+    invalidate: [[...GERACAO_KEY, "headlines"], [...GERACAO_KEY, "roteiros"], [ESTEIRA_PIPELINE_KEY], ESTEIRA_KEY],
+  });
 }
 
 // ─── Ditado (mic) ───────────────────────────────────────────────────────────

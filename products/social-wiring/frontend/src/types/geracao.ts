@@ -3,6 +3,7 @@
  * projects/core-studio-build/specs/geracao-contract.md §4.8 (`export` added only).
  * BE schemas mirror these; change the contract first.
  */
+import type { Fluxo, Proposta } from '@/types/estruturas'
 export type LoteOrigem = 'form_me' | 'form_public' | 'form_viral' | 'biblioteca' | 'sugestao_auto'
 export type GeracaoStatus = 'criando' | 'processando' | 'completo' | 'falha'
 export type RoteiroStatus = 'criando' | 'perguntas' | 'processando' | 'completo' | 'falha'
@@ -59,12 +60,15 @@ export type Roteiro = RoteiroResumo & { instrucoes: string; fonte: 'ia' | 'web' 
                  brain_id: string | null; viral: ViralCard | null; perguntas: RoteiroPergunta[]; etapa: string | null;
                  conteudo: string | null; fontes: string | null; versao: number; feedback: 'gostei'|'nao_gostei'|null;
                  feedback_motivo: string | null; erro: string | null; post?: PostRef | null }
-export type Agente = 'headline' | 'roteiro'
+/** Estruturas contract §6.5/§11.2: one unified chat. The old `headline|roteiro` union is deprecated for one release. */
+export type AgenteLegado = 'headline' | 'roteiro'
+export type Agente = 'unificado'
 export type Conversa = { id: string; marca_id: string; agente: Agente; titulo: string; last_message_at: string | null }
-export type MencaoTipo = 'pesquisa' | 'cerebro' | 'biblioteca' | 'headline'
-export type Mencao = { tipo: MencaoTipo; id: string; rotulo: string; detalhe: string | null }
+export type MencaoTipo = 'pesquisa' | 'cerebro' | 'biblioteca' | 'headline' | 'estrutura'
+export type Mencao = { tipo: MencaoTipo; id: string; rotulo: string; detalhe: string | null; via?: 'texto' }
 export type Mensagem = { id: string; role: 'user' | 'assistant'; conteudo: string; referencias: Mencao[];
-                  status: 'completa' | 'parcial' | 'erro'; truncada: boolean; created_at: string }
+                  status: 'completa' | 'parcial' | 'erro'; truncada: boolean; created_at: string;
+                  tipo: 'texto' | 'roteiro_gerado'; propostas: Proposta[]; fluxo: Fluxo | null }
 export type Memoria = { id: string; texto: string; created_at: string }
 export type EventoHistorico = { tipo: string; texto: string; ator: string | null; em: string }
 export type DashboardCriacao = { saudacao_nome: string; kpis: { headlines_geradas: number; roteiros_gerados: number; itens_pendentes: number };
