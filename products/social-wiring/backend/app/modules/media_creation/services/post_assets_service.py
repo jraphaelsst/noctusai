@@ -14,14 +14,14 @@ from typing import Any, Callable, Optional
 
 from noctusai_lib.integrations.media import FfmpegNotInstalled, MediaProbeError, probe_video
 
+from app.modules.media_creation.midia_storage import MIDIA_BUCKET, MidiaStorageError, prefixo_post, validar_chave
 from app.modules.media_creation.post_formatos import AssetFato, classificar_proporcao
 
 logger = logging.getLogger(__name__)
 
 POSTS = "cs_posts"
 ASSETS = "cs_post_assets"
-#: PRIVATE bucket (migration 342). Key convention: ``org/<org>/posts/<post>/...`` (slice S5 refines the sub-prefixes).
-MIDIA_BUCKET = "sw-posts-midia"
+__all__ = ["MIDIA_BUCKET"]  # re-exported: the bucket + key convention live in ``midia_storage`` (slice S5)
 
 EXT_IMAGEM = frozenset({".jpg", ".jpeg", ".png", ".webp", ".gif"})
 EXT_VIDEO = frozenset({".mp4", ".mov", ".m4v", ".webm"})
@@ -139,7 +139,7 @@ class PostAssetsService:
         return rows[0]
 
     def prefixo(self, post_id: str) -> str:
-        return f"org/{self.org_id}/posts/{post_id}/"
+        return prefixo_post(self.org_id, post_id)
 
     def todos(self, post_id: str) -> list[dict[str, Any]]:
         self._post(post_id)
@@ -158,8 +158,10 @@ class PostAssetsService:
     def validar_caminho(self, post_id: str, storage_path: str) -> None:
         """The file must live under THIS org's and post's prefix: a foreign path is never registered."""
         self._post(post_id)
-        if ".." in storage_path or not storage_path.startswith(self.prefixo(post_id)):
-            raise PostAssetError(422, {"code": "caminho_invalido", "detail": "O arquivo não pertence a este post"})
+        try:
+            validar_chave(self.org_id, post_id, storage_path)
+        except MidiaStorageError as exc:
+            raise PostAssetError(422, {"code": exc.code, "detail": exc.detail})
 
     def registrar(
         self, post_id: str, *, storage_path: str, ordem: Optional[int], fato: MidiaFato,
