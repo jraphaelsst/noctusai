@@ -120,3 +120,9 @@ def test_settings_wires_exactly_one_bash_rewriting_hook():
     cmds = [h["command"] for e in s["hooks"]["PreToolUse"] for h in e["hooks"]]
     assert sum("claude-guard-bash-rewrite.py" in c for c in cmds) == 1
     assert not any("claude-guard-heavy-run.py" in c or "claude-guard-background-launch.py" in c for c in cmds)
+
+
+def test_importing_the_chain_never_puts_the_toolkit_dev_dir_on_sys_path():
+    """The dev dir holds a context.py; on sys.path it shadows mcp/noctusai/context.py for every later import (2026-11-16)."""
+    dev = str(Path(chain.__file__).resolve().parent)
+    assert dev not in sys.path
