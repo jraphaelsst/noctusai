@@ -20391,6 +20391,7 @@ def check_all_products() -> tuple[int, list]:
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())
+    all_issues.extend(check_gh_calls_via_seam())
     # 2026-11-12 (W1-C) — a worker idle poll is a per-tick RPC; fixed/short idle = 56k calls/day.
     all_issues.extend(check_worker_idle_polling())
     # 2026-11-07 — Motion only via @noctusai/lib/marketing (reduced-motion + chunk boundary).
@@ -28501,6 +28502,74 @@ def check_stage_list_not_in_code(repo_root: Path | None = None) -> list[dict]:
                 "issue": f"{have} stage list(s) left but the baseline allows {allowed}: lower `{rel}` in {baseline_rel} — "
                          "`python mcp/noctusai/cli.py --lower-stage-list-not-in-code-baseline` (the ratchet only shrinks).",
             })
+    return issues
+
+
+# ── `check_gh_calls_via_seam` — every repo `gh` call goes through ci_verdict.RealGithubClient ──
+# Incident 2026-11-16: the account's REST core quota (5000/h) hit 0 and every session got 403 (merge-queue watch,
+# gh-run verdicts, filings). `gh run watch` re-fetches the run + jobs + per-job annotations every interval, per
+# watcher, per session. Construction = the seam (quota guard, ETag polling, call counting, 403 -> RateLimited);
+# this keeper is the backstop. KB § PATTERNS/devops/hardware-admission-budget.md (GitHub quota).
+_GH_SEAM_FILE = "mcp/noctusai/tools/noctus/dev/ci_verdict.py"
+# Shrink-only: legacy `["gh", ...]` argv sites that have not moved onto the seam yet. Each has a named destination.
+# NOC-REMEDIATE[gh-seam-migrate]: release.py (owner-triggered, few calls) -> a seam method; safety_pack_sync.py (one-shot
+# manual) -> same; merge_queue.py (guarded by quota_fn in watch_live; its Runner-based gh() stays) and mq_watchdog.py
+# (runs on a CI runner under GITHUB_TOKEN, a separate quota) -> keep until the Runner protocol is unified — 2026-11-16
+_GH_SEAM_BASELINE = {
+    "mcp/noctusai/tools/noctus/dev/release.py": 3,
+    "mcp/noctusai/tools/noctus/dev/safety_pack_sync.py": 2,
+    "mcp/noctusai/tools/noctus/dev/merge_queue.py": 3,
+    "mcp/noctusai/tools/noctus/dev/mq_watchdog.py": 1,
+}
+
+
+def _gh_argv_sites(tree: ast.AST) -> list[tuple[int, bool]]:
+    """(lineno, is_run_watch) for every list/tuple literal whose first element is the string "gh"."""
+    out: list[tuple[int, bool]] = []
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.List, ast.Tuple)) and n.elts and isinstance(n.elts[0], ast.Constant) and n.elts[0].value == "gh":
+            watch = (len(n.elts) > 2 and all(isinstance(e, ast.Constant) for e in n.elts[1:3])
+                     and [e.value for e in n.elts[1:3]] == ["run", "watch"])
+            out.append((n.lineno, watch))
+    return out
+
+
+def check_gh_calls_via_seam(paths: list[Path] | None = None, repo_root: Path | None = None) -> list[dict]:
+    """Keeper: `gh run watch` is forbidden everywhere (it polls run+jobs+annotations per tick); a `["gh", ...]` argv
+    outside ci_verdict.RealGithubClient is refused unless it is a counted legacy site in the shrink-only baseline."""
+    root = repo_root or REPO_ROOT
+    files = [Path(p) for p in paths] if paths else [f for d in ("mcp", "scripts") for f in sorted((root / d).rglob("*.py"))]
+    issues: list[dict] = []
+    for f in files:
+        f = f if f.is_absolute() else root / f
+        try:
+            rel = str(f.relative_to(root))
+        except ValueError:
+            continue
+        if "/tests/" in f"/{rel}" or "node_modules" in rel or "/.venv" in rel or not rel.endswith(".py"):
+            continue
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            continue
+        sites = _gh_argv_sites(tree)
+        for lineno, watch in sites:
+            if watch:
+                issues.append({"file": f"{rel}:{lineno}", "severity": "high", "issue": (
+                    "`gh run watch` re-fetches the run, its jobs and per-job annotations every interval (>=2+jobs REST "
+                    "calls per tick per watcher; it helped exhaust the account quota 2026-11-16). Use "
+                    "ci_verdict.RealGithubClient.watch (one ETag-conditional GET every 60s, backoff, quota guard).")})
+        if rel == _GH_SEAM_FILE:
+            continue
+        n_plain = sum(1 for _l, w in sites if not w)
+        allowed = _GH_SEAM_BASELINE.get(rel, 0)
+        if n_plain > allowed:
+            issues.append({"file": rel, "severity": "high", "issue": (
+                f"{n_plain} `[\"gh\", ...]` argv site(s), baseline {allowed}: route GitHub calls through "
+                "ci_verdict.RealGithubClient (call counting, quota guard, 403 -> RateLimited). The baseline only shrinks.")})
+        elif n_plain < allowed and paths is None:
+            issues.append({"file": rel, "severity": "warning", "issue": (
+                f"{n_plain} gh argv site(s) < baseline {allowed}: shrink _GH_SEAM_BASELINE in compliance.py to {n_plain}.")})
     return issues
 
 

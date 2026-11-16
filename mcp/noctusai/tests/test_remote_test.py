@@ -35,7 +35,9 @@ GH = textwrap.dedent('''\
     S.setdefault("calls", []).append(a)
     def save(): json.dump(S, open(st, "w"))
     if a[:1] == ["api"]:
-        path = a[1]
+        path = [x for x in a[1:] if not x.startswith("-")][0]
+        if path == "rate_limit":
+            save(); print(json.dumps(S.get("rate", {"resources": {"core": {"remaining": 4000, "limit": 5000, "reset": 0}}}))); sys.exit(0)
         if path.endswith("/actions/workflows/remote-test.yml"):
             save()
             if S.get("workflow_exists", True):
@@ -48,7 +50,14 @@ GH = textwrap.dedent('''\
             run = [r for r in S.get("runs", []) if str(r["id"]) == rid][0]
             run = {**run, "status": "completed", "conclusion": S.get("conclusion", "success"),
                    "head_sha": S.get("final_head_sha", run["head_sha"])}
-            save(); print(json.dumps(run)); sys.exit(0)
+            save()
+            if "-i" in a:
+                if S.get("force_403"):
+                    print("HTTP/2.0 403 Forbidden\n\n{}"); print("gh: API rate limit exceeded (HTTP 403)", file=sys.stderr); sys.exit(1)
+                if any("If-None-Match" in x for x in a) and S.get("etag_304"):
+                    print("HTTP/2.0 304 Not Modified\n"); sys.exit(1)
+                print('HTTP/2.0 200 OK\nEtag: "e1"\n'); print(json.dumps(run)); sys.exit(0)
+            print(json.dumps(run)); sys.exit(0)
     if a[:2] == ["workflow", "run"]:
         inputs = {x.split("=", 1)[0]: x.split("=", 1)[1] for i, x in enumerate(a) if i and a[i - 1] == "-f"}
         S.setdefault("dispatches", []).append({"workflow": a[2], "ref": a[a.index("--ref") + 1], "inputs": inputs})
@@ -56,7 +65,7 @@ GH = textwrap.dedent('''\
                                           "html_url": "https://github.com/acme/noc/actions/runs/5001"})
         save(); sys.exit(0)
     if a[:2] == ["run", "watch"]:
-        save(); print("Run Remote test (5001) completed"); sys.exit(0)
+        save(); print("recorder: `gh run watch` must never be called", file=sys.stderr); sys.exit(3)
     if a[:2] == ["run", "view"]:
         save(); sys.stdout.write(S.get("log", "")); sys.exit(0)
     save(); print("recorder: unhandled " + " ".join(a), file=sys.stderr); sys.exit(2)
@@ -129,7 +138,7 @@ class TestRemoteRun:
                                                         "cmd": "pytest t.py -q"}}]
         assert "FAILED tests/test_a.py::test_x" in capsys.readouterr().out
         err = world.err.getvalue()
-        assert "REMOTE-TEST START" in err and "actions/runs/5001" in err and "REMOTE-TEST ... Run Remote test" in err
+        assert "REMOTE-TEST START" in err and "actions/runs/5001" in err and "REMOTE-TEST ... run 5001: completed" in err
         row = world.rows[-1]
         assert (row["event"], row["backend"], row["run_id"], row["sha"], row["outcome"]["exit_code"]) == \
                ("remote_run", "remote", "5001", world.head, 3) and row["wall_s"] >= 0
@@ -329,3 +338,128 @@ class TestTelemetry:
         b = hw.report()["backends"]
         assert (b["remote_runs"], b["remote_wall_s"], b["remote_failed"]) == (2, 60.0, 1)
         assert b["fallbacks"] == {"HEAD not pushed": 1} and b["local_runs"] == 0
+
+
+class TestGithubQuota:
+    """GitHub first; the local slot when GitHub is out of quota; never `gh run watch`, never stop work."""
+
+    def test_remote_run_records_quota_telemetry_and_never_uses_gh_run_watch(self, world):
+        assert world.run() == 0
+        assert all(c[:2] != ["run", "watch"] for c in world.st()["calls"])
+        row = world.rows[-1]
+        assert row["rate_remaining_start"] == 4000 and row["api_calls"] >= 4 and "rate_remaining_end" in row
+
+    def test_quota_below_the_floor_declines_to_the_local_slot_naming_remaining_and_reset(self, world):
+        world.set(rate={"resources": {"core": {"remaining": 12, "limit": 5000, "reset": 1700000000}}})
+        assert world.run() is None
+        err = world.err.getvalue()
+        assert "REMOTE-TEST FALLBACK: github-quota 12/5000 resets 22:13Z" in err and "local slot" in err
+        assert "dispatches" not in world.st() and world.rows[-1]["event"] == "remote_fallback"
+
+    def test_quota_below_the_floor_in_remote_mode_is_exit_75(self, world):
+        world.set(rate={"resources": {"core": {"remaining": 0, "limit": 5000, "reset": 1700000000}}})
+        assert world.run(mode="remote") == rt.EX_TEMPFAIL and "dispatches" not in world.st()
+
+    def test_403_mid_watch_falls_back_locally_and_names_the_orphaned_run(self, world):
+        world.set(force_403=True)
+        assert world.run() is None
+        err = world.err.getvalue()
+        assert "github-quota-midwatch" in err and "actions/runs/5001" in err
+        row = world.rows[-1]
+        assert row["event"] == "remote_fallback" and row["reason"] == "github-quota-midwatch" and "5001" in row["orphaned_run_url"]
+
+    def test_403_mid_watch_in_remote_mode_keeps_exit_75(self, world):
+        world.set(force_403=True)
+        assert world.run(mode="remote") == rt.EX_TEMPFAIL
+
+    def test_unreadable_meter_does_not_block_work(self, world):
+        world.set(rate="not json")
+        assert world.run() == 0 and world.rows[-1]["rate_remaining_start"] is None
+
+
+class TestWatchPolling:
+    """`wait_for_run` through the real client with an injected clock: backoff, ETag, quota sleep. No live gh."""
+
+    def _client(self, responses):
+        calls = []
+
+        def runner(args, cwd=None, timeout=60):
+            calls.append(args)
+            return responses(args)
+
+        return cv.RealGithubClient("/x", runner=runner, repo="acme/noc"), calls
+
+    def test_polls_one_endpoint_with_backoff_60_120_300_and_etag(self):
+        n = {"i": 0}
+
+        def resp(args):
+            if args[:2] == ["gh", "api"] and "-i" in args:
+                n["i"] += 1
+                if n["i"] > 1:
+                    assert "If-None-Match: \"e1\"" in args
+                if n["i"] == 6:
+                    return 0, 'HTTP/2.0 200 OK\nEtag: "e2"\n\n{"status":"completed","conclusion":"success"}', ""
+                if n["i"] > 1:
+                    return 1, "HTTP/2.0 304 Not Modified\n\n", ""
+                return 0, 'HTTP/2.0 200 OK\nEtag: "e1"\n\n{"status":"in_progress"}', ""
+            raise AssertionError(args)
+
+        c, calls = self._client(resp)
+        sleeps, lines, t = [], [], {"t": 0.0}
+        done = c.watch("7", lines.append, 3600, sleep=lambda s: (sleeps.append(s), t.__setitem__("t", t["t"] + s)),
+                       clock=lambda: t["t"])
+        assert done and sleeps == [60.0, 120.0, 300.0, 300.0, 300.0]
+        assert len(calls) == 6 and c.api_calls == 6 and lines == ["run 7: in_progress", "run 7: completed (success)"]
+
+    def test_timeout_returns_false_without_polling_forever(self):
+        c, calls = self._client(lambda a: (0, 'HTTP/2.0 200 OK\n\n{"status":"queued"}', ""))
+        t = {"t": 0.0}
+        assert c.watch("7", lambda _l: None, 100, sleep=lambda s: t.__setitem__("t", t["t"] + s), clock=lambda: t["t"]) is False
+        assert len(calls) <= 3
+
+    def test_rate_limit_sleeps_until_the_reset_loudly_then_resumes(self):
+        state = {"i": 0}
+
+        def resp(args):
+            if args[2] == "rate_limit":
+                return 0, '{"resources":{"core":{"remaining":0,"limit":5000,"reset":%d}}}' % int(__import__("time").time() + 120), ""
+            state["i"] += 1
+            if state["i"] == 1:
+                return 1, "", "gh: API rate limit exceeded for user (HTTP 403)"
+            return 0, 'HTTP/2.0 200 OK\n\n{"status":"completed","conclusion":"success"}', ""
+
+        c, calls = self._client(resp)
+        sleeps, lines = [], []
+        assert c.watch("7", lines.append, 3600, sleep=sleeps.append, clock=lambda: 0.0)
+        assert 100 < sleeps[0] < 130 and any(l.startswith("GITHUB QUOTA") and "sleeping" in l for l in lines)
+        assert c.free_calls == 1
+
+    def test_quota_pause_is_zero_when_healthy_or_unreadable(self):
+        ok = lambda a, cwd=None: (0, '{"resources":{"core":{"remaining":900,"limit":5000,"reset":9}}}', "")
+        low = lambda a, cwd=None: (0, '{"resources":{"core":{"remaining":3,"limit":5000,"reset":1000}}}', "")
+        bad = lambda a, cwd=None: (1, "", "boom")
+        assert cv.quota_pause_s(ok)[0] == 0.0 and cv.quota_pause_s(bad)[0] == 0.0
+        assert cv.quota_pause_s(low, now=lambda: 400.0)[0] == 605.0
+
+
+class TestGhCallsViaSeamKeeper:
+    def _scan(self, tmp_path, src, name="mcp/x/tools/a.py"):
+        from tools.noctus.dev.compliance import check_gh_calls_via_seam
+        f = tmp_path / name
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(src)
+        return check_gh_calls_via_seam(repo_root=tmp_path)
+
+    def test_gh_run_watch_is_forbidden_everywhere(self, tmp_path):
+        out = self._scan(tmp_path, 'import subprocess\nsubprocess.run(["gh", "run", "watch", "1"])\n')
+        assert any("gh run watch" in i["issue"] for i in out)
+
+    def test_new_gh_argv_outside_the_seam_is_flagged_and_clean_code_is_not(self, tmp_path):
+        assert self._scan(tmp_path, 'x = ["gh", "api", "rate_limit"]\n')[0]["severity"] == "high"
+        assert self._scan(tmp_path, "x = ['git', 'status']\n", name="mcp/x/tools/b.py") != []  # a.py still dirty
+        (tmp_path / "mcp/x/tools/a.py").unlink()
+        assert self._scan(tmp_path, "x = ['git', 'status']\n", name="mcp/x/tools/b.py") == []
+
+    def test_the_repo_is_clean(self):
+        from tools.noctus.dev.compliance import check_gh_calls_via_seam
+        assert [i for i in check_gh_calls_via_seam() if i["severity"] != "warning"] == []

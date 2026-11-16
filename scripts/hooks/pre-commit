@@ -1029,6 +1029,14 @@ if [[ -n "$STAGED_NPM_MANIFEST" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-bis-1. GitHub-call seam (WARN-first SHADOW) ───────────────────────
+# Keeper `check_gh_calls_via_seam`. `gh run watch` and ad-hoc `["gh", ...]` argv outside
+# ci_verdict.RealGithubClient bypass the quota guard (2026-11-16: account REST quota hit 0).
+STAGED_GH_SEAM=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(mcp|scripts)/.*\.py$' | grep -v '/tests/' || true)
+if [[ -n "$STAGED_GH_SEAM" ]] && have_py; then
+    "$PY" "$CLI" --check-gh-calls-via-seam --worktree-path "$REPO_ROOT" || echo "[pre-commit] WARNING (shadow): gh_calls_via_seam — route GitHub calls through ci_verdict.RealGithubClient." >&2
+fi
+
 # ─── 6e-bis-0. Worker idle-polling gate (blocking, only when a worker / ─
 # jobs file is staged) ───────────────────────────────────────────────────
 # Keeper `check_worker_idle_polling` + `KB § PATTERNS/backend/polling-request-

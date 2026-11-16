@@ -109,6 +109,23 @@ for low memory). Every pytest / vitest / `npm test` run now goes to a GitHub Act
 - **Telemetry.** `~/.noctus/hw-admission.ndjson` gets `remote_run` rows (`backend=remote`, `run_id`, `sha`, `wall_s`,
   `outcome`) and `remote_fallback` rows (`reason`); local `ran` rows carry `backend=local`;
   `hw_admission action=report` -> `backends` (local vs remote runs, remote wall time, fallbacks by reason).
+- **GitHub quota (methodology: GitHub first; the local slot when GitHub is unavailable or out of quota; never stop work).**
+  2026-11-16: the account's REST core quota (5000/h, shared by every session) hit 0 and every `gh` call returned 403.
+  The driver was `gh run watch --interval 15`: each tick re-fetches the run, its jobs and per-job annotations (>= 2 + jobs
+  REST calls per tick, per watcher; a 20 min run by ~10 sessions is thousands of calls). By construction now:
+  (1) `ci_verdict.RealGithubClient` is THE GitHub-call seam (counts `api_calls`; a 403 rate-limit becomes `RateLimited`,
+  never a retry storm); (2) waiting = ONE `actions/runs/<id>` GET every 60s with `If-None-Match` (a 304 is not counted)
+  and backoff 60 -> 120 -> 300s, no jobs fetch until the final log read; dispatch polls are 5 x 8s; (3) `gh api rate_limit`
+  (free) is read before every dispatch/watch: below `QUOTA_FLOOR` (500), `remote_test` declines with reason
+  `github-quota <remaining>/<limit> resets <HH:MM>Z` and the command takes the LOCAL slot; a 403 mid-watch stops the watch
+  and runs the SAME command locally (`remote_fallback` row, reason `github-quota-midwatch`, `orphaned_run_url` names the
+  GH run to read later); only `--remote` / `NOCTUS_TEST_BACKEND=remote` keeps exit 75. Long-lived watchers (merge-queue
+  `watch_live`) sleep until the reset, loudly (`MQ-QUOTA`). Telemetry: every `remote_run` row carries `api_calls`,
+  `rate_remaining_start`, `rate_remaining_end`; `ci_verdict.resolve_for_filing` returns the same. Backstop: keeper
+  `check_gh_calls_via_seam` (`gh run watch` forbidden everywhere; a new `["gh", ...]` argv outside the seam is refused;
+  legacy sites in the shrink-only `_GH_SEAM_BASELINE`: release.py + safety_pack_sync.py (move onto a seam method),
+  merge_queue.py (guarded by `quota_fn`), mq_watchdog.py (runs on a CI runner under `GITHUB_TOKEN`, a separate quota)).
+  `scripts/bg_run.py` / `_bg_process_core.py` only describe/wrap a command, they make no gh calls.
 - **Stale slot files.** Lock files at index >= `max_heavy` (a lowered budget) are swept on slot acquisition
   (`sweep_excess_slots`); a still-flocked one is reported, never touched.
 - **Gate row.** `noctus.dev.gate_alignment` declares `remote_test_default` (mechanism: the single `run` entry; backstop: the

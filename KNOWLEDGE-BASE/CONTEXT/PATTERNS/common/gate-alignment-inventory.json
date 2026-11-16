@@ -1224,6 +1224,15 @@
    "class": "new (shadow)",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-gh-calls-via-seam": {
+   "mechanism": "api: ci_verdict.RealGithubClient (quota guard, conditional polling, call counting) is the one GitHub-call seam",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-16",
+   "source": "GitHub REST docs: rate limits + conditional requests (304 not counted); cli/cli gh run watch polls run+jobs+annotations per interval"
+  },
   "keeper:check-git-hook-file-tampering": {
    "severity": "high",
    "kind": "keeper-batch",
@@ -3878,6 +3887,18 @@
    "branch": "feat/keepers-by-construction",
    "gates": [
     "keeper:check-git-hooks-bypass"
+   ]
+  },
+  {
+   "id": "D42",
+   "decision": "GitHub API quota is a shared budget: repo code reaches GitHub only through one seam; GitHub first, local slot when out of quota",
+   "home": "GitHub REST docs: rate limits + conditional requests (304 not counted); cli/cli gh run watch polls run+jobs+annotations per interval",
+   "construction": "api: ci_verdict.RealGithubClient (quota guard, conditional polling, call counting) is the one GitHub-call seam",
+   "gate": "keeper:check-gh-calls-via-seam",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "branch": "pending:keeper:check-gh-calls-via-seam",
+   "gates": [
+    "keeper:check-gh-calls-via-seam"
    ]
   }
  ]

@@ -1139,7 +1139,8 @@ def watch(list_fn: Callable[[], dict[str, Any]], status_fn: Callable[[str], dict
           interval: float = 60, sleep: Callable[[float], None] = time.sleep,
           emit: Callable[[str], None] = lambda line: print(line, flush=True),
           max_polls: int | None = None, attempts: int = 3, left_retries: int = 10,
-          batches_fn: Callable[[], list[dict[str, Any]]] | None = None) -> None:
+          batches_fn: Callable[[], list[dict[str, Any]]] | None = None,
+          quota_fn: Callable[[], float] | None = None) -> None:
     """Long-running transition printer: ONE line per change, so a steward never diffs by hand.
 
     `MQ <slug> <sha9> -> <state>: <desc> <url>` when a listed entry's verdict changes (and once
@@ -1149,6 +1150,10 @@ def watch(list_fn: Callable[[], dict[str, Any]], status_fn: Callable[[str], dict
     reported as `MQ-WATCH-ERROR <type>: <msg>` while the last good snapshot is KEPT, so the next
     successful poll still reports every transition that happened in between. Never exits on a
     transient error (only KeyboardInterrupt / `max_polls`, for tests).
+
+    `quota_fn` (GitHub quota guard, 2026-11-16): returns the seconds to wait when the account's REST quota is below
+    the floor, else 0. A watcher is long-lived, so it SLEEPS until the reset, loudly (`MQ-QUOTA ...`), and reads
+    nothing meanwhile - it never burns the last calls and never retry-storms a 403.
 
     With `batches_fn` (completed candidate runs: [{id, branch, conclusion, url}]) it also
     prints `MQ-BATCH <branch> -> <conclusion> <url>` once per candidate batch that finishes
@@ -1162,6 +1167,13 @@ def watch(list_fn: Callable[[], dict[str, Any]], status_fn: Callable[[str], dict
     polls = 0
     while max_polls is None or polls < max_polls:
         polls += 1
+        pause = quota_fn() if quota_fn else 0.0
+        if pause > 0:
+            emit(f"MQ-QUOTA GitHub API quota is below the floor; sleeping {int(pause)}s until it resets, then resuming")
+            sleep(pause)
+            if max_polls is not None and polls >= max_polls:
+                break
+            continue
         if batches_fn is not None:
             try:
                 done = batches_fn()
@@ -1234,9 +1246,15 @@ def watch_live(interval: float = 60, run: Runner = _default_run, workdir: str | 
     """`watch` against the real repo: the list is read IN-PROCESS (no subprocess/JSON scrape)."""
     wd = workdir or os.getcwd()
     repo = _repo_from_remote(run, wd)
+    from importlib import util as _ilu  # ci_verdict is THE GitHub seam (quota guard); loaded by path like remote_test does
+    _spec = _ilu.spec_from_file_location("noc_ci_verdict_mq", os.path.join(os.path.dirname(os.path.abspath(__file__)), "ci_verdict.py"))
+    _cv = _ilu.module_from_spec(_spec)
+    sys.modules[_spec.name] = _cv
+    _spec.loader.exec_module(_cv)
     watch(lambda: queue_snapshot(repo, run=run, workdir=wd),
           lambda sha: read_status(repo, sha, run=run), interval=interval,
-          batches_fn=lambda: completed_candidate_runs(run=run, workdir=wd))
+          batches_fn=lambda: completed_candidate_runs(run=run, workdir=wd),
+          quota_fn=lambda: _cv.quota_pause_s(run, cwd=wd)[0])
 
 
 def completed_candidate_runs(run: Runner = _default_run, workdir: str | None = None,

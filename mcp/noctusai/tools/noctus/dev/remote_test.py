@@ -225,7 +225,7 @@ def _timeout_s() -> float:
 def try_remote(job: str, argv: list[str], *, cwd: str, mode: str | None = None, client: Any = None,
                log: Callable[[dict[str, Any]], None] | None = None, err: Any = None,
                sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
-               polls: int = 8, interval_s: float = 4.0) -> int | None:
+               polls: int = 5, interval_s: float = 8.0) -> int | None:
     """Run `argv` on GitHub and return the test command's exit code; None = the caller runs it on the local slot.
 
     A fallback is never silent: it prints `REMOTE-TEST FALLBACK: <reason>` and logs a `remote_fallback` row.
@@ -268,9 +268,16 @@ def try_remote(job: str, argv: list[str], *, cwd: str, mode: str | None = None, 
     ci = _sibling("ci_verdict")
     try:
         client = client or ci.make_client(plan.top)
+        calls0 = getattr(client, "api_calls", 0)
         tip = client.remote_tip(branch)
         if tip != head:
             return decline(f"HEAD not pushed: origin/{branch} is at {str(tip)[:9]}, local HEAD {head[:9]} (push first)")
+        try:  # free `gh api rate_limit`; below the floor -> RateLimited -> local slot (GitHub first, never stop work)
+            rate_start: int | None = int(client.ensure_quota()["remaining"])
+        except ci.RateLimited:
+            raise
+        except ci.CiVerdictError:
+            rate_start = None  # an unreadable meter never blocks work (telemetry records None)
         if not client.workflow_exists(WORKFLOW):
             return decline(f"workflow {WORKFLOW} is missing on GitHub (it must exist on the default branch to be dispatchable)")
         before = {str(r["id"]) for r in client.runs_for_workflow(WORKFLOW, branch)}
@@ -287,11 +294,17 @@ def try_remote(job: str, argv: list[str], *, cwd: str, mode: str | None = None, 
             sleep(interval_s)
         if run is None:
             return decline(f"dispatched {WORKFLOW} but no new run on {head[:9]} appeared")
+    except ci.RateLimited as exc:
+        return decline(f"github-quota {exc.remaining}/5000 resets {ci.reset_clock(exc.reset_epoch)[:5]}Z ({exc})")
     except ci.CiVerdictError as exc:
         return decline(f"GitHub unavailable: {exc}")
     run_id, url = str(run["id"]), run.get("html_url") or str(run["id"])
     t0 = clock()
     say(f"REMOTE-TEST START job={job} backend=remote run={url} sha={head[:9]} workdir={plan.workdir or '.'} cmd={cmd}")
+    def tel() -> dict[str, Any]:  # quota telemetry on every outcome row: what this run cost GitHub, and what was left
+        return {"api_calls": getattr(client, "api_calls", 0) - calls0, "rate_remaining_start": rate_start,
+                "rate_remaining_end": getattr(client, "rate_remaining", None)}
+
     row: dict[str, Any] = {"event": "remote_run", "backend": "remote", "job": job, "mode": mode, "run_id": run_id,
                            "run_url": url, "sha": head, "branch": branch, "workdir": plan.workdir or ".", "cmd": cmd}
     try:
@@ -302,23 +315,33 @@ def try_remote(job: str, argv: list[str], *, cwd: str, mode: str | None = None, 
                 seen.add(ln)
                 say(f"REMOTE-TEST ... {ln}")
 
-        finished = client.watch(run_id, progress, _timeout_s())
+        finished = client.watch(run_id, progress, _timeout_s(), sleep=sleep, clock=clock, on_quota="raise")
         if not finished:
             wall = round(clock() - t0, 1)
-            log({**row, "wall_s": wall, "outcome": {"exit_code": EX_TEMPFAIL, "conclusion": "timeout"}})
-            say(f"REMOTE-TEST UNMEASURED: still running after {wall}s: {url} (watch it: gh run watch {run_id}). Exit {EX_TEMPFAIL}.")
+            log({**row, **tel(), "wall_s": wall, "outcome": {"exit_code": EX_TEMPFAIL, "conclusion": "timeout"}})
+            say(f"REMOTE-TEST UNMEASURED: still running after {wall}s: {url} (read it later: {url}). Exit {EX_TEMPFAIL}.")
             return EX_TEMPFAIL
         final = client.run(run_id) or {}
         if final.get("head_sha") != head:  # verdict-channel integrity: the exit code must belong to THIS head
             wall = round(clock() - t0, 1)
-            log({**row, "wall_s": wall, "outcome": {"exit_code": EX_TEMPFAIL, "conclusion": "sha_mismatch"}})
+            log({**row, **tel(), "wall_s": wall, "outcome": {"exit_code": EX_TEMPFAIL, "conclusion": "sha_mismatch"}})
             say(f"REMOTE-TEST UNMEASURED: run {run_id} judged {str(final.get('head_sha'))[:9]}, not local HEAD {head[:9]}. "
                 f"Exit {EX_TEMPFAIL}.")
             return EX_TEMPFAIL
         code, lines = parse_log(client.run_log(run_id))
+    except ci.RateLimited as exc:  # quota exhausted mid-watch: stop watching, run the SAME command on the local slot
+        wall = round(clock() - t0, 1)
+        log({**row, **tel(), "event": "remote_fallback", "backend": "local" if mode != "remote" else "refused",
+             "reason": "github-quota-midwatch", "wall_s": wall, "orphaned_run_url": url})
+        if mode == "remote":
+            say(f"REMOTE-TEST REFUSED ({ENV_BACKEND}=remote forbids a local fallback): github-quota-midwatch ({exc}); "
+                f"orphaned GitHub run: {url}. Exit {EX_TEMPFAIL}.")
+            return EX_TEMPFAIL
+        say(f"REMOTE-TEST FALLBACK: github-quota-midwatch ({exc}); orphaned GitHub run (read it later): {url}: running on the local slot")
+        return None
     except ci.CiVerdictError as exc:
         wall = round(clock() - t0, 1)
-        log({**row, "wall_s": wall, "outcome": {"exit_code": EX_TEMPFAIL, "conclusion": "gh_error", "error": str(exc)[:200]}})
+        log({**row, **tel(), "wall_s": wall, "outcome": {"exit_code": EX_TEMPFAIL, "conclusion": "gh_error", "error": str(exc)[:200]}})
         say(f"REMOTE-TEST UNMEASURED: lost contact with GitHub ({exc}); the run may still finish: {url}. Exit {EX_TEMPFAIL}.")
         return EX_TEMPFAIL
     wall = round(clock() - t0, 1)
@@ -326,11 +349,11 @@ def try_remote(job: str, argv: list[str], *, cwd: str, mode: str | None = None, 
     for ln in summarize(lines):
         print(ln, flush=True)
     if code is None:
-        log({**row, "wall_s": wall, "outcome": {"exit_code": EX_TEMPFAIL, "conclusion": conclusion}})
+        log({**row, **tel(), "wall_s": wall, "outcome": {"exit_code": EX_TEMPFAIL, "conclusion": conclusion}})
         say(f"REMOTE-TEST UNMEASURED: run {conclusion} before the test command printed its exit code "
             f"(setup/validation failed, or cancelled): {url}. Exit {EX_TEMPFAIL}.")
         return EX_TEMPFAIL
-    log({**row, "wall_s": wall, "outcome": {"exit_code": code, "conclusion": conclusion}})
+    log({**row, **tel(), "wall_s": wall, "outcome": {"exit_code": code, "conclusion": conclusion}})
     say(f"HW-RUN DONE rc={code} elapsed={int(wall)}s backend=remote run={url} sha={head[:9]}")
     return code
 
