@@ -295,7 +295,14 @@ def try_remote(job: str, argv: list[str], *, cwd: str, mode: str | None = None, 
     row: dict[str, Any] = {"event": "remote_run", "backend": "remote", "job": job, "mode": mode, "run_id": run_id,
                            "run_url": url, "sha": head, "branch": branch, "workdir": plan.workdir or ".", "cmd": cmd}
     try:
-        finished = client.watch(run_id, lambda ln: say(f"REMOTE-TEST ... {ln}"), _timeout_s())
+        seen: set[str] = set()  # `gh run watch` redraws the whole table each interval: print only lines not seen yet
+
+        def progress(ln: str) -> None:
+            if ln not in seen:
+                seen.add(ln)
+                say(f"REMOTE-TEST ... {ln}")
+
+        finished = client.watch(run_id, progress, _timeout_s())
         if not finished:
             wall = round(clock() - t0, 1)
             log({**row, "wall_s": wall, "outcome": {"exit_code": EX_TEMPFAIL, "conclusion": "timeout"}})
