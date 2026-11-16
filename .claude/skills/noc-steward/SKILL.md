@@ -48,7 +48,7 @@ Rule: `KB § PATTERNS/devops/release-steward.md` § 7a (guardian spec, council 0
 
 ## 4 · On every landing
 
-`task_branch action=landed slug=… confirm=True`, then reply `LANDED <dev sha>` / `EJECTED <reason>` to the requester. `no_pointer` on a subagent worktree is benign. `missing_commits` on derived `chore(kb-counts) … [auto]` commits is the tool, not lost work: confirm with `git log --oneline` that the content is on dev.
+`task_branch action=landed slug=… confirm=True`, then reply `LANDED <dev sha>` / `EJECTED <reason>` to the requester. **Hand-off-and-end deliveries (owner 2026-11-16):** a requester that sent a handoff message and closed is NOT orphaned. You own its delivery: check its CI runs yourself (one `gh run view` per run, ≥ 60 s apart, never `gh run watch`), enqueue in its given order, land, deploy, and send LANDED/EJECTED/DEPLOYED to the owner, since the requester is gone. A red run or ejection follows § 7a.6 (owner alert, the fix goes to the resume note's line). `KB § PATTERNS/devops/release-steward.md` § 7a.7. `no_pointer` on a subagent worktree is benign. `missing_commits` on derived `chore(kb-counts) … [auto]` commits is the tool, not lost work: confirm with `git log --oneline` that the content is on dev.
 
 ## 5 · Consent — what the steward may decide
 
