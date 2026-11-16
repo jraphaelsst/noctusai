@@ -154,7 +154,7 @@ python mcp/noctusai/cli.py --release-steward claim --steward-name <name> --stewa
 `ListAgents` and `SendMessage` the announcement. `--steward-session-id` overrides
 `$CLAUDE_CODE_SESSION_ID` for an operator acting for another session.
 
-## 7a · Ejection flow (the branch steward fixes; not live until build 4 inbox fields; end predicate not live until builds 3+5)
+## 7a · Ejection flow and hand-off-and-end (the branch steward fixes; not live until build 4 inbox fields; hand-off-and-end live 2026-11-16, its `mine` tool support build 5)
 
 Guardian spec, council 09340534 (dispositions A: the guardian is a service leaf whose authority is the lane only; B: a rejected delivery returns to its steward, not to a rescue branch; K: ejection fixes belong to the branch steward). It supersedes the rescue-branch flow of the 2026-11-10 queue-lifecycle decision (council a341e383, `project-history/assistant-chatbot/queue-lifecycle-decision.md`) and the older `merge-queue.md` §4 "the owning session fixes".
 
@@ -164,7 +164,13 @@ Guardian spec, council 09340534 (dispositions A: the guardian is a service leaf 
 4. **The branch steward fixes it** on its own branch and files `request` again (the `deliverable` preflight runs again at filing). The guardian never patches the branch, never opens a rescue branch and never dispatches an engineer for it.
 5. **Two strikes.** After 2 ejections the delivery parks as `blocked_on_steward` until its steward re-files a fix the preflight accepts.
 6. **Orphan.** If the steward's session is gone, or silent past the TTL, the delivery stays `blocked_on_steward`. The guardian alerts the owner, and the OWNER names a new branch steward, who adopts the branch (role registry `to_session_id=`). The guardian never adopts it itself.
-7. **End predicate** (`release_steward mine`, builds 3+5): a requester may end only when its requests are LANDED (plus DEPLOYED if asked) or handed to a successor steward the owner named, it has no open `mq/*` ref, and no CI run it depends on is in flight. Teardown rules: `background-agent-lifecycle.md`.
+7. **Hand off and end** (owner 2026-11-16; supersedes the old "end only when LANDED/DEPLOYED" predicate). A requester does NOT wait for its deliveries to land. It ends as soon as every delivery is **filed and accepted** by the outbox (`queued_for_steward`, `pending_ci` or `queued`; never `needs_resync`/refused, which it fixes and re-files first). Close-out, in order:
+   1. **File everything.** `request` per branch, landing order in `notes`; fix any `needs_resync` item that is fixable now (derived files, kb-counts) and re-file.
+   2. **One handoff message to the steward** (`SendMessage`; the outbox stays the record): each slug + head + verdict ref, the landing order, migrations and whether the owner's prod consent is already in the steward's transcript, which CI runs are still in flight, and that the requester is closing.
+   3. **Resume note** in the project memory (the named destination for a RED run, an ejection, or post-landing cleanup): final heads, run ids, what is owed after landing (worktree cleanup, installs).
+   4. **Stop your own watchers.** `session_end_sweep` clean: no poll loop, monitor or subagent outlives the session; the steward watches CI from here (one check per run, polls ≥ 60 s).
+   5. **Worktrees of filed-but-unlanded branches stay**; they are cleaned after landing by the next session on the line or the mole sweep.
+   **The steward owns the delivery from the handoff:** it checks the CI runs itself, enqueues in the given order, lands, runs the prod cut, and reports `LANDED <sha>` / `EJECTED <reason>` / `DEPLOYED` to the requester if it is live, otherwise to the owner. A red run or an ejection after the requester left follows the orphan rule (6): `blocked_on_steward` + owner alert; the fix belongs to the line named in the resume note, never to the guardian. **Why:** a session waiting for landing holds context, memory and poll loops on an 8 GB laptop shared by up to 7 sessions, while the steward already watches the queue. Tool support (not live): `release_steward action=mine` reporting `can_end` = every request accepted + no own background process (build 5).
 
 ## 8 · Reboot / multi-steward (2026-11-09/10)
 
