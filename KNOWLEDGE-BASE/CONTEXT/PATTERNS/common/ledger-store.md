@@ -94,6 +94,10 @@ Peer sessions whose MCP server still has the old code keep appending to the
   Real-store tests build a `GitLedgerStore` on a temp bare repo
   (`tests/test_ledger_store.py`). No test can push to the real origin.
 
+## Findings ledgers (2026-11-15)
+
+The keyed living findings ledgers (`noctus.dev.findings_ledger`) use this store for their row events (`append`/`update`) under flat names `findings-<ledger>.ndjson`, dual-read with the tree copy (store wins by `key`). See `KB § PATTERNS/common/living-findings-ledgers.md` § Where a write lands.
+
 ## Operate
 
 `noctus.dev.ledger_store` — `action='status'` (tip, row counts, spooled rows) ·
