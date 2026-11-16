@@ -147,12 +147,13 @@ def _active_catalog_rows() -> list[tuple[str, str]]:
             "backends) and re-run. Refusing to guess the active product set."
         )
     try:
-        from supabase import create_client
+        from ._http import supabase_client, supabase_execute
     except ImportError as exc:  # pragma: no cover - env-dependent
         raise RuntimeError(f"the `supabase` package is required to read the catalog: {exc}") from exc
 
-    client = create_client(url, key)
-    resp = client.table("products").select("slug,deploy_scope").eq("ativo", True).execute()
+    client = supabase_client(url, key, call_site="build_scope.catalog")
+    resp = supabase_execute(client.table("products").select("slug,deploy_scope").eq("ativo", True),
+                            call_site="build_scope.catalog")
     return sorted((row["slug"], row["deploy_scope"]) for row in (resp.data or []))
 
 

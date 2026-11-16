@@ -51,10 +51,9 @@ def _real_client() -> Optional[Any]:
     url, key = os.environ.get(ENV_URL), os.environ.get(ENV_KEY)
     if not url or not key:
         return None
-    from supabase import create_client
-    from supabase.lib.client_options import ClientOptions
+    from ._http import supabase_client
 
-    return create_client(url, key, options=ClientOptions(schema=SCHEMA))
+    return supabase_client(url, key, call_site="finance_import_igig", schema=SCHEMA, read=120.0)
 
 
 def finance_import_igig(

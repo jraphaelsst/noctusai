@@ -15,6 +15,8 @@ from typing import Any, Callable
 
 import httpx
 
+from ..dev._http import bounded_client
+
 DEFAULT_URL = "https://core.noctusai.com"
 MAX_BYTES = 150 * 1024 * 1024
 TERMINAL = frozenset({"concluida", "falhou", "cancelada"})
@@ -27,7 +29,6 @@ _TRANSIENT = frozenset({429, 502, 503, 504})
 _SLOW_POLL_S = 30.0
 _FAST_WINDOW_S = 60.0
 _MAX_SUBMIT_WAIT_S = 120.0
-_HTTP_TIMEOUT = httpx.Timeout(60.0, connect=15.0, read=300.0, write=600.0)
 
 
 def _error(codigo: str, mensagem: str, status_code: int | None = None,
@@ -71,8 +72,9 @@ def _config() -> tuple[str, str] | dict[str, Any]:
 
 
 def _client(base: str, token: str, transport: httpx.BaseTransport | None) -> httpx.Client:
-    return httpx.Client(base_url=base, headers={"Authorization": f"Bearer {token}"},
-                        timeout=_HTTP_TIMEOUT, transport=transport)
+    return bounded_client(base_url=base, headers={"Authorization": f"Bearer {token}"}, transport=transport,
+                          deadline_s=900.0, read=600.0, why="uploads up to 150 MB + server-side validation",
+                          call_site="transcription.client")
 
 
 def _request(method: str, path: str, transport: httpx.BaseTransport | None = None,
