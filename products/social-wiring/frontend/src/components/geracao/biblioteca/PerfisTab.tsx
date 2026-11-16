@@ -117,7 +117,7 @@ export function PerfisTab({ marcaId, isAdmin }: { marcaId: string | null; isAdmi
   );
 }
 
-function PerfilCard({ perfil: p }: { perfil: PerfilBiblioteca }) {
+export function PerfilCard({ perfil: p }: { perfil: PerfilBiblioteca }) {
   return (
     <article
       className="relative flex items-center gap-3 rounded-lg border bg-card p-4 shadow-xs focus-within:ring-2 focus-within:ring-ring hover:border-primary/50"
@@ -137,13 +137,21 @@ function PerfilCard({ perfil: p }: { perfil: PerfilBiblioteca }) {
           </Link>
         </h3>
         {p.nome && <p className="truncate text-xs text-muted-foreground">{p.nome}</p>}
-        <p className="mt-1 text-xs text-muted-foreground">
-          {compactoPtBr(p.seguidores)} seguidores
-          {p.estruturas_total != null ? ` · ${p.estruturas_total === 1 ? "1 estrutura" : `${p.estruturas_total} estruturas`}` : ""}
-        </p>
+        {/* Client orgs get handle + name only: no photo, no follower count (owner decision) — the line simply drops. */}
+        {(p.seguidores != null || p.estruturas_total != null) && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {[
+              p.seguidores != null ? `${compactoPtBr(p.seguidores)} seguidores` : null,
+              p.estruturas_total != null ? (p.estruturas_total === 1 ? "1 estrutura" : `${p.estruturas_total} estruturas`) : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+        )}
       </div>
       <div className="flex flex-col items-end gap-1">
-        {p.monitorar === false ? <Badge variant="outline">Somente biblioteca</Badge> : <Badge variant="secondary">{ROTULO_PERFIL_STATUS[p.status] ?? p.status}</Badge>}
+        {/* status / monitorar are admin-only fields: ABSENT for members, so nothing is rendered from undefined. */}
+        {p.monitorar === false ? <Badge variant="outline">Somente biblioteca</Badge> : p.status ? <Badge variant="secondary">{ROTULO_PERFIL_STATUS[p.status] ?? p.status}</Badge> : null}
         {p.selecionado_pela_marca && <Badge variant="outline">Na sua biblioteca</Badge>}
       </div>
     </article>

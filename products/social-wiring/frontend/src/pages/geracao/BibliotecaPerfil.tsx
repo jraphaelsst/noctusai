@@ -152,10 +152,10 @@ export default function BibliotecaPerfil() {
             <h1 className="text-2xl font-semibold">@{p.handle}</h1>
             {p.nome && <p className="text-sm text-muted-foreground">{p.nome}</p>}
             <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <span>{compactoPtBr(p.seguidores)} seguidores</span>
-              <span>· {p.estruturas_total != null ? (p.estruturas_total === 1 ? "1 estrutura" : `${p.estruturas_total} estruturas`) : "— estruturas"}</span>
-              <span>· Última sincronização: {dataPtBr(p.ultima_sync_em)}</span>
-              {p.monitorar === false ? <Badge variant="outline">Somente biblioteca</Badge> : <Badge variant="secondary">{ROTULO_PERFIL_STATUS[p.status] ?? p.status}</Badge>}
+              {p.seguidores != null && <span>{compactoPtBr(p.seguidores)} seguidores ·</span>}
+              <span>{p.estruturas_total != null ? (p.estruturas_total === 1 ? "1 estrutura" : `${p.estruturas_total} estruturas`) : "— estruturas"}</span>
+              {p.ultima_sync_em !== undefined && <span>· Última sincronização: {dataPtBr(p.ultima_sync_em)}</span>}
+              {p.monitorar === false ? <Badge variant="outline">Somente biblioteca</Badge> : p.status ? <Badge variant="secondary">{ROTULO_PERFIL_STATUS[p.status] ?? p.status}</Badge> : null}
               {perfilQ.isRefreshing && <span className="text-xs">Atualizando…</span>}
             </div>
             <a className="inline-flex w-fit items-center gap-1 text-sm text-primary hover:underline" href={`https://www.instagram.com/${encodeURIComponent(p.handle)}/`} target="_blank" rel="noopener noreferrer">

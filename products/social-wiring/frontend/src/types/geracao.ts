@@ -3,7 +3,7 @@
  * projects/core-studio-build/specs/geracao-contract.md §4.8 (`export` added only).
  * BE schemas mirror these; change the contract first.
  */
-import type { Fluxo, Proposta } from '@/types/estruturas'
+import type { EstruturaFormato, EstruturaRef, EstruturaUso, Fluxo, Proposta } from '@/types/estruturas'
 export type LoteOrigem = 'form_me' | 'form_public' | 'form_viral' | 'biblioteca' | 'sugestao_auto'
 export type GeracaoStatus = 'criando' | 'processando' | 'completo' | 'falha'
 export type RoteiroStatus = 'criando' | 'perguntas' | 'processando' | 'completo' | 'falha'
@@ -16,14 +16,25 @@ export type PerfilCriacao = { marca_id: string; bio: string; nichos: number[]; p
                        apresentacao_magnetica: string; ctas: string; updated_at: string | null }
 export type Treinamento = { id: string; ordem: number; titulo: string; descricao: string; video_url: string | null; ativo: boolean }
 export type PerfilStatus = 'aguardando'|'ativo'|'pausado'|'nao_encontrado'|'sem_conta'|'sem_credencial'|'sem_orcamento'|'erro'
+/**
+ * Client orgs see handle + name only (owner decision): the BE nulls `foto_url` and `seguidores` for non-admins, so every
+ * member-facing render must tolerate null (initials avatar, no follower line). `erro_mensagem` is likewise admin-only.
+ */
 export type PerfilMonitorado = { id: string; handle: string; nome: string | null; foto_url: string | null; seguidores: number | null;
-                          status: PerfilStatus; erro_mensagem: string | null; ultima_sync_em: string | null;
-                          metrica_base: 'views' | 'engajamento' | null; mediana_metrica: number | null;
+                          /** Ingestion state: ADMIN-ONLY. The key is ABSENT (not null) for non-admins — treat undefined as "not shown". */
+                          status?: PerfilStatus; erro_mensagem?: string | null; ultima_sync_em?: string | null;
+                          metrica_base?: 'views' | 'engajamento' | null; mediana_metrica?: number | null;
                           virais: number; posts: number;
                           /** Kill-switch state of the library ingestion (false => monitoring not activated yet). */
                           ingestao_ativa: boolean
                           /** LGPD opt-out e-mail for third-party creators (configurable server-side). */
-                          optout_contato: string }
+                          optout_contato: string
+                          /** false = library-only profile (imported, no ingestion). Estruturas contract §3.2. */
+                          monitorar?: boolean
+                          /** Detail endpoint only (`GET /biblioteca/perfis/{id}`); absent on list items. */
+                          estruturas_total?: number
+                          /** Present when the request carried `marca_id`. */
+                          selecionado_pela_marca?: boolean }
 export type TranscricaoViralStatus = 'nao_aplicavel'|'pendente'|'na_fila'|'concluida'|'falhou'|'grande_demais'|'longa_demais'|'sem_orcamento'
 export type ViralCard = { id: string; codigo: number; perfil: { id: string; handle: string }; thumbnail_url: string | null;
                    permalink: string; publicado_em: string; views: number | null; likes: number | null; comments: number | null;
@@ -32,6 +43,8 @@ export type ViralDetalhe = ViralCard & { caption: string | null; gancho: string 
                    transcricao_status: TranscricaoViralStatus; classificacao_status: 'pendente'|'processando'|'concluida'|'falhou';
                    nichos: Taxon[]; profissoes: Taxon[]; formatos: Taxon[]; gatilho: Gatilho | null;
                    estrutura_utilizavel: boolean; blueprint?: string | null;
+                   /** Estruturas contract §11.2: the video's Estruturas (the per-viral blueprint above is deprecated). */
+                   estruturas?: EstruturaRef[]; origem_inclusao?: 'sync' | 'link_manual';
                    /** Scraped CDN video (short-lived; null when absent/expired => Instagram embed). */
                    video_url?: string | null }
 export type Referencia = { id: string; modo: 'perfil' | 'video'; perfil: PerfilMonitorado | null; viral: ViralCard | null;
@@ -43,11 +56,15 @@ export type Headline = { id: string; marca_id: string; lote_id: string | null; t
                   angulo: 1 | 2 | null; viral: ViralCard | null; template_metodo: number | null; itens_usados: ItemUsado[];
                   favorita: boolean; modo: 'manual' | 'automatico' | null; roteiro_id: string | null; created_at: string;
                   post?: PostRef | null;
+                  /** Estruturas contract §6.6: the Estrutura(s) the headline was generated from (`blocos` empty for headlines). */
+                  estruturas?: EstruturaUso[];
                   /** Computed by the BE (no column): over the recommended length — a warning, never a block. */
                   acima_recomendado: boolean; recomendado_max_texto: number }
 export type HeadlineLote = { id: string; marca_id: string; origem: LoteOrigem; status: GeracaoStatus; etapa: string | null;
                       estruturas_total: number; estruturas_processadas: number; estruturas_com_erro: number;
                       aviso_poucas_estruturas: boolean; fallback_metodo: boolean; erro: string | null;
+                      /** Estruturas without a source video, left out of a formato/gatilho filter (contract §6.6). */
+                      aviso_sem_classificacao?: number
                       resumo: string; created_at: string; finished_at: string | null }
 export type HeadlineLoteDetalhe = HeadlineLote & { parametros: Record<string, unknown>; headlines: Headline[] }
 export type RoteiroPergunta = { id: string; pergunta: string; resposta: string | null }
@@ -57,6 +74,9 @@ export type RoteiroResumo = { id: string; nome: string; headline_texto: string; 
 export type RoteiroEstrutura = 'cta_inicio' | 'cta_final'
 export type Roteiro = RoteiroResumo & { instrucoes: string; fonte: 'ia' | 'web' | 'link'; duracao: 'auto'|'1'|'2'|'3';
                  estrutura: RoteiroEstrutura;
+                 /** Estruturas contract §6.7 (all four formats). Absent until the roteiro API ships them: read with a fallback. */
+                 formato?: EstruturaFormato; ordem_cta?: RoteiroEstrutura; estruturas?: EstruturaUso[];
+                 conversa?: { id: string; titulo: string } | null;
                  brain_id: string | null; viral: ViralCard | null; perguntas: RoteiroPergunta[]; etapa: string | null;
                  conteudo: string | null; fontes: string | null; versao: number; feedback: 'gostei'|'nao_gostei'|null;
                  feedback_motivo: string | null; erro: string | null; post?: PostRef | null }

@@ -17,6 +17,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { EstruturaPicker } from "@/components/geracao/estruturas/EstruturaPicker";
+import { idsDaSelecao, mensagemDoForm, type EstruturaEscolhida } from "@/components/geracao/estruturas/selecao";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -41,6 +43,8 @@ export function GerarHeadlineWizard({ open, onOpenChange, marcaId, viralId, hand
   const [ids, setIds] = useState<string[]>([]);
   const [livre, setLivre] = useState("");
   const [enviada, setEnviada] = useState(false);
+  // Optional: one specific Estrutura instead of "all of this video's Estruturas" (`LoteBiblioteca`: exactly one of the two).
+  const [estruturas, setEstruturas] = useState<EstruturaEscolhida[]>([]);
 
   const assuntosQ = useAssuntosVirais(open ? marcaId : null, "approved");
   const gerar = useGerarHeadlineViral();
@@ -51,6 +55,7 @@ export function GerarHeadlineWizard({ open, onOpenChange, marcaId, viralId, hand
       setIds([]);
       setLivre("");
       setEnviada(false);
+      setEstruturas([]);
     }
   }, [open, viralId]);
 
@@ -69,16 +74,14 @@ export function GerarHeadlineWizard({ open, onOpenChange, marcaId, viralId, hand
     try {
       await gerar.mutateAsync({
         marca_id: marcaId,
-        viral_id: viralId,
+        ...(estruturas.length > 0 ? { estrutura_id: idsDaSelecao(estruturas)[0] } : { viral_id: viralId }),
         ...(ids.length > 0 ? { assunto_ids: ids } : {}),
         ...(livreLimpo ? { assunto_livre: livreLimpo } : {}),
       });
       setEnviada(true);
       setPasso(3);
     } catch (e) {
-      toast.error(
-        e instanceof Error && e.message ? e.message : "Não foi possível criar a headline.",
-      );
+      toast.error(mensagemDoForm(e, "Não foi possível criar a headline."));
     }
   }
 
@@ -148,6 +151,7 @@ export function GerarHeadlineWizard({ open, onOpenChange, marcaId, viralId, hand
                     })}
                   </ul>
                 )}
+                <EstruturaPicker marcaId={marcaId} value={estruturas} onChange={setEstruturas} max={1} disabled={gerar.isPending} />
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="wiz-livre">Escreva o assunto viral manualmente (opcional)</Label>
                   <Textarea
@@ -166,6 +170,11 @@ export function GerarHeadlineWizard({ open, onOpenChange, marcaId, viralId, hand
                 <p>
                   <span className="text-muted-foreground">Viral de: </span>@{handle}
                 </p>
+                {estruturas[0] && (
+                  <p>
+                    <span className="text-muted-foreground">Estrutura: </span>#{estruturas[0].codigo} @{estruturas[0].perfil.handle}
+                  </p>
+                )}
                 <div>
                   <span className="text-muted-foreground">Assuntos: </span>
                   {escolhidos.length === 0 && !livreLimpo
