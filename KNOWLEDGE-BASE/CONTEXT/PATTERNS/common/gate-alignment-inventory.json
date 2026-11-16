@@ -1445,6 +1445,16 @@
    "class": "never-fires",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-http-call-without-timeout": {
+   "mechanism": "tool:_http (urlopen_read / client_timeout: connect+read timeouts, total deadline, one bounded retry, telemetry)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "Keeper (ratchet, 2026-11-16): every outbound HTTP call under mcp/noctusai/tools carries an explicit non-None timeout or goes through tools/noctus/dev/_http.py (connect/read timeouts + TOTAL deadline + one bounded retry + http-timeout telemetry); AST; baseline 0, shrink-only",
+   "new": true,
+   "declared": "2026-11-16",
+   "source": "migrate_product --confirm hung 45 min on a CLOSE_WAIT socket 2026-11-16 (N=2; N=1 2026-11-13 held a heavy slot 80 min); KB PATTERNS/architect/mcp-tool-conventions.md section 11",
+   "telemetry": "kind=http-timeout events (host, call site, elapsed, outcome) via gate_alignment.record_event + cli exit wrapper -> guard-events.ndjson"
+  },
   "keeper:check-http-detail-echoes-exception": {
    "mechanism": "api: noctusai_lib.api.integration_errors.integration_error (fixed pt-BR message + stable code; the structured integration_error log line is the telemetry leg)",
    "owner": "backend-engineer",
@@ -3842,6 +3852,18 @@
    "branch": "feat/polling-budget-keeper",
    "gates": [
     "keeper:check-polling-request-budget"
+   ]
+  },
+  {
+   "id": "D-http-timeouts",
+   "decision": "Every outbound HTTP call of the toolkit is bounded as a whole (connect/read timeouts, a total deadline, one bounded retry; a lost non-idempotent write is re-read, never re-sent); a hang is counted, and an unbounded call is refused",
+   "home": "KB § PATTERNS/architect/mcp-tool-conventions.md",
+   "construction": "tool:tools/noctus/dev/_http.py (urlopen_read / client_timeout / run_with_deadline); migrate_product returns ledger_record_failed instead of hanging",
+   "gate": "keeper:check-http-call-without-timeout",
+   "telemetry": "kind=http-timeout events in guard-events.ndjson (host, call site, elapsed, outcome) + keeper gate events",
+   "branch": "feat/http-timeouts-by-construction",
+   "gates": [
+    "keeper:check-http-call-without-timeout"
    ]
   }
  ]

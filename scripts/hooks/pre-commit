@@ -1442,6 +1442,16 @@ if [[ -n "$STAGED_MNR" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies-bis-2. Outbound HTTP without a timeout (WARN-first SHADOW, ratchet) ─
+# Keeper `check_http_call_without_timeout`: every outbound HTTP call under mcp/noctusai/tools carries an
+# explicit timeout or goes through tools/noctus/dev/_http.py (connect/read timeouts + TOTAL deadline + one
+# bounded retry). Born from migrate_product hanging 45 min on a CLOSE_WAIT socket (2026-11-16).
+STAGED_HCT=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^mcp/noctusai/tools/.*\.py$' || true)
+if [[ -n "$STAGED_HCT" ]] && have_py; then
+    "$PY" "$CLI" --check-http-call-without-timeout --paths "$(echo "$STAGED_HCT" | paste -sd, -)" --worktree-path "$REPO_ROOT" \
+        || echo "[pre-commit] WARNING (shadow): http_call_without_timeout — use tools/noctus/dev/_http.py (urlopen_read / client_timeout) or pass timeout=. KB § PATTERNS/architect/mcp-tool-conventions.md." >&2
+fi
+
 # ─── 6e-quinquies-ter. Local pipeline board/card layer (WARN-first SHADOW) ─
 # Keeper `check_local_pipeline_board`. Products copied the funnel board/card
 # layer 4x; the seed funnel organ (`noctusai_lib.domain.pipeline.funnel` +

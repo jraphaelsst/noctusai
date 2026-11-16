@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Callable
 
 from .tunnel_config import _resolve_root, _read_ingress
+from . import _http
 from ._vps_ssh import run_remote
 
 TUNNEL_ID = "6e9ccdc5-4d99-4d5e-b9f9-1da2fe99f56c"
@@ -89,8 +90,7 @@ def doh_resolves(host: str) -> bool:
         url = "https://cloudflare-dns.com/dns-query?" + urllib.parse.urlencode(
             {"name": host, "type": rtype})
         req = urllib.request.Request(url, headers={"accept": "application/dns-json"})
-        with urllib.request.urlopen(req, timeout=10) as r:  # noqa: S310 - fixed https host
-            data = json.loads(r.read().decode())
+        data = json.loads(_http.urlopen_read(req, call_site="cloudflare_dns.doh_resolves", read=10).text())
         if data.get("Status") == 0 and data.get("Answer"):
             return True
     return False
@@ -99,8 +99,8 @@ def doh_resolves(host: str) -> bool:
 def _http_get(url: str, headers: dict) -> tuple[int, dict]:
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:  # noqa: S310
-            return r.status, json.loads(r.read().decode())
+        r = _http.urlopen_read(req, call_site="cloudflare_dns._http_get", read=15)
+        return r.status, json.loads(r.text())
     except urllib.error.HTTPError as e:
         try:
             body = json.loads(e.read().decode())

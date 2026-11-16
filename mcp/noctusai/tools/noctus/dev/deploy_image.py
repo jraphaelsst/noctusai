@@ -82,6 +82,7 @@ from typing import Any, Callable
 from env_bootstrap import redact_secrets_in_text
 
 from . import _catalog_scope_guard
+from . import _http
 from . import release_steward as _steward
 from . import _redis_auth_compose as _redis_auth
 from . import toolkit_freshness as _toolkit_freshness
@@ -451,8 +452,8 @@ def _curl_edge(hostname: str, timeout: int = 20) -> tuple[bool, str]:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return True, f"edge reachable: HTTP {resp.status}"
+        resp = _http.urlopen_read(req, call_site="deploy_image._curl_edge", retries=0, read=timeout, total=timeout + 10)
+        return True, f"edge reachable: HTTP {resp.status}"
     except urllib.error.HTTPError as exc:
         # Any HTTP status (incl. 4xx/5xx) proves the edge forwarded to the origin
         return True, f"edge reachable: HTTP {exc.code}"

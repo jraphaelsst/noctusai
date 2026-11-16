@@ -505,3 +505,20 @@ Consumers: the four `compliance.py` AST scans (silent-refusal, motion-import, ly
 `node_toolchain.run_files_scan`; `ts_ast_edit`, `migration_replay` (`require=@electric-sql/pglite`) and `release_steward.link_pglite` via `resolve`;
 `task_branch` `wire_env` refuses to link a toolkit install whose lockfile differs (`node_toolchain.lockfile_verdict`). A new node-backed keeper calls the resolver; a hand-rolled `subprocess.run(["node", ...])` is the shape this section retires (test: `test_node_toolchain.py::TestEveryKeeperUsesTheSharedResolver`).
 
+
+## 11. Every outbound HTTP call has a timeout - ONE helper (`tools/noctus/dev/_http.py`)
+
+A per-socket timeout bounds one `recv`, never the call: a peer that dribbles bytes or holds a half-closed (CLOSE_WAIT) socket resets it forever.
+`migrate_product --confirm` hung 45 min that way after applying its DDL and died before writing `migrations-applied.json` (N=2; N=1 2026-11-13 held a
+heavy slot 80 min). The construction, not a reminder:
+
+- `_http.urlopen_read(req, call_site=...)` (urllib) and `_http.client_timeout()` (httpx) give explicit connect/read timeouts (env `NOC_HTTP_CONNECT_TIMEOUT_S` 10,
+  `NOC_HTTP_READ_TIMEOUT_S` 60), a **total** deadline per attempt (`NOC_HTTP_TOTAL_DEADLINE_S` 120; the caller is released with `HttpDeadlineExceeded`, a `TimeoutError`),
+  and ONE bounded retry on timeout / 502-504 / 429 (`idempotent=False` retries only provably-unsent failures; `retries=0` for liveness probes).
+  A longer budget is declared at the call site (`read=`, `total=`), never by dropping the bound.
+- A non-idempotent write whose response is lost is never re-sent blindly: re-READ the state, then decide (`migrate_product` confirms its ledger row by a SELECT
+  before it reports `ledger_record_failed` with the exact `record_applied_migrations` command).
+- Telemetry: every timeout / retry / terminal transport failure is one `kind=http-timeout` event (host, call site, elapsed, outcome) in the guard event log.
+- `_http.py` is stdlib-only at import time (`prod_watchdog` / `mq_watchdog` run in CI with no pip).
+- Backstop: keeper `check_http_call_without_timeout` (`--check-http-call-without-timeout`, AST, ratchet `mcp/noctusai/tests/http_timeout_baseline.json`, shrink-only;
+  suppress with `# noc-allow: http-timeout -- <reason>`).

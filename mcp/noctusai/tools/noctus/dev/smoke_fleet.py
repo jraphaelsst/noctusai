@@ -20,6 +20,7 @@ import pathlib
 import re
 import urllib.error
 import urllib.request
+from . import _http
 from typing import Any, Callable
 
 from settings import REPO_ROOT
@@ -64,8 +65,7 @@ def _default_fetch_status(url: str) -> str:
     return the HTTP status string, or "FAIL" on any error / non-2xx."""
     try:
         req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return str(resp.status)
+        return str(_http.urlopen_read(req, call_site="smoke_fleet._default_fetch_status", retries=0, read=5, total=15).status)
     except urllib.error.HTTPError as exc:  # got a response, non-2xx
         return str(exc.code)
     except Exception:  # connection refused / timeout / DNS — script's FAIL
