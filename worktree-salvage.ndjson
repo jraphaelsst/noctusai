@@ -1155,3 +1155,4 @@
 {"ts": "2026-11-16T14:14:46.318617+00:00", "kind": "salvage-before-delete:worktree", "target": "/Users/rapha/Documents/repository/NoctusAI/noctusai/.claude/worktrees/agent-a4c188fd43dd835ca", "dry_run": false, "ok": true, "preserved": ["recovery-pointer: worktree slug=agent-a4c188fd43dd835ca branch=feat/vista-sync-historico-v3"]}
 {"ts": "2026-11-16T14:14:49.568509+00:00", "kind": "salvage-before-delete:worktree", "target": "/Users/rapha/Documents/repository/NoctusAI/noctusai/.claude/worktrees/vista-sync-historico-v2", "dry_run": false, "ok": true, "preserved": []}
 {"ts": "2026-11-16T14:15:07.855510+00:00", "kind": "salvage-before-delete:branch", "target": "feat/vista-sync-historico-v2", "dry_run": false, "ok": true, "preserved": []}
+{"ts": "2026-11-16T14:15:14.423186+00:00", "kind": "salvage-before-delete:branch", "target": "feat/vista-sync-historico", "dry_run": false, "ok": true, "preserved": []}
