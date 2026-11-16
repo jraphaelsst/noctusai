@@ -71,7 +71,7 @@ def events_path() -> Path:
 def record_event(gate: str, outcome: str, *, kind: str, target: str = "",
                  reason: str = "", source: str = "", log_path: Path | None = None,
                  class_key: str = "") -> None:
-    """Append one gate event. `outcome` is 'deny' (refusal) or 'pass'. Never raises.
+    """Append one gate event. `outcome` is 'deny' (refusal), 'warn' (advisory, not a refusal) or 'pass'. Never raises.
 
     `class_key` (a `refusal_class(...)` key) is stored as `class` so recurrence counting
     is exact; absent, a deny's class is derived at read time (`event_class`)."""
@@ -149,12 +149,15 @@ def record_cli_exit(argv: list[str], code: Any, *, finding: str = "") -> None:
         if a == "--paths" and i + 1 < len(argv):
             target = argv[i + 1][:200]
     stage = os.environ.get("NOC_HOOK_STAGE", "").strip() or "manual"
+    # An ADVISORY invocation (the pre-commit heads-up whose blocking twin runs in commit-msg) is a `warn`, never a
+    # `deny`: logging it as a refusal double-counted every doc-staleness block (476 denies, 2026-11-14).
+    outcome = "pass" if ok else ("warn" if os.environ.get("NOC_GATE_ADVISORY") else "deny")
     if not ok:
         finding = finding or (_first_finding[0] if _first_finding else "")
         target = target or f"stage:{stage}"
     for f in flags:
         gate = f"keeper:{f[2:]}"
-        record_event(gate, "pass" if ok else "deny", kind="keeper", target=target,
+        record_event(gate, outcome, kind="keeper", target=target,
                      reason="" if ok else f"stage={stage} code={finding or 'unknown'}", source="cli",
                      class_key="" if ok else refusal_class(gate, stage, finding or "unknown"))
 

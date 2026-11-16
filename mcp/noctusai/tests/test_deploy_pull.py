@@ -165,6 +165,26 @@ def test_rebuild_decision_real_seed_change_still_rebuilds():
     assert d["needed"] is True and d["fleet_wide"] is True
 
 
+def test_rebuild_decision_applied_ledger_only_no_rebuild():
+    # migrations-applied.json is a ledger of prod-applied migrations, not a build input
+    d = DP._rebuild_decision(["products/social-wiring/backend/migrations-applied.json"],
+                             build_set=["social-wiring", "core"])
+    assert d["needed"] is False and d["products"] == [] and d["rebuild_set"] == []
+    assert d["recreate_needed"] is False
+
+
+def test_rebuild_decision_applied_ledger_does_not_mask_real_change():
+    d = DP._rebuild_decision([
+        "products/social-wiring/backend/migrations-applied.json",
+        "products/social-wiring/backend/app/main.py",
+    ], build_set=["social-wiring", "core"])
+    assert d["needed"] is True and d["rebuild_set"] == ["social-wiring"]
+    # a migration SQL file is still a (backend) product change, only the ledger is exempt
+    d2 = DP._rebuild_decision(["products/social-wiring/backend/migrations/345_x.sql"],
+                              build_set=["social-wiring"])
+    assert d2["needed"] is True
+
+
 # ── safety invariants ────────────────────────────────────────────
 def test_never_emits_destructive_command_on_confirmed_deploy():
     f = FakeRemote(head="aaa", target_sha="bbb", is_ancestor=True,

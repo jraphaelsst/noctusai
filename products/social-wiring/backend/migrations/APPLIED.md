@@ -682,3 +682,7 @@ Authored 2026-11-05 (owner: "add the allowlist with a switch on/off, so I can se
 ## 345 — imobshot_card_transition_log — NOT APPLIED
 
 Authored 2026-11-15 (EOA debt: 344's hand-written `imobshot_eventos`). Renders the seed `transition_log` for the card (`imobshot_card_events` + the `imobshot_card_*` RPCs + the shared `transition_log_erasures`), copies every `imobshot_eventos` row into it (same id / timestamps / actor / detail; an unmappable row or a count mismatch ABORTS the migration, nothing copied), re-points 344's three service-only functions at the primitive (same names and signatures) and makes `imobshot_eventos` read-only (NOT dropped: a later contract migration drops it one release after 345 is verified in prod, `NOC-REMEDIATE[imobshot-eventos-contract]`). **Apply AFTER 344 and BEFORE the image that reads them** (344 is itself not applied in prod yet: apply 344 then 345 in order; the previous image has no ImobShotAI code, so there is no N-1 hazard). 344 is untouched. Forward-only, idempotent.
+
+## 346 — imobshot_eventos_contract — NOT APPLIED
+
+Authored 2026-11-15. CONTRACT step of the 344/345 expand-migrate-contract: drops the legacy `imobshot_eventos` table, its trigger and `imobshot_eventos_append_only()`. A guard RAISES (nothing dropped) if any legacy row id is not already in `imobshot_card_events`. **Apply AFTER 345 (applied and verified in prod), any time before or with the next SW image**; no code reads the legacy table. 344/345 untouched. Forward-only, idempotent.

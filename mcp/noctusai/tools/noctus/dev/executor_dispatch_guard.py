@@ -1,4 +1,4 @@
-"""Deny dispatching an EXECUTOR subagent with no worktree to work in.
+"""Rewrite the dispatch of an EXECUTOR subagent that has no worktree to work in (adds `isolation: "worktree"`).
 
 An executor (backend/frontend/devops-engineer, product-engineer) writes code; an
 executor launched with neither `isolation: "worktree"` nor a brief naming an
@@ -68,7 +68,7 @@ def decide(
     agents_dir: Path,
     roots: list[Path],
 ) -> dict[str, Any] | None:
-    """None to allow; `{"reason": ...}` to deny."""
+    """None to allow; `{"decision": "allow", "updated_input": ...}` to REWRITE (add `isolation: "worktree"`)."""
     if tool_name not in _DISPATCH_TOOLS:
         return None
     tool_input = tool_input or {}
@@ -80,14 +80,16 @@ def decide(
     prompt = tool_input.get("prompt")
     if isinstance(prompt, str) and _referenced_worktree_exists(prompt, roots):
         return None
+    # REWRITE, not refuse (2026-11-14): the correct form is known, so produce it. The harness creates
+    # a fresh isolated worktree for the subagent; nothing about the brief needs to change.
     return {
-        "reason": (
-            f"REFUSED — executor subagent '{subagent}' dispatched without a worktree: "
-            "`isolation` is not \"worktree\" and the brief names no existing "
-            "`.claude/worktrees/<slug>` directory, so it would write into the caller's "
-            "tree (CLAUDE.md §1 self-branching). First run "
-            "`noctus.dev.task_branch action=start slug=<slug> confirm=True`, then name the "
-            "worktree path (.claude/worktrees/<slug>) in the brief — or pass "
-            "`isolation: \"worktree\"`."
-        )
+        "decision": "allow",
+        "updated_input": {**tool_input, "isolation": "worktree"},
+        "context": (
+            f"[noc-guard:executor-dispatch] REWROTE this dispatch of executor '{subagent}' to "
+            "`isolation: \"worktree\"`: the brief named no existing `.claude/worktrees/<slug>` directory, "
+            "so the subagent would have written into the caller's tree (CLAUDE.md §1 self-branching). "
+            "It now works in its own isolated worktree. To reuse a worktree you already started "
+            "(`noctus.dev.task_branch action=start`), name its .claude/worktrees/<slug> path in the brief."
+        ),
     }
