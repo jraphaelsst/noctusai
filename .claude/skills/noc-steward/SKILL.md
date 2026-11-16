@@ -57,6 +57,10 @@ Rule: `KB § PATTERNS/devops/release-steward.md` § 7a (guardian spec, council 0
 - Deleting remote branches and closing PRs needs the owner, always.
 - A deploy hold (missing secret, migration-before-image) is written into the memory file the moment it is known, with the dev SHA to cut at.
 
+## 5a · Handoffs: finish what was handed
+
+A peer handing off (it finished, or the owner told it to) sends the `release-steward.md` § 7c report. The steward then: acks in one line naming the watched runs; registers those runs in the ONE feed; dispatches an engineer on the handed worktree for any NEXT STEPS or red run (it does not write the code itself); and after landing runs CLEANUP (worktree, resume-note memory absorbed then deleted). Reports go to the owner, batched.
+
 ## 6 · Ship
 
 After the queue drains: follow `noc-ship` (status → manifest → `predeploy_check` per active product, pinned tree → bless → promote). Apply each authorized migration BEFORE the image that needs it, then `deploy_image`, then reply `DEPLOYED`. A fleet-wide FE change needs one page per product opened by eye.

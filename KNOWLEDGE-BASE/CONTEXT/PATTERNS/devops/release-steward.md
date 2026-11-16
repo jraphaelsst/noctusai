@@ -164,7 +164,7 @@ Guardian spec, council 09340534 (dispositions A: the guardian is a service leaf 
 4. **The branch steward fixes it** on its own branch and files `request` again (the `deliverable` preflight runs again at filing). The guardian never patches the branch, never opens a rescue branch and never dispatches an engineer for it.
 5. **Two strikes.** After 2 ejections the delivery parks as `blocked_on_steward` until its steward re-files a fix the preflight accepts.
 6. **Orphan.** If the steward's session is gone, or silent past the TTL, the delivery stays `blocked_on_steward`. The guardian alerts the owner, and the OWNER names a new branch steward, who adopts the branch (role registry `to_session_id=`). The guardian never adopts it itself.
-7. **Hand off and end** (owner 2026-11-16; supersedes the old "end only when LANDED/DEPLOYED" predicate). A requester does NOT wait for its deliveries to land. It ends as soon as every delivery is **filed and accepted** by the outbox (`queued_for_steward`, `pending_ci` or `queued`; never `needs_resync`/refused, which it fixes and re-files first). Close-out, in order:
+7. **Hand off and end** (owner 2026-11-16; supersedes the old "end only when LANDED/DEPLOYED" predicate). **Two triggers:** the session finished its main task, OR the owner asks it to hand off ("hand it to the steward"), which may leave the work UNFINISHED. The handoff message follows the § 7c report structure either way. A requester does NOT wait for its deliveries to land. It ends as soon as every delivery is **filed and accepted** by the outbox (`queued_for_steward`, `pending_ci` or `queued`; never `needs_resync`/refused, which it fixes and re-files first). Close-out, in order:
    1. **File everything.** `request` per branch, landing order in `notes`; fix any `needs_resync` item that is fixable now (derived files, kb-counts) and re-file.
    2. **One handoff message to the steward** (`SendMessage`; the outbox stays the record): each slug + head + verdict ref, the landing order, migrations and whether the owner's prod consent is already in the steward's transcript, which CI runs are still in flight, and that the requester is closing.
    3. **Resume note** in the project memory (the named destination for a RED run, an ejection, or post-landing cleanup): final heads, run ids, what is owed after landing (worktree cleanup, installs).
@@ -444,6 +444,30 @@ Every session shares ONE GitHub REST quota (5000/h per account). On 2026-11-16 i
 4. **Requester exceptions.** It reads a run once when it needs the log of a red run the steward reported, or when its own engineer is still iterating on that branch and the steward was told to hold it. In that case the engineer watches it and the steward does not.
 
 Telemetry: `remote_run` rows carry `api_calls` + `rate_remaining_*` (`ci_verdict` seam). `gh api rate_limit` is free; check it before arming any watcher. Composes with § 7a.7 (handoff-and-end): a requester that has handed everything off ends its session.
+
+## 7c · The handoff report: one structure, finished or not (owner, 2026-11-16)
+
+The owner closes a session the moment it says "the steward will handle the rest", so the handoff message must carry everything the steward needs to finish the work without the requester's context. It also has to stay short, because the steward holds many of them at once. One message, these blocks in this order, one line per item, and a block left out means "none":
+
+```
+HANDOFF <session name> -> steward · state: FINISHED | UNFINISHED · closing: yes|no
+DELIVERIES   <slug> <branch> <head sha> <worktree path> · verdict <gh-run:id|ci-parity:id> tested <sha> · <green|running|red|none>
+ORDER        <slug> before <slug> (why) · independent: <slugs>
+PROD         migrations <numbers> · owner consent typed in steward transcript: yes|no|n/a · deploy products <list> · post-land <e.g. /mcp reconnect>
+NEXT STEPS   (UNFINISHED only) <step> · spec <file or 1-line> · done when <acceptance check>
+STATE        what works now, what is half-done, the last thing tried and its result
+ON RED       fix line: <worktree> · known traps <one line each>
+CLEANUP      worktrees to remove after landing · memory files to absorb or delete · remote branches (owner deletes)
+OWNER ASKS   open decisions only the owner can make
+RESUME NOTE  <memory file> (the long form; the message is the index into it)
+```
+
+**The steward's side**, in order:
+1. **Ack in one line**: name the runs it now watches. That ack is the requester's cue to stop its own watchers (§ 7b) and end.
+2. **Register every run in the ONE feed** (§ 7b). No new watcher per handoff.
+3. **UNFINISHED work is finished, not parked.** The steward dispatches an engineer on the handed worktree with NEXT STEPS + STATE as the brief, and does not author the code itself (guardian model, § 8b). A red run follows ON RED the same way. The owner is alerted only for OWNER ASKS and for prod consent the steward does not hold.
+4. **Close the loop after landing**: `landed`, prod cut if PROD says so, then CLEANUP. Remove the worktree (salvage-before-delete), absorb the resume note into its durable home and delete it (`noc-archive-absorb`), and list remote branches for the owner. Nothing handed off leaves an old worktree or a stale memory file behind.
+5. **Report** LANDED / EJECTED / DEPLOYED per slug to the owner, batched, not per event.
 
 ## 8c · Lessons that recur (the full append list lives in skill `noc-steward` § Lessons that recur)
 
