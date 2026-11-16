@@ -639,6 +639,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--redis-acl-write", action="store_true", help="With --redis-acl=render: write the files (needs REDIS_ACL_MASTER_SECRET in env or deploy/fleet/.env.fleet).")
     parser.add_argument("--redis-acl-services", metavar="SVC,SVC", default=None, help="With --redis-acl=render --redis-acl-write: the services to CUT OVER (written to the host-local compose.redis-auth.prod.yml). Re-render without a service to roll it back; an empty value removes the override.")
     parser.add_argument("--merge-queue-interval", type=float, default=60, help="With --merge-queue=watch: poll interval in seconds.")
+    parser.add_argument("--merge-queue-idle-exit", action="store_true", help="With --merge-queue=watch: print MQ-IDLE and exit 0 once the queue is empty AND no handed run is pending (run it under scripts/bg_run.py --done-when; no 30-min Monitor cap to re-arm).")
+    parser.add_argument("--steward-feed", metavar="ACTION", choices=["register", "pending"], help="The release steward's handed-run registry (one append per handoff; the --merge-queue watch polls every registered run, enqueues on green, records landings). register needs --feed-slug --feed-run --feed-sha [--feed-after SLUG]; pending lists what the watch still waits on. KB § PATTERNS/devops/release-steward.md § 7b.")
+    parser.add_argument("--feed-slug", default=None, help="With --steward-feed register: the feat/<slug> handed off.")
+    parser.add_argument("--feed-run", default=None, help="With --steward-feed register: the gh run id of the test.yml run.")
+    parser.add_argument("--feed-sha", default=None, help="With --steward-feed register: the full sha that run tested.")
+    parser.add_argument("--feed-after", default=None, help="With --steward-feed register: enqueue only after this slug has finished (ordering).")
     parser.add_argument("--merge-queue-sha", default=None, help="With --merge-queue=status: the enqueued sha.")
     parser.add_argument("--task-branch-slugs", default=None, help="With --task-branch=train: comma-separated ready feat/<slug> branches to merge --no-ff into ONE train-<name> branch (omit => dry-run candidate listing; --task-branch-slug names the train). Merge-all-before-integrating: one integrate of the train lands them all.")
     parser.add_argument("--task-branch-train-order", default="given", choices=["given", "auto"], help="With --task-branch=train: merge order - 'given' (as listed) or 'auto' (least path-overlap first).")
@@ -4588,13 +4594,28 @@ def main():
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok", r.get("status") != "error") else 1)
 
+    elif getattr(args, "steward_feed", None):
+        from tools.noctus.dev import steward_feed as _sf
+        _reg = _sf.HandedRuns(_sf.default_registry())
+        if args.steward_feed == "register":
+            if not (args.feed_slug and args.feed_run and args.feed_sha):
+                print(json.dumps({"status": "error", "error": "register needs --feed-slug --feed-run --feed-sha"}))
+                sys.exit(1)
+            _r = _reg.register(args.feed_slug, args.feed_run, args.feed_sha, args.feed_after)
+            print(f"REGISTERED {_r['slug']} run={_r['run']} sha={_r['sha'][:9]}" + (f" after={_r['after']}" if _r.get("after") else ""))
+        else:
+            for _p in _reg.pending():
+                print(f"PENDING {_p['slug']} run={_p['run']} sha={_p['sha'][:9]}" + (f" after={_p['after']}" if _p.get("after") else ""))
+        sys.exit(0)
+
     elif getattr(args, "merge_queue", None):
         from tools.noctus.dev import merge_queue as _mq
         if args.merge_queue == "watch":
             try:
-                _mq.watch_live(args.merge_queue_interval)
+                _mq.watch_live(args.merge_queue_interval, idle_exit=args.merge_queue_idle_exit)
             except KeyboardInterrupt:
                 sys.exit(0)
+            sys.exit(0)
         try:
             if args.merge_queue == "status":
                 r = _mq.read_status(_mq._repo_from_remote(_mq._default_run, str(Path.cwd())), args.merge_queue_sha or "")
