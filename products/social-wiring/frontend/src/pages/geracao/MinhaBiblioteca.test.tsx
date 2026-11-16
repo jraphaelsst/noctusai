@@ -141,14 +141,26 @@ describe("Minha Biblioteca", () => {
   });
 });
 
+describe("Solicitar Perfil (platform admin only)", () => {
+  it("a member cannot add profiles: sees the notice, no form, no request", async () => {
+    renderPage();
+    await abrirSolicitar();
+    expect(rtl.screen.getByTestId("perfil-somente-admin").textContent).toContain("somente administradores adicionam perfis");
+    expect(rtl.screen.queryByLabelText(/Perfil do Instagram/)).toBeNull();
+    expect(m.solicitar).not.toHaveBeenCalled();
+  });
+});
+
 describe("Solicitar Perfil live check", () => {
+  beforeEach(() => m.admin.mockReturnValue({ data: true }));
+
   it("rejects a post link without calling the check", async () => {
     renderPage();
     await abrirSolicitar();
     await userEvent.type(rtl.screen.getByLabelText(/Perfil do Instagram/), "https://instagram.com/reel/abc/");
     expect(await rtl.screen.findByText(/não o link de um post/)).toBeTruthy();
     expect(m.verificar).not.toHaveBeenCalledWith("abc");
-    expect((rtl.screen.getByRole("button", { name: "Enviar" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((rtl.screen.getByRole("button", { name: "Adicionar perfil" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it.each([
@@ -161,10 +173,10 @@ describe("Solicitar Perfil live check", () => {
     await abrirSolicitar();
     await userEvent.type(rtl.screen.getByLabelText(/Perfil do Instagram/), "@novo");
     expect(await rtl.screen.findByText(texto)).toBeTruthy();
-    expect((rtl.screen.getByRole("button", { name: "Enviar" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((rtl.screen.getByRole("button", { name: "Adicionar perfil" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("valid username enables Enviar and posts the normalized handle", async () => {
+  it("valid username enables Adicionar perfil and posts the normalized handle (no marca_id: the library is platform-wide)", async () => {
     m.verificar.mockImplementation((h: string) => ({
       data: h ? { status: "disponivel" } : undefined,
       isFetching: false,
@@ -174,9 +186,9 @@ describe("Solicitar Perfil live check", () => {
     await abrirSolicitar();
     await userEvent.type(rtl.screen.getByLabelText(/Perfil do Instagram/), "@Novo.Perfil");
     expect(await rtl.screen.findByText("✓ Username válido")).toBeTruthy();
-    await userEvent.click(rtl.screen.getByRole("button", { name: "Enviar" }));
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Adicionar perfil" }));
     await rtl.waitFor(() =>
-      expect(m.solicitar).toHaveBeenCalledWith({ marca_id: "m1", handle: "novo.perfil" }),
+      expect(m.solicitar).toHaveBeenCalledWith({ handle: "novo.perfil" }),
     );
   });
 
@@ -194,7 +206,9 @@ describe("Solicitar Perfil live check", () => {
 });
 
 describe("Opt-out (LGPD)", () => {
+  const comoAdmin = () => m.admin.mockReturnValue({ data: true });
   it("names the opt-out e-mail in the transparency note (default when no profile yet)", async () => {
+    comoAdmin();
     renderPage();
     await abrirSolicitar();
     const nota = rtl.screen.getByTestId("nota-transparencia").textContent ?? "";
@@ -204,6 +218,7 @@ describe("Opt-out (LGPD)", () => {
 
   it("uses the configurable contact served by the profiles list", async () => {
     m.perfis.mockReturnValue(ok([perfil({ optout_contato: "privacidade@exemplo.com" })]));
+    comoAdmin();
     renderPage();
     await abrirSolicitar();
     const nota = rtl.screen.getByTestId("nota-transparencia").textContent ?? "";
@@ -217,6 +232,7 @@ describe("Opt-out (LGPD)", () => {
       isError: !!h,
       error: h ? Object.assign(new Error("[422] x"), { code: "perfil_optout" }) : null,
     }));
+    comoAdmin();
     renderPage();
     await abrirSolicitar();
     await userEvent.type(rtl.screen.getByLabelText(/Perfil do Instagram/), "@pediu");
@@ -232,6 +248,7 @@ describe("Opt-out (LGPD)", () => {
       isError: true,
       error: Object.assign(new Error("[422] x"), { code: "perfil_optout" }),
     });
+    comoAdmin();
     renderPage();
     await abrirSolicitar();
     const campo = rtl.screen.getByLabelText(/Perfil do Instagram/);
@@ -246,11 +263,12 @@ describe("Opt-out (LGPD)", () => {
   it("perfil_optout on submit shows the inline message", async () => {
     m.verificar.mockImplementation((h: string) => ({ data: h ? { status: "disponivel" } : undefined, isFetching: false, isError: false }));
     m.solicitar.mockRejectedValue(Object.assign(new Error("[422] x"), { code: "perfil_optout" }));
+    comoAdmin();
     renderPage();
     await abrirSolicitar();
     await userEvent.type(rtl.screen.getByLabelText(/Perfil do Instagram/), "@pediu");
     await rtl.screen.findByText("✓ Username válido");
-    await userEvent.click(rtl.screen.getByRole("button", { name: "Enviar" }));
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Adicionar perfil" }));
     expect(await rtl.screen.findByText("Este perfil pediu para não ser monitorado.")).toBeTruthy();
   });
 
