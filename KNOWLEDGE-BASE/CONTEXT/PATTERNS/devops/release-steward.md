@@ -434,6 +434,17 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
   stale-guardian takeover that may only resume or roll back; one plan hash per deploy window) are the ratified spec and are
   tracked as follow-ups; this section records what is built.
 
+## 7b · One watcher per GitHub run: handed to the steward means the requester stops watching (owner, 2026-11-16)
+
+Every session shares ONE GitHub REST quota (5000/h per account). On 2026-11-16 it ran dry at ~20:50Z: every `gh` call in every session returned 403 for ~25 min, the merge-queue watch included. Part of the drain was the same run watched twice, by the requester and by the steward.
+
+1. **Hand off with run ids.** A requester files the branch (`release_steward action=request`) or messages the steward with slug, head and `gh-run:<id>` for every run in flight.
+2. **Stop your watchers.** Once the steward confirms it watches those runs, the requester stops its own watchers on them (`TaskStop` the background `gh` waits, stop Monitors). It does not keep a second watcher "to be sure". The steward reports red/LANDED/EJECTED back, so a second watcher only spends quota.
+3. **The steward watches in one feed.** It polls every handed run from ONE watcher, at most one `gh run view <id> --json status,conclusion` per run per ≥120s. It never uses `gh run watch` (its default 3s tick drained the quota; keeper `check_gh_calls_via_seam`). Prefer the seam's conditional GET: an unchanged run is a free 304.
+4. **Requester exceptions.** It reads a run once when it needs the log of a red run the steward reported, or when its own engineer is still iterating on that branch and the steward was told to hold it. In that case the engineer watches it and the steward does not.
+
+Telemetry: `remote_run` rows carry `api_calls` + `rate_remaining_*` (`ci_verdict` seam). `gh api rate_limit` is free; check it before arming any watcher. Composes with § 7a.7 (handoff-and-end): a requester that has handed everything off ends its session.
+
 ## 8c · Lessons that recur (the full append list lives in skill `noc-steward` § Lessons that recur)
 
 - **A known false alarm with live evidence never re-blocks a cut.** `predeploy_check` may BLOCK on a check whose output the steward has already proven to be a harness or tooling defect (2026-11-15: `schema_drift` reported `missing_table:monica.*` for `nosnolimiar` - live had 25 tables in `nosnolimiar`, 0 in `monica`; two prod cuts stalled on re-measuring it). Then: record the live evidence (the query and its rows) in the shift memory, file the tooling fix on its own branch, and ship the cut. Do not keep re-measuring. Only a DIFFERENT output re-opens it; "still red" does not.
