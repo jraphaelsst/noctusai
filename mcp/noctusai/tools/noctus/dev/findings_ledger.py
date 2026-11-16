@@ -286,6 +286,9 @@ def _gate_fixed(root: Path, ledger: str, detail: str, fix_sha: str | None) -> di
     if not sha:
         return {"ok": False, "error": "a fix needs its commit: name the sha in detail (or pass fix_sha). A fix with no commit "
                                       "is `accepted <rationale>` (accept-with-rationale), never `fixed`."}
+    rc, full, _e = _runner(root)(["git", "rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}"])
+    if rc == 0 and full.strip():
+        sha = full.strip()  # store the full sha: a short one can become ambiguous
     on_dev = sha_on_dev(root, sha)
     if on_dev:
         return {"ok": True, "status": "fixed", "detail": detail or sha, "fix_sha": sha, "fix_branch": "", "reason": ""}
@@ -343,6 +346,8 @@ def fixed_off_dev(name: str, root: Path | None = None) -> list[dict]:
         if r["status"] != "fixed":
             continue
         base = {"id": r["id"], "scope": r["scope"], "target": r["target"]}
+        if r.get("status_detail") == "worktree":  # scanner close outside a git repo: no commit exists to name
+            continue
         sha = r.get("fix_sha") or sha_in_text(r.get("status_detail", ""))
         if not sha:
             out.append({**base, "sha": "", "why": "no commit named"})
@@ -407,9 +412,11 @@ def reconcile(name: str, root: Path | None = None, found_by: str = "scanner", ad
         scanned = set(lt.sections) if lt.sections else {v.get("section") for v in cur.values()}
         for k, r in rows.items():
             if r["section"] in scanned and r["status"] in ("open", "in-progress") and k not in cur and not r.get("fix_sha"):
-                g = _gate_fixed(root, name, sha, sha if sha != "worktree" else None)
-                if not g["ok"]:
+                if sha == "worktree":  # no git HEAD to name (not a repo): nothing to verify, close as before
+                    r.update(status="fixed", status_detail=sha, closed_at=_today())
+                    closed += 1
                     continue
+                g = _gate_fixed(root, name, sha, sha)
                 r.update(status=g["status"], status_detail=g["detail"], closed_at=_today() if g["status"] == "fixed" else "",
                          fix_sha=g["fix_sha"], fix_branch=g["fix_branch"])
                 closed += 1
