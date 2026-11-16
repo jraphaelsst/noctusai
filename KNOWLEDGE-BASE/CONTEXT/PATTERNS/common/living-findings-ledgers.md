@@ -40,3 +40,7 @@ Every dispatch brief composes the scope's open rows first (`engineer_brief_compo
 ## Who writes
 
 The scanners write on their own (`reconcile`); the effective-state prod tool `noctus.dev.access_tier_exposure reconcile=true` writes `eff:` rows (closes only classes it measures, only on a fully-measured run); an audit or an agent appends/updates through the tool. Never open the file in an editor.
+
+## Where a write lands (2026-11-15: never in the shared primary)
+
+`append` / `update` are row EVENTS: in store mode (`NOCTUS_LEDGER_STORE=git`, the default) they apply on the store's fresh text and ship through `noctus.dev.ledger_store` (`origin/ledgers`, file `findings-<ledger>.ndjson`, plumbing only, no working tree touched); every reader (`load`, `open_for_scope`, the injection hook) overlays that store copy on the tree copy by `key`. `reconcile`, `materialize`, the gate-alignment inventory writers and the access-tier catalog are code-coupled renders: they write the tree of the `worktree_path` you pass and ship with that branch. Backstop `_primary_ledger_guard` (gate `ledger-primary-write`): a tree write aimed at the primary checkout on `dev`/`main`/`prod` refuses loudly, names `ledger_store`, and logs a gate event. `materialize` (run in a worktree) brings the store's rows and `FINDINGS.md` into the branch.

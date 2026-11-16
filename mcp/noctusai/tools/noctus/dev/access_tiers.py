@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from settings import REPO_ROOT
+from tools.noctus.dev._primary_ledger_guard import ensure_not_shared_primary
 
 REGISTRY_REL = Path("seed/lib/backend/noctusai_lib/api/access_tiers.py")
 CATALOG_REL = Path("project-history/access-tiers/endpoint-catalog.md")
@@ -1320,6 +1321,7 @@ def access_tier_catalog(write: bool = False, worktree_path: str | None = None) -
         {"verdict": r.verdict, "product": r.product, "route": f"{r.method} {r.path}", "tier": r.tier, "gates": r.gates, "note": r.note}
         for r in routes if r.verdict != "ok"][:200]}
     if write:
+        ensure_not_shared_primary(root, 'access_tier_catalog.write')
         p = root / CATALOG_REL
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(render_catalog(root), encoding="utf-8")
