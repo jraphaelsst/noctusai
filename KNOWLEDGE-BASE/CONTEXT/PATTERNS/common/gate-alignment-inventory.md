@@ -67,6 +67,7 @@ Totals by class: **?** 43, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | `guard:council-read` |  | mcp/noctusai/tools/noctus/dev/council_ledger.py (neutral recorder: tool-assigned labels, s | tooling-engineer | 0 (0) | ? |
 | `guard:dev-advance` |  | KB § PATTERNS/architect/orchestration-craft-canon.md §6.13 (push leg + noc-branch-dispatch | tooling-engineer | 0 (0) | ? |
 | `guard:harness-signature` |  | none (advisory PostToolUse measurement leg; it never blocks) | tooling-engineer | 0 (0) | never-fires |
+| `guard:ledger-primary-write` |  | mcp/noctusai/tools/noctus/dev/findings_ledger.py (append/update ship through ledger_store; | tooling-engineer | 0 (0) | ? |
 | `guard:primary-write-post` |  | none (advisory PostToolUse measurement leg; it never blocks) | tooling-engineer | 0 (0) | never-fires |
 | `guard:session-heartbeat` |  | none (advisory liveness refresh, not an enforcing gate: calls StewardStore.role_touch and  | tooling-engineer | 0 (0) | ? |
 | `keeper:check-absorption-pilot-is-canon` |  | tool:absorption_log (re-point the pilot to the canon with an append-only capability row; t | tooling-engineer | 0 (0) | ? |
