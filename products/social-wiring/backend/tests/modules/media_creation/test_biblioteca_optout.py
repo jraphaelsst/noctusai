@@ -82,8 +82,9 @@ def _seed_second_org(bib):
     }).execute()
     db.from_("transcricoes").insert({
         "id": str(uuid.uuid4()), "org_id": OTHER_ORG, "contexto_tipo": "biblioteca_viral", "contexto_ref": vid2,
-        "status": "concluida",
+        "status": "concluida", "storage_path": f"{OTHER_ORG}/u/{vid2}.mp3",
     }).execute()
+    anyio.run(lambda: bib.storage.put(bucket="sw-transcricoes", key=f"{OTHER_ORG}/u/{vid2}.mp3", data=b"audio"))
     db.from_("cs_biblioteca_referencias").insert({
         "id": str(uuid.uuid4()), "org_id": OTHER_ORG, "marca_id": str(uuid.uuid4()), "modo": "perfil", "perfil_id": pid2,
         "auto_atualizar": True,

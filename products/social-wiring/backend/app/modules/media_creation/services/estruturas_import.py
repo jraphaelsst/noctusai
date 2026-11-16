@@ -416,9 +416,13 @@ class ImportStore(Protocol):
     def total_perfis(self) -> int: ...
     def existentes(self, fonte_externa: str, refs: Iterable[str]) -> dict[str, dict[str, Any]]: ...
     def blocos_de(self, estrutura_id: str) -> list[dict[str, Any]]: ...
-    def criar_perfil(self, handle: str, nome: Optional[str], ator_id: Optional[str]) -> str: ...
-    def evento_perfil(self, perfil_id: str, handle: str, tipo: str, ator_id: Optional[str]) -> None: ...
+    def criar_perfil(self, handle: str, nome: Optional[str], ator_id: Optional[str], importacao_id: str) -> str: ...  # raises PerfilEmOptout
+    def evento_perfil(self, perfil_id: str, tipo: str, ator_id: Optional[str], importacao_id: str) -> None: ...
     def rpc(self, nome: str, params: dict[str, Any]) -> dict[str, Any]: ...
+
+
+class PerfilEmOptout(Exception):
+    """The creator opted out between the plan and the write: the creation RPC refused (``perfil_optout``, F3)."""
 
 
 @dataclass
@@ -486,7 +490,9 @@ def executar(
 
     for handle in sorted(por_handle):
         linhas = por_handle[handle]
-        if handle in bloqueados:
+        # F3: the opt-out is re-read right before this profile is written (the set above was read before the run began, and
+        # a run can last minutes): a creator registered since is skipped, never written past.
+        if handle in bloqueados or (aplicar and store.optouts([handle])):
             for _ in linhas:
                 c.ignorar(M_OPTOUT)
             continue
@@ -501,12 +507,20 @@ def executar(
             c.perfis_criados += 1
             if aplicar:
                 nome = next((l.perfil_nome for l in linhas if l.perfil_nome), None)
-                perfil_id = store.criar_perfil(handle, nome, ator_id)
-                store.evento_perfil(perfil_id, handle, "criado", ator_id)
+                try:
+                    # the RPC writes the profile + its `criado` / `importado` events in one transaction and refuses an
+                    # opted-out handle INSIDE it
+                    perfil_id = store.criar_perfil(handle, nome, ator_id, importacao_id)
+                except PerfilEmOptout:
+                    novos_planejados -= 1
+                    c.perfis_criados -= 1
+                    for _ in linhas:
+                        c.ignorar(M_OPTOUT)
+                    continue
         else:
             c.perfis_mesclados += 1
-        if aplicar and perfil_id:
-            store.evento_perfil(perfil_id, handle, "importado", ator_id)
+            if aplicar:
+                store.evento_perfil(str(perfil_id), "importado", ator_id, importacao_id)
 
         refs_por_fonte: dict[str, dict[str, dict[str, Any]]] = {}
         for l in linhas:
@@ -591,9 +605,8 @@ BLOCO_COLS = "id,ordem,tipo_id,nome,tempo,instrucao,nota,repeticoes,nome_origem,
 class SupabaseImportStore:
     """PostgREST reads + RPC writes. The library tables are service-role READ-only; every Estrutura write is an RPC.
 
-    NOC-REMEDIATE[est3-perfil-write]: the platform profile + its ``cs_perfil_eventos`` row are inserted directly (no
-    RPC exists for them in migration 350); this relies on migration 351 (EST-2: ``org_id`` nullable, ``monitorar``,
-    ``cs_perfil_eventos``) granting the service role INSERT. Move to an RPC if EST-2 ships one. -- 2026-11-15"""
+    The platform profile is created through the ``cs_perfil_plataforma_criar`` RPC of migration 351 (the est3-perfil-write
+    remediation: no direct profile insert any more)."""
 
     def __init__(self, db: Any):
         self.db = db
@@ -629,13 +642,29 @@ class SupabaseImportStore:
     def blocos_de(self, estrutura_id: str) -> list[dict[str, Any]]:
         return self.db.table(BLOCOS_T).select(BLOCO_COLS).eq("estrutura_id", str(estrutura_id)).order("ordem").execute().data or []
 
-    def criar_perfil(self, handle: str, nome: Optional[str], ator_id: Optional[str]) -> str:
-        row = {"rede": "instagram", "handle": handle, "nome": nome, "org_id": None, "monitorar": False, "status": "aguardando", "created_by": ator_id}
-        return str(self.db.table(PERFIS_T).insert(row).execute().data[0]["id"])
+    def criar_perfil(self, handle: str, nome: Optional[str], ator_id: Optional[str], importacao_id: str) -> str:
+        """Through ``cs_perfil_plataforma_criar`` (security review F3): profile + `criado`/`importado` events in one
+        transaction, the opt-out registry checked inside it. An opted-out handle -> :class:`PerfilEmOptout`."""
+        from app.modules.media_creation.services.biblioteca_service import BibliotecaError, criar_perfil_plataforma
 
-    def evento_perfil(self, perfil_id: str, handle: str, tipo: str, ator_id: Optional[str]) -> None:
+        try:
+            return criar_perfil_plataforma(
+                self.db, handle=handle, nome=nome, origem="import", ator_tipo="sistema_import", ator_id=ator_id,
+                importacao_id=importacao_id, monitorar=False, status="aguardando",
+            )["id"]
+        except BibliotecaError as exc:
+            if exc.code == "perfil_optout":
+                raise PerfilEmOptout(handle) from None
+            raise
+
+    def evento_perfil(self, perfil_id: str, tipo: str, ator_id: Optional[str], importacao_id: str) -> None:
+        """The `importado` event of a MERGED profile (a new one gets it inside the RPC). The row carries no handle.
+
+        NOC-REMEDIATE[cs-service-role-writes]: a direct service-role INSERT (security review F7); destination EST-RO
+        (wave 3), which wraps it in an RPC and revokes the table write -- 2026-11-15."""
         self.db.table(PERFIL_EVENTOS_T).insert({
-            "perfil_id": str(perfil_id), "handle": handle, "tipo": tipo, "ator_id": ator_id, "ator_tipo": "sistema_import",
+            "perfil_id": str(perfil_id), "tipo": tipo, "ator_id": ator_id, "ator_tipo": "sistema_import",
+            "importacao_id": importacao_id,
         }).execute()
 
     def rpc(self, nome: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -657,6 +686,13 @@ IMPORTACAO_COLS = (
 )
 ERRO_ARQUIVO_INDISPONIVEL = "arquivo_indisponivel"
 ERRO_JOB_FALHOU = "job_falhou"
+
+
+class ImportacaoFalhou(Exception):
+    """What leaves the worker when a load run crashes: ONLY the exception class name (security review F5).
+
+    A raw exception message may carry row text (a formula, a block name) or a database detail; it must never reach the
+    queue's error column or a log line, so the worker re-raises this instead of the original."""
 
 
 class ImportacaoError(Exception):
@@ -844,7 +880,7 @@ async def executar_job(
         if ultima_tentativa:
             svc.falhar(importacao_id, f"erro:{type(exc).__name__}")
             await storage.delete(bucket=BIBLIOTECA_BUCKET, key=chave)
-        raise
+        raise ImportacaoFalhou(type(exc).__name__) from None
     await storage.delete(bucket=BIBLIOTECA_BUCKET, key=chave)
 
 
@@ -886,7 +922,7 @@ register()
 
 
 __all__ = [
-    "ArquivoInvalido", "BlocoPlano", "ImportacaoError", "ImportacaoService", "JOB_TYPE", "apresentar_relatorio", "chave_blob", "executar_job", "handle_importar", "reconciliar_dead_letter", "register", "CAMPOS_NAO_IMPORTADOS", "Contadores", "FONTES", "ImportStore", "LinhaPlano", "MOTIVOS",
+    "ArquivoInvalido", "BlocoPlano", "ImportacaoError", "ImportacaoFalhou", "PerfilEmOptout", "ImportacaoService", "JOB_TYPE", "apresentar_relatorio", "chave_blob", "executar_job", "handle_importar", "reconciliar_dead_letter", "register", "CAMPOS_NAO_IMPORTADOS", "Contadores", "FONTES", "ImportStore", "LinhaPlano", "MOTIVOS",
     "Parseado", "SupabaseImportStore", "blocos_iguais", "executar", "json_canonico", "montar_blocos", "montar_patch",
     "normalizar_handle", "parse_documento", "payload_criar", "sha256_documento",
 ]

@@ -24,7 +24,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 from noctusai_lib.domain.jobs import JobRepository
 from noctusai_lib.integrations.apify import ActorRunner, ApifyNotConfigured, ApifyRateLimited, ApifyRunFailed
@@ -87,6 +87,9 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _KW_STRIP = re.compile(r"[,()%*\\\":;]")
 MAX_KEYWORDS = 8
 MAX_KEYWORD_CHARS = 40
+
+#: Every stored add-by-link permalink starts with this (the canonical Instagram post URL, F10).
+PERMALINK_PREFIXO = "https://www.instagram.com/"
 
 MSG_SEM_CONTA = (
     "Conecte uma conta do Instagram pelo login do Facebook (Meta) para monitorar perfis."
@@ -247,18 +250,21 @@ def pool_expression(refs: list[dict[str, Any]]) -> Optional[str]:
 
 
 def registrar_evento(
-    db: Any, *, perfil_id: Any, handle: str, tipo: str, ator_id: Optional[str], ator_tipo: str = "admin",
+    db: Any, *, perfil_id: Any, tipo: str, ator_id: Optional[str], ator_tipo: str = "admin",
     viral_id: Optional[str] = None,
 ) -> None:
     """Append ONE content-free ``cs_perfil_eventos`` row (who / when / what) for an admin write on a library profile or video.
+    The row carries NO handle (owner decision 2026-11-15): it outlives the profile, and an opt-out purge must not leave who
+    the creator was in its own history.
 
     A failed insert is LOUD (logged, re-raised -- never swallowed): the audit row is part of the write.
-    NOC-REMEDIATE[cs-perfil-eventos-rpc]: the state write and its event are two PostgREST calls, not one transaction (the
-    profile writes are plain table writes, unlike the Estrutura RPCs). Destination: wrap the profile writes in SECURITY
-    DEFINER RPCs when the next migration touches this table -- 2026-12-15."""
+    NOC-REMEDIATE[cs-service-role-writes]: the profile / video state writes and this event are separate service-role
+    PostgREST calls, not one transaction, and the service role holds table INSERT/UPDATE (security review F7: revoke the
+    table writes and wrap every library write in a SECURITY DEFINER RPC, as ``cs_perfil_plataforma_criar`` /
+    ``cs_perfil_purgar`` already are). Destination: EST-RO (wave 3) -- 2026-11-15."""
     try:
         db.table(EVENTOS).insert({
-            "perfil_id": str(perfil_id), "viral_id": str(viral_id) if viral_id else None, "handle": handle,
+            "perfil_id": str(perfil_id), "viral_id": str(viral_id) if viral_id else None,
             "tipo": tipo, "ator_id": ator_id or None, "ator_tipo": ator_tipo,
         }).execute()
     except Exception:
@@ -271,14 +277,52 @@ def prefixo_blobs(perfil: dict[str, Any]) -> str:
     return str(perfil.get("org_id") or biblioteca_fonte.PREFIXO_PLATAFORMA)
 
 
-def _rpc_estruturas_total(exc: BaseException) -> Optional[int]:
-    """The ``DETAIL`` count of a ``perfil_com_estruturas`` refusal of ``cs_perfil_purgar`` (``None`` = not that refusal)."""
+def _rpc_mensagem(exc: BaseException) -> tuple[str, str]:
+    """``(message, details)`` of a PostgREST ``APIError`` (the coded ``RAISE EXCEPTION '<code>'`` of an RPC)."""
     payload = exc.args[0] if exc.args and isinstance(exc.args[0], dict) else {}
     message = str(getattr(exc, "message", None) or payload.get("message") or "").strip()
+    details = str(getattr(exc, "details", None) or payload.get("details") or "").strip()
+    return message, details
+
+
+def _rpc_estruturas_total(exc: BaseException) -> Optional[int]:
+    """The ``DETAIL`` count of a ``perfil_com_estruturas`` refusal of ``cs_perfil_purgar`` (``None`` = not that refusal)."""
+    message, details = _rpc_mensagem(exc)
     if message != "perfil_com_estruturas":
         return None
-    details = str(getattr(exc, "details", None) or payload.get("details") or "").strip()
     return int(details) if details.isdigit() else 0
+
+
+def erro_optout() -> "BibliotecaError":
+    return BibliotecaError(409, biblioteca_optout.MSG_OPTOUT, code=biblioteca_optout.CODIGO_OPTOUT)
+
+
+def criar_perfil_plataforma(
+    db: Any, *, handle: str, nome: Optional[str] = None, origem: str = "manual", ator_tipo: str = "admin",
+    ator_id: Optional[str] = None, importacao_id: Optional[str] = None, monitorar: bool = False,
+    status: str = "aguardando", conta: Optional[str] = None, erro_codigo: Optional[str] = None,
+    erro_mensagem: Optional[str] = None,
+) -> dict[str, Any]:
+    """Create a platform library profile through the ONE door: the ``cs_perfil_plataforma_criar`` RPC (security review F3).
+
+    The profile and its ``criado`` (+ ``importado``) events are written in one transaction, and the opt-out registry is
+    checked INSIDE it (a creator who opted out is refused ``perfil_optout`` -> :class:`BibliotecaError` 409 whatever the
+    caller checked before). Idempotent on the handle: ``criado=False`` returns the existing profile. ``{id, handle, criado}``."""
+    try:
+        res = db.rpc("cs_perfil_plataforma_criar", {
+            "p_handle": handle, "p_nome": nome, "p_origem": origem, "p_ator_tipo": ator_tipo, "p_ator": ator_id,
+            "p_importacao": importacao_id, "p_monitorar": bool(monitorar), "p_status": status, "p_conta": conta,
+            "p_erro_codigo": erro_codigo, "p_erro_mensagem": erro_mensagem,
+        }).execute()
+    except Exception as exc:  # noqa: BLE001 - the one coded refusal is mapped; anything else is re-raised, never swallowed
+        if _rpc_mensagem(exc)[0] == biblioteca_optout.CODIGO_OPTOUT:
+            raise erro_optout() from exc
+        raise
+    data = getattr(res, "data", None)
+    data = data[0] if isinstance(data, list) and data else data
+    if not isinstance(data, dict) or not data.get("id"):
+        raise RuntimeError("cs_perfil_plataforma_criar: resposta sem id")
+    return {"id": str(data["id"]), "handle": data.get("handle", handle), "criado": bool(data.get("criado"))}
 
 
 def erro_perfil_com_estruturas(total: int) -> BibliotecaError:
@@ -286,6 +330,53 @@ def erro_perfil_com_estruturas(total: int) -> BibliotecaError:
         409, "Este perfil tem estruturas na biblioteca. Apague-as junto ou arquive-as antes de excluir o perfil.",
         code="perfil_com_estruturas", extra={"estruturas_total": int(total)},
     )
+
+
+async def apagar_transcricoes(db: Any, storage: StorageBackend, viral_ids: Sequence[str]) -> dict[str, int]:
+    """Erase the transcriptions of library videos THROUGH the transcription organ (security review F2).
+
+    Every ``biblioteca_viral`` row of the given videos goes -- including a job still ``na_fila`` / ``processando``: the
+    organ's ``marcar_falha`` first closes it (the worker's conditional finish can no longer fill it), then its own
+    ``apagar_audio`` deletes the recording (``sw-transcricoes``) and only then is the row (transcript text) deleted. A
+    recording that cannot be deleted keeps its row (text nulled) so the organ's retention sweep, which owns the audio
+    bucket, retries it -- never an orphaned blob nobody points at. Returns ``{transcricoes, audios_falhos}``."""
+    from app.modules.transcricoes.service import IN_FLIGHT, apagar_audio, marcar_falha
+
+    out = {"transcricoes": 0, "audios_falhos": 0}
+    for chunk in batched(sorted({str(v) for v in viral_ids})):
+        rows = (
+            db.table(TRANSCRICOES).select("id,status,storage_path,audio_apagado_em").eq("contexto_tipo", CONTEXTO_TIPO)
+            .in_("contexto_ref", chunk).execute().data or []
+        )
+        for r in rows:
+            if r.get("status") in IN_FLIGHT:
+                marcar_falha(db, r["id"], "contexto_apagado", reembolsar=True)
+            if await apagar_audio(db, storage, r):
+                db.table(TRANSCRICOES).delete().eq("id", str(r["id"])).execute()
+                out["transcricoes"] += 1
+            else:
+                db.table(TRANSCRICOES).update({"texto": None}).eq("id", str(r["id"])).execute()
+                out["audios_falhos"] += 1
+    return out
+
+
+async def minimizar_perfil(
+    db: Any, storage: StorageBackend, perfil_id: str, *, ator_id: Optional[str] = None, ator_tipo: str = "sistema",
+) -> bool:
+    """Owner decision 2026-11-15 (#4): a profile RETAINED only because a non-archived Estrutura references it drops its
+    photo + follower count (``cs_perfil_minimizar``: one transaction, one ``minimizado`` event, idempotent), then the photo
+    blob is deleted (a failed delete is logged; the orphan sweep retries the prefix). ``True`` when something was dropped."""
+    res = db.rpc("cs_perfil_minimizar", {"p_perfil": str(perfil_id), "p_ator": ator_id, "p_ator_tipo": ator_tipo}).execute()
+    data = getattr(res, "data", None)
+    data = data[0] if isinstance(data, list) and data else data
+    if not isinstance(data, dict) or not data.get("minimizado"):
+        return False
+    if data.get("foto_path"):
+        try:
+            await storage.delete(bucket=BUCKET, key=data["foto_path"])
+        except Exception:  # noqa: BLE001 - the row is already minimised; the orphan sweep retries the blob
+            logger.warning("biblioteca: foto do perfil minimizado não apagada perfil=%s", perfil_id, exc_info=True)
+    return True
 
 
 async def purgar_perfil(
@@ -339,9 +430,8 @@ async def purgar_perfil(
         except Exception:  # noqa: BLE001 - never leave the row alive because a blob delete failed
             out["blobs_falhos"] += 1
             logger.warning("biblioteca: blob delete failed key=%s (a varredura de órfãos repete)", key, exc_info=True)
-    for chunk in batched([str(v["id"]) for v in virais]):
-        db.table(TRANSCRICOES).delete().eq("contexto_tipo", CONTEXTO_TIPO).in_(
-            "contexto_ref", chunk).neq("status", "processando").execute()
+    t = await apagar_transcricoes(db, storage, [str(v["id"]) for v in virais])
+    out["blobs_falhos"] += t["audios_falhos"]
     return out
 
 
@@ -481,24 +571,30 @@ class BibliotecaService:
         return {k: (v[0], v[1]) for k, v in out.items()}
 
     async def _perfil_out(self, row: dict[str, Any], counts: tuple[int, int], ativa: bool) -> dict[str, Any]:
-        return {
+        """A client org sees a creator as handle + name ONLY (owner decision 2026-11-15, LGPD): no photo, no follower
+        count, no ingestion status / ``monitorar`` / sync metrics (security review F9). Admins keep the whole row."""
+        out: dict[str, Any] = {
             "id": row["id"],
             "handle": row["handle"],
             "nome": row.get("nome"),
-            "foto_url": await self._signed(row.get("foto_path")),
-            "seguidores": row.get("seguidores"),
-            "status": row["status"],
-            "monitorar": bool(row.get("monitorar", True)),
-            # An ingestion error names credentials / budgets of the platform: it is the admin's, not a member's.
-            "erro_mensagem": row.get("erro_mensagem") if self.is_admin else None,
-            "ultima_sync_em": row.get("ultima_sync_em"),
-            "metrica_base": row.get("metrica_base"),
-            "mediana_metrica": float(row["mediana_metrica"]) if row.get("mediana_metrica") is not None else None,
             "virais": counts[0],
             "posts": counts[1],
             "ingestao_ativa": ativa,
             "optout_contato": self.optout_contato(),
         }
+        if self.is_admin:
+            out.update({
+                "foto_url": await self._signed(row.get("foto_path")),
+                "seguidores": row.get("seguidores"),
+                "status": row["status"],
+                "monitorar": bool(row.get("monitorar", True)),
+                # An ingestion error names credentials / budgets of the platform: it is the admin's, not a member's.
+                "erro_mensagem": row.get("erro_mensagem"),
+                "ultima_sync_em": row.get("ultima_sync_em"),
+                "metrica_base": row.get("metrica_base"),
+                "mediana_metrica": float(row["mediana_metrica"]) if row.get("mediana_metrica") is not None else None,
+            })
+        return out
 
     async def perfis_out(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         counts = self._counts([str(r["id"]) for r in rows])
@@ -608,9 +704,10 @@ class BibliotecaService:
             formatos=[{"id": i, "nome": _FORMATO[i]} for i in row.get("formato_ids") or [] if i in _FORMATO],
             gatilho=row.get("gatilho"),
             estrutura_utilizavel=bool(row.get("blueprint")) and row["classificacao_status"] == "concluida",
-            origem_inclusao=row.get("origem_inclusao") or "sync",
             estruturas=self._estruturas_do_viral(str(row["id"])),
         )
+        if self.is_admin:  # how the video entered the library is an admin fact (F9)
+            out["origem_inclusao"] = row.get("origem_inclusao") or "sync"
         em = _parse_dt(row.get("video_url_em"))
         out["video_url"] = (
             row["video_url"] if row.get("video_url") and em is not None and _now() - em < VIDEO_URL_FRESCA else None
@@ -782,14 +879,14 @@ class BibliotecaService:
 
     def _assert_sem_optout(self, handle: str) -> None:
         if biblioteca_optout.esta_bloqueado(self.db, handle):
-            raise BibliotecaError(409, biblioteca_optout.MSG_OPTOUT, code=biblioteca_optout.CODIGO_OPTOUT)
+            raise erro_optout()
 
     def _total_perfis(self) -> int:
         res = self.db.table(PERFIS).select("id", count="exact").limit(1).execute()
         return int(res.count) if getattr(res, "count", None) is not None else len(res.data or [])
 
-    def _evento(self, perfil_id: Any, handle: str, tipo: str, *, viral_id: Optional[str] = None) -> None:
-        registrar_evento(self.db, perfil_id=perfil_id, handle=handle, tipo=tipo, ator_id=self.user_id, viral_id=viral_id)
+    def _evento(self, perfil_id: Any, tipo: str, *, viral_id: Optional[str] = None) -> None:
+        registrar_evento(self.db, perfil_id=perfil_id, tipo=tipo, ator_id=self.user_id, viral_id=viral_id)
 
     async def criar_perfil(
         self, handle: str, conta_descoberta_id: Optional[str] = None, monitorar: bool = True
@@ -813,20 +910,23 @@ class BibliotecaService:
             status = "ativo"  # library-only: nothing to wait for (never scraped)
         else:
             status = "aguardando" if pronto else "sem_conta"
-        payload: dict[str, Any] = {
-            "org_id": None, "rede": "instagram", "handle": handle, "conta_descoberta_id": conta,
-            "status": status, "monitorar": bool(monitorar), "created_by": self.user_id,
-        }
+        erro_codigo = erro_mensagem = None
         if monitorar and not pronto:
-            payload["erro_codigo"] = "sem_conta"
-            payload["erro_mensagem"] = MSG_SEM_CONTA
+            erro_codigo, erro_mensagem = "sem_conta", MSG_SEM_CONTA
         try:
-            row = self.db.table(PERFIS).insert(payload).execute().data[0]
+            criado = criar_perfil_plataforma(
+                self.db, handle=handle, origem="manual", ator_tipo="admin", ator_id=self.user_id, monitorar=bool(monitorar),
+                status=status, conta=conta, erro_codigo=erro_codigo, erro_mensagem=erro_mensagem,
+            )
         except Exception as exc:  # noqa: BLE001 - a concurrent admin won the UNIQUE (rede, handle): coded 409; else re-raise
             if not is_unique_violation(exc):
                 raise
             raise BibliotecaError(409, "Este perfil já está na biblioteca.", code="perfil_ja_existe") from exc
-        self._evento(row["id"], handle, "criado")
+        if not criado["criado"]:
+            raise BibliotecaError(
+                409, "Este perfil já está na biblioteca.", code="perfil_ja_existe", extra={"perfil_id": criado["id"]},
+            )
+        row = self._perfil_row(criado["id"])
         if monitorar and pronto:
             await self._enqueue_sync(str(row["id"]))
         return (await self.perfis_out([row]))[0]
@@ -867,7 +967,7 @@ class BibliotecaService:
         if row["status"] in ("sem_conta", "erro", "nao_encontrado", "sem_credencial", "sem_orcamento"):
             self.db.table(PERFIS).update({"status": "aguardando", "erro_codigo": None, "erro_mensagem": None}).eq(
                 "id", row["id"]).execute()
-        self._evento(row["id"], row["handle"], "sincronizacao_solicitada")
+        self._evento(row["id"], "sincronizacao_solicitada")
         return {"perfil_id": row["id"], "enfileirado": True, "ingestao_ativa": self.ingestao_ativa()}
 
     async def patch_perfil(
@@ -902,7 +1002,7 @@ class BibliotecaService:
             patch["updated_at"] = _now().isoformat()
             self.db.table(PERFIS).update(patch).eq("id", row["id"]).execute()
             for tipo in dict.fromkeys(eventos):
-                self._evento(row["id"], row["handle"], tipo)
+                self._evento(row["id"], tipo)
             row = self._perfil_row(perfil_id)
         if enqueue and row["status"] == "aguardando":
             await self._enqueue_sync(str(row["id"]), suffix=":ativar")
@@ -1007,8 +1107,13 @@ class BibliotecaService:
             self.db.table(VIRAIS).update({"ig_shortcode": shortcode}).eq("id", dup["id"]).execute()
             return {"viral": await self._card_de(dup), "perfil_criado": perfil_criado, "ja_existia": True}
         stamp = agora.isoformat()
+        # F10: the stored permalink is the CANONICAL one re-composed from the validated shortcode (``extrair_shortcode``
+        # only ever yields https://www.instagram.com/{p|reel|tv}/<code>/) -- never the string the scraper returned.
+        if not canonico.startswith(PERMALINK_PREFIXO):
+            raise BibliotecaError(422, "Link inválido.", code="link_invalido")
         linha = {
-            **biblioteca_fonte.campos_midia(m, stamp), "ig_shortcode": shortcode, "perfil_id": str(perfil["id"]),
+            **biblioteca_fonte.campos_midia(m, stamp), "permalink": canonico,
+            "ig_shortcode": shortcode, "perfil_id": str(perfil["id"]),
             "ig_media_id": str(m.id), "org_id": None, "origem_inclusao": "link_manual", "incluido_por": self.user_id,
             "transcricao_status": "nao_aplicavel", "classificacao_status": "pendente", "e_viral": False,
         }
@@ -1030,7 +1135,7 @@ class BibliotecaService:
             )
             if path:
                 self.db.table(VIRAIS).update({"thumbnail_path": path}).eq("id", vid).execute()
-        self._evento(perfil["id"], handle, "video_adicionado_por_link", viral_id=vid)
+        self._evento(perfil["id"], "video_adicionado_por_link", viral_id=vid)
         await self._enfileirar_analise(vid, m, agora)
         row = self._viral_card_por_id(vid) or row
         return {"viral": await self._card_de(row), "perfil_criado": perfil_criado, "ja_existia": False}
@@ -1047,12 +1152,13 @@ class BibliotecaService:
         return rows[0] if rows else None
 
     def _criar_perfil_so_biblioteca(self, handle: str) -> dict[str, Any]:
-        """The profile of a video added by link: a library-only row (``monitorar=false``, never scraped)."""
+        """The profile of a video added by link: a library-only row (``monitorar=false``, never scraped), created through
+        the RPC (the opt-out registry is checked in its transaction)."""
         try:
-            row = self.db.table(PERFIS).insert({
-                "org_id": None, "rede": "instagram", "handle": handle, "status": "ativo", "monitorar": False,
-                "created_by": self.user_id,
-            }).execute().data[0]
+            criado = criar_perfil_plataforma(
+                self.db, handle=handle, origem="manual", ator_tipo="admin", ator_id=self.user_id, monitorar=False,
+                status="ativo",
+            )
         except Exception as exc:  # noqa: BLE001 - a concurrent admin created it: use theirs; else re-raise
             if not is_unique_violation(exc):
                 raise
@@ -1060,8 +1166,7 @@ class BibliotecaService:
             if vivo is None:
                 raise
             return vivo
-        self._evento(row["id"], handle, "criado")
-        return row
+        return self._perfil_row(criado["id"])
 
     def _registrar_uso_post(self, org: str, post: biblioteca_fonte.PostBuscado, now: datetime) -> None:
         ledger_db = None
@@ -1207,6 +1312,10 @@ class BibliotecaService:
 
 __all__ = [
     "BUCKET",
+    "PERMALINK_PREFIXO",
+    "apagar_transcricoes",
+    "criar_perfil_plataforma",
+    "minimizar_perfil",
     "EVENTOS",
     "prefixo_blobs",
     "purgar_handle",

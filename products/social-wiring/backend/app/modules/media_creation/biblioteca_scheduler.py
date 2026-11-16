@@ -15,21 +15,28 @@
   - A profile that is ``pausado`` or referenced by no marca (neither a ``perfil`` reference nor a
     ``video`` reference to one of its virais) is stamped ``inativo_desde`` the first sweep that sees
     it so; the stamp is cleared the moment it is in use again -- UNLESS it is RETAINED: it has >= 1 non-``arquivada``
-    Estrutura (the curated derived data) or ``monitorar = false`` (a library-only profile). A retained profile is never
-    purged as a profile, but its viral media / transcripts / thumbnails are still erased by age
-    (:func:`purgar_virais_antigos`), except the videos a marca selected.
+    Estrutura (the curated derived data the library keeps; owner decision 2026-11-15 -- ``monitorar = false`` alone no
+    longer exempts a profile). A retained profile is never purged as a profile, but its viral media / transcripts /
+    thumbnails are still erased by age (:func:`purgar_virais_antigos`), except the videos a marca selected, and a retained
+    library-only profile (``monitorar = false``) is MINIMISED: photo + follower count dropped (:func:`minimizar_perfil`).
   - After ``biblioteca_retencao_dias`` (config, default 90 -- the owner validates the number) an unused,
     non-retained profile is PURGED through the same :func:`purgar_perfil` the delete endpoint uses: caption, transcript,
     blueprint, thumbnails, profile picture / name / followers -- rows and blobs.
   - The orphan sweep deletes every ``sw-biblioteca/{org|platform}/{perfil}/`` prefix whose profile no longer
     exists. It is the RETRY for a blob delete that failed (logged, never fatal) and the cleanup for a
-    sync that was still uploading when its profile was deleted.
+    sync that was still uploading when its profile was deleted. Only UUID (or ``platform``) segments are profile
+    prefixes: any other segment is skipped EXPLICITLY and counted (``segmentos_ignorados``, logged -- security review F1),
+    and ``importacoes/`` (the Estruturas load documents) has its own sweep, :func:`varrer_blobs_importacao`.
+  - **24-month-unused review** (owner decision 2026-11-15): an ``ativa`` Estrutura nobody used / edited / published for
+    :data:`REVISAO_DESUSO_MESES` months is FLAGGED for admin review (never archived) through ``cs_estruturas_revisao_desuso``;
+    the per-run counts are always logged.
 
 Registered at IMPORT time via ``configure()`` (same idiom as ``geracao_scheduler``).
 """
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
@@ -49,9 +56,13 @@ from app.modules.media_creation.services.biblioteca_service import (
     REFS,
     TRANSCRICOES,
     VIRAIS,
+    apagar_transcricoes,
+    minimizar_perfil,
     purgar_perfil,
     registrar_evento,
 )
+from app.modules.media_creation.services.estruturas_import import IMPORTACOES_T, PREFIXO_BLOB, SIMULACAO_VALIDADE_HORAS
+from app.modules.media_creation.services.biblioteca_fonte import PREFIXO_PLATAFORMA
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +76,13 @@ RETENCAO_CRON = "40 4 * * *"
 #: Upper bound of one ``list_keys`` page (the storage seam has no cursor): more orgs / profiles than this
 #: in the bucket are reached over successive daily runs as earlier orphans are deleted.
 LISTA_MAX = 1000
+#: The owner's 24-month-unused review window (decision 2026-11-15), in months.
+REVISAO_DESUSO_MESES = 24
+#: Days an Estruturas load document may stay in the bucket while its lote is ``em_andamento`` (stuck) before the sweep
+#: deletes it; a finished / failed / unknown lote's document goes at the next run, a ``simulada`` one after its 24 h validity.
+#: NOC-REMEDIATE[cs-importacao-blob-ttl-setting]: a module constant because config.py is not this slice's file; move it to
+#: ``settings`` (``estruturas_importacao_blob_dias``) with the next config change -- 2026-11-30.
+IMPORTACAO_BLOB_TTL_DIAS = 7
 
 #: Transcription states from which classification may start.
 CLASSIFICAVEL = ("nao_aplicavel", "concluida", "falhou", "grande_demais", "longa_demais", "sem_orcamento")
@@ -177,24 +195,15 @@ def _perfis_selecionados(db: Any) -> set[str]:
 
 
 def _perfis_retidos(db: Any) -> set[str]:
-    """Profiles exempt from the unreferenced purge (estruturas-contract 4.3 #5): those with >= 1 non-``arquivada``
-    Estrutura (the curated derived data the library keeps) and the library-only ones (``monitorar = false``)."""
-    retidos: set[str] = set()
-    for r in iter_paged_rows(
-        lambda s, e: db.table(ESTRUTURAS).select("id,perfil_id").neq("status", "arquivada")
-        .order("id").range(s, e).execute().data
-    ):
-        retidos.add(str(r["perfil_id"]))
-    for r in iter_paged_rows(
-        lambda s, e: db.table(PERFIS).select("id").eq("monitorar", False).order("id").range(s, e).execute().data
-    ):
-        retidos.add(str(r["id"]))
-    return retidos
-
-
-def _perfis_referenciados(db: Any) -> set[str]:
-    """Profile ids that are NOT purge candidates: referenced by a marca, OR retained (has Estruturas / ``monitorar=false``)."""
-    return _perfis_de_marcas(db) | _perfis_retidos(db)
+    """Profiles exempt from the unreferenced purge: those with >= 1 non-``arquivada`` Estrutura (the curated derived data
+    the library keeps). A brand selection is handled by :func:`_perfis_de_marcas`; ``monitorar = false`` alone exempts
+    nothing any more (owner decision 2026-11-15, #4)."""
+    return {
+        str(r["perfil_id"]) for r in iter_paged_rows(
+            lambda s, e: db.table(ESTRUTURAS).select("id,perfil_id").neq("status", "arquivada")
+            .order("id").range(s, e).execute().data
+        ) if r.get("perfil_id")
+    }
 
 
 def _viral_ids_selecionados(db: Any) -> set[str]:
@@ -224,7 +233,6 @@ async def purgar_virais_antigos(
     out = {"virais": 0, "blobs_falhos": 0}
     if not velhos:
         return out
-    handle = (db.table(PERFIS).select("handle").eq("id", pid).execute().data or [{}])[0].get("handle", "")
     for v in velhos:
         if v.get("thumbnail_path"):
             try:
@@ -232,13 +240,13 @@ async def purgar_virais_antigos(
             except Exception:  # noqa: BLE001 - the row goes anyway; the orphan sweep retries the prefix listing
                 out["blobs_falhos"] += 1
                 logger.warning("biblioteca: thumbnail antigo não apagado key=%s", v["thumbnail_path"], exc_info=True)
+    # transcripts go through the transcription organ (recording + text, in-flight jobs included -- F2)
+    t = await apagar_transcricoes(db, storage, [str(v["id"]) for v in velhos])
+    out["blobs_falhos"] += t["audios_falhos"]
     for chunk in batched([str(v["id"]) for v in velhos]):
-        db.table(TRANSCRICOES).delete().eq("contexto_tipo", CONTEXTO_TIPO).in_(
-            "contexto_ref", chunk).neq("status", "processando").execute()
         db.table(VIRAIS).delete().in_("id", chunk).execute()
     for v in velhos:
-        registrar_evento(db, perfil_id=pid, handle=handle, tipo="excluido", ator_id=None, ator_tipo="sistema",
-                         viral_id=str(v["id"]))
+        registrar_evento(db, perfil_id=pid, tipo="excluido", ator_id=None, ator_tipo="sistema", viral_id=str(v["id"]))
         out["virais"] += 1
     return out
 
@@ -247,16 +255,17 @@ async def purgar_expirados(
     db: Any, storage: StorageBackend, *, dias: int, now: Optional[datetime] = None
 ) -> dict[str, int]:
     """Stamp / clear ``inativo_desde`` and purge the profiles idle for ``dias`` days; erase the old videos of retained
-    profiles. Returns ``{marcados, reativados, purgados, blobs_falhos, virais_antigos}``."""
+    profiles; erase the old videos of retained profiles and minimise the retained library-only ones. Returns
+    ``{marcados, reativados, purgados, blobs_falhos, virais_antigos, minimizados}``."""
     agora = now or datetime.now(timezone.utc)
     de_marcas = _perfis_de_marcas(db)
     retidos = _perfis_retidos(db)
     selecionados = _viral_ids_selecionados(db)
     inteiros = _perfis_selecionados(db)
-    out = {"marcados": 0, "reativados": 0, "purgados": 0, "blobs_falhos": 0, "virais_antigos": 0}
+    out = {"marcados": 0, "reativados": 0, "purgados": 0, "blobs_falhos": 0, "virais_antigos": 0, "minimizados": 0}
     perfis = list(
         iter_paged_rows(
-            lambda s, e: db.table(PERFIS).select("id,org_id,status,foto_path,inativo_desde")
+            lambda s, e: db.table(PERFIS).select("id,org_id,status,foto_path,seguidores,monitorar,inativo_desde")
             .order("id").range(s, e).execute().data
         )
     )
@@ -271,6 +280,10 @@ async def purgar_expirados(
             r = await purgar_virais_antigos(db, storage, p, dias=dias, protegidos=selecionados, now=agora)
             out["virais_antigos"] += r["virais"]
             out["blobs_falhos"] += r["blobs_falhos"]
+        if retido and p.get("monitorar") is False and (p.get("foto_path") or p.get("seguidores") is not None):
+            # Kept only for its Estruturas and never scraped: it drops photo + follower count (decision #4).
+            if await minimizar_perfil(db, storage, pid, ator_tipo="sistema"):
+                out["minimizados"] += 1
         if not inativo:
             if desde is not None:
                 db.table(PERFIS).update({"inativo_desde": None}).eq("id", pid).execute()
@@ -298,16 +311,39 @@ def _segmento(chave: str, n: int) -> Optional[str]:
     return partes[n] if len(partes) > n else None
 
 
+def _e_uuid(valor: Optional[str]) -> bool:
+    if not valor:
+        return False
+    try:
+        uuid.UUID(valor)
+    except ValueError:
+        return False
+    return True
+
+
 async def varrer_blobs_orfaos(db: Any, storage: StorageBackend) -> dict[str, int]:
-    """Delete every ``{org}/{perfil}/`` prefix of ``sw-biblioteca`` whose profile row no longer exists.
-    Returns ``{orfaos, blobs_apagados, blobs_falhos}``."""
-    out = {"orfaos": 0, "blobs_apagados": 0, "blobs_falhos": 0}
-    orgs = sorted({o for k in await storage.list_keys(bucket=BUCKET, prefix="", limit=LISTA_MAX) if (o := _segmento(k, 0))})
+    """Delete every ``{org|platform}/{perfil}/`` prefix of ``sw-biblioteca`` whose profile row no longer exists.
+
+    Only a UUID (or the literal ``platform``) first segment and a UUID second segment name a profile prefix. Anything else
+    in the bucket -- the ``importacoes/`` documents of the Estruturas load (their own sweep), a stray object -- is skipped
+    EXPLICITLY: counted in ``segmentos_ignorados`` and logged, never silently dropped and never cast to a UUID column
+    (the 22P02 crash of security review F1).
+    Returns ``{orfaos, blobs_apagados, blobs_falhos, segmentos_ignorados}``."""
+    out = {"orfaos": 0, "blobs_apagados": 0, "blobs_falhos": 0, "segmentos_ignorados": 0}
+    raiz = sorted({o for k in await storage.list_keys(bucket=BUCKET, prefix="", limit=LISTA_MAX) if (o := _segmento(k, 0))})
+    orgs: list[str] = []
+    for o in raiz:
+        if o == PREFIXO_PLATAFORMA or _e_uuid(o):
+            orgs.append(o)
+        elif o != PREFIXO_BLOB.rstrip("/"):  # the load documents have their own sweep: not an unknown segment
+            out["segmentos_ignorados"] += 1
     for org in orgs:
-        perfis = sorted({
+        candidatos = sorted({
             p for k in await storage.list_keys(bucket=BUCKET, prefix=f"{org}/", limit=LISTA_MAX)
             if (p := _segmento(k, 1))
         })
+        perfis = [p for p in candidatos if _e_uuid(p)]
+        out["segmentos_ignorados"] += len(candidatos) - len(perfis)
         vivos: set[str] = set()
         for chunk in batched(perfis):
             vivos |= {str(r["id"]) for r in db.table(PERFIS).select("id").in_("id", chunk).execute().data or []}
@@ -322,6 +358,66 @@ async def varrer_blobs_orfaos(db: Any, storage: StorageBackend) -> dict[str, int
                 except Exception:  # noqa: BLE001 - retried by tomorrow's sweep
                     out["blobs_falhos"] += 1
                     logger.warning("biblioteca: blob órfão não apagado key=%s", key, exc_info=True)
+    if out["segmentos_ignorados"]:
+        logger.warning("biblioteca: varredura de órfãos ignorou %d segmento(s) que não são prefixo de perfil", out["segmentos_ignorados"])
+    return out
+
+
+async def varrer_blobs_importacao(
+    db: Any, storage: StorageBackend, *, dias: int = IMPORTACAO_BLOB_TTL_DIAS, now: Optional[datetime] = None,
+) -> dict[str, int]:
+    """Delete the stored Estruturas load documents (``importacoes/{lote}.json``) nobody needs any more (security review F1).
+
+    The worker deletes the document itself when the job ends; this is the net for every path that skipped it (a queue-level
+    dead letter, a crash, a simulation never applied). A document goes when its lote is ``concluida`` / ``falhou`` /
+    unknown, ``simulada`` and older than its 24 h validity, or still ``em_andamento`` after ``dias`` days (stuck).
+    A key that is not ``{uuid}.json`` is counted in ``segmentos_ignorados`` and logged, never cast to a UUID.
+    Returns ``{apagados, falhos, segmentos_ignorados}``."""
+    agora = now or datetime.now(timezone.utc)
+    out = {"apagados": 0, "falhos": 0, "segmentos_ignorados": 0}
+    chaves: dict[str, str] = {}
+    for k in await storage.list_keys(bucket=BUCKET, prefix=PREFIXO_BLOB, limit=LISTA_MAX):
+        nome = _segmento(k, 1)
+        lote = nome[: -len(".json")] if nome and nome.endswith(".json") else None
+        if _e_uuid(lote):
+            chaves[str(lote)] = f"{PREFIXO_BLOB}{nome}"
+        else:
+            out["segmentos_ignorados"] += 1
+    lotes: dict[str, dict[str, Any]] = {}
+    for chunk in batched(sorted(chaves)):
+        for r in db.table(IMPORTACOES_T).select("id,status,created_at").in_("id", chunk).execute().data or []:
+            lotes[str(r["id"])] = r
+    for lote, chave in sorted(chaves.items()):
+        row = lotes.get(lote)
+        criado = _parse_ts(row.get("created_at")) if row else None
+        if row is None or row["status"] in ("concluida", "falhou"):
+            apagar = True
+        elif row["status"] == "simulada":
+            apagar = criado is not None and agora - criado >= timedelta(hours=SIMULACAO_VALIDADE_HORAS)
+        else:  # em_andamento: only a stuck one
+            apagar = criado is not None and agora - criado >= timedelta(days=dias)
+        if not apagar:
+            continue
+        try:
+            await storage.delete(bucket=BUCKET, key=chave)
+            out["apagados"] += 1
+        except Exception:  # noqa: BLE001 - retried by tomorrow's sweep
+            out["falhos"] += 1
+            logger.warning("biblioteca: documento de importação não apagado key=%s", chave, exc_info=True)
+    if out["segmentos_ignorados"]:
+        logger.warning("biblioteca: varredura de importações ignorou %d chave(s) fora do formato {uuid}.json", out["segmentos_ignorados"])
+    return out
+
+
+def sinalizar_revisao_por_desuso(db: Any, *, meses: int = REVISAO_DESUSO_MESES) -> dict[str, int]:
+    """The 24-month-unused review (owner decision 2026-11-15): ONE ``cs_estruturas_revisao_desuso`` call flags every ``ativa``
+    Estrutura with no use / edit / publication for ``meses`` months -- once per window, an event each, never an auto-archive.
+    Always logs the counts (measurable per run). Returns ``{sinalizadas, liberadas}``."""
+    res = db.rpc("cs_estruturas_revisao_desuso", {"p_meses": int(meses)}).execute()
+    data = getattr(res, "data", None)
+    data = data[0] if isinstance(data, list) and data else data
+    out = {"sinalizadas": int((data or {}).get("sinalizadas") or 0), "liberadas": int((data or {}).get("liberadas") or 0)}
+    logger.info("biblioteca revisão por desuso (%d meses): %d sinalizada(s), %d liberada(s)", meses, out["sinalizadas"], out["liberadas"])
     return out
 
 
@@ -379,8 +475,10 @@ async def run_retencao(
         st = storage or _storage()
         purga = await purgar_expirados(db, st, dias=int(dias if dias is not None else settings.biblioteca_retencao_dias))
         orfaos = await varrer_blobs_orfaos(db, st)
-        if any(purga.values()) or any(orfaos.values()):
-            logger.info("biblioteca retenção: %s órfãos: %s", purga, orfaos)
+        importacoes = await varrer_blobs_importacao(db, st)
+        revisao = sinalizar_revisao_por_desuso(db)
+        if any(purga.values()) or any(orfaos.values()) or any(importacoes.values()) or any(revisao.values()):
+            logger.info("biblioteca retenção: %s órfãos: %s importações: %s revisão: %s", purga, orfaos, importacoes, revisao)
     except Exception as exc:  # noqa: BLE001
         logger.error("biblioteca retenção falhou: %s", exc, exc_info=True)
 
@@ -399,8 +497,12 @@ def configure() -> None:
 __all__ = [
     "RETENCAO_CRON",
     "RETENCAO_JOB_ID",
+    "IMPORTACAO_BLOB_TTL_DIAS",
+    "REVISAO_DESUSO_MESES",
     "purgar_expirados",
     "run_retencao",
+    "sinalizar_revisao_por_desuso",
+    "varrer_blobs_importacao",
     "varrer_blobs_orfaos",
     "SWEEP_CRON",
     "SWEEP_JOB_ID",

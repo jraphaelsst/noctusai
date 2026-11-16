@@ -22,8 +22,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -46,12 +48,39 @@ def _error(codigo: str, mensagem: str, **extra: Any) -> dict[str, Any]:
     return {"error": {"codigo": codigo, "mensagem": mensagem, **extra}}
 
 
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _url_segura(url: str) -> bool:
+    """The bearer token of a platform admin travels in this request: ``https`` only (``http`` only to a loopback host, the
+    local dev stack), a host, no userinfo (security review F8)."""
+    try:
+        partes = urlsplit(url)
+        host = (partes.hostname or "").lower()
+        sem_userinfo = partes.netloc.lower() == (f"{host}:{partes.port}" if partes.port else host)
+    except ValueError:
+        return False
+    if not host or not sem_userinfo:
+        return False
+    return partes.scheme == "https" or (partes.scheme == "http" and host in _LOOPBACK)
+
+
 def _config() -> tuple[str, str] | dict[str, Any]:
     url = os.environ.get("NOCTUS_SW_URL", "").strip().rstrip("/")
     token = os.environ.get("NOCTUS_SW_TOKEN", "").strip()
     if not url or not token:
         return _error("nao_configurado", "NOCTUS_SW_URL e NOCTUS_SW_TOKEN (token de sessão de um admin da plataforma) precisam estar no .env da raiz.")
+    if not _url_segura(url):
+        return _error("url_insegura", "NOCTUS_SW_URL precisa ser https (http só para localhost): o token de admin viaja nessa chamada.")
     return url, token
+
+
+def _importacao_id_valido(valor: str) -> bool:
+    """The run id is interpolated into the request path: only a canonical UUID may go there (F8)."""
+    try:
+        return str(uuid.UUID(valor)) == valor.lower()
+    except ValueError:
+        return False
 
 
 def sha256_documento(conteudo: Any) -> str:
@@ -108,6 +137,8 @@ def estruturas_import(
         return _error("acao_invalida", f"action deve ser um de {ACOES}.")
     if fonte not in FONTES:
         return _error("arquivo_invalido", "Esta fonte não é carregada na biblioteca de Estruturas.", motivo="fonte_nao_suportada", http_status=422)
+    if importacao_id and not _importacao_id_valido(importacao_id):
+        return _error("importacao_id_invalido", "importacao_id precisa ser um UUID.")
     if action == "apply" and not confirm:
         return _error("confirmacao_obrigatoria", "apply precisa de confirm=True (e de um plan do mesmo arquivo nas últimas 24 h).")
     cfg = _config()

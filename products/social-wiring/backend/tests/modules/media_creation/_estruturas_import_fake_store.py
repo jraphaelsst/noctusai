@@ -21,6 +21,10 @@ class FakeStore:
     def __init__(self, *, optouts: Iterable[str] = (), limite_estrutura: Optional[int] = None):
         self._tipos = {n: str(uuid.uuid4()) for n in TIPOS_CATALOGO}
         self._optouts = set(optouts)
+        #: registered DURING the run: the plan-time read does not see it, the per-profile re-check does (F3)
+        self.optouts_ja_registrados: set[str] = set()
+        self._leituras_optout = 0
+        self.optouts_tardios: set[str] = set()  # visible only to the creation RPC (a race inside the transaction)
         self.perfis_: dict[str, str] = {}
         self.estruturas: dict[str, dict[str, Any]] = {}  # id -> row
         self.blocos: dict[str, list[dict[str, Any]]] = {}
@@ -31,7 +35,10 @@ class FakeStore:
 
     # reads
     def tipos(self): return dict(self._tipos)
-    def optouts(self, handles): return {h for h in handles if h in self._optouts}
+    def optouts(self, handles):
+        self._leituras_optout += 1
+        visiveis = self._optouts | (self.optouts_ja_registrados if self._leituras_optout > 1 else set())
+        return {h for h in handles if h in visiveis}
     def perfis(self, handles): return {h: self.perfis_[h] for h in handles if h in self.perfis_}
     def total_perfis(self): return len(self.perfis_)
 
@@ -42,14 +49,22 @@ class FakeStore:
     def blocos_de(self, estrutura_id): return [dict(b) for b in self.blocos.get(estrutura_id, [])]
 
     # writes
-    def criar_perfil(self, handle, nome, ator_id):
+    def criar_perfil(self, handle, nome, ator_id, importacao_id):
+        """Emulates ``cs_perfil_plataforma_criar``: refuses an opted-out handle (even one registered AFTER the plan, see
+        ``optouts_tardios``) and writes `criado` + `importado` in the same call."""
+        from app.modules.media_creation.services.estruturas_import import PerfilEmOptout
+
+        if handle in self.optouts_tardios or handle in self._optouts:
+            raise PerfilEmOptout(handle)
         pid = str(uuid.uuid4())
         self.perfis_[handle] = pid
         self.perfil_nomes[handle] = nome
-        self.calls.append(("criar_perfil", {"handle": handle}))
+        self.calls.append(("criar_perfil", {"handle": handle, "importacao_id": importacao_id}))
+        self.eventos_perfil.extend([(handle, "criado"), (handle, "importado")])
         return pid
 
-    def evento_perfil(self, perfil_id, handle, tipo, ator_id):
+    def evento_perfil(self, perfil_id, tipo, ator_id, importacao_id):
+        handle = next(h for h, i in self.perfis_.items() if i == perfil_id)
         self.eventos_perfil.append((handle, tipo))
         self.calls.append(("evento_perfil", {"handle": handle, "tipo": tipo}))
 
