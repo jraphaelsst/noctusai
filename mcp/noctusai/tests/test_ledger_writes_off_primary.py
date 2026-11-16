@@ -65,9 +65,9 @@ def test_update_carries_a_tree_only_row_into_the_store(primary):
     row = fl._row(lt, "manual:s:old", {"scope": "s", "target": "old", "kind": "wall"}, "manual", "x")
     (clone / TREE_REL).parent.mkdir(parents=True)
     (clone / TREE_REL).write_text(json.dumps(row, sort_keys=True) + "\n")
+    landed = g(clone, "rev-parse", "HEAD").strip()  # on origin/dev: `fixed` is only written for such a sha
     g(clone, "add", "-A")
     g(clone, "commit", "-qm", "tree copy")
-    landed = g(clone, "rev-parse", "HEAD").strip()  # on origin/dev: `fixed` is only written for such a sha
     out = fl.update(LEDGER, clone, id=row["id"], status="fixed", detail=landed)
     assert out["ok"] and out["store"]["pushed"] is True
     stored = [json.loads(x) for x in show(STORE_FILE).splitlines()]

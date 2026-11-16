@@ -1434,7 +1434,7 @@ def main():
         sys.exit(1)
     elif args.check_findings_fixed_on_dev:
         from tools.noctus.dev.compliance import check_findings_fixed_on_dev
-        issues = check_findings_fixed_on_dev()
+        issues = check_findings_fixed_on_dev(repo_root=Path(args.worktree_path).expanduser().resolve() if args.worktree_path else None)
         if not issues:
             print(f"  {GREEN}✓ findings-fixed-on-dev clean: every fixed row's commit is on origin/dev.{RESET}"); sys.exit(0)
         print(f"  {RED}✗ {len(issues)} findings-fixed-on-dev issue(s):{RESET}")
