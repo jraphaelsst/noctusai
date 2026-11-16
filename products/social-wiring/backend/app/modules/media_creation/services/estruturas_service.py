@@ -41,8 +41,8 @@ VIRAIS = "cs_virais"
 REFERENCIAS = "cs_biblioteca_referencias"
 
 LIST_COLS = (
-    "id,codigo,perfil_id,viral_id,formula_headline,formato,objetivos,status,updated_at,blocos_total,campos_pendentes,"
-    "revisao_desuso_em"
+    "id,codigo,perfil_id,viral_id,formula_headline,formato,objetivos,status,origem,updated_at,blocos_total,"
+    "campos_pendentes,revisao_desuso_em"
 )
 ESTRUTURA_COLS = (
     "id,codigo,perfil_id,viral_id,formula_headline,formato,objetivos,status,origem,ref_externa,formula_herdada_de,"
@@ -278,12 +278,16 @@ class EstruturasService:
             "objetivos": list(row.get("objetivos") or []), "blocos_total": int(row.get("blocos_total") or 0),
             "viral": self._viral_ref(virais.get(str(row.get("viral_id")))) if row.get("viral_id") else None,
             "status": row["status"], "updated_at": row.get("updated_at"),
+            # legal attribution (EST-5 amendment item 9): every role learns the Estrutura is AI-derived; the raw
+            # `origem` (which would reveal the import source) stays admin-only.
+            "gerada_por_ia": row.get("origem") == fmt.ORIGEM_GERADA_POR_IA,
         }
         if selecionados is not None:
             out["selecionada_pela_marca"] = str(row["perfil_id"]) in selecionados
         if self.is_admin:
             out["pendente_revisao"] = int(row.get("campos_pendentes") or 0) > 0
             out["revisao_por_desuso"] = row.get("revisao_desuso_em")
+            out["origem"] = row.get("origem")
         return out
 
     def detalhe(self, estrutura_id: str) -> dict[str, Any]:

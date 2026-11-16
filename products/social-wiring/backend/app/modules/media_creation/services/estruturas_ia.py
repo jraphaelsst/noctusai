@@ -53,6 +53,7 @@ from noctusai_lib.integrations.llm.exceptions import (
 )
 from noctusai_lib.integrations.prompt_registry import RegistroIAIndisponivel, chamar_ia, prompt_e_modelo
 
+from app.modules.media_creation import estruturas_formatos as fmt
 from app.modules.media_creation import saida_ia_estruturas as saida
 from app.modules.media_creation.estruturas_tipos_bloco import NOME_OUTRO
 from app.modules.media_creation.prompts import estruturas_derivacao as prompt
@@ -112,7 +113,7 @@ LIMITE_MANUAL_DIA = "limite_diario_manual"
 LIMITE_NAO_VERIFICAVEL = "limite_nao_verificavel"
 CATALOGO_INVALIDO = "catalogo_sem_outro"
 
-ORIGEM_AUTO = "viral_auto"
+ORIGEM_AUTO = fmt.ORIGEM_GERADA_POR_IA
 ORIGEM_MANUAL = "manual"
 PROVENIENCIA = "ia_sugerido"
 

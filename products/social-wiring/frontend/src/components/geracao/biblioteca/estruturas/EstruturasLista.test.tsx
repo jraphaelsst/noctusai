@@ -59,6 +59,12 @@ describe("member view", () => {
     const f = m.lista.mock.calls[0]![0];
     expect(f.status).toBeUndefined();
     expect(f.somentePendentesRevisao).toBe(false);
+    expect(f.revisaoPorDesuso).toBe(false);
+  });
+
+  it("offers no 24-month filter to members", () => {
+    renderLista();
+    expect(rtl.screen.queryByRole("button", { name: "Sem uso há 24 meses" })).toBeNull();
   });
 
   it("shows no admin badge even if a row somehow carried a status (only the server's fields render)", () => {
@@ -85,6 +91,17 @@ describe("admin view", () => {
     const f = m.lista.mock.calls[0]![0];
     expect(f.status).toBe("rascunho");
     expect(f.somentePendentesRevisao).toBe(true);
+  });
+});
+
+describe("admin 24-month filter", () => {
+  it("toggles desuso and sends it to the query", async () => {
+    const { onFiltros } = renderLista({ isAdmin: true });
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Sem uso há 24 meses" }));
+    expect(onFiltros).toHaveBeenCalledWith({ ...FILTROS_ESTRUTURAS_VAZIOS, desuso: true, pagina: 1 });
+    rtl.cleanup();
+    renderLista({ isAdmin: true, filtros: { ...FILTROS_ESTRUTURAS_VAZIOS, desuso: true } });
+    expect(m.lista.mock.calls.at(-1)![0].revisaoPorDesuso).toBe(true);
   });
 });
 
