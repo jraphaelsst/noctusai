@@ -7,6 +7,7 @@ text can never close or open a ``<material>`` tag). ``PROMPT_VERSAO`` is the bum
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Sequence
 
 PROMPT_VERSAO = "estruturas-contexto-v1-draft"
@@ -46,21 +47,30 @@ def _cortar_palavra(texto: str, limite: int) -> str:
     return corte.rstrip(" ;,.—-")
 
 
+_ESPACOS = re.compile(r"\s+")
+
+
+def _linha(valor: Any) -> str:
+    """One line: every run of whitespace (newlines, tabs) in STORED content collapses to one space, so a stored block
+    instruction cannot start a new "paragraph" / list item / heading inside the prompt (stored-content injection)."""
+    return _ESPACOS.sub(" ", str(valor)).strip() if valor is not None else ""
+
+
 def _bloco_texto(i: int, b: Any) -> str:
-    tempo = f" [{b.tempo}]" if b.tempo else ""
-    instr = f" — {b.instrucao}" if b.instrucao else ""
-    nota = f" ({b.nota})" if b.nota else ""
+    tempo = f" [{_linha(b.tempo)}]" if b.tempo else ""
+    instr = f" — {_linha(b.instrucao)}" if b.instrucao else ""
+    nota = f" ({_linha(b.nota)})" if b.nota else ""
     rep = f" × {b.repeticoes}" if b.repeticoes and b.repeticoes > 1 else ""
-    tipo = f"{b.tipo} " if b.tipo else ""
-    return f"{i}. {tipo}«{b.nome}»{tempo}{instr}{nota}{rep}"
+    tipo = f"{_linha(b.tipo)} " if b.tipo else ""
+    return f"{i}. {tipo}«{_linha(b.nome)}»{tempo}{instr}{nota}{rep}"
 
 
 def renderizar_estrutura(e: Any, *, limite: int = MAX_CHARS_ESTRUTURA) -> str:
     """``estrutura #<codigo> (@<handle>) | formato: f | objetivos: a, b | FÓRMULA: ... | BLOCOS: 1. ...; 2. ...``,
     <= ``limite`` chars: blocks are dropped from the end (with a marker) rather than cut mid-word."""
-    quem = f" (@{e.handle})" if e.handle else ""
-    cab = f"estrutura #{e.codigo}{quem} | formato: {e.formato or '-'} | objetivos: {', '.join(e.objetivos) or '-'}"
-    formula = f" | FÓRMULA: {e.formula}" if e.formula else ""
+    quem = f" (@{_linha(e.handle)})" if e.handle else ""
+    cab = f"estrutura #{e.codigo}{quem} | formato: {_linha(e.formato) or '-'} | objetivos: {', '.join(_linha(o) for o in e.objetivos) or '-'}"
+    formula = f" | FÓRMULA: {_linha(e.formula)}" if e.formula else ""
     base = cab + formula
     if len(base) > limite:
         return _cortar_palavra(base, limite - len(MARCADOR_BLOCOS)) + MARCADOR_BLOCOS

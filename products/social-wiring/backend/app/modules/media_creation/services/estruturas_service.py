@@ -422,8 +422,22 @@ class EstruturasService:
         })
         return self.detalhe(estrutura_id)
 
+    def _ia_nao_revisado(self, estrutura_id: str) -> bool:
+        """True when an ``origem='viral_auto'`` rascunho still carries an ``ia_sugerido`` field (estrutura or block level).
+        NOC-REMEDIATE[publicar-ia-gate-in-rpc]: enforce the same gate inside ``cs_estrutura_publicar`` in the next
+        migration (this service check can be bypassed by anything calling the RPC directly) -- before switch-on, 2026-11-16."""
+        rows = self.db.table(ESTRUTURAS).select("origem,formula_origem,formato_origem,objetivos_origem").eq("id", str(estrutura_id)).execute().data
+        if not rows or rows[0].get("origem") != "viral_auto":
+            return False
+        if any(rows[0].get(k) == "ia_sugerido" for k in ("formula_origem", "formato_origem", "objetivos_origem")):
+            return True
+        blocos = self.db.table(BLOCOS).select("nome_origem,tipo_origem,tempo_origem,instrucao_origem").eq("estrutura_id", str(estrutura_id)).execute().data or []
+        return any(b.get(k) == "ia_sugerido" for b in blocos for k in ("nome_origem", "tipo_origem", "tempo_origem", "instrucao_origem"))
+
     def publicar(self, estrutura_id: str, expected_versao: int) -> dict[str, Any]:
         self._exigir_admin()
+        if self._ia_nao_revisado(estrutura_id):
+            raise coded(409, "rascunho_ia_nao_revisado", "Revise e confirme todos os campos sugeridos pela IA antes de publicar.")
         self._rpc("cs_estrutura_publicar", {"p_id": str(estrutura_id), "p_expected_versao": expected_versao, "p_ator": self.user_id})
         return self.detalhe(estrutura_id)
 

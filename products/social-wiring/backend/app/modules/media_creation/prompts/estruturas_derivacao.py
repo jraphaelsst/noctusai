@@ -20,12 +20,23 @@ NOC-REMEDIATE[estruturas-derivacao-registry-seed]: the registry row ``estruturas
 core migration seeded from :data:`PROMPT_SEMENTE` (like ``122_seed_fotos_rotular.sql``) before the auto-draft or
 ``POST /estruturas/a-partir-do-viral`` can run; until then both fail loud with ``ia_indisponivel``. Destination: the
 tech-lead/core migration owner (EST-5 adds no migration) -- 2026-11-15.
+
+NOC-REMEDIATE[autodraft-attribution-label]: published auto-drafts must be labelled in the UI ("Estrutura gerada por IA a
+partir de um vídeo público de @x; não é texto do criador.") -- legal item 9; FE. Destination: FE-Z, before switch-on -- 2026-11-16.
+NOC-REMEDIATE[estruturas-ia-model-dead-setting]: `estruturas_ia_model` (app/config.py, C3) is unused now that the registry
+row carries the model; remove or repurpose it. Destination: tech-lead (config.py owner), before switch-on -- 2026-11-16.
+NOC-REMEDIATE[autodraft-art33-and-lia]: the Art. 33 transfer mechanism and the signed LIA v2 are owner/lawyer decisions
+(legal items 7/8); the derivation must not run in production until recorded in the ROPA. Destination: owner + encarregado,
+before switch-on -- 2026-11-16.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional, Sequence
 
-from app.modules.media_creation.prompts.biblioteca_classificador import limpar_texto
+from noctusai_lib.primitives.accents import fold_accents
+
+from app.modules.media_creation.prompts.biblioteca_classificador import limpar_texto, normalizar_nfkc
 
 CHAVE = "estruturas.derivacao"
 
@@ -34,6 +45,17 @@ MAX_LEGENDA_PROMPT_CHARS = 5_000
 MAX_TRANSCRICAO_PROMPT_CHARS = 12_000
 MAX_ANALISE_PROMPT_CHARS = 4_000
 MAX_TIPO_INSTRUCAO_PROMPT_CHARS = 300
+#: With a blueprint the model gets blueprint + gancho + only the OPENING of the transcript (data minimisation, LGPD).
+MAX_TRANSCRICAO_COM_BLUEPRINT_CHARS = 1_500
+
+_REMOVIDO = " "
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_URL_RE = re.compile(
+    r"(?:https?|ftp)://\S+|\bwww\.\S+|"
+    r"\b[a-z0-9-]+\.(?:com|net|org|io|app|ly|gl|me|co|dev|ai|xyz|link|site)(?:\.br)?\b(?:/\S*)?", re.IGNORECASE)
+_MENCAO_RE = re.compile(r"@[\w.]+")
+#: 8+ digits, possibly separated by spaces, dots, dashes or parentheses (a phone, a document number).
+_TELEFONE_RE = re.compile(r"\+?\d(?:[\s().-]?\d){7,}")
 
 #: STARTING CONTENT of the registry row (see the module docstring). Not read at call time.
 PROMPT_SEMENTE = """Você é um analista de estrutura de roteiros de vídeo curto para redes sociais.
@@ -61,6 +83,37 @@ Sem URLs, sem hashtags, sem HTML.
 """
 
 
+def _remover_termo(texto: str, termo: Optional[str]) -> str:
+    """Remove ``termo`` (a handle or display name) from ``texto``: case- and accent-insensitive, with ``.``/``_`` in a
+    handle matching any separator. A term shorter than 3 characters is ignored (it would erase ordinary words)."""
+    termo = (termo or "").strip().lstrip("@")
+    if len(termo) < 3:
+        return texto
+    partes = [re.escape(p) for p in re.split(r"[._\s-]+", termo) if p]
+    padrao = re.compile(r"@?" + r"[._\s-]?".join(partes), re.IGNORECASE)
+    dobrado = fold_accents(texto)
+    alvo = dobrado if len(dobrado) == len(texto) else texto  # an accent fold that moves offsets is not used
+    saida, ultimo = [], 0
+    for m in padrao.finditer(alvo):
+        saida.append(texto[ultimo:m.start()])
+        saida.append(_REMOVIDO)
+        ultimo = m.end()
+    saida.append(texto[ultimo:])
+    return "".join(saida)
+
+
+def minimizar(texto: Optional[str], *, handle: Optional[str] = None, nome: Optional[str] = None) -> str:
+    """Strip personal identifiers from third-party text BEFORE it is sent (LGPD data minimisation): e-mail addresses,
+    URLs, @mentions, phone-like digit runs, and the creator's handle and display name. NFKC first, so a compatibility
+    form or a zero-width split cannot slip past the patterns."""
+    t = normalizar_nfkc(texto or "")
+    for rx in (_EMAIL_RE, _URL_RE, _MENCAO_RE, _TELEFONE_RE):
+        t = rx.sub(_REMOVIDO, t)
+    t = _remover_termo(t, handle)
+    t = _remover_termo(t, nome)
+    return t
+
+
 def _bloco(tag: str, texto: Optional[str], limite: int, vazio: str) -> str:
     corpo = limpar_texto((texto or "").strip())[:limite]
     return f"<{tag}>\n{corpo or vazio}\n</{tag}>"
@@ -74,9 +127,19 @@ def build_user_message(
     blueprint: Optional[str],
     formato_sugerido: Optional[str],
     tipos: Sequence[tuple[str, Optional[str]]],
+    handle: Optional[str] = None,
+    nome: Optional[str] = None,
 ) -> str:
     """The user turn. ``tipos`` is ``[(nome, instrucao_referencia)]`` of the ACTIVE catalogue (our own rows, still
-    sanitised). Nothing in the arguments can add or close a delimiter: see :func:`limpar_texto`."""
+    sanitised). Nothing in the arguments can add or close a delimiter: see :func:`limpar_texto`. ``handle`` / ``nome``
+    (the creator's) are used ONLY to strip them from the text -- they are never written into the message. With a
+    blueprint the transcript is cut to its opening (:data:`MAX_TRANSCRICAO_COM_BLUEPRINT_CHARS`)."""
+    legenda = minimizar(legenda, handle=handle, nome=nome)
+    transcricao = minimizar(transcricao, handle=handle, nome=nome)
+    gancho = minimizar(gancho, handle=handle, nome=nome)
+    blueprint = minimizar(blueprint, handle=handle, nome=nome)
+    if blueprint.strip():
+        transcricao = transcricao[:MAX_TRANSCRICAO_COM_BLUEPRINT_CHARS]
     catalogo = "\n".join(
         f"- {limpar_texto(nome)[:80]}: {limpar_texto(instrucao or '')[:MAX_TIPO_INSTRUCAO_PROMPT_CHARS]}".rstrip(": ")
         for nome, instrucao in tipos
@@ -97,4 +160,6 @@ def build_user_message(
     return "\n\n".join(partes)
 
 
-__all__ = ["CHAVE", "PROMPT_SEMENTE", "build_user_message"]
+__all__ = [
+    "CHAVE", "MAX_TRANSCRICAO_COM_BLUEPRINT_CHARS", "PROMPT_SEMENTE", "build_user_message", "minimizar",
+]

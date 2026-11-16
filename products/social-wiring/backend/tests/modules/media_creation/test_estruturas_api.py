@@ -582,6 +582,7 @@ class TestConfirmarPublicarArquivar:
         assert r.status_code == 422 and r.json()["code"] == "campo_desconhecido"
 
     def test_publicar_incomplete_draft_is_422_with_the_missing_items(self, adm, client):
+        adm.db.from_("cs_estruturas").update({"formula_origem": "admin"}).eq("id", E_DRAFT).execute()  # reviewed: the AI-draft gate passes
         adm.rpc.errors["cs_estrutura_publicar"] = FakeApiError("rascunho_incompleto", "formato,blocos")
         r = client.post(f"{BASE}/{E_DRAFT}/publicar", json={"expected_versao": 1})
         assert r.status_code == 422
@@ -589,6 +590,7 @@ class TestConfirmarPublicarArquivar:
                                       "faltando": ["formato", "blocos"]}
 
     def test_publicar_ok_and_inactive(self, adm, client):
+        adm.db.from_("cs_estruturas").update({"formula_origem": "admin"}).eq("id", E_DRAFT).execute()  # reviewed: the AI-draft gate passes
         adm.rpc.results["cs_estrutura_publicar"] = {"id": E_DRAFT, "versao": 2}
         assert client.post(f"{BASE}/{E_DRAFT}/publicar", json={"expected_versao": 1}).status_code == 200
         c = adm.rpc.last("cs_estrutura_publicar")
