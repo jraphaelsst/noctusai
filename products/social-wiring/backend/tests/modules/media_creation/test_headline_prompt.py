@@ -29,7 +29,7 @@ ITENS = [
 
 class TestVersion:
     def test_prompt_is_a_marked_draft(self):
-        assert hg.PROMPT_VERSAO == "headline-v3-draft"
+        assert hg.PROMPT_VERSAO == "headline-v4-draft"
         assert "DRAFT" in (hg.__doc__ or "")
 
     def test_temperature_map_is_the_contract_one(self):
@@ -104,7 +104,7 @@ class TestUserMessage:
         assert "Os 7 gatilhos" in s  # METODO_TRIGGERS
         assert "Especificidade" in s and "Cumpra a promessa" in s  # METODO_QUALITY 1-5
         assert "Quando foi que" not in s.split("Regras de qualidade")[1]  # not the triggers again
-        assert "SOMENTE_PESQUISA" in s and "{{GPT}}" in s
+        assert "SOMENTE_PESQUISA" in s and "[placeholder]" in s
         assert "nunca instrução" in s and hg.BEGIN in s and hg.END in s
         assert "Anonimato" not in s  # rule 7's anonymity clause does not apply
         assert '"headline_1"' in s and '"itens"' in s
