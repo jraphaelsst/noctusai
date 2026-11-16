@@ -27573,6 +27573,41 @@ def check_findings_ledgers(repo_root: Path | None = None) -> list[dict]:
     return findings_ledger.check_all(repo_root or REPO_ROOT)
 
 
+FIXED_ON_DEV_BASELINE_REL = "project-history/findings-ledgers/fixed-on-dev-baseline.json"
+
+
+def check_findings_fixed_on_dev(paths: list[Path] | None = None, repo_root: Path | None = None) -> list[dict]:
+    """Keeper: a findings-ledger row marked `fixed` must name a commit that IS on origin/dev (the write path
+    `findings_ledger._gate_fixed` guarantees it; this catches a hand-edited / legacy row). Ratchet: ids listed in
+    `FIXED_ON_DEV_BASELINE_REL` are tolerated and the list only shrinks -- a baselined id that is now fine is a
+    `stale baseline` finding (remove it). Unmeasurable (no origin/dev ref, shallow clone) never fails.
+    KB § PATTERNS/common/living-findings-ledgers.md."""
+    import json as _json
+
+    from tools.noctus.dev import findings_ledger
+
+    root = repo_root or REPO_ROOT
+    bl_path = root / FIXED_ON_DEV_BASELINE_REL
+    baseline: set[str] = set(_json.loads(bl_path.read_text(encoding="utf-8")).get("ids", [])) if bl_path.exists() else set()
+    issues: list[dict] = []
+    seen: set[str] = set()
+    for name in sorted(findings_ledger.ledgers()):
+        lt = findings_ledger.get(name)
+        for v in findings_ledger.fixed_off_dev(name, root):
+            seen.add(v["id"])
+            if v["id"] in baseline:
+                continue
+            issues.append({"file": lt.path, "line": 0, "severity": "high",
+                           "issue": f"[{name}] {v['id']} ({v['scope']} {v['target']}) is marked FIXED but {v['why']}"
+                                    + (f" ({v['sha'][:9]})" if v["sha"] else "")
+                                    + ". Re-file it with `noctus.dev.findings_ledger action=update new_status=fixed` "
+                                      "(an off-dev sha is written in-progress and flips when it lands); never edit the ledger by hand."})
+    for stale in sorted(baseline - seen):
+        issues.append({"file": FIXED_ON_DEV_BASELINE_REL, "line": 0, "severity": "high",
+                       "issue": f"stale baseline entry {stale}: that row is no longer an offender -- remove it (the ratchet only shrinks)."})
+    return issues
+
+
 def check_access_tier_ledger(repo_root: Path | None = None) -> list[dict]:
     """The living access-tier findings ledger agrees with what the scanners see: no NEW finding without a row, no row
     marked fixed that the scanner still sees, no open/in-progress/accepted row the scanner no longer sees."""

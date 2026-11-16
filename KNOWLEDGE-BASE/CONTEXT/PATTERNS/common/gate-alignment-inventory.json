@@ -1138,6 +1138,20 @@
     "pre-commit"
    ]
   },
+  "keeper:check-findings-fixed-on-dev": {
+   "mechanism": "write-path: mcp/noctusai/tools/noctus/dev/findings_ledger.py::_gate_fixed (fixed only for a sha on origin/dev) + flip_landed (task_branch landed, session_end_sweep, reconcile)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-16",
+   "source": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/living-findings-ledgers.md",
+   "shadow": {
+    "since": "2026-11-16",
+    "fires": 0,
+    "fix_rate": null
+   }
+  },
   "keeper:check-findings-ledger-visibility": {
    "severity": "",
    "kind": "keeper",
@@ -3871,6 +3885,18 @@
    "branch": "feat/tests-off-laptop",
    "gates": [
     "remote_test_default"
+   ]
+  },
+  {
+   "id": "D41",
+   "decision": "A findings-ledger row says fixed only for a commit that is on origin/dev; an off-dev fix is written in-progress and flips to fixed on landing",
+   "home": "KB § PATTERNS/common/living-findings-ledgers.md",
+   "construction": "findings_ledger._gate_fixed (write path: append/update/reconcile) + flip_landed (task_branch landed, session_end_sweep, reconcile)",
+   "gate": "keeper:check-findings-fixed-on-dev",
+   "telemetry": "gate events findings-fixed-on-dev: warn per downgrade, pass per auto-flip",
+   "branch": "feat/findings-fixed-on-dev",
+   "gates": [
+    "keeper:check-findings-fixed-on-dev"
    ]
   }
  ]
