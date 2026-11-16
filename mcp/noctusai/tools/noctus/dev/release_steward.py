@@ -405,6 +405,7 @@ class StewardStore:
                  deliverable_check: Callable[[str, str | None, str | None], dict[str, Any]] | None = None,
                  resolve_branch: Callable[[str], dict[str, Any]] | None = None,
                  scoped_check: Callable[[str, str], dict[str, Any]] | None = None,
+                 ci_resolve: Callable[[str, str], dict[str, Any]] | None = None,
                  repo_cwd: str | Path | None = None, scoped_deadline_s: float | None = None,
                  progress: Callable[[str], None] | None = None,
                  toolkit_check: Callable[[bool], dict[str, Any]] | None = None,
@@ -437,6 +438,10 @@ class StewardStore:
         self._scoped_queues = scoped_queues or (scoped_check is None and root is None)   # a check that queues reports `mark_admitted`
         self._scoped_check = scoped_check if scoped_check is not None else (
             self._parity_check() if root is None else None)
+        # Item 5 at filing = a GitHub Actions test.yml run (`gh-run:<id>`), not a local run (2026-11-16): production resolves
+        # (find or dispatch) it through ci_verdict; an explicit-root store (tests) has none unless it injects one.
+        self._ci_resolve = ci_resolve if ci_resolve is not None else (
+            (lambda b, h: _sibling("ci_verdict").resolve_for_filing(b, h)) if root is None else None)
         # Production (root=None -> ~/.noctus) runs the real gate; a store built on an explicit root
         # (tests, tooling) opts out unless it injects one - the gate reads the shared pointer ledger.
         self._inline_gate = inline_gate if inline_gate is not None else (
@@ -750,8 +755,20 @@ class StewardStore:
         scoped_run: dict[str, Any] | None = None
         # No verdict handed over => RUN the scoped check now (by construction: a verdict-less filing used to be refused
         # after the fact, 65/91 refusals). Only possible for one branch with a runner configured.
+        multi = bool(branches and len(branches) > 1)
+        auto_ci = (not run_scoped and not (verdict_ref or "").strip() and self._ci_resolve is not None and not multi)
         auto_scoped = (not run_scoped and not (verdict_ref or "").strip() and self._scoped_check is not None
-                       and not (branches and len(branches) > 1))
+                       and not multi and self._ci_resolve is None)
+        ci_run: dict[str, Any] | None = None
+        if auto_ci:  # NON-BLOCKING: find/dispatch the GitHub run and file at once; a pending run is item 5 pending
+            full_head = self.resolve_head(branch)
+            if not full_head:
+                return _err(f"cannot resolve {branch}'s head to judge on GitHub CI (is the branch local?)")
+            head_sha = full_head
+            ci_run = self._ci_resolve(branch, full_head)  # type: ignore[misc]
+            if not ci_run.get("ok"):
+                return _err(f"{ci_run.get('error')} (run_scoped=true runs the local CI-parity check instead)")
+            verdict_ref = ci_run["ref"]
         if run_scoped or auto_scoped:
             # NEVER silently ignored: run it, or refuse with the reason.
             if branches and len(branches) > 1:
@@ -774,6 +791,8 @@ class StewardStore:
                 contract = self._deliverable_check(b, head_sha if b == branch else None, verdict_ref)
                 if not contract.get("ok"):
                     break
+        if contract is not None and contract.get("verdict") == "pending_ci":
+            contract = {**contract, "ok": True}  # only item 5 is pending on a running GitHub run: filed, not refused
         if contract is not None and not contract.get("ok"):
             requester = {"session_id": session_id, "name": name or _short(session_id)}
             with self._locked("ship-requests"):
@@ -799,7 +818,7 @@ class StewardStore:
             self._append_event({
                 "ts": _iso(self.clock()), "event": "request", "slug": slug, "branch": branch,
                 "head_sha": head_sha, "products": products or [], "migrations": bool(migrations),
-                "notes": notes, "verdict_ref": verdict_ref,
+                "notes": notes, "verdict_ref": verdict_ref, "verdict_kind": verdict_kind(verdict_ref),
                 "requester": {"session_id": session_id, "name": name or _short(session_id)},
                 "branches": branches,
             })
@@ -811,6 +830,7 @@ class StewardStore:
                             if contract else None),
             "scoped": ({"ok": scoped_run.get("ok"), "detail": scoped_run.get("detail"), "verdict_ref": scoped_run.get("verdict_ref")}
                        if scoped_run is not None else None),
+            "ci": ({k: ci_run.get(k) for k in ("ref", "state", "detail", "dispatched")} if ci_run is not None else None),
             "updated_head": bool(before) and before.get("head_sha") != after.get("head_sha"),
             "steward": holder if holder and holder["state"] == "live" else None,
             "next": "KEEP BUILDING the remaining work; do not wait. release_steward action=mine shows the outcome.",
@@ -2618,6 +2638,10 @@ def verdict_report(store: str | Path | None, events: list[dict[str, Any]], *, si
                            "verdict_ok": bool(rec.get("ok")) if rec else None,
                            "suites_ran": len(rec.get("suites_ran") or []) if rec and "suites_ran" in rec else None,
                            "requester": c["who"]})
+    kinds: dict[str, int] = {}
+    for c in cur.values():
+        k = c["ev"].get("verdict_kind") or verdict_kind(c["ev"].get("verdict_ref")) or "none"
+        kinds[k] = kinds.get(k, 0) + 1
     green = [j for j in joined if j["verdict_ok"]]
     false_green = [j for j in green if j["outcome"] == "ejected"]
     zero = [j for j in green if j["suites_ran"] == 0]
@@ -2626,7 +2650,7 @@ def verdict_report(store: str | Path | None, events: list[dict[str, Any]], *, si
     for row in per_req.values():
         done = row["ejected"] + row["landed"]
         row["rejection_rate"] = round((row["ejected"] + row["refused"]) / max(1, done + row["refused"]), 3)
-    return {"ok": True, "status": "report", "verdicts": len(recs), "joined": len(joined), "unlinked_outcomes": len(unlinked),
+    return {"ok": True, "status": "report", "by_verdict_kind": kinds, "verdicts": len(recs), "joined": len(joined), "unlinked_outcomes": len(unlinked),
             "green_then_ejected": len(false_green), "green_then_landed": len(green) - len(false_green),
             "false_green_rate": round(len(false_green) / len(green), 3) if green else None,
             "zero_suite_green": len(zero), "zero_suite_green_ejected": len(zero_bad),
@@ -2640,6 +2664,13 @@ def verdict_report(store: str | Path | None, events: list[dict[str, Any]], *, si
 VERDICT_STORE_NAME = "deliverable-verdicts.ndjson"
 _VERDICT_REF_RE = re.compile(r"^ci-parity:([0-9a-f]{32})$")
 _FULL_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+_GH_RUN_RE = re.compile(r"^gh-run:\d+$")
+
+
+def verdict_kind(ref: str | None) -> str | None:
+    """Which kind of verdict a filing used (telemetry: `verdicts` splits on it): gh-run | ci-parity | None."""
+    ref = (ref or "").strip()
+    return "gh-run" if _GH_RUN_RE.match(ref) else "ci-parity" if _VERDICT_REF_RE.match(ref) else None
 
 
 def default_verdict_store(env: dict[str, str] | None = None) -> Path:
@@ -2746,6 +2777,9 @@ def validate_verdict_ref(ref: str | None, head: str | None, store: str | Path | 
     if not ref:
         return False, ("no verdict_ref and no scoped check ran: run `release_steward action=deliverable run_scoped=true` "
                        "(CI-blocking keepers + real-tree keeper tests, env-scrubbed) and file the `ci-parity:<id>` it returns")
+    if _GH_RUN_RE.match(ref):  # judged against GitHub itself (repo, workflow, full head sha, conclusion): not forgeable
+        _state, detail = _sibling("ci_verdict").judge(ref, head)
+        return _state == "green", detail
     m = _VERDICT_REF_RE.match(ref)
     if not m:
         return False, (f"free-form verdict_ref {ref[:80]!r} refused: a verdict_ref is `ci-parity:<id>` minted by a "
@@ -3297,14 +3331,17 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
                 rc5, o5, _e5 = git("rev-parse", "--verify", "--quiet", f"{head}^{{tree}}")
                 tree5 = o5.strip() if rc5 == 0 and o5.strip() else None
             ok5, why5 = validate_verdict_ref(verdict_ref, head, verdict_store, tree5)
-            items.append(_item(5, DELIVERABLE_ITEMS[4], ok5, why5))
+            items.append(_item(5, DELIVERABLE_ITEMS[4], ok5, why5,
+                               **({"pending": True} if not ok5 and why5.startswith(_sibling("ci_verdict").PENDING_PREFIX) else {})))
     except Exception as exc:  # noqa: BLE001
         items.append(_unmeasured(5, DELIVERABLE_ITEMS[4], exc))
 
     failing = [i["name"] for i in items if not i["ok"]]
     if failing:
         _record_failing_items(branch, items)
-    return {**out, "ok": not failing, "verdict": "deliverable" if not failing else "needs_resync",
+    pending_only = failing == [DELIVERABLE_ITEMS[4]] and any(i.get("pending") for i in items)
+    return {**out, "ok": not failing,
+            "verdict": "deliverable" if not failing else "pending_ci" if pending_only else "needs_resync",
             "items": items, "failing": failing, "kb": KB_POINTER}
 
 
@@ -3435,7 +3472,7 @@ def register(server) -> None:
             "inline_reason=orchestrator_owned|single_coherent_voice|shared_state|owner_directed + inline_note, else a "
             "warning names the specialists to dispatch) | mine (my requests' outcomes) | inbox [include_done] (pending, grouped by "
             "requester, with the batched drain list) | ack slug= outcome=enqueued|landed|ejected|deployed|withdrawn|needs_resync [dev_sha= "
-            "notes= (required for withdrawn|needs_resync)] (steward) | deliverable slug=|branch= [head_sha= verdict_ref= run_scoped=true] (READ-ONLY, open to all: the DELIVERY CONTRACT - head pushed + tree clean, merge-buildable (contains origin/dev OR merge-tree clean), migration numbers free, derived files current at the head, scoped keepers/tests green the way CI judges them - the CI-blocking keeper set + real-tree keeper tests, env-scrubbed, derived from test.yml (run_scoped=true runs it, minutes) OR a verdict_ref carrying `env-scrubbed`,`ci-keepers` and the head sha; verdict deliverable|needs_resync, failing items named; `request` runs it at filing and the guardian re-runs it before enqueue, which is then a pure push) | withdraw slug= [notes=] (the requester or steward takes a request back) | ask slug= question= [addressed_to=<role> deadline_min=30] (steward: kind=needs_info, one bounded question; unanswered past the deadline = escalate_to_owner in inbox) | position slug= notes= [ref=<ni-id>] (answer / stance) | decision slug= notes= (steward's final call) | role role=<role> [name= op=set|clear to_session_id=] (durable ROLE->session map: dev-steward "
+            "notes= (required for withdrawn|needs_resync)] (steward) | deliverable slug=|branch= [head_sha= verdict_ref= run_scoped=true] (READ-ONLY, open to all: the DELIVERY CONTRACT - head pushed + tree clean, merge-buildable (contains origin/dev OR merge-tree clean), migration numbers free, derived files current at the head, scoped keepers/tests green the way CI judges them - by default a GitHub Actions test.yml run on the exact head (request finds or dispatches it and files `verdict_ref=gh-run:<id>` at once; a still-running run is item 5 PENDING, verdict pending_ci, never a resync), or run_scoped=true for the local CI-parity run (minutes; `ci-parity:<id>`); verdict deliverable|needs_resync, failing items named; `request` runs it at filing and the guardian re-runs it before enqueue, which is then a pure push) | withdraw slug= [notes=] (the requester or steward takes a request back) | ask slug= question= [addressed_to=<role> deadline_min=30] (steward: kind=needs_info, one bounded question; unanswered past the deadline = escalate_to_owner in inbox) | position slug= notes= [ref=<ni-id>] (answer / stance) | decision slug= notes= (steward's final call) | role role=<role> [name= op=set|clear to_session_id=] (durable ROLE->session map: dev-steward "
             "is derived from the lease, also branch-steward:<branch>, agents, products/sw, ...; any session sets its own, "
             "steward sets others') | verdicts [since=<ISO>] (READ-ONLY: joins item-5 verdict records to drain outcomes by head sha / verdict_ref - false-green rate (green then ejected), the zero-suite split, rejection rate per requester) | roles (the map, stale/dead sessions flagged) | reconcile [confirm=True] (steward: ack "
             "every inbox request already in origin/dev - `git cherry` - as landed; inbox/status list them as already_landed, "
