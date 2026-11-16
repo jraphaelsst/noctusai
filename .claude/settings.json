@@ -37,6 +37,15 @@
             "timeout": 3
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-wire-worktree-toolchain.py\"",
+            "timeout": 300
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -204,6 +213,15 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-inject-open-findings.py\"",
             "timeout": 15
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-wire-worktree-toolchain.py\"",
+            "timeout": 300
           }
         ]
       }

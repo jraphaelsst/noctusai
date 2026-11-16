@@ -719,15 +719,15 @@ def test_derive_product_repoints_matches_real_products():
 
 
 def test_plan_env_wiring_reports_missing_toolkit_node_modules(tmp_path):
-    """Absent toolkit node_modules → REPORTED, not silently omitted."""
+    """Absent PRIMARY toolkit node_modules → an install into the worktree is PLANNED (never a silent omission)."""
     primary = tmp_path / "primary"
     wt_root = primary / ".claude" / "worktrees" / "zeta"
     _seed_primary(primary, slugs=("zeta",), with_toolkit_nm=False)
     _seed_worktree_tree(wt_root)
 
     wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
-    assert not [w for w in wire if w["link"].endswith("mcp/noctusai/node/node_modules")]
-    assert [s for s in skipped if "primary toolkit node_modules absent" in s["reason"]]
+    (spec,) = [w for w in wire if w["link"].endswith("mcp/noctusai/node/node_modules")]
+    assert spec["kind"] == "node_install" and "primary toolkit node_modules absent" in spec["why"]
 
 
 def test_plan_env_wiring_reports_missing_primary_dotenv(tmp_path):
