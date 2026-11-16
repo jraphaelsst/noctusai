@@ -152,6 +152,14 @@ def default_ttl(env: dict[str, str] | None = None) -> int:
 SCOPED_DEADLINE_ENV = "NOCTUS_STEWARD_SCOPED_DEADLINE_S"
 SCOPED_DEADLINE_DEFAULT_S = 3600.0
 SCOPED_PROGRESS_EVERY_S = 60.0
+#: Time kept for the run itself when the scoped check queues for the heavy slot inside the request's deadline.
+SCOPED_RUN_RESERVE_S = 900.0
+
+
+def slot_wait_budget_s(deadline_s: float) -> float:
+    """How long the scoped check may QUEUE for the machine-wide heavy slot: the request's own wall-clock deadline minus a
+    reserve for the run, never under half of it (so a short deadline still waits). Past it = UNMEASURED naming the wait."""
+    return max(deadline_s - SCOPED_RUN_RESERVE_S, deadline_s / 2.0)
 
 
 def _stderr_progress(msg: str) -> None:
@@ -396,7 +404,8 @@ class StewardStore:
         # `request(run_scoped=True)` runs the CI-parity check (minutes) and files with the ref it mints. Production runs
         # the real one; an explicit-root store (tests) has none unless it injects one - and then REFUSES the flag.
         self._scoped_check = scoped_check if scoped_check is not None else (
-            export_ci_parity_check() if root is None else None)
+            export_ci_parity_check(slot_wait_s=slot_wait_budget_s(self.scoped_deadline_s), progress=self.progress)
+            if root is None else None)
         # Production (root=None -> ~/.noctus) runs the real gate; a store built on an explicit root
         # (tests, tooling) opts out unless it injects one - the gate reads the shared pointer ledger.
         self._inline_gate = inline_gate if inline_gate is not None else (
@@ -911,7 +920,8 @@ class StewardStore:
             elif stored_ref:
                 verdict_ref = stored_ref
         if run_scoped:  # minutes: judge the head the way CI does (CI-blocking keepers + real-tree tests, env-scrubbed)
-            res = deliverable(branch, head_sha=head_sha, verdict_ref=verdict_ref, scoped_check=export_ci_parity_check())
+            res = deliverable(branch, head_sha=head_sha, verdict_ref=verdict_ref, scoped_check=export_ci_parity_check(
+                slot_wait_s=slot_wait_budget_s(self.scoped_deadline_s), progress=self.progress))
         else:
             check = self._deliverable_check or (lambda b, h, v: deliverable(b, head_sha=h, verdict_ref=v))
             res = check(branch, head_sha, verdict_ref)
@@ -2624,8 +2634,17 @@ def _git_init_export(tree: str | Path, head: str, timeout: int = 300) -> str | N
     return None
 
 
-def _hw_slot(job: str):
-    return _sibling("hw_admission").heavy_slot(job)
+def _hw_slot(job: str, wait_s: float | None = None, progress: Callable[[str], None] | None = None):
+    """Queue for the machine-wide heavy slot through hw_admission's own FIFO wait (no loop of ours), up to `wait_s`."""
+    return _sibling("hw_admission").heavy_slot(job, wait_s=wait_s, progress=progress)
+
+
+def slot_refusal_detail(adm: Any) -> str:
+    """UNMEASURED text for a scoped run that never got the heavy slot: how long it waited and who held it."""
+    held = "; ".join(getattr(adm, "blocked_by", None) or []) or "holders unknown"
+    waited = int(getattr(adm, "waited_s", 0) or 0)
+    return (f"UNMEASURED: no machine-wide heavy slot after queueing {waited}s ({getattr(adm, 'verdict', '?')}; {held}) - "
+            "item 5 runs CI's suites and is never judged green unrun")
 
 
 class _CiParityTimeout(Exception):
@@ -2648,7 +2667,9 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                            base_env: dict[str, str] | None = None,
                            verdict_store: str | Path | None = None,
                            admit: Callable[[str], Any] | None = None,
-                           timing_store: str | Path | None = None) -> Callable[[str, str], dict[str, Any]]:
+                           timing_store: str | Path | None = None,
+                           slot_wait_s: float | None = None,
+                           progress: Callable[[str], None] | None = None) -> Callable[[str, str], dict[str, Any]]:
     """Real default for `deliverable(scoped_check=)`: judge the head the way CI does. Export it, prime the
     hermetic state CI primes, then - in a SCRUBBED environment - run (1) every `cli.py --check-*` keeper CI
     runs as a blocking step, (2) the real-tree keeper tests (`ci_keeper_test_ids`) and (3) the suites of the
@@ -2666,7 +2687,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
     retry at x1.5 when it times out; a stage that times out twice is `UNMEASURED` naming the stage (never green).
     `timeout=` overrides every stage."""
     py = python or sys.executable
-    slot = admit or _hw_slot
+    slot = admit or (lambda job: _hw_slot(job, wait_s=slot_wait_s, progress=progress))
     cs = _sibling("ci_scope")
     if timing_store is None and verdict_store is not None:  # a hermetic verdict store gets a hermetic timing store beside it
         timing_store = Path(verdict_store).parent / STAGE_TIMING_STORE_NAME
@@ -2694,8 +2715,7 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                                            f"(item 5 judges the MERGE, not the head): {why}"}
         with slot(f"deliverable:{branch}") as adm:
             if adm is not None and not getattr(adm, "admitted", True):
-                return {"ok": False, "detail": f"UNMEASURED: no machine-wide heavy slot ({getattr(adm, 'verdict', '?')}) - "
-                                               "item 5 runs CI's suites and is never judged green unrun"}
+                return {"ok": False, "detail": slot_refusal_detail(adm)}
             return _parity_run(head, mtree, scope, changed)
 
     def _parity_run(head: str, mtree: str, scope: Any, changed: list[str]) -> dict[str, Any]:
@@ -3077,6 +3097,17 @@ def deliverable_refusal(result: dict[str, Any]) -> str:
 
 ACTIONS = ("status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack",
            "role", "roles", "reconcile", "withdraw", "ask", "position", "decision", "deliverable", "verdicts")
+
+
+EXIT_OK, EXIT_ERROR, EXIT_NEEDS_RESYNC = 0, 1, 3
+
+
+def cli_exit_code(result: dict[str, Any]) -> int:
+    """Process exit code for a steward result: 0 = done/filed, 3 = needs_resync (the delivery contract refused it: fix the
+    named items on the branch and re-request), 1 = any other failure. A refusal must never read as success to a caller."""
+    if result.get("status") == "needs_resync" or result.get("verdict") == "needs_resync":
+        return EXIT_NEEDS_RESYNC
+    return EXIT_OK if result.get("ok") else EXIT_ERROR
 
 
 def run_action(action: str, session_id: str | None, *, store: StewardStore | None = None,

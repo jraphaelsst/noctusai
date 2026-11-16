@@ -44,13 +44,30 @@ def test_refreshes_heartbeat_and_pid_of_own_role_only(tmp_path):
     assert rows["sess-b"]["heartbeat_ts"] == 1000.0 and rows["sess-b"]["claude_pid"] == 222
 
 
-def test_never_touches_or_reassigns_the_lease(tmp_path):
+def test_renews_only_the_holders_own_lease_and_never_reassigns_it(tmp_path):
     st = StewardStore(tmp_path)
     assert st.claim("sess-g", name="g", reason="t", claude_pid=os.getpid()).get("ok")
-    before = (tmp_path / "release-steward.json").read_text()
+    lease = json.loads((tmp_path / "release-steward.json").read_text())
+    stale = dict(lease, heartbeat_ts=1.0, heartbeat_at="1970-01-01T00:00:01Z")
+    (tmp_path / "release-steward.json").write_text(json.dumps(stale))
+    assert st.holder()[1] == "stale"
+    # another session's prompt never renews it
     hb.touch({"session_id": "sess-other"}, root=tmp_path, claude_pid=4242)
-    hb.touch({"session_id": "sess-g"}, root=tmp_path, claude_pid=4242)
-    assert (tmp_path / "release-steward.json").read_text() == before
+    assert json.loads((tmp_path / "release-steward.json").read_text()) == stale
+    # the holder's own prompt renews the heartbeat (+ pid); holder, name, reason, claimed_at stay as they were
+    hb.touch({"session_id": "sess-g"}, root=tmp_path, claude_pid=os.getpid())
+    after = json.loads((tmp_path / "release-steward.json").read_text())
+    assert after["heartbeat_ts"] > 1.0 and st.holder()[1] == "live"
+    for key in ("session_id", "session_name", "reason", "claimed_at", "ttl_s"):
+        assert after[key] == stale[key]
+
+
+def test_lease_touch_is_false_for_a_non_holder_and_with_no_lease(tmp_path):
+    st = StewardStore(tmp_path)
+    assert hb.renew_own_lease(st, "sess-x", None) is False and not (tmp_path / "release-steward.json").exists()
+    assert st.claim("sess-g", name="g", reason="t", claude_pid=os.getpid()).get("ok")
+    assert hb.renew_own_lease(st, "sess-x", None) is False and hb.renew_own_lease(st, None, None) is False
+    assert hb.renew_own_lease(st, "sess-g", None) is True
 
 
 def test_throttled_within_window(tmp_path):

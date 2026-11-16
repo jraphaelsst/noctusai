@@ -109,6 +109,14 @@ class TestTelemetryAndWalls:
         assert [r["outcome"] for r in rows] == ["deny", "pass"]
         assert rows[0]["guard"] == "keeper:check-foo" and rows[0]["target"] == "a.py,b.py" and rows[0]["kind"] == "keeper"
 
+    def test_advisory_invocation_logs_warn_not_deny(self, tmp_path, monkeypatch):
+        log = tmp_path / "ev.ndjson"
+        monkeypatch.setenv("NOCTUS_GUARD_EVENT_LOG", str(log))
+        monkeypatch.setenv("NOC_GATE_ADVISORY", "1")
+        ga.record_cli_exit(["--check-foo"], 1)
+        ga.record_cli_exit(["--check-foo"], 0)
+        assert [json.loads(l)["outcome"] for l in log.read_text().splitlines()] == ["warn", "pass"]
+
     def test_effective_false_positive_is_a_refusal_never_followed_by_a_pass(self):
         ev = [{"gate": "g", "outcome": "deny", "ts": "1", "session": "s1", "target": "a"},
               {"gate": "g", "outcome": "pass", "ts": "2", "session": "s1", "target": "a"},

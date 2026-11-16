@@ -23,7 +23,6 @@
   "keeper:check-contract-field-provenance-map",
   "keeper:check-db-guard-registry-static",
   "keeper:check-dependabot-product-coverage",
-  "keeper:check-doc-staleness",
   "keeper:check-eight-way-sync",
   "keeper:check-embed-funnel-self-configures",
   "keeper:check-every-test-file-is-gated",

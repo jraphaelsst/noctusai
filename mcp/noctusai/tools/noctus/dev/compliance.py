@@ -25512,8 +25512,15 @@ def check_stale_branch_pointers(
     session: str | None = None,
     repo_root: Path | None = None,
     run=None,
+    heal=None,
+    healed_out: list[str] | None = None,
 ) -> list[dict]:
     """SAFETY NET behind the pointer-lifecycle mechanism (2026-09-23).
+
+    `heal(branch, note) -> {"ok": bool, ...}` (optional): a pointer whose branch is PROVABLY landed on origin/dev with
+    its worktree gone is flipped to `shipped` by it instead of being reported (a blocked unrelated push is the cost
+    the safety net used to charge for the lifecycle's miss). A heal that fails leaves the issue as before; healed
+    branches are appended to `healed_out`.
 
     The mechanism is `task_branch`: start claims `on_going`, integrate writes
     `integrated-worktree-live`, cleanup writes `shipped`; `session_end_sweep`
@@ -25577,6 +25584,15 @@ def check_stale_branch_pointers(
             fork_sha=wts.fork_sha_from_pointer_base(row.get("base", "")))
         if not landed:
             continue
+        if heal is not None:
+            try:
+                healed = heal(branch, f"healed by check_stale_branch_pointers: branch landed on {base} ({how}), worktree gone")
+            except Exception as exc:  # noqa: BLE001 - a failed heal falls back to reporting the pointer
+                healed = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            if healed.get("ok"):
+                if healed_out is not None:
+                    healed_out.append(branch)
+                continue
         own = bool(me) and row.get("session") == me
         issues.append({
             "product": "<platform>",
