@@ -692,6 +692,58 @@ def suggest(result: dict[str, Any]) -> str:
     return "\n".join(lines) or "nothing to update"
 
 
+# ── edit-time coverage map (the hint that makes the commit leg a net, not a wall) ──────────────
+#: Precomputed {doc: [globs]} the PostToolUse hook reads on the hot path (stdlib-only, no git walk).
+COVERAGE_CACHE_REL = ".claude/cache/doc-coverage.json"
+
+
+def coverage_map(root: Path) -> dict[str, list[str]]:
+    """{living doc: code globs it is accountable for}, STRUCTURAL_RULES docs included -- the exact
+    set `check_range` couples against, so the edit-time hint and the commit leg can never disagree."""
+    out: dict[str, list[str]] = {}
+    for doc in load_docs(root):
+        cov = doc_coverage(root, doc)
+        if cov:
+            out[doc.rel] = cov
+    for rule in STRUCTURAL_RULES:
+        for dpath in rule["docs"]:
+            if (root / dpath).is_file():
+                out[dpath] = sorted(set(out.get(dpath, [])) | set(rule["covers"]))
+    return out
+
+
+def covering_docs(cmap: dict[str, list[str]], path: str) -> list[str]:
+    """Docs whose coverage globs match repo-relative `path` (sorted, stable)."""
+    return sorted(d for d, globs in cmap.items() if any(_glob_match(path, g) for g in globs))
+
+
+def write_coverage_cache(root: Path) -> dict[str, Any]:
+    """(Re)build the cache the hook reads; stamped with HEAD so a stale map is detectable, never fatal."""
+    head = _git(root, "rev-parse", "HEAD", timeout=10)
+    cmap = coverage_map(root)
+    dest = root / COVERAGE_CACHE_REL
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"stamp": head.stdout.strip() if head and head.returncode == 0 else "",
+                               "docs": cmap}, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(dest)
+    return {"ok": True, "docs": len(cmap), "path": str(dest)}
+
+
+def covering_docs_for_paths(root: Path, paths: list[str]) -> dict[str, list[str]]:
+    """{path: covering docs} for the paths that have any; reads the cache, rebuilds it when absent."""
+    cache = root / COVERAGE_CACHE_REL
+    cmap: dict[str, list[str]] | None = None
+    try:
+        cmap = json.loads(cache.read_text(encoding="utf-8")).get("docs")
+    except (OSError, ValueError):
+        cmap = None
+    if not isinstance(cmap, dict):
+        cmap = coverage_map(root)
+    res = {p: d for p in paths if (d := covering_docs(cmap, p.replace("\\", "/").removeprefix("./")))}
+    return res
+
+
 # ── keeper wrapper + MCP ────────────────────────────────────────────────────────
 def check_doc_staleness(repo_root: Path | None = None, rev_range: str | None = None) -> list[dict]:
     """Keeper entrypoint: range given -> coupling; else -> NEW claim staleness vs the ratchet."""
@@ -731,4 +783,5 @@ def register(server) -> None:
 
 
 __all__ = ["check_doc_staleness", "check_range", "check_staged", "STAGED", "check_claims", "check_tree", "age_report",
-           "write_baseline", "load_baseline", "parse_covers", "register"]
+           "write_baseline", "load_baseline", "parse_covers", "coverage_map", "covering_docs", "write_coverage_cache",
+           "covering_docs_for_paths", "COVERAGE_CACHE_REL", "register"]

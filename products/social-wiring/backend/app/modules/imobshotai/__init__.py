@@ -1,7 +1,7 @@
 """`imobshotai` — the ImobShotAI photo funnel on top of Edição de Fotos (IMOBSHOTAI-CONTRACT.md v1).
 
     etapa.py        the card-stage projection (pure)
-    repository.py   `imobshot_cards` / `imobshot_eventos` port: Supabase (atomic RPCs) + in-memory
+    repository.py   `imobshot_cards` / `imobshot_card_events` port: Supabase (atomic RPCs) + in-memory
     service.py      `sincronizar_etapa` + the card read models (batched reads)
     router.py       POST /lotes · GET /cards · GET /cards/{id}
     worker_hook.py  `fotos.lote_pronto` -> sync the card

@@ -4,8 +4,9 @@
 A session's guardian/steward role row only refreshed when the session called `release_steward`, so a
 long-quiet but ALIVE session aged toward 'dead' (`StewardStore.session_state`: recorded pid gone AND heartbeat
 older than the TTL). This hook calls the existing `StewardStore.role_touch(session_id, claude_pid)` for the
-payload's session_id - nothing else: it never claims, hands off or reassigns a lease or role, never touches
-another session's rows, and `role_touch` never touches the lease itself.
+payload's session_id - nothing else: it never claims, hands off or reassigns a lease or role and never touches
+another session's rows; `lease_touch` renews ONLY a lease this session already holds (a quiet steward's lease
+no longer ages into a guard refusal of its own session).
 
 ADVISORY by construction (deliberately NOT `run_guard`, which fails closed): always exits 0, fails OPEN, a ~1s
 internal deadline, and a per-session throttle (at most once per THROTTLE_S). A telemetry row is written on
@@ -21,6 +22,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -79,6 +81,32 @@ def _telemetry(reason: str, session_id: str | None) -> None:
         pass
 
 
+def renew_own_lease(store, session_id: str, claude_pid: int | None) -> bool:
+    """Renew the LEASE when `session_id` is its holder (2026-11-14): a quiet-but-alive steward's lease aged past its
+    TTL (or kept a dead pid) and the steward guard then refused its own session. Uses the store's EXISTING lease
+    I/O under its own lock; rewrites only heartbeat (+ pid) of a lease this session already holds - never claims,
+    hands off or touches another session's lease. Best-effort (never raises); True when renewed."""
+    try:
+        cur = store._read_lease()  # unlocked read: the common case (not the holder) pays no lock
+        if not cur or cur.get("corrupt") or cur.get("session_id") != session_id:
+            return False
+        with store._locked("release-steward"):
+            cur = store._read_lease()
+            if not cur or cur.get("corrupt") or cur.get("session_id") != session_id:
+                return False
+            now = store.clock()
+            cur["heartbeat_at"] = datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds")
+            cur["heartbeat_ts"] = now
+            if claude_pid:
+                cur["claude_pid"] = claude_pid
+            elif cur.get("claude_pid") and not store.pid_alive(cur.get("claude_pid")):
+                cur["claude_pid"] = None  # the holder demonstrably lives; a dead recorded pid falls back to the TTL
+            store._write_lease(cur)
+        return True
+    except Exception:  # noqa: BLE001 - advisory: never changes the always-0 outcome
+        return False
+
+
 def touch(payload: dict, *, root: Path | None = None, now: float | None = None,
           claude_pid: int | None = None, find_pid=claude_ancestor_pid) -> str:
     """The whole job, injectable for tests. Returns `touched` | `throttled` | `no-session`."""
@@ -97,7 +125,9 @@ def touch(payload: dict, *, root: Path | None = None, now: float | None = None,
             pid = find_pid()
         except Exception:  # noqa: BLE001 - no pid => heartbeat only
             pid = None
-    mod.StewardStore(Path(base)).role_touch(session_id, pid)
+    store = mod.StewardStore(Path(base))
+    store.role_touch(session_id, pid)
+    renew_own_lease(store, session_id, pid)
     return "touched"
 
 

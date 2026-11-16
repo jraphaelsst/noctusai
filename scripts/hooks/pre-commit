@@ -1964,7 +1964,7 @@ fi
 _dsg="$(git rev-parse --git-dir 2>/dev/null || true)"
 if [[ -z "${NOCTUS_SKIP_DOC_STALENESS:-}" && -n "$_dsg" && ! -f "$_dsg/MERGE_HEAD" ]] \
    && git symbolic-ref -q HEAD >/dev/null 2>&1 && have_py; then
-    _ds_out="$("$PY" "$CLI" --check-doc-staleness --doc-staged --worktree-path "$REPO_ROOT" 2>&1)" || {
+    _ds_out="$(NOC_GATE_ADVISORY=1 "$PY" "$CLI" --check-doc-staleness --doc-staged --worktree-path "$REPO_ROOT" 2>&1)" || {
         echo "[pre-commit] doc-staleness (heads-up): staged code changes under docs that are NOT staged." >&2
         echo "$_ds_out" | grep -v "env_bootstrap" | sed 's/^/[pre-commit] /' >&2
         echo "[pre-commit] Update + stage the listed docs NOW (same commit) — commit-msg will block otherwise." >&2

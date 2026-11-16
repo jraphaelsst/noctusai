@@ -206,7 +206,7 @@ routes whose scope it holds (all other routes keep 403 `user_required`). Token l
 | **PKG-BUILD** (engineer) | `mcp/noctusai/tools/noctus/dev/agent_package*.py` (build, pull, context_sync, learnings_promote) + tests |
 | **BE-API** (engineer) | `products/agents/backend/` migration + importer additions + §I routes + scopes + tests |
 | **FE-STUDIO** (engineer) | `products/agents/frontend/src/pages/studio/**` kind badge, Aprendizados tab, project collections |
-| **HOOKS** (engineer) | `scripts/hooks/` noc pre-push §F + consumer hook template |
+| **HOOKS** (engineer) | `scripts/hooks/` noc pre-push §F + consumer hook template (other hooks there, e.g. the Claude PostToolUse edit hints, are outside this contract) |
 | **CONTENT** (orchestrator) | `products/agents/packages/{mobile-dev,nos-no-limiar}/` |
 
 ## §M · DB-source agents (A11) — the mirror contract
