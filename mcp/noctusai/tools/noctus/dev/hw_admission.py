@@ -582,6 +582,19 @@ def _typical_run_s(default: float = 300.0, last_n: int = 2000) -> float:
     return sorted(ds)[len(ds) // 2] if ds else default
 
 
+def stderr_progress(msg: str) -> None:
+    """The default queue-progress sink: one line on stderr (stdout stays the tool's JSON)."""
+    print(f"HW-WAIT {msg}", file=sys.stderr, flush=True)
+
+
+def queued_heavy_slot(job: str, **kw: Any):
+    """`heavy_slot` that reports its wait by construction: every caller that admits through here (gate_sweep,
+    predeploy_check, task_branch integrate) prints a progress line while queued instead of sitting silent for hours.
+    An explicit `progress=` (a callable, or None to silence) wins."""
+    kw.setdefault("progress", stderr_progress)
+    return heavy_slot(job, **kw)
+
+
 def shared_deadline_admit(total_wait_s: float, now: Callable[[], float] = time.monotonic,
                           slot: Callable[..., Any] | None = None):
     """An `admit` for a multi-gate run (task_branch integrate): every gate queues
@@ -590,7 +603,7 @@ def shared_deadline_admit(total_wait_s: float, now: Callable[[], float] = time.m
     deadline = now() + total_wait_s
 
     def admit(job: str, **kw: Any):
-        return (slot or heavy_slot)(job, wait_s=max(0.0, deadline - now()), **kw)
+        return (slot or queued_heavy_slot)(job, wait_s=max(0.0, deadline - now()), **kw)
     return admit
 
 

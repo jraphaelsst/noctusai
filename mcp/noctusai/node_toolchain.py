@@ -49,6 +49,18 @@ class Toolchain:
         return ["node", str(script)], None
 
 
+def repo_toplevel(cwd: Path | str | None = None) -> Path:
+    """The repository TOPLEVEL for `cwd` (default: the process cwd); `cwd` itself when git cannot say. A repo root derived
+    from the cwd is wrong the moment the process runs from a subdirectory (`mcp/noctusai/mcp/noctusai/node`, 2026-11-15)."""
+    here = Path(cwd) if cwd is not None else Path.cwd()
+    try:
+        out = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=here, capture_output=True, text=True,
+                             timeout=10, check=False).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return here
+    return Path(out) if out else here
+
+
 def _git_common_checkout(worktree: Path) -> Path | None:
     try:
         out = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=worktree,

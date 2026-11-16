@@ -9,8 +9,14 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "mcp" / "noctusai" / "tools" / "noctus" / "dev"))
-import ci_shards  # noqa: E402
+# Loaded by path: putting tools/noctus/dev on sys.path shadows mcp/noctusai/context.py (the dev dir has its own context.py)
+# for every later test in the shard (2026-11-16: test_server_build / test_strict_tool_arguments ImportError).
+import importlib.util  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("ci_shards", REPO / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "ci_shards.py")
+ci_shards = importlib.util.module_from_spec(_spec)
+sys.modules["ci_shards"] = ci_shards
+_spec.loader.exec_module(ci_shards)
 
 TABLE = REPO / ci_shards.DEFAULT_TABLE
 TOTAL = 4
