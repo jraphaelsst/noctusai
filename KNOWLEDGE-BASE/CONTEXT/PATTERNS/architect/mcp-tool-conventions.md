@@ -506,6 +506,13 @@ Consumers: the four `compliance.py` AST scans (silent-refusal, motion-import, ly
 `task_branch` `wire_env` refuses to link a toolkit install whose lockfile differs (`node_toolchain.lockfile_verdict`). A new node-backed keeper calls the resolver; a hand-rolled `subprocess.run(["node", ...])` is the shape this section retires (test: `test_node_toolchain.py::TestEveryKeeperUsesTheSharedResolver`).
 
 
+### 10a. Fresh worktrees are provisioned by construction; tool output is capped by construction (2026-11-15)
+
+- **Node toolchain.** `node_toolchain.provision` = `resolve` + a LOUD `npm ci --prefix` when there is no lockfile-identical install to link (a `node_modules` symlink is removed first - `npm ci` would otherwise wipe the primary's install through it). `task_branch` `wire_env` plans a `node_install` spec instead of skipping; the harness's agent worktrees get the same via `scripts/hooks/claude-wire-worktree-toolchain.py` (SessionStart + SubagentStart; link-only for sibling trees). Closes `NOC-REMEDIATE[worktree-pglite-node-modules]`.
+- **`NOC_REQUIRE_REAL_PG=1` fails, never skips.** Every PGlite fixture path goes through `noctusai_lib.testing.pglite` (`pglite_available`, `pglite_replay_skipif`, `real_pg_required`); a module that drives `replay.mjs` directly uses `pytest.mark.skipif(**pglite_replay_skipif())`, never a hand-rolled `shutil.which` expression.
+- **Stale pre-push.** The hook carries `# NOC-HOOK-STAMP` / `# NOC-HOOK-LEGS`; an installed copy older than the tree's hands the push to the tree's hook (once) or prints `NOC-REMEDIATE[hook-leg-absent-loud]` naming the absent legs. Bump the stamp with every new leg. Closes `NOC-REMEDIATE[hook-leg-absent-loud]`.
+- **Output cap.** `tool_output_cap.install_output_cap(server)` (after `install_strict_tool_arguments`): a result over ~50k chars becomes a summary + `full_output_path` (full JSON under `~/.noctus/tool-output`, newest 50 kept). `session_end_sweep` also returns a compact form itself (`verbose=true` for the raw). Closes `NOC-REMEDIATE[tool-output-cap]`.
+
 ## 11. Every outbound HTTP call has a timeout - ONE helper (`tools/noctus/dev/_http.py`)
 
 A per-socket timeout bounds one `recv`, never the call: a peer that dribbles bytes or holds a half-closed (CLOSE_WAIT) socket resets it forever.

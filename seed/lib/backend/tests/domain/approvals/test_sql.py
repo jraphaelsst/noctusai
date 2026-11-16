@@ -16,6 +16,7 @@ from noctusai_lib.domain.approvals import (
     approvals_migration,
     table_specs,
 )
+from noctusai_lib.testing.pglite import pglite_replay_skipif
 
 SCHEMA = "aprx"
 ROOT = Path(__file__).resolve().parents[6]
@@ -83,10 +84,7 @@ def test_the_organ_is_registered_and_its_registry_output_matches_the_generator()
     assert {p.probe_key for p in organ_guard_probes("approvals", SCHEMA)} == {p.probe_key for p in approvals_guard_probes(SCHEMA)}
 
 
-_REAL = pytest.mark.skipif(
-    shutil.which("node") is None or not HARNESS.exists() or not (NODE_DIR / "node_modules" / "@electric-sql").exists(),
-    reason="PGlite replay harness unavailable (needs `node` and mcp/noctusai/node/node_modules)",
-)
+_REAL = pytest.mark.skipif(**pglite_replay_skipif())
 
 PRELUDE = f"""
 CREATE SCHEMA IF NOT EXISTS {SCHEMA};
