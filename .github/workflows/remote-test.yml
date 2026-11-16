@@ -8,8 +8,6 @@ name: Remote test
 # to the exact head sha (the job refuses a moved ref; the caller re-checks the run's head_sha); a re-dispatch of the same
 # command on the same ref cancels the stale run.
 on:
-  push:
-    branches: [feat/tests-off-laptop]  # TEMP: registers the workflow before it reaches the default branch
   workflow_dispatch:
     inputs:
       ref:
