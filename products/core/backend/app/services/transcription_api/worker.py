@@ -102,8 +102,13 @@ class TranscricaoJobHandler:
             transcriber = s.transcriber()
             extra = {"palavras": True} if (job.payload or {}).get("palavras") else {}
             result = await asyncio.wait_for(
+                # The cap is core's configured limit (CONTRACT §3), never the file's own
+                # probed duration: the transcriber's decode can run a few ms past the
+                # upload probe (a 3.68 s WAV probed at 3.6786 s), which failed as
+                # duracao_excedida. The upload already rejected anything over the limit.
                 transcriber.transcribe(
-                    blob.data, language=row.get("idioma") or "pt", max_seconds=duracao_s, **extra
+                    blob.data, language=row.get("idioma") or "pt",
+                    max_seconds=s.limits.max_duration_s, **extra
                 ),
                 timeout=L.call_timeout_s(duracao_s),
             )
