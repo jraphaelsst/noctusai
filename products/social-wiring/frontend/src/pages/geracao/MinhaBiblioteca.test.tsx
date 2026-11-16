@@ -15,11 +15,13 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.f
 
 const m = vi.hoisted(() => ({
   perfis: vi.fn(),
+  pagina: vi.fn(),
   refs: vi.fn(),
   verificar: vi.fn(),
   contas: vi.fn(),
   solicitar: vi.fn(),
   removerRef: vi.fn(),
+  sincronizar: vi.fn(),
   criar: vi.fn(),
   admin: vi.fn(),
   optouts: vi.fn(),
@@ -31,13 +33,15 @@ vi.mock("@/hooks/useMarcas", () => ({
   useMarcas: () => ({ data: [{ id: "m1", name: "Marca 1" }], isPending: false }),
 }));
 vi.mock("@/hooks/geracao/useBiblioteca", () => ({
+  PERFIS_POR_PAGINA: 30,
   usePerfisMonitorados: () => m.perfis(),
+  usePerfisBiblioteca: () => m.pagina(),
   useReferencias: () => m.refs(),
   useVerificarPerfil: (h: string) => m.verificar(h),
   useContasDescoberta: () => m.contas(),
   useSolicitarPerfil: () => ({ mutateAsync: m.solicitar, isPending: false }),
   useCriarReferencias: () => ({ mutateAsync: m.criar, isPending: false }),
-  useSincronizarPerfil: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSincronizarPerfil: () => ({ mutateAsync: m.sincronizar, isPending: false }),
   useAtualizarPerfil: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useRemoverPerfil: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useRemoverReferencia: () => ({ mutateAsync: m.removerRef, isPending: false }),
@@ -78,6 +82,7 @@ async function abrirSolicitar() {
 beforeEach(() => {
   vi.clearAllMocks();
   m.perfis.mockReturnValue(ok([perfil()]));
+  m.pagina.mockReturnValue(ok({ items: [perfil()], total: 1 }));
   m.refs.mockReturnValue(
     ok([
       {
@@ -107,13 +112,16 @@ beforeEach(() => {
 
 describe("Minha Biblioteca", () => {
   it("says monitoring is not activated when ingestion is off", () => {
+    m.admin.mockReturnValue({ data: true });
     renderPage();
     expect(rtl.screen.getByText(/Monitoramento ainda não ativado/)).toBeTruthy();
     expect(rtl.screen.getAllByText("Aguardando").length).toBeGreaterThan(0);
   });
 
   it("no banner once ingestion is active", () => {
-    m.perfis.mockReturnValue(ok([perfil({ status: "ativo", ultima_sync_em: "2026-10-01T00:00:00Z", virais: 5, ingestao_ativa: true })]));
+    const ativo = perfil({ status: "ativo", ultima_sync_em: "2026-10-01T00:00:00Z", virais: 5, ingestao_ativa: true });
+    m.perfis.mockReturnValue(ok([ativo]));
+    m.pagina.mockReturnValue(ok({ items: [ativo], total: 1 }));
     renderPage();
     expect(rtl.screen.queryByText(/Monitoramento ainda não ativado/)).toBeNull();
   });
@@ -138,6 +146,55 @@ describe("Minha Biblioteca", () => {
     m.refs.mockReturnValue({ data: undefined, showSkeleton: false, isRefreshing: false, isError: true, refetch: vi.fn() });
     renderPage();
     expect(rtl.screen.getByText(/Não foi possível carregar as referências/)).toBeTruthy();
+  });
+});
+
+describe("Perfis da biblioteca (platform-wide, admin-only writes)", () => {
+  it("a member's profile has no status/monitorar/ultima_sync_em keys: no status badge, no stale-date column", () => {
+    const { status: _s, erro_mensagem: _e, ultima_sync_em: _u, ...semAdmin } = perfil();
+    m.pagina.mockReturnValue(ok({ items: [semAdmin], total: 1 }));
+    renderPage();
+    const tabela = rtl.screen.getByText("Perfis da biblioteca", { selector: "h2" }).closest("section")!;
+    expect(rtl.within(tabela).getByText("@fulano")).toBeTruthy();
+    expect(rtl.within(tabela).queryByText("Aguardando")).toBeNull();
+    expect(rtl.within(tabela).queryByText("Pausado")).toBeNull();
+    expect(rtl.within(tabela).queryByRole("columnheader", { name: "Status" })).toBeNull();
+    expect(rtl.within(tabela).queryByRole("columnheader", { name: "Última atualização" })).toBeNull();
+  });
+
+  it("a member sees the profiles but none of the write controls", () => {
+    renderPage();
+    const tabela = rtl.screen.getByText("Perfis da biblioteca", { selector: "h2" }).closest("section")!;
+    expect(rtl.within(tabela).getByText("@fulano")).toBeTruthy();
+    expect(rtl.within(tabela).queryByRole("button", { name: "Atualizar agora" })).toBeNull();
+    expect(rtl.within(tabela).queryByRole("button", { name: "Pausar" })).toBeNull();
+    expect(rtl.within(tabela).queryByRole("button", { name: "Remover" })).toBeNull();
+  });
+
+  it("an admin gets them", () => {
+    m.admin.mockReturnValue({ data: true });
+    renderPage();
+    const tabela = rtl.screen.getByText("Perfis da biblioteca", { selector: "h2" }).closest("section")!;
+    expect(rtl.within(tabela).getByRole("button", { name: "Atualizar agora" })).toBeTruthy();
+    expect(rtl.within(tabela).getByRole("button", { name: "Remover" })).toBeTruthy();
+  });
+
+  it("pages the library: shows the range and total, Próxima is off on the last page", () => {
+    m.pagina.mockReturnValue(ok({ items: [perfil()], total: 1 }));
+    renderPage();
+    expect(rtl.screen.getByTestId("perfis-pagina").textContent).toBe("1–1 de 1");
+    expect((rtl.screen.getByRole("button", { name: "Próxima" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((rtl.screen.getByRole("button", { name: "Anterior" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("a coded 403 on an admin-only write is said out loud", async () => {
+    // A member who somehow triggers the write (stale is_admin) still gets the sentence, never silence.
+    m.admin.mockReturnValue({ data: true });
+    m.sincronizar.mockRejectedValue(Object.assign(new Error("[403] x"), { status: 403 }));
+    renderPage();
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Atualizar agora" }));
+    const { toast } = await import("sonner");
+    await rtl.waitFor(() => expect((toast.error as any).mock.calls.flat().join(" ")).toContain("Somente administradores"));
   });
 });
 

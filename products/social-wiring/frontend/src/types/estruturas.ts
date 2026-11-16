@@ -10,7 +10,7 @@ export type EstruturaObjetivo = 'alcance' | 'autoridade' | 'conexao' | 'venda'
 export type EstruturaStatus = 'rascunho' | 'ativa' | 'arquivada'
 export type EstruturaOrigem = 'manual' | 'import_corestudio' | 'import_maquina' | 'viral_auto'
 export type OrigemCampo = 'fonte' | 'referencia' | 'ia_sugerido' | 'admin'
-export type EstruturaPerfilRef = { id: string; handle: string; nome: string | null; foto_url: string | null }
+export type EstruturaPerfilRef = { id: string; handle: string; nome: string | null; foto_url?: string | null /* absent for non-admins */ }
 export type TipoBloco = { id: string; nome: string; ordem: number; tempo_tipico: string | null; instrucao_referencia: string; ativo: boolean }
 export type Bloco = { id: string; ordem: number; nome: string; tipo: { id: string; nome: string }; tempo: string | null; instrucao: string | null;
   nota: string | null; repeticoes: number;

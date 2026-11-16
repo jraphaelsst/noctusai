@@ -24,8 +24,18 @@ import {
 } from "@/hooks/geracao/useHeadlines";
 import { usePesquisaVariaveis } from "@/hooks/usePesquisa";
 import type { Criatividade, HeadlineLote } from "@/types/geracao";
+import { CandidatosPerfil } from "@/components/geracao/estruturas/CandidatosPerfil";
+import { EstruturaPicker } from "@/components/geracao/estruturas/EstruturaPicker";
+import {
+  candidatosDoErro,
+  idsDaSelecao,
+  mensagemDoForm,
+  sugestoesDoErro,
+  type EstruturaEscolhida,
+} from "@/components/geracao/estruturas/selecao";
+import type { PerfilCandidato } from "@/types/estruturas";
 import { CRIATIVIDADE_ROTULO } from "../labels";
-import { alternarEm, mensagemErro } from "./lote";
+import { alternarEm } from "./lote";
 
 const ASSUNTO_MAX = 300;
 const NIVEIS: Criatividade[] = ["essencial", "equilibrado", "explorador"];
@@ -97,6 +107,9 @@ export function FormMePublico({ who, marcaId, bloqueado, postId, onCriado }: Pro
   const [gatilhos, setGatilhos] = useState<string[]>([]);
   const [somentePesquisa, setSomentePesquisa] = useState(false);
   const [nivel, setNivel] = useState(1);
+  const [estruturas, setEstruturas] = useState<EstruturaEscolhida[]>([]);
+  // 422 `perfil_ambiguo` / `perfil_nao_encontrado_na_biblioteca`: the candidates the user can pick from (contract §6.6).
+  const [candidatos, setCandidatos] = useState<{ tipo: "ambiguo" | "sugestao"; lista: PerfilCandidato[] } | null>(null);
 
   const variaveis = useMemo(
     () => (variaveisQ.data ?? []).filter((v) => v.grupo === grupo).sort((a, b) => a.sort_order - b.sort_order),
@@ -110,7 +123,9 @@ export function FormMePublico({ who, marcaId, bloqueado, postId, onCriado }: Pro
 
   const assuntoLimpo = assunto.trim();
   const referencia: ReferenciaLote | undefined =
-    refTipo === "perfil" && perfilIds.length
+    estruturas.length > 0
+      ? undefined // explicit Estruturas win over a referencia (the server applies the same precedence)
+      : refTipo === "perfil" && perfilIds.length
       ? { tipo: "perfil", perfil_ids: perfilIds }
       : refTipo === "formato" && formatoIds.length
         ? { tipo: "formato", formato_ids: formatoIds }
@@ -119,8 +134,9 @@ export function FormMePublico({ who, marcaId, bloqueado, postId, onCriado }: Pro
           : undefined;
   const podeGerar = !!marcaId && selecionadas.length > 0 && !criar.isPending && !bloqueado;
 
-  async function gerar() {
+  async function gerar(perfilEscolhido?: string) {
     if (!podeGerar || !marcaId) return;
+    setCandidatos(null);
     const valoresEscolhidos = Object.fromEntries(
       Object.entries(valores).filter(([s, ids]) => !todos && slugs.includes(s) && ids.length > 0),
     );
@@ -130,7 +146,12 @@ export function FormMePublico({ who, marcaId, bloqueado, postId, onCriado }: Pro
       variaveis: selecionadas,
       ...(Object.keys(valoresEscolhidos).length ? { valores: valoresEscolhidos } : {}),
       ...(assuntoLimpo ? { assunto: assuntoLimpo } : {}),
-      ...(referencia ? { referencia } : {}),
+      ...(perfilEscolhido
+        ? { referencia: { tipo: "perfil" as const, perfil_ids: [perfilEscolhido] } }
+        : referencia
+          ? { referencia }
+          : {}),
+      ...(estruturas.length > 0 ? { estrutura_ids: idsDaSelecao(estruturas) } : {}),
       somente_pesquisa: somentePesquisa,
       criatividade: NIVEIS[nivel],
       ...(postId ? { post_id: postId } : {}),
@@ -138,8 +159,19 @@ export function FormMePublico({ who, marcaId, bloqueado, postId, onCriado }: Pro
     try {
       onCriado(await criar.mutateAsync(body));
     } catch (e) {
-      toast.error(mensagemErro(e, "Não foi possível gerar as headlines."));
+      const amb = candidatosDoErro(e);
+      const sug = sugestoesDoErro(e);
+      if (amb.length > 0) setCandidatos({ tipo: "ambiguo", lista: amb });
+      else if (sug.length > 0) setCandidatos({ tipo: "sugestao", lista: sug });
+      toast.error(mensagemDoForm(e, "Não foi possível gerar as headlines."));
     }
+  }
+
+  function escolherPerfil(c: PerfilCandidato) {
+    setEstruturas([]);
+    setRefTipo("perfil");
+    setPerfilIds([c.perfil_id]);
+    void gerar(c.perfil_id);
   }
 
   return (
@@ -205,9 +237,20 @@ export function FormMePublico({ who, marcaId, bloqueado, postId, onCriado }: Pro
         />
       </div>
 
+      {candidatos && (
+        <CandidatosPerfil tipo={candidatos.tipo} candidatos={candidatos.lista} onEscolher={escolherPerfil} disabled={criar.isPending} />
+      )}
+
+      <EstruturaPicker marcaId={marcaId} value={estruturas} onChange={setEstruturas} disabled={criar.isPending} />
+
       <fieldset className="space-y-3 rounded-md border p-3">
         <legend className="px-1 text-sm font-medium">Opções Avançadas</legend>
         <p className="text-sm">Quero criar headlines com base em:</p>
+        {estruturas.length > 0 && (
+          <p role="status" className="text-xs text-muted-foreground">
+            As estruturas escolhidas acima valem mais do que esta referência.
+          </p>
+        )}
         <div className="flex flex-wrap gap-4 text-sm">
           {(
             [

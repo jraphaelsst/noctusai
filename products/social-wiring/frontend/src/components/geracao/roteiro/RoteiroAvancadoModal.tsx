@@ -14,6 +14,17 @@ import { AlertCircle, Brain, Globe, Link2, Loader2, Sparkles } from "lucide-reac
 import { toast } from "sonner";
 
 import { VideoPicker } from "@/components/geracao/biblioteca/VideoPicker";
+import { ROTULO_FORMATO, FORMATOS } from "@/components/geracao/biblioteca/estruturas/rotulos";
+import { CandidatosPerfil } from "@/components/geracao/estruturas/CandidatosPerfil";
+import { EstruturaPicker } from "@/components/geracao/estruturas/EstruturaPicker";
+import {
+  candidatosDoErro,
+  formatoDaSelecao,
+  idsDaSelecao,
+  mensagemDoForm,
+  sugestoesDoErro,
+  type EstruturaEscolhida,
+} from "@/components/geracao/estruturas/selecao";
 import { AvisoTamanhoHeadline } from "@/components/geracao/headlines/TamanhoHeadline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,6 +49,7 @@ import {
 } from "@/hooks/geracao/useRoteiros";
 import { cn } from "@/lib/utils";
 import type { Roteiro } from "@/types/geracao";
+import type { EstruturaFormato, PerfilCandidato } from "@/types/estruturas";
 import { ESTRUTURAS_ROTEIRO, HEADLINE_TEXTO_MAX } from "../labels";
 import { FeedbackRoteiro } from "./FeedbackRoteiro";
 import { MODAL_ROTEIRO_GRANDE, RoteiroCorpo, SalvarRoteiroButton, useEdicaoRoteiro } from "./RoteiroEdicao";
@@ -72,8 +84,7 @@ interface Props {
 }
 
 function mensagemErro(e: unknown, fallback: string): string {
-  const msg = e instanceof Error ? e.message.replace(/^\[\d+\]\s*/, "") : "";
-  return msg || fallback;
+  return mensagemDoForm(e, fallback);
 }
 
 export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInicial, onCriado, postId }: Props) {
@@ -86,6 +97,10 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
   const [comPerguntas, setComPerguntas] = useState(true);
   const [roteiroId, setRoteiroId] = useState<string | null>(null);
   const [respostas, setRespostas] = useState<Record<string, string>>({});
+  const [estruturas, setEstruturas] = useState<EstruturaEscolhida[]>([]);
+  const [formato, setFormato] = useState<EstruturaFormato>("reels");
+  // 422 from the create call that the user can still act on, rendered inline next to the field it is about.
+  const [erroCriar, setErroCriar] = useState<{ mensagem: string; candidatos: PerfilCandidato[]; tipo: "ambiguo" | "sugestao" } | null>(null);
 
   const brainsQ = useCerebroBrains(open ? marcaId : null);
   const brains = (brainsQ.data ?? []).filter((b) => b.content_chars > 0);
@@ -109,6 +124,9 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
     setComPerguntas(true);
     setRoteiroId(null);
     setRespostas({});
+    setEstruturas([]);
+    setFormato("reels");
+    setErroCriar(null);
   }, [open, headlineInicial?.id, headlineInicial?.texto]);
 
   // Seed the answers form once the questions arrive.
@@ -125,8 +143,19 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
   const podeCriar =
     !!marcaId && headlineLimpa.length > 0 && headlineLimpa.length <= HEADLINE_TEXTO_MAX && !criar.isPending;
 
+  // With Estruturas the formato is theirs (§6.7); the selector only drives the no-Estrutura case.
+  const formatoDasEstruturas = formatoDaSelecao(estruturas);
+  const formatoEfetivo = formatoDasEstruturas ?? formato;
+
+  /** A candidate of an ambiguous free-text profile name: `@handle` in the instructions resolves it exactly. */
+  function usarCandidato(c: PerfilCandidato) {
+    setInstrucoes((atual) => `${atual.trim()}${atual.trim() ? " " : ""}@${c.handle}`.slice(0, INSTRUCOES_MAX));
+    setErroCriar(null);
+  }
+
   async function enviar() {
     if (!podeCriar || !marcaId) return;
+    setErroCriar(null);
     const mesmaHeadline = !!headlineInicial?.id && headlineLimpa === headlineInicial.texto.trim();
     try {
       const novo = await criar.mutateAsync({
@@ -139,13 +168,20 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
         estrutura,
         brain_id: brainId || null,
         viral_id: viralId,
+        // `formato` is omitted for the default (reels): identical to the server default, and an older API that has not
+        // learned the field yet (strict request models) keeps accepting every Reels request.
+        ...(estruturas.length > 0 ? { estrutura_ids: idsDaSelecao(estruturas) } : formato !== "reels" ? { formato } : {}),
         gerar_perguntas: comPerguntas,
         ...(postId ? { post_id: postId } : {}),
       });
       setRoteiroId(novo.id);
       onCriado?.(novo);
     } catch (e) {
-      toast.error(mensagemErro(e, "Não foi possível criar o roteiro."));
+      const mensagem = mensagemErro(e, "Não foi possível criar o roteiro.");
+      const amb = candidatosDoErro(e);
+      const sug = sugestoesDoErro(e);
+      setErroCriar({ mensagem, candidatos: amb.length > 0 ? amb : sug, tipo: amb.length > 0 ? "ambiguo" : "sugestao" });
+      toast.error(mensagem);
     }
   }
 
@@ -259,6 +295,33 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
               </div>
             </fieldset>
 
+            <EstruturaPicker marcaId={marcaId} value={estruturas} onChange={setEstruturas} disabled={criar.isPending} />
+
+            <fieldset className="space-y-2" disabled={estruturas.length > 0}>
+              <legend className="text-sm font-medium">Formato</legend>
+              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Formato">
+                {FORMATOS.map((f) => (
+                  <Button
+                    key={f}
+                    type="button"
+                    size="sm"
+                    role="radio"
+                    aria-checked={formatoEfetivo === f}
+                    disabled={estruturas.length > 0}
+                    variant={formatoEfetivo === f ? "default" : "outline"}
+                    onClick={() => setFormato(f)}
+                  >
+                    {ROTULO_FORMATO[f]}
+                  </Button>
+                ))}
+              </div>
+              {estruturas.length > 0 && (
+                <p className="text-xs text-muted-foreground" data-testid="formato-da-estrutura">
+                  O formato vem da estrutura escolhida{formatoDasEstruturas ? ` (${ROTULO_FORMATO[formatoDasEstruturas]})` : ""}.
+                </p>
+              )}
+            </fieldset>
+
             <fieldset className="space-y-2">
               <legend className="text-sm font-medium">Duração do vídeo</legend>
               <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Duração do vídeo">
@@ -279,8 +342,8 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
             </fieldset>
 
             <fieldset className="space-y-2">
-              <legend className="text-sm font-medium">Estrutura</legend>
-              <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Estrutura">
+              <legend className="text-sm font-medium">Ordem do CTA</legend>
+              <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Ordem do CTA">
                 {ESTRUTURAS_ROTEIRO.map((e) => (
                   <Button
                     key={e.valor}
@@ -335,6 +398,15 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
               />
               <Label htmlFor="ra-perguntas">Responder perguntas estratégicas antes (recomendado)</Label>
             </div>
+
+            {erroCriar && (
+              <div className="space-y-2" data-testid="erro-criar-roteiro">
+                <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                  {erroCriar.mensagem}
+                </p>
+                <CandidatosPerfil tipo={erroCriar.tipo} candidatos={erroCriar.candidatos} onEscolher={usarCandidato} />
+              </div>
+            )}
 
             <DialogFooter>
               <Button variant="outline" onClick={() => onOpenChange(false)}>

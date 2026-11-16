@@ -381,7 +381,8 @@ export function useRemoverReferencia() {
 export function useGerarHeadlineViral() {
   return useCacheWriteMutation<
     HeadlineLote,
-    { marca_id: string; viral_id: string; assunto_ids?: string[]; assunto_livre?: string }
+    // Exactly one of `viral_id` | `estrutura_id` (contract §6.6 `LoteBiblioteca`).
+    { marca_id: string; viral_id?: string; estrutura_id?: string; assunto_ids?: string[]; assunto_livre?: string }
   >({
     mutationFn: async (v) =>
       unwrap(

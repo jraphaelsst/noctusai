@@ -10,6 +10,7 @@ import { MemoryRouter } from "react-router-dom";
 
 afterEach(cleanup);
 
+vi.mock("@/components/geracao/estruturas/EstruturaPicker", () => ({ EstruturaPicker: () => null }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/hooks/geracao/useEsteira", () => ({
   useCriarPost: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -146,7 +147,7 @@ describe("RoteiroAvancadoModal", () => {
   it("estrutura: CTA no início é o padrão, cada opção explica a ordem, CTA no final é enviado quando escolhido", async () => {
     m.criar.mockResolvedValue({ ...base, status: "criando", estrutura: "cta_final" });
     abrir({ headlineInicial: { id: "h1", texto: "3 alimentos" } });
-    const grupo = screen.getByRole("radiogroup", { name: "Estrutura" });
+    const grupo = screen.getByRole("radiogroup", { name: "Ordem do CTA" });
     expect(grupo).toBeInTheDocument();
     const ctaInicio = screen.getByRole("radio", { name: /CTA de salvar no início \(padrão\)/ });
     const ctaFinal = screen.getByRole("radio", { name: /^CTA no final/ });

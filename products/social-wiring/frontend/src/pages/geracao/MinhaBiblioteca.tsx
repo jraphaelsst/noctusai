@@ -24,14 +24,18 @@ import { SolicitarPerfil } from "@/components/geracao/biblioteca/SolicitarPerfil
 import { OptoutsAdmin } from "@/components/geracao/biblioteca/OptoutsAdmin";
 import { MultiSelectPopover } from "@noctusai/lib/design-system";
 import {
+  PERFIS_POR_PAGINA,
   useAtualizarPerfil,
   useCriarReferencias,
+  usePerfisBiblioteca,
   usePerfisMonitorados,
   useReferencias,
   useRemoverPerfil,
   useRemoverReferencia,
   useSincronizarPerfil,
 } from "@/hooks/geracao/useBiblioteca";
+import { codigoDoErro, dadoDoErro, mensagemEstruturas } from "@/components/geracao/biblioteca/estruturas/erros";
+import { useTreinamentosAdmin } from "@/hooks/geracao/useTreinamentos";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useMarcaPesquisa } from "@/hooks/useMarcaPesquisa";
 import { useMarcas } from "@/hooks/useMarcas";
@@ -49,8 +53,12 @@ export const PERFIL_STATUS_ROTULO: Record<PerfilStatus, string> = {
   erro: "Erro",
 };
 
+/**
+ * A refusal is never silent: the catalogue's pt-BR sentence by `code`, then the server's own. Writes on the library
+ * itself are platform-admin only (the library is platform-wide), so a member's 403 says exactly that.
+ */
 const msg = (e: unknown, fallback: string) =>
-  e instanceof Error && e.message ? e.message : fallback;
+  mensagemEstruturas(e, fallback).replace(/^\[\d+\]\s*/, "");
 
 export default function MinhaBiblioteca() {
   const marcasQ = useMarcas();
@@ -59,7 +67,16 @@ export default function MinhaBiblioteca() {
 
   const [busca, setBusca] = useState("");
   const buscaDeb = useDebouncedValue(busca, 300);
-  const perfisQ = usePerfisMonitorados();
+  // Member write controls on the library (sync / pause / remove / request) are platform-admin only; the server
+  // enforces it (403), the UI just doesn't offer what it will refuse.
+  const isAdmin = useTreinamentosAdmin().data === true;
+  const [buscaPerfil, setBuscaPerfil] = useState("");
+  const buscaPerfilDeb = useDebouncedValue(buscaPerfil, 300);
+  // Picker source: searchable, first 50 matches (the library is paged server-side, ≤ 50 per request).
+  const perfisQ = usePerfisMonitorados(buscaPerfilDeb);
+  // The table: the whole library, one page at a time.
+  const [offset, setOffset] = useState(0);
+  const paginaQ = usePerfisBiblioteca({ marcaId, limit: PERFIS_POR_PAGINA, offset });
   const refsQ = useReferencias(marcaId, buscaDeb);
   const criar = useCriarReferencias();
   const sincronizar = useSincronizarPerfil();
@@ -70,13 +87,15 @@ export default function MinhaBiblioteca() {
   const [perfisSel, setPerfisSel] = useState<string[]>([]);
   const [auto, setAuto] = useState(true);
   const [refRemover, setRefRemover] = useState<Referencia | null>(null);
-  const [perfilRemover, setPerfilRemover] = useState<{ id: string; handle: string } | null>(null);
+  const [perfilRemover, setPerfilRemover] = useState<{ id: string; handle: string; estruturasTotal?: number } | null>(null);
 
   const perfis = perfisQ.data ?? [];
+  const pagina = paginaQ.data?.items ?? [];
+  const totalPerfis = paginaQ.data?.total ?? 0;
   const refs = refsQ.data ?? [];
   const jaRef = new Set(refs.filter((r) => r.modo === "perfil" && r.perfil).map((r) => r.perfil!.id));
   const disponiveis = perfis.filter((p) => !jaRef.has(p.id));
-  const monitoramentoOff = perfis.some((p) => p.ingestao_ativa === false);
+  const monitoramentoOff = [...perfis, ...pagina].some((p) => p.ingestao_ativa === false);
 
   async function salvarPerfis() {
     if (!marcaId || perfisSel.length === 0) return;
@@ -103,7 +122,7 @@ export default function MinhaBiblioteca() {
     }
   }
 
-  async function alternarPausa(id: string, status: PerfilStatus) {
+  async function alternarPausa(id: string, status?: PerfilStatus) {
     try {
       await atualizar.mutateAsync({ id, status: status === "pausado" ? "ativo" : "pausado" });
     } catch (e) {
@@ -125,11 +144,22 @@ export default function MinhaBiblioteca() {
   async function confirmarRemoverPerfil() {
     if (!perfilRemover) return;
     try {
-      await removerPerfil.mutateAsync({ id: perfilRemover.id, marca_id: marcaId });
+      await removerPerfil.mutateAsync({
+        id: perfilRemover.id,
+        marca_id: marcaId,
+        // Second round: the admin has seen "tem N estruturas" and confirmed deleting them too.
+        ...(perfilRemover.estruturasTotal != null ? { apagar_estruturas: true } : {}),
+      });
       toast.success("Perfil removido.");
       setPerfilRemover(null);
     } catch (e) {
-      toast.error(msg(e, "Perfil em uso por outra marca ou não pôde ser removido."));
+      if (codigoDoErro(e) === "perfil_com_estruturas" && perfilRemover.estruturasTotal == null) {
+        // Coded refusal, shown not swallowed: keep the dialog open and ask for the explicit confirmation.
+        const n = Number(dadoDoErro(e, "estruturas_total"));
+        setPerfilRemover({ ...perfilRemover, estruturasTotal: Number.isFinite(n) ? n : 0 });
+        return;
+      }
+      toast.error(msg(e, "Não foi possível remover o perfil."));
       setPerfilRemover(null);
     }
   }
@@ -163,11 +193,17 @@ export default function MinhaBiblioteca() {
           </TabsList>
 
           <TabsContent value="perfil" className="mt-4 flex max-w-md flex-col gap-3">
+            <Input
+              aria-label="Buscar perfis da biblioteca"
+              placeholder="Buscar perfil por @handle ou nome..."
+              value={buscaPerfil}
+              onChange={(e) => setBuscaPerfil(e.target.value)}
+            />
             <MultiSelectPopover
               label="Perfis da biblioteca"
               options={disponiveis.map((p) => ({
                 value: p.id,
-                label: `@${p.handle} (${p.virais} virais)`,
+                label: `@${p.handle}${p.nome ? ` · ${p.nome}` : ""} (${p.virais} virais)`,
               }))}
               selected={perfisSel}
               onToggle={(id) =>
@@ -214,71 +250,84 @@ export default function MinhaBiblioteca() {
       </section>
 
       <section className="flex flex-col gap-2">
-        <h2 className="text-lg font-semibold">Perfis monitorados</h2>
-        {perfisQ.showSkeleton ? (
+        <h2 className="text-lg font-semibold">Perfis da biblioteca</h2>
+        {paginaQ.showSkeleton ? (
           <Skeleton className="h-24 w-full" />
-        ) : perfisQ.isError ? (
-          <div className="text-sm text-destructive">
+        ) : paginaQ.isError && !paginaQ.data ? (
+          <div role="alert" className="text-sm text-destructive">
             Não foi possível carregar os perfis.{" "}
-            <Button variant="link" className="h-auto p-0" onClick={() => perfisQ.refetch()}>
+            <Button variant="link" className="h-auto p-0" onClick={() => paginaQ.refetch()}>
               Tentar novamente
             </Button>
           </div>
-        ) : perfis.length === 0 ? (
+        ) : pagina.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nenhum perfil monitorado ainda. Use "Solicitar Perfil" acima.
+            {isAdmin
+              ? 'Nenhum perfil na biblioteca ainda. Use "Solicitar Perfil" acima.'
+              : "Nenhum perfil na biblioteca ainda. A equipe NoctusAI adiciona novos perfis."}
           </p>
         ) : (
-          <div className={cn("overflow-x-auto rounded-md border", perfisQ.isRefreshing && "opacity-70")}>
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50 text-left">
-                <tr>
-                  <th className="p-2">Perfil</th>
-                  <th className="p-2">Status</th>
-                  <th className="p-2">Virais</th>
-                  <th className="p-2">Última atualização</th>
-                  <th className="p-2">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {perfis.map((p) => (
-                  <tr key={p.id} className="border-t">
-                    <td className="p-2">
-                      <Link
-                        className="text-primary hover:underline"
-                        to={`/media-creation/biblioteca?perfil=${encodeURIComponent(p.id)}`}
-                      >
-                        @{p.handle}
-                      </Link>
-                    </td>
-                    <td className="p-2">
-                      <Badge variant="outline">{PERFIL_STATUS_ROTULO[p.status]}</Badge>
-                      {p.erro_mensagem && (
-                        <span className="ml-2 text-xs text-muted-foreground">{p.erro_mensagem}</span>
-                      )}
-                    </td>
-                    <td className="p-2">{compactoPtBr(p.virais)}</td>
-                    <td className="p-2">{dataPtBr(p.ultima_sync_em)}</td>
-                    <td className="flex flex-wrap gap-1 p-2">
-                      <Button size="sm" variant="outline" onClick={() => atualizarAgora(p.id)}>
-                        Atualizar agora
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => alternarPausa(p.id, p.status)}>
-                        {p.status === "pausado" ? "Retomar" : "Pausar"}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setPerfilRemover({ id: p.id, handle: p.handle })}
-                      >
-                        Remover
-                      </Button>
-                    </td>
+          <>
+            <div className={cn("overflow-x-auto rounded-md border", paginaQ.isRefreshing && "opacity-70")}>
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 text-left">
+                  <tr>
+                    <th className="p-2">Perfil</th>
+                    {isAdmin && <th className="p-2">Status</th>}
+                    <th className="p-2">Virais</th>
+                    {isAdmin && <th className="p-2">Última atualização</th>}
+                    {isAdmin && <th className="p-2">Ações</th>}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {pagina.map((p) => (
+                    <tr key={p.id} className="border-t">
+                      <td className="p-2">
+                        <Link className="text-primary hover:underline" to={`/media-creation/biblioteca/perfis/${encodeURIComponent(p.id)}`}>
+                          @{p.handle}
+                        </Link>
+                        {p.nome && <span className="ml-2 text-xs text-muted-foreground">{p.nome}</span>}
+                      </td>
+                      {isAdmin && (
+                        <td className="p-2">
+                          {p.status && <Badge variant="outline">{PERFIL_STATUS_ROTULO[p.status]}</Badge>}
+                          {p.erro_mensagem && <span className="ml-2 text-xs text-muted-foreground">{p.erro_mensagem}</span>}
+                        </td>
+                      )}
+                      <td className="p-2">{compactoPtBr(p.virais)}</td>
+                      {isAdmin && <td className="p-2">{dataPtBr(p.ultima_sync_em ?? null)}</td>}
+                      {isAdmin && (
+                        <td className="flex flex-wrap gap-1 p-2">
+                          <Button size="sm" variant="outline" onClick={() => atualizarAgora(p.id)}>
+                            Atualizar agora
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => alternarPausa(p.id, p.status)}>
+                            {p.status === "pausado" ? "Retomar" : "Pausar"}
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setPerfilRemover({ id: p.id, handle: p.handle })}>
+                            Remover
+                          </Button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <nav aria-label="Paginação dos perfis" className="flex items-center justify-between gap-2 text-sm">
+              <span className="text-muted-foreground" data-testid="perfis-pagina">
+                {offset + 1}–{offset + pagina.length} de {totalPerfis}
+              </span>
+              <span className="flex gap-2">
+                <Button size="sm" variant="outline" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PERFIS_POR_PAGINA))}>
+                  Anterior
+                </Button>
+                <Button size="sm" variant="outline" disabled={offset + pagina.length >= totalPerfis} onClick={() => setOffset(offset + PERFIS_POR_PAGINA)}>
+                  Próxima
+                </Button>
+              </span>
+            </nav>
+          </>
         )}
       </section>
 
@@ -378,8 +427,12 @@ export default function MinhaBiblioteca() {
         open={!!perfilRemover}
         onOpenChange={(o) => !o && setPerfilRemover(null)}
         titulo="Remover perfil monitorado"
-        descricao={`Remover @${perfilRemover?.handle ?? ""} apaga seus virais, miniaturas e transcrições. Não é possível se outra marca ainda o referencia.`}
-        rotuloConfirmar="Remover perfil"
+        descricao={
+          perfilRemover?.estruturasTotal != null
+            ? `@${perfilRemover.handle} tem ${perfilRemover.estruturasTotal} ${perfilRemover.estruturasTotal === 1 ? "estrutura" : "estruturas"}. Confirmar apaga o perfil, seus virais e também essas estruturas.`
+            : `Remover @${perfilRemover?.handle ?? ""} apaga seus virais, miniaturas e transcrições.`
+        }
+        rotuloConfirmar={perfilRemover?.estruturasTotal != null ? "Apagar perfil e estruturas" : "Remover perfil"}
         onConfirmar={confirmarRemoverPerfil}
         pendente={removerPerfil.isPending}
       />
