@@ -88,6 +88,8 @@
     "342_cs_post_axes.sql": "839cd028554c6cd8fd3c497d6146f13fae4cd254280df06d206d04b628a1fb5c",
     "343_transcricao_sem_cota_diaria.sql": "f94f774aff40b8ba792fc8c1c8866f2b87c86825b351227e75b0eaa9b8d841d9",
     "344_imobshotai_cards.sql": "039c941e22bb8d2f55e3048b7fcaa38e63e740b982088baef4d65dd7f61aed66",
-    "345_imobshot_card_transition_log.sql": "16c69dc3caafd599f74ca5b901fa6e6134e32c6136e77f249acd73aee1bc358b"
+    "345_imobshot_card_transition_log.sql": "16c69dc3caafd599f74ca5b901fa6e6134e32c6136e77f249acd73aee1bc358b",
+    "346_imobshot_eventos_contract.sql": "07651b74e779600313873b32e060afc78cc58784cc7b23935e471b60ce4153bd",
+    "349_imovel_historico_vista_escrita.sql": "246c3659b6890f2c292910e1fd3e477b21f39f96f923f5b101b927d8b40df60d"
   }
 }

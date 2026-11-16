@@ -86,7 +86,7 @@ Team Topologies TVP + CNCF platform-as-product §1 · MCP spec (tools, structure
 1. Discover with caches first (`keeper_pattern_lookup`, `kb_search`, `noctus.graph.*`); an empty semantic result means "unknown", so fall back to grep.
 2. Pick the thinnest change: extend a tool or cache before adding one.
 3. Build the mechanism → gate → backfill → red/green tests, using the §12 checklist that matches.
-4. Verify with the narrowest suite under `mcp/noctusai/tests/` via `hw_admission`, then run the full toolkit suite before returning.
+4. Push, then verify with the narrowest suite under `mcp/noctusai/tests/` via `hw_admission run` (remote by default: GitHub runner at your pushed sha; `--local` forces the laptop slot), then run the full toolkit suite before returning.
 5. Return the product-engineer short form plus `/mcp reconnect needed: yes|no` (the running server stays stale until restarted).
 
 ## Commit ownership

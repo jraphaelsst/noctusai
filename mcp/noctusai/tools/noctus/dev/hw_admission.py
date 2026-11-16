@@ -29,6 +29,12 @@ MECHANISM
   (machine-local by design: capacity is a property of THIS machine); ``report``
   summarizes it so later phases are set from data, not guesses.
 
+REMOTE BY DEFAULT FOR TESTS (2026-11-16, owner's top priority): ``run`` first tries ``remote_test.try_remote`` - a
+pytest/vitest/npm-test command whose worktree HEAD is pushed runs on a GitHub runner (same exit-code contract, no slot
+taken); anything else, or any unmet precondition (loud ``REMOTE-TEST FALLBACK: <reason>``), takes the local slot below.
+``--local`` / ``NOCTUS_TEST_BACKEND=local`` force local; ``--remote`` / ``=remote`` forbid the fallback (exit 75).
+Telemetry: ``remote_run`` / ``remote_fallback`` rows; ``report`` -> ``backends``. Lock files at index >= max_heavy are swept.
+
 KB § PATTERNS/devops/hardware-admission-budget.md
 """
 from __future__ import annotations
@@ -489,7 +495,29 @@ def holders() -> list[dict[str, Any]]:
     return out
 
 
+def sweep_excess_slots(n: int) -> dict[str, list[str]]:
+    """Lock files at index >= `n` (left by a higher max_heavy that was later lowered) are never taken again and only
+    mislead a reader. Removes the UNHELD ones; a still-flocked one (a live holder from an older budget) is reported,
+    never touched."""
+    swept: list[str] = []
+    held: list[str] = []
+    for f in sorted(_slot_dir().glob("slot-*.lock")):
+        m = re.fullmatch(r"slot-(\d+)\.lock", f.name)
+        if not m or int(m.group(1)) < n:
+            continue
+        with f.open("a+") as fh:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                held.append(f.name)
+                continue
+            f.unlink(missing_ok=True)  # removed while we hold the flock: no racer can take a half-deleted slot
+            swept.append(f.name)
+    return {"swept": swept, "held_beyond_max": held}
+
+
 def _try_slot(n: int, job: str) -> tuple[Any, Path] | None:
+    sweep_excess_slots(n)
     for i in range(n):
         f = _slot_dir() / f"slot-{i}.lock"
         fh = f.open("a+")
@@ -582,6 +610,19 @@ def _typical_run_s(default: float = 300.0, last_n: int = 2000) -> float:
     return sorted(ds)[len(ds) // 2] if ds else default
 
 
+def stderr_progress(msg: str) -> None:
+    """The default queue-progress sink: one line on stderr (stdout stays the tool's JSON)."""
+    print(f"HW-WAIT {msg}", file=sys.stderr, flush=True)
+
+
+def queued_heavy_slot(job: str, **kw: Any):
+    """`heavy_slot` that reports its wait by construction: every caller that admits through here (gate_sweep,
+    predeploy_check, task_branch integrate) prints a progress line while queued instead of sitting silent for hours.
+    An explicit `progress=` (a callable, or None to silence) wins."""
+    kw.setdefault("progress", stderr_progress)
+    return heavy_slot(job, **kw)
+
+
 def shared_deadline_admit(total_wait_s: float, now: Callable[[], float] = time.monotonic,
                           slot: Callable[..., Any] | None = None):
     """An `admit` for a multi-gate run (task_branch integrate): every gate queues
@@ -590,7 +631,7 @@ def shared_deadline_admit(total_wait_s: float, now: Callable[[], float] = time.m
     deadline = now() + total_wait_s
 
     def admit(job: str, **kw: Any):
-        return (slot or heavy_slot)(job, wait_s=max(0.0, deadline - now()), **kw)
+        return (slot or queued_heavy_slot)(job, wait_s=max(0.0, deadline - now()), **kw)
     return admit
 
 
@@ -717,7 +758,7 @@ def heavy_slot(job: str, *, wait_s: float | None = None, budget: dict[str, Any] 
         # linux: KiB). Only reported when THIS job raised it, else None (unknown).
         rss = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
         to_mb = (1 / 2**20) if sys.platform == "darwin" else (1 / 1024)
-        _log({"event": "ran", "host": b["host"], **adm.as_dict(),
+        _log({"event": "ran", "host": b["host"], "backend": "local", **adm.as_dict(),
               "duration_s": round(time.monotonic() - started, 1),
               "children_peak_rss_mb": round(rss * to_mb, 1) if rss > rss0 else None})
         held[0].close()
@@ -757,7 +798,16 @@ def report(last_n: int = 5000, since: str | None = None, until: str | None = Non
         elif ev == "not_admitted":
             ph["not_admitted"] += 1
     waits = [r["waited_s"] for r in ran]
-    return {"log": str(p), "window": {"since": since, "until": until}, "rows": len(rows),
+    remote = [r for r in rows if r.get("event") == "remote_run"]
+    fallbacks: dict[str, int] = {}
+    for r in rows:
+        if r.get("event") == "remote_fallback":
+            fallbacks[str(r.get("reason"))[:80]] = fallbacks.get(str(r.get("reason"))[:80], 0) + 1
+    backends = {"local_runs": len(ran), "remote_runs": len(remote),
+                "remote_wall_s": round(sum(r.get("wall_s") or 0 for r in remote), 1),
+                "remote_failed": sum(1 for r in remote if (r.get("outcome") or {}).get("exit_code") not in (None, 0)),
+                "fallbacks": fallbacks}
+    return {"backends": backends, "log": str(p), "window": {"since": since, "until": until}, "rows": len(rows),
             "runs": len(ran),
             "not_admitted": sum(1 for r in rows if r.get("event") == "not_admitted"),
             "max_wait_s": max(waits) if waits else 0, "by_job": by_job, "by_phase": by_phase,
@@ -936,10 +986,28 @@ def run_streamed(job: str, argv: list[str]) -> int:
     return stream_process(proc, log_path)
 
 
-def run_command(job: str, argv: list[str], wait_s: float | None = None) -> int:
-    """Exit 75 (EX_TEMPFAIL) when not admitted — never runs the command then.
+def _sibling(name: str):
+    """Load a sibling module by path (this file also runs as a standalone script / out-of-repo copy)."""
+    import importlib.util
+    mod = sys.modules.get(f"noc_{name}")
+    if mod is None:
+        path = Path(__file__).resolve().parent / f"{name}.py"
+        spec = importlib.util.spec_from_file_location(f"noc_{name}", path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+    return mod
+
+
+def run_command(job: str, argv: list[str], wait_s: float | None = None, backend: str | None = None) -> int:
+    """A heavy TEST command runs on a GitHub runner by default (remote_test.try_remote: same exit-code contract,
+    loud reasoned fallback); everything else, and every fallback, takes the local slot below.
+    Exit 75 (EX_TEMPFAIL) when not admitted — never runs the command then.
     A known fan-out command (`npm test`, `npx playwright test`) gets the budget's
     worker cap here too, and the row records it whatever the job is named."""
+    remote_rc = _sibling("remote_test").try_remote(job, argv, cwd=os.getcwd(), mode=backend, log=_log)
+    if remote_rc is not None:
+        return remote_rc
     n = job_workers()          # an unreadable budget already yields 1
     capped = cap_worker_argv(argv, n)
     jw = n if capped != list(argv) else _AUTO
@@ -984,12 +1052,14 @@ if __name__ == "__main__":  # pragma: no cover - thin shell entry
     r = sub.add_parser("run")
     r.add_argument("--job", required=True)
     r.add_argument("--wait-s", type=float)
+    r.add_argument("--local", action="store_true", help="force the local slot (default: tests run on GitHub)")
+    r.add_argument("--remote", action="store_true", help="remote only: no local fallback (exit 75 if unmet)")
     r.add_argument("argv", nargs=argparse.REMAINDER)
     for name in ("status", "sample", "report"):
         sub.add_parser(name)
     a = ap.parse_args()
     if a.cmd == "run":
         cmd = a.argv[1:] if a.argv[:1] == ["--"] else a.argv
-        sys.exit(run_command(a.job, cmd, a.wait_s))
+        sys.exit(run_command(a.job, cmd, a.wait_s, "local" if a.local else "remote" if a.remote else None))
     out = {"status": status, "sample": sample}.get(a.cmd, lambda: {**report(), "timer": recheck_timer()})()
     print(json.dumps(out, indent=2, default=str))
