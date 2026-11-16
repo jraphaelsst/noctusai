@@ -1,4 +1,8 @@
-"""Deny an UNGATED heavy test/build run from an agent's Bash call, BEFORE it runs.
+"""Route an UNGATED heavy test/build run from an agent's Bash call through the gate, BEFORE it runs.
+
+REWRITE, NOT DENY (2026-11-14): a guard that knows the correct form produces it. The command becomes
+`<venv python> hw_admission.py run --job <derived> --wait-s 7200 -- bash -c '<command>'` (updatedInput,
+outcome=rewrite in the guard-event log). Still refused: local Whisper (policy) and unparseable commands.
 
 WHY THIS EXISTS
 ===============
@@ -54,6 +58,7 @@ import os
 import re
 import shlex
 import sys
+from pathlib import Path
 from typing import Any
 
 ESCAPE_ENV = "NOC_HW_UNGATED_OK"
@@ -283,7 +288,8 @@ def _suggest_job(kind: str, words: list[str], command: str) -> str:
 
 
 def decide(payload: dict[str, Any]) -> dict[str, Any] | None:
-    """None to allow; `{"reason": ...}` to deny. Only `Bash` is judged."""
+    """None to allow; `{"reason": ...}` to deny; `{"decision": "allow", "updated_input": ...}` to REWRITE
+    (a heavy run is wrapped through the gate, 2026-11-14). Only `Bash` is judged."""
     if (payload.get("tool_name") or "") != "Bash":
         return None
     command = ((payload.get("tool_input") or {}).get("command")) or ""
@@ -313,7 +319,54 @@ def decide(payload: dict[str, Any]) -> dict[str, Any] | None:
         return None
     kind, words, env = found[0]
     why = "unparseable command" if "__unparseable__" in env else None
-    return {"reason": _msg(kind, words, command, why)}
+    if kind == "whisper" or why:
+        return {"reason": _msg(kind, words, command, why)}  # policy / cannot-rewrite: still a refusal
+    return rewrite_through_gate(payload.get("tool_input") or {}, command, kind, words)
+
+
+GATE_WAIT_S = 7200
+
+
+def gate_python() -> str:
+    """The absolute interpreter the gate wrapper runs under: this tree's venv, the PRIMARY's venv, else ours."""
+    here = Path(__file__).resolve()
+    roots = [here.parents[5]]  # <tree>/mcp/noctusai/tools/noctus/dev/<this file>
+    try:  # a linked worktree's `.git` file names the primary
+        dot_git = roots[0] / ".git"
+        if dot_git.is_file():
+            gitdir = Path(dot_git.read_text(encoding="utf-8").split("gitdir:", 1)[1].strip())
+            if ".git" in gitdir.parts:
+                roots.append(Path(*gitdir.parts[: gitdir.parts.index(".git")]))
+    except (OSError, IndexError, ValueError):
+        pass
+    for root in roots:
+        cand = root / "mcp" / "noctusai" / ".venv" / "bin" / "python"
+        if cand.is_file():
+            return str(cand)
+    return sys.executable
+
+
+def gated_command(command: str, job: str) -> str:
+    """The whole `command` run as ONE job under the hardware gate (quoted as a single `bash -c` argument)."""
+    gate = Path(__file__).resolve().with_name("hw_admission.py")
+    return (f"{shlex.quote(gate_python())} {shlex.quote(str(gate))} run --job {shlex.quote(job)} "
+            f"--wait-s {GATE_WAIT_S} -- bash -c {shlex.quote(command)}")
+
+
+def rewrite_through_gate(tool_input: dict[str, Any], command: str, kind: str,
+                         words: list[str]) -> dict[str, Any]:
+    """The REWRITE verdict: the guard knows the correct form, so it produces it instead of refusing."""
+    job = _suggest_job(kind, words, command)
+    return {
+        "decision": "allow",
+        "updated_input": {**tool_input, "command": gated_command(command, job)},
+        "context": (
+            f"[noc-guard:heavy-run] REWROTE this heavy {kind} run to go through the hardware gate "
+            f"(--job {job}, waits up to {GATE_WAIT_S}s for a slot) as one `bash -c` job. A `cd` inside the "
+            "command no longer persists in the session shell. Self-gating tools need no wrapper. "
+            f"{KB_POINTER}"
+        ),
+    }
 
 
 def _msg(kind: str, words: list[str], command: str, why: str | None) -> str:

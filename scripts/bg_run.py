@@ -9,7 +9,7 @@ checks itself, salvages its own output on exit, and tree-stops its children (no 
 
 No lifetime cap, no idle timer (owner, 2026-11-14): it ends when the command exits or --done-when
 succeeds, not on a clock. Open-ended background launches without it are refused at launch by
-claude-guard-background-launch.py. KB § PATTERNS/common/background-agent-lifecycle.md
+claude-guard-bash-rewrite.py. KB § PATTERNS/common/background-agent-lifecycle.md
 """
 import sys
 from pathlib import Path
