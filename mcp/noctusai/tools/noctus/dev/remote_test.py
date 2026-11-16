@@ -56,8 +56,8 @@ _TEST_KINDS = {"pytest", "vitest"}  # heavy_run_guard._heavy_kind results that a
 
 def _sibling(name: str):
     """Load a sibling module (works as a package member and when this file is run by path on a CI runner)."""
-    mod = sys.modules.get(f"noc_{name}")
-    if mod is not None:
+    mod = sys.modules.get(f"noc_{name}") or sys.modules.get(f"tools.noctus.dev.{name}")
+    if mod is not None:  # one module object = one exception class (a client built from the package must be caught by `except ci.X`)
         return mod
     path = Path(__file__).resolve().parent / f"{name}.py"
     spec = importlib.util.spec_from_file_location(f"noc_{name}", path)

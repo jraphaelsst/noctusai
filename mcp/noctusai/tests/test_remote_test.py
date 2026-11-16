@@ -53,10 +53,10 @@ GH = textwrap.dedent('''\
             save()
             if "-i" in a:
                 if S.get("force_403"):
-                    print("HTTP/2.0 403 Forbidden\n\n{}"); print("gh: API rate limit exceeded (HTTP 403)", file=sys.stderr); sys.exit(1)
+                    print("HTTP/2.0 403 Forbidden\\n\\n{}"); print("gh: API rate limit exceeded (HTTP 403)", file=sys.stderr); sys.exit(1)
                 if any("If-None-Match" in x for x in a) and S.get("etag_304"):
-                    print("HTTP/2.0 304 Not Modified\n"); sys.exit(1)
-                print('HTTP/2.0 200 OK\nEtag: "e1"\n'); print(json.dumps(run)); sys.exit(0)
+                    print("HTTP/2.0 304 Not Modified\\n"); sys.exit(1)
+                print('HTTP/2.0 200 OK\\nEtag: "e1"\\n'); print(json.dumps(run)); sys.exit(0)
             print(json.dumps(run)); sys.exit(0)
     if a[:2] == ["workflow", "run"]:
         inputs = {x.split("=", 1)[0]: x.split("=", 1)[1] for i, x in enumerate(a) if i and a[i - 1] == "-f"}
@@ -124,6 +124,9 @@ def world(tmp_path, monkeypatch):
     state.write_text(json.dumps({"tip": head, "log": _log(0)}))
     monkeypatch.setenv("GH_STATE", str(state))
     monkeypatch.setenv("PATH", f"{binp}{os.pathsep}{os.environ['PATH']}")
+    # a recorder that cannot run would silently fall through PATH to the REAL gh (and spend real quota): prove it runs
+    probe = subprocess.run(["gh", "api", "rate_limit"], capture_output=True, text=True, check=False)
+    assert probe.returncode == 0 and '"remaining": 4000' in probe.stdout, f"recorder gh is not the gh on PATH: {probe.stdout[:80]}"
     monkeypatch.delenv("NOCTUS_HW_SLOT_HELD", raising=False)
     monkeypatch.delenv(rt.ENV_BACKEND, raising=False)
     return World(work, head, state, cv.RealGithubClient(str(work), repo=REPO_NAME))
