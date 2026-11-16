@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
@@ -53,8 +54,10 @@ def _sh(args: list[str], cwd: str | None, timeout: int = 60) -> tuple[int, str, 
 class RealGithubClient:
     """Shells `gh` (authenticated locally) and `git`; argv lists only, no shell."""
 
-    def __init__(self, cwd: str | None = None, runner: Callable[..., tuple[int, str, str]] = _sh) -> None:
-        self.cwd, self._sh, self._repo = cwd, runner, None
+    def __init__(self, cwd: str | None = None, runner: Callable[..., tuple[int, str, str]] = _sh,
+                 repo: str | None = None) -> None:
+        """`repo` pins owner/name (else derived from `git remote get-url origin`)."""
+        self.cwd, self._sh, self._repo = cwd, runner, repo
 
     def _gh(self, *args: str) -> Any:
         rc, out, err = self._sh(["gh", *args], self.cwd)
@@ -94,6 +97,55 @@ class RealGithubClient:
         rc, out, err = self._sh(["gh", *args], self.cwd)
         if rc != 0:
             raise CiVerdictError(f"gh workflow run failed (rc={rc}): {(err or out).strip()[-300:]}")
+
+
+    def remote_tip(self, branch: str) -> str | None:
+        """The AUTHORITATIVE pushed tip (`git ls-remote`), not the possibly stale local origin/<branch> ref."""
+        rc, out, _e = self._sh(["git", "ls-remote", "origin", f"refs/heads/{branch}"], self.cwd)
+        return (out.split() or [None])[0] if rc == 0 else None
+
+    def workflow_exists(self, workflow: str) -> bool:
+        rc, out, err = self._sh(["gh", "api", f"repos/{self.repo()}/actions/workflows/{workflow}"], self.cwd)
+        if rc == 0:
+            return True
+        if "404" in (err or out) or "Not Found" in (err or out):
+            return False
+        raise CiVerdictError(f"gh api workflows/{workflow} failed (rc={rc}): {(err or out).strip()[-300:]} "
+                             "(is `gh auth status` green?)")
+
+    def dispatch_workflow(self, workflow: str, branch: str, inputs: dict[str, str]) -> None:
+        args = ["workflow", "run", workflow, "--ref", branch, "-R", self.repo()]
+        for k, v in inputs.items():
+            args += ["-f", f"{k}={v}"]
+        rc, out, err = self._sh(["gh", *args], self.cwd)
+        if rc != 0:
+            raise CiVerdictError(f"gh workflow run {workflow} failed (rc={rc}): {(err or out).strip()[-300:]}")
+
+    def runs_for_workflow(self, workflow: str, branch: str) -> list[dict[str, Any]]:
+        d = self._gh("api", f"repos/{self.repo()}/actions/workflows/{workflow}/runs"
+                            f"?branch={branch}&event=workflow_dispatch&per_page=30")
+        return list((d or {}).get("workflow_runs") or [])
+
+    def watch(self, run_id: str, out: Callable[[str], None], timeout_s: float) -> bool:
+        """ONE blocking `gh run watch`, progress lines to `out`; False when `timeout_s` elapsed first."""
+        proc = subprocess.Popen(["gh", "run", "watch", str(run_id), "-R", self.repo(), "--interval", "15"],  # noqa: S603
+                                cwd=self.cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+        timer = threading.Timer(timeout_s, proc.kill)
+        timer.start()
+        try:
+            for line in proc.stdout or []:
+                if line.strip():
+                    out(line.rstrip("\n"))
+            proc.wait()
+        finally:
+            timer.cancel()
+        return proc.returncode is not None and proc.returncode >= 0
+
+    def run_log(self, run_id: str) -> str:
+        rc, out, err = self._sh(["gh", "run", "view", str(run_id), "--log", "-R", self.repo()], self.cwd, timeout=300)
+        if rc != 0:
+            raise CiVerdictError(f"gh run view --log failed (rc={rc}): {(err or out).strip()[-300:]}")
+        return out
 
 
 @dataclass
