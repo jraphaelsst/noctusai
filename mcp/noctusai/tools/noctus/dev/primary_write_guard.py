@@ -68,6 +68,7 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
@@ -2452,10 +2453,103 @@ def _git_config_env_injection(command: str) -> str | None:
     return None
 
 
+#: Absolute prefixes of the system temp area (macOS resolves `/tmp` -> `/private/tmp` and the per-user
+#: `$TMPDIR` under `/var/folders`; pytest's `tmp_path` lives under `tempfile.gettempdir()`).
+_TMP_ROOT_PREFIXES = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders")
+
+
+def _under_tmp(path: str | None) -> bool:
+    """True when `path` (resolved) is inside the system temp area / pytest's tmp root. Judged by the PATH the git
+    command runs in (`-C`, a preceding `cd`, or the hook payload cwd), never by the command text. Unknown -> False
+    (fail closed)."""
+    if not path:
+        return False
+    try:
+        real = os.path.realpath(path)
+    except (OSError, ValueError):
+        return False
+    roots = {os.path.realpath(r) for r in _TMP_ROOT_PREFIXES}
+    roots.add(os.path.realpath(tempfile.gettempdir()))
+    return any(real == r or real.startswith(r + os.sep) for r in roots)
+
+
+def _git_dash_c_dir(rest: Sequence[str]) -> str | None:
+    """The last `-C <dir>` operand of a git invocation's global flags, or None."""
+    found = None
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        if tok == "-C" and i + 1 < len(rest):
+            found = rest[i + 1]
+            i += 2
+            continue
+        if tok in _GIT_GLOBAL_FLAGS_WITH_OPERAND or tok in ("-c", "--config", "--config-env"):
+            i += 2
+            continue
+        if not tok.startswith("-"):
+            break
+        i += 1
+    return found
+
+
+def _git_ref_forge_reason(tokens: Sequence[str], cwd: str | None) -> str | None:
+    """A reason when this segment forges history behind the hooks: `git commit-tree` (writes a commit object from
+    an arbitrary tree, no hook ever runs) or `git update-ref refs/heads/...` (moves a branch onto it). Together
+    with `git write-tree` they commit without pre-commit/commit-msg (2026-11-15: a sibling agent bypassed every
+    keeper this way). Not refused when the command runs in a temp repo (a test fixture): `-C <dir>` (resolved
+    against `cwd`) or `cwd` itself must be under the system tmp / pytest tmp root. None otherwise."""
+    if tokens and os.path.basename(tokens[0]) in ("echo", "printf"):
+        return None  # a message that merely names the command
+    # `c=$(git commit-tree ...)` / backticks / `(git ...)`: the command substitution glues its opener to `git`.
+    tokens = [re.sub(r"^.*[$(`]+(git)$", r"\1", t) for t in tokens]
+    gi = _find_git_start(tokens)
+    if gi is None:
+        return None
+    rest = tokens[gi + 1:]
+    sub = ""
+    args: list[str] = []
+    i = 0
+    while i < len(rest):
+        tok = rest[i]
+        if not sub:
+            if tok in ("-c", "--config", "--config-env") or tok in _GIT_GLOBAL_FLAGS_WITH_OPERAND:
+                i += 2
+                continue
+            if not tok.startswith("-"):
+                sub = tok
+        else:
+            args.append(tok)
+        i += 1
+    if sub == "commit-tree":
+        what = "`git commit-tree` writes a commit object directly"
+    elif sub == "update-ref" and any(a.startswith("refs/heads/") for a in args):
+        what = "`git update-ref refs/heads/...` moves a branch ref directly"
+    else:
+        return None
+    run_dir = _git_dash_c_dir(rest)
+    if run_dir is not None and cwd and not os.path.isabs(run_dir):
+        run_dir = os.path.join(cwd, run_dir)
+    if _under_tmp(run_dir if run_dir is not None else cwd):
+        return None
+    return (
+        f"{what}, bypassing the pre-commit and commit-msg hooks (every keeper) with no warning. "
+        f"`git write-tree` + `commit-tree` + `reset`/`update-ref` is the plumbing form of `--no-verify`."
+    )
+
+
+def _cd_target(tokens: Sequence[str], cwd: str | None) -> str | None:
+    """New cwd after a bare `cd <dir>` segment, else None."""
+    if len(tokens) >= 2 and tokens[0] == "cd" and not tokens[1].startswith("-"):
+        d = os.path.expanduser(tokens[1])
+        return d if os.path.isabs(d) or not cwd else os.path.join(cwd, d)
+    return None
+
+
 def decide_git_bypass(
     tool_name: str,
     tool_input: dict[str, Any] | None = None,
     allow_override: bool | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any] | None:
     """None to allow; a dict describing the refusal otherwise.
 
@@ -2479,14 +2573,33 @@ def decide_git_bypass(
     command = _normalize(raw_command)
 
     reason = _git_config_env_injection(command)
+    forge = False
     if reason is None:
+        seg_cwd = cwd or os.getcwd()
         for segment in _segments(command):
             tokens = _strip_redirections(_tokens(segment))
             reason = _git_hooks_bypass_reason(tokens)
+            if reason is None:
+                reason = _git_ref_forge_reason(tokens, seg_cwd)
+                forge = reason is not None
             if reason is not None:
                 break
+            seg_cwd = _cd_target(tokens, seg_cwd) or seg_cwd
     if reason is None:
         return None
+    if forge:
+        return {
+            "tool": tool_name,
+            "reason": (
+                f"REFUSED - {reason}\n"
+                f"Commit normally; if a keeper refuses, surface the line to the tech-lead. A keeper that blocks "
+                f"you is the safety net working: fix what it names, or hand it over. Ref plumbing is for the "
+                f"toolkit's own tools (ledger_store, release, task_branch), which run it from Python, never from "
+                f"a Bash command; a test fixture inside a temp repo (cwd or `-C` under the system tmp dir) is "
+                f"allowed. No agent or brief can authorize this; the only hatch is `{HOOK_BYPASS_ALLOW_ENV}=1` "
+                f"set in the launching shell's environment."
+            ),
+        }
 
     return {
         "tool": tool_name,

@@ -64,7 +64,7 @@ def _db(*, mirror=(), registry=()):
     db = _Db()
     db.set_table_data("imoveis", [dict(r) for r in mirror])
     db.set_table_data("imovel_registry", [dict(r) for r in registry])
-    for t in ("vista_divergencias_config", "imovel_campo_conflitos", "imovel_captacao", "imovel_dados", "julia_proprietarios_contatos"):
+    for t in ("vista_divergencias_config", "imovel_campo_conflitos", "imovel_captacao", "imovel_dados", "julia_proprietarios_contatos", "imovel_historico"):
         db.set_table_data(t, [])
     return db
 

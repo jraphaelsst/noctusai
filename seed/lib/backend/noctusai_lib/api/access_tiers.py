@@ -185,6 +185,15 @@ PLATFORM_IP_ROUTES: dict[str, tuple[str, ...]] = {
         r"/studio/.*qualifica", r"/studio/.*(credential|runtime-settings)",
     ),
     "core": (r"^/api/admin/(?!llm-spend)",),
+    # CoreStudio platform library (Estruturas contract §4.1): admin-write-only PATHS. Paths shared by an org read and
+    # a platform write (`/estruturas`, `/estruturas/{id}`, `/estruturas/tipos-bloco[/{id}]`) cannot be expressed here
+    # (the registry is path-only, not per-method) -- those stay covered by the route-tier keeper + strict 403 tests.
+    "social-wiring": (
+        r"/media-creation/estruturas/[^/]+/(blocos|confirmar|publicar|arquivar|restaurar|metricas)$",
+        r"/media-creation/estruturas/importacoes",
+        r"/media-creation/estruturas/a-partir-do-viral",
+        r"/media-creation/biblioteca/virais/por-link",
+    ),
 }
 
 #: Response-model field names that are Platform IP -- a route below ``platform`` returning one is TOO-OPEN.

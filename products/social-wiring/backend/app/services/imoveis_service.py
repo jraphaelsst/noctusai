@@ -277,6 +277,10 @@ class SyncReport:
     divergencias_linhas: list[dict] = field(default_factory=list)
     divergencias_erros: list[str] = field(default_factory=list)
     divergencias_comparadas: int = 0
+    # What Vista changed this run (history rows written): the per-run in-app notice reports these. Owner 2026-11-04.
+    vista_imoveis_atualizados: int = 0
+    vista_campos_atualizados: int = 0
+    vista_enviados: int = 0
 
     @property
     def complete(self) -> bool:
@@ -316,6 +320,9 @@ class SyncReport:
             "divergencias": [{"codigo": r["codigo"], "campo": r["campo"]} for r in self.divergencias_linhas[:50]],
             "divergencias_erros": self.divergencias_erros[:20],
             "divergencias_comparadas": self.divergencias_comparadas,
+            "vista_imoveis_atualizados": self.vista_imoveis_atualizados,
+            "vista_campos_atualizados": self.vista_campos_atualizados,
+            "vista_enviados": self.vista_enviados,
             "total_reported": self.total_reported,
             "pages_fetched": self.pages_fetched,
             "upserted": self.upserted,
@@ -706,7 +713,7 @@ class ImovelSyncService:
         report = SyncReport()
         started = datetime.now(timezone.utc)
         report.started_at = started.isoformat()
-        self._div = vista_divergencias.iniciar(self._client.schema(_SCHEMA), org_id)
+        self._div = vista_divergencias.iniciar(self._client.schema(_SCHEMA), org_id, self._adapter)
         self._novas_run, self._tinha_espelho = [], None  # `None` = decided lazily, BEFORE the first upsert of the run
         # {"cidade": {canonical: {raw spellings seen}}, "empreendimento": {...}}
         place_name_variants: dict[str, dict[str, set[str]]] = {
@@ -912,7 +919,7 @@ class ImovelSyncService:
         report = SyncReport(caminho="detalhes", escopo=escopo)
         started = datetime.now(timezone.utc)
         report.started_at = synced_at = started.isoformat()
-        self._div = vista_divergencias.iniciar(self._client.schema(_SCHEMA), org_id)
+        self._div = vista_divergencias.iniciar(self._client.schema(_SCHEMA), org_id, self._adapter)
         place_name_variants: dict[str, dict[str, set[str]]] = {k: {} for k in _PLACE_NAME_WIRE_KEYS}
 
         espelho = self._indice_espelho(org_id)
@@ -997,7 +1004,7 @@ class ImovelSyncService:
         for i in range(0, len(iguais), _LOTE):
             self._table().update({"sincronizado_em": synced_at}).eq("org_id", str(org_id)).in_("codigo", iguais[i:i + _LOTE]).execute()
         self._reativar_registro(org_id, [im.codigo for im in obtidos.values()], synced_at, report)
-        self._divergencias(list(obtidos.values()))
+        await self._divergencias(list(obtidos.values()))
         self._fechar_divergencias(report)
 
         self._marcar_removidos(org_id, sumiram, ocultos, espelho, synced_at, report, caminhados=len(buscados))
@@ -1054,6 +1061,7 @@ class ImovelSyncService:
             rows = [_imovel_to_row(im, org_id, synced_at) for im in lote]
             self._aplicar_pausa(org_id, rows, report)
             _assert_so_vista(rows)
+            self._div_antes(lote)
             self._table().upsert(rows, on_conflict="org_id,codigo").execute()
             report.upserted += len(rows)
             self._upsert_registry(lote, org_id, synced_at, report)
@@ -1077,7 +1085,7 @@ class ImovelSyncService:
         report = SyncReport(caminho="detalhes", escopo=None)
         agora = datetime.now(timezone.utc)
         report.started_at = synced_at = agora.isoformat()
-        self._div = vista_divergencias.iniciar(self._client.schema(_SCHEMA), org_id)
+        self._div = vista_divergencias.iniciar(self._client.schema(_SCHEMA), org_id, self._adapter)
         imovel, desfecho = await self.buscar_detalhe(codigo, report)
         saida = RefreshCodigo(codigo=codigo, desfecho=desfecho, report=report, corretores_oculto=self.corretores_ocultos.pop(codigo, []))
         self._novas_run, self._tinha_espelho = [], self._mirror_tem_linhas(org_id)
@@ -1102,7 +1110,7 @@ class ImovelSyncService:
         }
         self.gravar_imoveis(org_id, [imovel], synced_at, report)
         self._reativar_registro(org_id, [imovel.codigo], synced_at, report)
-        self._divergencias([imovel])
+        await self._divergencias([imovel])
         self._fechar_divergencias(report)
         self._fim_de_run_avisos(org_id, report, [imovel.codigo])
         report.finished_at = datetime.now(timezone.utc).isoformat()
@@ -1177,8 +1185,13 @@ class ImovelSyncService:
             report.novos_vista_codigos.extend(novas or [])
         self._novas_run = []
 
-    def _divergencias(self, imoveis: list[Imovel]) -> None:
-        """THE call site of the transitional Vista-vs-ours divergence check (no-op when the org's flag is off)."""
+    def _div_antes(self, imoveis: list[Imovel]) -> None:
+        """Read the mirror rows as they are BEFORE the upsert (so the history can say what the upsert changed). No-op when off."""
+        if self._div is not None and imoveis:
+            vista_divergencias.capturar_antes(self._div, imoveis)
+
+    async def _divergencias(self, imoveis: list[Imovel]) -> None:
+        """THE call site of the Vista sync's history / overlay / owner-confirmation handling (no-op when the org's switch is off)."""
         if self._div is None or not imoveis:
             return
         link = None
@@ -1188,13 +1201,16 @@ class ImovelSyncService:
             link = julia_conhecimento_service.link_imovel_fn(self._client.schema(_SCHEMA), self._div.org_id)
         except Exception as exc:  # a link is a convenience; the divergence is not
             logger.warning("vista divergences: site link unavailable (%s)", type(exc).__name__)
-        vista_divergencias.verificar(self._div, imoveis, link_site=link)
+        await vista_divergencias.verificar(self._div, imoveis, link_site=link)
 
     def _fechar_divergencias(self, report: SyncReport) -> None:
         if self._div is not None:
             report.divergencias_linhas = list(self._div.novas)
             report.divergencias_erros = list(self._div.erros)
             report.divergencias_comparadas = self._div.comparadas
+            report.vista_imoveis_atualizados = len(self._div.imoveis_atualizados)
+            report.vista_campos_atualizados = self._div.campos_atualizados
+            report.vista_enviados = self._div.enviados
 
     def _descobridores_padrao(self) -> list[imoveis_descoberta.Descobridor]:
         return [imoveis_descoberta.por_destaques, imoveis_descoberta.criar_sonda(self._sonda_max_falhas)]
@@ -1317,6 +1333,7 @@ class ImovelSyncService:
         self._aplicar_pausa(org_id, rows, report)
         novas = self._detectar_novas(org_id, rows, report)
         _assert_so_vista(rows)
+        self._div_antes(imoveis)
         self._table().upsert(rows, on_conflict="org_id,codigo").execute()
         report.upserted += len(rows)
         self._novas_run.extend(novas)
@@ -1330,7 +1347,7 @@ class ImovelSyncService:
         # because the catalog later showed it to us. The sweep, not this,
         # maintains the lifecycle columns.
         self._upsert_registry(imoveis, org_id, synced_at, report)
-        self._divergencias(imoveis)
+        await self._divergencias(imoveis)
 
     def _registry_table(self):
         return self._client.schema(_SCHEMA).table(_REGISTRY_TABLE)

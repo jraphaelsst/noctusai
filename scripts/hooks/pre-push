@@ -29,6 +29,10 @@
 # Carve-out: [carve:hook] — git-hook entry; logic is git-native + thin.
 # See KB § PATTERNS/branching-and-merging.md § 0.2 and § PATTERNS/branching-dispatch.md.
 # ──────────────────────────────────────────────────────────────
+# NOC-HOOK-STAMP: 1
+# NOC-HOOK-LEGS: protected-branches mq-guard embed-refresh branch-pointer-ensure branch-tree-mirror stale-pointers ledger-drain doc-staleness hook-dispatch
+# ^ BUMP the stamp (and list the leg) with every new leg: a worktree push runs whichever hook copy .git/hooks points at
+#   (the PRIMARY's), which can be older than this tree's - the dispatch block below compares the two.
 set -euo pipefail
 # Quiet the toolkit CLI's banner + INFO logs for every call this hook makes
 # (verdict lines still print). NOCTUS_HOOK_VERBOSE=1 restores them.
@@ -43,6 +47,34 @@ blocked=0
 # Capture upfront — the refresh-gate needs the pushed range; the protection
 # loop reuses the captured lines (git provides stdin exactly once).
 PUSH_LINES="$(cat)"
+
+# ─── stale hook copy: dispatch to THIS tree's hook, or say loudly which legs are absent ──────────────────────────
+# (NOC-REMEDIATE[hook-leg-absent-loud], 2026-11-15.) .git/hooks/pre-push is shared by every worktree of the clone, so a
+# worktree push ran the PRIMARY's copy; when that is older than the worktree's own scripts/hooks/pre-push, the new
+# legs (e.g. branch-pointer-ensure) were silently absent. Construction: when the tree's hook carries a higher
+# NOC-HOOK-STAMP, hand the push to it (once - NOC_HOOK_REEXEC guards the loop) so the CURRENT logic runs; when that is
+# impossible, print the missing legs and the fix instead of passing quietly.
+_hk_stamp() { sed -n 's/^# NOC-HOOK-STAMP: *\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | head -1; }
+_hk_legs()  { sed -n 's/^# NOC-HOOK-LEGS: *//p' "$1" 2>/dev/null | head -1; }
+_hk_real()  { ( cd "$(dirname "$1")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename "$1")" ); }
+_hk_top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+_hk_self="$(_hk_real "${BASH_SOURCE[0]}")"
+_hk_tree="${_hk_top:+$_hk_top/scripts/hooks/pre-push}"
+if [[ -n "$_hk_tree" && -f "$_hk_tree" && "$(_hk_real "$_hk_tree")" != "$_hk_self" ]]; then
+    _hk_own="$(_hk_stamp "$_hk_self")"; _hk_theirs="$(_hk_stamp "$_hk_tree")"
+    if (( ${_hk_theirs:-0} > ${_hk_own:-0} )); then
+        _hk_missing=""
+        for _l in $(_hk_legs "$_hk_tree"); do
+            [[ " $(_hk_legs "$_hk_self") " == *" $_l "* ]] || _hk_missing="$_hk_missing $_l"
+        done
+        _hk_missing="${_hk_missing# }"
+        if [[ -x "$_hk_tree" && -z "${NOC_HOOK_REEXEC:-}" ]]; then
+            echo "[pre-push] ⚠ the installed hook ($_hk_self, stamp ${_hk_own:-0}) is older than this tree's ($_hk_tree, stamp $_hk_theirs) - running THIS tree's hook; legs the installed copy lacked: ${_hk_missing:-none listed}. Fix: fast-forward the primary checkout (git -C <primary> merge --ff-only origin/dev)." >&2
+            NOC_HOOK_REEXEC=1 exec "$_hk_tree" "$@" <<<"$PUSH_LINES"
+        fi
+        echo "[pre-push] 🔴 NOC-REMEDIATE[hook-leg-absent-loud]: the installed hook ($_hk_self, stamp ${_hk_own:-0}) is OLDER than this tree's ($_hk_tree, stamp $_hk_theirs) and could not hand over to it. Legs this push is NOT being checked by: ${_hk_missing:-none listed}. Fix: fast-forward the primary checkout (git -C <primary> merge --ff-only origin/dev) so .git/hooks/pre-push is current." >&2
+    fi
+fi
 
 # ─── the merge-queue path (guardian spec, 2026-11-10) ────────────────────────
 # Code reaches dev through `git push origin <sha>:refs/heads/mq/<slug>--<sha7>`: a PURE PUSH of
@@ -248,12 +280,27 @@ export NOC_HOOK_STAGE="${NOC_HOOK_STAGE:-pre-push}"  # gate telemetry: where a k
 # .venv, and every leg here was guarded by `-x "$PY_PP"`: the branch-tree mirror keeper, stale-pointers
 # and the hard-block keepers all SKIPPED, and a push without a branch pointer went through (e1's
 # mq-ref-delete). Fall back to the PRIMARY checkout's interpreter (derived from --git-common-dir, never
-# hand-built) while still running THIS checkout's cli.py - the ledger-drain leg below did this alone.
+# hand-built) while and (since 2026-11-15) the PRIMARY's cli.py too - see TOOLKIT below.
+_pp_primary="$(cd "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd || true)"
 if [[ ! -x "$PY_PP" ]]; then
-    _pp_primary="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd || true)"
     if [[ -n "$_pp_primary" && -x "$_pp_primary/mcp/noctusai/.venv/bin/python" ]]; then
         PY_PP="$_pp_primary/mcp/noctusai/.venv/bin/python"
     fi
+fi
+# TOOLKIT = the PRIMARY checkout's cli.py (2026-11-15, CI-refusal inventory class 15a, ~144 hits). A branch cut
+# before a flag landed, or one carrying a broken cli.py, used to run stale or broken hook logic on its own push.
+# Every hooked flag below is passed `--worktree-path "$REPO_ROOT_PP"` (cli.py rebinds settings.REPO_ROOT before any
+# tool imports), so each check still judges THIS worktree's tree with the primary's code. The ONE exception is a
+# change to the hooks/toolkit that needs the branch's own flag (e.g. the commit that introduces a flag the hook then
+# calls): set NOCTUS_HOOK_OWN_TOOLKIT=<why, 10+ chars>; it is printed on every use.
+if [[ -n "${NOCTUS_HOOK_OWN_TOOLKIT:-}" ]]; then
+    if [[ ${#NOCTUS_HOOK_OWN_TOOLKIT} -lt 10 ]]; then
+        echo "🔴 pre-push BLOCKED: NOCTUS_HOOK_OWN_TOOLKIT needs a reason of 10+ characters (why this push must run the branch's own toolkit)." >&2
+        exit 1
+    fi
+    echo "[pre-push] ⚠ running THIS branch's own toolkit (NOCTUS_HOOK_OWN_TOOLKIT: $NOCTUS_HOOK_OWN_TOOLKIT)." >&2
+elif [[ -n "$_pp_primary" && -f "$_pp_primary/mcp/noctusai/cli.py" ]]; then
+    CLI_PP="$_pp_primary/mcp/noctusai/cli.py"
 fi
 # FAIL CLOSED: with no interpreter anywhere every keeper below would skip, and a push whose gates did not
 # run must not read as one that passed. Ledger-only pushes and mq withdrawals exited above.
@@ -322,7 +369,7 @@ if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; the
         # constant pointer update never pays the noc-graph/embedding refresh tax.
         # (Defensive belt: ndjson already matches no pattern above; this makes
         # the exemption explicit + robust against future pattern drift.)
-        if [[ -z "$force" ]] && "$PY_PP" "$CLI_PP" --branch-pointer-cache-exempt --bp-paths "$changed" >/dev/null 2>&1; then
+        if [[ -z "$force" ]] && "$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --branch-pointer-cache-exempt --bp-paths "$changed" >/dev/null 2>&1; then
             echo "[pre-push] metadata-only branch-tree pointer push — cache refresh exempt."
             kb=0; code=0; md=0; comp=0; agents=0; ndjson=0; graph=0
         fi
@@ -340,13 +387,13 @@ if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; the
         # to eliminate. Same bounded-wrapper semantics apply: `|| true` is no
         # longer needed on these four (the wrapper always returns 0; see its
         # definition above), so it's dropped rather than kept as dead belt.
-        if [[ $kb     -eq 1 ]]; then echo "[pre-push] kb sources changed → refreshing kb-embeddings";   _pp_bounded_refresh kb-embed     "$PY_PP" "$CLI_PP" --refresh-kb-embeddings;     ran=1; fi
-        if [[ $code   -eq 1 ]]; then echo "[pre-push] py changed → refreshing code-embeddings";          _pp_bounded_refresh code-embed   "$PY_PP" "$CLI_PP" --refresh-code-embeddings;   ran=1; fi
-        if [[ $md     -eq 1 ]]; then echo "[pre-push] markdown changed → refreshing corpus-embeddings";  _pp_bounded_refresh corpus-embed "$PY_PP" "$CLI_PP" --refresh-corpus-embeddings; ran=1; fi
-        if [[ $comp   -eq 1 ]]; then _pp_bounded_refresh keeper           "$PY_PP" "$CLI_PP" --refresh-keeper-cache;           ran=1; fi
-        if [[ $agents -eq 1 ]]; then _pp_bounded_refresh agent-context    "$PY_PP" "$CLI_PP" --refresh-agent-context-cache;    ran=1; fi
-        if [[ $ndjson -eq 1 ]]; then _pp_bounded_refresh auto-improvement "$PY_PP" "$CLI_PP" --refresh-auto-improvement-cache; ran=1; fi
-        if [[ $graph  -eq 1 ]]; then _pp_bounded_refresh noc-graph        "$PY_PP" "$CLI_PP" --refresh-noc-graph;              ran=1; fi
+        if [[ $kb     -eq 1 ]]; then echo "[pre-push] kb sources changed → refreshing kb-embeddings";   _pp_bounded_refresh kb-embed     "$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --refresh-kb-embeddings;     ran=1; fi
+        if [[ $code   -eq 1 ]]; then echo "[pre-push] py changed → refreshing code-embeddings";          _pp_bounded_refresh code-embed   "$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --refresh-code-embeddings;   ran=1; fi
+        if [[ $md     -eq 1 ]]; then echo "[pre-push] markdown changed → refreshing corpus-embeddings";  _pp_bounded_refresh corpus-embed "$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --refresh-corpus-embeddings; ran=1; fi
+        if [[ $comp   -eq 1 ]]; then _pp_bounded_refresh keeper           "$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --refresh-keeper-cache;           ran=1; fi
+        if [[ $agents -eq 1 ]]; then _pp_bounded_refresh agent-context    "$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --refresh-agent-context-cache;    ran=1; fi
+        if [[ $ndjson -eq 1 ]]; then _pp_bounded_refresh auto-improvement "$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --refresh-auto-improvement-cache; ran=1; fi
+        if [[ $graph  -eq 1 ]]; then _pp_bounded_refresh noc-graph        "$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --refresh-noc-graph;              ran=1; fi
         # memory-embeddings is OUT-OF-REPO (the ~/.claude memory dir), so git CANNOT
         # gate it on changed files the way the others are gated — and an agent that
         # edits memory mid-session must never have to refresh it by hand (the
@@ -355,7 +402,7 @@ if [[ -z "${NOCTUS_SKIP_EMBED_REFRESH:-}" && -x "$PY_PP" && -f "$CLI_PP" ]]; the
         # near-no-op dir-walk when nothing changed, self-healing when it did). This is
         # memory's gate — its own content sha, since git can't be. No manual work.
         echo "[pre-push] memory dir is out-of-repo → refreshing memory-embeddings (source_sha-guarded)"
-        _pp_bounded_refresh memory-embed "$PY_PP" "$CLI_PP" --refresh-memory-embeddings; ran=1
+        _pp_bounded_refresh memory-embed "$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --refresh-memory-embeddings; ran=1
         [[ $ran -eq 0 ]] && echo "[pre-push] no embeddable/graph sources changed in this push — skipped all refreshes."
     fi
 fi
@@ -422,6 +469,17 @@ if [[ -z "${NOCTUS_SKIP_BRANCH_TREE_CHECK:-}" && -x "$PY_PP" && -f "$CLI_PP" ]];
         # before main fast-forwards to it. Every commit on it already passed this
         # keeper on its way to dev. Without this skip the cut can never be pushed.
         [[ "${r_ref:-}" == refs/heads/release/* || "$_bt_branch" == release/* ]] && continue
+        # Construction leg (2026-11-15, class 12: 72 refusals / 11 sessions): write or refresh the pointer
+        # through the branch_pointer writer BEFORE the keeper judges it. The keeper below stays the backstop:
+        # when this cannot write it prints why and the keeper blocks. A fresh pointer is a no-op (no ledger traffic).
+        _bt_ens_rc=0
+        _bt_ens_out="$("$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --ensure-branch-pointer "$_bt_branch" 2>&1)" || _bt_ens_rc=$?
+        if [[ $_bt_ens_rc -ne 0 ]]; then
+            echo "[pre-push] ⚠ branch-pointer for '$_bt_branch' was NOT written (rc=$_bt_ens_rc) - the keeper below decides:" >&2
+            echo "$_bt_ens_out" | tail -5 >&2
+        else
+            echo "[pre-push] $(echo "$_bt_ens_out" | tail -1 | sed 's/^[[:space:]]*//')"
+        fi
         # Run the keeper for this branch — any high finding = block.
         echo "[pre-push] branch-tree mirror check for '$_bt_branch'..."
         # `|| _bt_rc=$?` keeps the assignment a TESTED command under `set -e`:
@@ -429,7 +487,7 @@ if [[ -z "${NOCTUS_SKIP_BRANCH_TREE_CHECK:-}" && -x "$PY_PP" && -f "$CLI_PP" ]];
         # status BEFORE the BLOCKED message below prints — the push then fails
         # with no explanation at all (2026-09-29).
         _bt_rc=0
-        _bt_out="$("$PY_PP" "$CLI_PP" --check-branch-tree-mirror "$_bt_branch" 2>&1)" || _bt_rc=$?
+        _bt_out="$("$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --check-branch-tree-mirror "$_bt_branch" 2>&1)" || _bt_rc=$?
         if [[ $_bt_rc -ne 0 ]]; then
             echo "" >&2
             echo "🔴 pre-push: branch-tree mirror keeper BLOCKED push of '$_bt_branch'." >&2
@@ -453,7 +511,7 @@ fi
 _sp_rc=0
 if [[ ! -x "$PY_PP" || ! -f "$CLI_PP" ]]; then
     echo "[pre-push] stale-branch-pointers: SKIPPED — no toolkit venv at $PY_PP (unmeasurable, not a pass)."
-elif _sp_out="$("$PY_PP" "$CLI_PP" --check-stale-branch-pointers 2>&1)" || { _sp_rc=$?; false; }; then
+elif _sp_out="$("$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --check-stale-branch-pointers 2>&1)" || { _sp_rc=$?; false; }; then
     echo "[pre-push] $(echo "$_sp_out" | grep -E '✓|⚠' | head -1 | sed 's/^[[:space:]]*//')"
 elif [[ $_sp_rc -ne 0 ]]; then
     echo "" >&2
@@ -471,7 +529,7 @@ for _ll_flag in --check-engineer-slice-scored --check-guard-hooks-registered; do
     _ll_rc=0
     if [[ ! -x "$PY_PP" || ! -f "$CLI_PP" ]]; then
         echo "[pre-push] ${_ll_flag#--}: SKIPPED — no toolkit venv at $PY_PP (unmeasurable, not a pass)."
-    elif _ll_out="$("$PY_PP" "$CLI_PP" "$_ll_flag" 2>&1)" || { _ll_rc=$?; false; }; then
+    elif _ll_out="$("$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" "$_ll_flag" 2>&1)" || { _ll_rc=$?; false; }; then
         echo "[pre-push] $(echo "$_ll_out" | grep -E '✓|⚠' | head -1 | sed 's/^[[:space:]]*//')"
     elif [[ $_ll_rc -ne 0 ]]; then
         echo "" >&2
@@ -486,7 +544,7 @@ done
 # inline_reason. The construction leg is release_steward `request` (inline_reason/inline_note); this is
 # the backstop. Promote to blocking only after >=7 days of measured fix_rate (gate-alignment inventory).
 if [[ -x "$PY_PP" && -f "$CLI_PP" ]]; then
-    _oi_out="$("$PY_PP" "$CLI_PP" --check-orchestrator-inline-over-cutoff 2>&1)" || true
+    _oi_out="$("$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --check-orchestrator-inline-over-cutoff 2>&1)" || true
     echo "[pre-push] $(echo "$_oi_out" | grep -E '✓|⚠' | head -1 | sed 's/^[[:space:]]*//')"
     if [[ "$_oi_out" == *"⚠"* ]]; then
         echo "[pre-push] WARNING (shadow): ORCHESTRATOR-INLINE-OVER-CUTOFF — dispatch the specialist next time, or record inline_reason (see KB § PATTERNS/architect/parallelization-first-orchestration.md Enforcement)." >&2
@@ -498,7 +556,7 @@ fi
 # from code. Flags a NEW LLM call site outside the registry (shrink-only ratchet baseline). --llm-prompt-log
 # files an auto-improvement drift row per flagged file. Promote to blocking only after >=7 days of measured fix_rate.
 if [[ -x "$PY_PP" && -f "$CLI_PP" ]]; then
-    _lp_out="$("$PY_PP" "$CLI_PP" --check-llm-prompt-from-registry --llm-prompt-log 2>&1)" || true
+    _lp_out="$("$PY_PP" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --check-llm-prompt-from-registry --llm-prompt-log 2>&1)" || true
     echo "[pre-push] $(echo "$_lp_out" | grep -E '✓|⚠' | head -1 | sed 's/^[[:space:]]*//')"
     if [[ "$_lp_out" == *"⚠"* ]]; then
         echo "[pre-push] WARNING (shadow): LLM-PROMPT-NOT-FROM-REGISTRY — use noctusai_lib.integrations.prompt_registry (chamar_ia / prompt_e_modelo); see KB § PATTERNS/ai/prompts-from-registry.md." >&2
@@ -530,7 +588,7 @@ fi
 #     skips; a HARD-BLOCK keeper that skips in the one place work actually
 #     happens is not a gate. So fall back to the PRIMARY checkout's
 #     interpreter (derived from `--git-common-dir`, never hand-built) while
-#     still running the WORKTREE's `cli.py`, so what gets checked is the code
+#     running the PRIMARY's `cli.py` against this worktree via --worktree-path (2026-11-15), so what gets checked is the tree
 #     being pushed rather than the primary's copy of it.
 _ld_py="$PY_PP"
 if [[ ! -x "$_ld_py" ]]; then
@@ -544,7 +602,7 @@ if [[ ! -x "$_ld_py" || ! -f "$CLI_PP" ]]; then
 else
 echo "[pre-push] ledger-drain keeper..."
 _ld_rc=0
-_ld_out="$("$_ld_py" "$CLI_PP" --check-ledger-drain-after-settle 2>&1)" || _ld_rc=$?
+_ld_out="$("$_ld_py" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --check-ledger-drain-after-settle 2>&1)" || _ld_rc=$?
 if [[ $_ld_rc -ne 0 ]]; then
     echo "" >&2
     echo "🔴 pre-push: ledger-drain keeper BLOCKED the push." >&2
@@ -566,13 +624,13 @@ fi
 # themselves landed fine. This is the backstop for that CLASS of gap (applied
 # ≠ recorded), not just that one cause — reuses `_ld_py` resolved above (a
 # worktree has no mcp/noctusai/.venv; fall back to the primary's interpreter,
-# still running THIS tree's cli.py). Needs live Supabase credentials, so a
+# the PRIMARY's cli.py). Needs live Supabase credentials, so a
 # missing token SKIPS loudly rather than reading as a pass — see the keeper's
 # own dispatcher in cli.py. Observe-first: warning severity, NEVER blocks.
 if [[ -x "$_ld_py" && -f "$CLI_PP" ]]; then
     echo "[pre-push] migration-applied-ledger-drift keeper..."
     _mld_rc=0
-    _mld_out="$("$_ld_py" "$CLI_PP" --check-migration-applied-ledger-drift 2>&1)" || _mld_rc=$?
+    _mld_out="$("$_ld_py" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --check-migration-applied-ledger-drift 2>&1)" || _mld_rc=$?
     echo "$_mld_out" | tail -5 | sed 's/^/[pre-push] /'
     if [[ $_mld_rc -ne 0 ]]; then
         echo "[pre-push] migration-applied-ledger-drift: unexpected non-zero exit ($_mld_rc) — non-blocking (warning-only), continuing." >&2
@@ -588,7 +646,7 @@ fi
 # every covering doc is untouched. Ack a doc that is still accurate with a
 # `Docs-Reviewed: <doc> — <reason>` commit trailer. Tree-level claim staleness
 # (the shrink-only ratchet) is enforced by CI's commit-range-keepers job, not
-# here. Reuses `_ld_py` (worktree-safe interpreter) and THIS tree's cli.py.
+# here. Reuses `_ld_py` (worktree-safe interpreter) and the primary's cli.py (--worktree-path judges this tree).
 # Skips (loudly) when no interpreter, a new branch, or an unknown remote tip.
 if [[ -z "${NOCTUS_SKIP_DOC_STALENESS:-}" ]]; then
     while read -r _ds_lref _ds_loid _ds_rref _ds_roid; do
@@ -615,7 +673,7 @@ if [[ -z "${NOCTUS_SKIP_DOC_STALENESS:-}" ]]; then
         fi
         echo "[pre-push] doc-staleness keeper (${_ds_roid:0:9}..${_ds_loid:0:9})..."
         _ds_rc=0
-        _ds_out="$("$_ld_py" "$CLI_PP" --check-doc-staleness --doc-range "${_ds_roid}..${_ds_loid}" --worktree-path "$REPO_ROOT_PP" 2>&1)" || _ds_rc=$?
+        _ds_out="$("$_ld_py" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --check-doc-staleness --doc-range "${_ds_roid}..${_ds_loid}" 2>&1)" || _ds_rc=$?
         if [[ $_ds_rc -ne 0 ]]; then
             echo "" >&2
             echo "🔴 pre-push: DOC-STALENESS — code changed under docs that were not updated." >&2
@@ -686,6 +744,6 @@ fi
 # the newest Studio publish. Stale / unverified -> loud stderr + `.agents-mirror-pending`. NEVER blocks.
 # Instant no-op when no mirror carries the generated marker.
 if grep -lq "GENERATED from Agents Studio" "$REPO_ROOT_PP"/.claude/agents/*.md 2>/dev/null; then
-    "$_ld_py" "$REPO_ROOT_PP/mcp/noctusai/cli.py" --agent-mirror-check --worktree-path "$REPO_ROOT_PP" || true
+    "$_ld_py" "$CLI_PP" --worktree-path "$REPO_ROOT_PP" --agent-mirror-check || true
 fi
 exit 0

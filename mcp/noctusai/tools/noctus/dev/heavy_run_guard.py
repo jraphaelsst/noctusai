@@ -1,5 +1,8 @@
 """Route an UNGATED heavy test/build run from an agent's Bash call through the gate, BEFORE it runs.
 
+REMOTE BY DEFAULT (2026-11-16): the rewritten command is `hw_admission.py run`, which sends a pytest/vitest/npm-test run
+to a GitHub Actions runner (remote_test.py) and takes the laptop slot only as a loud fallback. KB § PATTERNS/devops/hardware-admission-budget.md
+
 REWRITE, NOT DENY (2026-11-14): a guard that knows the correct form produces it. The command becomes
 `<venv python> hw_admission.py run --job <derived> --wait-s 7200 -- bash -c '<command>'` (updatedInput,
 outcome=rewrite in the guard-event log). Still refused: local Whisper (policy) and unparseable commands.
@@ -21,6 +24,12 @@ WHAT IS MATCHED (per command segment; compound commands are split by shlex)
 Local Whisper (2026-11-07): `whisper`/`faster-whisper`/`whisperx` CLIs, `python -m *whisper*`,
 `python <…whisper….py>`, including behind `uv run [opts]`. The refusal points to the server
 (`noctus.transcription.*`) FIRST; the gate wrapper is offered only for a real server failure.
+
+Leading wrappers are stripped before the decision (2026-11-16): `timeout`/`gtimeout` (with `-k`, `-s`, `--signal=`,
+`--kill-after=` and the duration), `env`, `nice`, `nohup`, `caffeinate`, `time`, `ionice`, `stdbuf`, `setsid`, `arch`,
+`taskpolicy`. The interpreter is judged by basename, so any path counts (`venv/bin/python`, `.venv/bin/python3.11`),
+and `-m pytest`, `pytest`, `py.test` and `-m unittest` are heavy under any of them. The REWRITE keeps the whole
+original command (the `timeout` included) INSIDE the admitted `bash -c` job.
 
 WHAT IS ALLOWED
 ===============
@@ -67,7 +76,17 @@ GATE = "python mcp/noctusai/tools/noctus/dev/hw_admission.py run"
 
 _OPS = {"&&", "||", ";", "|", "&", "(", ")", "|&", ";;", "\n"}
 _ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-_WRAPPERS = {"env", "sudo", "time", "nohup", "command", "exec", "nice", "caffeinate", "builtin"}
+# Leading wrapper words that run the REST of the command line, and the options of each that take a VALUE (so the
+# value is not mistaken for the command). 2026-11-16: a `timeout`-prefixed bare-venv pytest ran outside the slot.
+_WRAPPER_VALUED: dict[str, set[str]] = {
+    "env": {"-u", "-C", "-S"}, "sudo": {"-u", "-g", "-C", "-h", "-p", "-r", "-t", "-U"}, "time": {"-o", "-f"},
+    "nohup": set(), "command": set(), "exec": {"-a"}, "nice": {"-n"}, "caffeinate": {"-t", "-w"}, "builtin": set(),
+    "ionice": {"-c", "-n", "-p", "-P", "-u"}, "taskpolicy": {"-c", "-d", "-g"}, "arch": set(), "stdbuf": set(),
+    "setsid": set(),
+}
+_WRAPPERS = set(_WRAPPER_VALUED)
+_TIMEOUTS = {"timeout", "gtimeout"}
+_TIMEOUT_VALUED = {"-s", "-k", "--signal", "--kill-after"}
 _RUNNERS = {"npx", "pnpx", "bunx"}
 _PKG = {"npm", "pnpm", "yarn", "bun"}
 _SHELLS = {"bash", "sh", "zsh"}
@@ -192,13 +211,18 @@ def _strip_prefix(seg: list[str]) -> tuple[list[str], dict[str, str]]:
             env[k] = v
             i += 1
         elif os.path.basename(t) in _WRAPPERS:
+            valued = _WRAPPER_VALUED[os.path.basename(t)]
             i += 1
             # The wrapper's own flags (`nice -n 10`, `env -i`) are not the command;
             # without this `nice -n 10 pytest` read `-n` as the command and slipped through.
             while i < len(seg) and seg[i].startswith("-"):
-                i += 2 if seg[i] in {"-n", "-u", "-C", "-S"} and i + 1 < len(seg) else 1
-        elif os.path.basename(t) == "timeout":
-            i += 2 if i + 1 < len(seg) else 1
+                i += 2 if seg[i] in valued and i + 1 < len(seg) else 1
+        elif os.path.basename(t) in _TIMEOUTS:
+            # `timeout [OPTION]... DURATION COMMAND`: options (`-k 10`, `--signal=KILL`, `--foreground`), then the duration.
+            i += 1
+            while i < len(seg) and seg[i].startswith("-"):
+                i += 2 if seg[i] in _TIMEOUT_VALUED and i + 1 < len(seg) else 1
+            i += 1 if i < len(seg) else 0  # the DURATION
         else:
             break
     return seg[i:], env
@@ -233,7 +257,7 @@ def _heavy_kind(words: list[str]) -> str | None:
         return _heavy_kind(args[i:])
     if re.fullmatch(r"python[\d.]*", cmd):
         for a, b in zip(args, args[1:]):
-            if a == "-m" and b in {"pytest", "py.test"}:
+            if a == "-m" and b in {"pytest", "py.test", "unittest"}:
                 return "pytest"
             if a == "-m" and "whisper" in b:
                 return "whisper"
@@ -362,7 +386,9 @@ def rewrite_through_gate(tool_input: dict[str, Any], command: str, kind: str,
         "updated_input": {**tool_input, "command": gated_command(command, job)},
         "context": (
             f"[noc-guard:heavy-run] REWROTE this heavy {kind} run to go through the hardware gate "
-            f"(--job {job}, waits up to {GATE_WAIT_S}s for a slot) as one `bash -c` job. A `cd` inside the "
+            f"(--job {job}) as one `bash -c` job. A pytest/vitest/npm-test run goes to a GitHub runner by DEFAULT "
+            "(push first: it tests the pushed sha; unpushed/dirty/gh-less falls back to the local slot with a loud "
+            f"reason; `--local` or NOCTUS_TEST_BACKEND=local forces local); anything else waits up to {GATE_WAIT_S}s for the local slot. A `cd` inside the "
             "command no longer persists in the session shell. Self-gating tools need no wrapper. "
             f"{KB_POINTER}"
         ),

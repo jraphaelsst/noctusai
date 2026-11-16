@@ -719,15 +719,15 @@ def test_derive_product_repoints_matches_real_products():
 
 
 def test_plan_env_wiring_reports_missing_toolkit_node_modules(tmp_path):
-    """Absent toolkit node_modules → REPORTED, not silently omitted."""
+    """Absent PRIMARY toolkit node_modules → an install into the worktree is PLANNED (never a silent omission)."""
     primary = tmp_path / "primary"
     wt_root = primary / ".claude" / "worktrees" / "zeta"
     _seed_primary(primary, slugs=("zeta",), with_toolkit_nm=False)
     _seed_worktree_tree(wt_root)
 
     wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
-    assert not [w for w in wire if w["link"].endswith("mcp/noctusai/node/node_modules")]
-    assert [s for s in skipped if "primary toolkit node_modules absent" in s["reason"]]
+    (spec,) = [w for w in wire if w["link"].endswith("mcp/noctusai/node/node_modules")]
+    assert spec["kind"] == "node_install" and "primary toolkit node_modules absent" in spec["why"]
 
 
 def test_plan_env_wiring_reports_missing_primary_dotenv(tmp_path):
@@ -832,7 +832,9 @@ def test_plan_env_wiring_reports_missing_primary_node_modules(tmp_path):
     # the @noctusai re-points target the WORKTREE seed (which exists) so they still plan
     nm_skips = [s for s in skipped if "primary node_modules absent" in s["reason"]]
     assert len(nm_skips) == 3  # 2 seed pkgs + 1 product frontend
-    assert all(w["kind"] == "@noctusai" for w in wire)
+    # plus the toolkit's own `node_install` (primary toolkit node_modules absent → install, never a link)
+    assert {w["kind"] for w in wire} <= {"@noctusai", "node_install"}
+    assert [w["kind"] for w in wire].count("node_install") == 1
     # the honest edge case the brief names explicitly: the PRIMARY checkout
     # itself was never `npm install`'d — the reason must NAME the fix, not
     # just report the symptom.

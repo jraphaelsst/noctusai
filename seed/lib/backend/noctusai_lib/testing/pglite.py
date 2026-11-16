@@ -34,7 +34,7 @@ from types import SimpleNamespace
 from typing import Any, Optional, Sequence
 
 __all__ = ["BRIDGE_JS", "REQUIRE_REAL_PG_ENV", "PgliteClient", "PgliteError", "RealPgUnavailable", "node_dir",
-           "pglite_available", "real_pg_required", "stubs_path"]
+           "pglite_available", "pglite_replay_skipif", "real_pg_required", "stubs_path"]
 
 #: seed/lib/backend/noctusai_lib/testing/pglite.py -> repo root
 _REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -130,22 +130,47 @@ def real_pg_required() -> bool:
     return os.environ.get(REQUIRE_REAL_PG_ENV, "").strip() == "1"
 
 
+def _harness_missing(*, replay: bool) -> list[str]:
+    checks = [
+        ("`node` on PATH", shutil.which("node") is not None),
+        (f"{node_dir() / 'node_modules' / '@electric-sql'} (run `npm ci` in {node_dir()})",
+         (node_dir() / "node_modules" / "@electric-sql").exists()),
+        (f"{stubs_path()}", stubs_path().exists()),
+    ]
+    if replay:
+        checks.append((f"{node_dir() / 'migration_replay' / 'replay.mjs'}", (node_dir() / "migration_replay" / "replay.mjs").exists()))
+    return [what for what, ok in checks if not ok]
+
+
+def _unavailable(missing: list[str]) -> str:
+    return f"PGlite harness unavailable (missing: {', '.join(missing)})"
+
+
 def pglite_available() -> bool:
     """True when node + the toolkit's PGlite install are present.
 
     Under ``NOC_REQUIRE_REAL_PG=1`` a missing harness RAISES `RealPgUnavailable` instead of returning False, so
     every ``if not pglite_available(): pytest.skip(...)`` call site fails loudly in CI rather than skipping.
     """
-    missing = [what for what, ok in (
-        ("`node` on PATH", shutil.which("node") is not None),
-        (f"{node_dir() / 'node_modules' / '@electric-sql'} (run `npm ci` in {node_dir()})",
-         (node_dir() / "node_modules" / "@electric-sql").exists()),
-        (f"{stubs_path()}", stubs_path().exists()),
-    ) if not ok]
+    missing = _harness_missing(replay=False)
     if missing and real_pg_required():
-        raise RealPgUnavailable(f"PGlite harness unavailable (missing: {', '.join(missing)}) while "
-                                f"{REQUIRE_REAL_PG_ENV}=1 -- a skipped real-Postgres proof is not a pass")
+        raise RealPgUnavailable(f"{_unavailable(missing)} while {REQUIRE_REAL_PG_ENV}=1 -- a skipped real-Postgres proof is not a pass")
     return not missing
+
+
+def pglite_replay_skipif() -> dict[str, Any]:
+    """Keyword arguments for ``pytest.mark.skipif(**pglite_replay_skipif())`` on a module that drives the toolkit's
+    PGlite *replay* harness (`migration_replay/replay.mjs`) directly instead of through `PgliteClient`.
+
+    Those modules used to hand-roll the same ``shutil.which("node") is None or not ...exists()`` expression, which
+    skipped regardless of ``NOC_REQUIRE_REAL_PG`` -- the flag was set and the suite still said "skipped". Evaluated
+    at import time, a missing harness under the flag RAISES `RealPgUnavailable` (a collection error naming what is
+    missing) instead of producing a skip; without the flag it is the visible skip it always was."""
+    missing = _harness_missing(replay=True)
+    if missing and real_pg_required():
+        raise RealPgUnavailable(f"{_unavailable(missing)} while {REQUIRE_REAL_PG_ENV}=1 -- a skipped real-Postgres proof is not a pass")
+    return {"condition": bool(missing),
+            "reason": f"{_unavailable(missing)} - did not run" if missing else "PGlite replay harness available"}
 
 
 class PgliteError(RuntimeError):

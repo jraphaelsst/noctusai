@@ -24,6 +24,10 @@ _SW_231 = "products/social-wiring/backend/migrations/231_intermediario_documento
 
 def _node_eval(js: str) -> str:
     if shutil.which("node") is None:
+        from noctusai_lib.testing.pglite import REQUIRE_REAL_PG_ENV, real_pg_required
+
+        if real_pg_required():
+            pytest.fail(f"`node` not on PATH while {REQUIRE_REAL_PG_ENV}=1 - a skipped real-Postgres proof is not a pass")
         pytest.skip("node not on PATH")
     proc = subprocess.run(
         ["node", "--input-type=module", "-e", js], cwd=_NODE_DIR / "migration_replay",

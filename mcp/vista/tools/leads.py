@@ -28,6 +28,9 @@ _HANDLED = (WritesDisabled, ValueError, VistaConfigError, VistaTimeout, VistaUps
 
 
 async def submit_lead(args: dict) -> dict:
+    # NOC-REMEDIATE[vista-mcp-escrita-motivo-nota]: a lead submission must carry a REQUIRED `motivo` too (owner rule 2026-11-04: no Vista
+    # write without a reason and a note); the note lands where a note field exists (a lead's `mensagem`/observation) -- deferred with the
+    # photos tool, outside the Vista-sync slice -- 2026-11-04
     inp = SubmitLeadInput(**args)
     lead = inp.model_dump(exclude_none=True)
     try:

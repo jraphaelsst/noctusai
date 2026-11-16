@@ -66,9 +66,8 @@ class TestQueueingForTheSlot:
         finally:
             holder[0].close()
 
-    def test_budget_is_the_deadline_minus_a_run_reserve_never_under_half(self):
-        assert rs.slot_wait_budget_s(3600.0) == 3600.0 - rs.SCOPED_RUN_RESERVE_S
-        assert rs.slot_wait_budget_s(1000.0) == 500.0
+    def test_queue_and_run_have_their_own_budgets(self):
+        assert rs.SCOPED_QUEUE_DEFAULT_S == 3 * 3600 and rs.SCOPED_RUN_DEFAULT_S > 0
 
     def test_unmeasured_names_the_wait_and_the_holder(self):
         adm = type("Adm", (), {"verdict": "waiting_for_slot", "waited_s": 1234.6,

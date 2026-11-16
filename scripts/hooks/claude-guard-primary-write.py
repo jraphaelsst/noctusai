@@ -108,7 +108,7 @@ def _judge_timed(payload: dict, stages: dict[str, float]) -> dict | None:
         # subprocess, no worktree discovery, no baseline -- those cost seconds under load and a
         # read has nothing to guard. A stale baseline from an earlier write is dropped by a plain
         # file remove (no git) so the Post leg never diffs against it.
-        verdict = guard.decide_git_bypass(tool_name, tool_input)
+        verdict = guard.decide_git_bypass(tool_name, tool_input, cwd=payload.get("cwd"))
         if verdict is None and tool_name == "Bash":
             from _guard_failclosed import _primary_root
             guard.discard_pretool_baseline(guard.GuardContext(str(_primary_root()), "", ()),
@@ -120,7 +120,7 @@ def _judge_timed(payload: dict, stages: dict[str, float]) -> dict | None:
     # docstring), so a command that is also a primary-checkout write gets the
     # more specific reason.
     cwd = payload.get("cwd") or os.getcwd()
-    verdict = guard.decide_git_bypass(tool_name, tool_input)
+    verdict = guard.decide_git_bypass(tool_name, tool_input, cwd=cwd)
     if verdict is None:
         verdict = guard.decide_wired_worktree_npm(tool_name, tool_input, cwd)  # plain file reads, no git
     lap("bypass+npm")

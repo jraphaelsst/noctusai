@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from noctusai_lib.domain.clients import CLIENTS_MIGRATION_HEADER, clients_guard_probes, clients_migration, clients_table_ddl
+from noctusai_lib.testing.pglite import pglite_replay_skipif
 
 ROOT = Path(__file__).resolve().parents[6]
 NODE_DIR = ROOT / "mcp" / "noctusai" / "node"
@@ -47,10 +48,7 @@ def test_every_unique_guard_is_declared_as_a_probe():
     assert declared == emitted == ["uq_client_sessions_slot", "uq_clients_lead"]
 
 
-_REAL = pytest.mark.skipif(
-    shutil.which("node") is None or not HARNESS.exists() or not (NODE_DIR / "node_modules" / "@electric-sql").exists(),
-    reason="PGlite replay harness unavailable (needs `node` and mcp/noctusai/node/node_modules)",
-)
+_REAL = pytest.mark.skipif(**pglite_replay_skipif())
 
 PRELUDE = f"""
 CREATE SCHEMA IF NOT EXISTS {SCHEMA};

@@ -44,6 +44,7 @@ from app.modules.media_creation.esteira_config import (
     ROLE_POSTADO,
 )
 from app.modules.media_creation.prompts.headline_geracao import aviso_tamanho
+from app.modules.media_creation.services.roteiro_aprovacao import roteiro_aprovado
 
 logger = logging.getLogger(__name__)
 
@@ -356,9 +357,13 @@ class EsteiraService:
         if not row.get("roteiro_id"):
             faltando.append("roteiro")
         else:
-            rt = self.db.table(ROTEIROS).select("id,status").eq("id", row["roteiro_id"]).eq("org_id", self.org_id).execute().data
+            rt = self.db.table(ROTEIROS).select("id,status,versao").eq("id", row["roteiro_id"]).eq("org_id", self.org_id).execute().data
             if not rt or rt[0].get("status") != "completo":
                 faltando.append("roteiro_incompleto")
+            elif not roteiro_aprovado(self.db, self.org_id, str(row["roteiro_id"])):
+                # Approval is ALWAYS required (owner 2026-11-13): `completo` only means the AI finished. Editing an
+                # approved roteiro bumps its versao, which makes this False again until it is re-approved.
+                faltando.append("roteiro_nao_aprovado")
         return faltando
 
     @staticmethod

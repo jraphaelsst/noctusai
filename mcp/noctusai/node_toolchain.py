@@ -36,7 +36,7 @@ _LOCK = "package-lock.json"
 class Toolchain:
     ok: bool
     node_dir: Path          # <worktree>/mcp/noctusai/node
-    source: str             # "own" | "linked" | "borrowed" | "" (not ok)
+    source: str             # "own" | "linked" | "installed" | "borrowed" | "" (not ok)
     provider: Path | None   # the node dir whose node_modules serves (== node_dir for own/linked)
     reason: str = ""        # "" when ok; else why not + the exact fix
 
@@ -47,6 +47,18 @@ class Toolchain:
         if self.source == "borrowed" and self.provider is not None:
             return ["node", "--input-type=module", "-e", script.read_text(encoding="utf-8")], self.provider
         return ["node", str(script)], None
+
+
+def repo_toplevel(cwd: Path | str | None = None) -> Path:
+    """The repository TOPLEVEL for `cwd` (default: the process cwd); `cwd` itself when git cannot say. A repo root derived
+    from the cwd is wrong the moment the process runs from a subdirectory (`mcp/noctusai/mcp/noctusai/node`, 2026-11-15)."""
+    here = Path(cwd) if cwd is not None else Path.cwd()
+    try:
+        out = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=here, capture_output=True, text=True,
+                             timeout=10, check=False).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return here
+    return Path(out) if out else here
 
 
 def _git_common_checkout(worktree: Path) -> Path | None:
@@ -109,8 +121,14 @@ def resolve(worktree: Path | str | None = None, *, require: Sequence[str] = DEFA
     node_dir = wt.joinpath(*NODE_REL)
     fix = f"run `npm ci --prefix {node_dir}`"
     own_missing = _missing(node_dir, require)
-    if not own_missing:
-        return Toolchain(True, node_dir, "own", node_dir)
+    nm_own = node_dir / "node_modules"
+    # A node_modules that is a SYMLINK is another checkout's install: it is ours only while the two lockfiles agree.
+    # A stale link (the lockfile moved on this branch) must fall through to re-link or install, never pass as "own".
+    stale_link = nm_own.is_symlink() and not own_missing and lockfile_verdict(node_dir, nm_own.resolve().parent)
+    if not own_missing and not stale_link:
+        return Toolchain(True, node_dir, "own", node_dir)  # "own" = already wired; callers report only new links
+    if stale_link:
+        own_missing = [f"node_modules (a link to {nm_own.resolve()} whose lockfile differs)"]
     why: list[str] = []
     for src_root in _candidate_sources(wt, sources):
         src = src_root.joinpath(*NODE_REL)
@@ -139,6 +157,45 @@ def resolve(worktree: Path | str | None = None, *, require: Sequence[str] = DEFA
     state = "carries a real node_modules without " + ", ".join(own_missing) if (node_dir / "node_modules").is_dir() and not (node_dir / "node_modules").is_symlink() else "has no usable node_modules"
     detail = "; ".join(why) if why else "no other checkout with an install was found"
     return Toolchain(False, node_dir, "", None, f"node toolchain unavailable: {node_dir} {state} ({detail}) - {fix}")
+
+
+def provision(worktree: Path | str | None = None, *, require: Sequence[str] = DEFAULT_REQUIRE,
+              sources: Sequence[Path | str] | None = None, install: bool = True, timeout: int = 900,
+              run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> Toolchain:
+    """`resolve`, and when there is NO usable install anywhere (no lockfile-identical one to link) INSTALL it:
+    `npm ci --prefix <worktree node dir>` -- the one install CI itself runs, so the result is what CI judges against.
+
+    This is the construction behind a fresh worktree/agent worktree: a lockfile-identical link when one exists, else a
+    LOUD install (the returned `Toolchain` says `source="installed"`, or `ok=False` with npm's own tail). `install=False`
+    is `resolve` plus the same loud reason. A `node_modules` that is a SYMLINK is removed before `npm ci` -- `npm ci`
+    deletes the directory it installs into, and through a link that is another checkout's install."""
+    wt = Path(worktree) if worktree is not None else Path(__file__).resolve().parents[2]
+    tc = resolve(wt, require=require, sources=sources)
+    if tc.ok or not install:
+        return tc
+    node_dir = tc.node_dir
+    if not (node_dir / _LOCK).is_file():
+        return Toolchain(False, node_dir, "", None, f"{tc.reason} (and {node_dir / _LOCK} is absent, so there is nothing to `npm ci`)")
+    npm = shutil.which("npm")
+    if npm is None:
+        return Toolchain(False, node_dir, "", None, f"{tc.reason} (`npm` is not on PATH, so it was not installed automatically)")
+    nm = node_dir / "node_modules"
+    try:
+        if nm.is_symlink():
+            nm.unlink()
+        proc = run([npm, "ci", "--prefix", str(node_dir), "--no-audit", "--no-fund"], capture_output=True, text=True,
+                   timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return Toolchain(False, node_dir, "", None, f"`npm ci --prefix {node_dir}` exceeded {timeout}s - run it by hand: {tc.reason}")
+    except OSError as exc:
+        return Toolchain(False, node_dir, "", None, f"`npm ci --prefix {node_dir}` could not start ({exc}) - {tc.reason}")
+    if proc.returncode != 0:
+        tail = ((proc.stderr or proc.stdout or "").strip())[-400:]
+        return Toolchain(False, node_dir, "", None, f"`npm ci --prefix {node_dir}` failed (exit {proc.returncode}): {tail}")
+    after = _missing(node_dir, require)
+    if after:
+        return Toolchain(False, node_dir, "", None, f"`npm ci --prefix {node_dir}` succeeded but {', '.join(after)} is still missing - the lockfile does not install it")
+    return Toolchain(True, node_dir, "installed", node_dir)
 
 
 def run_files_scan(script_rel: Sequence[str], files: Sequence[Path], *, root: Path | None = None, timeout: int,
