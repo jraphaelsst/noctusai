@@ -12,6 +12,7 @@ from typing import Any
 
 from settings import REPO_ROOT
 from tools.noctus.dev import findings_ledger as gl
+from tools.noctus.dev._primary_ledger_guard import ensure_not_shared_primary
 
 NAME = "access-tier"
 LEDGER_REL = Path("project-history/access-tiers/findings.ndjson")
@@ -114,6 +115,7 @@ def reconcile_effective(effective_result: dict, root: Path | None = None, found_
     """Feed a `diff_exposure` result into the ledger: new `eff:` findings are opened; a previously-open `eff:` row that a
     FULLY MEASURED run no longer reports is closed. An unmeasured run only adds, never closes."""
     root = root or REPO_ROOT
+    ensure_not_shared_primary(root, 'access_tier_findings.reconcile_effective')
     rows = gl.load(LEDGER, root)
     seen: set[str] = set()
     added = closed = 0

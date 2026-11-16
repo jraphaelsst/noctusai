@@ -418,6 +418,11 @@ BEFORE_RETURNING_BLOCK = (
     "files next to your change: `vitest run` (`npm test`) in each touched "
     "`products/<slug>/frontend` and `seed/**` frontend, `pytest` in each touched "
     "backend. A page harness that does not stub a hook you added fails only here.\n"
+    "   Tests run on GitHub, not your laptop: COMMIT AND PUSH your branch, then "
+    "`python mcp/noctusai/tools/noctus/dev/hw_admission.py run --job <kind:target> -- "
+    "<test command>` (remote by default: it runs exactly that command at your pushed "
+    "sha on a runner and returns its exit code; unpushed/dirty/no-gh falls back to the "
+    "local slot with a loud reason; `--local` forces local).\n"
     "2. `mcp/noctusai/.venv/bin/python mcp/noctusai/cli.py --check-doc-staleness "
     "--doc-range origin/dev..HEAD` from your worktree must be clean: update each "
     "listed doc, or add `Docs-Reviewed: <doc> - <why still accurate>` to a commit.\n"
@@ -472,6 +477,17 @@ def _source_warnings(
     return warns
 
 
+def _covering_docs(target_files: list[str], degraded: list[str] | None) -> dict[str, list[str]]:
+    """{target file: living docs covering it} -- the docs the slice must update in the same commit (or ack)."""
+    try:
+        from tools.noctus.dev import doc_staleness
+
+        return doc_staleness.covering_docs_for_paths(doc_staleness.REPO_ROOT, target_files)
+    except Exception as exc:  # noqa: BLE001 -- a brief without the doc list is degraded, never silent
+        _note(degraded, "doc_staleness", exc)
+        return {}
+
+
 def _render_brief(
     *,
     description: str,
@@ -482,6 +498,7 @@ def _render_brief(
     recent_misses: list[dict] | None = None,
     open_findings: list[str] | None = None,
     source_warnings: list[dict] | None = None,
+    covering_docs: dict[str, list[str]] | None = None,
 ) -> str:
     """Render the brief in dispatch-engineer-tuning §4d shape."""
     title_slug = description[:60].rstrip()
@@ -516,6 +533,13 @@ def _render_brief(
     if open_findings:
         lines += ["", "### Open findings in your scope (fix-on-contact; the ledger is written only by `noctus.dev.findings_ledger`)"]
         lines += [f"- {ln.strip()}" for ln in open_findings]
+
+    # Docs that cover the target files: the commit-msg doc-staleness leg refuses a commit that changes covered code
+    # materially without them (or a `Docs-Reviewed:` trailer) -- known at dispatch, not at commit time.
+    if covering_docs:
+        lines += ["", "### Docs covering your target files (update in the same commit, or `Docs-Reviewed: <doc> — <why unaffected>`)"]
+        for tf, docs in covering_docs.items():
+            lines.append(f"- `{tf}` -> " + ", ".join(f"`{d}`" for d in docs))
 
     # F4 (Phase 5a): a brief naming a frozen absorption SOURCE outside an absorption slice (warn, never blocks).
     if source_warnings:
@@ -632,6 +656,9 @@ def compose_brief(
     # Step 5c (F4): frozen absorption sources named in the brief text / targets, outside an absorption slice.
     source_warnings = _source_warnings(description, target_files, sources, degraded)
 
+    # Step 5d: docs covering the target files (doc-staleness coverage map).
+    covering = _covering_docs(target_files, degraded)
+
     # Step 6: render.
     brief = _render_brief(
         description=description,
@@ -642,6 +669,7 @@ def compose_brief(
         recent_misses=misses,
         open_findings=open_findings,
         source_warnings=source_warnings,
+        covering_docs=covering,
     )
 
     return {
@@ -652,6 +680,7 @@ def compose_brief(
         "recent_misses": misses,
         "open_findings": open_findings,
         "source_warnings": source_warnings,
+        "covering_docs": covering,
         "degraded": degraded,
     }
 

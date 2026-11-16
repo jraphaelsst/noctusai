@@ -35,12 +35,15 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import logging
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 from settings import REPO_ROOT
+from tools.noctus.dev import _ledger_store as ls
+from tools.noctus.dev._primary_ledger_guard import PrimaryLedgerWriteRefused, ensure_not_shared_primary
 
 STATUSES = ("open", "in-progress", "fixed", "accepted")
 LIVE = ("open", "in-progress", "accepted")
@@ -109,26 +112,91 @@ def _head(root: Path) -> str:
         return "worktree"
 
 
-def load(lt: LedgerType, root: Path | None = None) -> dict[str, dict]:
-    p = (root or REPO_ROOT) / lt.path
+def _store_name(lt: LedgerType) -> str:
+    """The flat file name of this ledger's rows on `origin/ledgers` (the store takes bare `*.ndjson` names)."""
+    return f"findings-{lt.name}.ndjson"
+
+
+def _by_key(row: dict) -> str:
+    return row["key"]
+
+
+def _tree_text(lt: LedgerType, root: Path) -> str:
+    p = root / lt.path
+    return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+def _parse(text: str) -> dict[str, dict]:
     rows: dict[str, dict] = {}
-    if p.exists():
-        for line in p.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                r = json.loads(line)
-                rows[r["key"]] = r
+    for line in text.splitlines():
+        if line.strip():
+            r = json.loads(line)
+            rows[r["key"]] = r
     return rows
 
 
-def save(lt: LedgerType, rows: dict[str, dict], root: Path | None = None) -> None:
+def _dump(rows: dict[str, dict]) -> str:
+    return "".join(json.dumps(r, ensure_ascii=False, sort_keys=True) + "\n" for r in sorted(rows.values(), key=lambda r: r["id"]))
+
+
+def _store_text(lt: LedgerType, root: Path) -> str:
+    """The ledger's rows on the store (git mode) -- '' when the store is unreadable (the tree copy still answers, loudly)."""
+    if ls.store_mode() == ls.MODE_FAKE:
+        return ""  # the Fake IS the tree file: nothing extra to overlay
+    try:
+        return ls.open_ledger(_store_name(lt), root / lt.path, repo_root=root).read_text()
+    except ls.LedgerStoreError as exc:
+        logging.getLogger(__name__).warning("findings_ledger: %s store unreadable, tree copy only: %s", lt.name, exc)
+        return ""
+
+
+def load(lt: LedgerType, root: Path | None = None) -> dict[str, dict]:
+    """Tree copy overlaid by the store copy (the store is authoritative: every row write lands there)."""
     root = root or REPO_ROOT
+    return _parse(ls.merge_ndjson_text(_tree_text(lt, root), _store_text(lt, root), key=_by_key))
+
+
+def save(lt: LedgerType, rows: dict[str, dict], root: Path | None = None) -> None:
+    """Write the TREE copy + its render + the roster. Refused on the shared primary (see `_primary_ledger_guard`)."""
+    root = root or REPO_ROOT
+    ensure_not_shared_primary(root, f"findings_ledger.save[{lt.name}]")
     p = root / lt.path
     p.parent.mkdir(parents=True, exist_ok=True)
     ordered = sorted(rows.values(), key=lambda r: r["id"])
-    p.write_text("".join(json.dumps(r, ensure_ascii=False, sort_keys=True) + "\n" for r in ordered), encoding="utf-8")
+    p.write_text(_dump(rows), encoding="utf-8")
     _write_roster(lt, root)
     (root / lt.summary).parent.mkdir(parents=True, exist_ok=True)
     (root / lt.summary).write_text(render_summary(lt, ordered), encoding="utf-8")
+
+
+def _mutate(lt: LedgerType, root: Path, fn: Callable[[dict[str, dict]], dict], message: str) -> dict:
+    """Apply ``fn(rows) -> result`` (mutates ``rows``; ``result['ok'] is False`` = nothing to write).
+
+    Git mode (production): the mutation is applied on the STORE's fresh text inside its publish loop (retried on the
+    push race) and shipped by the store itself -- no working tree is touched, so a call from the primary checkout cannot
+    strand anything. Fake mode (tests): the tree file, as before."""
+    if ls.store_mode() == ls.MODE_FAKE:
+        rows = load(lt, root)
+        res = fn(rows)
+        if res.get("ok") is not False:
+            save(lt, rows, root)
+        return res
+    tree = _tree_text(lt, root)
+    holder: dict[str, dict] = {}
+
+    def transform(base: str) -> str:
+        rows = _parse(ls.merge_ndjson_text(tree, base, key=_by_key))
+        holder["res"] = fn(rows)
+        return base if holder["res"].get("ok") is False else _dump(rows)
+
+    out = ls.open_ledger(_store_name(lt), root / lt.path, repo_root=root).update(transform, message=message)
+    res = holder.get("res")
+    if res is not None and res.get("ok") is False:
+        return res  # a validation refusal (duplicate id, unknown finding): nothing to publish
+    if res is None or not out.get("ok"):
+        return {"ok": False, "error": f"NOT applied -- the ledger store could not publish ({out.get('error')}); re-run the call",
+                "store": out}
+    return {**res, "store": {k: out.get(k) for k in ("status", "pushed", "commit") if k in out}}
 
 
 ROSTER_REL = Path("project-history/findings-ledgers.json")
@@ -173,6 +241,10 @@ def reconcile(name: str, root: Path | None = None, found_by: str = "scanner", ad
     root = root or REPO_ROOT
     if lt.scanner is None:
         return {"ok": False, "error": f"ledger {name} is manual-only (no scanner registered)"}
+    try:  # a reconcile is a code-coupled render: it ships with the caller's branch, never from the shared primary
+        ensure_not_shared_primary(root, f"findings_ledger.reconcile[{name}]")
+    except PrimaryLedgerWriteRefused as exc:
+        return {"ok": False, "error": str(exc)}
     rows = load(lt, root)
     cur = _cur(lt, root)
     added = closed = reopened = 0
@@ -255,16 +327,18 @@ def append(name: str, root: Path | None = None, *, scope: str, target: str, foun
     bad = _validate_extra(lt, {**{n: None for n in lt.extra}, **extra}) if any(a is not None for a in lt.extra.values()) else None
     if bad:
         return {"ok": False, "error": bad}
-    rows = load(lt, root)
     k = key or f"manual:{scope}:{target}"
-    if k in rows and rows[k]["status"] != "fixed":
-        return {"ok": False, "error": f"{rows[k]['id']} already exists ({rows[k]['status']}); use action=update"}
     f = {"section": section, "scope": scope, "target": target, "severity": severity, "note": note, **extra}
-    rows[k] = _row(lt, k, f, source, found_by, status, detail)
-    if status == "fixed":
-        rows[k]["closed_at"] = _today()
-    save(lt, rows, root)
-    return {"ok": True, "id": rows[k]["id"]}
+
+    def fn(rows: dict[str, dict]) -> dict:
+        if k in rows and rows[k]["status"] != "fixed":
+            return {"ok": False, "error": f"{rows[k]['id']} already exists ({rows[k]['status']}); use action=update"}
+        rows[k] = _row(lt, k, f, source, found_by, status, detail)
+        if status == "fixed":
+            rows[k]["closed_at"] = _today()
+        return {"ok": True, "id": rows[k]["id"]}
+
+    return _mutate(lt, root, fn, f"append {_id(lt, k)}")
 
 
 def update(name: str, root: Path | None = None, *, id: str, status: str, detail: str = "", note: str | None = None) -> dict:
@@ -274,15 +348,29 @@ def update(name: str, root: Path | None = None, *, id: str, status: str, detail:
         return {"ok": False, "error": f"status must be one of {STATUSES}"}
     if status != "open" and not detail.strip():
         return {"ok": False, "error": f"status {status} needs detail (branch | sha | rationale)"}
-    rows = load(lt, root)
-    hit = next((r for r in rows.values() if r["id"] == id), None)
-    if hit is None:
-        return {"ok": False, "error": f"no finding {id} in ledger {name}"}
-    hit.update(status=status, status_detail=detail, closed_at=_today() if status == "fixed" else "")
-    if note is not None:
-        hit["note"] = note
-    save(lt, rows, root)
-    return {"ok": True, "id": id, "status": status}
+    def fn(rows: dict[str, dict]) -> dict:
+        hit = next((r for r in rows.values() if r["id"] == id), None)
+        if hit is None:
+            return {"ok": False, "error": f"no finding {id} in ledger {name}"}
+        hit.update(status=status, status_detail=detail, closed_at=_today() if status == "fixed" else "")
+        if note is not None:
+            hit["note"] = note
+        return {"ok": True, "id": id, "status": status}
+
+    return _mutate(lt, root, fn, f"update {id} -> {status.split()[0]}")
+
+
+def materialize(name: str, root: Path | None = None) -> dict:
+    """Write the merged (tree + store) rows into THIS tree's ndjson, FINDINGS.md and roster, so the branch carries the
+    store's row events for the keepers/readers that only see a checkout. Run it in a worktree; refused on the primary."""
+    lt = get(name)
+    root = root or REPO_ROOT
+    try:
+        rows = load(lt, root)
+        save(lt, rows, root)
+    except PrimaryLedgerWriteRefused as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "ledger": name, "rows": len(rows), "written": [lt.path, lt.summary]}
 
 
 def query(name: str, root: Path | None = None, scope: str | None = None, status: str | None = None,
@@ -432,7 +520,9 @@ def register(server) -> None:
             "(scope/status/section filters, worst first) | open_for_scope (compact lines across ALL ledgers for a product/agent "
             "you are about to touch) | append (scope,target,found_by,severity,note + the ledger's extra fields) | update "
             "(id,new_status: open | in-progress <branch> | fixed <sha> | accepted <rationale>, detail) | reconcile (the ledger's "
-            "registered scanner adds new rows, closes fixed ones, reopens regressions) | check (status-vs-reality drift)."
+            "registered scanner adds new rows, closes fixed ones, reopens regressions; run in YOUR worktree: refused on the shared primary) | "
+            "check (status-vs-reality drift) | materialize (write the merged tree+store rows + FINDINGS.md into THIS worktree so the branch carries them). "
+            "append/update ship through noctus.dev.ledger_store (origin/ledgers, off every working tree)."
         ),
     )
     def _ledger(action: str = "ledgers", ledger: str = "access-tier", scope: str | None = None, status: str | None = None,
@@ -460,6 +550,8 @@ def register(server) -> None:
                 return {"issues": check(ledger, root)}
             if action == "reconcile":
                 return reconcile(ledger, root, found_by=found_by)
+            if action == "materialize":
+                return materialize(ledger, root)
             if action == "append":
                 if not (scope and target):
                     return {"ok": False, "error": "append needs scope and target"}
@@ -469,10 +561,10 @@ def register(server) -> None:
                 if not (id and new_status):
                     return {"ok": False, "error": "update needs id and new_status"}
                 return update(ledger, root, id=id, status=new_status, detail=detail, note=note or None)
-        except KeyError as exc:
+        except (KeyError, PrimaryLedgerWriteRefused) as exc:
             return {"ok": False, "error": str(exc)}
-        return {"ok": False, "error": "action must be ledgers | scaffold | status | query | open_for_scope | append | update | reconcile | check"}
+        return {"ok": False, "error": "action must be ledgers | scaffold | status | query | open_for_scope | append | update | reconcile | materialize | check"}
 
 
-__all__ = ["LedgerType", "append", "check", "check_all", "get", "known_live_keys", "ledgers", "load", "open_for_scope",
+__all__ = ["LedgerType", "append", "check", "check_all", "get", "known_live_keys", "ledgers", "load", "materialize", "open_for_scope",
            "query", "reconcile", "register", "register_ledger", "status_of", "update"]

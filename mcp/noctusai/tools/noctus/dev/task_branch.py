@@ -988,19 +988,20 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps,
         rel = os.path.join("mcp", "noctusai", "node", "node_modules")
         src = os.path.join(primary_root, rel)
         link = os.path.join(wt_root, rel)
-        if not fs.exists(src):
-            skipped.append({"link": link, "reason": (
-                f"primary toolkit node_modules absent: {src} — the PRIMARY "
-                f"checkout itself was never provisioned; run `npm install` "
-                f"in {os.path.join(primary_root, 'mcp', 'noctusai', 'node')} first")})
-            return
+        node_dir = os.path.join(wt_root, "mcp", "noctusai", "node")
         if fs.is_dir(link) and not fs.is_symlink(link):
             skipped.append({"link": link, "reason": "real node_modules already present in worktree"})
             return
+        # By construction (NOC-REMEDIATE[worktree-pglite-node-modules], closed 2026-11-15): a lockfile-identical link
+        # when the primary has one, else a LOUD `npm ci --prefix` into the worktree (`node_toolchain.provision`).
+        # Never a silent skip, and never a borrowed install that is not what CI's `npm ci` would give this tree.
+        if not fs.exists(src):
+            wire.append({"link": link, "target": node_dir, "kind": "node_install", "why": (
+                f"primary toolkit node_modules absent ({src}) - installing into the worktree instead")})
+            return
         mismatch = _toolkit_lock_mismatch(primary_root, wt_root)
-        if mismatch:  # never borrow an install that is not what CI's `npm ci` would give this tree (node_toolchain)
-            skipped.append({"link": link, "reason": (
-                f"{mismatch}; run `npm ci --prefix {os.path.join(wt_root, 'mcp', 'noctusai', 'node')}`")})
+        if mismatch:
+            wire.append({"link": link, "target": node_dir, "kind": "node_install", "why": mismatch})
             return
         wire.append({"link": link, "target": src, "kind": "node_modules"})
 
@@ -1202,6 +1203,10 @@ def _apply_env_wiring(wire: list[dict], fs: FsOps) -> tuple[list[dict], list[dic
             if spec.get("kind") == "dotenv_scrubbed":
                 created_or_failed = _write_scrubbed_dotenv(spec, fs)
                 (created if "reason" not in created_or_failed else failed).append(created_or_failed)
+                continue
+            if spec.get("kind") == "node_install":
+                tc = node_toolchain.provision(Path(spec["target"]).parents[2])
+                (created if tc.ok else failed).append({**spec, "source": tc.source, **({} if tc.ok else {"reason": tc.reason})})
                 continue
             if spec.get("kind") == "ensure_real_dir":
                 if fs.is_symlink(link):
@@ -2820,6 +2825,10 @@ def _enqueue(git, runner, *, base: dict[str, Any], slug: str, branch: str, confi
     plan["deliverable"] = contract
     plan["introduced_migrations"] = contract.get("introduced_migrations", [])
     qref = f"{MQ_PREFIX}{slug}--{head[:7]}"
+    if contract.get("verdict") == "pending_ci":  # item 5 = a GitHub test.yml run still going: stay queued, retry next round
+        return {**plan, "status": "pending_ci", "exit_code": 1, "failing": contract["failing"],
+                "message": (f"{branch}: item 5 waits on its GitHub CI run - NOT pushed, NOT a resync. "
+                            f"{_steward.deliverable_refusal(contract)}. Leave it queued; the next drain round re-checks.")}
     if not contract["ok"]:
         _write_enqueue_attestation(runner, head=head, slug=slug, branch=branch, contract=contract,
                                    ref=f"refs/heads/{qref}", ok=False, only_if_exists=True)
@@ -2907,10 +2916,16 @@ def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_pat
     new_head = _resolve(git, _head_ref(branch))
     result = {**out, "status": "integrated", "exit_code": 0, "dev_sha": dev,
               "message": f"{branch} landed via the merge queue ({st.get('description')})."}
+    # The pointer is flipped HERE, at the moment of landing, and published at once (a spooled row is flushed by a
+    # detached best-effort job and may never be). A worktree already gone (removed by its steward or the harness before
+    # the queue landed) has no teardown left to close the lifecycle, so the branch is `shipped` now; with the worktree
+    # still on disk it stays `integrated-worktree-live` until cleanup closes it.
+    worktree_gone = not os.path.isdir(abs_wt)
     result["pointer"] = _pointer_transition(
-        pointer_fn, branch=branch, status="integrated-worktree-live",
-        commit=(new_head or "")[:9] or None,
-        notes=f"merge-queue landed → {dev_branch}@{(dev or '')[:9]} (enqueued {head[:9]})")
+        pointer_fn, branch=branch, status="shipped" if worktree_gone else "integrated-worktree-live",
+        commit=(new_head or "")[:9] or None, publish=True,
+        notes=(f"merge-queue landed → {dev_branch}@{(dev or '')[:9]} (enqueued {head[:9]})"
+               + ("; worktree already gone" if worktree_gone else "")))
     result["primary_ff"] = _ff_primary_after_integrate(
         runner, _resolve_primary_root(primary_root), dev_branch, remote)
     if auto_cleanup:
@@ -3376,6 +3391,7 @@ def task_branch(
             created, failed = _apply_env_wiring(would, fsops)
             wired_count = len(created)
             all_skipped = skipped + failed
+            wire_warnings = [f"LOUD: {f['reason']}" for f in failed if f.get("kind") == "node_install"]
             if verbose:
                 wired_extra = {"wire_env": True, "wire_scope": scope_label, "wired": created, "skipped": all_skipped}
             else:
@@ -3387,6 +3403,8 @@ def task_branch(
                     "skipped": _compact_wire_list(all_skipped),
                     "full_report": report_path,
                 }
+            if wire_warnings:
+                wired_extra["wire_warnings"] = wire_warnings
         pointer_result = _pointer_claim(
             pointer_fn, branch=branch, base_ref=f"{remote}/{dev_branch}@{dev[:9]}",
             commit=dev[:9], wt_path=wt_path, slug=slug, project=project, brief=brief,

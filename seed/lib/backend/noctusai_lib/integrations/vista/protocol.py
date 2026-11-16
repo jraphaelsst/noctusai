@@ -24,7 +24,7 @@ calibration, MCP server).
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Optional, Protocol
+from typing import Any, Mapping, Optional, Protocol
 
 from noctusai_lib.domain.real_estate import Imovel, ImovelFoto, ImovelPage, PropertyData
 
@@ -142,3 +142,17 @@ class VistaCRMAdapter(Protocol):
         """
         ...
 
+    async def atualizar_imovel(
+        self, code: str, campos: Mapping[str, Any], *, motivo: str, autor: str, canal: str = "NoctusAI", fonte: str = "NoctusAI",
+        finalidade: str = "venda", conversa_url: Optional[str] = None, rotulos: Optional[Mapping[str, str]] = None,
+    ) -> str:
+        """Set fields on an EXISTING listing (`PUT /imoveis/detalhes`, vista.md § 4.8) and leave a note in its internal observations
+        (`ObsVenda`/`ObsLocacao`, inserted before the first dated line of the CURRENT field). `motivo` + `autor` are REQUIRED: owner
+        2026-11-04, "we shall never edit vista data without a reason and without leaving a note behind". Returns the note line.
+        Raises the typed Vista error on any refusal (permission, not found, transport, a failed read of the current note) -- no
+        silent `False`. The caller gates it behind its own switch."""
+        ...
+
+    async def pode_atualizar_imovel(self) -> Optional[bool]:
+        """Non-mutating: may this key `PUT /imoveis/detalhes`? `True` permitted / `False` denied / `None` unknown."""
+        ...

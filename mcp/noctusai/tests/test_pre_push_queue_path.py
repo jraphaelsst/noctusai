@@ -24,11 +24,15 @@ for _k in ("NOCTUS_ALLOW_MAIN_PUSH", "NOCTUS_SKIP_EMBED_REFRESH", "NOCTUS_SKIP_D
     _ENV.pop(_k, None)
 _STUB_CLI = """\
 import pathlib, sys
-if sys.argv[1] == "--check-branch-tree-mirror":
+a = sys.argv[1:]  # the hook puts --worktree-path <tree> first: find the keeper flag anywhere
+if "--ensure-branch-pointer" in a:
+    sys.exit(1)  # this suite exercises the keeper as the backstop; the construction leg is test_pre_push_toolkit_and_pointer.py
+if "--check-branch-tree-mirror" in a:
+    name = a[a.index("--check-branch-tree-mirror") + 1]
     known = pathlib.Path(__file__).resolve().parent.joinpath("pointers.txt").read_text().split()
-    if sys.argv[2] in known:
+    if name in known:
         print("ok"); sys.exit(0)
-    print("[high] No branch-pointer found for %r" % sys.argv[2]); sys.exit(1)
+    print("[high] No branch-pointer found for %r" % name); sys.exit(1)
 sys.exit(0)
 """
 

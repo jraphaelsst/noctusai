@@ -177,12 +177,13 @@ class TestTaskBranchWiresOnlyAMatchingToolkitInstall:
         _node(primary, lock_p)
         _node(wt, lock_w, pkgs=())
         wire, skipped = T._plan_env_wiring(str(primary), str(wt), T.FsOps())
-        return [w for w in wire if w["link"].endswith("node/node_modules")], [s for s in skipped if "package-lock" in s["reason"]]
+        return [w for w in wire if w["link"].endswith("node/node_modules")], skipped
 
     def test_matching_lockfiles_wire(self, tmp_path):
         wired, skipped = self._plan(tmp_path, "L", "L")
-        assert len(wired) == 1 and not skipped
+        assert [w["kind"] for w in wired] == ["node_modules"] and not [s for s in skipped if "package-lock" in s["reason"]]
 
-    def test_a_differing_lockfile_is_skipped_loudly(self, tmp_path):
+    def test_a_differing_lockfile_plans_a_loud_install_never_a_borrow_and_never_a_silent_skip(self, tmp_path):
         wired, skipped = self._plan(tmp_path, "L1", "L2")
-        assert not wired and len(skipped) == 1 and "npm ci --prefix" in skipped[0]["reason"]
+        assert [w["kind"] for w in wired] == ["node_install"] and "package-lock.json differs" in wired[0]["why"]
+        assert not [s for s in skipped if s["link"].endswith("node/node_modules")]

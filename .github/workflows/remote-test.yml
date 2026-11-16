@@ -1,0 +1,88 @@
+name: Remote test
+
+# Runs EXACTLY ONE test command (pytest / vitest / npm test) for `hw_admission.py run`, so heavy tests do not queue on
+# the shared laptop slot. Dispatched by mcp/noctusai/tools/noctus/dev/remote_test.py. KB § PATTERNS/devops/hardware-admission-budget.md
+#
+# Constraints (release steward, 2026-11-16): ONLY the requested command (never the matrix: minutes are metered);
+# NO secrets and read-only token (tests need no prod secrets; asserted by tests/test_remote_test.py); the result is bound
+# to the exact head sha (the job refuses a moved ref; the caller re-checks the run's head_sha); a re-dispatch of the same
+# command on the same ref cancels the stale run.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: branch to test
+        required: true
+      sha:
+        description: the head sha of ref the caller pushed (the job refuses anything else)
+        required: true
+      workdir:
+        description: directory, relative to the repository root, to run in
+        required: true
+        default: "."
+      cmd:
+        description: the test command (allowlist - pytest, python -m pytest, vitest, npx vitest, npm test)
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remote-test-${{ inputs.ref }}-${{ inputs.workdir }}-${{ inputs.cmd }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Remote test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Refuse a sha that is not the ref's head
+        env:
+          WANT: ${{ inputs.sha }}
+          REF: ${{ inputs.ref }}
+        run: |
+          got="$(git rev-parse HEAD)"
+          if [ "$got" != "$WANT" ]; then
+            echo "::error::$REF is at $got, not $WANT: the branch moved since dispatch; re-run from the new head"
+            exit 1
+          fi
+
+      - name: Validate the command (allowlist)
+        id: validate
+        env:
+          CMD: ${{ inputs.cmd }}
+          WORKDIR: ${{ inputs.workdir }}
+        run: python3 mcp/noctusai/tools/noctus/dev/remote_test.py validate
+
+      - name: Python test environment
+        if: steps.validate.outputs.kind == 'python'
+        uses: ./.github/actions/python-test-env
+
+      - name: Set up Node
+        if: steps.validate.outputs.kind == 'node'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "20"
+
+      - name: Install seed frontend deps
+        if: steps.validate.outputs.kind == 'node'
+        uses: ./.github/actions/install-seed-frontend
+
+      - name: Install workdir dependencies
+        if: steps.validate.outputs.kind == 'node'
+        env:
+          WORKDIR: ${{ inputs.workdir }}
+        working-directory: ${{ inputs.workdir }}
+        run: npm ci --no-audit --no-fund --legacy-peer-deps
+
+      - name: Run test command
+        env:
+          CMD: ${{ inputs.cmd }}
+          WORKDIR: ${{ inputs.workdir }}
+          PYTHONPATH: ${{ github.workspace }}/seed/lib/backend
+        run: python3 mcp/noctusai/tools/noctus/dev/remote_test.py exec

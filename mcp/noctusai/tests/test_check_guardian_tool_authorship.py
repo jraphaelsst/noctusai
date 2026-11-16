@@ -163,7 +163,7 @@ class TestUnmeasured:
 REPO = Path(__file__).resolve().parents[3]
 #: Pinned: a new import reachable from release_steward/task_branch shows up in review as a diff HERE.
 EXPECTED_PROTECTED = sorted(f"{_DEV}/{n}.py" for n in (
-    "_benign_stash _catalog_scope_guard _ledger_push _ledger_store _pii_guard _push_verdict _transient_retry _vps_ssh "
+    "_benign_stash _catalog_scope_guard _ledger_push _primary_ledger_guard _ledger_store _pii_guard _push_verdict _transient_retry _vps_ssh "
     "_worktree_staleness auth_false_green_predicate auto_improvement branch_pointer build build_scope cache_backend "
     "cache_backend_postgres ci_scope council_ledger decision_log deploy_pull deploy_verify dispatch_token_log doc_staleness "
     "gate_alignment gate_budget gate_sweep gate_verdict_cache harness_signatures hw_admission ledger_checksums "
@@ -359,3 +359,21 @@ class TestMergeCommitInheritedContent:
         _git(repo, "add", extra)
         issues = self._run(repo, tmp_path)
         assert len(issues) == 1 and extra in issues[0]["file"]
+
+    def test_an_injected_staged_list_never_consults_the_live_merge_head(self, tmp_path, monkeypatch):
+        """2026-11-16: with `staged=` injected and no repo_root, the keeper read the LIVE checkout's MERGE_HEAD, so
+        test_holder_staging_task_branch_is_refused went red only when the tree running it was mid-merge. Inheritance
+        is judged against the source the staged list came from - an injected list has no index to inherit from.
+        Counted through a real `git` shim on PATH (deterministic, no patching of our own code)."""
+        import shutil
+        real_git = shutil.which("git")
+        log = tmp_path / "git-args.log"
+        shim = tmp_path / "bin" / "git"
+        shim.parent.mkdir()
+        shim.write_text(f'#!/bin/sh\necho "$*" >> "{log}"\nexec "{real_git}" "$@"\n')
+        shim.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{shim.parent}{os.pathsep}{os.environ['PATH']}")
+        _claim(tmp_path)
+        assert len(_check(tmp_path, [TB])) == 1
+        calls = log.read_text() if log.exists() else ""
+        assert "MERGE_HEAD" not in calls, calls

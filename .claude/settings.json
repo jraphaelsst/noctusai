@@ -37,6 +37,15 @@
             "timeout": 3
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-wire-worktree-toolchain.py\"",
+            "timeout": 300
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -105,17 +114,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-guard-heavy-run.py\"",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-guard-background-launch.py\"",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-guard-bash-rewrite.py\"",
             "timeout": 10
           }
         ]
@@ -142,6 +141,16 @@
       }
     ],
     "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-inject-doc-coverage.py\"",
+            "timeout": 5
+          }
+        ]
+      },
       {
         "matcher": "Bash",
         "hooks": [
@@ -204,6 +213,15 @@
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-inject-open-findings.py\"",
             "timeout": 15
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-wire-worktree-toolchain.py\"",
+            "timeout": 300
           }
         ]
       }

@@ -20,6 +20,8 @@ from typing import Any, Mapping, Optional
 
 import httpx
 from noctusai_lib.integrations import rate_limit
+
+from .observacoes import campo_obs, compor_campos, exigir_motivo
 from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 logger = logging.getLogger(__name__)
@@ -921,6 +923,41 @@ class VistaClient:
             cadastro={"fields": dict(fotos)},
         )
 
+    async def atualizar_imovel(
+        self, codigo: str, campos: Mapping[str, Any], *, motivo: str, autor: str, canal: str = "NoctusAI", fonte: str = "NoctusAI",
+        finalidade: str = "venda", conversa_url: Optional[str] = None, rotulos: Optional[Mapping[str, str]] = None,
+    ) -> str:
+        """Update fields of an existing listing -- `PUT /imoveis/detalhes?imovel=<codigo>` with `cadastro={"fields": {...}}` -- and
+        LEAVE A NOTE: returns the note line written.
+
+        RULE (owner 2026-11-04): never edit Vista data without a reason and without leaving a note behind. `motivo` and `autor` are
+        REQUIRED (refused when blank, before any call). In the SAME PUT the updated internal-observations field (`ObsVenda` /
+        `ObsLocacao` by `finalidade`) carries our dated line, inserted before the first dated line of the CURRENT field (read via
+        detalhes immediately before the PUT, so the team's latest lines are never lost); a failed read => NOTHING is written.
+        See `observacoes`. Contract (live probe 2026-11-04, key `...644c`, NON-mutating -- vista.md § 4.8): `/imoveis/detalhes` answers
+        `Allow: GET, POST, PUT, DELETE`; an EMPTY PUT on a non-existent code is `401 "Voce deve informar os dados em json no parametro
+        cadastro"` (permitted). There is no `/imoveis/alterar` (404). `prontuario` (history) is GET-only.
+
+        Raises `VistaPermissionDenied` when the key lacks the PUT grant, `VistaNotFound` for a missing code.
+        """
+        validate_imovel_update_payload(codigo, campos)
+        exigir_motivo(motivo, autor)
+        obs = campo_obs(finalidade)
+        lido = await self.detalhes_imovel(codigo, fields=["Codigo", obs, *campos.keys()])
+        atual = unwrap_keyed_record(lido.data, codigo) or {}
+        a_enviar, linha = compor_campos(
+            campos, atual, finalidade=finalidade, fonte=fonte, canal=canal, motivo=motivo, autor=autor, conversa_url=conversa_url, rotulos=rotulos)
+        escrita = await self._request(
+            "/imoveis/detalhes",
+            method="PUT",
+            extra_params={"imovel": codigo},
+            cadastro={"fields": a_enviar},
+        )
+        corpo = escrita.data
+        if isinstance(corpo, dict) and isinstance(corpo.get("status"), int) and corpo["status"] >= 400:  # Vista's soft error on a 200
+            raise VistaUpstreamError(corpo["status"], self._redact(str(corpo.get("message")))[:200], "/imoveis/detalhes")
+        return linha
+
     async def enviar_lead(self, lead: Mapping[str, Any]) -> VistaCallResult:
         """Submit an inbound lead — `POST /lead` (top level, NOT `/clientes/lead`).
 
@@ -944,10 +981,13 @@ class VistaClient:
             "/lead", method="POST", cadastro={"lead": dict(lead)}
         )
 
-    async def probe_write_permission(self, endpoint: str) -> dict:
+    async def probe_write_permission(
+        self, endpoint: str, method: str = "POST", extra_params: Optional[Mapping[str, Any]] = None
+    ) -> dict:
         """Non-mutating verdict on whether this key may write to `endpoint`.
 
-        Sends a POST with **no payload**. Vista authorises before it
+        Sends a `method` (default POST) request with **no payload** (`extra_params` carries only a lookup key such as a
+        NON-EXISTENT `imovel` code -- never a `cadastro`). Vista authorises before it
         validates, so the reply is `Permissão Negada` when the key lacks the
         method grant, and a missing-parameter/format error when it has it —
         and with no payload there is nothing to create. See
@@ -956,7 +996,7 @@ class VistaClient:
         Returns `{endpoint, verdict, http_status}`; never raises.
         """
         try:
-            result = await self._request(endpoint, method="POST")
+            result = await self._request(endpoint, method=method, extra_params=dict(extra_params) if extra_params else None)
         except VistaPermissionDenied as e:
             return {"endpoint": endpoint, "verdict": WRITE_DENIED, "http_status": e.status}
         except VistaMissingParameter as e:
@@ -1023,6 +1063,16 @@ def validate_fotos_payload(codigo: str, fotos: Mapping[str, str]) -> None:
     for key, url in fotos.items():
         if not key or not isinstance(url, str) or not url.startswith(("http://", "https://")):
             raise ValueError(f"photo {key!r} must map to an http(s) URL Vista can fetch")
+
+
+def validate_imovel_update_payload(codigo: str, campos: Mapping[str, Any]) -> None:
+    """Refuse an empty/blank update before it costs a round-trip (shared by Real and Fake)."""
+    if not codigo or not str(codigo).strip():
+        raise ValueError("atualizar_imovel needs the imovel codigo")
+    if not campos:
+        raise ValueError("atualizar_imovel needs at least one field to change")
+    if any(not str(k).strip() for k in campos):
+        raise ValueError("atualizar_imovel: a field name is blank")
 
 
 def validate_lead_payload(lead: Mapping[str, Any]) -> None:

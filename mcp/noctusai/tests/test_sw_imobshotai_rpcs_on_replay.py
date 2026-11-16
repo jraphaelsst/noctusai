@@ -172,6 +172,7 @@ END $$;""",
 
 def _steps(legacy_sql: str, scenarios: dict[str, str]) -> list[dict]:
     steps = mr._steps_for(Path(REPO_ROOT), "social-wiring", {_MIG}, "worktree", {})
+    steps = [s for s in steps if s["file"] != "346_imobshot_eventos_contract.sql"]  # the contract step has its own tests below
     at = next(i for i, s in enumerate(steps) if s["product"] == "social-wiring" and s["file"] == _MIG_NAME)
     steps.insert(at, {"product": "social-wiring", "file": "fixture:legacy_history", "sql": legacy_sql, "mode": "file", "twice": False})
     for name, sql in scenarios.items():
@@ -214,3 +215,64 @@ END $$;"""}
     errors = " ".join(str(f.get("error", "")) for f in by_file[_MIG_NAME]["failures"])
     assert "cannot be mapped" in errors, by_file[_MIG_NAME]["failures"]
     assert not by_file["legacy_table_survived"]["failures"], by_file["legacy_table_survived"]["failures"]
+
+
+# --- 346: the contract step (drop of the legacy table) ----------------------------------------------------------
+
+_MIG_346 = "products/social-wiring/backend/migrations/346_imobshot_eventos_contract.sql"
+_MIG_346_NAME = Path(_MIG_346).name
+
+
+def _steps_346(extra_before_346: list[dict], scenarios: dict[str, str]) -> list[dict]:
+    steps = mr._steps_for(Path(REPO_ROOT), "social-wiring", {_MIG, _MIG_346}, "worktree", {})
+    at = next(i for i, s in enumerate(steps) if s["product"] == "social-wiring" and s["file"] == _MIG_NAME)
+    steps.insert(at, {"product": "social-wiring", "file": "fixture:legacy_history", "sql": _LEGACY_OK, "mode": "file", "twice": False})
+    at = next(i for i, s in enumerate(steps) if s["file"] == _MIG_346_NAME)
+    for extra in reversed(extra_before_346):
+        steps.insert(at, extra)
+    for name, sql in scenarios.items():
+        steps.append({"product": "social-wiring", "file": name, "sql": sql, "mode": "file", "twice": False})
+    return steps
+
+
+_GONE = {"legacy_objects_gone": """
+DO $$ BEGIN
+  IF to_regclass('social_wiring.imobshot_eventos') IS NOT NULL THEN RAISE EXCEPTION 'legacy table still there'; END IF;
+  IF to_regprocedure('social_wiring.imobshot_eventos_append_only()') IS NOT NULL THEN RAISE EXCEPTION 'legacy function still there'; END IF;
+  IF (SELECT count(*) FROM social_wiring.imobshot_card_events) <> 5 THEN RAISE EXCEPTION 'events lost'; END IF;
+END $$;"""}
+
+
+def test_346_drops_the_legacy_table_after_a_lossless_345(pglite):
+    steps = _steps_346([], _GONE)
+    next(s for s in steps if s["file"] == _MIG_346_NAME)["twice"] = True  # idempotent: a second apply is a no-op
+    res = mr._run_harness(steps, 900, None)
+    assert res.get("ok"), res
+    by_file = {st["file"]: st for st in res["steps"]}
+    assert not by_file[_MIG_346_NAME]["failures"], by_file[_MIG_346_NAME]["failures"]
+    assert not by_file["legacy_objects_gone"]["failures"], by_file["legacy_objects_gone"]["failures"]
+
+
+# A legacy row that never reached the events (e.g. written after 345 by an owner role): must never be dropped.
+_UNMIGRATED = {"product": "social-wiring", "file": "fixture:unmigrated_row", "mode": "file", "twice": False, "sql": """
+INSERT INTO social_wiring.imobshot_eventos (id, org_id, card_id, tipo, etapa_para, at)
+SELECT '00000000-0000-0000-0000-0000000e0099', org_id, id, 'card_criado', 'fotos_enviadas', now()
+  FROM social_wiring.imobshot_cards LIMIT 1;"""}
+
+_KEPT = {"legacy_table_survived_the_guard": """
+DO $$ BEGIN
+  IF to_regclass('social_wiring.imobshot_eventos') IS NULL THEN RAISE EXCEPTION 'unmigrated legacy table was dropped'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM social_wiring.imobshot_eventos WHERE id = '00000000-0000-0000-0000-0000000e0099') THEN
+    RAISE EXCEPTION 'unmigrated row lost'; END IF;
+END $$;"""}
+
+
+def test_346_refuses_to_drop_a_legacy_row_that_is_not_in_the_events(pglite):
+    steps = _steps_346([_UNMIGRATED], _KEPT)
+    next(s for s in steps if s["file"] == _MIG_346_NAME)["twice"] = False
+    res = mr._run_harness(steps, 900, None)
+    assert res.get("ok"), res
+    by_file = {st["file"]: st for st in res["steps"]}
+    errors = " ".join(str(f.get("error", "")) for f in by_file[_MIG_346_NAME]["failures"])
+    assert "not in imobshot_card_events" in errors, by_file[_MIG_346_NAME]["failures"]
+    assert not by_file["legacy_table_survived_the_guard"]["failures"], by_file["legacy_table_survived_the_guard"]["failures"]

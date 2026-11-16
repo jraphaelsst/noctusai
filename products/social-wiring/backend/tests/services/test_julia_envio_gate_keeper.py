@@ -67,9 +67,7 @@ FORA_DO_PORTAO: dict[tuple[str, str], str] = {
     ("routers/settings_router.py", "send_waha_test"): "operator-initiated test send to an explicit number (POST endpoint)",
     ("services/whatsapp_intake_service.py", "WhatsAppIntakeService._reply"): "upload-flow reply to the staff uploader (web: sessions never reach WAHA)",
     ("services/whatsapp_intake_service.py", "WhatsAppIntakeService._run_upload"): "upload-flow status to the staff uploader, not a lead",
-    # TRANSITIONAL (`vista_divergencias`, NOC-REMEDIATE[transicao-vista-divergencias-staff-send]): ONE digest per refresh run to the
-    # org's own destination USER (an admin of the org, never a lead), capped per hour. It moves behind the gate's `interno` flow
-    # (feat/julia-v3-sw-turno) as soon as that branch is merged.
+    # `vista_divergencias.enviador_padrao.enviar` (the approvals digest, kept 2026-11-15) is a staff send to the org's own destination user.
     ("services/vista_divergencias.py", "enviador_padrao.enviar"): "staff digest to the org's own destination user (not a lead), hourly-capped",
 }
 

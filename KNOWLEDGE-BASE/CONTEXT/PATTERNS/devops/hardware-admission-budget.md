@@ -82,6 +82,38 @@ startup alone can take many seconds), so the old rows read about 10× high: 3566
 Every log row carries `probe_version`, and `usage_eval`'s sync copies it into
 `dev_telemetry_os.extra`. Bump it whenever a metric changes meaning.
 
+## 2a · Tests run on GitHub by default; the local slot is the fallback (2026-11-16)
+
+Owner's top priority: the single laptop slot was slowing all work (ten sessions, hours of queueing, swap 9/10 GB, runs killed
+for low memory). Every pytest / vitest / `npm test` run now goes to a GitHub Actions runner **by construction**.
+
+- **One entry.** `hw_admission.py run --job X -- <cmd>` first calls `remote_test.try_remote`
+  (`mcp/noctusai/tools/noctus/dev/remote_test.py`). Engineers' briefs say "push, then `hw_admission run`"; a bare
+  heavy command is rewritten into that form by the `heavy_run_guard` (§6a), so both paths are remote by default.
+- **What runs.** Exactly the one test command (optionally behind a leading `cd <dir> &&`), from the same subdirectory,
+  same args, at the **pushed** head sha, through `.github/workflows/remote-test.yml` (`workflow_dispatch` inputs
+  `ref`, `sha`, `workdir`, `cmd`). The workflow checks out `ref`, refuses a `sha` that is not its head, validates the
+  command against an allowlist (pytest, python -m pytest, vitest, npx vitest, npm test: `validate_argv`, run by the workflow
+  itself, no shell), sets up the toolchain (`.github/actions/python-test-env` / seed-frontend + `npm ci`), runs the
+  command and prints `NOC-REMOTE-TEST-EXIT=<rc>`. No secrets, `permissions: contents: read`, one job, concurrency
+  group per ref+workdir+cmd with `cancel-in-progress` (a re-dispatch cancels the stale run). Test-asserted.
+- **Same contract as local.** Progress lines on stderr (`REMOTE-TEST START … run=<url>`), the pytest/vitest summary on
+  stdout, the **exact** exit code of the test command. The caller verifies the run's `head_sha` equals local HEAD
+  before trusting the code (verdict-channel integrity). A run that did not finish, finished at another sha, or never
+  printed the marker exits **75** (unmeasured, never green or red), like "not admitted".
+- **Loud fallbacks to the local slot** (`REMOTE-TEST FALLBACK: <reason>: running on the local slot`): unpushed HEAD,
+  uncommitted changes (remote tests the pushed sha, not the edits), detached HEAD, `gh` missing/unauthenticated,
+  `remote-test.yml` missing on GitHub (it must exist on the default branch to be dispatchable), env assignments / compound
+  commands, a nested run that inherited a slot. `--local` or `NOCTUS_TEST_BACKEND=local` forces local;
+  `--remote` / `=remote` forbids the fallback (refusal, exit 75). Build/playwright are local by design (no row, no noise).
+- **Telemetry.** `~/.noctus/hw-admission.ndjson` gets `remote_run` rows (`backend=remote`, `run_id`, `sha`, `wall_s`,
+  `outcome`) and `remote_fallback` rows (`reason`); local `ran` rows carry `backend=local`;
+  `hw_admission action=report` -> `backends` (local vs remote runs, remote wall time, fallbacks by reason).
+- **Stale slot files.** Lock files at index >= `max_heavy` (a lowered budget) are swept on slot acquisition
+  (`sweep_excess_slots`); a still-flocked one is reported, never touched.
+- **Gate row.** `noctus.dev.gate_alignment` declares `remote_test_default` (mechanism: the single `run` entry; backstop: the
+  `heavy_run_guard` rewrite + `tests/test_remote_test.py`; telemetry: the rows above).
+
 ## 3 · Guarantees
 
 - **No silent start.** A job that isn't admitted is **not run**:
@@ -212,7 +244,10 @@ then change detection, then alerts.
 
 The wrap rule used to be discipline-only (one agent file + this doc), so on 2026-11-04 several
 sessions ran suites ungated (1,253 + 273 + 568 tests) and the 8 GB machine swapped. Gate and
-methodology ship together: `scripts/hooks/claude-guard-heavy-run.py` (fail-closed via
+methodology ship together: the heavy-run judge, wired since 2026-11-14 through the ONE Bash rewrite hook
+`scripts/hooks/claude-guard-bash-rewrite.py` (composed with the background wrapper, hw_admission innermost,
+`bg_run.py` outermost: `KB § PATTERNS/common/background-agent-lifecycle.md` Rewrite chain; the former standalone
+hook script was retired into it; fail-closed via
 `_guard_failclosed`, marker `[noc-guard:heavy-run]`, PreToolUse on `Bash`) over the pure
 `mcp/noctusai/tools/noctus/dev/heavy_run_guard.py::decide`.
 
@@ -229,8 +264,15 @@ methodology ship together: `scripts/hooks/claude-guard-heavy-run.py` (fail-close
 - **Allowed:** a segment that runs `hw_admission.py` (the wrapped command is its argument);
   `--collect-only` / `--co` / `--version` / `--help` / `-h`; commands that merely mention the
   word (`grep pytest f`, `echo "pytest"`).
-- **Deny message** prints the exact wrapped command with a suggested `--job`
-  (`pytest:<dir>` / `vitest:<product>` / `build:<product>`).
+- **REWRITE, not deny (2026-11-14):** the guard knows the correct form, so it PRODUCES it. A heavy
+  run (anything but local Whisper or an unparseable command) is rewritten via `updatedInput` into
+  `<absolute venv python> <abs>/hw_admission.py run --job <derived> --wait-s 7200 -- bash -c '<the whole
+  original command, shlex-quoted>'`; the allow carries `additionalContext` `[noc-guard:heavy-run] REWROTE …`
+  and a guard-event row `outcome=rewrite`. The whole command travels as ONE job, so the compound "heredoc
+  writes the test, then runs pytest" works (the heredoc is inside the quoted argument). A `cd` inside it no
+  longer persists in the session shell. Why: 206 denies in 22 sessions were each a wasted round trip; a gate
+  that knows the answer should not make the agent retype it. Local Whisper (policy: server first) and an
+  unparseable command (cannot quote what cannot be parsed) are still refusals.
 - **Escape:** inline `NOC_HW_UNGATED_OK=<non-empty reason> <cmd>`; the reason is echoed to
   stderr. An empty reason is still a deny. Use it only when the gate itself is what is being
   debugged. The escape is read BEFORE parsing (2026-11-05), so it works on a command the

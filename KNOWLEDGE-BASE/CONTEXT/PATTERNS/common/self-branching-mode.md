@@ -140,6 +140,8 @@ The worktree now gets a generated `.env` (`env_bootstrap.render_scrubbed_dotenv`
 - **One classifier.** `is_secret_entry` holds the secret rule: by name, token shape, or credentialed URL.
 - **Migration.** A pre-existing symlink is replaced on the next `wire_env`, and the SessionStart sweep converts any remaining one (`cli.py --scrub-worktree-dotenvs`). A real file without the scrub marker is someone's own and is left alone.
 
+**2026-11-15 — hooks run the PRIMARY's toolkit, judging the worktree (CI-refusal inventory class 15a, ~144 hits: stale or invented CLI flags).** `scripts/hooks/pre-commit` and `pre-push` used to run the WORKTREE's own `mcp/noctusai/cli.py`, so a branch cut before a flag landed - or one carrying a broken `cli.py` - ran stale or broken hook logic on its own commit. They now resolve the primary checkout from `git rev-parse --git-common-dir`, run ITS `cli.py`, and pass `--worktree-path <the worktree>` on every hooked call (`cli.py` rebinds `settings.REPO_ROOT` before any tool imports, so each keeper reads the worktree's tree; `test_pre_push_toolkit_and_pointer.py` audits every call site, derived from the hook files). The one named exception: a change that needs its own toolkit (the commit that introduces a flag the hook then calls) sets `NOCTUS_HOOK_OWN_TOOLKIT=<reason, 10+ chars>`; every use is printed. The same hook also writes the branch pointer by construction (`KB § PATTERNS/architect/branch-tree-tracking.md` §5). Consequence: a hook can only call a flag the PRIMARY already has - land the flag, then the hook call.
+
 **2026-11-10 — `wire_env` also links the primary's toolkit venv.** `scripts/hooks/pre-push` runs its keepers with the worktree's own toolkit venv (`.venv/bin/python` under `mcp/noctusai`); a fresh worktree has none (gitignored), so every keeper printed "SKIPPED - no toolkit venv (unmeasurable, not a pass)" and the push was judged by nothing. Same rules as `node_modules`: whole-dir symlink, a real `.venv` in the worktree is never clobbered, reported in `wired`/`skipped`, dry-run honoured; a primary with no `.venv` reports the exact command to create it (a `python3 -m venv .venv` plus a `pip install -r requirements.txt` inside the primary's `mcp/noctusai`).
 
 **2026-10-09 — the per-product overlay is SCOPED.** Wiring every product cost ~5,865 symlinks per worktree (46,920 across 8 live worktrees) for slices that touched one product or none. `task_branch action='start'` now overlays `node_modules` only for products named by a `paths` entry under `products/<slug>/` (~200–490 links each); no product paths ⇒ no product overlay (`.env`, the toolkit and seed `node_modules` are still wired). `wire_products=[slugs]` overrides the derivation, `['*']` restores wire-everything (e.g. a seed-frontend slice that builds every consumer). Every product left out is reported in `skipped` with the exact opt-in — never silent. **So: a frontend slice must pass its `paths`** (it should anyway — they fill the branch-tree pointer). Gate: `test_wire_env_link_budget_does_not_regress` (`mcp/noctusai/tests/test_task_branch.py`).
@@ -543,6 +545,22 @@ becomes the thing someone deletes. So the decision lives in a **stdlib-only**
 module the hook loads **by path** (not as a package), and the whole hook runs in
 ~60 ms.
 
+### Claim-only fast path — no git on the hot path (2026-11-14, finding GW-8a7e7ce8)
+
+443 fail-closed timeouts in 43 sessions: every non-read call spent 4+ `git` processes (`discover_context` x3,
+`decide_hook_integrity`) before the guard could say "this is your own worktree", and machine load burned the
+8 s deadline. `decide_claimed_fast` (`primary_write_guard.py`) decides the dominant case from the claim file
+plus three plain file reads: the claim -> `<wt>/.git` (a FILE) -> its gitdir under THIS primary's
+`.git/worktrees/` -> `HEAD` names a non-shared branch. An Edit/Write whose realpath is inside the claimed
+worktree, or a Bash call whose cwd is inside it and that carries no `cd` / `git -C`, no `..`, no shell
+expansion (`$`, backtick, `~`; heredoc bodies excluded), no absolute path into the primary outside the
+worktree, and EVERY write target `bash_write_targets` can see (relative ones too, symlinks followed -- `wire_env`
+links node_modules into the primary) resolving inside the worktree with a certain parse, is allowed with zero subprocesses (the hook measures ~2 ms vs several seconds under load).
+Anything unproven (incl. every write into the primary's `.git/hooks` / `.git/config` by absolute path, symlink or
+`git -C`) falls through to the full git-backed decision incl. `decide_hook_integrity`, which still fails closed: the fast path only
+ever turns a slow allow into a fast one. The hook runs it after the pure-string bypass check and the
+node_modules-overlay check, and before the git-backed integrity check.
+
 ### Redirect into a claimed worktree (owner-approved 2026-10-06)
 
 A refused **Edit / Write / MultiEdit / NotebookEdit** is rewritten into the session's worktree instead of being refused, when that session has **claimed** one. The guard then answers `allow` with `updatedInput` (the same input, path rebased from `<primary>/<rel>` to `<worktree>/<rel>`) and `additionalContext` beginning `[noc-guard:primary-write] REDIRECTED <from> → <to>`. The model is told, never silently moved.
@@ -614,11 +632,12 @@ PreToolUse guard script MUST use `run_guard` and `load_module`; tests in
 `mcp/noctusai/tests/test_guard_failclosed.py`.
 
 **Dispatch-time gate for executors.** `claude-guard-executor-dispatch.py`
-(matcher `Agent|Task`; logic `executor_dispatch_guard.py`) denies dispatching an
-EXECUTOR subagent unless `isolation == "worktree"` or the brief names an
-EXISTING `.claude/worktrees/<slug>` directory (absolute or repo-relative); deny
-reason `[noc-guard:executor-dispatch] ...` points at
-`noctus.dev.task_branch action=start`. The EXECUTOR set is derived from the
+(matcher `Agent|Task`; logic `executor_dispatch_guard.py`) **rewrites** the dispatch of an
+EXECUTOR subagent (2026-11-14; it used to deny, 37 times) unless `isolation == "worktree"` or the
+brief names an EXISTING `.claude/worktrees/<slug>` directory (absolute or repo-relative): the
+Agent input gets `isolation: "worktree"` added via `updatedInput`, the allow carries
+`[noc-guard:executor-dispatch] REWROTE …` (pointing at `noctus.dev.task_branch action=start`
+for reusing an existing worktree) and a guard-event row `outcome=rewrite`. The EXECUTOR set is derived from the
 `description` frontmatter of `.claude/agents/*.md` (the word `EXECUTOR`) — a new
 executor agent must carry it; never a hand-listed constant. Activation is a
 `.claude/settings.json` PreToolUse entry: `{"matcher": "Agent|Task", "hooks":

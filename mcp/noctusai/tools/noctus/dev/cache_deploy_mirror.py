@@ -61,7 +61,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from settings import REPO_ROOT
-from tools.noctus.dev.cache_backend import apply_locking_pragmas, cache_path, known_caches
+from tools.noctus.dev.cache_backend import apply_locking_pragmas, cache_path, known_caches, mirror_source_path
 from tools.noctus.dev import _embedding_corpus as _ec
 
 
@@ -595,6 +595,28 @@ def _mirror_simple_table(
     return {"rows_written": len(rows), "source_total": len(rows)}
 
 
+def _source_provenance(cache_name: str, repo_root: Path | None) -> dict[str, Any]:
+    """Which file a mirror reads, and how old: never silent about a fallback.
+
+    A linked worktree with no private slot yet mirrors the common-dir (primary
+    tree) slot, which can lag this tree's source; `slot` says so and `age_s`
+    bounds the staleness so the caller can judge it.
+    """
+    src = mirror_source_path(cache_name, repo_root)
+    out: dict[str, Any] = {"path": str(src)}
+    if not src.exists():
+        return out
+    fallback = src != cache_path(cache_name, repo_root)
+    out["slot"] = "common-dir-fallback" if fallback else "own"
+    out["age_s"] = int(datetime.now(timezone.utc).timestamp() - src.stat().st_mtime)
+    if fallback:
+        out["warning"] = (
+            "no per-worktree cache built yet; mirrored the common-dir (primary tree) "
+            "cache, which may lag this tree's source (see age_s)"
+        )
+    return out
+
+
 def mirror_one_cache(
     cache_name: str,
     *,
@@ -622,7 +644,7 @@ def mirror_one_cache(
             "cache": cache_name,
             "error": f"unknown cache; valid: {sorted(_TABLE_MAP)}",
         }
-    sqlite_path = cache_path(cache_name, repo_root)
+    sqlite_path = mirror_source_path(cache_name, repo_root)
     if not sqlite_path.exists():
         return {
             "ok": False,
@@ -776,7 +798,7 @@ def mirror_all(
         # Plan-only: report local row counts per cache.
         plan = {}
         for name in active:
-            p = cache_path(name, repo_root)
+            p = mirror_source_path(name, repo_root)
             if not p.exists():
                 plan[name] = {"status": "skip", "reason": "local-missing"}
                 continue
@@ -787,7 +809,8 @@ def mirror_all(
                 apply_locking_pragmas(conn)
                 row_count = conn.execute(f"SELECT COUNT(*) FROM {sqlite_table}").fetchone()[0]
                 conn.close()
-                plan[name] = {"status": "ready", "local_rows": row_count}
+                plan[name] = {"status": "ready", "local_rows": row_count,
+                              "source": _source_provenance(name, repo_root)}
             except sqlite3.OperationalError as e:
                 plan[name] = {"status": "error", "reason": str(e)[:120]}
         return {
@@ -804,6 +827,7 @@ def mirror_all(
     total = 0
     for name in active:
         result = mirror_one_cache(name, dsn=dsn, repo_root=repo_root)
+        result["source"] = _source_provenance(name, repo_root)
         mirrored[name] = result
         if result.get("ok"):
             total += result.get("rows_written", 0)
@@ -853,7 +877,7 @@ def repair_embedding_cache_drift(
         }
     results: dict[str, Any] = {}
     for name in active:
-        p = cache_path(name, repo_root)
+        p = mirror_source_path(name, repo_root)
         if not p.exists():
             results[name] = {"ok": False, "error": f"local SQLite cache missing: {p}"}
             continue

@@ -354,6 +354,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gate", default=None, help="With --gate-alignment declare: the gate id (keeper:check-x | guard:x | ci:x).")
     parser.add_argument("--mechanism", default=None, help="With --gate-alignment declare: pointer to the construction leg, or 'none (reason)'.")
     parser.add_argument("--owner", default=None, help="With --gate-alignment declare: the agent/file that owns the gate.")
+    parser.add_argument("--gate-source", default="", help="With --gate-alignment declare: the standard/rule read BEFORE codifying (a NEW gate must cite it).")
+    parser.add_argument("--decision", default="", help="With --gate-alignment declare: one-line rule the gate serves; appends its decision-matrix row (a NEW gate needs one).")
+    parser.add_argument("--decision-branch", default="", help="With --gate-alignment declare --decision: the row's owning branch (default pending:<gate>).")
     parser.add_argument("--existing", action="store_true", help="With --gate-alignment declare: the gate already lives on dev (landed by another branch): declare its row without the new-gate shadow/source/matrix requirements.")
     parser.add_argument("--placement", default="warn", help="With --gate-alignment declare: blocking|warn|report (new gates start warn = shadow).")
     parser.add_argument("--check-refusal-classes-owned", action="store_true", help="Keeper (WARN-first shadow): a refusal class that fired >=3 times in 14 days with no open fix (pointer / in-progress gate-walls row / NOC-REMEDIATE[<class>]) is a recurring mistake nobody owns. Reads the machine-local gate event log. Fix: `--gate-alignment refusals`. KB § PATTERNS/common/gate-methodology-sync.md.")
@@ -430,6 +433,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-doc-staleness", action="store_true", help="Keeper (CI + pre-push): deterministic doc-staleness gate. With --doc-range BASE..TIP: change-coupling (covered code changed materially, covering docs untouched; ack via `Docs-Reviewed: <doc> — <reason>` trailer). Without: claim checks over every living doc (cited paths exist; 'scaffold only / nothing implemented / NOT applied' vs the code) judged against the shrink-only ratchet mcp/noctusai/tests/doc_staleness_baseline.json, plus age warnings. Severity high. KB § PATTERNS/common/doc-staleness-gate.md.")
     parser.add_argument("--doc-range", metavar="BASE..TIP", default=None, help="With --check-doc-staleness: run the change-coupling leg over this range.")
     parser.add_argument("--doc-staged", action="store_true", help="With --check-doc-staleness: the COMMIT leg -- coupling over the STAGED diff (code a doc covers staged materially without that doc staged). With --commit-msg-file the `Docs-Reviewed:` trailers are honoured (commit-msg hook, blocking); without it (pre-commit) the fix-list is printed as an early heads-up.")
+    parser.add_argument("--write-doc-coverage-cache", action="store_true", help="Rebuild .claude/cache/doc-coverage.json ({living doc: covered code globs}) that the PostToolUse hook claude-inject-doc-coverage.py reads at edit time. Honours --worktree-path. KB § PATTERNS/common/doc-staleness-gate.md.")
     parser.add_argument("--doc-baseline", choices=["init", "shrink"], default=None, help="With --check-doc-staleness: rewrite the ratchet (init = first snapshot; shrink = drop fixed entries; never grows).")
     parser.add_argument("--doc-suggest", action="store_true", help="With --check-doc-staleness: print the exact docs to update and the claims that are false.")
     parser.add_argument("--commit-msg-file", default=None, help="With --check-product-guide-cochange / --check-lgpd-entry-removal: path of the commit message file (so the Guide-Unaffected / LGPD-Entry-Removed trailer escape hatch can be read).")
@@ -470,7 +474,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-ledger-drain-after-settle", action="store_true", help="Keeper (pre-push HARD-BLOCK): every append-only project-history ledger written during a task_branch run must have a stage that SHIPS it — the drain leg must exist in BOTH the integrate and cleanup result paths AND run AFTER cache_settle. Closes the 4+-incident stranded-ledger-row recurrence. Severity high. KB § PATTERNS/common/self-branching-mode.md.")
     parser.add_argument("--check-engineer-slice-scored", action="store_true", help="Backstop for the task_branch integrate slice-score gate: landed engineer slices (branch-tree pointer) with no slice-scores.ndjson row. Blocks only on this session's own pointers. KB § CONTEXT/PATTERNS/common/dispatch-token-log.md.")
     parser.add_argument("--check-guard-hooks-registered", action="store_true", help="Every scripts/hooks/claude-guard-*.py must be referenced by a hook entry in .claude/settings.json (unregistered guard = silent no-op).")
-    parser.add_argument("--check-stale-branch-pointers", action="store_true", help="Safety net (pre-push) behind the task_branch pointer lifecycle: on_going/integrated-worktree-live pointers whose branch landed on origin/dev and whose worktree is gone. Blocks only on pointers owned by this session (CLAUDE_CODE_SESSION_ID); others are warnings. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3.")
+    parser.add_argument("--check-stale-branch-pointers", action="store_true", help="Safety net (pre-push) behind the task_branch pointer lifecycle: on_going/integrated-worktree-live pointers whose branch landed on origin/dev and whose worktree is gone. A provably landed pointer is HEALED to shipped (not reported); a failed heal blocks only on pointers owned by this session (CLAUDE_CODE_SESSION_ID), others are warnings. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3.")
+    parser.add_argument("--ensure-branch-pointer", metavar="BRANCH", help="Pre-push construction leg of the branch-tree mirror keeper: write (no pointer) or refresh (>24h behind the tip, terminal status, unresolvable commit) the pointer of BRANCH through the branch_pointer writer; a fresh pointer is a no-op. Exit 1, naming why, when the pointer cannot be written - the keeper then blocks. Judges the tree of --worktree-path. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §5.")
     parser.add_argument("--check-branch-tree-mirror", metavar="BRANCH", nargs="?", const="__all__", help="Keeper (pre-push HARD-BLOCK): for the given branch (or all non-terminal branches when omitted) verify the branch-tree mirror — pointer exists + non-stale + git↔claude mirror intact + valid status + no shipped-but-ahead contradiction. Severity high. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §5.")
     parser.add_argument("--check-dangling-remote-branches", action="store_true", help="Keeper: flag origin/* branches with unique content older than 7 days. Squash-aware (git-cherry + subject-on-dev). Advisory-only (severity warning); never a commit-blocker. Surfaces in review + session-end sweep. KB § CONTEXT/PATTERNS/common/learn-before-archive.md.")
     parser.add_argument("--check-keeper-delta", action="store_true", help="Gate: run ONLY the compliance.py keepers this branch added/changed (AST diff vs the merge-base of --keeper-delta-base-ref, plus keepers calling a changed helper) over every active product, and fail on any high/critical fingerprint not in tests/compliance_baseline.json. The seconds-scale slice of TestSeedCompliance::test_all_products_compliant that an integrate budget can fit. tools/noctus/dev/keeper_delta.py.")
@@ -652,7 +657,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="Keepers that collapse advisory output (e.g. --check-eight-way-sync's cache-staleness warnings) print every line instead of a one-line summary. Env NOCTUS_HOOK_VERBOSE=1 does the same from a git hook.")
     parser.add_argument("--task-branch-verbose", action="store_true", help="With --task-branch action=start: full inline wire_env would_wire/wired/skipped lists instead of the compact {count, sample} shape.")
     parser.add_argument("--cleanup-respect-min-age", action="store_true", help="With --cleanup-stale-worktrees --force: keep the min-age guard (never take a brand-new worktree). Used by the SessionStart sweep.")
-    parser.add_argument("--release-steward", metavar="ACTION", choices=["status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack", "role", "roles", "reconcile", "withdraw", "ask", "position", "decision", "deliverable", "verdicts"], help="The release steward: ONE elected leader session per machine handles CI queueing AND deploy; everyone else files deliveries (request) and keeps building. Session identity = --steward-session-id or $CLAUDE_CODE_SESSION_ID. This is also the first-claim bootstrap path. MCP: noctus.dev.release_steward. KB § PATTERNS/devops/release-steward.md.")
+    parser.add_argument("--release-steward", metavar="ACTION", choices=["status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack", "role", "roles", "reconcile", "withdraw", "ask", "position", "decision", "deliverable", "verdicts"], help="The release steward: ONE elected leader session per machine handles CI queueing AND deploy; everyone else files deliveries (request) and keeps building. Exit code: 0 done or filed, 3 needs_resync (refused by the delivery contract), 1 error. Session identity = --steward-session-id or $CLAUDE_CODE_SESSION_ID. This is also the first-claim bootstrap path. MCP: noctus.dev.release_steward. KB § PATTERNS/devops/release-steward.md.")
     parser.add_argument("--steward-session-id", default=None, help="With --release-steward: the caller's session id (default $CLAUDE_CODE_SESSION_ID).")
     parser.add_argument("--steward-name", default=None, help="With --release-steward claim/request: a human-readable session name (e.g. noctusai-51).")
     parser.add_argument("--steward-reason", default=None, help="With --release-steward claim: why this session holds the lane.")
@@ -2366,7 +2371,8 @@ def main():
     elif args.gate_alignment is not None:
         from tools.noctus.dev.gate_alignment import run_action
         _ga = run_action(args.gate_alignment, gate=args.gate or "", mechanism=args.mechanism or "",
-                         owner=args.owner or "", placement=args.placement, file=args.file_walls, existing=args.existing)
+                         owner=args.owner or "", placement=args.placement, file=args.file_walls, existing=args.existing,
+                         source=args.gate_source, decision=args.decision, branch=args.decision_branch)
         print(json.dumps(_ga, indent=1, ensure_ascii=False))
         sys.exit(0 if _ga.get("ok", True) else 1)
     elif args.check_refusal_classes_owned:
@@ -3011,6 +3017,13 @@ def main():
             print(f"    [{c['status']}] {c['file']}:{c['line']} {c['kind']} {c['claim']} -> {c['live'] or '-'} {c['note']}")
         sys.exit(0 if r["ok"] else 1)
 
+    elif args.write_doc_coverage_cache:
+        from tools.noctus.dev import doc_staleness as _ds
+        _croot = Path(args.worktree_path) if getattr(args, "worktree_path", None) else _ds.REPO_ROOT
+        _cr = _ds.write_coverage_cache(_croot)
+        print(f"  doc-coverage cache: {_cr['docs']} covering docs -> {_cr['path']}")
+        sys.exit(0)
+
     elif args.check_doc_staleness:
         from tools.noctus.dev import doc_staleness as _ds
         _root = Path(args.worktree_path) if getattr(args, "worktree_path", None) else None
@@ -3444,8 +3457,13 @@ def main():
 
     elif args.check_stale_branch_pointers:
         from tools.noctus.dev.compliance import check_stale_branch_pointers
-        issues = check_stale_branch_pointers()
+        from tools.noctus.dev import branch_pointer as _bp
+        _healed: list[str] = []
+        issues = check_stale_branch_pointers(
+            heal=lambda b, note: _bp.update(branch=b, status="shipped", notes=note, push_dev=True), healed_out=_healed)
         high = [i for i in issues if i["severity"] == "high"]
+        if _healed:
+            print(f"  {GREEN}✓ stale-branch-pointers: healed {len(_healed)} landed pointer(s) to shipped: {', '.join(_healed)}{RESET}")
         if not issues:
             print(f"  {GREEN}✓ stale-branch-pointers: every landed branch's pointer is closed.{RESET}")
             sys.exit(0)
@@ -3455,6 +3473,18 @@ def main():
         for i in issues:
             print(f"    [{i['severity']}] {i['issue']}")
         sys.exit(1 if high else 0)
+
+    elif args.ensure_branch_pointer is not None:
+        import settings as _bp_settings
+        from tools.noctus.dev.branch_pointer import ensure_for_push
+        _ens = ensure_for_push(branch=args.ensure_branch_pointer, root=_bp_settings.REPO_ROOT)
+        if not _ens.get("ok"):
+            print(f"  {RED}✗ branch-pointer for '{args.ensure_branch_pointer}' could not be written: {_ens.get('error')}{RESET}")
+            sys.exit(1)
+        _note = f" ({'; '.join(_ens['reasons'])})" if _ens.get("reasons") else ""
+        _pub = "" if _ens.get("published", True) else f" - NOT published to origin/ledgers ({_ens.get('publish_error')}); spooled, publishes with the next write"
+        print(f"  {GREEN}✓ branch-pointer {_ens['action']}: {args.ensure_branch_pointer}{_note}{_pub}{RESET}")
+        sys.exit(0)
 
     elif args.check_branch_tree_mirror is not None:
         from tools.noctus.dev.compliance import check_branch_tree_mirror
@@ -4596,7 +4626,7 @@ def main():
             deadline_min=args.steward_deadline_min, ref=args.steward_ref,
             verdict_ref=args.steward_verdict_ref, run_scoped=args.steward_run_scoped)
         print(json.dumps(r, indent=2, default=str))
-        sys.exit(0 if r.get("ok") and r.get("status") != "needs_resync" else 1)
+        sys.exit(_rs.cli_exit_code(r))
 
     elif args.task_branch_post_integrate:
         from tools.noctus.dev.task_branch import run_post_integrate
