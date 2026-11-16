@@ -20,6 +20,7 @@ from noctusai_lib.domain.commerce.erp_sql import commerce_erp_migration
 from noctusai_lib.domain.commerce.money_sql import commerce_money_migration
 from noctusai_lib.domain.inventory import InventoryConfig, inventory_migration
 from noctusai_lib.domain.items import ItemsConfig, items_migration
+from noctusai_lib.testing.pglite import pglite_replay_skipif
 
 ROOT = Path(__file__).resolve().parents[6]
 NODE_DIR = ROOT / "mcp" / "noctusai" / "node"
@@ -27,10 +28,7 @@ HARNESS = NODE_DIR / "migration_replay" / "replay.mjs"
 STUBS = NODE_DIR / "migration_replay" / "stubs.sql"
 SCHEMA = "comerp"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None or not HARNESS.exists() or not (NODE_DIR / "node_modules" / "@electric-sql").exists(),
-    reason="PGlite replay harness unavailable (needs `node` and mcp/noctusai/node/node_modules)",
-)
+pytestmark = pytest.mark.skipif(**pglite_replay_skipif())
 
 PRELUDE = f"""
 CREATE SCHEMA IF NOT EXISTS {SCHEMA};

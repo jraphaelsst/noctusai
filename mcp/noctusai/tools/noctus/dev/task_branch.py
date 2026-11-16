@@ -998,19 +998,20 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps,
         rel = os.path.join("mcp", "noctusai", "node", "node_modules")
         src = os.path.join(primary_root, rel)
         link = os.path.join(wt_root, rel)
-        if not fs.exists(src):
-            skipped.append({"link": link, "reason": (
-                f"primary toolkit node_modules absent: {src} — the PRIMARY "
-                f"checkout itself was never provisioned; run `npm install` "
-                f"in {os.path.join(primary_root, 'mcp', 'noctusai', 'node')} first")})
-            return
+        node_dir = os.path.join(wt_root, "mcp", "noctusai", "node")
         if fs.is_dir(link) and not fs.is_symlink(link):
             skipped.append({"link": link, "reason": "real node_modules already present in worktree"})
             return
+        # By construction (NOC-REMEDIATE[worktree-pglite-node-modules], closed 2026-11-15): a lockfile-identical link
+        # when the primary has one, else a LOUD `npm ci --prefix` into the worktree (`node_toolchain.provision`).
+        # Never a silent skip, and never a borrowed install that is not what CI's `npm ci` would give this tree.
+        if not fs.exists(src):
+            wire.append({"link": link, "target": node_dir, "kind": "node_install", "why": (
+                f"primary toolkit node_modules absent ({src}) - installing into the worktree instead")})
+            return
         mismatch = _toolkit_lock_mismatch(primary_root, wt_root)
-        if mismatch:  # never borrow an install that is not what CI's `npm ci` would give this tree (node_toolchain)
-            skipped.append({"link": link, "reason": (
-                f"{mismatch}; run `npm ci --prefix {os.path.join(wt_root, 'mcp', 'noctusai', 'node')}`")})
+        if mismatch:
+            wire.append({"link": link, "target": node_dir, "kind": "node_install", "why": mismatch})
             return
         wire.append({"link": link, "target": src, "kind": "node_modules"})
 
@@ -1212,6 +1213,10 @@ def _apply_env_wiring(wire: list[dict], fs: FsOps) -> tuple[list[dict], list[dic
             if spec.get("kind") == "dotenv_scrubbed":
                 created_or_failed = _write_scrubbed_dotenv(spec, fs)
                 (created if "reason" not in created_or_failed else failed).append(created_or_failed)
+                continue
+            if spec.get("kind") == "node_install":
+                tc = node_toolchain.provision(Path(spec["target"]).parents[2])
+                (created if tc.ok else failed).append({**spec, "source": tc.source, **({} if tc.ok else {"reason": tc.reason})})
                 continue
             if spec.get("kind") == "ensure_real_dir":
                 if fs.is_symlink(link):
@@ -3397,6 +3402,7 @@ def task_branch(
             created, failed = _apply_env_wiring(would, fsops)
             wired_count = len(created)
             all_skipped = skipped + failed
+            wire_warnings = [f"LOUD: {f['reason']}" for f in failed if f.get("kind") == "node_install"]
             if verbose:
                 wired_extra = {"wire_env": True, "wire_scope": scope_label, "wired": created, "skipped": all_skipped}
             else:
@@ -3408,6 +3414,8 @@ def task_branch(
                     "skipped": _compact_wire_list(all_skipped),
                     "full_report": report_path,
                 }
+            if wire_warnings:
+                wired_extra["wire_warnings"] = wire_warnings
         pointer_result = _pointer_claim(
             pointer_fn, branch=branch, base_ref=f"{remote}/{dev_branch}@{dev[:9]}",
             commit=dev[:9], wt_path=wt_path, slug=slug, project=project, brief=brief,

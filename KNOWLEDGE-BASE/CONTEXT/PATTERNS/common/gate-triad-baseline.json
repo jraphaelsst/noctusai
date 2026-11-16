@@ -31,7 +31,6 @@
   "keeper:check-frontend-config-paths",
   "keeper:check-frontend-entrypoint",
   "keeper:check-git-hook-file-tampering",
-  "keeper:check-git-hooks-bypass",
   "keeper:check-git-leftovers",
   "keeper:check-gitignore-drift",
   "keeper:check-guard-hooks-registered",

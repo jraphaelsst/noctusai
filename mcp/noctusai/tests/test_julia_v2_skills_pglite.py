@@ -120,6 +120,10 @@ def test_the_skill_library_guards_refuse_what_they_claim_to_refuse():
     steps.append({"product": "agents", "file": "skills_probe", "sql": PROBE, "mode": "file", "twice": False})
     res = mr._run_harness(steps, 600, None)
     if not res.get("ok"):
+        from noctusai_lib.testing.pglite import REQUIRE_REAL_PG_ENV, real_pg_required
+
+        if real_pg_required():
+            pytest.fail(f"PGlite harness could not measure while {REQUIRE_REAL_PG_ENV}=1: {res.get('error')}")
         pytest.skip(f"PGlite harness could not measure: {res.get('error')}")
     (probe,) = [s for s in res["steps"] if s["file"] == "skills_probe"]
     assert probe["failures"] == [], probe["failures"]

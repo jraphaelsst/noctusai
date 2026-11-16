@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from noctusai_lib.domain.leads import LEADS_MIGRATION_HEADER, leads_guard_probes, leads_migration, leads_table_ddl
+from noctusai_lib.testing.pglite import pglite_replay_skipif
 
 ROOT = Path(__file__).resolve().parents[6]
 NODE_DIR = ROOT / "mcp" / "noctusai" / "node"
@@ -39,10 +40,7 @@ def test_every_unique_guard_is_declared_as_a_probe():
     assert [p.guard_name for p in leads_guard_probes(SCHEMA)] == ["uq_leads_chat"]
 
 
-_REAL = pytest.mark.skipif(
-    shutil.which("node") is None or not HARNESS.exists() or not (NODE_DIR / "node_modules" / "@electric-sql").exists(),
-    reason="PGlite replay harness unavailable (needs `node` and mcp/noctusai/node/node_modules)",
-)
+_REAL = pytest.mark.skipif(**pglite_replay_skipif())
 
 PRELUDE = f"""
 CREATE SCHEMA IF NOT EXISTS {SCHEMA};

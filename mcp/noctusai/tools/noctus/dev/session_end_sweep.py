@@ -534,6 +534,60 @@ def sweep(
     }
 
 
+_ATTENTION_CLASSES = ("uncommitted-work", "ahead-of-dev", "unknown")
+_SAMPLE = 10
+
+
+def compact_sweep(full: dict[str, Any], *, out_dir: Path | None = None) -> dict[str, Any]:
+    """The decision data of a sweep (counts, what needs a human, small samples) + the path of the FULL JSON.
+
+    The raw sweep lists every worktree, every local orphan branch and every integrated remote branch: ~150k chars on
+    a busy clone, past the tool-result cap (NOC-REMEDIATE[tool-output-cap], 2026-11-14/15). Nothing is dropped - the
+    full dict is written under ~/.noctus/tool-output and `full_report` names it."""
+    from tool_output_cap import write_full_output  # noqa: PLC0415 - mcp/noctusai top level (on sys.path via cli/server)
+
+    path, why = write_full_output("noctus.dev.session_end_sweep", full, out_dir)
+    wts = full.get("worktrees") or []
+    counts: dict[str, int] = {}
+    for w in wts:
+        counts[w.get("classification", "unknown")] = counts.get(w.get("classification", "unknown"), 0) + 1
+    orphan = full.get("orphan_branches") or {}
+    orphan_rows = orphan.get("branches") or []
+    orphan_counts: dict[str, int] = {}
+    for b in orphan_rows:
+        orphan_counts[b.get("classification", "unknown")] = orphan_counts.get(b.get("classification", "unknown"), 0) + 1
+    remote = dict(full.get("remote_branches") or {})
+    for key in ("integrated_suggest_delete", "unique_aged_suggest_salvage"):
+        if isinstance(remote.get(key), list):
+            remote[key] = remote[key][:_SAMPLE]
+    safe = [w["slug"] for w in wts if w.get("classification") == "safe-to-cleanup"]
+    out: dict[str, Any] = {k: full[k] for k in ("ok", "clean_wrap", "wrap_blockers", "sweep_ts") if k in full}
+    out.update({
+        "compact": True,
+        "full_report": str(path) if path else None,
+        "worktree_counts": counts,
+        "needs_attention": [{k: w.get(k) for k in ("slug", "branch", "classification", "ahead", "behind", "uncommitted", "suggestion")}
+                            for w in wts if w.get("classification") in _ATTENTION_CLASSES][:50],
+        "safe_to_cleanup_count": len(safe),
+        "safe_to_cleanup_sample": safe[:_SAMPLE],
+        "orphan_branches": {"ok": orphan.get("ok"), "total": len(orphan_rows), "by_classification": orphan_counts,
+                            **({"error": orphan["error"]} if orphan.get("error") else {})},
+        "remote_branches": remote,
+        "pointer_heal": {"healed": len((full.get("pointer_heal") or {}).get("healed", [])),
+                         "skipped_unproven": len((full.get("pointer_heal") or {}).get("skipped_unproven", [])),
+                         "errors": (full.get("pointer_heal") or {}).get("errors", [])},
+        "background_processes": {k: v for k, v in (full.get("background_processes") or {}).items() if k != "processes"}
+                                | {"process_count": len((full.get("background_processes") or {}).get("processes", []) or [])},
+        "ledger_delivery": full.get("ledger_delivery"),
+        "summary_log": full.get("summary_log"),
+        "ledger_store_flush": full.get("ledger_store_flush"),
+        "how_to_read": "full_report is the complete sweep JSON (every worktree + orphan + remote branch); pass verbose=true for it inline",
+    })
+    if not path:
+        out["full_report_error"] = f"the full sweep could not be saved ({why}); pass verbose=true for it inline"
+    return out
+
+
 # ── MCP registration ─────────────────────────────────────────────────────────
 def register(server) -> None:
     @server.tool(
@@ -559,8 +613,9 @@ def register(server) -> None:
             "KB § CONTEXT/PATTERNS/common/learn-before-archive.md."
         ),
     )
-    def _sweep() -> dict:
-        return sweep()
+    def _sweep(verbose: bool = False) -> dict:
+        full = sweep()
+        return full if verbose else compact_sweep(full)
 
 
 __all__ = ["sweep", "register"]

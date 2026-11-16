@@ -31,6 +31,8 @@ KB § PATTERNS/common/gate-methodology-sync.md
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.noctus.dev.primary_write_guard import (  # noqa: E402
@@ -243,3 +245,78 @@ def test_env_var_escape_hatch_is_separate_from_the_primary_write_one():
     assert HOOK_BYPASS_ALLOW_ENV == "NOCTUS_ALLOW_HOOK_BYPASS"
     from tools.noctus.dev.primary_write_guard import ALLOW_ENV
     assert HOOK_BYPASS_ALLOW_ENV != ALLOW_ENV
+
+
+# ── plumbing form of the bypass: write-tree + commit-tree + update-ref (2026-11-15) ─────────────────────────────
+
+REPO = str(Path(__file__).resolve().parents[3])  # a real, non-tmp checkout
+
+
+def _forge(command, cwd):
+    return decide_git_bypass("Bash", {"command": command}, allow_override=False, cwd=cwd)
+
+
+FORGE_INCIDENT = (
+    'tree=$(git write-tree) && c=$(git commit-tree "$tree" -p HEAD -m "sneaky") '
+    '&& git update-ref refs/heads/feat/x "$c"'
+)
+
+
+@pytest.mark.parametrize("command", [
+    FORGE_INCIDENT,
+    "git commit-tree abc123 -p HEAD -m msg",
+    "git update-ref refs/heads/feat/x 0123456789abcdef0123456789abcdef01234567",
+    "git -C . update-ref -m move refs/heads/feat/x deadbeef",
+    "env X=1 git commit-tree abc -p def",
+])
+def test_ref_forge_commands_are_refused_in_a_real_checkout(command):
+    verdict = _forge(command, REPO)
+    assert verdict is not None
+    assert "commit normally; if a keeper refuses, surface the line to the tech-lead" in verdict["reason"].lower()
+
+
+def test_the_deny_text_names_the_sanctioned_path():
+    assert "Commit normally; if a keeper refuses, surface the line to the tech-lead" in _forge(FORGE_INCIDENT, REPO)["reason"]
+
+
+@pytest.mark.parametrize("command", [
+    "git update-ref refs/remotes/origin/dev abc",  # not a local branch
+    "git update-ref -d refs/tmp/scratch",
+    "git commit -m 'commit-tree is a word in a message'",
+    "git log --oneline",
+    "echo git commit-tree",
+])
+def test_non_forging_commands_pass(command):
+    assert _forge(command, REPO) is None
+
+
+def test_fixture_in_a_temp_repo_cwd_is_allowed(tmp_path):
+    assert _forge(FORGE_INCIDENT, str(tmp_path)) is None
+
+
+def test_fixture_selected_by_dash_C_under_tmp_is_allowed(tmp_path):
+    assert _forge(f"git -C {tmp_path} commit-tree abc -p def", REPO) is None
+
+
+def test_cd_into_tmp_then_forge_is_allowed_but_cd_out_is_not(tmp_path):
+    assert _forge(f"cd {tmp_path} && git commit-tree abc -p def", REPO) is None
+    assert _forge(f"cd {tmp_path} && cd {REPO} && git commit-tree abc -p def", REPO) is not None
+
+
+def test_tmp_in_the_command_text_does_not_exempt():
+    """Judged by cwd / -C, never by text: a /tmp mention in an argument is not a temp repo."""
+    assert _forge("git commit-tree abc -p def -m /tmp/fixture", REPO) is not None
+
+
+def test_unknown_cwd_fails_closed(monkeypatch):
+    monkeypatch.chdir(REPO)
+    assert decide_git_bypass("Bash", {"command": "git commit-tree abc"}, allow_override=False) is not None
+
+
+def test_the_env_override_still_applies():
+    assert decide_git_bypass("Bash", {"command": "git commit-tree abc"}, allow_override=True, cwd=REPO) is None
+
+
+def test_command_substitution_form_is_refused():
+    assert _forge('c=$(git commit-tree "$t" -p HEAD -m x)', REPO) is not None
+    assert _forge("c=`git commit-tree $t`", REPO) is not None
