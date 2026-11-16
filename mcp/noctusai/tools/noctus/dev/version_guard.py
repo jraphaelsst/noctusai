@@ -23,6 +23,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import node_toolchain
+
 _SEMVER_RE = re.compile(
     r"^(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?P<pre>-[a-zA-Z0-9.]+)?\s*$"
 )
@@ -73,7 +75,7 @@ def check_version_bump(repo_root: str | Path | None = None) -> dict[str, Any]:
       - ``major_unauthorized`` — MAJOR bumped without marker (BLOCKS)
       - ``parse_error``    — couldn't parse one or both versions
     """
-    root = Path(repo_root) if repo_root else Path.cwd()
+    root = Path(repo_root) if repo_root else node_toolchain.repo_toplevel()
     version_file = root / "VERSION"
 
     if not version_file.exists():

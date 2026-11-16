@@ -18364,6 +18364,7 @@ def check_guardian_tool_authorship(
             pass
 
     failure = None
+    staged_from_git = staged is None
     if staged is None:
         root = repo_root or REPO_ROOT
         try:
@@ -18404,7 +18405,10 @@ def check_guardian_tool_authorship(
                  "issue": f"cannot derive the guardian-protected tool set ({derive_error}); refusing while this session "
                           "holds the release-steward lease (fail closed). KB § PATTERNS/common/gate-methodology-sync.md"}]
     hits = sorted(p for p in staged if p in protected)
-    if hits:
+    # Inheritance is judged against the SAME source the staged list came from: git's index (staged read above) or
+    # an explicit repo_root. An injected `staged` with no repo_root must not consult the live checkout's MERGE_HEAD -
+    # otherwise the verdict depends on whether the caller's tree happens to be mid-merge.
+    if hits and (staged_from_git or repo_root is not None):
         inherited = _merge_inherited_paths(repo_root or REPO_ROOT, hits)
         if inherited:
             _telemetry("allow", "merge-inherited: staged blob equals MERGE_HEAD's", ",".join(sorted(inherited)))

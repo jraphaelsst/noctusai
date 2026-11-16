@@ -32,12 +32,27 @@ from typing import Any
 
 _HERE = Path(__file__).resolve().parent
 _HOOKS = _HERE.parents[4] / "scripts" / "hooks"
-for _p in (str(_HERE), str(_HOOKS)):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+# Only the HOOKS dir goes on sys.path. This module's own dir (tools/noctus/dev) must NOT: it holds a `context.py`, and a
+# prepended dev dir makes every later `from context import ...` (mcp/noctusai/context.py) resolve to the wrong file for the
+# rest of the process - the order-dependent test_server_build / test_strict_tool_arguments ImportError (2026-11-16, run
+# 43883480788). The two sibling guards load by path under their own names instead.
+if str(_HOOKS) not in sys.path:
+    sys.path.insert(0, str(_HOOKS))
 
-import bg_launch_guard as bg  # noqa: E402
-import heavy_run_guard as heavy  # noqa: E402
+
+def _load_sibling(name: str):
+    import importlib.util
+    mod = sys.modules.get(f"noc_{name}")
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(f"noc_{name}", _HERE / f"{name}.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+    return mod
+
+
+bg = _load_sibling("bg_launch_guard")
+heavy = _load_sibling("heavy_run_guard")
 from _guard_failclosed import log_event  # noqa: E402
 
 HEAVY, BG = "heavy-run", "background-launch"

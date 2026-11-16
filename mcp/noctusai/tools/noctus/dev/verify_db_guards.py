@@ -86,6 +86,8 @@ Outcome -> status:
   refused / clean / allowed -> "pass"      (the guard did what it claims)
   permitted / violation / blocked -> "finding"   (the guard did NOT fire — the bug)
   no_fixture / ambiguous -> "failure"   (could not verify at all)
+  a raw Postgres error, no sentinel (the probe's own SETUP failed) -> "failure"
+      with outcome "setup_failed" + sqlstate + constraint; never a verdict on the guard
   (executor ok=True, or no sentinel found in the error text) -> "failure"
 
 `allowed` / `blocked` are the INVERSE-POLARITY pair for a `"write_allowed"`
@@ -238,6 +240,39 @@ class GuardProbe:
     migrations: tuple[str, ...] = field(default_factory=tuple)
 
 
+_SQLSTATE_RE = re.compile(r"SQLSTATE[\s=:]*(?P<a>[0-9A-Z]{5})|\"code\"\s*:\s*\"(?P<b>[0-9A-Z]{5})\"")
+_CONSTRAINT_RE = re.compile(r"constraint \"(?P<name>[^\"]+)\"")
+_DUPLICATE_KEY_RE = re.compile(r"duplicate key value violates unique constraint")
+
+
+def _classify_setup_failure(error: str) -> dict[str, Any] | None:
+    """A raw Postgres error with NO sentinel means the probe's own SETUP failed before the
+    guard under test was reached (every attempt at the guard is wrapped and sentinel-tagged).
+    Report it as `setup_failed` with the SQLSTATE and constraint name so the failure names
+    the real cause; it is never folded into the guard's verdict (a finding/pass). None when
+    the text does not look like a Postgres error at all (stays the generic unclassifiable)."""
+    constraint = _CONSTRAINT_RE.search(error)
+    sqlstate_m = _SQLSTATE_RE.search(error)
+    sqlstate = (sqlstate_m.group("a") or sqlstate_m.group("b")) if sqlstate_m else None
+    if sqlstate is None and _DUPLICATE_KEY_RE.search(error):
+        sqlstate = "23505"
+    if sqlstate is None and constraint is None:
+        return None
+    cname = constraint.group("name") if constraint else None
+    return {
+        "status": "failure",
+        "outcome": "setup_failed",
+        "severity": "high",
+        "sqlstate": sqlstate,
+        "constraint": cname,
+        "detail": (
+            f"probe SETUP failed before the guard under test was reached (SQLSTATE {sqlstate or 'unknown'}, "
+            f"constraint {cname or 'unknown'}) - the guard was NOT exercised; fix the probe fixture, "
+            f"this says nothing about the guard: {error[:300]}"
+        ),
+    }
+
+
 def run_probe(probe: GuardProbe, executor: "_mp.SqlExecutor") -> dict[str, Any]:
     """Run one probe through the rollback-only wrapper and classify the
     outcome. Never raises — every failure mode (including a malformed
@@ -298,6 +333,9 @@ def run_probe(probe: GuardProbe, executor: "_mp.SqlExecutor") -> dict[str, Any]:
             "detail": f"transient transport failure after automatic retries: {error[:300]}",
         }
     if not m:
+        setup = _classify_setup_failure(error)
+        if setup is not None:
+            return {**base, **setup}
         return {
             **base,
             "status": "failure",
@@ -348,6 +386,56 @@ def _sql_lit(text: str) -> str:
     property a future registry entry can be trusted to preserve.
     """
     return (text or "").replace("'", "''")
+
+
+# ---------------------------------------------------------------------------
+# The ONE org fixture every probe uses (build triad, 2026-11-16).
+#
+# A probe never borrows an existing `public.organizations` row: prod orgs carry
+# prod data, and any one-per-org uniqueness (`uq_marcas_one_per_org`, SW 339)
+# made the probe's own SETUP fail with an unrelated constraint, so the guard
+# under test was never reached and the gate went red for a reason that says
+# nothing about the guard (N=2: cs_extraction_post_runs, then sw241). The
+# probe's org (and its one marca, when it needs one) is created INSIDE the
+# probe's rolled-back transaction. Two brands in one org is impossible by
+# design: a probe needing two marcas calls this twice, once per org.
+# `TestProbeOrgFixture` walks the module AST and every registered probe's SQL
+# and fails on any probe that skips this helper.
+# ---------------------------------------------------------------------------
+
+_PROBE_ORG_MARKER = "-- noc-probe:own-org"
+
+
+def _table_fixture_check(qualified: str) -> str:
+    return (
+        f"  IF to_regclass('{qualified}') IS NULL THEN\n"
+        f"    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_sql_lit(qualified)} does not exist (migrations not applied)';\n"
+        "  END IF;\n"
+    )
+
+
+def _probe_own_org_sql(org_var: str, *, marca_var: str | None = None, marca_slug: str = "noc-probe") -> str:
+    """SQL statements (inside a probe's DO body) creating a probe-owned org into
+    `org_var` and, when `marca_var` is given, that org's single marca into
+    `marca_var`. The ONLY place in this module that inserts the probe org."""
+    sql = (
+        f"  {_PROBE_ORG_MARKER} {org_var}: probe-owned org, never borrowed (SW 339: one marca per org)\n"
+        + _table_fixture_check("public.organizations")
+        + "  INSERT INTO public.organizations (nome, slug)\n"
+        "  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)\n"
+        f"  RETURNING id INTO {org_var};\n"
+    )
+    if marca_var:
+        sql += (
+            f"  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)\n"
+            f"  VALUES ({org_var}, '{marca_slug}', '{marca_slug}')\n"
+            f"  RETURNING id INTO {marca_var};\n"
+        )
+    return sql
+
+
+#: the common single-org fixture (`v_org`): what the probes written before the helper took a parameter use.
+_PROBE_ORG_SETUP = _probe_own_org_sql("v_org")
 
 
 def _frozen_column_probe(
@@ -1204,11 +1292,7 @@ _IMOBILIARIA_CNPJ_UNIQUE_PROBE = GuardProbe(
 DECLARE
   v_org_id uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe company';
-  END IF;
-  BEGIN
+{_probe_own_org_sql('v_org_id')}  BEGIN
     INSERT INTO {_SW_SCHEMA}.org_imobiliarias (org_id, razao_social, cnpj)
     VALUES (v_org_id, 'noc-probe-a', '11222333000181');
     INSERT INTO {_SW_SCHEMA}.org_imobiliarias (org_id, razao_social, cnpj)
@@ -1244,11 +1328,7 @@ _CLIENTE_ORIGEM_EXCLUIDA_UNIQUE_PROBE = GuardProbe(
 DECLARE
   v_org_id uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe tombstone';
-  END IF;
-  BEGIN
+{_probe_own_org_sql('v_org_id')}  BEGIN
     INSERT INTO {_SW_SCHEMA}.cliente_origens_excluidas (org_id, origem_tabela, origem_id, cliente_id)
     VALUES (v_org_id, 'leads', 'noc-probe-origem', gen_random_uuid());
     INSERT INTO {_SW_SCHEMA}.cliente_origens_excluidas (org_id, origem_tabela, origem_id, cliente_id)
@@ -1268,21 +1348,6 @@ END;
 )
 
 
-# A probe that INSERTs owns its org: a borrowed one can already hold a row some product invariant
-# (one marca / one destination / one active identity per org) forbids a second of.
-def _table_fixture_check(qualified: str) -> str:
-    return (
-        f"  IF to_regclass('{qualified}') IS NULL THEN\n"
-        f"    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_sql_lit(qualified)} does not exist (migrations not applied)';\n"
-        "  END IF;\n"
-    )
-
-
-_PROBE_ORG_SETUP = _table_fixture_check("public.organizations") + """
-  INSERT INTO public.organizations (nome, slug)
-  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
-  RETURNING id INTO v_org;
-"""
 
 
 _JULIA_RELATORIO_DESTINO_USUARIO_PROBE = GuardProbe(
@@ -1336,11 +1401,7 @@ BEGIN
   -- Self-provisioned owner: the walker rolls the whole block back, so the probe contact never
   -- persists. Borrowing an existing julia_contatos row made the probe unverifiable on a DB
   -- where Julia had no contacts yet (prod before go-live, 2026-11-05).
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe contact';
-  END IF;
-  INSERT INTO {_SW_SCHEMA}.julia_contatos (org_id, connection_id, chat_id)
+{_probe_own_org_sql('v_org_id')}  INSERT INTO {_SW_SCHEMA}.julia_contatos (org_id, connection_id, chat_id)
   VALUES (v_org_id, gen_random_uuid(), 'noc-probe@c.us')
   RETURNING id INTO v_contato_id;
   BEGIN
@@ -1737,17 +1798,7 @@ DECLARE
   v_org_id uuid;
   v_marca_id uuid;
 BEGIN
-  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
-  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
-  IF to_regclass('public.organizations') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
-  END IF;
-  INSERT INTO public.organizations (nome, slug)
-  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
-  RETURNING id INTO v_org_id;
-  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
-  VALUES (v_org_id, 'noc-probe-pesquisa', 'noc-probe-pesquisa')
-  RETURNING id INTO v_marca_id;
+{_probe_own_org_sql('v_org_id', marca_var='v_marca_id', marca_slug='noc-probe-pesquisa')}
   BEGIN
     INSERT INTO {_SW_SCHEMA}.cs_research_items (org_id, marca_id, variable_slug, content, status, origin)
     VALUES (v_org_id, v_marca_id, 'GPT', 'noc probe item', 'approved', 'manual');
@@ -1788,17 +1839,7 @@ DECLARE
   v_job_id uuid;
   v_topic_id uuid;
 BEGIN
-  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
-  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
-  IF to_regclass('public.organizations') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
-  END IF;
-  INSERT INTO public.organizations (nome, slug)
-  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
-  RETURNING id INTO v_org_id;
-  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
-  VALUES (v_org_id, 'noc-probe-pesquisa-w2', 'noc-probe-pesquisa-w2')
-  RETURNING id INTO v_marca_id;
+{_probe_own_org_sql('v_org_id', marca_var='v_marca_id', marca_slug='noc-probe-pesquisa-w2')}
 {setup}
   BEGIN
 {first}
@@ -1932,17 +1973,7 @@ DECLARE
   v_perfil_id uuid;
   v_viral_id uuid;
 BEGIN
-  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
-  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
-  IF to_regclass('public.organizations') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
-  END IF;
-  INSERT INTO public.organizations (nome, slug)
-  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
-  RETURNING id INTO v_org_id;
-  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
-  VALUES (v_org_id, 'noc-probe-geracao', 'noc-probe-geracao')
-  RETURNING id INTO v_marca_id;
+{_probe_own_org_sql('v_org_id', marca_var='v_marca_id', marca_slug='noc-probe-geracao')}
 {setup}
   BEGIN
 {statements}
@@ -3961,11 +3992,10 @@ _ORG_PICKER_ENDED_PAIR_PROBE = _picker_constraint_probe(
     guard_name="platform_org_selections_ended_pair",
     rationale="A selection is live (no ended_at, no ended_by) or ended (both): half-ended rows would be neither.",
     declare="  v_staff uuid; v_home uuid; v_pid uuid; v_org uuid;",
-    steps="""    SELECT u.id, u.org_id INTO v_staff, v_home FROM public.noctus_users u LIMIT 1;
+    steps=_probe_own_org_sql("v_org") + """    SELECT u.id, u.org_id INTO v_staff, v_home FROM public.noctus_users u LIMIT 1;
     SELECT id INTO v_pid FROM public.products LIMIT 1;
-    SELECT id INTO v_org FROM public.organizations LIMIT 1;
-    IF v_staff IS NULL OR v_pid IS NULL OR v_org IS NULL THEN
-      RAISE EXCEPTION 'NOC_PROBE:no_fixture: needs one noctus_users, products and organizations row';
+    IF v_staff IS NULL OR v_pid IS NULL THEN
+      RAISE EXCEPTION 'NOC_PROBE:no_fixture: needs one noctus_users and products row';
     END IF;
     INSERT INTO public.platform_org_selections
       (user_id, product_id, target_org_id, home_org_id, auth_session_id, ended_at, ended_by)
@@ -6887,11 +6917,7 @@ BEGIN
   IF to_regclass('public.credit_entries') IS NULL THEN
     RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.credit_entries does not exist (core migration 093 not applied)';
   END IF;
-  SELECT id INTO v_org FROM public.organizations ORDER BY created_at LIMIT 1;
-  IF v_org IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to borrow';
-  END IF;
-  BEGIN
+{_probe_own_org_sql('v_org')}  BEGIN
 {op_sql}
     RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the guard did not fire';
   EXCEPTION WHEN OTHERS THEN
@@ -10308,17 +10334,7 @@ DECLARE
   v_marca uuid;
   v_brain uuid;
 BEGIN
-  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
-  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
-  IF to_regclass('public.organizations') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
-  END IF;
-  INSERT INTO public.organizations (nome, slug)
-  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
-  RETURNING id INTO v_org;
-  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
-  VALUES (v_org, 'noc-probe-cerebro', 'noc-probe-cerebro')
-  RETURNING id INTO v_marca;
+{_probe_own_org_sql('v_org', marca_var='v_marca', marca_slug='noc-probe-cerebro')}
   BEGIN
 {setup_and_dupes}
     RAISE EXCEPTION 'NOC_PROBE:permitted: {detail} succeeded — the unique guard did not fire';
@@ -10634,6 +10650,8 @@ _SW_241_MIGRATION = "241_cs_esteira.sql"
 _SW_241_DECLARE = """
 DECLARE
   v_org uuid;
+  v_org_b uuid;
+  v_etapa_b uuid;
   v_marca_a uuid;
   v_marca_b uuid;
   v_etapa uuid;
@@ -10646,32 +10664,26 @@ DECLARE
 """
 
 _SW_241_FIXTURE = f"""
-  -- A probe-owned org, never a borrowed one: SW 339 allows ONE marca per org, so borrowing an org
-  -- that already has its brand failed the setup INSERT with uq_marcas_one_per_org (unclassifiable).
-  IF to_regclass('public.organizations') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.organizations does not exist (migrations not applied)';
-  END IF;
-  INSERT INTO public.organizations (nome, slug)
-  VALUES ('NOC probe org (guard)', 'noc-probe-' || gen_random_uuid()::text)
-  RETURNING id INTO v_org;
-  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
-  VALUES (v_org, 'noc-probe-esteira-a', 'noc-probe-esteira-a') RETURNING id INTO v_marca_a;
-  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
-  VALUES (v_org, 'noc-probe-esteira-b', 'noc-probe-esteira-b') RETURNING id INTO v_marca_b;
+{_probe_own_org_sql('v_org', marca_var='v_marca_a', marca_slug='noc-probe-esteira-a')}
+{_probe_own_org_sql('v_org_b', marca_var='v_marca_b', marca_slug='noc-probe-esteira-b')}
   INSERT INTO {_SW_SCHEMA}.pipeline_stages (org_id, pipeline, slug, label, posicao)
   VALUES (v_org, 'esteira', 'noc_probe_esteira', 'noc probe', 9999) RETURNING id INTO v_etapa;
+  INSERT INTO {_SW_SCHEMA}.pipeline_stages (org_id, pipeline, slug, label, posicao)
+  VALUES (v_org_b, 'esteira', 'noc_probe_esteira', 'noc probe', 9999) RETURNING id INTO v_etapa_b;
   INSERT INTO {_SW_SCHEMA}.cs_headlines (org_id, marca_id, texto)
-  VALUES (v_org, v_marca_b, 'noc probe headline') RETURNING id INTO v_head_b;
+  VALUES (v_org_b, v_marca_b, 'noc probe headline') RETURNING id INTO v_head_b;
   INSERT INTO {_SW_SCHEMA}.cs_roteiros (org_id, marca_id, nome, headline_texto)
-  VALUES (v_org, v_marca_b, 'noc probe roteiro', 'noc probe headline') RETURNING id INTO v_rot_b;
+  VALUES (v_org_b, v_marca_b, 'noc probe roteiro', 'noc probe headline') RETURNING id INTO v_rot_b;
 """
 
 
 def _sw241_post_ins(marca: str = "v_marca_a", *, cols: str = "", vals: str = "", titulo: str = "'noc probe post'") -> str:
     """One `cs_posts` insert (statement text, no trailing `;`) on the fixture stage."""
+    # One marca per org (SW 339): marca B lives in the fixture's second org, with its own stage.
+    org, etapa = ("v_org_b", "v_etapa_b") if marca == "v_marca_b" else ("v_org", "v_etapa")
     return (
         f"INSERT INTO {_SW_SCHEMA}.cs_posts (org_id, marca_id, titulo, etapa_id{cols}) "
-        f"VALUES (v_org, {marca}, {titulo}, v_etapa{vals})"
+        f"VALUES ({org}, {marca}, {titulo}, {etapa}{vals})"
     )
 
 
@@ -10848,11 +10860,7 @@ END;
 DECLARE
   v_org uuid;
 BEGIN
-  SELECT id INTO v_org FROM public.organizations LIMIT 1;
-  IF v_org IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe team member';
-  END IF;
-  BEGIN
+{_probe_own_org_sql('v_org')}  BEGIN
     INSERT INTO {_SW_SCHEMA}.cs_equipe (org_id, nome) VALUES (v_org, 'noc probe equipe');
     INSERT INTO {_SW_SCHEMA}.cs_equipe (org_id, nome) VALUES (v_org, 'NOC PROBE EQUIPE');
     RAISE EXCEPTION 'NOC_PROBE:permitted: case-variant duplicate team member inserted - the guard did not fire';
@@ -12325,11 +12333,7 @@ DECLARE
   v_conn uuid;
   v_ev uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to borrow an org_id from (a genuinely org-less database)';
-  END IF;
-  INSERT INTO assistant.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token, paired_at)
+{_probe_own_org_sql('v_org_id')}  INSERT INTO assistant.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token, paired_at)
   VALUES (v_org_id, gen_random_uuid(), 'noc-probe', 'http://probe.invalid', 'x', 'noc-probe-' || gen_random_uuid()::text, now() - interval '1 day')
   RETURNING id INTO v_conn;
   PERFORM assistant.append_intake(v_org_id, v_conn, 'noc-probe-msg', 'noc-probe-ref', 'chat', 'oi', now());
@@ -12375,11 +12379,7 @@ DECLARE
   v_conn uuid;
   v_ev uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to borrow an org_id from (a genuinely org-less database)';
-  END IF;
-  INSERT INTO assistant.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token, paired_at)
+{_probe_own_org_sql('v_org_id')}  INSERT INTO assistant.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token, paired_at)
   VALUES (v_org_id, gen_random_uuid(), 'noc-probe', 'http://probe.invalid', 'x', 'noc-probe-' || gen_random_uuid()::text, now() - interval '1 day')
   RETURNING id INTO v_conn;
   PERFORM assistant.append_intake(v_org_id, v_conn, 'noc-probe-msg', 'noc-probe-ref', 'chat', 'oi', now());
@@ -12503,11 +12503,7 @@ DECLARE
   v_conn uuid;
   v_intake uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to borrow an org_id from (a genuinely org-less database)';
-  END IF;
-  INSERT INTO assistant.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token, paired_at)
+{_probe_own_org_sql('v_org_id')}  INSERT INTO assistant.whatsapp_connections (org_id, user_id, label, base_url, encrypted_api_key, webhook_token, paired_at)
   VALUES (v_org_id, gen_random_uuid(), 'noc-probe', 'http://probe.invalid', 'x', 'noc-probe-' || gen_random_uuid()::text, now() - interval '1 day')
   RETURNING id INTO v_conn;
   SELECT a.id INTO v_intake FROM assistant.append_intake(v_org_id, v_conn, 'noc-probe-msg', 'noc-probe-ref', 'chat', 'oi', now()) a;
@@ -12566,11 +12562,7 @@ DECLARE
   v_org_id uuid;
   v_ev uuid;
 BEGIN
-  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
-  IF v_org_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to borrow an org_id from (a genuinely org-less database)';
-  END IF;
-  INSERT INTO assistant.ai_feedback_events (org_id, labeler_id, subject_id, label, round)
+{_probe_own_org_sql('v_org_id')}  INSERT INTO assistant.ai_feedback_events (org_id, labeler_id, subject_id, label, round)
   VALUES (v_org_id, gen_random_uuid(), gen_random_uuid(), 'nao_sei', 1)
   RETURNING id INTO v_ev;
   BEGIN

@@ -2820,6 +2820,10 @@ def _enqueue(git, runner, *, base: dict[str, Any], slug: str, branch: str, confi
     plan["deliverable"] = contract
     plan["introduced_migrations"] = contract.get("introduced_migrations", [])
     qref = f"{MQ_PREFIX}{slug}--{head[:7]}"
+    if contract.get("verdict") == "pending_ci":  # item 5 = a GitHub test.yml run still going: stay queued, retry next round
+        return {**plan, "status": "pending_ci", "exit_code": 1, "failing": contract["failing"],
+                "message": (f"{branch}: item 5 waits on its GitHub CI run - NOT pushed, NOT a resync. "
+                            f"{_steward.deliverable_refusal(contract)}. Leave it queued; the next drain round re-checks.")}
     if not contract["ok"]:
         _write_enqueue_attestation(runner, head=head, slug=slug, branch=branch, contract=contract,
                                    ref=f"refs/heads/{qref}", ok=False, only_if_exists=True)

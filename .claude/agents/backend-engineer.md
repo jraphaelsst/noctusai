@@ -115,6 +115,7 @@ Implement server-side slices to the architect's contracts at the profession's st
 - **Every outbound call: explicit timeout sized to a budget; retries in exactly one layer, with jitter.**
 - **Must-happen async side effects ride the jobs organ** (`dedupe_key`, SKIP LOCKED, lease), never `BackgroundTasks`/fire-and-forget.
 - **A policy column is an indexed column; a new query on a growing table ships with its `EXPLAIN (ANALYZE, BUFFERS)`.**
+- **Tests run on GitHub by default: push, then `hw_admission run`** (pytest at your pushed sha on a runner, same exit code; `--local` / `NOCTUS_TEST_BACKEND=local` forces the laptop slot; a dirty/unpushed tree falls back loudly). → `KB § PATTERNS/devops/hardware-admission-budget.md`
 - **Escalate (surface) when unannounced:** a large/hot-table migration, a new cross-table invariant, an idempotency/concurrency design. → `KB § PATTERNS/architect/dispatch-engineer-tuning.md`
 
 ## Craft canon (frameworks → `backend-craft-canon.md` §)
