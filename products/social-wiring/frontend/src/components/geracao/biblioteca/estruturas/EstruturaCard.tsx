@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
 import type { EstruturaResumo } from "@/types/estruturas";
+import { AtribuicaoIAChip, RevisaoDesusoBadge } from "./atribuicao";
 import { ROTULO_FORMATO, ROTULO_OBJETIVO, ROTULO_STATUS, rotuloCodigo } from "./rotulos";
 
 export const rotaEstrutura = (id: string) => `/media-creation/biblioteca/estruturas/${encodeURIComponent(id)}`;
@@ -42,7 +43,7 @@ export function EstruturaCard({ estrutura: e }: { estrutura: EstruturaResumo }) 
         ))}
         <span className="text-xs text-muted-foreground">{e.blocos_total === 1 ? "1 bloco" : `${e.blocos_total} blocos`}</span>
       </div>
-      {(e.status !== "ativa" || e.pendente_revisao || e.selecionada_pela_marca) && (
+      {(e.status !== "ativa" || e.pendente_revisao || e.revisao_por_desuso || e.origem === "viral_auto" || e.selecionada_pela_marca) && (
         <div className="flex flex-wrap items-center gap-1.5">
           {e.status !== "ativa" && <Badge variant={e.status === "rascunho" ? "default" : "secondary"}>{ROTULO_STATUS[e.status]}</Badge>}
           {e.pendente_revisao && (
@@ -50,6 +51,8 @@ export function EstruturaCard({ estrutura: e }: { estrutura: EstruturaResumo }) 
               Pendente de revisão
             </Badge>
           )}
+          <RevisaoDesusoBadge desde={e.revisao_por_desuso} />
+          <AtribuicaoIAChip origem={e.origem} handle={e.perfil.handle} />
           {e.selecionada_pela_marca && <Badge variant="outline">Na sua biblioteca</Badge>}
         </div>
       )}

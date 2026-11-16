@@ -61,6 +61,7 @@ export function EstruturasLista({ filtros, onFiltros, isAdmin, marcaId, perfilId
     // Members never send admin filters (the server ignores them anyway).
     status: isAdmin ? filtros.status : undefined,
     somentePendentesRevisao: isAdmin && filtros.pendentes,
+    revisaoPorDesuso: isAdmin && filtros.desuso,
     limit: ESTRUTURAS_POR_PAGINA,
     offset: (filtros.pagina - 1) * ESTRUTURAS_POR_PAGINA,
   });
@@ -109,6 +110,16 @@ export function EstruturasLista({ filtros, onFiltros, isAdmin, marcaId, perfilId
             onClick={() => mudar({ pendentes: !filtros.pendentes })}
           >
             Pendentes de revisão
+          </Button>
+        )}
+        {isAdmin && (
+          <Button
+            type="button"
+            variant={filtros.desuso ? "default" : "outline"}
+            aria-pressed={filtros.desuso}
+            onClick={() => mudar({ desuso: !filtros.desuso })}
+          >
+            Sem uso há 24 meses
           </Button>
         )}
         {ativos > 0 && (

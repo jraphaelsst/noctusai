@@ -69,6 +69,8 @@ export interface EstruturasFiltros {
   status?: EstruturaStatus | "todas";
   /** Admin only. */
   somentePendentesRevisao?: boolean;
+  /** Admin only: the 24-months-unused review queue (`revisao=pendente`). */
+  revisaoPorDesuso?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -87,6 +89,7 @@ export function estruturasQuery(f: EstruturasFiltros): string {
   f.objetivos?.forEach((x) => p.append("objetivo", x));
   if (f.status) p.set("status", f.status);
   if (f.somentePendentesRevisao) p.set("somente_pendentes_revisao", "true");
+  if (f.revisaoPorDesuso) p.set("revisao", "pendente");
   p.set("limit", String(f.limit ?? ESTRUTURAS_POR_PAGINA));
   p.set("offset", String(f.offset ?? 0));
   return p.toString();

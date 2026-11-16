@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EstruturaEditor } from "@/components/geracao/biblioteca/estruturas/EstruturaEditor";
+import { AtribuicaoIAFrase, RevisaoDesusoBadge } from "@/components/geracao/biblioteca/estruturas/atribuicao";
 import { EstruturaLeitura } from "@/components/geracao/biblioteca/estruturas/EstruturaLeitura";
 import { statusDoErro } from "@/components/geracao/biblioteca/estruturas/erros";
 import {
@@ -82,6 +83,7 @@ export default function EstruturaDetalhePage() {
               </Badge>
             ))}
             {isAdmin && e.status !== "ativa" && <Badge>{ROTULO_STATUS[e.status]}</Badge>}
+            {isAdmin && <RevisaoDesusoBadge desde={e.revisao_por_desuso} />}
             {q.isRefreshing && <span className="text-xs text-muted-foreground">Atualizando…</span>}
           </div>
         </div>
@@ -112,6 +114,8 @@ export default function EstruturaDetalhePage() {
           </div>
         </section>
       )}
+
+      <AtribuicaoIAFrase origem={e.origem} handle={e.perfil.handle} />
 
       {isAdmin && e.origem && (
         <p className="text-xs text-muted-foreground" data-testid="estrutura-origem">
