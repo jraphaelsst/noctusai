@@ -305,3 +305,43 @@ class TestCheckGitHooksBypass:
     def test_a_clean_tree_is_silent(self, tmp_path):
         _write(tmp_path, "scripts/x.sh", "#!/usr/bin/env bash\necho hi\n")
         assert check_git_hooks_bypass(repo_root=tmp_path, paths=["scripts/x.sh"]) == []
+
+
+# ── backstop leg: commit-tree / update-ref refs/heads spawned from a tracked file (2026-11-15) ──────────────────
+
+def test_shell_script_spawning_commit_tree_is_flagged(scratch):
+    _write(scratch, "scripts/forge.sh", """\
+        #!/usr/bin/env bash
+        c=$(git commit-tree "$tree" -p HEAD -m x)
+        git update-ref refs/heads/feat/x "$c"
+        """)
+    found = _check(scratch, "scripts/forge.sh")
+    assert len(found) == 2
+    assert all("bypassing the pre-commit" in f["issue"] for f in found)
+
+
+def test_python_subprocess_spawning_update_ref_heads_is_flagged(scratch):
+    _write(scratch, "scripts/forge.py", """\
+        import subprocess
+        subprocess.run(["git", "update-ref", "refs/heads/main", "abc"], check=True)
+        """)
+    assert len(_check(scratch, "scripts/forge.py")) == 1
+
+
+def test_python_wrapper_calls_and_other_refs_are_not_flagged(scratch):
+    """The toolkit's own plumbing goes through wrappers, never a literal git command string."""
+    _write(scratch, "mcp/tool.py", """\
+        def go(git):
+            git("commit-tree", "tree", "-p", "tip")
+            import subprocess
+            subprocess.run(["git", "update-ref", "refs/remotes/origin/dev", "abc"])
+        """)
+    assert _check(scratch, "mcp/tool.py") == []
+
+
+def test_test_files_building_fixture_repos_are_not_flagged(scratch):
+    _write(scratch, "mcp/noctusai/tests/test_fx.py", """\
+        import subprocess
+        subprocess.run(["git", "commit-tree", "abc"])
+        """)
+    assert _check(scratch, "mcp/noctusai/tests/test_fx.py") == []

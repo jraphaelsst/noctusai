@@ -1230,7 +1230,7 @@
     "compliance.py sweep"
    ],
    "standard": "",
-   "mechanism": "",
+   "mechanism": "mcp/noctusai/tools/noctus/dev/primary_write_guard.py decide_git_bypass (PreToolUse deny at write time; commit-tree/update-ref refs/heads included 2026-11-15)",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -1238,7 +1238,10 @@
     "sessions": 0
    },
    "class": "unmeasured",
-   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)",
+   "new": false,
+   "declared": "2026-11-15",
+   "source": "KB § PATTERNS/common/bypass-rationalization-anti-patterns.md"
   },
   "keeper:check-git-leftovers": {
    "severity": "high",
@@ -3824,6 +3827,18 @@
    "branch": "feat/polling-budget-keeper",
    "gates": [
     "keeper:check-polling-request-budget"
+   ]
+  },
+  {
+   "id": "D40",
+   "decision": "A hooks bypass is refused at write time and swept in tracked files: --no-verify, core.hooksPath overrides, and the plumbing form (git commit-tree / update-ref refs/heads) are all denied outside a temp-repo fixture; the sanctioned path is commit normally and surface a keeper refusal to the tech-lead",
+   "home": "KB § PATTERNS/common/bypass-rationalization-anti-patterns.md",
+   "construction": "mcp/noctusai/tools/noctus/dev/primary_write_guard.py decide_git_bypass (PreToolUse deny at write time; commit-tree/update-ref refs/heads included 2026-11-15)",
+   "gate": "keeper:check-git-hooks-bypass",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "branch": "feat/keepers-by-construction",
+   "gates": [
+    "keeper:check-git-hooks-bypass"
    ]
   }
  ]

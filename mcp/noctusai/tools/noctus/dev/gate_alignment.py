@@ -517,8 +517,13 @@ def refresh_baseline(root: Path | None = None) -> dict:
 
 def declare_gate(gate: str, mechanism: str, owner: str, *, standard: str = "",
                  placement: str = "warn", source: str = "", existing: bool = False,
-                 root: Path | None = None) -> dict:
-    """Write/replace one inventory row. Refuses an invalid mechanism (no silent-null)."""
+                 decision: str = "", branch: str = "", root: Path | None = None) -> dict:
+    """Write/replace one inventory row. Refuses an invalid mechanism (no silent-null).
+
+    A NEW gate (not ``existing``) must cite its ``source`` and map to a decision-matrix row, or the triad refuses it;
+    ``decision`` (the one-line rule the gate serves) appends that row in the same call (idempotent: a row already
+    listing the gate is left alone) so a scaffolded keeper is declared complete in ONE command. ``branch`` is the
+    row's owning-branch leg (default ``pending:<gate>`` - a ledger finding, not a failure, until it lands)."""
     root = root or REPO_ROOT
     if not mechanism_ok(mechanism):
         return {"ok": False, "error": "mechanism must point at the construction leg (KB §/tool:/scaffold:/template:/"
@@ -537,8 +542,16 @@ def declare_gate(gate: str, mechanism: str, owner: str, *, standard: str = "",
     if placement == "blocking" and row["new"]:
         row.setdefault("shadow", None)
     inv["gates"][gate] = row
+    row_added = None
+    if decision.strip() and not any(gate in (d.get("gates") or []) for d in inv.get("decisions", [])):
+        nums = [_decision_num(d) for d in inv.get("decisions", [])]
+        row_added = {"id": f"D{max(nums, default=0) + 1}", "decision": decision.strip(),
+                     "home": source or mechanism, "construction": mechanism, "gate": gate,
+                     "telemetry": "cli exit wrapper -> guard-events.ndjson",
+                     "branch": branch or f"pending:{gate}", "gates": [gate]}
+        inv.setdefault("decisions", []).append(row_added)
     _write_inventory(root, inv)
-    return {"ok": True, "gate": gate, "row": row}
+    return {"ok": True, "gate": gate, "row": row, "decision_row": row_added}
 
 
 def _write_inventory(root: Path, inv: dict) -> None:
@@ -807,7 +820,7 @@ def register(server) -> None:
             "Gate alignment (build-triad telemetry + meta-gate). action=walls (default): rank gates that fire in "
             "normal flow and their effective false-positive rate; file=true appends wall findings to the ledger "
             "feed. action=sources: report-only KB docs changed without a sources section. action=triad: run the meta-gate (every gate declared with mechanism+owner). action=declare: "
-            "write one inventory row (gate, mechanism, owner, placement). action=render: regenerate the inventory "
+            "write one inventory row (gate, mechanism, owner, placement; a NEW gate also source + decision = the matrix row it serves). action=render: regenerate the inventory "
             "markdown. action=refresh-baseline: shrink-only. action=trend: refusals this week vs last, by class. "
             "action=refusals: recurrence by class (n_14d, sessions, open_fix); file=true upserts ONE auto-improvement row per "
             "class at N>=2 (self-closing on gate_quiet). Read-only except file/declare/render/refresh-baseline."
@@ -815,13 +828,16 @@ def register(server) -> None:
     )
     def _gate_alignment(action: str = "walls", gate: str = "", mechanism: str = "", owner: str = "",
                         placement: str = "warn", file: bool = False, existing: bool = False,
+                        source: str = "", decision: str = "", branch: str = "",
                         worktree_path: str = "") -> dict:
         return run_action(action, gate=gate, mechanism=mechanism, owner=owner, placement=placement,
-                          file=file, existing=existing, root=Path(worktree_path) if worktree_path else None)
+                          file=file, existing=existing, source=source, decision=decision, branch=branch,
+                          root=Path(worktree_path) if worktree_path else None)
 
 
 def run_action(action: str, *, gate: str = "", mechanism: str = "", owner: str = "",
                placement: str = "warn", file: bool = False, existing: bool = False,
+               source: str = "", decision: str = "", branch: str = "",
                root: Path | None = None) -> dict:
     root = root or REPO_ROOT
     if action == "walls":
@@ -833,7 +849,8 @@ def run_action(action: str, *, gate: str = "", mechanism: str = "", owner: str =
         issues = triad_issues(root)
         return {"ok": not issues, "issues": issues, "burn_down": burn_down(root)}
     if action == "declare":
-        return declare_gate(gate, mechanism, owner, placement=placement, existing=existing, root=root)
+        return declare_gate(gate, mechanism, owner, placement=placement, existing=existing,
+                            source=source, decision=decision, branch=branch, root=root)
     if action == "sources":
         return sources_report(root)
     if action == "matrix":
