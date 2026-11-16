@@ -24,6 +24,7 @@ from app.modules.media_creation.services import biblioteca_ingestao as ing
 from app.modules.media_creation.services import biblioteca_service as svc
 from app.modules.media_creation.services.chat_contexto import cerca
 
+from .test_geracao_biblioteca_api import _PurgeRpc
 from .test_geracao_biblioteca_ingestao import (
     NOW,
     ORG,
@@ -260,33 +261,34 @@ class TestSyncRechecksTheProfile:
 # ── L2: queue share, daily manual cap ───────────────────────────────────────
 
 
-class TestOrgQueueShare:
-    def test_an_org_with_two_queued_transcriptions_waits(self):
+class TestLibraryLaneQueueShare:
+    """The library lane is ONE platform lane since migration 351: its queued transcriptions are capped as a whole."""
+
+    def _fill(self, db, org):
+        for i in (2, 3):
+            db.from_("cs_virais").insert({
+                "id": f"q{i}", "org_id": org, "perfil_id": PID, "ig_media_id": f"mq{i}",
+                "transcricao_status": "na_fila", "classificacao_status": "pendente",
+            }).execute()
+
+    @pytest.mark.parametrize("org", [None, ORG, "other-org"])
+    def test_two_queued_transcriptions_make_the_next_one_wait(self, org):
         from .test_geracao_biblioteca_ingestao import _transcrever
 
         db = _db()
         _viral(db, status="pendente")
-        for i in (2, 3):
-            db.from_("cs_virais").insert({
-                "id": f"q{i}", "org_id": ORG, "perfil_id": PID, "ig_media_id": f"mq{i}",
-                "transcricao_status": "na_fila", "classificacao_status": "pendente",
-            }).execute()
+        self._fill(db, org)
         ports = _ports(db)
         with pytest.raises(RescheduleLater):
             _transcrever(ports)
         assert _vstatus(db)["transcricao_status"] == "pendente"  # untouched: it simply waits
 
-    def test_another_orgs_queue_does_not_count(self):
+    def test_an_empty_lane_submits(self):
         from .test_geracao_biblioteca_ingestao import MP4, CDN, FakeTranscricao, _transcrever
         from noctusai_lib.integrations.media.safe_fetch import FakeSafeFetcher, FetchResult
 
         db = _db()
         _viral(db, status="pendente")
-        for i in (2, 3):
-            db.from_("cs_virais").insert({
-                "id": f"q{i}", "org_id": "other-org", "perfil_id": "x", "ig_media_id": f"mq{i}",
-                "transcricao_status": "na_fila", "classificacao_status": "pendente",
-            }).execute()
         ports = _ports(db, transcricao=FakeTranscricao(),
                        fetcher=FakeSafeFetcher({f"{CDN}/v1.mp4": FetchResult(f"{CDN}/v1.mp4", 200, "video/mp4", MP4)}))
         _transcrever(ports)
@@ -298,19 +300,30 @@ class TestOrgQueueShare:
 DIAS = 90
 
 
-def _seed_perfil(db, pid, *, org=ORG, status="ativo", inativo_desde=None, foto=None):
+def _seed_perfil(db, pid, *, org=None, status="ativo", inativo_desde=None, foto=None, monitorar=True):
     db.from_("cs_perfis_monitorados").insert({
-        "id": pid, "org_id": org, "rede": "instagram", "handle": f"h{pid}", "status": status,
+        "id": pid, "org_id": org, "rede": "instagram", "handle": f"h{pid}", "status": status, "monitorar": monitorar,
         "inativo_desde": inativo_desde, "foto_path": foto, "nome": "Alvo", "seguidores": 10, "created_by": "u",
     }).execute()
 
 
-def _seed_viral(db, vid, pid, *, org=ORG, thumb=None):
+def _seed_viral(db, vid, pid, *, org=None, thumb=None, created_at=None):
     db.from_("cs_virais").insert({
         "id": vid, "org_id": org, "perfil_id": pid, "ig_media_id": f"m{vid}", "caption": "legenda de terceiro",
         "transcricao_texto": "voz de terceiro", "blueprint": "BP", "thumbnail_path": thumb,
         "transcricao_status": "concluida", "classificacao_status": "concluida", "e_viral": True,
+        **({"created_at": created_at} if created_at else {}),
     }).execute()
+
+
+def _seed_estrutura(db, eid, pid, status="ativa"):
+    db.from_("cs_estruturas").insert({"id": eid, "perfil_id": pid, "status": status, "formula_headline": "x"}).execute()
+
+
+def _mock():
+    db = MockSupabaseClient()
+    db.rpc = _PurgeRpc(db)  # the cs_perfil_purgar double (its SQL is proven on PGlite by the 351 probes)
+    return db
 
 
 def _seed_ref(db, rid, marca, *, perfil=None, viral=None):
@@ -338,11 +351,11 @@ def _perfis(db):
 
 class TestRetention:
     def test_an_unreferenced_profile_is_stamped_first_and_purged_after_the_window(self):
-        db, st = MockSupabaseClient(), FakeStorageBackend()
-        _seed_perfil(db, "p1", foto=f"{ORG}/p1/foto.jpg")
-        _seed_viral(db, "v1", "p1", thumb=f"{ORG}/p1/v1.jpg")
-        _put(st, f"{ORG}/p1/foto.jpg")
-        _put(st, f"{ORG}/p1/v1.jpg")
+        db, st = _mock(), FakeStorageBackend()
+        _seed_perfil(db, "p1", foto="platform/p1/foto.jpg")
+        _seed_viral(db, "v1", "p1", thumb="platform/p1/v1.jpg")
+        _put(st, f"platform/p1/foto.jpg")
+        _put(st, "platform/p1/v1.jpg")
         out = _purgar(db, st)
         assert out["marcados"] == 1 and out["purgados"] == 0
         assert _perfis(db)["p1"]["inativo_desde"] is not None and len(_keys(st)) == 2
@@ -355,13 +368,13 @@ class TestRetention:
         assert _perfis(db) == {} and _keys(st) == []  # virais go with the profile (FK cascade)
 
     def test_a_paused_profile_is_idle_even_when_a_marca_references_it(self):
-        db, st = MockSupabaseClient(), FakeStorageBackend()
+        db, st = _mock(), FakeStorageBackend()
         _seed_perfil(db, "p1", status="pausado", inativo_desde=(NOW - timedelta(days=DIAS + 1)).isoformat())
         _seed_ref(db, "r1", "m1", perfil="p1")
         assert _purgar(db, st)["purgados"] == 1
 
     def test_a_referenced_active_profile_is_never_purged_and_its_stamp_is_cleared(self):
-        db, st = MockSupabaseClient(), FakeStorageBackend()
+        db, st = _mock(), FakeStorageBackend()
         _seed_perfil(db, "p1", inativo_desde=(NOW - timedelta(days=400)).isoformat())
         _seed_ref(db, "r1", "m1", perfil="p1")
         out = _purgar(db, st)
@@ -369,14 +382,14 @@ class TestRetention:
         assert "p1" in _perfis(db) and _perfis(db)["p1"]["inativo_desde"] is None
 
     def test_a_video_reference_keeps_its_profile_in_use(self):
-        db, st = MockSupabaseClient(), FakeStorageBackend()
+        db, st = _mock(), FakeStorageBackend()
         _seed_perfil(db, "p1", inativo_desde=(NOW - timedelta(days=400)).isoformat())
         _seed_viral(db, "v1", "p1")
         _seed_ref(db, "r1", "m1", viral="v1")
         assert _purgar(db, st)["purgados"] == 0
 
     def test_a_failed_blob_delete_never_keeps_the_rows_and_the_orphan_sweep_retries_it(self):
-        db = MockSupabaseClient()
+        db = _mock()
 
         class Flaky(FakeStorageBackend):
             fail = True
@@ -387,10 +400,10 @@ class TestRetention:
                 return await super().delete(bucket=bucket, key=key)
 
         st = Flaky()
-        _seed_perfil(db, "p1", inativo_desde=(NOW - timedelta(days=DIAS + 1)).isoformat(), foto=f"{ORG}/p1/foto.jpg")
-        _seed_viral(db, "v1", "p1", thumb=f"{ORG}/p1/v1.jpg")
-        _put(st, f"{ORG}/p1/foto.jpg")
-        _put(st, f"{ORG}/p1/v1.jpg")
+        _seed_perfil(db, "p1", inativo_desde=(NOW - timedelta(days=DIAS + 1)).isoformat(), foto="platform/p1/foto.jpg")
+        _seed_viral(db, "v1", "p1", thumb="platform/p1/v1.jpg")
+        _put(st, f"platform/p1/foto.jpg")
+        _put(st, "platform/p1/v1.jpg")
         out = _purgar(db, st)
         assert out["purgados"] == 1 and out["blobs_falhos"] == 2
         assert _perfis(db) == {} and len(_keys(st)) == 2  # rows gone, blobs survived the outage
@@ -402,20 +415,90 @@ class TestRetention:
         assert ok["orfaos"] == 1 and ok["blobs_apagados"] == 2 and _keys(st) == []
 
 
+class TestRetentionExemptions:
+    """estruturas-contract 4.3 #5: a profile with >= 1 non-archived Estrutura, or a library-only one (monitorar=false), is exempt
+    from the unreferenced purge; its viral media / transcripts / thumbnails still expire by age."""
+
+    OLD = (NOW - timedelta(days=DIAS + 5)).isoformat()
+    FRESH = (NOW - timedelta(days=3)).isoformat()
+
+    def _idle(self, db, pid, **kw):
+        _seed_perfil(db, pid, inativo_desde=(NOW - timedelta(days=400)).isoformat(), **kw)
+
+    def test_a_profile_with_a_live_estrutura_is_never_purged_as_a_profile(self):
+        db, st = _mock(), FakeStorageBackend()
+        self._idle(db, "p1")
+        _seed_estrutura(db, "e1", "p1", "rascunho")
+        out = _purgar(db, st)
+        assert out["purgados"] == 0 and "p1" in _perfis(db)
+        assert _perfis(db)["p1"]["inativo_desde"] is None  # the idle stamp is cleared: it is retained, not idle
+
+    def test_a_library_only_profile_is_never_purged_as_a_profile(self):
+        db, st = _mock(), FakeStorageBackend()
+        self._idle(db, "p1", monitorar=False)
+        assert _purgar(db, st)["purgados"] == 0 and "p1" in _perfis(db)
+
+    def test_a_profile_with_only_archived_estruturas_is_purged_and_they_go_with_a_system_event(self):
+        db, st = _mock(), FakeStorageBackend()
+        self._idle(db, "p1")
+        _seed_estrutura(db, "e1", "p1", "arquivada")
+        out = _purgar(db, st)
+        assert out["purgados"] == 1 and _perfis(db) == {}
+        assert db.from_("cs_estruturas").select("*").execute().data == []
+        ev = db.from_("cs_estrutura_eventos").select("*").execute().data
+        assert [(e["tipo"], e["ator_tipo"]) for e in ev] == [("excluida", "sistema_retencao")]
+        assert db.rpc.calls[0]["p_ator_tipo"] == "sistema" and db.rpc.calls[0]["p_apagar_estruturas"] is True
+
+    def test_old_videos_of_a_retained_profile_expire_and_their_media_with_them(self):
+        db, st = _mock(), FakeStorageBackend()
+        _seed_perfil(db, "p1", monitorar=False, foto="platform/p1/foto.jpg")
+        _seed_viral(db, "velho", "p1", thumb="platform/p1/velho.jpg", created_at=self.OLD)
+        _seed_viral(db, "novo", "p1", thumb="platform/p1/novo.jpg", created_at=self.FRESH)
+        db.from_("transcricoes").insert({"id": "t1", "contexto_tipo": "biblioteca_viral", "contexto_ref": "velho", "status": "concluida"}).execute()
+        for k in ("platform/p1/foto.jpg", "platform/p1/velho.jpg", "platform/p1/novo.jpg"):
+            _put(st, k)
+        out = _purgar(db, st)
+        assert out["virais_antigos"] == 1 and out["purgados"] == 0
+        assert [r["id"] for r in db.from_("cs_virais").select("id").execute().data] == ["novo"]
+        assert db.from_("transcricoes").select("*").execute().data == []
+        assert sorted(_keys(st)) == ["platform/p1/foto.jpg", "platform/p1/novo.jpg"]
+        assert [(e["tipo"], e["viral_id"], e["ator_tipo"]) for e in db.from_("cs_perfil_eventos").select("*").execute().data] == [
+            ("excluido", "velho", "sistema")]
+
+    def test_a_video_a_marca_selected_is_kept_even_when_old(self):
+        db, st = _mock(), FakeStorageBackend()
+        _seed_perfil(db, "p1", monitorar=False)
+        _seed_viral(db, "escolhido", "p1", created_at=self.OLD)
+        _seed_viral(db, "outro", "p1", created_at=self.OLD)
+        _seed_ref(db, "r1", "m1", viral="escolhido")
+        _purgar(db, st)
+        assert [r["id"] for r in db.from_("cs_virais").select("id").execute().data] == ["escolhido"]
+
+    def test_the_estruturas_survive_the_expiry_of_their_source_video(self):
+        db, st = _mock(), FakeStorageBackend()
+        _seed_perfil(db, "p1")
+        _seed_viral(db, "velho", "p1", created_at=self.OLD)
+        _seed_estrutura(db, "e1", "p1", "ativa")
+        _purgar(db, st)
+        assert [e["id"] for e in db.from_("cs_estruturas").select("id").execute().data] == ["e1"]
+
+
 class TestOrphanSweep:
     def test_deletes_only_prefixes_whose_profile_is_gone(self):
-        db, st = MockSupabaseClient(), FakeStorageBackend()
+        db, st = _mock(), FakeStorageBackend()
         _seed_perfil(db, "vivo")
-        for k in (f"{ORG}/vivo/a.jpg", f"{ORG}/morto/a.jpg", f"{ORG}/morto/b.jpg", "outra-org/fantasma/a.jpg"):
+        for k in ("platform/vivo/a.jpg", "platform/morto/a.jpg", "platform/morto/b.jpg", "outra-org/fantasma/a.jpg",
+                  f"{ORG}/legado/a.jpg"):
             _put(st, k)
+        _seed_perfil(db, "legado", org=ORG)  # a LEGACY per-org prefix is swept by the same rule
         out = anyio.run(lambda: sched.varrer_blobs_orfaos(db, st))
         assert out["orfaos"] == 2 and out["blobs_apagados"] == 3
-        assert _keys(st) == [f"{ORG}/vivo/a.jpg"]
+        assert sorted(_keys(st)) == sorted([f"{ORG}/legado/a.jpg", "platform/vivo/a.jpg"])
 
     def test_run_retencao_never_raises_and_does_both_jobs(self):
-        db, st = MockSupabaseClient(), FakeStorageBackend()
+        db, st = _mock(), FakeStorageBackend()
         _seed_perfil(db, "p1", inativo_desde=(NOW - timedelta(days=DIAS + 1)).isoformat())
-        _put(st, f"{ORG}/zumbi/a.jpg")
+        _put(st, "platform/zumbi/a.jpg")
         anyio.run(lambda: sched.run_retencao(client=lambda: db, storage=st, dias=DIAS))
         assert _perfis(db) == {} and _keys(st) == []
 
@@ -432,12 +515,12 @@ class TestOrphanSweep:
 
 class TestDeleteEndpointUsesTheSameErasure:
     def test_purgar_perfil_removes_prefix_blobs_not_listed_on_any_row(self):
-        db, st = MockSupabaseClient(), FakeStorageBackend()
+        db, st = _mock(), FakeStorageBackend()
         _seed_perfil(db, "p1")
         _seed_viral(db, "v1", "p1")  # thumbnail_path NULL: the upload happened, the row update did not
-        _put(st, f"{ORG}/p1/sem-linha.jpg")
-        falhas = anyio.run(lambda: svc.purgar_perfil(db, st, ORG, _perfis(db)["p1"]))
-        assert falhas == 0 and _keys(st) == [] and _perfis(db) == {}
+        _put(st, "platform/p1/sem-linha.jpg")
+        r = anyio.run(lambda: svc.purgar_perfil(db, st, _perfis(db)["p1"]))
+        assert r == {"blobs_falhos": 0, "estruturas": 0, "virais": 1} and _keys(st) == [] and _perfis(db) == {}
 
 
 # ── cfg sanity ──────────────────────────────────────────────────────────────

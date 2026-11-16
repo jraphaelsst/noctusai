@@ -3,12 +3,17 @@
 Contract: ``projects/core-studio-build/specs/geracao-contract.md`` section 4.3 (endpoints 7-19) and 4.8
 (response shapes, built as plain dicts by the service so they mirror ``src/types/geracao.ts``).
 Strict at the HTTP boundary (``extra="forbid"``).
+
+Since migration 351 the library (profiles, videos) is PLATFORM-WIDE: the profile writes below are admin-only
+(``estruturas-contract.md`` section 4.2); ``marca_id`` on :class:`PerfilCreate` is accepted and ignored for one
+release (the previous image's clients still send it).
 """
 from __future__ import annotations
 
 import re
 import uuid
 from typing import Literal, Optional, Union
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
 
@@ -56,9 +61,12 @@ def normalizar_handle(bruto: str) -> str:
 
 
 class PerfilCreate(StrictHttpModel):
-    marca_id: uuid.UUID
+    #: Accepted and ignored for one release (the admin adds a library profile, not a brand's).
+    marca_id: Optional[uuid.UUID] = None
     handle: str = Field(min_length=1, max_length=200)
     conta_descoberta_id: Optional[uuid.UUID] = None
+    #: False = a library-only profile (its videos are added by link / import; the daily sync skips it).
+    monitorar: bool = True
 
     @field_validator("handle")
     @classmethod
@@ -67,6 +75,58 @@ class PerfilCreate(StrictHttpModel):
             return normalizar_handle(v)
         except HandleInvalido as exc:
             raise ValueError(str(exc)) from None
+
+
+class LinkInvalido(ValueError):
+    """The pasted text is not an Instagram post link (the message is pt-BR and user-facing)."""
+
+
+MSG_LINK_INVALIDO = "Informe o link de um post do Instagram (instagram.com/p/…, /reel/… ou /tv/…)."
+_LINK_HOSTS = frozenset({"instagram.com", "www.instagram.com"})
+_LINK_KINDS = {"p": "p", "reel": "reel", "reels": "reel", "tv": "tv"}
+_SHORTCODE_RE = re.compile(r"^[A-Za-z0-9_-]{5,30}$")
+_LINK_USER_RE = re.compile(r"^[a-zA-Z0-9._]{1,30}$")
+MAX_LINK_CHARS = 300
+
+
+def extrair_shortcode(url: str) -> tuple[str, str]:
+    """``(shortcode, canonical_url)`` of an Instagram post link, or :class:`LinkInvalido`.
+
+    SSRF / abuse guard (contract section 12.5): only ``https://(www.)instagram.com`` is accepted (no userinfo, no port,
+    no other host), the path must be ``/(p|reel|reels|tv)/<shortcode>/`` (an optional ``/<username>/`` precedes it, the
+    form Instagram's share button produces), and the URL that is later handed to the scraper is RE-COMPOSED from the
+    shortcode -- the pasted string (query, fragment, anything else) is never fetched."""
+    raw = (url or "").strip()
+    if not raw or len(raw) > MAX_LINK_CHARS:
+        raise LinkInvalido(MSG_LINK_INVALIDO)
+    try:
+        parts = urlsplit(raw)
+        host = (parts.hostname or "").lower()
+        netloc_ok = parts.netloc.lower() == host  # no userinfo, no port
+    except ValueError:
+        raise LinkInvalido(MSG_LINK_INVALIDO) from None
+    if parts.scheme.lower() != "https" or host not in _LINK_HOSTS or not netloc_ok:
+        raise LinkInvalido(MSG_LINK_INVALIDO)
+    segs = [x for x in parts.path.split("/") if x]
+    if len(segs) == 3 and _LINK_USER_RE.match(segs[0]):
+        segs = segs[1:]
+    if len(segs) != 2 or segs[0].lower() not in _LINK_KINDS or not _SHORTCODE_RE.match(segs[1]):
+        raise LinkInvalido(MSG_LINK_INVALIDO)
+    kind, code = _LINK_KINDS[segs[0].lower()], segs[1]
+    return code, f"https://www.instagram.com/{kind}/{code}/"
+
+
+class PorLinkCreate(StrictHttpModel):
+    url: str = Field(min_length=1, max_length=MAX_LINK_CHARS)
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        try:
+            extrair_shortcode(v)
+        except LinkInvalido as exc:
+            raise ValueError(str(exc)) from None
+        return v.strip()
 
 
 class OptoutCreate(StrictHttpModel):
@@ -86,6 +146,9 @@ class OptoutCreate(StrictHttpModel):
 class PerfilPatch(StrictHttpModel):
     status: Optional[Literal["ativo", "pausado"]] = None
     conta_descoberta_id: Optional[uuid.UUID] = None
+    monitorar: Optional[bool] = None
+    #: Display-name override (the profile's real name stays what the source served until an admin edits it).
+    nome: Optional[str] = Field(default=None, min_length=1, max_length=120)
 
 
 class ReferenciasPerfil(StrictHttpModel):
@@ -112,6 +175,10 @@ class ReferenciaPatch(StrictHttpModel):
 
 __all__ = [
     "HandleInvalido",
+    "LinkInvalido",
+    "MSG_LINK_INVALIDO",
+    "PorLinkCreate",
+    "extrair_shortcode",
     "MAX_REFERENCIAS_MARCA",
     "PAGE_SIZE",
     "PerfilCreate",

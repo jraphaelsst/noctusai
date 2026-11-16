@@ -87,6 +87,8 @@ def register() -> Any:
         dashboard_criacao,
         equipe,
         esteira,
+        estruturas,
+        estruturas_admin,
         generation,
         perfil_criacao,
         headlines,
@@ -165,8 +167,15 @@ def register() -> Any:
             dashboard_criacao.router,
             chat.router,
             roteiros.router,
+            # Biblioteca (EST-2): the platform-admin WRITE router first (its static /perfis/verificar must precede
+            # the read router's /perfis/{perfil_id}), then the org READ router.
+            biblioteca.router_admin,
             biblioteca.router,
             headlines.router,
+            # Estruturas library (EST-1): the admin WRITE router first, then the READ router (its static paths
+            # /admin and /tipos-bloco precede /{id}); EST-3/EST-4a routers (importacoes, resolver-perfil) go BEFORE both.
+            estruturas_admin.router,
+            estruturas.router,
             esteira_legenda.router,
             equipe.router,
             post_assets.router,
