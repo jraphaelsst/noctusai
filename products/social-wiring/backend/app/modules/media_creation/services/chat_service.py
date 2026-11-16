@@ -11,6 +11,12 @@ Persistence rules (6.2): the user message is written BEFORE the model is called 
 the assistant message is written as ``completa`` on done, ``parcial`` on client disconnect and
 ``erro`` on a model failure (partial text kept).
 
+ONE unified chat (``estruturas-contract.md`` 6.5): there is no headline/roteiro agent any more. ``agente`` is accepted
+on input and ignored; every read answers ``unificado`` (a legacy ``headline|roteiro`` row is presented as unified and
+never filtered by it). On ``done`` the assistant text is parsed SERVER-SIDE into propostas (``services/propostas.py``,
+the single derivation) and persisted -- message, propostas, Estrutura links and events in ONE transaction -- and
+returned in the ``done`` frame.
+
 ``NOC-REMEDIATE[chat-stream-lock]`` -- 2026-10-10: "one stream per user" is an in-process guard
 (single uvicorn worker today). Behind several workers it needs a shared lock (DB advisory / Redis seam).
 ``NOC-REMEDIATE[chat-retention]`` -- 2026-10-10: conversations and memories are kept until the user deletes them.
@@ -23,7 +29,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncIterator, Callable, Optional
+from typing import Any, AsyncIterator, Callable, Mapping, Optional
 
 from fastapi.concurrency import run_in_threadpool
 
@@ -41,7 +47,7 @@ from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.integrations.persistence.table_reads import PAGE_SIZE, batched
 
 from app.config import settings
-from app.modules.media_creation.prompts import chat_headline, chat_roteiro
+from app.modules.media_creation.prompts import chat_unificado
 from app.modules.media_creation.services.chat_contexto import (
     ChatContexto,
     ChatError,
@@ -49,6 +55,7 @@ from app.modules.media_creation.services.chat_contexto import (
     ReferenciaResolvida,
     eh_uuid,
 )
+from app.modules.media_creation.services.fluxo_service import FluxoService
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +63,7 @@ CONVERSAS = "cs_chat_conversas"
 MENSAGENS = "cs_chat_mensagens"
 MEMORIAS = "cs_memorias"
 MARCAS = "marcas"
+FLUXO_EVENTOS = "cs_fluxo_eventos"
 
 TITULO_PADRAO = "Nova conversa"
 MAX_TITULO_AUTO = 60
@@ -81,7 +89,15 @@ ERRO_LIMITE = "limite_de_mensagens"
 ChatStreamFn = Callable[..., AsyncIterator[str]]
 
 CONVERSA_COLS = "id,org_id,marca_id,user_id,agente,titulo,last_message_at"
-MENSAGEM_COLS = "id,role,conteudo,referencias,status,truncada,created_at"
+MENSAGEM_COLS = "id,role,conteudo,referencias,status,truncada,created_at,tipo,proposta_id"
+
+#: The ONE agent value every read answers (legacy ``headline`` / ``roteiro`` rows are presented as unified).
+AGENTE_UNIFICADO = "unificado"
+#: The fluxo event kinds the citation parser may report (``cs_fluxo_eventos.tipo``); anything else is a parser bug.
+EVENTOS_DO_PARSER = frozenset({"citacao_rejeitada", "formato_misturado", "placeholder_remanescente", "atribuicao_ausente"})
+#: ``(texto, codigos_permitidos) -> ResultadoPropostas`` -- DI seam over ``services/propostas.extrair_propostas``.
+ExtrairFn = Callable[[str, Mapping[str, Any]], Any]
+RESOLUCAO_VAZIA = {"resolvidos": [], "ambiguos": [], "nao_encontrados": []}
 
 
 def default_stream_fn(
@@ -96,6 +112,18 @@ def default_stream_fn(
 def get_chat_stream_fn() -> ChatStreamFn:
     """FastAPI dependency -- the model stream. Tests override it with a fake."""
     return default_stream_fn
+
+
+def extrair_propostas_padrao(texto: str, codigos_permitidos: Mapping[str, Any]) -> Any:
+    """The real parser (``services/propostas.py``, EST-4a: a PURE parser/validator, no DB writes)."""
+    from app.modules.media_creation.services.propostas import extrair_propostas
+
+    return extrair_propostas(texto, codigos_permitidos)
+
+
+def get_extrair_propostas() -> ExtrairFn:
+    """FastAPI dependency -- the citation parser. Tests override it (a parser of their own, never a patched guard)."""
+    return extrair_propostas_padrao
 
 
 # ── one stream per user ──────────────────────────────────────────────────
@@ -144,20 +172,43 @@ def _parse_ts(valor: Any) -> Optional[datetime]:
 
 
 def conversa_out(r: dict[str, Any]) -> dict[str, Any]:
-    return {k: r.get(k) for k in ("id", "marca_id", "agente", "titulo", "last_message_at")}
+    out = {k: r.get(k) for k in ("id", "marca_id", "titulo", "last_message_at")}
+    out["agente"] = AGENTE_UNIFICADO  # a legacy headline|roteiro row is PRESENTED as unified, never filtered by it
+    return out
 
 
-def mensagem_out(r: dict[str, Any]) -> dict[str, Any]:
+def mensagem_out(
+    r: dict[str, Any], propostas: Optional[list[dict[str, Any]]] = None, fluxo: Optional[dict[str, Any]] = None
+) -> dict[str, Any]:
     return {
         "id": r["id"], "role": r["role"], "conteudo": r.get("conteudo") or "",
         "referencias": r.get("referencias") or [], "status": r.get("status") or "completa",
         "truncada": bool(r.get("truncada")), "created_at": r.get("created_at"),
+        "tipo": r.get("tipo") or "texto", "propostas": propostas or [], "fluxo": fluxo,
     }
 
 
-def _sistema(agente: str, montado: ContextoMontado) -> str:
-    prompt = chat_headline.SYSTEM_PROMPT if agente == "headline" else chat_roteiro.SYSTEM_PROMPT
+def _sistema(montado: ContextoMontado) -> str:
+    prompt = chat_unificado.SYSTEM_PROMPT
     return f"{prompt}\n\n{montado.texto}" if montado.texto else prompt
+
+
+def _agente_do_contexto(conversa: dict[str, Any]) -> str:
+    """What ``ChatContexto.montar`` is told. The unified chat IS the headline conversation (its context is the headline
+    context: perfil, memorias, mentions, the Estrutura pool); a legacy ``roteiro`` row keeps the context it was written
+    with until the context itself stops branching on the agent (EST-4a)."""
+    return conversa["agente"] if conversa["agente"] in ("headline", "roteiro") else "headline"
+
+
+def mapa_citavel(contexto: ContextoMontado) -> Mapping[str, Any]:
+    """The ``{codigo: EstruturaCitavel}`` the context put in front of the model (``ContextoMontado.citaveis``, EST-4a):
+    what ``propostas.extrair_propostas`` validates the model's citations against."""
+    return contexto.citaveis
+
+
+def codigos_para_meta(contexto: ContextoMontado) -> list[int]:
+    """``meta.codigos_permitidos``: the Estrutura ``codigo`` numbers the model was allowed to cite."""
+    return list(contexto.codigos_permitidos)
 
 
 @dataclass
@@ -175,14 +226,18 @@ class Envio:
     rodada: AsyncIterator[str]
     outcome: StreamOutcome
     modelo: str
+    extrair: ExtrairFn = extrair_propostas_padrao
+    modo_estrutura: str = "auto"
+    resolucao_perfis: Optional[dict[str, Any]] = None
 
 
 class ChatService:
-    def __init__(self, db: Any, org_id: str, user_id: str) -> None:
+    def __init__(self, db: Any, org_id: str, user_id: str, *, fluxo: Optional[FluxoService] = None) -> None:
         self.db = db
         self.org_id = org_id
         self.user_id = user_id
         self.contexto = ChatContexto(db, org_id, user_id, settings.chat_contexto_max_chars)
+        self.fluxo = fluxo if fluxo is not None else FluxoService(db, org_id, user_id)
 
     # ── guards ───────────────────────────────────────────────────────────
 
@@ -202,22 +257,23 @@ class ChatService:
 
     # ── conversations ────────────────────────────────────────────────────
 
-    def list_conversas(self, marca_id: str, agente: str, limit: int, offset: int) -> dict[str, Any]:
+    def list_conversas(self, marca_id: str, limit: int, offset: int) -> dict[str, Any]:
+        """Conversations are listed per (user, marca) only: the legacy ``agente`` filter is gone (a legacy row is a unified one)."""
         self.assert_marca(marca_id)
         rows = (
             self.db.table(CONVERSAS).select(CONVERSA_COLS)
             .eq("org_id", self.org_id).eq("user_id", self.user_id)
-            .eq("marca_id", marca_id).eq("agente", agente)
+            .eq("marca_id", marca_id)
             .order("last_message_at", desc=True).range(offset, offset + limit).execute().data
         ) or []
         return {"items": [conversa_out(r) for r in rows[:limit]], "tem_mais": len(rows) > limit}
 
-    def create_conversa(self, marca_id: str, agente: str, titulo: Optional[str]) -> dict[str, Any]:
+    def create_conversa(self, marca_id: str, titulo: Optional[str]) -> dict[str, Any]:
         self.assert_marca(marca_id)
         agora = _iso(_agora())
         row = {
             "id": novo_id(), "org_id": self.org_id, "marca_id": marca_id, "user_id": self.user_id,
-            "agente": agente, "titulo": titulo or TITULO_PADRAO, "last_message_at": agora,
+            "agente": AGENTE_UNIFICADO, "titulo": titulo or TITULO_PADRAO, "last_message_at": agora,
             "created_at": agora, "updated_at": agora,
         }
         self.db.table(CONVERSAS).insert(row).execute()
@@ -259,7 +315,15 @@ class ChatService:
         rows = q.order("created_at", desc=True).limit(limit + 1).execute().data or []
         rows.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
         pagina = list(reversed(rows[:limit]))
-        return {"items": [mensagem_out(r) for r in pagina], "tem_mais": len(rows) > limit}
+        propostas = self.fluxo.propostas_por_mensagem(r["id"] for r in pagina if r["role"] == "assistant")
+        items = []
+        for r in pagina:
+            fluxo = None
+            if (r.get("tipo") or "texto") == "roteiro_gerado" and r.get("proposta_id"):
+                proposta = self.fluxo.get_proposta(str(r["proposta_id"]))
+                fluxo = self.fluxo.compor_fluxo(proposta) if proposta else None
+            items.append(mensagem_out(r, propostas.get(str(r["id"])), fluxo))
+        return {"items": items, "tem_mais": len(rows) > limit}
 
     def _historico(self, conversa_id: str) -> list[dict[str, str]]:
         rows = (
@@ -415,9 +479,12 @@ class ChatService:
                 self.db.table(MENSAGENS).select("id").eq("conversa_id", conversa_id)
                 .eq("org_id", self.org_id).limit(1).execute().data
             )
-            montado = self.contexto.montar(conversa, resolvidas)
-            refs_dict = [r.como_dict() for r in resolvidas]
+            # the typed text turns on the free-text profile resolution (8.3); the profiles it resolved are stored on the
+            # message `referencias` (each carries via="texto") next to the explicit mentions
+            montado = self.contexto.montar({**conversa, "agente": _agente_do_contexto(conversa)}, resolvidas, texto=conteudo)
+            refs_dict = [r.como_dict() for r in [*resolvidas, *montado.referencias_via_texto]]
             msg = self._gravar_mensagem(conversa_id, "user", conteudo, referencias=refs_dict)
+            self._gravar_eventos_do_contexto(conversa, msg["id"], montado.eventos)
             titulo = conteudo[:MAX_TITULO_AUTO].strip() if eh_primeira and conversa["titulo"] == TITULO_PADRAO else None
             self._tocar_conversa(conversa_id, titulo)
         except Exception:
@@ -426,13 +493,25 @@ class ChatService:
         return {"conversa": conversa, "historico": historico, "montado": montado,
                 "msg_id": msg["id"], "refs": refs_dict}
 
+    def _gravar_eventos_do_contexto(self, conversa: dict[str, Any], mensagem_id: str, eventos: list[dict[str, Any]]) -> None:
+        """The name-resolution outcomes (``perfil_resolvido|perfil_ambiguo|perfil_nao_encontrado`` + ``contagem``) of this
+        turn, as ``cs_fluxo_eventos`` rows (no content: counts only)."""
+        if not eventos:
+            return
+        self.db.table(FLUXO_EVENTOS).insert([
+            {"id": novo_id(), "org_id": self.org_id, "marca_id": conversa["marca_id"], "conversa_id": conversa["id"],
+             "mensagem_id": mensagem_id, "ator_id": self.user_id, "tipo": e["tipo"], "contagem": int(e.get("contagem") or 0)}
+            for e in eventos
+        ]).execute()
+
     async def preparar_envio(
-        self, conversa_id: str, conteudo: str, referencias: list[Any], stream_fn: ChatStreamFn
+        self, conversa_id: str, conteudo: str, referencias: list[Any], stream_fn: ChatStreamFn,
+        extrair: ExtrairFn = extrair_propostas_padrao,
     ) -> Envio:
         prep = await run_in_threadpool(self._preparar_sync, conversa_id, conteudo, referencias)
         conversa = prep["conversa"]
         modelo = settings.geracao_llm_model
-        sistema = _sistema(conversa["agente"], prep["montado"])
+        sistema = _sistema(prep["montado"])
         mensagens = build_conversation_messages(
             system_prompt=sistema,
             history=prep["historico"] + [{"role": "user", "content": conteudo}],
@@ -464,7 +543,9 @@ class ChatService:
         return Envio(
             conversa=conversa, mensagens=prep["historico"], sistema=sistema, contexto=prep["montado"],
             mensagem_usuario_id=prep["msg_id"], referencias=prep["refs"], stream_fn=stream_fn,
-            primeira=primeira, rodada=agen, outcome=outcome, modelo=modelo,
+            primeira=primeira, rodada=agen, outcome=outcome, modelo=modelo, extrair=extrair,
+            modo_estrutura=prep["montado"].modo_estrutura,
+            resolucao_perfis=prep["montado"].resolucao.como_dict() if prep["montado"].resolucao is not None else None,
         )
 
     # ── the stream ───────────────────────────────────────────────────────
@@ -481,6 +562,56 @@ class ChatService:
         except Exception:
             logger.exception("chat: falha ao gravar a resposta (status=%s) conversa=%s", status, envio.conversa["id"])
             return None
+
+    def _finalizar_resposta(self, envio: Envio, texto: str, truncada: bool) -> tuple[Optional[str], list[dict[str, Any]]]:
+        """Save the completed answer. With Estrutura citations to validate: parse (server-side, single derivation) and write
+        message + propostas + Estrutura links + events in ONE transaction (``cs_chat_resposta_gravar``). Returns
+        ``(mensagem_id, Proposta[])``. A text with no parsable headline is saved the plain way, ``propostas: []``."""
+        mapa = mapa_citavel(envio.contexto)
+        try:
+            resultado = envio.extrair(texto, mapa)
+        except Exception:
+            # a parser bug must never cost the user the answer: keep the text, lose (loudly) its propostas
+            logger.exception("chat: o parser de propostas falhou conversa=%s", envio.conversa["id"])
+            return self._salvar_resposta(envio, texto, "completa", truncada), []
+        propostas = list(getattr(resultado, "propostas", ()) or ())
+        eventos = self._eventos_do_parser(getattr(resultado, "eventos", ()) or ())
+        if not propostas and not eventos:
+            return self._salvar_resposta(envio, texto, "completa", truncada), []
+        payload = {
+            "org_id": self.org_id, "conversa_id": envio.conversa["id"], "user_id": self.user_id, "conteudo": texto,
+            "truncada": truncada, "modelo": envio.modelo, "contexto_chars": envio.contexto.chars,
+            "propostas": [
+                {
+                    "ordem": p.ordem, "texto": p.headline, "gatilho_tag": p.gatilho,
+                    "estrutura_ids": list(dict.fromkeys(str(i) for i in p.estrutura_ids))[:3],
+                }
+                for p in propostas
+            ],
+            "eventos": eventos,
+        }
+        try:
+            res = self.db.rpc("cs_chat_resposta_gravar", {"p": payload}).execute()
+            data = res.data[0] if isinstance(res.data, list) else res.data
+            mensagem_id = str(data["mensagem_id"])
+            self._tocar_conversa(envio.conversa["id"])
+            ids = [str(p["id"]) for p in sorted(data.get("propostas") or [], key=lambda x: x["ordem"])]
+            rows = [self.fluxo.get_proposta(i) for i in ids]
+            return mensagem_id, self.fluxo.apresentar_propostas([r for r in rows if r])
+        except Exception:
+            # the user keeps the answer: save the text the plain way and say loudly that its propostas were lost
+            logger.exception("chat: falha ao gravar a resposta com propostas conversa=%s", envio.conversa["id"])
+            return self._salvar_resposta(envio, texto, "completa", truncada), []
+
+    @staticmethod
+    def _eventos_do_parser(eventos: Any) -> list[dict[str, Any]]:
+        out = []
+        for e in eventos:
+            if e.get("tipo") not in EVENTOS_DO_PARSER:
+                logger.error("chat: o parser de propostas devolveu um evento desconhecido: %r", e.get("tipo"))
+                continue
+            out.append({"tipo": e["tipo"], "contagem": int(e.get("contagem") or 0)})
+        return out
 
     async def eventos(self, envio: Envio, conteudo: str) -> AsyncIterator[str]:
         """SSE frames: ``meta`` -> ``delta``... -> [``truncated``] -> ``done`` | ``error``."""
@@ -503,7 +634,9 @@ class ChatService:
             yield sse_event({"meta": {
                 "mensagem_usuario_id": envio.mensagem_usuario_id,
                 "contexto_chars": envio.contexto.chars,
-                "codigos_permitidos": envio.contexto.codigos_permitidos,
+                "codigos_permitidos": codigos_para_meta(envio.contexto),
+                "modo_estrutura": envio.modo_estrutura,
+                "resolucao_perfis": envio.resolucao_perfis or RESOLUCAO_VAZIA,
             }})
             if envio.primeira is not None:
                 partes.append(envio.primeira)
@@ -532,10 +665,10 @@ class ChatService:
                 )
             truncada = bool(outcome.truncated)
             salvo = True
-            mensagem_id = await run_in_threadpool(self._salvar_resposta, envio, "".join(partes), "completa", truncada)
+            mensagem_id, propostas = await run_in_threadpool(self._finalizar_resposta, envio, "".join(partes), truncada)
             if truncada:
                 yield sse_event({"truncated": True})
-            yield sse_event({"done": {"mensagem_id": mensagem_id}})
+            yield sse_event({"done": {"mensagem_id": mensagem_id, "propostas": propostas}})
             logger.info(
                 "chat: stream ok org=%s conversa=%s chars=%d continuacoes=%d truncated=%s latency_ms=%d",
                 org_id, conversa["id"], len("".join(partes)), continuacoes, truncada,
@@ -561,6 +694,7 @@ class ChatService:
 
 
 __all__ = [
-    "ChatError", "ChatService", "ChatStreamFn", "ERRO_STREAM_EM_ANDAMENTO", "Envio", "TITULO_PADRAO",
-    "conversa_out", "get_chat_stream_fn", "liberar_stream", "mensagem_out",
+    "AGENTE_UNIFICADO", "ChatError", "ChatService", "ChatStreamFn", "ERRO_STREAM_EM_ANDAMENTO", "Envio", "ExtrairFn",
+    "TITULO_PADRAO", "conversa_out", "extrair_propostas_padrao", "get_chat_stream_fn", "get_extrair_propostas",
+    "liberar_stream", "mensagem_out",
 ]

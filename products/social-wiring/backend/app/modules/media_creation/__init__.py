@@ -90,6 +90,7 @@ def register() -> Any:
         estruturas,
         estruturas_admin,
         estruturas_importacao,
+        estruturas_resolver,
         generation,
         perfil_criacao,
         headlines,
@@ -176,6 +177,7 @@ def register() -> Any:
             # Estruturas library (EST-1): the admin WRITE router first, then the READ router (its static paths
             # /admin and /tipos-bloco precede /{id}); EST-3/EST-4a routers (importacoes, resolver-perfil) go BEFORE both.
             estruturas_importacao.router,
+            estruturas_resolver.router,
             estruturas_admin.router,
             estruturas.router,
             esteira_legenda.router,

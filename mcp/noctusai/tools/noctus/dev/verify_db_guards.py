@@ -13186,6 +13186,250 @@ _SW_351_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — social_wiring unified chat, propostas and the flow ledger (migration 352, M3 of
+# estruturas-contract.md section 3.3). Self-provisioning like the 350 probes: every probe builds its OWN org / marca /
+# profile / Estruturas / conversation / proposta inside the rolled-back transaction, so no prod row is borrowed.
+# `statements` is the write under test; the LAST one must be the refused (or sanctioned) one.
+# ---------------------------------------------------------------------------
+
+_SW_352_MIGRATION = "352_cs_unified_chat.sql"
+
+
+def _sw352_probe(
+    *, probe_id: str, guard_name: str, statements: str, permitted_msg: str, rationale: str,
+    kind: str = "write_refusal", after_ok: str = "",
+) -> GuardProbe:
+    """Probe on a migration-352 guard. ``kind='write_refusal'``: ``statements`` must be refused by ``guard_name`` (a
+    constraint / trigger / function name matched against the error text). ``kind='write_allowed'``: ``statements`` is a
+    SANCTIONED write -- success is the pass; ``after_ok`` re-checks the resulting state and RAISEs
+    ``NOC_PROBE:blocked:`` when it is wrong."""
+    fragment_lit = _sql_lit(guard_name)
+    pass_branch = (
+        f"    RAISE EXCEPTION 'NOC_PROBE:permitted: {_sql_lit(permitted_msg)} - the guard did not fire';"
+        if kind == "write_refusal"
+        else f"{after_ok}\n    RAISE EXCEPTION 'NOC_PROBE:allowed: {_sql_lit(permitted_msg)}';"
+    )
+    ok_marker, bad_marker = (
+        ("NOC_PROBE:permitted:", "refused") if kind == "write_refusal" else ("NOC_PROBE:allowed:", "blocked")
+    )
+    return GuardProbe(
+        id=probe_id, product="social-wiring", schema=_SW_SCHEMA, guard_name=guard_name, kind=kind,
+        migrations=(_SW_352_MIGRATION,), rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org uuid; v_marca uuid; v_perfil uuid; v_est uuid; v_est2 uuid; v_conv uuid; v_msg uuid; v_msg2 uuid; v_prop uuid;
+  v_he uuid; v_ev uuid; v_etapa uuid;
+BEGIN
+  IF to_regclass('{_SW_SCHEMA}.cs_fluxo_eventos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:pending: {_SW_SCHEMA}.cs_fluxo_eventos does not exist (migration 352 not applied)';
+  END IF;
+  INSERT INTO public.organizations (nome, slug)
+  VALUES ('NOC probe org (chat)', 'noc-probe-' || gen_random_uuid()::text) RETURNING id INTO v_org;
+  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name) VALUES (v_org, 'noc-probe-chat', 'noc-probe-chat') RETURNING id INTO v_marca;
+  INSERT INTO {_SW_SCHEMA}.cs_perfis_monitorados (org_id, handle) VALUES (v_org, 'noc.probe.chat') RETURNING id INTO v_perfil;
+  INSERT INTO {_SW_SCHEMA}.cs_estruturas (perfil_id, formula_headline, status, origem)
+  VALUES (v_perfil, 'noc probe 1', 'rascunho', 'manual') RETURNING id INTO v_est;
+  INSERT INTO {_SW_SCHEMA}.cs_estruturas (perfil_id, formula_headline, status, origem)
+  VALUES (v_perfil, 'noc probe 2', 'rascunho', 'manual') RETURNING id INTO v_est2;
+  INSERT INTO {_SW_SCHEMA}.cs_chat_conversas (org_id, marca_id, user_id, agente, titulo)
+  VALUES (v_org, v_marca, gen_random_uuid(), 'unificado', 'noc probe') RETURNING id INTO v_conv;
+  INSERT INTO {_SW_SCHEMA}.cs_chat_mensagens (org_id, conversa_id, role, conteudo)
+  VALUES (v_org, v_conv, 'assistant', 'noc probe') RETURNING id INTO v_msg;
+  INSERT INTO {_SW_SCHEMA}.cs_chat_mensagens (org_id, conversa_id, role, conteudo)
+  VALUES (v_org, v_conv, 'assistant', 'noc probe 2') RETURNING id INTO v_msg2;
+  INSERT INTO {_SW_SCHEMA}.cs_chat_propostas (org_id, marca_id, conversa_id, mensagem_id, ordem, texto)
+  VALUES (v_org, v_marca, v_conv, v_msg, 1, 'noc probe') RETURNING id INTO v_prop;
+  INSERT INTO {_SW_SCHEMA}.cs_chat_proposta_estruturas (proposta_id, estrutura_id, ordem, principal)
+  VALUES (v_prop, v_est, 1, true);
+  INSERT INTO {_SW_SCHEMA}.cs_headlines (org_id, marca_id, texto) VALUES (v_org, v_marca, 'noc probe') RETURNING id INTO v_he;
+  INSERT INTO {_SW_SCHEMA}.cs_fluxo_eventos (org_id, marca_id, conversa_id, proposta_id, tipo)
+  VALUES (v_org, v_marca, v_conv, v_prop, 'propostas_geradas') RETURNING id INTO v_ev;
+  INSERT INTO {_SW_SCHEMA}.pipeline_stages (org_id, pipeline, slug, label, posicao)
+  VALUES (v_org, 'esteira', 'noc_probe_chat', 'noc probe', 9999) RETURNING id INTO v_etapa;
+  BEGIN
+{statements}
+{pass_branch}
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE '{ok_marker}%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:{bad_marker}: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_SW352 = _SW_SCHEMA
+_SW352_EVENTO_AUSENTE = (
+    f"    IF EXISTS (SELECT 1 FROM {_SW352}.cs_fluxo_eventos WHERE id = v_ev) THEN\n"
+    "      RAISE EXCEPTION 'NOC_PROBE:blocked: the ledger row survived the ON DELETE CASCADE of its marca';\n"
+    "    END IF;"
+)
+
+_SW_352_PROBES: tuple[GuardProbe, ...] = (
+    # the flow ledger: append-only
+    _sw352_probe(
+        probe_id="sw352_fluxo_eventos_update_refused", guard_name="cs_fluxo_eventos_imutavel",
+        statements=f"    UPDATE {_SW352}.cs_fluxo_eventos SET tipo = 'fluxo_concluido' WHERE id = v_ev;",
+        permitted_msg="a flow event was rewritten",
+        rationale="The chat -> roteiro -> card ledger feeds the funnel metrics: a rewritten row falsifies the stage counts.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_fluxo_eventos_delete_refused", guard_name="cs_fluxo_eventos_imutavel",
+        statements=f"    DELETE FROM {_SW352}.cs_fluxo_eventos WHERE id = v_ev;",
+        permitted_msg="a flow event was deleted",
+        rationale="A deleted event silently shortens the funnel; only a DB-driven cascade (marca / org erase) may remove one.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_fluxo_eventos_truncate_refused", guard_name="cs_fluxo_recusa_truncate",
+        statements=f"    TRUNCATE {_SW352}.cs_fluxo_eventos;",
+        permitted_msg="the flow ledger was truncated",
+        rationale="Row triggers never fire on TRUNCATE: without the statement-level refusal the append-only ledger can still be emptied in one statement.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_fluxo_eventos_marca_cascade_allowed", guard_name="cs_fluxo_eventos_imutavel", kind="write_allowed",
+        statements=f"    DELETE FROM {_SW352}.marcas WHERE id = v_marca;",
+        permitted_msg="deleting the marca cascaded its ledger rows, as it must",
+        after_ok=_SW352_EVENTO_AUSENTE,
+        rationale="An append-only ledger must not block the ON DELETE CASCADE of its brand (account / org deletion, LGPD erase).",
+    ),
+    _sw352_probe(
+        probe_id="sw352_fluxo_eventos_tipo_valido", guard_name="cs_fluxo_eventos_tipo_check",
+        statements=(f"    INSERT INTO {_SW352}.cs_fluxo_eventos (org_id, marca_id, conversa_id, tipo) "
+                    "VALUES (v_org, v_marca, v_conv, 'evento_inventado');"),
+        permitted_msg="a flow event with an unknown tipo was recorded",
+        rationale="The event vocabulary is the metric's vocabulary: an unnamed tipo would be a row no funnel query counts.",
+    ),
+    # propostas
+    _sw352_probe(
+        probe_id="sw352_proposta_status_valido", guard_name="cs_chat_propostas_status_check",
+        statements=f"    UPDATE {_SW352}.cs_chat_propostas SET status = 'feita' WHERE id = v_prop;",
+        permitted_msg="a proposta got an unknown status",
+        rationale="A proposta is `proposta` or `escolhida`: the claim/lease conditions branch on it.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_etapa_valida", guard_name="cs_chat_propostas_fluxo_etapa_check",
+        statements=f"    UPDATE {_SW352}.cs_chat_propostas SET fluxo_etapa = 'quase_la' WHERE id = v_prop;",
+        permitted_msg="a proposta got an unknown fluxo_etapa",
+        rationale="The saga resumes from the last recorded etapa: an unknown value would strand the flow.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_ordem_unica", guard_name="cs_chat_propostas_mensagem_ordem_uq",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_propostas (org_id, marca_id, conversa_id, mensagem_id, ordem, texto) "
+                    "VALUES (v_org, v_marca, v_conv, v_msg, 1, 'noc probe dup');"),
+        permitted_msg="two propostas took the same (mensagem, ordem)",
+        rationale="A message's headlines are numbered once: a retried save must not duplicate the list the user clicks on.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_ordem_valida", guard_name="cs_chat_propostas_ordem_check",
+        statements=f"    UPDATE {_SW352}.cs_chat_propostas SET ordem = 0 WHERE id = v_prop;",
+        permitted_msg="a proposta was numbered below 1",
+        rationale="Headlines are numbered from 1 (the list the user clicks on); ordem 0 would be a row the numbered list cannot show.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_texto_valido", guard_name="cs_chat_propostas_texto_check",
+        statements=f"    UPDATE {_SW352}.cs_chat_propostas SET texto = '' WHERE id = v_prop;",
+        permitted_msg="a proposta was saved with an empty headline",
+        rationale="The proposta's text becomes the saved headline (1..1000 chars): an empty one would be refused at the click, after the user saw it.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_estrutura_max_tres", guard_name="cs_chat_proposta_estruturas_ordem_check",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_proposta_estruturas (proposta_id, estrutura_id, ordem) "
+                    "VALUES (v_prop, v_est2, 4);"),
+        permitted_msg="a proposta cited a 4th Estrutura",
+        rationale="A headline mixes at most three Estruturas (contract 3.3); the server-side parser caps it and the table backs it up.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_uma_principal", guard_name="cs_chat_proposta_estruturas_principal_uq",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_proposta_estruturas (proposta_id, estrutura_id, ordem, principal) "
+                    "VALUES (v_prop, v_est2, 2, true);"),
+        permitted_msg="a proposta had two principal Estruturas",
+        rationale="The principal Estrutura decides the roteiro's formato: exactly one per proposta.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_estrutura_slot_unico", guard_name="cs_chat_proposta_estruturas_ordem_uq",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_proposta_estruturas (proposta_id, estrutura_id, ordem) "
+                    "VALUES (v_prop, v_est2, 1);"),
+        permitted_msg="two Estruturas shared one slot of a proposta",
+        rationale="The citation order is the attribution order: one Estrutura per slot.",
+    ),
+    # the headline / message links
+    _sw352_probe(
+        probe_id="sw352_headline_proposta_unica", guard_name="cs_headlines_conversa_proposta_uq",
+        statements=(f"    INSERT INTO {_SW352}.cs_headlines (org_id, marca_id, texto, conversa_id, proposta_id) "
+                    "VALUES (v_org, v_marca, 'noc probe a', v_conv, v_prop);\n"
+                    f"    INSERT INTO {_SW352}.cs_headlines (org_id, marca_id, texto, conversa_id, proposta_id) "
+                    "VALUES (v_org, v_marca, 'noc probe b', v_conv, v_prop);"),
+        permitted_msg="one proposta was saved as two headlines",
+        rationale="A double click or a retried save of the same proposta is a lookup, never a second headline.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_mensagem_proposta_unica", guard_name="cs_chat_mensagens_proposta_uq",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_mensagens (org_id, conversa_id, role, conteudo, tipo, proposta_id) "
+                    "VALUES (v_org, v_conv, 'assistant', 'Criei', 'roteiro_gerado', v_prop);\n"
+                    f"    INSERT INTO {_SW352}.cs_chat_mensagens (org_id, conversa_id, role, conteudo, tipo, proposta_id) "
+                    "VALUES (v_org, v_conv, 'assistant', 'Criei', 'roteiro_gerado', v_prop);"),
+        permitted_msg="the roteiro_gerado message was inserted twice for one proposta",
+        rationale="The finalizer and a resumed click both reach the last step: the message must appear exactly once.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_mensagem_tipo_valido", guard_name="cs_chat_mensagens_tipo_check",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_mensagens (org_id, conversa_id, role, conteudo, tipo) "
+                    "VALUES (v_org, v_conv, 'assistant', 'x', 'outro');"),
+        permitted_msg="a chat message got an unknown tipo",
+        rationale="The FE renders by tipo (texto vs roteiro_gerado): an unknown value is a message nothing can draw.",
+    ),
+    # the widened CHECKs on the existing tables
+    _sw352_probe(
+        probe_id="sw352_conversa_agente_valido", guard_name="cs_chat_conversas_agente_check",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_conversas (org_id, marca_id, user_id, agente, titulo) "
+                    "VALUES (v_org, v_marca, gen_random_uuid(), 'outro', 'noc probe');"),
+        permitted_msg="a conversation got an unknown agente",
+        rationale="The vocabulary is headline | roteiro (legacy rows) | unificado; anything else is a write by code that predates the contract.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_conversa_agente_unificado_allowed", guard_name="cs_chat_conversas_agente_check", kind="write_allowed",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_conversas (org_id, marca_id, user_id, agente, titulo) "
+                    "VALUES (v_org, v_marca, gen_random_uuid(), 'unificado', 'noc probe');"),
+        permitted_msg="a unified conversation was created, as it must",
+        rationale="The N code writes `unificado`; the widened CHECK must accept it (and keep the legacy values the N-1 image writes).",
+    ),
+    _sw352_probe(
+        probe_id="sw352_roteiro_formato_valido", guard_name="cs_roteiros_formato_check",
+        statements=(f"    INSERT INTO {_SW352}.cs_roteiros (org_id, marca_id, nome, headline_texto, formato) "
+                    "VALUES (v_org, v_marca, 'noc probe', 'noc probe', 'short');"),
+        permitted_msg="a roteiro got an unknown formato",
+        rationale="reels | carrossel | stories | post is the roteiro's grammar selector: an unknown value has no prompt.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_roteiro_formato_carrossel_allowed", guard_name="cs_roteiros_formato_check", kind="write_allowed",
+        statements=(f"    INSERT INTO {_SW352}.cs_roteiros (org_id, marca_id, nome, headline_texto, formato) "
+                    "VALUES (v_org, v_marca, 'noc probe', 'noc probe', 'carrossel');"),
+        permitted_msg="a carrossel roteiro was created, as it must",
+        rationale="All four formatos are supported (owner decision): the CHECK must accept each.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_posts_formato_valido", guard_name="cs_posts_formato_check",
+        statements=(f"    INSERT INTO {_SW352}.cs_posts (org_id, marca_id, titulo, etapa_id, formato) "
+                    "VALUES (v_org, v_marca, 'noc probe', v_etapa, 'video_longo');"),
+        permitted_msg="a card got a formato outside reel|carrossel|story|feed",
+        rationale="The card's formato is S1's vocabulary; the relaxed CHECK must still refuse everything else.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_posts_formato_carrossel_allowed", guard_name="cs_posts_formato_check", kind="write_allowed",
+        statements=(f"    INSERT INTO {_SW352}.cs_posts (org_id, marca_id, titulo, etapa_id, formato) "
+                    "VALUES (v_org, v_marca, 'noc probe', v_etapa, 'carrossel');"),
+        permitted_msg="a carrossel card was created, as it must",
+        rationale="The auto-card carries the roteiro's truthful formato (M3 relaxed the CHECK from reel only).",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
@@ -13311,6 +13555,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_342_PROBES,
     *_SW_350_PROBES,
     *_SW_351_PROBES,
+    *_SW_352_PROBES,
     *_SW_JULIA_ENVIO_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
     *_SW_JULIA_CREDITO_PROBES,
