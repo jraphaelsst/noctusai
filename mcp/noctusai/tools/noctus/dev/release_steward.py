@@ -149,30 +149,46 @@ def default_ttl(env: dict[str, str] | None = None) -> int:
         return DEFAULT_TTL_S
 
 
+#: RUN budget override (seconds): how long the scoped check may RUN once it holds the heavy slot. Unset = derived from gate_budget.
 SCOPED_DEADLINE_ENV = "NOCTUS_STEWARD_SCOPED_DEADLINE_S"
-SCOPED_DEADLINE_DEFAULT_S = 3600.0
+#: Run budget before the check has sized itself (= gate_budget.DEFAULT_OVERALL_CEILING_S); once the suites are selected the
+#: check publishes the budget derived from gate_budget's per-stage / per-suite costs and that replaces it.
+SCOPED_RUN_DEFAULT_S = 5400.0
+#: QUEUE budget (seconds): how long the scoped check may WAIT, FIFO, for the machine-wide heavy slot. Waiting and running
+#: have separate clocks: under load the wait used to eat the one shared deadline and the verdict came back UNMEASURED.
+SCOPED_QUEUE_ENV = "NOCTUS_STEWARD_SCOPED_QUEUE_S"
+SCOPED_QUEUE_DEFAULT_S = 10800.0
 SCOPED_PROGRESS_EVERY_S = 60.0
-#: Time kept for the run itself when the scoped check queues for the heavy slot inside the request's deadline.
-SCOPED_RUN_RESERVE_S = 900.0
-
-
-def slot_wait_budget_s(deadline_s: float) -> float:
-    """How long the scoped check may QUEUE for the machine-wide heavy slot: the request's own wall-clock deadline minus a
-    reserve for the run, never under half of it (so a short deadline still waits). Past it = UNMEASURED naming the wait."""
-    return max(deadline_s - SCOPED_RUN_RESERVE_S, deadline_s / 2.0)
+#: How often the watchdog re-reads the phase (queued -> running) while the check works.
+SCOPED_TICK_S = 2.0
+#: Grace over the queue budget so hw_admission's own refusal (which names the holders) reports before our watchdog does.
+SCOPED_QUEUE_GRACE_S = 60.0
+#: `retry_after_s` hint on an UNMEASURED that ran out of a budget: a queue wait is retried after a heavy job has had time
+#: to finish; a run overrun after the machine has had time to quiet down.
+SCOPED_RETRY_AFTER_QUEUE_S = 900
+SCOPED_RETRY_AFTER_RUN_S = 1800
 
 
 def _stderr_progress(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
-def _scoped_deadline_s(env: dict[str, str] | None = None) -> float:
-    raw = (env if env is not None else os.environ).get(SCOPED_DEADLINE_ENV, "")
+def _env_seconds(name: str, env: dict[str, str] | None = None) -> float | None:
+    raw = (env if env is not None else os.environ).get(name, "")
     try:
         v = float(raw)
     except ValueError:
-        return SCOPED_DEADLINE_DEFAULT_S
-    return v if v > 0 else SCOPED_DEADLINE_DEFAULT_S
+        return None
+    return v if v > 0 else None
+
+
+def _scoped_deadline_s(env: dict[str, str] | None = None) -> float | None:
+    """The explicit RUN budget override, or None (= derive it from gate_budget)."""
+    return _env_seconds(SCOPED_DEADLINE_ENV, env)
+
+
+def _scoped_queue_s(env: dict[str, str] | None = None) -> float:
+    return _env_seconds(SCOPED_QUEUE_ENV, env) or SCOPED_QUEUE_DEFAULT_S
 
 
 def _refusal_telemetry():
@@ -390,9 +406,24 @@ class StewardStore:
                  resolve_branch: Callable[[str], dict[str, Any]] | None = None,
                  scoped_check: Callable[[str, str], dict[str, Any]] | None = None,
                  repo_cwd: str | Path | None = None, scoped_deadline_s: float | None = None,
-                 progress: Callable[[str], None] | None = None) -> None:
+                 progress: Callable[[str], None] | None = None,
+                 toolkit_check: Callable[[bool], dict[str, Any]] | None = None,
+                 scoped_queue_s: float | None = None, scoped_queues: bool = False,
+                 queue_grace_s: float = SCOPED_QUEUE_GRACE_S) -> None:
+        # The toolkit CHECKOUT this steward runs from vs origin/dev (`toolkit_freshness.ensure_current`; the argument is
+        # "fetch + fast-forward it"). Production runs the real one; an explicit-root store (tests) has none unless injected.
+        self._toolkit_check = toolkit_check if toolkit_check is not None else (
+            (lambda ff: _sibling("toolkit_freshness").ensure_current(fetch=ff)) if root is None else None)
         self.root = Path(root) if root is not None else default_root()
-        self.scoped_deadline_s = scoped_deadline_s if scoped_deadline_s is not None else _scoped_deadline_s()
+        # Two clocks: QUEUE (waiting for the heavy slot, FIFO through hw_admission) and RUN (holding it). The run budget is the
+        # override when one is given (arg or NOCTUS_STEWARD_SCOPED_DEADLINE_S), else it starts at the ceiling and is
+        # replaced by the budget derived from gate_budget once the check has selected its suites (`_on_sized`).
+        override = scoped_deadline_s if scoped_deadline_s is not None else _scoped_deadline_s()
+        self._run_budget_overridden = override is not None
+        self.scoped_deadline_s = override if override is not None else SCOPED_RUN_DEFAULT_S
+        self.scoped_queue_s = scoped_queue_s if scoped_queue_s is not None else _scoped_queue_s()
+        self.queue_grace_s = queue_grace_s
+        self._admitted_at: float | None = None
         self.progress = progress if progress is not None else _stderr_progress
         # Same posture as inline_gate/landed_check: production runs the real delivery-contract preflight
         # (`deliverable`) at filing; a store built on an explicit root (tests) skips it unless it injects one.
@@ -403,9 +434,9 @@ class StewardStore:
         self.repo_cwd = repo_cwd  # where the landed-by-branch-steward rule reads git (None = the process cwd)
         # `request(run_scoped=True)` runs the CI-parity check (minutes) and files with the ref it mints. Production runs
         # the real one; an explicit-root store (tests) has none unless it injects one - and then REFUSES the flag.
+        self._scoped_queues = scoped_queues or (scoped_check is None and root is None)   # a check that queues reports `mark_admitted`
         self._scoped_check = scoped_check if scoped_check is not None else (
-            export_ci_parity_check(slot_wait_s=slot_wait_budget_s(self.scoped_deadline_s), progress=self.progress)
-            if root is None else None)
+            self._parity_check() if root is None else None)
         # Production (root=None -> ~/.noctus) runs the real gate; a store built on an explicit root
         # (tests, tooling) opts out unless it injects one - the gate reads the shared pointer ledger.
         self._inline_gate = inline_gate if inline_gate is not None else (
@@ -851,10 +882,39 @@ class StewardStore:
         except Exception as exc:  # noqa: BLE001 - fail closed, say why
             return False, f"could not verify ({type(exc).__name__}: {str(exc)[:120]})"
 
+    def _parity_check(self) -> Callable[[str, str], dict[str, Any]]:
+        return export_ci_parity_check(slot_wait_s=self.scoped_queue_s, progress=self.progress,
+                                      on_admitted=self.mark_admitted, on_sized=self.size_run_budget)
+
+    def mark_admitted(self) -> None:
+        """The scoped check got the heavy slot: the QUEUE clock stops and the RUN clock starts."""
+        self._admitted_at = time.monotonic()
+
+    def size_run_budget(self, derived_s: float) -> None:
+        """The check selected its suites: size the run budget from gate_budget's per-stage / per-suite costs (an explicit
+        NOCTUS_STEWARD_SCOPED_DEADLINE_S override always wins)."""
+        if not self._run_budget_overridden:
+            self.scoped_deadline_s = max(float(derived_s), 1.0)
+
+    def _budget_exhausted(self, phase: str, spent_s: float, started: float) -> dict[str, Any]:
+        """UNMEASURED naming WHICH budget ran out, how much was spent, and when to retry; nothing is filed."""
+        total = int(time.monotonic() - started)
+        if phase == "queue":
+            return {"ok": False, "timed_out": True, "budget_exhausted": "queue", "retry_after_s": SCOPED_RETRY_AFTER_QUEUE_S,
+                    "detail": f"UNMEASURED: the QUEUE budget ran out - {int(spent_s)}s of {int(self.scoped_queue_s)}s waiting for the "
+                              f"machine-wide heavy slot ({SCOPED_QUEUE_ENV} overrides); the run never started, nothing was judged and "
+                              f"nothing was filed. Retry after ~{SCOPED_RETRY_AFTER_QUEUE_S}s (the queue is FIFO)"}
+        return {"ok": False, "timed_out": True, "budget_exhausted": "run", "retry_after_s": SCOPED_RETRY_AFTER_RUN_S,
+                "detail": f"UNMEASURED: the RUN budget ran out - {int(spent_s)}s of the {int(self.scoped_deadline_s)}s wall-clock "
+                          f"deadline spent running after the slot was granted ({total}s since the request; "
+                          f"{SCOPED_DEADLINE_ENV} overrides); nothing was filed. Retry after ~{SCOPED_RETRY_AFTER_RUN_S}s on a quieter machine"}
+
     def _run_scoped(self, branch: str, head: str) -> dict[str, Any]:
-        """Run the injected scoped check under a WALL-CLOCK deadline with a progress line every minute. A runner that
-        raises or overruns yields an UNMEASURED result without a verdict_ref (the request is then refused loudly,
-        never filed on nothing). The runner's own subprocess stages carry their per-stage budgets."""
+        """Run the scoped check under TWO wall-clock budgets with a progress line every minute: QUEUE (waiting for the
+        machine-wide heavy slot, `scoped_queue_s`, default 3h) and RUN (once admitted, `scoped_deadline_s`). A check that
+        does not report admission (an injected runner) is in the RUN phase from the start. A runner that raises or
+        overruns yields an UNMEASURED result naming the budget that ran out, without a verdict_ref (the request is then
+        refused loudly, never filed on nothing). The runner's own subprocess stages carry their per-stage budgets."""
         out: list[dict[str, Any]] = []
         err: list[BaseException] = []
 
@@ -866,18 +926,31 @@ class StewardStore:
 
         t = threading.Thread(target=work, name=f"scoped-{branch}", daemon=True)
         started = time.monotonic()
+        self._admitted_at = None if self._scoped_queues else started
         self.progress(f"scoped check for {branch}@{head[:9]} started (CI-blocking keepers + real-tree tests + touched suites; "
-                      f"deadline {int(self.scoped_deadline_s)}s)")
+                      f"queue budget {int(self.scoped_queue_s)}s, run budget {int(self.scoped_deadline_s)}s)")
         t.start()
+        last_progress, announced = started, False
         while t.is_alive():
-            left = self.scoped_deadline_s - (time.monotonic() - started)
-            if left <= 0:
-                return {"ok": False, "timed_out": True,
-                        "detail": f"UNMEASURED: no verdict within the {int(self.scoped_deadline_s)}s wall-clock deadline "
-                                  f"({SCOPED_DEADLINE_ENV} overrides); nothing was filed"}
-            t.join(min(SCOPED_PROGRESS_EVERY_S, left))
-            if t.is_alive():
-                self.progress(f"scoped check for {branch} still running ({int(time.monotonic() - started)}s elapsed)")
+            now = time.monotonic()
+            adm = self._admitted_at
+            if adm is None:
+                left = self.scoped_queue_s + self.queue_grace_s - (now - started)
+                if left <= 0:
+                    return self._budget_exhausted("queue", now - started, started)
+            else:
+                if not announced and adm > started and self._scoped_queues:
+                    announced = True
+                    self.progress(f"scoped check for {branch} got the heavy slot after {int(adm - started)}s queued; "
+                                  f"running ({int(self.scoped_deadline_s)}s run budget)")
+                left = self.scoped_deadline_s - (now - adm)
+                if left <= 0:
+                    return self._budget_exhausted("run", now - adm, started)
+            t.join(min(left, SCOPED_TICK_S))
+            if t.is_alive() and time.monotonic() - last_progress >= SCOPED_PROGRESS_EVERY_S:
+                last_progress = time.monotonic()
+                self.progress(f"scoped check for {branch} still {'running' if self._admitted_at is not None else 'queued'} "
+                              f"({int(last_progress - started)}s elapsed)")
         if err:
             return {"ok": False, "detail": f"UNMEASURED: scoped check crashed: {type(err[0]).__name__}: {str(err[0])[:200]}"}
         res = out[0] if out else {"ok": False, "detail": "UNMEASURED: scoped check returned nothing"}
@@ -921,7 +994,7 @@ class StewardStore:
                 verdict_ref = stored_ref
         if run_scoped:  # minutes: judge the head the way CI does (CI-blocking keepers + real-tree tests, env-scrubbed)
             res = deliverable(branch, head_sha=head_sha, verdict_ref=verdict_ref, scoped_check=export_ci_parity_check(
-                slot_wait_s=slot_wait_budget_s(self.scoped_deadline_s), progress=self.progress))
+                slot_wait_s=self.scoped_queue_s, progress=self.progress))
         else:
             check = self._deliverable_check or (lambda b, h, v: deliverable(b, head_sha=h, verdict_ref=v))
             res = check(branch, head_sha, verdict_ref)
@@ -1686,7 +1759,7 @@ def tool_refusal(tool_name: str, args: dict[str, Any], *, store: StewardStore | 
 DELIVERABLE_ITEMS = ("head_pushed_clean", "merge_buildable", "migrations_free", "derived_current", "scoped_green")
 BRANCH_PREFIXES = ("feat/", "fix/", "docs/", "chore/", "refactor/", "test/", "perf/", "ci/", "build/", "style/")
 _READONLY_GIT = frozenset({"rev-parse", "ls-remote", "merge-base", "merge-tree", "rev-list", "diff",
-                           "ls-tree", "status", "worktree", "fetch", "cat-file", "show", "for-each-ref"})
+                           "ls-tree", "status", "worktree", "fetch", "cat-file", "show", "for-each-ref", "check-attr"})
 GitFn = Callable[..., "tuple[int, str, str]"]
 
 #: Derived artifacts a delivery must carry up to date AT its head. Each is regenerated in `--check`
@@ -1760,6 +1833,117 @@ def trial_merge_tree(git: GitFn, *args: str, attr_tree: str | None = None) -> tu
         return 2, "", "git dir unresolved; trial merge skipped"
     pre = (f"--attr-source={attr_tree}",) if attr_tree else ()
     return git(*pre, "merge-tree", "--write-tree", *args, cwd=gitdir)
+
+
+#: merge drivers the composed-tree probe can run in-process (the drivers' PURE cores), by the attribute value
+#: `.gitattributes` gives the path. `git merge-tree` never runs an external driver, so without this a path with one is
+#: reported as a conflict that a real `git merge` (and the queue) resolve - a false needs_resync (3+ times, 2026-11).
+_DRIVER_RESOLVERS = ("gate-inventory", "ledger-render")
+
+
+def _driver_merge(driver: str, rel: str, base: str, ours: str, theirs: str, root: str) -> tuple[str | None, str]:
+    """`(merged text | None, note)`: None = the driver would exit 10 (a real conflict) or cannot derive it."""
+    if driver == "gate-inventory":
+        text, conflicted, notes = _sibling("gate_alignment").merge_inventory(base, ours, theirs)
+        return (None if conflicted else text), "; ".join(notes)[:200]
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="noc-driver-") as d:
+        files = []
+        for name, body in (("base", base), ("ours", ours), ("theirs", theirs)):
+            (Path(d) / name).write_text(body, encoding="utf-8")
+            files.append(Path(d) / name)
+        text, notes = _sibling("ledger_render_merge").merge_render(rel, *files, root=Path(root))
+        return text, "; ".join(notes)[:200]
+
+
+def _write_tree_with(gitdir: str, tree: str, entries: list[tuple[str, str, str]]) -> tuple[str | None, str]:
+    """`tree` with `(mode, text, path)` entries replaced, through a throwaway index (nothing of the caller's is touched)."""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="noc-idx-") as d:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(d) / "index")}
+
+        def run(*args: str, stdin: str | None = None) -> tuple[int, str]:
+            r = subprocess.run(["git", *args], cwd=gitdir, env=env, input=stdin, capture_output=True, text=True,
+                               timeout=120, check=False)
+            return r.returncode, (r.stdout if r.returncode == 0 else r.stderr).strip()
+        rc, out = run("read-tree", tree)
+        for mode, text, path in entries:
+            if rc != 0:
+                break
+            rc, blob = run("hash-object", "-w", "--stdin", stdin=text)
+            if rc != 0:
+                return None, blob[:160]
+            rc, out = run("update-index", "--add", "--cacheinfo", f"{mode},{blob},{path}")
+        if rc != 0:
+            return None, out[:160]
+        rc, out = run("write-tree")
+        return (out, "") if rc == 0 else (None, out[:160])
+
+
+def compose_merge(git: GitFn, base_ref: str, head: str, *, attr_tree: str | None = None,
+                  write_tree: Callable[[str, str, list[tuple[str, str, str]]], tuple[str | None, str]] = _write_tree_with
+                  ) -> dict[str, Any]:
+    """The tree of merging `head` into `base_ref`, the way a real `git merge` (and the queue) compose it.
+
+    `git merge-tree --write-tree` never runs external merge drivers, so a path whose `.gitattributes` names a registered
+    driver (`gate-inventory`, `ledger-render`) comes back as a conflict. For each conflicted path this reads the
+    attribute (taken from `attr_tree`, never from the head), merges base/ours/theirs through the driver's pure core and
+    counts the path a conflict only when the driver says so (exit 10 / not derivable) or it has no registered driver.
+    Returns `{rc, tree, conflicts, resolved_by_driver: [{path, driver}], why}`: rc 0 = clean (possibly via drivers),
+    1 = real conflicts in `conflicts`, other = the probe could not run."""
+    rc, o, e = trial_merge_tree(git, "--name-only", base_ref, head, attr_tree=attr_tree)
+    lines = (o or "").splitlines()
+    out: dict[str, Any] = {"rc": rc, "tree": None, "conflicts": [], "resolved_by_driver": [], "why": ""}
+    if rc == 0 and lines:
+        out["tree"] = lines[0].strip()
+        return out
+    if rc != 1 or not lines:
+        out["why"] = (e or o or "").strip()[:160]
+        return out
+    tree, files = lines[0].strip(), []
+    for ln in lines[1:]:
+        if not ln.strip():
+            break
+        files.append(ln.strip())
+    rc_g, gd, _e = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    gitdir = gd.strip().splitlines()[0] if rc_g == 0 and gd.strip() else ""
+    rc_t, top, _e = git("rev-parse", "--show-toplevel")
+    root = top.strip() if rc_t == 0 and top.strip() else gitdir
+    rc_b, mb, _e = git("merge-base", base_ref, head)
+    attr = f"--source={attr_tree}" if attr_tree else "--source=HEAD"
+    resolved: list[dict[str, str]] = []
+    entries: list[tuple[str, str, str]] = []
+    remaining: list[str] = []
+    for path in files:
+        rc_a, ao, _e = git("check-attr", attr, "merge", "--", path)   # needs a work tree; --source reads dev's attributes
+        driver = ao.strip().rsplit(": ", 1)[-1] if rc_a == 0 and ao.strip() else ""
+        if driver not in _DRIVER_RESOLVERS or rc_b != 0 or not gitdir:
+            remaining.append(path)
+            continue
+        blobs = []
+        for rev in (mb.strip(), base_ref, head):
+            rc_s, txt, _e = git("show", f"{rev}:{path}")
+            blobs.append(txt if rc_s == 0 else "")
+        try:
+            merged, _note = _driver_merge(driver, path, blobs[0], blobs[1], blobs[2], root)
+        except Exception:  # noqa: BLE001 - a driver core that cannot run is "not derivable" = the conflict stands
+            merged = None
+        if merged is None:
+            remaining.append(path)
+            continue
+        rc_m, mo, _e = git("ls-tree", base_ref, "--", path)
+        mode = mo.split()[0] if rc_m == 0 and mo.split() else "100644"
+        entries.append((mode, merged, path))
+        resolved.append({"path": path, "driver": driver})
+    out["conflicts"], out["resolved_by_driver"] = remaining, resolved
+    if remaining:
+        return out
+    new_tree, why = write_tree(gitdir, tree, entries)
+    if new_tree is None:
+        out.update(rc=2, why=f"drivers resolved {[r['path'] for r in resolved]} but the composed tree could not be written: {why}")
+        return out
+    out.update(rc=0, tree=new_tree)
+    return out
 
 
 def resolve_branch_name(slug: str, git: GitFn | None = None, explicit: str | None = None,
@@ -2256,6 +2440,9 @@ def link_pglite(tree: str | Path, source_repo: str | Path) -> str:
     if _toolkit not in sys.path:
         sys.path.insert(0, _toolkit)
     import node_toolchain
+    # The source checkout is the repository TOPLEVEL, never the cwd: from `mcp/noctusai` the node dir resolved to
+    # `<repo>/mcp/noctusai/mcp/noctusai/node` and the scoped run came back UNMEASURED (2026-11-15).
+    source_repo = _git_toplevel(source_repo) or source_repo
     tc = node_toolchain.resolve(tree, require=("@electric-sql/pglite",), sources=[source_repo])
     return "" if tc.ok else tc.reason
 
@@ -2359,11 +2546,12 @@ def merge_tree_sha(head: str, cwd: str | Path | None, base: str = "origin/dev") 
     """The tree of `git merge-tree --write-tree <base> <head>` - what the merge queue's candidate will be (item 5
     judges the MERGE, not the head: a keeper baseline that misses dev's newer migration cost 5h on 2026-11-11).
     Returns `(tree_sha, "")`, or `(None, why)` on a conflict / a git without `--write-tree`."""
-    rc, out, err = _subprocess_git(cwd)("merge-tree", "--write-tree", base, head)
-    first = (out or "").splitlines()[0].strip() if (out or "").strip() else ""
-    if rc == 0 and _FULL_SHA_RE.match(first):
-        return first, ""
-    return None, _last_line(err or out) or f"git merge-tree exited {rc}"
+    cm = compose_merge(_subprocess_git(cwd), base, head, attr_tree=base)
+    if cm["rc"] == 0 and cm["tree"] and _FULL_SHA_RE.match(cm["tree"]):
+        return cm["tree"], ""
+    if cm["conflicts"]:
+        return None, f"merge conflicts in {', '.join(cm['conflicts'][:6])}"
+    return None, cm["why"] or f"git merge-tree exited {cm['rc']}"
 
 
 def _pytest_counts(text: str | None) -> int:
@@ -2663,13 +2851,39 @@ class _CiParityTimeout(Exception):
             "or set NOCTUS_GATE_BUDGETS_JSON='{\"%s\": <seconds>}'." % gate)
 
 
+def derive_run_budget_s(budget: Callable[..., int], *, n_flags: int, n_prime: int, has_tests: bool, has_live: bool,
+                        suites: list[tuple[str, Any]], suite_budget_s: float) -> float:
+    """The wall-clock the scoped RUN may take once it holds the heavy slot, from the SAME per-stage budgets the stages
+    use (`gate_budget`: declared rows, and for per-file suites the cost derived from the selected files): every stage
+    may time out once and retry (first + x1.5 retry), the selected suites are bounded by the suite budget (a suite
+    starting before it is spent still finishes). Pure: `budget(gate, files=None)` is the seam."""
+    from tools.noctus.dev import gate_budget as gb
+
+    def worst(gate: str, files: list[str] | None = None) -> float:
+        first = budget(gate, files)
+        return float(first + gb.retry_budget(first))
+
+    total = worst("ci_parity:export") * 2   # the merge-tree export + the throwaway git init
+    total += n_prime * worst("ci_parity:prime:x") + n_flags * worst("ci_parity:keeper:x")
+    total += worst("ci_parity:pytest") if has_tests else 0.0
+    total += worst("ci_parity:livetree") if has_live else 0.0
+    costs = []
+    for gate, suite in suites:
+        files = gb.test_files([*getattr(suite, "argv", [])]) if gb.per_file_gate(gate) else None
+        costs.append(worst(gate, files))
+    total += min(sum(costs), float(suite_budget_s) + (max(costs) if costs else 0.0))
+    return total
+
+
 def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None = None, timeout: int | None = None,
                            base_env: dict[str, str] | None = None,
                            verdict_store: str | Path | None = None,
                            admit: Callable[[str], Any] | None = None,
                            timing_store: str | Path | None = None,
                            slot_wait_s: float | None = None,
-                           progress: Callable[[str], None] | None = None) -> Callable[[str, str], dict[str, Any]]:
+                           progress: Callable[[str], None] | None = None,
+                           on_admitted: Callable[[], None] | None = None,
+                           on_sized: Callable[[float], None] | None = None) -> Callable[[str, str], dict[str, Any]]:
     """Real default for `deliverable(scoped_check=)`: judge the head the way CI does. Export it, prime the
     hermetic state CI primes, then - in a SCRUBBED environment - run (1) every `cli.py --check-*` keeper CI
     runs as a blocking step, (2) the real-tree keeper tests (`ci_keeper_test_ids`) and (3) the suites of the
@@ -2715,7 +2929,10 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                                            f"(item 5 judges the MERGE, not the head): {why}"}
         with slot(f"deliverable:{branch}") as adm:
             if adm is not None and not getattr(adm, "admitted", True):
-                return {"ok": False, "detail": slot_refusal_detail(adm)}
+                return {"ok": False, "budget_exhausted": "queue", "retry_after_s": SCOPED_RETRY_AFTER_QUEUE_S,
+                        "detail": slot_refusal_detail(adm)}
+            if on_admitted is not None:
+                on_admitted()   # the QUEUE clock stops here; the RUN clock starts
             return _parity_run(head, mtree, scope, changed)
 
     def _parity_run(head: str, mtree: str, scope: Any, changed: list[str]) -> dict[str, Any]:
@@ -2828,6 +3045,10 @@ def export_ci_parity_check(cwd: str | Path | None = None, *, python: str | None 
                 if r.returncode != 0:
                     failed += pytest_failures(r, "livetree")
             budget_s = int(os.environ.get(SUITE_BUDGET_ENV) or SUITE_BUDGET_DEFAULT_S)
+            if on_sized is not None:   # size the RUN budget from the same declared / derived per-stage costs the stages use
+                on_sized(derive_run_budget_s(
+                    budget, n_flags=len(flags), n_prime=len(prime), has_tests=bool(tests), has_live=bool(live),
+                    suites=[(f"ci_parity:suite:{x.label}", x) for x in suites], suite_budget_s=budget_s))
             started, ran_suites = time.monotonic(), []
             for s in suites:
                 if time.monotonic() - started >= budget_s:
@@ -2979,25 +3200,25 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
         else:
             rc, behind, _e = git("rev-list", "--count", f"{head}..{dev}")
             n_behind = behind.strip() if rc == 0 else "?"
-            rc, o, e = trial_merge_tree(git, "--name-only", dev, head, attr_tree=dev)
-            lines = (o or "").splitlines()
-            if rc == 0 and lines:
-                composed_tree = lines[0].strip()
+            cm = compose_merge(git, dev, head, attr_tree=dev)
+            drv = cm["resolved_by_driver"]
+            names = ", ".join(r["path"] + " [" + r["driver"] + "]" for r in drv[:4])
+            via = f"; {len(drv)} path(s) resolved by merge driver ({names})" if drv else ""
+            if cm["rc"] == 0 and cm["tree"]:
+                composed_tree = cm["tree"]
                 items.append(_item(2, DELIVERABLE_ITEMS[1], True,
-                                   f"{n_behind} behind {remote}/{dev_branch}, `git merge-tree` is clean (the queue composes it; no rebase needed)"))
-            elif rc == 1:
-                files = []
-                for ln in lines[1:]:
-                    if not ln.strip():
-                        break
-                    files.append(ln.strip())
+                                   f"{n_behind} behind {remote}/{dev_branch}, `git merge-tree` is clean (the queue composes it; no rebase needed){via}",
+                                   resolved_by_driver=drv))
+            elif cm["rc"] == 1:
+                files = cm["conflicts"]
                 items.append(_item(2, DELIVERABLE_ITEMS[1], False,
                                    f"{n_behind} behind {remote}/{dev_branch} and the merge CONFLICTS in "
                                    f"{', '.join(files[:8]) or '(see git merge-tree)'}: the branch steward must merge "
-                                   f"{remote}/{dev_branch} into the branch, resolve, push, and re-request", conflicts=files))
+                                   f"{remote}/{dev_branch} into the branch, resolve, push, and re-request{via}",
+                                   conflicts=files, resolved_by_driver=drv))
             else:
                 items.append(_item(2, DELIVERABLE_ITEMS[1], False,
-                                   f"UNMEASURED: merge-tree exit {rc}: {(e or o).strip()[:160]}"))
+                                   f"UNMEASURED: merge-tree exit {cm['rc']}: {cm['why']}"))
     except Exception as exc:  # noqa: BLE001
         items.append(_unmeasured(2, DELIVERABLE_ITEMS[1], exc))
 
@@ -3110,9 +3331,45 @@ def cli_exit_code(result: dict[str, Any]) -> int:
     return EXIT_OK if result.get("ok") else EXIT_ERROR
 
 
+#: actions that run or judge with the toolkit and are refused (not just warned) when its checkout is far behind origin/dev
+_TOOLKIT_GATED = frozenset({"claim", "ack", "reconcile", "handoff"})
+
+
+def toolkit_gate(store: "StewardStore", action: str, run_scoped: bool = False) -> tuple[dict[str, Any] | None, str | None]:
+    """`(refusal, warning)` for the toolkit checkout vs origin/dev. `claim` first FIXES it (fetch + fast-forward a clean
+    checkout); the steward-class actions (`claim`, `ack`, `reconcile`, `handoff`, and a scoped run) are REFUSED with the
+    exact fix command when it is >= 20 commits behind or any `mcp/noctusai/tools` file changed on origin/dev; every other
+    action just carries the warning. An unreadable answer never refuses (unmeasurable is not red)."""
+    check = getattr(store, "_toolkit_check", None)
+    if check is None:
+        return None, None
+    try:
+        v = check(action == "claim")
+    except Exception as exc:  # noqa: BLE001 - a broken probe warns, never blocks
+        return None, f"toolkit checkout vs origin/dev UNMEASURED ({type(exc).__name__}: {str(exc)[:120]})"
+    msg = v.get("message") or None
+    if v.get("fast_forwarded"):
+        msg = f"steward toolkit fast-forwarded {v.get('fast_forwarded_commits')} commit(s) to origin/dev ({v.get('root')}); restart the MCP server to load it"
+    gated = action in _TOOLKIT_GATED or (run_scoped and action in ("request", "deliverable"))
+    if gated and v.get("refuse"):
+        return {"ok": False, "status": "refused_toolkit_behind", "exit_code": 1, "toolkit": v, "error": msg}, msg
+    return None, msg
+
+
 def run_action(action: str, session_id: str | None, *, store: StewardStore | None = None,
                claude_pid: int | None = None, child_session: bool = False, **kw: Any) -> dict[str, Any]:
     store = store or StewardStore()
+    refusal, warning = toolkit_gate(store, action, bool(kw.get("run_scoped")))
+    if refusal is not None:
+        return refusal
+    res = _run_action(action, session_id, store=store, claude_pid=claude_pid, child_session=child_session, **kw)
+    if warning and isinstance(res, dict):
+        res.setdefault("warnings", []).append(warning)
+    return res
+
+
+def _run_action(action: str, session_id: str | None, *, store: StewardStore,
+                claude_pid: int | None = None, child_session: bool = False, **kw: Any) -> dict[str, Any]:
     if action != "status":
         store.role_touch(session_id, claude_pid)
     if action == "status":
