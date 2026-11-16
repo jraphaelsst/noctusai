@@ -1,8 +1,14 @@
-"""`/api/imoveis/{codigo}/divergencias` (+ `/divergencias/config`): the review API of the TRANSITIONAL Vista-vs-ours check.
-Org admin only (strict `== 401` without a session, 403 for a member); resolving 'vista' / 'nosso' / 'manual' and what each writes."""
+"""`/api/imoveis/{codigo}/divergencias` (+ `/divergencias/config`, `/historico`): the approvals + switches + history API of the
+Vista sync. Org admin only for writes (strict `== 401` without a session, 403 for a member); resolving `aprovar` / `recusar` (and the
+legacy 'vista' / 'nosso' / 'manual' of the first version) and what each writes.
+
+DECISION REVERSED 2026-11-04: the config is `{ativa, vista_escrita_ativa, vista_escrita_disponivel}` -- the WhatsApp destination
+(`destino_user_id`) is gone with the digest."""
 from __future__ import annotations
 
 import pytest
+from noctusai_lib.domain.real_estate import Imovel
+from noctusai_lib.integrations.vista import FakeVistaAdapter, VistaConfigError
 
 from tests.routers.test_julia_equipe_protecao import admin, member, override_settings_factory  # noqa: F401
 from tests.support.julia_world import ORG_ID
@@ -18,10 +24,19 @@ def _conflito(i, campo, anterior, proposto, origem, **kw):
             "created_at": "2026-11-04T00:00:00+00:00", **kw}
 
 
+@pytest.fixture(autouse=True)
+def _sem_cache_de_permissao():
+    from app.services import vista_divergencias
+
+    vista_divergencias._PERMISSAO.clear()
+    yield
+    vista_divergencias._PERMISSAO.clear()
+
+
 def _cena(scene):
     from app.main import app
     from app.modules.imovel_hub.deps import get_imovel_hub_client
-    from app.routers.imovel_divergencias_router import get_divergencias_core
+    from app.routers.imovel_divergencias_router import get_divergencias_core, get_vista_adapter_provider
 
     sw = scene.w.sw
     sw.set_table_data("imovel_campo_conflitos", [
@@ -39,7 +54,12 @@ def _cena(scene):
     sw.set_table_data("julia_proprietarios_contatos", [{"id": "p1", "org_id": ORG_ID, "imovel_codigo": COD, "preco_confirmado": 850.0,
                                                          "preco_tipo_confirmado": "venda", "status_confirmado": "vendido", "confirmado_at": "2026-11-03T00:00:00+00:00"}])
     sw.set_table_data("vista_divergencias_config", [])
-    ov = {get_imovel_hub_client: lambda: sw, get_divergencias_core: lambda: scene.w.root}
+    for t in ("imovel_historico", "imovel_preco_historico", "imovel_notas"):
+        sw.set_table_data(t, [])
+    sw.set_table_data("imovel_registry", [{"org_id": ORG_ID, "codigo_canonical": COD, "codigo_display": COD}])
+    scene.vista = FakeVistaAdapter(imoveis={COD: Imovel(codigo=COD)})
+    ov = {get_imovel_hub_client: lambda: sw, get_divergencias_core: lambda: scene.w.root,
+          get_vista_adapter_provider: lambda: (lambda _org: scene.vista)}
     app.dependency_overrides.update(ov)
     yield scene
     for k in ov:
@@ -140,12 +160,163 @@ class TestResolver:
         assert cena.req("post", f"{BASE}/c-cap/resolver", corpo).status_code == 422
 
 
+class TestAprovacao:
+    def _liga(self, cena, ativa=True):
+        cena.w.sw.set_table_data("vista_divergencias_config", [{"org_id": ORG_ID, "ativa": True, "vista_escrita_ativa": ativa}])
+
+    def test_aprovar_with_the_switch_off_records_a_manual_update_and_keeps_the_link(self, cena):
+        r = cena.req("post", f"{BASE}/c-prc/resolver", {"escolha": "aprovar"})
+        assert r.status_code == 200 and r.json()["status"] == "resolvido" and r.json()["resolucao"]["escolha"] == "aprovar"
+        assert _row(cena, "c-prc")["status"] == "aceito" and cena.vista.atualizacoes == []
+        [h] = [x for x in cena.w.sw.table("imovel_historico").select("*").execute().data if x["acao"] == "aprovacao_decidida"]
+        assert "atualizar manualmente no Vista" in h["detalhe"] and h["conflito_id"] == "c-prc" and h["origem"] == "usuario" and h["ator_user_id"]
+
+    def test_aprovar_with_the_switch_on_and_the_put_permitted_pushes_our_value(self, cena):
+        self._liga(cena)
+        r = cena.req("post", f"{BASE}/c-prc/resolver", {"escolha": "aprovar"})
+        assert r.status_code == 200
+        [(cod, campos)] = cena.vista.atualizacoes
+        assert cod == COD and campos["ValorVenda"] == "850"
+        nota = campos["ObsVenda"]
+        assert "aprovação de um usuário" in nota and "(NoctusAI)" in nota and "\n" not in nota  # the reason + author label, one line
+        [env] = [x for x in cena.w.sw.table("imovel_historico").select("*").execute().data if x["acao"] == "enviado_ao_vista"]
+        assert env["detalhe"] == nota  # mirrored into the history
+        acoes = sorted(x["acao"] for x in cena.w.sw.table("imovel_historico").select("*").execute().data)
+        assert acoes == ["aprovacao_decidida", "enviado_ao_vista"]
+
+    def test_aprovar_when_the_key_may_not_write_falls_back_to_manual(self, cena):
+        self._liga(cena)
+        cena.vista.permitir_escrita(False)
+        assert cena.req("post", f"{BASE}/c-prc/resolver", {"escolha": "aprovar"}).status_code == 200
+        assert cena.vista.atualizacoes == [] and _row(cena, "c-prc")["status"] == "aceito"
+
+    def test_aprovar_a_field_that_is_not_pushable_is_manual_even_with_the_switch_on(self, cena):
+        self._liga(cena)
+        assert cena.req("post", f"{BASE}/c-dis/resolver", {"escolha": "aprovar"}).status_code == 200
+        assert cena.vista.atualizacoes == []
+
+    def test_a_failed_push_still_records_the_approval_and_the_failure(self, cena):
+        from noctusai_lib.integrations.vista import VistaUpstreamError
+
+        self._liga(cena)
+        cena.vista.permitir_escrita(True, VistaUpstreamError(500, "boom", "/imoveis/detalhes"))
+        assert cena.req("post", f"{BASE}/c-prc/resolver", {"escolha": "aprovar"}).status_code == 200
+        acoes = sorted(x["acao"] for x in cena.w.sw.table("imovel_historico").select("*").execute().data)
+        assert acoes == ["aprovacao_decidida", "envio_vista_falhou"]
+
+    def test_recusar_keeps_vista_and_records_it(self, cena):
+        r = cena.req("post", f"{BASE}/c-prc/resolver", {"escolha": "recusar"})
+        assert r.status_code == 200 and r.json()["resolucao"]["escolha"] == "recusar" and _row(cena, "c-prc")["status"] == "rejeitado"
+        assert cena.vista.atualizacoes == []
+        assert [x["acao"] for x in cena.w.sw.table("imovel_historico").select("*").execute().data] == ["aprovacao_decidida"]
+
+    def test_recusar_on_a_legacy_overlay_row_writes_vistas_value_into_our_layer(self, cena):
+        assert cena.req("post", f"{BASE}/c-cap/resolver", {"escolha": "recusar"}).status_code == 200
+        assert cena.w.sw.table("imovel_captacao").select("*").execute().data[0]["valor_venda"] == 900.0
+
+    def test_aprovar_and_recusar_need_an_admin(self, cena_membro):
+        for escolha in ("aprovar", "recusar"):
+            assert cena_membro.req("post", f"{BASE}/c-prc/resolver", {"escolha": escolha}).status_code == 403
+        assert cena_membro.w.sw.table("imovel_historico").select("*").execute().data == []
+
+
 class TestConfig:
-    def test_read_toggle_and_destination(self, cena):
-        assert cena.req("get", "/api/imoveis/divergencias/config").json()["data"] == {"ativa": False, "destino_user_id": None}
-        r = cena.req("put", "/api/imoveis/divergencias/config", {"ativa": True, "destino_user_id": "00000000-0000-4000-8000-0000000000d1"})
-        assert r.status_code == 200 and r.json()["data"] == {"ativa": True, "destino_user_id": "00000000-0000-4000-8000-0000000000d1"}
-        r = cena.req("put", "/api/imoveis/divergencias/config", {"ativa": False})
-        assert r.json()["data"]["ativa"] is False and r.json()["data"]["destino_user_id"] == "00000000-0000-4000-8000-0000000000d1"
-        assert cena.req("put", "/api/imoveis/divergencias/config", {"destino_user_id": None}).json()["data"]["destino_user_id"] is None
+    def test_read_and_toggle_the_two_switches(self, cena):
+        assert cena.req("get", "/api/imoveis/divergencias/config").json()["data"] == {
+            "ativa": False, "vista_escrita_ativa": False, "destino_user_id": None, "vista_escrita_disponivel": True}
+        r = cena.req("put", "/api/imoveis/divergencias/config", {"ativa": True, "vista_escrita_ativa": True})
+        assert r.status_code == 200 and r.json()["data"] == {"ativa": True, "vista_escrita_ativa": True, "destino_user_id": None, "vista_escrita_disponivel": True}
+        r = cena.req("put", "/api/imoveis/divergencias/config", {"vista_escrita_ativa": False})
+        assert r.json()["data"]["ativa"] is True and r.json()["data"]["vista_escrita_ativa"] is False  # partial update keeps the other
         assert cena.req("put", "/api/imoveis/divergencias/config", {"x": 1}).status_code == 422
+        r = cena.req("put", "/api/imoveis/divergencias/config", {"destino_user_id": "00000000-0000-4000-8000-0000000000d1"})
+        assert r.status_code == 200 and r.json()["data"]["destino_user_id"] == "00000000-0000-4000-8000-0000000000d1"  # the digest destination is kept
+        r = cena.req("put", "/api/imoveis/divergencias/config", {"ativa": False})  # omitted = untouched
+        assert r.json()["data"]["destino_user_id"] == "00000000-0000-4000-8000-0000000000d1"
+        assert cena.req("put", "/api/imoveis/divergencias/config", {"destino_user_id": None}).json()["data"]["destino_user_id"] is None
+
+    def test_the_switch_defaults_off_when_the_org_has_no_row(self, cena):
+        assert cena.req("put", "/api/imoveis/divergencias/config", {"ativa": True}).json()["data"]["vista_escrita_ativa"] is False
+
+    def test_availability_comes_from_the_cached_probe(self, cena):
+        cena.vista.permitir_escrita(False)
+        assert cena.req("get", "/api/imoveis/divergencias/config").json()["data"]["vista_escrita_disponivel"] is False
+        cena.vista.permitir_escrita(True)  # cached: the verdict is not re-probed on every read
+        assert cena.req("get", "/api/imoveis/divergencias/config").json()["data"]["vista_escrita_disponivel"] is False
+
+    def test_availability_is_null_when_the_org_has_no_vista_credential(self, cena):
+        from app.main import app
+        from app.routers.imovel_divergencias_router import get_vista_adapter_provider
+
+        def sem_credencial(_org):
+            raise VistaConfigError("sem credencial")
+
+        app.dependency_overrides[get_vista_adapter_provider] = lambda: sem_credencial
+        assert cena.req("get", "/api/imoveis/divergencias/config").json()["data"]["vista_escrita_disponivel"] is None
+
+
+class TestHistorico:
+    URL = f"/api/imoveis/{COD}/historico"
+
+    def _semear(self, cena):
+        sw = cena.w.sw
+        sw.set_table_data("imovel_historico", [
+            {"id": "h1", "org_id": ORG_ID, "codigo_canonical": COD, "ocorrido_em": "2026-11-04T10:00:00+00:00", "origem": "vista_sync", "acao": "campo_atualizado",
+             "campo": "dormitorios", "valor_anterior": 2, "valor_novo": 3, "ator_user_id": None, "conversa": None, "detalhe": None, "conflito_id": None},
+            {"id": "h2", "org_id": ORG_ID, "codigo_canonical": COD, "ocorrido_em": "2026-11-04T11:00:00+00:00", "origem": "julia", "acao": "aprovacao_pendente",
+             "campo": "valor_venda", "valor_anterior": 900.0, "valor_novo": 850.0, "ator_user_id": None, "conversa": {"id": "jc-1", "url": "/julia/conversas?contato=jc-1"},
+             "detalhe": "x", "conflito_id": "c-prc"},
+            {"id": "h3", "org_id": ORG_ID, "codigo_canonical": COD, "ocorrido_em": "2026-11-04T12:00:00+00:00", "origem": "julia", "acao": "enviado_ao_vista",
+             "campo": "valor_venda", "valor_anterior": 900.0, "valor_novo": 850.0, "ator_user_id": None, "conversa": {"id": "jc-1", "url": "/julia/conversas?contato=jc-1"},
+             "detalhe": "enviado", "conflito_id": None},
+            {"id": "h4", "org_id": ORG_ID, "codigo_canonical": COD, "ocorrido_em": "2026-11-04T09:00:00+00:00", "origem": "vista_sync", "acao": "vista_prevaleceu",
+             "campo": "logradouro", "valor_anterior": "Rua Nossa", "valor_novo": "Rua Deles", "ator_user_id": None, "conversa": None, "detalhe": None, "conflito_id": None},
+            {"id": "h-outro", "org_id": ORG_ID, "codigo_canonical": "OUTRO", "ocorrido_em": "2026-11-04T13:00:00+00:00", "origem": "vista_sync", "acao": "campo_atualizado",
+             "campo": "vagas", "valor_anterior": 1, "valor_novo": 2},
+        ])
+        sw.set_table_data("imovel_preco_historico", [{"id": "pp1", "org_id": ORG_ID, "codigo_canonical": COD, "valor_venda_anterior": 800.0, "valor_venda_novo": 900.0,
+                                                    "valor_locacao_anterior": None, "valor_locacao_novo": None, "evento": "alteracao", "fonte": "vista_sync",
+                                                    "observado_em": "2026-11-04T08:00:00+00:00"}])
+        sw.set_table_data("imovel_notas", [{"id": "n1", "org_id": ORG_ID, "codigo": COD, "texto": "chave com o porteiro", "created_by": None,
+                                            "created_at": "2026-11-04T07:00:00+00:00"}])
+
+    def test_no_session_is_strictly_401(self, cena):
+        assert cena.tc.get(self.URL).status_code == 401
+
+    def test_merges_history_prices_and_notes_newest_first_with_the_documented_payloads(self, cena_membro):
+        self._semear(cena_membro)
+        d = cena_membro.req("get", self.URL).json()["data"]
+        assert [i["id"] for i in d["items"]] == ["h3", "h2", "h1", "h4", "pp1:valor_venda", "n1"] and d["next_cursor"] is None
+        por_id = {i["id"]: i for i in d["items"]}
+        assert por_id["h1"]["kind"] == "vista" and por_id["h1"]["payload"] == {"campo": "dormitorios", "rotulo": "dormitórios", "de": 2, "para": 3, "acao": "campo_atualizado"}
+        assert por_id["h1"]["ator"] == {"tipo": "vista", "nome": "Vista"} and por_id["h1"]["campo"] == "dormitorios"  # flattened like the lead card
+        assert por_id["h4"]["kind"] == "vista" and por_id["h4"]["payload"]["acao"] == "vista_prevaleceu"
+        assert por_id["h2"]["kind"] == "aprovacao" and por_id["h2"]["payload"]["conversa"] == {"id": "jc-1", "url": "/julia/conversas?contato=jc-1"}
+        assert por_id["h2"]["payload"]["status"] == "pendente" and por_id["h2"]["payload"]["divergencia_id"] == "c-prc"
+        assert por_id["h3"]["kind"] == "vista_envio" and por_id["h3"]["ator"] == {"tipo": "julia", "nome": "Julia"}
+        assert por_id["pp1:valor_venda"]["kind"] == "preco" and por_id["pp1:valor_venda"]["payload"]["para"] == 900.0
+        assert por_id["n1"]["kind"] == "nota" and por_id["n1"]["payload"]["corpo"] == "chave com o porteiro"
+        assert "h-outro" not in por_id  # another imóvel's history never leaks in
+
+    def test_a_decided_approval_reports_its_status_from_the_conflict_row(self, cena_membro):
+        self._semear(cena_membro)
+        cena_membro.w.sw.table("imovel_campo_conflitos").update({"status": "aceito"}).eq("id", "c-prc").execute()
+        d = cena_membro.req("get", self.URL).json()["data"]
+        assert next(i for i in d["items"] if i["id"] == "h2")["payload"]["status"] == "aprovada"
+
+    def test_pagination_walks_the_whole_thread_by_cursor(self, cena_membro):
+        self._semear(cena_membro)
+        p1 = cena_membro.req("get", f"{self.URL}?limit=2").json()["data"]
+        assert [i["id"] for i in p1["items"]] == ["h3", "h2"] and p1["next_cursor"]
+        p2 = cena_membro.req("get", f"{self.URL}?limit=2&cursor={p1['next_cursor']}").json()["data"]
+        assert [i["id"] for i in p2["items"]] == ["h1", "h4"]
+        p3 = cena_membro.req("get", f"{self.URL}?limit=2&cursor={p2['next_cursor']}").json()["data"]
+        assert [i["id"] for i in p3["items"]] == ["pp1:valor_venda", "n1"] and p3["next_cursor"] is None
+
+    def test_a_bad_cursor_is_a_400_and_an_unknown_imovel_a_404(self, cena_membro):
+        assert cena_membro.req("get", f"{self.URL}?cursor=nao-e-cursor").status_code == 400
+        assert cena_membro.req("get", "/api/imoveis/NAOEXISTE/historico").status_code == 404
+
+    def test_limit_is_bounded(self, cena_membro):
+        assert cena_membro.req("get", f"{self.URL}?limit=0").status_code == 422
+        assert cena_membro.req("get", f"{self.URL}?limit=101").status_code == 422

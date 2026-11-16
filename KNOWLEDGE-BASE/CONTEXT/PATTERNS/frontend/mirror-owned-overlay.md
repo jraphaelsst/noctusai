@@ -47,7 +47,7 @@ When the mirror and OUR value for the same fact disagree (e.g. a Julia conversat
 - Detection is backend-side on the existing conflict machinery (`imovel_campo_conflitos`); the sync writes a flag, not the column.
 - UI: a block "Divergências com o Vista" rendered **only while ≥1 is pending**, a count badge on the diverging field rows, each item showing both values with dates, **the origin of our value** (e.g. a link to the Julia conversation + a sanitized excerpt, never raw PII), and three actions — *Usar Vista* / *Manter o nosso* / *Corrigir* (manual value). History collapsed. Read open, buttons org-admin (server enforces).
 - Resolution goes through `useCacheWriteMutation` (item leaves "pending" on the click); a refusal is drawn on the item.
-- Transitional by design: the whole review lives in one component + one hook file + one mount (social-wiring: `ImovelDivergenciasVista`, `useImovelDivergencias`) so it can be deleted without touching the page. Use the existing binary `ConflitosPendentesCard` when the decision is only accept/reject of a machine reading; this three-way review is for mirror-vs-owned.
+- Superseded 2026-11-04 (owner): the three-way review card (`ImovelDivergenciasVista`) was removed — Vista wins, nothing alerts anyone, and every change plus any pending approval (Aprovar / Manter Vista) lives in the imóvel's "Histórico" card (social-wiring: `ImovelHistoricoCard`, `useImovelHistorico`, over the seed `Timeline`). Use the existing binary `ConflitosPendentesCard` when the decision is only accept/reject of a machine reading; this three-way review is for mirror-vs-owned.
 
 ## 3 · Checklist for a new data UI
 

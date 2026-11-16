@@ -1,4 +1,4 @@
-/** DivergenciasAvisos.test.tsx — toggle, picker, no-destination note, refused save surfaced. */
+/** DivergenciasAvisos.test.tsx — picker, no-destination note, refused save surfaced (the on/off is the Notificações switch). */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 afterEach(async () => {
@@ -66,12 +66,6 @@ describe("DivergenciasAvisos", () => {
     const { getByTestId, queryByTestId } = await render();
     expect(getByTestId("divergencias-destino-atual").textContent).toContain("Bruno");
     expect(queryByTestId("divergencias-sem-destino")).toBeNull();
-  });
-
-  it("o interruptor salva só `ativa`", async () => {
-    const { getByTestId } = await render();
-    (await import("@testing-library/react")).fireEvent.click(getByTestId("divergencias-toggle"));
-    expect(mockSalvar).toHaveBeenCalledWith({ ativa: true });
   });
 
   it("escolher e limpar o destino salva só `destino_user_id`", async () => {

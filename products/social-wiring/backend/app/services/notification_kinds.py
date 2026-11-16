@@ -56,9 +56,9 @@ KINDS: tuple[NotificationKind, ...] = (
     NotificationKind(
         kind="vista_divergencias",
         titulo="Divergências com o Vista",
-        descricao="Resumo de campos de imóveis que divergem entre o Vista e o Social Wiring, com link para decidir. "
-                  "Vai para o usuário destino configurado em Imóveis → Divergências.",
-        gatilho="Uma sincronização de imóveis abre divergências novas (no máximo 4 resumos por hora).",
+        descricao="Resumo das aprovações pendentes: valores confirmados pelo proprietário que divergem do Vista (o Vista "
+                  "prevaleceu), com link para decidir. Vai para o usuário destino configurado em Imóveis → Divergências.",
+        gatilho="Uma sincronização de imóveis abre aprovações novas (no máximo 4 resumos por hora).",
     ),
     NotificationKind(
         kind="imoveis_delistados",

@@ -686,3 +686,7 @@ Authored 2026-11-15 (EOA debt: 344's hand-written `imobshot_eventos`). Renders t
 ## 346 — imobshot_eventos_contract — NOT APPLIED
 
 Authored 2026-11-15. CONTRACT step of the 344/345 expand-migrate-contract: drops the legacy `imobshot_eventos` table, its trigger and `imobshot_eventos_append_only()`. A guard RAISES (nothing dropped) if any legacy row id is not already in `imobshot_card_events`. **Apply AFTER 345 (applied and verified in prod), any time before or with the next SW image**; no code reads the legacy table. 344/345 untouched. Forward-only, idempotent.
+
+## 349 — imovel_historico_vista_escrita — NOT APPLIED
+
+Authored 2026-11-15 (re-cut v3 of the 2026-11-04 Vista sync-and-history work; the WhatsApp digest and its `destino_user_id` are KEPT, owner option 1). ADDs `vista_escrita_ativa boolean NOT NULL DEFAULT false` (the owner's switch to edit Vista), and creates the append-only `imovel_historico` (UPDATE/DELETE revoked + seed GUC carve-out guard trigger; DELETE only for a future LGPD erasure that sets `social_wiring.imovel_historico_expurgo`). Apply BEFORE deploying the image: the sync writes `imovel_historico` and the config reads `vista_escrita_ativa`. Idempotent.

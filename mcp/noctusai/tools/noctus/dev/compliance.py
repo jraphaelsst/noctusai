@@ -18207,6 +18207,7 @@ def check_guardian_tool_authorship(
             pass
 
     failure = None
+    staged_from_git = staged is None
     if staged is None:
         root = repo_root or REPO_ROOT
         try:
@@ -18247,7 +18248,10 @@ def check_guardian_tool_authorship(
                  "issue": f"cannot derive the guardian-protected tool set ({derive_error}); refusing while this session "
                           "holds the release-steward lease (fail closed). KB § PATTERNS/common/gate-methodology-sync.md"}]
     hits = sorted(p for p in staged if p in protected)
-    if hits:
+    # Inheritance is judged against the SAME source the staged list came from: git's index (staged read above) or
+    # an explicit repo_root. An injected `staged` with no repo_root must not consult the live checkout's MERGE_HEAD -
+    # otherwise the verdict depends on whether the caller's tree happens to be mid-merge.
+    if hits and (staged_from_git or repo_root is not None):
         inherited = _merge_inherited_paths(repo_root or REPO_ROOT, hits)
         if inherited:
             _telemetry("allow", "merge-inherited: staged blob equals MERGE_HEAD's", ",".join(sorted(inherited)))
@@ -25434,8 +25438,14 @@ def check_branch_tree_mirror(
                 # AND neither matches.
                 if recorded_parent and recorded_parent != "origin/dev":
                     # parent should be a branch and base should resolve near it.
-                    parent_rc, parent_sha = _git("rev-parse", "--verify", recorded_parent)
-                    base_rc, base_sha = _git("rev-parse", "--verify", recorded_base)
+                    # `X` and `origin/X` are one branch; the remote-tracking ref is the shared truth and
+                    # the local branch may carry local-only commits (a primary checkout's `dev` does), so a
+                    # local `dev` is never compared against `origin/dev`.
+                    _parent_name = recorded_parent[len("origin/"):] if recorded_parent.startswith("origin/") else recorded_parent
+                    parent_rc, parent_sha = _git("rev-parse", "--verify", f"refs/remotes/origin/{_parent_name}")
+                    if parent_rc != 0:
+                        parent_rc, parent_sha = _git("rev-parse", "--verify", recorded_parent)
+                    base_rc, base_sha = _git("rev-parse", "--verify", _split_pinned(recorded_base)[0])
                     if parent_rc == 0 and base_rc == 0 and parent_sha and base_sha:
                         # Check if base is an ancestor of or equal to parent — normal.
                         anc_rc, _ = _git("merge-base", "--is-ancestor", base_sha, parent_sha)

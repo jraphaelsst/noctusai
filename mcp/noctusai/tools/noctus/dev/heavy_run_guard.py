@@ -1,5 +1,8 @@
 """Route an UNGATED heavy test/build run from an agent's Bash call through the gate, BEFORE it runs.
 
+REMOTE BY DEFAULT (2026-11-16): the rewritten command is `hw_admission.py run`, which sends a pytest/vitest/npm-test run
+to a GitHub Actions runner (remote_test.py) and takes the laptop slot only as a loud fallback. KB § PATTERNS/devops/hardware-admission-budget.md
+
 REWRITE, NOT DENY (2026-11-14): a guard that knows the correct form produces it. The command becomes
 `<venv python> hw_admission.py run --job <derived> --wait-s 7200 -- bash -c '<command>'` (updatedInput,
 outcome=rewrite in the guard-event log). Still refused: local Whisper (policy) and unparseable commands.
@@ -383,7 +386,9 @@ def rewrite_through_gate(tool_input: dict[str, Any], command: str, kind: str,
         "updated_input": {**tool_input, "command": gated_command(command, job)},
         "context": (
             f"[noc-guard:heavy-run] REWROTE this heavy {kind} run to go through the hardware gate "
-            f"(--job {job}, waits up to {GATE_WAIT_S}s for a slot) as one `bash -c` job. A `cd` inside the "
+            f"(--job {job}) as one `bash -c` job. A pytest/vitest/npm-test run goes to a GitHub runner by DEFAULT "
+            "(push first: it tests the pushed sha; unpushed/dirty/gh-less falls back to the local slot with a loud "
+            f"reason; `--local` or NOCTUS_TEST_BACKEND=local forces local); anything else waits up to {GATE_WAIT_S}s for the local slot. A `cd` inside the "
             "command no longer persists in the session shell. Self-gating tools need no wrapper. "
             f"{KB_POINTER}"
         ),

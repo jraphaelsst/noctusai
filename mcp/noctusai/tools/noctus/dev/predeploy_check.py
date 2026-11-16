@@ -1255,7 +1255,7 @@ def predeploy_check(
     probe_tree = tree_probe or tree_identity
     tree_start = probe_tree(root)
     if admit is _AUTO_ADMIT:
-        admit = _hw.heavy_slot if run_check is None else None
+        admit = _hw.queued_heavy_slot if run_check is None else None
     admission = admit(f"predeploy:{product}") if admit else contextlib.nullcontext(None)
     with admission as adm:
         if adm is not None and not adm.admitted:
