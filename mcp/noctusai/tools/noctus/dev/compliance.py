@@ -20541,6 +20541,7 @@ def check_all_products() -> tuple[int, list]:
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())
+    all_issues.extend(check_supply_chain_pin())
     # 2026-11-12 (W1-C) — a worker idle poll is a per-tick RPC; fixed/short idle = 56k calls/day.
     all_issues.extend(check_worker_idle_polling())
     # 2026-11-07 — Motion only via @noctusai/lib/marketing (reduced-motion + chunk boundary).
@@ -28651,6 +28652,107 @@ def check_stage_list_not_in_code(repo_root: Path | None = None) -> list[dict]:
                 "issue": f"{have} stage list(s) left but the baseline allows {allowed}: lower `{rel}` in {baseline_rel} — "
                          "`python mcp/noctusai/cli.py --lower-stage-list-not-in-code-baseline` (the ratchet only shrinks).",
             })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_supply_chain_pin` — what EXECUTES must be pinned: every third-party
+# GitHub Action by FULL commit SHA, every image on the PROD deploy surface by
+# digest or a specific x.y[.z] version tag — never `:latest`, a bare major, or
+# no tag. A mutable tag is a re-pointable supply chain (tj-actions/changed-files
+# 2025, trivy-action 2026-03: whoever controls the tag controls what runs with
+# our secrets). Construction half: Dependabot github-actions SHA bumps and the
+# `noctus.dev.image_pin` (resolves + writes the digest; Dependabot docker-compose moves it). Escape: a
+# `# pin-ok: <reason>` comment on the image line or in the comment block right
+# above it (images only; an Action has no escape). Scope = the prod deploy
+# surface (deploy/{fleet,services,legacy,tunnel}) — per-product dev composes
+# are generated from the seed and the dev fleet is dormant.
+# KB § PATTERNS/devops/ci-security-gates.md § Supply-chain pins.
+# ---------------------------------------------------------------------------
+_SUPPLY_CHAIN_COMPOSE_GLOBS = (
+    "deploy/fleet/*.yml", "deploy/services/*.yml", "deploy/legacy/*.yml", "deploy/tunnel/*.yml",
+)
+_SUPPLY_CHAIN_OWN_IMAGE_PREFIXES = ("ghcr.io/jraphaelsst/",)  # built by our CI, deployed by immutable :sha / NOCTUS_IMAGE_TAG
+_SUPPLY_CHAIN_USES_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*(?P<ref>[^\s#]+)")
+_SUPPLY_CHAIN_IMAGE_RE = re.compile(r"^\s*image:\s*(?P<ref>[^\s#]+)")
+_SUPPLY_CHAIN_SHA_RE = re.compile(r"@[0-9a-f]{40}$")
+_SUPPLY_CHAIN_VERSION_TAG_RE = re.compile(r"\d+\.\d+")
+
+
+def _supply_chain_image_violation(raw: str) -> str | None:
+    """Why ``raw`` (an `image:` value) is unpinned, or None when it is pinned/exempt."""
+    ref = raw.strip().strip("\"'")
+    m = re.fullmatch(r"\$\{[A-Za-z_][A-Za-z0-9_]*:-(?P<d>[^}]*)\}", ref)
+    if m:
+        ref = m.group("d")  # ${VAR:-default}: the default is what runs unless overridden
+    elif ref.startswith("${"):
+        return None  # ${VAR:?...} / ${VAR}: no default value to judge
+    if not ref or any(ref.startswith(pfx) for pfx in _SUPPLY_CHAIN_OWN_IMAGE_PREFIXES):
+        return None
+    if "@sha256:" in ref:
+        return None
+    last = ref.rsplit("/", 1)[-1]
+    if ":" not in last:
+        return f"`{ref}` has no tag (resolves to :latest)"
+    tag = last.split(":", 1)[1]
+    if tag.startswith("latest") and not _SUPPLY_CHAIN_VERSION_TAG_RE.search(tag):
+        return f"`{ref}` is the floating :latest tag"
+    if not _SUPPLY_CHAIN_VERSION_TAG_RE.search(tag):
+        return f"`{ref}` carries a floating tag (no x.y version, no digest)"
+    return None
+
+
+def check_supply_chain_pin(paths: list[Path] | None = None, repo_root: Path | None = None) -> list[dict]:
+    """Keeper: every third-party GitHub Action is pinned to a 40-hex SHA and every
+    prod-surface compose image to a digest or an x.y[.z] version tag.
+    Return shape: [{"file", "issue", "severity"}]. `paths` (repo-relative) scopes a
+    pre-commit delta; None = full scan."""
+    root = repo_root or REPO_ROOT
+    only = {str(p) for p in paths} if paths else None
+    issues: list[dict] = []
+
+    def _emit(rel: str, lineno: int, what: str, fix: str) -> None:
+        issues.append({
+            "file": rel, "severity": "high",
+            "issue": f"`{rel}:{lineno}` {what}. {fix} KB § PATTERNS/devops/ci-security-gates.md § Supply-chain pins.",
+        })
+
+    gh = root / ".github"
+    if gh.is_dir():
+        for f in sorted([*gh.rglob("*.yml"), *gh.rglob("*.yaml")]):
+            rel = str(f.relative_to(root))
+            if only is not None and rel not in only:
+                continue
+            for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+                m = _SUPPLY_CHAIN_USES_RE.match(line)
+                if not m:
+                    continue
+                ref = m.group("ref")
+                if ref.startswith("./") or ref.startswith("docker://") or _SUPPLY_CHAIN_SHA_RE.search(ref):
+                    continue
+                _emit(rel, n, f"Action `{ref}` is not pinned to a full commit SHA",
+                      "Pin to the tag's commit (`gh api repos/<owner>/<repo>/git/ref/tags/<tag>`, deref annotated tags): `@<40-hex>  # <tag>`.")
+
+    for pattern in _SUPPLY_CHAIN_COMPOSE_GLOBS:
+        for f in sorted(root.glob(pattern)):
+            rel = str(f.relative_to(root))
+            if only is not None and rel not in only:
+                continue
+            lines = f.read_text(encoding="utf-8").splitlines()
+            for n, line in enumerate(lines, 1):
+                m = _SUPPLY_CHAIN_IMAGE_RE.match(line)
+                if not m:
+                    continue
+                why = _supply_chain_image_violation(m.group("ref"))
+                if why is None:
+                    continue
+                window = [line, *lines[max(0, n - 6):n - 1]]
+                if any("pin-ok" in w for w in window):
+                    continue
+                _emit(rel, n, f"image {why}",
+                      "Do not hand-edit: `noctus.dev.image_pin action='pin' write=True` resolves and writes the digest "
+                      "(`name:tag@sha256:...`); if it genuinely cannot be pinned (a locally built image), say why with "
+                      "`# pin-ok: <reason>` above it.")
     return issues
 
 

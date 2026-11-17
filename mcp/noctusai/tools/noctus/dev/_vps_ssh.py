@@ -383,7 +383,8 @@ _SSH_HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # ── the real ssh runner (the injectable seam for tests) ─────────────────────
 def _real_ssh(
-    ssh_host: str, remote_cmd: str, connect_timeout: int, timeout: float | None
+    ssh_host: str, remote_cmd: str, connect_timeout: int, timeout: float | None,
+    stdin_text: str | None = None,
 ) -> tuple[int, str, str]:
     """``timeout`` bounds the WHOLE subprocess (connect + remote command). Production
     callers always route through ``run_remote``, which resolves ``timeout`` to a
@@ -404,6 +405,9 @@ def _real_ssh(
         remote_cmd,
     ]
     kwargs: dict = {"capture_output": True, "text": True}
+    if stdin_text is not None:
+        # A secret rides stdin, never argv (argv is visible in `ps` on both machines).
+        kwargs["input"] = stdin_text
     if timeout is not None:
         kwargs["timeout"] = timeout
     try:
@@ -488,6 +492,7 @@ def run_remote(
     connect_timeout: int | None = None,
     timeout: float | None = None,
     force: bool = False,
+    stdin_text: str | None = None,
     _now: Callable[[], float] | None = None,
     _sleep: Callable[[float], None] | None = None,
     _state_path: str | Path | None = None,
@@ -506,6 +511,9 @@ def run_remote(
     for a known-long op (e.g. a large image pull) still passes an explicit
     ``timeout=`` — but a silent, caller-invisible, unbounded block is no longer
     reachable through this chokepoint at all.
+
+    ``stdin_text`` feeds the remote command's stdin (the only safe channel for a secret; the runner seam is
+    called with a 5th ``stdin_text`` argument ONLY when it is set, so existing 4-arg fakes keep working).
 
     ``_now`` / ``_sleep`` / ``_state_path`` / ``_runner`` are test seams (inject to
     run with zero real SSH and zero real sleep).
@@ -585,10 +593,11 @@ def run_remote(
         # ── attempt (with ONE backed-off retry on a connection failure) ──
         # `remote_timeout` (never None) bounds this — and the retry — so the total
         # time this call can hold `_state_lock` is finite by construction.
-        rc, out, err = runner(ssh_host, remote_cmd, ctimeout, remote_timeout)
+        _extra = () if stdin_text is None else (stdin_text,)
+        rc, out, err = runner(ssh_host, remote_cmd, ctimeout, remote_timeout, *_extra)
         if _is_connection_failure(rc, err):
             sleep(min_interval)
-            rc, out, err = runner(ssh_host, remote_cmd, ctimeout, remote_timeout)
+            rc, out, err = runner(ssh_host, remote_cmd, ctimeout, remote_timeout, *_extra)
 
         # ── update shared state ──
         attempt_ts = now()

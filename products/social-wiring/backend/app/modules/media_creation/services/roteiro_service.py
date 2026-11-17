@@ -32,6 +32,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
 
+from noctusai_lib.domain.approvals import ApprovalError, ApprovalService
 from noctusai_lib.domain.jobs import DeadLetterError, Job, JobRepository
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.integrations.llm import LLMBudgetExceeded, LLMNotConfigured, chat_completion, resolve_api_key
@@ -50,8 +51,18 @@ from app.modules.media_creation.prompts.roteiro_perguntas import (
     build_perguntas_user_message,
     parse_perguntas,
 )
+from app.modules.media_creation.saida_ia import SaidaIaFalha, validar_roteiro
 from app.modules.media_creation.schemas.roteiros import MAX_CONTEUDO, MAX_INSTRUCOES, MAX_NOME
 from app.modules.media_creation.services import geracao_jobs
+from app.modules.media_creation.services.roteiro_aprovacao import (
+    NOTA_EDITADO,
+    NOTA_GERADO,
+    SUBJECT_KIND,
+    AprovacaoRoteiroError,
+    make_approvals,
+    present_estado,
+    solicitar_aprovacao_roteiro,
+)
 from app.modules.media_creation.services.post_ref import post_refs
 from app.modules.media_creation.services.viral_card import viral_cards
 
@@ -78,6 +89,7 @@ MSG_SEM_PERGUNTAS = "Não foi possível gerar perguntas; o roteiro será criado 
 MSG_IA_FALHOU = "A IA não conseguiu gerar o roteiro. Tente novamente."
 MSG_IA_NAO_CONFIGURADA = "A IA não está configurada para esta conta."
 MSG_ORCAMENTO = "O orçamento de IA da organização foi excedido."
+MSG_SAIDA_INVALIDA = "A IA devolveu um roteiro inválido ({codigo}). Tente novamente."
 
 ROTEIRO_COLS = (
     "id,marca_id,created_by,nome,headline_id,headline_texto,instrucoes,fonte,duracao,brain_id,viral_id,"
@@ -182,8 +194,9 @@ def present_perguntas(raw: Any) -> list[dict[str, Any]]:
 
 def present_roteiro(
     row: dict[str, Any], viral: Optional[dict[str, Any]] = None, post: Optional[dict[str, Any]] = None,
+    aprovacao: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """``Roteiro`` (contract 4.8)."""
+    """``Roteiro`` (contract 4.8) + ``aprovacao`` (CoreStudio S3: ``{status, versao, decidido_por, decidido_em, motivo}``)."""
     return {
         **present_resumo(row, post),
         "instrucoes": row.get("instrucoes") or "",
@@ -200,6 +213,7 @@ def present_roteiro(
         "feedback": row.get("feedback"),
         "feedback_motivo": row.get("feedback_motivo"),
         "erro": row.get("erro"),
+        "aprovacao": aprovacao,
     }
 
 
@@ -222,6 +236,7 @@ class RoteiroService:
         jobs: Optional[JobRepository] = None,
         ia_check: IaCheck = check_ia_configurada,
         storage: Optional[StorageBackend] = None,
+        approvals: Optional[ApprovalService] = None,
     ):
         self.db = db
         self.org_id = org_id
@@ -230,6 +245,7 @@ class RoteiroService:
         self.jobs = jobs
         self.ia_check = ia_check
         self.storage = storage
+        self.approvals = approvals or make_approvals(db)
 
     # guards / lookups (everything is scoped to the org: a foreign id is a 404)
 
@@ -265,7 +281,8 @@ class RoteiroService:
 
     async def _present(self, row: dict[str, Any]) -> dict[str, Any]:
         post = post_refs(self.db, self.org_id, "roteiro_id", [row["id"]]).get(str(row["id"]))
-        return present_roteiro(row, await self._viral_for(row.get("viral_id")), post)
+        aprovacao = present_estado(self.approvals.state(self.org_id, SUBJECT_KIND, str(row["id"])))
+        return present_roteiro(row, await self._viral_for(row.get("viral_id")), post, aprovacao)
 
     def _usage_hoje(self) -> int:
         """Roteiros this user created in the rolling window (capped read: never needs more than the cap)."""
@@ -479,7 +496,57 @@ class RoteiroService:
         )
         if not rows:
             raise RoteiroError(409, "O roteiro mudou; recarregue a página")
+        # Editing invalidates a previous decision: the new versao is submitted (pending) and must be approved again.
+        self._submeter(roteiro_id, int(rows[0].get("versao") or body.expected_versao + 1), NOTA_EDITADO)
         return await self._present({**row, **rows[0]})
+
+    # approval (CoreStudio S3): any org member decides; approval is always required
+
+    def _submeter(self, roteiro_id: str, versao: int, nota: str) -> None:
+        try:
+            self.approvals.submit(self.org_id, SUBJECT_KIND, roteiro_id, versao, actor_id=self.user_id, note=nota)
+        except ApprovalError as exc:
+            raise self._aprovacao_erro(exc) from exc
+
+    @staticmethod
+    def _aprovacao_erro(exc: ApprovalError) -> RoteiroError:
+        return RoteiroError(exc.status_code, {"code": exc.code, "message": exc.message})
+
+    def _row_aprovavel(self, roteiro_id: str) -> dict[str, Any]:
+        row = self._get_row(roteiro_id)
+        if row["status"] != "completo":
+            raise RoteiroError(409, {"code": "roteiro_incompleto", "message": "O roteiro ainda não está pronto para aprovação."})
+        # Idempotent: a roteiro whose generation-time submit was lost (or that predates this feature) is submitted now.
+        self._submeter(roteiro_id, int(row.get("versao") or 1), NOTA_GERADO)
+        return row
+
+    async def aprovacao(self, roteiro_id: str) -> dict[str, Any]:
+        self._get_row(roteiro_id)
+        return present_estado(self.approvals.state(self.org_id, SUBJECT_KIND, roteiro_id))
+
+    async def solicitar_aprovacao(self, roteiro_id: str) -> dict[str, Any]:
+        try:
+            return solicitar_aprovacao_roteiro(self.db, self.org_id, roteiro_id, actor_id=self.user_id, approvals=self.approvals)
+        except AprovacaoRoteiroError as exc:
+            raise RoteiroError(exc.status, {"code": exc.codigo, "message": exc.mensagem}) from exc
+        except ApprovalError as exc:
+            raise self._aprovacao_erro(exc) from exc
+
+    async def aprovar(self, roteiro_id: str, versao: int) -> dict[str, Any]:
+        self._row_aprovavel(roteiro_id)
+        try:
+            state = self.approvals.approve(self.org_id, SUBJECT_KIND, roteiro_id, versao, actor_id=self.user_id)
+        except ApprovalError as exc:
+            raise self._aprovacao_erro(exc) from exc
+        return present_estado(state)
+
+    async def reprovar(self, roteiro_id: str, versao: int, motivo: Optional[str]) -> dict[str, Any]:
+        self._row_aprovavel(roteiro_id)
+        try:
+            state = self.approvals.reject(self.org_id, SUBJECT_KIND, roteiro_id, versao, actor_id=self.user_id, motivo=motivo)
+        except ApprovalError as exc:
+            raise self._aprovacao_erro(exc) from exc
+        return present_estado(state)
 
     async def feedback(self, roteiro_id: str, feedback: str, motivo: Optional[str]) -> dict[str, Any]:
         row = self._get_row(roteiro_id)
@@ -674,9 +741,17 @@ async def executar_geracao(job: Job, *, db: Any, llm: RoteiroLlm, cfg: Any = Non
         logger.error("roteiro %s: a IA devolveu um roteiro vazio", roteiro_id)
         _falha(db, roteiro_id, MSG_IA_FALHOU, from_status=["processando"])
         return
-    if len(conteudo) > MAX_CONTEUDO:
-        conteudo = conteudo[:MAX_CONTEUDO].rstrip()
-    _settle(
+    # S6 guard: schema + length caps + no URLs / storage paths. A rejected output is a coded `falha`, never trimmed.
+    try:
+        conteudo = validar_roteiro(conteudo)["conteudo"]
+    except SaidaIaFalha as falha:
+        logger.error("roteiro %s: saída da IA rejeitada (%s)", roteiro_id, falha)
+        _falha(db, roteiro_id, MSG_SAIDA_INVALIDA.format(codigo=falha.codigo), from_status=["processando"])
+        return
+    if len(conteudo) > MAX_CONTEUDO:  # unreachable while MAX_ROTEIRO <= MAX_CONTEUDO; kept as a loud guard, not a trim
+        _falha(db, roteiro_id, MSG_SAIDA_INVALIDA.format(codigo="saida_limite_excedido"), from_status=["processando"])
+        return
+    moved = _settle(
         db, roteiro_id,
         {
             "status": "completo", "etapa": None, "erro": None, "conteudo": conteudo, "conteudo_original": conteudo,
@@ -684,6 +759,19 @@ async def executar_geracao(job: Job, *, db: Any, llm: RoteiroLlm, cfg: Any = Non
         },
         from_status=["processando"],
     )
+    if moved:
+        _submeter_geracao(db, row, versao=1)
+
+
+def _submeter_geracao(db: Any, row: dict[str, Any], *, versao: int) -> None:
+    """T3: the generated versao goes up for approval (event ``submitted`` = ``roteiro_gerado``).
+
+    Not fatal: the roteiro is already ``completo`` and a retry would see it settled, so a lost submit is healed by the
+    idempotent submit every approval call (and the Esteira gate's ``roteiro_nao_aprovado``) performs. It is logged at error."""
+    try:
+        make_approvals(db).submit(str(row["org_id"]), SUBJECT_KIND, str(row["id"]), versao, actor_id=None, note=NOTA_GERADO)
+    except Exception:  # noqa: BLE001 - healed by the idempotent submit on the next approval call; never fails the job
+        logger.exception("roteiro %s: falha ao submeter a versao %s para aprovação", row.get("id"), versao)
 
 
 def reconcile_dead_letter(db: Any, job: Job) -> None:

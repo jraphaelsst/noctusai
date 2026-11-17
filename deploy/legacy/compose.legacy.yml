@@ -6,13 +6,16 @@
 # Without the worker, async match processing silently fails (see the app's
 # .replit / CLAUDE.md). Both MUST run.
 #
-# Redis  : EXTERNAL/shared — provided via env (CELERY_BROKER_URL /
-#          CELERY_RESULT_BACKEND). No Redis container here; reuse the fleet's
-#          noctusai-infra Redis (reachable on noctus-net as e.g. redis://redis:6379/N).
+# Redis  : DEDICATED `legacy-redis` (this file), password-protected, on legacy-net ONLY. The legacy Django app is
+#          the oldest, least-patched code on the box, so it shares neither a network nor a Redis with the fleet
+#          (security hardening 2026-11-15). The password and BOTH Celery URLs are DERIVED from REDIS_ACL_MASTER_SECRET
+#          by `noctus.dev.redis_acl render --write` into redis-auth/legacy.env beside this file (gitignored), which is
+#          loaded AFTER .env so it wins. Nothing to type; a not-yet-rendered stack starts as before (no password).
 # Postgres: EXTERNAL — Supabase, via SUPABASE_DB_URL. No DB container here.
-# Network : `noctus-net` is EXTERNAL (created once by the fleet's start.sh:
-#           `docker network create noctus-net`). Joining it lets the Cloudflare
-#           named tunnel route legacy.noctusai.com → http://legacy:5000.
+# Network : `legacy-net` (EXTERNAL, created once: `docker network create legacy-net`), NOT `noctus-net`: no product
+#           container can resolve or reach `legacy`. The Cloudflare tunnel container ALSO joins legacy-net
+#           (deploy/tunnel/compose.tunnel.yml) so legacy.noctusai.com → http://legacy:5000 keeps working.
+#           Apply order: create the network, join the tunnel to it, THEN recreate legacy.
 #
 # Build context = the legacy app source root (the read-only reference clone).
 # Adjust `build.context` to wherever that source lives on the VPS.
@@ -27,6 +30,8 @@
 
 services:
   legacy:
+    depends_on:
+      - legacy-redis
     build:
       # Source root of the legacy app (the read-only reference clone). These were
       # relative to the OLD archived location; the assets now live in the live
@@ -40,14 +45,17 @@ services:
         # NOT passed: their only referrer was an unused Supabase client that
         # published the anon key in the public bundle (deleted upstream, da8cf2d).
         REACT_APP_API_URL: ${REACT_APP_API_URL:-}
+    # pin-ok: locally built image (build: above), never pulled from a registry
     image: legacy-permutas:latest
     container_name: legacy-permutas
     env_file:
       - .env
+      - path: ./redis-auth/legacy.env   # LEGACY_REDIS_PASSWORD + CELERY_* (derived), overrides .env
+        required: false
     expose:
       - "5000"
     networks:
-      - noctus-net
+      - legacy-net
     restart: unless-stopped
     healthcheck:
       # send the real Host — ALLOWED_HOSTS=legacy.noctusai.com → a bare localhost
@@ -61,18 +69,46 @@ services:
   legacy-celery:
     # Reuse the SAME built image (no second build); override the command to run
     # the Celery worker instead of gunicorn.
+    # pin-ok: locally built image (shared with `legacy`), never pulled from a registry
     image: legacy-permutas:latest
     container_name: legacy-permutas-celery
     command: ["celery", "-A", "backend", "worker", "--loglevel=info", "--concurrency=2"]
     env_file:
       - .env
+      - path: ./redis-auth/legacy.env
+        required: false
     depends_on:
       - legacy
+      - legacy-redis
     networks:
-      - noctus-net
+      - legacy-net
     restart: unless-stopped
 
+  legacy-redis:
+    # Same digest-pinned 7.4.6 the fleet's ACL Redis uses.
+    image: redis:7.4.6-alpine@sha256:3b73847e72874be07e6657b129a94761662b79bc0f679273757d4218573b2a98
+    container_name: legacy-permutas-redis
+    env_file:
+      - path: ./redis-auth/legacy.env   # LEGACY_REDIS_PASSWORD, derived
+        required: false
+    command: ["sh", "-c", "if [ -n \"$$LEGACY_REDIS_PASSWORD\" ]; then exec redis-server --appendonly yes --requirepass \"$$LEGACY_REDIS_PASSWORD\"; fi; exec redis-server --appendonly yes"]
+    volumes:
+      - legacy_redis_data:/data
+    expose:
+      - "6379"
+    networks:
+      - legacy-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$LEGACY_REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 networks:
-  noctus-net:
-    name: noctus-net
+  legacy-net:
+    name: legacy-net
     external: true
+
+volumes:
+  legacy_redis_data:

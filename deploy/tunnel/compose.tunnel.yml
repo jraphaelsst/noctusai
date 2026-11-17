@@ -24,7 +24,9 @@ name: noctusai-tunnel
 
 services:
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    # Pinned 2026-11-15 to the digest PROD IS RUNNING (was :latest): the tunnel is the one container on every network
+    # and holds the tunnel credential. A no-op recreate; upgrades are a deliberate bump.
+    image: cloudflare/cloudflared:latest@sha256:59bab8d3aceec09bf6bdb07d6beca0225ca5cd7ab79436a87ea97978fe1dc4f9
     container_name: noctus-tunnel
     # Named-tunnel run: reads config.yml (tunnel id + credentials + ingress).
     # `--protocol http2` is also pinned in config.yml; passing it here too is
@@ -38,9 +40,15 @@ services:
       - ./:/etc/cloudflared:ro
     networks:
       - noctus-net
+      # legacy lives on its OWN network so no product can reach it; the tunnel is the only container on both.
+      # `docker network create legacy-net` first (runbook § legacy).
+      - legacy-net
     restart: unless-stopped
 
 networks:
   noctus-net:
     name: noctus-net
+    external: true
+  legacy-net:
+    name: legacy-net
     external: true

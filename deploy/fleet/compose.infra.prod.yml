@@ -44,7 +44,10 @@ name: noctusai-infra-prod
 
 services:
   redis:
-    image: redis:7-alpine
+    # Pinned 2026-11-15 to the digest PROD IS RUNNING (was floating 7-alpine), so the pin is a no-op recreate.
+    # This is the LEGACY unauthenticated Redis; the requirepass intent is delivered by the ACL cutover (redis-acl below,
+    # KB § PATTERNS/devops/redis-acl-lockdown.md) — clients are derived there, never hand-listed.
+    image: redis:7-alpine@sha256:ee64a64eaab618d88051c3ade8f6352d11531fcf79d9a4818b9b183d8c1d18ba
     container_name: noctus-redis
     # Internal only — products reach it as redis://noctus-redis:6379 over
     # noctus-net. No host port published in prod.
@@ -157,7 +160,9 @@ services:
     # cache-backend-portability for the migration path).
     # Image is pinned to pgvector/pgvector:pg16 (Postgres 16 + pgvector
     # extension pre-baked).
-    image: pgvector/pgvector:pg16
+    # Pinned 2026-11-15 to the digest PROD IS RUNNING (a floating pg16 can bump the debian base = glibc collation
+    # change = index corruption on an existing volume). Upgrades are a deliberate bump, never a re-pull.
+    image: pgvector/pgvector:pg16@sha256:00ba258a66dac104fd5171074a0084462a64a1369d8513f3d0a634e2f24d15bc
     container_name: noctus-cache-pg
     expose:
       - "5432"
@@ -201,7 +206,7 @@ services:
     #   (`--profile waha`); an empty key has zero prod impact until an
     # operator deliberately enables the profile, at which point they must
     #   set it in deploy/fleet/.env.fleet first (`.env.fleet.example`).
-    image: ${WAHA_IMAGE:-devlikeapro/waha:latest}
+    image: ${WAHA_IMAGE:-devlikeapro/waha:noweb-2026.9.2}
     platform: ${WAHA_PLATFORM:-linux/amd64}
     container_name: noctus-waha
     environment:

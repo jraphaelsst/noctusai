@@ -254,7 +254,7 @@ def _prune_ranges(lines: list[str], blocks: list[_Block], slugs: set[str]) -> li
     return out
 
 
-def sync_dependabot_coverage(root: Path | None = None, write: bool = True) -> dict:
+def _sync_npm_coverage(root: Path | None = None, write: bool = True) -> dict:
     """Repair `.github/dependabot.yml` in place. Returns
     `{ok, status, path, changed, added, guard_fixed, stale}`; `status` is
     `written` | `in-sync` | `would-write` | `error`. `added` is the sorted list
@@ -365,6 +365,69 @@ def sync_dependabot_coverage(root: Path | None = None, write: bool = True) -> di
         "ok": True, "status": "written", "path": str(path), "changed": True,
         "added": missing, "guard_fixed": guard_gaps, "stale": stale, "pruned": pruned,
     }
+_COMPOSE_DIR_GLOBS = ("deploy/fleet", "deploy/services", "deploy/legacy", "deploy/tunnel")
+
+
+def _compose_dirs_on_disk(root: Path) -> list[str]:
+    """`/deploy/<x>` for every prod-surface dir that has a compose file declaring a third-party `image:`."""
+    out = []
+    for rel in _COMPOSE_DIR_GLOBS:
+        d = root / rel
+        for f in sorted(d.glob("*.yml")) if d.is_dir() else []:
+            if re.search(r"^\s*image:\s*(?!ghcr\.io/)\S", f.read_text(encoding="utf-8"), flags=re.M):
+                out.append("/" + rel)
+                break
+    return out
+
+
+def _render_compose_block(directory: str, stamp: str) -> list[str]:
+    return [
+        f"  # {directory} compose images — added automatically by noctus.dev.refresh_dependabot_coverage ({stamp}):\n",
+        "  # images are pinned `name:tag@sha256:...` (check_supply_chain_pin); Dependabot moves the digest via a PR.\n",
+        '  - package-ecosystem: "docker-compose"\n',
+        f'    directory: "{directory}"\n',
+        "    schedule:\n",
+        '      interval: "weekly"\n',
+        "    open-pull-requests-limit: 2\n",
+        "    labels:\n",
+        '      - "dependencies"\n',
+        '      - "docker"\n',
+        "\n",
+    ]
+
+
+def _sync_compose_blocks(root: Path, write: bool) -> list[str]:
+    """Append a docker-compose block for every prod-surface compose dir without one. Returns the directories added."""
+    path = root / DEPENDABOT_REL
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    have = {b.directory for b in _parse_blocks(lines) if b.ecosystem == "docker-compose"}
+    missing = [d for d in _compose_dirs_on_disk(root) if d not in have]
+    if missing and write:
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        if lines and lines[-1].strip():
+            lines.append("\n")
+        for d in missing:
+            lines.extend(_render_compose_block(d, stamp))
+        path.write_text("".join(lines), encoding="utf-8")
+    return missing
+
+
+def sync_dependabot_coverage(root: Path | None = None, write: bool = True) -> dict:
+    """npm coverage + guard repair (see `_sync_npm_coverage`) PLUS a docker-compose block per prod-surface compose dir.
+    The result gains `compose_added` (dirs added / that would be added) and `changed` covers both."""
+    root = root or REPO_ROOT
+    if not (root / DEPENDABOT_REL).is_file():
+        return _sync_npm_coverage(root, write)
+    compose_added = _sync_compose_blocks(root, write)
+    res = _sync_npm_coverage(root, write)
+    res["compose_added"] = compose_added
+    if compose_added:
+        res["changed"] = True
+        if res.get("status") == "in-sync":
+            res["status"] = "written" if write else "would-write"
+    return res
 
 
 def register(server) -> None:
