@@ -91,7 +91,8 @@ class RealGithubClient:
         return list((d or {}).get("workflow_runs") or [])
 
     def dispatch(self, branch: str, base: str | None) -> None:
-        args = ["workflow", "run", WORKFLOW_FILE, "--ref", branch, "-R", self.repo()]
+        # scope=changed (2026-11-17): a branch verdict is scoped to its diff against base/merge-base.
+        args = ["workflow", "run", WORKFLOW_FILE, "--ref", branch, "-R", self.repo(), "-f", "scope=changed"]
         if base:
             args += ["-f", f"base={base}"]
         rc, out, err = self._sh(["gh", *args], self.cwd)

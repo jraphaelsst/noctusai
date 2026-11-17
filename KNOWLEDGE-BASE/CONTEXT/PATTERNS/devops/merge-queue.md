@@ -362,6 +362,16 @@ uses the same splitter, so a file can never be dropped or run twice. Owner-appro
 - **Recurrence andon (steward enqueue only).** A refusal class recurring >=3 times in 14 days with no open fix (`gate_alignment.refusal_recurrence`, read behind a guarded `getattr`) is reported as `recurrence_andon`: a warning until 2026-11-21, a refusal (`refused='refusal_recurrence'`) after. One `findings_ledger` update (`in-progress <branch>` or `accepted <rationale>`) or a `NOC-REMEDIATE` marker clears it; an owner branch with no commits for 72h lapses. Requesters are never blocked: `request` does not call it.
 - **Pointer roles.** `executor` and `advisor` (the agent-file vocabulary) are accepted aliases for the `engineer` pointer role.
 
+## 6f · Scoped verdicts by default; the whole suite on a 6h schedule and before main (2026-11-17)
+
+Every branch verdict and every queue batch was a `workflow_dispatch`, which ALWAYS ran the full suite - so each delivery ran it twice (its verdict run, then its batch). Owner-approved change:
+
+- **`test.yml` takes `scope` (`changed` default | `full`).** `changed` diffs against the `base` input (the dev sha a batch was composed on) else `git merge-base origin/dev <sha>` (git answers it, zero API calls) and runs through `ci_scope.py`: ledger-only skips everything; a shared surface (`seed/`, `.github/`, `scripts/ci/`, root lockfiles/requirements, `active-scope.txt`) runs every product (the `mcp/` toolkit is not imported by products: its own suite plus the repo-wide keepers judge it); otherwise only the touched products. The repo-wide suites (toolkit, seed, tooling, keepers) run whenever anything but a ledger changed. No usable base fails toward `full`. `changed` is the dispatch default, so queue batches (`merge_queue.py`, unchanged) and branch verdicts (`ci_verdict` passes it explicitly) are scoped.
+- **Full suite on dev every 6h** (`schedule: '0 */6 * * *'`). When red, the `scheduled-full-report` job writes the commit range since the last full-green scheduled / `scope=full` run to the job summary (`git log --oneline <last_full_green>..HEAD`), using the Actions `GITHUB_TOKEN` (its own quota) and two server-filtered `gh run list` calls.
+- **Full-green before main.** The run title carries `[scope=full|changed]` (`run-name`, `ci_full_green.FULL_MARK`); `release stage=bless` refuses a target no green `scope=full` run covers and says how to dispatch one (`KB § PATTERNS/architect/git-branch-model.md`). A `workflow_dispatch` green is no longer a qualifying heavy run on its own - it must be `scope=full`.
+
+GitHub API calls (owner constraint, the 5000/h quota): per branch verdict ~2 before (dispatch + run lookup + polls) and the batch run no longer repeats the full suite (fewer job minutes, same call count); per queue batch unchanged (dispatch + list + view polls); per scheduled run 0 from the owner (Actions token) + 2 list calls only when red; per bless +1 (exact-sha full probe) +1 only when that sha has no full run. No loop over runs or jobs was added.
+
 ## 7 · Limits and options
 
 - **Why not GitHub's native merge queue?** It needs an organization-owned
