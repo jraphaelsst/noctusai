@@ -53,6 +53,7 @@ ALTER TABLE agents.eval_loops ADD COLUMN IF NOT EXISTS modo TEXT NOT NULL DEFAUL
     CHECK (modo IN ('automatico', 'manual'));
 ALTER TABLE agents.eval_loops ADD COLUMN IF NOT EXISTS aviso JSONB NULL;
 
+-- transition-log-ok: eval_loop_eventos one polymorphic lifecycle log for three entities (loop, round, run) written by the app driver, not a single state row + events pair
 -- 3 . the lifecycle events (append-only) ------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS agents.eval_loop_eventos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
