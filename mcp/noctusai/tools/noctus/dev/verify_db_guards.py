@@ -6581,6 +6581,78 @@ _OWNER_RECIPIENT_FIXTURE = """    INSERT INTO public.notification_owner_recipien
     VALUES ('+5500000000001', gen_random_uuid(), now())
     RETURNING id INTO v_id;"""
 
+# ---------------------------------------------------------------------------
+# Registry — agents.eval_loop_eventos append-only guard (agents migration 088).
+# ---------------------------------------------------------------------------
+#
+# The loop's lifecycle events (who/when/what of every round and every driver decision). `loop_id` is an FK to `agents.eval_loops`,
+# so the probe BORROWS an existing loop row (read-only; the event it inserts and then tries to rewrite is rolled back with the
+# wrapper). No loop at all -> `no_fixture` (a failure, never a silent skip).
+
+_AGENTS_EVAL_LOOP_EVENTOS_GUARD = "eval_loop_eventos_append_only"
+
+
+def _agents_eval_loop_eventos_probe(*, probe_id: str, op_sql: str, what: str) -> GuardProbe:
+    fragment_lit = _sql_lit("eval_loop_eventos is append-only")
+    what_lit = _sql_lit(what)
+    sql = _do_block(f"""
+DECLARE
+  v_loop uuid;
+  v_org uuid;
+  v_id uuid;
+BEGIN
+  IF to_regclass('agents.eval_loop_eventos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: agents.eval_loop_eventos does not exist (agents 088 not applied)';
+  END IF;
+  SELECT id, org_id INTO v_loop, v_org FROM agents.eval_loops LIMIT 1;
+  IF v_loop IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: agents.eval_loops has no row to hang a probe event on';
+  END IF;
+  BEGIN
+    INSERT INTO agents.eval_loop_eventos (org_id, loop_id, evento) VALUES (v_org, v_loop, 'loop_iniciado')
+    RETURNING id INTO v_id;
+{op_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the append-only guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product="agents",
+        schema="agents",
+        guard_name=_AGENTS_EVAL_LOOP_EVENTOS_GUARD,
+        kind="write_refusal",
+        migrations=("088_eval_erro_e_loop_driver.sql",),
+        sql=sql,
+        rationale=(
+            "The loop events are the measurement trail of the eval pipeline (what each round and each driver decision did, and "
+            "when); a rewritable or deletable event would let a loop's history say something that did not happen."
+        ),
+    )
+
+
+_AGENTS_EVAL_LOOP_EVENTOS_PROBES: tuple[GuardProbe, ...] = (
+    _agents_eval_loop_eventos_probe(
+        probe_id="agents.eval_loop_eventos.update_refused",
+        op_sql="    UPDATE agents.eval_loop_eventos SET evento = 'loop_parado' WHERE id = v_id;",
+        what="UPDATE of an eval_loop_eventos row",
+    ),
+    _agents_eval_loop_eventos_probe(
+        probe_id="agents.eval_loop_eventos.delete_refused",
+        op_sql="    DELETE FROM agents.eval_loop_eventos WHERE id = v_id;",
+        what="DELETE of an eval_loop_eventos row",
+    ),
+)
+
+
 _OWNER_RECIPIENT_EVENTS_PROBES: tuple[GuardProbe, ...] = (
     _owner_recipient_events_probe(
         probe_id="notification_owner_recipient_events.update_refused",
@@ -13573,6 +13645,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
     *_OWNER_RECIPIENT_EVENTS_PROBES,
+    *_AGENTS_EVAL_LOOP_EVENTOS_PROBES,
     *_CORE_AI_USAGE_PROBES,
     *_CORE_FUNNEL_PROBES,
     *_PLATFORM_TEMPLATES_PROBES,

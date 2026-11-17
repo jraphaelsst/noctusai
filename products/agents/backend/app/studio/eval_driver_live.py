@@ -267,6 +267,12 @@ class LiveEvalTurnDriver:
         """A fresh thread: drop the whole in-memory world."""
         self._mundo = None
 
+    def preflight(self) -> None:
+        """Compile the agent's turn once (the SAME ``preparar`` every case runs) and raise :class:`TurnoRecusado` with the reason
+        when it cannot start -- so a run is refused BEFORE it is booked, never discovered 46 times at 350 ms each."""
+        m = self._montar(ThreadState())
+        turno_mod.preparar(m.svc, m.org_id, m.agent, versao=m.version_id, specs=m.specs, sem_padrao_ok=True)
+
     # ── world construction ──
 
     def _montar(self, thread: ThreadState) -> _Mundo:
@@ -347,7 +353,7 @@ class LiveEvalTurnDriver:
         if not estado.criterios and not estado.lotes:
             return
         padrao = turno_mod.padrao_do_turno(m.svc, turno_mod.resolve_agent_for_org(
-            m.svc.studio_store, m.org_id, m.agent.key, versao=m.version_id))
+            m.svc.studio_store, m.org_id, m.agent.key, versao=m.version_id), sem_padrao_ok=True)
         if estado.criterios:
             m.leads.adicionar_registros(
                 m.org_id, m.lead_ref_id, agent_id=m.agent.id, versao_id=padrao.id, thread_id=None, message_id=None,
@@ -396,7 +402,7 @@ class LiveEvalTurnDriver:
                 estado=self._estado(m), violacoes=(Violation("limite_atingido", tripped),),
                 participante_estado=self._participante_estado(m, th), valores_terceiros=m.sinteticos.terceiros())
 
-        prep = turno_mod.preparar(m.svc, m.org_id, m.agent, versao=m.version_id, specs=m.specs)
+        prep = turno_mod.preparar(m.svc, m.org_id, m.agent, versao=m.version_id, specs=m.specs, sem_padrao_ok=True)
         if self._modelo or self._temperatura is not None:  # cheaper / A-B iteration; never changes the compiled hash
             prep = replace(prep, spec=replace(
                 prep.spec, model=self._modelo or prep.spec.model,
@@ -462,7 +468,7 @@ class LiveEvalTurnDriver:
                 estado=self._estado(m), participante_estado=self._participante_estado(m, th),
                 valores_terceiros=m.sinteticos.terceiros(), retomada_status=ctl.status, retomada_tier=retomada.tier)
         contexto = contexto_de_retomada(thread.fixture, retomada)
-        prep = turno_mod.preparar(m.svc, m.org_id, m.agent, versao=m.version_id, specs=m.specs)
+        prep = turno_mod.preparar(m.svc, m.org_id, m.agent, versao=m.version_id, specs=m.specs, sem_padrao_ok=True)
         if self._modelo or self._temperatura is not None:
             prep = replace(prep, spec=replace(
                 prep.spec, model=self._modelo or prep.spec.model,
@@ -494,7 +500,7 @@ class LiveEvalTurnDriver:
         if m.lead_ref_id is None:
             return Estado()
         r = turno_mod.resolve_agent_for_org(m.svc.studio_store, m.org_id, m.agent.key, versao=m.version_id)
-        padrao = turno_mod.padrao_do_turno(m.svc, r)
+        padrao = turno_mod.padrao_do_turno(m.svc, r, sem_padrao_ok=True)
         e = m.svc.qual.avaliar(
             m.org_id, m.lead_ref_id, padrao.id, turno_mod.escopo_de(m.agent), turno_mod.LeadSinais())
         lotes: dict[int, list[str]] = {}

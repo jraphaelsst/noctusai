@@ -61,6 +61,7 @@ import {
   Textarea,
 } from "@noctusai/lib/design-system";
 import { EvalLoopCard } from "@/components/studio/EvalLoopCard";
+import { RunProgressPanel, statusLabel } from "@/components/studio/RunProgressPanel";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { ApiError, errorMessage } from "@/lib/errors";
 import { formatUsdCost } from "@/lib/utils";
@@ -123,6 +124,8 @@ const RUN_STATUS_VARIANT: Record<EvalRunStatus, "default" | "muted" | "destructi
   concluida: "default",
   falhou: "destructive",
   cancelada: "outline",
+  erro: "destructive",
+  parcial_com_erros: "destructive",
 };
 
 /** One `deve`/`não deve` criterion list — items are added and removed one at
@@ -575,7 +578,9 @@ function RunDetailPanel({
               parcial (não vale para publicar)
             </Badge>
           )}
-          <Badge variant={RUN_STATUS_VARIANT[run.status]}>{run.status}</Badge>
+          <Badge variant={RUN_STATUS_VARIANT[run.status]} data-testid="evals-run-status">
+            {statusLabel(run.status)}
+          </Badge>
           {isAdmin && isRunFinished(run.status) && (
             <Button
               size="sm"
@@ -603,6 +608,7 @@ function RunDetailPanel({
           )}
         </div>
       </div>
+      <RunProgressPanel agentKey={agentKey} suite="comportamento" runId={run.id} />
       {orcamentoEstourado ? (
         <div
           className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700"
@@ -614,7 +620,8 @@ function RunDetailPanel({
           marcados como "pulado" — não entram no score, nem contam contra o portão de publicação.
         </div>
       ) : (
-        run.erro && <FormError message={run.erro} />
+        // an errored run's reason is already in the progress panel's red banner (code + text): no second copy
+        run.erro && run.status !== "erro" && run.status !== "parcial_com_erros" && <FormError message={run.erro} />
       )}
       {run.casos_pulados && run.casos_pulados.length > 0 && (
         <div className="rounded-md border border-border p-2 text-xs text-muted-foreground" data-testid="evals-run-pulados">
@@ -636,8 +643,17 @@ function RunDetailPanel({
                 <span className="h-3.5 w-3.5 rounded-full border border-muted-foreground/40" />
               )}
               <span className="font-medium text-foreground">{r.case_titulo}</span>
-              <span className={r.status === "pulado" ? "font-medium text-amber-700" : "text-muted-foreground"}>
-                {r.status}
+              <span
+                className={
+                  r.status === "pulado"
+                    ? "font-medium text-amber-700"
+                    : r.status === "erro"
+                      ? "font-medium text-destructive"
+                      : "text-muted-foreground"
+                }
+                data-testid={`evals-result-status-${r.case_id}`}
+              >
+                {r.status === "erro" ? "erro (turno/avaliador)" : r.status}
               </span>
               {r.score != null && <span className="text-muted-foreground">score {r.score.toFixed(2)}</span>}
             </div>
@@ -650,7 +666,19 @@ function RunDetailPanel({
                 tokens {r.tokens_entrada ?? "—"} in / {r.tokens_saida ?? "—"} out
               </span>
             </div>
-            {r.saida && <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{r.saida}</p>}
+            {r.status === "erro" && r.notas_juiz && (
+              <p className="mt-1 font-medium text-destructive" role="alert" data-testid={`evals-result-erro-${r.case_id}`}>
+                {r.notas_juiz}
+              </p>
+            )}
+            {r.saida && (
+              <details className="mt-1" data-testid={`evals-result-saida-${r.case_id}`}>
+                <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground">
+                  Resposta do agente
+                </summary>
+                <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{r.saida}</p>
+              </details>
+            )}
             {r.veredito && r.veredito.length > 0 && (
               <ul className="mt-1 space-y-0.5">
                 {r.veredito.map((v, i) => (
@@ -661,7 +689,7 @@ function RunDetailPanel({
                 ))}
               </ul>
             )}
-            {r.notas_juiz && <p className="mt-1 italic text-muted-foreground">{r.notas_juiz}</p>}
+            {r.notas_juiz && r.status !== "erro" && <p className="mt-1 italic text-muted-foreground">{r.notas_juiz}</p>}
           </div>
         ))}
       </div>
@@ -888,7 +916,12 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
                         parcial
                       </Badge>
                     )}
-                    <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
+                    {r.erro_codigo && (r.status === "erro" || r.status === "parcial_com_erros") && (
+                      <span className="text-destructive" data-testid={`evals-run-erro-${r.id}`}>
+                        {r.erro_codigo}
+                      </span>
+                    )}
+                    <Badge variant={RUN_STATUS_VARIANT[r.status]}>{statusLabel(r.status)}</Badge>
                     {isAdmin && finished && (
                       <Button
                         size="sm"

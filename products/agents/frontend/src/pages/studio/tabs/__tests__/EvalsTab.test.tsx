@@ -31,6 +31,8 @@ vi.mock("@/hooks/studio/useEvals", () => ({
   useDeleteEvalCase: () => mockUseDeleteEvalCase(),
   useCancelEvalRun: () => mockUseCancelEvalRun(),
   useConsolidacao: () => mockUseConsolidacao(),
+  // the live-progress panel is covered by RunProgressPanel.test.tsx; here it has no data yet (renders nothing)
+  useRunProgresso: () => ({ data: undefined, showSkeleton: false, isRefreshing: false, isError: false, error: null }),
 }));
 vi.mock("@/hooks/useIsAdmin", () => ({ useIsAdmin: () => mockUseIsAdmin() }));
 vi.mock("@/hooks/studio/useStudioAgents", () => ({ useStudioAgent: () => mockUseStudioAgent() }));
@@ -411,6 +413,27 @@ describe("EvalsTab — Controle de custo (contract §L)", () => {
 
       const banner = await screen.findByTestId("evals-run-budget-banner");
       expect(banner.textContent).toContain("limite de custo atingido");
+    });
+  });
+
+  describe("Errored runs (2026-11-17)", () => {
+    it("an all-error run is shown as 'erro' (never concluída / 0), with the code in the list and each case's reason in red", async () => {
+      const ERRO_RUN = {
+        ...CONCLUDED_RUN, status: "erro" as const, score: null, aprovados: 0, erro_codigo: "qualificacao_indisponivel", casos_com_erro: 1,
+        erro: "1 de 1 casos terminaram em erro. Primeiro erro: O agente não tem padrão de qualificação.",
+      };
+      const RESULT_ERRO = {
+        ...RESULT_APROVADO, status: "erro" as const, score: null, saida: null,
+        notas_juiz: "O turno foi recusado (qualificacao_indisponivel): O agente não tem padrão de qualificação.",
+      };
+      mockUseEvalRuns.mockReturnValue({ data: [ERRO_RUN] });
+      mockUseEvalRun.mockReturnValue({ data: { ...ERRO_RUN, resultados: [RESULT_ERRO] }, showSkeleton: false, isError: false });
+      await renderTab();
+      expect(screen.getByTestId("evals-run-erro-r1").textContent).toBe("qualificacao_indisponivel");
+      fireEvent.click(screen.getByTestId("evals-run-row-r1"));
+      expect((await screen.findByTestId("evals-run-status")).textContent).toBe("erro");
+      expect(screen.getByTestId(`evals-result-erro-${RESULT_ERRO.case_id}`).textContent).toMatch(/qualificacao_indisponivel/);
+      expect(screen.getByTestId(`evals-result-status-${RESULT_ERRO.case_id}`).textContent).toMatch(/erro/);
     });
   });
 

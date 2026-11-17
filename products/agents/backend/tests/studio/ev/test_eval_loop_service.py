@@ -141,12 +141,27 @@ def test_a_round_in_flight_blocks_the_next_start():
 def test_a_stuck_round_whose_run_already_ended_is_reconciled_at_the_next_admission():
     w = W()
     run = w.rodada("h1")
-    resumo = RunResumo(run_id=run, run_tipo="comportamento", status="falhou", score=None, custo_usd=0.4, falhas=(), compiled_hash="h1")
+    resumo = RunResumo(run_id=run, run_tipo="comportamento", status="cancelada", score=None, custo_usd=0.4, falhas=(), compiled_hash="h1")
     a = w.svc.admitir(ORG, AGENT, w.loop.id, suite="comportamento", compiled_hash="h2", limite_usd=2.0,
                       ler_resumo=lambda rid: resumo if rid == run else None)
     assert a.limite_usd == 2.0
     e = w.estado()
-    assert e["serie"][0]["status"] == "falhou" and e["serie"][0]["score"] is None and e["gasto_usd"] == 0.4
+    assert e["serie"][0]["status"] == "cancelada" and e["serie"][0]["score"] is None and e["gasto_usd"] == 0.4
+
+
+def test_a_stuck_round_whose_run_FAILED_is_reconciled_as_an_error_and_the_loop_refuses_the_next_round():
+    w = W()
+    run = w.rodada("h1")
+    resumo = RunResumo(run_id=run, run_tipo="comportamento", status="erro", score=None, custo_usd=0.0, falhas=(), compiled_hash="h1",
+                       erro="46 de 46 casos terminaram em erro.", erro_codigo="qualificacao_indisponivel")
+    with pytest.raises(HTTPException) as ei:
+        w.svc.admitir(ORG, AGENT, w.loop.id, suite="comportamento", compiled_hash="h2", limite_usd=2.0,
+                      ler_resumo=lambda rid: resumo if rid == run else None)
+    assert ei.value.detail["code"] == "loop_encerrado"
+    e = w.estado()
+    assert e["status"] == "parado" and e["motivo_parada"] == "erro" and e["detalhe_parada"]["codigo"] == "qualificacao_indisponivel"
+    assert e["serie"][0]["status"] == "erro" and e["serie"][0]["erro_mensagem"] == "46 de 46 casos terminaram em erro."
+    assert e["estado_driver"] == "encerrado"
 
 
 def test_closing_is_idempotent_and_a_run_without_a_loop_is_ignored():

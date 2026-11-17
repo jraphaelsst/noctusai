@@ -322,6 +322,10 @@ class EvalRunOut(BaseModel):
     #: judge, summed over every result) — ``None`` until the runner has
     #: written at least one result.
     custo_usd: float | None = None
+    #: Migration 088 (additive): a run whose cases ERRORED is ``erro`` | ``parcial_com_erros`` (never ``concluida``):
+    #: the first error's code and how many cases errored. ``score`` is ``None`` when nothing was measured.
+    erro_codigo: str | None = None
+    casos_com_erro: int = 0
 
 
 class EvalRunListOut(BaseModel):

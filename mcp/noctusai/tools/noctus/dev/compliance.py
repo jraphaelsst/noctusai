@@ -16600,6 +16600,28 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
 #: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
 #: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
 _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
+    # agents 088 (eval errors + loop driver): three status/reason VOCABULARY CHECKs re-created with the new values ('erro',
+    # 'parcial_com_erros', the stop reason 'erro'). Pure value lists (no cross-column logic) written only by our own runner /
+    # loop service from the code constants; the migration pins them to those constants (tests/test_migration_eval_erro_e_loop_driver.py
+    # compares each CHECK to RUN_STATUSES / MOTIVOS_PARADA) and the widened constraints do not exist in prod to probe until it is applied.
+    (
+        "products/agents/backend/migrations/088_eval_erro_e_loop_driver.sql",
+        "eval_runs_status_check",
+        "Vocabulary-only CHECK widened with 'erro'/'parcial_com_erros'; written from the runner's fixed literals and pinned to "
+        "RUN_STATUSES by test_migration_eval_erro_e_loop_driver; unapplied, so there is no live constraint to probe yet.",
+    ),
+    (
+        "products/agents/backend/migrations/088_eval_erro_e_loop_driver.sql",
+        "eval_loop_rodadas_status_check",
+        "Vocabulary-only CHECK widened with 'erro'/'parcial_com_erros'; written by the loop service from the run's own status and "
+        "pinned by test_migration_eval_erro_e_loop_driver; unapplied, so there is no live constraint to probe yet.",
+    ),
+    (
+        "products/agents/backend/migrations/088_eval_erro_e_loop_driver.sql",
+        "eval_loops_motivo_parada_check",
+        "Vocabulary-only CHECK widened with the stop reason 'erro'; pinned to MOTIVOS_PARADA by "
+        "test_migration_eval_erro_e_loop_driver; unapplied, so there is no live constraint to probe yet.",
+    ),
     # orbity 035: composite (org_id, ...) unique indexes that exist ONLY as ON CONFLICT arbiters for the org-bound client (it
     # refuses an upsert whose conflict target lacks org_id). The old, stricter global keys (campaign_metrics_campaign_date_ux,
     # lead_scoring_results_lead_id_key) stay and fire first on any duplicate (same error class), so a duplicate-insert probe

@@ -31,7 +31,8 @@ def test_one_active_loop_per_agent_and_suite_and_one_round_per_seq_and_run():
 
 def test_the_stop_reasons_in_the_check_match_the_code_and_an_active_loop_has_none():
     body = SQL[SQL.index("motivo_parada TEXT NULL CHECK"):SQL.index("detalhe_parada JSONB")]
-    assert {m for m in MOTIVOS_PARADA} == {t.strip().strip("'") for t in body.split("IN (")[1].split(")")[0].replace("\n", "").split(",")}
+    # 076 declared the original reasons; migration 088 widens the CHECK with `erro` (pinned in test_migration_eval_erro_e_loop_driver)
+    assert {m for m in MOTIVOS_PARADA} - {"erro"} == {t.strip().strip("'") for t in body.split("IN (")[1].split(")")[0].replace("\n", "").split(",")}
     assert "status = 'ativo' AND motivo_parada IS NULL AND stopped_at IS NULL" in SQL
 
 

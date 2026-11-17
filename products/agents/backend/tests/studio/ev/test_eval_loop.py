@@ -43,11 +43,27 @@ class TestImprovementAndOvercalls:  # G5
     def test_float_noise_is_not_an_improvement(self):
         assert melhorou([_r(1, 0.7)], 0.7 + 1e-12) is False
 
-    def test_an_unscored_round_is_neutral_but_still_costs(self):
+    def test_a_cancelled_round_is_neutral_but_still_costs(self):
         loop = _loop(gasto_usd=3.0)
-        d = _fechar(loop, [_r(1, 0.5), _r(2, 0.5)], 3, None, status="falhou", custo_usd=2.0)
+        d = _fechar(loop, [_r(1, 0.5), _r(2, 0.5)], 3, None, status="cancelada", custo_usd=2.0)
         assert d.melhorou is None and d.overcall is False and d.gasto_usd == 5.0
         assert d.sem_melhora_seguidas == 1 and d.parada is None  # the streak is untouched by the neutral round
+
+    def test_an_errored_unscored_round_stops_the_loop_with_the_reason_never_a_neutral_shrug(self):
+        loop = _loop(gasto_usd=3.0)
+        for status in ("erro", "falhou"):
+            d = _fechar(loop, [_r(1, 0.5)], 2, None, status=status, custo_usd=0.0)
+            assert d.parada is not None and d.parada.motivo == "erro" and d.parada.status == "parado"
+            assert d.parada.detalhe["rodada"] == 2 and d.melhorou is None and d.overcall is False
+
+    def test_the_error_detail_travels_with_the_stop(self):
+        d = avaliar_rodada(_loop(), [], seq=1, status="erro", score=None, custo_usd=0.0, falhas=(), compiled_hash="h",
+                           erro={"codigo": "qualificacao_indisponivel", "mensagem": "O agente não tem padrão de qualificação."})
+        assert d.parada.detalhe["codigo"] == "qualificacao_indisponivel"
+
+    def test_a_partial_run_is_scored_over_what_was_measured_and_does_not_stop_the_loop(self):
+        d = _fechar(_loop(), [_r(1, 0.5)], 2, 0.6, status="parcial_com_erros")
+        assert d.parada is None and d.melhorou is True
 
 
 class TestStopRules:
