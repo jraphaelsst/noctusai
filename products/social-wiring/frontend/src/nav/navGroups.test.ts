@@ -163,18 +163,7 @@ describe.each([
     }
   });
 
-  it("Edição de Imagem sits inside CoreStudio before Pesquisa, with Operação/Configuração; cms module is gone", () => {
-    expect(byKey(groups, "cms")).toBeUndefined();
-    const cs = byKey(groups, "corestudio")!;
-    expect(cs.groups!.slice(0, 2).map((g) => g.label)).toEqual(["Edição de Imagem", "Pesquisa"]);
-    const ed = cs.groups![0];
-    expect(ed.groups!.map((g) => g.label)).toEqual(["Operação", "Configuração"]);
-    expect(allItems([ed as AnyGroup]).every((i) => i.href.startsWith("/edicao-fotos"))).toBe(true);
-    expect(allItems([ed as AnyGroup])).toHaveLength(10);
-    expect(topGroupOf("/edicao-fotos/novo")).toEqual(["corestudio"]);
-  });
-
-  it("ImobShotAI sits inside CoreStudio before Pesquisa and absorbs Edição de Imagem under Configurações; cms module is gone", () => {
+  it("ImobShotAI sits inside CoreStudio before Pesquisa and absorbs Edição de Imagem (Operação/Configuração); cms module is gone", () => {
     expect(byKey(groups, "cms")).toBeUndefined();
     expect(byKey(groups, "edicao-fotos")).toBeUndefined();
     const cs = byKey(groups, "corestudio")!;
@@ -185,10 +174,10 @@ describe.each([
       ["Nova edição de fotos", "/imobshotai/fotos/novo"],
       ["Vídeo", "/imobshotai/video/novo"],
     ]);
-    expect(imob.groups!.map((g) => g.label)).toEqual(["Configurações"]);
-    const config = imob.groups![0];
-    expect(config.items.every((i) => i.href.startsWith("/edicao-fotos"))).toBe(true);
-    expect(config.items).toHaveLength(10);
+    expect(imob.groups!.map((g) => g.label)).toEqual(["Operação", "Configuração"]);
+    const edicao = allItems(imob.groups! as AnyGroup[]);
+    expect(edicao.every((i) => i.href.startsWith("/edicao-fotos"))).toBe(true);
+    expect(edicao).toHaveLength(10);
     expect(topGroupOf("/edicao-fotos/novo")).toEqual(["corestudio"]);
     expect(topGroupOf("/imobshotai")).toEqual(["corestudio"]);
   });
