@@ -56,6 +56,33 @@ def linked_worktree_top(start: Path) -> Path | None:
     return Path(top)
 
 
+def _wire_frontend(own: Path, toolkit_root: Path) -> list[str]:
+    """Seed-frontend node_modules (+ de-contaminate a hand-made product symlink): without them `vite build` in a
+    harness worktree fails on `@vitejs/plugin-react-swc` / `tailwindcss` (the factory resolves from the worktree seed)."""
+    common = _git(own, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not common:
+        return []
+    primary = Path(common).parent
+    if primary.resolve() == own.resolve():
+        return []
+    sys.path.insert(0, str(toolkit_root / "mcp" / "noctusai"))
+    try:
+        import contextlib, io  # noqa: PLC0415 - the toolkit import prints benign unrelated stderr noise
+        with contextlib.redirect_stderr(io.StringIO()):
+            from tools.noctus.dev import task_branch as tb  # noqa: PLC0415 - heavy, only on a linked worktree
+        res = tb.wire_harness_worktree_frontend_env(str(primary), str(own))
+    except Exception as exc:  # noqa: BLE001 - never block a session, never swallow it
+        return [f"[noc-frontend-env] LOUD: wiring the frontend node_modules failed: {type(exc).__name__}: {exc}. "
+                "Run noctus.dev.task_branch action=start slug=<slug> paths=[products/<p>/x] confirm=True."]
+    out = []
+    if res["wired"]:
+        out.append(f"[noc-frontend-env] {own.name}: linked {len(res['wired'])} frontend node_modules entr(ies) "
+                   "(seed frontends; vite build works here).")
+    if res["failed"]:
+        out.append(f"[noc-frontend-env] LOUD: {len(res['failed'])} link(s) failed, e.g. {res['failed'][0].get('reason')}")
+    return out
+
+
 def wire(start: Path, toolkit_root: Path, *, npm_timeout: int = NPM_TIMEOUT_S) -> list[str]:
     """Lines to tell the agent; [] when nothing needed doing. See the module docstring."""
     mod = _toolchain_module(toolkit_root)
@@ -74,6 +101,8 @@ def wire(start: Path, toolkit_root: Path, *, npm_timeout: int = NPM_TIMEOUT_S) -
                          "(under NOC_REQUIRE_REAL_PG=1 they FAIL, naming this).")
         elif not had or tc.source in ("linked", "installed"):
             lines.append(f"[noc-node-toolchain] {own.name}: node toolchain {tc.source} (mcp/noctusai/node/node_modules).")
+    if own is not None:
+        lines.extend(_wire_frontend(own, toolkit_root))
     common = _git(start, "rev-parse", "--path-format=absolute", "--git-common-dir")
     wt_dir = Path(common).parent / ".claude" / "worktrees" if common else None
     linked = 0
