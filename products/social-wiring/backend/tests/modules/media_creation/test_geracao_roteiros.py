@@ -254,9 +254,10 @@ class TestLeitura:
         assert set(d) == {
             "id", "nome", "headline_texto", "headline_id", "status", "post", "created_at", "instrucoes", "fonte", "duracao",
             "brain_id", "viral", "perguntas", "etapa", "conteudo", "fontes", "versao", "feedback", "feedback_motivo", "erro",
-            "estrutura",
+            "estrutura", "aprovacao",
         }
         assert d["fontes"] is None
+        assert d["aprovacao"] == {"status": "none", "versao": None, "decidido_por": None, "decidido_em": None, "motivo": None}
 
     def test_excluir_so_apaga_da_propria_org(self, rc):
         a = _criar(rc).json()["data"]["id"]
@@ -423,10 +424,11 @@ class TestGeracaoFalhas:
         asyncio.run(executar_geracao(_job(rc, rid, "roteiro.gerar"), db=rc.mock_supabase, llm=Llm("## x"), cfg=_cfg()))
         assert _row(rc, rid)["status"] == "falha"
 
-    def test_conteudo_acima_do_teto_e_cortado(self, rc):
+    def test_conteudo_acima_do_teto_e_falha_codificada_nunca_cortado(self, rc):
         rid = self._processando(rc)
         asyncio.run(executar_geracao(_job(rc, rid, "roteiro.gerar"), db=rc.mock_supabase, llm=Llm("x" * 40000), cfg=_cfg()))
-        assert len(_row(rc, rid)["conteudo"]) == 30000
+        row = _row(rc, rid)
+        assert row["status"] == "falha" and "saida_limite_excedido" in row["erro"] and not row.get("conteudo")
 
     def test_dead_letter_reconcilia_para_falha_e_e_idempotente(self, rc):
         rid = self._processando(rc)

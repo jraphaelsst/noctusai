@@ -34,6 +34,7 @@ owns_kb:
   - CONTEXT/PATTERNS/common/tmp-artifact-cleanup.md
   - CONTEXT/05-INFRASTRUCTURE.md
   - CONTEXT/GUIDES/production-deploy.md
+  - CONTEXT/GUIDES/security-infra-hardening-runbook.md
   - CONTEXT/GUIDES/deploy-workspace-online.md
   - CONTEXT/GUIDES/setup.md
   - CONTEXT/PATTERNS/devops/sre-craft-canon.md
@@ -100,7 +101,7 @@ Worktree off `origin/dev`; commit ONLY `feat/<your-branch>`. NEVER touch `dev` /
 ## Owned KB depth (canonical territory)
 **Reliability (SRE)** → `KB § PATTERNS/devops/sre-craft-canon.md` · `KB § PATTERNS/devops/prod-watchdog.md` · `KB § 05-INFRASTRUCTURE.md`.
 **Containers** → `KB § PATTERNS/devops/containerization.md` · `KB § PATTERNS/devops/containerization-operations.md` · `KB § PATTERNS/devops/container-sanitization.md` · `KB § PATTERNS/devops/base-image-dep-freshness.md` · `KB § PATTERNS/devops/product-lockfile-and-slug-drift.md`.
-**Deploy & parity** → `KB § PATTERNS/devops/deploy-config-contract.md` · `KB § PATTERNS/devops/dev-prod-parity.md` · `KB § PATTERNS/devops/dev-fleet-dormant.md` · `KB § PATTERNS/devops/prod-deploy-safety-gates.md` · `KB § PATTERNS/devops/predeploy-leg-verify-or-block.md` · `KB § PATTERNS/devops/prod-exposure-consent.md` · `KB § PATTERNS/devops/ship-consent-riders.md` · `KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md` · `KB § GUIDES/production-deploy.md` · `KB § GUIDES/deploy-workspace-online.md` · `KB § GUIDES/setup.md`.
+**Deploy & parity** → `KB § PATTERNS/devops/deploy-config-contract.md` · `KB § PATTERNS/devops/dev-prod-parity.md` · `KB § PATTERNS/devops/dev-fleet-dormant.md` · `KB § PATTERNS/devops/prod-deploy-safety-gates.md` · `KB § PATTERNS/devops/predeploy-leg-verify-or-block.md` · `KB § PATTERNS/devops/prod-exposure-consent.md` · `KB § PATTERNS/devops/ship-consent-riders.md` · `KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md` · `KB § GUIDES/production-deploy.md` · `KB § GUIDES/security-infra-hardening-runbook.md` · `KB § GUIDES/deploy-workspace-online.md` · `KB § GUIDES/setup.md`.
 **CI / environment** → `KB § PATTERNS/devops/ci-security-gates.md` · `KB § PATTERNS/devops/ci-deploy-prod.md` · `KB § PATTERNS/devops/dev-main-ci-gates.md` · `KB § PATTERNS/devops/ci-embedding-cache-gate.md` · `KB § PATTERNS/devops/ssh-deploy-key-restrictions.md` · `KB § PATTERNS/devops/environment.md`.
 **Cache runtime in prod** → `KB § PATTERNS/devops/prod-cache-container.md` · `KB § PATTERNS/devops/cache-deploy-mirror.md` (cache/vector design + harness mods → `tooling-engineer` since 2026-11-05).
 **Dev harness** → `KB § PATTERNS/devops/hardware-admission-budget.md` · `KB § PATTERNS/devops/usage-evaluation.md` · `KB § PATTERNS/common/tmp-artifact-cleanup.md`.
