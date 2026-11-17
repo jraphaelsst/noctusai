@@ -214,6 +214,7 @@ def _seed_connection(
     authorized_numbers: list[str] | None = None,
     bound_chats: list[dict] | None = None,
     auto_reply_enabled: bool = False,
+    base_url: str = "https://waha.example.com",
 ) -> None:
     fernet = Fernet(_TEST_ENCRYPTION_KEY.encode("utf-8"))
     encrypted = fernet.encrypt(b"fake-waha-api-key").decode("ascii")
@@ -225,7 +226,7 @@ def _seed_connection(
                 "org_id": org_id,
                 "user_id": user_id,
                 "label": "Test line",
-                "base_url": "https://waha.example.com",
+                "base_url": base_url,
                 "session_name": "default",
                 "encrypted_api_key": encrypted,
                 "webhook_url": None,
@@ -651,3 +652,53 @@ class TestInboundMessage:
         redis_lib.from_url(settings.redis_url, decode_responses=True).delete(
             f"whatsapp:msg_seen:{msg_id}"
         )
+
+
+# ── Per-line instance secrets (S2 / P4): two orgs on two WAHA instances cannot sign for each other ───────────────────────────
+class TestPerLineHmac:
+    _BODY = b'{"event":"session.status","session":"default","payload":{"status":"WORKING"}}'
+
+    @pytest.fixture
+    def two_lines(self, client, monkeypatch):
+        from app.main import app
+        from app.waha_instances import WahaInstance, get_waha_instances
+
+        tc, _sb, db = client
+        monkeypatch.setenv("WAHA_SW_A_HMAC_SECRET", "secret-a")
+        monkeypatch.setenv("WAHA_SW_B_HMAC_SECRET", "secret-b")
+        app.dependency_overrides[get_waha_instances] = lambda: (
+            WahaInstance("sw-a", "http://waha-sw-a:3000", "default", "WAHA_SW_A_API_KEY", "WAHA_SW_A_HMAC_SECRET"),
+            WahaInstance("sw-b", "http://waha-sw-b:3000", "default", "WAHA_SW_B_API_KEY", "WAHA_SW_B_HMAC_SECRET"),
+        )
+        _seed_connection(db, base_url="http://waha-sw-a:3000")
+        yield tc, db
+        app.dependency_overrides.pop(get_waha_instances, None)
+
+    def _post(self, tc, secret):
+        return tc.post(_TOKEN_URL, content=self._BODY,
+                       headers={"X-Webhook-Hmac": _sig(self._BODY, secret), "content-type": "application/json"})
+
+    def test_a_line_accepts_its_own_instances_secret(self, two_lines):
+        tc, _db = two_lines
+        assert self._post(tc, "secret-a").status_code == 200
+
+    def test_another_instances_secret_cannot_sign_for_this_line(self, two_lines):
+        tc, _db = two_lines
+        assert self._post(tc, "secret-b").status_code == 401
+
+    def test_the_global_secret_cannot_sign_for_an_instance_line(self, two_lines, override_settings):
+        override_settings(waha_webhook_hmac_secret="sekrit")
+        tc, _db = two_lines
+        assert self._post(tc, "sekrit").status_code == 401
+
+    def test_an_instance_line_with_no_secret_configured_is_refused_unsigned(self, two_lines, monkeypatch):
+        monkeypatch.delenv("WAHA_SW_A_HMAC_SECRET")
+        tc, _db = two_lines
+        resp = tc.post(_TOKEN_URL, content=self._BODY, headers={"content-type": "application/json"})
+        assert resp.status_code == 401
+
+    def test_a_legacy_line_still_uses_the_global_secret(self, client, override_settings):
+        tc, _sb, db = client
+        _seed_connection(db)  # base_url is no declared instance
+        override_settings(waha_webhook_hmac_secret="sekrit")
+        assert self._post(tc, "sekrit").status_code == 200
