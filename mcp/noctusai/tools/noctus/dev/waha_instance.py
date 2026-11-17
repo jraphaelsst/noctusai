@@ -79,6 +79,61 @@ def relay_base(inst: dict) -> str:
     return f"http://waha-{inst['name']}:3001"
 
 
+def line_base_url(inst: dict) -> str:
+    """The address a product reaches the line on (the declared one for an external host)."""
+    return inst["base_url"] if inst.get("external") else f"http://waha-{inst['name']}:3000"
+
+
+def line_env_names(inst: dict) -> dict[str, str]:
+    """The env NAMES (never values) the PRODUCT process reads for this line: the root .env copy of the .env.fleet secrets."""
+    if inst.get("external"):
+        return {"api_key": inst["api_key_env"], "hmac_secret": inst["hmac_secret_env"]}
+    k = inst_keys(inst)
+    return {"api_key": k["api_key"], "hmac_secret": k["hmac_secret"]}
+
+
+def product_line_policies_json(spec: dict, product: str) -> str:
+    """The `WAHA_LINE_POLICIES` env value of a product whose lines are DB-sourced: the external shared host stays the
+    legacy `"*"` default (a shared session's markOnline/fullSync must not be rewritten, 2026-10-15), every OTHER declared
+    line of the product is registered by URL. Byte-checked against docker-compose.prod.yml by a keeper."""
+    out: dict[str, dict] = {}
+    for inst in spec["instances"]:
+        if inst["product"] != product:
+            continue
+        pol = {k: inst["line_policy"][k] for k in _POLICY_KEYS}
+        if inst.get("external"):
+            out["*"] = pol
+        else:
+            out[line_base_url(inst)] = pol
+    return json.dumps(dict(sorted(out.items(), key=lambda kv: (kv[0] != "*", kv[0]))), separators=(",", ":"))
+
+
+DECLARED_LINES_REL = "seed/lib/backend/noctusai_lib/integrations/whatsapp/declared_lines.py"
+
+
+def render_declared_lines(spec: dict) -> str:
+    """Generated seed module: the CLOSED list of declared WhatsApp lines (name -> product, base_url, session, the env NAMES
+    of its api key + HMAC secret, its policy). A product resolves a connection's WAHA server FROM this, never from a
+    hand-synced copy."""
+    rows = {}
+    for inst in spec["instances"]:
+        env = line_env_names(inst)
+        rows[inst["name"]] = {
+            "product": inst["product"], "base_url": line_base_url(inst), "session": inst["session"],
+            "api_key_env": env["api_key"], "hmac_secret_env": env["hmac_secret"],
+            "shared": bool(inst.get("external")), "line_policy": {k: inst["line_policy"][k] for k in _POLICY_KEYS},
+        }
+    body = "".join(f"    {n!r}: {v!r},\n" for n, v in sorted(rows.items()))
+    return (
+        '"""GENERATED from deploy/fleet/waha-instances.yml by noctus.dev.waha_instance action=\'render\' -- DO NOT EDIT.\n\n'
+        "The closed list of declared WhatsApp lines: name -> product, base_url, session, the ENV NAMES of the api key and the\n"
+        "webhook HMAC secret (never values), `shared` (the legacy shared host) and the declared line policy.\n"
+        "check_waha_instances_render_sync fails when this file differs from the render. KB § CONTEXT/INTEGRATIONS/whatsapp.md.\n"
+        '"""\n'
+        "DECLARED_LINES: dict[str, dict] = {\n" + body + "}\n"
+    )
+
+
 READ_ONLY_REL = "seed/lib/backend/noctusai_lib/integrations/whatsapp/read_only_lines.py"
 
 
@@ -149,6 +204,23 @@ def _validate_policy(i: int, name: str, inst: dict) -> None:
                              "(the edge relays the core's webhooks there; the core has no route to the product)")
 
 
+def _validate_external(i: int, name: str, inst: dict) -> None:
+    """`external: true` = a host this file DECLARES but does not render (the shared `waha` service lives in
+    compose.infra.prod.yml). It names its own service/container/base_url and the env names of its credentials."""
+    if "external" in inst and not isinstance(inst["external"], bool):
+        raise ValueError(f"instances[{i}] ({name}): `external` must be a boolean")
+    inst.setdefault("external", False)
+    if not inst["external"]:
+        return
+    for k in ("service", "container", "base_url", "api_key_env", "hmac_secret_env"):
+        if not isinstance(inst.get(k), str) or not inst[k]:
+            raise ValueError(f"instances[{i}] ({name}): an `external: true` host requires `{k}`")
+    if not re.match(r"^https?://[A-Za-z0-9._-]+(:\d+)?$", inst["base_url"]):
+        raise ValueError(f"instances[{i}] ({name}): base_url must be a bare http(s)://host[:port]")
+    if inst["edge_deny_writes"] or inst.get("personal"):
+        raise ValueError(f"instances[{i}] ({name}): an `external: true` host cannot be an edge or personal line")
+
+
 def parse_instances_text(text: str) -> dict:
     return parse_instances(text)
 
@@ -178,6 +250,7 @@ def parse_instances(text: str) -> dict:
             raise ValueError(f"instances[{i}] ({name}): missing `product`")
         inst.setdefault("session", "default")
         _validate_policy(i, name, inst)
+        _validate_external(i, name, inst)
     return data
 
 
@@ -341,7 +414,7 @@ def render_compose(spec: dict) -> str:
         "# KB § CONTEXT/INTEGRATIONS/whatsapp.md § One WAHA per number.\n"
         "name: noctus-waha\n\nservices:\n"
     ]
-    out += [_service(spec, i) for i in spec["instances"]]
+    out += [_service(spec, i) for i in spec["instances"] if not i.get("external")]
     out.append("\nnetworks:\n  noctus-net:\n    name: noctus-net\n    external: true\n")
     for i in spec["instances"]:
         if i.get("edge_deny_writes"):
@@ -349,6 +422,8 @@ def render_compose(spec: dict) -> str:
             out.append(f"  waha_{n.replace('-', '_')}_edge:\n    name: noctus-waha-{n}-edge\n")
     out.append("\nvolumes:\n")
     for i in spec["instances"]:
+        if i.get("external"):
+            continue
         n = i["name"]
         out.append(f"  waha_{n.replace('-', '_')}:\n    name: noctus-waha-{n}\n")
     return "".join(out)
@@ -399,7 +474,7 @@ def _list(spec: dict, host: str) -> dict:
     rows = []
     for inst in spec["instances"]:
         n = inst["name"]
-        c = f"noctus-{core_service(inst)}"
+        c = inst["container"] if inst.get("external") else f"noctus-{core_service(inst)}"
         fmt = "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}"
         rc, out, _ = _sh(host, f"docker inspect -f '{fmt}' {c}")
         row = {"name": n, "container": c, "declared": True, "running": False, "health": None, "rss_mb": None,
@@ -426,6 +501,8 @@ def _session_status(host: str, container: str, name: str) -> str | None:
 
 def _plan(spec: dict, name: str) -> dict:
     inst = _inst(spec, name)
+    if inst.get("external"):
+        raise ValueError(f"instance {name!r} is an external host (compose.infra.prod.yml): nothing to render or generate")
     k = inst_keys(inst)
     up = inst["product"].upper().replace("-", "_")
     return {
@@ -796,12 +873,15 @@ def waha_instance(action: str = "list", name: str | None = None, ssh_host: str =
             if write:
                 (root / COMPOSE_REL).write_text(text, encoding="utf-8")
                 (root / READ_ONLY_REL).write_text(render_read_only_lines(spec), encoding="utf-8")
+                (root / DECLARED_LINES_REL).write_text(render_declared_lines(spec), encoding="utf-8")
             return {"ok": True, "action": "render", "written": write, "compose": text,
                     "read_only_lines": render_read_only_lines(spec)}
         if action == "list":
             return _list(spec, ssh_host)
         if action in ("plan", "add"):
             return _plan(spec, name or "")
+        if action in ("provision", "apply", "remove") and name and _inst(spec, name).get("external"):
+            raise ValueError(f"instance {name!r} is an external host (compose.infra.prod.yml): not managed by this tool")
         if action == "provision":
             return _provision(spec, name or "", ssh_host, confirm, root=root)
         if action == "apply":
@@ -838,4 +918,5 @@ def register(server) -> None:
 
 __all__ = ["waha_instance", "register", "render_compose", "parse_instances", "env_keys", "inst_keys", "load_spec",
            "line_policy_json", "core_service", "services_of", "render_read_only_lines", "READ_ONLY_REL",
-           "relay_base", "policy_noweb"]
+           "relay_base", "policy_noweb", "line_base_url", "line_env_names", "product_line_policies_json",
+           "render_declared_lines", "DECLARED_LINES_REL"]
