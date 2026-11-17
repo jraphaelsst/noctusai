@@ -55,6 +55,7 @@
     "306_imovel_campos_manuais.sql": "98759bd37a0319ae50bf91ecfbf3109062915b016155e29a8733321c08bf429b",
     "307_certidao_consulta_manual_sem_documento.sql": "07bd6d537a5ccf58b59a9b4477e26a739cb60bd14ddc41e9ce83e1696c66c4ee",
     "308_contrato_especificacoes.sql": "af4fc4895274a2c922dff78e5ced190f6cbfacd443175aa77ed0c5ad4e451cdb",
+    "309_status_pagina_guia_documentos.sql": "940089c4deb2b6aabef05b4be5c7a13beea81424912ab5d76a702833afd8c805",
     "310_permuta_matches_motivo_rejeicao.sql": "d15d5dfd46f3e29f8c179fff0f012f7a8c4936cf0ea7dc26087f4aeb4d2ba8e0",
     "311_status_pagina_leftovers.sql": "ed85f17f0f9f7649a09210747a05ae1635a0fbf919ba5b9d0f0301591e1015bb",
     "312_leads_meta_external_key_backfill.sql": "b0c742c07a4ea1e00b04e11a91e183bc845025658fb0fc431d464ff9e61299c6",
@@ -81,6 +82,21 @@
     "336_vitrine_exclusivos_orgs.sql": "af1ba98fc3be53ee0c5385c5a34ee216d1de4ea5d7ebcbeb57981f6cedda25af",
     "337_vista_clientes_sync.sql": "d07d791c92f6e642741ed69228cc1089e17cb4dca60d24e7fafe3666109515a6",
     "338_roteiro_ciclo_de_vida.sql": "b46a34288180adb8a46c98e3a3eaea3f6111b52f9e0c38ae28da35c730c55e2a",
-    "339_marca_one_per_org.sql": "3c9a79209be958b322ef12a28f532359719366b85fcbab35aea786be36fb26f7"
+    "339_marca_one_per_org.sql": "3c9a79209be958b322ef12a28f532359719366b85fcbab35aea786be36fb26f7",
+    "340_transcricoes_formato_shape.sql": "3b997786d54b6b6050c0bde411e338ed4f37001d6ad5271d0553401ffb2cd15c",
+    "341_resumable_uploads.sql": "6265f5d305742b7862d8b63dc65416b69402e734055632ff01af08eac3a80ec7",
+    "342_cs_post_axes.sql": "839cd028554c6cd8fd3c497d6146f13fae4cd254280df06d206d04b628a1fb5c",
+    "343_transcricao_sem_cota_diaria.sql": "f94f774aff40b8ba792fc8c1c8866f2b87c86825b351227e75b0eaa9b8d841d9",
+    "344_imobshotai_cards.sql": "039c941e22bb8d2f55e3048b7fcaa38e63e740b982088baef4d65dd7f61aed66",
+    "345_imobshot_card_transition_log.sql": "16c69dc3caafd599f74ca5b901fa6e6134e32c6136e77f249acd73aee1bc358b",
+    "346_imobshot_eventos_contract.sql": "07651b74e779600313873b32e060afc78cc58784cc7b23935e471b60ce4153bd",
+    "347_approvals.sql": "e6a74b3705c3744e63bada7cbd13834de73eb260268dd2635d047310da9b0a02",
+    "348_cs_esteira_papel_agendado.sql": "e2c097ca02a11b811bab1eddc58eb75600cf746f36aab1287f894ae74cfcc3c1",
+    "349_imovel_historico_vista_escrita.sql": "246c3659b6890f2c292910e1fd3e477b21f39f96f923f5b101b927d8b40df60d",
+    "350_cs_estruturas.sql": "a14dd8de929ba4b86c45ac7367a16afa9b8c4afde8df7a848e60e57e48e31137",
+    "351_cs_library_platform_scope.sql": "337717d01fe9936a40fb987087d2a41a419aa17763cd41c28e4829cdadec9ab7",
+    "352_cs_unified_chat.sql": "32f0f708ca08d08e5c36009f22094f5757c52a4be31ebad6edc8ef1001f9cc1f",
+    "353_cs_post_insumos_apagados.sql": "6c5f6f2e124a89ccd44efdf35c945030ccef3132ca80a0aa1d5d3372d6e2f36b",
+    "354_julia_avaliacao_pedido_ativo.sql": "3ae2242842b3027306bbe97c5a5c0eb36175f14bb41463475e402dbbd297b9a7"
   }
 }

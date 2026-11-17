@@ -136,7 +136,8 @@ async def delete_objects(storage: StorageBackend, cfg: CommerceConfig, rows: lis
 async def with_url(storage: StorageBackend, cfg: CommerceConfig, row: dict) -> dict:
     """The media row with a short-TTL signed `url` (and without the raw storage path)."""
     url: Optional[str] = await storage.signed_url(
-        bucket=cfg.bucket, key=row["storage_path"], expires_in_seconds=cfg.signed_url_ttl_seconds
+        bucket=cfg.bucket, key=row["storage_path"], expires_in_seconds=cfg.signed_url_ttl_seconds,
+        ttl_reason=cfg.signed_url_ttl_reason,
     )
     public = {k: v for k, v in row.items() if k != "storage_path"}
     public["url"] = url

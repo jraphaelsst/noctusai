@@ -467,38 +467,47 @@ def test_snapshot_run_not_configured_still_returns_stub():
     assert result.get("account_id") is None
 
 
-def test_snapshot_run_with_full_auth_calls_http(monkeypatch):
-    """When api_token + base_url are provided, the tool calls the product API."""
+def test_snapshot_run_with_full_auth_calls_http():
+    """When api_token + base_url are provided, the tool POSTs to the product API (real local server, no stand-in)."""
+    import json as _json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    seen: dict = {}
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            seen["path"], seen["auth"] = self.path, self.headers.get("Authorization")
+            body = _json.dumps({"ok": True}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
     acc = _fake_account()
     client = _make_client(accounts=[acc])
-
-    # Mock httpx inside the module
-    import types
-    fake_response = MagicMock()
-    fake_response.status_code = 200
-    fake_response.headers = {"content-type": "application/json"}
-    fake_response.json.return_value = {"ok": True}
-
-    fake_httpx = types.SimpleNamespace(
-        Client=MagicMock(return_value=MagicMock(
-            __enter__=MagicMock(return_value=MagicMock(
-                post=MagicMock(return_value=fake_response)
-            )),
-            __exit__=MagicMock(return_value=False),
-        ))
-    )
-
-    with patch("tools.noctus.youtube.snapshot_run.get_yt_client", return_value=client), \
-         patch("tools.noctus.youtube.snapshot_run.resolve_account", return_value=acc), \
-         patch.dict("sys.modules", {"httpx": fake_httpx}):
-        result = snapshot_run(
-            account=acc["id"],
-            api_token="tok_test",
-            base_url="https://social-wiring.example.com",
-        )
+    try:
+        with patch("tools.noctus.youtube.snapshot_run.get_yt_client", return_value=client), \
+             patch("tools.noctus.youtube.snapshot_run.resolve_account", return_value=acc):
+            result = snapshot_run(
+                account=acc["id"],
+                api_token="tok_test",
+                base_url=f"http://127.0.0.1:{httpd.server_address[1]}",
+            )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
     assert result.get("status") == "triggered"
     assert result["account_id"] == acc["id"]
+    assert result["response"] == {"ok": True}
+    assert seen["auth"] == "Bearer tok_test" and "/api/youtube/snapshot/run" in seen["path"]
 
 
 # ─── registration smoke ───────────────────────────────────────────────────────

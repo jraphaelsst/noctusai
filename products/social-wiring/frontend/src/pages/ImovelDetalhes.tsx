@@ -53,7 +53,7 @@ import ImovelCondicoesComerciaisSection from "@/components/imovel/ImovelCondicoe
 import ImovelConstrucaoSection from "@/components/imovel/ImovelConstrucaoSection";
 import ImovelDescricaoSection from "@/components/imovel/ImovelDescricaoSection";
 import ImovelDocumentosCard from "@/components/imovel/ImovelDocumentosCard";
-import { DivergenciaCampoBadge, ImovelDivergenciasVista } from "@/components/imovel/ImovelDivergenciasVista";
+import { ImovelHistoricoCard } from "@/components/imovel/ImovelHistoricoCard";
 import { ImovelNotasCard } from "@/components/imovel/ImovelNotasCard";
 import { VistaSyncProvider } from "@/components/imovel/VistaSyncContext";
 import { ImovelInteressadosCard } from "@/components/imovel/ImovelInteressadosCard";
@@ -298,9 +298,6 @@ export default function ImovelDetalhes() {
         </div>
       </div>
 
-      {/* Transitional + removable: Vista-vs-ours divergences a human decides. */}
-      {codigo && <ImovelDivergenciasVista codigo={codigo} />}
-
       {codigo && temDuplicatas && (
         <ImovelDuplicatasSection codigo={codigo} temPendentes={temDuplicatas} />
       )}
@@ -366,14 +363,6 @@ export default function ImovelDetalhes() {
             error={dadosMutation.error?.message ?? null}
             onSave={(patch) => dadosMutation.mutate(patch)}
             mirror={{ area_terreno: imovel.area_terreno, area_construida: imovel.area_construida }}
-            rowBadge={(campo) =>
-              codigo ? (
-                <DivergenciaCampoBadge
-                  codigo={codigo}
-                  campos={[campo, campo.replace(/_m2$/, "")]}
-                />
-              ) : null
-            }
           />
 
           {/* § 5.7 Condições comerciais */}
@@ -559,6 +548,9 @@ export default function ImovelDetalhes() {
           {codigo && <ImovelProprietariosCard codigo={codigo} />}
           {codigo && <ImovelInteressadosCard codigo={codigo} />}
           {codigo && <ImovelSimilaresCard codigo={codigo} />}
+
+          {/* Every change to this imóvel (Vista sync, approvals, sends to Vista, prices, notes). */}
+          {codigo && <ImovelHistoricoCard codigo={codigo} />}
 
           {/* Our own notes — owned, full CRUD (migration 315). */}
           {codigo && <ImovelNotasCard codigo={codigo} />}

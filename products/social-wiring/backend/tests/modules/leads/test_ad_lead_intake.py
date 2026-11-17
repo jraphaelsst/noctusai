@@ -72,7 +72,7 @@ def _db(*, lead=None, meta=None, registry=True, mirror=(), corretores_sw=(), ali
         "imovel_corretores": [], "lead_corretor_divergencias": [], "lead_imovel_intakes": [],
         "vista_divergencias_config": [{"org_id": str(ORG), "ativa": True, "destino_user_id": None}] if divergencia_ativa else [],
         "imovel_captacao": [dict(r) for r in captacao], "imovel_dados": [], "julia_proprietarios_contatos": [], "imovel_campo_conflitos": [],
-        "conversation_messages": [], "lead_sources": [],
+        "conversation_messages": [], "lead_sources": [], "imovel_historico": [],
         "ad_lead_intake_config": [{"org_id": str(ORG), "corretor_principal_fallback_vista_codigo": fallback}] if fallback else [],
     }
     for nome, rows in seed.items():
@@ -157,10 +157,12 @@ def test_existing_property_diverged_in_price_is_refreshed_and_the_change_recorde
     assert res["imovel"] == "atualizado"
     assert res["mudancas"]["valor_venda"] == {"antes": 1_290_000.0, "depois": 1_250_000.0}
     assert _rows(db, "imoveis")[0]["valor_venda"] == 1_250_000.0                      # the mirror now says what Vista says
-    # …and the existing divergence mechanism opened the review row: OUR owned value (captação) vs Vista's
-    assert [d["campo"] for d in res["divergencias_vista"]] == ["valor_venda"]
-    [c] = _rows(db, "imovel_campo_conflitos", campo="valor_venda")
-    assert c["status"] == "pendente" and c["valor_anterior"] == 1_290_000.0 and c["valor_proposto"] == 1_250_000.0
+    # …and the sync-with-history rule applied: a captação (our overlay) that differs is NOT an approval -- Vista wins over it and
+    # the history says so (only an owner-confirmed value can open an approval)
+    assert res["divergencias_vista"] == [] and _rows(db, "imovel_campo_conflitos", campo="valor_venda") == []
+    assert _rows(db, "imovel_captacao")[0]["valor_venda"] == 1_250_000.0
+    [h] = _rows(db, "imovel_historico", campo="valor_venda", acao="vista_prevaleceu")
+    assert h["valor_anterior"] == 1_290_000.0 and h["valor_novo"] == 1_250_000.0
 
 
 # ─── Vista outcomes ──────────────────────────────────────────────────────

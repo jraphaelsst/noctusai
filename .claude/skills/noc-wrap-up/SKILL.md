@@ -1,7 +1,7 @@
 ---
 name: noc-wrap-up
 description: Use at end-of-task wrap moments — triggers "anything else?", "are we done?", "wrap up", "what's left?", "final check", "done?", "before we ship", "before I push". Honest 3-5 polish-item survey, never reflexive "all good". Born from the 2026-05-26 evening session that caught 11 silent test failures via this exact discipline.
-version: 1.2.0
+version: 1.3.0
 ---
 
 # noc-wrap-up — honest assessment before the wrap
@@ -15,6 +15,8 @@ version: 1.2.0
    - **Two-leg dispatch footer leftovers** — `noctus.dev.auto_improvement_query open_only=true since=<session-start>` for unresolved `drift-found:` / `scoped-improvement:` entries opened in this session. Tech-lead RESOLVES; engineers SURFACE. Nothing should leave the session in s2-memory if a s3-codified move is cheap. → `KB § PATTERNS/common/scoped-auto-improvement.md`.
    - **s-stage backfills owed** — same query, status filter `s2-memory` or `s3-codified` without a same-target s4. `noctus.dev.codify_log` enforces s4-requires-s3; backfill in-session beats next-session-archaeology. → `KB § PATTERNS/common/methodology-codification-pipeline.md`.
    - **Untracked + uncommitted drift** — `git status --porcelain` at the worktree AND the primary checkout. Untracked at root = drift-fix-on-contact precondition; uncommitted in a peer worktree = potential cross-tree pollution. → `KB § PATTERNS/common/drift-fix-on-contact.md`.
+   - **Background processes** - `noctus.dev.session_end_sweep` reports `clean_wrap`/`wrap_blockers`; while `background_processes` blocks, salvage + stop each leftover with `noctus.dev.bg_process action=stop` (reason + learnings, confirm=true) or `action=declare` it if it must live. Whoever ends the session owns its leftovers. `KB § PATTERNS/common/background-agent-lifecycle.md`
+   - **Deliveries handed to the steward (hand off and end)** - every branch this session built is FILED and accepted (`release_steward action=mine`: `queued_for_steward`/`pending_ci`/`queued`, no `needs_resync`); one handoff message sent to the steward (slugs, heads, verdict refs, order, migrations + consent, runs in flight, "closing"); resume note written to the project memory; no watcher of yours still polling CI. Do NOT keep the session open to watch landing: the steward owns it and reports back. `KB § PATTERNS/devops/release-steward.md` § 7a.7
    - **Pending dispatches / orphan branches / stale caches** — `noctus.dev.cleanup_stale_worktrees dry_run=true` + `noctus.dev.orphan_branch_sweep` + `noctus.dev.detect_stale_caches`. Three single calls, ~5s total.
 
    - **Every engineer slice scored** — each slice dispatched this session has a `slice-scores.ndjson` row (`noctus.dev.dispatch_log_completion` with `score=` on the rubric `RUBRIC_V1`, plus `engineer_return=` so its drift/improvement footer lands in the ledger). An unscored slice is invisible to `noctus.team.agent_metrics`, so the agent's progress over time can't be tracked. → `KB § PATTERNS/common/dispatch-token-log.md`.

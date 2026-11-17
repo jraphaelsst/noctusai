@@ -479,6 +479,9 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append(f"--task-branch-accept-unmeasured-reason={kwargs['accept_unmeasured_reason']}")
         if kwargs.get("accept_unscored"):
             argv.append(f"--task-branch-accept-unscored={kwargs['accept_unscored']}")
+        if kwargs.get("score"):
+            sc = kwargs["score"]
+            argv.append(f"--task-branch-score={sc if isinstance(sc, str) else json.dumps(sc)}")
         if kwargs.get("branch"):
             argv.append(f"--task-branch-branch={kwargs['branch']}")
         if kwargs.get("verdict_ref"):
@@ -511,6 +514,28 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append("--supabase-breaker-confirm")
         return argv
 
+    if tool_name == "photo_label_dataset":
+        argv = ["--photo-label-dataset"]
+        for k in ("out_csv", "csv_in", "photos_dir", "base_dir", "concurrency", "limit"):
+            v = kwargs.get(k)
+            if v not in (None, ""):
+                argv.append(f"--photo-label-dataset-{k.replace('_', '-')}={v}")
+        if kwargs.get("dry_run") is False:
+            argv.append("--photo-label-dataset-run")
+        if kwargs.get("confirm"):
+            argv.append("--photo-label-dataset-confirm")
+        return argv
+
+    if tool_name == "bg_process":
+        argv = ["--bg-process"]
+        for k in ("action", "pid", "purpose", "reason", "learnings", "term_grace_s", "session_id"):
+            v = kwargs.get(k)
+            if v not in (None, ""):
+                argv.append(f"--bg-process-{k.replace('_', '-')}={v}")
+        if kwargs.get("confirm"):
+            argv.append("--bg-process-confirm")
+        return argv
+
     return None
 
 
@@ -538,7 +563,7 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
     "task_branch": frozenset({
         "action", "slug", "confirm", "project", "brief", "paths", "agent",
         "role", "parent", "wire_env", "verbose", "keep_worktree",
-        "wire_products", "accept_unmeasured", "accept_unmeasured_reason", "accept_unscored",
+        "wire_products", "accept_unmeasured", "accept_unmeasured_reason", "accept_unscored", "score",
         "slugs", "order", "branch", "verdict_ref",
     }),
     "source_register": frozenset({
@@ -546,6 +571,10 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
         "claim", "evidence", "question", "note", "by", "events", "confirm",
     }),
     "supabase_breaker": frozenset({"action", "source", "product", "reason", "by", "ssh_host", "confirm"}),
+    "photo_label_dataset": frozenset({"out_csv", "csv_in", "photos_dir", "base_dir", "concurrency", "limit", "dry_run", "confirm"}),
+    "bg_process": frozenset({
+        "action", "pid", "purpose", "reason", "learnings", "term_grace_s", "session_id", "confirm",
+    }),
 }
 
 
@@ -964,6 +993,92 @@ def refuse_gate(
     return decorator
 
 
+# ── the toolkit CHECKOUT behind origin/dev (2026-11-15) ────────────────────────────────────────────────────────────
+# A stale PROCESS is the baseline check above. A stale CHECKOUT is the other half: the release steward ran from a detached
+# worktree (`.claude/worktrees/steward-tools`) 182 commits behind origin/dev - every gate, selector and verdict it ran was
+# the toolkit of a month ago - and nothing said so. `behind_origin` measures it; `ensure_current` fixes it by construction
+# (fast-forward a clean checkout) and refuses with the exact command when it cannot.
+#: refuse at this many commits behind origin/dev ...
+BEHIND_REFUSE_COMMITS = 20
+#: ... or when ANY file under this path changed on origin/dev since the checkout (the steward runs this code)
+BEHIND_TOOLS_REL = "mcp/noctusai/tools"
+BEHIND_BASE = "origin/dev"
+
+GitRunner = Callable[..., "tuple[int, str]"]
+
+
+def _run_git(*args: str, cwd: str | Path) -> tuple[int, str]:
+    try:
+        r = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=120, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, f"{type(exc).__name__}: {exc}"
+    return r.returncode, (r.stdout if r.returncode == 0 else (r.stderr or r.stdout)).strip()
+
+
+def _toplevel(root: Path | str, git: GitRunner) -> str | None:
+    rc, out = git("rev-parse", "--show-toplevel", cwd=root)
+    return out if rc == 0 and out else None
+
+
+def behind_origin(root: Path | str | None = None, *, git: GitRunner = _run_git, base: str = BEHIND_BASE,
+                  threshold: int = BEHIND_REFUSE_COMMITS) -> dict[str, Any]:
+    """How far the checkout the toolkit runs from is behind `base` (local ref; fetch first for a live answer).
+    `{status: current|behind|unknown, behind, tools_changed, refuse, clean, detached, can_fast_forward, fix, message}`.
+    `refuse` = behind >= `threshold` commits OR any file under `mcp/noctusai/tools` changed on `base`. An unreadable
+    answer is `unknown` and never refuses (unmeasurable is not red) but says so."""
+    top = _toplevel(root if root is not None else TOOLKIT_ROOT, git)
+    if top is None:
+        return {"status": "unknown", "refuse": False, "message": f"toolkit checkout behind {base}: cannot resolve the repository at {root or TOOLKIT_ROOT}"}
+    rc, n = git("rev-list", "--count", f"HEAD..{base}", cwd=top)
+    if rc != 0 or not n.isdigit():
+        return {"status": "unknown", "refuse": False, "root": top, "message": f"toolkit checkout behind {base}: cannot read {base} ({n[:120]})"}
+    behind = int(n)
+    rc_d, changed = git("diff", "--name-only", f"HEAD...{base}", "--", BEHIND_TOOLS_REL, cwd=top)
+    tools_changed = changed.splitlines() if rc_d == 0 and changed else []
+    _rc, porcelain = git("status", "--porcelain", "--untracked-files=no", cwd=top)
+    clean = not porcelain
+    rc_h, sym = git("symbolic-ref", "--quiet", "--short", "HEAD", cwd=top)
+    detached = rc_h != 0
+    rc_a, _o = git("merge-base", "--is-ancestor", "HEAD", base, cwd=top)
+    can_ff = behind > 0 and clean and rc_a == 0
+    ff = (f"git -C {top} checkout --detach {base}" if detached else f"git -C {top} merge --ff-only {base}")
+    refuse = behind > 0 and (behind >= threshold or bool(tools_changed))
+    if behind == 0:
+        return {"status": "current", "behind": 0, "tools_changed": [], "refuse": False, "clean": clean, "detached": detached,
+                "can_fast_forward": False, "root": top, "fix": None, "message": ""}
+    fix = ff if can_ff else (f"the checkout {top} has local work or has diverged from {base}: use a clean checkout of {base} "
+                             f"(`git worktree add --detach <path> {base}`) and run the steward from it")
+    msg = (f"steward toolkit is {behind} commit(s) behind {base}"
+           + (f", {len(tools_changed)} file(s) under {BEHIND_TOOLS_REL} changed" if tools_changed else "")
+           + f" ({top}{', detached' if detached else ''}): every gate, selector and verdict it runs is the older code. Fix: {fix}")
+    return {"status": "behind", "behind": behind, "tools_changed": tools_changed, "refuse": refuse, "clean": clean,
+            "detached": detached, "can_fast_forward": can_ff, "root": top, "fix": fix, "message": msg}
+
+
+def ensure_current(root: Path | str | None = None, *, git: GitRunner = _run_git, fetch: bool = True,
+                   base: str = BEHIND_BASE, threshold: int = BEHIND_REFUSE_COMMITS) -> dict[str, Any]:
+    """Construction first: fetch `base`, and when the toolkit checkout is clean and a strict ancestor of it, fast-forward it
+    (`merge --ff-only`, or `checkout --detach` for a detached worktree). Returns `behind_origin`'s verdict AFTER the
+    attempt plus `fast_forwarded` / `fast_forward_error`; `refuse` stays True only when it could not be fixed."""
+    top = _toplevel(root if root is not None else TOOLKIT_ROOT, git)
+    if top is not None and fetch:
+        remote, _, branch = base.partition("/")
+        git("fetch", "--quiet", remote, branch, cwd=top)   # a failed fetch leaves the local ref; the verdict says what it saw
+    v = behind_origin(root, git=git, base=base, threshold=threshold)
+    v["fast_forwarded"] = False
+    if v["status"] == "behind" and v["can_fast_forward"]:
+        before = v["behind"]
+        rc, out = git(*(["checkout", "--detach", base] if v["detached"] else ["merge", "--ff-only", base]), cwd=v["root"])
+        if rc == 0:
+            after = behind_origin(root, git=git, base=base, threshold=threshold)
+            after.update(fast_forwarded=True, fast_forwarded_commits=before)
+            _invalidate_cache()
+            return after
+        v["fast_forward_error"] = out[:200]
+    return v
+
+
+
 def register(server) -> None:
     @server.tool(
         name="noctus.dev.toolkit_freshness",
@@ -996,7 +1111,7 @@ def register(server) -> None:
             "warn-only, never subprocessed. This tool always does a fresh "
             "stat pass (never the "
             "TTL-cached answer other tools use internally for cheapness) — "
-            "calling it IS asking 'right now'. KB § PATTERNS/common/"
+            "calling it IS asking 'right now'. It also returns checkout_behind: how far the checkout the toolkit runs from is behind origin/dev (the steward refuses at 20 commits or any mcp/noctusai/tools change, after fast-forwarding a clean checkout at claim). KB § PATTERNS/common/"
             "methodology-execution-discipline.md § 7."
         ),
     )
@@ -1011,6 +1126,7 @@ def register(server) -> None:
             "checked_files": verdict["checked_files"],
             "check_duration_ms": verdict["check_duration_ms"],
             "remedy": verdict["remedy"],
+            "checkout_behind": behind_origin(),
         }
 
 
@@ -1024,5 +1140,7 @@ __all__ = [
     "warn_if_stale",
     "warn_gate",
     "refuse_gate",
+    "behind_origin",
+    "ensure_current",
     "register",
 ]

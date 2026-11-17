@@ -32,6 +32,7 @@
  * de Fotos", ex-module `cms`). Their hrefs and status_pagina `route` keys are unchanged (redirects come later);
  * the `cms` module is gone (composeModules/MODULE_GROUP_ORDER tolerate an absent key). The `imobshotai*` keys
  * are added to status_pagina by the ImobShotAI backend migration.
+ * Edição de Imagem's pages keep dev's Operação / Configuração split, now under the ImobShotAI sub-group.
  * CoreStudio keeps its literal tree (two items share one page key, which
  * `defineModule` forbids); it is a local group keyed `corestudio`.
  */
@@ -85,9 +86,6 @@ import {
   MessagesSquare,
   Library,
   GraduationCap,
-  Heading,
-  Star,
-  Clapperboard,
   Bookmark,
   Palette,
   GalleryHorizontal,
@@ -121,6 +119,7 @@ const crm = defineModule({
       pg("Contatos", "/contatos", "contatos", UserRound),
       pg("Clientes", "/clientes", "clientes", UserCheck),
       pg("Revisão de Duplicados", "/clientes/revisao", "clientes_revisao", GitMerge),
+      pg("Guia de documentos", "/guia-documentos", "guia_documentos", BookOpen),
     ]),
     grp("vendas", "Vendas", Target, [
       pg("Leads", "/leads", "leads", Target),
@@ -221,7 +220,7 @@ const CORESTUDIO_GROUP: NavGroupWithRoute =
     icon: Wand2,
     items: [
       { name: "Dashboard", href: "/media-creation/dashboard", icon: LayoutDashboard, route: "media-creation-dashboard" },
-      { name: "Criar Headlines e Roteiros", href: "/media-creation/chat", icon: MessagesSquare, route: "media-creation-chat" },
+      { name: "Roteiros", href: "/media-creation/chat", icon: MessagesSquare, route: "media-creation-chat" },
       { name: "Esteira", href: "/media-creation/esteira", icon: KanbanSquare, route: "media-creation-esteira" },
       { name: "Carrosséis", href: "/media-creation/carrosseis", icon: GalleryHorizontal, route: "media-creation-carrosseis" },
       { name: "Biblioteca", href: "/media-creation/biblioteca", icon: Library, route: "media-creation-biblioteca" },
@@ -238,16 +237,23 @@ const CORESTUDIO_GROUP: NavGroupWithRoute =
         ],
         groups: [
           {
-            // The former CoreStudio "Edição de Imagem" sub-group (D2: ImobShotAI absorbs it). Same hrefs and
-            // status_pagina keys; the redirects into /imobshotai are a later slice.
-            key: "imobshotai-config",
-            label: "Configurações",
-            icon: Settings2,
+            // The former CoreStudio "Edição de Imagem" sub-group (D2: ImobShotAI absorbs it), keeping dev's
+            // Operação / Configuração split. Same hrefs and status_pagina keys; redirects are a later slice.
+            key: "imobshotai-operacao",
+            label: "Operação",
+            icon: Activity,
             items: [
               { name: "Lotes", href: "/edicao-fotos", icon: ImagePlus, route: "edicao-fotos" },
               { name: "Novo Lote", href: "/edicao-fotos/novo", icon: Plus, route: "edicao-fotos-novo-lote" },
               { name: "Painel", href: "/edicao-fotos/painel", icon: BarChart3, route: "edicao-fotos-painel" },
               { name: "Processamento", href: "/edicao-fotos/processamento", icon: Activity, route: "edicao-fotos-processamento" },
+            ],
+          },
+          {
+            key: "imobshotai-config",
+            label: "Configuração",
+            icon: Settings2,
+            items: [
               { name: "Configurações", href: "/edicao-fotos/configuracoes", icon: Settings2, route: "edicao-fotos-configuracoes" },
               { name: "Referências", href: "/edicao-fotos/referencias", icon: Images, route: "edicao-fotos-referencias" },
               { name: "Guias de Estilo", href: "/edicao-fotos/guias", icon: BookOpen, route: "edicao-fotos-guias" },
@@ -285,19 +291,6 @@ const CORESTUDIO_GROUP: NavGroupWithRoute =
           { name: "Branding", href: "/media-creation/branding", icon: Palette, route: "media-creation-branding" },
           { name: "Minha Biblioteca", href: "/media-creation/minha-biblioteca", icon: Bookmark, route: "media-creation-minha-biblioteca" },
           { name: "Treinamentos", href: "/media-creation/treinamentos", icon: GraduationCap, route: "media-creation-treinamentos" },
-        ],
-        groups: [
-          {
-            key: "media-creation-headlines",
-            label: "Headlines",
-            icon: Heading,
-            items: [
-              { name: "Gerar Headlines", href: "/media-creation/headlines/gerar", icon: Sparkles, route: "media-creation-headlines-gerar" },
-              { name: "Headlines Favoritas", href: "/media-creation/headlines/favoritas", icon: Star, route: "media-creation-headlines-favoritas" },
-              { name: "Headlines sugeridas", href: "/media-creation/headlines/sugeridas", icon: Lightbulb, route: "media-creation-headlines-sugeridas" },
-              { name: "Roteiros", href: "/media-creation/roteiros", icon: Clapperboard, route: "media-creation-roteiros" },
-            ],
-          },
         ],
       },
     ],

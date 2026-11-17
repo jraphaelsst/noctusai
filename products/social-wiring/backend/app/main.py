@@ -155,6 +155,8 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.integracao_vista_router import router as integracao_vista_router
     from app.routers.imovel_divergencias_router import router as imovel_divergencias_router
     from app.routers.julia_especificacoes_router import router as julia_especificacoes_router
+    from app.routers.julia_contatos_setoriais_router import router as julia_contatos_setoriais_router
+    from app.routers.julia_conhecimento_editor_router import router as julia_conhecimento_editor_router
     from app.services import julia_reengajamento_worker
     from app.routers.settings_router import router as settings_router
     from app.routers.whatsapp_router import router as whatsapp_router
@@ -300,6 +302,8 @@ def _register_media_wiring() -> ModuleRegistration:
             integracao_vista_router,
             imovel_divergencias_router,
             julia_especificacoes_router,
+            julia_contatos_setoriais_router,
+            julia_conhecimento_editor_router,
             whatsapp_router,
             assinatura_webhook_router,
             whatsapp_connections_router,
@@ -350,6 +354,7 @@ from app.modules.youtube import register as _youtube
 from app.modules.instagram import register as _instagram
 from app.modules.simec import register as _simec
 from app.modules.edicao_fotos import register as _edicao_fotos
+from app.modules.imobshotai import register as _imobshotai
 from app.modules.empresas import register as _empresas
 from app.modules.transcricoes import register as _transcricoes
 from app.modules.atendimento_blocos import register as _atendimento_blocos
@@ -425,6 +430,9 @@ MODULES = [
     # app/lifespan.py (EDICAO_FOTOS_WORKER_ENABLED = kill switch; the live
     # pause is the `processamento_ativo` platform setting).
     _edicao_fotos,
+    # ImobShotAI (IMOBSHOTAI-CONTRACT.md). `/api/imobshotai/{lotes,cards}` -- unique literal prefix, literal first
+    # segments only, no upload route, no scheduler job. Position is free.
+    _imobshotai,
     # P0c (`sw-drive-extraction`). `/api/empresas` is a unique literal
     # prefix — `{empresa_id}` is not a 1-segment path at the router's own
     # root the `clientes_router` hazard could shadow, so position is free.
@@ -599,6 +607,12 @@ _MAX_BODY_PATH_OVERRIDES = {
     # (`TranscriptionLimits.max_bytes`, enforced by the route's stream cut -> 413
     # `arquivo_grande`); this outer bound adds 512 KB of multipart framing. Both
     # modules mirror their entries in their own `MAX_BODY_PATH_OVERRIDES`.
+    # Estruturas import (POST /api/media-creation/estruturas/importacoes -- `media_creation.routers.estruturas_importacao`,
+    # EST-3). A platform-admin-only route that takes the parsed JSON document as the body: the reference file is ~2.9 MB
+    # and the corpus grows, so the default 1 MB would silently cap it (contract 6.3). Declared up front by EST-1
+    # (collision class C3) so the router slice only registers the route. Not a multipart upload: the boot-time
+    # `UploadFile` derivation does not need it, `tests/test_max_body_path_overrides.py` pins it.
+    "/api/media-creation/estruturas/importacoes": 16 * 1024 * 1024,  # 16 MiB
     "/api/transcricoes": 15 * 1024 * 1024 + 512 * 1024,
     "/api/media-creation/cerebro/brains/*/answers/*/audio": 15 * 1024 * 1024 + 512 * 1024,
     # Chatbot platform-chat file staging (POST /api/chat/upload-file —
@@ -698,6 +712,8 @@ _MAX_BODY_PATH_OVERRIDES = {
     # spools each part to disk and the route reads one file at a time, so
     # memory stays bounded by one photo, not by this ceiling.
     "/api/edicao-fotos/lotes/*/fotos": 256 * 1024 * 1024,  # 256 MB
+    # One resumable-upload PART (seed `resumable_uploads`: <= max_part_size 16 MiB + 64 KiB framing).
+    "/api/edicao-fotos/uploads/*/parts/*": 16 * 1024 * 1024 + 64 * 1024,
     # Edição de Fotos reference-pair upload (POST /api/edicao-fotos/referencias
     # — contract §5, the before+after pair of the platform pool;
     # `app.modules.edicao_fotos.routers.referencias`). Derived: exactly two

@@ -19,6 +19,7 @@ from noctusai_lib.domain.jobs import FakeJobRepository
 from app.config import settings
 from app.modules.media_creation.prompts.legenda_reel import (
     LEGENDA_REEL_SYSTEM_PROMPT,
+    system_prompt as legenda_system_prompt,
     LegendaParseError,
     build_legenda_user_message,
     parse_legenda,
@@ -402,3 +403,31 @@ class TestParseLegenda:
     def test_refuses_unusable_replies(self, reply):
         with pytest.raises(LegendaParseError):
             parse_legenda(reply)
+
+
+class TestLegendaPorFormato:
+    """EST-FMT: the caption is format-aware; a ``post`` reuses the roteiro's own ``### Legenda`` (no model call)."""
+
+    POST_MD = "### Texto na tela\n**Tela 1** Olha isso\n\n### Legenda\nPra quem vai comprar.\n\nSalva e manda."
+
+    def _com_formato(self, ec, formato, conteudo):
+        rid = _roteiro_pronto(ec, conteudo=conteudo)
+        ec.mock_supabase.from_("cs_roteiros").update({"formato": formato}).eq("id", rid).execute()
+
+    def test_post_reusa_a_legenda_do_roteiro_sem_modelo(self, ec):
+        self._com_formato(ec, "post", self.POST_MD)
+        r = ec.post(LEGENDA_URL)
+        assert r.status_code == 200, r.text
+        assert r.json()["data"] == {"legenda": "Pra quem vai comprar.\n\nSalva e manda.", "hashtags": [], "primeiro_comentario": ""}
+        assert not ec.llm.calls and not _geracoes(ec)  # no model, no cap slot
+
+    def test_post_sem_secao_cai_no_servico(self, ec):
+        self._com_formato(ec, "post", "### Texto na tela\n**Tela 1** x")
+        assert ec.post(LEGENDA_URL).status_code == 200
+        system, _, _ = ec.llm.calls[0]
+        assert system == legenda_system_prompt("post") and len(_geracoes(ec)) == 1
+
+    def test_carrossel_usa_o_prompt_do_formato(self, ec):
+        self._com_formato(ec, "carrossel", "**Slide 1 — A**\nx")
+        assert ec.post(LEGENDA_URL).status_code == 200
+        assert ec.llm.calls[0][0] == legenda_system_prompt("carrossel")

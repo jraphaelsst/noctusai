@@ -426,7 +426,7 @@ class TestMirrorOneCacheRefusesShortfall:
             _FakeBackend,
         )
         monkeypatch.setattr(
-            "tools.noctus.dev.cache_deploy_mirror.cache_path",
+            "tools.noctus.dev.cache_deploy_mirror.mirror_source_path",
             lambda name, repo_root=None: db_path,
         )
 
@@ -496,7 +496,7 @@ class TestMirrorOneCacheRefusesShortfall:
             _FakeBackend,
         )
         monkeypatch.setattr(
-            "tools.noctus.dev.cache_deploy_mirror.cache_path",
+            "tools.noctus.dev.cache_deploy_mirror.mirror_source_path",
             lambda name, repo_root=None: db_path,
         )
 
@@ -575,3 +575,31 @@ class TestMirrorSimpleTable:
         (sql, rows) = pg.cursor_obj.executemany_calls[0]
         assert "cache_t" in sql and "a, b" in sql
         assert sorted(rows) == [("p", "q"), ("x", "y")]
+
+
+class TestSourceProvenance:
+    """A common-dir fallback must be reported (slot + age), never silent."""
+
+    def test_fallback_is_flagged_with_age(self, monkeypatch, tmp_path):
+        own = tmp_path / "own.sqlite"          # never built
+        shared = tmp_path / "shared.sqlite"
+        shared.write_bytes(b"")
+        monkeypatch.setattr("tools.noctus.dev.cache_deploy_mirror.cache_path",
+                            lambda name, repo_root=None: own)
+        monkeypatch.setattr("tools.noctus.dev.cache_deploy_mirror.mirror_source_path",
+                            lambda name, repo_root=None: shared)
+        from tools.noctus.dev import cache_deploy_mirror as m
+        got = m._source_provenance("keeper-patterns", None)
+        assert got["slot"] == "common-dir-fallback"
+        assert got["age_s"] >= 0 and "warning" in got
+
+    def test_own_slot_has_no_warning(self, monkeypatch, tmp_path):
+        own = tmp_path / "own.sqlite"
+        own.write_bytes(b"")
+        monkeypatch.setattr("tools.noctus.dev.cache_deploy_mirror.cache_path",
+                            lambda name, repo_root=None: own)
+        monkeypatch.setattr("tools.noctus.dev.cache_deploy_mirror.mirror_source_path",
+                            lambda name, repo_root=None: own)
+        from tools.noctus.dev import cache_deploy_mirror as m
+        got = m._source_provenance("keeper-patterns", None)
+        assert got["slot"] == "own" and "warning" not in got

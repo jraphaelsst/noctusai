@@ -1,7 +1,7 @@
 """Absorption SOURCES are frozen — the one derivation every gate shares (Phase 5a, owner rule 2026-11-12).
 
-A product on the absorption list (erp-imobiliario -> social-wiring, igig -> orbity, therapy-platform -> monica,
-community -> monica) is an absorption SOURCE only, until it is erased (ladder step A6):
+A product on the absorption list (erp-imobiliario -> social-wiring, igig -> orbity, therapy-platform -> nosnolimiar,
+community -> nosnolimiar) is an absorption SOURCE only, until it is erased (ladder step A6):
 
   1. no change / refinement / fix to its code, migrations, docs or data — the only writes allowed are the
      absorption ladder's own steps, on a branch named ``absorb-<source>-*``;

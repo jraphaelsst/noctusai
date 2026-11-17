@@ -100,8 +100,16 @@ class TranscricaoJobHandler:
         duracao_s = float(row["duracao_s"])
         try:
             transcriber = s.transcriber()
+            extra = {"palavras": True} if (job.payload or {}).get("palavras") else {}
             result = await asyncio.wait_for(
-                transcriber.transcribe(blob.data, language=row.get("idioma") or "pt", max_seconds=duracao_s),
+                # The cap is core's configured limit (CONTRACT §3), never the file's own
+                # probed duration: the transcriber's decode can run a few ms past the
+                # upload probe (a 3.68 s WAV probed at 3.6786 s), which failed as
+                # duracao_excedida. The upload already rejected anything over the limit.
+                transcriber.transcribe(
+                    blob.data, language=row.get("idioma") or "pt",
+                    max_seconds=s.limits.max_duration_s, **extra
+                ),
                 timeout=L.call_timeout_s(duracao_s),
             )
         except TranscriberBusy as exc:
@@ -199,6 +207,7 @@ def build_worker(service: TranscricaoService, jobs: JobRepository, *, worker_id:
         # Kill switch off: leave `na_fila` jobs untouched.
         return service.kill_switch.habilitada()
 
+    # poll-budget: claim poll, 2s base doubling to the 300s seed cap when idle, reset on work; 1 calls/tick (rpc claim_next_job); worst 288/day per idle worker (43200/day only while busy at the 2s base); idle=backoff
     return Worker(
         jobs,
         worker_id=worker_id,
@@ -258,6 +267,7 @@ class TranscricaoBackground:
 
     async def _supervise(self, name: str, run: Callable) -> None:
         """Restart a crashed loop (logged with traceback) instead of dying silent."""
+        # poll-budget: supervisor re-enters only when a loop crashed, then waits 10s; 0 Supabase calls/tick of its own (the Worker and the sweep own theirs); worst 8640/day in a crash loop, 0/day healthy; idle=event
         while not self._stop.is_set():
             try:
                 await run()

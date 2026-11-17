@@ -120,9 +120,10 @@ See `.env.example` for the full, commented list. Summary:
    `dj-database-url` (`sslmode=require`, `conn_max_age=600`, health checks). The
    app does NOT use a `DATABASE_URL` name. If unset, Django silently falls back
    to local SQLite — never acceptable in production.
-3. **Redis is external/shared.** The app reads `CELERY_BROKER_URL` /
-   `CELERY_RESULT_BACKEND` (not a single `REDIS_URL`). Point both at the fleet's
-   shared Redis on `noctus-net`, using a dedicated DB index to avoid collision.
+3. **Redis is dedicated.** The app reads `CELERY_BROKER_URL` /
+   `CELERY_RESULT_BACKEND` (not a single `REDIS_URL`). Point both at `legacy-redis`
+   (this compose, password DERIVED from `REDIS_ACL_MASTER_SECRET` via `noctus.dev.redis_acl render --write`, on `legacy-net` only) —
+   never at the fleet Redis; legacy is off `noctus-net` since 2026-11-15.
 4. **CRA env is build-time.** `REACT_APP_*` are inlined into the SPA bundle at
    build; changing them later requires a rebuild, not a restart.
 5. **Migrations at deploy, not build.** The Dockerfile runs `collectstatic` at

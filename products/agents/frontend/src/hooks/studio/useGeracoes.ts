@@ -57,6 +57,7 @@ export function useGeracao(key: string, id: string | undefined) {
     enabled: !!key && !!id,
     retry: false,
     placeholderData: (prev) => prev,
+    // poll-budget: 2s only while the generation is active, stops after; 1 calls/tick (refetch of the polled GET, only while the job is in flight); worst 43200/day per open tab; hidden=paused
     refetchInterval: (query) => (isGeracaoAtiva(query.state.data?.status) ? GERACAO_POLL_MS : false),
   });
   return toView(q);

@@ -66,6 +66,7 @@ DEFAULT_CHECKS: list[str] = [
     "db_guards",  # a declared DB guard (trigger/CHECK/UNIQUE) actually REFUSES what it claims — structure-green is not behaviour-green (2026-09-18)
     "ledger_checksums",  # every applied migration still hashes to its schema_migrations checksum at HEAD's committed blobs (2026-10-10)
     "env_fleet_manifest",  # every deploy/fleet/env.fleet.keys name has a non-empty value in a fed .env.fleet snapshot
+    "ghcr_login",  # the VPS docker daemon user is logged into ghcr.io — images are PRIVATE; no login => every pull 401s (2026-11-15)
     "webhook_secret_present",  # a product mounting a WhatsApp/webhook router has a *WEBHOOK_HMAC_SECRET in the prod snapshot (fail-closed prep, 2026-10-19)
 ]
 
@@ -737,6 +738,31 @@ def backend_test_env(root: pathlib.Path) -> dict[str, str]:
     return gate_subprocess_env(root)
 
 
+def audit_ghcr_login(config_text: str) -> tuple[bool, str]:
+    """Pure verdict on a (redacted) docker ``config.json``: logged into ghcr.io? Never echoes a credential.
+    The parsing lives in ``ghcr_access.audit_login`` (the tool that installs the login); this adds the BLOCKED wording."""
+    from . import ghcr_access as _g
+
+    ok, why = _g.audit_login(config_text)
+    if ok:
+        return True, f"ghcr_login ok — {why}"
+    return False, (
+        f"ghcr_login BLOCKED — {why}; GHCR packages are private, so `deploy_image --source pull` and any "
+        f"`compose pull` will 401. Fix: {_g.INSTALL_HINT} (KB § GUIDES/security-infra-hardening-runbook.md § 1)."
+    )
+
+
+def audit_ghcr_access(visibility: str, config_text: str | None) -> tuple[bool, str]:
+    """Pure verdict for the ghcr_login leg, derived from REALITY: while the package is public, pulls work anonymously
+    and a missing login is not a failure; the moment it is private the login is required. An unmeasurable
+    visibility blocks (verify-or-block) -- it is never a quiet ok."""
+    if visibility == "public":
+        return True, "ghcr_login ok — packages are still public (anonymous pull works); login becomes required once private"
+    if visibility == "private":
+        return audit_ghcr_login(config_text or "")
+    return False, "ghcr_login BLOCKED — could not determine package visibility (anonymous probe of ghcr.io failed); an unverifiable state is not a pass"
+
+
 def _default_run_check(
     check: str,
     product: str,
@@ -1006,6 +1032,24 @@ def _default_run_check(
         if result["status"] != "clean":
             return False, f"storage_bucket_public BLOCKED ({result['status']}) — {result['error']}"
         return True, "storage_bucket_public ok — no public bucket in storage.buckets"
+    if check == "ghcr_login":
+        # Platform-wide, verify-or-block. Visibility is MEASURED (anonymous pull probe), so the requirement follows
+        # reality: public => no login needed yet; private => the VPS must be logged in (installed by
+        # `noctus.dev.ghcr_access install`, which is also what makes the flip safe).
+        from . import ghcr_access as _g
+        from . import vps_exec as _vps_exec
+
+        owner, _pkgs = _g._context(root)
+        visibility = _g.probe_visibility(owner, _g.CORE_PACKAGE)
+        if visibility != "private":
+            return audit_ghcr_access(visibility, None)
+        res = _vps_exec.exec_cmd(_g.DOCKER_CONFIG_REDACTED_CMD)
+        if not res.get("ok"):
+            return False, (
+                "ghcr_login BLOCKED — packages are private but the VPS docker config could not be read "
+                f"({res.get('status') or res.get('error') or 'unreachable'}); an unverifiable login is not a pass."
+            )
+        return audit_ghcr_access(visibility, res.get("stdout") or "")
     if check == "ledger_checksums":
         # An applied migration edited afterwards ships NOWHERE (2026-10-10: 15/375
         # drifted, two carrying intent prod never got). Compares every ledger row
@@ -1255,7 +1299,7 @@ def predeploy_check(
     probe_tree = tree_probe or tree_identity
     tree_start = probe_tree(root)
     if admit is _AUTO_ADMIT:
-        admit = _hw.heavy_slot if run_check is None else None
+        admit = _hw.queued_heavy_slot if run_check is None else None
     admission = admit(f"predeploy:{product}") if admit else contextlib.nullcontext(None)
     with admission as adm:
         if adm is not None and not adm.admitted:
@@ -1443,6 +1487,8 @@ __all__ = [
     "audit_required_prod_env_present",
     "audit_cors_roster_complete",
     "audit_env_fleet_manifest_present",
+    "audit_ghcr_login",
+    "audit_ghcr_access",
     "DEFAULT_CHECKS",
     "PROJECT_SLUG",
     "register",

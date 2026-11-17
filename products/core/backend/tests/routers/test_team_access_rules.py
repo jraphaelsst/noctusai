@@ -434,7 +434,7 @@ class TestDashboardAdmitsLikeSso:
             {"user_id": USER, "org_id": "org-2", "org_role": other_role, "status": "active", "updated_at": "2026-01-01"},
         ])
         mock_sb.set_table_data("products", [{
-            "id": "p-mo", "slug": "monica", "nome": "Monica", "url_base": "http://localhost:8080",
+            "id": "p-mo", "slug": "nosnolimiar", "nome": "Nós no Limiar", "url_base": "http://localhost:8080",
             "aceita_clientes": False, "ativo": True, "deploy_scope": "live"}])
         mock_sb.set_table_data("licenses", [
             {"id": "l-2", "status": "active", "fim": None, "org_id": "org-2", "product_id": "p-mo"}])
@@ -445,22 +445,22 @@ class TestDashboardAdmitsLikeSso:
     def _has_access(self, client):
         resp = client.get("/api/auth/me")
         assert resp.status_code == 200, resp.text
-        return {p["slug"]: p["has_access"] for p in resp.json()["products"]}["monica"]
+        return {p["slug"]: p["has_access"] for p in resp.json()["products"]}["nosnolimiar"]
 
     def test_a_product_licensed_only_to_another_membership_org_is_open(self, client):
         self._seed(client.mock_supabase)
         assert self._has_access(client) is True
-        assert client.post("/api/sso/token", json={"product_slug": "monica"}).status_code == 200
+        assert client.post("/api/sso/token", json={"product_slug": "nosnolimiar"}).status_code == 200
 
     def test_blocked_in_the_only_licensed_org_is_locked(self, client):
         self._seed(client.mock_supabase, blocks=["org-2"])
         assert self._has_access(client) is False
-        assert client.post("/api/sso/token", json={"product_slug": "monica"}).status_code == 403
+        assert client.post("/api/sso/token", json={"product_slug": "nosnolimiar"}).status_code == 403
 
     def test_a_customer_role_in_the_licensed_org_is_locked(self, client):
         self._seed(client.mock_supabase, other_role="membro")
         assert self._has_access(client) is False
-        assert client.post("/api/sso/token", json={"product_slug": "monica"}).status_code == 403
+        assert client.post("/api/sso/token", json={"product_slug": "nosnolimiar"}).status_code == 403
 
     def test_unauthenticated_is_401(self, unauth_client):
         assert unauth_client.get("/api/auth/me").status_code == 401

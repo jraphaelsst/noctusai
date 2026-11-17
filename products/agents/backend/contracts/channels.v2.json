@@ -1277,6 +1277,13 @@
           "identificacao": {
             "$ref": "#/$defs/RelatorioIdentificacaoOut"
           },
+          "imoveis_de_interesse": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Imoveis De Interesse",
+            "type": "array"
+          },
           "imoveis_oferecidos": {
             "items": {
               "$ref": "#/$defs/RelatorioImovelOut"
@@ -1317,6 +1324,16 @@
             ],
             "default": null,
             "title": "Resumo Conversa"
+          },
+          "temperatura": {
+            "default": "frio",
+            "enum": [
+              "frio",
+              "morno",
+              "quente"
+            ],
+            "title": "Temperatura",
+            "type": "string"
           },
           "texto": {
             "title": "Texto",

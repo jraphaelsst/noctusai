@@ -39,6 +39,7 @@
  *
  * Presentational only (`card/**`): props in, callbacks out.
  */
+import { DadoObrigatorioInfo, DocumentoInfo } from "@/components/guia/GuiaInfo";
 import { useRef, useState } from "react";
 import {
   Check,
@@ -144,6 +145,8 @@ export function IdentidadeChecklistRow({
           data-testid={`${tid}-label`}
         >
           {item.label}
+          {/* "i": which documents supply this item (guia de documentos). */}
+          <DadoObrigatorioInfo chave={item.key} rotulo={item.label} className="ml-1.5" />
         </span>
         {item.origem === "manual" && (
           <>
@@ -365,8 +368,10 @@ function IdentidadeSlotLinha({
   return (
     <li data-testid={`${tid}-slot-wrap`}>
     <div className="flex items-center gap-2" data-testid={`${tid}-slot`}>
-      <span className="w-32 shrink-0 text-xs font-medium text-muted-foreground">
+      <span className="flex w-32 shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground">
         {slot.rotulo}
+        {/* "i": what is read from this document and where it goes. */}
+        <DocumentoInfo tipo={slot.tipo_documento} rotulo={slot.rotulo} />
       </span>
       <span
         className={cn(

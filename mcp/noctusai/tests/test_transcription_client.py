@@ -1,6 +1,7 @@
 """Tests for ``noctus.transcription.*`` — injected httpx.MockTransport, no network."""
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -88,10 +89,10 @@ def test_missing_file_refused(tmp_path):
 def test_error_envelope_with_retry_after(audio):
     def h(req):
         return httpx.Response(429, headers={"Retry-After": "17"},
-                              json={"codigo": "limite_envios_hora", "mensagem": "Muitos envios"})
+                              json={"codigo": "limite_requisicoes", "mensagem": "Muitos envios"})
 
     out = client.submit(audio, _transport=_t(h))
-    assert out == {"codigo": "limite_envios_hora", "mensagem": "Muitos envios",
+    assert out == {"codigo": "limite_requisicoes", "mensagem": "Muitos envios",
                    "status_code": 429, "retry_after": 17.0}
 
 
@@ -279,3 +280,192 @@ def test_batch_honours_submit_429_and_records_failures(tmp_path):
 def test_batch_missing_dir_is_an_error(tmp_path):
     res = client.batch(str(tmp_path / "nope"), str(tmp_path / "out"))
     assert res["codigo"] == "arquivo_invalido"
+
+
+def test_batch_retry_after_beyond_budget_returns_bloqueado_without_sleeping(tmp_path):
+    src, out = _dir(tmp_path, 2)
+    clock = Clock()
+
+    def h(req):
+        return httpx.Response(429, headers={"Retry-After": "3600"},
+                              json={"codigo": "limite_requisicoes", "mensagem": "Muitas requisicoes"})
+
+    res = client.batch(str(src), str(out), timeout_s=600, _transport=_t(h),
+                       _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "bloqueado" and res["codigo"] == "limite_requisicoes"
+    assert res["retry_after"] == 3600.0 and res["status_code"] == 429
+    assert res["mensagem"] == "Muitas requisicoes"
+    assert res["pending"] == ["r0", "r1"]
+    assert clock.sleeps == []  # never sleeps past the budget
+
+
+def test_batch_poll_429_beyond_budget_returns_bloqueado_keeping_inflight(tmp_path):
+    src, out = _dir(tmp_path, 1)
+    clock = Clock()
+
+    def h(req):
+        if req.method == "POST":
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        return httpx.Response(503, headers={"Retry-After": "900"},
+                              json={"codigo": "fila_cheia", "mensagem": "cheia"})
+
+    res = client.batch(str(src), str(out), timeout_s=600, _transport=_t(h),
+                       _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "bloqueado" and res["codigo"] == "fila_cheia"
+    assert res["inflight"] == {"j1": "r0"} and res["retry_after"] == 900.0
+    assert clock.sleeps == [5.0]  # only the normal poll gap
+
+
+def test_batch_forwards_segmentos_to_submit(tmp_path):
+    src, out = _dir(tmp_path, 1)
+    clock = Clock()
+    bodies = []
+
+    def h(req):
+        if req.method == "POST":
+            bodies.append(req.content)
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        return httpx.Response(200, json={"id": "j1", "status": "concluida", "texto": "t"})
+
+    res = client.batch(str(src), str(out), segmentos=True, _transport=_t(h),
+                       _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida"
+    assert b'name="segmentos"' in bodies[0] and b"true" in bodies[0].lower()
+
+
+def test_batch_long_but_progressing_runs_to_the_end_in_one_call(tmp_path):
+    """timeout_s is a no-progress window: 20 jobs x ~10 min each (far past a 1 h total) still finish
+    in ONE call, because every finished job resets the window (2026-11-14: the old wall budget
+    stopped a healthy 87-part batch with status 'timeout' every hour)."""
+    src, out = _dir(tmp_path, 20)
+    clock = Clock()
+    born: dict[str, float] = {}
+
+    def h(req):
+        if req.method == "POST":
+            jid = f"j{len(born)}"
+            born[jid] = clock.t
+            return httpx.Response(202, json={"id": jid, "status": "na_fila"})
+        jid = req.url.path.rsplit("/", 1)[1]
+        if clock.t - born[jid] < 600:
+            return httpx.Response(200, json={"id": jid, "status": "processando"})
+        return httpx.Response(200, json={"id": jid, "status": "concluida", "texto": "ok"})
+
+    res = client.batch(str(src), str(out), max_inflight=3, timeout_s=3600, _transport=_t(h),
+                       _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida" and len(res["done"]) == 20
+    assert clock.t > 3600  # ran past what the old total budget allowed
+    assert not (out / ".inflight.json").exists()
+
+
+def test_batch_real_stall_stops_as_sem_progresso_and_keeps_inflight(tmp_path):
+    src, out = _dir(tmp_path, 2)
+    clock = Clock()
+    n = {"post": 0}
+
+    def h(req):
+        if req.method == "POST":
+            n["post"] += 1
+            return httpx.Response(202, json={"id": f"j{n['post']}", "status": "na_fila"})
+        jid = req.url.path.rsplit("/", 1)[1]
+        return httpx.Response(200, json={"id": jid, "status": "processando"})  # never finishes
+
+    res = client.batch(str(src), str(out), max_inflight=2, timeout_s=300, _transport=_t(h),
+                       _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "sem_progresso" and len(res["inflight"]) == 2
+    saved = json.loads((out / ".inflight.json").read_text())
+    assert sorted(saved.values()) == ["r0", "r1"]
+
+
+def test_batch_rerun_resumes_inflight_without_reuploading(tmp_path):
+    src, out = _dir(tmp_path, 3)
+    out.mkdir()
+    (out / ".inflight.json").write_text(json.dumps({"old-1": "r1"}))
+    clock = Clock()
+    posts: list[str] = []
+
+    def h(req):
+        if req.method == "POST":
+            jid = f"new-{len(posts)}"
+            posts.append(jid)
+            return httpx.Response(202, json={"id": jid, "status": "na_fila"})
+        jid = req.url.path.rsplit("/", 1)[1]
+        return httpx.Response(200, json={"id": jid, "status": "concluida", "texto": f"t-{jid}"})
+
+    res = client.batch(str(src), str(out), _transport=_t(h), _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida" and res["resumed"] == ["r1"]
+    assert len(posts) == 2  # r0 and r2 uploaded; r1 was NOT re-uploaded
+    assert (out / "r1.txt").read_text() == "t-old-1"
+    assert not (out / ".inflight.json").exists()
+
+
+def test_batch_gateway_502_during_core_restart_is_retried_not_failed(tmp_path):
+    """A core/tunnel restart answers polls with 502 for a while; the job is still alive server-side."""
+    src, out = _dir(tmp_path, 1)
+    clock = Clock()
+    polls = {"n": 0}
+
+    def h(req):
+        if req.method == "POST":
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        polls["n"] += 1
+        if polls["n"] <= 3:
+            return httpx.Response(502, text="Bad Gateway")
+        return httpx.Response(200, json={"id": "j1", "status": "concluida", "texto": "ok"})
+
+    res = client.batch(str(src), str(out), _transport=_t(h), _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida" and res["done"] == ["r0"] and res["failed"] == []
+
+
+@pytest.mark.parametrize("code", [520, 522, 530])
+def test_batch_cloudflare_52x_on_poll_of_accepted_job_keeps_polling_until_done(tmp_path, code):
+    """2026-11-15: HTTP 530 (tunnel blip) dropped accepted jobs that finished server-side."""
+    src, out = _dir(tmp_path, 1)
+    clock = Clock()
+    polls = {"n": 0}
+
+    def h(req):
+        if req.method == "POST":
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        polls["n"] += 1
+        if polls["n"] <= 3:
+            return httpx.Response(code, text="origin unreachable")
+        return httpx.Response(200, json={"id": "j1", "status": "concluida", "texto": "ok"})
+
+    res = client.batch(str(src), str(out), _transport=_t(h), _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida" and res["done"] == ["r0"] and res["failed"] == []
+    assert not (out / ".inflight.json").exists()
+
+
+def test_batch_530_on_submit_is_retried_then_accepted(tmp_path):
+    src, out = _dir(tmp_path, 1)
+    clock = Clock()
+    posts = {"n": 0}
+
+    def h(req):
+        if req.method == "POST":
+            posts["n"] += 1
+            if posts["n"] <= 2:
+                return httpx.Response(530, text="origin unreachable")
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        return httpx.Response(200, json={"id": "j1", "status": "concluida", "texto": "ok"})
+
+    res = client.batch(str(src), str(out), _transport=_t(h), _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida" and res["done"] == ["r0"] and res["failed"] == []
+    assert posts["n"] == 3
+
+
+def test_transcribe_530_on_submit_without_retry_after_is_retried(audio):
+    clock = Clock()
+    posts = {"n": 0}
+
+    def h(req):
+        if req.method == "POST":
+            posts["n"] += 1
+            if posts["n"] == 1:
+                return httpx.Response(530)
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        return httpx.Response(200, json={"id": "j1", "status": "concluida", "texto": "ok"})
+
+    out = client.transcribe(audio, _transport=_t(h), _sleep=clock.sleep, _clock=clock.now)
+    assert out["status"] == "concluida" and posts["n"] == 2

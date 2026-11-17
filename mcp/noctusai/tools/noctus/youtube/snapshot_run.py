@@ -178,7 +178,10 @@ def _do_trigger(*, base_url: str, account_id: str, api_token: str) -> dict:
     try:
         import httpx  # type: ignore[import]
 
-        with httpx.Client(timeout=30) as http:
+        from ..dev._http import bounded_client
+
+        with bounded_client(deadline_s=45.0, read=30.0, why="triggers one snapshot run",
+                            call_site="youtube.snapshot_run") as http:
             resp = http.post(url, headers=headers, params=params)
         return {
             "status": "triggered",
@@ -195,8 +198,9 @@ def _do_trigger(*, base_url: str, account_id: str, api_token: str) -> dict:
 
     full_url = f"{url}?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(full_url, method="POST", headers=headers)
-    with urllib.request.urlopen(req, timeout=30) as r:
-        body = r.read().decode("utf-8")
+    from ..dev import _http
+
+    body = _http.urlopen_read(req, call_site="youtube.snapshot_run", idempotent=False, retries=0, read=30).text()
     try:
         body_parsed = _json.loads(body)
     except Exception:

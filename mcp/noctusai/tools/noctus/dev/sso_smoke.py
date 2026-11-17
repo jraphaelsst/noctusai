@@ -25,6 +25,7 @@ import os
 import pathlib
 import urllib.error
 import urllib.request
+from . import _http
 from typing import Any, Callable
 
 from settings import REPO_ROOT
@@ -66,8 +67,9 @@ def _default_http(method: str, url: str, body: dict | None, headers: dict | None
     h.update(headers or {})
     req = urllib.request.Request(url, data=data, headers=h, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return resp.status, _parse(resp.read())
+        resp = _http.urlopen_read(req, call_site="sso_smoke._default_http", idempotent=method in ("GET", "HEAD", "OPTIONS"),
+                                  read=30)
+        return resp.status, _parse(resp.body)
     except urllib.error.HTTPError as exc:
         return exc.code, _parse(exc.read())
     except Exception as exc:  # connection refused / timeout / DNS
@@ -251,8 +253,8 @@ def _default_preflight(url: str, origin: str) -> tuple[int, dict[str, str]]:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            return resp.status, {k.lower(): v for k, v in resp.headers.items()}
+        resp = _http.urlopen_read(req, call_site="sso_smoke.cors_preflight", retries=0, read=20, total=30)
+        return resp.status, {k.lower(): v for k, v in resp.headers.items()}
     except urllib.error.HTTPError as exc:
         return exc.code, {k.lower(): v for k, v in (exc.headers or {}).items()}
     except Exception as exc:

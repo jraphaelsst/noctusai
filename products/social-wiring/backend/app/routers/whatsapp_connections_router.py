@@ -104,6 +104,7 @@ from app.schemas.whatsapp_connection import (
     WhatsAppWebhookResultOut,
 )
 from app.services.credential_vault import CredentialStoreError, EncryptionNotConfigured
+from app.waha_instances import find_instance, get_waha_instances
 from app.services.message_store import MessageStore
 from app.services.whatsapp_chat_store import WhatsAppChatStore
 from app.services.whatsapp_connection_store import (
@@ -365,6 +366,7 @@ async def create_connection(
     store: WhatsAppConnectionStore = Depends(get_connection_store),
     cfg: SocialWiringSettings = Depends(get_settings),
     waha_factory: Any = Depends(get_waha_client_factory),
+    instances: Any = Depends(get_waha_instances),
 ) -> WhatsAppConnectionOut:
     """Create a new WAHA connection line (PLATFORM ADMINS only: provisioning binds a WAHA session to an org).
 
@@ -392,25 +394,38 @@ async def create_connection(
     """
     user, _token, raw_org = auth
 
-    # ── 1. Resolve the WAHA server ─────────────────────────────────────
-    base_url = (cfg.waha_base_url or "").strip()
-    if not base_url:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="WAHA server not configured (WAHA_BASE_URL is empty)",
-        )
-
-    api_key = (cfg.waha_api_key or "").strip()
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="WAHA server not configured (WAHA_API_KEY is empty)",
-        )
-
-    # ── 2. Resolve the WAHA session name ───────────────────────────────
-    # WAHA Core supports ONLY the single "default" session, so we drive it
-    # rather than minting a unique per-connection name.
-    session_name = "default"
+    # ── 1+2. Resolve the WAHA server + session ─────────────────────────
+    # `instancia` (a name from the CLOSED list derived from deploy/fleet/waha-instances.yml) -> that container's URL, session and
+    # key. Absent -> the legacy single shared WAHA (env), session "default" (WAHA Core allows only that one per container).
+    inst = None
+    if body.instancia is not None:
+        inst = find_instance(instances, body.instancia)
+        if inst is None:
+            logger.warning("whatsapp connections: create refused -- undeclared WAHA instance %r", body.instancia)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="instancia_waha_desconhecida"
+            )
+    if inst is not None and not inst.shared:
+        base_url, api_key, session_name = inst.base_url, inst.api_key(), inst.session
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"WAHA instance not configured ({inst.api_key_env} is empty)",
+            )
+    else:
+        base_url = (cfg.waha_base_url or "").strip()
+        if not base_url:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="WAHA server not configured (WAHA_BASE_URL is empty)",
+            )
+        api_key = (cfg.waha_api_key or "").strip()
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="WAHA server not configured (WAHA_API_KEY is empty)",
+            )
+        session_name = "default"
 
     # ── 3. Mint webhook token + build public URL ────────────────────────
     webhook_token = secrets.token_urlsafe(24)

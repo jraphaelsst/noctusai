@@ -87,9 +87,16 @@ def register() -> Any:
         dashboard_criacao,
         equipe,
         esteira,
+        esteira_origem,
+        estruturas,
+        estruturas_admin,
+        estruturas_ia,
+        estruturas_importacao,
+        estruturas_resolver,
         generation,
         perfil_criacao,
         headlines,
+        headlines_roteiros,
         pesquisa,
         pesquisa_extracao,
         posts,
@@ -97,6 +104,8 @@ def register() -> Any:
         treinamentos,
         roteiros,
         esteira_legenda,
+        post_assets,
+        post_publicacoes,
     )
     from app.modules.media_creation import cerebro_scheduler
     from app.modules.media_creation.services import cerebro_transcricao
@@ -129,6 +138,10 @@ def register() -> Any:
     biblioteca_ingestao.register_handlers()
     biblioteca_transcricao.register_contexto()
     biblioteca_scheduler.configure()
+    # Estruturas auto-draft (EST-5): the `estruturas.rascunho_do_viral` handler + the `depois_de_classificar` callback.
+    from app.modules.media_creation.services import estruturas_autodraft
+
+    estruturas_autodraft.register()
 
     async def start_pesquisa_extracao_hook() -> None:
         """Its OWN seed Worker (types ["pesquisa.extrair"]), NOT the fotos one (that one's claim
@@ -163,10 +176,24 @@ def register() -> Any:
             dashboard_criacao.router,
             chat.router,
             roteiros.router,
+            # Biblioteca (EST-2): the platform-admin WRITE router first (its static /perfis/verificar must precede
+            # the read router's /perfis/{perfil_id}), then the org READ router.
+            biblioteca.router_admin,
             biblioteca.router,
             headlines.router,
+            headlines_roteiros.router,
+            esteira_origem.router,
+            # Estruturas library (EST-1): the admin WRITE router first, then the READ router (its static paths
+            # /admin and /tipos-bloco precede /{id}); EST-3/EST-4a routers (importacoes, resolver-perfil) go BEFORE both.
+            estruturas_ia.router,
+            estruturas_importacao.router,
+            estruturas_resolver.router,
+            estruturas_admin.router,
+            estruturas.router,
             esteira_legenda.router,
             equipe.router,
+            post_assets.router,
+            post_publicacoes.router,
             *esteira.ROUTERS,
         ],
         # No extra standard routers — the LLM seam is auto-wired by

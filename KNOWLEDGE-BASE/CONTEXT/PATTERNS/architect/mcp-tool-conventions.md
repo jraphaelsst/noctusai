@@ -488,3 +488,50 @@ Future candidates: any upstream MCP whose typical response exceeds the
 tool-result cap on real data. File a filter-proxy follow-up project when
 an in-flight project hits the cap (the symmetric of how
 `projects/noctus-supabase-advisors-proxy/` was filed).
+
+---
+
+## 10. Node toolchain — ONE resolver (`node_toolchain.resolve`)
+
+The toolkit node dir's `node_modules` is gitignored, so every fresh worktree and scrubbed export lacks it and each ts-morph / PGlite keeper
+failed on its own (N>=4 on 2026-11-14/15: the silent-refusal scanner refused two merge commits, polling-budget went red on a never-installed primary).
+Do not resolve it per keeper. `mcp/noctusai/node_toolchain.py` (stdlib only) is the single answer:
+
+1. the worktree's own `node_modules` when it carries every required package (`require=`, default `ts-morph`);
+2. else another checkout's install (the primary via git-common-dir, the checkout owning the interpreter's venv, this toolkit's own tree, or explicit `sources=`) **only when its `package-lock.json` is byte-identical** - symlinked in (gitignored) or, if the link cannot be made, borrowed through `Toolchain.invocation`;
+3. else a loud `Toolchain.reason` naming the exact `npm ci --prefix <worktree>/mcp/noctusai/node`. The caller reports UNMEASURED or refuses with it; a mismatched install is never borrowed silently.
+
+Consumers: the four `compliance.py` AST scans (silent-refusal, motion-import, lying-loading Mode B, module-page-keys) and `polling_request_budget` via
+`node_toolchain.run_files_scan`; `ts_ast_edit`, `migration_replay` (`require=@electric-sql/pglite`) and `release_steward.link_pglite` via `resolve`;
+`task_branch` `wire_env` refuses to link a toolkit install whose lockfile differs (`node_toolchain.lockfile_verdict`). A new node-backed keeper calls the resolver; a hand-rolled `subprocess.run(["node", ...])` is the shape this section retires (test: `test_node_toolchain.py::TestEveryKeeperUsesTheSharedResolver`).
+
+
+### 10a. Fresh worktrees are provisioned by construction; tool output is capped by construction (2026-11-15)
+
+- **Node toolchain.** `node_toolchain.provision` = `resolve` + a LOUD `npm ci --prefix` when there is no lockfile-identical install to link (a `node_modules` symlink is removed first - `npm ci` would otherwise wipe the primary's install through it). `task_branch` `wire_env` plans a `node_install` spec instead of skipping; the harness's agent worktrees get the same via `scripts/hooks/claude-wire-worktree-toolchain.py` (SessionStart + SubagentStart; link-only for sibling trees). Closes `NOC-REMEDIATE[worktree-pglite-node-modules]`.
+- **`NOC_REQUIRE_REAL_PG=1` fails, never skips.** Every PGlite fixture path goes through `noctusai_lib.testing.pglite` (`pglite_available`, `pglite_replay_skipif`, `real_pg_required`); a module that drives `replay.mjs` directly uses `pytest.mark.skipif(**pglite_replay_skipif())`, never a hand-rolled `shutil.which` expression.
+- **Stale pre-push.** The hook carries `# NOC-HOOK-STAMP` / `# NOC-HOOK-LEGS`; an installed copy older than the tree's hands the push to the tree's hook (once) or prints `NOC-REMEDIATE[hook-leg-absent-loud]` naming the absent legs. Bump the stamp with every new leg. Closes `NOC-REMEDIATE[hook-leg-absent-loud]`.
+- **Output cap.** `tool_output_cap.install_output_cap(server)` (after `install_strict_tool_arguments`): a result over ~50k chars becomes a summary + `full_output_path` (full JSON under `~/.noctus/tool-output`, newest 50 kept). `session_end_sweep` also returns a compact form itself (`verbose=true` for the raw). Closes `NOC-REMEDIATE[tool-output-cap]`.
+
+## 11. Every outbound HTTP call has a timeout - ONE helper (`tools/noctus/dev/_http.py`)
+
+A per-socket timeout bounds one `recv`, never the call: a peer that dribbles bytes or holds a half-closed (CLOSE_WAIT) socket resets it forever.
+`migrate_product --confirm` hung 45 min that way after applying its DDL and died before writing `migrations-applied.json` (N=2; N=1 2026-11-13 held a
+heavy slot 80 min). The construction, not a reminder:
+
+- `_http.urlopen_read(req, call_site=...)` (urllib) and `_http.client_timeout()` (httpx) give explicit connect/read timeouts (env `NOC_HTTP_CONNECT_TIMEOUT_S` 10,
+  `NOC_HTTP_READ_TIMEOUT_S` 60), a **total** deadline per attempt (`NOC_HTTP_TOTAL_DEADLINE_S` 120; the caller is released with `HttpDeadlineExceeded`, a `TimeoutError`),
+  and ONE bounded retry on timeout / 502-504 / 429 (`idempotent=False` retries only provably-unsent failures; `retries=0` for liveness probes).
+  A longer budget is declared at the call site (`read=`, `total=`), never by dropping the bound.
+- A non-idempotent write whose response is lost is never re-sent blindly: re-READ the state, then decide (`migrate_product` confirms its ledger row by a SELECT
+  before it reports `ledger_record_failed` with the exact `record_applied_migrations` command).
+- Telemetry: every timeout / retry / terminal transport failure is one `kind=http-timeout` event (host, call site, elapsed, outcome) in the guard event log.
+- `_http.py` is stdlib-only at import time (`prod_watchdog` / `mq_watchdog` run in CI with no pip).
+- **httpx and supabase-py (http-deadlines-clients, 2026-11-16).** httpx's `timeout=` is per-socket too, so a bare `httpx.Client(timeout=...)` is NOT bounded. Use
+  `_http.bounded_client(deadline_s=..., why="...", call_site=...)`: every request (any verb, `request()`, `stream()` until headers) runs under the same
+  `run_with_deadline`, and a blown deadline surfaces as `httpx.ReadTimeout` so existing `except httpx.HTTPError` handlers keep working. The budget and its reason
+  are declared at the call site (`deadline_s=900, why="batch backfill walks Vista code by code"`; `why` is mandatory; `timeout=` is refused). supabase-py goes through
+  `_http.supabase_client(url, key, call_site=..., schema=...)` (explicit connect/read timeouts on the postgrest, storage and functions sub-clients via
+  `ClientOptions.*_client_timeout`) plus `_http.supabase_execute(builder, call_site=...)` for a total deadline on one `.execute()`.
+- Backstop: keeper `check_http_call_without_timeout` (also flags every httpx call outside `bounded_client`, even with `timeout=`, and every bare `create_client(`; baseline 0) (`--check-http-call-without-timeout`, AST, ratchet `mcp/noctusai/tests/http_timeout_baseline.json`, shrink-only;
+  suppress with `# noc-allow: http-timeout -- <reason>`).

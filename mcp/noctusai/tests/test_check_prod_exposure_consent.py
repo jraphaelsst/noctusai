@@ -366,6 +366,50 @@ class TestConsentCommitMustBeIsolated:
         assert isolation_issues == []
 
 
+class TestConsentCommitIsolationIgnoresMergeInheritedContent:
+    """2026-11-15: merging dev into a branch re-stages the consent record dev already landed alongside dev's other
+    files; the isolation rule judges what THIS commit authors, so MERGE_HEAD-inherited blobs do not count."""
+
+    def _merge_setup(self, tmp_path: Path) -> Path:
+        root = _init_repo(tmp_path)
+        _commit_surfaces(root, ["core"], "baseline: core only")
+        _git(root, "branch", "feat")
+        consent_ref = _write_roadmap_with_milestone(root, "orbity", "M4: prod promote")
+        _write_consent_record(root, "orbity", consent_ref=consent_ref, commit=False)
+        (root / "other.txt").write_text("dev work\n")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-m", "dev lands consent + other work")
+        _git(root, "checkout", "feat")
+        (root / "feature.txt").write_text("feature\n")
+        _git(root, "add", "feature.txt")
+        _git(root, "commit", "-m", "feature work")
+        return root
+
+    @staticmethod
+    def _isolation(issues: list[dict]) -> list[dict]:
+        return [i for i in issues if i.get("symbol") == "prod-exposure-consent-not-isolated"]
+
+    def test_consent_record_inherited_from_the_merged_branch_is_not_flagged(self, tmp_path):
+        root = self._merge_setup(tmp_path)
+        _git(root, "merge", "--no-commit", "--no-ff", "main")
+        staged = _git(root, "diff", "--cached", "--name-only").split()
+        assert "deploy/consent/orbity.prod.yml" in staged and "other.txt" in staged  # the premise
+        assert self._isolation(check_prod_exposure_consent(repo_root=root)) == []
+
+    def test_same_staged_content_without_a_merge_is_still_flagged(self, tmp_path):
+        root = self._merge_setup(tmp_path)
+        _git(root, "checkout", "main", "--", "deploy/consent/orbity.prod.yml", "other.txt")
+        assert len(self._isolation(check_prod_exposure_consent(repo_root=root))) == 1
+
+    def test_an_edit_layered_on_the_merge_is_still_flagged(self, tmp_path):
+        root = self._merge_setup(tmp_path)
+        _git(root, "merge", "--no-commit", "--no-ff", "main")
+        (root / "README.md").write_text("layered edit\n")
+        (root / "deploy/consent/other.prod.yml").write_text("consented_by: x\n")  # NEW consent, not inherited
+        _git(root, "add", "README.md", "deploy/consent/other.prod.yml")
+        assert len(self._isolation(check_prod_exposure_consent(repo_root=root))) == 1
+
+
 class TestResolveRoadmapMilestone:
     def test_resolves_when_anchor_and_checkmark_present(self, tmp_path):
         root = _init_repo(tmp_path)

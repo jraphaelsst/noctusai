@@ -29,7 +29,7 @@ import asyncio
 import json
 import logging
 from datetime import date
-from typing import Any
+from typing import Any, Mapping, Optional
 
 import httpx
 
@@ -48,19 +48,25 @@ from noctusai_lib.integrations.vista.client import (
     VistaError,
     VistaFieldNotAvailable,
     PAGINATION_KEYS,
+    WRITE_DENIED,
+    WRITE_PERMITTED,
     VistaNotFound,
     VistaRecordUnpublished,
     extract_corretores_items,
+    VistaUpstreamError,
     extract_items,
     redact_api_key,
 )
 from noctusai_lib.integrations.vista.imovel_normalizer import vista_to_imovel
+from noctusai_lib.integrations.vista.observacoes import exigir_motivo
 
 logger = logging.getLogger(__name__)
 
 #: Vista caps `paginacao.quantidade` at 50; concurrent requests per search stay small (rate courtesy).
 SEARCH_PAGE_SIZE = 50
 SEARCH_CONCURRENCY = 4
+#: A code that cannot exist at any tenant: the write-permission probe names it so an (impossible) accepted request creates nothing.
+WRITE_PROBE_CODE = "ZZNOCPROBE0"
 
 
 # Alias the existing seed names to the adapter-layer vocabulary the
@@ -227,7 +233,9 @@ class VistaRESTAdapter:
         listing = await self._fetch_listing_row(client, code)
         detalhes: dict | None = None
         try:
-            fields = await calibrator.get_imovel_detail_fields(client)
+            fields = await calibrator.get_imovel_detail_fields(
+                client, sample_codigo=code
+            )
             result = await client.detalhes_imovel(code, fields=fields)
             if isinstance(result.data, dict):
                 detalhes = result.data
@@ -331,7 +339,9 @@ class VistaRESTAdapter:
                 codigo = row.get("Codigo")
                 if codigo:
                     try:
-                        detail_fields = await calibrator.get_imovel_detail_fields(client)
+                        detail_fields = await calibrator.get_imovel_detail_fields(
+                            client, sample_codigo=codigo
+                        )
                         detail_result = await client.detalhes_imovel(
                             codigo, fields=detail_fields
                         )
@@ -572,98 +582,51 @@ class VistaRESTAdapter:
             thumbnail_url=thumbnail,
         )
 
+    async def atualizar_imovel(
+        self, code: str, campos: Mapping[str, Any], *, motivo: str, autor: str, canal: str = "NoctusAI", fonte: str = "NoctusAI",
+        finalidade: str = "venda", conversa_url: Optional[str] = None, rotulos: Optional[Mapping[str, str]] = None,
+    ) -> str:
+        """Set fields on an existing Vista listing -- `PUT /imoveis/detalhes?imovel=<code>` (vista.md § 4.8) -- AND leave a note in
+        its internal observations (`ObsVenda`/`ObsLocacao`; `observacoes`). `motivo` + `autor` REQUIRED (owner 2026-11-04: never edit
+        Vista without a reason and a note). Returns the note line. Raises the typed Vista error on any refusal; a failed read of the
+        current observations writes NOTHING."""
+        if not validate_product_code(code):
+            raise ValueError(f"invalid Vista product code {code!r}")
+        return await self._client().atualizar_imovel(
+            code, campos, motivo=motivo, autor=autor, canal=canal, fonte=fonte, finalidade=finalidade, conversa_url=conversa_url, rotulos=rotulos)
+
+    async def pode_atualizar_imovel(self) -> Optional[bool]:
+        """Is this key allowed to `PUT /imoveis/detalhes`? Non-mutating (empty PUT on a NON-EXISTENT code, no `cadastro`).
+        `True` = permitted, `False` = denied, `None` = could not tell (timeout/5xx/unknown)."""
+        row = await self._client().probe_write_permission(
+            "/imoveis/detalhes", method="PUT", extra_params={"imovel": WRITE_PROBE_CODE},
+        )
+        if row["verdict"] == WRITE_PERMITTED:
+            return True
+        if row["verdict"] == WRITE_DENIED:
+            return False
+        return None
+
     async def update_property_video_url(
         self,
         code: str,
         video_url: str,
         *,
+        motivo: str,
+        autor: str = "NoctusAI",
         field_name: str = "Tour360",
     ) -> bool:
-        """Push a video URL onto a Vista property — best-effort write.
-
-        Returns ``True`` if Vista accepted the write, ``False`` on any
-        failure (4xx, 5xx, network, malformed response). Never raises;
-        the caller treats this as a fire-and-forget side effect that
-        must not block the WhatsApp post-upload notification.
-
-        ``field_name`` is the Vista field to populate. For this tenant
-        (one-consultoria) the only video-ish field exposed by
-        ``/imoveis/detalhes`` is ``Tour360``; other tenants may have a
-        dedicated ``UrlVideo`` / ``LinkYoutube`` / etc. Pass an override
-        if discovery reveals a better target.
-
-        Endpoint contract — derived from the Vista REST docs (see
-        ``KB § INTEGRATIONS/vista.md``). The exact route + method varies
-        per tenant API-key permissions: read-only keys return 404 on the
-        write routes. We try the documented ``PUT /imoveis/alterar``;
-        observed 404 on the one-consultoria tenant means writes aren't
-        provisioned for that key. Operator should request an elevated
-        key from Vista support to enable this path.
-        """
-        if not validate_product_code(code):
-            logger.info(
-                "Vista update skipped: invalid product code %s", code
-            )
-            return False
+        """Push a video URL onto a Vista property -- best-effort write; ``True`` if Vista accepted it, ``False`` on any
+        failure (never raises: a fire-and-forget side effect; `motivo` is still REQUIRED -- a missing one is a caller bug and raises). Goes through `atualizar_imovel`
+        (`PUT /imoveis/detalhes`; the old `PUT /imoveis/alterar` never existed -- 404, probed 2026-11-04)."""
         if not video_url:
             return False
-
-        url = f"{self._base_url}/imoveis/alterar"
-        params = {"imovel": code, "key": self._api_key}
-        payload = {field_name: video_url}
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-
+        exigir_motivo(motivo, autor)
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.put(
-                    url, params=params, json=payload, headers=headers
-                )
-        except httpx.HTTPError as exc:
-            logger.warning(
-                "Vista update_property_video_url transport error for %s: %s",
-                code,
-                exc,
-            )
+            await self.atualizar_imovel(code, {field_name: video_url}, motivo=motivo, autor=autor, canal="upload de vídeo")
+        except (VistaError, ValueError) as exc:
+            logger.warning("Vista update_property_video_url for %s failed (%s)", code, type(exc).__name__)
             return False
-
-        if response.status_code >= 400:
-            logger.warning(
-                "Vista update_property_video_url for %s returned %d: %s",
-                code,
-                response.status_code,
-                response.text[:200],
-            )
-            return False
-
-        try:
-            data = response.json()
-        except Exception:
-            # Empty or non-JSON 2xx body — Vista sometimes returns
-            # 200 with no body on success. Treat as a soft success.
-            logger.info(
-                "Vista update_property_video_url for %s succeeded (empty body)",
-                code,
-            )
-            return True
-
-        # Vista's error shape is ``{"status": 4xx, "message": [...]}`` even
-        # on 200 with payload errors. Defensive check.
-        if isinstance(data, dict) and isinstance(data.get("status"), int):
-            if data["status"] >= 400:
-                logger.warning(
-                    "Vista update_property_video_url for %s returned soft error %s: %s",
-                    code,
-                    data["status"],
-                    data.get("message"),
-                )
-                return False
-
-        logger.info(
-            "Vista update_property_video_url for %s succeeded", code
-        )
         return True
 
 

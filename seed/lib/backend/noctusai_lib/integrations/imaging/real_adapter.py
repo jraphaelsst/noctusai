@@ -17,7 +17,7 @@ on save.** Pillow does not round-trip EXIF/ICC into a saved image
 unless the caller explicitly re-attaches it — so simply never doing
 that is what strips GPS coordinates (an LGPD requirement, not an
 optimization), the EXIF orientation tag (already baked into the pixels
-by `ImageOps.exif_transpose` before this point — carrying the tag
+by the ingest sanitizer (`sanitize.py`) before this point — carrying the tag
 forward would double-rotate downstream viewers that also honour it),
 and any ICC profile (already converted to sRGB — the profile pointer
 is dropped, downstream consumers assume untagged sRGB).
@@ -28,7 +28,7 @@ from __future__ import annotations
 import io
 
 import pillow_heif
-from PIL import ExifTags, Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont
 from PIL import UnidentifiedImageError
 
 try:
@@ -40,6 +40,11 @@ except ImportError:  # pragma: no cover - ImageCms needs littlecms; ships with
     # of the whole adapter for a capability only some inputs even use.
     ImageCms = None  # type: ignore[assignment]
 
+from noctusai_lib.integrations.imaging.sanitize import (
+    ImageIngestError,
+    sanitize_image,
+    sniff_image_format,
+)
 from noctusai_lib.integrations.imaging.types import (
     DEFAULT_JPEG_QUALITY,
     DEFAULT_WATERMARK_TEXT,
@@ -51,11 +56,6 @@ from noctusai_lib.integrations.imaging.types import (
 # `Image.open` transparently decodes `.heic`/`.heif` bytes. Safe to call
 # more than once (module-level import is itself already idempotent).
 pillow_heif.register_heif_opener()
-
-_GPS_INFO_TAG_ID = next(
-    tag_id for tag_id, name in ExifTags.TAGS.items() if name == "GPSInfo"
-)
-
 
 def _open_image(image_bytes: bytes) -> Image.Image:
     try:
@@ -102,18 +102,22 @@ class RealImagingAdapter:
     backend = "pillow"
 
     def normalize_for_edit(self, image_bytes: bytes) -> NormalizedImage:
-        im = _open_image(image_bytes)
-        source_format = im.format or "UNKNOWN"
-
-        exif = im.getexif()
-        had_gps = _GPS_INFO_TAG_ID in exif
-
-        transposed = ImageOps.exif_transpose(im)
-        if transposed is None:
-            raise UnsupportedImageFormatError(
-                f"{source_format}: exif_transpose could not produce a usable image"
+        # Strip + orientation + sniff are owned by the canonical ingest
+        # sanitizer (security standard S8) — one implementation fleet-wide.
+        try:
+            clean = sanitize_image(
+                image_bytes,
+                max_bytes=len(image_bytes),
+                allowed=("jpeg", "png", "webp", "heic"),
             )
-        im = transposed
+        except ImageIngestError as exc:
+            raise UnsupportedImageFormatError(
+                f"Could not decode image bytes ({len(image_bytes)} bytes): {exc}"
+            ) from exc
+        sniffed = sniff_image_format(image_bytes) or "unknown"
+        source_format = "HEIF" if sniffed == "heic" else sniffed.upper()
+        had_gps = "gps" in clean.stripped
+        im = _open_image(clean.data)  # already oriented, metadata-free
 
         icc_bytes = im.info.get("icc_profile")
         if icc_bytes:

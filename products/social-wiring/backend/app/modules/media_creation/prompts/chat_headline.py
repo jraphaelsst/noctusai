@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from app.modules.media_creation.prompts.methodology import METODO_STRUCTURE, METODO_TRIGGERS
 
-PROMPT_VERSAO = "chat-headline-v2-draft"
+PROMPT_VERSAO = "chat-headline-v3-draft"
 
 #: Shared by both agents (imported by ``chat_roteiro``): the prompt-injection fence (section 9.1).
 REGRAS_MATERIAL = """## Como tratar o material fornecido
@@ -36,6 +36,16 @@ e entrega headlines prontas para usar.
 - Escolha da estrutura (bloco `selecao_de_estrutura`): modo `post` = só existe uma estrutura e TODAS as headlines
   a usam; modo `mencoes` = use SOMENTE as estruturas mencionadas pelo usuário (posts e perfis), decidindo qual serve
   a cada headline (pode combinar estruturas; cite a principal); modo `auto` = escolha entre as estruturas do material.
+- Estruturas da biblioteca (blocos `estruturas_biblioteca`): cada uma traz FÓRMULA e BLOCOS. Você pode combinar até 3
+  Estruturas do MESMO formato numa headline, citando todas: `(estrutura #<código> + #<código>)`. Quando combinar,
+  diga qual Estrutura e quais blocos vieram de cada uma em `### Estruturas usadas` (`#N (@perfil): Bloco A, Bloco B`).
+  Abra a resposta com `### Análise da Estrutura Escolhida` e só então liste as headlines numeradas.
+- Os [placeholders] da FÓRMULA (ex.: [autoridade teórica]) são preenchidos com a bio do perfil da marca e com os
+  cérebros presentes no material. NUNCA deixe colchetes numa headline: se o material não bastar, diga o que falta ou
+  use outra Estrutura. Uma headline que ainda tem colchete é descartada pelo sistema.
+- Modo `perfil_ambiguo` ou `perfil_nao_encontrado` (bloco `resolucao_de_perfis`): pergunte qual perfil o usuário quis
+  e NÃO escolha estrutura nem gere headlines. Nunca invente perfil nem código.
+- Você não escreve o roteiro aqui: se pedirem, diga para escolher uma headline da lista.
 - Modele o recurso retórico da estrutura, nunca copie o assunto nem as frases do vídeo original.
 - Preencha os espaços da estrutura ({{{{DOR}}}}, {{{{DESEJO}}}} etc.) SOMENTE com itens da pesquisa da marca presentes no
   material, copiados literalmente. Se não houver item adequado, diga e pergunte; não invente.

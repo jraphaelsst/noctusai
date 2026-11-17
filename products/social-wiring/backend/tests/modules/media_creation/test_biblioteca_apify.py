@@ -66,8 +66,8 @@ class Ledger:
 def _db(**extra):
     db = MockSupabaseClient()
     db.from_("cs_perfis_monitorados").insert({
-        "id": PID, "org_id": ORG, "rede": "instagram", "handle": "alvo", "status": "aguardando",
-        "created_by": "u1", **extra,
+        "id": PID, "org_id": None, "rede": "instagram", "handle": "alvo", "status": "aguardando",
+        "created_by": "u1", "monitorar": True, **extra,
     }).execute()
     return db
 
@@ -77,6 +77,7 @@ def _ports(db, scraper=None, factory=None, ledger=None, cfg=CFG):
         raise AssertionError("Meta must not be touched on the Apify path")
 
     def default_factory(org):
+        assert org == ORG  # the token / cap / ledger belong to the platform INGESTION org, never to a customer org
         if scraper is None:
             raise ApifyNotConfigured("no token")
         return scraper
@@ -86,6 +87,7 @@ def _ports(db, scraper=None, factory=None, ledger=None, cfg=CFG):
         llm=None, adapter_factory=no_adapter, transcricao_factory=lambda o, u: None, cfg=cfg, clock=lambda: NOW,
         scraper_factory=factory or default_factory, fonte_reader=lambda: "apify",
         ledger_factory=(lambda: ledger.db) if ledger else None,
+        ingestao_org=lambda: ORG, ingestao_user=lambda: "sys-user",
     )
 
 
@@ -118,7 +120,7 @@ def test_sync_without_meta_account_persists_views_video_url_cost_and_header():
     assert not p.get("conta_descoberta_id")
     assert sc.calls == [("alvo", 60, None)]
     led = ledger.db.from_("cost_ledger").select("*").execute().data
-    assert len(led) == 1 and led[0]["category"] == "apify" and led[0]["currency"] == "USD" and led[0]["fx_pending"]
+    assert len(led) == 1 and led[0]["org_id"] == ORG and led[0]["category"] == "apify" and led[0]["currency"] == "USD" and led[0]["fx_pending"]
     assert db.from_("cs_apify_uso").select("*").execute().data[0]["resultados"] == 2
 
 

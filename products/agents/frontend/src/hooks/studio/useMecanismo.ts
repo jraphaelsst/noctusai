@@ -41,6 +41,7 @@ export function useMecanismoRun(key: string, runId: string | null) {
     queryFn: () => api.get<MecanismoRun>(`/api/studio/agents/${seg(key)}/mecanismo-runs/${seg(runId ?? "")}`),
     enabled: !!key && !!runId,
     retry: false,
+    // poll-budget: 3s only while the mechanism run is executing, stops on error or finish; 1 calls/tick (refetch of the polled GET, only while the job is in flight); worst 28800/day per open tab; hidden=paused
     refetchInterval: (query) => {
       if (query.state.status === "error") return false;
       const s = (query.state.data as MecanismoRun | undefined)?.status;

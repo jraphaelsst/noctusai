@@ -74,6 +74,8 @@ export default function NovoLote() {
 
   const [nome, setNome] = useState("");
   const [fonte, setFonte] = useState<Fonte>("upload");
+  // Percent of CONFIRMED bytes of the big (chunked) photos; null while none is in flight.
+  const [progressoEnvio, setProgressoEnvio] = useState<number | null>(null);
   const [arquivos, setArquivos] = useState<File[]>([]);
   const [codigoVista, setCodigoVista] = useState("");
   const [etapa, setEtapa] = useState<null | "criando" | "enviando_fotos" | "puxando_vista" | "submetendo">(null);
@@ -123,7 +125,7 @@ export default function NovoLote() {
 
       if (fonte === "upload") {
         setEtapa("enviando_fotos");
-        await uploadFotos.mutateAsync({ loteId: lote.id, files: arquivos });
+        await uploadFotos.mutateAsync({ loteId: lote.id, files: arquivos, onProgress: setProgressoEnvio });
       } else {
         setEtapa("puxando_vista");
         await loteVista.mutateAsync({ loteId: lote.id, body: { codigo: codigoVista.trim() } });
@@ -142,6 +144,7 @@ export default function NovoLote() {
       });
     } finally {
       setEtapa(null);
+      setProgressoEnvio(null);
     }
   }
 
@@ -242,7 +245,11 @@ export default function NovoLote() {
 
             <Button onClick={handleCriar} disabled={!podeSubmeter}>
               <Upload className="h-4 w-4" />
-              {enviando ? etapaLabel[etapa!] : "Criar lote"}
+              {enviando
+                ? etapa === "enviando_fotos" && progressoEnvio !== null
+                  ? `Enviando fotos… ${progressoEnvio}%`
+                  : etapaLabel[etapa!]
+                : "Criar lote"}
             </Button>
           </CardContent>
         </Card>

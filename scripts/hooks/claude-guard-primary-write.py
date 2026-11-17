@@ -108,7 +108,7 @@ def _judge_timed(payload: dict, stages: dict[str, float]) -> dict | None:
         # subprocess, no worktree discovery, no baseline -- those cost seconds under load and a
         # read has nothing to guard. A stale baseline from an earlier write is dropped by a plain
         # file remove (no git) so the Post leg never diffs against it.
-        verdict = guard.decide_git_bypass(tool_name, tool_input)
+        verdict = guard.decide_git_bypass(tool_name, tool_input, cwd=payload.get("cwd"))
         if verdict is None and tool_name == "Bash":
             from _guard_failclosed import _primary_root
             guard.discard_pretool_baseline(guard.GuardContext(str(_primary_root()), "", ()),
@@ -120,12 +120,25 @@ def _judge_timed(payload: dict, stages: dict[str, float]) -> dict | None:
     # docstring), so a command that is also a primary-checkout write gets the
     # more specific reason.
     cwd = payload.get("cwd") or os.getcwd()
-    verdict = guard.decide_git_bypass(tool_name, tool_input)
+    verdict = guard.decide_git_bypass(tool_name, tool_input, cwd=cwd)
+    if verdict is None:
+        verdict = guard.decide_wired_worktree_npm(tool_name, tool_input, cwd)  # plain file reads, no git
+    lap("bypass+npm")
+    if verdict is None:
+        # CLAIM-ONLY FAST PATH (2026-11-14, finding GW-8a7e7ce8): a write confined to this session's own claimed
+        # worktree is decided from the claim file + three file reads - no git subprocess - so machine load can no
+        # longer burn the deadline on the dominant, harmless case. Anything unproven falls through to the full
+        # (git-backed, still fail-closed) decision below.
+        from _guard_failclosed import _primary_root
+        primary = str(_primary_root())
+        if guard.decide_claimed_fast(tool_name, tool_input, cwd, payload.get("session_id"), primary) is not None:
+            if tool_name == "Bash":  # nothing to diff against afterwards: the write cannot have hit the primary
+                guard.discard_pretool_baseline(guard.GuardContext(primary, "", ()), payload.get("session_id"))
+            lap("claimed-fastpath")
+            return None
     if verdict is None:
         verdict = guard.decide_hook_integrity(tool_name, tool_input, cwd)
-    if verdict is None:
-        verdict = guard.decide_wired_worktree_npm(tool_name, tool_input, cwd)
-    lap("bypass+integrity")
+    lap("integrity")
     ctx = None
     if verdict is None:
         ctx = guard.discover_context(cwd)

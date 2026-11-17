@@ -193,6 +193,18 @@ vs. migrations — offline, no live DB needed). A product with NEITHER a
 migrations dir NOR ORM models is `undeterminable` — a finding, never a
 silent pass (fail-closed).
 
+**Schema renames are followed (2026-11-15).** Earlier migrations are frozen:
+`CREATE TABLE monica.*` stays in 001-022 after nosnolimiar's `023` renames the
+schema, and reading those literally reported `missing_table:monica.*` against a
+live DB that holds 25 tables in `nosnolimiar` and 0 in `monica` (a false alarm
+that blocked two prod cuts). `schema_drift` now re-keys the declared map through
+every rename it can read, in order: `ALTER SCHEMA x RENAME TO y`, the dynamic
+`EXECUTE format('ALTER SCHEMA %I RENAME TO %I', v_old, v_new)` form (variables
+resolved from literal `DECLARE`s, as 023 does), or the product-declared marker
+`-- noc-schema-alias: old -> new` for a rename it cannot read (computed names).
+Comments never count as a rename. A product that renames its schema ships the
+rename in a migration the scanner can read, or the marker.
+
 **Blind spot, by construction:** a column the code writes that NO migration
 (and no ORM model) ever declared — bug #1's own shape — agrees with itself
 on both sides of a migrations-vs-live diff, so `schema_drift` cannot see it.
@@ -215,7 +227,9 @@ Two migrations sharing a numeric prefix have undefined apply-order. This bit twi
 2. `origin/dev`, freshly fetched — the authoritative merged state. Catches a migration a parallel worktree already merged that this worktree hasn't rebased onto (the 2026-08-13 shape).
 3. Every LOCAL branch (git refs are shared across every worktree of one clone) diffed against `origin/dev` — catches a sibling worktree's committed-but-unpushed migration (the 2026-08-03 shape).
 
-`scaffold_migration` consumes this internally, so using the standard authoring tool is sufficient — no extra step to remember. Call `next_migration_number` directly only to preview a number before scaffolding, or to sanity-check a hand-picked one.
+`scaffold_migration` consumes this internally, so using the standard authoring tool is sufficient — no extra step to remember.
+
+**Contract / drop migrations: the guard and the drops share ONE `DO` block.** `scaffold_migration` emits a plain skeleton; when you turn it into a contract step (the `DROP`s after an expand/backfill), a guard that `RAISE`s because data is unmigrated must sit in the SAME `DO $$ ... END $$` as the `DROP`s. `migration_replay` replays applied history statement by statement (autocommit), so a `RAISE` in a separate guard block aborts only that statement and the later `DROP`s still run; inside one block the exception unwinds everything after it (and `migrate_product` sends the whole file in one call, where it is atomic either way). Pattern: `DO $$ BEGIN IF <unmigrated rows> THEN RAISE EXCEPTION '...; nothing was dropped'; END IF; EXECUTE 'DROP ...'; END $$;` (see `346_imobshot_eventos_contract.sql`). Call `next_migration_number` directly only to preview a number before scaffolding, or to sanity-check a hand-picked one.
 
 **Two backstops catch what authoring-time missed.** `check_migration_number_collision` (a `check_*` keeper — the compliance-not-authoring layer) runs at `pre-commit` whenever a migration is staged: **Leg A** (severity `high`, blocking) flags a duplicate number already ON DISK; **Leg B** (severity `warning`, non-blocking) flags a number two DIFFERENT local branches both claim, latent until one of them merges second. Leg B stays a warning at commit time deliberately — blocking it would punish whichever branch happens to commit first for something not their fault (the collision belongs to whoever merges *second*, who may not be this commit). The SECOND backstop is `noctus.dev.task_branch(action='integrate')`: after the branch rebases onto fresh `origin/dev` (so Leg A's plain directory scan now sees both the merged state and this branch's own migration together) it re-runs the same unmodified keeper, scoped to the directories this branch's own migrations touch.
 

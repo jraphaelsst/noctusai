@@ -52,9 +52,11 @@ class TestViralCardPresenter:
         assert card["thumbnail_url"].startswith(f"fake://storage/{BIBLIOTECA_BUCKET}/t/1.jpg")
         assert card["perfil"]["handle"] == "alvo" and card["codigo"] == 3 and card["trecho"] == "Um gancho"
 
-    def test_foreign_org_viral_is_absent(self, client):
+    def test_the_library_is_platform_wide_so_any_orgs_caller_gets_the_card(self, client):
         vid = _seed_viral(client.mock_supabase)
-        assert anyio.run(lambda: viral_cards(client.mock_supabase, "other-org", FakeStorageBackend(), [vid])) == {}
+        cards = anyio.run(lambda: viral_cards(client.mock_supabase, "other-org", FakeStorageBackend(), [vid]))
+        assert set(cards) == {vid}  # the org argument is ignored (kept for caller compatibility)
+        assert anyio.run(lambda: viral_cards(client.mock_supabase, None, FakeStorageBackend(), [str(uuid.uuid4())])) == {}
 
     @pytest.mark.parametrize("storage", [None, _Boom()])
     def test_unsignable_thumbnail_is_none_not_an_error(self, client, storage):

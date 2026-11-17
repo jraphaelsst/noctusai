@@ -380,7 +380,7 @@ def _instrument(
     return _run
 
 
-def _drop_existing(name: str) -> None:
+def _drop_existing(name: str) -> int:
     """Remove every job already registered under `name`.
 
     A drain loop, not a single `remove_job`: on a stopped scheduler
@@ -406,6 +406,22 @@ def _drop_existing(name: str) -> None:
         logger.warning(
             "register(%r): dropped %d duplicate registrations", name, removed,
         )
+    return removed
+
+
+def unregister(name: str) -> bool:
+    """Remove the job registered under `name` and forget its spec.
+
+    The public removal path — the counterpart of `register`. Drains every
+    duplicate entry (see `_drop_existing`) and clears the job's spec and
+    run-ledger sampling state, so a later `register` of the same name starts
+    clean. Returns True when a job or spec existed, False for an unknown name.
+    """
+    removed = _drop_existing(name)
+    had_spec = _job_specs.pop(name, None) is not None
+    _last_written.pop(name, None)
+    _write_failed.pop(name, None)
+    return bool(removed) or had_spec
 
 
 def register(

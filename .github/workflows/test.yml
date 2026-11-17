@@ -1,5 +1,16 @@
 name: Tests & Build
 
+# The title carries the scope so ONE server-filtered `gh run list --json
+# displayTitle` tells a full run from a scoped one (release bless gate, the
+# scheduled-run report) with no per-run API call. ci_full_green.FULL_MARK is the
+# single spelling; test_ci_scoped_verdicts pins the two together.
+run-name: >-
+  ${{ github.workflow }} [scope=${{
+  (github.event_name == 'schedule' && 'full')
+  || (github.event_name == 'workflow_dispatch' && (inputs.scope || 'changed'))
+  || ((github.ref == 'refs/heads/main' || github.ref == 'refs/heads/prod' || startsWith(github.ref, 'refs/heads/release/')) && 'full')
+  || 'changed' }}]
+
 # `dev` is the integration branch — CI runs on every push to it so its tip is
 # already proven green by bless-time (dev→main is then a clean FF of validated
 # code). `main` stays gated too. KB § PATTERNS/branching-and-merging.md § 0.
@@ -22,6 +33,24 @@ on:
         description: diff base for the range keepers (dev sha)
         required: false
         default: ''
+      scope:
+        # 2026-11-17 (owner-approved): branch verdicts and merge-queue batches
+        # are SCOPED by default - the whole suite runs on a 6h schedule on dev
+        # and, as `full`, before bless. `changed` diffs against `base` (the dev
+        # sha a queue batch was composed on) else the merge-base with
+        # origin/dev; shared surfaces (ci_scope.SHARED_RE) escalate to every
+        # product. `full` = the suite as it always was.
+        description: 'changed = scoped to the diff (default) · full = the whole suite'
+        type: choice
+        options: [changed, full]
+        required: false
+        default: changed
+  # Full suite on dev every 6h (2026-11-17): bless/promote requires a full-green
+  # run, and this is what makes one exist without a human dispatching it.
+  # `schedule` always runs on the default branch (dev). On red the
+  # `scheduled-full-report` job names the commit range since the last full-green.
+  schedule:
+    - cron: '0 */6 * * *'
   push:
     # `release/**` (2026-09-22): a ship-consent CUT (noctus.dev.release
     # stage=bless mode=cut) pushes release/<stamp>; bless REQUIRES this
@@ -145,10 +174,13 @@ jobs:
             echo "::warning::deploy/fleet/active-scope.txt is missing — every product is being treated as active (fail toward coverage, never silently narrowed)"
           fi
 
-          # Release branches + manual re-triggers ALWAYS run the full suite —
-          # bless (push to `main`) and promote-adjacent verification must
-          # never be scoped down, no matter what the diff looks like.
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || \
+          # Full suite when: a scheduled run, a dispatch with scope=full, a push to
+          # main/prod, a release-branch ref. A dispatch with scope=changed (the
+          # DEFAULT, 2026-11-17: branch verdicts + merge-queue batches) falls
+          # through to a diff-scoped run below. Bless (push to `main`) and the
+          # scheduled run must never be scoped down.
+          if [ "${{ github.event_name }}" = "schedule" ] || \
+             { [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.scope }}" = "full" ]; } || \
              [ "${{ github.ref }}" = "refs/heads/main" ] || \
              [ "${{ github.ref }}" = "refs/heads/prod" ] || \
              [ "${GITHUB_REF#refs/heads/release/}" != "${GITHUB_REF}" ]; then
@@ -158,12 +190,20 @@ jobs:
               echo "harness_changed=true"
               echo "changed_products=,"
             } >> "$GITHUB_OUTPUT"
-            echo "scope: workflow_dispatch or a release-branch ref → full suite, never scoped down"
+            echo "scope: schedule / scope=full / release-branch ref → full suite, never scoped down"
             exit 0
           fi
 
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # scope=changed (2026-11-17): the merge queue passes the dev sha its
+            # batch was composed on; a branch verdict has none, so the base is
+            # the merge-base with origin/dev - git answers it, zero API calls.
+            # No usable base falls through to the full suite below.
+            BASE="${{ github.event.inputs.base }}"
+            [ -n "$BASE" ] || BASE="$(git merge-base origin/dev "${{ github.sha }}" 2>/dev/null || true)"
+            echo "diff base (scope=changed dispatch): ${BASE:-none}"
           else
             BASE="${{ github.event.before }}"
             # VERIFIED BASE (2026-09-24). `event.before` alone is unsafe with
@@ -286,7 +326,7 @@ jobs:
           - community
           - store
           - commerce
-          - monica
+          - nosnolimiar
           - assistant
 
     steps:
@@ -405,8 +445,35 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-asyncio
 
+      # 2026-11-07: the real-Postgres proofs (transition_log + event_store conformance on PGlite, the
+      # event_store two-connection concurrency tests on a throwaway initdb cluster) SKIPPED here — no node,
+      # no PGlite install — and a skip reads as green. Install the harness, then NOC_REQUIRE_REAL_PG=1 makes
+      # an unavailable harness FAIL (noctusai_lib.testing.pglite / .pgserver), never skip.
+      - name: Set up Node (PGlite harness — the toolkit's pinned PGlite)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "20"
+
+      - name: Install MCP toolkit node deps (PGlite)
+        working-directory: mcp/noctusai/node
+        run: npm ci --no-audit --no-fund
+
+      - name: Locate Postgres server binaries (two-connection proofs)
+        # ubuntu runners ship PostgreSQL under /usr/lib/postgresql/<v>/bin (not on PATH); pin the newest
+        # explicitly so a missing install fails HERE with a clear message instead of deep in a fixture.
+        run: |
+          bin=$(find /usr/lib/postgresql -mindepth 2 -maxdepth 2 -type d -name bin 2>/dev/null | sort -V | tail -1)
+          if [ -z "$bin" ] || [ ! -x "$bin/initdb" ] || [ ! -x "$bin/pg_ctl" ]; then
+            echo "::error::no initdb/pg_ctl under /usr/lib/postgresql/*/bin — the event_store concurrency proofs cannot run"
+            exit 1
+          fi
+          echo "NOCTUS_TEST_PG_BIN=$bin" >> "$GITHUB_ENV"
+          "$bin/initdb" --version
+
       - name: Run tests
         working-directory: ${{ matrix.root }}
+        env:
+          NOC_REQUIRE_REAL_PG: "1"
         run: pytest --tb=short -q
 
   erp-frontend-build:
@@ -520,7 +587,7 @@ jobs:
           - community
           - store
           - commerce
-          - monica
+          - nosnolimiar
           - seed
           - assistant
 
@@ -1434,6 +1501,12 @@ jobs:
         working-directory: mcp/noctusai/node
         run: npm ci --no-audit --no-fund
 
+      - name: Keeper check_polling_request_budget — every loop / poll declares its per-day cost (full tree)
+        if: ${{ !cancelled() }}
+        # 2026-11-10 Supabase egress incident (~620k REST calls/day from our own pollers). Needs ts-morph (the step above).
+        # KB § PATTERNS/backend/polling-request-budget.md
+        run: python mcp/noctusai/cli.py --check-polling-request-budget
+
       - name: Migration chain replay (range)
         if: ${{ !cancelled() }}
         env:
@@ -1780,3 +1853,46 @@ jobs:
             exit 1
           fi
           echo "OK: $TOTAL test files, exactly covered once each by the 5 shards (1 isolated + 4 duration-balanced)"
+
+  scheduled-full-report:
+    # The 6h full suite on dev (2026-11-17). Green = nothing to say. Red = name the
+    # commit range since the LAST full-green run (scheduled, or a `scope=full`
+    # dispatch), so a red full run is bisectable to a handful of commits instead of
+    # "something in the last 6 hours". API cost: two `gh run list` calls with
+    # GITHUB_TOKEN (the Actions token has its own quota - never the owner's), each
+    # server-filtered (event + branch + status=success + limit); the range itself
+    # is git. ci_full_green.py picks the full runs by the `[scope=full]` run title.
+    name: Scheduled full run - red range report
+    needs: [changes, product-backend-tests, seed-backend-tests, erp-frontend-build, core-frontend-build, product-frontend-tests, seed-frontend-tests, pf-frontend-build, core-e2e-tests, erp-e2e-tests, sw-e2e-tests, docker-compose-validate, trivy-fs-scan, bandit-scan, gitleaks-scan, harness-mod-tests, commit-range-keepers, tooling-tests, mcp-toolkit-tests, mcp-toolkit-tests-coverage]
+    if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Name the range since the last full-green run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          HEAD_SHA="${{ github.sha }}"
+          {
+            gh run list --workflow "${{ github.workflow }}" --event schedule --branch dev --status success --limit 5 --json displayTitle,headSha
+            gh run list --workflow "${{ github.workflow }}" --event workflow_dispatch --branch dev --status success --limit 10 --json displayTitle,headSha
+          } | jq -s 'add // []' > /tmp/full-runs.json || echo '[]' > /tmp/full-runs.json
+          LAST="$(python3 mcp/noctusai/tools/noctus/dev/ci_full_green.py "$HEAD_SHA" < /tmp/full-runs.json || true)"
+          {
+            echo "## Scheduled full suite is RED on dev (${HEAD_SHA:0:9})"
+            if [ -n "$LAST" ]; then
+              echo "Last full-green run: \`${LAST:0:9}\`. Commits since (the suspects):"
+              echo '```'
+              git log --oneline "${LAST}..${HEAD_SHA}"
+              echo '```'
+            else
+              echo "No full-green run found in the recent history (last 5 scheduled / 10 scope=full dispatches) - the range cannot be bounded. Recent commits:"
+              echo '```'
+              git log --oneline -30 "$HEAD_SHA"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -50,7 +50,6 @@ from tests.modules.test_certidoes_service import (
     _resultado,
 )
 
-_CRED = "app.modules.certidoes.credentials.resolve_api_key"
 
 # ---- verbatim prod answers (masked) ---------------------------------------
 
@@ -137,8 +136,14 @@ async def _emitir(tipo: str, http, **consulta):
 #: endpoints REJECT unknown params, so this is the contract, not a sample.
 PARAMS_CPF = {
     "cnd_federal": {"token", "cpf", "birthdate", "preferencia_emissao"},
-    "trf3_sp": {"token", "cpf", "tipo", "abrangencia", "nome_social"},
-    "trf3": {"token", "cpf", "tipo", "abrangencia", "nome_social"},
+    # TRF3 (CPF) sends the complementary data the consulta already holds
+    # (nome_mae, birthdate, RG as tipo_documento+documento) so the site's
+    # conditional "dados complementares" step does not end in a billed 606 —
+    # see `_build_params_trf3_civel`. `_consulta_row()` holds all of them.
+    "trf3_sp": {"token", "cpf", "tipo", "abrangencia", "nome_social",
+                "nome_mae", "birthdate", "tipo_documento", "documento"},
+    "trf3": {"token", "cpf", "tipo", "abrangencia", "nome_social",
+             "nome_mae", "birthdate", "tipo_documento", "documento"},
     "trt2_digital": {"token", "cpf"},
     "trt2_fisico": {"token", "cpf", "nome"},
     "cnd_trabalhista_tst": {"token", "cpf"},
@@ -173,21 +178,31 @@ class TestRequisicaoPorTipo:
         assert pendencia_pre_chamada(cfg, c) is None
         assert set(PARAM_BUILDERS[cfg["params_fn"]](c, "tok")) == PARAMS_CNPJ[tipo]
 
+    @pytest.mark.parametrize("tipo", ["trf3_sp", "trf3"])
+    def test_trf3_cpf_sem_dados_complementares_envia_so_o_minimo(self, tipo):
+        # Nothing complementary is required up front: a consulta without it
+        # still calls, with only the CPF search fields.
+        cfg = config_for(tipo)
+        c = _consulta_row(nome_mae=None, data_nascimento=None, rg=None)
+        assert pendencia_pre_chamada(cfg, c) is None
+        assert set(PARAM_BUILDERS[cfg["params_fn"]](c, "tok")) == {
+            "token", "cpf", "tipo", "abrangencia", "nome_social"}
+
     def test_cnd_federal_cpf_sem_nascimento_nao_chama(self):
         # The F113 class: a billed 606 is never bought.
         msg = pendencia_pre_chamada(config_for("cnd_federal"), _consulta_row(data_nascimento=None))
         assert msg and "data de nascimento" in msg
 
     @pytest.mark.parametrize("tipo", ["cnd_fazenda_sp", "divida_ativa_sp"])
-    def test_govbr_sem_login_nao_chama_e_com_login_vai_no_corpo(self, tipo):
+    def test_govbr_sem_login_nao_chama_e_com_login_vai_no_corpo(self, tipo, credenciais):
         cfg = config_for(tipo)
-        with patch(_CRED, return_value=None):
-            assert pendencia_pre_chamada(cfg, _consulta_row()) is not None
+        credenciais(None)
+        assert pendencia_pre_chamada(cfg, _consulta_row()) is not None
         creds = {"infosimples_govbr_cpf": "00000000000", "infosimples_govbr_senha": "x"}
-        with patch(_CRED, side_effect=lambda n, org_id=None: creds.get(n)):
-            c = _consulta_row()
-            assert pendencia_pre_chamada(cfg, c) is None
-            p = PARAM_BUILDERS[cfg["params_fn"]](c, "tok")
+        credenciais(lambda n, org_id=None: creds.get(n))
+        c = _consulta_row()
+        assert pendencia_pre_chamada(cfg, c) is None
+        p = PARAM_BUILDERS[cfg["params_fn"]](c, "tok")
         assert {"login_cpf", "login_senha"} <= set(p) and set(p) & set(SEGREDOS_DE_PARAMS)
 
     def test_todo_tipo_automatico_esta_coberto(self):

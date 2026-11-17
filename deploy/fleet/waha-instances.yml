@@ -19,10 +19,24 @@ engine: NOWEB                      # chat list / history backfill; the store its
 mem_limit: 512m                    # measured ~208 MB RSS idle on the first instance; headroom for the NOWEB store
 node_heap_mb: 384
 instances:
-  - name: monica                   # -> service waha-monica, http://waha-monica:3000, volume noctus-waha-monica
-    product: monica
+  - name: shared                   # the existing shared `waha` host (compose.infra.prod.yml, profile waha): social-wiring's DB-sourced lines
+    product: social-wiring
+    session: default
+    # EXTERNAL = declared here, NOT rendered into compose.waha.yml (it already runs from compose.infra.prod.yml) and never
+    # provisioned/applied/removed by noctus.dev.waha_instance. Its sessions are SHARED, so it stays under the legacy "*" policy
+    # (config_authority off: markOnline/fullSync of a session someone else owns are never rewritten, 2026-10-15). The env names
+    # are the product's ROOT .env copy of the credentials (the API key; the webhook HMAC secret).
+    external: true
+    service: waha
+    container: noctus-waha
+    base_url: http://waha:3000
+    api_key_env: WAHA_API_KEY
+    hmac_secret_env: WAHA_WEBHOOK_HMAC_SECRET
+    line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}   # the line's CURRENT behaviour, made explicit
+  - name: nosnolimiar              # -> service waha-nosnolimiar, http://waha-nosnolimiar:3000, volume noctus-waha-nosnolimiar
+    product: nosnolimiar
     session: default               # CORE: always `default`
-    line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}   # monica's CURRENT behaviour, made explicit
+    line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}   # the line's CURRENT behaviour, made explicit
   - name: assistant                # -> core waha-assistant (no edge: a send-enabled line has none); volume noctus-waha-assistant
     product: assistant
     session: default
@@ -32,5 +46,13 @@ instances:
     # allow-list + on/off) AND at the assistant's send seam, not here. A personal line is provisioned by the owner by hand or
     # by an agent through the shared checks (KB § INTEGRATIONS/whatsapp.md § 6a); `remove` is refused for agents.
     personal: true
+    line_policy: {send: enabled, mark_online: false, full_sync: false, auto_repair: false}
+    dashboard: false
+  - name: sw-vendas                # -> service waha-sw-vendas, http://waha-sw-vendas:3000, volume noctus-waha-sw-vendas
+    product: social-wiring         # NoctusAI's OWN sales line (Julia sells NoctusAI); the line is a social-wiring connection
+    session: default
+    # Sales line: replies are sent (send on); online presence + full history sync stay off (privacy, no backfill of the chats
+    # that were there before go-live); dashboard + Swagger off (they can send). Paired by the owner (QR) at a later, consented
+    # step -- declaring it here pairs nothing.
     line_policy: {send: enabled, mark_online: false, full_sync: false, auto_repair: false}
     dashboard: false

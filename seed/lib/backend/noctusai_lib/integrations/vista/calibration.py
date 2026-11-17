@@ -53,6 +53,7 @@ from noctusai_lib.integrations.vista.client import (
     VistaConfigError,
     VistaFieldNotAvailable,
     VistaPermissionDenied,
+    VistaRecordUnpublished,
     VistaUpstreamError,
 )
 
@@ -424,6 +425,17 @@ class Calibrator:
                     logger.info(
                         "calibration[%s]: 401 permission-gated — returning floor, "
                         "NOT caching (re-arms automatically if the grant lands)",
+                        cache_key,
+                    )
+                    return list(FLOOR_FIELDS)
+                except VistaRecordUnpublished:
+                    # The sample record is invisible to this key (ExibirNoSite=Nao),
+                    # so the 200 proved nothing about the fields. Falling into the
+                    # generic branch below would CACHE the un-narrowed candidate
+                    # set -- the same trap as the 401 above. Floor, uncached.
+                    logger.info(
+                        "calibration[%s]: sample record unpublished -- returning "
+                        "floor, NOT caching",
                         cache_key,
                     )
                     return list(FLOOR_FIELDS)

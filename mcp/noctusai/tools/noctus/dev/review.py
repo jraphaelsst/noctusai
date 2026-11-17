@@ -106,6 +106,8 @@ def _detect(
         check_silent_refusal,                          # silent-refusal 2026-10-24
         check_stale_after_write,                       # stale-after-write 2026-10-24
         check_async_handler_sync_db,                   # request-path-latency 2026-10-21
+        check_signed_url_ttl,                          # url-hygiene 2026-11-14
+        check_pii_query_params,                        # url-hygiene 2026-11-14
     )
 
     base = products_dir if products_dir is not None else PRODUCTS_DIR
@@ -152,6 +154,8 @@ def _detect(
         issues.extend(check_silent_refusal())  # silent-refusal 2026-10-24
         issues.extend(check_stale_after_write())  # stale-after-write 2026-10-24
         issues.extend(check_async_handler_sync_db())  # request-path-latency 2026-10-21
+        issues.extend(check_signed_url_ttl())  # url-hygiene 2026-11-14
+        issues.extend(check_pii_query_params())  # url-hygiene 2026-11-14
     return products, issues
 
 

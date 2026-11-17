@@ -91,7 +91,10 @@ def register_all(server) -> None:
     from . import prod_watchdog
     from . import mq_watchdog
     from . import ensure_product_url_roster
+    from . import ghcr_access
+    from . import image_pin
     from . import ensure_schema_exposure
+    from . import projection_rebuild
     from . import check_storage_no_public_buckets
     from . import projection_reconcile
     from . import lgpd
@@ -189,6 +192,8 @@ def register_all(server) -> None:
     from . import source_register
     from . import supabase_breaker
     from . import supabase_request_budget
+    from . import photo_label_dataset
+    from . import bg_process
 
     absorption_tracking.register(server)
     agent_context.register(server)
@@ -269,7 +274,10 @@ def register_all(server) -> None:
     prod_watchdog.register(server)
     mq_watchdog.register(server)
     ensure_product_url_roster.register(server)
+    ghcr_access.register(server)
+    image_pin.register(server)
     ensure_schema_exposure.register(server)
+    projection_rebuild.register(server)
     check_storage_no_public_buckets.register(server)
     projection_reconcile.register(server)
     lgpd.register(server)
@@ -367,6 +375,8 @@ def register_all(server) -> None:
     source_register.register(server)
     supabase_breaker.register(server)
     supabase_request_budget.register(server)
+    photo_label_dataset.register(server)
+    bg_process.register(server)
 
 
 __all__ = ["register_all"]

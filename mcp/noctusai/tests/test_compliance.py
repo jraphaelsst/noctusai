@@ -4621,3 +4621,70 @@ class TestPredeployLegVerifyOrBlock:
         (src / "predeploy_check.py").write_text("def broken(:\n", encoding="utf-8")
         issues = check_predeploy_leg_verify_or_block(tmp_path)
         assert issues and issues[0]["symbol"] == "predeploy-leg-parse-error"
+
+
+class TestCheckNoSelfMonkeypatchStringConstants:
+    """2026-11-15: certidoes tests patched `app....resolve_api_key` through a module-level
+    `_CRED = "..."` string and the literal-only AST check never saw it."""
+
+    def _issues(self, content: str) -> list[dict]:
+        tmp = Path(tempfile.mkdtemp(prefix="self_patch_const_"))
+        d = tmp / "products" / "p1" / "backend" / "tests"
+        d.mkdir(parents=True)
+        (d / "test_x.py").write_text(content)
+        return check_no_self_monkeypatch(tmp)
+
+    def test_patch_through_a_module_level_string_constant_is_flagged(self):
+        issues = self._issues(
+            "from unittest.mock import patch\n"
+            '_CRED = "app.modules.certidoes.credentials.resolve_api_key"\n\n'
+            "def test_thing():\n"
+            "    with patch(_CRED, return_value=None):\n"
+            "        pass\n"
+        )
+        assert len(issues) == 1
+        assert "app.modules.certidoes.credentials.resolve_api_key" in issues[0]["issue"]
+
+    def test_annotated_constant_and_attr_name_constant_are_flagged(self):
+        issues = self._issues(
+            "from app.services import ai_pipeline\n"
+            '_ATTR = "require"\n'
+            '_T: str = "app.services.ai_pipeline.other"\n\n'
+            "def test_a(monkeypatch):\n"
+            "    monkeypatch.setattr(ai_pipeline, _ATTR, lambda *a: None)\n\n"
+            "def test_b():\n"
+            "    from unittest.mock import patch\n"
+            "    patch(_T)\n"
+        )
+        assert len(issues) == 2
+
+    def test_a_constant_naming_an_external_boundary_is_not_flagged(self):
+        issues = self._issues(
+            "from unittest.mock import patch\n"
+            '_SLEEP = "asyncio.sleep"\n\n'
+            "def test_thing():\n"
+            "    with patch(_SLEEP):\n"
+            "        pass\n"
+        )
+        assert issues == []
+
+    def test_a_reassigned_constant_stays_unresolved_not_guessed(self):
+        issues = self._issues(
+            "from unittest.mock import patch\n"
+            '_T = "app.a.b"\n'
+            '_T = "asyncio.sleep"\n\n'
+            "def test_thing():\n"
+            "    with patch(_T):\n"
+            "        pass\n"
+        )
+        assert issues == []
+
+    def test_the_marker_still_allows_a_constant_patch(self):
+        issues = self._issues(
+            "from unittest.mock import patch\n"
+            '_CRED = "app.modules.certidoes.credentials.resolve_api_key"\n\n'
+            "def test_thing():\n"
+            "    with patch(_CRED):  # self-patch-ok: pins the seam on purpose\n"
+            "        pass\n"
+        )
+        assert issues == []

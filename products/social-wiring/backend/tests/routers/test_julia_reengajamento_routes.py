@@ -103,7 +103,7 @@ class TestAuth:
 class TestConfig:
     def test_defaults_then_partial_put(self, admin):
         assert admin.call("get", "/config").json()["data"] == {
-            "minutos_ativo": False, "minutos_intervalo": 5, "horas_ativo": False, "horas_intervalo": 1}
+            "minutos_ativo": False, "minutos_intervalo": 15, "horas_ativo": False, "horas_intervalo": 4}
         r = admin.call("put", "/config", {"minutos_ativo": True, "minutos_intervalo": 25})
         assert r.status_code == 200 and r.json()["data"]["minutos_intervalo"] == 25
         assert admin.call("put", "/config", {"horas_ativo": True, "horas_intervalo": 11}).json()["data"] == {
@@ -120,7 +120,7 @@ class TestConfig:
         admin.call("put", "/config", {"horas_ativo": True})
         admin.w.sw.table("julia_reengajamento_config").insert({
             "org_id": OTHER_ORG_ID, "minutos_ativo": True, "minutos_intervalo": 60, "horas_ativo": False, "horas_intervalo": 1}).execute()
-        assert admin.call("get", "/config").json()["data"]["minutos_intervalo"] == 5
+        assert admin.call("get", "/config").json()["data"]["minutos_intervalo"] == 15
 
 
 class TestReguas:

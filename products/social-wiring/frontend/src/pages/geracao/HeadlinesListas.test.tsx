@@ -91,7 +91,7 @@ describe("Favoritas", () => {
     renderPage(<HeadlinesFavoritas />);
     expect(rtl.screen.getByText("Headlines Favoritas")).toBeTruthy();
     expect(rtl.screen.getByText("Headline um")).toBeTruthy();
-    expect(rtl.screen.getByText("Roteiro criado").closest("a")?.getAttribute("href")).toBe("/media-creation/roteiros?open=r9");
+    expect(rtl.screen.getByText("Roteiro criado").closest("a")?.getAttribute("href")).toBe("/media-creation/chat/meus-roteiros?open=r9");
     expect(rtl.screen.queryByText("Modo")).toBeNull();
     expect(m.listaArgs.mock.calls[0][1]).toBe("favoritas");
   });

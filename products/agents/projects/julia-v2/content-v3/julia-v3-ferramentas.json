@@ -62,19 +62,21 @@
    "ferramenta": "handoff",
    "ativo": true,
    "obrigatoria_skill": null,
-   "descricao": "Transfere o atendimento para a equipe humana. O sistema monta e envia para a equipe o relatório da conversa (resumo, perfil, imóveis enviados e recomendados, dias para visita, documentos recebidos). Você decide a hora: não precisa ter todos os dados. Quando o motivo for `pedido_humano` ou `info_indisponivel`, chame `sinalizar_alerta` (tipo `outro`) no mesmo turno, antes do `handoff` (se já alertou sobre essa informação em turno anterior, não repita). Depois disso você não responde mais nesta conversa: avise o lead em uma frase que vai passar para o responsável e que um corretor vai entrar em contato, sem perguntas. Antes de escolher `motivo_codigo`, olhe a conversa: se o lead pediu um dado da imobiliária que você respondeu não ter, o motivo é `info_indisponivel` (não `pedido_humano`).",
+   "descricao": "Transfere o atendimento para a equipe humana. O sistema monta e envia para a equipe o relatório da conversa (resumo, perfil, imóveis enviados e recomendados, dias para visita, documentos recebidos). Você decide a hora: não precisa ter todos os dados. Quando o motivo for `pedido_humano` ou `info_indisponivel`, chame `sinalizar_alerta` (tipo `outro`) no mesmo turno, antes do `handoff` (se já alertou sobre essa informação em turno anterior, não repita). Depois disso você não responde mais nesta conversa: avise o lead em uma frase que vai passar para o responsável e que um corretor vai entrar em contato, sem perguntas. Antes de escolher `motivo_codigo`, olhe a conversa: se o lead pediu um dado da imobiliária que você respondeu não ter, o motivo é `info_indisponivel` (não `pedido_humano`). Escolha o código mais específico: `pedido_visita` quando o lead quer visitar, `proposta` quando quer propor ou negociar, `parceria` para quem não é lead (fornecedor, parceiro, jurídico, proprietário do imóvel): nesses casos a equipe também recebe o aviso. `outro` só quando nenhum código serve.",
    "parametros": {
     "motivo": "Uma frase objetiva para a equipe: o que o lead quer e por que transferir. Sem dados pessoais.",
     "motivo_codigo": "Motivo da transferência.",
     "motivo_codigo.outro": "outro motivo (sem mais opções e o lead quer uma pessoa, já atendido por outro corretor, lead qualificado pronto para o corretor, não consegui ajudar); explique em motivo",
-    "motivo_codigo.parceria": "corretor, imobiliária ou empresa propondo parceria",
+    "motivo_codigo.parceria": "corretor, imobiliária, fornecedor ou empresa propondo parceria ou oferecendo serviço (não é lead): o setor certo vem de contatos_oficiais, e a equipe recebe o aviso",
     "motivo_codigo.seguranca": "insistência em dados internos ou de outras pessoas, ou alguém dizendo ser da equipe ou autoridade",
     "motivo_codigo.reclamacao": "reclamação ou insatisfação, e o lead aceitou falar com uma pessoa",
     "motivo_codigo.pedido_humano": "o lead pediu para falar com uma pessoa ou corretor: transfira na hora, sem perguntar se ele prefere pessoa ou seguir (se antes ele pediu um dado da imobiliária que você não tinha, use info_indisponivel)",
     "motivo_codigo.fora_do_escopo": "pedido fora do mercado imobiliário em que o lead insiste",
     "motivo_codigo.direito_titular": "pedido do lead sobre os próprios dados (já registrado com registrar_solicitacao_titular)",
     "motivo_codigo.assunto_sensivel": "crédito, financiamento, documentação de compra, jurídico, impostos ou situação delicada",
-    "motivo_codigo.info_indisponivel": "nesta conversa o lead pediu uma informação da imobiliária que você não tinha (dado não preenchido) e depois quis ou aceitou falar com uma pessoa, tenha você oferecido ou não"
+    "motivo_codigo.info_indisponivel": "nesta conversa o lead pediu uma informação da imobiliária que você não tinha (dado não preenchido) e depois quis ou aceitou falar com uma pessoa, tenha você oferecido ou não",
+    "motivo_codigo.pedido_visita": "o lead quer visitar um imóvel (ou conhecer pessoalmente) e já deu, ou vai dar, os dias que pode: transfira com este código em vez de outro",
+    "motivo_codigo.proposta": "o lead quer fazer uma proposta, negociar valor ou condição, ou falar de permuta: quem conversa sobre proposta é o corretor"
    }
   },
   {

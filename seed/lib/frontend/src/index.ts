@@ -264,11 +264,23 @@ export { lazyWithReload } from "./lazyWithReload";
 // Poll an async job while it runs — and keep polling in a hidden tab, refetching
 // at once on return — so a progress UI never freezes in the background.
 // → KB § PATTERNS/frontend/frontend.md ("Job-progress polling")
+export { markJobStreamLive, resetJobStreams } from './job-polling';
+export { useJobProgress, handOffToJobProgress, mergeJobProgress, JOB_PROGRESS_EVENT, JOB_PROGRESS_FALLBACK_MS } from './job-progress';
+export type { JobProgressState, JobProgressTarget, JobProgressMode, UseJobProgressOptions } from './job-progress';
 export { jobPolling, handOffToPolling, resetJobHandOffs, JOB_HANDOFF_GRACE_MS, useJobPollingStalled, resumeJobPolling } from './job-polling';
 export { JobPollingPausedNotice } from './components/JobPollingPausedNotice';
 export type { JobPollingOptions, JobPollingQuery, HandOffToPollingOptions, HandOffUntil, HandOffQueryClient } from './job-polling';
 
 // ─── Edição de Fotos (seed feature) ──────────────────────────────────────────
+// Resumable chunked uploads (twin of backend `noctusai_lib.domain.resumable_uploads`).
+export {
+  uploadResumable, abortResumableUpload, ResumableUploadError, isRetryableUploadError, backoffDelayMs,
+  defaultClientKey, RESUMABLE_UPLOAD_BASE_PATH, RESUMABLE_UPLOAD_CONCURRENCY,
+} from "./resumableUpload";
+export type { UploadApi, UploadSessionDto, UploadProgress, ResumableUploadOptions, ResumableUploadResult } from "./resumableUpload";
+export { useResumableUpload } from "./useResumableUpload";
+export type { ResumableUploadStatus } from "./useResumableUpload";
+
 // Seed-portable AI photo-editing organs — no Social-Wiring coupling. See
 // `projects/edicao-fotos/EDICAO-FOTOS-CONTRACT.md` for the API contract this
 // hook factory + capability guards are typed to.

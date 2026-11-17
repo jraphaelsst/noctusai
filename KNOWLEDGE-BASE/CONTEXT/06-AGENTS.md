@@ -6,7 +6,7 @@
 ## Tools
 
 <!-- kb-counts:start:mcp_tools -->
-**320 tools total** (auto-counted from `mcp/noctusai/tools/`).
+**326 tools total** (auto-counted from `mcp/noctusai/tools/`).
 <!-- kb-counts:end:mcp_tools -->
 
 ### Context
@@ -166,8 +166,8 @@ The static-axis review surface (`noctus.dev.review`) walks repo files. The **ses
 **CLI invocation:**
 
 ```bash
-python mcp/noctusai/cli.py --review-session ~/.claude/projects/<encoded-cwd>/<uuid>.jsonl
-python mcp/noctusai/cli.py --review-session-latest          # newest *.jsonl in default dir (macOS)
+noctus.dev.review_session path=~/.claude/projects/<encoded-cwd>/<uuid>.jsonl  # MCP tool (no CLI flag):
+noctus.dev.review_session latest=true  # MCP tool (no CLI flag):          # newest *.jsonl in default dir (macOS)
 ```
 
 **Out of scope (Phase 5+ follow-on):** Stop-hook auto-run, project-close gate, scrubbed transcript reports, additional detectors (estimate-off-evidence, replication-to-seed slip, absorption-search compliance, auto-commit gate). The harness is designed so each new detector is a one-file addition + one-line registry entry in `_DETECTORS`.
@@ -202,8 +202,8 @@ python mcp/noctusai/cli.py --count-tokens-text "<text>" # token budget for inlin
 python mcp/noctusai/cli.py --count-tokens-ext .py <dir> # recursive walk, by extension
 
 # Session-axis review (added 2026-05-03 by session-review-baseline)
-python mcp/noctusai/cli.py --review-session <jsonl>          # walk one transcript; emit ast-first / narrow-read issues
-python mcp/noctusai/cli.py --review-session-latest           # newest *.jsonl in macOS default dir
+noctus.dev.review_session path=<jsonl>  # MCP tool (no CLI flag):          # walk one transcript; emit ast-first / narrow-read issues
+noctus.dev.review_session latest=true  # MCP tool (no CLI flag):           # newest *.jsonl in macOS default dir
 ```
 
 ## Subagent MCP access (dispatched agents CAN use this toolkit — no extra infra)

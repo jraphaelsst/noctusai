@@ -2,8 +2,9 @@
  * "Informações do Viral" modal (contract §7.3; layout mirrors the reference app,
  * owner decision 2026-11-04): profile pill + Gerar headline, video (native player
  * from the scraped `video_url`, Instagram embed fallback), Métricas card,
- * Transcrição card, then Nicho / Profissão / Formato. The structure (gancho,
- * blueprint, #codigo) is deliberately NOT shown here — it surfaces in the chat.
+ * Transcrição card, then Nicho / Profissão / Formato, then the video's Estruturas
+ * (estruturas-contract §3.6/§11.3: the per-viral blueprint is deprecated; the library
+ * Estruturas replace it, each one a link to its detail page).
  */
 import { useState } from "react";
 import type React from "react";
@@ -24,6 +25,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { compactoPtBr, dataHoraPtBr } from "@/components/pesquisa/format";
+import { rotaEstrutura } from "./estruturas/EstruturaCard";
+import { rotuloCodigo } from "./estruturas/rotulos";
 import { useViralDetalhe } from "@/hooks/geracao/useBiblioteca";
 import type { TranscricaoViralStatus } from "@/types/geracao";
 import { embedUrlInstagram } from "./filtros";
@@ -65,6 +68,9 @@ export function ViralModal({ open, onOpenChange, marcaId, viralId }: Props) {
   const v = q.data;
   const [wizard, setWizard] = useState(false);
   const embed = embedUrlInstagram(v?.permalink);
+  // The video's own Estruturas decide whether a headline can be made from it; the deprecated
+  // blueprint flag only answers while the server has not sent `estruturas` yet.
+  const podeGerar = v ? (v.estruturas ? v.estruturas.length > 0 : v.estrutura_utilizavel) : false;
 
   return (
     <>
@@ -113,16 +119,18 @@ export function ViralModal({ open, onOpenChange, marcaId, viralId }: Props) {
                         <span tabIndex={0}>
                           <Button
                             className="rounded-full"
-                            disabled={!v.estrutura_utilizavel}
+                            disabled={!podeGerar}
                             onClick={() => setWizard(true)}
                           >
                             Gerar headline
                           </Button>
                         </span>
                       </TooltipTrigger>
-                      {!v.estrutura_utilizavel && (
+                      {!podeGerar && (
                         <TooltipContent>
-                          A estrutura deste viral ainda não está disponível para gerar headlines.
+                          {v.estruturas
+                            ? "Este vídeo ainda não tem estruturas."
+                            : "A estrutura deste viral ainda não está disponível para gerar headlines."}
                         </TooltipContent>
                       )}
                     </Tooltip>
@@ -218,6 +226,26 @@ export function ViralModal({ open, onOpenChange, marcaId, viralId }: Props) {
                   <BadgeGrupo rotulo="Formato do Vídeo" itens={v.formatos.map((n) => n.nome)} />
                 </div>
               </div>
+
+              {v.estruturas && (
+                <section aria-label="Estruturas deste vídeo" className="rounded-xl border p-4 text-sm">
+                  <h3 className="mb-2 font-semibold">Estruturas deste vídeo</h3>
+                  {v.estruturas.length === 0 ? (
+                    <p className="text-muted-foreground">Este vídeo ainda não tem estruturas.</p>
+                  ) : (
+                    <ul className="flex flex-col gap-2">
+                      {v.estruturas.map((e) => (
+                        <li key={e.id}>
+                          <Link className="text-primary hover:underline" to={rotaEstrutura(e.id)}>
+                            {rotuloCodigo(e.codigo)} · @{e.perfil.handle}
+                          </Link>
+                          <span className="ml-2 text-muted-foreground">{e.formula_trecho}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              )}
             </div>
           )}
         </DialogContent>

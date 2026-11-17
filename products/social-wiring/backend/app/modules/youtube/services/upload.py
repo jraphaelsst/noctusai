@@ -457,6 +457,7 @@ class UploadService:
         # (or a BackgroundTasks worker thread), so sleeping here is fine.
         # The outer asyncio loop stays free for other requests.
         import time
+        # poll-budget: 3s tick while this upload waits for its queue turn (blocking thread); 0 Supabase calls/tick (Redis queue position only); worst 28800/day per upload waiting nonstop (bounded by the queue wait); idle=fixed
         while True:
             try:
                 pos = queue.position(job_key)
@@ -900,6 +901,7 @@ class UploadService:
 
         deadline = _time.time() + YT_PROCESSING_TIMEOUT_S
         last_log = 0.0
+        # poll-budget: 30s (YT_PROCESSING_POLL_S) for at most 10 min (YT_PROCESSING_TIMEOUT_S) per upload; 1 calls/tick (YouTube videos.list, not Supabase); worst 2880/day only if an upload were always processing (20 ticks per upload); idle=fixed
         while _time.time() < deadline:
             try:
                 state = self._youtube.get_processing_status(

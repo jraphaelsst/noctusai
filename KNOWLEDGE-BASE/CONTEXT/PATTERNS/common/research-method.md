@@ -20,6 +20,7 @@ and so did the same failures:
 | A fast-moving vendor doc silently contradicted an old belief | WAHA "Core = one session" was obsolete since 2026.6.1 (`vendor-facts.md` Q6) | Register rows go `stale` after 180 days; vendor docs are re-read before relying |
 | Primary text unreachable (paywall, 404, login) and replaced by a summary without saying so | ISO 25010/42010 paywalled; ADP 6-0 404; ITIL 4 paywalled; SAFe login (`decision-rights-research.md`, `product-roles-research.md`) | `unreachable` is a recorded outcome; the fallback source is named and its tier is lower |
 | Weak sources (SEO/vendor pages) filling a gap where no reliable source exists | "No reliable source defines 'product architect'" (`product-roles-research.md`) | Saying "no reliable source found" is a valid, recorded answer; T4 is signal only |
+| An advisor's hand-back cites "Receita, notícias ago/set 2026" with **no URL**, so the owner can't verify it (owner ask 2026-11-14: research must hand over the URLs) | Hotmart e-book tax research, accountant hand-back | Every sourced claim carries its full page URL + date read, in the hand-back and in the deliverable; a URL-less hand-back is returned to the agent before use; never rebuild a URL from memory |
 | Specialists researching in parallel without each other's frame, then disagreeing | browser-ops: architect vs security vs agents-security vs legal on container count, login channel, proxies | Route each sub-question to its advisor; the synthesis states each disagreement and which side the evidence favours |
 
 Good shape worth keeping (it recurred because it worked): a source legend at the top (`[read]` / `[snippet]` /
@@ -84,7 +85,7 @@ Mapping: `[norma]`/`[órgão oficial]` = T1; `[doutrina]`/`[publicação técnic
 | Instagram content | skill `noc-ig-analysis` |
 
 Each brief carries: the sub-questions, the register rows for the domains it will likely hit, the output
-shape (claim · status · source URL · tier · date read), and "write your position BEFORE seeing the others"
+shape (claim · status · **full source URL — mandatory, a claim without it is returned** · tier · date read), and "write your position BEFORE seeing the others"
 when the answer feeds a decision (independence; see `KB § PATTERNS/common/council.md` if a council follows).
 Nothing in the domain? Research inline, or with the Anthropic `deep-research` skill (§6).
 

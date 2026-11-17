@@ -142,7 +142,8 @@ def run_guard(
 ) -> int:
     """Read the hook payload, call `judge(payload)`, emit a deny on a verdict OR on any failure.
 
-    `judge` returns None to allow, a dict with `reason` to deny, or a dict with
+    `judge` returns None to allow, a dict with `reason` to deny (optional `guard`: the member guard whose marker/log
+    name the deny carries, for a composing hook), or a dict with
     `decision: "allow"` + `updated_input` (+ `context`) to allow a REWRITTEN call
     (the primary-write redirect). Always returns 0: a deny is a JSON decision on
     stdout, never a non-zero exit (which would fail open).
@@ -152,9 +153,9 @@ def run_guard(
 
     payload: Any = None
 
-    def _emit(reason: str) -> int:
-        json.dump(deny_json(name, reason), out)
-        log_event(name, "deny", reason, payload if isinstance(payload, dict) else None, event_log)
+    def _emit(reason: str, guard: str | None = None) -> int:
+        json.dump(deny_json(guard or name, reason), out)
+        log_event(guard or name, "deny", reason, payload if isinstance(payload, dict) else None, event_log)
         return 0
 
     try:
@@ -215,9 +216,10 @@ def run_guard(
         if not isinstance(verdict.get("updated_input"), dict):
             return _emit("allow verdict without an updated_input object — guard failed closed; fix the guard.")
         json.dump(allow_rewritten_json(verdict["updated_input"], str(verdict.get("context") or "")), out)
-        log_event(name, "rewrite", str(verdict.get("context") or ""), payload, event_log)
+        if not verdict.get("events_logged"):  # a composing hook (bash_rewrite_chain) logs one event per guard itself
+            log_event(name, "rewrite", str(verdict.get("context") or ""), payload, event_log)
         return 0
-    return _emit(str(verdict["reason"]))
+    return _emit(str(verdict["reason"]), verdict.get("guard"))
 
 
 def allow_rewritten_json(updated_input: dict[str, Any], context: str) -> dict[str, Any]:

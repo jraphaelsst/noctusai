@@ -23,7 +23,7 @@ from tools.noctus.dev.engineer_brief_compose import compose_brief  # noqa: E402
 from tools.noctus.dev.engineer_output_linter import lint_return  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SOURCES = {"erp-imobiliario": "social-wiring", "igig": "orbity", "therapy-platform": "monica", "community": "monica"}
+SOURCES = {"erp-imobiliario": "social-wiring", "igig": "orbity", "therapy-platform": "nosnolimiar", "community": "nosnolimiar"}
 
 
 def _row(slug, stage, ts, canon=None, **extra):
@@ -246,6 +246,40 @@ class TestAbsorptionSourceFrozen:
     def test_unreadable_ledger_is_unmeasured_not_green_noise(self, tmp_path, capsys):
         assert check_absorption_source_frozen(repo_root=tmp_path, staged=[("M", "products/igig/x.py")], branch="x") == []
         assert "UNMEASURED" in capsys.readouterr().err
+
+    def _merge_repo(self, tmp_path):
+        import subprocess
+
+        def g(*a):
+            subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+
+        g("init", "-q", "-b", "main")
+        g("config", "user.email", "t@t")
+        g("config", "user.name", "t")
+        (tmp_path / "products/igig").mkdir(parents=True)
+        (tmp_path / "products/igig/x.py").write_text("v = 1\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "base")
+        g("checkout", "-q", "-b", "feat/other")
+        (tmp_path / "f.txt").write_text("f\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "feat")
+        g("checkout", "-q", "main")
+        (tmp_path / "products/igig/x.py").write_text("v = 2  # landed on dev by the absorb branch\n")
+        g("commit", "-q", "-am", "dev change")
+        g("checkout", "-q", "feat/other")
+        g("merge", "--no-commit", "--no-ff", "main")
+        return g
+
+    def test_content_inherited_from_the_merged_branch_is_not_a_change_here(self, tmp_path):
+        self._merge_repo(tmp_path)
+        assert check_absorption_source_frozen(repo_root=tmp_path, branch="feat/other", sources=SOURCES) == []
+
+    def test_an_edit_layered_on_the_merge_is_still_refused(self, tmp_path):
+        g = self._merge_repo(tmp_path)
+        (tmp_path / "products/igig/x.py").write_text("v = 3  # my own edit\n")
+        g("add", "-A")
+        assert check_absorption_source_frozen(repo_root=tmp_path, branch="feat/other", sources=SOURCES)
 
     def test_fire_is_a_gate_fire_row(self, tmp_path):
         check_absorption_source_frozen(staged=[("M", "products/igig/x.py")], branch="feat/x", sources=SOURCES)

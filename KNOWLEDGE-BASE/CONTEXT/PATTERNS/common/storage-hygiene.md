@@ -135,6 +135,9 @@ Net: `force=True` bypasses dirty/stash/locked → still NO (unchanged); bypasses
 - The auto-heal now checks worktree-directory existence (via the same `_worktree_branches` parse the module already does) BEFORE flipping, and writes the distinct non-terminal `integrated-worktree-live` status instead of `shipped` when the directory is still there — guard 1 refuses it exactly like `on_going`.
 - Guard 3 (recent-mtime) is the independent backstop: even if a pointer is wrong, stale, or was never published at all, a worktree touched moments ago is refused on filesystem evidence alone.
 
+**🔴 The queue-landed-immortal hole (2026-11-14).** The `integrated-worktree-live` override (`integrated_live_pointer_confirms_dead`, 2026-10-09) required SHA ancestry, but the CI merge queue lands a branch re-applied (new SHA, same patch). Measured 2026-11-14: ~26 landed, clean worktrees `pointer_blocked` forever, disk at 94%. The status already proves an integrate ran, so the override now uses the shared `is_merged` predicate (SHA ancestry OR `git cherry` patch-id with ≥1 commit and zero `+`); a branch with any unmerged commit still blocks, and dirty/stash/lock/mtime/age guards still run.
+The same day, the second half: ~34 `on_going` claims for branches already landed. The pointer healer (`session_end_sweep._autoheal_branch_pointers`) only runs when a session runs its end sweep — a session the owner just closes never does — and the queue lands without touching pointers. So the sweep itself now overrides an `on_going` claim when `pointer_branch_landed` proves it (`on_going_landed` signal; the SAME predicate the healer and `check_stale_branch_pointers` use). The SessionStart hook runs that sweep on every session start, so reclamation is by construction, not by session discipline; `_close_pointers` then closes the claim to `shipped`. A fork with no commits of its own or with any unmerged commit keeps blocking; unknown pointers are unchanged. Regression tests: `TestIntegratedLivePointer` in `mcp/noctusai/tests/test_cleanup_worktrees.py`.
+
 **🔴 The ledger-less-immortal-branch hole (2026-09-20): "unresolvable" is not the same as "unknowable".** Guard 1's 2026-09-17 fail-closed fix (unresolvable pointer ⇒ block) is correct in isolation, but it has a second-order effect nobody had measured: a branch that was simply **never published a pointer for at all** becomes IMMORTAL — permanently un-sweepable by `cleanup_stale_worktrees`, forever, regardless of `force`. Measured 2026-09-20: 37 stale worktrees on disk (6.4 GB), 36 of them carrying **zero** rows in `project-history/branch-tree.ndjson` (537 rows / 206 branches accumulated since 2026-09-13 — pointer publishing is real but not universal), every one of the 36 independently verified merged into `origin/dev` by hand (`git merge-base --is-ancestor <branch> dev`). Only branches that HAD been pointer-published were ever getting swept — the entire debt was the ledger-less set.
 
 A second, POSITIVE liveness signal closes this — `wts.merged_into_base_confirms_dead(run, branch, base)`, consulted **ONLY** when `pointer_status_for_branch` resolves NOTHING at all (never when a live non-terminal pointer, or even a resolvable-but-terminal one, exists — those paths are unchanged). It requires BOTH: the branch is a true SHA ancestor of `base` (`is_ancestor`, not merely patch-id/cherry-pick equivalence — deliberately stricter than the `is_merged` gate checked earlier in the same function, since this signal has no ledger corroboration to lean on), AND the branch has genuinely diverged from `base` (`branch`'s tip SHA differs from `base`'s). The divergence half is what stops this from reintroducing the exact 2026-09-16 false positive above: a worktree freshly forked off the current tip has ZERO commits ahead, so `branch` and `base` are the literal same sha — trivially "ancestors" of each other, carrying zero evidence of deadness. A branch that diverged (did real work) and is NOW reachable from `base` by true ancestry, by contrast, is fully represented in `base`'s history already — there is no unique commit content a removal could lose.
@@ -247,13 +250,13 @@ docker ps -q | xargs -I{} docker inspect {} --format '{{range .Mounts}}{{if eq .
 
 ```bash
 python mcp/noctusai/cli.py --mole scan             # all three scopes, read-only, JSON-ish report
-python mcp/noctusai/cli.py --mole scan --artifacts   # only artifacts scope
-python mcp/noctusai/cli.py --mole scan --environments
-python mcp/noctusai/cli.py --mole scan --worktrees
+python mcp/noctusai/cli.py --mole scan   # all scopes (narrow with MCP noctus.dev.mole scope=artifacts|environments|worktrees)
+python mcp/noctusai/cli.py --mole scan
+python mcp/noctusai/cli.py --mole scan
 
 python mcp/noctusai/cli.py --mole sweep            # dry-run by default; --force to act
-python mcp/noctusai/cli.py --mole sweep --artifacts --force
-python mcp/noctusai/cli.py --mole sweep --worktrees --force
+python mcp/noctusai/cli.py --mole sweep --force
+python mcp/noctusai/cli.py --mole sweep --force
 
 python mcp/noctusai/cli.py --mole report           # machine-readable summary (next_action, sizes, counts)
 ```
@@ -305,11 +308,11 @@ Before any `Agent(isolation: "worktree")` call, the orchestrator runs `python mc
 
 ### 4.2 · Pre-commit hook (repo-side)
 
-`scripts/hooks/pre-commit` calls `python mcp/noctusai/cli.py --mole scan --artifacts` (cheap — only counts pycache/pytest_cache sizes). If artifact total exceeds **2 GB**, prints a `WARNING` to stderr (doesn't block the commit — just informs). The pre-commit's role is to surface bloat trending up, not block work.
+`scripts/hooks/pre-commit` calls `python mcp/noctusai/cli.py --mole scan` (cheap — only counts pycache/pytest_cache sizes). If artifact total exceeds **2 GB**, prints a `WARNING` to stderr (doesn't block the commit — just informs). The pre-commit's role is to surface bloat trending up, not block work.
 
 ### 4.3 · Bootstrap pre-flight (engineer-side)
 
-`scripts/bootstrap/bootstrap-worktree.sh` already calls `cleanup-stale-worktrees.sh`. Migrate that call to `python mcp/noctusai/cli.py --mole sweep --worktrees --force` so the worktree-scope sweep happens automatically when each new engineer worktree is created. Effect: stale worktrees never accumulate across more than one dispatch cycle.
+`scripts/bootstrap/bootstrap-worktree.sh` already calls `cleanup-stale-worktrees.sh`. Migrate that call to `python mcp/noctusai/cli.py --mole sweep --force` so the worktree-scope sweep happens automatically when each new engineer worktree is created. Effect: stale worktrees never accumulate across more than one dispatch cycle.
 
 ### 4.4 · Post-cherry-pick (orchestrator-side) — **MUST**, not MAY
 

@@ -217,7 +217,7 @@ migrate_product(
 Return shape:
 ```json
 {
-    "status": "dry_run | applied | up_to_date | not_configured | error | refused_stale_tree",
+    "status": "dry_run | applied | up_to_date | not_configured | error | refused_stale_tree | ledger_record_failed",
     "exit_code": 0,
     "product": "...",
     "schema": "...",
@@ -239,6 +239,14 @@ Return shape:
     "allow_stale_tree": false
 }
 ```
+
+## Every HTTP call is bounded; the ledger step is always reached (2026-11-16)
+
+`SupabaseMgmtExecutor` goes through `tools/noctus/dev/_http.py` (total deadline + one bounded retry; a write-mode executor never re-sends a maybe-executed request;
+`KB § PATTERNS/architect/mcp-tool-conventions.md` section 11). After the applies, a `schema_migrations` INSERT that does not confirm is settled by a READ (the response may
+have been lost after the write) and one idempotent re-INSERT; still unconfirmed returns `status='ledger_record_failed'`, `exit_code=1`, `ledger_unrecorded`, `reason` and
+`record_command` (the exact `noctus.dev.record_applied_migrations` call) - the DDL is live, the record is not. A failed in-repo applied-record persist keeps `status='applied'` but
+carries the same `record_command`. A transport failure DURING a DDL apply says the DDL MAY have applied: read the live state before re-running.
 
 ## Ledger repair — `noctus.dev.repair_migration_ledger`
 
@@ -420,7 +428,7 @@ produces). Files without a leading numeric prefix are silently skipped (logged a
 
 ## Applied record is persisted through an isolated branch (2026-10-14)
 
-`migrate_product confirm=True` mirrors what it applied into `products/<p>/backend/migrations-applied.json`, but never writes that file into the tree it read from: it calls `noctus.dev.record_applied_migrations`, which opens a `task_branch` worktree off `origin/dev`, writes + commits the record there and integrates it. Writing into the primary left untracked files there (4 on 2026-10-14) — breaking the clean-primary rule and later blocking `task_branch integrate`'s primary fast-forward on the same paths. Chosen over "return the record and let the caller commit" because the DDL has already run: leaving persistence to a second manual step is exactly the step that gets skipped. "Record failure is reported, not raised" holds: `applied_record = {path, status, error, files}`; retry by hand with `record_applied_migrations(product, files)`. Test seam: `migrate_product(record_persister=...)`.
+`migrate_product confirm=True` mirrors what it applied into `products/<p>/backend/migrations-applied.json`, but never writes that file into the tree it read from: it calls `noctus.dev.record_applied_migrations`, which opens a `task_branch` worktree off `origin/dev`, writes + commits the record there and integrates it. Writing into the primary left untracked files there (4 on 2026-10-14) — breaking the clean-primary rule and later blocking `task_branch integrate`'s primary fast-forward on the same paths. Chosen over "return the record and let the caller commit" because the DDL has already run: leaving persistence to a second manual step is exactly the step that gets skipped. "Record failure is reported, not raised" holds: `applied_record = {path, status, error, files}`; retry by hand with `record_applied_migrations(product, files)`. Test seam: `migrate_product(record_persister=...)`. The ledger is NOT an image build input: `deploy_pull._rebuild_decision` (the one rebuild oracle behind `deploy_verify`, promote and `deploy_pull`) excludes `products/<p>/backend/migrations-applied.json`, so recording a migration never marks a product drifted or forces a no-op rebuild (2026-11-15).
 
 ## Transient retries + `probe_ids` rerun (2026-10-21)
 

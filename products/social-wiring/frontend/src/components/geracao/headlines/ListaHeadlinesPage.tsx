@@ -11,6 +11,7 @@ import { toast } from "sonner";
 
 import { MetricaPill } from "@/components/geracao/MetricaPill";
 import { CriarPostButton, NoPostBadge } from "@/components/geracao/PostEsteira";
+import { PaginaCabecalho, usePaginaPadding } from "@/components/geracao/PaginaCabecalho";
 import { AvisoTamanhoHeadline } from "@/components/geracao/headlines/TamanhoHeadline";
 import { RoteiroAvancadoModal } from "@/components/geracao/roteiro/RoteiroAvancadoModal";
 import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
@@ -47,7 +48,7 @@ import { MODO_ROTULO } from "../labels";
 import { EditarHeadlineRoteiroModal } from "./EditarHeadlineRoteiroModal";
 import { mensagemErro } from "./lote";
 
-const ROTEIROS = "/media-creation/roteiros";
+const ROTEIROS = "/media-creation/chat/meus-roteiros";
 
 const TEXTOS: Record<ListaHeadlines, { titulo: string; descricao: string; vazio: string }> = {
   favoritas: {
@@ -213,24 +214,19 @@ export function ListaHeadlinesPage({ lista }: { lista: ListaHeadlines }) {
     );
   }
 
+  const padding = usePaginaPadding();
   const colunas = lista === "sugeridas" ? 6 : 4;
 
   return (
-    <div className="space-y-6 p-6">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">{t.titulo}</h1>
-          <p className="text-sm text-muted-foreground">{t.descricao}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
-          {lista === "sugeridas" && (
-            <Button onClick={sugerirAgora} disabled={!marcaId || gerarAgora.isPending}>
-              <RefreshCw className="mr-1 h-4 w-4" /> {gerarAgora.isPending ? "Gerando…" : "Gerar sugestões agora"}
-            </Button>
-          )}
-        </div>
-      </header>
+    <div className={`space-y-6 ${padding}`}>
+      <PaginaCabecalho titulo={t.titulo} descricao={t.descricao}>
+        <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
+        {lista === "sugeridas" && (
+          <Button onClick={sugerirAgora} disabled={!marcaId || gerarAgora.isPending}>
+            <RefreshCw className="mr-1 h-4 w-4" /> {gerarAgora.isPending ? "Gerando…" : "Gerar sugestões agora"}
+          </Button>
+        )}
+      </PaginaCabecalho>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">

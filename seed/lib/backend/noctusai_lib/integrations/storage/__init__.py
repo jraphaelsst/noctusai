@@ -40,7 +40,12 @@ projects (out-of-scope for this lift).
 from noctusai_lib.integrations.storage.factory import make_storage_backend
 from noctusai_lib.integrations.storage.fake import FakeStorageBackend
 from noctusai_lib.integrations.storage.local import LocalFilesystemStorageBackend
-from noctusai_lib.integrations.storage.protocol import StorageBackend
+from noctusai_lib.integrations.storage.protocol import (
+    DEFAULT_SIGNED_URL_TTL_SECONDS,
+    MAX_SIGNED_URL_TTL_SECONDS,
+    StorageBackend,
+    validate_signed_url_ttl,
+)
 from noctusai_lib.integrations.storage.types import BlobMetadata, StoredBlob
 
 
@@ -64,7 +69,10 @@ __all__ = [
     "BlobMetadata",
     "FakeStorageBackend",
     "LocalFilesystemStorageBackend",
+    "DEFAULT_SIGNED_URL_TTL_SECONDS",
+    "MAX_SIGNED_URL_TTL_SECONDS",
     "StorageBackend",
+    "validate_signed_url_ttl",
     "StoredBlob",
     "SupabaseStorageBackend",
     "make_storage_backend",

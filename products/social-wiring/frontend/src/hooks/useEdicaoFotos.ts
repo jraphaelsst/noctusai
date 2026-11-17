@@ -62,7 +62,10 @@ export const {
   useProcessamento,
   useAtualizarProcessamento,
   useSondarOpenAI,
-} = createEdicaoFotosHooks(api);
+} = createEdicaoFotosHooks(api, {
+  // Photos >= 4 MiB go chunked + resumable (flaky mobile links); smaller ones stay one request.
+  resumableThresholdBytes: 4 * 1024 * 1024,
+});
 
 export type {
   Capacidades,

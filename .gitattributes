@@ -42,3 +42,16 @@ LGPD-WARNINGS.md                         merge=lgpd-warnings
 # `gate-inventory` driver unions gates and renumbers colliding decisions.
 # Driver = scripts/hooks/merge-gate-inventory.sh. KB § PATTERNS/common/auto-generated-merge-drivers.md
 KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/gate-alignment-inventory.json   merge=gate-inventory
+
+# Generated renders: FINDINGS.md (project-history/<ledger>/, from findings.ndjson) and
+# gate-alignment-inventory.md (from the .json). Every branch that reconciles/declares rewrites the same file, so
+# parallel branches conflicted on machine churn (22 transcript hotspots). The `ledger-render` driver regenerates the
+# render from the MERGED source; an unrenderable file still gets the plain 3-way merge (a real conflict surfaces).
+# Driver = scripts/hooks/merge-ledger-render.sh. KB § PATTERNS/common/auto-generated-merge-drivers.md
+project-history/*/FINDINGS.md   merge=ledger-render
+KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/gate-alignment-inventory.md   merge=ledger-render
+
+# Guardian protected-file snapshot: sorted one-path-per-line so parallel slices that each add a protected module
+# merge clean (built-in union driver, no registration). The test compares to the derived set EXACTLY, so a
+# union-resurrected line goes red naming it. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md
+mcp/noctusai/tests/snapshots/guardian_protected_files.txt   merge=union

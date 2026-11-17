@@ -1,5 +1,5 @@
 """Biblioteca de virais -- creator opt-out registry (BE-OPTOUT): platform-admin endpoints, the
-cross-org purge, registration/verify/sync enforcement and idempotency.
+platform-wide purge (profile + videos + blobs + Estruturas, content-free events), registration/verify/sync enforcement and idempotency.
 
 Contract: ``geracao-contract.md`` 2.3, 3.3, 9.2, 9.3. The migration is found by NAME, never by number.
 """
@@ -24,6 +24,8 @@ from .test_geracao_biblioteca_api import (  # noqa: F401 - `bib` is the shared f
     ORG,
     P1,
     V1,
+    _eventos,
+    _PurgeRpc,
     bib,
 )
 from .test_geracao_biblioteca_ingestao import PID, _adapter, _db, _page, _ports, _sync
@@ -67,7 +69,7 @@ class TestAuth:
 
 
 def _seed_second_org(bib):
-    """The same creator is monitored by BOTH orgs: P1 (alvo1, ORG) and a copy in OTHER_ORG."""
+    """The same creator exists twice: the platform row P1 (alvo1) and a LEGACY per-org copy (written before migration 351)."""
     pid2, vid2 = str(uuid.uuid4()), str(uuid.uuid4())
     db = bib.db
     db.from_("cs_perfis_monitorados").insert({
@@ -80,8 +82,9 @@ def _seed_second_org(bib):
     }).execute()
     db.from_("transcricoes").insert({
         "id": str(uuid.uuid4()), "org_id": OTHER_ORG, "contexto_tipo": "biblioteca_viral", "contexto_ref": vid2,
-        "status": "concluida",
+        "status": "concluida", "storage_path": f"{OTHER_ORG}/u/{vid2}.mp3",
     }).execute()
+    anyio.run(lambda: bib.storage.put(bucket="sw-transcricoes", key=f"{OTHER_ORG}/u/{vid2}.mp3", data=b"audio"))
     db.from_("cs_biblioteca_referencias").insert({
         "id": str(uuid.uuid4()), "org_id": OTHER_ORG, "marca_id": str(uuid.uuid4()), "modo": "perfil", "perfil_id": pid2,
         "auto_atualizar": True,
@@ -90,7 +93,7 @@ def _seed_second_org(bib):
         "id": str(uuid.uuid4()), "org_id": OTHER_ORG, "marca_id": str(uuid.uuid4()), "modo": "video", "viral_id": vid2,
         "auto_atualizar": True,
     }).execute()
-    for key in (f"{OTHER_ORG}/{pid2}/{vid2}.jpg", f"{OTHER_ORG}/{pid2}/foto.jpg", f"{ORG}/{P1}/{V1}.jpg"):
+    for key in (f"{OTHER_ORG}/{pid2}/{vid2}.jpg", f"{OTHER_ORG}/{pid2}/foto.jpg", f"platform/{P1}/{V1}.jpg"):
         anyio.run(lambda k=key: bib.storage.put(bucket="sw-biblioteca", key=k, data=b"x", content_type="image/jpeg"))
     return pid2, vid2
 
@@ -102,15 +105,18 @@ def _count(bib, table, **eq):
     return len(q.execute().data)
 
 
-class TestPurgeAcrossOrgs:
-    def test_registering_purges_every_org_and_returns_counts(self, bib, client):
+class TestPurgePlatformWide:
+    def test_registering_purges_the_platform_row_and_legacy_copies_and_returns_counts(self, bib, client):
         bib.admin = True
+        bib.client.mock_supabase.rpc = _PurgeRpc(bib.db)
         pid2, vid2 = _seed_second_org(bib)
         r = client.post(ADMIN, json={"handle": "@Alvo1", "motivo": "pedido por e-mail", "origem": "email"})
         assert r.status_code == 200, r.text
         d = r.json()["data"]
         assert d["criado"] is True and d["optout"]["handle"] == "alvo1" and d["optout"]["origem"] == "email"
-        assert d["purgados"] == {"perfis": 2, "virais": 2, "blobs_falhos": 0}
+        assert d["purgados"] == {"perfis": 2, "virais": 2, "estruturas": 0, "blobs_falhos": 0}
+        assert sorted(e["perfil_id"] for e in _eventos(bib, "optout_purgado")) == sorted([P1, pid2])
+        assert {e["ator_tipo"] for e in _eventos(bib, "optout_purgado")} == {"admin"}
         for pid in (P1, pid2):
             assert _count(bib, "cs_perfis_monitorados", id=pid) == 0
         assert _count(bib, "cs_virais", perfil_id=P1) == 0 and _count(bib, "cs_virais", perfil_id=pid2) == 0
@@ -122,18 +128,33 @@ class TestPurgeAcrossOrgs:
         # an unrelated creator is untouched
         assert _count(bib, "cs_perfis_monitorados", id=FOREIGN_PERFIL) == 1
 
+    def test_the_opt_out_purge_takes_the_Estruturas_with_it_and_leaves_only_content_free_events(self, bib, client):
+        bib.admin = True
+        rpc = bib.client.mock_supabase.rpc = _PurgeRpc(bib.db)
+        for eid in ("e1", "e2"):
+            bib.db.from_("cs_estruturas").insert({"id": eid, "perfil_id": P1, "status": "ativa", "formula_headline": "TEXTO-DO-CRIADOR"}).execute()
+        d = client.post(ADMIN, json={"handle": "alvo1", "origem": "dpo"}).json()["data"]
+        assert d["purgados"]["estruturas"] == 2
+        assert rpc.calls[0]["p_apagar_estruturas"] is True and rpc.calls[0]["p_tipo"] == "optout_purgado"
+        assert _count(bib, "cs_estruturas") == 0
+        ev = bib.db.from_("cs_estrutura_eventos").select("*").execute().data
+        assert sorted(e["estrutura_id"] for e in ev) == ["e1", "e2"] and {e["tipo"] for e in ev} == {"excluida"}
+        assert "TEXTO-DO-CRIADOR" not in str(ev) + str(_eventos(bib))
+
     def test_re_adding_the_same_handle_is_idempotent(self, bib, client):
         bib.admin = True
+        bib.client.mock_supabase.rpc = _PurgeRpc(bib.db)
         first = client.post(ADMIN, json={"handle": "alvo1", "origem": "dpo"}).json()["data"]
         again = client.post(ADMIN, json={"handle": "https://instagram.com/Alvo1/", "motivo": "outro", "origem": "admin"})
         assert again.status_code == 200
         d = again.json()["data"]
         assert d["criado"] is False and d["optout"]["id"] == first["optout"]["id"] and d["optout"]["origem"] == "dpo"
-        assert d["purgados"] == {"perfis": 0, "virais": 0, "blobs_falhos": 0}
+        assert d["purgados"] == {"perfis": 0, "virais": 0, "estruturas": 0, "blobs_falhos": 0}
         assert _count(bib, "cs_biblioteca_optouts") == 1
 
     def test_a_handle_nobody_monitors_is_still_registered(self, bib, client):
         bib.admin = True
+        bib.client.mock_supabase.rpc = _PurgeRpc(bib.db)
         d = client.post(ADMIN, json={"handle": "ninguem", "origem": "admin"}).json()["data"]
         assert d["criado"] is True and d["purgados"]["perfis"] == 0
 
@@ -160,25 +181,23 @@ class TestListAndUnblock:
 
     def test_unblocking_lets_the_handle_be_registered_again(self, bib, client):
         bib.admin = True
+        bib.client.mock_supabase.rpc = _PurgeRpc(bib.db)
         oid = client.post(ADMIN, json={"handle": "novo.alvo", "origem": "email"}).json()["data"]["optout"]["id"]
-        bib.admin = False
-        assert client.post(f"{BASE}/perfis", json={"marca_id": MARCA, "handle": "novo.alvo"}).status_code == 422
-        bib.admin = True
+        assert client.post(f"{BASE}/perfis", json={"handle": "novo.alvo"}).status_code == 409
         client.delete(f"{ADMIN}/{oid}")
-        bib.admin = False
-        assert client.post(f"{BASE}/perfis", json={"marca_id": MARCA, "handle": "novo.alvo"}).status_code == 201
+        assert client.post(f"{BASE}/perfis", json={"handle": "novo.alvo"}).status_code == 201
 
 
 class TestEnforcement:
     def _block(self, bib, client, handle):
         bib.admin = True
+        bib.client.mock_supabase.rpc = _PurgeRpc(bib.db)
         assert client.post(ADMIN, json={"handle": handle, "origem": "email"}).status_code == 200
-        bib.admin = False
 
     def test_registration_is_refused_with_the_optout_code(self, bib, client):
         self._block(bib, client, "bloqueado")
-        r = client.post(f"{BASE}/perfis", json={"marca_id": MARCA, "handle": "@Bloqueado"})
-        assert r.status_code == 422
+        r = client.post(f"{BASE}/perfis", json={"handle": "@Bloqueado"})
+        assert r.status_code == 409
         assert r.json()["detail"] == MSG and r.json()["code"] == "perfil_optout"
         assert _count(bib, "cs_perfis_monitorados", handle="bloqueado") == 0
         assert bib.queued("biblioteca.sync_perfil") == []
@@ -186,15 +205,19 @@ class TestEnforcement:
     def test_verificar_is_refused_too(self, bib, client):
         self._block(bib, client, "bloqueado")
         r = client.get(f"{BASE}/perfis/verificar?handle=https://instagram.com/bloqueado/")
-        assert r.status_code == 422 and r.json()["code"] == "perfil_optout"
+        assert r.status_code == 409 and r.json()["code"] == "perfil_optout"
         assert client.get(f"{BASE}/perfis/verificar?handle=livre").status_code == 200
 
     def test_sync_skips_and_purges_a_surviving_row(self):
         db = _db(perfil_status="ativo")
         db.from_(optout.OPTOUTS).insert({"handle": "alvo", "origem": "dpo"}).execute()
+        db.rpc = _PurgeRpc(db)
         ports = _ports(db)
         _sync(ports)
         assert db.from_("cs_perfis_monitorados").select("id").eq("id", PID).execute().data == []
+        # a system purge: no human actor, Estruturas included (the creator asked not to be monitored)
+        call = db.rpc.calls[0]
+        assert (call["p_ator_tipo"], call["p_tipo"], call["p_apagar_estruturas"]) == ("sistema", "optout_purgado", True)
 
     def test_sync_is_untouched_for_a_handle_that_did_not_opt_out(self):
         db = _db(perfil_status="ativo")

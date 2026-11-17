@@ -147,7 +147,7 @@ def test_no_max_seconds_reads_the_whole_audio_and_never_cuts_it_off():
     # Owner, 2026-10-30: any length is read. A 2-hour note decodes uncapped and a
     # slow engine still answers 200 (no wall-clock 504 any more).
     eng, seen = FakeEngine(delay=0.3), []
-    app = create_app(eng, token=TOKEN, load_in_background=False, daily_limit_min=1e9,
+    app = create_app(eng, token=TOKEN, load_in_background=False,
                      decode_fn=_pcm_decoder(7200.0, seen))
     with TestClient(app) as c:
         r = c.post("/v1/transcribe?language=pt", content=b"a", headers=H)
@@ -174,13 +174,13 @@ def test_busy_503_with_retry_after():
     assert results["first"].status_code == 200
 
 
-def test_daily_backstop_503():
+def test_no_daily_minute_cap_many_long_notes_all_transcribed():
+    # Owner, 2026-11-14: no daily limit on transcription. 12 x 30 min = 360 min, far past the old
+    # 10 min/day in-memory backstop, still all 200.
     eng = FakeEngine()
-    with TestClient(_app(eng, seconds=30.0, daily_limit_min=0.9)) as c:
-        assert c.post("/v1/transcribe", content=b"a", headers=H).status_code == 200  # 0.5 min
-        r = c.post("/v1/transcribe", content=b"a", headers=H)  # would be 1.0 > 0.9
-    assert r.status_code == 503
-    assert r.json()["codigo"] == "capacidade_diaria"
+    with TestClient(_app(eng, seconds=1800.0)) as c:
+        codes = [c.post("/v1/transcribe", content=b"a", headers=H).status_code for _ in range(12)]
+    assert codes == [200] * 12
 
 
 def test_probe_uses_probe_function(engine):

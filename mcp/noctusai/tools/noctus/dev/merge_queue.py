@@ -113,6 +113,14 @@ DERIVED_SETS: tuple[dict[str, Any], ...] = (
                "project-history/access-tiers/findings.ndjson",
                "project-history/access-tiers/metrics.ndjson"),
      "regen": ("mcp/noctusai/cli.py", "--findings-ledger-reconcile", "access-tier", "--found-by", "merge-queue")},
+    # Backstop for the `ledger-render` merge driver (which regenerates these locally): a render the driver could not
+    # derive still conflicts, and is a pure function of its source, so it is re-derived here, never ejected.
+    {"name": "gate-walls",
+     "paths": ("project-history/gate-alignment/FINDINGS.md",),
+     "regen": ("mcp/noctusai/cli.py", "--findings-ledger-reconcile", "gate-walls", "--found-by", "merge-queue")},
+    {"name": "gate-inventory-render",
+     "paths": ("KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/gate-alignment-inventory.md",),
+     "regen": ("mcp/noctusai/cli.py", "--gate-alignment", "render")},
 )
 REDERIVE_MAX_STOPS = 50  # a linear entry replays commit by commit; each can stop on the derived files
 
@@ -1131,7 +1139,11 @@ def watch(list_fn: Callable[[], dict[str, Any]], status_fn: Callable[[str], dict
           interval: float = 60, sleep: Callable[[float], None] = time.sleep,
           emit: Callable[[str], None] = lambda line: print(line, flush=True),
           max_polls: int | None = None, attempts: int = 3, left_retries: int = 10,
-          batches_fn: Callable[[], list[dict[str, Any]]] | None = None) -> None:
+          batches_fn: Callable[[], list[dict[str, Any]]] | None = None,
+          tick_fn: Callable[[], None] | None = None,
+          on_left: Callable[[str, str, dict[str, Any]], None] | None = None,
+          idle_fn: Callable[[], bool] | None = None,
+          interval_fn: Callable[[], float] | None = None) -> None:
     """Long-running transition printer: ONE line per change, so a steward never diffs by hand.
 
     `MQ <slug> <sha9> -> <state>: <desc> <url>` when a listed entry's verdict changes (and once
@@ -1147,7 +1159,12 @@ def watch(list_fn: Callable[[], dict[str, Any]], status_fn: Callable[[str], dict
     after the first poll (the first poll is a silent baseline). A red or cancelled batch is
     the one event an entry-only watch never shows: a bisect replays the same entries for
     hours with nothing leaving the list (2026-11-08: 3.5 h silent; 2026-11-09: the owner
-    caught batch 9's red before the steward did)."""
+    caught batch 9's red before the steward did).
+
+    Steward-feed hooks (all optional, `steward_feed`): `tick_fn` runs once per poll (the handed-run registry);
+    `on_left(slug, sha, verdict)` after every `MQ-LEFT` landed/ejected line; `idle_fn()` true while NOTHING is
+    pending outside the queue - with an empty queue and nothing leaving, the watch prints `MQ-IDLE` and RETURNS
+    (exit-when-idle, for `bg_run.py --done-when`); `interval_fn()` overrides the poll interval (quota back-off)."""
     known: dict[str, dict[str, Any]] = {}   # sha -> {slug, state, line}
     leaving: dict[str, dict[str, Any]] = {}  # sha -> {slug, tries}
     seen_batches: set[str] | None = None     # None until the silent baseline poll
@@ -1169,6 +1186,11 @@ def watch(list_fn: Callable[[], dict[str, Any]], status_fn: Callable[[str], dict
                             emit(f"MQ-BATCH {b.get('branch', '?')} -> {b.get('conclusion') or 'unknown'} "
                                  f"{b.get('url', '')}".rstrip())
                     seen_batches |= ids
+        if tick_fn is not None:
+            try:
+                tick_fn()
+            except Exception as exc:  # noqa: BLE001 - a feed fault is reported, never fatal
+                emit(f"MQ-WATCH-ERROR feed {type(exc).__name__}: {str(exc)[:300]}")
         report: dict[str, Any] | None = None
         err: BaseException | None = None
         for i in range(attempts):
@@ -1210,25 +1232,47 @@ def watch(list_fn: Callable[[], dict[str, Any]], status_fn: Callable[[str], dict
                 emit(f"MQ-LEFT {slug} {sha[:9]} -> landed {v.get('dev_sha', '')}".rstrip())
             elif st == "ejected":
                 emit(f"MQ-LEFT {slug} {sha[:9]} -> ejected {v.get('description') or v.get('detail') or ''}".rstrip())
-            else:
+            if st in ("landed", "ejected") and on_left is not None:
+                try:
+                    on_left(slug, sha, v)
+                except Exception as exc:  # noqa: BLE001
+                    emit(f"MQ-WATCH-ERROR on_left {type(exc).__name__}: {str(exc)[:300]}")
+            if st not in ("landed", "ejected"):
                 leaving[sha]["tries"] += 1
                 if leaving[sha]["tries"] >= left_retries:
                     emit(f"MQ-LEFT {slug} {sha[:9]} -> unknown (no final verdict after {left_retries} polls: {st})")
                 else:
                     continue
             leaving.pop(sha, None)
+        if idle_fn is not None and report is not None and not report.get("entries") and not leaving and idle_fn():
+            emit("MQ-IDLE queue empty and no handed run pending")
+            return
         if max_polls is not None and polls >= max_polls:
             break
-        sleep(interval)
+        sleep(interval_fn() if interval_fn is not None else interval)
 
 
-def watch_live(interval: float = 60, run: Runner = _default_run, workdir: str | None = None) -> None:
-    """`watch` against the real repo: the list is read IN-PROCESS (no subprocess/JSON scrape)."""
+def watch_live(interval: float = 60, run: Runner = _default_run, workdir: str | None = None,
+               idle_exit: bool = False, feed_enabled: bool = True) -> None:
+    """`watch` against the real repo: the list is read IN-PROCESS (no subprocess/JSON scrape). With `feed_enabled` the
+    handed-run registry rides the same loop (`steward_feed`); `idle_exit` returns once the queue and the registry are idle."""
     wd = workdir or os.getcwd()
     repo = _repo_from_remote(run, wd)
+    hooks: dict[str, Any] = {}
+    if feed_enabled:
+        from tools.noctus.dev import steward_feed as sf
+        from tools.noctus.dev.ci_verdict import make_client
+        feed = sf.StewardFeed(sf.HandedRuns(sf.default_registry()), make_client(wd),
+                              enqueue_fn=sf.real_enqueue(wd), landed_fn=sf.real_landed(wd),
+                              heartbeat_fn=sf.real_heartbeat(), superseded_fn=sf.real_superseded(wd),
+                              base_interval=interval)
+        hooks = {"tick_fn": feed.tick, "on_left": feed.on_left, "interval_fn": feed.interval,
+                 "idle_fn": feed.idle if idle_exit else None}
+    elif idle_exit:
+        hooks = {"idle_fn": lambda: True}
     watch(lambda: queue_snapshot(repo, run=run, workdir=wd),
           lambda sha: read_status(repo, sha, run=run), interval=interval,
-          batches_fn=lambda: completed_candidate_runs(run=run, workdir=wd))
+          batches_fn=lambda: completed_candidate_runs(run=run, workdir=wd), **hooks)
 
 
 def completed_candidate_runs(run: Runner = _default_run, workdir: str | None = None,
@@ -1291,12 +1335,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--sha", help="status: the enqueued sha")
     ap.add_argument("--interval", type=float, default=60, help="watch: poll interval, seconds")
+    ap.add_argument("--idle-exit", action="store_true", help="watch: print MQ-IDLE and exit 0 when the queue is empty and no handed run is pending")
     a = ap.parse_args(argv)
     if a.command == "watch":
         try:
-            watch_live(a.interval)
+            watch_live(a.interval, idle_exit=a.idle_exit)
         except KeyboardInterrupt:
             return 0
+        return 0
     if a.command == "status":
         print(json.dumps(read_status(a.repo, a.sha), indent=2))
         return 0

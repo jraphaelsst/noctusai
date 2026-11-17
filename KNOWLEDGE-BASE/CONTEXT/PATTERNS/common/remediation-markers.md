@@ -112,6 +112,21 @@ A batch session triages the sweep (`[F]`/`[R]`/`[A]`), fixes what's cheap togeth
 
 The `codify` class gets a second surface — the **`check_codification_debt` keeper** in the compliance gate (built 2026-05-25). It reuses the *same* parser (`markers_of_class` over the shared `_iter_markers` — one parser, two surfaces) but runs *always-on* inside `check_all_products`, so a deferred codification surfaces every gate run, not only when someone remembers to sweep. `[codify]` markers are `warning` (sanctioned, non-blocking); malformed/on-`except` are `high`; backlog ≥3 adds a "run `/codify` sweep" warning. This is the bridge from the advisory scan into the keeper gate — the `/codify` command's *detection* half mechanized.
 
+### Markers inside applied (frozen) migrations
+
+An applied migration is frozen (its sha is in `products/<slug>/backend/migrations-applied.json`), so the marker it carries
+(`345` declared the contract step `346` later shipped) can never be edited away. The scanner (`scan_remediation_markers`
+and every keeper on `_iter_markers`) treats such a marker as RESOLVED when either:
+
+1. a LATER migration of the same product (higher numeric prefix) carries the header line
+   `-- Resolves: NOC-REMEDIATE[<class>]` (put it in the resolving migration while it is still unapplied), or
+2. `products/<slug>/backend/migrations/remediation-resolved.txt` lists it, one line each:
+   `<NNN_file.sql> NOC-REMEDIATE[<class>] -- <why / pointer>` (use this when the resolving migration is itself already
+   applied and can no longer take a header).
+
+A header resolves only its own class and only markers in migrations numbered before it; a marker in a migration that is NOT
+yet applied is not eligible (delete the marker instead).
+
 ---
 
 ## Composition / codification

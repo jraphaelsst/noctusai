@@ -64,6 +64,8 @@ function setup(agente: unknown = AGENTE, aviso: unknown = AVISO, roteamento: unk
     if (url === "/api/julia/agente") return agente instanceof Error ? Promise.reject(agente) : Promise.resolve({ data: agente });
     if (url === "/api/julia/agente/aviso") return Promise.resolve({ data: aviso });
     if (url === "/api/julia/especificacoes") return espec instanceof Error ? Promise.reject(espec) : Promise.resolve(espec);
+    if (url === "/api/julia/contatos-setoriais") return Promise.resolve({ data: { dono: null, contatos: [], legado: [], setores: ["juridico"], maximo: 10, declarada: true } });
+    if (url === "/api/julia/conhecimento-editor") return Promise.resolve({ data: { itens: [], max_chars: 4000 } });
     if (url.startsWith("/api/whatsapp/connections/")) return Promise.resolve(url.endsWith("/qr") ? { connection_id: "c1", scannable: false, status: "SCAN_QR_CODE", png_base64: null } : WA_STATUS);
     return Promise.reject(new Error(`unexpected GET ${url}`));
   });

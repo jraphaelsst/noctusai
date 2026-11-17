@@ -32,6 +32,8 @@ export {
 export type { RetryableErrorProps, QueryErrorStateProps, RetryableQueryLike } from './RetryableError';
 export { UploadErro } from './UploadErro';
 export type { UploadErroProps } from './UploadErro';
+export { InfoPopover, InfoSecoes } from './InfoPopover';
+export type { InfoPopoverProps, InfoSecoesProps, InfoSecao } from './InfoPopover';
 export type { SideDrawerProps, SideDrawerWidth } from './SideDrawer';
 export { VoiceAnswerInput, VOICE_ANSWER_MESSAGES } from './VoiceAnswerInput';
 export type { VoiceAnswerInputProps } from './VoiceAnswerInput';

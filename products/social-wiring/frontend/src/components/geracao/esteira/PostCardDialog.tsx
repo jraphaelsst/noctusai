@@ -19,7 +19,7 @@ import {
   type CardDatas,
   type CardSubpage,
 } from "@noctusai/lib/components";
-import { Bell, FileText, Film, Lightbulb, Megaphone, MessageSquareText, ScrollText } from "lucide-react";
+import { Bell, FileText, Film, Lightbulb, Megaphone, MessageSquareText, ScrollText, Sprout } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -31,12 +31,13 @@ import { dataHoraLocalParaIsoComOffsetSP } from "@/lib/dataHoraSP";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import type { PostDetalhe, PostUpdate, RecorrenciaPost } from "@/types/esteira";
 import { PostHeaderAcoes } from "./PostHeaderAcoes";
+import { EstruturasSecao } from "./secoes/EstruturasSecao";
 import { HeadlineSecao } from "./secoes/HeadlineSecao";
 import { ProducaoSecao } from "./secoes/ProducaoSecao";
 import { PublicacaoSecao } from "./secoes/PublicacaoSecao";
 import { RoteiroSecao } from "./secoes/RoteiroSecao";
 
-export type PostSubpageKey = "geral" | "headline" | "roteiro" | "producao" | "publicacao" | "lembretes";
+export type PostSubpageKey = "geral" | "headline" | "roteiro" | "origem" | "producao" | "publicacao" | "lembretes";
 
 export interface PostCardDialogProps {
   /** The post id from `?post=`; the dialog is open while it is set. */
@@ -285,6 +286,7 @@ export function PostCardDialog({ postId, onClose }: PostCardDialogProps) {
         { key: "geral", label: "Geral", icon: FileText, render: () => <GeralSecao post={post} /> },
         { key: "headline", label: "Headline", icon: Lightbulb, render: () => <HeadlineSecao post={post} /> },
         { key: "roteiro", label: "Roteiro", icon: ScrollText, render: () => <RoteiroSecao post={post} /> },
+        { key: "origem", label: "Origem", icon: Sprout, render: () => <EstruturasSecao post={post} /> },
         { key: "producao", label: "Produção", icon: Film, render: () => <ProducaoSecao post={post} /> },
         {
           key: "publicacao",

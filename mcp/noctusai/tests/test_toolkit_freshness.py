@@ -474,6 +474,10 @@ def test_every_wired_tools_argv_parses_cleanly_through_cli_argparse():
                          "verbose": True},
          {"task_branch": "cleanup", "task_branch_slug": "feat-x",
           "task_branch_confirm": True, "task_branch_verbose": True}),
+        ("task_branch", {"action": "enqueue", "slug": "x", "confirm": True,
+                         "score": {"model": "m", "q": {"Q1": 3}, "duration_minutes": 12}},
+         {"task_branch": "enqueue", "task_branch_slug": "x", "task_branch_confirm": True,
+          "task_branch_score": '{"model": "m", "q": {"Q1": 3}, "duration_minutes": 12}'}),
         ("verify_db_guards", {"probe_ids": ["a.b", "c.d"], "project_ref": "ref1"},
          {"verify_db_guards": True, "verify_db_guards_probe_ids": "a.b,c.d",
           "verify_db_guards_project_ref": "ref1"}),
@@ -847,3 +851,17 @@ def test_refuse_posture_fresh_write_is_never_refused(fresh_toolkit):
                           subprocess_run=spy,
                           run=_fake_git_with_refs({"origin/dev": "d0"}))["status"] != "refused_stale_toolkit"
     assert spy.calls == []
+
+
+def test_score_survives_the_mcp_to_subprocess_hop():
+    """MCP `score=` -> `_tool_cli_argv` -> the REAL cli parser -> the dict `task_branch` receives."""
+    import cli as _cli
+
+    score = {"model": "m", "q": {"Q1": 3, "Q2": None}, "duration_minutes": 12, "agent": "backend-engineer"}
+    argv = TF._tool_cli_argv("task_branch", {"action": "integrate", "slug": "x", "confirm": True, "score": score})
+    args = _cli.build_parser().parse_args(argv)
+    assert _cli._task_branch_score_arg(args.task_branch_score) == score
+    assert _cli._task_branch_score_arg(None) is None
+    import pytest
+    with pytest.raises(SystemExit):
+        _cli._task_branch_score_arg("[1]")

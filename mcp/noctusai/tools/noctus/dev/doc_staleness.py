@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -207,6 +208,47 @@ def load_docs(root: Path) -> list[Doc]:
     return docs
 
 
+# ── tracked-path existence (local == CI) ────────────────────────────────────────
+#: "Does a cited path exist" is judged against what git TRACKS (the index: HEAD plus staged adds), never the
+#: filesystem: an untracked / gitignored / generated file exists on the author's disk but not in CI's fresh
+#: checkout or the merge queue's composed tree, so a filesystem check is green locally and red in CI.
+#: Filesystem fallback ONLY when `root` is not a git tree -- announced loudly on stderr, never silent.
+_PATH_INDEX: dict[str, tuple[frozenset[str], frozenset[str]] | None] = {}
+
+
+def reset_path_index() -> None:
+    """Drop the cached tracked-path index (entry points call this; the tree may have changed since)."""
+    _PATH_INDEX.clear()
+
+
+def _path_index(root: Path) -> tuple[frozenset[str], frozenset[str]] | None:
+    key = str(root)
+    if key not in _PATH_INDEX:
+        r = _git(root, "ls-files", "-z")
+        if r is None or r.returncode != 0:
+            import sys
+            print(f"doc_staleness: {root} is not a git tree -- cited-path existence falls back to the FILESYSTEM "
+                  "(untracked/gitignored files count as existing; results may differ from CI).", file=sys.stderr)
+            _PATH_INDEX[key] = None
+        else:
+            files = frozenset(p for p in r.stdout.split("\0") if p)
+            dirs = frozenset("/".join(f.split("/")[:i]) for f in files for i in range(1, f.count("/") + 1))
+            _PATH_INDEX[key] = (files, dirs)
+    return _PATH_INDEX[key]
+
+
+def _exists(root: Path, rel: str) -> bool:
+    """Tracked file or directory (a directory = any tracked file below it); filesystem only outside git."""
+    idx = _path_index(root)
+    rel = rel.rstrip("/")
+    return (rel in idx[0] or rel in idx[1]) if idx is not None else (root / rel).exists()
+
+
+def _is_dir(root: Path, rel: str) -> bool:
+    idx = _path_index(root)
+    return rel.rstrip("/") in idx[1] if idx is not None else (root / rel).is_dir()
+
+
 # ── coverage ────────────────────────────────────────────────────────────────────
 def _cited_code_paths(root: Path, doc: Doc) -> tuple[list[str], list[str]]:
     """(existing, missing) repo-relative code paths cited in backticks."""
@@ -215,7 +257,7 @@ def _cited_code_paths(root: Path, doc: Doc) -> tuple[list[str], list[str]]:
         tok = _normalise_path_token(m.group(1))
         if tok and tok not in found:
             found.append(tok)
-    existing = [t for t in found if (root / t).exists()]
+    existing = [t for t in found if _exists(root, t)]
     missing = [t for t in found if t not in existing]
     return existing, missing
 
@@ -246,7 +288,7 @@ def doc_coverage(root: Path, doc: Doc) -> list[str]:
             # _PRODUCT_ROOT_RE); as a CONTRACT citation it coupled the contract to EVERY change.
             if p.endswith(".md") or _PRODUCT_ROOT_RE.fullmatch(p):
                 continue
-            g = f"{p}/**" if (root / p).is_dir() else p
+            g = f"{p}/**" if _is_dir(root, p) else p
             if g not in cov:
                 cov.append(g)
     return cov
@@ -269,7 +311,7 @@ def _relative_cited_paths(root: Path, doc: Doc) -> list[str]:
         if "/" not in tok or not re.search(r"\w$", tok):
             continue
         rel = f"{base}/{tok}"
-        if rel not in out and (root / rel).exists():
+        if rel not in out and _exists(root, rel):
             out.append(rel)
     return out
 
@@ -360,6 +402,8 @@ def check_staged_new_missing_paths(root: Path) -> list[dict]:
     citing a renamed/mistyped path committed cleanly and went red ~25 min later
     in the queue. Only citations NEW in the staged text are judged — a doc you
     touch is not blocked for pre-existing debt (the CI ratchet owns that)."""
+    reset_path_index()
+
     def out(*args: str) -> str | None:
         r = _git(root, *args)
         return r.stdout if r is not None and r.returncode == 0 else None
@@ -392,6 +436,7 @@ def check_range(root: Path, rev_range: str, message: str | None = None) -> list[
     (`rev_range == STAGED`, trailers from `message`)."""
     if rev_range != STAGED and (".." not in rev_range or "..." in rev_range):
         return [_issue("<range>", f"needs a `<base>..<tip>` range, got {rev_range!r}")]
+    reset_path_index()
     changes, all_paths, err = material_changes(root, rev_range)
     if err:
         return [_issue(rev_range, err + "; fail-closed")]
@@ -476,6 +521,7 @@ def _applied_migrations(root: Path) -> set[str]:
 
 def check_claims(root: Path, docs: list[Doc] | None = None) -> list[dict]:
     """Leg 2 -- deterministic claim checks over every living doc."""
+    reset_path_index()
     docs = docs if docs is not None else load_docs(root)
     applied = _applied_migrations(root)
     issues: list[dict] = []
@@ -537,8 +583,9 @@ def _impl_commits(root: Path, doc_rel: str) -> int:
 
 
 def _rel_exists(root: Path, doc_rel: str, p: str) -> bool:
-    d = (root / doc_rel).parent
-    return (d / p).exists() or ((root / "products" / (_product_of(doc_rel) or "_") / p).exists())
+    d = Path(doc_rel).parent
+    return (_exists(root, os.path.normpath(str(d / p)))
+            or _exists(root, f"products/{_product_of(doc_rel) or '_'}/{p}"))
 
 
 # ── age backstop ────────────────────────────────────────────────────────────────
@@ -645,6 +692,58 @@ def suggest(result: dict[str, Any]) -> str:
     return "\n".join(lines) or "nothing to update"
 
 
+# ── edit-time coverage map (the hint that makes the commit leg a net, not a wall) ──────────────
+#: Precomputed {doc: [globs]} the PostToolUse hook reads on the hot path (stdlib-only, no git walk).
+COVERAGE_CACHE_REL = ".claude/cache/doc-coverage.json"
+
+
+def coverage_map(root: Path) -> dict[str, list[str]]:
+    """{living doc: code globs it is accountable for}, STRUCTURAL_RULES docs included -- the exact
+    set `check_range` couples against, so the edit-time hint and the commit leg can never disagree."""
+    out: dict[str, list[str]] = {}
+    for doc in load_docs(root):
+        cov = doc_coverage(root, doc)
+        if cov:
+            out[doc.rel] = cov
+    for rule in STRUCTURAL_RULES:
+        for dpath in rule["docs"]:
+            if (root / dpath).is_file():
+                out[dpath] = sorted(set(out.get(dpath, [])) | set(rule["covers"]))
+    return out
+
+
+def covering_docs(cmap: dict[str, list[str]], path: str) -> list[str]:
+    """Docs whose coverage globs match repo-relative `path` (sorted, stable)."""
+    return sorted(d for d, globs in cmap.items() if any(_glob_match(path, g) for g in globs))
+
+
+def write_coverage_cache(root: Path) -> dict[str, Any]:
+    """(Re)build the cache the hook reads; stamped with HEAD so a stale map is detectable, never fatal."""
+    head = _git(root, "rev-parse", "HEAD", timeout=10)
+    cmap = coverage_map(root)
+    dest = root / COVERAGE_CACHE_REL
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"stamp": head.stdout.strip() if head and head.returncode == 0 else "",
+                               "docs": cmap}, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(dest)
+    return {"ok": True, "docs": len(cmap), "path": str(dest)}
+
+
+def covering_docs_for_paths(root: Path, paths: list[str]) -> dict[str, list[str]]:
+    """{path: covering docs} for the paths that have any; reads the cache, rebuilds it when absent."""
+    cache = root / COVERAGE_CACHE_REL
+    cmap: dict[str, list[str]] | None = None
+    try:
+        cmap = json.loads(cache.read_text(encoding="utf-8")).get("docs")
+    except (OSError, ValueError):
+        cmap = None
+    if not isinstance(cmap, dict):
+        cmap = coverage_map(root)
+    res = {p: d for p in paths if (d := covering_docs(cmap, p.replace("\\", "/").removeprefix("./")))}
+    return res
+
+
 # ── keeper wrapper + MCP ────────────────────────────────────────────────────────
 def check_doc_staleness(repo_root: Path | None = None, rev_range: str | None = None) -> list[dict]:
     """Keeper entrypoint: range given -> coupling; else -> NEW claim staleness vs the ratchet."""
@@ -684,4 +783,5 @@ def register(server) -> None:
 
 
 __all__ = ["check_doc_staleness", "check_range", "check_staged", "STAGED", "check_claims", "check_tree", "age_report",
-           "write_baseline", "load_baseline", "parse_covers", "register"]
+           "write_baseline", "load_baseline", "parse_covers", "coverage_map", "covering_docs", "write_coverage_cache",
+           "covering_docs_for_paths", "COVERAGE_CACHE_REL", "register"]

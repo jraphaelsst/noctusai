@@ -2,6 +2,10 @@
 
 Real seams only: the DB is a ``MockSupabaseClient``, the queue a ``FakeJobRepository``, the LLM the
 injected ``HeadlineLlm`` callable (scripted per call). Nothing of ours is patched.
+
+The structures are ``ativa`` Estruturas of the PLATFORM library (no ``org_id``; estruturas-contract 8.2). The
+``viral()`` helper makes a source video AND its Estrutura (formula = ``blueprint``), so a marker in the formula
+shows up in the rendered structure the model receives.
 """
 from __future__ import annotations
 
@@ -43,17 +47,33 @@ def sb():
     return db
 
 
-def viral(sb, *, slots=(PESSOAS, DORES), score=10.0, perfil="p1", nichos=(3,), formatos=(), gatilho=None,
-          e_viral=True, status="concluida", blueprint="BP", publicado=None, codigo=None, **extra):
+def estrutura(sb, *, perfil="p1", viral_id=None, formula="BP", status="ativa", formato="reels", objetivos=("autoridade",),
+              codigo=None, eid=None):
+    eid = eid or str(uuid.uuid4())
+    sb.from_("cs_estruturas").insert({
+        "id": eid, "codigo": codigo or len(sb.from_("cs_estruturas").select("id").execute().data) + 1, "perfil_id": perfil,
+        "viral_id": viral_id, "formula_headline": formula, "formato": formato, "objetivos": list(objetivos), "status": status,
+    }).execute()
+    return eid
+
+
+def viral(sb, *, score=10.0, perfil="p1", nichos=(3,), formatos=(), gatilho=None, e_viral=True, status="concluida",
+          blueprint="BP", publicado=None, codigo=None, com_estrutura=True, **extra):
+    """A source video (platform-wide: no ``org_id``) and, unless ``com_estrutura=False``, its ``ativa`` Estrutura."""
     vid = str(uuid.uuid4())
     sb.from_("cs_virais").insert({
-        "id": vid, "org_id": ORG, "perfil_id": perfil, "codigo": codigo or len(sb.from_("cs_virais").select("id").execute().data) + 1,
+        "id": vid, "perfil_id": perfil, "codigo": codigo or len(sb.from_("cs_virais").select("id").execute().data) + 1,
         "classificacao_status": status, "blueprint": blueprint if blueprint else None,
-        "blueprint_slots": list(slots), "formato_ids": list(formatos), "nicho_ids": list(nichos),
+        "formato_ids": list(formatos), "nicho_ids": list(nichos),
         "gatilho": gatilho, "score_viral": score, "e_viral": e_viral,
         "publicado_em": publicado or _ago(5), **extra,
     }).execute()
+    if com_estrutura:
+        VIDEO_ESTRUTURA[vid] = estrutura(sb, perfil=perfil, viral_id=vid, formula=blueprint or "BP")
     return vid
+
+
+VIDEO_ESTRUTURA: dict[str, str] = {}
 
 
 def item(sb, slug, content, *, plays=0, status="approved", iid=None):
@@ -161,75 +181,74 @@ class TestVerificarItens:
 
 
 class TestSelection:
-    def test_pool_order_marca_library_first(self, sb):
-        mine = viral(sb, blueprint="MINE", perfil="p-mine", nichos=())
-        viral(sb, blueprint="NICHE", perfil="p-other", nichos=(3,))
-        viral(sb, blueprint="ANY", perfil="p-any", nichos=(9,))
+    def test_the_brand_selected_profiles_are_the_pool(self, sb):
+        mine = viral(sb, blueprint="MINE", perfil="p-mine")
+        viral(sb, blueprint="OTHER", perfil="p-other")
         ref_perfil(sb, "p-mine")
         llm = Llm()
         run(sb, lote(sb), llm)
         assert len(llm.calls) == 1 and "MINE" in llm.calls[0][1]
         assert [h["viral_id"] for h in headlines(sb)] == [mine, mine]
 
-    def test_video_reference_is_in_the_marca_pool(self, sb):
-        v = viral(sb, blueprint="VID", perfil="p-x", nichos=())
-        viral(sb, blueprint="NICHE", nichos=(3,))
+    def test_a_video_reference_selects_the_profile_of_that_video(self, sb):
+        v = viral(sb, blueprint="VID", perfil="p-x")
+        viral(sb, blueprint="OTHER", perfil="p-y")
         ref_video(sb, v)
         llm = Llm()
         run(sb, lote(sb), llm)
         assert "VID" in llm.calls[0][1] and len(llm.calls) == 1
 
-    def test_profile_reference_only_counts_posts_newer_than_posts_ate(self, sb):
-        old = viral(sb, blueprint="OLD", perfil="p1", nichos=(), publicado=_ago(30))
-        new = viral(sb, blueprint="NEW", perfil="p1", nichos=(), publicado=_ago(2))
-        ref_perfil(sb, "p1", posts_ate=_ago(10))
+    def test_no_selection_means_the_whole_library_not_the_orgs(self, sb):
+        viral(sb, blueprint="A", perfil="pa")
+        viral(sb, blueprint="B", perfil="pb")
         llm = Llm()
-        run(sb, lote(sb), llm)
-        assert {h["viral_id"] for h in headlines(sb)} == {new} and old not in {h["viral_id"] for h in headlines(sb)}
+        row = run(sb, lote(sb), llm)
+        assert len(llm.calls) == 2 and row["fallback_metodo"] is False
 
-    def test_falls_through_to_nicho_overlap_then_to_the_whole_org(self, sb):
-        viral(sb, blueprint="NICHE", nichos=(3,))
-        viral(sb, blueprint="OTHER", nichos=(9,))
-        llm = Llm()
-        run(sb, lote(sb), llm)
-        assert len(llm.calls) == 1 and "NICHE" in llm.calls[0][1]
+    def test_only_ativa_estruturas_are_ever_offered(self, sb):
+        estrutura(sb, status="rascunho", formula="RASCUNHO")
+        estrutura(sb, status="arquivada", formula="ARQUIVADA")
+        row = run(sb, lote(sb), llm := Llm())
+        assert row["fallback_metodo"] is True  # nothing usable in the library: never silently empty
+        assert all("RASCUNHO" not in u and "ARQUIVADA" not in u for _, u, _, _ in llm.calls)
 
-        sb2 = MockSupabaseClient()
-        sb2.from_("cs_marca_perfil").insert({"marca_id": MARCA, "org_id": ORG, "bio": BIO, "nichos": [3]}).execute()
-        viral(sb2, blueprint="OTHER", nichos=(9,))
-        llm2 = Llm()
-        run(sb2, lote(sb2), llm2)
-        assert len(llm2.calls) == 1 and "OTHER" in llm2.calls[0][1]
-
-    def test_unclassified_and_blueprintless_virais_are_never_structures(self, sb):
-        viral(sb, status="pendente")
-        viral(sb, status="falhou")
-        viral(sb, blueprint=None)
+    def test_the_pool_is_capped_deterministic_and_seeded_by_the_lote(self, sb):
+        for i in range(8):
+            viral(sb, blueprint=f"BP{i}", perfil=f"p{i}")
         lid = lote(sb)
-        llm = Llm()
-        row = run(sb, lid, llm)
-        assert row["fallback_metodo"] is True  # nothing usable in the library at all
-        assert all(h["viral_id"] is None for h in headlines(sb))
+        first = Llm()
+        run(sb, lid, first)
+        assert len(first.calls) == 5
+        again = Llm()
+        sb.from_("cs_headline_lotes").update({"status": "criando"}).eq("id", lid).execute()
+        run(sb, lid, again)  # a re-run of the same lote is stable
+        assert viral_ids_seen(first) == viral_ids_seen(again)
 
-    def test_top_five_by_score(self, sb):
-        ids = [viral(sb, blueprint=f"BP{i}", score=float(i), perfil=f"p{i}") for i in range(8)]
-        llm = Llm()
-        run(sb, lote(sb), llm)
-        assert len(llm.calls) == 5
-        assert {h["viral_id"] for h in headlines(sb)} == set(ids[3:])
-        assert [("BP%d" % i) in llm.calls[7 - i][1] for i in range(3, 8)] == [True] * 5
-
-    def test_filter_by_profile_format_and_trigger(self, sb):
-        a = viral(sb, perfil="pa", blueprint="A", formatos=(1,), gatilho="misterio")
-        b = viral(sb, perfil="pb", blueprint="B", formatos=(2,), gatilho="crenca")
+    def test_filter_by_profile(self, sb):
+        a = viral(sb, perfil="pa", blueprint="A")
+        viral(sb, perfil="pb", blueprint="B")
         row = run(sb, lote(sb, referencia={"tipo": "perfil", "perfil_ids": ["pa"]}), Llm())
         assert {h["viral_id"] for h in headlines(sb)} == {a} and row["estruturas_total"] == 1
-        sb.from_("cs_headlines").delete().execute()
+
+    def test_formato_and_gatilho_filters_go_through_the_source_video(self, sb):
+        a = viral(sb, perfil="pa", blueprint="A", formatos=(1,), gatilho="misterio")
+        b = viral(sb, perfil="pb", blueprint="B", formatos=(2,), gatilho="crenca")
         run(sb, lote(sb, referencia={"tipo": "formato", "formato_ids": [2]}), Llm())
         assert {h["viral_id"] for h in headlines(sb)} == {b}
         sb.from_("cs_headlines").delete().execute()
         run(sb, lote(sb, referencia={"tipo": "gatilho", "gatilhos": ["misterio", "autoridade"]}), Llm())
         assert {h["viral_id"] for h in headlines(sb)} == {a}
+
+    def test_estruturas_without_a_classified_source_video_are_excluded_and_counted(self, sb):
+        ok = viral(sb, perfil="pa", blueprint="OK", formatos=(1,))
+        estrutura(sb, perfil="pb", viral_id=None, formula="SEM-VIDEO")  # no source video at all
+        viral(sb, perfil="pc", blueprint="PENDENTE", formatos=(1,), status="pendente")  # video not classified
+        llm = Llm()
+        lid = lote(sb, referencia={"tipo": "formato", "formato_ids": [1]})
+        row = run(sb, lid, llm)
+        assert {h["viral_id"] for h in headlines(sb)} == {ok} and row["estruturas_total"] == 1
+        assert row["parametros"]["aviso_sem_classificacao"] == 2
+        assert all("SEM-VIDEO" not in u and "PENDENTE" not in u for _, u, _, _ in llm.calls)
 
     def test_filters_that_match_nothing_fail_honestly_not_fallback(self, sb):
         viral(sb, perfil="pa")
@@ -237,36 +256,38 @@ class TestSelection:
         assert row["status"] == "falha" and row["erro"] == hp.MSG_SEM_ESTRUTURA_FILTROS
         assert llm.calls == [] and not row.get("fallback_metodo")
 
-    def test_compatible_structures_rank_first_and_few_compatible_warns(self, sb):
-        viral(sb, slots=(MOMENTO,), score=99.0, blueprint="NOCOMPAT")
-        viral(sb, slots=(PESSOAS,), score=1.0, blueprint="COMPAT")
+    def test_estrutura_ids_restrict_the_pool_to_those_ativa_rows(self, sb):
+        a = viral(sb, perfil="pa", blueprint="A")
+        viral(sb, perfil="pb", blueprint="B")
+        arquivada = estrutura(sb, perfil="pc", formula="ARQ", status="arquivada")
         llm = Llm()
-        row = run(sb, lote(sb, variaveis=[PESSOAS]), llm)
-        assert "COMPAT" in llm.calls[0][1] and "NOCOMPAT" in llm.calls[1][1]
-        assert row["aviso_poucas_estruturas"] is True and row["estruturas_total"] == 2
+        run(sb, lote(sb, estrutura_ids=[VIDEO_ESTRUTURA[a], arquivada]), llm)
+        assert len(llm.calls) == 1 and "A" in llm.calls[0][1] and "ARQ" not in llm.calls[0][1]
 
-    def test_three_compatible_structures_do_not_warn(self, sb):
+    def test_estrutura_ids_win_over_the_profile_reference(self, sb):
+        a = viral(sb, perfil="pa", blueprint="A")
+        viral(sb, perfil="pb", blueprint="B")
+        run(sb, lote(sb, estrutura_ids=[VIDEO_ESTRUTURA[a]], referencia={"tipo": "perfil", "perfil_ids": ["pb"]}), Llm())
+        assert {h["viral_id"] for h in headlines(sb)} == {a}
+
+    def test_a_profile_named_in_the_text_narrows_the_pool(self, sb):
+        a = viral(sb, perfil="pa", blueprint="A")
+        viral(sb, perfil="pb", blueprint="B")
+        run(sb, lote(sb, perfis_resolvidos=["pa"]), Llm())
+        assert {h["viral_id"] for h in headlines(sb)} == {a}
+
+    def test_few_structures_warn_three_do_not(self, sb):
+        viral(sb, blueprint="U")
+        assert run(sb, lote(sb), Llm())["aviso_poucas_estruturas"] is True
+        sb.from_("cs_headline_lotes").delete().execute()
         for i in range(3):
-            viral(sb, slots=(PESSOAS,), blueprint=f"C{i}", perfil=f"p{i}")
-        row = run(sb, lote(sb, variaveis=[PESSOAS]), Llm())
-        assert row["aviso_poucas_estruturas"] is False
+            viral(sb, blueprint=f"C{i}", perfil=f"p{i}")
+        assert run(sb, lote(sb), Llm())["aviso_poucas_estruturas"] is False
 
-    def test_somente_pesquisa_excludes_unfillable_structures_before_the_llm(self, sb):
-        i1 = item(sb, PESSOAS, "seus pais")
-        i3 = item(sb, DORES, "aluguel que nunca acaba")
-        viral(sb, slots=(PESSOAS, DORES, MOMENTO, "GPT"), blueprint="NEEDS-MOMENTO", score=50.0)
-        viral(sb, slots=(PESSOAS, DORES), blueprint="FILLABLE", score=1.0)
-        llm = Llm(reply=reply_json("Seus pais e o aluguel que nunca acaba.", "O aluguel que nunca acaba e seus pais.", i1=[i1, i3], i2=[i1, i3]))
-        row = run(sb, lote(sb, somente_pesquisa=True), llm)
-        assert len(llm.calls) == 1 and "FILLABLE" in llm.calls[0][1] and "NEEDS-MOMENTO" not in llm.calls[0][1]
-        assert "###MODO: SOMENTE_PESQUISA" in llm.calls[0][1] and row["status"] == "completo"
-
-    def test_somente_pesquisa_with_nothing_fillable_fails_naming_the_missing_variables(self, sb):
-        item(sb, PESSOAS, "seus pais")
-        item(sb, DORES, "aluguel que nunca acaba")
-        viral(sb, slots=(PESSOAS, DORES, MOMENTO, "GPT"), blueprint="NEEDS-MOMENTO")
+    def test_somente_pesquisa_without_any_approved_item_fails_naming_the_missing_variables(self, sb):
+        viral(sb)
         llm = Llm()
-        row = run(sb, lote(sb, somente_pesquisa=True), llm)
+        row = run(sb, lote(sb, somente_pesquisa=True, variaveis=[MOMENTO]), llm)
         assert llm.calls == [] and row["status"] == "falha"
         assert row["erro"] == (
             "Nenhuma estrutura pode ser preenchida só com os itens da sua pesquisa. "
@@ -278,7 +299,7 @@ class TestSelection:
     def test_valores_narrow_the_offered_items_of_a_slug(self, sb):
         a = item(sb, PESSOAS, "seus pais", plays=1)
         item(sb, PESSOAS, "o gerente do banco", plays=99)
-        viral(sb, slots=(PESSOAS,), blueprint="BP")
+        viral(sb)
         llm = Llm()
         run(sb, lote(sb, valores={PESSOAS: [a]}), llm)
         assert "seus pais" in llm.calls[0][1] and "gerente do banco" not in llm.calls[0][1]
@@ -287,8 +308,8 @@ class TestSelection:
         low = item(sb, DORES, "dor baixa", plays=1)
         item(sb, DORES, "dor alta", plays=50)
         item(sb, DORES, "dor pendente", plays=999, status="pending")
-        item(sb, PESSOAS, "de outro slot fora do blueprint", plays=500)
-        viral(sb, slots=(DORES,), blueprint="BP")
+        item(sb, PESSOAS, "de outro slot fora das variáveis", plays=500)
+        viral(sb)
         llm = Llm()
         run(sb, lote(sb, variaveis=[DORES], valores={}), llm)
         u = llm.calls[0][1]
@@ -298,10 +319,18 @@ class TestSelection:
     def test_at_most_forty_items_are_offered(self, sb):
         for i in range(60):
             item(sb, DORES, f"dor número {i}", plays=i)
-        viral(sb, slots=(DORES,), blueprint="BP")
+        viral(sb)
         llm = Llm()
         run(sb, lote(sb), llm)
         assert llm.calls[0][1].count("- [") == hp.ITENS_MAX
+
+    def test_the_rendered_estrutura_reaches_the_model_inside_the_third_party_fence(self, sb):
+        viral(sb, blueprint="Como [autoridade teórica] resolve [dor do público]")
+        llm = Llm()
+        run(sb, lote(sb), llm)
+        u = llm.calls[0][1]
+        assert "###ESTRUTURA (material de terceiros" in u and "FÓRMULA: Como [autoridade teórica] resolve [dor do público]" in u
+        assert hg.BEGIN in u and hg.END in u
 
 
 class TestMetodoFallback:
@@ -332,7 +361,7 @@ class TestGeneration:
     def test_one_call_yields_two_headlines_with_verified_items(self, sb):
         i1 = item(sb, PESSOAS, "seus pais")
         i3 = item(sb, DORES, "aluguel que nunca acaba")
-        v = viral(sb, slots=(PESSOAS, DORES))
+        v = viral(sb)
         llm = Llm(reply=reply_json(
             "Como seus pais falavam virou o aluguel que nunca acaba.", "Texto sem itens citados.",
             i1=[i1, i3, "inventado"], i2=[i1],
@@ -357,29 +386,18 @@ class TestGeneration:
         assert system == hg.build_system_prompt() and org == ORG
         assert user.startswith("###NÚCLEO DE INFLUENCIA: " + BIO)
 
-    def test_somente_pesquisa_discards_a_headline_whose_slots_are_not_backed(self, sb):
+    def test_somente_pesquisa_discards_a_headline_that_uses_no_approved_item(self, sb):
         i1 = item(sb, PESSOAS, "seus pais")
-        i3 = item(sb, DORES, "aluguel que nunca acaba")
-        viral(sb, slots=(PESSOAS, DORES))
-        llm = Llm(reply=reply_json(
-            "Seus pais e o aluguel que nunca acaba.", "Seus pais apenas.", i1=[i1, i3], i2=[i1],
-        ))
+        viral(sb)
+        llm = Llm(reply=reply_json("Seus pais sabem a verdade.", "Texto sem item nenhum.", i1=[i1], i2=[i1]))
         row = run(sb, lote(sb, somente_pesquisa=True), llm)
-        hs = headlines(sb)
-        assert [h["angulo"] for h in hs] == [1] and row["status"] == "completo"
+        assert [h["angulo"] for h in headlines(sb)] == [1] and row["status"] == "completo"
 
     def test_somente_pesquisa_all_discarded_fails_with_the_discard_message(self, sb):
         item(sb, PESSOAS, "seus pais")
-        item(sb, DORES, "aluguel que nunca acaba")
-        viral(sb, slots=(PESSOAS, DORES))
+        viral(sb)
         row = run(sb, lote(sb, somente_pesquisa=True), Llm(reply=reply_json("Texto livre.", "Outro livre.")))
         assert row["status"] == "falha" and row["erro"] == hp.MSG_DESCARTADAS and headlines(sb) == []
-
-    def test_gpt_slot_never_needs_an_item(self, sb):
-        i1 = item(sb, PESSOAS, "seus pais")
-        viral(sb, slots=(PESSOAS, "GPT"))
-        row = run(sb, lote(sb, somente_pesquisa=True), Llm(reply=reply_json("Seus pais sabem.", "Seus pais calam.", i1=[i1], i2=[i1])))
-        assert row["status"] == "completo" and len(headlines(sb)) == 2
 
     def test_partial_failure_still_completes_with_the_error_count(self, sb):
         for i in range(3):
@@ -494,31 +512,91 @@ class TestGeneration:
 
 
 class TestFixedStructureOrigins:
-    def test_biblioteca_uses_exactly_the_chosen_viral_and_marks_it_manual(self, sb):
+    def test_biblioteca_viral_id_uses_all_the_ativa_estruturas_of_that_video_and_marks_it_manual(self, sb):
         chosen = viral(sb, blueprint="CHOSEN", score=1.0)
+        second = estrutura(sb, perfil="p1", viral_id=chosen, formula="CHOSEN-2")
+        estrutura(sb, perfil="p1", viral_id=chosen, formula="CHOSEN-ARQ", status="arquivada")
         viral(sb, blueprint="BETTER", score=99.0, perfil="p2")
         llm = Llm()
         row = run(sb, lote(sb, "biblioteca", viral_id=chosen), llm)
-        assert len(llm.calls) == 1 and "CHOSEN" in llm.calls[0][1]
-        assert {h["modo"] for h in headlines(sb)} == {"manual"} and row["estruturas_total"] == 1
+        assert len(llm.calls) == 2 and all("CHOSEN" in u and "BETTER" not in u and "ARQ" not in u for _, u, _, _ in llm.calls)
+        assert {h["modo"] for h in headlines(sb)} == {"manual"} and row["estruturas_total"] == 2
+        assert second in {u["estrutura_id"] for u in sb.from_("cs_estrutura_usos").select("*").execute().data}
+
+    def test_biblioteca_estrutura_id_uses_exactly_that_estrutura(self, sb):
+        a = viral(sb, blueprint="AAA")
+        viral(sb, blueprint="BBB", perfil="p2")
+        llm = Llm()
+        run(sb, lote(sb, "biblioteca", estrutura_id=VIDEO_ESTRUTURA[a]), llm)
+        assert len(llm.calls) == 1 and "AAA" in llm.calls[0][1]
 
     def test_biblioteca_with_a_vanished_viral_fails(self, sb):
         row = run(sb, lote(sb, "biblioteca", viral_id=str(uuid.uuid4())), Llm())
         assert row["status"] == "falha" and row["erro"] == hp.MSG_SEM_ESTRUTURA_VIRAL
 
-    def test_sugestao_auto_generates_for_the_given_ids_in_order_and_marks_automatic(self, sb):
+    def test_sugestao_auto_generates_for_the_given_estruturas_in_order_and_marks_automatic(self, sb):
         a = viral(sb, blueprint="AAA", score=1.0)
         b = viral(sb, blueprint="BBB", score=99.0, perfil="p2")
         llm = Llm()
-        run(sb, lote(sb, "sugestao_auto", viral_ids=[a, b]), llm)
+        run(sb, lote(sb, "sugestao_auto", estrutura_ids=[VIDEO_ESTRUTURA[a], VIDEO_ESTRUTURA[b]]), llm)
         assert "AAA" in llm.calls[0][1] and "BBB" in llm.calls[1][1]
         assert {h["modo"] for h in headlines(sb)} == {"automatico"}
 
-    def test_form_viral_does_not_filter_by_variable(self, sb):
-        viral(sb, slots=(MOMENTO,), blueprint="ONLY-MOMENTO")
+    def test_a_sugestao_queued_before_estruturas_still_runs_from_its_videos(self, sb):
+        a = viral(sb, blueprint="AAA")
+        llm = Llm()
+        run(sb, lote(sb, "sugestao_auto", viral_ids=[a]), llm)
+        assert "AAA" in llm.calls[0][1] and {h["viral_id"] for h in headlines(sb)} == {a}
+
+    def test_form_viral_has_no_variable_filter(self, sb):
+        viral(sb, blueprint="ONLY-ONE")
         llm = Llm()
         run(sb, lote(sb, "form_viral", assunto_livre="x"), llm)
-        assert "ONLY-MOMENTO" in llm.calls[0][1]
+        assert "ONLY-ONE" in llm.calls[0][1]
+
+
+class TestPlaceholdersAndUsos:
+    def test_a_headline_that_keeps_a_placeholder_is_dropped_and_the_clean_one_is_kept(self, sb):
+        viral(sb)
+        row = run(sb, lote(sb), Llm(reply=reply_json("Uma headline com [autoridade teórica] sobrando.", "Uma headline limpa.")))
+        hs = headlines(sb)
+        assert [h["texto"] for h in hs] == ["Uma headline limpa."] and row["status"] == "completo"
+        assert all("[" not in h["texto"] for h in hs)
+
+    def test_all_headlines_with_placeholders_fail_with_the_placeholder_message(self, sb):
+        viral(sb)
+        row = run(sb, lote(sb), Llm(reply=reply_json("Com [colchete].", "Outra [coisa] também.")))
+        assert row["status"] == "falha" and row["erro"] == hp.MSG_DESCARTADAS_PLACEHOLDER and headlines(sb) == []
+
+    def test_the_model_may_skip_a_headline_it_cannot_fill(self, sb):
+        viral(sb)
+        row = run(sb, lote(sb), Llm(reply=reply_json("", "Só esta cabe.")))
+        assert [h["texto"] for h in headlines(sb)] == ["Só esta cabe."] and row["status"] == "completo"
+
+    def test_the_prompt_tells_the_model_to_fill_placeholders_from_the_bio_and_brains_and_never_keep_one(self):
+        system = hg.build_system_prompt()
+        assert "[placeholder]" in system and "NÚCLEO" in system and "CÉREBROS" in system and "NUNCA deixe colchetes" in system
+
+    def test_one_uso_per_headline_with_the_lote_context(self, sb):
+        a = viral(sb)
+        row = run(sb, lote(sb), Llm())
+        usos = sb.from_("cs_estrutura_usos").select("*").execute().data
+        hs = headlines(sb)
+        assert sorted(u["headline_id"] for u in usos) == sorted(h["id"] for h in hs) and len(usos) == 2
+        assert {(u["estrutura_id"], u["contexto"], u["papel"], u["ordem"], u["marca_id"], u["org_id"]) for u in usos} == {
+            (VIDEO_ESTRUTURA[a], "lote_headlines", "principal", 1, MARCA, ORG)
+        }
+        assert row["status"] == "completo"
+
+    def test_a_dropped_headline_writes_no_uso_and_a_metodo_fallback_writes_none(self, sb):
+        run(sb, lote(sb), Llm())
+        assert sb.from_("cs_estrutura_usos").select("*").execute().data == []  # empty library: Metodo templates
+
+        v = viral(sb)
+        sb.from_("cs_headlines").delete().execute()
+        run(sb, lote(sb), Llm(reply=reply_json("Fica.", "Cai [assim].")))
+        assert len(sb.from_("cs_estrutura_usos").select("*").execute().data) == 1
+        assert v
 
 
 class TestJobWiring:
@@ -579,3 +657,35 @@ class TestJobWiring:
         from app.config import settings
 
         assert any(m.id == settings.geracao_llm_model and m.provider == "anthropic" for m in MODELS)
+
+
+class TestProgressPublishing:
+    """`executar_lote(progress=...)` pushes each structure's stage and a terminal state to the live stream."""
+
+    def _run(self, sb, lid, llm):
+        seen: list[tuple[str, str, dict]] = []
+
+        async def progress(org_id, lote_id, state):
+            seen.append((org_id, lote_id, dict(state)))
+
+        asyncio.run(hp.executar_lote(sb, llm, lid, cfg=CFG, progress=progress))
+        return seen
+
+    def test_pushes_running_stages_then_a_terminal_completo(self, sb):
+        viral(sb)
+        lid = lote(sb)
+        seen = self._run(sb, lid, Llm())
+        assert seen and all(o == ORG and l == lid for o, l, _ in seen)
+        assert any("estrutura 1 de 1" in (s.get("etapa") or "") for _, _, s in seen)
+        assert seen[-1][2]["status"] == "completo"
+
+    def test_pushes_a_terminal_falha_when_nothing_was_generated(self, sb):
+        viral(sb)
+        lid = lote(sb)
+        seen = self._run(sb, lid, Llm(script=[RuntimeError("boom")]))
+        assert seen[-1][2]["status"] == "falha" and seen[-1][2]["erro"]
+
+    def test_a_publisher_is_optional(self, sb):
+        viral(sb)
+        lid = lote(sb)
+        assert run(sb, lid, Llm())["status"] == "completo"

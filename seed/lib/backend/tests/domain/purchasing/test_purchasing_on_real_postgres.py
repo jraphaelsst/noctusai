@@ -20,16 +20,14 @@ from noctusai_lib.domain.finance import FinanceConfig, finance_migration
 from noctusai_lib.domain.inventory import InventoryConfig, inventory_migration
 from noctusai_lib.domain.parties import PartiesConfig, parties_migration
 from noctusai_lib.domain.purchasing import PurchasingConfig, purchasing_migration
+from noctusai_lib.testing.pglite import pglite_replay_skipif
 
 ROOT = Path(__file__).resolve().parents[6]
 NODE_DIR = ROOT / "mcp" / "noctusai" / "node"
 HARNESS = NODE_DIR / "migration_replay" / "replay.mjs"
 STUBS = NODE_DIR / "migration_replay" / "stubs.sql"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None or not HARNESS.exists() or not (NODE_DIR / "node_modules" / "@electric-sql").exists(),
-    reason="PGlite replay harness unavailable (needs `node` and mcp/noctusai/node/node_modules)",
-)
+pytestmark = pytest.mark.skipif(**pglite_replay_skipif())
 
 FULL, BARE = "purf", "purb"
 

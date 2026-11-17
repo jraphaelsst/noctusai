@@ -60,19 +60,22 @@ async def present_viral_card(
 
 
 async def viral_cards(
-    db: Any, org_id: str, storage: Optional[StorageBackend], viral_ids: list[str]
+    db: Any, org_id: Optional[str], storage: Optional[StorageBackend], viral_ids: list[str]
 ) -> dict[str, dict[str, Any]]:
-    """``{viral_id: ViralCard}`` for the org's virais (unknown / foreign ids are simply absent)."""
+    """``{viral_id: ViralCard}`` for the given library videos (unknown ids are simply absent).
+
+    The library is PLATFORM-WIDE since migration 351: nothing here filters by org. ``org_id`` is kept (and ignored) so the
+    callers written against the per-org signature keep working; the caller's own scoping (a brand's selection, a headline /
+    roteiro it owns) is what decides which ids reach this function."""
+    del org_id  # platform-wide library: kept for caller compatibility only
     ids = sorted({str(i) for i in viral_ids if i})
     if not ids:
         return {}
     rows: list[dict[str, Any]] = []
     for chunk in batched(ids):
-        rows.extend(
-            db.table(VIRAIS).select(VIRAL_CARD_COLS).eq("org_id", org_id).in_("id", chunk).execute().data or []
-        )
+        rows.extend(db.table(VIRAIS).select(VIRAL_CARD_COLS).in_("id", chunk).execute().data or [])
     handles: dict[str, str] = {}
     for chunk in batched(sorted({str(r["perfil_id"]) for r in rows})):
-        for p in db.table(PERFIS).select("id,handle").eq("org_id", org_id).in_("id", chunk).execute().data or []:
+        for p in db.table(PERFIS).select("id,handle").in_("id", chunk).execute().data or []:
             handles[str(p["id"])] = p["handle"]
     return {str(r["id"]): await present_viral_card(r, handles.get(str(r["perfil_id"])), storage) for r in rows}

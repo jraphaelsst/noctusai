@@ -368,7 +368,27 @@ def test_worker_completes_job_and_deletes_audio_immediately():
     assert body["expira_em"] == iso(parse_ts(body["concluido_em"]) + timedelta(days=30))
     assert not asyncio.run(env.storage.exists(bucket=L.BUCKET, key=path))
     assert env.repo.rows[tid]["audio_apagado_em"]
-    assert env.transcriber.calls[0]["max_seconds"] == 30.0
+    # the cap is the configured limit, not the file's own probed duration (30 s)
+    assert env.transcriber.calls[0]["max_seconds"] == 600.0
+
+
+def test_decode_slightly_longer_than_probe_still_completes():
+    """Regression (2026-11-16): a 3.68 s WAV probed at 3.6786 s failed as duracao_excedida
+    because the worker capped the transcriber at the file's own probed duration. The
+    transcriber's decoded length may drift a few ms past the probe; the cap is the limit."""
+
+    class StrictCap(FakeTranscriber):
+        async def transcribe(self, audio, *, language="pt", max_seconds=None, **kw):
+            decoded_s = PROBE_OK.duracao_s + 0.002  # decoder reads 2 ms past the probe
+            if max_seconds is not None and decoded_s > max_seconds:
+                raise TranscriptionRejected("duracao_excedida")
+            return await super().transcribe(audio, language=language, max_seconds=max_seconds, **kw)
+
+    env = Env(transcriber=StrictCap(default_probe=PROBE_OK, script=["ola"]))
+    tid = env.post().json()["id"]
+    env.work()
+    body = env.client.get(f"/api/transcriptions/{tid}", headers=env.write_token).json()
+    assert body["status"] == "concluida", body.get("erro")
 
 
 def test_segments_only_stored_when_requested():
@@ -631,3 +651,23 @@ def test_supabase_repo_reservar_and_scoped_get():
     client.set_rpc_data("reservar_transcricao_api", None)
     with pytest.raises(RuntimeError):
         repo.reservar(caller_kind="token", caller_id=USER, org_id=ORG, duracao_s=30.0)
+
+
+def test_palavras_flag_rides_job_payload_and_reaches_transcriber():
+    env = Env(transcriber=FakeTranscriber(default_probe=PROBE_OK, script=["ola mundo"]))
+    tid = env.post(palavras="true").json()["id"]
+    assert env.repo.rows[tid]["segmentos"] == []  # palavras implies segments are kept
+    assert env.work() is True
+    assert env.transcriber.calls[0]["palavras"] is True
+    body = env.client.get(f"/api/transcriptions/{tid}", headers=env.write_token).json()
+    words = body["segmentos"][0]["palavras"]
+    assert [w["texto"] for w in words] == ["ola", "mundo"]
+    assert set(words[0]) == {"texto", "inicio", "fim", "confianca"}
+
+
+def test_palavras_default_off_leaves_payload_and_call_unchanged():
+    env = Env(transcriber=FakeTranscriber(default_probe=PROBE_OK, script=["ola"]))
+    tid = env.post().json()["id"]
+    claimed = asyncio.run(env.jobs.claim_next(worker_id="t", job_types=[L.JOB_TYPE]))
+    assert claimed.payload == {"transcricao_id": tid}
+    assert env.repo.rows[tid]["segmentos"] is None

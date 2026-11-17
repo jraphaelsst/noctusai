@@ -164,6 +164,7 @@ class UploadQueue:
         """
         max_concurrent = max(1, max_concurrent)
         last_position: int | None = None
+        # poll-budget: poll_seconds (default 3s) while a job waits its turn; 0 Supabase calls/tick (Redis queue position only); worst 28800/day per waiter waiting nonstop (bounded by the queue wait); idle=fixed
         while True:
             self._maybe_release_stale_head()
             pos = self._position_of(job_id)

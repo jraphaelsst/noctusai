@@ -55,8 +55,6 @@ from app.modules.certidoes.registry import (
 #: `noctusai_lib`'s `resolve_credential`) is the point of
 #: `credentials.resolve_key`: the store behind it moved to the product-local
 #: encrypted one and these tests did not have to follow it into two tiers.
-_CRED = "app.modules.certidoes.credentials.resolve_api_key"
-_REGISTRY_RESOLVE = "app.modules.certidoes.registry.resolve_key"
 
 ORG = "11111111-1111-4111-8111-111111111111"
 OTHER_ORG = "22222222-2222-4222-8222-222222222222"
@@ -238,17 +236,17 @@ class TestGetCertidoesTipos:
 
 
 class TestCheckRequiredCredentials:
-    def test_sem_infosimples_retorna_mensagem(self):
-        with patch(_CRED, return_value=None):
-            missing = service.check_required_credentials(ORG)
+    def test_sem_infosimples_retorna_mensagem(self, credenciais):
+        credenciais(None)
+        missing = service.check_required_credentials(ORG)
         assert len(missing) == 1
         assert "InfoSimples" in missing[0]
 
-    def test_com_infosimples_retorna_vazio(self):
-        with patch(_CRED, return_value="tok-123"):
-            assert service.check_required_credentials(ORG) == []
+    def test_com_infosimples_retorna_vazio(self, credenciais):
+        credenciais("tok-123")
+        assert service.check_required_credentials(ORG) == []
 
-    def test_resolve_passa_pelo_seam_do_modulo(self):
+    def test_resolve_passa_pelo_seam_do_modulo(self, credenciais):
         """Every key in this module goes through `credentials.resolve_key`,
         which now resolves through the product's own encrypted key store.
 
@@ -257,11 +255,11 @@ class TestCheckRequiredCredentials:
         the operator writes in Settings → Chaves de API — and nothing would say
         so: the platform tier still answers for a pre-existing key, so the miss
         would surface only for an org that had re-entered its token in the new
-        UI. This asserts the routing, not just the return value.
+        UI. This asserts the routing, not just the return value: ONLY
+        `infosimples_token` is set, and the pre-flight is satisfied by it alone.
         """
-        with patch(_CRED, return_value="tok") as m:
-            service.check_required_credentials(ORG)
-        m.assert_called_once_with("infosimples_token", ORG)
+        credenciais(lambda n: "tok" if n == "infosimples_token" else None)
+        assert service.check_required_credentials(ORG) == []
 
     def test_credenciais_resolvem_pelo_key_store_do_produto(self):
         """The import is the contract: `credentials.resolve_key` delegates to
@@ -315,6 +313,12 @@ class TestBuildParamsTrf3:
             "tipo": "1",
             "abrangencia": "3",
             "nome_social": "João da Silva",
+            # Complementary data the TRF3 asks for only on its conditional
+            # step — sent whenever the consulta knows it (prod 606, 2026-10).
+            "nome_mae": "Maria da Silva",
+            "birthdate": "1990-01-15",
+            "tipo_documento": "2",
+            "documento": "123456789",
         }
 
     def test_cnpj_so_documento_sem_nome_social(self):
@@ -338,6 +342,12 @@ class TestBuildParamsTrf3Sp:
             "tipo": "1",
             "abrangencia": "2",
             "nome_social": "João da Silva",
+            # Complementary data the TRF3 asks for only on its conditional
+            # step — sent whenever the consulta knows it (prod 606, 2026-10).
+            "nome_mae": "Maria da Silva",
+            "birthdate": "1990-01-15",
+            "tipo_documento": "2",
+            "documento": "123456789",
         }
 
     def test_cnpj_so_documento_sem_nome_social(self):
@@ -347,6 +357,15 @@ class TestBuildParamsTrf3Sp:
             "tipo": "1",
             "abrangencia": "2",
         }
+
+    def test_cpf_sem_dados_complementares_nao_os_envia(self):
+        params = _build_params_trf3_sp(CONSULTA_MINIMAL, "tok")
+        for chave in ("nome_mae", "birthdate", "tipo_documento", "documento"):
+            assert chave not in params
+
+    def test_rg_igual_ao_cpf_cin_nao_vai_como_rg(self):
+        params = _build_params_trf3_sp({**CONSULTA_CPF, "rg": "123.456.789-01"}, "tok")
+        assert "tipo_documento" not in params and "documento" not in params
 
     def test_mesmo_endpoint_do_regional_difere_so_na_abrangencia(self):
         """The two TRF3 entries share an endpoint and are both Cível —
@@ -390,49 +409,57 @@ class TestBuildParamsSimples:
 
 
 class TestBuildParamsTjsp:
-    def test_inclui_modelo(self):
-        with patch(_REGISTRY_RESOLVE, return_value=None):
-            assert _build_params_tjsp(CONSULTA_CPF, "tok")["modelo"] == "4"
+    def test_inclui_modelo(self, credenciais):
+        credenciais(None)
+        assert _build_params_tjsp(CONSULTA_CPF, "tok")["modelo"] == "4"
 
-    def test_cpf_usa_nome_completo(self):
-        with patch(_REGISTRY_RESOLVE, return_value=None):
-            params = _build_params_tjsp(CONSULTA_CPF, "tok")
+    def test_cpf_usa_nome_completo(self, credenciais):
+        credenciais(None)
+        params = _build_params_tjsp(CONSULTA_CPF, "tok")
         assert params["nome_completo"] == "João da Silva"
         assert "razao_social" not in params
 
-    def test_cnpj_usa_razao_social(self):
-        with patch(_REGISTRY_RESOLVE, return_value=None):
-            params = _build_params_tjsp(CONSULTA_CNPJ, "tok")
+    def test_cnpj_usa_razao_social(self, credenciais):
+        credenciais(None)
+        params = _build_params_tjsp(CONSULTA_CNPJ, "tok")
         assert params["razao_social"] == "Empresa XPTO"
         assert "nome_completo" not in params
 
-    def test_inclui_email_envio_quando_configurado(self):
-        with patch(_REGISTRY_RESOLVE, return_value="fila@noctus.com"):
-            params = _build_params_tjsp(CONSULTA_CPF, "tok")
+    def test_inclui_email_envio_quando_configurado(self, credenciais):
+        credenciais("fila@noctus.com")
+        params = _build_params_tjsp(CONSULTA_CPF, "tok")
         assert params["email_envio"] == "fila@noctus.com"
 
-    def test_omite_email_envio_quando_nao_configurado(self):
-        with patch(_REGISTRY_RESOLVE, return_value=None):
-            assert "email_envio" not in _build_params_tjsp(CONSULTA_CPF, "tok")
+    def test_omite_email_envio_quando_nao_configurado(self, credenciais):
+        credenciais(None)
+        assert "email_envio" not in _build_params_tjsp(CONSULTA_CPF, "tok")
 
-    def test_inclui_campos_opcionais_quando_presentes(self):
-        with patch(_REGISTRY_RESOLVE, return_value=None):
-            params = _build_params_tjsp(CONSULTA_CPF, "tok")
+    def test_inclui_campos_opcionais_quando_presentes(self, credenciais):
+        credenciais(None)
+        params = _build_params_tjsp(CONSULTA_CPF, "tok")
         assert params["rg"] == "123456789"
         assert params["genero"] == "M"
         assert params["nome_mae"] == "Maria da Silva"
         assert params["nome_pai"] == "José da Silva"
 
-    def test_omite_campos_opcionais_quando_ausentes(self):
-        with patch(_REGISTRY_RESOLVE, return_value=None):
-            params = _build_params_tjsp(CONSULTA_MINIMAL, "tok")
+    def test_rg_igual_ao_cpf_vai_como_cin(self, credenciais):
+        """Docs: an RG filled with the CPF number is not processed — a CIN
+        holder (RG == CPF) goes as `cin`."""
+        credenciais(None)
+        params = _build_params_tjsp({**CONSULTA_CPF, "rg": "123.456.789-01"}, "tok")
+        assert params["cin"] == "12345678901"
+        assert "rg" not in params
+
+    def test_omite_campos_opcionais_quando_ausentes(self, credenciais):
+        credenciais(None)
+        params = _build_params_tjsp(CONSULTA_MINIMAL, "tok")
         for field in ("rg", "genero", "nome_mae", "nome_pai", "birthdate"):
             assert field not in params
 
-    def test_email_resolve_pelo_seam_do_modulo(self):
-        with patch(_CRED, return_value="fila@noctus.com") as m:
-            _build_params_tjsp(CONSULTA_CPF, "tok")
-        m.assert_called_once_with("infosimples_email_envio", ORG)
+    def test_email_resolve_pelo_seam_do_modulo(self, credenciais):
+        credenciais(lambda n: "fila@noctus.com" if n == "infosimples_email_envio" else None)
+        params = _build_params_tjsp(CONSULTA_CPF, "tok")
+        assert params["email_envio"] == "fila@noctus.com"
 
 
 # ---------------------------------------------------------------------------
@@ -794,19 +821,20 @@ def _provider_raising(exc):
 
 class TestAnalyzeWithAi:
     @pytest.mark.asyncio
-    async def test_sem_chave_retorna_marcador_em_portugues(self):
+    async def test_sem_chave_retorna_marcador_em_portugues(self, credenciais):
         """Not None: an empty column reads as a broken feature. The marker says
         WHICH setting is missing, in the language the operator reads."""
-        with patch(_CRED, return_value=None):
-            out = await service._analyze_with_ai(
-                "texto", ORG, resolve_provider=_provider("openai")
-            )
+        credenciais(None)
+        out = await service._analyze_with_ai(
+            "texto", ORG, resolve_provider=_provider("openai")
+        )
         assert "Análise IA não disponível" in out
         assert "OpenAI API Key" in out
 
     @pytest.mark.asyncio
-    async def test_com_chave_chama_seed_chat_completion(self):
-        with patch(_CRED, return_value="sk-x"), patch(
+    async def test_com_chave_chama_seed_chat_completion(self, credenciais):
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value="Tudo regular."),
         ) as chat:
@@ -819,14 +847,15 @@ class TestAnalyzeWithAi:
         assert kwargs["model"] == "gpt-4.1-mini"
 
     @pytest.mark.asyncio
-    async def test_o_provedor_selecionado_roteia_chamada_e_modelo(self):
+    async def test_o_provedor_selecionado_roteia_chamada_e_modelo(self, credenciais):
         """🔴 The provider and the model move together or not at all.
 
         `gpt-4.1-mini` sent to Anthropic is a 404, and the operator who just
         flipped the switch would read that as a broken key. This asserts the
         pair, not just the provider.
         """
-        with patch(_CRED, return_value="sk-ant-x"), patch(
+        credenciais("sk-ant-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value="Consta débito."),
         ) as chat:
@@ -840,17 +869,17 @@ class TestAnalyzeWithAi:
         assert kwargs["model"] == "claude-haiku-4-5"
 
     @pytest.mark.asyncio
-    async def test_a_chave_conferida_e_a_do_provedor_escolhido(self):
+    async def test_a_chave_conferida_e_a_do_provedor_escolhido(self, credenciais):
         """An org running on Anthropic must not be told its OpenAI key is
         missing. Checking OpenAI's key regardless of the selection refuses
         work the configured vendor can do — and trains the operator to
         ignore the one message that panel exists to show.
         """
-        with patch(_CRED, return_value=None) as cred:
-            out = await service._analyze_with_ai(
-                "texto", ORG, resolve_provider=_provider("anthropic")
-            )
-        assert cred.call_args.args[0] == "anthropic_api_key"
+        # Only the OpenAI key exists: were it the one checked, the call would proceed.
+        credenciais(lambda n: "sk-x" if n == "openai_api_key" else None)
+        out = await service._analyze_with_ai(
+            "texto", ORG, resolve_provider=_provider("anthropic")
+        )
         assert "Anthropic" in out
         assert "OpenAI" not in out
 
@@ -883,15 +912,16 @@ class TestAnalyzeWithAi:
 
     @pytest.mark.asyncio
     async def test_falha_do_provedor_vira_none_nao_excecao_nem_texto_de_erro(
-        self, caplog
-    ):
+        self, caplog, 
+    credenciais):
         """🔴 The regression this pins: a vendor error must never land in
         `analise_ia` (prod showed the raw `AsyncMessages.create() got an
         unexpected keyword argument 'temperature'` as if it were the
         analysis, 2026-09-10 onward). NULL + a logged error, not a marker
         string — the column is a due-diligence read surface, not an error
         channel."""
-        with patch(_CRED, return_value="sk-x"), patch(
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(side_effect=RuntimeError("429")),
         ), caplog.at_level(logging.ERROR):
@@ -1395,7 +1425,7 @@ class TestProcessSingleCertidao:
         assert row["erro_mensagem"] == "CPF inválido"
 
     @pytest.mark.asyncio
-    async def test_api_requested_at_e_gravado_antes_da_chamada(self):
+    async def test_api_requested_at_e_gravado_antes_da_chamada(self, credenciais):
         """🔴 The TJSP cooldown reads this column and nothing else. If it were
         only written on success, a failed request — which still consumed the
         30-minute window at TJSP — would look like no request at all."""
@@ -1403,14 +1433,16 @@ class TestProcessSingleCertidao:
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[_resultado(tipo=TJSP_TIPO)],
         )
-        with patch(_REGISTRY_RESOLVE, return_value=None):
-            await service._process_single_certidao(
-                config_for(TJSP_TIPO), _consulta_row(), "tok", db,
-                "resultado-001", _FakeHttp({"code": 400, "errors": ["x"]}),
-                FakeStorageBackend(),
-                analyze=_noop_analyze, extract_text=_noop_extract_text,
-                core_db=MockSupabaseClient(schema="public"),
-            )
+        # The delivery e-mail is configured: without it the pre-call check
+        # parks the cell and nothing is requested (`requer_credencial`).
+        credenciais("fila@example.com")
+        await service._process_single_certidao(
+            config_for(TJSP_TIPO), _consulta_row(), "tok", db,
+            "resultado-001", _FakeHttp({"code": 400, "errors": ["x"]}),
+            FakeStorageBackend(),
+            analyze=_noop_analyze, extract_text=_noop_extract_text,
+            core_db=MockSupabaseClient(schema="public"),
+        )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "resultado-001"
         ).execute().data[0]
@@ -1535,13 +1567,13 @@ class TestAtualizarStatusConsulta:
 
 class TestProcessarConsulta:
     @pytest.mark.asyncio
-    async def test_sem_token_marca_tudo_erro_com_mensagem_acionavel(self):
+    async def test_sem_token_marca_tudo_erro_com_mensagem_acionavel(self, credenciais):
         db = _db(
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[_resultado(id="r1"), _resultado(id="r2", ordem=2)],
         )
-        with patch(_CRED, return_value=None):
-            await service.processar_consulta("consulta-001", db, FakeStorageBackend())
+        credenciais(None)
+        await service.processar_consulta("consulta-001", db, FakeStorageBackend())
 
         rows = db.table("certidao_resultados").select("*").execute().data
         assert all(r["status"] == "erro" for r in rows)
@@ -1550,7 +1582,7 @@ class TestProcessarConsulta:
         assert consulta["status"] == "erro"
 
     @pytest.mark.asyncio
-    async def test_tjsp_em_cooldown_vai_para_na_fila_e_agenda(self):
+    async def test_tjsp_em_cooldown_vai_para_na_fila_e_agenda(self, credenciais):
         recent = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
         db = _db(
             certidao_consultas=[_consulta_row()],
@@ -1560,11 +1592,11 @@ class TestProcessarConsulta:
             ],
         )
         scheduled: list[tuple] = []
-        with patch(_CRED, return_value="tok"):
-            await service.processar_consulta(
-                "consulta-001", db, FakeStorageBackend(),
-                schedule_tjsp=lambda *a: scheduled.append(a),
-            )
+        credenciais("tok")
+        await service.processar_consulta(
+            "consulta-001", db, FakeStorageBackend(),
+            schedule_tjsp=lambda *a: scheduled.append(a),
+        )
 
         row = db.table("certidao_resultados").select("*").eq(
             "id", "r-tjsp"
@@ -1573,20 +1605,20 @@ class TestProcessarConsulta:
         assert len(scheduled) == 1 and scheduled[0][0] == ORG
 
     @pytest.mark.asyncio
-    async def test_tjsp_sem_historico_roda_imediatamente(self):
+    async def test_tjsp_sem_historico_roda_imediatamente(self, credenciais):
         db = _db(
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[_resultado(id="r-tjsp", tipo=TJSP_TIPO, ordem=7)],
         )
         processed = _Recorder()
-        with patch(_CRED, return_value="tok"):
-            await service.processar_consulta(
-                "consulta-001", db, FakeStorageBackend(), process_one=processed,
-            )
+        credenciais("tok")
+        await service.processar_consulta(
+            "consulta-001", db, FakeStorageBackend(), process_one=processed,
+        )
         assert processed.count == 1
 
     @pytest.mark.asyncio
-    async def test_tipo_fora_do_registro_e_pulado_com_log_nao_derruba_o_resto(self):
+    async def test_tipo_fora_do_registro_e_pulado_com_log_nao_derruba_o_resto(self, credenciais):
         db = _db(
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[
@@ -1595,10 +1627,10 @@ class TestProcessarConsulta:
             ],
         )
         processed = _Recorder()
-        with patch(_CRED, return_value="tok"):
-            await service.processar_consulta(
-                "consulta-001", db, FakeStorageBackend(), process_one=processed,
-            )
+        credenciais("tok")
+        await service.processar_consulta(
+            "consulta-001", db, FakeStorageBackend(), process_one=processed,
+        )
         assert processed.count == 1
         # The orphan tipo is skipped, not crashed on — and the real one ran.
         assert processed.resultado_ids == ["r-ok"]
@@ -1846,18 +1878,18 @@ class TestProcessSingleTjspItem:
         assert row["erro_mensagem"] == "Consulta não encontrada"
 
     @pytest.mark.asyncio
-    async def test_sem_token_marca_erro(self):
+    async def test_sem_token_marca_erro(self, credenciais):
         db = _db(
             certidao_consultas=[_consulta_row()],
             certidao_resultados=[
                 _resultado(id="r-tjsp", tipo=TJSP_TIPO, status="na_fila"),
             ],
         )
-        with patch(_CRED, return_value=None):
-            await service._process_single_tjsp_item(
-                {"id": "r-tjsp", "consulta_id": "consulta-001", "org_id": ORG},
-                db, FakeStorageBackend(),
-            )
+        credenciais(None)
+        await service._process_single_tjsp_item(
+            {"id": "r-tjsp", "consulta_id": "consulta-001", "org_id": ORG},
+            db, FakeStorageBackend(),
+        )
         row = db.table("certidao_resultados").select("*").eq(
             "id", "r-tjsp"
         ).execute().data[0]
@@ -2678,14 +2710,14 @@ class TestParseResultadoCenprot:
 
 class TestAnalyzeEstruturaWithAi:
     @pytest.mark.asyncio
-    async def test_sem_chave_retorna_none_nao_marcador(self):
+    async def test_sem_chave_retorna_none_nao_marcador(self, credenciais):
         """🔴 Unlike `_analyze_with_ai`'s PT-BR marker (meant to be READ in a
         text column), a failure here has no honest column to sit in — the
         caller's fields simply stay whatever they already were."""
-        with patch(_CRED, return_value=None):
-            out = await service._analyze_estrutura_with_ai(
-                "texto", "CND Federal", ORG, resolve_provider=_provider("openai")
-            )
+        credenciais(None)
+        out = await service._analyze_estrutura_with_ai(
+            "texto", "CND Federal", ORG, resolve_provider=_provider("openai")
+        )
         assert out is None
 
     @pytest.mark.asyncio
@@ -2697,8 +2729,9 @@ class TestAnalyzeEstruturaWithAi:
         assert out is None
 
     @pytest.mark.asyncio
-    async def test_json_limpo_e_extraido(self):
-        with patch(_CRED, return_value="sk-x"), patch(
+    async def test_json_limpo_e_extraido(self, credenciais):
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value=(
                 '{"numero": "123", "emitida_em": "2026-01-10", '
@@ -2716,8 +2749,9 @@ class TestAnalyzeEstruturaWithAi:
         }
 
     @pytest.mark.asyncio
-    async def test_json_cercado_por_markdown_fence_e_aceito(self):
-        with patch(_CRED, return_value="sk-x"), patch(
+    async def test_json_cercado_por_markdown_fence_e_aceito(self, credenciais):
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value='```json\n{"resultado": "positiva"}\n```'),
         ):
@@ -2727,11 +2761,12 @@ class TestAnalyzeEstruturaWithAi:
         assert out == {"resultado": "positiva"}
 
     @pytest.mark.asyncio
-    async def test_negativa_com_homonimos_e_aceita_migracao_116(self):
+    async def test_negativa_com_homonimos_e_aceita_migracao_116(self, credenciais):
         """The fifth `resultado` value (migration 116) must round-trip
         through the SAME vocabulary check as the original four — it is not
         special-cased, just added to `RESULTADO_VALUES`."""
-        with patch(_CRED, return_value="sk-x"), patch(
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value='{"resultado": "negativa_com_homonimos"}'),
         ):
@@ -2741,13 +2776,14 @@ class TestAnalyzeEstruturaWithAi:
         assert out == {"resultado": "negativa_com_homonimos"}
 
     @pytest.mark.asyncio
-    async def test_prompt_pede_homonimos_e_data_da_consulta_como_fallback(self):
+    async def test_prompt_pede_homonimos_e_data_da_consulta_como_fallback(self, credenciais):
         """Migration 116: the shared extraction prompt (used by BOTH the
         automated flow and every manual upload, including Serasa) must ask
         the model to (a) recognize a homônimos caveat and (b) fall back to
         the consulta date when a document has no explicit emission date."""
         mock_chat = AsyncMock(return_value='{"resultado": "negativa"}')
-        with patch(_CRED, return_value="sk-x"), patch(
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion", new=mock_chat,
         ):
             await service._analyze_estrutura_with_ai(
@@ -2759,10 +2795,11 @@ class TestAnalyzeEstruturaWithAi:
         assert "data da consulta" in system_msg
 
     @pytest.mark.asyncio
-    async def test_resultado_fora_do_vocabulario_e_descartado(self):
+    async def test_resultado_fora_do_vocabulario_e_descartado(self, credenciais):
         """A model that ignores the instruction and answers a free-text
         verdict must not write outside the CHECK-constrained vocabulary."""
-        with patch(_CRED, return_value="sk-x"), patch(
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value='{"resultado": "provavelmente ok"}'),
         ):
@@ -2772,8 +2809,9 @@ class TestAnalyzeEstruturaWithAi:
         assert out is None
 
     @pytest.mark.asyncio
-    async def test_json_invalido_retorna_none(self):
-        with patch(_CRED, return_value="sk-x"), patch(
+    async def test_json_invalido_retorna_none(self, credenciais):
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value="isto não é json"),
         ):
@@ -2783,8 +2821,9 @@ class TestAnalyzeEstruturaWithAi:
         assert out is None
 
     @pytest.mark.asyncio
-    async def test_data_fora_do_formato_iso_e_descartada(self):
-        with patch(_CRED, return_value="sk-x"), patch(
+    async def test_data_fora_do_formato_iso_e_descartada(self, credenciais):
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value=(
                 '{"emitida_em": "10 de março", "resultado": "negativa"}'
@@ -2796,8 +2835,9 @@ class TestAnalyzeEstruturaWithAi:
         assert out == {"resultado": "negativa"}
 
     @pytest.mark.asyncio
-    async def test_falha_do_provedor_retorna_none(self):
-        with patch(_CRED, return_value="sk-x"), patch(
+    async def test_falha_do_provedor_retorna_none(self, credenciais):
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(side_effect=RuntimeError("429")),
         ):
@@ -2807,10 +2847,11 @@ class TestAnalyzeEstruturaWithAi:
         assert out is None
 
     @pytest.mark.asyncio
-    async def test_resposta_vazia_de_json_retorna_none(self):
+    async def test_resposta_vazia_de_json_retorna_none(self, credenciais):
         """Every field either absent or invalid → `_parse_json_resultado`
         collapses the dict to empty and this returns `None`, not `{}`."""
-        with patch(_CRED, return_value="sk-x"), patch(
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value='{"numero": null, "resultado": null}'),
         ):
@@ -2823,7 +2864,7 @@ class TestAnalyzeEstruturaWithAi:
     # applied over the AI structured read's own `numero`. All fixture text
     # is synthetic (invented codes/numbers, mirroring the measured shapes).
     @pytest.mark.asyncio
-    async def test_g14_codigo_de_controle_preenche_numero_quando_ia_nao_achou(self):
+    async def test_g14_codigo_de_controle_preenche_numero_quando_ia_nao_achou(self, credenciais):
         """The PCEN ("CERTIDÃO POSITIVA COM EFEITOS DE NEGATIVA…") layout —
         measured: the AI structured read misses the código de controle
         here even though it finds it reliably on a plain NEGATIVA CND."""
@@ -2833,7 +2874,8 @@ class TestAnalyzeEstruturaWithAi:
             "Nome: FULANO DE TESTE SINTETICO\n"
             "Código de controle da certidão: 1A2B.3C4D.5E6F.7G8H\n"
         )
-        with patch(_CRED, return_value="sk-x"), patch(
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value='{"numero": null, "resultado": "positiva_com_efeito_de_negativa"}'),
         ):
@@ -2844,12 +2886,13 @@ class TestAnalyzeEstruturaWithAi:
         assert out["resultado"] == "positiva_com_efeito_de_negativa"
 
     @pytest.mark.asyncio
-    async def test_g14_codigo_de_controle_sobrescreve_um_numero_da_ia_diferente(self):
+    async def test_g14_codigo_de_controle_sobrescreve_um_numero_da_ia_diferente(self, credenciais):
         """The label IS the source of truth — an AI-guessed `numero` that
         disagrees with the document's own printed código de controle is
         overridden, not merged alongside."""
         texto = "Código de controle da certidão: 9Z8Y.7X6W.5V4U.3T2S\n"
-        with patch(_CRED, return_value="sk-x"), patch(
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value='{"numero": "algo-diferente"}'),
         ):
@@ -2859,11 +2902,12 @@ class TestAnalyzeEstruturaWithAi:
         assert out["numero"] == "9Z8Y.7X6W.5V4U.3T2S"
 
     @pytest.mark.asyncio
-    async def test_g14_sem_o_rotulo_o_numero_da_ia_sobrevive_intacto(self):
+    async def test_g14_sem_o_rotulo_o_numero_da_ia_sobrevive_intacto(self, credenciais):
         """No "Código de controle da certidão" label in the text at all —
         every OTHER certidão type — the AI's own `numero` passes through
         untouched."""
-        with patch(_CRED, return_value="sk-x"), patch(
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value='{"numero": "protocolo-123"}'),
         ):
@@ -2874,12 +2918,13 @@ class TestAnalyzeEstruturaWithAi:
         assert out["numero"] == "protocolo-123"
 
     @pytest.mark.asyncio
-    async def test_g15_completa_o_numero_com_o_ano_impresso_ao_lado(self):
+    async def test_g15_completa_o_numero_com_o_ano_impresso_ao_lado(self, credenciais):
         """TRT2 físico — measured: the document prints "999999 / 9999"
         (number / year) as ONE número, but the AI structured read hands
         back just the bare number, dropping the year."""
         texto = "Certidão nº 654321 / 2019 — Tribunal Regional do Trabalho\n"
-        with patch(_CRED, return_value="sk-x"), patch(
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value='{"numero": "654321"}'),
         ):
@@ -2889,8 +2934,9 @@ class TestAnalyzeEstruturaWithAi:
         assert out["numero"] == "654321/2019"
 
     @pytest.mark.asyncio
-    async def test_g15_ja_no_formato_completo_nao_e_alterado(self):
-        with patch(_CRED, return_value="sk-x"), patch(
+    async def test_g15_ja_no_formato_completo_nao_e_alterado(self, credenciais):
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value='{"numero": "654321/2019"}'),
         ):
@@ -2901,11 +2947,12 @@ class TestAnalyzeEstruturaWithAi:
         assert out["numero"] == "654321/2019"
 
     @pytest.mark.asyncio
-    async def test_g15_sem_ano_correspondente_no_texto_fica_como_a_ia_devolveu(self):
+    async def test_g15_sem_ano_correspondente_no_texto_fica_como_a_ia_devolveu(self, credenciais):
         """The bare-digit shape alone is not enough — the SAME digits must
         also appear followed by "/<ano>" in the source text, or nothing
         changes (never invents a year from elsewhere in the document)."""
-        with patch(_CRED, return_value="sk-x"), patch(
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value='{"numero": "654321"}'),
         ):
@@ -2916,11 +2963,12 @@ class TestAnalyzeEstruturaWithAi:
         assert out["numero"] == "654321"
 
     @pytest.mark.asyncio
-    async def test_g14_e_g15_nunca_disparam_em_cima_de_um_none(self):
+    async def test_g14_e_g15_nunca_disparam_em_cima_de_um_none(self, credenciais):
         """The AI returned nothing usable at all AND the text carries
         neither label/shape — the function still returns `None`, not a
         stray `{"numero": ...}` conjured out of nothing."""
-        with patch(_CRED, return_value="sk-x"), patch(
+        credenciais("sk-x")
+        with patch(
             "app.modules.certidoes.service.chat_completion",
             new=AsyncMock(return_value='{"numero": null, "resultado": null}'),
         ):
@@ -5347,13 +5395,13 @@ class TestRetomadaDeReleitura:
 
 class TestConsultaManualNuncaChamaInfoSimples:
     @pytest.mark.asyncio
-    async def test_processar_consulta_manual_nao_chama_api_nem_muda_status(self):
+    async def test_processar_consulta_manual_nao_chama_api_nem_muda_status(self, credenciais):
         db = _db(
             certidao_consultas=[_consulta_row(origem="manual", total_certidoes=1)],
             certidao_resultados=[_resultado(id="r1")],
         )
-        with patch(_CRED, return_value="tok"):
-            await service.processar_consulta("consulta-001", db, FakeStorageBackend())
+        credenciais("tok")
+        await service.processar_consulta("consulta-001", db, FakeStorageBackend())
         assert db.table("certidao_consultas").select("*").execute().data[0]["status"] == "pendente"
         assert db.table("certidao_resultados").select("*").execute().data[0]["status"] == "pendente"
 

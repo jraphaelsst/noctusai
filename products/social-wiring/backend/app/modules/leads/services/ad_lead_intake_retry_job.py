@@ -105,6 +105,7 @@ async def ad_lead_intake_retry_job(*, admin_factory: Any = None, intake_fn: Any 
 
 def configure() -> None:
     """Register the interval job on the seed scheduler (import-time, before `start_scheduler()`; idempotent)."""
+    # poll-budget: every 600s (INTERVALO_S); 1 calls/tick (one retry-sweep run; its reads are a bounded batch); worst 144/day; idle=fixed
     seed_scheduler.register(JOB_NAME, ad_lead_intake_retry_job, seconds=INTERVALO_S, misfire_grace_time=_MISFIRE_GRACE)
     logger.info("%s configured: every %ds", JOB_NAME, INTERVALO_S)
 

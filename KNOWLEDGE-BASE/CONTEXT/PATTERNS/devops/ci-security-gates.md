@@ -14,6 +14,7 @@ Lives at `.github/workflows/test.yml`. First landed 2026-05-11 via the `ci-secur
 6. Job shape — the canonical pattern every security job follows
 7. Local invocations
 8. Relationship to accept-with-rationale + recurrence rule
+9. Supply-chain pins — what executes is pinned
 
 ---
 
@@ -200,3 +201,23 @@ gitleaks detect --no-git --source . --config .gitleaks.toml --verbose
 - **Every `.trivyignore` CVE entry** that's a queued-fix must name the follow-up project in its comment (e.g. `trivy-baseline-cleanup`).
 - **Every bandit-baseline entry** is implicit tech debt. If the same B-code surfaces in N≥3 files (across the baseline + new findings), the recurrence rule fires — formalize via a code-pattern fix (e.g. `defusedxml` adoption for all XML parsing).
 - **No allowlist entry without a destination.** Same rule as `accept-with-rationale.md § "Accept is a real landing — paperwork keeps it from going silent"`.
+
+---
+
+## 9 · Supply-chain pins — what executes is pinned
+
+A mutable tag is a re-pointable supply chain: whoever controls the tag controls what runs with our secrets (tj-actions/changed-files 2025,
+trivy-action 2026-03). Two surfaces, one keeper (`check_supply_chain_pin`, `python mcp/noctusai/cli.py --check-supply-chain-pin`, severity high):
+
+- **GitHub Actions** — every third-party `uses:` is `owner/repo@<40-hex>  # vN`. Construction: Dependabot's github-actions block (`.github/dependabot.yml`) opens SHA-pinned bumps; a hand-added Action is pinned with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` (deref annotated tags) and written `@<40-hex>  # <tag>`. No escape hatch.
+- **Images on the prod deploy surface** (`deploy/{fleet,services,legacy,tunnel}`) — `name:tag@sha256:...` (or at least an `x.y` version tag); never
+  `:latest`, a bare major or no tag. Our own `ghcr.io/jraphaelsst/*` images are exempt (deployed by immutable `:sha`).
+  **Construction, not correction:** `noctus.dev.image_pin` (`--image-pin check|pin|bump`) resolves the registry digest and WRITES it, so a new
+  image is born pinned; Dependabot `docker-compose` blocks (kept by `refresh_dependabot_coverage`) move the digest by PR; the keeper is only the net.
+  Escape: `# pin-ok: <reason>` for an image that cannot be pulled (a locally built one). Data images are pinned to the digest RUNNING in prod so the
+  first pin is a no-op recreate (a debian-base bump under an existing volume changes glibc collation).
+- **Registry access** — `noctus.dev.ghcr_access` installs + verifies the VPS's GHCR read login before packages go private; the `ghcr_login`
+  predeploy leg is the net (public => no login needed; private => login required; unmeasurable => block).
+
+Backstop: `mcp/noctusai/tests/test_sec_infra_hardening.py` (`TestSupplyChainPin.test_real_tree_is_clean`, CI). Apply steps:
+`KB § GUIDES/security-infra-hardening-runbook.md`.

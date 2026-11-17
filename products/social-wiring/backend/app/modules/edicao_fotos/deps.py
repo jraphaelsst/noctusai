@@ -177,6 +177,19 @@ def get_edicao_ports(cfg: Any = Depends(get_settings)) -> PhotoEditingPorts:
         raise api_error(503, exc.code, str(exc)) from exc
 
 
+def get_imovel_lookup() -> Callable[[str, list[str]], dict[str, dict]]:
+    """Seam: `(org_id, codigos) -> {codigo: imóvel}` over the registry + mirror (`imovel_hub.busca_service.enriquecer`)."""
+    from uuid import UUID
+
+    from app.dependencies import get_scoped_admin_client
+    from app.modules.imovel_hub import busca_service
+
+    def lookup(org_id: str, codigos: list[str]) -> dict[str, dict]:
+        return busca_service.enriquecer(get_scoped_admin_client("social_wiring"), UUID(org_id), codigos)
+
+    return lookup
+
+
 def get_painel_client() -> Any:
     """FastAPI dependency — the `social_wiring`-scoped admin (service-role)
     client used ONLY by the dashboard RPC (`fotos_painel`, migration 133,
@@ -267,6 +280,7 @@ __all__ = [
     "get_credit_probe",
     "get_edicao_ports",
     "get_grant_repository",
+    "get_imovel_lookup",
     "get_painel_client",
     "get_platform_openai_key",
     "get_preferences_repository",
@@ -281,3 +295,25 @@ __all__ = [
     "require_platform_admin",
     "require_pool_manager",
 ]
+
+
+def get_upload_service() -> Any:
+    """Seam: the resumable-upload service — parts + assembled files live in the photo bucket under `uploads/<org>/`,
+    sessions + events in `social_wiring.upload_sessions` (service-role only). One org, one object prefix."""
+    from noctusai_lib.domain.resumable_uploads import ResumableUploadService, UploadPolicy, make_upload_session_store
+    from noctusai_lib.integrations.storage import make_storage_backend
+
+    from app.dependencies import get_admin_client
+    from app.modules.edicao_fotos.services.ports import BUCKET_FOTOS, EdicaoFotosUnavailable, SCHEMA
+
+    try:
+        admin = get_admin_client()
+    except EdicaoFotosUnavailable as exc:  # pragma: no cover - mirrors get_edicao_ports
+        raise api_error(503, exc.code, str(exc)) from exc
+    return ResumableUploadService(
+        store=make_upload_session_store(kind="supabase", get_client=lambda: admin, schema=SCHEMA),
+        storage=make_storage_backend(kind="supabase", client=admin),
+        bucket=BUCKET_FOTOS,
+        prefix="uploads",
+        policy=UploadPolicy(max_bytes=100 * 1024 * 1024, allowed_types=("image/*",)),
+    )

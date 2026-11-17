@@ -195,8 +195,8 @@ repo, and every `products/` walk in the toolkit must carry a
 
 ## 4d · Absorption SOURCE — a fourth state, orthogonal to ativo/inativo (2026-11-12)
 
-A product on the absorption list (today `erp-imobiliario` -> social-wiring, `igig` -> orbity, `therapy-platform` -> monica,
-`community` -> monica) is an absorption SOURCE until it is erased (ladder step A6): **no change, refinement or fix** to its
+A product on the absorption list (today `erp-imobiliario` -> social-wiring, `igig` -> orbity, `therapy-platform` -> nosnolimiar,
+`community` -> nosnolimiar) is an absorption SOURCE until it is erased (ladder step A6): **no change, refinement or fix** to its
 code, migrations, docs or data, and **never a reference, pilot or model** for new work (reference the canon or the seed). The
 only writes allowed are the ladder's own steps (A1 salvage, A5 decouple, A6 retire) on a branch named `absorb-<source>-<step>`
 (`feat/` prefix accepted). Its findings are carried as absorption input and closed `accepted (erased)` at A6 — fix-on-contact does
