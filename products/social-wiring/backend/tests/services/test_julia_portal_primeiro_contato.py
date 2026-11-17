@@ -136,10 +136,10 @@ class TestIniciar:
         assert cena.rodar(_lead(origem_lead_id="olx-3"))["status"] == "reentrada"
         assert len(cena.w.waha.sent_messages) == 1
 
-    def test_outside_business_hours_without_a_queue_is_recorded_not_sent(self, cena):
+    def test_outside_business_hours_without_a_queue_is_deferred_not_sent(self, cena):
         cena.ligar()
         r = cena.rodar(agora=NOITE, lead=_lead(chegou_em=(NOITE - timedelta(minutes=1)).isoformat()))
-        assert r["status"] == "fora_do_horario" and cena.w.waha.sent_messages == [] and cena.status() == ["fora_do_horario"]
+        assert r["status"] == "adiado" and cena.w.waha.sent_messages == [] and cena.status() == ["adiado"]
 
     def test_outside_business_hours_the_lead_is_deferred_to_the_next_opening(self, cena, repo):
         cena.ligar()
