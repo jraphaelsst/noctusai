@@ -201,6 +201,14 @@ Note for legal: once the buyer becomes a client, their LEADS' data flows through
 
 ## 6 · Open owner decisions (batches of at most four; tech-lead relays)
 
+**Decided 2026-11-17 (owner, in chat)**
+- **D2 → (b) "fale com um especialista".** No self-serve checkout until the multi-org blocker (P4) closes.
+- **D1 → (b) setup + monthly.** Values are still open. The owner added that **onboarding is done by our chatbot**: it interviews the client about their business and context, as a person designing their assistant would, and builds the client's contextualised Julia on top of the sdr-base layer. This follows the model of Lais's base SDR plus its business-specific settings ("Minha Lais"). The reference study is in progress (`_private-studies/lais/specs/business-context-2026-11.md` → onboarding interview checklist). New scope: an onboarding-chatbot spec (separate, after the study).
+- **D3 → (a) only the legal 7 days**, stated as the law. This may change later.
+- **D7 → all three surfaces, ONE canonical page.** `/julia` on agents is canonical: full sequence, the specialist CTA, funnel events, and it links to the client's control panel. The core site shows a `ProductCatalogGrid` card linking to `/julia`. The Social Wiring landing gets a "your hub comes with an AI SDR" section linking to `/julia`, which is the honest bundle while Julia is real-estate-only and runs on Social Wiring data. No duplicated full copy.
+
+Still open: D1 values · D4 · D5 · D6 · D8 · D9 · D10 · D11 (shaped by the onboarding chatbot) · D12.
+
 **Batch A — the offer**
 1. **D1 Price and plan.** No Julia plan exists in code; core has the billing machinery (Stripe/Asaas, `plan_prices`). Options: (a) monthly subscription with a credit allowance + prepaid top-up (your 2026-10-29 billing model); (b) one-off setup fee + monthly; (c) paid pilot (30-60 days, target agreed before start) then monthly; (d) no public price, quote after a conversation. Which, and at what values?
 2. **D2 Purchase path.** (a) self-serve checkout on the page; (b) "fale com um especialista" on WhatsApp, a person closes and sends a payment link; (c) hybrid: checkout for the pilot, specialist for the full plan. Recommendation: (b) or (c) until P4 is closed, because each new client needs operator setup and an isolated line.
