@@ -13,25 +13,30 @@ import { ListSkeleton, RefreshingBar, RetryError } from './controls';
 import { addDays, formatDay, formatDayShort, optionOf, todayIn, tzOf, WEEKDAYS_SHORT, weekStartOf, zonedParts } from './format';
 import { errorMessage, type ClientsHooks } from './hooks';
 import { t } from './i18n';
-import { SessionFormDialog } from './SessionFormDialog';
+import { ClientsMonthSummary } from './ClientsMonthSummary';
+import { SessionDetailDialog } from './SessionDetailDialog';
 import type { Session } from './types';
 
 export interface ClientsAgendaProps {
   hooks: ClientsHooks;
   /** Host navigation to a client's page. */
   onOpenClient?: (clientId: string) => void;
+  /** UX gate only (the server enforces admin on payments). */
+  isAdmin?: boolean;
   /** Injectable clock for tests. */
   now?: number;
 }
 
-export function ClientsAgenda({ hooks, onOpenClient, now }: ClientsAgendaProps) {
+export function ClientsAgenda({ hooks, onOpenClient, isAdmin = false, now }: ClientsAgendaProps) {
   const { data: config } = hooks.useClientsConfig();
   const tz = tzOf(config);
   const today = todayIn(tz, now);
   const [start, setStart] = React.useState(() => weekStartOf(today));
   const end = addDays(start, 6);
   const week = hooks.useAgendaSessions(start, end);
-  const [open, setOpen] = React.useState<Session | null>(null);
+  // The session opened is read from the live week: a status change shows in the dialog at once.
+  const [openId, setOpenId] = React.useState<string | null>(null);
+  const open = (week.data ?? []).find((s) => s.id === openId) ?? null;
 
   const days = React.useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(start, i)), [start]);
   const byDay = React.useMemo(() => {
@@ -88,7 +93,7 @@ export function ClientsAgenda({ hooks, onOpenClient, now }: ClientsAgendaProps) 
                         <li key={s.id}>
                           <button
                             type="button"
-                            onClick={() => setOpen(s)}
+                            onClick={() => setOpenId(s.id)}
                             title={`${st.label} · ${s.client_name}`}
                             className={cn('w-full truncate rounded border px-1.5 py-1 text-left text-xs', stageTagClasses(st.color))}
                             data-testid={`agenda-session-${s.id}`}
@@ -105,21 +110,8 @@ export function ClientsAgenda({ hooks, onOpenClient, now }: ClientsAgendaProps) 
           })}
         </div>
       )}
-      <SessionFormDialog
-        hooks={hooks}
-        open={!!open}
-        onClose={() => setOpen(null)}
-        clientId={open?.client_id ?? ''}
-        session={open}
-        onOpenClient={
-          onOpenClient
-            ? (id) => {
-                setOpen(null);
-                onOpenClient(id);
-              }
-            : undefined
-        }
-      />
+      <ClientsMonthSummary key={start.slice(0, 7)} hooks={hooks} month={start.slice(0, 7)} />
+      <SessionDetailDialog hooks={hooks} open={!!open} onClose={() => setOpenId(null)} session={open} isAdmin={isAdmin} onOpenClient={onOpenClient} />
     </div>
   );
 }
