@@ -50,7 +50,12 @@ INTERVALO_PEDIDO = timedelta(days=90)
 JANELA_WHATSAPP = timedelta(hours=24)
 SYNC_MIN_INTERVALO = timedelta(minutes=15)
 ULTIMAS = 10
-CONFIG_PADRAO: dict[str, Any] = {"google_review_url": None, "gbp_location_id": None, "capi_ativo": False, "capi_pixel_id": None}
+#: `pedido_ativo` (Lais study S7, owner 2026-11-17): no review ask for now -- the code stays behind this per-org switch, OFF by default.
+CONFIG_PADRAO: dict[str, Any] = {
+    "google_review_url": None, "gbp_location_id": None, "capi_ativo": False, "capi_pixel_id": None, "pedido_ativo": False,
+}
+#: Closed hand-off window: an ask never rides in the burst that hands the lead to a person (study S7).
+JANELA_HANDOFF = timedelta(hours=24)
 _URL_RE = re.compile(r"^https://\S+$")
 _PIXEL_RE = re.compile(r"^[0-9]{5,20}$")
 
@@ -93,7 +98,7 @@ def validar_config(valores: dict[str, Any]) -> dict[str, Any]:
             raise AppException("config_invalida", "O pixel deve conter apenas números (5 a 20 dígitos).", status_code=422)
         if chave == "gbp_location_id" and valor is not None and len(valor) > 200:
             raise AppException("config_invalida", "Identificador do local muito longo.", status_code=422)
-        if chave == "capi_ativo":
+        if chave in ("capi_ativo", "pedido_ativo"):
             valor = bool(valor)
         out[chave] = valor
     return out
@@ -161,6 +166,16 @@ def pedido_recente(db: Any, org_id: UUID | str, contato_id: UUID | str, agora: d
     return bool(rows)
 
 
+def handoff_recente(db: Any, org_id: UUID | str, contato_id: UUID | str, agora: datetime) -> bool:
+    """The contato was handed to a person within `JANELA_HANDOFF` (event `handoff`): the review ask never joins that burst."""
+    desde = (agora - JANELA_HANDOFF).isoformat()
+    rows = (
+        db.table("julia_eventos").select("id").eq("org_id", str(org_id)).eq("contato_id", str(contato_id))
+        .eq("tipo", "handoff").gte("created_at", desde).limit(1).execute().data or []
+    )
+    return bool(rows)
+
+
 def dentro_da_janela(contato: dict[str, Any], agora: datetime) -> bool:
     ultimo = ts(contato.get("ultimo_inbound_at"))
     return ultimo is not None and timedelta(0) <= agora - ultimo <= JANELA_WHATSAPP
@@ -177,8 +192,13 @@ def motivo_para_nao_pedir(
     )
     if not inter or inter[0].get("desfecho") != DESFECHO_QUALIFICADO:
         return "desfecho_nao_qualificado"
-    if not obter_config(db, org_id)["google_review_url"]:
+    cfg = obter_config(db, org_id)
+    if not cfg["pedido_ativo"]:
+        return "pedido_desligado"
+    if not cfg["google_review_url"]:
         return "sem_link"
+    if handoff_recente(db, org_id, contato["id"], agora):
+        return "handoff_recente"
     if ultimo_feedback_negativo(db, org_id, contato["id"]):
         return "feedback_negativo"
     if pedido_recente(db, org_id, contato["id"], agora):
@@ -198,7 +218,8 @@ async def agendar_apos_fechar(
     Cheap pre-checks only; the full rule is re-read at fire time. Returns the job id, or None when nothing queued."""
     if interacao.get("desfecho") != DESFECHO_QUALIFICADO:
         return None
-    if not obter_config(db, org_id)["google_review_url"]:
+    cfg = obter_config(db, org_id)
+    if not (cfg["pedido_ativo"] and cfg["google_review_url"]):
         return None
     if _repo is None:
         logger.warning("julia avaliacoes: no job repository registered -- the review ask for contato=%s is not queued", contato.get("id"))

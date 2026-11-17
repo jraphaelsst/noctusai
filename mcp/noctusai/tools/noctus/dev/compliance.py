@@ -8927,7 +8927,8 @@ def check_migration_number_refs_in_tests(
 # timeouts + a TOTAL deadline + one bounded retry + telemetry); this is the backstop. AST, not regex:
 # `httpx.Client|AsyncClient|get|post|put|delete|patch|head|options|request|stream`, `requests.<verb>`,
 # `requests.Session().<verb>`, `urllib.request.urlopen` / bare `urlopen` without a non-None `timeout=`.
-# Going through `_http` is never matched. Suppress with `# noc-allow: http-timeout -- <reason>`.
+# 2026-11-16 (http-deadlines-clients): httpx is flagged EVEN WITH `timeout=` (not a total deadline) -> `_http.bounded_client`;
+# bare supabase `create_client(` is flagged -> `_http.supabase_client`. Going through `_http` is never matched. Suppress with `# noc-allow: http-timeout -- <reason>`.
 # RATCHET: `mcp/noctusai/tests/http_timeout_baseline.json` ({"files": {relpath: count}}), shrink-only.
 # KB § PATTERNS/architect/mcp-tool-conventions.md (outbound HTTP).
 # ---------------------------------------------------------------------------
@@ -8941,10 +8942,12 @@ _HTTP_ALLOW_RE = re.compile(r"noc-allow:\s*http-timeout\s*(?:--|\u2014|-)\s*\S{8
 def _http_call_kind(func: ast.expr) -> str | None:
     """Name the unbounded-by-default HTTP entry point a call targets, else None."""
     if isinstance(func, ast.Name):
-        return "urlopen" if func.id == "urlopen" else None
+        return {"urlopen": "urlopen", "create_client": "create_client"}.get(func.id)
     if not isinstance(func, ast.Attribute):
         return None
     attr, base = func.attr, func.value
+    if attr == "create_client":  # supabase.create_client / supabase_lib.create_client
+        return "create_client"
     dotted: list[str] = []
     node: ast.expr = func
     while isinstance(node, ast.Attribute):
@@ -8989,7 +8992,11 @@ def _http_scan_file(path: Path, rel: str) -> list[tuple[int, str]]:
         if not isinstance(node, ast.Call):
             continue
         kind = _http_call_kind(node.func)
-        if kind is None or _http_has_timeout(node):
+        if kind is None:
+            continue
+        # httpx and supabase-py are flagged even WITH ``timeout=``: a per-socket timeout is not a total
+        # deadline (a dribbling peer resets it), so they go through ``_http.bounded_client`` / ``supabase_client``.
+        if kind != "create_client" and not kind.startswith("httpx.") and _http_has_timeout(node):
             continue
         if kind.endswith("urlopen") and len(node.args) >= 3:  # urlopen(url, data, timeout)
             continue
@@ -9061,7 +9068,9 @@ def check_http_call_without_timeout(repo_root: Path | None = None, paths: list[s
             "issue": (
                 f"{len(hits)} HTTP call(s) without an explicit timeout (baseline {allowed}): {where}. A call with no "
                 "bound hangs forever on a dead socket (migrate_product, 2026-11-16: 45 min). Use "
-                "tools/noctus/dev/_http.py (`urlopen_read` / `client_timeout()`), or pass `timeout=`; a justified "
+                "tools/noctus/dev/_http.py (`urlopen_read`; `bounded_client(deadline_s=, why=)` for httpx; "
+                "`supabase_client` for create_client -- a `timeout=` alone is not a total deadline), or pass "
+                "`timeout=` (urllib/requests only); a justified "
                 "exception: `# noc-allow: http-timeout -- <reason>`. KB § PATTERNS/architect/mcp-tool-conventions.md."
             ),
         })

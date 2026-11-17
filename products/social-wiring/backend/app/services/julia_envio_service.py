@@ -48,6 +48,7 @@ from app.services import (
     julia_contatos_service as contatos,
     julia_envio_criterios as criterios,
     julia_eventos_service as eventos,
+    julia_nota_lead,
     julia_perguntas_service,
     julia_reengajamento_service,
     julia_slots_sensiveis as sensiveis,
@@ -279,6 +280,7 @@ def montar_nota(client: Any, contato: dict[str, Any], gatilho: str) -> str:
         .order("iniciada_at", desc=True).limit(1).execute().data or []
     )
     partes = [f"Lead enviado pela Julia ({GATILHO_LABEL.get(gatilho, gatilho)})."]
+    partes.append("Situação do lead:\n" + "\n".join(julia_nota_lead.linhas_da_nota(client, contato["org_id"], contato, gatilho)))
     resumo = (inter[0].get("resumo") if inter else None) or ""
     if resumo.strip():
         partes.append(f"Resumo da conversa:\n{resumo.strip()}")

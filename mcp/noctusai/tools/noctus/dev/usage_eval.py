@@ -393,8 +393,8 @@ def _client():
     if not url or not key:
         raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set — cannot write dev telemetry. "
                            "Source the repo-root .env and re-run.")
-    from supabase import create_client
-    return create_client(url, key)
+    from ._http import supabase_client
+    return supabase_client(url, key, call_site="usage_eval.sync", read=120.0)
 
 
 def _chunks(rows: list[dict], n: int = 500) -> Iterator[list[dict]]:

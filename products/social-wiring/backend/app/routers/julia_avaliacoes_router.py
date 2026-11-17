@@ -3,7 +3,7 @@
   GET /api/julia/avaliacoes?mes=YYYY-MM    org member -> {data: {mes, pedidos_enviados, novas_avaliacoes,
                                           distribuicao: {"1".."5"}, media, total, ultimas: [{autor, data, nota,
                                           texto, link}], configurado: {review_url, gbp}}}
-  GET /api/julia/avaliacoes/config         org member -> {data: {google_review_url, gbp_location_id, capi_ativo, capi_pixel_id}}
+  GET /api/julia/avaliacoes/config         org member -> {data: {google_review_url, gbp_location_id, capi_ativo, capi_pixel_id, pedido_ativo}}
   PUT /api/julia/avaliacoes/config         org admin  (partial: only the sent keys change; null clears)
 
 `mes` defaults to the current month (America/Sao_Paulo); malformed -> 422 `mes_invalido`. The GET refreshes the
@@ -47,6 +47,7 @@ class ConfigIn(StrictHttpModel):
     gbp_location_id: Optional[str] = Field(default=None, max_length=200)
     capi_ativo: Optional[bool] = None
     capi_pixel_id: Optional[str] = Field(default=None, max_length=20)
+    pedido_ativo: Optional[bool] = None
 
 
 @router.get("")

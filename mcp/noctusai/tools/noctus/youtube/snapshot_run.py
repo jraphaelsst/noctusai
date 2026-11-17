@@ -178,7 +178,10 @@ def _do_trigger(*, base_url: str, account_id: str, api_token: str) -> dict:
     try:
         import httpx  # type: ignore[import]
 
-        with httpx.Client(timeout=30) as http:
+        from ..dev._http import bounded_client
+
+        with bounded_client(deadline_s=45.0, read=30.0, why="triggers one snapshot run",
+                            call_site="youtube.snapshot_run") as http:
             resp = http.post(url, headers=headers, params=params)
         return {
             "status": "triggered",

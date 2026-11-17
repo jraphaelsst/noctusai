@@ -63,9 +63,13 @@ TIPOS_JULIA_V2: frozenset[str] = frozenset({
     "lead_pronto", "intencao_visita", "agente_nao_atendeu", "handoff_recebido", "lead_opt_out", "limite_para_humano",
     "relatorio_entregue", "alerta_julia", "documento_identificacao", "opt_out_notificado",
 })
+#: Lais study (owner 2026-11-17): `configuracao_alterada` = an org admin changed a Julia setting (payload `{area, chaves, total?,
+#: com_dono?, ator}`: the area, the spec/setting keys, counts and the acting user id -- never a value, a name or a number).
+#: Not notifiable: it is the measurable record of the change (who/when/what).
+TIPOS_CONFIGURACAO: frozenset[str] = frozenset({"configuracao_alterada"})
 TIPOS: frozenset[str] = (
     TIPOS_NOTIFICAVEIS | TIPOS_DIAGNOSTICO | TIPOS_REENGAJAMENTO | TIPOS_CREDITO | TIPOS_CONSULTA
-    | TIPOS_PRIMEIRO_CONTATO | TIPOS_GATE | TIPOS_ALERTA_DONO | TIPOS_JULIA_V2
+    | TIPOS_PRIMEIRO_CONTATO | TIPOS_GATE | TIPOS_ALERTA_DONO | TIPOS_JULIA_V2 | TIPOS_CONFIGURACAO
 )
 
 #: Post-insert sinks `(client, row) -> None` (wave 6 registers the notification fan-out). A seam, so no

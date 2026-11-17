@@ -19,9 +19,10 @@ from typing import Any
 
 import httpx
 
+from ..dev._http import bounded_client
+
 MODOS = ("auto", "listar", "detalhes")
 ESCOPOS = ("vitrine", "resto", "todos")
-_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 
 def _error(codigo: str, mensagem: str, **extra: Any) -> dict[str, Any]:
@@ -57,7 +58,8 @@ def imoveis_sync(
     else:
         metodo, caminho, params = "GET", "/api/imoveis/sync/ultimo", None
     try:
-        with httpx.Client(base_url=base, headers={"Authorization": f"Bearer {token}"}, timeout=_TIMEOUT, transport=_transport) as c:
+        with bounded_client(base_url=base, headers={"Authorization": f"Bearer {token}"}, transport=_transport,
+                            deadline_s=60.0, why="queues a refresh / reads last run", call_site="sw.imoveis_sync") as c:
             resp = c.request(metodo, caminho, params=params)
     except httpx.HTTPError as exc:
         return _error("erro_de_rede", f"{type(exc).__name__}: {exc}")  # str(exc) never carries the Authorization header

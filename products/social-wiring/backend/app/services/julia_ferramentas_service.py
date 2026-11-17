@@ -11,6 +11,7 @@ Registry of tool implementations (waves 1 / 5 / 12 replace one line each, the ro
   imovel_campanha          v2     the lead's campaign listing (explicit `codigo`, or the contato's
                                   `codigo_imovel_campanha` via `interacao_id`)
   detalhes_imovel          F      wave 1 switches (julia_conhecimento_service.politica_endereco_iptu) ON `iptu` and the full `endereco`
+  resolver_imovel          S5     a listing from a pasted URL / portal ad code / portal stock text (`julia_imovel_referencia`)
   horarios_visita          wave 5 (config + SchedulingEngine), `julia_visitas_service`
   consultar_empreendimento development catalogue derived from `imoveis.empreendimento` / `construtora`
 
@@ -30,7 +31,7 @@ from pydantic import Field, model_validator
 from noctusai_lib.api import StrictHttpModel
 
 from app.services import julia_busca_imoveis as busca
-from app.services import julia_catalogo_service, julia_conhecimento_service, julia_eventos_service, julia_imovel_confirmado
+from app.services import julia_catalogo_service, julia_conhecimento_service, julia_eventos_service, julia_imovel_confirmado, julia_imovel_referencia
 from app.services.julia_catalogo_service import COLUNAS, FETCH_BUSCA, TABLE, publicado as _publicado  # noqa: F401
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,13 @@ class ImovelCampanhaArgs(StrictHttpModel):
 class DetalhesImovelArgs(StrictHttpModel):
     interacao_id: Optional[UUID] = None
     codigo: str = Field(min_length=1, max_length=40)
+
+
+class ResolverImovelArgs(StrictHttpModel):
+    """S5: what the lead pasted -- an own/portal URL, a portal ad code or the portal's stock message."""
+    interacao_id: Optional[UUID] = None
+    referencia: str = Field(min_length=2, max_length=2000)
+    operacao: Optional[str] = Field(default=None, pattern="^(compra|aluguel)$")
 
 
 class HorariosVisitaArgs(StrictHttpModel):
@@ -256,6 +264,20 @@ def imovel_campanha(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dic
     return _itens(client, org_id, [r], operacao)
 
 
+def resolver_imovel(client: Any, org_id: UUID, args: dict[str, Any]) -> dict[str, Any]:
+    """The listing a lead means from a URL / portal code / portal stock text (`julia_imovel_referencia`): `{encontrado: True,
+    via, imovel: <card>}` or `{encontrado: False, candidatos}`. Only PUBLISHED listings resolve; the card is the same shape as
+    `buscar_imoveis` (no owner data)."""
+    a = ResolverImovelArgs(**args)
+    r = julia_imovel_referencia.resolver(julia_catalogo_service.catalogo_da_org(client, org_id), a.referencia)
+    if not r["encontrado"]:
+        return {"encontrado": False, "candidatos": r["candidatos"]}
+    linha = r["linha"]
+    operacao = a.operacao or ("compra" if linha.get("valor_venda") is not None else "aluguel")
+    (item,) = _itens(client, org_id, [linha], operacao)
+    return {"encontrado": True, "via": r["via"], "imovel": item}
+
+
 def detalhes_imovel(client: Any, org_id: UUID, args: dict[str, Any]) -> dict[str, Any]:
     a = DetalhesImovelArgs(**args)
     r = julia_catalogo_service.catalogo_da_org(client, org_id).um(a.codigo)
@@ -338,7 +360,7 @@ def consultar_empreendimento(client: Any, org_id: UUID, args: dict[str, Any]) ->
 
 
 #: Tools whose successful lookups feed Relatorios "top imoveis".
-CONSULTAS_REGISTRADAS = ("buscar_imoveis", "detalhes_imovel")
+CONSULTAS_REGISTRADAS = ("buscar_imoveis", "detalhes_imovel", "resolver_imovel")
 
 
 def _codigos_consultados(nome: str, data: Any) -> list[str]:
@@ -346,6 +368,8 @@ def _codigos_consultados(nome: str, data: Any) -> list[str]:
         return [str(d["codigo"]) for d in (data or []) if d.get("codigo")]
     if nome == "detalhes_imovel" and isinstance(data, dict) and data.get("encontrado"):
         return [str(data["codigo"])]
+    if nome == "resolver_imovel" and isinstance(data, dict) and data.get("encontrado"):
+        return [str(data["imovel"]["codigo"])]
     return []
 
 
@@ -383,6 +407,7 @@ FERRAMENTAS: dict[str, Ferramenta] = {
     "buscar_imoveis": buscar_imoveis,
     "imovel_campanha": imovel_campanha,
     "detalhes_imovel": detalhes_imovel,
+    "resolver_imovel": resolver_imovel,
     "horarios_visita": horarios_visita,
     "consultar_empreendimento": consultar_empreendimento,
 }
@@ -392,6 +417,7 @@ ARGS: dict[str, type[StrictHttpModel]] = {
     "buscar_imoveis": BuscarImoveisArgs,
     "imovel_campanha": ImovelCampanhaArgs,
     "detalhes_imovel": DetalhesImovelArgs,
+    "resolver_imovel": ResolverImovelArgs,
     "horarios_visita": HorariosVisitaArgs,
     "consultar_empreendimento": ConsultarEmpreendimentoArgs,
 }

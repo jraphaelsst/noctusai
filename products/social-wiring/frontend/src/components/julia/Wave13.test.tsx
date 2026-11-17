@@ -24,7 +24,7 @@ const AV = {
   ultimas: [{ autor: "Ana", nota: 5, texto: "Ótimo", data: "2026-10-01T10:00:00Z", link: "https://g.co/x" }],
   configurado: { review_url: true, gbp: true },
 };
-const mockAv = (d: object, cfg = { google_review_url: "https://a", gbp_location_id: null, capi_ativo: false, capi_pixel_id: null }) =>
+const mockAv = (d: object, cfg = { google_review_url: "https://a", gbp_location_id: null, capi_ativo: false, capi_pixel_id: null, pedido_ativo: false }) =>
   api.get.mockImplementation(async (u: string) => (u.includes("/config") ? { data: cfg } : { data: d }));
 
 beforeEach(() => { h.admin = true; Object.values(api).forEach((f) => f.mockReset()); });
@@ -58,7 +58,7 @@ describe("Avaliações", () => {
     fireEvent.change(screen.getByLabelText("ID do pixel da Meta"), { target: { value: " 123456 " } });
     fireEvent.click(screen.getByText("Salvar"));
     await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/julia/avaliacoes/config",
-      { google_review_url: "https://novo", capi_ativo: true, capi_pixel_id: "123456" }));
+      { google_review_url: "https://novo", capi_ativo: true, capi_pixel_id: "123456", pedido_ativo: false }));
   });
   it("hides configure for non-admin", async () => {
     h.admin = false;

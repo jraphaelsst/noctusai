@@ -4,7 +4,7 @@
  *   GET /api/julia/avaliacoes?mes=YYYY-MM → {data:{pedidos_enviados, novas_avaliacoes,
  *       distribuicao:{"1".."5"}, media, total, ultimas[], configurado:{review_url, gbp}}}
  *   GET /api/julia/avaliacoes/config (member) · PUT (admin, partial)
- *       {google_review_url, gbp_location_id, capi_ativo, capi_pixel_id}
+ *       {google_review_url, gbp_location_id, capi_ativo, capi_pixel_id, pedido_ativo}
  */
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { listOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
@@ -26,6 +26,8 @@ export interface AvaliacoesConfig {
   gbp_location_id: string | null;
   capi_ativo: boolean;
   capi_pixel_id: string | null;
+  /** Lais study S7: the review ask is off by default (owner 2026-11-17). */
+  pedido_ativo: boolean;
 }
 
 const KEY = ["julia", "avaliacoes"] as const;

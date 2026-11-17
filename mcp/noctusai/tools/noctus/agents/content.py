@@ -114,6 +114,8 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
+from ..dev._http import bounded_client
+
 ENV_TOKEN = "NOCTUS_AGENTS_CONTENT_TOKEN"
 ENV_URL = "NOCTUS_AGENTS_URL"
 #: Optional platform-issued ``studio:evals-run`` token for the eval-loop actions (falls back to ENV_TOKEN: a platform
@@ -121,7 +123,6 @@ ENV_URL = "NOCTUS_AGENTS_URL"
 ENV_EVALS_TOKEN = "NOCTUS_AGENTS_EVALS_TOKEN"
 DEFAULT_ENV_FILE = Path("~/.config/noctus/agents.env")
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
-_HTTP_TIMEOUT = httpx.Timeout(60.0, connect=15.0)
 ACTIONS = ("list", "get", "set")
 PADRAO_ACTIONS = ("criar_padrao",)
 _PADRAO_KEY_RE = re.compile(r"^[a-z][a-z0-9_-]{1,63}$")
@@ -249,9 +250,10 @@ def _load_payload(payload_path: str | None) -> Any:
 class _Api:
     def __init__(self, base: str, token: str, transport: httpx.BaseTransport | None) -> None:
         self._token = token
-        self._client = httpx.Client(
+        self._client = bounded_client(
             base_url=base, headers={"Authorization": f"Bearer {token}", "User-Agent": "Mozilla/5.0 (noctus-agents-content)"},
-            timeout=_HTTP_TIMEOUT, transport=transport,
+            transport=transport, deadline_s=120.0, read=60.0, why="Studio API content read/write",
+            call_site="agents.content",
         )
         self.writes = 0
 

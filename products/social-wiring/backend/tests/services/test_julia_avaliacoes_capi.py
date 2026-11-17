@@ -76,7 +76,7 @@ def interacao(w: World, c: dict[str, Any], desfecho: str = "qualificado") -> dic
 
 
 def config(w: World, **over):
-    w.sw.table(av.T_CONFIG).insert({"org_id": ORG, "google_review_url": LINK, "gbp_location_id": None, "capi_ativo": False, "capi_pixel_id": None, **over}).execute()
+    w.sw.table(av.T_CONFIG).insert({"org_id": ORG, "google_review_url": LINK, "gbp_location_id": None, "capi_ativo": False, "capi_pixel_id": None, "pedido_ativo": True, **over}).execute()
 
 
 class Saida:
@@ -177,7 +177,29 @@ class TestPedido:
         i = interacao(world, c, desfecho)
         assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=Saida(), agora=AGORA, agents=FakeAgentsClient())) == "ignorado:desfecho_nao_qualificado"
 
+    def test_ask_is_off_by_default_even_with_a_link(self, world):
+        """S7 (owner 2026-11-17): no review ask for now -- the switch is off unless the org turns it on."""
+        assert av.CONFIG_PADRAO["pedido_ativo"] is False
+        config(world, pedido_ativo=False)
+        c = contato(world)
+        i = interacao(world, c)
+        out = Saida()
+        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=out, agora=AGORA, agents=FakeAgentsClient())) == "ignorado:pedido_desligado"
+        assert out.enviados == [] and world.rows(av.T_PEDIDOS) == []
+
+    def test_never_rides_in_the_handoff_burst(self, world):
+        config(world)
+        c = contato(world)
+        i = interacao(world, c)
+        world.sw.table("julia_eventos").insert({
+            "id": str(uuid4()), "org_id": ORG, "tipo": "handoff", "contato_id": c["id"], "payload": {"motivo_codigo": "outro"},
+            "created_at": (AGORA - timedelta(hours=2)).isoformat()}).execute()
+        out = Saida()
+        assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=out, agora=AGORA, agents=FakeAgentsClient())) == "ignorado:handoff_recente"
+        assert out.enviados == []
+
     def test_no_review_link_skips(self, world):
+        config(world, google_review_url=None)
         c = contato(world)
         i = interacao(world, c)
         assert run(av.executar_pedido(job(c, i), client=world.sw, enviar=Saida(), agora=AGORA, agents=FakeAgentsClient())) == "ignorado:sem_link"

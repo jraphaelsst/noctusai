@@ -17,8 +17,9 @@ from typing import Any
 
 import httpx
 
+from ..dev._http import bounded_client
+
 MODOS = ("novos", "pendentes", "refazer")
-_TIMEOUT = httpx.Timeout(900.0, connect=10.0)  # a real batch walks Vista code by code
 _SOMAS = ("lote", "sem_lead", "ja_feitos", "a_processar", "processados")
 
 
@@ -63,7 +64,8 @@ def ad_lead_intake(
         return cfg
     base, token = cfg
     efetivo_dry = dry_run or not confirm
-    with httpx.Client(base_url=base, headers={"Authorization": f"Bearer {token}"}, timeout=_TIMEOUT, transport=_transport) as c:
+    with bounded_client(base_url=base, headers={"Authorization": f"Bearer {token}"}, transport=_transport,
+                        deadline_s=900.0, why="batch backfill walks Vista code by code", call_site="sw.ad_lead_intake") as c:
         if action == "status":
             r = _chamar(c, "GET", "/api/leads/ad-intake/resumo")
             return r if "error" in r else {"status": "ok", "org": org or None, "resumo": r["dados"]}

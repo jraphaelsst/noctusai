@@ -22,6 +22,10 @@ Envio (`julia_envio_service.enviar`) attaches the existing lead by phone when th
 never duplicates it.
 
 NEVER raises (the caller is a background leg after Meta's 200); every outcome is a returned status.
+
+NOC-REMEDIATE[julia-portal-primeiro-contato]: portal leads (ZAP / ImovelWeb / OLX) get the same Cloud-template first contact
+and a de-duplicated opener on portal re-entry (Lais study S1) -- destination: a portal lead intake beside this Meta one, once
+the portal integrations exist (owner 2026-11-17: later; there are no ZAP/ImovelWeb integrations yet) -- 2026-11-17
 """
 from __future__ import annotations
 

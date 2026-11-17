@@ -44,7 +44,7 @@ class Scene:
 
     def config(self, **over):
         self.w.sw.table(av.T_CONFIG).insert({"org_id": ORG_ID, "google_review_url": LINK, "gbp_location_id": None,
-                                             "capi_ativo": False, "capi_pixel_id": None, **over}).execute()
+                                             "capi_ativo": False, "capi_pixel_id": None, "pedido_ativo": True, **over}).execute()
 
 
 def _scene(role, provider=None):
