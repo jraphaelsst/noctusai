@@ -21,7 +21,7 @@ One post, three independent axes. The spec touches only the first and hints at t
 
 Rules that follow: the editor never writes `cs_post_publicacoes` and never publishes; a finished render creates a new asset **version** in `midia_em_producao → midia_pronta` (T6); approval and `agendado` belong to the CoreStudio approval flow (T8). The spec's `modo_aprovacao` governs only the approvals INSIDE the edit job (plan, sample); it never replaces the post's media approval.
 
-Worker seams used: job queue with retry (`domain.jobs`, family `video.editar | video.preview | video.export`), one throwaway sandbox per job, SSE progress (`fase`, `pct`, `eta`). Transcription is the existing server (`noctus.transcription.*`): **one file ≤ 600 s and ≤ 150 MB per call; longer media is chunked by the caller** (skill `edicao-video-preparo-de-midia` has the recipe) and the timestamps re-offset. Today the service returns text and optional `segmentos` (`start`,`end`,`text`); **it does not return per-word timestamps** (see §8, open item 1).
+Worker seams used: job queue with retry (`domain.jobs`, family `video.editar | video.preview | video.export`), one throwaway sandbox per job, SSE progress (`fase`, `pct`, `eta`). Transcription is the existing server (`noctus.transcription.*`): **one file ≤ 600 s and ≤ 150 MB per call; longer media is chunked by the caller** (skill `edicao-video-preparo-de-midia` has the recipe) and the timestamps re-offset. The service returns text, optional `segmentos`, and with `palavras=true` per-word timestamps `segmentos[].palavras[{texto, inicio, fim, confianca}]` (shipped 2026-11-15; see §8 item 1).
 
 ## 3 · The spec (top level)
 
@@ -136,7 +136,7 @@ Third-party skill packs studied have **no licence file: study-only, nothing is v
 
 ## 8 · Open items (not decided here)
 
-1. **Word-level timestamps.** Decided 2026-11-13: our transcription service gets per-word output in a separate slice, `segmentos[].palavras[{texto, inicio, fim, confianca}]`. Until it lands the skill degrades to segment-level and says so in the report; no forced-alignment stage is needed.
+1. **Word-level timestamps — CLOSED 2026-11-15.** Decided 2026-11-13, shipped in `feat/transcription-word-timestamps`: pass `palavras=true` and each segment carries `palavras[{texto, inicio, fim, confianca}]`; verified live 2026-11-16. The skill degrades to segment-level only when a result lacks them, and says so in the report; no forced-alignment stage is needed.
 2. Safe-zone numbers per rede × formato are `nao_verificado` in the skill; they must come from the official docs via the validity matrix (S1), not from memory.
 3. Event names in §4 are proposals; they bind when the job events table lands.
 
