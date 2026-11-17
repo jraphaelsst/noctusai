@@ -899,6 +899,12 @@ if [[ -n "$STAGED_LEDGER_SURFACE" ]] && have_py; then
         exit 1
     fi
 fi
+# (d2) a findings-ledger row marked FIXED must name a commit that is on origin/dev (WARN-first SHADOW; the write path
+#      `findings_ledger._gate_fixed` makes it true by construction -- this catches hand edits). Baseline: project-history/findings-ledgers/.
+STAGED_FIXED_ON_DEV=$(git diff --cached --name-only 2>/dev/null | grep -E '^project-history/(access-tiers|julia|gate-alignment|findings-ledgers)/' || true)
+if [[ -n "$STAGED_FIXED_ON_DEV" ]] && have_py; then
+    "$PY" "$CLI" --check-findings-fixed-on-dev --worktree-path "$REPO_ROOT" || echo "[pre-commit] WARNING (shadow): findings-fixed-on-dev -- a row says fixed for a commit not on origin/dev. Re-file it via noctus.dev.findings_ledger (it writes in-progress and flips on landing). See KB § PATTERNS/common/living-findings-ledgers.md." >&2
+fi
 STAGED_TIER_MIGRATIONS=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/backend/migrations/.*\.sql|seed/lib/backend/noctusai_lib/api/access_tiers\.py|deploy/security/access-tier-baseline\.json)$' || true)
 if [[ -n "$STAGED_TIER_MIGRATIONS" ]] && have_py; then
     echo "[pre-commit] migration staged — checking Platform-IP tables are service-role only and new tables declare a tier..."

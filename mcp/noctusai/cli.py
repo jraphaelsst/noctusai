@@ -316,6 +316,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--write", action="store_true", help="With --access-tier-catalog: write the generated catalog file instead of printing the summary.")
     parser.add_argument("--check-access-tier-ledger", action="store_true", help="BLOCKING keeper: the living access-tier findings ledger (project-history/access-tiers/findings.ndjson) agrees with the scanners: a NEW finding needs a row, a row marked fixed must not still be seen, an open row the scanners no longer see must be closed.")
     parser.add_argument("--check-findings-ledgers", action="store_true", help="BLOCKING keeper over EVERY registered living findings ledger (access-tier, Julia's mistakes, ...): a status that disagrees with the latest scan fails (new finding without a row, a row marked fixed that is still seen, an open row no longer seen). KB § PATTERNS/common/living-findings-ledgers.md.")
+    parser.add_argument("--check-findings-fixed-on-dev", action="store_true", help="Keeper: every findings-ledger row marked fixed names a commit that is on origin/dev (the write path guarantees it; this catches hand edits / legacy rows). Shrink-only baseline project-history/findings-ledgers/fixed-on-dev-baseline.json. Unmeasurable (no origin/dev, shallow) never fails. KB § PATTERNS/common/living-findings-ledgers.md.")
     parser.add_argument("--check-findings-ledger-visibility", action="store_true", help="Backstop: the findings-injection hook is registered for SessionStart + SubagentStart and every registered ledger is on the roster it reads (visibility is injected by construction; nobody should hit this).")
     parser.add_argument("--findings-ledger-sarif", metavar="LEDGER", default=None, help="Export the ledger as SARIF 2.1.0 to stdout (or --out FILE) for GitHub code scanning (codeql-action/upload-sarif).")
     parser.add_argument("--findings-ledger-reconcile", metavar="LEDGER", default=None, help="The ledger's registered scanner writes it: add new rows, close fixed ones, reopen regressions (the tool is the only writer).")
@@ -1447,6 +1448,16 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i.get('line', 0)} — {i['issue']}")
         sys.exit(1)
+    elif args.check_findings_fixed_on_dev:
+        from tools.noctus.dev.compliance import check_findings_fixed_on_dev
+        issues = check_findings_fixed_on_dev(repo_root=Path(args.worktree_path).expanduser().resolve() if args.worktree_path else None)
+        if not issues:
+            print(f"  {GREEN}✓ findings-fixed-on-dev clean: every fixed row's commit is on origin/dev.{RESET}"); sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} findings-fixed-on-dev issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+
     elif args.check_access_tier_routes or args.check_access_tier_tables or args.check_access_tier_streams or args.check_access_tier_fingerprint or args.check_access_tier_ledger or args.check_findings_ledgers or args.check_findings_ledger_visibility:
         from settings import REPO_ROOT
         from tools.noctus.dev.compliance import (

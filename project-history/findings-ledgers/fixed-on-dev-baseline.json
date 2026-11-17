@@ -1,0 +1,4 @@
+{
+ "_comment": "Shrink-only ratchet for check_findings_fixed_on_dev: ids of rows marked fixed whose commit is not on origin/dev. Never add; remove when fixed.",
+ "ids": []
+}

@@ -1138,6 +1138,20 @@
     "pre-commit"
    ]
   },
+  "keeper:check-findings-fixed-on-dev": {
+   "mechanism": "write-path: mcp/noctusai/tools/noctus/dev/findings_ledger.py::_gate_fixed (fixed only for a sha on origin/dev) + flip_landed (task_branch landed, session_end_sweep, reconcile)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-16",
+   "source": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/living-findings-ledgers.md",
+   "shadow": {
+    "since": "2026-11-16",
+    "fires": 0,
+    "fix_rate": null
+   }
+  },
   "keeper:check-findings-ledger-visibility": {
    "severity": "",
    "kind": "keeper",
@@ -3909,6 +3923,18 @@
   },
   {
    "id": "D41",
+   "decision": "A findings-ledger row says fixed only for a commit that is on origin/dev; an off-dev fix is written in-progress and flips to fixed on landing",
+   "home": "KB § PATTERNS/common/living-findings-ledgers.md",
+   "construction": "findings_ledger._gate_fixed (write path: append/update/reconcile) + flip_landed (task_branch landed, session_end_sweep, reconcile)",
+   "gate": "keeper:check-findings-fixed-on-dev",
+   "telemetry": "gate events findings-fixed-on-dev: warn per downgrade, pass per auto-flip",
+   "branch": "feat/findings-fixed-on-dev",
+   "gates": [
+    "keeper:check-findings-fixed-on-dev"
+   ]
+  },
+  {
+   "id": "D42",
    "decision": "A hooks bypass is refused at write time and swept in tracked files: --no-verify, core.hooksPath overrides, and the plumbing form (git commit-tree / update-ref refs/heads) are all denied outside a temp-repo fixture; the sanctioned path is commit normally and surface a keeper refusal to the tech-lead",
    "home": "KB § PATTERNS/common/bypass-rationalization-anti-patterns.md",
    "construction": "mcp/noctusai/tools/noctus/dev/primary_write_guard.py decide_git_bypass (PreToolUse deny at write time; commit-tree/update-ref refs/heads included 2026-11-15)",
@@ -3920,7 +3946,7 @@
    ]
   },
   {
-   "id": "D42",
+   "id": "D43",
    "decision": "What executes is pinned: third-party Actions by full commit SHA, prod-surface images by digest or x.y version; a floating tag is a re-pointable supply chain",
    "home": "KB § PATTERNS/devops/ci-security-gates.md § 9",
    "construction": "Dependabot github-actions SHA bumps; pin-at-authoring with a mandatory running-version preflight (KB § GUIDES/security-infra-hardening-runbook.md)",

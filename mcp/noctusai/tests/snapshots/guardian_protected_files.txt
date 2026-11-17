@@ -24,6 +24,7 @@ mcp/noctusai/tools/noctus/dev/deploy_pull.py
 mcp/noctusai/tools/noctus/dev/deploy_verify.py
 mcp/noctusai/tools/noctus/dev/dispatch_token_log.py
 mcp/noctusai/tools/noctus/dev/doc_staleness.py
+mcp/noctusai/tools/noctus/dev/findings_ledger.py
 mcp/noctusai/tools/noctus/dev/gate_alignment.py
 mcp/noctusai/tools/noctus/dev/gate_budget.py
 mcp/noctusai/tools/noctus/dev/gate_sweep.py

@@ -395,8 +395,11 @@ class TestFindingsLedgers:
     def test_fixed_but_still_seen_fails(self, tmp_path):
         root = self._root(tmp_path)
         gl.reconcile("access-tier", root)
-        fid = next(f["id"] for f in gl.query("access-tier", root)["findings"] if f["class"] == "unclear")
-        gl.update("access-tier", root, id=fid, status="fixed", detail="abc1234")
+        lt = gl.get("access-tier")
+        rows = gl.load(lt, root)
+        key = next(k for k, r in rows.items() if r["class"] == "unclear")
+        rows[key].update(status="fixed", status_detail="abc1234")  # a hand-edited row: the write path would refuse this
+        gl.save(lt, rows, root)
         assert any("marked FIXED" in i["issue"] for i in gl.check("access-tier", root))
 
     def test_new_finding_without_row_fails_the_keeper(self, tmp_path):
