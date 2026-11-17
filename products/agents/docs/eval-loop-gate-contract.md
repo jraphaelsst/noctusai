@@ -16,7 +16,7 @@ Platform IP tier: every table is `agents.eval_*` (service role only, `COMMENT �
 | G6 | a round on an unchanged content hash beyond the consolidation passes is refused: fix first, then run | run start → 409 `hash_inalterado` |
 | G7 | spend per round against the loop budget (the config's cap, default US$ 5, never exceeded); reaching it stops the loop for an owner decision | run close hook → `parado` / `orcamento_atingido`; run start clamps the run cap to what is left |
 
-Definitions. A **round** is one run started with the loop's id. A round **improved** when its score is strictly above the best score of the earlier scored rounds; the first scored round is the baseline (neither an improvement nor an overcall). A round with no score (the run failed before measuring: harness error, spec refused, cancelled) is **neutral** for G4/G5, but its cost still counts for G7. Stop order when a round closes: G3 → G7 → G4 → rounds exhausted.
+Definitions. A **round** is one run started with the loop's id. A round **improved** when its score is strictly above the best score of the earlier scored rounds; the first scored round is the baseline (neither an improvement nor an overcall). A cancelled round is **neutral** for G4/G5, but its cost still counts for G7; a round with no score because the run FAILED / ERRORED stops the loop (`erro`, see below). Stop order when a round closes: G3 → G7 → G4 → rounds exhausted.
 
 ### G6 reuses the consolidation, not a new counter
 
@@ -117,6 +117,28 @@ Recipients: every platform admin (the owner is one). Dedup keys `eval_loop:<loop
 - **Budget** (same kind): `O orçamento do loop foi atingido na rodada N: US$ X de US$ Y. Notas: … Decisão do dono: aumentar o orçamento em um novo loop ou encerrar.` + failing cases.
 - **Planned rounds exhausted** (same kind): `As N rodadas planejadas acabaram sem chegar a <alvo>% (95% by default). Notas: … Gasto …`.
 - **Checkpoint** (kind `agents.eval_loop_checkpoint`, rounds 5/10/15 ≤ N): `Rodada N de M. Notas: … Gasto … Rodadas sem melhora: K (US$ …).`
+
+## Errors, the driver and live progress (owner 2026-11-17, migration `088_eval_erro_e_loop_driver.sql`)
+
+Owner, 2026-11-17: "I ran a loop on agente-base yesterday ... I need to see progress ... live-streaming results and numbers updating". Evidence: loop `02150e62` sat at "Rodada 0 de 5" overnight (no driver); the one round clicked by hand errored 46 of 46 cases in ~350 ms (`qualificacao_indisponivel`: a base layer has no qualification standard) and was stored as `concluida`, score 0.0, counted as round 1.
+
+**No silent errors.**
+- A run with errored cases is no longer `concluida`: `erro` (no case produced a verdict; `score` is `null`, never 0.0) or `parcial_com_erros` (some did; the score is over the measured cases only, `completa=false`). `EvalRunOut` carries `erro` (text), `erro_codigo` (the first error's code) and `casos_com_erro`. A refused turn is a typed case error (`O turno foi recusado (<codigo>): <texto>`), no longer "O turno do agente falhou.".
+- **Preflight.** Before a run or a loop round is booked (both suites) the agent's turn is compiled once (`LiveEvalTurnDriver.preflight` = the same `turno.preparar` the cases run); a refusal is a 409 with the turn's own code (e.g. `qualificacao_indisponivel`), nothing is booked or spent, and a loop records a `preflight_recusado` event.
+- A round whose run closed `erro` / `falhou` with nothing measured **stops the loop** with `motivo_parada=erro` (+ `detalhe_parada {rodada, status, codigo, mensagem}`, notified like any stop). A cancelled round stays neutral; `parcial_com_erros` is scored. `RodadaOut.erro_codigo/erro_mensagem` carry the reason; "casos falhando" lists behaviour failures only, never errored cases.
+
+**Evaluating a layer with no qualification standard.** `padrao_do_turno(..., sem_padrao_ok=True)` (ONLY the eval driver passes it) runs an agent whose definition declares none with the in-memory NULL standard (`qualificacao/models.py::padrao_nulo`: one base stage, nothing conclusive; the qualification tools are not offered, no scoring). A production channel turn still refuses it (409 `qualificacao_indisponivel`); a DECLARED but unpublished standard still refuses in both.
+
+**The driver.** A loop opens in `modo` `automatico` (default; `manual` = each round is the owner's click). The server books round 1, and every round that closes without stopping the loop wakes the driver (`EvalLoopService(ao_fechar=...)`), which books the next one through the SAME functions the routes use (`reservar_run`, `iniciar_run_mecanismo`) with the owner's context, so every guard applies. Nothing lives only in memory: at startup (after the orphan sweeps) every ACTIVE automatic loop is re-driven from the DB (a round the restart orphaned closes as neutral, then the next opens; `driver_retomado` event). Gate refusals: `hash_inalterado` / one-run-per-user / `todos_consolidados` leave the loop active and idle with `aviso {codigo, mensagem}` (`estado_driver=aguardando_edicao`); `orcamento_do_loop_atingido` / `rodadas_esgotadas` stop it with that reason; any other refusal or a driver crash stops it with `erro`. **There is no refine step between rounds**: refining the draft is the owner's (or `noctus.agents.content`'s) job; an unchanged hash is refused (G6), so an automatic loop waits for an edit and the owner's "Retomar automático". Cancelling the run of an automatic loop switches it to `manual`.
+
+- `POST /{key}/evals/loops` body gains `modo` (`automatico` default | `manual`).
+- `PUT /{key}/evals/loops/{loop_id}/modo` body `{modo}` → `LoopOut` (`automatico` resumes and books now; `manual` pauses after the round in flight); 409 `loop_ja_encerrado`.
+- `GET /{key}/evals/loops/{loop_id}/eventos` → `{items: [{evento, rodada_seq, run_id, detalhe, created_at}]}`: the append-only lifecycle (`loop_iniciado`, `rodada_aberta`, `rodada_fechada`, `rodada_com_erro`, `preflight_recusado`, `driver_aguardando`, `driver_retomado`, `modo_alterado`, `loop_parado`) in `agents.eval_loop_eventos` (Platform IP, service role only, UPDATE/DELETE refused by trigger).
+- `LoopOut` gains `modo`, `aviso`, `estado_driver` (`rodando | automatico | aguardando_edicao | manual | encerrado`), `serie[].erro_codigo/erro_mensagem`; `motivo_parada` gains `erro`.
+
+**Live progress** (REST + polling every 1.5–2 s while active, stopping by itself; the stack has no run stream).
+- `GET /{key}/evals/runs/{run_id}/progresso` and `GET /{key}/mecanismo-runs/{run_id}/progresso` → `RunProgressoOut {run_id, suite, status, ativo, indeterminado, total, concluidos, aprovados, reprovados, erros, pulados, score_parcial, custo_usd, limite_usd, started_at, finished_at, decorrido_s, eta_s, erro, erro_codigo}`. The behaviour suite writes each case as it finishes (exact numbers; the per-case rows with verdict, judge notes and output come from `GET .../runs/{id}`); the mechanism suite stores its executions only when it ends, so while it runs `indeterminado=true` (status, elapsed, cost cap) and the numbers close at the end.
+- Same auth as the run reads (platform admin / `studio:evals-run` token / `studio:publish` on a dev-advisor agent).
 
 ## Not in this slice
 

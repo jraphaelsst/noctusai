@@ -41,6 +41,10 @@ class LoopRecord:
     started_by: UUID
     started_at: datetime | None
     stopped_at: datetime | None
+    #: ``automatico`` = the loop runs its rounds by itself until a stop condition; ``manual`` = each round is the owner's click.
+    modo: str = "manual"
+    #: why an automatic loop is idle right now (``{codigo, mensagem}``), e.g. ``hash_inalterado``; ``None`` = nothing to say.
+    aviso: dict[str, Any] | None = None
 
     def definicao(self) -> LoopDef:
         return LoopDef(
@@ -51,7 +55,7 @@ class LoopRecord:
 class LoopStore(Protocol):
     def create_loop(
         self, org_id: UUID, agent_id: UUID, *, agente_chave: str, suite: str, rodadas_planejadas: int, alvo: float,
-        piso: float, orcamento_usd: float, started_by: UUID,
+        piso: float, orcamento_usd: float, started_by: UUID, modo: str = "manual",
     ) -> LoopRecord:
         """Raises :class:`StudioConflict` ``loop_ativo_existente`` when the (agent, suite) already has an active loop."""
         ...
@@ -89,6 +93,7 @@ class LoopStore(Protocol):
     def fechar_rodada(
         self, org_id: UUID, loop_id: UUID, run_id: UUID, run_tipo: str, *, status: str, score: float | None, custo_usd: float,
         falhas: list[str], melhorou: bool | None, overcall: bool, gasto_usd: float, parada: Parada | None,
+        erro_codigo: str | None = None, erro_mensagem: str | None = None,
     ) -> bool:
         """Close the round and (atomically with it, in that order) add its cost to the loop and apply the stop. Idempotent:
         ``False`` = the round was not open any more (another closer won); nothing is written twice."""
@@ -96,6 +101,29 @@ class LoopStore(Protocol):
 
     def parar_loop(self, org_id: UUID, agent_id: UUID, loop_id: UUID, *, motivo: str, status: str, detalhe: dict[str, Any] | None) -> bool:
         """Stop an ACTIVE loop. ``False`` = it was not active."""
+        ...
+
+    def definir_modo(self, org_id: UUID, agent_id: UUID, loop_id: UUID, modo: str) -> bool:
+        """``automatico`` | ``manual`` on an ACTIVE loop. ``False`` = it was not active or the mode did not change."""
+        ...
+
+    def definir_aviso(self, org_id: UUID, loop_id: UUID, aviso: dict[str, Any] | None) -> None:
+        """The idle notice of an automatic loop (``None`` clears it)."""
+        ...
+
+    def loops_automaticos_ativos(self) -> list[LoopRecord]:
+        """Every ACTIVE loop in ``automatico`` mode (any org): what the startup resume re-drives."""
+        ...
+
+    def registrar_evento(
+        self, org_id: UUID, loop_id: UUID, evento: str, *, run_id: UUID | None = None, rodada_seq: int | None = None,
+        detalhe: dict[str, Any] | None = None, ator: UUID | None = None,
+    ) -> None:
+        """Append one lifecycle event (``eval_loop_eventos``, append-only)."""
+        ...
+
+    def listar_eventos(self, org_id: UUID, loop_id: UUID, *, limite: int = 200) -> list[dict[str, Any]]:
+        """The loop's events, oldest first."""
         ...
 
 
@@ -109,7 +137,7 @@ def _loop_de(r: dict[str, Any]) -> LoopRecord:
         suite=r["suite"], rodadas_planejadas=int(r["rodadas_planejadas"]), alvo=_num(r["alvo"]), piso=_num(r["piso"]),
         orcamento_usd=_num(r["orcamento_usd"]), gasto_usd=_num(r["gasto_usd"]), status=r["status"],
         motivo_parada=r.get("motivo_parada"), detalhe_parada=r.get("detalhe_parada"), started_by=UUID(str(r["started_by"])),
-        started_at=r.get("started_at"), stopped_at=r.get("stopped_at"))
+        started_at=r.get("started_at"), stopped_at=r.get("stopped_at"), modo=r.get("modo") or "manual", aviso=r.get("aviso"))
 
 
 def _rodada_de(r: dict[str, Any]) -> Rodada:
@@ -117,7 +145,7 @@ def _rodada_de(r: dict[str, Any]) -> Rodada:
         seq=int(r["seq"]), run_id=UUID(str(r["run_id"])), run_tipo=r["run_tipo"], compiled_hash=r["compiled_hash"],
         status=r["status"], score=None if r.get("score") is None else float(r["score"]), custo_usd=_num(r.get("custo_usd")),
         falhas=tuple(r.get("falhas") or ()), melhorou=r.get("melhorou"), overcall=bool(r.get("overcall")),
-        partes=r.get("partes"))
+        partes=r.get("partes"), erro_codigo=r.get("erro_codigo"), erro_mensagem=r.get("erro_mensagem"))
 
 
 class FakeLoopStore:
@@ -128,6 +156,33 @@ class FakeLoopStore:
         self.rodadas: dict[UUID, list[Rodada]] = {}
         self.runs: dict[tuple[str, UUID], UUID] = {}
         self.recusas: list[dict[str, Any]] = []
+        self.eventos: list[dict[str, Any]] = []
+
+    def definir_modo(self, org_id: UUID, agent_id: UUID, loop_id: UUID, modo: str) -> bool:
+        rec = self.get_loop(org_id, agent_id, loop_id)
+        if rec.status != "ativo" or rec.modo == modo:
+            return False
+        self.loops[loop_id] = replace(rec, modo=modo)
+        return True
+
+    def definir_aviso(self, org_id: UUID, loop_id: UUID, aviso: dict[str, Any] | None) -> None:
+        rec = self.loops.get(loop_id)
+        if rec is not None and rec.org_id == org_id:
+            self.loops[loop_id] = replace(rec, aviso=aviso)
+
+    def loops_automaticos_ativos(self) -> list[LoopRecord]:
+        return [l for l in self.loops.values() if l.status == "ativo" and l.modo == "automatico"]
+
+    def registrar_evento(
+        self, org_id: UUID, loop_id: UUID, evento: str, *, run_id: UUID | None = None, rodada_seq: int | None = None,
+        detalhe: dict[str, Any] | None = None, ator: UUID | None = None,
+    ) -> None:
+        self.eventos.append({
+            "org_id": org_id, "loop_id": loop_id, "evento": evento, "run_id": run_id, "rodada_seq": rodada_seq,
+            "detalhe": dict(detalhe or {}), "ator": ator, "created_at": utcnow()})
+
+    def listar_eventos(self, org_id: UUID, loop_id: UUID, *, limite: int = 200) -> list[dict[str, Any]]:
+        return [e for e in self.eventos if e["org_id"] == org_id and e["loop_id"] == loop_id][:limite]
 
     def loops_ativos_do_usuario(self, started_by: UUID) -> list[LoopRecord]:
         return [l for l in self.loops.values() if l.started_by == started_by and l.status == "ativo"]
@@ -142,7 +197,7 @@ class FakeLoopStore:
 
     def create_loop(
         self, org_id: UUID, agent_id: UUID, *, agente_chave: str, suite: str, rodadas_planejadas: int, alvo: float,
-        piso: float, orcamento_usd: float, started_by: UUID,
+        piso: float, orcamento_usd: float, started_by: UUID, modo: str = "manual",
     ) -> LoopRecord:
         if self.loops_ativos_do_usuario(started_by):  # mirror of migration 087's guard_eval_um_por_usuario
             raise StudioConflict("loop_ativo_do_usuario", "O usuário já tem um loop ativo.")
@@ -151,7 +206,8 @@ class FakeLoopStore:
         rec = LoopRecord(
             id=uuid4(), org_id=org_id, agent_id=agent_id, agente_chave=agente_chave, suite=suite,
             rodadas_planejadas=rodadas_planejadas, alvo=alvo, piso=piso, orcamento_usd=orcamento_usd, gasto_usd=0.0,
-            status="ativo", motivo_parada=None, detalhe_parada=None, started_by=started_by, started_at=utcnow(), stopped_at=None)
+            status="ativo", motivo_parada=None, detalhe_parada=None, started_by=started_by, started_at=utcnow(), stopped_at=None,
+            modo=modo)
         self.loops[rec.id] = rec
         self.rodadas[rec.id] = []
         return rec
@@ -197,12 +253,13 @@ class FakeLoopStore:
     def fechar_rodada(
         self, org_id: UUID, loop_id: UUID, run_id: UUID, run_tipo: str, *, status: str, score: float | None, custo_usd: float,
         falhas: list[str], melhorou: bool | None, overcall: bool, gasto_usd: float, parada: Parada | None,
+        erro_codigo: str | None = None, erro_mensagem: str | None = None,
     ) -> bool:
         rs = self.rodadas.get(loop_id, [])
         for i, r in enumerate(rs):
             if r.run_id == run_id and r.run_tipo == run_tipo and r.aberta:
                 rs[i] = replace(r, status=status, score=score, custo_usd=custo_usd, falhas=tuple(falhas),
-                                melhorou=melhorou, overcall=overcall)
+                                melhorou=melhorou, overcall=overcall, erro_codigo=erro_codigo, erro_mensagem=erro_mensagem)
                 rec = self.loops[loop_id]
                 upd: dict[str, Any] = {"gasto_usd": gasto_usd}
                 if parada is not None and rec.status == "ativo":
@@ -229,12 +286,12 @@ class SupabaseLoopStore:
 
     def create_loop(
         self, org_id: UUID, agent_id: UUID, *, agente_chave: str, suite: str, rodadas_planejadas: int, alvo: float,
-        piso: float, orcamento_usd: float, started_by: UUID,
+        piso: float, orcamento_usd: float, started_by: UUID, modo: str = "manual",
     ) -> LoopRecord:
         row = {
             "org_id": str(org_id), "agent_id": str(agent_id), "agente_chave": agente_chave, "suite": suite,
             "rodadas_planejadas": rodadas_planejadas, "alvo": alvo, "piso": piso, "orcamento_usd": orcamento_usd,
-            "started_by": str(started_by),
+            "started_by": str(started_by), "modo": modo,
         }
         data = exec_query(self._t("eval_loops").insert(row), unique_code="loop_ativo_existente").data or []
         return _loop_de(data[0])
@@ -312,12 +369,13 @@ class SupabaseLoopStore:
     def fechar_rodada(
         self, org_id: UUID, loop_id: UUID, run_id: UUID, run_tipo: str, *, status: str, score: float | None, custo_usd: float,
         falhas: list[str], melhorou: bool | None, overcall: bool, gasto_usd: float, parada: Parada | None,
+        erro_codigo: str | None = None, erro_mensagem: str | None = None,
     ) -> bool:
         # the conditional UPDATE is the idempotency: only the closer that finds the round still `executando` proceeds
         done = exec_query(
             self._t("eval_loop_rodadas").update({
                 "status": status, "score": score, "custo_usd": custo_usd, "falhas": falhas, "melhorou": melhorou,
-                "overcall": overcall, "finished_at": utcnow_iso(),
+                "overcall": overcall, "finished_at": utcnow_iso(), "erro_codigo": erro_codigo, "erro_mensagem": erro_mensagem,
             }).eq("org_id", str(org_id)).eq("loop_id", str(loop_id)).eq("run_id", str(run_id)).eq("run_tipo", run_tipo)
             .eq("status", "executando")).data or []
         if not done:
@@ -336,6 +394,33 @@ class SupabaseLoopStore:
             self._t("eval_loops").update({"status": status, "motivo_parada": motivo, "detalhe_parada": detalhe, "stopped_at": utcnow_iso()})
             .eq("org_id", str(org_id)).eq("agent_id", str(agent_id)).eq("id", str(loop_id)).eq("status", "ativo")).data or []
         return bool(done)
+
+
+    def definir_modo(self, org_id: UUID, agent_id: UUID, loop_id: UUID, modo: str) -> bool:
+        done = exec_query(
+            self._t("eval_loops").update({"modo": modo}).eq("org_id", str(org_id)).eq("agent_id", str(agent_id))
+            .eq("id", str(loop_id)).eq("status", "ativo").neq("modo", modo)).data or []
+        return bool(done)
+
+    def definir_aviso(self, org_id: UUID, loop_id: UUID, aviso: dict[str, Any] | None) -> None:
+        exec_query(self._t("eval_loops").update({"aviso": aviso}).eq("org_id", str(org_id)).eq("id", str(loop_id)))
+
+    def loops_automaticos_ativos(self) -> list[LoopRecord]:
+        rows = exec_query(self._t("eval_loops").select("*").eq("status", "ativo").eq("modo", "automatico").limit(200)).data or []
+        return [_loop_de(r) for r in rows]
+
+    def registrar_evento(
+        self, org_id: UUID, loop_id: UUID, evento: str, *, run_id: UUID | None = None, rodada_seq: int | None = None,
+        detalhe: dict[str, Any] | None = None, ator: UUID | None = None,
+    ) -> None:
+        exec_query(self._t("eval_loop_eventos").insert({
+            "org_id": str(org_id), "loop_id": str(loop_id), "evento": evento, "rodada_seq": rodada_seq,
+            "run_id": None if run_id is None else str(run_id), "detalhe": detalhe or {},
+            "ator": None if ator is None else str(ator)}))
+
+    def listar_eventos(self, org_id: UUID, loop_id: UUID, *, limite: int = 200) -> list[dict[str, Any]]:
+        return exec_query(self._t("eval_loop_eventos").select("*").eq("org_id", str(org_id)).eq("loop_id", str(loop_id))
+                          .order("created_at").limit(limite)).data or []
 
 
 def get_loop_store(settings: Any) -> LoopStore:

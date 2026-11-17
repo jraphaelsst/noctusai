@@ -47,7 +47,7 @@ from app.channels.tool_registry import (
     tools_ofertaveis,
 )
 from app.config import settings
-from app.qualificacao.models import LeadSinais, VersaoPadrao
+from app.qualificacao.models import LeadSinais, VersaoPadrao, e_padrao_nulo, padrao_nulo
 from app.qualificacao.prompt import qualificacao_data
 from app.realtime import conversation_scope, get_bus, publish_event
 from noctusai_lib.integrations.llm.context_window import fit_history
@@ -190,15 +190,22 @@ def _texto_opcional(conteudo: Any, chave: str) -> str:
         return ""
 
 
-def padrao_do_turno(svc: ServicosCanal, r: AgenteResolvido) -> VersaoPadrao:
+def padrao_do_turno(svc: ServicosCanal, r: AgenteResolvido, *, sem_padrao_ok: bool = False) -> VersaoPadrao:
     """The pinned standard version of the agent version; unpinned = the newest PUBLISHED version of the
-    agent's standard (its key is part of the platform definition)."""
+    agent's standard (its key is part of the platform definition).
+
+    An agent whose definition declares NO standard (a base layer) is refused (409 ``qualificacao_indisponivel``) on a
+    production channel turn. ``sem_padrao_ok=True`` -- ONLY the eval path passes it -- runs it with the NULL standard
+    instead: no qualification tools, no scoring, the rest of the turn unchanged. A standard that is DECLARED but not
+    published still refuses in both."""
     pin = getattr(r.versao, "qualificacao_versao_id", None)
     try:
         if pin is not None:
             return svc.padroes.obter_versao(pin)
         chave = padrao_de(r.definicao)
         if chave is None:
+            if sem_padrao_ok:
+                return padrao_nulo()
             raise TurnoRecusado(409, "qualificacao_indisponivel", "O agente não tem padrão de qualificação.")
         return svc.padroes.obter_versao_publicada(chave)
     except NotFound as exc:
@@ -207,7 +214,7 @@ def padrao_do_turno(svc: ServicosCanal, r: AgenteResolvido) -> VersaoPadrao:
 
 def _compilar(
     svc: ServicosCanal, org_id: UUID, agent: Any, *, versao: UUID | str = "ativa",
-    specs: Mapping[str, str] | None = None, tolerar_specs_faltando: bool = False,
+    specs: Mapping[str, str] | None = None, tolerar_specs_faltando: bool = False, sem_padrao_ok: bool = False,
 ) -> tuple[AgenteResolvido, VersaoPadrao, Any]:
     """Resolve + compile FOR THE ORG with the pinned standard; refuses (typed) when there is nothing to run
     or the content is incomplete. No side effect. ``versao``/``specs`` serve the eval driver (a DRAFT, with
@@ -221,14 +228,15 @@ def _compilar(
             for k, v in specs.items()))
     if r.versao is None:
         raise TurnoRecusado(409, "no_active_version", "O agente não tem versão publicada.")
-    padrao = padrao_do_turno(svc, r)
+    padrao = padrao_do_turno(svc, r, sem_padrao_ok=sem_padrao_ok)
     publicada = getattr(r.versao, "status", None) in ("ativa", "substituida")
     chave = (r.definicao.org_id, r.versao.id, org_specs_hash(r), padrao.id)
     if publicada and chave in _COMPILADOS:
         compiled, avisos = _COMPILADOS[chave]
         ESTATISTICAS["reaproveitou"] += 1
     else:
-        compiled = compile_for_org(svc.studio_store, svc.catalog, r, qualificacao=qualificacao_data(padrao))
+        compiled = compile_for_org(
+            svc.studio_store, svc.catalog, r, qualificacao=None if e_padrao_nulo(padrao) else qualificacao_data(padrao))
         avisos = tuple(conteudo_status(svc.studio_store, svc.catalog, r, compiled=compiled).avisos_bloqueantes)
         ESTATISTICAS["compilou"] += 1
         if publicada and padrao.id is not None:
@@ -273,12 +281,13 @@ def _marcador_do_prompt(r: AgenteResolvido, compiled: Any) -> tuple[str | None, 
 
 def preparar(
     svc: ServicosCanal, org_id: UUID, agent: Any, *, versao: UUID | str = "ativa",
-    specs: Mapping[str, str] | None = None,
+    specs: Mapping[str, str] | None = None, sem_padrao_ok: bool = False,
 ) -> Preparado:
     """Everything a turn needs that does not depend on the lead. Raises :class:`TurnoRecusado` (409) BEFORE
     anything is persisted: ``no_active_version`` · ``qualificacao_indisponivel`` · ``conteudo_incompleto`` ·
     ``prompt_too_large``."""
-    r, padrao, compiled = _compilar(svc, org_id, agent, versao=versao, specs=specs, tolerar_specs_faltando=True)
+    r, padrao, compiled = _compilar(
+        svc, org_id, agent, versao=versao, specs=specs, tolerar_specs_faltando=True, sem_padrao_ok=sem_padrao_ok)
     if len(compiled.texto) > MAX_COMPILED_PROMPT_CHARS:
         raise TurnoRecusado(409, "prompt_too_large", "O prompt compilado passa do limite de tamanho.")
     try:  # proof of use (§A7), under the org that owns the version's rows; write-once, so once per process is enough
@@ -1119,7 +1128,7 @@ async def _escalar(
         await executar_handoff(turno, "fora_do_escopo", resumo("fora_do_escopo"))
         return
     rq = regras.get("escala_qualificacao_completa")
-    if rq and rq.ativo:
+    if rq and rq.ativo and not e_padrao_nulo(turno.padrao):
         r = await asyncio.to_thread(
             svc.qual.pode_concluir, org_id, lead_ref_id, turno.padrao.id, turno.escopo, turno.sinais)
         if r.ok:

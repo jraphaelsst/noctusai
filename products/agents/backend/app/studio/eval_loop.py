@@ -13,6 +13,11 @@ A LOOP refines one suite of one agent over planned rounds. A ROUND is one run st
 "Improved" means strictly above the best score of the earlier scored rounds. The first scored round is the baseline: it
 is neither an improvement nor an overcall. A round with no score (the run failed before measuring: harness error,
 cancelled, spec refused) is NEUTRAL for G4/G5 but its cost still counts for G7.
+
+A round whose run ERRORED (``erro`` / ``falhou`` with nothing measured) is not a neutral shrug: it STOPS the loop with the
+motivo ``erro`` (+ the code/message in ``detalhe_parada``), so a broken agent or harness is seen at once and never burns the
+budget round after round. A cancelled round stays neutral (the owner did it). ``parcial_com_erros`` is scored over the cases
+that were measured.
 """
 from __future__ import annotations
 
@@ -36,7 +41,7 @@ EPS = 1e-9
 #: how many still-failing cases a stop message names (the rest are counted).
 MAX_FALHAS_NA_MENSAGEM = 12
 
-MOTIVOS_PARADA = ("alvo_atingido", "sem_melhora", "orcamento_atingido", "rodadas_esgotadas", "parado_manualmente")
+MOTIVOS_PARADA = ("alvo_atingido", "sem_melhora", "orcamento_atingido", "rodadas_esgotadas", "parado_manualmente", "erro")
 
 
 @dataclass(frozen=True)
@@ -45,13 +50,16 @@ class Rodada:
     run_id: UUID
     run_tipo: str
     compiled_hash: str
-    status: str = "executando"  # executando | concluida | falhou | cancelada
+    status: str = "executando"  # executando | concluida | parcial_com_erros | erro | falhou | cancelada
     score: float | None = None
     custo_usd: float = 0.0
     falhas: tuple[str, ...] = ()
     melhorou: bool | None = None
     overcall: bool = False
     partes: Mapping[str, str] | None = None
+    #: a round whose run ERRORED says why (code + text): the UI shows it as an error, never as failing cases.
+    erro_codigo: str | None = None
+    erro_mensagem: str | None = None
 
     @property
     def aberta(self) -> bool:
@@ -163,7 +171,7 @@ def checkpoints_atingidos(loop: LoopDef, rodadas: Sequence[Rodada]) -> list[dict
 
 def avaliar_rodada(loop: LoopDef, anteriores: Sequence[Rodada], *, seq: int, status: str, score: float | None,
                    custo_usd: float, falhas: Sequence[str], compiled_hash: str,
-                   partes: Mapping[str, str] | None = None) -> Decisao:
+                   partes: Mapping[str, str] | None = None, erro: Mapping[str, Any] | None = None) -> Decisao:
     """Close one round: G5 flags, then the stop rules in order G3 (target) -> G7 (budget) -> G4 (no improvement) ->
     planned rounds exhausted. ``anteriores`` are the loop's OTHER rounds (open ones ignored)."""
     fechadas = [r for r in ordenar(anteriores) if not r.aberta and r.seq != seq]
@@ -183,6 +191,8 @@ def avaliar_rodada(loop: LoopDef, anteriores: Sequence[Rodada], *, seq: int, sta
         parada = Parada("alvo_atingido", "concluido", {"score": score, "alvo": loop.alvo})
     elif gasto >= loop.orcamento_usd - EPS:
         parada = Parada("orcamento_atingido", "parado", {"gasto_usd": gasto, "orcamento_usd": loop.orcamento_usd})
+    elif score is None and status in ("erro", "falhou"):
+        parada = Parada("erro", "parado", {"rodada": seq, "status": status, **dict(erro or {})})
     elif seguidas >= SEM_MELHORA_MAX:
         ultimas = [r for r in fechadas if r.pontuada][-1:]  # the previous scored round, to say what changed since
         mudou = partes_alteradas(ultimas[0].partes, partes) if ultimas else None
