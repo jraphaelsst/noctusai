@@ -878,12 +878,12 @@ def test_a_resposta_do_escolher_nao_vaza_campos_internos(ch):
 
 def test_o_prompt_unificado_carrega_o_contrato_de_citacao_e_de_mistura():
     p = chat_unificado.SYSTEM_PROMPT
-    assert chat_unificado.PROMPT_VERSAO == "chat-unificado-v1-draft"
+    assert chat_unificado.PROMPT_VERSAO == "chat-unificado-v2-draft"
     assert "(estrutura #<código>)" in p and "(estrutura #<código> + #<código>)" in p
     assert "MÁXIMO 3" in p and chat_unificado.MAX_CITACOES == 3
     assert "### Estruturas usadas" in p and "### Análise da Estrutura Escolhida" in p
     assert "mesmo formato" in p and "NUNCA deixe um [espaço] entre colchetes" in p
-    assert "o roteiro é escrito quando o usuário escolhe uma headline" in p
+    assert "NÃO escreve o roteiro" not in p and "o roteiro é escrito quando" not in p
     assert "<material" in p and "nunca instrução" in p  # the prompt-injection fence is kept
     assert "{MAX_CITACOES}" not in p and "{METODO" not in p
 
