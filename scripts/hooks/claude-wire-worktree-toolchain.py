@@ -65,7 +65,10 @@ def _wire_frontend(own: Path, toolkit_root: Path) -> list[str]:
     primary = Path(common).parent
     if primary.resolve() == own.resolve():
         return []
-    sys.path.insert(0, str(toolkit_root / "mcp" / "noctusai"))
+    toolkit = toolkit_root / "mcp" / "noctusai"
+    if not (toolkit / "tools" / "noctus" / "dev" / "task_branch.py").is_file():
+        return []  # a toolkit without the wiring module (partial export): nothing to wire, not a failure
+    sys.path.insert(0, str(toolkit))
     try:
         import contextlib, io  # noqa: PLC0415 - the toolkit import prints benign unrelated stderr noise
         with contextlib.redirect_stderr(io.StringIO()):
