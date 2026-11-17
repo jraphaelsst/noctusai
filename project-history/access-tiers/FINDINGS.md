@@ -2,7 +2,7 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile access-tier`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**1020 open / in-progress**, 320 fixed, 2 accepted (1342 total).
+**1018 open / in-progress**, 322 fixed, 2 accepted (1342 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
@@ -22,7 +22,7 @@
 | personal-finance | 41 | 0 | 0 | 41 | 0 | 0 |
 | pilates | 1 | 0 | 0 | 1 | 0 | 0 |
 | seed | 5 | 0 | 0 | 5 | 0 | 25 |
-| social-wiring | 276 | 0 | 0 | 276 | 0 | 71 |
+| social-wiring | 274 | 0 | 0 | 274 | 0 | 73 |
 | store | 14 | 0 | 0 | 14 | 0 | 0 |
 | therapy-platform | 162 | 0 | 0 | 162 | 0 | 0 |
 
@@ -182,7 +182,7 @@
 
 ## Bulk (defence in depth: browser grants on tables without `tier:org|public`)
 
-- social-wiring: 267
+- social-wiring: 265
 - erp-imobiliario: 154
 - therapy-platform: 114
 - core: 87

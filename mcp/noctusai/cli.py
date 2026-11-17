@@ -316,6 +316,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--write", action="store_true", help="With --access-tier-catalog: write the generated catalog file instead of printing the summary.")
     parser.add_argument("--check-access-tier-ledger", action="store_true", help="BLOCKING keeper: the living access-tier findings ledger (project-history/access-tiers/findings.ndjson) agrees with the scanners: a NEW finding needs a row, a row marked fixed must not still be seen, an open row the scanners no longer see must be closed.")
     parser.add_argument("--check-findings-ledgers", action="store_true", help="BLOCKING keeper over EVERY registered living findings ledger (access-tier, Julia's mistakes, ...): a status that disagrees with the latest scan fails (new finding without a row, a row marked fixed that is still seen, an open row no longer seen). KB § PATTERNS/common/living-findings-ledgers.md.")
+    parser.add_argument("--check-findings-fixed-on-dev", action="store_true", help="Keeper: every findings-ledger row marked fixed names a commit that is on origin/dev (the write path guarantees it; this catches hand edits / legacy rows). Shrink-only baseline project-history/findings-ledgers/fixed-on-dev-baseline.json. Unmeasurable (no origin/dev, shallow) never fails. KB § PATTERNS/common/living-findings-ledgers.md.")
     parser.add_argument("--check-findings-ledger-visibility", action="store_true", help="Backstop: the findings-injection hook is registered for SessionStart + SubagentStart and every registered ledger is on the roster it reads (visibility is injected by construction; nobody should hit this).")
     parser.add_argument("--findings-ledger-sarif", metavar="LEDGER", default=None, help="Export the ledger as SARIF 2.1.0 to stdout (or --out FILE) for GitHub code scanning (codeql-action/upload-sarif).")
     parser.add_argument("--findings-ledger-reconcile", metavar="LEDGER", default=None, help="The ledger's registered scanner writes it: add new rows, close fixed ones, reopen regressions (the tool is the only writer).")
@@ -448,6 +449,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--refresh-llm-prompt-from-registry-baseline", action="store_true", help="Write/SHRINK the --check-llm-prompt-from-registry ratchet baseline (first run records current sites; afterwards min(current, recorded); vanished files drop out; never adds).")
     parser.add_argument("--llm-prompt-log", action="store_true", help="With --check-llm-prompt-from-registry: file one auto-improvement drift row per flagged file (target llm_prompt_not_from_registry:<file>).")
     parser.add_argument("--llm-prompt-replay", action="store_true", help="With --check-llm-prompt-from-registry: research mode, print EVERY site in the tree (ignores the baseline) grouped per product.")
+    parser.add_argument("--check-http-call-without-timeout", action="store_true", help="Keeper (ratchet, 2026-11-16): every outbound HTTP call under mcp/noctusai/tools (httpx.Client/AsyncClient/get|post|request, requests.*, urllib.request.urlopen) carries an explicit non-None `timeout=` or goes through tools/noctus/dev/_http.py (connect/read timeouts + TOTAL deadline + one bounded retry + telemetry). AST-based. migrate_product hung 45 min on a CLOSE_WAIT socket. Suppress: `# noc-allow: http-timeout -- <reason>`. Baseline mcp/noctusai/tests/http_timeout_baseline.json (shrink-only). `--paths` narrows reporting. Severity high. KB § PATTERNS/architect/mcp-tool-conventions.md.")
+    parser.add_argument("--refresh-http-timeout-baseline", action="store_true", help="Shrink-only refresh of the --check-http-call-without-timeout baseline (first run records current offenders; later runs only lower counts / drop fixed files, never add).")
     parser.add_argument("--check-migration-number-refs-in-tests", action="store_true", help="Keeper (ratchet, 2026-10-10): an awake product's backend test must not reference a migration by NUMBER (\"217_x.sql\", migrations/217_) — task_branch integrate renumbers colliding migrations, breaking the test. Use noctusai_lib.testing.migrations.migration_path(root, name_suffix). Pre-existing offenders are baselined in mcp/noctusai/tests/migration_number_refs_baseline.json; only a new file or grown count blocks. `--paths` narrows reporting (pre-commit). Severity high. KB § PATTERNS/compliance/testing.md.")
     parser.add_argument("--check-local-pipeline-board", action="store_true", help="Keeper (severity warning, shadow-first): no NEW product-local pipeline board/card layer in an AWAKE product (`mover-etapa` route, `move_card`/`group_into_colunas` call, `<PipelineBoard>`/`<KanbanBoard>` render) — consume the seed funnel organ (`noctusai_lib.domain.pipeline.funnel` + `FunnelBoard`). A file with `NOC-REMEDIATE[pipeline-board-organ]` is exempt; the marker count only shrinks. KB § PATTERNS/common/remediation-markers.md.")
     parser.add_argument("--refresh-pipeline-board-markers-baseline", action="store_true", help="Shrink-only refresh of the --check-local-pipeline-board marker-count baseline (first run records; later runs only lower it).")
@@ -648,6 +651,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--redis-acl-write", action="store_true", help="With --redis-acl=render: write the files (needs REDIS_ACL_MASTER_SECRET in env or deploy/fleet/.env.fleet).")
     parser.add_argument("--redis-acl-services", metavar="SVC,SVC", default=None, help="With --redis-acl=render --redis-acl-write: the services to CUT OVER (written to the host-local compose.redis-auth.prod.yml). Re-render without a service to roll it back; an empty value removes the override.")
     parser.add_argument("--merge-queue-interval", type=float, default=60, help="With --merge-queue=watch: poll interval in seconds.")
+    parser.add_argument("--merge-queue-idle-exit", action="store_true", help="With --merge-queue=watch: print MQ-IDLE and exit 0 once the queue is empty AND no handed run is pending (run it under scripts/bg_run.py --done-when; no 30-min Monitor cap to re-arm).")
+    parser.add_argument("--steward-feed", metavar="ACTION", choices=["register", "pending"], help="The release steward's handed-run registry (one append per handoff; the --merge-queue watch polls every registered run, enqueues on green, records landings). register needs --feed-slug --feed-run --feed-sha [--feed-after SLUG]; pending lists what the watch still waits on. KB § PATTERNS/devops/release-steward.md § 7b.")
+    parser.add_argument("--feed-slug", default=None, help="With --steward-feed register: the feat/<slug> handed off.")
+    parser.add_argument("--feed-run", default=None, help="With --steward-feed register: the gh run id of the test.yml run.")
+    parser.add_argument("--feed-sha", default=None, help="With --steward-feed register: the full sha that run tested.")
+    parser.add_argument("--feed-after", default=None, help="With --steward-feed register: enqueue only after this slug has finished (ordering).")
     parser.add_argument("--merge-queue-sha", default=None, help="With --merge-queue=status: the enqueued sha.")
     parser.add_argument("--task-branch-slugs", default=None, help="With --task-branch=train: comma-separated ready feat/<slug> branches to merge --no-ff into ONE train-<name> branch (omit => dry-run candidate listing; --task-branch-slug names the train). Merge-all-before-integrating: one integrate of the train lands them all.")
     parser.add_argument("--task-branch-train-order", default="given", choices=["given", "auto"], help="With --task-branch=train: merge order - 'given' (as listed) or 'auto' (least path-overlap first).")
@@ -1440,6 +1449,16 @@ def main():
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']}:{i.get('line', 0)} — {i['issue']}")
         sys.exit(1)
+    elif args.check_findings_fixed_on_dev:
+        from tools.noctus.dev.compliance import check_findings_fixed_on_dev
+        issues = check_findings_fixed_on_dev(repo_root=Path(args.worktree_path).expanduser().resolve() if args.worktree_path else None)
+        if not issues:
+            print(f"  {GREEN}✓ findings-fixed-on-dev clean: every fixed row's commit is on origin/dev.{RESET}"); sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} findings-fixed-on-dev issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+
     elif args.check_access_tier_routes or args.check_access_tier_tables or args.check_access_tier_streams or args.check_access_tier_fingerprint or args.check_access_tier_ledger or args.check_findings_ledgers or args.check_findings_ledger_visibility:
         from settings import REPO_ROOT
         from tools.noctus.dev.compliance import (
@@ -3218,6 +3237,24 @@ def main():
         print(f"  baseline refreshed: {len(_bl)} file(s), {sum(_bl.values())} site(s).")
         sys.exit(0)
 
+    elif args.check_http_call_without_timeout:
+        from tools.noctus.dev.compliance import check_http_call_without_timeout
+        _hct_paths = [p for p in (args.paths or "").split(",") if p] or None
+        issues = check_http_call_without_timeout(paths=_hct_paths)
+        if not issues:
+            print(f"  {GREEN}\u2713 http-call-without-timeout: every outbound HTTP call is bounded.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}\u2717 {len(issues)} http-call-without-timeout issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} \u2014 {i['issue']}")
+        sys.exit(1)
+
+    elif args.refresh_http_timeout_baseline:
+        from tools.noctus.dev.compliance import refresh_http_timeout_baseline
+        _bl = refresh_http_timeout_baseline()
+        print(f"  baseline refreshed: {len(_bl)} file(s), {sum(_bl.values())} site(s).")
+        sys.exit(0)
+
     elif args.check_migration_number_refs_in_tests:
         from tools.noctus.dev.compliance import check_migration_number_refs_in_tests
         _mnr_paths = [p for p in (args.paths or "").split(",") if p] or None
@@ -4630,13 +4667,28 @@ def main():
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok", r.get("status") != "error") else 1)
 
+    elif getattr(args, "steward_feed", None):
+        from tools.noctus.dev import steward_feed as _sf
+        _reg = _sf.HandedRuns(_sf.default_registry())
+        if args.steward_feed == "register":
+            if not (args.feed_slug and args.feed_run and args.feed_sha):
+                print(json.dumps({"status": "error", "error": "register needs --feed-slug --feed-run --feed-sha"}))
+                sys.exit(1)
+            _r = _reg.register(args.feed_slug, args.feed_run, args.feed_sha, args.feed_after)
+            print(f"REGISTERED {_r['slug']} run={_r['run']} sha={_r['sha'][:9]}" + (f" after={_r['after']}" if _r.get("after") else ""))
+        else:
+            for _p in _reg.pending():
+                print(f"PENDING {_p['slug']} run={_p['run']} sha={_p['sha'][:9]}" + (f" after={_p['after']}" if _p.get("after") else ""))
+        sys.exit(0)
+
     elif getattr(args, "merge_queue", None):
         from tools.noctus.dev import merge_queue as _mq
         if args.merge_queue == "watch":
             try:
-                _mq.watch_live(args.merge_queue_interval)
+                _mq.watch_live(args.merge_queue_interval, idle_exit=args.merge_queue_idle_exit)
             except KeyboardInterrupt:
                 sys.exit(0)
+            sys.exit(0)
         try:
             if args.merge_queue == "status":
                 r = _mq.read_status(_mq._repo_from_remote(_mq._default_run, str(Path.cwd())), args.merge_queue_sha or "")

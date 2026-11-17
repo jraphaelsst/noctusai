@@ -33,8 +33,10 @@ __all__ = [
     "RELATORIO_TEXTO_MAX",
     "ResumoFactory",
     "gerador_resumo_llm",
+    "interesse_de",
     "montar_relatorio",
     "reacao_de",
+    "temperatura_de",
 ]
 
 #: Per-field caps of the free text that reaches the owner's phone.
@@ -118,6 +120,35 @@ def reacao_de(eventos: Sequence[Any]) -> dict[str, str]:
     return out
 
 
+#: Hand-off reasons that are not a lead: the report says ``frio`` so the CRM note never reads as a hot prospect.
+_MOTIVOS_NAO_LEAD = frozenset({"parceria", "fora_do_escopo", "seguranca", "direito_titular"})
+#: A hand-off for these reasons is a hot lead by itself (Lais study A10/A11).
+_MOTIVOS_QUENTES = frozenset({"pedido_visita", "proposta"})
+#: A profile with this many known criteria is substantial: the lead told us who they are looking for.
+PERFIL_SUBSTANCIAL = 3
+INTERESSE_MAX = 5
+
+
+def temperatura_de(
+    *, motivo_codigo: str | None, gostou: Sequence[str], visita: bool, oferecidos: int, perfil: int,
+) -> str:
+    """``quente`` | ``morno`` | ``frio`` from the RECORDS (never the model's opinion). ``quente``: a visit option, a liked
+    property, a visit request or a proposal. ``morno``: properties were offered, the profile is substantial, or the
+    qualification was concluded. ``frio``: the rest, and every hand-off that is not a lead."""
+    if motivo_codigo in _MOTIVOS_NAO_LEAD:
+        return "frio"
+    if visita or gostou or motivo_codigo in _MOTIVOS_QUENTES:
+        return "quente"
+    if oferecidos or perfil >= PERFIL_SUBSTANCIAL or motivo_codigo == "qualificacao_concluida":
+        return "morno"
+    return "frio"
+
+
+def interesse_de(*, gostados: Sequence[str], visitas: Sequence[str], campanha: str | None) -> list[str]:
+    """The properties the lead showed interest in: liked, then the ones with a visit option, then the campaign one."""
+    return list(dict.fromkeys([*gostados, *visitas, *([campanha] if campanha else [])]))[:INTERESSE_MAX]
+
+
 def _valor_legivel(criterio: Any, valor: Any) -> str:
     if isinstance(valor, bool):
         return "sim" if valor else "não"
@@ -152,7 +183,7 @@ def perfil_legivel(padrao: Any, valores: Mapping[str, Any]) -> dict[str, str]:
 def _texto(
     *, nome: str | None, telefone: str | None, origem: str | None, resumo: str | None, perfil: Mapping[str, str],
     oferecidos: Sequence[Mapping[str, Any]], recomendados: Sequence[str], disponibilidade: str | None,
-    ident: Mapping[str, bool], motivo: str, proximos: str,
+    ident: Mapping[str, bool], motivo: str, proximos: str, temperatura: str = "frio", interesse: Sequence[str] = (),
 ) -> str:
     reacao_txt = {"gostou": "gostou", "nao_gostou": "não gostou", "sem_reacao": "sem reação"}
 
@@ -162,6 +193,9 @@ def _texto(
             linhas.append(f"Telefone: {telefone}")
         if origem:
             linhas.append(f"Origem: {origem}")
+        linhas.append(f"Temperatura: {temperatura}")
+        if interesse:
+            linhas.append("Imóveis de interesse: " + ", ".join(interesse))
         if resumo_cortado:
             linhas += ["", ROTULO_RESUMO_IA, resumo_cortado]
         if perfil:
@@ -200,8 +234,11 @@ def _proximos_passos(*, intencoes: Sequence[str], disponibilidade: str | None, f
     return "; ".join(passos).capitalize() + "."
 
 
-async def montar_relatorio(t: Any, *, motivo: str, perfil: Mapping[str, Any], faltando_ident: Sequence[str]) -> dict[str, Any]:
-    """The report of the turn's ``JuliaTurno`` ``t`` (see module docstring). Never raises for a generation failure."""
+async def montar_relatorio(
+    t: Any, *, motivo: str, perfil: Mapping[str, Any], faltando_ident: Sequence[str], motivo_codigo: str | None = None,
+) -> dict[str, Any]:
+    """The report of the turn's ``JuliaTurno`` ``t`` (see module docstring). Never raises for a generation failure.
+    ``motivo_codigo`` is the typed reason of the hand-off (it, with the records, decides ``temperatura``)."""
     eventos = await asyncio.to_thread(t.qual.eventos, t.org_id, t.lead_ref_id)
     reacoes = reacao_de(eventos)
     oferecidos: list[str] = []
@@ -260,12 +297,19 @@ async def montar_relatorio(t: Any, *, motivo: str, perfil: Mapping[str, Any], fa
     motivo = limpo(motivo, CAMPO_MAX)
     proximos = _proximos_passos(
         intencoes=list(perfil.get("intencoes_visita") or []), disponibilidade=disponibilidade, faltando=list(faltando_ident))
+    interesse = interesse_de(
+        gostados=gostados, visitas=[*(perfil.get("intencoes_visita") or []), *horarios], campanha=codigo_camp)
+    temperatura = temperatura_de(
+        motivo_codigo=motivo_codigo, gostou=gostados,
+        visita=bool(horarios or perfil.get("intencoes_visita")), oferecidos=len(oferecidos), perfil=len(perfil_leg))
     texto = _texto(
         nome=nome, telefone=telefone, origem=origem, resumo=resumo, perfil=perfil_leg, oferecidos=lista,
-        recomendados=recomendados, disponibilidade=disponibilidade, ident=flags, motivo=motivo, proximos=proximos)
+        recomendados=recomendados, disponibilidade=disponibilidade, ident=flags, motivo=motivo, proximos=proximos,
+        temperatura=temperatura, interesse=interesse)
     return {
         "texto": texto, "resumo_conversa": resumo, "perfil": perfil_leg, "imoveis_oferecidos": lista,
-        "imoveis_recomendados": recomendados, "disponibilidade_visita": disponibilidade,
+        "imoveis_recomendados": recomendados, "temperatura": temperatura, "imoveis_de_interesse": interesse,
+        "disponibilidade_visita": disponibilidade,
         "identificacao": {k: bool(flags.get(k)) for k in ("cpf", "rg", "email", "documento_enviado")},
         "motivo": motivo, "proximos_passos": proximos,
     }

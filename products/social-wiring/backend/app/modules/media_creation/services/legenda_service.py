@@ -19,10 +19,10 @@ from typing import Any, Awaitable, Callable, Optional
 from noctusai_lib.integrations.llm import LLMBudgetExceeded, LLMNotConfigured, resolve_api_key
 
 from app.modules.media_creation.prompts.legenda_reel import (
-    LEGENDA_REEL_SYSTEM_PROMPT,
     build_legenda_user_message,
+    system_prompt as legenda_system_prompt,
 )
-from app.modules.media_creation.saida_ia import SaidaIaFalha, validar_legenda
+from app.modules.media_creation.saida_ia import SaidaIaFalha, extrair_legenda_do_post, validar_legenda
 from app.modules.media_creation.services import geracao_jobs
 from app.modules.media_creation.services.roteiro_service import make_chat_roteiro_llm
 
@@ -96,7 +96,7 @@ class LegendaService:
         post = self._um(POSTS, "id,marca_id,headline_id,roteiro_id", post_id)
         if post is None:
             raise LegendaError(404, "Post não encontrado")
-        roteiro = self._um(ROTEIROS, "id,status,conteudo,headline_texto", post["roteiro_id"]) if post.get("roteiro_id") else None
+        roteiro = self._um(ROTEIROS, "id,status,conteudo,headline_texto,formato", post["roteiro_id"]) if post.get("roteiro_id") else None
         if roteiro is None or roteiro.get("status") != "completo" or not (roteiro.get("conteudo") or "").strip():
             raise LegendaError(422, {"code": "sem_roteiro", "detail": MSG_SEM_ROTEIRO})
         headline = roteiro.get("headline_texto") or ""
@@ -109,6 +109,7 @@ class LegendaService:
         return {
             "roteiro": roteiro["conteudo"], "headline": headline,
             "bio": perfil.get("bio") or "", "ctas": perfil.get("ctas") or "",
+            "formato": roteiro.get("formato") or "reels",
         }
 
     def _assert_cap(self) -> None:
@@ -134,12 +135,19 @@ class LegendaService:
 
     async def gerar(self, post_id: str) -> dict[str, Any]:
         ctx = self._contexto(post_id)
+        formato = ctx.pop("formato")
+        if formato == "post":
+            # The post's caption is the roteiro's own validated ``### Legenda`` (no second model call, no slot spent);
+            # a missing/invalid section falls through to the model path below.
+            propria = extrair_legenda_do_post(ctx["roteiro"])
+            if propria is not None:
+                return validar_legenda({"legenda": propria})
         self.ia_check(self.org_id)
         await self.orcamento(self.org_id)
         self._assert_cap()
         try:
             reply = await self.llm(
-                LEGENDA_REEL_SYSTEM_PROMPT, build_legenda_user_message(**ctx), self.org_id,
+                legenda_system_prompt(formato), build_legenda_user_message(**ctx), self.org_id,
             )
         except LLMNotConfigured as exc:
             raise LegendaError(503, {"code": "ia_nao_configurada", "detail": MSG_IA_NAO_CONFIGURADA}) from exc

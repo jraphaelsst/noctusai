@@ -3,8 +3,11 @@ Platform Terms deletion-on-request). Contract: ``geracao-contract.md`` 2.3, 9.3.
 
 A monitored creator who asks not to be monitored is recorded here ONCE, platform-wide (the handle is
 UNIQUE and NOT org-scoped: an opt-out binds every org). The registry is a leaf module (no import of
-the service) so the request path, the ingestion handler and the admin endpoints share one check. The
-purge itself lives next to ``purgar_perfil`` in :mod:`.biblioteca_service`.
+the service) so every door shares one check: ``POST /perfis``, ``POST /virais/por-link``, the ingestion
+handler and the Estruturas import (``esta_bloqueado``). The purge itself lives next to ``purgar_perfil`` in
+:mod:`.biblioteca_service` and, since migration 351 (the library is platform-wide), erases the platform
+profile, its videos, blobs, transcripts AND its Estruturas in one transaction, leaving only content-free events.
+A blocked handle is a 409 ``perfil_optout`` at the API.
 """
 from __future__ import annotations
 

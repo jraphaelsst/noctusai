@@ -8920,6 +8920,154 @@ def check_migration_number_refs_in_tests(
     return issues
 
 
+# ---------------------------------------------------------------------------
+# Keeper: http_call_without_timeout (2026-11-16) -- every outbound HTTP call in the toolkit carries an
+# explicit timeout. `migrate_product social-wiring --confirm` hung 45 min on a CLOSE_WAIT socket (N=2;
+# N=1 2026-11-13 held a heavy slot 80 min). CONSTRUCTION: `tools/noctus/dev/_http.py` (connect/read
+# timeouts + a TOTAL deadline + one bounded retry + telemetry); this is the backstop. AST, not regex:
+# `httpx.Client|AsyncClient|get|post|put|delete|patch|head|options|request|stream`, `requests.<verb>`,
+# `requests.Session().<verb>`, `urllib.request.urlopen` / bare `urlopen` without a non-None `timeout=`.
+# Going through `_http` is never matched. Suppress with `# noc-allow: http-timeout -- <reason>`.
+# RATCHET: `mcp/noctusai/tests/http_timeout_baseline.json` ({"files": {relpath: count}}), shrink-only.
+# KB § PATTERNS/architect/mcp-tool-conventions.md (outbound HTTP).
+# ---------------------------------------------------------------------------
+
+_HTTP_BASELINE_REL = ("mcp", "noctusai", "tests", "http_timeout_baseline.json")
+_HTTP_TOOLS_REL = ("mcp", "noctusai", "tools")
+_HTTP_VERBS = frozenset({"get", "post", "put", "delete", "patch", "head", "options", "request", "stream"})
+_HTTP_ALLOW_RE = re.compile(r"noc-allow:\s*http-timeout\s*(?:--|\u2014|-)\s*\S{8,}")
+
+
+def _http_call_kind(func: ast.expr) -> str | None:
+    """Name the unbounded-by-default HTTP entry point a call targets, else None."""
+    if isinstance(func, ast.Name):
+        return "urlopen" if func.id == "urlopen" else None
+    if not isinstance(func, ast.Attribute):
+        return None
+    attr, base = func.attr, func.value
+    dotted: list[str] = []
+    node: ast.expr = func
+    while isinstance(node, ast.Attribute):
+        dotted.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        dotted.append(node.id)
+    dotted.reverse()
+    name = ".".join(dotted)
+    if name in {"urllib.request.urlopen", "request.urlopen"} or (attr == "urlopen" and dotted[:1] == ["urllib"]):
+        return name
+    if dotted[:1] == ["httpx"] and (attr in {"Client", "AsyncClient"} or (len(dotted) == 2 and attr in _HTTP_VERBS)):
+        return name
+    if dotted[:1] == ["requests"] and len(dotted) == 2 and attr in _HTTP_VERBS:
+        return name
+    # requests.Session().get(...) -- a verb on a freshly-built Session.
+    if (attr in _HTTP_VERBS and isinstance(base, ast.Call) and isinstance(base.func, ast.Attribute)
+            and base.func.attr == "Session" and isinstance(base.func.value, ast.Name) and base.func.value.id == "requests"):
+        return "requests.Session()." + attr
+    return None
+
+
+def _http_has_timeout(call: ast.Call) -> bool:
+    for kw in call.keywords:
+        if kw.arg == "timeout":
+            return not (isinstance(kw.value, ast.Constant) and kw.value.value is None)
+    # positional timeout: urlopen(url, data, timeout)
+    return False
+
+
+def _http_scan_file(path: Path, rel: str) -> list[tuple[int, str]]:
+    """``[(lineno, target)]`` of unbounded HTTP calls in one file (suppressed ones omitted)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+        tree = ast.parse(text)
+    except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+        logger.warning("check_http_call_without_timeout: cannot parse %s: %s", rel, exc)
+        return []
+    lines = text.splitlines()
+    out: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        kind = _http_call_kind(node.func)
+        if kind is None or _http_has_timeout(node):
+            continue
+        if kind.endswith("urlopen") and len(node.args) >= 3:  # urlopen(url, data, timeout)
+            continue
+        end = getattr(node, "end_lineno", node.lineno) or node.lineno
+        if any(_HTTP_ALLOW_RE.search(lines[i]) for i in range(node.lineno - 1, min(end, len(lines)))):
+            continue
+        out.append((node.lineno, kind))
+    return out
+
+
+def _http_scan(root: Path) -> dict[str, list[tuple[int, str]]]:
+    base = root.joinpath(*_HTTP_TOOLS_REL)
+    found: dict[str, list[tuple[int, str]]] = {}
+    if not base.is_dir():
+        return found
+    for py in sorted(base.rglob("*.py")):
+        parts = set(py.relative_to(base).parts)
+        if "tests" in parts or "__pycache__" in parts or py.name == "_http.py":
+            continue
+        rel = py.relative_to(root).as_posix()
+        hits = _http_scan_file(py, rel)
+        if hits:
+            found[rel] = hits
+    return found
+
+
+def _http_load_baseline(root: Path) -> dict[str, int]:
+    try:
+        data = json.loads(root.joinpath(*_HTTP_BASELINE_REL).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): int(v) for k, v in dict(data.get("files", {})).items()}
+
+
+def refresh_http_timeout_baseline(repo_root: Path | None = None) -> dict[str, int]:
+    """Write the baseline. First run records the current offenders; afterwards it only SHRINKS
+    (min(current, recorded); fixed files drop out) -- a new offender is never ratified here."""
+    root = repo_root or REPO_ROOT
+    current = {rel: len(h) for rel, h in _http_scan(root).items()}
+    path = root.joinpath(*_HTTP_BASELINE_REL)
+    if path.exists():
+        old = _http_load_baseline(root)
+        new = {p: min(c, old[p]) for p, c in current.items() if p in old}
+    else:
+        new = current
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"files": dict(sorted(new.items()))}, indent=2) + "\n", encoding="utf-8")
+    return new
+
+
+def check_http_call_without_timeout(repo_root: Path | None = None, paths: list[str] | None = None) -> list[dict]:
+    """An outbound HTTP call under ``mcp/noctusai/tools`` must carry an explicit ``timeout=`` -- or go
+    through ``tools/noctus/dev/_http.py`` (connect/read timeouts + total deadline + bounded retry).
+    Baselined offenders tolerated until their count grows. ``paths`` narrows REPORTING. Severity high."""
+    root = repo_root or REPO_ROOT
+    baseline = _http_load_baseline(root)
+    scope = {p.replace("\\", "/") for p in paths} if paths else None
+    issues: list[dict] = []
+    for rel, hits in _http_scan(root).items():
+        if scope is not None and rel not in scope:
+            continue
+        allowed = baseline.get(rel, 0)
+        if len(hits) <= allowed:
+            continue
+        where = ", ".join(f"L{ln} {kind}" for ln, kind in hits[:6])
+        issues.append({
+            "severity": "high",
+            "file": rel,
+            "issue": (
+                f"{len(hits)} HTTP call(s) without an explicit timeout (baseline {allowed}): {where}. A call with no "
+                "bound hangs forever on a dead socket (migrate_product, 2026-11-16: 45 min). Use "
+                "tools/noctus/dev/_http.py (`urlopen_read` / `client_timeout()`), or pass `timeout=`; a justified "
+                "exception: `# noc-allow: http-timeout -- <reason>`. KB § PATTERNS/architect/mcp-tool-conventions.md."
+            ),
+        })
+    return issues
+
+
 # Metered seed LLM entry points: each records a `public.ai_usage` row whose agent_key / conversation_id come
 # ONLY from an enclosing `llm_usage_context(...)` scope (the HTTP middleware fills org/user/route, never the agent).
 _LLM_METERED_CALLS = frozenset({
@@ -19596,6 +19744,7 @@ _DETECTOR_TEST_OVERRIDES: dict[str, str] = {
     "check_storage_service_only_policy": "tests/test_storage_service_only_policy_keeper.py",
     "check_redis_client_via_seam": "tests/test_check_redis_client_via_seam.py",
     "check_migration_number_refs_in_tests": "tests/test_check_migration_number_refs_in_tests.py",
+    "check_http_call_without_timeout": "tests/test_check_http_call_without_timeout.py",
     "check_llm_prompt_from_registry": "tests/test_llm_prompt_from_registry.py",
 }
 
@@ -20388,6 +20537,7 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_upload_route_body_override())
     # 2026-10-10: migration referenced by NUMBER in a test breaks on integrate-renumber (ratchet).
     all_issues.extend(check_migration_number_refs_in_tests())
+    all_issues.extend(check_http_call_without_timeout())
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())
@@ -26759,6 +26909,28 @@ def check_waha_instances_render_sync(repo_root: Path | None = None) -> list[dict
                       "(every alias of a `send: disabled` line must be sticky in the seed) -- regenerate: "
                       "noctus.dev.waha_instance action='render' write=True. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."),
             "severity": "high", "symbol": "waha-read-only-lines-drift"})
+    from .waha_instance import DECLARED_LINES_REL, product_line_policies_json, render_declared_lines
+    spec_now = parse_instances(data_p.read_text(encoding="utf-8"))
+    dl_p = root / DECLARED_LINES_REL
+    if not dl_p.is_file() or dl_p.read_text(encoding="utf-8") != render_declared_lines(spec_now):
+        policy_issues.append({
+            "file": DECLARED_LINES_REL,
+            "issue": ("the seed's declared-lines list (name -> base_url, env names, policy) is MISSING or DIFFERENT from the "
+                      "render of waha-instances.yml -- regenerate: noctus.dev.waha_instance action='render' write=True. "
+                      "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."),
+            "severity": "high", "symbol": "waha-declared-lines-drift"})
+    prod_p = root / "deploy" / "fleet" / "docker-compose.prod.yml"
+    if prod_p.is_file():
+        prod_text = prod_p.read_text(encoding="utf-8")
+        for product in sorted({i["product"] for i in spec_now["instances"] if i.get("external")}):
+            want_pol = product_line_policies_json(spec_now, product)
+            if f"WAHA_LINE_POLICIES: '{want_pol}'" not in prod_text:
+                policy_issues.append({
+                    "file": "deploy/fleet/docker-compose.prod.yml",
+                    "issue": (f"{product}'s WAHA_LINE_POLICIES is not the render of waha-instances.yml (expected {want_pol!r}) "
+                              "-- derive it, never hand-edit (noctus.dev.waha_instance action='plan' name=<line>). "
+                              "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."),
+                    "severity": "high", "symbol": "waha-line-policies-env-drift"})
     if have == want:
         return policy_issues
     return policy_issues + [{"file": "deploy/fleet/compose.waha.yml",
@@ -27604,6 +27776,41 @@ def check_findings_ledgers(repo_root: Path | None = None) -> list[dict]:
     from tools.noctus.dev import findings_ledger
 
     return findings_ledger.check_all(repo_root or REPO_ROOT)
+
+
+FIXED_ON_DEV_BASELINE_REL = "project-history/findings-ledgers/fixed-on-dev-baseline.json"
+
+
+def check_findings_fixed_on_dev(paths: list[Path] | None = None, repo_root: Path | None = None) -> list[dict]:
+    """Keeper: a findings-ledger row marked `fixed` must name a commit that IS on origin/dev (the write path
+    `findings_ledger._gate_fixed` guarantees it; this catches a hand-edited / legacy row). Ratchet: ids listed in
+    `FIXED_ON_DEV_BASELINE_REL` are tolerated and the list only shrinks -- a baselined id that is now fine is a
+    `stale baseline` finding (remove it). Unmeasurable (no origin/dev ref, shallow clone) never fails.
+    KB § PATTERNS/common/living-findings-ledgers.md."""
+    import json as _json
+
+    from tools.noctus.dev import findings_ledger
+
+    root = repo_root or REPO_ROOT
+    bl_path = root / FIXED_ON_DEV_BASELINE_REL
+    baseline: set[str] = set(_json.loads(bl_path.read_text(encoding="utf-8")).get("ids", [])) if bl_path.exists() else set()
+    issues: list[dict] = []
+    seen: set[str] = set()
+    for name in sorted(findings_ledger.ledgers()):
+        lt = findings_ledger.get(name)
+        for v in findings_ledger.fixed_off_dev(name, root):
+            seen.add(v["id"])
+            if v["id"] in baseline:
+                continue
+            issues.append({"file": lt.path, "line": 0, "severity": "high",
+                           "issue": f"[{name}] {v['id']} ({v['scope']} {v['target']}) is marked FIXED but {v['why']}"
+                                    + (f" ({v['sha'][:9]})" if v["sha"] else "")
+                                    + ". Re-file it with `noctus.dev.findings_ledger action=update new_status=fixed` "
+                                      "(an off-dev sha is written in-progress and flips when it lands); never edit the ledger by hand."})
+    for stale in sorted(baseline - seen):
+        issues.append({"file": FIXED_ON_DEV_BASELINE_REL, "line": 0, "severity": "high",
+                       "issue": f"stale baseline entry {stale}: that row is no longer an offender -- remove it (the ratchet only shrinks)."})
+    return issues
 
 
 def check_access_tier_ledger(repo_root: Path | None = None) -> list[dict]:
@@ -28517,7 +28724,7 @@ _GH_SEAM_FILE = "mcp/noctusai/tools/noctus/dev/ci_verdict.py"
 # manual) -> same; merge_queue.py (guarded by quota_fn in watch_live; its Runner-based gh() stays) and mq_watchdog.py
 # (runs on a CI runner under GITHUB_TOKEN, a separate quota) -> keep until the Runner protocol is unified — 2026-11-16
 _GH_SEAM_BASELINE = {
-    "mcp/noctusai/tools/noctus/dev/release.py": 3,
+    "mcp/noctusai/tools/noctus/dev/release.py": 4,
     "mcp/noctusai/tools/noctus/dev/safety_pack_sync.py": 2,
     "mcp/noctusai/tools/noctus/dev/merge_queue.py": 3,
     "mcp/noctusai/tools/noctus/dev/mq_watchdog.py": 1,

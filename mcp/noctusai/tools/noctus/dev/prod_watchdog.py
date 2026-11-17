@@ -57,6 +57,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 from . import _public_edge as _edge
+from . import _http
 from . import supabase_request_budget as _budget
 
 # ── thresholds (module constants; each overridable by the env var named) ─────
@@ -323,8 +324,9 @@ def _post_json(url: str, payload: dict, headers: dict, timeout: float = 20) -> t
                                  headers={"Content-Type": "application/json",
                                           "User-Agent": _edge.BROWSER_UA, **headers})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return 200 <= resp.status < 300, f"HTTP {resp.status}"
+        resp = _http.urlopen_read(req, call_site="prod_watchdog._post_json", idempotent=False, retries=0,
+                                  read=timeout, total=timeout + 10)
+        return 200 <= resp.status < 300, f"HTTP {resp.status}"
     except urllib.error.HTTPError as exc:
         return False, f"HTTP {exc.code}"
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -606,8 +608,9 @@ def environment_protection(env: Mapping[str, str], fetch: Optional[Callable[...,
     def _default(url: str, headers: dict, timeout: float) -> tuple[int, bytes]:
         req = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.status, r.read()
+            r = _http.urlopen_read(req, call_site="prod_watchdog.environment_api", retries=0,
+                                   read=timeout, total=timeout + 10)
+            return r.status, r.body
         except urllib.error.HTTPError as exc:
             return exc.code, b""
 

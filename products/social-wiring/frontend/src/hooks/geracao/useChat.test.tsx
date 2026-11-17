@@ -3,6 +3,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { ApiError } from "@noctusai/lib";
 
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() }));
 vi.mock("@noctusai/seed/infra", () => ({ api, getAuthToken: vi.fn(async () => "tok") }));
@@ -10,8 +11,14 @@ const upload = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/useCardHub", () => ({ uploadMultipart: upload }));
 
 import {
+  fluxoAguardandoRoteiro,
+  lerErroCorpo,
+  mensagemEscolher,
   mensagemPreStream,
-  resolverViralPorCodigo,
+  perfilPendenteDoMeta,
+  useConversas,
+  useEscolherProposta,
+  useMensagens,
   useAdicionarMemoria,
   useDitadoChat,
   useEnviarMensagem,
@@ -177,14 +184,6 @@ describe("endpoints", () => {
     await result.current.mutateAsync({ marca_id: "m1", texto: "x" });
     expect(api.post).toHaveBeenCalledWith("/api/media-creation/headlines", { marca_id: "m1", texto: "x", favoritar: true });
   });
-
-  it("resolverViralPorCodigo devolve null quando o código não está na biblioteca", async () => {
-    api.get.mockResolvedValue({ data: { items: [], total: 0, page: 1, filtro_automatico: false } });
-    expect(await resolverViralPorCodigo("m1", 99)).toBeNull();
-    expect(api.get.mock.calls[0][0]).toContain("codigo=99");
-    api.get.mockResolvedValue({ data: { items: [{ id: "v", codigo: 99 }], total: 1, page: 1, filtro_automatico: false } });
-    expect((await resolverViralPorCodigo("m1", 99))?.id).toBe("v");
-  });
 });
 
 describe("useDitadoChat", () => {
@@ -210,5 +209,116 @@ describe("useDitadoChat", () => {
     act(() => result.current.enviar(new Blob(["a"]), "audio/webm"));
     await waitFor(() => expect(result.current.erro).toBe("Áudio vazio"));
     expect(onTexto).not.toHaveBeenCalled();
+  });
+});
+
+describe("unified chat", () => {
+  it("conversas: sem agente na URL e na chave", async () => {
+    api.get.mockResolvedValue({ data: { items: [], tem_mais: false } });
+    renderHook(() => useConversas("m1"), { wrapper });
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    expect(api.get.mock.calls[0][0]).toBe("/api/media-creation/chat/conversas?marca_id=m1&limit=15&offset=0");
+  });
+
+  it("lerErroCorpo lê o formato plano {code, detail} e o aninhado {error:{code,message}}", () => {
+    expect(lerErroCorpo({ code: "limite_de_mensagens", detail: "Limite" })).toEqual({ code: "limite_de_mensagens", message: "Limite" });
+    expect(lerErroCorpo({ error: { code: "FORBIDDEN", message: "Sem acesso" } })).toEqual({ code: "FORBIDDEN", message: "Sem acesso" });
+    expect(lerErroCorpo(null)).toEqual({ code: null, message: null });
+  });
+
+  it("409 pré-stream no formato plano também vira a mensagem pt-BR", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 409, json: async () => ({ code: "stream_em_andamento", detail: "x" }) }));
+    const { result } = renderHook(() => useEnviarMensagem(), { wrapper });
+    await act(async () => {
+      await result.current.enviar("c1", "oi", []);
+    });
+    expect(result.current.estado.erro).toMatch(/Aguarde/);
+  });
+
+  it("meta com perfil_ambiguo guarda os candidatos e a mensagem para reenviar; o próximo envio limpa", async () => {
+    const resolucao = {
+      resolvidos: [],
+      ambiguos: [{ trecho: "elias", candidatos: [{ perfil_id: "p1", handle: "a", nome: null }] }],
+      nao_encontrados: [],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(sseResponse([{ meta: { modo_estrutura: "perfil_ambiguo", resolucao_perfis: resolucao } }, { delta: "Qual?" }, { done: { mensagem_id: "a1", propostas: [] } }])));
+    const { result } = renderHook(() => useEnviarMensagem(), { wrapper });
+    await act(async () => {
+      await result.current.enviar("c1", "estilo do elias", [{ tipo: "pesquisa", id: "r1" }]);
+    });
+    expect(result.current.perfilPendente).toEqual({
+      modo: "perfil_ambiguo",
+      grupos: [{ trecho: "elias", candidatos: [{ perfil_id: "p1", handle: "a", nome: null }] }],
+      conteudo: "estilo do elias",
+      referencias: [{ tipo: "pesquisa", id: "r1" }],
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sseResponse([{ done: { mensagem_id: "a2" } }])));
+    await act(async () => {
+      await result.current.enviar("c1", "outra", []);
+    });
+    expect(result.current.perfilPendente).toBeNull();
+  });
+
+  it("perfilPendenteDoMeta: não_encontrados usa as sugestões; modos resolvidos não pedem nada", () => {
+    const r = { resolvidos: [], ambiguos: [], nao_encontrados: [{ trecho: "x", sugestoes: [{ perfil_id: "p", handle: "h", nome: null }] }] };
+    expect(perfilPendenteDoMeta({ modo_estrutura: "perfil_nao_encontrado", resolucao_perfis: r }, "m", [])?.grupos[0].candidatos).toHaveLength(1);
+    expect(perfilPendenteDoMeta({ modo_estrutura: "mencoes", resolucao_perfis: r }, "m", [])).toBeNull();
+    expect(perfilPendenteDoMeta({ modo_estrutura: "perfil_ambiguo" }, "m", [])).toBeNull();
+  });
+
+  it("fluxoAguardandoRoteiro: só quando o fluxo anda e ainda não há roteiro", () => {
+    const pag = (fluxo: unknown) => ({ pages: [{ items: [{ fluxo }], tem_mais: false }] });
+    expect(fluxoAguardandoRoteiro(pag({ etapa: "roteiro_gerando", roteiro: null }) as never)).toBe(true);
+    expect(fluxoAguardandoRoteiro(pag({ etapa: "roteiro_gerando", roteiro: { id: "r" } }) as never)).toBe(false);
+    expect(fluxoAguardandoRoteiro(pag({ etapa: "roteiro_pronto", roteiro: null }) as never)).toBe(false);
+    expect(fluxoAguardandoRoteiro(undefined)).toBe(false);
+  });
+
+  it("mensagemEscolher: cada recusa tem texto pt-BR", () => {
+    const err = (status: number, body: unknown) => new ApiError(status, "x", body);
+    expect(mensagemEscolher(err(429, { code: "limite_diario_roteiros", detail: "d" }))).toMatch(/limite diário/);
+    expect(mensagemEscolher(err(404, { code: "proposta_nao_encontrada", detail: "d" }))).toMatch(/não foi encontrada/);
+    expect(mensagemEscolher(err(503, { error: { code: "ia_nao_configurada", message: "m" } }))).toMatch(/não está configurada/);
+    expect(mensagemEscolher(new Error("boom"))).toMatch(/Não foi possível criar o roteiro/);
+  });
+
+  it("escolher: POST só com proposta_id; marca a proposta e anexa a mensagem roteiro_gerado (sem duplicar)", async () => {
+    const msgs = { pages: [{ items: [{ id: "a", propostas: [{ id: "p1", status: "proposta", headline_id: null }], fluxo: null }], tem_mais: false }], pageParams: [null] };
+    qc.setQueryData(["sw", "geracao", "chat", "mensagens", "c1"], msgs);
+    const fluxo = { proposta_id: "p1", etapa: "roteiro_gerando", headline: { id: "h1", texto: "t" }, roteiro: null, post: null, estruturas: [], legenda: "pendente", erro_codigo: null };
+    api.post.mockResolvedValue({ data: { proposta: { id: "p1", status: "escolhida", headline_id: "h1" }, fluxo, mensagem_id: "m9", ja_existia: false, em_andamento: false } });
+    const { result } = renderHook(() => useEscolherProposta(), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({ conversaId: "c1", proposta_id: "p1" });
+    });
+    expect(api.post).toHaveBeenCalledWith("/api/media-creation/chat/conversas/c1/escolher", { proposta_id: "p1" });
+    const itens = (qc.getQueryData(["sw", "geracao", "chat", "mensagens", "c1"]) as typeof msgs).pages[0].items as any[];
+    expect(itens.map((i) => i.id)).toEqual(["a", "m9"]);
+    expect(itens[0].propostas[0]).toMatchObject({ status: "escolhida", headline_id: "h1" });
+    expect(itens[1]).toMatchObject({ tipo: "roteiro_gerado", role: "assistant", fluxo });
+    await act(async () => {
+      await result.current.mutateAsync({ conversaId: "c1", proposta_id: "p1" });
+    });
+    expect(((qc.getQueryData(["sw", "geracao", "chat", "mensagens", "c1"]) as typeof msgs).pages[0].items as any[]).filter((i) => i.id === "m9")).toHaveLength(1);
+  });
+
+  it("escolher: erro não altera o cache e propaga para o chamador mostrar a recusa", async () => {
+    qc.setQueryData(["sw", "geracao", "chat", "mensagens", "c1"], { pages: [{ items: [], tem_mais: false }], pageParams: [null] });
+    api.post.mockRejectedValue(new ApiError(429, "limite", { code: "limite_diario_roteiros", detail: "d" }));
+    const { result } = renderHook(() => useEscolherProposta(), { wrapper });
+    await act(async () => {
+      await expect(result.current.mutateAsync({ conversaId: "c1", proposta_id: "p1" })).rejects.toBeInstanceOf(ApiError);
+    });
+    expect((qc.getQueryData(["sw", "geracao", "chat", "mensagens", "c1"]) as any).pages[0].items).toEqual([]);
+  });
+
+  it("mensagens: não carrega as mensagens de outra conversa enquanto a nova busca roda", async () => {
+    api.get.mockResolvedValueOnce({ data: { items: [{ id: "x" }], tem_mais: false } });
+    const { result, rerender } = renderHook(({ id }) => useMensagens(id), { wrapper, initialProps: { id: "c1" } });
+    await waitFor(() => expect(result.current.mensagens).toHaveLength(1));
+    api.get.mockReturnValue(new Promise(() => undefined));
+    rerender({ id: "c2" });
+    expect(result.current.mensagens).toHaveLength(0);
+    expect(result.current.showSkeleton).toBe(true);
   });
 });

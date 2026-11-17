@@ -163,14 +163,14 @@ Guardian spec, council 09340534 (dispositions A: the guardian is a service leaf 
 3. **Ask once, if needed.** An inbox `needs_info` record to that ROLE, one batched question, TTL about one CI cycle (~25 min). Method: `noc-questionnaire` peer mode.
 4. **The branch steward fixes it** on its own branch and files `request` again (the `deliverable` preflight runs again at filing). The guardian never patches the branch, never opens a rescue branch and never dispatches an engineer for it.
 5. **Two strikes.** After 2 ejections the delivery parks as `blocked_on_steward` until its steward re-files a fix the preflight accepts.
-6. **Orphan.** If the steward's session is gone, or silent past the TTL, the delivery stays `blocked_on_steward`. The guardian alerts the owner, and the OWNER names a new branch steward, who adopts the branch (role registry `to_session_id=`). The guardian never adopts it itself.
-7. **Hand off and end** (owner 2026-11-16; supersedes the old "end only when LANDED/DEPLOYED" predicate). A requester does NOT wait for its deliveries to land. It ends as soon as every delivery is **filed and accepted** by the outbox (`queued_for_steward`, `pending_ci` or `queued`; never `needs_resync`/refused, which it fixes and re-files first). Close-out, in order:
+6. **Orphan.** If the steward's session is gone, or silent past the TTL, the delivery stays `blocked_on_steward`. A delivery HANDED to the steward (§ 7a.7, § 7c) is not an orphan: the steward adopts it and finishes it itself (owner, 2026-11-17). Only a delivery whose session vanished WITHOUT a handoff goes to the owner, who may name a branch steward (role registry `to_session_id=`) or leave it to the dev steward.
+7. **Hand off and end** (owner 2026-11-16; supersedes the old "end only when LANDED/DEPLOYED" predicate). **Two triggers:** the session finished its main task, OR the owner asks it to hand off ("hand it to the steward"), which may leave the work UNFINISHED. The handoff message follows the § 7c report structure either way. A requester does NOT wait for its deliveries to land. It ends as soon as every delivery is **filed and accepted** by the outbox (`queued_for_steward`, `pending_ci` or `queued`; never `needs_resync`/refused, which it fixes and re-files first). Close-out, in order:
    1. **File everything.** `request` per branch, landing order in `notes`; fix any `needs_resync` item that is fixable now (derived files, kb-counts) and re-file.
    2. **One handoff message to the steward** (`SendMessage`; the outbox stays the record): each slug + head + verdict ref, the landing order, migrations and whether the owner's prod consent is already in the steward's transcript, which CI runs are still in flight, and that the requester is closing.
    3. **Resume note** in the project memory (the named destination for a RED run, an ejection, or post-landing cleanup): final heads, run ids, what is owed after landing (worktree cleanup, installs).
    4. **Stop your own watchers.** `session_end_sweep` clean: no poll loop, monitor or subagent outlives the session; the steward watches CI from here (one check per run, polls ≥ 60 s).
    5. **Worktrees of filed-but-unlanded branches stay**; they are cleaned after landing by the next session on the line or the mole sweep.
-   **The steward owns the delivery from the handoff:** it checks the CI runs itself, enqueues in the given order, lands, runs the prod cut, and reports `LANDED <sha>` / `EJECTED <reason>` / `DEPLOYED` to the requester if it is live, otherwise to the owner. A red run or an ejection after the requester left follows the orphan rule (6): `blocked_on_steward` + owner alert; the fix belongs to the line named in the resume note, never to the guardian. **Why:** a session waiting for landing holds context, memory and poll loops on an 8 GB laptop shared by up to 7 sessions, while the steward already watches the queue. Tool support (not live): `release_steward action=mine` reporting `can_end` = every request accepted + no own background process (build 5).
+   **The steward owns the delivery from the handoff:** it checks the CI runs itself, enqueues in the given order, lands, runs the prod cut, and reports `LANDED <sha>` / `EJECTED <reason>` / `DEPLOYED` to the requester if it is live, otherwise to the owner. A red run or an ejection after the requester left is the steward's to fix (§ 7c step 3): it merges `dev` in, resolves, re-verifies and re-enqueues, without asking the owner or messaging another session. **Why:** a session waiting for landing holds context, memory and poll loops on an 8 GB laptop shared by up to 7 sessions, while the steward already watches the queue. Tool support (not live): `release_steward action=mine` reporting `can_end` = every request accepted + no own background process (build 5).
 
 ## 8 · Reboot / multi-steward (2026-11-09/10)
 
@@ -253,7 +253,7 @@ meet at one read-only contract, so the guardian never has to touch a branch.
 |---|---|---|
 | Does | queues (`enqueue` = pure push), `landed`, merges into `dev`, deploys, watches the queue, re-runs `deliverable` before every enqueue | dispatches its team; makes the branch meet the contract (merge `dev` in, renumber, regenerate derived files, run the scoped suites); `request`; fixes its own ejections; stays alive until landed |
 | Post-landing tail | runs `landed` only for deliveries it owns or when asked; gets the ownership skips (`skipped_owned`) on anyone else's worktree | **owns it**: once its work is on `origin/dev` and its worktree is clean, the branch steward (requester / pointer session / worktree-claim holder) runs `task_branch landed` itself - pointer, primary FF, worktree cleanup. The guard allows exactly that and nothing else of the steward class |
-| **NEVER** | edits, rebases, merges into or renumbers a delivery branch; runs a mutating git command in a worktree it does not own; writes feature code or steward tooling; arbitrates content; deploys to prod without consent the owner typed in its own session; removes a worktree/branch it does not own (`skipped_owned`) | enqueues, deploys, touches `mq/*`, `main` or the VPS, or uses the override |
+| **NEVER** | edits, merges into or renumbers a delivery branch NOT handed to it (a handed one it owns, § 7c); rebases or force-pushes any branch; commits steward tooling while holding the lease (the keeper refuses; never routed around); arbitrates content; deploys to prod without consent the owner typed in its own session; removes a worktree/branch it does not own (`skipped_owned`) | enqueues, deploys, touches `mq/*`, `main` or the VPS, or uses the override |
 
 ### Delivery contract: `deliverable(branch)`
 
@@ -434,10 +434,56 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
   stale-guardian takeover that may only resume or roll back; one plan hash per deploy window) are the ratified spec and are
   tracked as follow-ups; this section records what is built.
 
+## 7b · One watcher per GitHub run: handed to the steward means the requester stops watching (owner, 2026-11-16)
+
+Every session shares ONE GitHub REST quota (5000/h per account). On 2026-11-16 it ran dry at ~20:50Z: every `gh` call in every session returned 403 for ~25 min, the merge-queue watch included. Part of the drain was the same run watched twice, by the requester and by the steward.
+
+1. **Hand off with run ids.** A requester files the branch (`release_steward action=request`) or messages the steward with slug, head and `gh-run:<id>` for every run in flight.
+2. **Stop your watchers.** Once the steward confirms it watches those runs, the requester stops its own watchers on them (`TaskStop` the background `gh` waits, stop Monitors). It does not keep a second watcher "to be sure". The steward reports red/LANDED/EJECTED back, so a second watcher only spends quota.
+3. **The steward watches in one feed.** It polls every handed run from ONE watcher, at most one `gh run view <id> --json status,conclusion` per run per ≥120s. It never uses `gh run watch` (its default 3s tick drained the quota; keeper `check_gh_calls_via_seam`). Prefer the seam's conditional GET: an unchanged run is a free 304.
+4. **Requester exceptions.** It reads a run once when it needs the log of a red run the steward reported, or when its own engineer is still iterating on that branch and the steward was told to hold it. In that case the engineer watches it and the steward does not.
+
+Telemetry: `remote_run` rows carry `api_calls` + `rate_remaining_*` (`ci_verdict` seam). `gh api rate_limit` is free; check it before arming any watcher. Composes with § 7a.7 (handoff-and-end): a requester that has handed everything off ends its session.
+
+## 7c · The handoff report: one structure, finished or not (owner, 2026-11-16)
+
+The owner closes a session the moment it says "the steward will handle the rest", so the handoff message must carry everything the steward needs to finish the work without the requester's context. It also has to stay short, because the steward holds many of them at once. One message, these blocks in this order, one line per item, and a block left out means "none":
+
+```
+HANDOFF <session name> -> steward · state: FINISHED | UNFINISHED · closing: yes|no
+DELIVERIES   <slug> <branch> <head sha> <worktree path> · verdict <gh-run:id|ci-parity:id> tested <sha> · <green|running|red|none>
+ORDER        <slug> before <slug> (why) · independent: <slugs>
+PROD         migrations <numbers> · owner consent typed in steward transcript: yes|no|n/a · deploy products <list> · post-land <e.g. /mcp reconnect>
+NEXT STEPS   (UNFINISHED only) <step> · spec <file or 1-line> · done when <acceptance check>
+STATE        what works now, what is half-done, the last thing tried and its result
+ON RED       fix line: <worktree> · known traps <one line each>
+CLEANUP      worktrees to remove after landing · memory files to absorb or delete · remote branches (owner deletes)
+OWNER ASKS   open decisions only the owner can make
+RESUME NOTE  <memory file> (the long form; the message is the index into it)
+```
+
+**The steward's side**, in order:
+1. **Ack in one line**: name the runs it now watches. That ack is the requester's cue to stop its own watchers (§ 7b) and end.
+2. **Register every run in the ONE feed** (§ 7b). No new watcher per handoff.
+3. **The steward finishes handed work itself — finished or not (owner, 2026-11-17).** It adopts the handed worktree and does the NEXT STEPS / ON RED work directly or through its own subagents: merge `dev` in, resolve conflicts, regenerate derived files, fix the red, re-verify, re-enqueue. It does NOT ask the owner for permission to finish, and does NOT send the work to another session: every extra message pollutes a context. **One fence stays:** `check_guardian_tool_authorship` refuses a commit of NEW steward tooling by the lease holder (a merge of `dev` passes). On that refusal the steward stops that one item and lists it in its batched report; it never spoofs an identity, drops the lease or uses a carve-out to pass. The owner is told only: OWNER ASKS, prod consent the steward does not hold, and fence refusals.
+4. **Close the loop after landing**: `landed`, prod cut if PROD says so, then CLEANUP. Remove the worktree (salvage-before-delete), absorb the resume note into its durable home and delete it (`noc-archive-absorb`), and list remote branches for the owner. Nothing handed off leaves an old worktree or a stale memory file behind.
+5. **Report** LANDED / EJECTED / DEPLOYED per slug to the owner, batched, not per event.
+
 ## 8c · Lessons that recur (the full append list lives in skill `noc-steward` § Lessons that recur)
 
 - **A known false alarm with live evidence never re-blocks a cut.** `predeploy_check` may BLOCK on a check whose output the steward has already proven to be a harness or tooling defect (2026-11-15: `schema_drift` reported `missing_table:monica.*` for `nosnolimiar` - live had 25 tables in `nosnolimiar`, 0 in `monica`; two prod cuts stalled on re-measuring it). Then: record the live evidence (the query and its rows) in the shift memory, file the tooling fix on its own branch, and ship the cut. Do not keep re-measuring. Only a DIFFERENT output re-opens it; "still red" does not.
 - **A `schema_drift` that lists ONLY tables created by migrations pending in this same cut is expected pre-state, not a block.** Predeploy runs before the cut's migrations are applied, so exactly those tables are absent live. Compare the `missing_table` list against the pending migrations (`migrate_product` dry-run, `earlier_pending`); anything outside that set is real drift and blocks.
+
+## 7b · One watcher per GitHub run: handed to the steward means the requester stops watching (owner, 2026-11-16)
+
+Every session shares ONE GitHub REST quota (5000/h per account). On 2026-11-16 it ran dry at ~20:50Z: every `gh` call in every session returned 403 for ~25 min, the merge-queue watch included. Part of the drain was the same run watched twice, by the requester and by the steward.
+
+1. **Hand off with run ids.** A requester files the branch (`release_steward action=request`) or messages the steward with slug, head and `gh-run:<id>` for every run in flight.
+2. **Stop your watchers.** Once the steward confirms it watches those runs, the requester stops its own watchers on them (`TaskStop` the background `gh` waits, stop Monitors). It does not keep a second watcher "to be sure". The steward reports red/LANDED/EJECTED back, so a second watcher only spends quota.
+3. **The steward watches in one feed** (`steward_feed`, built into `--merge-queue watch`). A handoff is ONE registry append: `cli.py --steward-feed register --feed-slug S --feed-run ID --feed-sha FULLSHA [--feed-after SLUG]` (`--steward-feed pending` lists them). The same watch polls every registered run through the `ci_verdict` seam (conditional GET, never `gh run watch`; keeper `check_gh_calls_via_seam`), at most once per run per 120s (300s while `rate_remaining` < 500), and prints ONE greppable line per event: `RUN <slug> <run> -> success|failure|cancelled <sha> rate_remaining=<n>` (a red adds `jobs=` and `first=` from one log fetch), `ENQ <slug> -> queued|refused:<why>|needs_resync:<item>` (the lease is heartbeated right before each enqueue), `LANDED-RECORDED <slug> <dev sha>` (the feed runs `task_branch landed` itself), `MQ-SUPERSEDED` (a `conflict` ejection whose content is already on dev: `git cherry` or content-equal), plus `MQ-LEFT` / `MQ-BATCH` / `MQ-WATCH-ERROR`. `--merge-queue-idle-exit` prints `MQ-IDLE` and exits 0 when the queue is empty and nothing is registered-pending. Registry: `~/.noctus/steward-handed-runs.ndjson` (append-only; a `done` row closes a slug).
+4. **Requester exceptions.** It reads a run once when it needs the log of a red run the steward reported, or when its own engineer is still iterating on that branch and the steward was told to hold it. In that case the engineer watches it and the steward does not.
+
+Telemetry: `remote_run` rows carry `api_calls` + `rate_remaining_*` (`ci_verdict` seam). `gh api rate_limit` is free; check it before arming any watcher. Composes with § 7a.7 (handoff-and-end): a requester that has handed everything off ends its session.
 
 ## 9 · Related
 

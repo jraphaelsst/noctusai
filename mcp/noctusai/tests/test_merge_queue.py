@@ -1024,3 +1024,17 @@ def test_parallel_candidates_that_would_not_recompose_cleanly_stay_queued(world)
     res = q.drain(max_rounds=1)
     assert len(res.landed) == 1 and not res.ejected  # the other is neither landed untested nor ejected
     assert len(queue_refs(world)) == 1
+
+
+def test_watch_sleeps_while_the_github_quota_is_below_the_floor_and_reads_nothing():
+    """quota_fn > 0: the watcher announces MQ-QUOTA, sleeps that long and does NOT read the queue; 0 resumes polling."""
+    from tools.noctus.dev import merge_queue as mq
+    pauses, lines, sleeps, reads = [300.0, 0.0], [], [], []
+
+    def list_fn():
+        reads.append(1)
+        return {"entries": []}
+
+    mq.watch(list_fn, lambda sha: {}, interval=60, sleep=sleeps.append, emit=lines.append, max_polls=2,
+             quota_fn=lambda: pauses.pop(0))
+    assert sleeps[0] == 300.0 and any(l.startswith("MQ-QUOTA") for l in lines) and len(reads) == 1

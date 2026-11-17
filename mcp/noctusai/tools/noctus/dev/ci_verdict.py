@@ -8,13 +8,11 @@ sha, status/conclusion) - a string a caller typed proves nothing. The GitHub acc
 Real shells `gh`, Fake for tests, `make_client` factory); no module function is ever patched.
 
 QUOTA BY CONSTRUCTION (2026-11-16: the account's REST core quota, 5000/h, hit 0 and every session got 403): this class is
-THE GitHub-call seam for repo code. It counts calls (`api_calls`), reads the free `gh api rate_limit` before a dispatch
-or a watch (`ensure_quota`, floor `QUOTA_FLOOR`), turns a 403 rate-limit into `RateLimited` (never a retry storm), and
-waits for a run with `wait_for_run` instead of `gh run watch`: that command re-fetches the run, its jobs and per-job
-annotations every interval (>= 2 + jobs REST calls per tick, per watcher). `wait_for_run` polls ONE endpoint
-(`actions/runs/<id>`) with an ETag (`If-None-Match`; a 304 is not counted against the primary limit) every 60s,
-backing off 60 -> 120 -> 300s. Keeper `check_gh_calls_via_seam` refuses `gh run watch` anywhere and a new `["gh", ...]`
-argv outside this file (shrink-only baseline for the named legacy sites).
+THE GitHub-call seam for repo code. ONE quota read - `rate_remaining()` (the free `gh api rate_limit`) - and everything layers
+on it: `ensure_quota(client)` raises `RateLimited` below `QUOTA_FLOOR`; every `gh` call is counted (`api_calls`) and a 403/429
+rate-limit becomes `RateLimited` (never a retry storm); `watch` polls ONE endpoint with an ETag (`run_cached`, a 304 is not
+counted by GitHub) every 60s (backoff 60 -> 120 -> 300s) instead of `gh run watch`, which re-fetches run + jobs + annotations
+every tick. Keeper `check_gh_calls_via_seam` refuses `gh run watch` anywhere and a new `["gh", ...]` argv outside this file.
 
 KB: PATTERNS/devops/release-steward.md (item 5) · PATTERNS/devops/hardware-admission-budget.md (GitHub quota).
 """
@@ -41,7 +39,7 @@ class CiVerdictError(RuntimeError):
 
 
 QUOTA_FLOOR = 500          # below this many remaining core calls: degrade loudly, spend nothing
-WATCH_BACKOFF_S = (60.0, 120.0, 300.0)  # poll gaps for wait_for_run; the last value repeats
+WATCH_BACKOFF_S = (60.0, 120.0, 300.0)  # poll gaps for watch; the last value repeats
 _RATE_PAT = re.compile(r"rate limit|secondary rate|abuse detection|HTTP 429", re.I)
 
 
@@ -72,18 +70,29 @@ def parse_rate(out: str) -> dict[str, float] | None:
     return {"remaining": int(core["remaining"]), "limit": int(core.get("limit") or 0), "reset": float(core.get("reset") or 0)}
 
 
-def quota_pause_s(run: Callable[..., tuple[int, str, str]], *, floor: int = QUOTA_FLOOR, now: Callable[[], float] = time.time,
-                  cwd: str | None = None) -> tuple[float, dict[str, float] | None]:
-    """(seconds to wait, rate) for a long-running watcher that shells `gh` through `run(args, cwd=)`: 0 when the free
-    `gh api rate_limit` shows `floor`+ calls left (or cannot be read: an unreadable meter never blocks work)."""
+def ensure_quota(client: Any, floor: int = QUOTA_FLOOR, now: Callable[[], float] = time.time) -> int:
+    """The guard layered on the ONE quota read (`client.rate_remaining()`): returns the remaining calls, raises `RateLimited`
+    (naming the reset time) below `floor`, and `CiVerdictError` when the meter cannot be read (the caller decides)."""
+    rem = client.rate_remaining()
+    if rem is None:
+        raise CiVerdictError("cannot read the GitHub quota (gh api rate_limit)")
+    if rem < floor:
+        reset = getattr(client, "rate_reset", None)
+        raise RateLimited(f"GitHub API quota is {rem} (floor {floor}); it resets at {reset_clock(reset)}"
+                          + (f" (in {int(max(0.0, reset - now()))}s)" if reset else ""), rem, reset)
+    return rem
+
+
+def quota_pause_s(client: Any, *, floor: int = QUOTA_FLOOR, now: Callable[[], float] = time.time) -> float:
+    """Seconds a long-running watcher should wait: 0 when `floor`+ calls remain or the meter is unreadable (an unreadable
+    meter never blocks work)."""
     try:
-        rc, out, _e = run(["gh", "api", "rate_limit"], cwd=cwd)
-    except Exception:  # noqa: BLE001 - an unreadable meter must not stop a watcher
-        return 0.0, None
-    rate = parse_rate(out) if rc == 0 else None
-    if rate is None or rate["remaining"] >= floor:
-        return 0.0, rate
-    return max(0.0, rate["reset"] - now()) + 5.0, rate
+        ensure_quota(client, floor, now)
+    except RateLimited as exc:
+        return max(0.0, (exc.reset_epoch or now()) - now()) + 5.0
+    except CiVerdictError:
+        pass
+    return 0.0
 
 
 class GithubClient(Protocol):
@@ -112,49 +121,19 @@ class RealGithubClient:
                  repo: str | None = None) -> None:
         """`repo` pins owner/name (else derived from `git remote get-url origin`)."""
         self.cwd, self._sh, self._repo = cwd, runner, repo
-        self.api_calls = 0                  # every `gh` call this client made (rate_limit reads counted in free_calls)
-        self.free_calls = 0
-        self.rate_remaining: int | None = None  # last quota reading (None until `rate()` ran)
-        self.rate_reset: float | None = None
-        self._etags: dict[str, tuple[str, Any]] = {}
+        self.api_calls = 0                      # every counted `gh` call this client made (the free rate_limit read is not)
+        self.rate_reset: float | None = None    # reset epoch from the last `rate_remaining()` read
 
     def _exec(self, args: list[str], timeout: int = 60, *, free: bool = False) -> tuple[int, str, str]:
         """THE choke point for `gh`: counts the call and turns a quota refusal into `RateLimited` (never a retry loop)."""
-        if free:
-            self.free_calls += 1
-        else:
+        if not free:
             self.api_calls += 1
         rc, out, err = self._sh(["gh", *args], self.cwd, timeout) if timeout != 60 else self._sh(["gh", *args], self.cwd)
         if rc != 0 and not free and _RATE_PAT.search(f"{err}\n{out}"):
-            rate = self._rate_quiet()
-            reset = rate["reset"] if rate else None
-            raise RateLimited(f"GitHub API quota exhausted ({(err or out).strip()[:120]}); it resets at {reset_clock(reset)}",
-                              rate["remaining"] if rate else 0, reset)
+            rem = self.rate_remaining()
+            raise RateLimited(f"GitHub API quota exhausted ({(err or out).strip()[:120]}); it resets at {reset_clock(self.rate_reset)}",
+                              rem if rem is not None else 0, self.rate_reset)
         return rc, out, err
-
-    def _rate_quiet(self) -> dict[str, float] | None:
-        try:
-            return self.rate()
-        except CiVerdictError:
-            return None
-
-    def rate(self) -> dict[str, float]:
-        """The core quota via `gh api rate_limit` (free: it is not counted against the limit)."""
-        rc, out, err = self._exec(["api", "rate_limit"], free=True)
-        rate = parse_rate(out) if rc == 0 else None
-        if rate is None:
-            raise CiVerdictError(f"cannot read the GitHub quota (gh api rate_limit rc={rc}): {(err or out).strip()[-200:]}")
-        self.rate_remaining, self.rate_reset = int(rate["remaining"]), rate["reset"]
-        return rate
-
-    def ensure_quota(self, floor: int = QUOTA_FLOOR, now: Callable[[], float] = time.time) -> dict[str, float]:
-        """Raise `RateLimited` (naming the quota and the reset time) when fewer than `floor` core calls remain."""
-        rate = self.rate()
-        if rate["remaining"] < floor:
-            raise RateLimited(f"GitHub API quota is {int(rate['remaining'])}/{int(rate['limit'])} (floor {floor}); it resets at "
-                              f"{reset_clock(rate['reset'])} (in {int(max(0.0, rate['reset'] - now()))}s)",
-                              int(rate["remaining"]), rate["reset"])
-        return rate
 
     def _gh(self, *args: str) -> Any:
         rc, out, err = self._exec(list(args))
@@ -162,27 +141,6 @@ class RealGithubClient:
             raise CiVerdictError(f"gh {' '.join(args[:2])} failed (rc={rc}): {(err or out).strip()[-300:]} "
                                  "(is `gh auth status` green?)")
         return json.loads(out) if out.strip() else None
-
-    def run_conditional(self, run_id: str) -> tuple[dict[str, Any] | None, bool]:
-        """(run, changed). Sends the remembered ETag as If-None-Match: an unchanged run is a 304 (not counted by GitHub)
-        and returns (the cached run, False). Headers come from `gh api -i`."""
-        path = f"repos/{self.repo()}/actions/runs/{run_id}"
-        cached = self._etags.get(path)
-        args = ["api", "-i", path] + (["-H", f"If-None-Match: {cached[0]}"] if cached else [])
-        rc, out, err = self._exec(args)
-        head, _sep, body = out.replace("\r\n", "\n").partition("\n\n")
-        status_line = head.splitlines()[0] if head.startswith("HTTP/") else ""
-        code = int(status_line.split()[1]) if len(status_line.split()) > 1 and status_line.split()[1].isdigit() else 0
-        if code == 304 and cached:
-            return cached[1], False
-        if rc != 0 or code >= 400 or not code:
-            raise CiVerdictError(f"gh api runs/{run_id} failed (rc={rc}, http={code}): {(err or out).strip()[-300:]} "
-                                 "(is `gh auth status` green?)")
-        run = json.loads(body) if body.strip() else None
-        etag = next((ln.split(":", 1)[1].strip() for ln in head.splitlines() if ln.lower().startswith("etag:")), "")
-        if etag:
-            self._etags[path] = (etag, run)
-        return run, True
 
     def repo(self) -> str:
         if self._repo is None:
@@ -209,7 +167,8 @@ class RealGithubClient:
         return list((d or {}).get("workflow_runs") or [])
 
     def dispatch(self, branch: str, base: str | None) -> None:
-        args = ["workflow", "run", WORKFLOW_FILE, "--ref", branch, "-R", self.repo()]
+        # scope=changed (2026-11-17): a branch verdict is scoped to its diff against base/merge-base.
+        args = ["workflow", "run", WORKFLOW_FILE, "--ref", branch, "-R", self.repo(), "-f", "scope=changed"]
         if base:
             args += ["-f", f"base={base}"]
         rc, out, err = self._exec(args)
@@ -248,12 +207,12 @@ class RealGithubClient:
               sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
               on_quota: str = "sleep") -> bool:
         """Wait for a run to complete; False when `timeout_s` elapsed first. NEVER `gh run watch` (see module docstring):
-        ONE conditional GET on the run every 60s (backoff 60/120/300s). A quota refusal sleeps until the reset, loudly
-        (long-lived watchers), or with `on_quota="raise"` re-raises `RateLimited` so the caller can fall back (remote_test)."""
+        ONE ETag-conditional GET (`run_cached`) every 60s, backoff 60/120/300s. A quota refusal sleeps until the reset,
+        loudly (long-lived watchers), or with `on_quota="raise"` re-raises `RateLimited` so the caller can fall back."""
         t0, tick, last = clock(), 0, None
         while True:
             try:
-                run, _changed = self.run_conditional(run_id)
+                run = self.run_cached(run_id)
             except RateLimited as exc:
                 if on_quota == "raise":
                     raise
@@ -276,6 +235,42 @@ class RealGithubClient:
                 return False
             sleep(gap)
 
+    def run_cached(self, run_id: str) -> dict[str, Any] | None:
+        """`run` as a CONDITIONAL GET (If-None-Match): an unchanged run answers 304, which does not spend core quota
+        (the steward feed polls every handed run every >=120s; 2026-11-16 the shared 5000/h ran dry)."""
+        etags = self.__dict__.setdefault("_etags", {})
+        key = str(run_id)
+        cmd = ["api", "-i", f"repos/{self.repo()}/actions/runs/{run_id}"]
+        if key in etags:
+            cmd[2:2] = ["-H", f"If-None-Match: {etags[key][0]}"]
+        rc, out, err = self._exec(cmd)
+        if "304" in (err or "")[:200] + out[:40] and key in etags:
+            return etags[key][1]
+        if rc != 0:
+            raise CiVerdictError(f"gh api runs/{run_id} failed (rc={rc}): {(err or out).strip()[-300:]}")
+        head, _sep, body = out.partition("\r\n\r\n") if "\r\n\r\n" in out else out.partition("\n\n")
+        run = json.loads(body) if body.strip() else None
+        m = re.search(r"(?im)^etag:\s*(\S+)", head)
+        if m and run is not None:
+            etags[key] = (m.group(1), run)
+        return run
+
+    def rate_remaining(self) -> int | None:
+        """Core API quota left (the `rate_limit` endpoint is free); None when unreadable."""
+        rc, out, _e = self._exec(["api", "rate_limit"], free=True)
+        rate = parse_rate(out) if rc == 0 else None
+        if rate is None:
+            return None
+        self.rate_reset = rate["reset"]
+        return int(rate["remaining"])
+
+    def failed_log(self, run_id: str) -> str:
+        """The failing steps' log, ONE fetch (`gh run view --log-failed`): `job<TAB>step<TAB>line` rows."""
+        rc, out, err = self._exec(["run", "view", str(run_id), "--log-failed", "-R", self.repo()], timeout=300)
+        if rc != 0:
+            raise CiVerdictError(f"gh run view --log-failed failed (rc={rc}): {(err or out).strip()[-300:]}")
+        return out
+
     def run_log(self, run_id: str) -> str:
         rc, out, err = self._exec(["run", "view", str(run_id), "--log", "-R", self.repo()], timeout=300)
         if rc != 0:
@@ -293,24 +288,12 @@ class FakeGithubClient:
     dispatched: list[tuple[str, str | None]] = field(default_factory=list)
     next_id: int = 1000
     fail: str | None = None
+    rate: int | None = 4000
+    logs: dict[str, str] = field(default_factory=dict)
+    polls: list[str] = field(default_factory=list)
     api_calls: int = 0
-    rate_remaining: int | None = 5000
     rate_reset: float | None = None
-    quota: tuple[int, float] | None = None  # (remaining, reset_epoch) the fake meter reports; None = plenty
     watched: list[str] = field(default_factory=list)
-
-    def rate(self) -> dict[str, float]:
-        rem, reset = self.quota if self.quota else (5000, 0.0)
-        self.rate_remaining, self.rate_reset = rem, reset
-        return {"remaining": rem, "limit": 5000, "reset": reset}
-
-    def ensure_quota(self, floor: int = QUOTA_FLOOR, now: Callable[[], float] = time.time) -> dict[str, float]:
-        rate = self.rate()
-        if rate["remaining"] < floor:
-            raise RateLimited(f"GitHub API quota is {int(rate['remaining'])}/5000 (floor {floor}); it resets at "
-                              f"{reset_clock(rate['reset'])}", int(rate["remaining"]), rate["reset"])
-        return rate
-
     watch_quota_error: RateLimited | None = None
 
     def watch(self, run_id: str, out: Callable[[str], None], timeout_s: float, **_kw: Any) -> bool:
@@ -341,6 +324,17 @@ class FakeGithubClient:
         self.repo()
         self.api_calls += 1
         return [r for r in self.runs.values() if r.get("head_sha") == head]
+
+    def run_cached(self, run_id: str) -> dict[str, Any] | None:
+        self.polls.append(str(run_id))
+        return self.run(run_id)
+
+    def rate_remaining(self) -> int | None:
+        return self.rate
+
+    def failed_log(self, run_id: str) -> str:
+        self.repo()
+        return self.logs.get(str(run_id), "")
 
     def dispatch(self, branch: str, base: str | None) -> None:
         self.repo()
@@ -432,8 +426,14 @@ def resolve_for_filing(branch: str, head: str, client: GithubClient | None = Non
     """find_existing else dispatch, then judge. {ok, ref, state, detail, dispatched}; ok False carries `error`."""
     try:
         client = client or make_client()
-        ensure = getattr(client, "ensure_quota", None)
-        start = int(ensure()["remaining"]) if ensure else None
+        start: int | None = None
+        if hasattr(client, "rate_remaining"):
+            try:
+                start = ensure_quota(client)
+            except RateLimited:
+                raise
+            except CiVerdictError:
+                start = None  # an unreadable meter never blocks a filing
         ref, dispatched = find_existing(head, client), False
         if ref is None:
             ref, dispatched = dispatch(branch, head, client, **kw), True
@@ -441,5 +441,4 @@ def resolve_for_filing(branch: str, head: str, client: GithubClient | None = Non
         return {"ok": False, "error": f"GitHub CI verdict unavailable: {exc}"}
     state, detail = judge(ref, head, client)
     return {"ok": True, "ref": ref, "state": state, "detail": detail, "dispatched": dispatched,
-            "api_calls": getattr(client, "api_calls", None), "rate_remaining_start": start,
-            "rate_remaining": getattr(client, "rate_remaining", None)}
+            "api_calls": getattr(client, "api_calls", None), "rate_remaining_start": start}

@@ -238,6 +238,7 @@ from . import _catalog_scope_guard
 from . import ledger_checksums as _ledger_checksums
 from . import release_steward as _steward
 from . import toolkit_freshness as _toolkit_freshness
+from . import _http
 from . import _transient_retry
 from . import migration_directives as _directives
 
@@ -621,16 +622,33 @@ class SupabaseMgmtExecutor:
     endpoint, same auth header, same response parsing.
     """
 
-    def __init__(self, *, access_token: str, project_ref: str, retry_ambiguous: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        access_token: str,
+        project_ref: str,
+        retry_ambiguous: bool = True,
+        base_url: str | None = None,
+        total_deadline: float | None = None,
+        read_timeout: float | None = None,
+        sleep: Callable[[float], Any] | None = None,
+    ) -> None:
         self._token = access_token
         self._ref = project_ref
-        # Transport-level retries (paced 1s/3s/9s) live HERE -- the one chokepoint every
+        # Injection seams (tests point base_url at a local server): the whole-call bound lives in
+        # `_http.urlopen_read` -- a per-socket timeout alone let a CLOSE_WAIT socket hang a confirm
+        # run for 45 min (2026-11-16).
+        self._base = base_url or _SUPABASE_MGMT_BASE
+        self._total_deadline = total_deadline
+        self._read_timeout = read_timeout
+        self._sleep = sleep
+        # Transport-level retry (ONE, `_http.HTTP_POLICY`) lives HERE -- the one chokepoint every
         # Management-API toolkit tool shares. retry_ambiguous=False: a request that may
         # have executed (read timeout / reset / 5xx) is not re-sent (non-idempotent writes).
         self._retry_ambiguous = retry_ambiguous
 
     def execute(self, sql: str) -> dict[str, Any]:
-        url = f"{_SUPABASE_MGMT_BASE}/v1/projects/{self._ref}/database/query"
+        url = f"{self._base}/v1/projects/{self._ref}/database/query"
         body = json.dumps({"query": sql}).encode("utf-8")
         headers = {
             "Authorization": f"Bearer {self._token}",
@@ -638,12 +656,12 @@ class SupabaseMgmtExecutor:
             "User-Agent": _UA,
         }
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        def _once() -> bytes:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                return resp.read()
-
         try:
-            raw = _transient_retry.call_with_transient_retry(_once, retry_ambiguous=self._retry_ambiguous)
+            raw = _http.urlopen_read(
+                req, call_site="migrate_product.SupabaseMgmtExecutor.execute",
+                idempotent=self._retry_ambiguous, read=self._read_timeout, total=self._total_deadline,
+                **({"sleep": self._sleep} if self._sleep else {}),
+            ).body
             rows = json.loads(raw) if raw else []
             if not isinstance(rows, list):
                 rows = [rows] if isinstance(rows, dict) else []
@@ -1094,6 +1112,32 @@ def _record_migration_sql(schema: str, filename: str, checksum: str) -> str:
     )
 
 
+def _record_deadline_s() -> float:
+    """Wall-clock bound for the in-repo applied-record persist (git/task_branch; env-overridable)."""
+    try:
+        v = float(os.environ.get("NOC_MIGRATE_RECORD_DEADLINE_S", "") or 600)
+    except ValueError:
+        return 600.0
+    return v if v > 0 else 600.0
+
+
+def _record_command(product: str, files: dict[str, str]) -> str:
+    """The exact CLI/MCP invocation that re-records ``migrations-applied.json`` for these rows."""
+    payload = json.dumps(dict(sorted(files.items())), separators=(",", ":"))
+    return f"noctus.dev.record_applied_migrations product={product} files={payload}"
+
+
+def _record_with_verification(executor: "SqlExecutor", schema: str, filename: str, checksum: str) -> bool:
+    """INSERT the ledger row; when it does not confirm, READ the ledger before deciding (the response
+    may have been lost after the write), then retry the idempotent INSERT once. True iff the row is there."""
+    if executor.execute(_record_migration_sql(schema, filename, checksum)).get("ok"):
+        return True
+    seen = executor.execute(_fetch_applied_sql(schema))
+    if seen.get("ok") and any(r.get("filename") == filename for r in (seen.get("rows") or [])):
+        return True
+    return bool(executor.execute(_record_migration_sql(schema, filename, checksum)).get("ok"))
+
+
 def _schema_migrations_exists_sql(schema: str) -> str:
     """SELECT probe: does ``<schema>.schema_migrations`` exist at all?
 
@@ -1158,7 +1202,7 @@ def _apply_migration_sql(
 
 _ERROR_STATUSES = frozenset({
     "error", "not_configured", "refused_stale_tree", _catalog_scope_guard.REFUSED_STATUS,
-    "checksum_drift", "checksum_inconclusive", "refused_out_of_order",
+    "checksum_drift", "checksum_inconclusive", "refused_out_of_order", "ledger_record_failed",
 })
 
 
@@ -1258,7 +1302,9 @@ def migrate_product(
     Returns a dict with keys::
 
         status ('dry_run' | 'applied' | 'up_to_date' | 'not_configured' |
-                'error' | 'refused_stale_tree' | 'refused_catalog_scope'),
+                'error' | 'refused_stale_tree' | 'refused_catalog_scope' |
+                'ledger_record_failed' (DDL applied, schema_migrations row unconfirmed:
+                carries ledger_unrecorded + reason + record_command, exit 1)),
         exit_code (0 on every non-error status, 1 otherwise),
         product, schema, schema_source, project_ref, applied,
         skipped_already_applied, pending, error, stale_tree,
@@ -1655,6 +1701,7 @@ def migrate_product(
         file_directives[mig_file.name] = (d, stmts)
 
     newly_applied: list[str] = []
+    ledger_failed: list[str] = []  # applied, but the schema_migrations row is unconfirmed
     unguarded_by_file: dict[str, list[int]] = {}  # no-tx statements that ran with NO lock_timeout
     for mig_file, sql, csum in pending_sql:
         logger.info("migrate_product: applying %s …", mig_file.name)
@@ -1674,19 +1721,20 @@ def migrate_product(
                 skipped_already_applied=skipped,
                 pending=[f.name for f in pending if f.name not in newly_applied],
                 unguarded_statements=unguarded_by_file,
-                error=f"migration {mig_file.name} failed: " + (result.get("error") or "unknown"),
+                error=f"migration {mig_file.name} failed: " + (result.get("error") or "unknown")
+                + (" -- transport failure: the response was lost, so the DDL MAY have applied. Do NOT re-send "
+                   "blindly: read the live state first (dry-run migrate_product, SQL on the objects), then decide."
+                   if result.get("transient") else ""),
             )
 
-        # Record the applied migration
-        record_sql = _record_migration_sql(derived_schema, mig_file.name, csum)
-        rec_result = executor.execute(record_sql)
-        if not rec_result.get("ok"):
+        # Record the applied migration. The INSERT is idempotent (ON CONFLICT DO NOTHING), so a lost
+        # response is settled by a READ-then-retry, never assumed either way.
+        if not _record_with_verification(executor, derived_schema, mig_file.name, csum):
             logger.warning(
-                "migrate_product: migration %s applied but tracking INSERT failed: %s",
+                "migrate_product: migration %s applied but the ledger record could not be confirmed",
                 mig_file.name,
-                rec_result.get("error"),
             )
-            # Non-fatal: the DDL ran; warn and continue.
+            ledger_failed.append(mig_file.name)
 
         newly_applied.append(mig_file.name)
         logger.info("migrate_product: applied %s ✓", mig_file.name)
@@ -1710,13 +1758,41 @@ def migrate_product(
         else:
             if record_persister is None:
                 from .record_applied_migrations import record_applied_migrations as record_persister
-            rec = record_persister(product, rec_files)
+            rec = _http.run_with_deadline(
+                lambda: record_persister(product, rec_files), _record_deadline_s(),
+                call_site="migrate_product.record_persister", host="git/task_branch")
         applied_record["path"] = rec.get("path")
         applied_record["status"] = rec.get("status")
         applied_record["error"] = rec.get("error")
     except Exception as exc:  # noqa: BLE001 -- surfaced in the result, DDL already applied
         applied_record["error"] = f"{type(exc).__name__}: {exc}"
         logger.warning("migrate_product: could not persist applied record: %s", exc)
+
+    if ledger_failed:
+        # The DDL ran, the ledger did not confirm: typed result + non-zero exit + the exact re-record
+        # command. Never a silent "applied" (2026-11-16: a hung run left the ledger unrecorded).
+        return _result(
+            "ledger_record_failed",
+            applied=newly_applied,
+            unguarded_statements=unguarded_by_file,
+            skipped_already_applied=skipped,
+            checksum_verification=checksum_verification,
+            applied_record=applied_record,
+            ledger_unrecorded=ledger_failed,
+            reason=(
+                f"{len(ledger_failed)} migration(s) applied but their {derived_schema}.schema_migrations row "
+                f"could not be confirmed ({', '.join(ledger_failed)}); the DDL is live."
+            ),
+            record_command=_record_command(product, rec_files),
+            error=(
+                "ledger_record_failed: migrations are APPLIED but not recorded. Re-run `migrate_product "
+                f"{product} --confirm` (the ledger INSERT is idempotent; applied files are skipped once "
+                "recorded) or re-record the in-repo applied file: " + _record_command(product, rec_files)
+            ),
+        )
+
+    if applied_record.get("error"):
+        applied_record["record_command"] = _record_command(product, rec_files)
 
     return _result(
         "applied",

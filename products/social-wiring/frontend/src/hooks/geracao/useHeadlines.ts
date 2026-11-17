@@ -139,6 +139,8 @@ export type LoteCreate =
       referencia?: ReferenciaLote;
       somente_pesquisa: boolean;
       criatividade: Criatividade;
+      /** Estruturas contract §6.6: restricts the pool to these `ativa` Estruturas (≤ 12; the UI sends ≤ 3, one formato). */
+      estrutura_ids?: string[];
       /** Batch generated from inside an Esteira post (contract §5.3 `LoteParams.post_id`). */
       post_id?: string;
     }
@@ -150,6 +152,7 @@ export type LoteCreate =
       tom?: number;
       referencia?: Exclude<ReferenciaLote, { tipo: "gatilho" }>;
       criatividade: Criatividade;
+      estrutura_ids?: string[];
       post_id?: string;
     };
 

@@ -1,100 +1,118 @@
 /**
- * Chat (P2, `/media-creation/chat`) — contract §7.2. Two agents (HEADLINE /
- * ROTEIRO) over a streaming conversation with @-references, memory, a context
- * meter and mic dictation. Loading: `showSkeleton` / `isRefreshing`, never
- * `.isLoading`. Deep links: `?c=` selects a conversation, `?cite_viral=` and
- * `?cite_perfil=` pre-attach a reference. Documents upload is phase 2 (not shown).
+ * Chat (`/media-creation/chat`) — Estruturas contract §11.3. ONE unified conversation (no
+ * headline/roteiro agents) over a streaming chat with @-references, memory, a context meter and
+ * mic dictation. Assistant answers carry server-parsed propostas (cards); choosing one writes the
+ * roteiro right away in the same conversation (`roteiro_gerado` message). Loading:
+ * `showSkeleton` / `isRefreshing`, never `.isLoading`. Deep links: `?conversa=` (legacy `?c=`)
+ * selects a conversation, `?estrutura=<id>` pre-attaches an Estrutura, `?cite_viral=` and
+ * `?cite_perfil=` pre-attach a reference.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Brain, BookMarked } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Composer, MENSAGEM_MAX } from "@/components/geracao/chat/Composer";
 import { ConversasRail } from "@/components/geracao/chat/ConversasRail";
 import { MemoriaModal } from "@/components/geracao/chat/MemoriaModal";
 import { MencaoPicker } from "@/components/geracao/chat/MencaoPicker";
 import { MensagemItem } from "@/components/geracao/chat/MensagemItem";
-import { ViralModal } from "@/components/geracao/biblioteca/ViralModal";
-import { RoteiroAvancadoModal } from "@/components/geracao/roteiro/RoteiroAvancadoModal";
+import { PerfilPendenteChips } from "@/components/geracao/chat/PerfilPendenteChips";
 import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
 import {
   MAX_REFERENCIAS,
-  resolverViralPorCodigo,
+  mensagemEscolher,
   useApagarConversa,
   useContextoChat,
   useConversas,
   useCriarConversa,
   useDitadoChat,
   useEnviarMensagem,
+  useEscolherProposta,
   useMensagens,
   useRenomearConversa,
-  useSalvarHeadline,
 } from "@/hooks/geracao/useChat";
 import { usePerfisMonitorados } from "@/hooks/geracao/useBiblioteca";
+import { PaginaCabecalho, usePaginaPadding } from "@/components/geracao/PaginaCabecalho";
 import { useMarcaPesquisa } from "@/hooks/useMarcaPesquisa";
 import { useMarcas } from "@/hooks/useMarcas";
-import type { Agente, Mencao } from "@/types/geracao";
+import type { Mencao } from "@/types/geracao";
 
 const msg = (e: unknown, fallback: string) =>
   e instanceof Error && e.message ? e.message.replace(/^\[\d+\]\s*/, "") : fallback;
 
 export default function Chat() {
+  const padding = usePaginaPadding();
   const [params, setParams] = useSearchParams();
   const marcasQ = useMarcas();
   const marcas = marcasQ.data ?? [];
   const { marcaId, escolherMarca } = useMarcaPesquisa(marcas);
 
-  const [agente, setAgente] = useState<Agente>("headline");
-  const conversaId = params.get("c");
+  // `?conversa=` is the contract's deep link; `?c=` is the legacy one (still opens).
+  const conversaId = params.get("conversa") ?? params.get("c");
   const setConversa = (id: string | null) =>
     setParams(
       (p) => {
         const n = new URLSearchParams(p);
-        if (id) n.set("c", id);
-        else n.delete("c");
+        n.delete("c");
+        if (id) n.set("conversa", id);
+        else n.delete("conversa");
         return n;
       },
       { replace: true },
     );
 
-  const conversasQ = useConversas(marcaId, agente);
+  const conversasQ = useConversas(marcaId);
   const mensagensQ = useMensagens(conversaId);
   const contextoQ = useContextoChat(conversaId);
   const criarConversa = useCriarConversa();
   const renomear = useRenomearConversa();
   const apagar = useApagarConversa();
-  const salvarHeadline = useSalvarHeadline();
-  const { estado, enviar, parar } = useEnviarMensagem();
+  const escolher = useEscolherProposta();
+  const { estado, enviar, parar, perfilPendente, limparPerfilPendente } = useEnviarMensagem();
   const perfisQ = usePerfisMonitorados();
 
   const [texto, setTexto] = useState("");
   const [referencias, setReferencias] = useState<Mencao[]>([]);
   const [mencoesAberto, setMencoesAberto] = useState(false);
   const [memoriaAberta, setMemoriaAberta] = useState(false);
-  const [viralId, setViralId] = useState<string | null>(null);
-  const [roteiro, setRoteiro] = useState<{ id?: string; texto: string } | null>(null);
-  const [salvos, setSalvos] = useState<Map<string, string>>(new Map());
   const fimRef = useRef<HTMLDivElement | null>(null);
 
   const ditado = useDitadoChat(marcaId, (t) => setTexto((atual) => (atual.trim() ? `${atual.trimEnd()} ${t}` : t).slice(0, MENSAGEM_MAX)));
 
-  // Conversations belong to (marca, agente): drop the selection when either changes.
-  const chaveEscopo = `${marcaId ?? ""}:${agente}`;
-  const escopoAnterior = useRef(chaveEscopo);
+  // Conversations belong to a marca: switching marca drops the selection. The first resolution
+  // (null -> marca) is not a switch — it must not discard a `?conversa=` deep link.
+  const marcaAnterior = useRef(marcaId);
   useEffect(() => {
-    if (escopoAnterior.current !== chaveEscopo) {
-      escopoAnterior.current = chaveEscopo;
+    const anterior = marcaAnterior.current;
+    marcaAnterior.current = marcaId;
+    if (anterior && anterior !== marcaId) {
       setConversa(null);
       setReferencias([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chaveEscopo]);
+  }, [marcaId]);
+
+  // A profile-choice prompt belongs to the conversation it came from.
+  useEffect(() => {
+    limparPerfilPendente();
+  }, [conversaId, limparPerfilPendente]);
 
   // Deep links: pre-attach once, then clean the URL.
+  const estruturaParam = params.get("estrutura");
+  useEffect(() => {
+    if (estruturaParam) {
+      setReferencias((r) =>
+        r.some((x) => x.tipo === "estrutura" && x.id === estruturaParam)
+          ? r
+          : [...r, { tipo: "estrutura", id: estruturaParam, rotulo: "Estrutura escolhida", detalhe: null }],
+      );
+      setParams((p) => { const n = new URLSearchParams(p); n.delete("estrutura"); return n; }, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [estruturaParam]);
   const citeViral = params.get("cite_viral");
   const citePerfil = params.get("cite_perfil");
   useEffect(() => {
@@ -134,7 +152,6 @@ export default function Chat() {
     fimRef.current?.scrollIntoView?.({ block: "end" });
   }, [mensagens.length, estado.texto, estado.usuario]);
 
-  const codigosPermitidos = estado.codigosPermitidos;
   const contextoChars = estado.contextoChars ?? contextoQ.data?.contexto_chars ?? null;
   const semMarca = !marcaId && !marcasQ.isPending;
   const ocupado = estado.ativo || criarConversa.isPending;
@@ -145,7 +162,7 @@ export default function Chat() {
     let id = conversaId;
     if (!id) {
       try {
-        const c = await criarConversa.mutateAsync({ marca_id: marcaId, agente, titulo: conteudo.slice(0, 60) });
+        const c = await criarConversa.mutateAsync({ marca_id: marcaId, titulo: conteudo.slice(0, 60) });
         id = c.id;
         setConversa(c.id);
       } catch (e) {
@@ -164,72 +181,44 @@ export default function Chat() {
     }
   }
 
-  async function abrirEstrutura(codigo: number) {
-    if (!marcaId) return;
+  /** Click on a proposta (or "Tentar de novo" on a failed flow): the roteiro is written right away. */
+  async function onEscolher(propostaId: string) {
+    if (!conversaId || escolher.isPending) return;
     try {
-      const v = await resolverViralPorCodigo(marcaId, codigo);
-      if (v) setViralId(v.id);
-      else toast.error(`A estrutura #${codigo} não está na sua Biblioteca.`);
+      const r = await escolher.mutateAsync({ conversaId, proposta_id: propostaId });
+      if (r.ja_existia) toast.info(r.em_andamento ? "Este roteiro já está sendo criado." : "Este roteiro já foi criado.");
     } catch (e) {
-      toast.error(msg(e, "Não foi possível abrir a estrutura."));
+      toast.error(mensagemEscolher(e));
     }
   }
 
-  async function salvar(textoHeadline: string): Promise<string | null> {
-    const existente = salvos.get(textoHeadline);
-    if (existente) return existente;
-    if (!marcaId) return null;
-    try {
-      const h = await salvarHeadline.mutateAsync({ marca_id: marcaId, texto: textoHeadline });
-      setSalvos((m) => new Map(m).set(textoHeadline, h.id));
-      toast.success("Headline salva nos favoritos.");
-      return h.id;
-    } catch (e) {
-      toast.error(msg(e, "Não foi possível salvar a headline."));
-      return null;
-    }
+  /** The user picked the profile a name meant: the same message goes out again with it attached. */
+  async function onEscolherPerfil(perfilId: string) {
+    if (!perfilPendente || !conversaId || ocupado) return;
+    const refs = [...perfilPendente.referencias, { tipo: "biblioteca" as const, id: `perfil:${perfilId}` }].slice(-MAX_REFERENCIAS);
+    const ok = await enviar(conversaId, perfilPendente.conteudo, refs);
+    if (!ok) toast.error("Não foi possível reenviar a mensagem com o perfil escolhido.");
   }
 
-  async function criarRoteiro(textoHeadline: string, editavel: boolean) {
-    // "a partir desta headline" links the roteiro to a saved headline; the
-    // editable variant opens the modal with free text the user can rewrite.
-    if (editavel) {
-      setRoteiro({ texto: textoHeadline });
-      return;
-    }
-    const id = await salvar(textoHeadline);
-    setRoteiro(id ? { id, texto: textoHeadline } : null);
-  }
-
-  const salvosSet = useMemo(() => new Set(salvos.keys()), [salvos]);
+  const escolhendoId = escolher.isPending && escolher.variables && "proposta_id" in escolher.variables ? escolher.variables.proposta_id : null;
   const erroMensagens = mensagensQ.isError && !mensagensQ.data;
 
   return (
-    <div className="flex flex-col gap-4 p-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Criar Headlines e Roteiros</h1>
-          <p className="text-sm text-muted-foreground">Converse com a IA para gerar headlines e roteiros com a sua voz.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
-          <Button asChild variant="outline" size="sm">
-            <Link to="/media-creation/cerebro">
-              <Brain className="mr-1 h-4 w-4" /> Segundo cérebro
-            </Link>
-          </Button>
-          <Button type="button" variant="outline" size="sm" disabled={!marcaId} onClick={() => setMemoriaAberta(true)}>
-            <BookMarked className="mr-1 h-4 w-4" /> Memória
-          </Button>
-        </div>
-      </header>
-
-      <Tabs value={agente} onValueChange={(v) => setAgente(v as Agente)}>
-        <TabsList aria-label="Agente">
-          <TabsTrigger value="headline">HEADLINE</TabsTrigger>
-          <TabsTrigger value="roteiro">ROTEIRO</TabsTrigger>
-        </TabsList>
-      </Tabs>
+    <div className={`flex flex-col gap-4 ${padding}`}>
+      <PaginaCabecalho
+        titulo="Roteiro"
+        descricao="Converse com a IA: ela propõe headlines a partir das estruturas da Biblioteca e, ao escolher uma, escreve o roteiro."
+      >
+        <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
+        <Button asChild variant="outline" size="sm">
+          <Link to="/media-creation/cerebro">
+            <Brain className="mr-1 h-4 w-4" /> Segundo cérebro
+          </Link>
+        </Button>
+        <Button type="button" variant="outline" size="sm" disabled={!marcaId} onClick={() => setMemoriaAberta(true)}>
+          <BookMarked className="mr-1 h-4 w-4" /> Memória
+        </Button>
+      </PaginaCabecalho>
 
       {semMarca ? (
         <p className="text-sm text-muted-foreground">Cadastre uma marca para conversar com a IA.</p>
@@ -301,9 +290,8 @@ export default function Chat() {
                   )}
                   {mensagens.length === 0 && !estado.usuario && (
                     <p className="m-auto max-w-md text-center text-sm text-muted-foreground">
-                      {agente === "headline"
-                        ? "Peça headlines: por exemplo, “me dê 10 headlines sobre o meu tema, baseadas em @um perfil da Biblioteca”."
-                        : "Peça um roteiro: cole uma headline ou mencione uma pesquisa ou um cérebro."}
+                      Peça headlines: por exemplo, “me dê 10 headlines sobre o meu tema, no estilo de @um perfil da Biblioteca”.
+                      Escolha uma e eu escrevo o roteiro aqui mesmo.
                     </p>
                   )}
                   {mensagens.map((m) => (
@@ -311,42 +299,33 @@ export default function Chat() {
                       key={m.id}
                       role={m.role}
                       conteudo={m.conteudo}
-                      agente={agente}
+                      tipo={m.tipo}
+                      propostas={m.propostas}
+                      fluxo={m.fluxo}
                       referencias={m.referencias}
                       status={m.status}
                       truncada={m.truncada}
-                      salvos={salvosSet}
-                      salvando={salvarHeadline.isPending}
-                      onAbrirEstrutura={(c) => void abrirEstrutura(c)}
-                      onSalvar={(t) => void salvar(t)}
-                      onCriarRoteiro={(t, ed) => void criarRoteiro(t, ed)}
+                      escolhendoId={escolhendoId}
+                      onEscolher={(id) => void onEscolher(id)}
                     />
                   ))}
                   {estado.usuario && (
-                    <MensagemItem
-                      role="user"
-                      conteudo={estado.usuario}
-                      agente={agente}
-                      salvos={salvosSet}
-                      salvando={false}
-                      onAbrirEstrutura={() => undefined}
-                      onSalvar={() => undefined}
-                      onCriarRoteiro={() => undefined}
-                    />
+                    <MensagemItem role="user" conteudo={estado.usuario} />
                   )}
                   {estado.ativo && (
                     <MensagemItem
                       role="assistant"
                       conteudo={estado.texto}
-                      agente={agente}
                       streaming
                       truncada={estado.truncada}
-                      codigosPermitidos={codigosPermitidos}
-                      salvos={salvosSet}
-                      salvando={false}
-                      onAbrirEstrutura={(c) => void abrirEstrutura(c)}
-                      onSalvar={() => undefined}
-                      onCriarRoteiro={() => undefined}
+                    />
+                  )}
+                  {perfilPendente && !estado.ativo && (
+                    <PerfilPendenteChips
+                      pendente={perfilPendente}
+                      desabilitado={ocupado}
+                      onEscolher={(id) => void onEscolherPerfil(id)}
+                      onDispensar={limparPerfilPendente}
                     />
                   )}
                   {estado.erro && (
@@ -387,14 +366,6 @@ export default function Chat() {
         onEscolher={(m) => setReferencias((l) => (l.length >= MAX_REFERENCIAS ? l : [...l, m]))}
       />
       <MemoriaModal open={memoriaAberta} onOpenChange={setMemoriaAberta} marcaId={marcaId} />
-      <ViralModal open={!!viralId} onOpenChange={(o) => !o && setViralId(null)} marcaId={marcaId} viralId={viralId} />
-      <RoteiroAvancadoModal
-        open={!!roteiro}
-        onOpenChange={(o) => !o && setRoteiro(null)}
-        marcaId={marcaId}
-        headlineInicial={roteiro}
-        onCriado={() => toast.success("Roteiro criado. Acompanhe em Roteiros.")}
-      />
     </div>
   );
 }

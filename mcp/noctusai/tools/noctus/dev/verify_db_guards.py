@@ -12724,6 +12724,777 @@ _SW_342_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — social_wiring Estruturas library + block-type catalog (migration 350, M1 of
+# estruturas-contract.md section 3.1). Self-provisioning: every probe builds its OWN org / marca / perfil / video /
+# Estrutura (direct INSERTs as the probe owner, through the same guards) inside the rolled-back transaction, so no
+# prod row is borrowed. `statements` is the write under test; the LAST one must be the refused (or sanctioned) one.
+# ---------------------------------------------------------------------------
+
+_SW_350_MIGRATION = "350_cs_estruturas.sql"
+
+
+def _sw350_probe(
+    *, probe_id: str, guard_name: str, statements: str, permitted_msg: str, rationale: str,
+    kind: str = "write_refusal", fragment: str | None = None, after_ok: str = "",
+) -> GuardProbe:
+    """Probe on a migration-350 guard. ``kind='write_refusal'``: ``statements`` must be refused by ``guard_name``
+    (``fragment`` defaults to it, matched against the error text -- a constraint / trigger / function name).
+    ``kind='write_allowed'``: ``statements`` is a SANCTIONED write (an FK action on the append-only usos): success
+    is the pass; ``after_ok`` is a SQL block that re-checks the resulting state and RAISEs ``NOC_PROBE:blocked:``
+    when it is wrong."""
+    fragment_lit = _sql_lit(fragment or guard_name)
+    pass_branch = (
+        f"    RAISE EXCEPTION 'NOC_PROBE:permitted: {_sql_lit(permitted_msg)} - the guard did not fire';"
+        if kind == "write_refusal"
+        else f"{after_ok}\n    RAISE EXCEPTION 'NOC_PROBE:allowed: {_sql_lit(permitted_msg)}';"
+    )
+    ok_marker, bad_marker = (
+        ("NOC_PROBE:permitted:", "refused") if kind == "write_refusal" else ("NOC_PROBE:allowed:", "blocked")
+    )
+    return GuardProbe(
+        id=probe_id, product="social-wiring", schema=_SW_SCHEMA, guard_name=guard_name, kind=kind,
+        migrations=(_SW_350_MIGRATION,), rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org uuid; v_marca uuid; v_perfil uuid; v_viral uuid; v_tipo uuid; v_est uuid; v_bloco uuid;
+  v_he uuid; v_ro uuid; v_ev uuid; v_tev uuid; v_uso uuid;
+BEGIN
+  IF to_regclass('{_SW_SCHEMA}.cs_estruturas') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:pending: {_SW_SCHEMA}.cs_estruturas does not exist (migration 350 not applied)';
+  END IF;
+{_probe_own_org_sql('v_org', marca_var='v_marca', marca_slug='noc-probe-est')}  INSERT INTO {_SW_SCHEMA}.cs_perfis_monitorados (org_id, handle) VALUES (v_org, 'noc.probe.est') RETURNING id INTO v_perfil;
+  INSERT INTO {_SW_SCHEMA}.cs_virais (org_id, perfil_id, ig_media_id) VALUES (v_org, v_perfil, 'noc-probe-est') RETURNING id INTO v_viral;
+  SELECT id INTO v_tipo FROM {_SW_SCHEMA}.cs_estrutura_tipos_bloco WHERE nome = 'Outro';
+  IF v_tipo IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: the system block type "Outro" is missing from {_SW_SCHEMA}.cs_estrutura_tipos_bloco';
+  END IF;
+  INSERT INTO {_SW_SCHEMA}.cs_estruturas (perfil_id, viral_id, formula_headline, formato, objetivos, status, origem)
+  VALUES (v_perfil, v_viral, 'noc probe', 'reels', ARRAY['alcance']::text[], 'ativa', 'manual') RETURNING id INTO v_est;
+  INSERT INTO {_SW_SCHEMA}.cs_estrutura_blocos (estrutura_id, ordem, tipo_id, nome) VALUES (v_est, 1, v_tipo, 'noc probe') RETURNING id INTO v_bloco;
+  INSERT INTO {_SW_SCHEMA}.cs_estrutura_eventos (estrutura_id, tipo, ator_tipo, versao) VALUES (v_est, 'criada', 'admin', 1) RETURNING id INTO v_ev;
+  INSERT INTO {_SW_SCHEMA}.cs_estrutura_tipo_eventos (tipo_id, tipo) VALUES (v_tipo, 'editado') RETURNING id INTO v_tev;
+  INSERT INTO {_SW_SCHEMA}.cs_headlines (org_id, marca_id, texto) VALUES (v_org, v_marca, 'noc probe') RETURNING id INTO v_he;
+  INSERT INTO {_SW_SCHEMA}.cs_roteiros (org_id, marca_id, nome, headline_texto) VALUES (v_org, v_marca, 'noc probe', 'noc probe') RETURNING id INTO v_ro;
+  INSERT INTO {_SW_SCHEMA}.cs_estrutura_usos (org_id, marca_id, estrutura_id, contexto, papel, ordem, headline_id, roteiro_id)
+  VALUES (v_org, v_marca, v_est, 'chat', 'principal', 1, v_he, v_ro) RETURNING id INTO v_uso;
+  BEGIN
+{statements}
+{pass_branch}
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE '{ok_marker}%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:{bad_marker}: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_SW350_E = f"{_SW_SCHEMA}.cs_estruturas"
+_SW350_USOS_ALLOWED_AFTER = {
+    "headline": (
+        f"    IF NOT EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_estrutura_usos WHERE id = v_uso AND headline_id IS NULL AND roteiro_id = v_ro) THEN\n"
+        "      RAISE EXCEPTION 'NOC_PROBE:blocked: the use did not survive the ON DELETE SET NULL of its headline';\n"
+        "    END IF;"
+    ),
+    "marca": (
+        f"    IF EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_estrutura_usos WHERE id = v_uso) THEN\n"
+        "      RAISE EXCEPTION 'NOC_PROBE:blocked: the use survived the ON DELETE CASCADE of its marca';\n"
+        "    END IF;"
+    ),
+    "perfil": (
+        f"    IF EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_estrutura_usos WHERE id = v_uso) OR EXISTS (SELECT 1 FROM {_SW350_E} WHERE id = v_est) THEN\n"
+        "      RAISE EXCEPTION 'NOC_PROBE:blocked: the profile purge left an Estrutura or a use behind';\n"
+        "    END IF;"
+    ),
+}
+
+_SW_350_PROBES: tuple[GuardProbe, ...] = (
+    # append-only ledgers
+    _sw350_probe(
+        probe_id="sw350_estrutura_eventos_update_refused", guard_name="cs_estrutura_eventos_imutavel",
+        statements=f"    UPDATE {_SW_SCHEMA}.cs_estrutura_eventos SET tipo = 'excluida' WHERE id = v_ev;",
+        permitted_msg="an Estrutura event was rewritten",
+        rationale="The Estrutura history (who changed which field from which provenance) is append-only: a rewritten row would falsify the field-review metric.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_estrutura_eventos_delete_refused", guard_name="cs_estrutura_eventos_imutavel",
+        statements=f"    DELETE FROM {_SW_SCHEMA}.cs_estrutura_eventos WHERE id = v_ev;",
+        permitted_msg="an Estrutura event was deleted",
+        rationale="A deleted event would silently shorten the history; the table is append-only (it carries no content, so nothing needs erasing).",
+    ),
+    _sw350_probe(
+        probe_id="sw350_tipo_eventos_update_refused", guard_name="cs_estrutura_tipo_eventos_imutavel",
+        statements=f"    UPDATE {_SW_SCHEMA}.cs_estrutura_tipo_eventos SET tipo = 'excluido' WHERE id = v_tev;",
+        permitted_msg="a block-type catalog event was rewritten",
+        rationale="The catalog edit history is append-only.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_tipo_eventos_delete_refused", guard_name="cs_estrutura_tipo_eventos_imutavel",
+        statements=f"    DELETE FROM {_SW_SCHEMA}.cs_estrutura_tipo_eventos WHERE id = v_tev;",
+        permitted_msg="a block-type catalog event was deleted",
+        rationale="The catalog edit history is append-only.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_events_truncate_refused", guard_name="cs_estruturas_recusa_truncate",
+        statements=f"    TRUNCATE {_SW_SCHEMA}.cs_estrutura_eventos;",
+        permitted_msg="the Estrutura event table was truncated",
+        rationale="Row triggers never fire on TRUNCATE: without the statement-level refusal an append-only ledger can still be emptied in one statement.",
+    ),
+    # usos: append-only + the FK-action carve-outs
+    _sw350_probe(
+        probe_id="sw350_usos_update_refused", guard_name="cs_estrutura_usos_imutavel",
+        statements=f"    UPDATE {_SW_SCHEMA}.cs_estrutura_usos SET papel = 'mistura' WHERE id = v_uso;",
+        permitted_msg="a recorded use of an Estrutura was rewritten",
+        rationale="Which Estrutura served which headline/roteiro is a fact table (approval rate per Estrutura joins it): a rewritten row corrupts the metric.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_usos_set_null_column_update_refused", guard_name="cs_estrutura_usos_imutavel",
+        statements=f"    UPDATE {_SW_SCHEMA}.cs_estrutura_usos SET headline_id = NULL WHERE id = v_uso;",
+        permitted_msg="a use's headline link was nulled by a direct UPDATE",
+        rationale="Only the database's own ON DELETE SET NULL may null a use's link; the same UPDATE issued directly (trigger depth 0/1) is refused.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_usos_delete_refused", guard_name="cs_estrutura_usos_imutavel",
+        statements=f"    DELETE FROM {_SW_SCHEMA}.cs_estrutura_usos WHERE id = v_uso;",
+        permitted_msg="a recorded use of an Estrutura was deleted",
+        rationale="A direct DELETE of a use is refused; only an FK cascade (estrutura / marca / org / opt-out purge) removes one.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_usos_set_null_allowed", guard_name="cs_estrutura_usos_imutavel", kind="write_allowed",
+        statements=f"    DELETE FROM {_SW_SCHEMA}.cs_headlines WHERE id = v_he;",
+        permitted_msg="deleting a headline nulled the use's link and the use survived, as it must",
+        after_ok=_SW350_USOS_ALLOWED_AFTER["headline"],
+        rationale="The guard must let the ON DELETE SET NULL of headline/roteiro through: deleting a headline must not fail because of the append-only use row.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_usos_marca_cascade_allowed", guard_name="cs_estrutura_usos_imutavel", kind="write_allowed",
+        statements=f"    DELETE FROM {_SW_SCHEMA}.marcas WHERE id = v_marca;",
+        permitted_msg="deleting the marca cascaded its uses, as it must",
+        after_ok=_SW350_USOS_ALLOWED_AFTER["marca"],
+        rationale="An append-only fact table must not block the ON DELETE CASCADE of its brand (account / org deletion).",
+    ),
+    _sw350_probe(
+        probe_id="sw350_usos_optout_purge_allowed", guard_name="cs_estrutura_usos_imutavel", kind="write_allowed",
+        statements=f"    DELETE FROM {_SW_SCHEMA}.cs_perfis_monitorados WHERE id = v_perfil;",
+        permitted_msg="deleting the profile purged its Estruturas, blocks and uses, as it must",
+        after_ok=_SW350_USOS_ALLOWED_AFTER["perfil"],
+        rationale="The LGPD opt-out purge is a profile delete: it must cascade the Estruturas AND their uses (the contract's RESTRICT would have made it fail for any used Estrutura).",
+    ),
+    # block-type catalog: the system row
+    _sw350_probe(
+        probe_id="sw350_tipo_sistema_rename_refused", guard_name="cs_estrutura_tipos_bloco_protegido",
+        statements=f"    UPDATE {_SW_SCHEMA}.cs_estrutura_tipos_bloco SET nome = 'Outros' WHERE id = v_tipo;",
+        permitted_msg="the system block type Outro was renamed",
+        rationale="`Outro` is where every block outside the catalog lands (the loaders and the AI rely on it by name): it cannot be renamed, deactivated or un-flagged.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_tipo_sistema_deactivate_refused", guard_name="cs_estrutura_tipos_bloco_protegido",
+        statements=f"    UPDATE {_SW_SCHEMA}.cs_estrutura_tipos_bloco SET ativo = false WHERE id = v_tipo;",
+        permitted_msg="the system block type Outro was deactivated",
+        rationale="A deactivated `Outro` would leave blocks outside the catalog with nowhere to go.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_tipo_sistema_delete_refused", guard_name="cs_estrutura_tipos_bloco_protegido",
+        statements=f"    DELETE FROM {_SW_SCHEMA}.cs_estrutura_tipos_bloco WHERE id = v_tipo;",
+        permitted_msg="the system block type Outro was deleted",
+        rationale="The system row cannot be deleted by any path (the FK would also RESTRICT it while a block uses it; the trigger refuses it always).",
+    ),
+    _sw350_probe(
+        probe_id="sw350_tipo_nome_unique", guard_name="cs_estrutura_tipos_bloco_nome_uq",
+        statements=(f"    INSERT INTO {_SW_SCHEMA}.cs_estrutura_tipos_bloco (nome, ordem, instrucao_referencia) "
+                    "VALUES ('Outro', 9999, 'noc probe');"),
+        permitted_msg="a second block type named Outro was inserted",
+        rationale="Block types are looked up by exact name (the loaders map `tipo` -> id); a duplicate name makes the mapping ambiguous.",
+    ),
+    # cs_estruturas CHECKs / UNIQUEs
+    _sw350_probe(
+        probe_id="sw350_estrutura_ativa_exige_formato", guard_name="cs_estruturas_ativa_completa",
+        statements=f"    UPDATE {_SW350_E} SET formato = NULL WHERE id = v_est;",
+        permitted_msg="an ativa Estrutura lost its formato",
+        rationale="Only `ativa` rows are offered to orgs and the AI; an ativa without formato / objetivos would reach generation unusable.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_estrutura_ativa_exige_objetivo", guard_name="cs_estruturas_ativa_completa",
+        statements=f"    UPDATE {_SW350_E} SET objetivos = '{{}}'::text[] WHERE id = v_est;",
+        permitted_msg="an ativa Estrutura lost all its objetivos",
+        rationale="Only `ativa` rows are offered to orgs and the AI; an ativa without objetivos would reach generation unusable.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_estrutura_formato_valido", guard_name="cs_estruturas_formato_valido",
+        statements=f"    UPDATE {_SW350_E} SET formato = 'video' WHERE id = v_est;",
+        permitted_msg="an Estrutura got a formato outside reels|carrossel|stories|post",
+        rationale="The formato drives the roteiro grammar and the card's cs_posts.formato mapping; any other value has no prompt.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_estrutura_status_valido", guard_name="cs_estruturas_status_valido",
+        statements=f"    UPDATE {_SW350_E} SET status = 'publicada' WHERE id = v_est;",
+        permitted_msg="an Estrutura got a status outside rascunho|ativa|arquivada",
+        rationale="Retrieval offers `ativa` only: a stray status would silently hide or expose a row.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_estrutura_objetivos_validos", guard_name="cs_estruturas_objetivos_validos",
+        statements=f"    UPDATE {_SW350_E} SET objetivos = ARRAY['alcance', 'alcance']::text[] WHERE id = v_est;",
+        permitted_msg="an Estrutura got a duplicated objetivo",
+        rationale="objetivos is a closed set of at most 4 distinct values (alcance|autoridade|conexao|venda).",
+    ),
+    _sw350_probe(
+        probe_id="sw350_estrutura_formula_valida", guard_name="cs_estruturas_formula_valida",
+        statements=f"    UPDATE {_SW350_E} SET formula_headline = ' com espaço ' WHERE id = v_est;",
+        permitted_msg="an Estrutura got an untrimmed formula",
+        rationale="The formula is stored trimmed (1..1000): a padded one makes the import's change detection and the dedupe unstable.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_estrutura_fonte_externa_par", guard_name="cs_estruturas_fonte_externa_par",
+        statements=f"    UPDATE {_SW350_E} SET fonte_externa = 'corestudio' WHERE id = v_est;",
+        permitted_msg="an Estrutura got a fonte_externa without its ref_externa",
+        rationale="The load's idempotency key is the PAIR (fonte_externa, ref_externa): half of it identifies nothing.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_estrutura_fonte_ref_unique", guard_name="cs_estruturas_fonte_ref_uq",
+        statements=(f"    UPDATE {_SW350_E} SET fonte_externa = 'corestudio', ref_externa = 'noc-probe' WHERE id = v_est;\n"
+                    f"    INSERT INTO {_SW350_E} (perfil_id, formula_headline, status, origem, fonte_externa, ref_externa) "
+                    "VALUES (v_perfil, 'noc probe 2', 'rascunho', 'manual', 'corestudio', 'noc-probe');"),
+        permitted_msg="two Estruturas shared one (fonte_externa, ref_externa)",
+        rationale="A re-run of the load must find its row again, never create a second one.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_estrutura_viral_auto_unique", guard_name="cs_estruturas_viral_auto_uq",
+        statements=(f"    UPDATE {_SW350_E} SET origem = 'viral_auto' WHERE id = v_est;\n"
+                    f"    INSERT INTO {_SW350_E} (perfil_id, viral_id, formula_headline, status, origem) "
+                    "VALUES (v_perfil, v_viral, 'noc probe 2', 'rascunho', 'viral_auto');"),
+        permitted_msg="one video got two auto-drafts",
+        rationale="A newly analysed video auto-creates ONE draft Estrutura; a retry of the job must not create a second.",
+    ),
+    # usos uniques
+    _sw350_probe(
+        probe_id="sw350_usos_roteiro_unique", guard_name="cs_estrutura_usos_roteiro_uq",
+        statements=(f"    INSERT INTO {_SW_SCHEMA}.cs_estrutura_usos (org_id, marca_id, estrutura_id, contexto, papel, ordem, roteiro_id) "
+                    "VALUES (v_org, v_marca, v_est, 'roteiro_avancado', 'principal', 1, v_ro);"),
+        permitted_msg="the same (estrutura, roteiro) use was counted twice",
+        rationale="A retry of the attribution step must never double-count an Estrutura on a roteiro.",
+    ),
+    _sw350_probe(
+        probe_id="sw350_usos_headline_unique", guard_name="cs_estrutura_usos_headline_uq",
+        statements=(f"    INSERT INTO {_SW_SCHEMA}.cs_estrutura_usos (org_id, marca_id, estrutura_id, contexto, papel, ordem, headline_id) "
+                    "VALUES (v_org, v_marca, v_est, 'lote_headlines', 'principal', 1, v_he);"),
+        permitted_msg="the same (estrutura, headline) use was counted twice",
+        rationale="A retry of the headline save must never double-count an Estrutura on a headline.",
+    ),
+    # importacoes lock
+    _sw350_probe(
+        probe_id="sw350_importacao_uma_em_andamento", guard_name="cs_estrutura_importacoes_uma_em_andamento_uq",
+        statements=(f"    INSERT INTO {_SW_SCHEMA}.cs_estrutura_importacoes (fonte, arquivo_sha256, status) "
+                    "VALUES ('referencia', repeat('a', 64), 'em_andamento');\n"
+                    f"    INSERT INTO {_SW_SCHEMA}.cs_estrutura_importacoes (fonte, arquivo_sha256, status) "
+                    "VALUES ('maquina_de_roteiros', repeat('b', 64), 'em_andamento');"),
+        permitted_msg="two Estrutura loads were em_andamento at once",
+        rationale="One load at a time: the importacao_em_andamento lock must hold where two admins cannot both pass a service-level check.",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Registry — social_wiring library -> PLATFORM scope (migration 351, M2 of estruturas-contract.md section 3.2).
+# Self-provisioning like the 350 probes: every probe builds its OWN platform profile (org_id NULL -- which itself proves
+# the DROP NOT NULL) / video / Estrutura inside the rolled-back transaction. `statements` is the write under test.
+# ---------------------------------------------------------------------------
+
+_SW_351_MIGRATION = "351_cs_library_platform_scope.sql"
+
+
+def _sw351_probe(
+    *, probe_id: str, guard_name: str, statements: str, permitted_msg: str, rationale: str,
+    kind: str = "write_refusal", fragment: str | None = None, after_ok: str = "",
+) -> GuardProbe:
+    """Probe on a migration-351 guard (same contract as ``_sw350_probe``): ``write_refusal`` = ``statements`` must be
+    refused by ``guard_name``; ``write_allowed`` = a SANCTIONED write whose success is the pass (``after_ok`` re-checks the
+    resulting state and RAISEs ``NOC_PROBE:blocked:`` when wrong)."""
+    fragment_lit = _sql_lit(fragment or guard_name)
+    pass_branch = (
+        f"    RAISE EXCEPTION 'NOC_PROBE:permitted: {_sql_lit(permitted_msg)} - the guard did not fire';"
+        if kind == "write_refusal"
+        else f"{after_ok}\n    RAISE EXCEPTION 'NOC_PROBE:allowed: {_sql_lit(permitted_msg)}';"
+    )
+    ok_marker, bad_marker = (
+        ("NOC_PROBE:permitted:", "refused") if kind == "write_refusal" else ("NOC_PROBE:allowed:", "blocked")
+    )
+    return GuardProbe(
+        id=probe_id, product="social-wiring", schema=_SW_SCHEMA, guard_name=guard_name, kind=kind,
+        migrations=(_SW_351_MIGRATION,), rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_perfil uuid; v_viral uuid; v_est uuid; v_ev uuid; v_pev uuid;
+BEGIN
+  IF to_regclass('{_SW_SCHEMA}.cs_perfil_eventos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:pending: {_SW_SCHEMA}.cs_perfil_eventos does not exist (migration 351 not applied)';
+  END IF;
+  INSERT INTO {_SW_SCHEMA}.cs_perfis_monitorados (handle, monitorar) VALUES ('noc.probe.plat', false) RETURNING id INTO v_perfil;
+  INSERT INTO {_SW_SCHEMA}.cs_virais (perfil_id, ig_media_id, ig_shortcode, origem_inclusao)
+  VALUES (v_perfil, 'noc-probe-351', 'NOCPROBE351', 'link_manual') RETURNING id INTO v_viral;
+  INSERT INTO {_SW_SCHEMA}.cs_estruturas (perfil_id, viral_id, formula_headline, formato, objetivos, status, origem)
+  VALUES (v_perfil, v_viral, 'noc probe', 'reels', ARRAY['alcance']::text[], 'ativa', 'manual') RETURNING id INTO v_est;
+  INSERT INTO {_SW_SCHEMA}.cs_estrutura_eventos (estrutura_id, tipo, ator_tipo, versao) VALUES (v_est, 'criada', 'admin', 1) RETURNING id INTO v_ev;
+  INSERT INTO {_SW_SCHEMA}.cs_perfil_eventos (perfil_id, tipo, ator_tipo) VALUES (v_perfil, 'criado', 'admin') RETURNING id INTO v_pev;
+  IF v_perfil IS NULL OR v_ev IS NULL OR v_pev IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: the self-provisioned fixture rows were not created';
+  END IF;
+  BEGIN
+{statements}
+{pass_branch}
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE '{ok_marker}%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:{bad_marker}: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_SW_351_TABLES = "'cs_perfis_monitorados', 'cs_virais', 'cs_perfil_eventos'"
+_SW_351_PROBES: tuple[GuardProbe, ...] = (
+    _sw351_probe(
+        probe_id="sw351_perfil_eventos_update_refused", guard_name="cs_perfil_eventos_imutavel",
+        statements=f"    UPDATE {_SW_SCHEMA}.cs_perfil_eventos SET tipo = 'excluido' WHERE id = v_pev;",
+        permitted_msg="a profile event was rewritten",
+        rationale="Who did what to a library profile is append-only history: a rewritten row would falsify the audit of admin writes.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_eventos_delete_refused", guard_name="cs_perfil_eventos_imutavel",
+        statements=f"    DELETE FROM {_SW_SCHEMA}.cs_perfil_eventos WHERE id = v_pev;",
+        permitted_msg="a profile event was deleted",
+        rationale="A deleted event would silently shorten the audit; the table is content-free, so nothing needs erasing.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_eventos_truncate_refused", guard_name="cs_estruturas_recusa_truncate",
+        statements=f"    TRUNCATE {_SW_SCHEMA}.cs_perfil_eventos;",
+        permitted_msg="the profile event ledger was truncated",
+        rationale="Row triggers never fire on TRUNCATE; a statement-level refusal keeps the ledger append-only for a bulk wipe too.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_eventos_tipo_valido", guard_name="cs_perfil_eventos_tipo_check",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_perfil_eventos (perfil_id, tipo, ator_tipo) VALUES (v_perfil, 'inventado', 'admin');",
+        permitted_msg="a profile event of an unknown type was recorded",
+        rationale="Event types are a closed enum so every metric over them has one definition.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_eventos_ator_valido", guard_name="cs_perfil_eventos_ator_tipo_check",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_perfil_eventos (perfil_id, tipo, ator_tipo) VALUES (v_perfil, 'criado', 'inventado');",
+        permitted_msg="a profile event of an unknown actor kind was recorded",
+        rationale="Actor kinds are a closed enum: an admin write and a system write are told apart.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_plataforma_handle_unico", guard_name="cs_perfis_monitorados_plataforma_handle_uq",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_perfis_monitorados (handle, monitorar) VALUES ('noc.probe.plat', false);",
+        permitted_msg="the same handle was registered twice in the platform library",
+        rationale="NULL org_id rows are distinct to the old (org, rede, handle) index: the platform handle needs its own unique key, or two admins create the same profile twice.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_viral_shortcode_unico", guard_name="cs_virais_ig_shortcode_uq",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_virais (perfil_id, ig_media_id, ig_shortcode, origem_inclusao) VALUES (v_perfil, 'noc-probe-351-b', 'NOCPROBE351', 'link_manual');",
+        permitted_msg="the same Instagram post was added twice by link",
+        rationale="The add-by-link dedupe: one Instagram shortcode is one video in the library, whichever profile or path added it.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_viral_codigo_unico", guard_name="cs_virais_codigo_uq",
+        statements=(f"    INSERT INTO {_SW_SCHEMA}.cs_virais (perfil_id, ig_media_id, codigo) OVERRIDING SYSTEM VALUE "
+                    f"SELECT v_perfil, 'noc-probe-351-c', codigo FROM {_SW_SCHEMA}.cs_virais WHERE id = v_viral;"),
+        permitted_msg="two library videos shared the same codigo",
+        rationale="`codigo` is the global handle of a video once the library is platform-wide (the per-org unique no longer scopes it).",
+    ),
+    _sw351_probe(
+        probe_id="sw351_viral_origem_valida", guard_name="cs_virais_origem_inclusao_valida",
+        statements=f"    UPDATE {_SW_SCHEMA}.cs_virais SET origem_inclusao = 'inventada' WHERE id = v_viral;",
+        permitted_msg="a video was given an unknown inclusion origin",
+        rationale="origem_inclusao is a closed enum (sync | link_manual): the share of manually added videos is a metric.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_estrutura_evento_ator_valido", guard_name="cs_estrutura_eventos_ator_tipo_valido",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_estrutura_eventos (estrutura_id, tipo, ator_tipo, versao) VALUES (v_est, 'excluida', 'inventado', 2);",
+        permitted_msg="an Estrutura event of an unknown actor kind was recorded",
+        rationale="The 351 rewrite of the ator_tipo CHECK must still refuse a value outside the closed set.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_estrutura_evento_ator_retencao_permitido", guard_name="cs_estrutura_eventos_ator_tipo_valido",
+        kind="write_allowed",
+        statements=f"    INSERT INTO {_SW_SCHEMA}.cs_estrutura_eventos (estrutura_id, tipo, ator_tipo, versao) VALUES (v_est, 'excluida', 'sistema_retencao', 2);",
+        permitted_msg="the retention sweep recorded an Estrutura erasure",
+        rationale="Retention erases the archived Estruturas of an unused profile; its event must be writable as sistema_retencao.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_purga_recusa_estruturas", guard_name="perfil_com_estruturas",
+        statements=f"    PERFORM {_SW_SCHEMA}.cs_perfil_purgar(v_perfil, NULL, 'admin', 'excluido', false);",
+        permitted_msg="a profile that owns Estruturas was erased without the explicit flag",
+        rationale="An ordinary profile delete must refuse while Estruturas exist (the admin sees the count first); only the opt-out passes the flag.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_purga_optout_cascata_permitida", guard_name="cs_perfil_purgar", kind="write_allowed",
+        statements=f"    PERFORM {_SW_SCHEMA}.cs_perfil_purgar(v_perfil, NULL, 'admin', 'optout_purgado', true);",
+        permitted_msg="the opt-out purge erased the profile, its video and its Estrutura",
+        after_ok=(
+            f"    IF EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_perfis_monitorados WHERE id = v_perfil)\n"
+            f"       OR EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_virais WHERE id = v_viral)\n"
+            f"       OR EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_estruturas WHERE id = v_est) THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the purge left the profile, its video or its Estrutura behind';\n"
+            "    END IF;\n"
+            f"    IF NOT EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_estrutura_eventos WHERE estrutura_id = v_est AND tipo = 'excluida')\n"
+            f"       OR NOT EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_perfil_eventos WHERE perfil_id = v_perfil AND tipo = 'optout_purgado') THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the purge left no content-free event';\n"
+            "    END IF;"
+        ),
+        rationale="LGPD opt-out: the erasure of a profile must take its videos and Estruturas with it in ONE transaction and leave only content-free events.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_plataforma_criar_idempotente", guard_name="cs_perfil_plataforma_criar", kind="write_allowed",
+        statements=(f"    PERFORM {_SW_SCHEMA}.cs_perfil_plataforma_criar('noc.probe.novo', 'Nome', 'import', 'sistema_import', NULL, NULL);\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_perfil_plataforma_criar('noc.probe.novo', 'Nome', 'import', 'sistema_import', NULL, NULL);"),
+        permitted_msg="the load created a profile twice-called, once",
+        after_ok=(
+            f"    IF (SELECT count(*) FROM {_SW_SCHEMA}.cs_perfis_monitorados WHERE handle = 'noc.probe.novo' AND org_id IS NULL AND monitorar = false) <> 1\n"
+            f"       OR (SELECT count(*) FROM {_SW_SCHEMA}.cs_perfil_eventos ev JOIN {_SW_SCHEMA}.cs_perfis_monitorados pf ON pf.id = ev.perfil_id"
+            " WHERE pf.handle = 'noc.probe.novo' AND ev.tipo IN ('criado', 'importado') AND ev.ator_tipo = 'sistema_import') <> 2 THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the profile create is not idempotent or wrote the wrong events';\n"
+            "    END IF;"
+        ),
+        rationale="The Estruturas load re-runs: creating the same library profile twice must yield one profile and one criado + importado pair.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_plataforma_criar_recusa_optout", guard_name="perfil_optout",
+        statements=(f"    INSERT INTO {_SW_SCHEMA}.cs_biblioteca_optouts (handle, origem) VALUES ('noc.probe.optout', 'admin');\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_perfil_plataforma_criar('noc.probe.optout', 'Nome', 'manual', 'admin', NULL, NULL, true, 'ativo');"),
+        permitted_msg="a library profile was created for a creator who opted out",
+        rationale="F3: the opt-out registry is checked INSIDE the creation transaction, so a registration racing an admin add / the load can never be written past.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_perfil_minimizar_zera_foto_e_seguidores", guard_name="cs_perfil_minimizar", kind="write_allowed",
+        statements=(f"    UPDATE {_SW_SCHEMA}.cs_perfis_monitorados SET foto_path = 'platform/noc/foto.jpg', seguidores = 1234 WHERE id = v_perfil;\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_perfil_minimizar(v_perfil, NULL, 'sistema');\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_perfil_minimizar(v_perfil, NULL, 'sistema');"),
+        permitted_msg="a retained profile was minimised once",
+        after_ok=(
+            f"    IF EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_perfis_monitorados WHERE id = v_perfil AND (foto_path IS NOT NULL OR seguidores IS NOT NULL))\n"
+            f"       OR (SELECT count(*) FROM {_SW_SCHEMA}.cs_perfil_eventos WHERE perfil_id = v_perfil AND tipo = 'minimizado') <> 1 THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the profile kept its photo / followers or the minimisation was not recorded exactly once';\n"
+            "    END IF;"
+        ),
+        rationale="Owner decision 2026-11-15 (#4): a profile retained only for its Estruturas drops photo + follower count, once, with an event.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_revisao_desuso_sinaliza_uma_vez", guard_name="cs_estruturas_revisao_desuso", kind="write_allowed",
+        statements=(f"    UPDATE {_SW_SCHEMA}.cs_estruturas SET created_at = now() - interval '30 months', updated_at = now() - interval '30 months' WHERE id = v_est;\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_estruturas_revisao_desuso(24);\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_estruturas_revisao_desuso(24);"),
+        permitted_msg="an Estrutura unused for 30 months was flagged for review once",
+        after_ok=(
+            f"    IF NOT EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_estruturas WHERE id = v_est AND status = 'ativa' AND revisao_desuso_em IS NOT NULL)\n"
+            f"       OR (SELECT count(*) FROM {_SW_SCHEMA}.cs_estrutura_eventos WHERE estrutura_id = v_est AND tipo = 'revisao_por_desuso_sinalizada') <> 1 THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the review flag is missing, repeated, or the Estrutura was archived';\n"
+            "    END IF;"
+        ),
+        rationale="Owner decision 2026-11-15 (#2): 24 months unused = flagged for ADMIN review, once per window, never auto-archived.",
+    ),
+    _sw351_probe(
+        probe_id="sw351_rascunho_automatico_expira", guard_name="cs_estruturas_rascunhos_expirar", kind="write_allowed",
+        statements=(f"    UPDATE {_SW_SCHEMA}.cs_estruturas SET status = 'rascunho', origem = 'viral_auto', created_at = now() - interval '100 days', updated_at = now() - interval '100 days' WHERE id = v_est;\n"
+                    f"    PERFORM {_SW_SCHEMA}.cs_estruturas_rascunhos_expirar(90);"),
+        permitted_msg="an unpublished auto-draft older than the retention window was deleted with its event",
+        after_ok=(
+            f"    IF EXISTS (SELECT 1 FROM {_SW_SCHEMA}.cs_estruturas WHERE id = v_est)\n"
+            f"       OR (SELECT count(*) FROM {_SW_SCHEMA}.cs_estrutura_eventos WHERE estrutura_id = v_est AND tipo = 'rascunho_expirado') <> 1 THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the stale auto-draft survived or left no content-free event';\n"
+            "    END IF;"
+        ),
+        rationale="EST-5 legal review: an AI draft nobody published within the retention window is third-party-derived text with no curator; it is erased, content-free event left.",
+    ),
+    GuardProbe(
+        id="sw351_perfil_eventos_sem_handle", product="social-wiring", schema=_SW_SCHEMA,
+        guard_name="cs_perfil_eventos_no_handle", kind="state_assertion", migrations=(_SW_351_MIGRATION,),
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                "SELECT count(*) FROM information_schema.columns"
+                f" WHERE table_schema = '{_SW_SCHEMA}' AND table_name = 'cs_perfil_eventos' AND column_name = 'handle'"
+                " INTO v_count;"
+            ),
+            clean_message="cs_perfil_eventos carries no handle column",
+            violation_message_prefix="cs_perfil_eventos still has a handle column -",
+        ),
+        rationale="Owner decision 2026-11-15 (#1): a purged profile's history must not say who it was.",
+    ),
+    GuardProbe(
+        id="sw351_biblioteca_sem_grant_navegador", product="social-wiring", schema=_SW_SCHEMA,
+        guard_name="cs_library_platform_tier", kind="state_assertion", migrations=(_SW_351_MIGRATION,),
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                "SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+                f" WHERE n.nspname = '{_SW_SCHEMA}' AND c.relname IN ({_SW_351_TABLES})"
+                " AND (c.relacl::text LIKE '%authenticated=%' OR c.relacl::text LIKE '%anon=%'))"
+                " + (SELECT count(*) FROM pg_policies"
+                f" WHERE schemaname = '{_SW_SCHEMA}' AND tablename IN ({_SW_351_TABLES})"
+                " AND (roles::text LIKE '%authenticated%' OR roles::text LIKE '%anon%' OR roles::text LIKE '%public%'))"
+                " INTO v_count;"
+            ),
+            clean_message="the platform library tables hold no browser grant and no browser policy",
+            violation_message_prefix="browser grant(s) / policies LIVE on the platform library tables -",
+        ),
+        rationale="The library is Platform IP (tier:platform): the API (service role) is the only door -- a browser grant or policy would let any member read or write the corpus straight through PostgREST.",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# Registry — social_wiring unified chat, propostas and the flow ledger (migration 352, M3 of
+# estruturas-contract.md section 3.3). Self-provisioning like the 350 probes: every probe builds its OWN org / marca /
+# profile / Estruturas / conversation / proposta inside the rolled-back transaction, so no prod row is borrowed.
+# `statements` is the write under test; the LAST one must be the refused (or sanctioned) one.
+# ---------------------------------------------------------------------------
+
+_SW_352_MIGRATION = "352_cs_unified_chat.sql"
+
+
+def _sw352_probe(
+    *, probe_id: str, guard_name: str, statements: str, permitted_msg: str, rationale: str,
+    kind: str = "write_refusal", after_ok: str = "",
+) -> GuardProbe:
+    """Probe on a migration-352 guard. ``kind='write_refusal'``: ``statements`` must be refused by ``guard_name`` (a
+    constraint / trigger / function name matched against the error text). ``kind='write_allowed'``: ``statements`` is a
+    SANCTIONED write -- success is the pass; ``after_ok`` re-checks the resulting state and RAISEs
+    ``NOC_PROBE:blocked:`` when it is wrong."""
+    fragment_lit = _sql_lit(guard_name)
+    pass_branch = (
+        f"    RAISE EXCEPTION 'NOC_PROBE:permitted: {_sql_lit(permitted_msg)} - the guard did not fire';"
+        if kind == "write_refusal"
+        else f"{after_ok}\n    RAISE EXCEPTION 'NOC_PROBE:allowed: {_sql_lit(permitted_msg)}';"
+    )
+    ok_marker, bad_marker = (
+        ("NOC_PROBE:permitted:", "refused") if kind == "write_refusal" else ("NOC_PROBE:allowed:", "blocked")
+    )
+    return GuardProbe(
+        id=probe_id, product="social-wiring", schema=_SW_SCHEMA, guard_name=guard_name, kind=kind,
+        migrations=(_SW_352_MIGRATION,), rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org uuid; v_marca uuid; v_perfil uuid; v_est uuid; v_est2 uuid; v_conv uuid; v_msg uuid; v_msg2 uuid; v_prop uuid;
+  v_he uuid; v_ev uuid; v_etapa uuid;
+BEGIN
+  IF to_regclass('{_SW_SCHEMA}.cs_fluxo_eventos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:pending: {_SW_SCHEMA}.cs_fluxo_eventos does not exist (migration 352 not applied)';
+  END IF;
+{_probe_own_org_sql('v_org', marca_var='v_marca', marca_slug='noc-probe-chat')}  INSERT INTO {_SW_SCHEMA}.cs_perfis_monitorados (org_id, handle) VALUES (v_org, 'noc.probe.chat') RETURNING id INTO v_perfil;
+  INSERT INTO {_SW_SCHEMA}.cs_estruturas (perfil_id, formula_headline, status, origem)
+  VALUES (v_perfil, 'noc probe 1', 'rascunho', 'manual') RETURNING id INTO v_est;
+  INSERT INTO {_SW_SCHEMA}.cs_estruturas (perfil_id, formula_headline, status, origem)
+  VALUES (v_perfil, 'noc probe 2', 'rascunho', 'manual') RETURNING id INTO v_est2;
+  INSERT INTO {_SW_SCHEMA}.cs_chat_conversas (org_id, marca_id, user_id, agente, titulo)
+  VALUES (v_org, v_marca, gen_random_uuid(), 'unificado', 'noc probe') RETURNING id INTO v_conv;
+  INSERT INTO {_SW_SCHEMA}.cs_chat_mensagens (org_id, conversa_id, role, conteudo)
+  VALUES (v_org, v_conv, 'assistant', 'noc probe') RETURNING id INTO v_msg;
+  INSERT INTO {_SW_SCHEMA}.cs_chat_mensagens (org_id, conversa_id, role, conteudo)
+  VALUES (v_org, v_conv, 'assistant', 'noc probe 2') RETURNING id INTO v_msg2;
+  INSERT INTO {_SW_SCHEMA}.cs_chat_propostas (org_id, marca_id, conversa_id, mensagem_id, ordem, texto)
+  VALUES (v_org, v_marca, v_conv, v_msg, 1, 'noc probe') RETURNING id INTO v_prop;
+  INSERT INTO {_SW_SCHEMA}.cs_chat_proposta_estruturas (proposta_id, estrutura_id, ordem, principal)
+  VALUES (v_prop, v_est, 1, true);
+  INSERT INTO {_SW_SCHEMA}.cs_headlines (org_id, marca_id, texto) VALUES (v_org, v_marca, 'noc probe') RETURNING id INTO v_he;
+  INSERT INTO {_SW_SCHEMA}.cs_fluxo_eventos (org_id, marca_id, conversa_id, proposta_id, tipo)
+  VALUES (v_org, v_marca, v_conv, v_prop, 'propostas_geradas') RETURNING id INTO v_ev;
+  INSERT INTO {_SW_SCHEMA}.pipeline_stages (org_id, pipeline, slug, label, posicao)
+  VALUES (v_org, 'esteira', 'noc_probe_chat', 'noc probe', 9999) RETURNING id INTO v_etapa;
+  IF v_ev IS NULL OR v_prop IS NULL OR v_est IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: the self-provisioned fixture rows were not created';
+  END IF;
+  BEGIN
+{statements}
+{pass_branch}
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE '{ok_marker}%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:{bad_marker}: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_SW352 = _SW_SCHEMA
+_SW352_EVENTO_AUSENTE = (
+    f"    IF EXISTS (SELECT 1 FROM {_SW352}.cs_fluxo_eventos WHERE id = v_ev) THEN\n"
+    "      RAISE EXCEPTION 'NOC_PROBE:blocked: the ledger row survived the ON DELETE CASCADE of its marca';\n"
+    "    END IF;"
+)
+
+_SW_352_PROBES: tuple[GuardProbe, ...] = (
+    # the flow ledger: append-only
+    _sw352_probe(
+        probe_id="sw352_fluxo_eventos_update_refused", guard_name="cs_fluxo_eventos_imutavel",
+        statements=f"    UPDATE {_SW352}.cs_fluxo_eventos SET tipo = 'fluxo_concluido' WHERE id = v_ev;",
+        permitted_msg="a flow event was rewritten",
+        rationale="The chat -> roteiro -> card ledger feeds the funnel metrics: a rewritten row falsifies the stage counts.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_fluxo_eventos_delete_refused", guard_name="cs_fluxo_eventos_imutavel",
+        statements=f"    DELETE FROM {_SW352}.cs_fluxo_eventos WHERE id = v_ev;",
+        permitted_msg="a flow event was deleted",
+        rationale="A deleted event silently shortens the funnel; only a DB-driven cascade (marca / org erase) may remove one.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_fluxo_eventos_truncate_refused", guard_name="cs_fluxo_recusa_truncate",
+        statements=f"    TRUNCATE {_SW352}.cs_fluxo_eventos;",
+        permitted_msg="the flow ledger was truncated",
+        rationale="Row triggers never fire on TRUNCATE: without the statement-level refusal the append-only ledger can still be emptied in one statement.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_fluxo_eventos_marca_cascade_allowed", guard_name="cs_fluxo_eventos_imutavel", kind="write_allowed",
+        statements=f"    DELETE FROM {_SW352}.marcas WHERE id = v_marca;",
+        permitted_msg="deleting the marca cascaded its ledger rows, as it must",
+        after_ok=_SW352_EVENTO_AUSENTE,
+        rationale="An append-only ledger must not block the ON DELETE CASCADE of its brand (account / org deletion, LGPD erase).",
+    ),
+    _sw352_probe(
+        probe_id="sw352_fluxo_eventos_tipo_valido", guard_name="cs_fluxo_eventos_tipo_check",
+        statements=(f"    INSERT INTO {_SW352}.cs_fluxo_eventos (org_id, marca_id, conversa_id, tipo) "
+                    "VALUES (v_org, v_marca, v_conv, 'evento_inventado');"),
+        permitted_msg="a flow event with an unknown tipo was recorded",
+        rationale="The event vocabulary is the metric's vocabulary: an unnamed tipo would be a row no funnel query counts.",
+    ),
+    # propostas
+    _sw352_probe(
+        probe_id="sw352_proposta_status_valido", guard_name="cs_chat_propostas_status_check",
+        statements=f"    UPDATE {_SW352}.cs_chat_propostas SET status = 'feita' WHERE id = v_prop;",
+        permitted_msg="a proposta got an unknown status",
+        rationale="A proposta is `proposta` or `escolhida`: the claim/lease conditions branch on it.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_etapa_valida", guard_name="cs_chat_propostas_fluxo_etapa_check",
+        statements=f"    UPDATE {_SW352}.cs_chat_propostas SET fluxo_etapa = 'quase_la' WHERE id = v_prop;",
+        permitted_msg="a proposta got an unknown fluxo_etapa",
+        rationale="The saga resumes from the last recorded etapa: an unknown value would strand the flow.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_ordem_unica", guard_name="cs_chat_propostas_mensagem_ordem_uq",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_propostas (org_id, marca_id, conversa_id, mensagem_id, ordem, texto) "
+                    "VALUES (v_org, v_marca, v_conv, v_msg, 1, 'noc probe dup');"),
+        permitted_msg="two propostas took the same (mensagem, ordem)",
+        rationale="A message's headlines are numbered once: a retried save must not duplicate the list the user clicks on.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_ordem_valida", guard_name="cs_chat_propostas_ordem_check",
+        statements=f"    UPDATE {_SW352}.cs_chat_propostas SET ordem = 0 WHERE id = v_prop;",
+        permitted_msg="a proposta was numbered below 1",
+        rationale="Headlines are numbered from 1 (the list the user clicks on); ordem 0 would be a row the numbered list cannot show.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_texto_valido", guard_name="cs_chat_propostas_texto_check",
+        statements=f"    UPDATE {_SW352}.cs_chat_propostas SET texto = '' WHERE id = v_prop;",
+        permitted_msg="a proposta was saved with an empty headline",
+        rationale="The proposta's text becomes the saved headline (1..1000 chars): an empty one would be refused at the click, after the user saw it.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_estrutura_max_tres", guard_name="cs_chat_proposta_estruturas_ordem_check",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_proposta_estruturas (proposta_id, estrutura_id, ordem) "
+                    "VALUES (v_prop, v_est2, 4);"),
+        permitted_msg="a proposta cited a 4th Estrutura",
+        rationale="A headline mixes at most three Estruturas (contract 3.3); the server-side parser caps it and the table backs it up.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_uma_principal", guard_name="cs_chat_proposta_estruturas_principal_uq",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_proposta_estruturas (proposta_id, estrutura_id, ordem, principal) "
+                    "VALUES (v_prop, v_est2, 2, true);"),
+        permitted_msg="a proposta had two principal Estruturas",
+        rationale="The principal Estrutura decides the roteiro's formato: exactly one per proposta.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_proposta_estrutura_slot_unico", guard_name="cs_chat_proposta_estruturas_ordem_uq",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_proposta_estruturas (proposta_id, estrutura_id, ordem) "
+                    "VALUES (v_prop, v_est2, 1);"),
+        permitted_msg="two Estruturas shared one slot of a proposta",
+        rationale="The citation order is the attribution order: one Estrutura per slot.",
+    ),
+    # the headline / message links
+    _sw352_probe(
+        probe_id="sw352_headline_proposta_unica", guard_name="cs_headlines_conversa_proposta_uq",
+        statements=(f"    INSERT INTO {_SW352}.cs_headlines (org_id, marca_id, texto, conversa_id, proposta_id) "
+                    "VALUES (v_org, v_marca, 'noc probe a', v_conv, v_prop);\n"
+                    f"    INSERT INTO {_SW352}.cs_headlines (org_id, marca_id, texto, conversa_id, proposta_id) "
+                    "VALUES (v_org, v_marca, 'noc probe b', v_conv, v_prop);"),
+        permitted_msg="one proposta was saved as two headlines",
+        rationale="A double click or a retried save of the same proposta is a lookup, never a second headline.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_mensagem_proposta_unica", guard_name="cs_chat_mensagens_proposta_uq",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_mensagens (org_id, conversa_id, role, conteudo, tipo, proposta_id) "
+                    "VALUES (v_org, v_conv, 'assistant', 'Criei', 'roteiro_gerado', v_prop);\n"
+                    f"    INSERT INTO {_SW352}.cs_chat_mensagens (org_id, conversa_id, role, conteudo, tipo, proposta_id) "
+                    "VALUES (v_org, v_conv, 'assistant', 'Criei', 'roteiro_gerado', v_prop);"),
+        permitted_msg="the roteiro_gerado message was inserted twice for one proposta",
+        rationale="The finalizer and a resumed click both reach the last step: the message must appear exactly once.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_mensagem_tipo_valido", guard_name="cs_chat_mensagens_tipo_check",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_mensagens (org_id, conversa_id, role, conteudo, tipo) "
+                    "VALUES (v_org, v_conv, 'assistant', 'x', 'outro');"),
+        permitted_msg="a chat message got an unknown tipo",
+        rationale="The FE renders by tipo (texto vs roteiro_gerado): an unknown value is a message nothing can draw.",
+    ),
+    # the widened CHECKs on the existing tables
+    _sw352_probe(
+        probe_id="sw352_conversa_agente_valido", guard_name="cs_chat_conversas_agente_check",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_conversas (org_id, marca_id, user_id, agente, titulo) "
+                    "VALUES (v_org, v_marca, gen_random_uuid(), 'outro', 'noc probe');"),
+        permitted_msg="a conversation got an unknown agente",
+        rationale="The vocabulary is headline | roteiro (legacy rows) | unificado; anything else is a write by code that predates the contract.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_conversa_agente_unificado_allowed", guard_name="cs_chat_conversas_agente_check", kind="write_allowed",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_conversas (org_id, marca_id, user_id, agente, titulo) "
+                    "VALUES (v_org, v_marca, gen_random_uuid(), 'unificado', 'noc probe');"),
+        permitted_msg="a unified conversation was created, as it must",
+        rationale="The N code writes `unificado`; the widened CHECK must accept it (and keep the legacy values the N-1 image writes).",
+    ),
+    _sw352_probe(
+        probe_id="sw352_roteiro_formato_valido", guard_name="cs_roteiros_formato_check",
+        statements=(f"    INSERT INTO {_SW352}.cs_roteiros (org_id, marca_id, nome, headline_texto, formato) "
+                    "VALUES (v_org, v_marca, 'noc probe', 'noc probe', 'short');"),
+        permitted_msg="a roteiro got an unknown formato",
+        rationale="reels | carrossel | stories | post is the roteiro's grammar selector: an unknown value has no prompt.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_roteiro_formato_carrossel_allowed", guard_name="cs_roteiros_formato_check", kind="write_allowed",
+        statements=(f"    INSERT INTO {_SW352}.cs_roteiros (org_id, marca_id, nome, headline_texto, formato) "
+                    "VALUES (v_org, v_marca, 'noc probe', 'noc probe', 'carrossel');"),
+        permitted_msg="a carrossel roteiro was created, as it must",
+        rationale="All four formatos are supported (owner decision): the CHECK must accept each.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_posts_formato_valido", guard_name="cs_posts_formato_check",
+        statements=(f"    INSERT INTO {_SW352}.cs_posts (org_id, marca_id, titulo, etapa_id, formato) "
+                    "VALUES (v_org, v_marca, 'noc probe', v_etapa, 'video_longo');"),
+        permitted_msg="a card got a formato outside reel|carrossel|story|feed",
+        rationale="The card's formato is S1's vocabulary; the relaxed CHECK must still refuse everything else.",
+    ),
+    _sw352_probe(
+        probe_id="sw352_posts_formato_carrossel_allowed", guard_name="cs_posts_formato_check", kind="write_allowed",
+        statements=(f"    INSERT INTO {_SW352}.cs_posts (org_id, marca_id, titulo, etapa_id, formato) "
+                    "VALUES (v_org, v_marca, 'noc probe', v_etapa, 'carrossel');"),
+        permitted_msg="a carrossel card was created, as it must",
+        rationale="The auto-card carries the roteiro's truthful formato (M3 relaxed the CHECK from reel only).",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
@@ -12848,6 +13619,9 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_240_PROBES,
     *_SW_241_PROBES,
     *_SW_342_PROBES,
+    *_SW_350_PROBES,
+    *_SW_351_PROBES,
+    *_SW_352_PROBES,
     *_SW_JULIA_ENVIO_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
     *_SW_JULIA_CREDITO_PROBES,

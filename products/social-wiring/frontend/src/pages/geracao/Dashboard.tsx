@@ -33,7 +33,7 @@ import { useMarcas } from "@/hooks/useMarcas";
 import type { EventoHistorico, Headline } from "@/types/geracao";
 import { QueryErrorState } from "@noctusai/lib/components";
 
-const SUGERIDAS = "/media-creation/headlines/sugeridas";
+const SUGERIDAS = "/media-creation/chat/sugeridas";
 const PESQUISA_PENDENTES = "/media-creation/pesquisa?status=pending";
 
 function dataHora(iso: string): string {

@@ -1,11 +1,13 @@
 /**
- * Biblioteca de virais (P3, `/media-creation/biblioteca`) — contract §7.3.
- * Filters live in the URL (`?viral=` opens the modal, `?perfil=` filters by
- * profile with no auto-filter banner). Loading: `showSkeleton` /
- * `isRefreshing` off `data`, never `.isLoading` (lying-loading-state.md).
+ * Biblioteca (`/media-creation/biblioteca`) — the platform-wide library, in three tabs
+ * `Perfis · Vídeos · Estruturas` (`?aba=perfis|videos|estruturas`, default `videos` to keep today's landing;
+ * estruturas-contract §11.3).
  *
- * Empty states are honest: the monitoring (ingestion) ships OFF behind a kill
- * switch, so "nothing here yet" says why instead of pretending.
+ * Vídeos (P3, geracao-contract §7.3): filters live in the URL (`?viral=` opens the modal, `?perfil=` filters by
+ * profile with no auto-filter banner). Platform admins also get "Adicionar por link".
+ * Loading: `showSkeleton` / `isRefreshing` off `data`, never `.isLoading` (lying-loading-state.md).
+ * Empty states are honest: the monitoring (ingestion) ships OFF behind a kill switch, so "nothing here yet"
+ * says why instead of pretending.
  */
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -13,9 +15,14 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
 import { FiltrosVirais } from "@/components/geracao/biblioteca/FiltrosVirais";
+import { PerfisTab } from "@/components/geracao/biblioteca/PerfisTab";
+import { EstruturasLista } from "@/components/geracao/biblioteca/estruturas/EstruturasLista";
+import { filtrosDeParams as estruturasDeParams, filtrosParaParams as estruturasParaParams, type FiltrosEstruturas } from "@/components/geracao/biblioteca/estruturas/filtros";
+import { PorLinkDialog } from "@/components/geracao/biblioteca/estruturas/PorLinkDialog";
 import { ViralCard } from "@/components/geracao/biblioteca/ViralCard";
 import { ViralModal } from "@/components/geracao/biblioteca/ViralModal";
 import {
@@ -30,17 +37,87 @@ import {
   useViraisBiblioteca,
   VIRAIS_POR_PAGINA,
 } from "@/hooks/geracao/useBiblioteca";
+import { useEstruturasAdmin } from "@/hooks/geracao/useEstruturas";
 import { useMarcaPesquisa } from "@/hooks/useMarcaPesquisa";
 import { useMarcas } from "@/hooks/useMarcas";
 import type { ViralCard as ViralCardT } from "@/types/geracao";
 
 const VIDEOS_MAX = 50;
 
+type Aba = "perfis" | "videos" | "estruturas";
+const ABAS: readonly Aba[] = ["perfis", "videos", "estruturas"];
+const abaDe = (v: string | null): Aba => (ABAS as readonly string[]).includes(v ?? "") ? (v as Aba) : "videos";
+
 export default function Biblioteca() {
   const marcasQ = useMarcas();
   const marcas = marcasQ.data ?? [];
   const { marcaId, escolherMarca } = useMarcaPesquisa(marcas);
+  const adminQ = useEstruturasAdmin();
+  const isAdmin = adminQ.data === true;
+  const [params, setParams] = useSearchParams();
+  const aba = abaDe(params.get("aba"));
+  const [porLink, setPorLink] = useState(false);
 
+  // Each tab owns its own URL filters; switching starts that tab clean (the default tab keeps a bare URL).
+  function mudarAba(proxima: string) {
+    setParams(proxima === "videos" ? new URLSearchParams() : new URLSearchParams({ aba: proxima }));
+  }
+
+  return (
+    <div className="flex flex-col gap-6 p-6">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Biblioteca</h1>
+          <p className="text-sm text-muted-foreground">Perfis, vídeos e estruturas da plataforma</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
+          {isAdmin && aba === "videos" && (
+            <Button onClick={() => setPorLink(true)}>Adicionar por link</Button>
+          )}
+          {isAdmin && aba === "estruturas" && (
+            <>
+              <Button variant="outline" asChild>
+                <Link to="/media-creation/biblioteca/tipos-de-bloco">Tipos de bloco</Link>
+              </Button>
+              <Button variant="outline" asChild>
+                <Link to="/media-creation/biblioteca/importacoes">Importações</Link>
+              </Button>
+            </>
+          )}
+        </div>
+      </header>
+
+      <Tabs value={aba} onValueChange={mudarAba}>
+        <TabsList aria-label="Seções da Biblioteca">
+          <TabsTrigger value="perfis">Perfis</TabsTrigger>
+          <TabsTrigger value="videos">Vídeos</TabsTrigger>
+          <TabsTrigger value="estruturas">Estruturas</TabsTrigger>
+        </TabsList>
+        <TabsContent value="perfis" className="mt-4">
+          <PerfisTab marcaId={marcaId} isAdmin={isAdmin} />
+        </TabsContent>
+        <TabsContent value="videos" className="mt-4">
+          <VideosTab marcaId={marcaId} marcasPending={marcasQ.isPending} semMarca={!marcaId && !marcasQ.isPending} />
+        </TabsContent>
+        <TabsContent value="estruturas" className="mt-4">
+          <EstruturasTab marcaId={marcaId} isAdmin={isAdmin} />
+        </TabsContent>
+      </Tabs>
+
+      {isAdmin && <PorLinkDialog open={porLink} onOpenChange={setPorLink} />}
+    </div>
+  );
+}
+
+function EstruturasTab({ marcaId, isAdmin }: { marcaId: string | null; isAdmin: boolean }) {
+  const [params, setParams] = useSearchParams();
+  const filtros = useMemo(() => estruturasDeParams(params), [params]);
+  const aplicar = (f: FiltrosEstruturas) => setParams(estruturasParaParams(f, new URLSearchParams({ aba: "estruturas" })));
+  return <EstruturasLista filtros={filtros} onFiltros={aplicar} isAdmin={isAdmin} marcaId={marcaId} />;
+}
+
+function VideosTab({ marcaId, marcasPending, semMarca }: { marcaId: string | null; marcasPending: boolean; semMarca: boolean }) {
   const [params, setParams] = useSearchParams();
   const filtros = useMemo(() => filtrosDeParams(params), [params]);
   const viralAberto = params.get("viral");
@@ -115,31 +192,24 @@ export default function Biblioteca() {
   const filtroAuto = !!data?.filtro_automatico && !filtros.perfilId;
 
   return (
-    <div className="flex flex-col gap-6 p-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Biblioteca de virais</h1>
-          <p className="text-sm text-muted-foreground">Biblioteca de virais disponíveis</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
-          <Button
-            variant="outline"
-            onClick={() =>
-              aplicar({
-                ...filtros,
-                ordem: filtros.ordem === "mais_vistos" ? "mais_recentes" : "mais_vistos",
-                page: 1,
-              })
-            }
-          >
-            {filtros.ordem === "mais_vistos" ? "Mais vistos" : "Mais recentes"}
-          </Button>
-          <Button variant="outline" onClick={() => setPainel((v) => !v)} aria-expanded={painel}>
-            Filtros{ativos > 0 ? ` (${ativos})` : ""}
-          </Button>
-        </div>
-      </header>
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button
+          variant="outline"
+          onClick={() =>
+            aplicar({
+              ...filtros,
+              ordem: filtros.ordem === "mais_vistos" ? "mais_recentes" : "mais_vistos",
+              page: 1,
+            })
+          }
+        >
+          {filtros.ordem === "mais_vistos" ? "Mais vistos" : "Mais recentes"}
+        </Button>
+        <Button variant="outline" onClick={() => setPainel((v) => !v)} aria-expanded={painel}>
+          Filtros{ativos > 0 ? ` (${ativos})` : ""}
+        </Button>
+      </div>
 
       {filtroAuto && (
         <div role="status" className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
@@ -203,11 +273,11 @@ export default function Biblioteca() {
             Virais Encontrados{data ? ` (${total})` : ""}
           </h2>
 
-          {!marcaId && !marcasQ.isPending ? (
+          {semMarca ? (
             <p className="text-sm text-muted-foreground">
               Cadastre uma marca para usar a biblioteca.
             </p>
-          ) : viraisQ.showSkeleton || marcasQ.isPending ? (
+          ) : viraisQ.showSkeleton || marcasPending ? (
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4 xl:grid-cols-6">
               {Array.from({ length: 12 }).map((_, i) => (
                 <Skeleton key={i} className="aspect-[9/16] w-full" />
@@ -292,9 +362,13 @@ function EstadoVazio({
       <p className="font-medium">Nenhum viral encontrado</p>
       {semPerfis ? (
         <p className="mt-1 text-muted-foreground">
-          Sua biblioteca ainda está vazia — cadastre perfis em{" "}
+          A biblioteca ainda não tem perfis — um administrador adiciona perfis na aba{" "}
+          <Link className="text-primary hover:underline" to="/media-creation/biblioteca?aba=perfis">
+            Perfis
+          </Link>
+          . Para escolher quais usar na sua marca, veja{" "}
           <Link className="text-primary hover:underline" to="/media-creation/minha-biblioteca">
-            Minha Biblioteca › Solicitar Perfil
+            Minha Biblioteca
           </Link>
           .
         </p>

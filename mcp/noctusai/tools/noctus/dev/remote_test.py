@@ -273,7 +273,7 @@ def try_remote(job: str, argv: list[str], *, cwd: str, mode: str | None = None, 
         if tip != head:
             return decline(f"HEAD not pushed: origin/{branch} is at {str(tip)[:9]}, local HEAD {head[:9]} (push first)")
         try:  # free `gh api rate_limit`; below the floor -> RateLimited -> local slot (GitHub first, never stop work)
-            rate_start: int | None = int(client.ensure_quota()["remaining"])
+            rate_start: int | None = ci.ensure_quota(client)
         except ci.RateLimited:
             raise
         except ci.CiVerdictError:
@@ -301,9 +301,15 @@ def try_remote(job: str, argv: list[str], *, cwd: str, mode: str | None = None, 
     run_id, url = str(run["id"]), run.get("html_url") or str(run["id"])
     t0 = clock()
     say(f"REMOTE-TEST START job={job} backend=remote run={url} sha={head[:9]} workdir={plan.workdir or '.'} cmd={cmd}")
+    def _rate_now(c: Any) -> int | None:  # the ONE quota read, free; unreadable -> None
+        try:
+            return c.rate_remaining()
+        except Exception:  # noqa: BLE001 - telemetry must never fail the run
+            return None
+
     def tel() -> dict[str, Any]:  # quota telemetry on every outcome row: what this run cost GitHub, and what was left
         return {"api_calls": getattr(client, "api_calls", 0) - calls0, "rate_remaining_start": rate_start,
-                "rate_remaining_end": getattr(client, "rate_remaining", None)}
+                "rate_remaining_end": _rate_now(client)}
 
     row: dict[str, Any] = {"event": "remote_run", "backend": "remote", "job": job, "mode": mode, "run_id": run_id,
                            "run_url": url, "sha": head, "branch": branch, "workdir": plan.workdir or ".", "cmd": cmd}

@@ -42,7 +42,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 44 | 69 | 99 | 12 | 133 | 1,594 |
+| Core | 44 | 69 | 99 | 12 | 133 | 1,595 |
 | Erp Imobiliario | 64 | 56 | 80 | 79 | 136 | 1,904 |
 | Personal Finance | 15 | 18 | 30 | 26 | 48 | 482 |
 | Therapy Platform | 40 | 46 | 65 | 36 | 85 | 1,143 |
@@ -50,26 +50,26 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 53 | 121 | 269 | 221 | 702 | 10,877 |
+| Social Wiring | 53 | 121 | 280 | 226 | 722 | 11,359 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 14 | 22 | 28 | 23 | 57 | 986 |
 | Igig | 23 | 26 | 33 | 27 | 44 | 978 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 10 | 0 | 28 | 10 | 25 | 191 |
-| Agents | 35 | 1 | 84 | 53 | 237 | 3,365 |
+| Agents | 35 | 1 | 84 | 53 | 239 | 3,390 |
 | Community | 23 | 29 | 49 | 30 | 58 | 657 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 40 | 7 | 8 | 64 |
 | Nosnolimiar | 2 | 1 | 15 | 0 | 8 | 39 |
 | Assistant | 3 | 7 | 18 | 0 | 19 | 186 |
-| **Total** | **362** | **444** | **920** | **545** | **1667** | **23,558** |
+| **Total** | **362** | **444** | **931** | **550** | **1689** | **24,066** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas DECLARED in migrations (20):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `assistant` + `commerce` + `community` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `monica` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `store` + `therapy`.
-- **Tables: 1222** declared across those schemas.
+- **Tables: 1233** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or

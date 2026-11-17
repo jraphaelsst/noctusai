@@ -1138,6 +1138,20 @@
     "pre-commit"
    ]
   },
+  "keeper:check-findings-fixed-on-dev": {
+   "mechanism": "write-path: mcp/noctusai/tools/noctus/dev/findings_ledger.py::_gate_fixed (fixed only for a sha on origin/dev) + flip_landed (task_branch landed, session_end_sweep, reconcile)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-16",
+   "source": "KNOWLEDGE-BASE/CONTEXT/PATTERNS/common/living-findings-ledgers.md",
+   "shadow": {
+    "since": "2026-11-16",
+    "fires": 0,
+    "fix_rate": null
+   }
+  },
   "keeper:check-findings-ledger-visibility": {
    "severity": "",
    "kind": "keeper",
@@ -1233,12 +1247,12 @@
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
   "keeper:check-gh-calls-via-seam": {
-   "mechanism": "api: ci_verdict.RealGithubClient (quota guard, conditional polling, call counting) is the one GitHub-call seam",
+   "mechanism": "api: ci_verdict.RealGithubClient (quota guard layered on the one rate_remaining() read, conditional polling, call counting) is the one GitHub-call seam",
    "owner": "tooling-engineer",
    "placement": "warn",
    "standard": "",
    "new": true,
-   "declared": "2026-11-16",
+   "declared": "2026-11-17",
    "source": "GitHub REST docs: rate limits + conditional requests (304 not counted); cli/cli gh run watch polls run+jobs+annotations per interval"
   },
   "keeper:check-git-hook-file-tampering": {
@@ -1464,6 +1478,16 @@
    },
    "class": "never-fires",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-http-call-without-timeout": {
+   "mechanism": "tool:_http (urlopen_read / client_timeout: connect+read timeouts, total deadline, one bounded retry, telemetry)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "Keeper (ratchet, 2026-11-16): every outbound HTTP call under mcp/noctusai/tools carries an explicit non-None timeout or goes through tools/noctus/dev/_http.py (connect/read timeouts + TOTAL deadline + one bounded retry + http-timeout telemetry); AST; baseline 0, shrink-only",
+   "new": true,
+   "declared": "2026-11-16",
+   "source": "migrate_product --confirm hung 45 min on a CLOSE_WAIT socket 2026-11-16 (N=2; N=1 2026-11-13 held a heavy slot 80 min); KB PATTERNS/architect/mcp-tool-conventions.md section 11",
+   "telemetry": "kind=http-timeout events (host, call site, elapsed, outcome) via gate_alignment.record_event + cli exit wrapper -> guard-events.ndjson"
   },
   "keeper:check-http-detail-echoes-exception": {
    "mechanism": "api: noctusai_lib.api.integration_errors.integration_error (fixed pt-BR message + stable code; the structured integration_error log line is the telemetry leg)",
@@ -3883,6 +3907,18 @@
    ]
   },
   {
+   "id": "D-http-timeouts",
+   "decision": "Every outbound HTTP call of the toolkit is bounded as a whole (connect/read timeouts, a total deadline, one bounded retry; a lost non-idempotent write is re-read, never re-sent); a hang is counted, and an unbounded call is refused",
+   "home": "KB § PATTERNS/architect/mcp-tool-conventions.md",
+   "construction": "tool:tools/noctus/dev/_http.py (urlopen_read / client_timeout / run_with_deadline); migrate_product returns ledger_record_failed instead of hanging",
+   "gate": "keeper:check-http-call-without-timeout",
+   "telemetry": "kind=http-timeout events in guard-events.ndjson (host, call site, elapsed, outcome) + keeper gate events",
+   "branch": "feat/http-timeouts-by-construction",
+   "gates": [
+    "keeper:check-http-call-without-timeout"
+   ]
+  },
+  {
    "id": "D40",
    "decision": "Heavy test runs execute on GitHub runners at the pushed sha, never queue on the shared laptop slot; the local slot is a loud, reasoned fallback",
    "home": "KB § PATTERNS/devops/hardware-admission-budget.md",
@@ -3896,6 +3932,18 @@
   },
   {
    "id": "D41",
+   "decision": "A findings-ledger row says fixed only for a commit that is on origin/dev; an off-dev fix is written in-progress and flips to fixed on landing",
+   "home": "KB § PATTERNS/common/living-findings-ledgers.md",
+   "construction": "findings_ledger._gate_fixed (write path: append/update/reconcile) + flip_landed (task_branch landed, session_end_sweep, reconcile)",
+   "gate": "keeper:check-findings-fixed-on-dev",
+   "telemetry": "gate events findings-fixed-on-dev: warn per downgrade, pass per auto-flip",
+   "branch": "feat/findings-fixed-on-dev",
+   "gates": [
+    "keeper:check-findings-fixed-on-dev"
+   ]
+  },
+  {
+   "id": "D42",
    "decision": "A hooks bypass is refused at write time and swept in tracked files: --no-verify, core.hooksPath overrides, and the plumbing form (git commit-tree / update-ref refs/heads) are all denied outside a temp-repo fixture; the sanctioned path is commit normally and surface a keeper refusal to the tech-lead",
    "home": "KB § PATTERNS/common/bypass-rationalization-anti-patterns.md",
    "construction": "mcp/noctusai/tools/noctus/dev/primary_write_guard.py decide_git_bypass (PreToolUse deny at write time; commit-tree/update-ref refs/heads included 2026-11-15)",
@@ -3904,18 +3952,6 @@
    "branch": "feat/keepers-by-construction",
    "gates": [
     "keeper:check-git-hooks-bypass"
-   ]
-  },
-  {
-   "id": "D42",
-   "decision": "GitHub API quota is a shared budget: repo code reaches GitHub only through one seam; GitHub first, local slot when out of quota",
-   "home": "GitHub REST docs: rate limits + conditional requests (304 not counted); cli/cli gh run watch polls run+jobs+annotations per interval",
-   "construction": "api: ci_verdict.RealGithubClient (quota guard, conditional polling, call counting) is the one GitHub-call seam",
-   "gate": "keeper:check-gh-calls-via-seam",
-   "telemetry": "cli exit wrapper -> guard-events.ndjson",
-   "branch": "pending:keeper:check-gh-calls-via-seam",
-   "gates": [
-    "keeper:check-gh-calls-via-seam"
    ]
   },
   {
@@ -3928,6 +3964,18 @@
    "branch": "feat/sec-infra-hardening-v2",
    "gates": [
     "keeper:check-supply-chain-pin"
+   ]
+  },
+  {
+   "id": "D44",
+   "decision": "GitHub API quota is a shared budget: repo code reaches GitHub only through one seam; GitHub first, local slot when out of quota",
+   "home": "GitHub REST docs: rate limits + conditional requests (304 not counted); cli/cli gh run watch polls run+jobs+annotations per interval",
+   "construction": "api: ci_verdict.RealGithubClient (quota guard layered on the one rate_remaining() read, conditional polling, call counting) is the one GitHub-call seam",
+   "gate": "keeper:check-gh-calls-via-seam",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "branch": "pending:keeper:check-gh-calls-via-seam",
+   "gates": [
+    "keeper:check-gh-calls-via-seam"
    ]
   }
  ]

@@ -2,14 +2,17 @@
 
 Contract ``specs/geracao-contract.md`` section 5. For one batch (``cs_headline_lotes`` row):
 
-1. **select structures** -- deterministic, no LLM (:func:`selecionar_estruturas`): the pool order,
-   the filters, the variable compatibility, the ``somente_pesquisa`` exclusion, the Metodo
-   fallback when the library has nothing;
-2. **assemble** one user message per structure (``prompts.headline_geracao.build_user_message``);
+1. **select structures** -- deterministic, no LLM (:func:`selecionar_estruturas`): the structures are the
+   ``ativa`` Estruturas of the PLATFORM library (estruturas-contract 8.2: the brand's selected profiles, else the
+   whole library; round-robin across profiles, seeded by the lote id), narrowed by ``estrutura_ids`` /
+   ``referencia`` / a profile named in free text, the formato / gatilho filters going THROUGH the source video,
+   the Metodo fallback when the pool is empty;
+2. **assemble** one user message per structure (``prompts.headline_geracao.build_user_message``): the rendered
+   Estrutura (formula + blocos) with the bio and the brains' elements that fill its ``[placeholders]``;
 3. **one LLM call per structure** -> two headlines; a failure of one structure never stops the rest;
 4. **verify** the research items the model claims (:func:`verificar_itens`: only a literal match the
-   server can see survives) and, in SOMENTE_PESQUISA, discard a headline a slot of which is not
-   backed by a kept item;
+   server can see survives); in SOMENTE_PESQUISA discard a headline that uses no kept item; ALWAYS discard a
+   headline that still carries a ``[placeholder]``; write one ``cs_estrutura_usos`` row per headline;
 5. settle the batch (``completo`` when at least one headline exists, else ``falha``).
 
 LLM output is untrusted: it is parsed strictly, every claimed item id must have been offered, and
@@ -38,6 +41,7 @@ from app.modules.media_creation.geracao_scheduler import MSG_JOB_FAILED
 from app.modules.media_creation.geracao_taxonomias import TONS
 from app.modules.media_creation.pesquisa_variables import VARIABLES, VARIABLE_SLUGS
 from app.modules.media_creation.prompts.cerebro_synthesis import ELEMENTOS_HEADING
+from app.modules.media_creation.prompts.estruturas_contexto import renderizar_estrutura
 from app.modules.media_creation.prompts.headline_geracao import (
     PROMPT_VERSAO,
     TEMPERATURA,
@@ -48,10 +52,13 @@ from app.modules.media_creation.prompts.headline_geracao import (
     build_system_prompt,
     build_user_message,
     parse_output,
+    tem_placeholder,
     template_blob,
     viral_blob,
 )
+from app.modules.media_creation.services import estruturas_retrieval as er
 from app.modules.media_creation.services import geracao_jobs
+from app.modules.media_creation.services.estruturas_service import EstruturasService
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +72,8 @@ ITENS = "cs_research_items"
 PERFIL = "cs_marca_perfil"
 BRAINS = "cs_brains"
 TOPICOS = "cs_viral_topics"
+ESTRUTURAS = er.ESTRUTURAS
+USOS = "cs_estrutura_usos"
 
 GPT_SLOT = "GPT"
 ELEMENTOS_MAX_CHARS = 4_000
@@ -83,6 +92,11 @@ MSG_NADA_GERADO = "Não foi possível gerar headlines — tente novamente."
 MSG_DESCARTADAS = (
     "As headlines geradas não usaram literalmente os itens da sua pesquisa. "
     "Tente novamente ou desmarque «usar apenas os itens da minha pesquisa»."
+)
+#: Every generated headline kept a ``[placeholder]`` the bio / brains could not fill (counted with the discards).
+MSG_DESCARTADAS_PLACEHOLDER = (
+    "As headlines geradas ficaram com campos [entre colchetes] sem preencher. "
+    "Complete a bio em Meu Perfil e os cérebros da marca e tente novamente."
 )
 
 #: ``(system, user, org_id, temperature) -> raw reply``. The DI seam of the LLM.
@@ -207,28 +221,8 @@ def carregar_assunto(db: Any, org_id: str, marca_id: str, params: Mapping[str, A
     return "; ".join(p for p in pieces if p)
 
 
-_VIRAL_COLS = "id,codigo,perfil_id,blueprint,blueprint_slots,formato_ids,nicho_ids,gatilho,score_viral,e_viral,publicado_em"
-
-
-def carregar_candidatos(db: Any, org_id: str) -> list[dict[str, Any]]:
-    """Every classified viral of the org with a blueprint (the structure candidates)."""
-    rows = _all_rows(
-        db, VIRAIS, _VIRAL_COLS,
-        lambda q: q.eq("org_id", org_id).eq("classificacao_status", "concluida"),
-        "cs_virais candidatos",
-    )
-    return [r for r in rows if (r.get("blueprint") or "").strip()]
-
-
-def carregar_virais_por_id(db: Any, org_id: str, ids: list[str]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for chunk in batched(ids):
-        out.extend(
-            db.table(VIRAIS).select(_VIRAL_COLS)
-            .eq("org_id", org_id).eq("classificacao_status", "concluida").in_("id", chunk)
-            .execute().data or []
-        )
-    return [r for r in out if (r.get("blueprint") or "").strip()]
+_LINHA_COLS = "id,perfil_id,viral_id,formato,objetivos"
+_VIRAL_COLS = "id,classificacao_status,formato_ids,nicho_ids,gatilho,score_viral,e_viral"
 
 
 def referencias_da_marca(db: Any, org_id: str, marca_id: str) -> list[dict[str, Any]]:
@@ -238,27 +232,72 @@ def referencias_da_marca(db: Any, org_id: str, marca_id: str) -> list[dict[str, 
     )
 
 
+def escopo_da_marca(db: Any, org_id: str, marca_id: str) -> Optional[set[str]]:
+    """The brand's selected profiles (estruturas-contract 8.2 step 1); ``None`` = it selected nothing = the
+    WHOLE library. The one org-scoped input of the pool."""
+    perfis = EstruturasService(db, org_id=org_id, user_id="", is_admin=False).perfis_selecionados(marca_id)
+    return perfis or None
+
+
+def carregar_linhas(
+    db: Any, *, perfil_ids: Optional[set[str]] = None, estrutura_ids: Optional[list[str]] = None,
+) -> list[dict[str, Any]]:
+    """The ``ativa`` Estruturas (``id, perfil_id, viral_id, formato, objetivos``) of the PLATFORM library -- no
+    ``org_id`` (migration 351). ``estrutura_ids`` wins over ``perfil_ids``; neither = the whole library. An empty
+    ``perfil_ids`` set is nothing, never "everything"."""
+    def query(filtro: Callable[[Any], Any]):
+        def pagina(a: int, b: int):
+            q = db.table(ESTRUTURAS).select(_LINHA_COLS).eq("status", "ativa")
+            return filtro(q).order("id").range(a, b).execute().data
+        return pagina
+
+    if estrutura_ids is not None:
+        coluna, valores = "id", estrutura_ids
+    elif perfil_ids is not None:
+        coluna, valores = "perfil_id", sorted(perfil_ids)
+    else:
+        return list(iter_paged_rows(query(lambda q: q), label="cs_estruturas (biblioteca)", page_size=1000, max_pages=200))
+    rows: list[dict[str, Any]] = []
+    for lote in batched(sorted({str(v) for v in valores})):
+        rows += list(iter_paged_rows(query(lambda q, lote=lote: q.in_(coluna, lote)), label=f"cs_estruturas ({coluna})", page_size=500))
+    return rows
+
+
+def carregar_virais_fonte(db: Any, viral_ids: Any) -> dict[str, dict[str, Any]]:
+    """The source videos' classification (platform-wide, no org filter), ``{viral_id: row}``."""
+    out: dict[str, dict[str, Any]] = {}
+    for lote in batched(sorted({str(v) for v in viral_ids if v})):
+        for r in db.table(VIRAIS).select(_VIRAL_COLS).in_("id", lote).execute().data or []:
+            out[str(r["id"])] = r
+    return out
+
+
 # ── selection ──────────────────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
 class Estrutura:
-    """One structure to generate from: a library viral or a Metodo template."""
+    """One structure to generate from: an Estrutura of the library or a Metodo template."""
 
-    viral_id: Optional[str] = None
+    pool: Optional[er.EstruturaPool] = None
+    viral_id: Optional[str] = None  # the source video (legacy ``Headline.viral``)
     template_metodo: Optional[int] = None
-    blueprint: Optional[str] = None
-    slots: tuple[str, ...] = ()
-    compativel: bool = True
+
+    @property
+    def estrutura_id(self) -> Optional[str]:
+        return self.pool.id if self.pool is not None else None
 
     @property
     def obrigatorios(self) -> frozenset[str]:
-        return frozenset(self.slots) - {GPT_SLOT}
+        """Research slots the structure demands: none -- an Estrutura has ``[placeholders]``, not ``{{SLUG}}`` slots."""
+        return frozenset()
 
     def blob(self) -> str:
         if self.template_metodo is not None:
             return template_blob(self.template_metodo)
-        return viral_blob(self.blueprint or "")
+        if self.pool is None:
+            raise ValueError("Estrutura sem template nem linha da biblioteca")
+        return viral_blob(renderizar_estrutura(self.pool))
 
 
 @dataclass
@@ -266,76 +305,23 @@ class Selecao:
     estruturas: list[Estrutura] = field(default_factory=list)
     fallback_metodo: bool = False
     aviso_poucas: bool = False
+    #: Estruturas a formato / gatilho filter excluded because their source video is missing or unclassified.
+    aviso_sem_classificacao: int = 0
     erro: Optional[str] = None
 
 
-def _estrutura(row: Mapping[str, Any], compativel: bool = True) -> Estrutura:
-    return Estrutura(
-        viral_id=str(row["id"]), blueprint=row.get("blueprint"),
-        slots=tuple(row.get("blueprint_slots") or ()), compativel=compativel,
-    )
+def estruturas_de(db: Any, linhas: list[dict[str, Any]], ids: list[str]) -> list[Estrutura]:
+    """The full :class:`Estrutura` objects of ``ids`` (in that order), taking ``viral_id`` from ``linhas``."""
+    viral_de = {str(r["id"]): (str(r["viral_id"]) if r.get("viral_id") else None) for r in linhas}
+    return [Estrutura(pool=p, viral_id=viral_de.get(p.id)) for p in er.carregar_estruturas(db, ids)]
 
 
-def _parse_ts(value: Any) -> Optional[datetime]:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
-
-def pool_da_biblioteca(
-    candidatos: list[dict[str, Any]], referencias: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Tier 1: what the marca's Minha Biblioteca allows -- the virals of the profile references newer
-    than their ``posts_ate`` plus the video references (the reference app did the same, mechanisms 7.3.1)."""
-    by_perfil: dict[str, Optional[datetime]] = {}
-    videos: set[str] = set()
-    for ref in referencias:
-        if ref.get("modo") == "perfil" and ref.get("perfil_id"):
-            by_perfil[str(ref["perfil_id"])] = _parse_ts(ref.get("posts_ate"))
-        elif ref.get("modo") == "video" and ref.get("viral_id"):
-            videos.add(str(ref["viral_id"]))
-    out = []
-    for c in candidatos:
-        if str(c["id"]) in videos:
-            out.append(c)
-        elif str(c["perfil_id"]) in by_perfil:
-            cutoff = by_perfil[str(c["perfil_id"])]
-            pub = _parse_ts(c.get("publicado_em"))
-            if cutoff is None or (pub is not None and pub >= cutoff):
-                out.append(c)
-    return out
-
-
-def tiers_de_pool(candidatos: list[dict[str, Any]], referencias: list[dict[str, Any]], nichos: list[int]) -> list[list[dict[str, Any]]]:
-    nich = set(nichos or [])
-    t1 = pool_da_biblioteca(candidatos, referencias)
-    t2 = [c for c in candidatos if nich & set(c.get("nicho_ids") or [])]
-    return [t1, t2, list(candidatos)]
-
-
-def pool_de_estruturas(
-    candidatos: list[dict[str, Any]], referencias: list[dict[str, Any]], nichos: list[int],
-) -> list[dict[str, Any]]:
-    """THE canonical structure pool (contract 5.1 step 1): the first non-empty tier of
-    Minha Biblioteca -> niche overlap -> whole org, over ``candidatos`` (classified virals with a
-    blueprint, see :func:`carregar_candidatos`). Filters / ranking are applied by the caller."""
-    return next((t for t in tiers_de_pool(candidatos, referencias, nichos) if t), [])
-
-
-def _passa_filtros(c: Mapping[str, Any], referencia: Optional[Mapping[str, Any]]) -> bool:
-    if not referencia:
-        return True
-    tipo = referencia.get("tipo")
-    if tipo == "perfil":
-        return str(c["perfil_id"]) in {str(p) for p in referencia.get("perfil_ids") or []}
-    if tipo == "formato":
-        return bool(set(referencia.get("formato_ids") or []) & set(c.get("formato_ids") or []))
-    if tipo == "gatilho":
-        return c.get("gatilho") in set(referencia.get("gatilhos") or [])
+def _passa_filtros(viral: Mapping[str, Any], referencia: Mapping[str, Any]) -> bool:
+    """The formato / gatilho filter, judged on the SOURCE VIDEO's classification."""
+    if referencia.get("tipo") == "formato":
+        return bool(set(referencia.get("formato_ids") or []) & set(viral.get("formato_ids") or []))
+    if referencia.get("tipo") == "gatilho":
+        return viral.get("gatilho") in set(referencia.get("gatilhos") or [])
     return True
 
 
@@ -356,76 +342,100 @@ def itens_por_slug(itens: list[dict[str, Any]], valores: Optional[Mapping[str, A
     return out
 
 
-def selecionar_estruturas(
-    *,
-    origem: str,
-    params: Mapping[str, Any],
-    candidatos: list[dict[str, Any]],
-    referencias: list[dict[str, Any]],
-    nichos: list[int],
-    por_slug: Mapping[str, list[dict[str, Any]]],
-    limite: int,
-) -> Selecao:
-    """Contract 5.1 steps 1-2, deterministic. ``biblioteca`` / ``sugestao_auto`` batches are handled
-    by :func:`estruturas_dadas` (their structures are chosen by id)."""
-    criatividade = params.get("criatividade") or "equilibrado"
-    if not candidatos:
-        nums = TEMPLATES_POR_CRIATIVIDADE[criatividade][:limite]
-        return Selecao([Estrutura(template_metodo=n, compativel=True) for n in nums if n in TEMPLATES_METODO],
-                       fallback_metodo=True)
-
-    formulario = origem in ("form_me", "form_public")
-    somente = bool(params.get("somente_pesquisa")) and formulario
+def _sem_itens_para_somente(params: Mapping[str, Any], por_slug: Mapping[str, list[dict[str, Any]]]) -> Optional[str]:
+    """SOMENTE_PESQUISA needs at least one approved item among the selected variables; else the honest error."""
     variaveis = set(params.get("variaveis") or [])
     if "*" in variaveis:
         variaveis = set(VARIABLE_SLUGS)
     variaveis.discard(GPT_SLOT)
-
-    filtrou_algo = False
-    faltantes: list[str] = []
-    for tier in tiers_de_pool(candidatos, referencias, nichos):
-        filtrados = [c for c in tier if _passa_filtros(c, params.get("referencia"))]
-        if not filtrados:
-            continue
-        filtrou_algo = True
-        elegiveis: list[Estrutura] = []
-        for c in sorted(filtrados, key=rank_score):
-            slots = frozenset(c.get("blueprint_slots") or ()) - {GPT_SLOT}
-            compat = (not formulario) or bool(slots & variaveis)
-            if somente:
-                lacunas = [s for s in sorted(slots) if not por_slug.get(s)]
-                if not compat or lacunas:
-                    faltantes.extend(lacunas)
-                    continue
-            elegiveis.append(_estrutura(c, compat))
-        if not elegiveis:
-            continue
-        elegiveis.sort(key=lambda e: not e.compativel)  # stable: compatible first, score order kept
-        escolhidas = elegiveis[:limite]
-        if formulario:
-            aviso = sum(1 for e in escolhidas if e.compativel) < 3
-        else:
-            aviso = origem == "form_viral" and len(escolhidas) < 3
-        return Selecao(escolhidas, aviso_poucas=aviso)
-
-    if somente and filtrou_algo:
-        nomes = []
-        for s in faltantes:
-            lab = _LABELS.get(s, s)
-            if lab not in nomes:
-                nomes.append(lab)
-        extra = f" (faltam: {'; '.join(nomes[:5])})" if nomes else ""
-        return Selecao(erro=(
-            "Nenhuma estrutura pode ser preenchida só com os itens da sua pesquisa. "
-            f"Aprove itens em Minha Pesquisa{extra} ou desmarque «usar apenas os itens da minha pesquisa»."
-        ))
-    return Selecao(erro=MSG_SEM_ESTRUTURA_FILTROS)
+    if any(por_slug.get(s) for s in variaveis):
+        return None
+    nomes = [_LABELS.get(s, s) for s in sorted(variaveis)]
+    extra = f" (faltam: {'; '.join(nomes[:5])})" if nomes else ""
+    return (
+        "Nenhuma estrutura pode ser preenchida só com os itens da sua pesquisa. "
+        f"Aprove itens em Minha Pesquisa{extra} ou desmarque «usar apenas os itens da minha pesquisa»."
+    )
 
 
-def estruturas_dadas(rows: list[dict[str, Any]], ordem: list[str]) -> list[Estrutura]:
-    """Structures chosen by id (the Biblioteca wizard / the daily suggestions), in the order given."""
-    by_id = {str(r["id"]): r for r in rows}
-    return [_estrutura(by_id[i]) for i in ordem if i in by_id]
+def selecionar_estruturas(
+    db: Any,
+    *,
+    org_id: str,
+    marca_id: str,
+    origem: str,
+    params: Mapping[str, Any],
+    por_slug: Mapping[str, list[dict[str, Any]]],
+    limite: int,
+    semente: str,
+) -> Selecao:
+    """Contract 5.1 steps 1-2 over the Estruturas pool (estruturas-contract 8.2), deterministic. ``biblioteca`` /
+    ``sugestao_auto`` batches are handled by :func:`estruturas_dadas` (their structures are chosen by id).
+
+    Scope: ``estrutura_ids`` (those ``ativa`` rows) > ``referencia: perfil`` / a profile named in free text
+    (``perfis_resolvidos``) > the brand's selected profiles > the whole library. The formato / gatilho filters go
+    through the source video; Estruturas whose video is missing or unclassified are excluded and COUNTED."""
+    criatividade = params.get("criatividade") or "equilibrado"
+    referencia = params.get("referencia") or None
+    ids_pedidos = [str(i) for i in params.get("estrutura_ids") or []]
+    perfis_pedidos: Optional[set[str]] = None
+    if referencia and referencia.get("tipo") == "perfil":
+        perfis_pedidos = {str(p) for p in referencia.get("perfil_ids") or []}
+    elif params.get("perfis_resolvidos"):
+        perfis_pedidos = {str(p) for p in params["perfis_resolvidos"]}
+
+    if ids_pedidos:
+        linhas = carregar_linhas(db, estrutura_ids=ids_pedidos)
+    elif perfis_pedidos is not None:
+        linhas = carregar_linhas(db, perfil_ids=perfis_pedidos)
+    else:
+        linhas = carregar_linhas(db, perfil_ids=escopo_da_marca(db, org_id, marca_id))
+    estreitado = bool(ids_pedidos) or perfis_pedidos is not None
+    if not linhas:
+        if estreitado:
+            return Selecao(erro=MSG_SEM_ESTRUTURA_FILTROS)
+        nums = TEMPLATES_POR_CRIATIVIDADE[criatividade][:limite]  # never silently empty: the Metodo templates
+        return Selecao([Estrutura(template_metodo=n) for n in nums if n in TEMPLATES_METODO], fallback_metodo=True)
+
+    sem_class = 0
+    if referencia and referencia.get("tipo") in ("formato", "gatilho"):
+        virais = carregar_virais_fonte(db, (r.get("viral_id") for r in linhas))
+        mantidas = []
+        for r in linhas:
+            v = virais.get(str(r["viral_id"])) if r.get("viral_id") else None
+            if v is None or v.get("classificacao_status") != "concluida":
+                sem_class += 1
+            elif _passa_filtros(v, referencia):
+                mantidas.append(r)
+        linhas = mantidas
+    if not linhas:
+        return Selecao(erro=MSG_SEM_ESTRUTURA_FILTROS, aviso_sem_classificacao=sem_class)
+
+    formulario = origem in ("form_me", "form_public")
+    if formulario and params.get("somente_pesquisa"):
+        erro = _sem_itens_para_somente(params, por_slug)
+        if erro:
+            return Selecao(erro=erro, aviso_sem_classificacao=sem_class)
+
+    ids = er.selecionar_ids(linhas, semente=semente, limite=limite)
+    escolhidas = estruturas_de(db, linhas, ids)
+    if not escolhidas:  # the rows vanished between the two reads
+        return Selecao(erro=MSG_SEM_ESTRUTURA_FILTROS, aviso_sem_classificacao=sem_class)
+    return Selecao(escolhidas, aviso_poucas=len(escolhidas) < 3, aviso_sem_classificacao=sem_class)
+
+
+def estruturas_dadas(db: Any, ids: list[str]) -> list[Estrutura]:
+    """Structures chosen by id (the Biblioteca wizard / the daily suggestions): ``ativa`` rows only, in the order given."""
+    ordem = list(dict.fromkeys(str(i) for i in ids))
+    linhas = carregar_linhas(db, estrutura_ids=ordem)
+    por_id = {e.estrutura_id: e for e in estruturas_de(db, linhas, [str(r["id"]) for r in linhas])}
+    return [por_id[i] for i in ordem if i in por_id]
+
+
+def estruturas_do_viral(db: Any, viral_id: str) -> list[str]:
+    """The ``ativa`` Estruturas of one source video (the Biblioteca wizard's ``viral_id``), by id."""
+    rows = db.table(ESTRUTURAS).select("id").eq("viral_id", viral_id).eq("status", "ativa").order("id").execute().data or []
+    return [str(r["id"]) for r in rows]
 
 
 # ── item offering + verification ───────────────────────────────────────────────
@@ -498,6 +508,30 @@ def montar_mensagem(
 
 # ── the job ────────────────────────────────────────────────────────────────────
 
+
+def _params_com_aviso(params: Mapping[str, Any], sel: Selecao) -> dict[str, Any]:
+    """``parametros`` with this run's ``aviso_sem_classificacao`` (the lote has no column for it; it is derived
+    afresh on every (re)run and read back by ``HeadlineService.present_lote``)."""
+    return {"parametros": {**params, "aviso_sem_classificacao": sel.aviso_sem_classificacao}}
+
+
+def _registrar_usos(
+    db: Any, est: Estrutura, headlines: list[dict[str, Any]], *, org_id: str, marca_id: str, user_id: Optional[str],
+) -> None:
+    """One ``cs_estrutura_usos`` row per generated headline (``contexto='lote_headlines'``, ``papel='principal'``).
+    A Metodo-template headline has no Estrutura and writes nothing."""
+    if est.estrutura_id is None:
+        return
+    db.table(USOS).insert([
+        {
+            "id": str(uuid.uuid4()), "org_id": org_id, "marca_id": marca_id, "estrutura_id": est.estrutura_id,
+            "contexto": "lote_headlines", "papel": "principal", "ordem": 1, "bloco_ids": [],
+            "headline_id": h["id"], "created_by": user_id, "created_at": _iso(),
+        }
+        for h in headlines
+    ]).execute()
+
+
 _TERMINAL = frozenset({"completo", "falha"})
 
 #: `(org_id, lote_id, state)` — pushes a batch's live state to the SSE job-progress stream. Optional.
@@ -556,37 +590,41 @@ async def executar_lote(
     limite = int(cfg.headline_estruturas_por_lote)
 
     if origem == "biblioteca":
-        sel = Selecao(estruturas_dadas(carregar_virais_por_id(db, org_id, [str(params.get("viral_id"))]),
-                                      [str(params.get("viral_id"))]))
+        if params.get("estrutura_id"):
+            ids = [str(params["estrutura_id"])]
+        else:  # the chosen video = all its ``ativa`` Estruturas
+            ids = estruturas_do_viral(db, str(params.get("viral_id")))
+        sel = Selecao(estruturas_dadas(db, ids[:limite]))
         if not sel.estruturas:
             sel.erro = MSG_SEM_ESTRUTURA_VIRAL
     elif origem == "sugestao_auto":
-        ids = [str(i) for i in params.get("viral_ids") or []][:limite]
-        sel = Selecao(estruturas_dadas(carregar_virais_por_id(db, org_id, ids), ids))
+        ids = [str(i) for i in params.get("estrutura_ids") or []]
+        for viral_id in params.get("viral_ids") or []:  # a batch queued before Estruturas: its videos' Estruturas
+            ids += estruturas_do_viral(db, str(viral_id))
+        sel = Selecao(estruturas_dadas(db, ids[:limite]))
         if not sel.estruturas:
             sel.erro = MSG_SEM_ESTRUTURA_VIRAL
     else:
         sel = selecionar_estruturas(
-            origem=origem, params=params, candidatos=carregar_candidatos(db, org_id),
-            referencias=referencias_da_marca(db, org_id, marca_id),
-            nichos=list((perfil or {}).get("nichos") or []), por_slug=por_slug, limite=limite,
+            db, org_id=org_id, marca_id=marca_id, origem=origem, params=params, por_slug=por_slug,
+            limite=limite, semente=lote_id,
         )
     if sel.erro:
-        _falhar(db, lote_id, sel.erro)
+        _falhar(db, lote_id, sel.erro, _params_com_aviso(params, sel))
         await _push(status="falha", erro=sel.erro, etapa=None)
         return
     total_est = len(sel.estruturas)
 
     _patch(db, lote_id, {
         "estruturas_total": len(sel.estruturas), "aviso_poucas_estruturas": sel.aviso_poucas,
-        "fallback_metodo": sel.fallback_metodo,
+        "fallback_metodo": sel.fallback_metodo, **_params_com_aviso(params, sel),
     })
 
     somente = bool(params.get("somente_pesquisa")) and origem in ("form_me", "form_public")
     criatividade = params.get("criatividade") or "equilibrado"
     system = build_system_prompt()
     modo = MODO_POR_ORIGEM.get(origem)
-    n_ok = n_erro = n_descartadas = 0
+    n_ok = n_erro = n_descartadas = n_colchetes = 0
     fatal: Optional[str] = None
 
     for idx, est in enumerate(sel.estruturas, start=1):
@@ -621,8 +659,11 @@ async def executar_lote(
 
         novas = []
         for s in saidas:
+            if tem_placeholder(s.texto):  # a [placeholder] the bio / brains did not fill: never shown, but counted
+                n_colchetes += 1
+                continue
             usados = verificar_itens(s.texto, list(s.itens), oferecidos)
-            if somente and est.obrigatorios - {u["slot"] for u in usados}:
+            if somente and not usados:
                 n_descartadas += 1
                 continue
             novas.append({
@@ -634,6 +675,7 @@ async def executar_lote(
             })
         if novas:
             db.table(HEADLINES).insert(novas).execute()
+            _registrar_usos(db, est, novas, org_id=org_id, marca_id=marca_id, user_id=lote.get("created_by"))
             n_ok += len(novas)
         else:
             n_erro += 1
@@ -644,7 +686,14 @@ async def executar_lote(
         _patch(db, lote_id, {**finished, "status": "completo", "erro": fatal})
         await _push(status="completo", etapa=None, estruturas_processadas=total_est)
     else:
-        erro = fatal or (MSG_DESCARTADAS if somente and n_descartadas else MSG_NADA_GERADO)
+        if fatal:
+            erro = fatal
+        elif n_colchetes and not n_descartadas:
+            erro = MSG_DESCARTADAS_PLACEHOLDER
+        elif somente and n_descartadas:
+            erro = MSG_DESCARTADAS
+        else:
+            erro = MSG_NADA_GERADO
         _falhar(db, lote_id, erro)
         await _push(status="falha", erro=erro, etapa=None)
 
@@ -702,7 +751,11 @@ __all__ = [
     "HeadlineLlm",
     "JOB_TYPE",
     "Selecao",
+    "carregar_linhas",
     "chat_headline_llm",
+    "escopo_da_marca",
+    "estruturas_dadas",
+    "estruturas_do_viral",
     "executar_lote",
     "extrair_elementos",
     "handle_headline_gerar",
@@ -710,9 +763,7 @@ __all__ = [
     "itens_por_slug",
     "make_handler",
     "montar_mensagem",
-    "pool_de_estruturas",
     "normalizar",
-    "pool_da_biblioteca",
     "reconciliar_dead_letter",
     "register",
     "selecionar_estruturas",

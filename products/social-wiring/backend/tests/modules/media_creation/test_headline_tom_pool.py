@@ -1,4 +1,4 @@
-"""Tom accepted as id or slug; the canonical structure pool function."""
+"""Tom accepted as id or slug; the old tiered pool is replaced by the Estruturas retrieval pool."""
 from __future__ import annotations
 
 import pytest
@@ -27,11 +27,8 @@ def test_tom_rejects_the_rest(bad):
         _lote(bad)
 
 
-def test_pool_de_estruturas_is_the_first_non_empty_tier():
-    a = {"id": "a", "perfil_id": "p1", "nicho_ids": [], "publicado_em": "2026-10-01T00:00:00+00:00"}
-    b = {"id": "b", "perfil_id": "p2", "nicho_ids": [3], "publicado_em": "2026-10-01T00:00:00+00:00"}
-    ref = [{"modo": "perfil", "perfil_id": "p1", "posts_ate": None}]
-    assert [c["id"] for c in hp.pool_de_estruturas([a, b], ref, [3])] == ["a"]
-    assert [c["id"] for c in hp.pool_de_estruturas([a, b], [], [3])] == ["b"]
-    assert [c["id"] for c in hp.pool_de_estruturas([a, b], [], [9])] == ["a", "b"]
-    assert hp.pool_de_estruturas([], [], [3]) == []
+def test_the_old_org_scoped_tiered_pool_is_gone():
+    """The pool is the EST-4a retrieval pool over the platform library (estruturas-contract 8.2)."""
+    for nome in ("pool_de_estruturas", "pool_da_biblioteca", "tiers_de_pool", "carregar_candidatos"):
+        assert not hasattr(hp, nome)
+    assert callable(hp.selecionar_estruturas) and callable(hp.carregar_linhas)

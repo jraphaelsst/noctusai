@@ -435,14 +435,17 @@ class TestWatchPolling:
         sleeps, lines = [], []
         assert c.watch("7", lines.append, 3600, sleep=sleeps.append, clock=lambda: 0.0)
         assert 100 < sleeps[0] < 130 and any(l.startswith("GITHUB QUOTA") and "sleeping" in l for l in lines)
-        assert c.free_calls == 1
+        assert c.api_calls == 2  # the refused poll + the retry; the rate_limit reads are free
 
     def test_quota_pause_is_zero_when_healthy_or_unreadable(self):
-        ok = lambda a, cwd=None: (0, '{"resources":{"core":{"remaining":900,"limit":5000,"reset":9}}}', "")
-        low = lambda a, cwd=None: (0, '{"resources":{"core":{"remaining":3,"limit":5000,"reset":1000}}}', "")
-        bad = lambda a, cwd=None: (1, "", "boom")
-        assert cv.quota_pause_s(ok)[0] == 0.0 and cv.quota_pause_s(bad)[0] == 0.0
-        assert cv.quota_pause_s(low, now=lambda: 400.0)[0] == 605.0
+        def mk(resp):
+            return cv.RealGithubClient(runner=lambda a, cwd=None, timeout=60: resp, repo="a/b")
+        ok = mk((0, '{"resources":{"core":{"remaining":900,"limit":5000,"reset":9}}}', ""))
+        low = mk((0, '{"resources":{"core":{"remaining":3,"limit":5000,"reset":1000}}}', ""))
+        bad = mk((1, "", "boom"))
+        assert cv.quota_pause_s(ok) == 0.0 and cv.quota_pause_s(bad) == 0.0
+        assert cv.quota_pause_s(low, now=lambda: 400.0) == 605.0
+        assert ok.api_calls == 0  # the quota read is free and never counted
 
 
 class TestGhCallsViaSeam:

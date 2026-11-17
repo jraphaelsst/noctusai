@@ -39,7 +39,7 @@ class FakeGit:
 
     def __init__(self, refs, anc, logs=None, diffs=None, ci=_GREEN, ci_rc=0,
                 rev_list=None, ci_by_sha=None, jobs_by_run_id=None,
-                assume_since_fix=True):
+                assume_since_fix=True, full_shas=None, sched_runs=None):
         self.refs = dict(refs)
         self._anc = anc
         self.logs = logs or {}
@@ -52,6 +52,11 @@ class FakeGit:
         self.ci_by_sha = ci_by_sha or {}
         self.jobs_by_run_id = jobs_by_run_id or {}
         self.assume_since_fix = assume_since_fix
+        # full-green gate (2026-11-17): `full_shas` = the shas that carry a green scope=full run
+        # (None = every sha does, which keeps the pre-gate bless cases testing what they test);
+        # `sched_runs` = the scheduled-on-dev runs the second probe returns.
+        self.full_shas = full_shas
+        self.sched_runs = sched_runs or []
         self.calls: list[tuple[list[str], dict | None]] = []
 
     def anc(self, a, b):
@@ -72,9 +77,23 @@ class FakeGit:
             if cmd[1:3] == ["run", "view"]:
                 run_id = cmd[3]
                 return (0, json.dumps({"jobs": self.jobs_by_run_id.get(run_id, [])}), "")
+            if "--status" in cmd and "--commit" in cmd:
+                sha = cmd[cmd.index("--commit") + 1]
+                if self.full_shas is None or sha in self.full_shas:
+                    return (0, json.dumps([{"displayTitle": "Tests & Build [scope=full]", "headSha": sha,
+                                            "event": "workflow_dispatch", "url": "https://ci/full"}]), "")
+                return (0, "[]", "")
+            if "--status" in cmd and "--event" in cmd:
+                return (0, json.dumps(self.sched_runs), "")
             if "--commit" in cmd:
                 sha = cmd[cmd.index("--commit") + 1]
-                return (0, json.dumps(self.ci_by_sha.get(sha, self.ci)), "")
+                runs = [dict(r) for r in self.ci_by_sha.get(sha, self.ci)]
+                # the bless probe's ONE list call also answers "was it a full run?" (no second call):
+                # a sha in `full_shas` (None = every sha) is titled [scope=full] unless the case set a title
+                if self.full_shas is None or sha in self.full_shas:
+                    for r in runs:
+                        r.setdefault("displayTitle", "Tests & Build [scope=full]")
+                return (0, json.dumps(runs), "")
             return (0, json.dumps(self.ci), "")
         sub = cmd[1] if len(cmd) > 1 else ""
         if sub == "fetch":
@@ -385,7 +404,9 @@ def test_green_ci_blesses_and_records_the_evidence():
     assert out["status"] == "blessed"
     assert out["ci"] == {"qualifies": True, "verdict": "green", "workflow": R._CI_WORKFLOW,
                          "conclusion": "success", "url": "https://ci/green",
-                         "qualifying_reason": "since_verified_base_fix"}
+                         "qualifying_reason": "since_verified_base_fix",
+                         # the same list call proves the full suite ran (no second `gh` call)
+                         "exact_full_green": "https://ci/green"}
     assert out["blessed_sha"] == "d" and out["dev_tip"] == "d"
     assert out["skipped_tail"] == {"count": 0, "commits": [], "projects": [], "migrations": []}
 
@@ -599,14 +620,14 @@ def test_bless_qualifies_a_workflow_dispatch_run_even_before_the_verified_base_f
         rev_list={f"m..{old_sha}": [old_sha]},
         ci_by_sha={old_sha: [{"status": "completed", "conclusion": "success",
                               "url": "https://ci/dispatch", "event": "workflow_dispatch",
-                              "databaseId": 999}]},
+                              "displayTitle": "Tests & Build [scope=full]", "databaseId": 999}]},
         logs={f"m..{old_sha}": "c0 x"},
         assume_since_fix=False,
     )
     out = R.release(stage="bless", confirm=True, run=fake)
     assert out["status"] == "blessed"
     assert out["ci"]["qualifying_reason"] == "workflow_dispatch"
-    gh = [c for c, _e in fake.calls if c[0] == "gh"]
+    gh = [c for c, _e in fake.calls if c[0] == "gh" and "--status" not in c]
     assert len(gh) == 1, "workflow_dispatch must short-circuit — no extra `gh run view` call"
 
 
@@ -703,3 +724,80 @@ def test_bless_ignores_deleted_non_migration_files():
     fake.deleted = {"d0..d2": "products/core/frontend/src/Old.tsx\n"}
     out = R.release(stage="bless", confirm=True, run=fake)
     assert out["status"] == "blessed", out
+
+
+# ── the full-green gate (2026-11-17) ──
+# Branch verdicts / queue batches run test.yml scoped; bless must still see the WHOLE suite green.
+def _full_case(full_shas, sched_runs=None, tree=None, diffs=None):
+    class G(FakeGit):
+        def __call__(self, cmd, env_extra=None):
+            if cmd[:2] == ["git", "rev-parse"] and cmd[2].endswith("^{tree}"):
+                t = (tree or {}).get(cmd[2][:-len("^{tree}")])
+                return (0, t + "\n", "") if t else (1, "", "no tree")
+            return super().__call__(cmd, env_extra)
+    return G(
+        refs={"origin/dev": "d", "origin/main": "m", "origin/prod": "p", "origin/prod-backup": "p"},
+        anc=_anc_pairs([("m", "d"), ("p", "m")]),
+        logs={"m..d": "a1 x"},
+        diffs=diffs or {"m..d": "products/x/backend/app/main.py"},
+        full_shas=full_shas, sched_runs=sched_runs)
+
+
+def test_bless_refuses_a_scoped_green_with_no_full_run_and_names_how_to_dispatch_one():
+    fake = _full_case(full_shas=set())
+    out = R.release(stage="bless", confirm=True, run=fake)
+    assert out["status"] == "blocked" and out["blessed_sha"] is None
+    assert "scope=full" in out["reason"] and "gh workflow run test.yml" in out["reason"]
+    assert out["full_green"]["covered"] is False
+    assert fake.pushes() == []
+
+
+def test_bless_passes_with_a_green_full_run_on_the_exact_sha():
+    out = R.release(stage="bless", confirm=True, run=_full_case(full_shas={"d"}))
+    assert out["status"] == "blessed" and out["full_green"]["how"] == "exact_sha"
+
+
+def test_bless_accepts_a_scheduled_full_run_on_a_commit_with_the_same_tree():
+    sched = [{"displayTitle": "Tests & Build [scope=full]", "headSha": "f", "event": "schedule", "url": "u"}]
+    out = R.release(stage="bless", confirm=True,
+                    run=_full_case(full_shas=set(), sched_runs=sched, tree={"f": "T1", "d": "T1"}))
+    assert out["status"] == "blessed" and out["full_green"]["how"] == "same_tree"
+
+
+def test_a_scheduled_full_run_does_not_cover_a_later_code_change():
+    sched = [{"displayTitle": "Tests & Build [scope=full]", "headSha": "f", "event": "schedule", "url": "u"}]
+    fake = _full_case(full_shas=set(), sched_runs=sched, tree={"f": "T1", "d": "T2"},
+                      diffs={"m..d": "products/x/backend/app/main.py", "f..d": "products/x/backend/app/main.py"})
+    fake._anc = _anc_pairs([("m", "d"), ("p", "m"), ("f", "d")])
+    assert R.release(stage="bless", confirm=True, run=fake)["status"] == "blocked"
+
+
+def test_a_scoped_title_never_counts_as_full():
+    fake = _full_case(full_shas=set(),
+                      sched_runs=[{"displayTitle": "Tests & Build [scope=changed]", "headSha": "d", "event": "schedule"}])
+    assert R.release(stage="bless", confirm=True, run=fake)["status"] == "blocked"
+
+
+def test_unreadable_gh_for_the_full_probe_refuses_rather_than_passing():
+    full = _full_case(full_shas=set())
+    full.full_shas = set()
+    orig = full.__call__
+
+    def broken(cmd, env_extra=None):
+        if cmd[0] == "gh" and "--status" in cmd:
+            return (1, "", "gh: boom")
+        return orig(cmd, env_extra)
+    class W:  # the runner seam: same call surface, the full probe fails
+        calls = full.calls
+        def __call__(self, cmd, env_extra=None):
+            return broken(cmd, env_extra)
+        def __getattr__(self, n):
+            return getattr(full, n)
+    out = R.release(stage="bless", confirm=True, run=W())
+    assert out["status"] == "blocked" and out["full_green"]["verdict"] == "unavailable"
+
+
+def test_the_docs_only_exception_needs_no_full_run():
+    fake = _ci_case(ci=[], diffs={"m..d": "docs/a.md"})
+    fake.full_shas = set()
+    assert R.release(stage="bless", confirm=True, run=fake)["status"] == "blessed"

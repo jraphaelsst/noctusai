@@ -271,7 +271,9 @@
       "outro",
       "seguranca",
       "direito_titular",
-      "info_indisponivel"
+      "info_indisponivel",
+      "pedido_visita",
+      "proposta"
      ],
      "title": "Motivo Codigo",
      "type": "string"

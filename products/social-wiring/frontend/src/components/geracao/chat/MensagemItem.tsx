@@ -1,36 +1,38 @@
 /**
- * One chat message (contract §7.2). Assistant markdown goes through the seed
- * `MarkdownRenderer` (no raw HTML). HEADLINE answers add, per headline line:
- * "Salvar headline" (POST /headlines), "Criar roteiro a partir desta headline"
- * and "Criar roteiro com headline editável"; `(estrutura #N)` opens the viral.
+ * One chat message of the unified chat (Estruturas contract §6.5 / §11.3). Assistant markdown goes
+ * through the seed `MarkdownRenderer` (no raw HTML). An assistant `texto` message that carries
+ * `propostas` renders them as cards (the SERVER parsed them — the client never derives headlines
+ * from the text); a `roteiro_gerado` message renders the flow card. `(estrutura #N)` links open the
+ * Estrutura detail, only for codes the message's own propostas vouch for.
  */
 import { useMemo } from "react";
-import { Copy, Star } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { MarkdownRenderer } from "@noctusai/lib/components";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { Agente, Mencao } from "@/types/geracao";
-import { codigoDoHref, extrairHeadlines, linkarCitacoes } from "./citacoes";
+import type { Fluxo, Proposta } from "@/types/estruturas";
+import type { Mencao } from "@/types/geracao";
+import { codigoDoHref, linkarCitacoes } from "./citacoes";
+import { FluxoCard } from "./FluxoCard";
+import { estruturaUrl, PropostaCard } from "./PropostaCard";
 
 interface Props {
   role: "user" | "assistant";
   conteudo: string;
-  agente: Agente;
+  tipo?: "texto" | "roteiro_gerado";
+  propostas?: Proposta[];
+  fluxo?: Fluxo | null;
   referencias?: Mencao[];
   status?: "completa" | "parcial" | "erro";
   truncada?: boolean;
   streaming?: boolean;
-  /** Allowed `(estrutura #N)` codes, when the server sent them; otherwise the server resolves on click. */
-  codigosPermitidos?: number[] | null;
-  salvos: ReadonlySet<string>;
-  salvando: boolean;
-  onAbrirEstrutura: (codigo: number) => void;
-  onSalvar: (texto: string) => void;
-  /** `editavel`: opens the modal with the text as a free (unlinked) headline. */
-  onCriarRoteiro: (texto: string, editavel: boolean) => void;
+  /** The proposta whose `escolher` is in flight, if any. */
+  escolhendoId?: string | null;
+  onEscolher?: (propostaId: string) => void;
 }
 
 async function copiar(texto: string) {
@@ -45,28 +47,38 @@ async function copiar(texto: string) {
 export function MensagemItem({
   role,
   conteudo,
-  agente,
+  tipo = "texto",
+  propostas = [],
+  fluxo = null,
   referencias,
   status,
   truncada,
   streaming,
-  codigosPermitidos,
-  salvos,
-  salvando,
-  onAbrirEstrutura,
-  onSalvar,
-  onCriarRoteiro,
+  escolhendoId = null,
+  onEscolher,
 }: Props) {
+  const navigate = useNavigate();
   const assistente = role === "assistant";
-  const permitidos = useMemo(() => (codigosPermitidos ? new Set(codigosPermitidos) : null), [codigosPermitidos]);
+
+  // code -> Estrutura id, from this message's own propostas (the only codes the server vouched for).
+  const idPorCodigo = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const p of propostas) for (const e of p.estruturas) m.set(e.codigo, e.id);
+    return m;
+  }, [propostas]);
   const texto = useMemo(
-    () => (assistente ? linkarCitacoes(conteudo, permitidos) : conteudo),
-    [assistente, conteudo, permitidos],
+    () => (assistente ? linkarCitacoes(conteudo, new Set(idPorCodigo.keys())) : conteudo),
+    [assistente, conteudo, idPorCodigo],
   );
-  const headlines = useMemo(
-    () => (assistente && agente === "headline" && !streaming ? extrairHeadlines(conteudo) : []),
-    [assistente, agente, conteudo, streaming],
-  );
+
+  if (assistente && tipo === "roteiro_gerado" && fluxo) {
+    return (
+      <article aria-label="Roteiro criado" className="flex flex-col items-start gap-2">
+        {conteudo && <p className="text-sm text-muted-foreground">{conteudo}</p>}
+        <FluxoCard fluxo={fluxo} tentando={escolhendoId === fluxo.proposta_id} onTentarDeNovo={(id) => onEscolher?.(id)} />
+      </article>
+    );
+  }
 
   return (
     <article
@@ -85,7 +97,8 @@ export function MensagemItem({
               content={texto}
               onNavigate={(href) => {
                 const cod = codigoDoHref(href);
-                if (cod != null) onAbrirEstrutura(cod);
+                const id = cod != null ? idPorCodigo.get(cod) : undefined;
+                if (id) navigate(estruturaUrl(id));
               }}
             />
           ) : (
@@ -122,28 +135,17 @@ export function MensagemItem({
         </Button>
       )}
 
-      {headlines.length > 0 && (
+      {assistente && !streaming && propostas.length > 0 && (
         <ul className="w-full max-w-[85%] space-y-2" aria-label="Headlines desta resposta">
-          {headlines.map((h) => {
-            const salvo = salvos.has(h);
-            return (
-              <li key={h} className="rounded-md border p-3 text-sm">
-                <p className="mb-2">{h}</p>
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" size="sm" variant="outline" disabled={salvo || salvando} onClick={() => onSalvar(h)}>
-                    <Star className="mr-1 h-3.5 w-3.5" />
-                    {salvo ? "Headline salva" : "Salvar headline"}
-                  </Button>
-                  <Button type="button" size="sm" onClick={() => onCriarRoteiro(h, false)}>
-                    Criar roteiro a partir desta headline
-                  </Button>
-                  <Button type="button" size="sm" variant="ghost" onClick={() => onCriarRoteiro(h, true)}>
-                    Criar roteiro com headline editável
-                  </Button>
-                </div>
-              </li>
-            );
-          })}
+          {propostas.map((p) => (
+            <PropostaCard
+              key={p.id}
+              proposta={p}
+              escolhendo={escolhendoId === p.id}
+              bloqueada={!!escolhendoId && escolhendoId !== p.id}
+              onEscolher={(id) => onEscolher?.(id)}
+            />
+          ))}
         </ul>
       )}
     </article>
