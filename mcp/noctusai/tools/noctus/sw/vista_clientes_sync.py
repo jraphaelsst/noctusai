@@ -16,9 +16,10 @@ from typing import Any
 
 import httpx
 
+from ..dev._http import bounded_client
+
 MODOS = ("novos", "refazer")
 MAX_LOTES = 20
-_TIMEOUT = httpx.Timeout(600.0, connect=10.0)
 _SOMAS = ("lote", "ja_vinculados", "casados", "campos_preenchidos", "divergencias", "ambiguos", "sem_match")
 
 
@@ -63,7 +64,8 @@ def vista_clientes_sync(
         return cfg
     base, token = cfg
     efetivo_dry = dry_run or not confirm
-    with httpx.Client(base_url=base, headers={"Authorization": f"Bearer {token}"}, timeout=_TIMEOUT, transport=_transport) as c:
+    with bounded_client(base_url=base, headers={"Authorization": f"Bearer {token}"}, transport=_transport,
+                        deadline_s=600.0, why="batch sync of Vista clients", call_site="sw.vista_clientes_sync") as c:
         if action == "status":
             r = _chamar(c, "GET", "/api/leads/vista-clientes/resumo")
             return r if "error" in r else {"status": "ok", "org": org or None, "resumo": r["dados"]}

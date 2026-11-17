@@ -29,13 +29,14 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from tools.noctus.dev._http import bounded_client
+
 ACOES = ("plan", "apply", "status")
 FONTES = ("referencia",)
 ARQUIVO_PADRAO = {"referencia": "estruturas-referencia.json"}
 DIRETORIO_PADRAO = Path.home() / "Documents/repository/NoctusAI/_private-studies/core-studio/estruturas-import"
 MAX_BYTES = 16 * 1024 * 1024  # the API's 16 MiB body override on this one route
 _BASE = "/api/media-creation/estruturas/importacoes"
-_TIMEOUT = httpx.Timeout(900.0, connect=10.0)
 #: The ONLY keys of the report that leave this tool (counts, codes, ids, timestamps).
 _RELATORIO = (
     "id", "fonte", "status", "dry_run", "arquivo_sha256", "linhas_total", "perfis_criados", "perfis_mesclados", "estruturas_criadas",
@@ -154,7 +155,9 @@ def estruturas_import(
         conteudo = _ler(caminho)
         if isinstance(conteudo, dict) and "error" in conteudo and len(conteudo) == 1:
             return conteudo
-    with httpx.Client(base_url=base, headers={"Authorization": f"Bearer {token}"}, timeout=_TIMEOUT, transport=_transport) as c:
+    with bounded_client(deadline_s=900.0, why="estruturas import: a large library file is parsed server-side",
+                        call_site="noctus.sw.estruturas_import", base_url=base,
+                        headers={"Authorization": f"Bearer {token}"}, transport=_transport) as c:
         try:
             if action == "status":
                 resp = c.get(f"{_BASE}/{importacao_id}") if importacao_id else c.get(_BASE, params={"limit": 5})

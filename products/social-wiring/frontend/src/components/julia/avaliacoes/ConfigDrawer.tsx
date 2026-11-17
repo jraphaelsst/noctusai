@@ -26,7 +26,7 @@ export function AvaliacoesConfigDrawer({ onClose }: { onClose: () => void }) {
           <Button variant="outline" onClick={onClose}>Cancelar</Button>
           <Button disabled={!f || salvar.isPending}
             onClick={() => f && salvar.mutate(
-              { google_review_url: f.google_review_url?.trim() || null, capi_ativo: f.capi_ativo, capi_pixel_id: f.capi_pixel_id?.trim() || null },
+              { google_review_url: f.google_review_url?.trim() || null, capi_ativo: f.capi_ativo, capi_pixel_id: f.capi_pixel_id?.trim() || null, pedido_ativo: f.pedido_ativo },
               {
                 onSuccess: () => { toast.success("Configuração salva."); onClose(); },
                 onError: (e) => toast.error(mensagemErroServidor(e, "Não foi possível salvar.")),
@@ -45,6 +45,11 @@ export function AvaliacoesConfigDrawer({ onClose }: { onClose: () => void }) {
             <input aria-label="Link de avaliação do Google" type="url" placeholder="https://g.page/r/…/review"
               className="h-9 w-full rounded-md border bg-background px-2 text-sm"
               value={f.google_review_url ?? ""} onChange={(e) => setF({ ...f, google_review_url: e.target.value })} />
+          </label>
+          <label className="flex items-center justify-between gap-3 text-sm">
+            Pedir avaliação aos clientes depois do atendimento (desligado por padrão)
+            <Switch aria-label="Pedir avaliação aos clientes depois do atendimento" checked={f.pedido_ativo}
+              onCheckedChange={(v) => setF({ ...f, pedido_ativo: v })} />
           </label>
           <label className="flex items-center justify-between gap-3 text-sm">
             Enviar sinais de qualificação para a Meta (CAPI)

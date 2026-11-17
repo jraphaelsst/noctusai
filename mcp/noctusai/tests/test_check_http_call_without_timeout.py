@@ -57,9 +57,32 @@ class TestHttpCallWithoutTimeout:
         assert len(_flag(tmp_path, "import httpx\nhttpx.Client(timeout=None)\n")) == 1
 
     def test_explicit_timeout_passes(self, tmp_path):
-        src = ("import httpx, requests, urllib.request\nhttpx.Client(timeout=30)\nhttpx.get(u, timeout=httpx.Timeout(5))\n"
+        src = ("import requests, urllib.request\n"
                "requests.get(u, timeout=(3, 9))\nurllib.request.urlopen(req, timeout=15)\n")
         assert _flag(tmp_path, src) == []
+
+    def test_httpx_with_timeout_but_no_deadline_is_flagged(self, tmp_path):
+        # A per-socket timeout is not a total deadline: a dribbling peer resets it.
+        src = "import httpx\nhttpx.Client(timeout=30)\nhttpx.get(u, timeout=httpx.Timeout(5))\n"
+        _tree(tmp_path, {T: src})
+        assert len(c._http_scan(tmp_path)[T]) == 2
+
+    def test_bounded_client_passes(self, tmp_path):
+        src = "from ..dev._http import bounded_client\nbounded_client(deadline_s=900, why='batch sync', call_site='x')\n"
+        assert _flag(tmp_path, src) == []
+
+    def test_bare_create_client_flagged_even_with_options(self, tmp_path):
+        src = ("from supabase import create_client\ncreate_client(url, key)\n"
+               "import supabase\nsupabase.create_client(url, key, options=o)\n")
+        _tree(tmp_path, {T: src})
+        assert [k for _, k in c._http_scan(tmp_path)[T]] == ["create_client", "create_client"]
+
+    def test_supabase_client_seam_passes(self, tmp_path):
+        assert _flag(tmp_path, "from ._http import supabase_client\nsupabase_client(u, k, call_site='x')\n") == []
+
+    def test_create_client_suppression_needs_a_reason(self, tmp_path):
+        ok = "create_client(u, k)  # noc-allow: http-timeout -- throwaway read-only probe client\n"
+        assert _flag(tmp_path, ok) == []
 
     def test_positional_urlopen_timeout_passes(self, tmp_path):
         assert _flag(tmp_path, "import urllib.request\nurllib.request.urlopen(u, None, 12)\n") == []

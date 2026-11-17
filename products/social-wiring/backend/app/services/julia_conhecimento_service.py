@@ -8,10 +8,11 @@ renders markdown into the turn: the `conhecimento` contexto provider is gone and
 
 What stays here is operational, not Julia's content: the recess notice (`mensagem_recesso_primeiro_turno`, a
 deterministic SW message), the property-link template and the address/IPTU policy that the SW tools use.
-`render_md_secoes` stays ONLY as the input of the one-time backfill job
-(`app/jobs/julia_conhecimento_backfill.py`) that copies the rendered text into agents.
+`render_md_secoes` stays ONLY as the input of the editor's "fill from the old form" suggestion
+(`julia_conhecimento_specs_service.sugestao`); the one-time backfill job into an undeclared spec key was replaced by that editor
+(Lais study S8, 2026-11-17).
 NOC-REMEDIATE[julia-v2-conhecimento-drop]: drop `julia_conhecimento_secoes`, the form and `render_md*` once the
-backfill ran in prod and the owner edits the knowledge in agents -- 2026-10-19
+owner edits the knowledge through the editor (three declared agents specs) in prod -- 2026-10-19
 """
 from __future__ import annotations
 
