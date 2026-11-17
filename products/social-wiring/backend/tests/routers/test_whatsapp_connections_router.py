@@ -301,6 +301,48 @@ class TestLiveOps:
         assert listed[0]["webhook_url"] == created["webhook_url"]
 
 
+class TestProfileName:
+    """PUT /{id}/perfil -> WAHA profile/name. Org-admin only; refusals typed (409 policy / 502 WAHA / 422 shape)."""
+
+    @staticmethod
+    def _enabled(fakes, session):
+        from noctusai_lib.integrations.whatsapp import LinePolicy
+
+        fakes[session] = FakeWahaClient(session=session, line_policy=LinePolicy("enabled", True, True, True))
+
+    def test_sets_the_profile_name(self, connections_client):
+        c, fakes = connections_client
+        created = _create(c).json()
+        self._enabled(fakes, created["session_name"])
+        r = c.put(f"/api/whatsapp/connections/{created['id']}/perfil", json={"nome": "  Júlia ~ One Consultoria "})
+        assert r.status_code == 200, r.text
+        assert r.json() == {"connection_id": created["id"], "nome": "Júlia ~ One Consultoria"}
+        assert fakes[created["session_name"]].profile_name == "Júlia ~ One Consultoria"
+
+    def test_a_line_that_cannot_write_is_409_not_silent(self, connections_client):
+        c, fakes = connections_client
+        created = _create(c).json()
+        from noctusai_lib.integrations.whatsapp import LinePolicy
+
+        fakes[created["session_name"]] = FakeWahaClient(
+            session=created["session_name"], line_policy=LinePolicy("disabled", False, False, False)
+        )  # a shadow line: writes to WhatsApp refused
+        r = c.put(f"/api/whatsapp/connections/{created['id']}/perfil", json={"nome": "Júlia"})
+        assert r.status_code == 409
+        assert fakes[created["session_name"]].profile_name is None
+
+    @pytest.mark.parametrize("nome", ["", "   ", "x" * 26])
+    def test_invalid_names_are_422(self, connections_client, nome):
+        c, _ = connections_client
+        cid = _create(c).json()["id"]
+        assert c.put(f"/api/whatsapp/connections/{cid}/perfil", json={"nome": nome}).status_code == 422
+
+    def test_unknown_line_is_404(self, connections_client):
+        c, _ = connections_client
+        r = c.put("/api/whatsapp/connections/00000000-0000-0000-0000-000000000009/perfil", json={"nome": "A"})
+        assert r.status_code == 404
+
+
 class TestConfigGap:
     def test_missing_encryption_key_503(self, client, override_settings):
         """No store override → the real get_connection_store path; empty

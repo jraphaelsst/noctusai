@@ -157,6 +157,13 @@ def get_mecanismo_store_dep():
 
     return get_mecanismo_store(settings)
 
+def get_mecanismo_preflight_dep():
+    """``(agent, driver) -> None``: refuses an agent whose turn cannot start BEFORE a mechanism run is booked (see ``eval_preflight``)."""
+    from app.studio.eval_preflight import preflight_mecanismo
+
+    return preflight_mecanismo
+
+
 def get_mecanismo_resumo_dep(mecanismo=Depends(get_mecanismo_store_dep)):
     """Reader behind the versions endpoint: ``(org_id, version_id, compiled_hash) -> MecanismoResumoOut | None`` --
     the newest FINISHED mechanism run (any driver) for exactly that hash, from A-EVAL's store. A test overrides it."""
@@ -268,9 +275,11 @@ def get_loop_service_dep(
     consolidacao=Depends(get_consolidacao_store_dep),
 ):
     """The eval-loop gate (G1-G7): admission of a round, its close hook, the stop notification. One seam for both suites."""
+    from app.studio.eval_loop_driver import agendar_ao_fechar
     from app.studio.eval_loop_service import EvalLoopService
 
-    return EvalLoopService(loops, sink, consolidacao)
+    # ``ao_fechar``: a round that closed WITHOUT stopping the loop wakes the driver (it books the next round of an automatic loop)
+    return EvalLoopService(loops, sink, consolidacao, ao_fechar=agendar_ao_fechar)
 
 
 # ── error helpers ───────────────────────────────────────────────────────────
@@ -1322,29 +1331,12 @@ class MecanismoRunOut(BaseModel):
     casos: list[MecanismoCasoOut] = Field(default_factory=list)
 
 
-@router.post(
-    "/agents/{key}/draft/mecanismo-runs", response_model=MecanismoRunIniciadaOut, status_code=status.HTTP_202_ACCEPTED,
-include_in_schema=False)
-async def run_mecanismo_suite(
-    key: str,
-    request: Request,
-    ctx: AuthContext = Depends(require_evals_run_access),
-    store=Depends(get_studio_definition_store_dep),
-    mecanismo=Depends(get_mecanismo_store_dep),
-    catalog=Depends(get_knowledge_catalog_dep),
-    driver=Depends(get_eval_turn_driver),
-    ceiling=Depends(get_spend_ceiling_dep),
-    consolidacao=Depends(get_consolidacao_store_dep),
-    loops=Depends(get_loop_service_dep),
-    evals=Depends(get_eval_store_dep),
-    rodar_tudo: bool = Query(False),
-    loop_id: UUID | None = Query(None, description="Eval-loop gate: book this run as the next round of the loop (G1-G7)."),
+async def iniciar_run_mecanismo(
+    ctx: AuthContext, key: str, app_state: Any, *, store, mecanismo, catalog, driver, ceiling, consolidacao, loops, evals,
+    rodar_tudo: bool = False, loop_id: UUID | None = None, preflight=None,
 ) -> MecanismoRunIniciadaOut:
-    """Book a mechanism-suite run against the CURRENT draft hash and execute it IN THE BACKGROUND (a live suite takes
-    minutes: it must not hold an HTTP request). Platform admin only (the suite is platform IP). 202 + the run id;
-    ``GET .../mecanismo-runs/{id}`` reports ``executando`` / ``concluida`` / ``falhou``. Several runs of the same
-    version may execute at once (071): each has its own id, results and cost cap. The driver comes from ``get_eval_turn_driver`` (409
-    ``driver_indisponivel`` when none is configured); the cost cap comes from settings. Replies carry codes only."""
+    """Book + start (in the background) one mechanism-suite run; shared by the route and the eval-loop driver. ``preflight``
+    refuses, with the turn's own code, an agent whose turn cannot even start -- before a run is booked."""
     agent = resolve_agent(store, ctx.org_id, key)
     require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
     draft = resolve_draft(store, ctx.org_id, agent)
@@ -1355,6 +1347,14 @@ async def run_mecanismo_suite(
         raise http_error(409, "driver_indisponivel", "O executor de turnos da avaliação não está configurado.")
     if hasattr(driver, "definir_agente"):
         driver.definir_agente(agent.key)
+    if preflight is not None:
+        try:
+            await anyio.to_thread.run_sync(lambda: preflight(agent, driver))
+        except HTTPException as exc:
+            if loop_id is not None:
+                await anyio.to_thread.run_sync(lambda: loops.store.registrar_evento(
+                    ctx.org_id, loop_id, "preflight_recusado", detalhe={"codigo": (exc.detail or {}).get("code")}))
+            raise
     limite = settings.studio_mecanismo_run_budget_usd
     await anyio.to_thread.run_sync(lambda: guard_um_por_usuario(
         ctx, agent, suite="mecanismo", loop_id=loop_id, runs=evals, mecanismo=mecanismo, loops=loops.store, defs=store,
@@ -1422,8 +1422,37 @@ async def run_mecanismo_suite(
 
     from app.routers.conversations_router import _track_background_task  # lazy: that router imports this one
 
-    _track_background_task(request.app.state, asyncio.create_task(_executar()))
+    _track_background_task(app_state, asyncio.create_task(_executar()))
     return MecanismoRunIniciadaOut(run_id=run_id, compiled_hash=compiled.hash, driver=driver.tipo, status="executando")
+
+
+@router.post(
+    "/agents/{key}/draft/mecanismo-runs", response_model=MecanismoRunIniciadaOut, status_code=status.HTTP_202_ACCEPTED,
+include_in_schema=False)
+async def run_mecanismo_suite(
+    key: str,
+    request: Request,
+    ctx: AuthContext = Depends(require_evals_run_access),
+    store=Depends(get_studio_definition_store_dep),
+    mecanismo=Depends(get_mecanismo_store_dep),
+    catalog=Depends(get_knowledge_catalog_dep),
+    driver=Depends(get_eval_turn_driver),
+    ceiling=Depends(get_spend_ceiling_dep),
+    consolidacao=Depends(get_consolidacao_store_dep),
+    loops=Depends(get_loop_service_dep),
+    evals=Depends(get_eval_store_dep),
+    rodar_tudo: bool = Query(False),
+    loop_id: UUID | None = Query(None, description="Eval-loop gate: book this run as the next round of the loop (G1-G7)."),
+    preflight=Depends(get_mecanismo_preflight_dep),
+) -> MecanismoRunIniciadaOut:
+    """Book a mechanism-suite run against the CURRENT draft hash and execute it IN THE BACKGROUND (a live suite takes
+    minutes: it must not hold an HTTP request). Platform admin only (the suite is platform IP). 202 + the run id;
+    ``GET .../mecanismo-runs/{id}`` reports ``executando`` / ``concluida`` / ``falhou``. Several runs of the same
+    version may execute at once (071): each has its own id, results and cost cap. The driver comes from ``get_eval_turn_driver`` (409
+    ``driver_indisponivel`` when none is configured); the cost cap comes from settings. Replies carry codes only."""
+    return await iniciar_run_mecanismo(
+        ctx, key, request.app.state, store=store, mecanismo=mecanismo, catalog=catalog, driver=driver, ceiling=ceiling,
+        consolidacao=consolidacao, loops=loops, evals=evals, rodar_tudo=rodar_tudo, loop_id=loop_id, preflight=preflight)
 
 
 @router.get("/agents/{key}/mecanismo-runs/{run_id}", response_model=MecanismoRunOut, response_model_by_alias=True, include_in_schema=False)
@@ -1464,6 +1493,27 @@ def get_mecanismo_run(
         orcamento_excedido=bool(run["orcamento_excedido"]), custo_usd=float(custo) if custo is not None else None,
         total_casos=int(run["total_casos"] or 0), casos_aprovados=int(run["casos_aprovados"] or 0),
         erro=run.get("erro"), casos=casos)
+
+
+@router.get("/agents/{key}/mecanismo-runs/{run_id}/progresso", include_in_schema=False)
+def get_mecanismo_run_progresso(
+    key: str,
+    run_id: UUID,
+    ctx: AuthContext = Depends(require_evals_run_access),
+    store=Depends(get_studio_definition_store_dep),
+    mecanismo=Depends(get_mecanismo_store_dep),
+):
+    """Live progress of a mechanism run (same shape as ``GET .../evals/runs/{id}/progresso``). The suite stores its executions
+    only when it ends, so while it executes the numbers are ``indeterminado`` (status, elapsed time, cost cap): never invented."""
+    from app.schemas.studio_eval_loops import RunProgressoOut
+    from app.studio.eval_progresso import progresso_mecanismo
+
+    agent = resolve_agent(store, ctx.org_id, key)
+    require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
+    run = mecanismo.get_run(ctx.org_id, run_id)
+    if run is None or str(run["agent_id"]) != str(agent.id):
+        raise http_error(404, "run_not_found", "Execução não encontrada.")
+    return RunProgressoOut(**progresso_mecanismo(run, run_id))
 
 
 # ── prompts by hash ─────────────────────────────────────────────────────────

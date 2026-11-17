@@ -79,6 +79,7 @@ const mockUseWhatsAppConnectionMutations = vi.fn();
 const mockUseWhatsAppConnectionStatus = vi.fn();
 
 vi.mock("@/hooks/useWhatsAppConnections", () => ({
+  useSetWhatsAppProfileName: () => ({ mutate: () => {}, isPending: false, isError: false, error: null }),
   useClientWhatsAppConnections: mockUseClientWhatsAppConnections,
   useWhatsAppConnectionMutations: mockUseWhatsAppConnectionMutations,
   useWhatsAppConnectionStatus: mockUseWhatsAppConnectionStatus,

@@ -130,6 +130,64 @@ describe("useRunLoopRound", () => {
   });
 });
 
+describe("round start fills every loop cache entry it touches (the stale 'Rodada 0' bug)", () => {
+  it("writes the booked round as OPEN into the list AND the detail entry before any refetch lands, so polling is armed at once", async () => {
+    mockPost.mockResolvedValue({ id: "r9" });
+    mockGet.mockReturnValue(new Promise(() => {})); // the refetch never answers: only the cache writes can explain what we see
+    const { useRunLoopRound, loopsKey, loopIsMoving } = await import("@/hooks/studio/useEvalLoops");
+    const qc = newClient();
+    qc.setQueryData([...loopsKey("isaia"), "list", null], { items: [loop()] });
+    qc.setQueryData([...loopsKey("isaia"), "detail", "l1"], loop());
+    const { result } = renderHook(() => useRunLoopRound("isaia", "comportamento"), { wrapper: wrapper(qc) });
+    await act(async () => { await result.current.mutateAsync({ loopId: "l1", versionId: "v1" }); });
+    const lista = qc.getQueryData<{ items: ReturnType<typeof loop>[] }>([...loopsKey("isaia"), "list", null]);
+    const detalhe = qc.getQueryData<ReturnType<typeof loop>>([...loopsKey("isaia"), "detail", "l1"]);
+    for (const l of [lista!.items[0], detalhe!]) {
+      expect(l.serie).toEqual([expect.objectContaining({ rodada: 1, run_id: "r9", status: "executando" })]);
+      expect(loopIsMoving(l as never)).toBe(true);
+    }
+  });
+
+  it("mechanism: the run_id of the 202 body is the round's run", async () => {
+    mockPost.mockResolvedValue({ run_id: "m7" });
+    mockGet.mockReturnValue(new Promise(() => {}));
+    const { useRunLoopRound, loopsKey } = await import("@/hooks/studio/useEvalLoops");
+    const qc = newClient();
+    qc.setQueryData([...loopsKey("isaia"), "detail", "l1"], loop({ suite: "mecanismo" }));
+    const { result } = renderHook(() => useRunLoopRound("isaia", "mecanismo"), { wrapper: wrapper(qc) });
+    await act(async () => { await result.current.mutateAsync({ loopId: "l1", versionId: "" }); });
+    expect(qc.getQueryData<ReturnType<typeof loop>>([...loopsKey("isaia"), "detail", "l1"])!.serie[0]).toMatchObject({ run_id: "m7", status: "executando" });
+  });
+});
+
+describe("loopIsMoving", () => {
+  it("polls an open round and an automatic loop between rounds; leaves manual / idle / ended loops alone", async () => {
+    const { loopIsMoving } = await import("@/hooks/studio/useEvalLoops");
+    const L = (over: Record<string, unknown>) => loop(over) as never;
+    expect(loopIsMoving(L({ estado_driver: "rodando" }))).toBe(true);
+    expect(loopIsMoving(L({ estado_driver: "automatico" }))).toBe(true);
+    expect(loopIsMoving(L({ estado_driver: "manual" }))).toBe(false);
+    expect(loopIsMoving(L({ estado_driver: "aguardando_edicao" }))).toBe(false);
+    expect(loopIsMoving(L({ status: "parado", estado_driver: "automatico" }))).toBe(false);
+    expect(loopIsMoving(undefined)).toBe(false);
+  });
+});
+
+describe("useSetLoopModo", () => {
+  it("PUTs the mode and writes the server's LoopOut into the detail entry", async () => {
+    const put = vi.fn().mockResolvedValue(loop({ modo: "manual", estado_driver: "manual" }));
+    const { api } = await import("@/lib/api");
+    (api as unknown as { put: unknown }).put = put;
+    mockGet.mockReturnValue(new Promise(() => {}));
+    const { useSetLoopModo, loopsKey } = await import("@/hooks/studio/useEvalLoops");
+    const qc = newClient();
+    const { result } = renderHook(() => useSetLoopModo("isaia"), { wrapper: wrapper(qc) });
+    await act(async () => { await result.current.mutateAsync({ loopId: "l1", modo: "manual" }); });
+    expect(put).toHaveBeenCalledWith("/api/studio/agents/isaia/evals/loops/l1/modo", { modo: "manual" });
+    expect(qc.getQueryData([...loopsKey("isaia"), "detail", "l1"])).toMatchObject({ modo: "manual" });
+  });
+});
+
 describe("loop config", () => {
   it("GETs the config and PUT writes the server answer into the cache while the refetch is pending", async () => {
     mockGet.mockResolvedValueOnce({ alvo: 0.95, orcamento_usd: 5, rodadas_max: 10, alterado_por: null, alterado_em: null });

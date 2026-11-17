@@ -120,7 +120,7 @@ async def test_hash_mismatch_fails_the_run_and_judges_nothing():
 
 
 @pytest.mark.asyncio
-async def test_judge_failure_marks_the_case_erro_and_counts_as_failed():
+async def test_judge_failure_marks_the_case_erro_and_the_run_partial_with_errors_scored_over_the_measured_cases():
     w = World(cases=[
         ("c1", "boa", {"deve": ["a"]}),
         ("c2", "ruim", {"deve": ["a"]}),
@@ -130,14 +130,16 @@ async def test_judge_failure_marks_the_case_erro_and_counts_as_failed():
     run = w.new_run()
     await w.runner().execute(ORG, run.id)
     row = w.run_row(run.id)
-    assert (row.status, row.aprovados, row.score) == ("concluida", 1, round(1 / 3, 3))
+    # two cases errored: NOT concluida, out of the denominator (1 measured case, passed -> 1.0), with the first error's code
+    assert (row.status, row.aprovados, row.score, row.casos_com_erro) == ("parcial_com_erros", 1, 1.0, 2)
+    assert row.erro_codigo == "avaliador_falhou" and "2 de 3 casos terminaram em erro" in row.erro and row.completa is False
     res = w.results(run.id)
     assert res["c2"].status == "erro" and "sem json" in res["c2"].notas_juiz
     assert res["c3"].status == "erro" and res["c3"].saida  # the agent's answer is kept
 
 
 @pytest.mark.asyncio
-async def test_agent_failure_marks_the_case_erro():
+async def test_agent_failure_marks_the_case_erro_and_an_all_error_run_is_erro_with_no_score_never_zero():
     class Exploding(FakeAgentRuntime):
         async def run_turn(self, spec, ctx, prompt, broker, slot=None):
             raise RuntimeError("cli died")
@@ -146,8 +148,38 @@ async def test_agent_failure_marks_the_case_erro():
     w = World(runtime=Exploding([]))
     run = w.new_run()
     await w.runner().execute(ORG, run.id)
-    assert w.run_row(run.id).status == "concluida"
+    row = w.run_row(run.id)
+    assert row.status == "erro" and row.score is None and row.aprovados == 0 and row.casos_com_erro == 1
+    assert row.erro_codigo == "turno_falhou" and "Primeiro erro" in row.erro
     assert w.results(run.id)["c1"].status == "erro"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_turn_surfaces_the_refusal_code_and_text_on_the_case_and_the_run():
+    from app.channels.turno import TurnoRecusado
+    from app.studio.eval_driver import Estado, TurnOutcome
+
+    class Recusa:
+        tipo = "fake"
+
+        def definir_agente(self, key):
+            pass
+
+        def nova_execucao(self):
+            pass
+
+        async def executar_turno(self, thread, mensagem):
+            raise TurnoRecusado(409, "qualificacao_indisponivel", "O agente não tem padrão de qualificação.")
+
+    w = World(cases=[(f"c{i}", f"P{i}", {"deve": ["a"]}) for i in range(3)])
+    w.defs._agents[(ORG, "isa")] = __import__("dataclasses").replace(w.defs._agents[(ORG, "isa")], modelo=True)
+    run = w.new_run()
+    await w.runner(turn_driver_factory=lambda: Recusa()).execute(ORG, run.id)
+    row = w.run_row(run.id)
+    assert (row.status, row.score, row.erro_codigo, row.casos_com_erro) == ("erro", None, "qualificacao_indisponivel", 3)
+    assert "O agente não tem padrão de qualificação." in row.erro
+    nota = w.results(run.id)["c0"].notas_juiz
+    assert "qualificacao_indisponivel" in nota and "não tem padrão" in nota and nota != "O turno do agente falhou."
 
 
 @pytest.mark.asyncio
@@ -200,7 +232,7 @@ async def test_busy_pool_waits_bounded_then_erro():
     await w.runner(slot_wait_seconds=0.05, slot_poll_seconds=0.01).execute(ORG, run.id)
     res = w.results(run.id)["c1"]
     assert res.status == "erro" and "vaga" in res.notas_juiz
-    assert w.run_row(run.id).status == "concluida"
+    assert w.run_row(run.id).status == "erro"  # the only case errored: nothing measured
 
 
 @pytest.mark.asyncio
