@@ -359,13 +359,21 @@ class LlmJudge:
 
 
 class _CaseError(Exception):
-    """A case that could not produce an agent answer."""
+    """A case that could not produce an agent answer. ``codigo`` = a stable machine code (shown by the UI next to the text)."""
+
+    def __init__(self, mensagem: str, codigo: str = "sem_resposta") -> None:
+        super().__init__(mensagem)
+        self.codigo = codigo
 
 
 @dataclass
 class _CaseOutcome:
     passed: bool
     score: float
+    #: the case ERRORED (no verdict): excluded from the score denominator, counted as an error of the run.
+    erro: bool = False
+    erro_codigo: str | None = None
+    erro_mensagem: str | None = None
 
 
 class _CostTracker:
@@ -531,7 +539,11 @@ class EvalRunner:
             logger.info("agents.eval.run_stopped org_id=%s run_id=%s", org_id, run.id)
             return
         aprovados = sum(1 for o in outcomes if o.passed)
-        score = round(sum(o.score for o in outcomes) / total, 3) if total else 0.0
+        erros = [o for o in outcomes if o.erro]
+        validos = [o for o in outcomes if not o.erro]
+        # errored cases are NOT measurements: out of the denominator; nothing measured => no score (never a 0.0)
+        denominador = total - len(erros)
+        score = round(sum(o.score for o in validos) / denominador, 3) if validos and denominador > 0 else None
         custo_usd = round(budget.total, 4) if budget.total else (budget.total or None)
         if budget_hit:
             skipped = self._runs.skip_pending_results(org_id, run.id, nota=BUDGET_EXCEEDED_NOTA)
@@ -546,7 +558,20 @@ class EvalRunner:
             self._runs.finish_run(
                 org_id, run.id, status="falhou", aprovados=aprovados, score=score,
                 erro=BUDGET_EXCEEDED_NOTA, custo_usd=custo_usd, completa=False,
+                erro_codigo=erros[0].erro_codigo if erros else None, casos_com_erro=len(erros),
             )
+            self._registrar_consolidacao(org_id, run)
+            return
+        if erros:
+            primeiro = erros[0]
+            self._runs.finish_run(
+                org_id, run.id, status="parcial_com_erros" if validos else "erro", aprovados=aprovados, score=score,
+                custo_usd=custo_usd, completa=False, erro_codigo=primeiro.erro_codigo, casos_com_erro=len(erros),
+                erro=f"{len(erros)} de {len(outcomes)} casos terminaram em erro. Primeiro erro: {primeiro.erro_mensagem}",
+            )
+            logger.warning(
+                "agents.eval.run_com_erros org_id=%s run_id=%s erros=%s de=%s codigo=%s", org_id, run.id, len(erros), len(outcomes),
+                primeiro.erro_codigo)
             self._registrar_consolidacao(org_id, run)
             return
         self._runs.finish_run(
@@ -566,6 +591,7 @@ class EvalRunner:
             resultados = [
                 (r.result.case_id, [r.result.status])
                 for r in self._evals.list_results_with_cases(org_id, run.agent_id, run.id)
+                if r.result.status != "erro"  # an error is no verdict about the case: it never moves a streak
             ]
             registrar_resultados(
                 self._consolidacao, org_id=org_id, agent_id=run.agent_id, suite="comportamento", run_id=run.id,
@@ -592,7 +618,9 @@ class EvalRunner:
         def _ms() -> int:
             return int((time.monotonic() - started) * 1000)
 
-        def _erro(nota: str, saida: str | None = None, custo: TurnCost | None = None) -> _CaseOutcome | None:
+        def _erro(
+            nota: str, saida: str | None = None, custo: TurnCost | None = None, codigo: str = "caso_com_erro",
+        ) -> _CaseOutcome | None:
             custo = custo or TurnCost()
             written = self._runs.set_result(
                 org_id, run.id, case_id, status="erro", saida=saida, score=None, veredito=None,
@@ -600,25 +628,25 @@ class EvalRunner:
                 custo_usd=custo.custo_usd, tokens_entrada=custo.tokens_entrada,
                 tokens_saida=custo.tokens_saida, tokens_cache_leitura=custo.tokens_cache_leitura,
             )
-            return _CaseOutcome(passed=False, score=0.0) if written else None
+            return _CaseOutcome(passed=False, score=0.0, erro=True, erro_codigo=codigo, erro_mensagem=nota) if written else None
 
         try:
             case = self._evals.get_case(org_id, run.agent_id, case_id)
         except Exception:
             logger.exception("agents.eval.case_load_failed run_id=%s case_id=%s", run.id, case_id)
-            return _erro("Caso de avaliação indisponível."), None
+            return _erro("Caso de avaliação indisponível.", codigo="caso_indisponivel"), None
         criterios = criteria_of(case.criterios)
         if not criterios:
-            return _erro("Caso sem critérios."), None
+            return _erro("Caso sem critérios.", codigo="caso_sem_criterios"), None
 
         try:
             saida, gen_custo = await self._agent_answer(org_id, run, spec, case)
         except _CaseError as exc:
             logger.warning("agents.eval.case_no_answer run_id=%s case_id=%s: %s", run.id, case_id, exc)
-            return _erro(str(exc)), None
+            return _erro(str(exc), codigo=exc.codigo), None
         except Exception:
             logger.exception("agents.eval.turn_failed run_id=%s case_id=%s", run.id, case_id)
-            return _erro("O turno do agente falhou."), None
+            return _erro("O turno do agente falhou.", codigo="turno_falhou"), None
 
         try:
             with llm_usage_context(product="agents", agent_key=spec.key, org_id=str(org_id)):
@@ -632,10 +660,10 @@ class EvalRunner:
             # Only the generator's cost is known — the judge call that
             # raised may or may not have been billed; §L accepts this as
             # the honest lower bound rather than guessing.
-            return _erro(f"Falha do avaliador: {exc}", saida, custo=gen_custo), gen_custo.custo_usd
+            return _erro(f"Falha do avaliador: {exc}", saida, custo=gen_custo, codigo="avaliador_falhou"), gen_custo.custo_usd
         except Exception:
             logger.exception("agents.eval.judge_failed run_id=%s case_id=%s", run.id, case_id)
-            return _erro("Falha do avaliador.", saida, custo=gen_custo), gen_custo.custo_usd
+            return _erro("Falha do avaliador.", saida, custo=gen_custo, codigo="avaliador_falhou"), gen_custo.custo_usd
 
         custo = combine_cost(gen_custo, verdict.custo)
         written = self._runs.set_result(
@@ -691,11 +719,15 @@ class EvalRunner:
         driver.nova_execucao()
         if run.modelo_geracao and hasattr(driver, "definir_modelo"):
             driver.definir_modelo(run.modelo_geracao)
+        from app.channels.turno import TurnoRecusado
+
         try:
             async with asyncio.timeout(self._turn_timeout):
                 out = await driver.executar_turno(self._thread_do_caso(case, ThreadState), case.entrada)
         except TimeoutError as exc:
-            raise _CaseError("O turno do agente excedeu o tempo limite.") from exc
+            raise _CaseError("O turno do agente excedeu o tempo limite.", "turno_timeout") from exc
+        except TurnoRecusado as exc:  # the turn refused to start: say WHY (code + text), never "o turno falhou"
+            raise _CaseError(f"O turno foi recusado ({exc.codigo}): {exc.detalhe}", exc.codigo) from exc
         texto = "\n\n".join(b for b in out.bolhas if b.strip())
         if not texto.strip():
             # codes only (never a text): WHY there is no reply -- a hand-off, a blocked reply, a stop

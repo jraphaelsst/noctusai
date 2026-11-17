@@ -8,6 +8,8 @@ const mockLoops = vi.fn();
 const mockCreate = vi.fn();
 const mockRound = vi.fn();
 const mockStop = vi.fn();
+const mockModo = vi.fn();
+const mockProgresso = vi.fn();
 const mockConfig = vi.fn();
 const mockConfigSave = vi.fn();
 const mockPlatformAdmin = vi.fn();
@@ -22,7 +24,12 @@ vi.mock("@/hooks/studio/useEvalLoops", async () => {
     useLoopConfig: () => mockConfig(),
     useUpdateLoopConfig: () => ({ mutateAsync: mockConfigSave, isPending: false }),
     useStopEvalLoop: () => ({ mutateAsync: mockStop, isPending: false }),
+    useSetLoopModo: () => ({ mutateAsync: mockModo, isPending: false }),
   };
+});
+vi.mock("@/hooks/studio/useEvals", async () => {
+  const actual = await vi.importActual<typeof import("@/hooks/studio/useEvals")>("@/hooks/studio/useEvals");
+  return { ...actual, useRunProgresso: () => mockProgresso() };
 });
 vi.mock("@/hooks/useIsPlatformAdmin", () => ({ useIsPlatformAdmin: () => mockPlatformAdmin() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -49,6 +56,7 @@ beforeEach(() => {
   mockLoops.mockReturnValue(state([]));
   mockConfig.mockReturnValue({ data: CONFIG, showSkeleton: false, isError: false });
   mockPlatformAdmin.mockReturnValue(false);
+  mockProgresso.mockReturnValue({ data: undefined, showSkeleton: true, isRefreshing: false, isError: false, error: null });
 });
 afterEach(cleanup);
 
@@ -77,7 +85,7 @@ describe("EvalLoopCard", () => {
     expect([rod.placeholder, rod.max, orc.placeholder, orc.max]).toEqual(["10", "10", "5", "5"]);
     expect(screen.getByTestId("loop-config-resumo").textContent).toMatch(/até 10 rodadas e US\$5\.00.*alvo 95%/);
     fireEvent.click(screen.getByText("Iniciar loop de refinamento"));
-    await waitFor(() => expect(mockCreate).toHaveBeenCalledWith({ suite: "comportamento", rodadas_planejadas: undefined, orcamento_usd: undefined }));
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledWith({ suite: "comportamento", rodadas_planejadas: undefined, orcamento_usd: undefined, modo: "automatico" }));
   });
 
   it("caps rounds and budget at the config client-side", () => {
@@ -114,7 +122,7 @@ describe("EvalLoopCard", () => {
     mockLoops.mockReturnValue(state([loop()]));
     render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
     expect(screen.getByText(/Alvo 95% \/ piso 80%/)).toBeTruthy();
-    expect(screen.getByTestId("loop-contagem").textContent).toBe("Rodada 3 de 30");
+    expect(screen.getByTestId("loop-contagem").textContent).toBe("3 de 30 rodadas concluídas");
     expect(screen.getByTestId("loop-gasto").textContent).toMatch(/US\$4\.50.*US\$15\.50/);
     expect(screen.getByTestId("loop-rodada-3").textContent).toMatch(/65%.*overcall/);
     expect(screen.getByTestId("loop-overcalls").textContent).toMatch(/Rodada 3: 65%/);
@@ -165,6 +173,65 @@ describe("EvalLoopCard", () => {
     await waitFor(() => expect(mockStop).toHaveBeenCalledWith({ loopId: "l1" }));
   });
 
+  it("shows the loop's true state: an automatic loop mid-round says which round runs, with live progress", () => {
+    mockLoops.mockReturnValue(
+      state([loop({ modo: "automatico", estado_driver: "rodando", rodadas_feitas: 0, score_atual: null, melhor_score: null, acima_do_piso: null,
+        serie: [rodada(1, { status: "executando", score: null })], overcalls: [], custo_overcalls_usd: 0 })]),
+    );
+    mockProgresso.mockReturnValue({
+      data: { run_id: "r1", suite: "comportamento", status: "executando", ativo: true, indeterminado: false, total: 46, concluidos: 12,
+        aprovados: 9, reprovados: 3, erros: 0, pulados: 0, score_parcial: 0.78, custo_usd: 0.4, limite_usd: 2, started_at: null,
+        finished_at: null, decorrido_s: 30, eta_s: 90, erro: null, erro_codigo: null },
+      showSkeleton: false, isRefreshing: false, isError: false, error: null,
+    });
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    expect(screen.getByTestId("loop-estado").textContent).toBe("Rodada em andamento");
+    expect(screen.getByTestId("loop-contagem").textContent).toMatch(/Rodada 1 de 30 em andamento \(0 concluídas\)/);
+    expect(screen.getByTestId("loop-gasto").textContent).toMatch(/Ainda sem nota medida/);
+    expect(screen.getByTestId("run-progress-contagem").textContent).toBe("12 de 46 casos");
+    expect(screen.getByTestId("loop-pausar")).toBeTruthy();
+  });
+
+  it("a round that ERRORED is shown as an error with the reason, never as failing cases; the stop says why", () => {
+    mockLoops.mockReturnValue(state([loop({
+      status: "parado", motivo_parada: "erro", rodadas_feitas: 1, score_atual: null, melhor_score: null,
+      detalhe_parada: { rodada: 1, codigo: "qualificacao_indisponivel", mensagem: "O agente não tem padrão de qualificação." },
+      serie: [rodada(1, { status: "erro", score: null, custo_usd: 0, erro_codigo: "qualificacao_indisponivel", erro_mensagem: "O agente não tem padrão de qualificação." })],
+      overcalls: [], custo_overcalls_usd: 0 })]));
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    expect(screen.getByTestId("loop-encerrado").textContent).toMatch(/Parado por erro/);
+    expect(screen.getByTestId("loop-detalhe-erro").textContent).toMatch(/não tem padrão de qualificação.*qualificacao_indisponivel/);
+    expect(screen.getByTestId("loop-rodada-erro-1").textContent).toMatch(/Erro \(qualificacao_indisponivel\)/);
+    expect(screen.queryByTestId("loop-falhas")).toBeNull();
+  });
+
+  it("an active ERRORED round (still active, e.g. partial) shows the red error block and no failing-case list for it", () => {
+    mockLoops.mockReturnValue(state([loop({
+      serie: [rodada(1, { status: "erro", score: null, erro_codigo: "turno_falhou", erro_mensagem: "O turno do agente falhou." })],
+      rodadas_feitas: 1, overcalls: [], custo_overcalls_usd: 0 })]));
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    expect(screen.getByTestId("loop-erro-rodada").textContent).toMatch(/A rodada 1 terminou com erro.*turno_falhou/);
+    expect(screen.queryByTestId("loop-falhas")).toBeNull();
+  });
+
+  it("an idle automatic loop says it waits for a draft edit and offers to resume", async () => {
+    mockModo.mockResolvedValue(loop({ modo: "automatico" }));
+    mockLoops.mockReturnValue(state([loop({ modo: "manual", estado_driver: "aguardando_edicao",
+      aviso: { codigo: "hash_inalterado", mensagem: "O conteúdo do agente não mudou desde a rodada 3." } })]));
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    expect(screen.getByTestId("loop-aviso").textContent).toMatch(/não mudou desde a rodada 3.*Retomar automático/);
+    fireEvent.click(screen.getByTestId("loop-retomar"));
+    await waitFor(() => expect(mockModo).toHaveBeenCalledWith({ loopId: "l1", modo: "automatico" }));
+  });
+
+  it("says plainly that the loop does not refine the draft between rounds", () => {
+    mockLoops.mockReturnValue(state([loop({ modo: "automatico", estado_driver: "automatico" })]));
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    expect(screen.getByTestId("loop-explica-refino").textContent).toMatch(/não refina o rascunho entre as rodadas/);
+    fireEvent.click(screen.getByTestId("loop-pausar"));
+    expect(mockModo).toHaveBeenCalledWith({ loopId: "l1", modo: "manual" });
+  });
+
   it("stopped loop (sem_melhora, same hash): motivo and the warning", () => {
     mockLoops.mockReturnValue(state([loop({ status: "parado", motivo_parada: "sem_melhora", detalhe_parada: { seguidas: 2, conteudo_mudou: false } })]));
     render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
@@ -188,7 +255,9 @@ describe("EvalLoopCard", () => {
   it("with an active loop on one suite the start form offers only the free suite", () => {
     mockLoops.mockReturnValue(state([loop()]));
     render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
-    const select = screen.getByTestId("loop-suite") as HTMLSelectElement;
-    expect(Array.from(select.options).map((o) => o.value)).toEqual(["mecanismo"]);
+    // only one suite is free: it is shown as fixed text matching the suite that really gets the loop, not a select that could
+    // disagree with the panel above it
+    expect(screen.queryByTestId("loop-suite")).toBeNull();
+    expect(screen.getByTestId("loop-suite-fixa").textContent).toMatch(/Mecanismo/);
   });
 });

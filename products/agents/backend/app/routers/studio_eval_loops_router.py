@@ -33,7 +33,10 @@ from app.schemas.studio_eval_loops import (
     EvalLoopConfigIn,
     EvalLoopConfigOut,
     LoopCreateRequest,
+    LoopEventoOut,
+    LoopEventosOut,
     LoopListOut,
+    LoopModoRequest,
     LoopOut,
     LoopStopRequest,
 )
@@ -56,6 +59,7 @@ def start_loop(
     config=Depends(get_eval_loop_config_store_dep),
     runs=Depends(get_eval_store_dep),
     mecanismo=Depends(get_mecanismo_store_dep),
+    svc=Depends(get_loop_service_dep),
 ) -> LoopOut:
     """Open a loop: G1 target (the config's ``alvo``, frozen on the loop) / floor = the agent's ``publicacao_limiar``; G2 the
     planned rounds (omitted = the config's max, never above it); G7 the budget (omitted = the config's cap, never above it)."""
@@ -68,9 +72,19 @@ def start_loop(
     try:
         rec = loops.create_loop(
             ctx.org_id, agent.id, agente_chave=agent.key, suite=payload.suite, rodadas_planejadas=rodadas,
-            alvo=cfg.alvo, piso=float(agent.publicacao_limiar), orcamento_usd=orcamento, started_by=actor_id(ctx))
+            alvo=cfg.alvo, piso=float(agent.publicacao_limiar), orcamento_usd=orcamento, started_by=actor_id(ctx),
+            modo=payload.modo)
     except StudioConflict as exc:
         raise http_error(409, exc.code, mensagem_conflito(exc)) from exc
+    loops.registrar_evento(ctx.org_id, rec.id, "loop_iniciado", detalhe={
+        "suite": rec.suite, "modo": rec.modo, "rodadas_planejadas": rec.rodadas_planejadas, "orcamento_usd": rec.orcamento_usd},
+        ator=actor_id(ctx))
+    if rec.modo == "automatico":
+        from app.studio.eval_loop_driver import get_driver
+
+        driver = get_driver()
+        if driver is not None:
+            driver.agendar(rec)  # books round 1 in the background; the response does not wait for it
     return LoopOut(**EvalLoopService.montar_estado(rec, []))
 
 
@@ -118,6 +132,46 @@ def stop_loop(
     agent = resolve_studio_agent(defs, ctx.org_id, key)
     svc.parar(ctx.org_id, agent.id, loop_id, motivo=payload.motivo)
     return LoopOut(**svc.estado(ctx.org_id, agent.id, loop_id))
+
+
+@router.put("/{key}/evals/loops/{loop_id}/modo", response_model=LoopOut)
+def put_loop_modo(
+    key: str,
+    loop_id: UUID,
+    payload: LoopModoRequest,
+    ctx: AuthContext = Depends(require_evals_run_access),
+    defs=Depends(get_studio_definition_store_dep),
+    svc=Depends(get_loop_service_dep),
+) -> LoopOut:
+    """``automatico`` resumes the driver (it books the next round now); ``manual`` pauses it: the round in flight finishes and is
+    recorded, then the loop waits for the owner's "Rodar próxima rodada". 409 ``loop_ja_encerrado`` on a stopped loop."""
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
+    require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
+    rec = svc.definir_modo(ctx.org_id, agent.id, loop_id, payload.modo, ator=actor_id(ctx))
+    if rec.modo == "automatico":
+        from app.studio.eval_loop_driver import get_driver
+
+        driver = get_driver()
+        if driver is not None:
+            driver.agendar(rec)
+    return LoopOut(**svc.estado(ctx.org_id, agent.id, loop_id))
+
+
+@router.get("/{key}/evals/loops/{loop_id}/eventos", response_model=LoopEventosOut)
+def list_loop_eventos(
+    key: str,
+    loop_id: UUID,
+    ctx: AuthContext = Depends(require_evals_run_access),
+    defs=Depends(get_studio_definition_store_dep),
+    svc=Depends(get_loop_service_dep),
+) -> LoopEventosOut:
+    """The loop's append-only lifecycle events (opened, round opened / closed / errored, preflight refused, driver idle / resumed,
+    mode changed, stopped), oldest first: what the owner queries to see what the driver actually did."""
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
+    require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
+    return LoopEventosOut(items=[LoopEventoOut(
+        evento=e["evento"], rodada_seq=e.get("rodada_seq"), run_id=e.get("run_id"), detalhe=e.get("detalhe") or {},
+        created_at=e.get("created_at")) for e in svc.eventos(ctx.org_id, agent.id, loop_id)])
 
 
 config_router = APIRouter(prefix="/api/studio/plataforma", tags=["studio-eval-loops"], include_in_schema=False)

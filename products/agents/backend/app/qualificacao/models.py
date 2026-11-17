@@ -135,6 +135,25 @@ class VersaoPadrao:
         return None
 
 
+#: Sentinel id of the in-memory NULL standard (an agent that declares none): never a stored row.
+ID_PADRAO_NULO = UUID(int=0)
+
+
+def padrao_nulo() -> VersaoPadrao:
+    """The standard of an agent WITHOUT a qualification standard (a base layer, evaluated on its own): no criteria, no
+    stages, nothing to score. Used only where the caller explicitly allows it (the eval path); a production channel turn
+    still refuses an agent that has none (``qualificacao_indisponivel``)."""
+    return VersaoPadrao(
+        padrao_chave="sem-padrao", versao=0, criterios=(),
+        # the engine needs one base stage that is always true; it is not conclusive, so nothing can "complete"
+        estagios=(EstagioDef("sem_qualificacao", "Sem qualificação", 0, {"score": {">=": 0}}),),
+        parametros=ParametrosDef(minimo_para_ofertar={"score": {">=": 0}}), id=ID_PADRAO_NULO)
+
+
+def e_padrao_nulo(padrao: VersaoPadrao) -> bool:
+    return padrao.id == ID_PADRAO_NULO
+
+
 @dataclass(frozen=True)
 class Registro:
     criterio_chave: str

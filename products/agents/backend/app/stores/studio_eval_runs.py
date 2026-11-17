@@ -55,7 +55,7 @@ _RESULTS_TABLE = "eval_results"
 #: `set_result` — `set_result` still only accepts the three judged
 #: outcomes.
 RESULT_FINAL_STATUSES = ("aprovado", "reprovado", "erro")
-RUN_FINAL_STATUSES = ("concluida", "falhou")
+RUN_FINAL_STATUSES = ("concluida", "falhou", "erro", "parcial_com_erros")
 
 
 class EvalRunWriter(Protocol):
@@ -85,6 +85,7 @@ class EvalRunWriter(Protocol):
     def finish_run(
         self, org_id: UUID, run_id: UUID, *, status: str, aprovados: int, score: float | None,
         erro: str | None = None, custo_usd: float | None = None, completa: bool | None = None,
+        erro_codigo: str | None = None, casos_com_erro: int = 0,
     ) -> bool:
         """``executando → concluida|falhou`` (conditional). ``False`` when the
         run is no longer ``executando`` (e.g. cancelled mid-run). ``custo_usd``
@@ -163,6 +164,7 @@ class FakeEvalRunWriter:
     def finish_run(
         self, org_id: UUID, run_id: UUID, *, status: str, aprovados: int, score: float | None,
         erro: str | None = None, custo_usd: float | None = None, completa: bool | None = None,
+        erro_codigo: str | None = None, casos_com_erro: int = 0,
     ) -> bool:
         _check(status, RUN_FINAL_STATUSES, "run")
         row = self._run_row(org_id, run_id)
@@ -172,6 +174,7 @@ class FakeEvalRunWriter:
         row.update({
             "status": status, "aprovados": aprovados, "score": score, "erro": erro,
             "finished_at": now, "updated_at": now, "custo_usd": custo_usd,
+            "erro_codigo": erro_codigo, "casos_com_erro": casos_com_erro,
         })
         if completa is not None:
             row["completa"] = completa
@@ -316,12 +319,14 @@ class SupabaseEvalRunWriter:
     def finish_run(
         self, org_id: UUID, run_id: UUID, *, status: str, aprovados: int, score: float | None,
         erro: str | None = None, custo_usd: float | None = None, completa: bool | None = None,
+        erro_codigo: str | None = None, casos_com_erro: int = 0,
     ) -> bool:
         _check(status, RUN_FINAL_STATUSES, "run")
         now = utcnow_iso()
         payload: dict[str, Any] = {
             "status": status, "aprovados": aprovados, "score": score, "erro": erro,
             "finished_at": now, "updated_at": now, "custo_usd": custo_usd,
+            "erro_codigo": erro_codigo, "casos_com_erro": casos_com_erro,
         }
         if completa is not None:
             payload["completa"] = completa

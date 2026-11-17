@@ -80,7 +80,9 @@ from app.schemas.studio_ke import (
 from app.stores._db_errors import StudioConflict, mensagem_conflito
 from app.studio.consolidacao import resumir_estados
 from app.studio.consolidacao_service import Selecao, confirmar_selecao, reconstruir, selecionar
+from app.schemas.studio_eval_loops import RunProgressoOut
 from app.studio.eval_loop_service import resumo_comportamento
+from app.studio.eval_progresso import progresso_comportamento
 from app.studio.spend import KIND_EVAL_RUN, get_spend_ceiling_dep, reserve_run
 from app.stores.errors import NotFound
 from app.stores.studio_definitions import StudioAgentRecord, VersionRecord
@@ -119,6 +121,14 @@ def get_current_partes_dep() -> CurrentPartes:
     return lambda org_id, agent, version: None
 
 
+def get_preflight_dep():
+    """``(agent) -> None``: refuses (409 with the turn's own code) an agent whose turn cannot even start, BEFORE a run is booked.
+    A no-op while no live turn driver is configured (tests with scripted drivers)."""
+    from app.studio.eval_preflight import preflight_comportamento
+
+    return preflight_comportamento
+
+
 def get_current_hash_dep() -> CurrentHash:
     """Fail-closed default (503 ``compile_unavailable``): stamping a run
     with a hash nobody computed would let the gate judge the wrong text.
@@ -153,6 +163,7 @@ def _run_out(record) -> EvalRunOut:
         limiar=record.limiar, started_at=record.started_at, finished_at=record.finished_at,
         erro=record.erro, completa=record.completa,
         modelo_geracao=record.modelo_geracao, limite_usd=record.limite_usd, custo_usd=record.custo_usd,
+        erro_codigo=record.erro_codigo, casos_com_erro=record.casos_com_erro,
     )
 
 
@@ -272,6 +283,130 @@ def _guard_token_run(ctx: AuthContext, store, defs, agent, version, payload) -> 
         raise http_error(422, "version_not_draft", "Este token só executa avaliações sobre o rascunho atual.")
 
 
+def reservar_run(
+    ctx: AuthContext, key: str, payload: EvalRunCreateRequest, *, store, defs, current_hash: CurrentHash,
+    current_partes: CurrentPartes, consol, ceiling, loops, mecanismo, preflight=None,
+):
+    """Resolve, guard, admit (the loop gate) and BOOK one behaviour run (sync: store calls). The route runs it in a worker
+    thread; the eval-loop driver calls it with the loop owner's context. ``preflight`` (``(agent) -> None``) refuses, with the
+    reason, an agent whose turn cannot even start -- BEFORE a run is booked and anything is spent."""
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
+    require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
+    version = resolve_version(defs, ctx.org_id, agent, payload.version_id)
+
+    def _fechar_loop(run_id: UUID) -> None:
+        """A run booked into a loop that never gets executed closes its round now (neutral: no score)."""
+        if payload.loop_id is not None:
+            loops.fechar_sem_falhar(
+                ctx.org_id, lambda: resumo_comportamento(store, ctx.org_id, agent.id, run_id), run_id=run_id,
+                run_tipo="comportamento")
+
+    if ctx.caller_kind == "product":
+        _guard_token_run(ctx, store, defs, agent, version, payload)
+    compiled_hash = current_hash(ctx.org_id, agent, version)
+    if preflight is not None:
+        try:
+            preflight(agent)
+        except HTTPException as exc:
+            if payload.loop_id is not None:
+                loops.store.registrar_evento(
+                    ctx.org_id, payload.loop_id, "preflight_recusado", detalhe={"codigo": (exc.detail or {}).get("code")})
+            raise
+
+    limite_usd = payload.limite_usd if payload.limite_usd is not None else settings.studio_eval_run_budget_usd
+    # one run / loop per user at a time (names what is running; migration 087's trigger is the race backstop)
+    guard_um_por_usuario(ctx, agent, suite="comportamento", loop_id=payload.loop_id, runs=store, mecanismo=mecanismo,
+                         loops=loops.store, defs=defs, fase="tudo" if payload.loop_id is None else "em_andamento")
+    if payload.loop_id is not None:
+        if payload.case_ids is not None or payload.repetir_falhas_de is not None:
+            raise http_error(422, "loop_run_parcial", "Uma run de loop cobre a suíte inteira: não aceita case_ids nem repetir_falhas_de.")
+        if payload.modelo_geracao is not None:
+            raise http_error(422, "loop_modelo_geracao_nao_permitido", "Uma run de loop usa o modelo da própria versão.")
+        # G6/G7: refuses a closed loop, an open round, a spent budget, an unchanged hash with nothing to consolidate;
+        # the cost cap is clamped to what the loop budget has left.
+        limite_usd = loops.admitir(
+            ctx.org_id, agent.id, payload.loop_id, suite="comportamento", compiled_hash=compiled_hash, limite_usd=limite_usd,
+            ler_resumo=lambda rid: resumo_comportamento(store, ctx.org_id, agent.id, rid)).limite_usd
+        guard_um_por_usuario(ctx, agent, suite="comportamento", loop_id=payload.loop_id, runs=store, mecanismo=mecanismo,
+                             loops=loops.store, defs=defs, fase="loop")
+
+    case_ids = payload.case_ids
+    if payload.repetir_falhas_de is not None:
+        # Contract §L: rerun only the failures of a prior run of THIS agent
+        # (org-scoped by `get_run`, which 404s a foreign/unknown run id —
+        # same resolver every studio route uses).
+        try:
+            prior = store.get_run(ctx.org_id, agent.id, payload.repetir_falhas_de)
+        except NotFound as exc:
+            raise not_found_error("Execução não encontrada.", "eval_run_not_found") from exc
+        case_ids = [
+            r.result.case_id for r in store.list_results_with_cases(ctx.org_id, agent.id, prior.id)
+            if r.result.status != "aprovado"
+        ]
+
+    # Consolidation: a DEFAULT run (no explicit ids, no repeat-failures, no rodar_tudo) executes only the cases that are
+    # not consolidated-and-unaffected. Explicit selections are never filtered.
+    partes = current_partes(ctx.org_id, agent, version)
+    filtrada = case_ids is None and not payload.rodar_tudo
+    if filtrada:
+        ativos = [c.id for c in store.list_cases(ctx.org_id, agent.id) if c.ativo and c.suite == "comportamento"]
+        selecao = selecionar(
+            consol, org_id=ctx.org_id, agent_id=agent.id, suite="comportamento", ativos=ativos, partes=partes,
+            hash_atual=compiled_hash, rodar_tudo=False)
+        if ativos and not selecao.rodar:
+            raise http_error(
+                409, "todos_consolidados",
+                "Todos os casos estão consolidados e não foram afetados por mudanças. Use rodar_tudo para rodar mesmo assim.")
+        if selecao.pulados:
+            case_ids = list(selecao.rodar)  # a subset run: never `completa` (the publish gate still needs rodar_tudo)
+    else:
+        selecao = Selecao(rodar=list(case_ids or []), rodar_tudo=True)
+
+    try:
+        run = store.create_run(
+            ctx.org_id, agent.id, version.id,
+            compiled_hash=compiled_hash, limiar=agent.publicacao_limiar,
+            case_ids=case_ids, started_by=actor_id(ctx),
+            modelo_geracao=payload.modelo_geracao, limite_usd=limite_usd,
+        )
+    except NotFound as exc:
+        raise not_found_error("Caso de avaliação não encontrado.", "eval_case_not_found") from exc
+    except StudioConflict as exc:  # a DB conflict mapped by the store; parallel runs of a version are allowed (071)
+        raise http_error(409, exc.code, mensagem_conflito(exc)) from exc
+    except ValueError as exc:
+        raise http_error(422, "no_eval_cases", str(exc)) from exc
+
+    if payload.loop_id is not None:
+        try:
+            loops.abrir(ctx.org_id, payload.loop_id, run_id=run.id, run_tipo="comportamento", compiled_hash=compiled_hash,
+                        partes=dict(partes) if partes is not None else None)
+        except Exception:
+            store.mark_run_failed(ctx.org_id, run.id, erro="loop_indisponivel")
+            raise
+
+    try:
+        confirmar_selecao(
+            consol, selecao, org_id=ctx.org_id, agent_id=agent.id, suite="comportamento", run_id=run.id,
+            run_tipo="comportamento", partes=partes, hash_atual=compiled_hash)
+    except Exception:
+        store.mark_run_failed(ctx.org_id, run.id, erro="consolidacao_indisponivel")
+        _fechar_loop(run.id)
+        raise
+    if selecao.pulados:
+        run = store.get_run(ctx.org_id, agent.id, run.id)  # `completa` was stamped by the covered selection
+
+    if ctx.caller_kind == "product":
+        # The shared daily ceiling (seed): over it / unverifiable -> the booked run is failed, never scheduled.
+        try:
+            reserve_run(ceiling, org_id=ctx.org_id, kind=KIND_EVAL_RUN, run_id=run.id, amount_usd=limite_usd)
+        except Exception:
+            store.mark_run_failed(ctx.org_id, run.id, erro="daily_spend_ceiling")
+            _fechar_loop(run.id)
+            raise
+
+    return run
+
+
 @router.post("/{key}/evals/runs", response_model=EvalRunOut, status_code=status.HTTP_202_ACCEPTED)
 # Stays `async def`: scheduler(run.id) -> asyncio.create_task needs the running loop,
 # which a threadpool worker does not have.
@@ -288,120 +423,14 @@ async def create_run(
     ceiling=Depends(get_spend_ceiling_dep),
     loops=Depends(get_loop_service_dep),
     mecanismo=Depends(get_mecanismo_store_dep),
+    preflight=Depends(get_preflight_dep),
 ) -> EvalRunOut:
     # The store/definition calls are sync PostgREST: run them in a worker thread so the loop keeps
     # serving. Only the scheduler (asyncio.create_task) stays on the loop. Exceptions (NotFound ->
     # 404, StudioConflict -> 409, ...) propagate through the thread unchanged.
-    def _prepare():
-        agent = resolve_studio_agent(defs, ctx.org_id, key)
-        require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
-        version = resolve_version(defs, ctx.org_id, agent, payload.version_id)
-
-        def _fechar_loop(run_id: UUID) -> None:
-            """A run booked into a loop that never gets executed closes its round now (neutral: no score)."""
-            if payload.loop_id is not None:
-                loops.fechar_sem_falhar(
-                    ctx.org_id, lambda: resumo_comportamento(store, ctx.org_id, agent.id, run_id), run_id=run_id,
-                    run_tipo="comportamento")
-
-        if ctx.caller_kind == "product":
-            _guard_token_run(ctx, store, defs, agent, version, payload)
-        compiled_hash = current_hash(ctx.org_id, agent, version)
-
-        limite_usd = payload.limite_usd if payload.limite_usd is not None else settings.studio_eval_run_budget_usd
-        # one run / loop per user at a time (names what is running; migration 087's trigger is the race backstop)
-        guard_um_por_usuario(ctx, agent, suite="comportamento", loop_id=payload.loop_id, runs=store, mecanismo=mecanismo,
-                             loops=loops.store, defs=defs, fase="tudo" if payload.loop_id is None else "em_andamento")
-        if payload.loop_id is not None:
-            if payload.case_ids is not None or payload.repetir_falhas_de is not None:
-                raise http_error(422, "loop_run_parcial", "Uma run de loop cobre a suíte inteira: não aceita case_ids nem repetir_falhas_de.")
-            if payload.modelo_geracao is not None:
-                raise http_error(422, "loop_modelo_geracao_nao_permitido", "Uma run de loop usa o modelo da própria versão.")
-            # G6/G7: refuses a closed loop, an open round, a spent budget, an unchanged hash with nothing to consolidate;
-            # the cost cap is clamped to what the loop budget has left.
-            limite_usd = loops.admitir(
-                ctx.org_id, agent.id, payload.loop_id, suite="comportamento", compiled_hash=compiled_hash, limite_usd=limite_usd,
-                ler_resumo=lambda rid: resumo_comportamento(store, ctx.org_id, agent.id, rid)).limite_usd
-            guard_um_por_usuario(ctx, agent, suite="comportamento", loop_id=payload.loop_id, runs=store, mecanismo=mecanismo,
-                                 loops=loops.store, defs=defs, fase="loop")
-
-        case_ids = payload.case_ids
-        if payload.repetir_falhas_de is not None:
-            # Contract §L: rerun only the failures of a prior run of THIS agent
-            # (org-scoped by `get_run`, which 404s a foreign/unknown run id —
-            # same resolver every studio route uses).
-            try:
-                prior = store.get_run(ctx.org_id, agent.id, payload.repetir_falhas_de)
-            except NotFound as exc:
-                raise not_found_error("Execução não encontrada.", "eval_run_not_found") from exc
-            case_ids = [
-                r.result.case_id for r in store.list_results_with_cases(ctx.org_id, agent.id, prior.id)
-                if r.result.status != "aprovado"
-            ]
-
-        # Consolidation: a DEFAULT run (no explicit ids, no repeat-failures, no rodar_tudo) executes only the cases that are
-        # not consolidated-and-unaffected. Explicit selections are never filtered.
-        partes = current_partes(ctx.org_id, agent, version)
-        filtrada = case_ids is None and not payload.rodar_tudo
-        if filtrada:
-            ativos = [c.id for c in store.list_cases(ctx.org_id, agent.id) if c.ativo and c.suite == "comportamento"]
-            selecao = selecionar(
-                consol, org_id=ctx.org_id, agent_id=agent.id, suite="comportamento", ativos=ativos, partes=partes,
-                hash_atual=compiled_hash, rodar_tudo=False)
-            if ativos and not selecao.rodar:
-                raise http_error(
-                    409, "todos_consolidados",
-                    "Todos os casos estão consolidados e não foram afetados por mudanças. Use rodar_tudo para rodar mesmo assim.")
-            if selecao.pulados:
-                case_ids = list(selecao.rodar)  # a subset run: never `completa` (the publish gate still needs rodar_tudo)
-        else:
-            selecao = Selecao(rodar=list(case_ids or []), rodar_tudo=True)
-
-        try:
-            run = store.create_run(
-                ctx.org_id, agent.id, version.id,
-                compiled_hash=compiled_hash, limiar=agent.publicacao_limiar,
-                case_ids=case_ids, started_by=actor_id(ctx),
-                modelo_geracao=payload.modelo_geracao, limite_usd=limite_usd,
-            )
-        except NotFound as exc:
-            raise not_found_error("Caso de avaliação não encontrado.", "eval_case_not_found") from exc
-        except StudioConflict as exc:  # a DB conflict mapped by the store; parallel runs of a version are allowed (071)
-            raise http_error(409, exc.code, mensagem_conflito(exc)) from exc
-        except ValueError as exc:
-            raise http_error(422, "no_eval_cases", str(exc)) from exc
-
-        if payload.loop_id is not None:
-            try:
-                loops.abrir(ctx.org_id, payload.loop_id, run_id=run.id, run_tipo="comportamento", compiled_hash=compiled_hash,
-                            partes=dict(partes) if partes is not None else None)
-            except Exception:
-                store.mark_run_failed(ctx.org_id, run.id, erro="loop_indisponivel")
-                raise
-
-        try:
-            confirmar_selecao(
-                consol, selecao, org_id=ctx.org_id, agent_id=agent.id, suite="comportamento", run_id=run.id,
-                run_tipo="comportamento", partes=partes, hash_atual=compiled_hash)
-        except Exception:
-            store.mark_run_failed(ctx.org_id, run.id, erro="consolidacao_indisponivel")
-            _fechar_loop(run.id)
-            raise
-        if selecao.pulados:
-            run = store.get_run(ctx.org_id, agent.id, run.id)  # `completa` was stamped by the covered selection
-
-        if ctx.caller_kind == "product":
-            # The shared daily ceiling (seed): over it / unverifiable -> the booked run is failed, never scheduled.
-            try:
-                reserve_run(ceiling, org_id=ctx.org_id, kind=KIND_EVAL_RUN, run_id=run.id, amount_usd=limite_usd)
-            except Exception:
-                store.mark_run_failed(ctx.org_id, run.id, erro="daily_spend_ceiling")
-                _fechar_loop(run.id)
-                raise
-
-        return run
-
-    run = await anyio.to_thread.run_sync(_prepare)
+    run = await anyio.to_thread.run_sync(lambda: reservar_run(
+        ctx, key, payload, store=store, defs=defs, current_hash=current_hash, current_partes=current_partes, consol=consol,
+        ceiling=ceiling, loops=loops, mecanismo=mecanismo, preflight=preflight))
 
     try:
         scheduler(run.id)
@@ -476,6 +505,28 @@ def get_run(
     )
 
 
+@router.get("/{key}/evals/runs/{run_id}/progresso", response_model=RunProgressoOut)
+def get_run_progresso(
+    key: str,
+    run_id: UUID,
+    ctx: AuthContext = Depends(require_evals_run_access),
+    store=Depends(get_eval_store_dep),
+    defs=Depends(get_studio_definition_store_dep),
+) -> RunProgressoOut:
+    """Live progress of a behaviour run (polled by the UI every 1-2 s while it is active): cases done / total, passed / failed /
+    errored, the running score (errored cases are out of the denominator), the cost so far against the cap, elapsed time and
+    the ETA. The per-case rows come from ``GET .../runs/{id}``. A mechanism run's progress is
+    ``GET .../draft/mecanismo-runs/{id}/progresso`` (it stores its executions only when it ends)."""
+    agent = resolve_studio_agent(defs, ctx.org_id, key)
+    require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
+    try:
+        run = store.get_run(ctx.org_id, agent.id, run_id)
+    except NotFound as exc:
+        raise not_found_error("Execução não encontrada.", "eval_run_not_found") from exc
+    resultados = [r.result for r in store.list_results_with_cases(ctx.org_id, agent.id, run_id)]
+    return RunProgressoOut(**progresso_comportamento(run, resultados))
+
+
 @router.post("/{key}/evals/runs/{run_id}/cancel", response_model=EvalRunOut)
 def cancel_run(
     key: str,
@@ -491,6 +542,8 @@ def cancel_run(
             run = store.cancel_run(ctx.org_id, agent.id, run_id)
     except NotFound as exc:
         raise not_found_error("Execução não encontrada.", "eval_run_not_found") from exc
+    # a cancelled run of an AUTOMATIC loop pauses it (manual): the owner stopped something, the driver must not undo it
+    loops.pausar_se_automatico(ctx.org_id, run.id, "comportamento")
     # a cancelled run of a loop closes its round (neutral); a no-op for a run that belongs to no loop
     loops.fechar_sem_falhar(ctx.org_id, lambda: resumo_comportamento(store, ctx.org_id, agent.id, run.id), run_id=run.id,
                             run_tipo="comportamento")

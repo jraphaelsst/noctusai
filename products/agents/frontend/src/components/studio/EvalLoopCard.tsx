@@ -8,7 +8,7 @@
  * `isRefreshing` from `data`, never `isLoading`).
  */
 import { useState, type FormEvent } from "react";
-import { Loader2, Play, Repeat, StopCircle } from "lucide-react";
+import { Loader2, Pause, Play, Repeat, StopCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Badge, Button, Card, Field, FormError, Input, Select } from "@noctusai/lib/design-system";
 import { ApiError, errorMessage } from "@/lib/errors";
@@ -20,6 +20,7 @@ import {
   useCreateEvalLoop,
   useEvalLoops,
   useRunLoopRound,
+  useSetLoopModo,
   useStopEvalLoop,
   hasRoundInFlight,
 } from "@/hooks/studio/useEvalLoops";
@@ -27,8 +28,11 @@ import type {
   EvalLoop,
   EvalLoopMotivoParada,
   EvalLoopConfig,
+  EvalLoopEstadoDriver,
+  EvalLoopRodada,
   EvalLoopSuite,
 } from "@/api/studio/types-ke";
+import { RunProgressPanel, statusLabel } from "./RunProgressPanel";
 import { StudioError, StudioLoading } from "./StudioStates";
 
 const SUITE_LABEL: Record<EvalLoopSuite, string> = { comportamento: "Comportamento", mecanismo: "Mecanismo" };
@@ -40,7 +44,20 @@ const MOTIVO_TEXT: Record<EvalLoopMotivoParada, string> = {
   orcamento_atingido: "Parado: o orçamento do loop foi atingido. Decisão do dono: abrir um novo loop com outro orçamento ou encerrar.",
   rodadas_esgotadas: "Encerrado: as rodadas planejadas acabaram sem chegar ao alvo.",
   parado_manualmente: "Parado manualmente.",
+  erro: "Parado por erro: uma rodada terminou com erro e o loop parou antes de gastar mais.",
 };
+
+/** What the loop is doing right now (server-derived `estado_driver`; never guessed from the buttons). */
+const ESTADO_TEXT: Record<EvalLoopEstadoDriver, string> = {
+  rodando: "Rodada em andamento",
+  automatico: "Automático: abrindo a próxima rodada",
+  aguardando_edicao: "Aguardando você editar o rascunho",
+  manual: "Manual: aguardando você rodar a próxima rodada",
+  encerrado: "Encerrado",
+};
+
+/** A round whose run errored (no verdict), as opposed to one that measured behaviour failures. */
+const rodadaComErro = (r: EvalLoopRodada): boolean => r.status === "erro" || r.status === "falhou" || r.status === "parcial_com_erros";
 
 export const pct = (v: number | null | undefined): string => (v == null ? "—" : `${Math.round(v * 100)}%`);
 
@@ -91,8 +108,22 @@ function ScoreSeries({ loop }: { loop: EvalLoop }) {
         {pts.map((p) => (
           <li key={p.run_id} data-testid={`loop-rodada-${p.rodada}`}>
             Rodada {p.rodada}:{" "}
-            {p.status === "executando" ? "em andamento" : p.score == null ? `sem nota (${p.status})` : pct(p.score)} ·{" "}
-            {formatUsdCost(p.custo_usd)}
+            {p.status === "executando" ? (
+              "em andamento"
+            ) : p.score == null ? (
+              <span className={rodadaComErro(p) ? "text-destructive" : undefined}>
+                sem nota ({statusLabel(p.status)})
+              </span>
+            ) : (
+              pct(p.score)
+            )}{" "}
+            · {formatUsdCost(p.custo_usd)}
+            {p.status === "parcial_com_erros" && <span className="text-destructive"> · com casos em erro</span>}
+            {p.erro_mensagem && rodadaComErro(p) && (
+              <span className="block text-destructive" data-testid={`loop-rodada-erro-${p.rodada}`}>
+                Erro{p.erro_codigo ? ` (${p.erro_codigo})` : ""}: {p.erro_mensagem}
+              </span>
+            )}
             {p.overcall && <span className="text-destructive"> · não melhorou (overcall)</span>}
           </li>
         ))}
@@ -109,7 +140,15 @@ function StopDetail({ loop }: { loop: EvalLoop }) {
   const motivo = loop.motivo_parada;
   return (
     <div className="space-y-1 text-sm" data-testid="loop-encerrado">
-      <p className="font-medium text-foreground">{motivo ? MOTIVO_TEXT[motivo] : "Loop encerrado."}</p>
+      <p className={`font-medium ${motivo === "erro" ? "text-destructive" : "text-foreground"}`}>
+        {motivo ? MOTIVO_TEXT[motivo] : "Loop encerrado."}
+      </p>
+      {motivo === "erro" && d && (
+        <p className="text-xs text-destructive" role="alert" data-testid="loop-detalhe-erro">
+          {typeof d.mensagem === "string" ? d.mensagem : "Sem detalhe do erro."}
+          {typeof d.codigo === "string" ? ` (código: ${d.codigo})` : ""}
+        </p>
+      )}
       {motivo === "sem_melhora" && d && (
         <p className="text-xs text-muted-foreground" data-testid="loop-detalhe-parada">
           {d.conteudo_mudou === false ? (
@@ -131,10 +170,16 @@ function ActiveLoop({ loop, versionId }: { loop: EvalLoop; versionId: string | n
   const agentKey = loop.agente_chave;
   const round = useRunLoopRound(agentKey, loop.suite);
   const stop = useStopEvalLoop(agentKey);
+  const setModo = useSetLoopModo(agentKey);
   const [refusal, setRefusal] = useState<unknown>(null);
   const emAndamento = hasRoundInFlight(loop);
-  const falhas = [...loop.serie].reverse().find((r) => r.status === "concluida")?.falhas ?? [];
+  const rodadaAberta = loop.serie.find((r) => r.status === "executando") ?? null;
+  const ultimaMedida = [...loop.serie].reverse().find((r) => r.status === "concluida" || r.status === "parcial_com_erros");
+  const falhas = ultimaMedida?.falhas ?? [];
+  const ultimaComErro = [...loop.serie].reverse().find(rodadaComErro) ?? null;
   const faltaVersao = loop.suite === "comportamento" && !versionId;
+  const automatico = loop.modo === "automatico";
+  const ocupado = round.isPending || stop.isPending || setModo.isPending;
 
   async function runNext() {
     setRefusal(null);
@@ -143,6 +188,7 @@ function ActiveLoop({ loop, versionId }: { loop: EvalLoop; versionId: string | n
       toast.success("Rodada iniciada.");
     } catch (err) {
       setRefusal(err);
+      toast.error(errorMessage(err));
     }
   }
   async function doStop() {
@@ -152,6 +198,17 @@ function ActiveLoop({ loop, versionId }: { loop: EvalLoop; versionId: string | n
       toast.success("Loop parado.");
     } catch (err) {
       setRefusal(err);
+      toast.error(errorMessage(err));
+    }
+  }
+  async function doModo(modo: "automatico" | "manual") {
+    setRefusal(null);
+    try {
+      await setModo.mutateAsync({ loopId: loop.id, modo });
+      toast.success(modo === "automatico" ? "Loop automático retomado." : "Loop em modo manual: a rodada em andamento termina e o loop espera você.");
+    } catch (err) {
+      setRefusal(err);
+      toast.error(errorMessage(err));
     }
   }
 
@@ -159,18 +216,35 @@ function ActiveLoop({ loop, versionId }: { loop: EvalLoop; versionId: string | n
     <div className="space-y-3" data-testid={`loop-ativo-${loop.suite}`}>
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Badge variant="default">ativo</Badge>
+        <Badge variant="outline" data-testid="loop-estado">
+          {ESTADO_TEXT[loop.estado_driver ?? (emAndamento ? "rodando" : "manual")]}
+        </Badge>
         <span className="font-medium text-foreground">
           Alvo {pct(loop.alvo)} / piso {pct(loop.piso)}
         </span>
         <span className="text-muted-foreground" data-testid="loop-contagem">
-          Rodada {loop.rodadas_feitas} de {loop.rodadas_planejadas}
+          {rodadaAberta
+            ? `Rodada ${rodadaAberta.rodada} de ${loop.rodadas_planejadas} em andamento (${loop.rodadas_feitas} concluída${loop.rodadas_feitas === 1 ? "" : "s"})`
+            : `${loop.rodadas_feitas} de ${loop.rodadas_planejadas} rodadas concluídas`}
         </span>
       </div>
       <p className="text-xs text-muted-foreground" data-testid="loop-gasto">
-        Gasto {formatUsdCost(loop.gasto_usd)} · restante {formatUsdCost(loop.restante_usd)} (orçamento {formatUsdCost(loop.orcamento_usd)}).
-        Nota atual {pct(loop.score_atual)} · melhor {pct(loop.melhor_score)}
+        Gasto {formatUsdCost(loop.gasto_usd)} · restante {formatUsdCost(loop.restante_usd)} (orçamento {formatUsdCost(loop.orcamento_usd)}).{" "}
+        {loop.score_atual == null ? "Ainda sem nota medida" : `Nota atual ${pct(loop.score_atual)} · melhor ${pct(loop.melhor_score)}`}
         {loop.acima_do_piso != null && (loop.acima_do_piso ? " · acima do piso" : " · abaixo do piso")}.
       </p>
+      {loop.estado_driver === "aguardando_edicao" && loop.aviso && (
+        <div
+          role="status"
+          className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800"
+          data-testid="loop-aviso"
+        >
+          <p className="font-semibold">O loop automático está parado esperando você.</p>
+          <p>{loop.aviso.mensagem}</p>
+          <p>Edite o rascunho e clique em &quot;Retomar automático&quot;.</p>
+        </div>
+      )}
+      {rodadaAberta && <RunProgressPanel agentKey={agentKey} suite={loop.suite} runId={rodadaAberta.run_id} />}
       <ScoreSeries loop={loop} />
       {loop.overcalls.length > 0 && (
         <div data-testid="loop-overcalls">
@@ -194,6 +268,17 @@ function ActiveLoop({ loop, versionId }: { loop: EvalLoop; versionId: string | n
           </li>
         ))}
       </ul>
+      {ultimaComErro && ultimaComErro.status !== "parcial_com_erros" && (
+        <div role="alert" className="text-xs text-destructive" data-testid="loop-erro-rodada">
+          <p className="font-semibold">
+            A rodada {ultimaComErro.rodada} terminou com erro (não é falha de comportamento dos casos).
+          </p>
+          <p>
+            {ultimaComErro.erro_mensagem ?? "Sem detalhe do erro."}
+            {ultimaComErro.erro_codigo ? ` (código: ${ultimaComErro.erro_codigo})` : ""}
+          </p>
+        </div>
+      )}
       {falhas.length > 0 && (
         <div data-testid="loop-falhas">
           <p className="text-xs font-semibold text-foreground">Casos ainda falhando na última rodada ({falhas.length})</p>
@@ -211,7 +296,7 @@ function ActiveLoop({ loop, versionId }: { loop: EvalLoop; versionId: string | n
           size="sm"
           variant="primary"
           onClick={runNext}
-          disabled={round.isPending || emAndamento || faltaVersao}
+          disabled={ocupado || emAndamento || faltaVersao}
           data-testid="loop-proxima"
         >
           {emAndamento || round.isPending ? (
@@ -221,11 +306,29 @@ function ActiveLoop({ loop, versionId }: { loop: EvalLoop; versionId: string | n
           )}
           {emAndamento ? "Rodada em andamento…" : round.isPending ? "Iniciando…" : "Rodar próxima rodada"}
         </Button>
-        <Button size="sm" variant="outline" onClick={doStop} disabled={stop.isPending} data-testid="loop-parar">
+        {automatico ? (
+          <Button size="sm" variant="outline" onClick={() => doModo("manual")} disabled={ocupado} data-testid="loop-pausar">
+            <Pause className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            {setModo.isPending ? "Pausando…" : "Pausar automático"}
+          </Button>
+        ) : (
+          <Button size="sm" variant="outline" onClick={() => doModo("automatico")} disabled={ocupado} data-testid="loop-retomar">
+            <Repeat className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            {setModo.isPending ? "Retomando…" : "Retomar automático"}
+          </Button>
+        )}
+        <Button size="sm" variant="outline" onClick={doStop} disabled={ocupado} data-testid="loop-parar">
           <StopCircle className="mr-1.5 h-3.5 w-3.5" aria-hidden />
           {stop.isPending ? "Parando…" : "Parar loop"}
         </Button>
       </div>
+      <p className="text-[11px] text-muted-foreground" data-testid="loop-explica-refino">
+        {automatico
+          ? "Automático: o servidor roda as rodadas sozinho até chegar ao alvo, 2 rodadas sem melhora, o orçamento, as rodadas planejadas ou um erro."
+          : "Manual: cada rodada é um clique seu."}{" "}
+        O loop não refina o rascunho entre as rodadas: quem edita o conteúdo é você (ou um agente de conteúdo). Se o conteúdo não
+        mudar, uma nova rodada só repetiria o resultado e o loop espera a sua edição.
+      </p>
       {emAndamento && (
         <p role="status" className="text-xs text-muted-foreground">
           Uma rodada está sendo medida. Parar o loop agora não cancela a rodada em andamento; ela termina e é registrada.
@@ -261,6 +364,7 @@ function StartForm({ agentKey, suites, config }: { agentKey: string; suites: Eva
   const [orcamento, setOrcamento] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [local, setLocal] = useState<string | null>(null);
+  const [automatico, setAutomatico] = useState(true);
   const create = useCreateEvalLoop(agentKey);
   const suiteAtual = suites.includes(suite) ? suite : suites[0];
   const maxRodadas = config?.rodadas_max;
@@ -287,12 +391,18 @@ function StartForm({ agentKey, suites, config }: { agentKey: string; suites: Eva
       }
     }
     try {
-      await create.mutateAsync({ suite: suiteAtual, rodadas_planejadas: n, orcamento_usd: orc });
-      toast.success("Loop iniciado.");
+      await create.mutateAsync({
+        suite: suiteAtual,
+        rodadas_planejadas: n,
+        orcamento_usd: orc,
+        modo: automatico ? "automatico" : "manual",
+      });
+      toast.success(automatico ? "Loop iniciado: a primeira rodada começa agora." : "Loop iniciado (modo manual).");
       setRodadas("");
       setOrcamento("");
     } catch (err) {
       setError(err);
+      toast.error(errorMessage(err));
     }
   }
 
@@ -300,14 +410,20 @@ function StartForm({ agentKey, suites, config }: { agentKey: string; suites: Eva
     <form onSubmit={submit} noValidate className="space-y-2" data-testid="loop-form">
       <FormError message={local} />
       <div className="grid gap-2 sm:grid-cols-3">
-        <Field label="Suíte">
-          <Select value={suiteAtual} onChange={(e) => setSuite(e.target.value as EvalLoopSuite)} data-testid="loop-suite">
-            {suites.map((s) => (
-              <option key={s} value={s}>
-                {SUITE_LABEL[s]}
-              </option>
-            ))}
-          </Select>
+        <Field label="Suíte do novo loop">
+          {suites.length > 1 ? (
+            <Select value={suiteAtual} onChange={(e) => setSuite(e.target.value as EvalLoopSuite)} data-testid="loop-suite">
+              {suites.map((s) => (
+                <option key={s} value={s}>
+                  {SUITE_LABEL[s]}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <p className="text-sm font-medium text-foreground" data-testid="loop-suite-fixa">
+              {SUITE_LABEL[suiteAtual]} <span className="text-xs font-normal text-muted-foreground">(a outra suíte já tem loop)</span>
+            </p>
+          )}
         </Field>
         <Field label="Rodadas planejadas">
           <Input
@@ -340,6 +456,15 @@ function StartForm({ agentKey, suites, config }: { agentKey: string; suites: Eva
           : "Em branco usa a configuração dos loops."}{" "}
         O loop para sozinho ao chegar ao alvo, após 2 rodadas seguidas sem melhora, ao esgotar o orçamento ou as rodadas.
       </p>
+      <label className="flex items-center gap-2 text-xs text-foreground">
+        <input
+          type="checkbox"
+          checked={automatico}
+          onChange={(e) => setAutomatico(e.target.checked)}
+          data-testid="loop-automatico"
+        />
+        Rodar as rodadas automaticamente em segundo plano (desmarque para clicar rodada a rodada)
+      </label>
       {error != null && <RefusalNote error={error} />}
       <Button type="submit" size="sm" variant="primary" disabled={create.isPending} data-testid="loop-iniciar">
         <Repeat className="mr-1.5 h-3.5 w-3.5" aria-hidden />
