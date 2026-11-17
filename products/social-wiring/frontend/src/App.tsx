@@ -23,13 +23,6 @@ import { JULIA_PAGES } from "@/nav/julia";
 import { Share2 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
-import {
-  RedirectHeadlinesFavoritas,
-  RedirectHeadlinesGerar,
-  RedirectHeadlinesRoteiros,
-  RedirectHeadlinesSugeridas,
-  RedirectMeusRoteiros,
-} from "@/pages/geracao/redirectsRoteiros";
 
 // Pages
 const Landing = lazyWithReload(() => import("@/pages/Landing"));
@@ -137,6 +130,11 @@ const GeracaoEsteira = lazyWithReload(() => import("@/pages/geracao/Esteira"));
 const GeracaoBranding = lazyWithReload(() => import("@/pages/geracao/Branding"));
 const GeracaoCarrosseis = lazyWithReload(() => import("@/pages/geracao/Carrosseis"));
 const RedirectMediaCreation = lazyWithReload(() => import("@/pages/RedirectMediaCreation"));
+const RedirectHeadlinesFavoritas = lazyWithReload(() => import("@/pages/geracao/redirectsRoteiros").then((m) => ({ default: m.RedirectHeadlinesFavoritas })));
+const RedirectHeadlinesGerar = lazyWithReload(() => import("@/pages/geracao/redirectsRoteiros").then((m) => ({ default: m.RedirectHeadlinesGerar })));
+const RedirectHeadlinesRoteiros = lazyWithReload(() => import("@/pages/geracao/redirectsRoteiros").then((m) => ({ default: m.RedirectHeadlinesRoteiros })));
+const RedirectHeadlinesSugeridas = lazyWithReload(() => import("@/pages/geracao/redirectsRoteiros").then((m) => ({ default: m.RedirectHeadlinesSugeridas })));
+const RedirectMeusRoteiros = lazyWithReload(() => import("@/pages/geracao/redirectsRoteiros").then((m) => ({ default: m.RedirectMeusRoteiros })));
 const MinhasExtracoes = lazyWithReload(() => import("@/pages/cerebro/MinhasExtracoes"));
 const Imobiliarias = lazyWithReload(() => import("@/pages/Imobiliarias"));
 // Edição de Fotos — W10a (plan §4/§7). Admin pages (Referências, Guias —

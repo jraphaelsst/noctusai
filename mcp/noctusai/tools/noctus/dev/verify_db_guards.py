@@ -12763,10 +12763,7 @@ BEGIN
   IF to_regclass('{_SW_SCHEMA}.cs_estruturas') IS NULL THEN
     RAISE EXCEPTION 'NOC_PROBE:pending: {_SW_SCHEMA}.cs_estruturas does not exist (migration 350 not applied)';
   END IF;
-  INSERT INTO public.organizations (nome, slug)
-  VALUES ('NOC probe org (estruturas)', 'noc-probe-' || gen_random_uuid()::text) RETURNING id INTO v_org;
-  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name) VALUES (v_org, 'noc-probe-est', 'noc-probe-est') RETURNING id INTO v_marca;
-  INSERT INTO {_SW_SCHEMA}.cs_perfis_monitorados (org_id, handle) VALUES (v_org, 'noc.probe.est') RETURNING id INTO v_perfil;
+{_probe_own_org_sql('v_org', marca_var='v_marca', marca_slug='noc-probe-est')}  INSERT INTO {_SW_SCHEMA}.cs_perfis_monitorados (org_id, handle) VALUES (v_org, 'noc.probe.est') RETURNING id INTO v_perfil;
   INSERT INTO {_SW_SCHEMA}.cs_virais (org_id, perfil_id, ig_media_id) VALUES (v_org, v_perfil, 'noc-probe-est') RETURNING id INTO v_viral;
   SELECT id INTO v_tipo FROM {_SW_SCHEMA}.cs_estrutura_tipos_bloco WHERE nome = 'Outro';
   IF v_tipo IS NULL THEN
@@ -13044,6 +13041,9 @@ BEGIN
   VALUES (v_perfil, v_viral, 'noc probe', 'reels', ARRAY['alcance']::text[], 'ativa', 'manual') RETURNING id INTO v_est;
   INSERT INTO {_SW_SCHEMA}.cs_estrutura_eventos (estrutura_id, tipo, ator_tipo, versao) VALUES (v_est, 'criada', 'admin', 1) RETURNING id INTO v_ev;
   INSERT INTO {_SW_SCHEMA}.cs_perfil_eventos (perfil_id, tipo, ator_tipo) VALUES (v_perfil, 'criado', 'admin') RETURNING id INTO v_pev;
+  IF v_perfil IS NULL OR v_ev IS NULL OR v_pev IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: the self-provisioned fixture rows were not created';
+  END IF;
   BEGIN
 {statements}
 {pass_branch}
@@ -13289,10 +13289,7 @@ BEGIN
   IF to_regclass('{_SW_SCHEMA}.cs_fluxo_eventos') IS NULL THEN
     RAISE EXCEPTION 'NOC_PROBE:pending: {_SW_SCHEMA}.cs_fluxo_eventos does not exist (migration 352 not applied)';
   END IF;
-  INSERT INTO public.organizations (nome, slug)
-  VALUES ('NOC probe org (chat)', 'noc-probe-' || gen_random_uuid()::text) RETURNING id INTO v_org;
-  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name) VALUES (v_org, 'noc-probe-chat', 'noc-probe-chat') RETURNING id INTO v_marca;
-  INSERT INTO {_SW_SCHEMA}.cs_perfis_monitorados (org_id, handle) VALUES (v_org, 'noc.probe.chat') RETURNING id INTO v_perfil;
+{_probe_own_org_sql('v_org', marca_var='v_marca', marca_slug='noc-probe-chat')}  INSERT INTO {_SW_SCHEMA}.cs_perfis_monitorados (org_id, handle) VALUES (v_org, 'noc.probe.chat') RETURNING id INTO v_perfil;
   INSERT INTO {_SW_SCHEMA}.cs_estruturas (perfil_id, formula_headline, status, origem)
   VALUES (v_perfil, 'noc probe 1', 'rascunho', 'manual') RETURNING id INTO v_est;
   INSERT INTO {_SW_SCHEMA}.cs_estruturas (perfil_id, formula_headline, status, origem)
@@ -13312,6 +13309,9 @@ BEGIN
   VALUES (v_org, v_marca, v_conv, v_prop, 'propostas_geradas') RETURNING id INTO v_ev;
   INSERT INTO {_SW_SCHEMA}.pipeline_stages (org_id, pipeline, slug, label, posicao)
   VALUES (v_org, 'esteira', 'noc_probe_chat', 'noc probe', 9999) RETURNING id INTO v_etapa;
+  IF v_ev IS NULL OR v_prop IS NULL OR v_est IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: the self-provisioned fixture rows were not created';
+  END IF;
   BEGIN
 {statements}
 {pass_branch}

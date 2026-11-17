@@ -418,12 +418,12 @@ def montar_pool(db: Any, filtros: FiltrosPool, *, semente: str, limite: int = MA
 
 
 def _linhas_candidatas(db: Any, f: FiltrosPool) -> list[dict[str, Any]]:
-    def query(extra):
+    def query(filtro):
         def pagina(a: int, b: int):
             q = db.table(ESTRUTURAS).select("id,perfil_id,formato,objetivos").eq("status", "ativa")
             if f.formato:
                 q = q.eq("formato", f.formato)
-            q = extra(q)
+            q = filtro(q)
             return q.order("id").range(a, b).execute().data
         return pagina
 

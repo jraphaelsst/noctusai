@@ -136,6 +136,7 @@ CREATE INDEX IF NOT EXISTS cs_chat_proposta_estruturas_estrutura_idx
 -- ----------------------------------------------------------------------------
 -- 4. cs_fluxo_eventos (append-only; no content, no FKs except org/marca)
 -- ----------------------------------------------------------------------------
+-- transition-log-ok: cs_fluxo_eventos a milestone ledger of the chat->headline->roteiro->post flow (typed counters/codes, no content), with no single state column to compare-and-set
 CREATE TABLE IF NOT EXISTS social_wiring.cs_fluxo_eventos (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id      UUID NOT NULL REFERENCES public.organizations (id) ON DELETE CASCADE,

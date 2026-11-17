@@ -245,10 +245,10 @@ def carregar_linhas(
     """The ``ativa`` Estruturas (``id, perfil_id, viral_id, formato, objetivos``) of the PLATFORM library -- no
     ``org_id`` (migration 351). ``estrutura_ids`` wins over ``perfil_ids``; neither = the whole library. An empty
     ``perfil_ids`` set is nothing, never "everything"."""
-    def query(extra: Callable[[Any], Any]):
+    def query(filtro: Callable[[Any], Any]):
         def pagina(a: int, b: int):
             q = db.table(ESTRUTURAS).select(_LINHA_COLS).eq("status", "ativa")
-            return extra(q).order("id").range(a, b).execute().data
+            return filtro(q).order("id").range(a, b).execute().data
         return pagina
 
     if estrutura_ids is not None:
