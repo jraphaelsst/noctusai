@@ -527,5 +527,11 @@ heavy slot 80 min). The construction, not a reminder:
   before it reports `ledger_record_failed` with the exact `record_applied_migrations` command).
 - Telemetry: every timeout / retry / terminal transport failure is one `kind=http-timeout` event (host, call site, elapsed, outcome) in the guard event log.
 - `_http.py` is stdlib-only at import time (`prod_watchdog` / `mq_watchdog` run in CI with no pip).
-- Backstop: keeper `check_http_call_without_timeout` (`--check-http-call-without-timeout`, AST, ratchet `mcp/noctusai/tests/http_timeout_baseline.json`, shrink-only;
+- **httpx and supabase-py (http-deadlines-clients, 2026-11-16).** httpx's `timeout=` is per-socket too, so a bare `httpx.Client(timeout=...)` is NOT bounded. Use
+  `_http.bounded_client(deadline_s=..., why="...", call_site=...)`: every request (any verb, `request()`, `stream()` until headers) runs under the same
+  `run_with_deadline`, and a blown deadline surfaces as `httpx.ReadTimeout` so existing `except httpx.HTTPError` handlers keep working. The budget and its reason
+  are declared at the call site (`deadline_s=900, why="batch backfill walks Vista code by code"`; `why` is mandatory; `timeout=` is refused). supabase-py goes through
+  `_http.supabase_client(url, key, call_site=..., schema=...)` (explicit connect/read timeouts on the postgrest, storage and functions sub-clients via
+  `ClientOptions.*_client_timeout`) plus `_http.supabase_execute(builder, call_site=...)` for a total deadline on one `.execute()`.
+- Backstop: keeper `check_http_call_without_timeout` (also flags every httpx call outside `bounded_client`, even with `timeout=`, and every bare `create_client(`; baseline 0) (`--check-http-call-without-timeout`, AST, ratchet `mcp/noctusai/tests/http_timeout_baseline.json`, shrink-only;
   suppress with `# noc-allow: http-timeout -- <reason>`).

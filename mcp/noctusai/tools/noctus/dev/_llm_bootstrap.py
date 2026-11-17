@@ -183,8 +183,8 @@ def ensure_prompt_registry_configured() -> bool:
             "prompt registry not configured: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set "
             "(export them or add them to the platform .env)"
         )
-    from supabase import create_client
+    from ._http import supabase_client
 
-    client = create_client(url, key)
+    client = supabase_client(url, key, call_site="_llm_bootstrap.prompt_registry")
     configure_prompt_registry(make_prompt_registry(lambda: client))
     return True

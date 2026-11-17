@@ -183,5 +183,63 @@ def urlopen_read(
         raise
 
 
-__all__ = ["EVENT_KIND", "GATE_ID", "HttpDeadlineExceeded", "Response", "client_timeout",
+# --------------------------------------------------------------------------------------------------
+# httpx + supabase-py clients (2026-11-16, http-deadlines-clients). Same deadline mechanism, no fork.
+# --------------------------------------------------------------------------------------------------
+
+def bounded_client(*, deadline_s: float, why: str, call_site: str, read: float | None = None, **client_kwargs: Any) -> Any:
+    """An ``httpx.Client`` whose EVERY request runs under a total wall-clock deadline (``run_with_deadline``).
+
+    httpx's ``timeout=`` bounds one socket operation, so a peer that dribbles bytes keeps resetting it. The
+    caller declares the budget AT THE CALL SITE (``deadline_s=900, why="batch sync"``); ``why`` is mandatory so
+    a long budget is a stated decision, not a drift. The per-operation read timeout defaults to the deadline.
+    ``stream=True`` sends are bounded only until the response headers arrive (body reads are the caller's).
+    Anything else (``base_url``, ``headers``, ``transport`` ...) is forwarded to ``httpx.Client``.
+    """
+    import httpx
+
+    if not why or not why.strip():
+        raise ValueError("bounded_client: `why` is required (state why this call needs a long budget)")
+    if deadline_s <= 0:
+        raise ValueError("bounded_client: deadline_s must be > 0")
+    if "timeout" in client_kwargs:
+        raise TypeError("bounded_client: pass deadline_s=/read=, not timeout= (the seam owns the timeouts)")
+    sock = read if read is not None else deadline_s
+    base_url = str(client_kwargs.get("base_url") or "")
+    host = urllib.parse.urlsplit(base_url).netloc or "?"
+
+    class _BoundedClient(httpx.Client):
+        def send(self, request: Any, **kw: Any) -> Any:  # every verb / request() / stream() funnels here
+            h = request.url.host or host
+            try:
+                return run_with_deadline(lambda: super(_BoundedClient, self).send(request, **kw), deadline_s,
+                                         call_site=f"{call_site} [{why}]", host=h)
+            except HttpDeadlineExceeded as exc:
+                # An httpx error, so every existing ``except httpx.HTTPError`` handler classifies it as a network failure.
+                raise httpx.ReadTimeout(str(exc), request=request) from exc
+
+    return _BoundedClient(timeout=client_timeout(read=sock), **client_kwargs)
+
+
+def supabase_client(url: str, key: str, *, call_site: str, schema: str = "public",
+                    read: float | None = None) -> Any:
+    """``supabase.create_client`` with explicit connect/read timeouts on every sub-client (postgrest,
+    storage, functions -- ``ClientOptions.*_client_timeout`` in supabase-py 2.x) instead of library defaults.
+    Pair each ``.execute()`` that must not hang with ``supabase_execute`` for a total deadline."""
+    from supabase import create_client
+    from supabase.lib.client_options import ClientOptions
+
+    t = client_timeout(read=read)
+    opts = ClientOptions(schema=schema, postgrest_client_timeout=t, storage_client_timeout=t,
+                         function_client_timeout=t)
+    return create_client(url, key, options=opts)
+
+
+def supabase_execute(builder: Any, *, call_site: str, deadline_s: float | None = None) -> Any:
+    """``builder.execute()`` under a total deadline (default ``NOC_HTTP_TOTAL_DEADLINE_S``)."""
+    return run_with_deadline(builder.execute, deadline_s if deadline_s is not None else total_deadline(),
+                             call_site=call_site, host="supabase")
+
+
+__all__ = ["EVENT_KIND", "GATE_ID", "HttpDeadlineExceeded", "Response", "bounded_client", "client_timeout", "supabase_client", "supabase_execute",
            "connect_timeout", "read_timeout", "run_with_deadline", "total_deadline", "urlopen_read"]
