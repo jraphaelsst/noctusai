@@ -91,6 +91,7 @@ import {
   GalleryHorizontal,
   Layers,
   Eye,
+  Clapperboard,
 } from "lucide-react";
 import { Youtube, Instagram } from "@noctusai/lib/brand-icons";
 import { JULIA_ICON, JULIA_LABEL, JULIA_NAV_KEY, JULIA_PAGES } from "@/nav/julia";
