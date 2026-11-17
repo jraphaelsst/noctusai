@@ -1,5 +1,6 @@
-/** Julia privacy notice — public read + the admin read (contract 11.2). Read-only here: NoctusAI edits it. */
-import { useQuery } from "@tanstack/react-query";
+/** Julia privacy notice — public read + the admin read (contract 11.2). Read for any org member; the PUT is platform-admin only (the server enforces). */
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMeAccess } from "@noctusai/lib/design-system";
 
 import { api } from "@/lib/api";
 
@@ -31,7 +32,7 @@ export function useJuliaAvisoPublico(slug: string | undefined) {
   });
 }
 
-// ─── Admin read (GET /api/julia/agente/aviso; the PUT is NoctusAI-only, there is no save hook) ───────────────────────────
+// ─── Admin read (GET /api/julia/agente/aviso) + platform-admin save (PUT, same path) ───────────────────────────
 
 export interface JuliaAvisoAdmin extends JuliaAvisoPublico {
   slug: string;
@@ -47,4 +48,28 @@ export function useJuliaAviso() {
     queryKey: AVISO_KEY,
     queryFn: async () => (await api.get<{ data: JuliaAvisoAdmin }>("/api/julia/agente/aviso")).data,
   });
+}
+
+export interface JuliaAvisoInput {
+  titulo: string;
+  empresa_nome: string;
+  contato_email: string | null;
+  contato_whatsapp: string | null;
+  mensagem_inicial: string;
+  secoes: JuliaAvisoSecao[];
+}
+
+/** The PUT answer is the full saved notice (new `versao`): it replaces the cached read. */
+export function useSalvarAviso() {
+  const qc = useQueryClient();
+  return useMutation<JuliaAvisoAdmin, unknown, JuliaAvisoInput>({
+    mutationFn: async (body) => (await api.put<{ data: JuliaAvisoAdmin }>("/api/julia/agente/aviso", body)).data,
+    onSuccess: (saved) => qc.setQueryData(AVISO_KEY, saved),
+  });
+}
+
+/** UX gate only (the server enforces): NoctusAI platform staff, from `/api/me/access`. */
+export function useIsPlatformAdmin(): boolean {
+  const role = useMeAccess().data?.org_selection?.platform_role;
+  return role === "admin" || role === "owner";
 }

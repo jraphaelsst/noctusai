@@ -25,11 +25,13 @@ import { CatalogoCard, RelatoriosCard } from "@/components/julia/RelatoriosCatal
 import { WhatsAppJuliaCard } from "@/components/julia/WhatsAppJuliaCard";
 import { RoteamentoCard } from "@/components/julia/RoteamentoCard";
 import { useJuliaAgente } from "@/hooks/useJuliaAgente";
+import { useIsPlatformAdmin } from "@/hooks/useJuliaAviso";
 import { useJuliaRoteamento } from "@/hooks/useJuliaRoteamento";
 import { JULIA_LABEL, JULIA_PAGES } from "@/nav/julia";
 
 export default function JuliaAgente() {
   const isAdmin = useIsOrgAdmin();
+  const isPlatformAdmin = useIsPlatformAdmin();
   const rot = useJuliaRoteamento();
   const agente = useJuliaAgente();
   const showSkeleton = rot.isPending && !rot.data;
@@ -85,7 +87,7 @@ export default function JuliaAgente() {
           <RoteamentoCard data={rot.data} isAdmin={isAdmin} />
           <RelatoriosCard isAdmin={isAdmin} />
           <CatalogoCard isAdmin={isAdmin} />
-          <AvisoPrivacidadeCard isAdmin={isAdmin} />
+          <AvisoPrivacidadeCard isPlatformAdmin={isPlatformAdmin} />
         </>
       ) : (
         <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground" data-testid="agente-erro">
