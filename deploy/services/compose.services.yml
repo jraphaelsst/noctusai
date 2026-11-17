@@ -81,7 +81,7 @@ services:
   n8n:
     # Pinned 2026-11-15 to the digest PROD IS RUNNING (was :latest): a no-op recreate (n8n refuses a DB downgrade, so
     # never pin older than what runs). Bump deliberately: `noctus.dev.image_pin` resolves the new digest.
-    image: n8nio/n8n:latest@sha256:b4ce485c070c95efae9f42fa39918623f821d70ea255cdf6467b02865db3a00e
+    image: n8nio/n8n:latest@sha256:b4b90747b81fcda7e76550c0d3aa7f0f64917a1e9573cff40d6834eaf2e0f8ea
     restart: unless-stopped
     networks:
       noctus-net:
