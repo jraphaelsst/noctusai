@@ -14,6 +14,12 @@ import { api } from "@/lib/api";
 import type { Importacao, Onboarding, RelatorioAplicacao } from "@/api/studio/types-onboarding";
 import { keepWithinAgent, seg, studioKeys, toView } from "./keys";
 
+export interface AplicarVars {
+  respostas: Record<number, unknown>;
+  importados: number[];
+  confirmados: number[];
+}
+
 const base = (key: string, product: string, orgId: string) =>
   `/api/studio/plataforma/agents/${seg(key)}/products/${seg(product)}/orgs/${seg(orgId)}/onboarding`;
 
@@ -38,8 +44,8 @@ export function useImportarOnboarding(key: string, product: string, orgId: strin
 export function useAplicarOnboarding(key: string, product: string, orgId: string) {
   // The answer is a per-item report (not a cached read): the progress and the specs form it changes are re-read from the
   // server (settled right after the write), never edited here.
-  return useCacheWriteMutation<RelatorioAplicacao, Record<number, unknown>>({
-    mutationFn: (respostas) => api.post<RelatorioAplicacao>(`${base(key, product, orgId)}/aplicar`, { respostas }),
+  return useCacheWriteMutation<RelatorioAplicacao, AplicarVars>({
+    mutationFn: (vars) => api.post<RelatorioAplicacao>(`${base(key, product, orgId)}/aplicar`, vars),
     targets: [{ queryKey: studioKeys.onboarding(key, product, orgId) }],
     invalidate: [studioKeys.staffOrgSpecs(key, product, orgId), studioKeys.prontidao(key)],
   });

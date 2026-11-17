@@ -24,6 +24,7 @@ from app.studio.models import ConfigValidacao
 __all__ = ["ItemRelatorio", "Relatorio", "aplicar", "progresso", "operacoes_de"]
 
 APLICADO, RECUSADO, PENDENTE_HUMANO = "aplicado", "recusado", "pendente_humano"
+PENDENTE_CONFIRMACAO = "pendente_confirmacao"
 MAX_PERGUNTAS_EXTRAS = 5
 _VAZIO = (None, "", [], {})
 _SIM = {"sim", "s", "true", "1", "yes", "on"}
@@ -185,9 +186,11 @@ def _compor_spec(chave: str, itens: list[tuple[Item, Any]], armazenado: str) -> 
 def aplicar(
     respostas: Mapping[int, Any], *, org_id: UUID, declaradas: Mapping[str, str], armazenados: Mapping[str, str],
     config: ConfigValidacao, gravar_specs: Callable[[dict[str, str]], None], sw: SwSettingsPort,
+    nao_confirmados: frozenset[int] = frozenset(),
 ) -> Relatorio:
     """Apply ``respostas`` (``{item number: value}``). ``declaradas`` = ``{spec key: type}`` the definition declares;
-    ``armazenados`` = the org's stored spec values; ``gravar_specs`` = the write path for the valid spec values."""
+    ``armazenados`` = the org's stored spec values; ``gravar_specs`` = the write path for the valid spec values.
+    ``nao_confirmados`` = imported items nobody confirmed: reported ``pendente_confirmacao``, never written."""
     rel = Relatorio()
     por_n: dict[int, ItemRelatorio] = {}
 
@@ -211,6 +214,9 @@ def aplicar(
             continue
         if v in _VAZIO:
             continue  # unanswered is not a refusal; the progress view lists it
+        if n in nao_confirmados:
+            anotar(item, PENDENTE_CONFIRMACAO, "nao_confirmado", "Valor importado: confirme com a empresa antes de aplicar.")
+            continue
         if n not in aplicaveis:
             anotar(item, RECUSADO, "item_nao_aplicavel", "Este item só vale para quem atende " + " ou ".join(item.quando) + ".")
             continue

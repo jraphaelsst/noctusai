@@ -21,6 +21,7 @@ const ESTADO_ROTULO: Record<ItemRelatorio["estado"], string> = {
   aplicado: "Aplicado",
   recusado: "Recusado",
   pendente_humano: "Passo da equipe",
+  pendente_confirmacao: "Falta confirmar",
 };
 const SELECT = "h-9 w-full max-w-md rounded-md border border-input bg-background px-3 text-sm";
 
@@ -127,6 +128,7 @@ function Entrevista({ agentKey, product, orgId }: { agentKey: string; product: s
   const aplicar = useAplicarOnboarding(agentKey, product, orgId);
   const [rascunho, setRascunho] = useState<Record<number, string>>({});
   const [origemImport, setOrigemImport] = useState<Set<number>>(new Set());
+  const [confirmados, setConfirmados] = useState<Set<number>>(new Set());
   const [texto, setTexto] = useState("");
 
   if (onb.showSkeleton) return <StudioLoading rows={4} testId="onboarding-progresso-skeleton" />;
@@ -136,7 +138,11 @@ function Entrevista({ agentKey, product, orgId }: { agentKey: string; product: s
 
   const pendentes = Object.entries(rascunho).filter(([, v]) => v.trim() !== "");
   const aplicarRascunho = () =>
-    aplicar.mutate(Object.fromEntries(pendentes.map(([n, v]) => [Number(n), parseResposta(v)])), {
+    aplicar.mutate({
+      respostas: Object.fromEntries(pendentes.map(([n, v]) => [Number(n), parseResposta(v)])),
+      importados: pendentes.map(([n]) => Number(n)).filter((n) => origemImport.has(n)),
+      confirmados: [...confirmados],
+    }, {
       onSuccess: (rel) => {
         // what the server took is no longer a draft; what it refused stays on screen to fix
         const recusados = new Set(rel.itens.filter((i) => i.estado !== "aplicado").map((i) => i.n));
@@ -153,6 +159,7 @@ function Entrevista({ agentKey, product, orgId }: { agentKey: string; product: s
           ),
         }));
         setOrigemImport((s) => new Set([...s, ...res.preenchidas.map((p) => p.n)]));
+        setConfirmados((c) => new Set([...c].filter((n) => !res.preenchidas.some((p) => p.n === n))));
       },
     });
 
@@ -216,6 +223,8 @@ function Entrevista({ agentKey, product, orgId }: { agentKey: string; product: s
             item={i}
             valor={rascunho[i.n] ?? ""}
             importado={origemImport.has(i.n)}
+            confirmado={confirmados.has(i.n)}
+            onConfirmar={(v) => setConfirmados((c) => { const s = new Set(c); if (v) s.add(i.n); else s.delete(i.n); return s; })}
             onChange={(v) => setRascunho((r) => ({ ...r, [i.n]: v }))}
           />
         ))}
@@ -267,8 +276,8 @@ function Entrevista({ agentKey, product, orgId }: { agentKey: string; product: s
 }
 
 function Linha({
-  item, valor, importado, onChange,
-}: { item: OnboardingItem; valor: string; importado: boolean; onChange: (v: string) => void }) {
+  item, valor, importado, confirmado, onConfirmar, onChange,
+}: { item: OnboardingItem; valor: string; importado: boolean; confirmado: boolean; onConfirmar: (v: boolean) => void; onChange: (v: string) => void }) {
   const id = `onboarding-item-${item.n}`;
   return (
     <li className="rounded-md border p-2" data-testid={id}>
@@ -286,7 +295,12 @@ function Linha({
         value={valor}
         onChange={(e) => onChange(e.target.value)}
       />
-      {importado && valor && <p className="text-xs text-amber-700">Importado: confirme antes de aplicar.</p>}
+      {importado && valor && (
+        <label className="mt-1 flex items-center gap-2 text-xs text-amber-700">
+          <input type="checkbox" data-testid={`${id}-confirmar`} checked={confirmado} onChange={(e) => onConfirmar(e.target.checked)} />
+          Importado: marque quando a empresa confirmar. Sem isso não é aplicado.
+        </label>
+      )}
     </li>
   );
 }

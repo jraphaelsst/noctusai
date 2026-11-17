@@ -73,9 +73,12 @@ evaluation mode (`modo_avaliacao`) for a dry conversation before go-live; going 
 
 Paste or upload an existing export (a JSON object or `chave: valor` lines; keys can be the item number, its title, the
 spec key or the setting id). Recognised lines come back as unconfirmed answers (`origem=importado`) the interviewer
-confirms instead of asking; unrecognised lines come back verbatim; conflicting duplicates are named, not guessed.
+confirms instead of asking; an imported item is only written once someone confirms it (otherwise the apply report says `pendente_confirmacao`); unrecognised lines come back verbatim; conflicting duplicates are named, not guessed.
 
 ## Deferred (named destinations)
+
+- Interviewer tools (progresso / importar / aplicar) and evals: `NOC-REMEDIATE[onboarding-interviewer-tools]` and
+  `[onboarding-interviewer-evals]`, destination: the next agents slice, "onboarding interviewer as a live chatbot".
 
 - SW settings are applied through `SwSettingsPort`; the Real client refuses `canal_sw_nao_configurado` and the report
   carries the route + body to apply by hand until social-wiring accepts a staff channel —
