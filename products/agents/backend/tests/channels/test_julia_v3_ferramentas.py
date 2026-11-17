@@ -72,6 +72,7 @@ class TestRelatorio:
         [h] = _acoes(r, "handoff")
         rp = h["relatorio"]
         assert set(rp) == {"texto", "resumo_conversa", "perfil", "imoveis_oferecidos", "imoveis_recomendados",
+                           "temperatura", "imoveis_de_interesse",
                            "disponibilidade_visita", "identificacao", "motivo", "proximos_passos"}
         assert rp["resumo_conversa"] == "O lead busca apartamento em Pinheiros." and chan.resumo_relatorio.chamadas == 1
         assert [i["codigo"] for i in rp["imoveis_oferecidos"]] == ["B1", "B2", "B3"]
@@ -79,6 +80,8 @@ class TestRelatorio:
             "B1": "gostou", "B2": "sem_reacao", "B3": "sem_reacao"}
         assert rp["imoveis_oferecidos"][0]["link"] == "https://imob.exemplo/B1"
         assert rp["imoveis_recomendados"] == ["B1", "B2", "B3"]  # liked first, at most 3
+        assert rp["temperatura"] == "quente" and rp["imoveis_de_interesse"][0] == "B1"  # liked + a visit option
+        assert "Temperatura: quente" in rp["texto"] and "Imóveis de interesse: B1" in rp["texto"]
         assert rp["disponibilidade_visita"] == "sábado"  # the lead's own option; Julia schedules nothing
         assert rp["identificacao"] == {"cpf": False, "rg": False, "email": False, "documento_enviado": False}
         assert rp["motivo"] == "Quer um corretor" and "Fulano da Silva" in rp["texto"] and len(rp["texto"]) <= 1500

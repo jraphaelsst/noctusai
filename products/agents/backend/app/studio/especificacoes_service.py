@@ -11,13 +11,43 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
+from noctusai_lib.primitives.accents import fold_accents
+
 from app.studio.especificacoes import conflitos_com_regras_fixas
 from app.studio.models import SPEC_TIPOS_TEXTO_LIVRE, ConfigValidacao
-from app.studio.spec_formatos import ContextoSpec, SpecInvalida, Violacao, validar_valor
+from app.studio.spec_formatos import ContextoSpec, SpecInvalida, Violacao, dividir_itens, validar_valor
 
-__all__ = ["ConfigValidacao", "ResultadoValidacao", "ValoresOrg", "config_atual", "preparar", "validar", "violacoes_armazenadas"]
+__all__ = [
+    "ConfigValidacao", "ResultadoValidacao", "VOCABULARIO_LISTA", "ValoresOrg", "config_atual", "preparar", "validar",
+    "violacoes_armazenadas",
+]
 
 CHAVE_DOMINIOS = "dominios_permitidos"
+
+#: Specs whose items come from a CLOSED vocabulary (``{chave: valid items}``). ``operacoes_atendidas`` (Lais study A2):
+#: what the agency attends, so the opener can skip the operation question and a captation lead is routed.
+VOCABULARIO_LISTA: Mapping[str, tuple[str, ...]] = {
+    "operacoes_atendidas": ("compra", "locacao", "administrativo", "captacao"),
+}
+
+
+def _forma_vocabulario(item: str) -> str:
+    return fold_accents(item.casefold()).strip()
+
+
+def _fora_do_vocabulario(chave: str, norm: str) -> Violacao | None:
+    """``None`` when every item of the list ``norm`` is in the key's vocabulary (accent- and case-insensitive)."""
+    validos = VOCABULARIO_LISTA[chave]
+    fora = [i for i in dividir_itens(norm) if _forma_vocabulario(i) not in validos]
+    if not fora:
+        return None
+    return Violacao(
+        "spec_formato_invalido", "valor_fora_do_vocabulario",
+        f"{chave}: valores aceitos: {', '.join(validos)} (recebido: {', '.join(fora)}).", chave)
+
+
+def _canonico_vocabulario(norm: str) -> str:
+    return ", ".join(dict.fromkeys(_forma_vocabulario(i) for i in dividir_itens(norm)))
 
 
 def config_atual() -> ConfigValidacao:
@@ -83,6 +113,13 @@ def validar(
             viol += [Violacao(v.codigo, v.motivo, f"{chave}: {v.mensagem}", chave) for v in exc.violacoes]
             saida[chave] = valor.strip()
             continue
+        if chave in VOCABULARIO_LISTA:
+            fora = _fora_do_vocabulario(chave, norm)
+            if fora is not None:
+                viol.append(fora)
+                saida[chave] = valor.strip()
+                continue
+            norm = _canonico_vocabulario(norm)
         saida[chave] = norm
         conflitos = conflitos_com_regras_fixas(norm)
         if conflitos:

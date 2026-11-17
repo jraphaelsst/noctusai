@@ -194,6 +194,8 @@ RECUSAS_POR_FERRAMENTA: dict[str, frozenset[str]] = {
 MOTIVOS_HANDOFF: tuple[str, ...] = (
     "pedido_humano", "reclamacao", "assunto_sensivel", "parceria", "fora_do_escopo", "outro",
     "seguranca", "direito_titular", "info_indisponivel",
+    # Lais study A10: a visit request / a purchase-or-rental proposal used to fall into ``outro``; the team now sees the reason
+    "pedido_visita", "proposta",
 )
 #: The hand-off reason of a lead who insisted on information the org never filled in (a REQUIRED spec with no value).
 MOTIVO_INFO_INDISPONIVEL = "info_indisponivel"
@@ -234,7 +236,8 @@ TEXTOS.update({
     # definition carries no such field. Until it does, the texts follow the tools of the qualification follow-up they
     # serve (NOC-REMEDIATE[reengajamento-sinal]: replace by a declared agent-side signal when one exists -- 2026-11-10)
     "contexto.titulo_reengajamento": _canal("contexto", ferramentas=_REENGAJAMENTO),
-    # a SIGNAL to the model when the lead's message is one of the stop words: Julia decides the opt-out (owner, 2026-11-08)
+    # RETIRED 2026-11-17 (owner D9): the exact stop words end the conversation in code again, so the turn no longer carries a
+    # hint to the model. The key stays registered only so a row already stored on a draft keeps validating; nothing reads it.
     "contexto.sinal_opt_out": _canal("contexto", obrigatoria=False),
     **{f"credito.{k}": _canal("credito", ferramentas=_CREDITO) for k in ("pedir", "consentiu", "recusou")},
     "reengajamento.minutos": _canal("reengajamento", ferramentas=_REENGAJAMENTO),

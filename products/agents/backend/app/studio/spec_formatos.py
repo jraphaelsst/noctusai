@@ -23,6 +23,7 @@ fences the free-text ones, §E3). Pure functions, no IO.
 from __future__ import annotations
 
 import ipaddress
+import json
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -32,7 +33,7 @@ from app.studio.models import LIMITS, SPEC_TIPOS, SPEC_TIPOS_TEXTO_LIVRE
 from app.studio.normalizador_texto import caractere_proibido
 
 __all__ = [
-    "ContextoSpec", "SpecInvalida", "Violacao", "dividir_itens", "e_texto_livre", "itens_da_lista", "validar_texto_externo",
+    "CAMPOS_CONTATO_SETORIAL", "ContextoSpec", "SpecInvalida", "Violacao", "dividir_itens", "e_texto_livre", "itens_da_lista", "validar_texto_externo",
     "validar_valor",
 ]
 
@@ -267,7 +268,90 @@ def _dominios(valor: str) -> tuple[str, list[Violacao]]:
 _EMAIL = re.compile(r"^[a-z0-9._%+-]{1,64}@[a-z0-9-]+(?:\.[a-z0-9-]+)+$")
 
 
+def _e164(it: str) -> tuple[str | None, Violacao | None]:
+    """``(+E.164, None)`` or ``(None, violation)`` for one phone as the org typed it."""
+    if not re.fullmatch(r"\+?[\d\s().-]+", it):
+        return None, _invalido("contato_formato", f"'{it}' não é um telefone (E.164) nem e-mail.")
+    d = re.sub(r"\D", "", it)
+    if it.lstrip().startswith("+"):
+        e164 = "+" + d
+    elif len(d) in (10, 11):
+        e164 = "+55" + d
+    elif len(d) in (12, 13) and d.startswith("55"):
+        e164 = "+" + d
+    else:
+        e164 = "+" + d
+    if not re.fullmatch(r"\+[1-9]\d{7,14}", e164):
+        return None, _invalido("contato_e164", f"'{it}' não é um telefone E.164 válido (ex.: +5511992694172).")
+    return e164, None
+
+
+#: The fields of a SECTORED contact (A4, Lais study): who answers (``setor``), for what (``finalidade``), the person's
+#: name (optional) and the phone. ``contatos_oficiais`` holds either the flat list (legacy: phones / e-mails) or a JSON
+#: array of these objects; the compiled prompt carries the canonical JSON so a deflection can name the right sector.
+CAMPOS_CONTATO_SETORIAL = ("setor", "finalidade", "nome", "telefone")
+_LIMITES_CONTATO = {"setor": 40, "finalidade": 160, "nome": 80}
+_SETOR = re.compile(r"^[\w][\w /&.-]*$")
+
+
+def _texto_de_contato(campo: str, valor: object, *, obrigatorio: bool) -> tuple[str, list[Violacao]]:
+    if valor is None or (isinstance(valor, str) and not valor.strip()):
+        if obrigatorio:
+            return "", [_invalido(f"contato_{campo}_ausente", f"cada contato precisa de '{campo}'.")]
+        return "", []
+    if not isinstance(valor, str):
+        return "", [_invalido(f"contato_{campo}_tipo", f"'{campo}' precisa ser um texto.")]
+    txt = _normalizar(valor)
+    if "\n" in txt:
+        return "", [_invalido(f"contato_{campo}_multilinha", f"'{campo}' cabe em uma linha.")]
+    if len(txt) > _LIMITES_CONTATO[campo]:
+        return "", [Violacao("spec_tamanho_excedido", f"contato_{campo}_tamanho",
+                             f"'{campo}' passa de {_LIMITES_CONTATO[campo]} caracteres.")]
+    if campo == "setor" and not _SETOR.match(txt):
+        return "", [_invalido("contato_setor_formato", "o setor é um nome curto (ex.: jurídico, administrativo, parcerias).")]
+    viol = _marcacao_texto(txt) + _fora_do_tipo(txt) + _parece_instrucao(txt)
+    return txt, viol
+
+
+def _contatos_setoriais(valor: str) -> tuple[str, list[Violacao]]:
+    try:
+        bruto = json.loads(valor)
+    except ValueError:
+        return valor, [_invalido("contatos_json", "a lista de contatos por setor precisa ser um JSON válido.")]
+    if not isinstance(bruto, list) or not bruto:
+        return valor, [_invalido("contatos_vazio", "informe ao menos um contato.")]
+    if len(bruto) > 10:
+        return valor, [_invalido("contatos_excede", "no máximo 10 contatos.")]
+    saida: list[dict[str, str]] = []
+    for item in bruto:
+        if not isinstance(item, dict):
+            return valor, [_invalido("contato_item", "cada contato é um objeto {setor, finalidade, nome, telefone}.")]
+        extras = sorted(set(item) - set(CAMPOS_CONTATO_SETORIAL))
+        if extras:
+            return valor, [_invalido("contato_campo_desconhecido", f"campo(s) não aceito(s): {', '.join(map(str, extras))}.")]
+        setor, v1 = _texto_de_contato("setor", item.get("setor"), obrigatorio=True)
+        finalidade, v2 = _texto_de_contato("finalidade", item.get("finalidade"), obrigatorio=True)
+        nome, v3 = _texto_de_contato("nome", item.get("nome"), obrigatorio=False)
+        viol = v1 + v2 + v3
+        fone_bruto = item.get("telefone")
+        e164: str | None = None
+        if not isinstance(fone_bruto, str) or not fone_bruto.strip():
+            viol.append(_invalido("contato_telefone_ausente", "cada contato precisa de 'telefone'."))
+        else:
+            e164, v = _e164(fone_bruto.strip())
+            if v is not None:
+                viol.append(v)
+        if viol:
+            return valor, viol
+        entrada = {"setor": setor, "finalidade": finalidade, **({"nome": nome} if nome else {}), "telefone": e164 or ""}
+        if entrada not in saida:
+            saida.append(entrada)
+    return json.dumps(saida, ensure_ascii=False, separators=(",", ":")), []
+
+
 def _contatos(valor: str) -> tuple[str, list[Violacao]]:
+    if valor.lstrip().startswith(("[", "{")):
+        return _contatos_setoriais(valor)
     itens = dividir_itens(valor)
     if not itens:
         return valor, [_invalido("contatos_vazio", "informe ao menos um contato.")]
@@ -281,20 +365,10 @@ def _contatos(valor: str) -> tuple[str, list[Violacao]]:
                 return valor, [_invalido("contato_email", f"'{it}' não é um e-mail válido.")]
             out.append(baixo)
             continue
-        if not re.fullmatch(r"\+?[\d\s().-]+", it):
-            return valor, [_invalido("contato_formato", f"'{it}' não é um telefone (E.164) nem e-mail.")]
-        d = re.sub(r"\D", "", it)
-        if it.lstrip().startswith("+"):
-            e164 = "+" + d
-        elif len(d) in (10, 11):
-            e164 = "+55" + d
-        elif len(d) in (12, 13) and d.startswith("55"):
-            e164 = "+" + d
-        else:
-            e164 = "+" + d
-        if not re.fullmatch(r"\+[1-9]\d{7,14}", e164):
-            return valor, [_invalido("contato_e164", f"'{it}' não é um telefone E.164 válido (ex.: +5511992694172).")]
-        out.append(e164)
+        e164, v = _e164(it)
+        if v is not None:
+            return valor, [v]
+        out.append(e164 or "")
     return ", ".join(dict.fromkeys(out)), []
 
 

@@ -382,6 +382,12 @@ class RelatorioOut(BaseModel):
     imoveis_oferecidos: list[RelatorioImovelOut] = Field(default_factory=list)
     #: Liked first, then best fit; at most 3.
     imoveis_recomendados: list[str] = Field(default_factory=list)
+    #: How warm the lead is, derived from the records (never from the model's opinion): ``quente`` = a visit option, a
+    #: liked property, a visit request or a proposal; ``morno`` = properties were offered or the profile is substantial;
+    #: ``frio`` otherwise (and for every non-lead hand-off). Lais study A11; SW puts it in the CRM note.
+    temperatura: Literal["frio", "morno", "quente"] = "frio"
+    #: The properties the LEAD showed interest in (liked / asked to visit / the campaign one), codes, at most 5.
+    imoveis_de_interesse: list[str] = Field(default_factory=list)
     #: The lead's OWN visit options. Julia never schedules.
     disponibilidade_visita: str | None = None
     identificacao: RelatorioIdentificacaoOut = Field(default_factory=RelatorioIdentificacaoOut)
