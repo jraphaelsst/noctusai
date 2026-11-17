@@ -48,7 +48,7 @@ Rule: `KB § PATTERNS/devops/release-steward.md` § 7a (guardian spec, council 0
 
 ## 4 · On every landing
 
-`task_branch action=landed slug=… confirm=True`, then reply `LANDED <dev sha>` / `EJECTED <reason>` to the requester. `no_pointer` on a subagent worktree is benign. `missing_commits` on derived `chore(kb-counts) … [auto]` commits is the tool, not lost work: confirm with `git log --oneline` that the content is on dev.
+`task_branch action=landed slug=… confirm=True`, then reply `LANDED <dev sha>` / `EJECTED <reason>` to the requester. **Hand-off-and-end deliveries (owner 2026-11-16):** a requester that sent a handoff message and closed is NOT orphaned. You own its delivery: check its CI runs yourself (one `gh run view` per run, ≥ 60 s apart, never `gh run watch`), enqueue in its given order, land, deploy, and send LANDED/EJECTED/DEPLOYED to the owner, since the requester is gone. A red run or ejection follows § 7a.6 (owner alert, the fix goes to the resume note's line). `KB § PATTERNS/devops/release-steward.md` § 7a.7. `no_pointer` on a subagent worktree is benign. `missing_commits` on derived `chore(kb-counts) … [auto]` commits is the tool, not lost work: confirm with `git log --oneline` that the content is on dev.
 
 ## 5 · Consent — what the steward may decide
 
@@ -89,7 +89,7 @@ After the queue drains: follow `noc-ship` (status → manifest → `predeploy_ch
 3. Write one line in the shift memory: gate · class · root · fixed / fixing-in-`<branch>` / deferred-to-`<destination>`. A row that only says "noted" is not finished.
 
 **Once per shift (at claim, and again at wrap):**
-- Run `cli.py --gate-alignment walls`, plus `trend` once it lands. Take the top wall that has no open fixing branch and dispatch its root fix: the owner column names the agent. One root per shift, minimum.
+- Run `cli.py --gate-alignment refusals` (recurrence by class: `n_14d`, `sessions`, `open_fix`), `trend` (this week vs last, by class) and `walls`. Any class with `open_fix: null` and `n_14d >= 3` is yours: dispatch its root fix, and put `refusal:<class>` in that branch's brief/notes so the pointer becomes its `open_fix`. One root per shift, minimum. `--gate-alignment refusals --file-walls` upserts ONE auto-improvement row per class (count in place, closes itself after 7 quiet days). The keeper `--check-refusal-classes-owned` warns on the same set at every commit. The tool counts; you do not re-derive it by reading logs.
 - Close fixed rows through `--findings-ledger-reconcile gate-walls`, never by hand.
 - Report one number to the owner: total refusals this week vs last week, plus the root fixed. If the number did not go down, name why.
 
@@ -101,3 +101,5 @@ After the queue drains: follow `noc-ship` (status → manifest → `predeploy_ch
 - A tool run that hangs keeps its hw-admission slot (2026-11-13: a migrate stuck on a dead socket held slot-1 for 80 min and starved every scoped run). Check `lsof ~/.noctus/hw-slots/*.lock` when admission waits with no visible heavy job.
 - The steward lease lasts 2 h. Run `--release-steward heartbeat` on a ~25-min loop for the whole shift, or `enqueue` starts refusing you as a stale steward.
 - The auto-mode classifier blocks `gh run cancel` on drains and force-pushes; ask the owner, never work around it.
+- **A known false alarm with live evidence never re-blocks a cut.** `predeploy_check` may BLOCK on a check whose output the steward has already proven to be a harness or tooling defect (2026-11-15: `schema_drift` reported `missing_table:monica.*` for `nosnolimiar` - live had 25 tables in `nosnolimiar`, 0 in `monica`; two prod cuts stalled on re-measuring it). Then: record the live evidence (the query and its rows) in the shift memory, file the tooling fix on its own branch, and ship the cut. Do not keep re-measuring. Only a DIFFERENT output re-opens it; "still red" does not.
+- **A `schema_drift` that lists ONLY tables created by migrations pending in this same cut is expected pre-state, not a block.** Predeploy runs before the cut's migrations are applied, so exactly those tables are absent live. Compare the `missing_table` list against the pending migrations (`migrate_product` dry-run, `earlier_pending`); anything outside that set is real drift and blocks.

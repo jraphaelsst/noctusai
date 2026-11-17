@@ -55,6 +55,24 @@ else
     PY="${PY:-${PYTHON:-python3}}"
 fi
 CLI="$REPO_ROOT/mcp/noctusai/cli.py"
+# TOOLKIT = the PRIMARY checkout's cli.py (2026-11-15, CI-refusal inventory class 15a, ~144 hits). A branch cut before
+# a flag landed, or one carrying a broken cli.py, used to run stale or broken hook logic on its own commit. Every
+# hooked flag below carries `--worktree-path "$REPO_ROOT"` (cli.py rebinds settings.REPO_ROOT before any tool
+# imports), so each check still judges THIS worktree's tree with the primary's code. The ONE exception is a change
+# that needs the branch's own toolkit (e.g. the commit introducing a flag the hook then calls): set
+# NOCTUS_HOOK_OWN_TOOLKIT=<why, 10+ chars>; it is printed on every use.
+_PC_PRIMARY="$(cd "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd || true)"
+if [[ -n "${NOCTUS_HOOK_OWN_TOOLKIT:-}" ]]; then
+    if [[ ${#NOCTUS_HOOK_OWN_TOOLKIT} -lt 10 ]]; then
+        echo "[pre-commit] BLOCKED: NOCTUS_HOOK_OWN_TOOLKIT needs a reason of 10+ characters (why this commit must run the branch's own toolkit)." >&2
+        exit 1
+    fi
+    echo "[pre-commit] ⚠ running THIS branch's own toolkit (NOCTUS_HOOK_OWN_TOOLKIT: $NOCTUS_HOOK_OWN_TOOLKIT)." >&2
+elif [[ -n "$_PC_PRIMARY" && -f "$_PC_PRIMARY/mcp/noctusai/cli.py" ]]; then
+    CLI="$_PC_PRIMARY/mcp/noctusai/cli.py"
+fi
+# Gate telemetry (gate_alignment.record_cli_exit) names WHERE a keeper refused, so refusals count by class.
+export NOC_HOOK_STAGE="${NOC_HOOK_STAGE:-pre-commit}"
 have_py() { command -v "$PY" >/dev/null 2>&1 || [[ -x "$PY" ]]; }
 # Every keeper below is gated on `have_py`; with no usable python they would ALL skip and the hook
 # would still print "OK". Say so once, loudly (never a silent green).
@@ -439,17 +457,24 @@ fi
 # Keeper `check_merge_drivers_registered_in_ci`: .gitattributes names the
 # drivers, register-merge-drivers.sh defines them, merge-queue.yml must run it.
 if have_py && echo ",$STAGED_ALL," | grep -qE ',(\.gitattributes|scripts/hooks/register-merge-drivers\.sh|\.github/workflows/merge-queue\.yml),'; then
-    if ! "$PY" "$CLI" --check-merge-drivers-registered-in-ci; then
+    if ! "$PY" "$CLI" --worktree-path "$REPO_ROOT" --check-merge-drivers-registered-in-ci; then
         echo "[pre-commit] merge-drivers-registered-in-ci FAILED. Commit aborted." >&2
         exit 1
     fi
+fi
+
+# ─── 6b-ter-ter. recurring refusal classes have an owner (WARN-first SHADOW) ──
+# Keeper `check_refusal_classes_owned`: a refusal class that fired >=3x in 14d with no open fix. Reads the
+# machine-local gate event log only; warn-only until the shadow record supports blocking.
+if have_py; then
+    "$PY" "$CLI" --worktree-path "$REPO_ROOT" --check-refusal-classes-owned || echo "[pre-commit] WARNING (shadow): refusal-classes-owned — a recurring refusal has no fix owner; see '--gate-alignment refusals'." >&2
 fi
 
 # ─── 6b-ter-bis. merge drivers have contract coverage (WARN-first SHADOW) ──
 # Keeper `check_merge_drivers_have_contract_coverage`: every custom `merge=<name>` needs a SPECS
 # fixture in tests/test_merge_driver_contract.py. Warn-only until the shadow record supports blocking.
 if have_py && echo ",$STAGED_ALL," | grep -qE ',(\.gitattributes|scripts/hooks/register-merge-drivers\.sh|scripts/hooks/merge-[a-z-]+\.sh|mcp/noctusai/tests/test_merge_driver_contract\.py),'; then
-    "$PY" "$CLI" --check-merge-drivers-have-contract-coverage || echo "[pre-commit] WARNING (shadow): merge-drivers-have-contract-coverage — add the driver's SPECS fixture." >&2
+    "$PY" "$CLI" --worktree-path "$REPO_ROOT" --check-merge-drivers-have-contract-coverage || echo "[pre-commit] WARNING (shadow): merge-drivers-have-contract-coverage — add the driver's SPECS fixture." >&2
 fi
 
 # ─── 6b-quater. conftest env ownership (blocking, only when a conftest is ──
@@ -651,7 +676,7 @@ fi
 STAGED_LGC=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(products/[^/]+/backend/app/.*\.py|seed/lib/backend/noctusai_lib/(domain/licensing|api/auth/.*)\.py|seed/framework/backend/noctusai_seed/(app|dependencies|auth_router|me_router)\.py)$' || true)
 if [[ -n "$STAGED_LGC" ]] && have_py; then
     echo "[pre-commit] Checking license gate by construction..."
-    if ! "$PY" "$CLI" --check-license-gate-by-construction; then
+    if ! "$PY" "$CLI" --worktree-path "$REPO_ROOT" --check-license-gate-by-construction; then
         echo "[pre-commit] license-gate-by-construction check FAILED. Commit aborted." >&2
         echo "[pre-commit] KB § PATTERNS/backend/tenancy-license-gate.md." >&2
         exit 1
@@ -1004,6 +1029,16 @@ if [[ -n "$STAGED_NPM_MANIFEST" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-bis-pin. Supply-chain pin gate (WARN-first SHADOW; CI test is the blocking backstop) ─────────
+# Keeper `check_supply_chain_pin` + `KB § PATTERNS/devops/ci-security-gates.md § 9`. A workflow `uses:` not
+# pinned to a 40-hex SHA, or a prod-surface compose image on :latest / a bare major, is a re-pointable supply
+# chain. Promote to blocking after >=7 shadow days with effective-FP <=10% (`gate_alignment walls`).
+STAGED_SUPPLY_PIN=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(\.github/.*\.ya?ml|deploy/(fleet|services|legacy|tunnel)/.*\.yml)$' || true)
+if [[ -n "$STAGED_SUPPLY_PIN" ]] && have_py; then
+    echo "[pre-commit] workflow / prod-compose file staged — checking supply-chain pins..."
+    "$PY" "$CLI" --check-supply-chain-pin --worktree-path "$REPO_ROOT" || echo "[pre-commit] WARNING (shadow): supply_chain_pin — pin by SHA/digest (tag's commit SHA for Actions) or run noctus.dev.image_pin action=pin write=True." >&2
+fi
+
 # ─── 6e-bis-0. Worker idle-polling gate (blocking, only when a worker / ─
 # jobs file is staged) ───────────────────────────────────────────────────
 # Keeper `check_worker_idle_polling` + `KB § PATTERNS/backend/polling-request-
@@ -1282,6 +1317,20 @@ if [[ -n "$STAGED_SR" ]] && have_py; then
     if ! "$PY" "$CLI" --check-silent-refusal --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] SILENT-REFUSAL check FAILED. Commit aborted." >&2
         echo "[pre-commit] Guard the empty branch with the query's error (QueryErrorState), and route uploads through useUploadDocumento + <UploadErro> (@noctusai/lib/upload-refusal). See KB § PATTERNS/frontend/silent-refusal.md." >&2
+        exit 1
+    fi
+fi
+# ─── 6e-quinquies-quater-ter-ante. Polling-request-budget gate (blocking) ──
+# Keeper `check_polling_request_budget` (2026-11-10, Supabase egress incident: ~620k REST calls/day from our own
+# pollers). Every forever-loop / periodic registration / browser poll carries `# poll-budget: ...; worst <N>/day`
+# (`//` in TS); a per-tick `select("*")` is refused outright. Scoped to the STAGED files (--paths): the full-tree
+# sweep runs in CI. Escape (R3 only, with a reason): `# poll-budget-ok: <why>`.
+STAGED_PB=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(products/[^/]+/backend/app/.*\.py|seed/lib/backend/noctusai_lib/.*\.py|products/[^/]+/frontend/src/.*\.tsx?|seed/lib/frontend/src/.*\.tsx?)$' | grep -vE '(^|/)(tests?|__tests__|testing|fixtures|_archive)/|/test_[^/]*\.py$|\.(test|spec)\.tsx?$' || true)
+if [[ -n "$STAGED_PB" ]] && have_py; then
+    echo "[pre-commit] source staged — checking polling request budget (declared cost per loop / poll)..."
+    if ! "$PY" "$CLI" --check-polling-request-budget --paths "$(echo "$STAGED_PB" | paste -sd, -)" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] POLLING-REQUEST-BUDGET check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Declare the cost next to the loop: '# poll-budget: <cadence>; <k> calls/tick; worst <N>/day; idle=<backoff|event|fixed>' ('//' + 'hidden=<paused|runs>' in TS). See KB § PATTERNS/backend/polling-request-budget.md." >&2
         exit 1
     fi
 fi
@@ -1605,6 +1654,10 @@ if [[ -n "$STAGED_SECURITY_MIGRATIONS" ]] && have_py; then
         echo "[pre-commit] Render it: noctusai_lib.domain.sql_templates.guc_carveout_guard_sql (or scaffold_migration with_guc_guard). See KB § PATTERNS/backend/database-rls.md § GUC carve-out guard." >&2
         exit 1
     fi
+    # Keeper: transition_log_hand_written -- WARN-first SHADOW (gate-alignment placement=warn); promote to
+    # blocking after the shadow record. KB § PATTERNS/backend/transition-log.md.
+    "$PY" "$CLI" --check-transition-log-hand-written --worktree-path "$REPO_ROOT" \
+        || echo "[pre-commit] WARNING (shadow): hand-written transition history -- render it with noctusai_lib.domain.transition_log.transition_log_migration. See KB § PATTERNS/backend/transition-log.md." >&2
     if ! "$PY" "$CLI" --check-migration-untyped-empty-array --worktree-path "$REPO_ROOT"; then
         echo "[pre-commit] MIGRATION-UNTYPED-EMPTY-ARRAY check FAILED. Commit aborted." >&2
         echo "[pre-commit] Cast the literal: ARRAY[]::text[]. See KB § PATTERNS/backend/migration-sql-security-gates.md." >&2
@@ -1710,7 +1763,7 @@ STAGED_REPLAY=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | g
 if [[ -n "$STAGED_REPLAY" ]] && have_py; then
     echo "[pre-commit] migrations staged — replaying the chain on PGlite..."
     # shellcheck disable=SC2086
-    "$PY" "$CLI" --migration-replay $STAGED_REPLAY --migration-replay-source index
+    "$PY" "$CLI" --worktree-path "$REPO_ROOT" --migration-replay $STAGED_REPLAY --migration-replay-source index
     MR_RC=$?
     if [[ $MR_RC -eq 1 ]]; then
         echo "[pre-commit] MIGRATION REPLAY is RED. Commit aborted." >&2
@@ -1845,7 +1898,7 @@ fi
 # cancelled that push's CI run.) Best-effort — telemetry never blocks a commit.
 # KB § PATTERNS/common/vector-cost-tracking.md.
 if have_py; then
-    "$PY" "$CLI" --vector-costs-drain-spool 2>&1 | sed 's/^/[pre-commit] cost-log: /' || true
+    "$PY" "$CLI" --worktree-path "$REPO_ROOT" --vector-costs-drain-spool 2>&1 | sed 's/^/[pre-commit] cost-log: /' || true
 fi
 
 # ─── 11. Vector-costs ledger sanity (2026-05-26, post-verify-pass) ──
@@ -1937,7 +1990,7 @@ fi
 _dsg="$(git rev-parse --git-dir 2>/dev/null || true)"
 if [[ -z "${NOCTUS_SKIP_DOC_STALENESS:-}" && -n "$_dsg" && ! -f "$_dsg/MERGE_HEAD" ]] \
    && git symbolic-ref -q HEAD >/dev/null 2>&1 && have_py; then
-    _ds_out="$("$PY" "$CLI" --check-doc-staleness --doc-staged --worktree-path "$REPO_ROOT" 2>&1)" || {
+    _ds_out="$(NOC_GATE_ADVISORY=1 "$PY" "$CLI" --check-doc-staleness --doc-staged --worktree-path "$REPO_ROOT" 2>&1)" || {
         echo "[pre-commit] doc-staleness (heads-up): staged code changes under docs that are NOT staged." >&2
         echo "$_ds_out" | grep -v "env_bootstrap" | sed 's/^/[pre-commit] /' >&2
         echo "[pre-commit] Update + stage the listed docs NOW (same commit) — commit-msg will block otherwise." >&2
@@ -1958,7 +2011,7 @@ STAGED_KB_FOR_BASELINE=$(git diff --cached --name-only 2>/dev/null | grep -cE '^
 if [[ "$STAGED_KB_FOR_BASELINE" -gt 5 ]] && have_py; then
     # Heuristic: 5+ KB docs staged in one commit = large KB change.
     # Suggest the user check baselines (no exit code).
-    "$PY" "$CLI" --check-kb-semantic-drift 2>&1 | sed 's/^/[pre-commit] /' || true
+    "$PY" "$CLI" --worktree-path "$REPO_ROOT" --check-kb-semantic-drift 2>&1 | sed 's/^/[pre-commit] /' || true
 fi
 
 echo "[pre-commit] OK"

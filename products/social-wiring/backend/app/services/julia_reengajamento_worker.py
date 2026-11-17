@@ -87,6 +87,7 @@ def build_worker(repo: JobRepository, cfg: Any) -> Worker:
     julia_credito_service.registrar_repo(repo)  # the credit analysis (wave 13) is queued on the same repo
     julia_avaliacoes_service.registrar_repo(repo)  # wave 13: the review-ask job
     julia_capi_service.registrar_repo(repo)  # wave 13: the CAPI send job
+    # poll-budget: claim poll, 5s base doubling to the 300s seed cap when idle, reset on work; 1 calls/tick (rpc claim_next_job); worst 288/day per idle worker (17280/day only while busy at the 5s base); idle=backoff
     return Worker(
         repo,
         worker_id=worker_id(),

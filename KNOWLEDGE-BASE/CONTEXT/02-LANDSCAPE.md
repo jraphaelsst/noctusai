@@ -26,7 +26,7 @@
 | **Store** | `products/store/` | Public sales page for digital products (first: the generic "Contrato Blindado de Compra e Venda" kit). Asaas one-off checkout, webhook-confirmed fulfillment by email + thank-you page, owner-only `/login` admin for landing values and sales. Scaffolded 2026-10-02 (contract `products/store/projects/store-v1-CONTRACT.md`) | 8018/8220 | `store` |
 | **Commerce** | `products/commerce/` | Generic e-commerce + ERP reference store for the commerce vertical seed (consumes `noctusai_lib.domain.commerce`): staff back office + host-resolved public storefront. Scaffolded 2026-10-12; `deploy_scope=dev` until owner validation (contract `projects/commerce-seed-p3/CONTRACT.md` §6) | 8019/8230 | `commerce` |
 | **Assistant** | `products/assistant/` | Shadow of one personal WhatsApp line (D46) that, since 2026-11-12, can ANSWER it through the owner's agent hosted in `agents` (live reply: off-by-default switch, agent on/off + allow-list in `agents` re-checked at the send seam, append-only `assistant.respostas_eventos`): QR pairing + the HMAC-signed inbound webhook ONLY (no send route, mark-read, backfill or chat reads); each inbound 1:1 text becomes a pending intake row (HMAC'd chat reference, 90-day body retention, append-only events in the same transaction) classified as about scheduling or not by a registry-prompted Haiku worker on the seed jobs Worker (S3, classification only; admin replay + blind sample routes); blind owner labelling + agreement on `/avaliacao` (S4, append-only labels `assistant.ai_feedback_events`); in-app "Conectar Google" per org (S7, D50: Calendar + Drive, PKCE, least-privilege scopes, token Fernet-encrypted in `assistant.oauth_credentials`). Own WAHA instance (personal live shape: line policy `send: enabled`, presence/sync/repair off, no edge). pt-BR. Scaffolded 2026-11-10; catalog row `dev` (owner decision, plan `project-history/assistant-chatbot/`) | 8021/8250 | `assistant` |
-| **Monica** | `products/monica/` | CRM of Mônica Tangerino's psychoanalysis practice (future ERP), first product of the org "Mônica Tangerino": WhatsApp-fed leads (funnel Lead→Atendimento→Negociação→Fechado + list), WhatsApp conversations (read + reply, QR connection), her own context (org specs of the agent `monica-leads`), finance mounted for later. Every screen is a seed organ (leads, WhatsApp inbox/connections, org-specs, `SectionTabsPage`); own WAHA instance (never the shared one). pt-BR. Scaffolded 2026-10-26; catalog row `dev` until the first go-live flips it in core admin (`KB § GUIDES/production-deploy.md § 5a`) | 8020/8240 | `monica` |
+| **Nós no Limiar** | `products/nosnolimiar/` | Home of the company Nós no Limiar: CRM/ERP of Mônica Tangerino's psychoanalysis practice (renamed from `monica` 2026-11-04; host `nosnolimiar.noctusai.com`, `monica.noctusai.com` retired), org "Nós no Limiar": WhatsApp-fed leads (funnel Lead→Atendimento→Negociação→Fechado + list), WhatsApp conversations (read + reply, QR connection), her own context (org specs of the agent `nosnolimiar-leads`), finance mounted for later; clinical tools planned (`products/nosnolimiar/projects/clinical-tools-build/`). Every screen is a seed organ (leads, WhatsApp inbox/connections, org-specs, `SectionTabsPage`); own WAHA instance `waha-nosnolimiar` (never the shared one). pt-BR. Scaffolded 2026-10-26 (`KB § GUIDES/production-deploy.md § 5a`) | 8020/8240 | `nosnolimiar` |
 | **Orbity** | `products/orbity/` | Agency operating-system (absorbing `sistema-orbity`): CRM/funil, clients, contracts, financeiro, agenda, WhatsApp automation, Meta ads, notifications — built seed-first via the absorption capability-uplift loop (in flight on `feat/orbity-build`, roadmap `project-history/roadmaps/orbity-2026-06.md`, knowledge `KB § ABSORPTIONS/orbity/`) | 8010/8140 | `orbity` |
 
 > **Retired 2026-05-16** (`social-wiring-absorption` Wave 4): `media-scheduling`, `youtube-crawler`, `mailing`, `imobi-scheduling` were consolidated into **`social-wiring`** (`products/social-wiring/`). Email-marketing → `social-wiring/app/modules/email_marketing/`; WhatsApp-scheduling → `social-wiring/app/modules/scheduling/`. Core un-registration: forward migration `products/core/backend/migrations/033_retire_consolidated_products.sql` (013/028 immutable). Durable record: `project-history/ledger.ndjson` slug `social-wiring-absorption-wave4-teardown`.
@@ -42,7 +42,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 44 | 69 | 99 | 12 | 133 | 1,592 |
+| Core | 44 | 69 | 99 | 12 | 133 | 1,594 |
 | Erp Imobiliario | 64 | 56 | 80 | 79 | 136 | 1,904 |
 | Personal Finance | 15 | 18 | 30 | 26 | 48 | 482 |
 | Therapy Platform | 40 | 46 | 65 | 36 | 85 | 1,143 |
@@ -50,7 +50,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 53 | 120 | 267 | 220 | 696 | 10,723 |
+| Social Wiring | 53 | 121 | 269 | 221 | 702 | 10,877 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 14 | 22 | 28 | 23 | 57 | 986 |
 | Igig | 23 | 26 | 33 | 27 | 44 | 978 |
@@ -60,16 +60,16 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Community | 23 | 29 | 49 | 30 | 58 | 657 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
 | Commerce | 3 | 0 | 40 | 7 | 8 | 64 |
-| Monica | 2 | 1 | 15 | 0 | 8 | 39 |
+| Nosnolimiar | 2 | 1 | 15 | 0 | 8 | 39 |
 | Assistant | 3 | 7 | 18 | 0 | 19 | 186 |
-| **Total** | **362** | **443** | **918** | **544** | **1661** | **23,402** |
+| **Total** | **362** | **444** | **920** | **545** | **1667** | **23,558** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
 
 <!-- kb-counts:start:database -->
 - **Schemas DECLARED in migrations (20):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `assistant` + `commerce` + `community` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `monica` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `store` + `therapy`.
-- **Tables: 1213** declared across those schemas.
+- **Tables: 1222** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or
@@ -85,7 +85,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Supabase | All | Database, auth, storage |
 | OpenAI | ERP, Therapy | AI descriptions, embeddings, scoring, transcription, summaries |
 | Stripe | Core, Therapy | Billing, subscriptions, marketplace payments |
-| WAHA | ERP, Therapy | WhatsApp messaging (self-hosted at `waha.noctusai.com`) |
+| WAHA | ERP, Therapy | WhatsApp messaging (self-hosted, internal-only `http://waha:3000`) |
 | Meta Business API | ERP | Facebook Lead Ads + campaign sync |
 | Resend | All | Email delivery |
 | LiveKit | Therapy | Video sessions (self-hosted) |

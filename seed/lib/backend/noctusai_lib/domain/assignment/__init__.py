@@ -10,9 +10,9 @@ funnel's `responsavel_field`. Formalizes social-wiring `julia_equipes_service` +
 
 Mount it from a product:
 
-    cfg = AssignmentConfig.for_funnel("monica", funnel_cfg)               # writes funnel_cfg.responsavel_field
-    sql = assignment_migration(cfg, "monica")                              # -> migrations/0NN_assignment.sql (noctus.dev.render_organ_migration)
-    organ = mount_assignment(schema="monica", auth_dependency=..., get_admin_client=..., get_core_client=..., cfg=cfg,
+    cfg = AssignmentConfig.for_funnel("nosnolimiar", funnel_cfg)               # writes funnel_cfg.responsavel_field
+    sql = assignment_migration(cfg, "nosnolimiar")                              # -> migrations/0NN_assignment.sql (noctus.dev.render_organ_migration)
+    organ = mount_assignment(schema="nosnolimiar", auth_dependency=..., get_admin_client=..., get_core_client=..., cfg=cfg,
                              strategy_hooks={"by_plantao": my_hook})       # optional: the named custom-strategy seam
     # on lead intake:  service.assign(org_id, subject_kind="card", subject_id=card_id, source="meta_ads")
 """

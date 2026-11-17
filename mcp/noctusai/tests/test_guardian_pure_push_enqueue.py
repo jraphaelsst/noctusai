@@ -818,7 +818,7 @@ def test_a_clean_head_passes_the_ci_parity_check_and_it_emits_a_valid_verdict_re
     assert res["ok"], res
     assert res["ran"]["flags"] == ["--check-scripts-manifest"] + ["--check-in-a-later-job"]
     # keeper tests always; the toolkit split is left to CI (owner 2026-11-11, measured 2h04m locally)
-    assert res["ran"]["tests"] and all("::" in t for t in res["ran"]["tests"]), res["ran"]["tests"]
+    assert any("::" in t for t in res["ran"]["tests"]), res["ran"]["tests"]  # + the selector's suites, by label
     assert not any(t.startswith("toolkit:") for t in res["ran"]["tests"])
     ok, why = RS.validate_verdict_ref(res["verdict_ref"], head, world.verdict_store)
     assert ok, why
@@ -1390,6 +1390,33 @@ def test_a_red_keeper_flag_carries_its_own_error_in_the_result(world):
     assert not res["ok"] and "script(s) without a manifest row" in res["detail"]
 
 
+def test_a_red_stage_without_failing_test_ids_stores_rc_tail_and_export(world):
+    """A stage that dies with NO `FAILED`/`ERROR` id: the verdict must still say why (rc, output tail, export)."""
+    _wt, head = _ci_branch(world, extra_test="\nimport os\nprint('dying in collection')\nos._exit(7)\n")
+    res = RS.export_ci_parity_check(world.repo, admit=_ADMIT, verdict_store=world.verdict_store)("feat/x", head)
+    assert not res["ok"]
+    err = res["stage_errors"][0]
+    assert err["rc"] == 7
+    assert err["export"].startswith(tempfile.gettempdir().rstrip("/")) or "noc-ci-parity-" in err["export"]
+    rec = RS.read_verdict(world.verdict_store, res["verdict_ref"].split(":")[1])
+    assert rec["stage_errors"] == res["stage_errors"]
+    rep = RS.verdict_report(world.verdict_store, [])
+    assert rep["red_without_test_ids"][0]["stage_errors"][0]["rc"] == err["rc"]
+
+
+def test_a_collection_or_setup_error_is_named_like_a_failure(world):
+    _wt, head = _ci_branch(world, extra_test="\nraise RuntimeError('collection boom')\n")
+    res = RS.export_ci_parity_check(world.repo, admit=_ADMIT, verdict_store=world.verdict_store)("feat/x", head)
+    assert not res["ok"] and any("test_keepers.py" in t for t in res["failing_tests"]), res
+
+
+def test_a_stage_red_from_an_interpreter_missing_a_module_is_unmeasured_not_red(world):
+    _wt, head = _ci_branch(world, extra_test="\n\ndef test_needs_a_dep():\n    import no_such_dep_for_harness\n")
+    res = RS.export_ci_parity_check(world.repo, admit=_ADMIT, verdict_store=world.verdict_store)("feat/x", head)
+    assert not res["ok"] and res["detail"].startswith("UNMEASURED") and "no_such_dep_for_harness" in res["detail"]
+    assert res["missing_modules"] == ["no_such_dep_for_harness"]
+
+
 # -- request(run_scoped=True) is not silently ignored ------------------------------------------------------------
 
 def test_request_run_scoped_runs_the_ci_parity_check_and_files_with_its_ref(world, tmp_path):
@@ -1564,13 +1591,13 @@ def test_all_products_compliant(product):
 """
 
 
-def test_a_non_keeper_toolkit_red_is_left_to_ci_not_run_locally(world):
-    """The narrowing, pinned (owner decision 2026-11-11): the full toolkit split took 2h04m locally, so a
-    non-keeper toolkit test is CI's to judge - item 5 does not run it."""
+def test_a_changed_toolkit_test_that_is_red_is_now_caught_by_the_selector(world):
+    """2026-11-12: item 5 went green on every ejected entry while running 0 suites. The ONE selector (gate_sweep's)
+    picks the toolkit tests the diff touches, so a red `test_all_products_compliant[core]` is RED here, named."""
     _ci_branch(world, extra=(("mcp/noctusai/tests/test_products.py", _FLEET_RED),))
     res = _parity(world, **_SCRUBBED_ENV)
-    assert res["ok"], res
-    assert "left to CI" in res["detail"]
+    assert not res["ok"] and "test_all_products_compliant" in res["detail"], res
+    assert res["suites_ran"] == ["mcp_toolkit_tests:scoped"] and res["tests_ran"] >= 1
 
 
 def test_no_heavy_slot_is_unmeasured_never_green(world):
@@ -1587,53 +1614,113 @@ def test_no_heavy_slot_is_unmeasured_never_green(world):
     assert not world.verdict_store.exists()
 
 
-_SUITE_WF = """\
-jobs:
-  product-backend-tests:
-    strategy:
-      matrix:
-        product: [core, agents, erp-imobiliario]
-  seed-backend-tests:
-    strategy:
-      matrix:
-        root: [seed/lib/backend, seed/framework/backend]
-"""
-
-
-def _suite_tree(tmp_path):
+def _selector_tree(tmp_path):
     for d in ("products/core/backend", "products/agents/backend", "products/erp-imobiliario/backend",
-              "seed/lib/backend", "seed/framework/backend", "deploy/fleet"):
+              "seed/lib/backend", "seed/framework/backend", "deploy/fleet", "mcp/noctusai/tests"):
         (tmp_path / d).mkdir(parents=True)
+    for slug in ("core", "agents"):
+        (tmp_path / "products" / slug / "backend" / "tests").mkdir()
+    (tmp_path / "products/core/frontend").mkdir()
+    (tmp_path / "products/core/frontend/package.json").write_text("{}")
     (tmp_path / "deploy/fleet/active-scope.txt").write_text("# awake\ncore\nagents\n")
     return tmp_path
 
 
-def test_only_the_directly_touched_suites_run_locally(tmp_path):
-    cs = RS._sibling("ci_scope")
-    tree = _suite_tree(tmp_path)
-
-    def labels(paths):
-        return [s.label for s in RS.local_suites(tree, cs.classify(paths), _SUITE_WF, paths)]
-    # a seed change runs ONLY the touched seed root - the "every product" fan-out is CI's
-    assert labels(["seed/lib/backend/x.py"]) == ["seed:seed/lib/backend"]
-    # a product diff: only that product's backend
-    assert labels(["products/core/backend/migrations/119_x.sql"]) == ["product:core"]
-    # an asleep product is never run, even when touched
-    assert labels(["products/erp-imobiliario/backend/a.py"]) == []
-    # toolkit-only and ledger-only diffs run no suite (keeper tests only)
-    assert labels(["mcp/x.py"]) == []
+def test_the_selector_is_gate_sweeps_not_a_second_fork(tmp_path):
+    tree = _selector_tree(tmp_path)
+    labels = lambda paths: [s.label for s in RS.select_ci_suites(tree, paths, "py")["suites"]]  # noqa: E731
+    assert "pytest:core" in labels(["products/core/backend/migrations/119_x.sql"])
     assert labels(["project-history/a.ndjson"]) == []
-    core = RS.local_suites(tree, cs.classify(["products/core/backend/a.py"]), _SUITE_WF, ["products/core/backend/a.py"])[0]
-    assert core.cwd == "products/core/backend" and core.argv == ("-m", "pytest", "--tb=short", "-q")
+    # a seed change reaches the consumers gate_sweep's import graph resolves - not only the touched root
+    assert {"pytest:core", "pytest:agents"} <= set(labels(["seed/lib/backend/x.py"]))
+    sel = RS.select_ci_suites(tree, ["mcp/noctusai/tools/noctus/dev/merge_queue.py"], "py")
+    assert sel["scope"]["mcp"] is True
 
 
-def test_the_split_matches_the_real_workflow():
-    """Pin against the REAL test.yml: if CI changes how it runs these suites, item 5 must change with it."""
-    wf = (Path(__file__).resolve().parents[3] / ".github/workflows/test.yml").read_text()
-    assert RS._matrix(wf, "seed-backend-tests", "root") and RS._matrix(wf, "product-backend-tests", "product")
-    assert "working-directory: products/${{ matrix.product }}/backend\n        run: pytest --tb=short -q" in wf
-    assert "working-directory: ${{ matrix.root }}\n        run: pytest --tb=short -q" in wf
-    assert "mcp/noctusai/tools/noctus/dev/ci_scope.py" in wf
+def test_the_full_toolkit_suite_and_fe_gates_are_named_as_not_run_never_dropped(tmp_path):
+    tree = _selector_tree(tmp_path)
+    sel = RS.select_ci_suites(tree, ["mcp/noctusai/tests/conftest.py", "products/core/frontend/src/a.tsx"], "py")
+    reasons = {k["label"]: k["reason"] for k in sel["skipped"]}
+    assert any("full toolkit suite" in r for r in reasons.values()), reasons
+    assert any(l.startswith(("vitest", "vite_build")) for l in reasons), reasons
+    assert "mcp_toolkit_tests" not in [s.label for s in sel["suites"]]
+
+
+def test_live_tree_tests_are_found_by_ast_not_only_check_x_equals_empty(tmp_path):
+    t = tmp_path / "tests"
+    t.mkdir()
+    (t / "test_a.py").write_text(
+        "from pathlib import Path\nREPO = Path(__file__).resolve().parents[3]\n\n"
+        "def test_walk():\n    assert not list(REPO.glob('x'))\n\n"
+        "def test_pure():\n    assert 1 + 1 == 2\n\n"
+        "class TestK:\n    def test_m(self):\n        assert REPO.exists()\n\n"
+        "def test_needs_pglite(pglite):\n    assert REPO.exists()\n")  # PGlite absent in the export: not a live-tree verdict test
+    (t / "test_b.py").write_text("def test_no_root():\n    assert True\n")
+    assert RS.live_tree_test_ids(t) == ["tests/test_a.py::test_walk", "tests/test_a.py::TestK::test_m"]
+
+
+def test_the_merge_not_the_head_is_what_item_5_judges(world):
+    """A head that is fine alone but whose MERGE with dev is red: dev adds a keeper-test the head's tree lacks."""
+    _ci_branch(world)
+    head = sh(world.repo, "git", "rev-parse", "feat/x")
+    tree, why = RS.merge_tree_sha(head, world.repo)
+    assert tree and not why
+    res = _parity(world)
+    rec = RS.read_verdict(world.verdict_store, res["verdict_ref"].split(":")[1])
+    assert rec["merge_tree"] == RS.merge_tree_sha(head, world.repo)[0]
+    assert rec["tree"] == sh(world.repo, "git", "rev-parse", f"{head}^{{tree}}")  # the ref still binds the HEAD
+
+
+def test_every_verdict_records_suites_ran_tests_ran_and_diff_scope(world):
+    _ci_branch(world)
+    res = _parity(world)
+    rec = RS.read_verdict(world.verdict_store, res["verdict_ref"].split(":")[1])
+    assert isinstance(rec["suites_ran"], list) and isinstance(rec["tests_ran"], int) and rec["tests_ran"] >= 1
+    assert {"describe", "run_heavy", "changed_files"} <= set(rec["diff_scope"])
+
+
+def test_a_heavy_scope_with_zero_suites_warns_loudly(world, monkeypatch):
+    _ci_branch(world)
+    monkeypatch.setattr(RS, "select_ci_suites", lambda *a, **k: {"suites": [], "skipped": [], "scope": {}})
+    monkeypatch.setattr(RS, "live_tree_test_ids", lambda *a, **k: [])
+    res = _parity(world)
+    assert any("0 suites ran" in w for w in res["warnings"]) and "0 suites ran" in res["detail"]
+
+
+def test_the_suite_budget_skips_the_rest_and_says_so(world, monkeypatch):
+    _ci_branch(world, extra=(("mcp/noctusai/tests/test_products.py", "def test_ok():\n    assert True\n"),))
+    monkeypatch.setenv(RS.SUITE_BUDGET_ENV, "0")
+    res = _parity(world)
+    assert res["partial"] is True and "PARTIAL" in res["detail"] and res["suites_ran"] == []
+
+
+def test_verdict_report_joins_verdicts_to_drain_outcomes_by_head_and_ref(tmp_path):
+    store = tmp_path / "v.ndjson"
+    for vid, head, ok, suites in (("a" * 32, "1" * 40, True, []), ("b" * 32, "2" * 40, True, ["pytest:core"]),
+                                  ("c" * 32, "3" * 40, True, [])):
+        store.open("a").write(json.dumps({"id": vid, "ts": "2026-11-12T00:00:00+00:00", "head": head, "ok": ok,
+                                          "suites_ran": suites}) + "\n")
+    rq = lambda n: {"name": n}  # noqa: E731
+    ev = [
+        {"event": "request", "slug": "s1", "head_sha": "1" * 9, "requester": rq("alice"), "ts": "2026-11-12T01"},
+        {"event": "ack", "slug": "s1", "outcome": "ejected", "ts": "2026-11-12T02"},
+        {"event": "request", "slug": "s2", "head_sha": "x", "verdict_ref": "ci-parity:" + "b" * 32, "requester": rq("alice"), "ts": "2026-11-12T03"},
+        {"event": "ack", "slug": "s2", "outcome": "landed", "ts": "2026-11-12T04"},
+        {"event": "request", "slug": "s3", "head_sha": "3" * 40, "requester": rq("bob"), "ts": "2026-11-12T05"},
+        {"event": "ack", "slug": "s3", "outcome": "ejected", "ts": "2026-11-12T06"},
+        {"event": "request_refused", "slug": "s4", "requester": rq("bob"), "ts": "2026-11-12T07"},
+    ]
+    rep = RS.verdict_report(store, ev)
+    assert (rep["joined"], rep["green_then_ejected"], rep["green_then_landed"]) == (3, 2, 1)
+    assert rep["false_green_rate"] == 0.667
+    assert (rep["zero_suite_green"], rep["zero_suite_green_ejected"], rep["zero_suite_false_green_rate"]) == (2, 2, 1.0)
+    assert rep["by_requester"]["alice"]["ejected"] == 1 and rep["by_requester"]["bob"]["refused"] == 1
+    assert rep["by_requester"]["bob"]["rejection_rate"] == 1.0
+
+
+def test_the_verdicts_action_is_read_only_and_open(tmp_path):
+    out = RS.run_action("verdicts", "sess", store=RS.StewardStore(root=tmp_path), verdict_store=tmp_path / "none.ndjson")
+    assert out["ok"] and out["status"] == "report" and out["verdicts"] == 0
 
 
 # ── migration -> DB-guard edge (owner-approved speedup 1, 2026-11-11) ───────────────────────────────────
@@ -1715,3 +1802,105 @@ def test_every_ci_parity_stage_has_a_declared_budget():
     for gate in ("ci_parity:export", "ci_parity:pytest", "ci_parity:keeper:--check-x", "ci_parity:prime:--stamp",
                  "ci_parity:suite:products/core/backend"):
         assert gb.declared_gate_budget(gate) is not None, gate
+
+
+def test_a_seed_module_change_selects_the_suites_of_the_products_that_import_it(tmp_path):
+    """Kind (2) reds - a SEED change breaking SIBLING products' tests: the selector (gate_sweep's import graph) fans a
+    seed/lib module out to the products that import it (and only them), not just the seed's own suite."""
+    tree = _selector_tree(tmp_path)
+    pkg = tree / "seed/lib/backend/noctusai_lib"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "foo.py").write_text("X = 1\n")
+    (pkg / "bar.py").write_text("Y = 2\n")
+    for slug, mod in (("core", "foo"), ("agents", "bar")):
+        app = tree / "products" / slug / "backend" / "app"
+        app.mkdir(parents=True)
+        (app / "main.py").write_text(f"from noctusai_lib import {mod}\n")
+    sel = RS.select_ci_suites(tree, ["seed/lib/backend/noctusai_lib/foo.py"], "py")
+    labels = {s.label for s in sel["suites"]}
+    assert sel["scope"]["seed_fanout"] == "scoped", sel["scope"]
+    assert "pytest:core" in labels and "pytest:agents" not in labels, labels
+    # a non-python seed file (a data file like channels.v2.json) is not provably narrower: the WHOLE awake fleet
+    wide = RS.select_ci_suites(tree, ["seed/lib/backend/noctusai_lib/channels.v2.json"], "py")
+    assert wide["scope"]["seed_fanout"] == "fleet"
+    assert {"pytest:core", "pytest:agents"} <= {s.label for s in wide["suites"]}
+
+
+def test_item5_selects_the_toolkit_wiring_tests_for_a_tool_module_plus_cli_diff_not_for_seed(tmp_path):
+    """2026-11-15: a diff confined to mcp/noctusai/** selected 0 suites and the queue ejected it on
+    test_toolkit_freshness. The wiring tests are added by NAME (full toolkit split stays CI-only)."""
+    tree = _selector_tree(tmp_path)
+    tests = tree / "mcp/noctusai/tests"
+    for n in ("test_toolkit_freshness", "test_cli_paths_help", "test_widgetmod", "test_other"):
+        (tests / f"{n}.py").write_text("import json\n")
+    (tree / "mcp/noctusai/tools/noctus/dev").mkdir(parents=True)
+    (tree / "mcp/noctusai/tools/noctus/dev/widgetmod.py").write_text("x = 1\n")
+    sel = RS.select_ci_suites(tree, ["mcp/noctusai/tools/noctus/dev/widgetmod.py", "mcp/noctusai/cli.py"], "py")
+    argv = [a for s in sel["suites"] for a in s.argv]
+    assert {"mcp/noctusai/tests/test_toolkit_freshness.py", "mcp/noctusai/tests/test_cli_paths_help.py",
+            "mcp/noctusai/tests/test_widgetmod.py"} <= set(argv)
+    assert "mcp/noctusai/tests/test_other.py" not in argv
+    seed = RS.select_ci_suites(tree, ["seed/lib/backend/noctusai_lib/foo.py"], "py")
+    assert "mcp/noctusai/tests/test_toolkit_freshness.py" not in [a for s in seed["suites"] for a in s.argv]
+
+
+def test_a_suite_with_a_pglite_fixture_test_is_detected_so_pglite_gets_wired(tmp_path):
+    t = tmp_path / "mcp/noctusai/tests"
+    t.mkdir(parents=True)
+    (t / "test_a.py").write_text("def test_x(pglite):\n    pass\n")
+    (t / "test_b.py").write_text("def test_y():\n    pass\n")
+    mk = lambda *f: RS.CiSuite("mcp_toolkit_tests:scoped", ".", ("-m", "pytest", *f, "-q"))  # noqa: E731
+    assert RS.suite_needs_pglite(tmp_path, mk("mcp/noctusai/tests/test_a.py", "mcp/noctusai/tests/test_b.py"))
+    assert not RS.suite_needs_pglite(tmp_path, mk("mcp/noctusai/tests/test_b.py"))
+
+
+# =================================================================================================
+# item 5 by a GitHub run (`gh-run:<id>`) on a branch that is BEHIND dev: the verdict binds to the HEAD, the queue composes the rest
+# =================================================================================================
+def _gh(world, head, *, repo_head=None, conclusion="success"):
+    """A Fake GitHub holding ONE completed test.yml run (judged on `repo_head` or `head`) and its `gh-run:` ref."""
+    import importlib.util as _u
+    spec = _u.spec_from_file_location("noc_ci_verdict_pp", Path(RS.__file__).parent / "ci_verdict.py")
+    cv = _u.module_from_spec(spec)
+    sys.modules[spec.name] = cv
+    spec.loader.exec_module(cv)
+    client = cv.FakeGithubClient(runs={"4242": cv.make_run(4242, repo_head or head, conclusion=conclusion)})
+    return client, "gh-run:4242"
+
+
+def _behind_branch(world, *, conflict: bool):
+    wt = world.worktree()
+    if conflict:
+        (wt / "src" / "a.txt").write_text("branch edit\n")
+    else:
+        (wt / "src" / "b.txt").write_text("b\n")
+        world.set_counts(wt)
+    world.commit(wt, "feat: change")
+    world.push(wt, "feat/x")
+    world.dev_commit("src/a.txt", "dev edit\n") if conflict else world.dev_commit("other/file.txt")
+    return sh(world.repo, "git", "rev-parse", "feat/x")
+
+
+def test_gh_run_green_on_the_exact_head_accepts_a_branch_behind_dev_with_a_clean_merge(world):
+    head = _behind_branch(world, conflict=False)
+    client, ref = _gh(world, head)
+    d = world.deliverable(verdict_ref=ref, ci_client=client)
+    assert d["ok"], d["items"]
+    assert "behind origin/dev" in item(d, "merge_buildable")["detail"] and item(d, "scoped_green")["ok"]
+
+
+def test_gh_run_green_but_a_conflicting_merge_is_needs_resync_naming_the_file(world):
+    head = _behind_branch(world, conflict=True)
+    client, ref = _gh(world, head)
+    d = world.deliverable(verdict_ref=ref, ci_client=client)
+    assert d["verdict"] == "needs_resync" and "merge_buildable" in d["failing"] and "scoped_green" not in d["failing"]
+    assert item(d, "merge_buildable")["conflicts"] == ["src/a.txt"] and item(d, "scoped_green")["ok"]
+
+
+def test_gh_run_green_on_an_older_head_is_needs_resync_head_moved(world):
+    head = _behind_branch(world, conflict=False)
+    client, ref = _gh(world, head, repo_head="e" * 40)
+    d = world.deliverable(verdict_ref=ref, ci_client=client)
+    five = item(d, "scoped_green")
+    assert d["verdict"] == "needs_resync" and not five["ok"] and "not " + head[:9] in five["detail"]

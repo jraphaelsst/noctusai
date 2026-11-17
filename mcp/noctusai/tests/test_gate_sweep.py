@@ -1604,3 +1604,48 @@ class TestE2EPortIsolation:
         res = GS._default_run_gate(GS.GateSpec("e2e:x", ["npx", "playwright", "test"], tmp_path),
                                    timeout=30)
         assert res[0] == 0 and "CI=1 " in res[1]
+
+
+# ── toolkit wiring tests are selected by name (2026-11-15) ────────────────
+
+
+def _wiring_tree(tmp_path):
+    tests = tmp_path / "mcp/noctusai/tests"
+    tests.mkdir(parents=True)
+    for name in ("test_toolkit_freshness", "test_cli_flags", "test_toolkit_cli_gaps", "test_widget",
+                 "test_widget_extra", "test_unrelated"):
+        (tests / f"{name}.py").write_text("import json\n")
+    return tmp_path
+
+
+def test_tool_module_plus_cli_diff_selects_freshness_cli_and_module_tests(tmp_path):
+    tree = _wiring_tree(tmp_path)
+    got = GS._mcp_wiring_tests(tree, ["mcp/noctusai/tools/noctus/dev/widget.py", "mcp/noctusai/cli.py"])
+    assert got == [f"mcp/noctusai/tests/{n}.py" for n in (
+        "test_cli_flags", "test_toolkit_cli_gaps", "test_toolkit_freshness", "test_widget", "test_widget_extra")]
+
+
+def test_cli_only_diff_selects_freshness_and_cli_tests_not_module_tests(tmp_path):
+    tree = _wiring_tree(tmp_path)
+    got = GS._mcp_wiring_tests(tree, ["mcp/noctusai/cli.py"])
+    assert "mcp/noctusai/tests/test_toolkit_freshness.py" in got
+    assert "mcp/noctusai/tests/test_cli_flags.py" in got
+    assert not any("widget" in g or "unrelated" in g for g in got)
+
+
+def test_seed_only_and_test_only_diffs_do_not_select_wiring_tests(tmp_path):
+    tree = _wiring_tree(tmp_path)
+    assert GS._mcp_wiring_tests(tree, []) == []
+    assert GS._mcp_wiring_tests(tree, ["mcp/noctusai/tests/test_widget.py"]) == []
+    scope = GS._derive_scope(["seed/lib/backend/noctusai_lib/x.py"])
+    assert GS._mcp_wiring_tests(tree, scope.get("mcp_files", [])) == []
+
+
+def test_scoped_gate_carries_the_wiring_tests_when_nothing_imports_the_module(tmp_path):
+    tree = _wiring_tree(tmp_path)
+    (tree / "mcp/noctusai/tools/noctus/dev").mkdir(parents=True)
+    (tree / "mcp/noctusai/tools/noctus/dev/orphanmod.py").write_text("x = 1\n")
+    scope = GS._derive_scope(["mcp/noctusai/tools/noctus/dev/orphanmod.py"])
+    specs = GS._build_gate_specs(tree, scope)
+    scoped = [s for s in specs if s.gate == "mcp_toolkit_tests:scoped"]
+    assert scoped and "mcp/noctusai/tests/test_toolkit_freshness.py" in scoped[0].argv

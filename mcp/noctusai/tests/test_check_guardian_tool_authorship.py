@@ -161,23 +161,23 @@ class TestUnmeasured:
 # ── the protected set is DERIVED (AST import walk), pinned as a snapshot ──────────────────────────────────────
 
 REPO = Path(__file__).resolve().parents[3]
-#: Pinned: a new import reachable from release_steward/task_branch shows up in review as a diff HERE.
-EXPECTED_PROTECTED = sorted(f"{_DEV}/{n}.py" for n in (
-    "_benign_stash _catalog_scope_guard _ledger_push _ledger_store _pii_guard _push_verdict _transient_retry _vps_ssh "
-    "_worktree_staleness auth_false_green_predicate auto_improvement branch_pointer build build_scope cache_backend "
-    "cache_backend_postgres ci_scope council_ledger decision_log deploy_pull deploy_verify dispatch_token_log doc_staleness "
-    "gate_alignment gate_budget gate_sweep gate_verdict_cache harness_signatures hw_admission ledger_checksums "
-    "merge_queue migrate_product migration_directives migration_replay noc_graph_cache orchestrator_inline_cutoff "
-    "primary_write_guard prod_consent product_scope query_key_family_predicate release_steward self_patch_predicate "
-    "ship_consent symbol_scope task_branch task_branch_train toolkit_freshness vps_exec").split()
-) + sorted((
-    ".github/workflows/merge-queue.yml", "scripts/hooks/claude-guard-release-steward.py",
-    "scripts/hooks/claude-guard-session-heartbeat.py", "scripts/hooks/pre-push"))
+SNAPSHOT = Path(__file__).parent / "snapshots" / "guardian_protected_files.txt"
+
+
+def _snapshot_lines() -> list[str]:
+    """Sorted one-path-per-line, `merge=union` in .gitattributes: two slices each ADDING a module merge clean
+    (no shared wrapped line to conflict on). Compared EXACTLY below, so a union-resurrected line is a red test."""
+    return [ln for ln in SNAPSHOT.read_text().splitlines() if ln.strip()]
 
 
 class TestDerivedProtectedSet:
     def test_snapshot_of_the_live_tree(self):
-        assert list(derive_guardian_protected_files(REPO)) == sorted(EXPECTED_PROTECTED)
+        lines = _snapshot_lines()
+        assert lines == sorted(set(lines)), f"{SNAPSHOT.name} must be sorted with no duplicates (fix the merge)"
+        derived, pinned = set(derive_guardian_protected_files(REPO)), set(lines)
+        assert derived == pinned, (
+            f"protected set drifted from {SNAPSHOT}: "
+            f"ADD these lines: {sorted(derived - pinned)}; REMOVE these lines: {sorted(pinned - derived)}")
 
     def test_required_members_and_every_path_exists(self):
         got = set(derive_guardian_protected_files(REPO))
@@ -285,8 +285,95 @@ class TestDerivationIsLazyAndFast:
         _claim(tmp_path)
         assert len(_check(tmp_path, [RS])) == 1 and calls
 
-    def test_git_derivation_is_fast_and_equals_the_tree_read(self):
-        t = time.time()
+    def test_git_derivation_is_fast_and_equals_the_tree_read(self, tmp_path, monkeypatch):
+        """"Fast" is measured as a COUNT of git processes (deterministic), not seconds (load-flaky): a real `git`
+        shim on PATH logs each invocation, then execs the real binary. The derivation batches existence + every
+        blob into a handful of processes; per-module spawning would blow the bound."""
+        import os
+        import shutil
+        real_git = shutil.which("git")
+        log = tmp_path / "git-calls.log"
+        shim = tmp_path / "bin" / "git"
+        shim.parent.mkdir()
+        shim.write_text(f'#!/bin/sh\necho "$1" >> "{log}"\nexec "{real_git}" "$@"\n')
+        shim.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{shim.parent}{os.pathsep}{os.environ['PATH']}")
         from_git = derive_guardian_protected_files(REPO, from_git=True)
-        assert time.time() - t < 3.0
+        calls = log.read_text().split()
+        assert 1 <= len(calls) <= 5, calls  # ls-tree + ls-files + one batched cat-file (+ headroom), not 2-4 per module
         assert from_git == derive_guardian_protected_files(REPO)
+
+
+
+class TestMergeCommitInheritedContent:
+    """2026-11-15: a merge commit re-stages dev's own doc_staleness.py / toolkit_freshness.py; the keeper
+    refused the guardian for content the MERGED BRANCH authored. Only an exact MERGE_HEAD blob is inherited."""
+
+    def _merge_setup(self, tmp_path: Path) -> tuple[Path, str]:
+        repo = _repo_with_tooling(tmp_path / "w")
+        extra = f"{_DEV}/extra_gate.py"
+        repo.joinpath(extra).write_text("x = 1\n")
+        repo.joinpath(RS).write_text("from tools.noctus.dev import extra_gate\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "wire extra_gate")
+        _git(repo, "branch", "feat")
+        # dev (the merged branch) edits the protected module
+        repo.joinpath(extra).write_text("x = 2  # authored on dev\n")
+        _git(repo, "commit", "-q", "-am", "dev edits extra_gate")
+        _git(repo, "checkout", "-q", "feat")
+        repo.joinpath("feature.txt").write_text("the guardian's own work\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "feature work")
+        return repo, extra
+
+    def _run(self, repo, tmp_path):
+        os.environ["NOCTUS_GUARD_EVENT_LOG"] = str(tmp_path / "ev-merge.ndjson")
+        try:
+            return check_guardian_tool_authorship(repo_root=repo, session_id="sess-guardian-1", lease_root=tmp_path)
+        finally:
+            os.environ.pop("NOCTUS_GUARD_EVENT_LOG", None)
+
+    def test_content_merged_from_the_other_branch_is_not_the_guardians(self, tmp_path):
+        repo, extra = self._merge_setup(tmp_path)
+        _claim(tmp_path)
+        _git(repo, "merge", "--no-commit", "--no-ff", "dev")
+        staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=repo, capture_output=True,
+                                text=True, check=True).stdout.split()
+        assert extra in staged  # the premise: the merge really re-staged the protected path
+        assert self._run(repo, tmp_path) == []
+
+    def test_the_same_path_without_a_merge_is_still_refused(self, tmp_path):
+        """Red/green pair: identical staged content, no MERGE_HEAD -> authored here -> refused."""
+        repo, extra = self._merge_setup(tmp_path)
+        _claim(tmp_path)
+        repo.joinpath(extra).write_text("x = 2  # authored on dev\n")
+        _git(repo, "add", extra)
+        issues = self._run(repo, tmp_path)
+        assert len(issues) == 1 and extra in issues[0]["file"]
+
+    def test_a_guardian_edit_layered_on_the_merge_is_still_refused(self, tmp_path):
+        repo, extra = self._merge_setup(tmp_path)
+        _claim(tmp_path)
+        _git(repo, "merge", "--no-commit", "--no-ff", "dev")
+        repo.joinpath(extra).write_text("x = 3  # the guardian's own edit\n")
+        _git(repo, "add", extra)
+        issues = self._run(repo, tmp_path)
+        assert len(issues) == 1 and extra in issues[0]["file"]
+
+    def test_an_injected_staged_list_never_consults_the_live_merge_head(self, tmp_path, monkeypatch):
+        """2026-11-16: with `staged=` injected and no repo_root, the keeper read the LIVE checkout's MERGE_HEAD, so
+        test_holder_staging_task_branch_is_refused went red only when the tree running it was mid-merge. Inheritance
+        is judged against the source the staged list came from - an injected list has no index to inherit from.
+        Counted through a real `git` shim on PATH (deterministic, no patching of our own code)."""
+        import shutil
+        real_git = shutil.which("git")
+        log = tmp_path / "git-args.log"
+        shim = tmp_path / "bin" / "git"
+        shim.parent.mkdir()
+        shim.write_text(f'#!/bin/sh\necho "$*" >> "{log}"\nexec "{real_git}" "$@"\n')
+        shim.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{shim.parent}{os.pathsep}{os.environ['PATH']}")
+        _claim(tmp_path)
+        assert len(_check(tmp_path, [TB])) == 1
+        calls = log.read_text() if log.exists() else ""
+        assert "MERGE_HEAD" not in calls, calls

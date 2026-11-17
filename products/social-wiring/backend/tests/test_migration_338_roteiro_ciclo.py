@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from noctusai_lib.testing.migrations import migration_path
+from noctusai_lib.testing.pglite import pglite_replay_skipif
 
 ROOT = Path(__file__).resolve().parents[4]
 NODE_DIR = ROOT / "mcp" / "noctusai" / "node"
@@ -23,10 +24,7 @@ HARNESS = NODE_DIR / "migration_replay" / "replay.mjs"
 STUBS = NODE_DIR / "migration_replay" / "stubs.sql"
 MIGRATION = migration_path(Path(__file__).resolve().parents[1], "roteiro_ciclo_de_vida")
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None or not HARNESS.exists() or not (NODE_DIR / "node_modules" / "@electric-sql").exists(),
-    reason="PGlite replay harness unavailable (needs `node` and mcp/noctusai/node/node_modules)",
-)
+pytestmark = pytest.mark.skipif(**pglite_replay_skipif())
 
 O = "00000000-0000-0000-0000-00000000000f"
 O2 = "00000000-0000-0000-0000-0000000000f2"

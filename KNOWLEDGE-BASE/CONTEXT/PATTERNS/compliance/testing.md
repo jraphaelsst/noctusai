@@ -308,6 +308,8 @@ def test_z(client):
 
 `monkeypatch.setattr(<our_module>, "<our_fn>", _noop)` and `patch.object(<our_module>, "<our_fn>", ...)` neuter the very logic the test claims to verify. The keeper detector `check_no_self_monkeypatch` flags these; severity is `warning` while a per-product cleanup is in flight, ratcheting to `high` when each product's count reaches zero.
 
+**The target may arrive through a module-level string constant (2026-11-15).** `_CRED = "app.modules.certidoes.credentials.resolve_api_key"` then `patch(_CRED, ...)` is the same self-patch as the literal. `check_no_self_monkeypatch` resolves `NAME = "literal"` / `NAME: str = "literal"` bindings made exactly once at module level (a reassigned name is left unresolved, never guessed) for the `patch(...)` target, the `patch.object`/`setattr` attribute name and the `setitem(sys.modules, ...)` key (`self_patch_predicate._module_string_constants` + `_extract_patch_target_resolved`, the ONE implementation the keeper re-exports and the write-time `test_seam_guard` calls). Names built at runtime stay a blind spot. The write-time guard resolves constants through the same functions, so both ends agree. The real-tier remedy for a credential resolver is the process environment (`monkeypatch.setenv/delenv`), as social-wiring's `credenciais` fixture does (`tests/modules/conftest.py`).
+
 **The three legitimate patterns** — pick by test shape, not by ease.
 
 ### Pattern 1: Dependency Injection (DI) — the default

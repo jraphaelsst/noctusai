@@ -149,7 +149,7 @@
    "source": "Claude Code hooks reference (code.claude.com/docs/en/hooks: PostToolUse/UserPromptSubmit additionalContext, SubagentStop); owner rule 2026-11-07; verified against 33 real subagent transcripts+meta.json"
   },
   "guard:background-launch": {
-   "mechanism": "scripts/bg_run.py launch wrapper (purpose + done-condition, salvage on exit, tree-stop) + noctus.dev.bg_process stop tool + session_end_sweep clean_wrap leg; KB § PATTERNS/common/background-agent-lifecycle.md",
+   "mechanism": "scripts/bg_run.py launch wrapper, applied BY CONSTRUCTION: the guard rewrites every non-infra run_in_background command into it (purpose + done-condition, ends when the child exits / done-when holds / the producer is dead / the owning session dies, salvage on exit, tree-stop); structural shell judge scripts/hooks/_bg_shell.py (invoked scripts opened and scanned); noctus.dev.bg_process stop (logs escaped-runtime-end) + session_end_sweep clean_wrap leg as backstop; KB § PATTERNS/common/background-agent-lifecycle.md",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "standard": "",
@@ -159,9 +159,17 @@
     "since": "2026-11-14",
     "fires": 0,
     "fix_rate": null,
-    "promote_when": "auto-enforces 2026-11-21 (bg_launch_guard.ENFORCE_FROM); owner 2026-11-14: 7-day warn-only soak, used to refine the tool from the warn events (--gate-alignment walls)"
+    "promote_when": "enforcing since 2026-11-14 (bg_launch_guard.ENFORCE_FROM); runtime-end legs added 2026-11-14: mandatory wrapper rewrite, structural shell parsing, script scan, parent-death, escaped-runtime-end telemetry (target ~0)"
    },
    "source": "owner decision 2026-11-14 (background processes end themselves; no lifetime cap or idle timer); Claude Code hooks reference (PreToolUse deny on Bash run_in_background)"
+  },
+  "guard:bash-rewrite": {
+   "mechanism": "mcp/noctusai/tools/noctus/dev/bash_rewrite_chain.py (the ONE composed rewrite: heavy-run wrap innermost via hw_admission, bg_run outermost, idempotent, a deny from either member guard wins, one rewrite event per guard; deadline overrun: shadow allows a non-heavy command, enforce denies, heavy stays fail-closed); KB § PATTERNS/common/background-agent-lifecycle.md",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": false,
+   "declared": "2026-11-14"
   },
   "guard:council-read": {
    "mechanism": "mcp/noctusai/tools/noctus/dev/council_ledger.py (neutral recorder: tool-assigned labels, seats withheld until verdict)",
@@ -194,7 +202,7 @@
     "PreToolUse"
    ],
    "standard": "",
-   "mechanism": "tool:task_branch start (creates the worktree the guard requires)",
+   "mechanism": "tool:task_branch start (creates the worktree to reuse); the guard REWRITES a worktree-less executor dispatch by adding isolation:\"worktree\" via updatedInput (outcome=rewrite logged)",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -203,7 +211,9 @@
    },
    "class": "wall",
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
-   "remediation": "NOC-REMEDIATE[gate-wall] destination: dispatch skill/template pre-fills worktree_path from task_branch start (noc-branch-dispatch)."
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: dispatch skill/template pre-fills worktree_path from task_branch start (noc-branch-dispatch).",
+   "new": false,
+   "declared": "2026-11-14"
   },
   "guard:harness-signature": {
    "severity": "",
@@ -229,7 +239,7 @@
     "PreToolUse"
    ],
    "standard": "",
-   "mechanism": "tool:hw_admission (the deny message names the wrapped command)",
+   "mechanism": "tool:hw_admission (the guard REWRITES the command into the admitted form via updatedInput: hw_admission run --job <derived> --wait-s 7200 -- bash -c; outcome=rewrite logged; refuses only local Whisper and unparseable commands)",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -238,7 +248,17 @@
    },
    "class": "wall",
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
-   "remediation": "NOC-REMEDIATE[gate-wall] destination: a wrapped-run injection (hw_admission command pre-filled in the agent start brief + test-engineer template) so the first command is already the admitted one."
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: a wrapped-run injection (hw_admission command pre-filled in the agent start brief + test-engineer template) so the first command is already the admitted one.",
+   "new": false,
+   "declared": "2026-11-14"
+  },
+  "guard:ledger-primary-write": {
+   "mechanism": "mcp/noctusai/tools/noctus/dev/findings_ledger.py (append/update ship through ledger_store; reconcile/inventory/catalog write the caller's worktree)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "standard": "",
+   "new": false,
+   "declared": "2026-11-15"
   },
   "guard:primary-write": {
    "severity": "",
@@ -247,7 +267,7 @@
     "PreToolUse"
    ],
    "standard": "",
-   "mechanism": "tool:task_branch start (isolates off origin/dev) · injection: scripts/hooks/claude-session-start-worktree-sweep.py",
+   "mechanism": "tool:task_branch start (isolates off origin/dev) · injection: scripts/hooks/claude-session-start-worktree-sweep.py · claim-only fast path decide_claimed_fast (a write inside the session's claimed worktree is decided from the claim file with no git subprocess) · redirect into the claimed worktree",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -256,7 +276,9 @@
    },
    "class": "wall",
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson",
-   "remediation": "NOC-REMEDIATE[gate-wall] destination: task_branch auto-isolation at dispatch (agents start in a worktree by injection); measure primary-dirt delta (leg already in flight, see section below)."
+   "remediation": "NOC-REMEDIATE[gate-wall] destination: task_branch auto-isolation at dispatch (agents start in a worktree by injection); measure primary-dirt delta (leg already in flight, see section below).",
+   "new": false,
+   "declared": "2026-11-14"
   },
   "guard:primary-write-post": {
    "severity": "",
@@ -293,12 +315,12 @@
    "telemetry": "_guard_failclosed.log_event -> guard-events.ndjson"
   },
   "guard:session-heartbeat": {
-   "mechanism": "none (advisory liveness refresh, not an enforcing gate: calls StewardStore.role_touch; the construction is role_touch on every release_steward action)",
+   "mechanism": "none (advisory liveness refresh, not an enforcing gate: calls StewardStore.role_touch and renew_own_lease so a live steward's own lease never ages stale between prompts; the construction is role_touch on every release_steward action)",
    "owner": "tooling-engineer",
    "placement": "warn",
    "standard": "",
    "new": true,
-   "declared": "2026-11-10",
+   "declared": "2026-11-14",
    "source": "release-steward.md (honest G3 / session liveness): dead = pid gone AND heartbeat past TTL, so a quiet alive session needs a refresh path; owner decision 2026-11-10",
    "telemetry": "_guard_failclosed.log_event error rows only (advisory hook, always exit 0)"
   },
@@ -646,7 +668,7 @@
     "pre-push"
    ],
    "standard": "Keeper (pre-push HARD-BLOCK): for the given branch (or all non-terminal branches when omitted) verify the branch-tree mirror — pointer exists + non-stale + git↔claude mirror intact + valid status + no shipped-but-ahead contradiction. Severi",
-   "mechanism": "write-path: branch_pointer._write_row writes both files",
+   "mechanism": "mcp/noctusai/tools/noctus/dev/branch_pointer.py ensure_for_push (cli --ensure-branch-pointer, called by scripts/hooks/pre-push before the keeper; construction leg, 2026-11-15)",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -654,7 +676,9 @@
     "sessions": 0
    },
    "class": "never-fires",
-   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "new": false,
+   "declared": "2026-11-15"
   },
   "keeper:check-cache-uses-locking-helper": {
    "severity": "high",
@@ -982,7 +1006,7 @@
     "pre-push"
    ],
    "standard": "Keeper (CI + pre-push): deterministic doc-staleness gate. With --doc-range BASE..TIP: change-coupling (covered code changed materially, covering docs untouched; ack via `Docs-Reviewed: <doc> — <reason>` trailer). Without: claim checks over ",
-   "mechanism": "",
+   "mechanism": "injection: scripts/hooks/claude-inject-doc-coverage.py (PostToolUse Edit|Write|NotebookEdit) + engineer_brief_compose covering_docs",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -990,7 +1014,9 @@
     "sessions": 0
    },
    "class": "never-fires",
-   "telemetry": "cli exit wrapper -> guard-events.ndjson"
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "new": false,
+   "declared": "2026-11-14"
   },
   "keeper:check-eight-way-sync": {
    "severity": "",
@@ -1230,7 +1256,7 @@
     "compliance.py sweep"
    ],
    "standard": "",
-   "mechanism": "",
+   "mechanism": "mcp/noctusai/tools/noctus/dev/primary_write_guard.py decide_git_bypass (PreToolUse deny at write time; commit-tree/update-ref refs/heads included 2026-11-15)",
    "owner": "tooling-engineer",
    "placement": "blocking",
    "firings": {
@@ -1238,7 +1264,10 @@
     "sessions": 0
    },
    "class": "unmeasured",
-   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)"
+   "telemetry": "NONE yet - runs in the validate/CI sweep (NOC-REMEDIATE[gate-telemetry]: per-run events)",
+   "new": false,
+   "declared": "2026-11-15",
+   "source": "KB § PATTERNS/common/bypass-rationalization-anti-patterns.md"
   },
   "keeper:check-git-leftovers": {
    "severity": "high",
@@ -2271,6 +2300,28 @@
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
   },
+  "keeper:check-polling-request-budget": {
+   "mechanism": "seed/lib/backend/noctusai_lib/domain/jobs/worker.py (idle backoff + wake-on-enqueue, branch feat/supabase-egress-polling) · KB § PATTERNS/backend/polling-request-budget.md (the declaration IS the construction: the author multiplies cadence x calls x 86400 before writing the loop)",
+   "owner": "tooling-engineer",
+   "placement": "blocking",
+   "standard": "every forever-loop / periodic registration / browser poll declares its per-day cost (`poll-budget: ...; worst <N>/day`); a per-tick select(\"*\") / limit>1000 is refused",
+   "new": true,
+   "declared": "2026-11-10",
+   "shadow": {
+    "since": "2026-11-10",
+    "fires": 0,
+    "true_positives": 94,
+    "effective_fp": 0.0,
+    "promote_when": "waived to blocking at birth by owner directive 2026-11-10: AST-only predicate, no baseline; every hit at birth is a real undeclared loop/poll (inventory handed to the fixing branches); demote if any effective FP"
+   },
+   "kind": "keeper",
+   "wired_in": [
+    "pre-commit",
+    "ci:commit-range-keepers"
+   ],
+   "source": "KB § PATTERNS/backend/polling-request-budget.md (2026-11-09 Supabase egress incident: ~620k REST calls/day polling an empty queue); owner directive 2026-11-10 \"guarantee nothing like that is set platform-wide\"",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson; request-volume truth: noctus.dev.supabase_request_budget (being built)"
+  },
   "keeper:check-postgrest-schema-qualified-table": {
    "severity": "",
    "kind": "keeper",
@@ -2613,6 +2664,20 @@
    },
    "class": "real-drift-catch",
    "telemetry": "cli exit wrapper -> guard-events.ndjson"
+  },
+  "keeper:check-refusal-classes-owned": {
+   "mechanism": "tool: noctus.dev.gate_alignment action=refusals (upserts one auto-improvement row per class + reports open_fix); refusal_recurrence() returned to every requester",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "A refusal class that fired >=3x in 14 days with no open fix (pointer / in-progress gate-walls row / NOC-REMEDIATE[class]) is an unowned recurring mistake (warn-first).",
+   "new": true,
+   "declared": "2026-11-14",
+   "source": "KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop); owner directive 2026-11-14; Tricorder (Sadowski et al.)",
+   "shadow": {
+    "since": "2026-11-14",
+    "fires": 0,
+    "fix_rate": null
+   }
   },
   "keeper:check-root-requirements-superset": {
    "severity": "high",
@@ -3021,6 +3086,15 @@
    },
    "source": "owner rule 2026-11-08 ('whenever we change the agent structure, we must update the function to match it. tests will probably pass, but it will break'); measured on origin/dev: 6 agent creation surfaces missing kind/fonte/superficie_claude, kind never creatable through POST /plataforma/agents; KB § PATTERNS/devops/product-lockfile-and-slug-drift.md (same hand-maintained-drift class)"
   },
+  "keeper:check-supply-chain-pin": {
+   "mechanism": "KB § GUIDES/security-infra-hardening-runbook.md (compose pin-at-authoring + running-version preflight; Actions: .github/dependabot.yml github-actions block opens SHA-pinned bumps)",
+   "owner": "devops-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-15",
+   "source": "security audit 2026-10-19 (tj-actions/changed-files 2025, trivy-action 2026-03: a mutable tag is a re-pointable supply chain); KB § PATTERNS/devops/ci-security-gates.md § 9"
+  },
   "keeper:check-table-has-rls": {
    "severity": "high",
    "kind": "keeper-batch",
@@ -3068,6 +3142,15 @@
    "wired_in": [
     "pre-commit"
    ]
+  },
+  "keeper:check-transition-log-hand-written": {
+   "mechanism": "template: seed/lib/backend/noctusai_lib/domain/transition_log/sql.py",
+   "owner": "backend-engineer",
+   "placement": "warn",
+   "standard": "Keeper: a NEW migration may not hand-write transition history (from/to state column pair, or BEFORE UPDATE OR DELETE trigger on a history-named table); render it with noctusai_lib.domain.transition_log.transition_log_migration. Shrink-only baseline.",
+   "new": true,
+   "declared": "2026-11-07",
+   "source": "KB § PATTERNS/backend/transition-log.md (Sources): PostgreSQL docs (explicit row locking SELECT ... FOR UPDATE; trigger behaviour incl. TRUNCATE statement triggers), Fowler 'Event Sourcing' / 'Audit Log', LGPD Lei 13.709 art. 18 VI (erasure)"
   },
   "keeper:check-tunnel-ingress-snapshot-sync": {
    "severity": "",
@@ -3221,6 +3304,15 @@
    "class": "wall",
    "telemetry": "cli exit wrapper -> guard-events.ndjson",
    "remediation": "NOC-REMEDIATE[gate-wall] destination: kb_sync already runs at integrate; add it to the pre-commit auto-fix path (regenerate + restage, then verify)."
+  },
+  "remote_test_default": {
+   "mechanism": "tool:noctus.dev.hw_admission (mcp/noctusai/tools/noctus/dev/remote_test.py try_remote; heavy_run_guard rewrite funnels bare commands into it)",
+   "owner": "tooling-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-16",
+   "source": "Owner directive 2026-11-16 (the single laptop heavy slot slows all work); KB § PATTERNS/devops/hardware-admission-budget.md § 2a; GitHub Actions workflow_dispatch + gh run watch docs"
   }
  },
  "decisions": [
@@ -3722,11 +3814,11 @@
   },
   {
    "id": "D-bg-self-ending",
-   "decision": "Background processes end themselves: every run_in_background command declares purpose + a done-condition via scripts/bg_run.py (salvage on exit, tree-stop, orphan check); open-ended loops and bare long runs are refused at launch; NO lifetime cap or idle timer; leftovers at session end are salvaged+stopped via noctus.dev.bg_process or kept as declared long-lived",
+   "decision": "Background processes end AT RUNTIME, not at a wrap-up sweep: every run_in_background command is rewritten by the guard into scripts/bg_run.py (purpose + done-condition) which ends it when the job is done, its wait can no longer be satisfied, or its owning session dies; only loops that cannot be given an end are refused; NO lifetime cap or idle timer; the session-end sweep is a backstop and every process it must stop is logged as escaped-runtime-end",
    "home": "KB § PATTERNS/common/background-agent-lifecycle.md (Background processes)",
-   "construction": "tool:scripts/bg_run.py + noctus.dev.bg_process (stop refuses without a salvage record)",
+   "construction": "tool:scripts/bg_run.py applied by the guard rewrite (updatedInput) + scripts/hooks/_bg_shell.py structural judge + noctus.dev.bg_process (stop refuses without a salvage record)",
    "gate": "guard:background-launch + session_end_sweep clean_wrap leg",
-   "telemetry": "guard-events.ndjson (guard=background-launch|background-process) + the bg-process salvage ledger (gitignored cache)",
+   "telemetry": "guard-events.ndjson (guard=background-launch deny|rewrite|warn; guard=background-process escaped-runtime-end) + the bg-process salvage ledger (gitignored cache)",
    "branch": "feat/bg-process-lifecycle",
    "gates": [
     "guard:background-launch"
@@ -3743,6 +3835,78 @@
    "gates": [
     "keeper:check-signed-url-ttl",
     "keeper:check-pii-query-params"
+   ]
+  },
+  {
+   "id": "D38",
+   "decision": "State transitions are recorded by the seed transition-log primitive (state row + append-only events in one row-locked transaction, one gated LGPD erasure) -- never a hand-written history table",
+   "home": "KB § PATTERNS/backend/transition-log.md",
+   "construction": "template: seed/lib/backend/noctusai_lib/domain/transition_log/sql.py (transition_log_migration + make_transition_log)",
+   "gate": "keeper:check-transition-log-hand-written (shadow) + verify_db_guards derived transition-log probes",
+   "telemetry": "pre-commit shadow WARN lines; verify_db_guards probe results",
+   "branch": "feat/transition-log-primitive",
+   "gates": [
+    "keeper:check-transition-log-hand-written"
+   ]
+  },
+  {
+   "id": "D-refusal-recurrence",
+   "decision": "Refusals are counted by class (refusal_class/refusal_recurrence over the gate event sink); a class recurring N>=2 is ONE auto-improvement row (count in place, closes on gate_quiet:<class>:7d); N>=3 with no open fix warns. Warn-first, promote after >=7 shadow days.",
+   "home": "KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop)",
+   "construction": "tool: noctus.dev.gate_alignment actions trend/refusals + refusal_recurrence() returned to requesters; harness_event upserts per class",
+   "gate": "keeper:check-refusal-classes-owned",
+   "telemetry": "gate events carry class/stage/first-finding (record_cli_exit -> guard-events.ndjson)",
+   "branch": "feat/refusal-recurrence",
+   "gates": [
+    "keeper:check-refusal-classes-owned"
+   ]
+  },
+  {
+   "id": "D39",
+   "decision": "A loop that runs forever declares its cost per day next to it, and a per-tick read never fetches whole rows; Supabase request volume is measured, not assumed",
+   "home": "KB § PATTERNS/backend/polling-request-budget.md",
+   "construction": "seed Worker idle backoff + wake-on-enqueue (feat/supabase-egress-polling); the `poll-budget:` declaration (cadence x calls x 86400 written down before the loop ships)",
+   "gate": "keeper:check-polling-request-budget",
+   "telemetry": "noctus.dev.supabase_request_budget (calls per product per minute vs quota; being built)",
+   "branch": "feat/polling-budget-keeper",
+   "gates": [
+    "keeper:check-polling-request-budget"
+   ]
+  },
+  {
+   "id": "D40",
+   "decision": "Heavy test runs execute on GitHub runners at the pushed sha, never queue on the shared laptop slot; the local slot is a loud, reasoned fallback",
+   "home": "KB § PATTERNS/devops/hardware-admission-budget.md",
+   "construction": "hw_admission.py run -> remote_test.try_remote (single entry; heavy_run_guard rewrites bare commands into it; briefs say push then run)",
+   "gate": "remote_test_default",
+   "telemetry": "hw-admission.ndjson remote_run / remote_fallback rows; hw_admission action=report -> backends",
+   "branch": "feat/tests-off-laptop",
+   "gates": [
+    "remote_test_default"
+   ]
+  },
+  {
+   "id": "D41",
+   "decision": "A hooks bypass is refused at write time and swept in tracked files: --no-verify, core.hooksPath overrides, and the plumbing form (git commit-tree / update-ref refs/heads) are all denied outside a temp-repo fixture; the sanctioned path is commit normally and surface a keeper refusal to the tech-lead",
+   "home": "KB § PATTERNS/common/bypass-rationalization-anti-patterns.md",
+   "construction": "mcp/noctusai/tools/noctus/dev/primary_write_guard.py decide_git_bypass (PreToolUse deny at write time; commit-tree/update-ref refs/heads included 2026-11-15)",
+   "gate": "keeper:check-git-hooks-bypass",
+   "telemetry": "cli exit wrapper -> guard-events.ndjson",
+   "branch": "feat/keepers-by-construction",
+   "gates": [
+    "keeper:check-git-hooks-bypass"
+   ]
+  },
+  {
+   "id": "D42",
+   "decision": "What executes is pinned: third-party Actions by full commit SHA, prod-surface images by digest or x.y version; a floating tag is a re-pointable supply chain",
+   "home": "KB § PATTERNS/devops/ci-security-gates.md § 9",
+   "construction": "Dependabot github-actions SHA bumps; pin-at-authoring with a mandatory running-version preflight (KB § GUIDES/security-infra-hardening-runbook.md)",
+   "gate": "keeper:check-supply-chain-pin",
+   "telemetry": "automatic: cli exit wrapper logs every --check-supply-chain-pin run to guard-events.ndjson",
+   "branch": "feat/sec-infra-hardening-v2",
+   "gates": [
+    "keeper:check-supply-chain-pin"
    ]
   }
  ]

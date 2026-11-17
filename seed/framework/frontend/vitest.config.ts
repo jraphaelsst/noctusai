@@ -42,6 +42,13 @@ export default defineConfig({
         find: "@noctusai/lib/components",
         replacement: resolve(__dirname, "tests/stubs/components.tsx"),
       },
+      // app.tsx / infra.tsx import the live-notification helpers from this subpath (never the root
+      // barrel, which product tests partially mock). It must sit BEFORE the bare `@noctusai/lib`
+      // entry: that one is a string prefix and would rewrite it to `.../index.ts/notifications`.
+      {
+        find: "@noctusai/lib/notifications",
+        replacement: resolve(__dirname, "../../lib/frontend/src/notifications.ts"),
+      },
       {
         find: "@noctusai/lib",
         replacement: resolve(__dirname, "../../lib/frontend/src/index.ts"),

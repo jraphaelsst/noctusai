@@ -46,6 +46,8 @@ def test_protocol_declares_the_expected_surface():
         "list_clientes",
         "list_imovel_fotos",
         "list_changed_since",
+        "atualizar_imovel",  # 2026-11-04: PUT /imoveis/detalhes (owner: Julia may edit Vista)
+        "pode_atualizar_imovel",
     }
 
 

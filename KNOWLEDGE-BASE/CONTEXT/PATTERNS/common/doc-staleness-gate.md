@@ -36,9 +36,17 @@ Owner order 2026-11-04: *"make sure all documentations referring to anything in 
 
 A commit trailer in any commit of the range: `Docs-Reviewed: <doc path or glob> — <reason>` (reason mandatory; sibling of `Guide-Unaffected:`). `Docs-Reviewed` also resets the **age** clock for that doc.
 
+## Cited-path existence is tracked, not on-disk (2026-11-14)
+
+The claims leg and the staged new-citation leg judge "a cited path exists" against what git tracks (the index: HEAD plus staged adds), never the filesystem — an untracked, gitignored or generated file exists on the author's disk but not in CI's checkout or the merge queue's composed tree, so a disk check was green locally and red in CI. Only outside a git tree does it fall back to the filesystem, announced on stderr.
+
 ## Compliance by construction
 
 `--check-doc-staleness [--doc-staged [--commit-msg-file F] | --doc-range …] [--doc-suggest]` / MCP `noctus.dev.doc_staleness` print the exact docs to update and the false claims — fix-list, not just a red. Do not add to the baseline; fix the doc.
+
+## Edit-time hint — the construction leg (2026-11-14)
+
+The commit leg alone was a wall: the agent learned which docs cover a file only when `commit-msg` refused (476 denies / 18 sessions). `scripts/hooks/claude-inject-doc-coverage.py` (PostToolUse `Edit|Write|NotebookEdit`, registered in `.claude/settings.json`; UX over the gate, never a gate) injects, on the FIRST edit of a covered code file per file + session, "docs covering this file: X, Y — update them in this commit or add `Docs-Reviewed: <doc> — <why unaffected>`". The map is `doc_staleness.coverage_map` — the very set `check_range` couples against, so hint and gate cannot disagree — precomputed to a gitignored cache file (doc-coverage.json in the per-worktree cache dir; `--write-doc-coverage-cache`); the hook does one JSON read + glob match (~15-30 ms over interpreter start, no git), serves a missing/stale cache as nothing/old and rebuilds it DETACHED (rate-limited), and always exits 0. `engineer_brief_compose` lists the same docs per target file (`covering_docs`) so the brief carries them at dispatch. The pre-commit heads-up leg runs with `NOC_GATE_ADVISORY=1`, so `record_cli_exit` logs it as `warn` — only the blocking commit-msg leg logs `deny` (it used to double-count every block).
 
 ## Composes with
 

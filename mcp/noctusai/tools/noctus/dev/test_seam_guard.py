@@ -275,11 +275,14 @@ def find_self_patches(
         connector_prefixes = ()
 
     import_map = comp._build_import_map(tree)
+    # `_CRED = "app.mod.fn"` ... `patch(_CRED)` is the same target as the literal; ONE
+    # resolver, shared with the commit-time keeper (self_patch_predicate).
+    string_constants = comp._module_string_constants(tree)
     lines = content.splitlines()
     found: list[str] = []
 
     for node in ast.walk(tree):
-        raw_target = comp._extract_patch_target(node)
+        raw_target = comp._extract_patch_target_resolved(node, string_constants)
         if raw_target is None:
             continue
         target = comp._resolve_target_via_imports(raw_target, import_map)

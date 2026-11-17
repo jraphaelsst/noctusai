@@ -85,9 +85,8 @@ vi.mock("@/components/imovel/ImovelInteressadosCard", () => ({
 vi.mock("@/components/imovel/ImovelProprietariosCard", () => ({
   ImovelProprietariosCard: () => null,
 }));
-vi.mock("@/components/imovel/ImovelDivergenciasVista", () => ({
-  ImovelDivergenciasVista: () => <div data-testid="mock-divergencias" />,
-  DivergenciaCampoBadge: () => null,
+vi.mock("@/components/imovel/ImovelHistoricoCard", () => ({
+  ImovelHistoricoCard: () => <div data-testid="mock-historico" />,
 }));
 vi.mock("@/components/imovel/ImovelNotasCard", () => ({
   ImovelNotasCard: () => <div data-testid="mock-notas-card" />,

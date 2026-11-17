@@ -48,3 +48,30 @@ def _virtual_rate_limit_clock():
     finally:
         rate_limit.reset_default_clock()
         rate_limit._reset_all_buckets()
+
+
+# --- a skipped real-Postgres proof is UNMEASURED, never green (2026-11-15) -------------------------------------
+# The event_store / transition_log proofs skip (no node/PGlite, no initdb) on a laptop or a scrubbed scoped run,
+# and a bare "N skipped" reads as complete -- the merge queue then hung on exactly the tests that never ran.
+# Say it LOUDLY, counted and named, with a stable marker (`REAL-PG-UNMEASURED`) the release steward's scoped
+# check parses. Under NOC_REQUIRE_REAL_PG=1 (CI) these skips are failures already and this prints nothing.
+_REAL_PG_SKIP_HINTS = ("postgres", "pglite")
+
+
+def pytest_terminal_summary(terminalreporter):  # noqa: D401 - pytest hook
+    skipped = [
+        (rep.nodeid, rep.longrepr[2] if isinstance(rep.longrepr, tuple) else str(rep.longrepr))
+        for rep in terminalreporter.stats.get("skipped", [])
+    ]
+    real_pg = [(n, why) for n, why in skipped if any(h in why.lower() for h in _REAL_PG_SKIP_HINTS)]
+    if not real_pg:
+        return
+    terminalreporter.section("REAL-PG-UNMEASURED", sep="!", red=True, bold=True)
+    terminalreporter.write_line(
+        f"REAL-PG-UNMEASURED: {len(real_pg)} real-Postgres/PGlite test(s) SKIPPED, not run -- this green does not cover them "
+        "(set NOCTUS_TEST_PG_BIN / install node + mcp/noctusai/node deps, run with NOC_REQUIRE_REAL_PG=1).", red=True)
+    by_file: dict[str, int] = {}
+    for node, _why in real_pg:
+        by_file[node.split("::")[0]] = by_file.get(node.split("::")[0], 0) + 1
+    for f, n in sorted(by_file.items()):
+        terminalreporter.write_line(f"  {n:>3} skipped in {f}")

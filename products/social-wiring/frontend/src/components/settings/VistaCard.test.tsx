@@ -26,7 +26,8 @@ vi.mock("@/hooks/useVistaIntegracao", async () => {
   };
 });
 
-vi.mock("@/components/settings/DivergenciasAvisos", () => ({ DivergenciasAvisos: () => <div data-testid="divergencias-stub" /> }));
+vi.mock("@/components/settings/VistaSincronizacao", () => ({ VistaSincronizacao: () => <div data-testid="divergencias-stub" /> }));
+vi.mock("@/components/settings/DivergenciasAvisos", () => ({ DivergenciasAvisos: () => <div data-testid="divergencias-destino-stub" /> }));
 
 const CONFIGURADA = {
   configurado: true,

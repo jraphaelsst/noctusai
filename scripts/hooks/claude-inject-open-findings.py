@@ -58,7 +58,13 @@ def main() -> int:
             p = ROOT / info["path"]
             if not p.exists():
                 continue
-            rows = [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+            by_key = {r["key"]: r for r in (json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip())}
+            # row writes (append/update) live on origin/ledgers, not in the tree: the store copy overrides the tree's
+            for x in _git("show", f"refs/remotes/origin/ledgers:findings-{name}.ndjson").splitlines():
+                if x.strip():
+                    r = json.loads(x)
+                    by_key[r["key"]] = r
+            rows = list(by_key.values())
             live = [r for r in rows if r.get("status") in ("open", "in-progress")]
             pick = [r for r in live if r.get("scope") in scopes] if scopes else []
             if not pick:

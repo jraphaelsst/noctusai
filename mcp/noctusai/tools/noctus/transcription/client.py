@@ -23,7 +23,9 @@ _FAST_POLL_S = 5.0
 #: answers with (502/504). None of them is a job result -- the job keeps running server-side -- so
 #: they are retried, never recorded as a failure (2026-11-14: a core redeploy turned 31 live jobs into
 #: "failed" 502s). A long outage is still bounded by the batch's no-progress window.
-_TRANSIENT = frozenset({429, 502, 503, 504})
+#: 2026-11-15: Cloudflare's 52x family (530 = origin unreachable, a tunnel blip) is the same class --
+#: three accepted jobs were dropped as "HTTP 530" failures although they finished server-side.
+_TRANSIENT = frozenset({429, 502, 503, 504, *range(520, 531)})
 _SLOW_POLL_S = 30.0
 _FAST_WINDOW_S = 60.0
 _MAX_SUBMIT_WAIT_S = 120.0
@@ -105,7 +107,8 @@ def _preflight(path: str) -> tuple[Path | None, dict[str, Any] | None]:
 
 
 def submit(path: str, idioma: str = "pt", rotulo: str | None = None,
-           segmentos: bool = False, *, _transport: httpx.BaseTransport | None = None) -> dict:
+           segmentos: bool = False, palavras: bool = False, *,
+           _transport: httpx.BaseTransport | None = None) -> dict:
     """POST multipart to /api/transcriptions; return the 202 body or an error dict."""
     cfg = _config()
     if isinstance(cfg, dict):
@@ -114,6 +117,8 @@ def submit(path: str, idioma: str = "pt", rotulo: str | None = None,
     if err:
         return err
     data = {"idioma": idioma, "segmentos": "true" if segmentos else "false"}
+    if palavras:
+        data["palavras"] = "true"
     if rotulo:
         data["rotulo"] = rotulo
     with p.open("rb") as fh:
@@ -137,7 +142,7 @@ def get(id: str, *, _transport: httpx.BaseTransport | None = None) -> dict:
 
 
 def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
-               timeout_s: float = 3600, segmentos: bool = False, *,
+               timeout_s: float = 3600, segmentos: bool = False, palavras: bool = False, *,
                _transport: httpx.BaseTransport | None = None,
                _sleep: Callable[[float], None] = time.sleep,
                _clock: Callable[[], float] = time.monotonic) -> dict:
@@ -145,6 +150,7 @@ def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
 
     ``segmentos=True`` asks the server for timestamped segments and returns them
     under ``segmentos`` — the reason callers used to fall back to local Whisper.
+    ``palavras=True`` also adds ``palavras: [{texto, inicio, fim, confianca}]`` to each segment.
     """
     start = _clock()
 
@@ -153,10 +159,11 @@ def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
 
     while True:
         job = submit(path, idioma=idioma, rotulo=rotulo, segmentos=segmentos,
-                     _transport=_transport)
-        ra = job.get("retry_after") if "codigo" in job else None
-        if ra is not None and job.get("status_code") in _TRANSIENT \
-                and ra <= _MAX_SUBMIT_WAIT_S and remaining() > ra:
+                     palavras=palavras, _transport=_transport)
+        ra = None
+        if "codigo" in job and job.get("status_code") in _TRANSIENT:
+            ra = job.get("retry_after") or _FAST_POLL_S
+        if ra is not None and ra <= _MAX_SUBMIT_WAIT_S and remaining() > ra:
             _sleep(ra)
             continue
         break
@@ -177,7 +184,7 @@ def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
                    "duracao_s": cur.get("duracao_s"), "rtf": cur.get("rtf"), "id": job_id}
             if cur.get("erro"):
                 out["erro"] = cur["erro"]
-            if segmentos:
+            if segmentos or palavras:
                 out["segmentos"] = cur.get("segmentos")
             return out
         if wait is None:
@@ -316,8 +323,10 @@ def register(server) -> None:
                      "API; returns the 202 body {id, status, posicao, estimativa_s, duracao_s}. "
                      "Needs NOCTUS_TRANSCRIPTION_TOKEN (pk_*)."),
     )
-    def _submit(path: str, idioma: str = "pt", rotulo: str = "", segmentos: bool = False) -> dict:
-        return submit(path, idioma=idioma, rotulo=rotulo or None, segmentos=segmentos)
+    def _submit(path: str, idioma: str = "pt", rotulo: str = "", segmentos: bool = False,
+                palavras: bool = False) -> dict:
+        return submit(path, idioma=idioma, rotulo=rotulo or None, segmentos=segmentos,
+                      palavras=palavras)
 
     @server.tool(
         name="noctus.transcription.get",
@@ -330,14 +339,14 @@ def register(server) -> None:
         name="noctus.transcription.transcribe",
         description=("Submit a local file and poll until terminal or timeout_s (default 3600). "
                      "Returns {status, texto, duracao_s, rtf, id}, plus segmentos "
-                     "[{start,end,text}] when segmentos=True; on timeout {status:'timeout', id} "
+                     "[{inicio,fim,texto}] when segmentos=True (palavras=True adds per-word palavras [{texto,inicio,fim,confianca}] to each segment); on timeout {status:'timeout', id} "
                      "and the job keeps running server-side (use get). The DEFAULT path for any "
                      "transcription — local Whisper is only a fallback when this server fails."),
     )
     def _transcribe(path: str, idioma: str = "pt", rotulo: str = "", timeout_s: float = 3600,
-                    segmentos: bool = False) -> dict:
+                    segmentos: bool = False, palavras: bool = False) -> dict:
         return transcribe(path, idioma=idioma, rotulo=rotulo or None, timeout_s=timeout_s,
-                          segmentos=segmentos)
+                          segmentos=segmentos, palavras=palavras)
 
     @server.tool(
         name="noctus.transcription.batch",

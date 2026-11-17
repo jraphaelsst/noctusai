@@ -7,6 +7,7 @@ from typing import Optional
 from noctusai_lib.integrations.transcription.types import (
     AudioProbe,
     ProbeNotSupported,
+    TranscriptionRejected,
     TranscriptResult,
 )
 from noctusai_lib.integrations.transcription.validation import sniff_container
@@ -25,8 +26,16 @@ class OpenAIWhisperTranscriber:
         raise ProbeNotSupported("openai backend cannot probe audio duration")
 
     async def transcribe(
-        self, audio: bytes, *, language: str = "pt", max_seconds: Optional[float] = None
+        self,
+        audio: bytes,
+        *,
+        language: str = "pt",
+        max_seconds: Optional[float] = None,
+        palavras: bool = False,
     ) -> TranscriptResult:
+        if palavras:
+            # The OpenAI backend has no per-word timing; never return a silent lookalike.
+            raise TranscriptionRejected("palavras_nao_suportado", "openai backend has no word timestamps")
         # Imported here, not at module top: the LLM stack pulls every provider SDK
         # (anthropic, openai, …). The self-hosted transcriber image imports this
         # package (server/ lives under it) with only its own deps, so the package

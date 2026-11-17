@@ -127,6 +127,22 @@ def avisar_listar_vazio(client: Any, core: Any, org_id: Any) -> bool:
     return True
 
 
+def _avisos_da_sincronizacao(core: Any, org: UUID, report: Any, relatorio: dict) -> None:
+    """The run's IN-APP notices (owner 2026-11-04; the WhatsApp digest below is a separate, switchable channel): ONE
+    `imoveis_vista_sincronizado` when Vista changed at least one imóvel, plus one `imovel_aprovacao_pendente` per approval the run
+    opened. Fills `relatorio`; never raises, never fails the run."""
+    if report is None:
+        return
+    try:
+        from app.services import vista_divergencias
+
+        relatorio["aviso_sincronizado"] = vista_divergencias.notificar_sincronizado(
+            core, org, getattr(report, "vista_imoveis_atualizados", 0), getattr(report, "vista_campos_atualizados", 0))
+        relatorio["avisos_aprovacao"] = vista_divergencias.notificar_aprovacoes(core, org, getattr(report, "divergencias_linhas", None) or [])
+    except Exception as exc:
+        logger.error("imoveis refresh: the Vista sync notices failed org=%s (%s)", org, type(exc).__name__)
+
+
 async def _digest_de_divergencias(client: Any, core: Any, org: UUID, execucao_id: Any, report: Any, relatorio: dict, enviar: Any) -> None:
     """TRANSITIONAL (`vista_divergencias`): ONE digest per run for the divergences it opened. Never raises."""
     linhas = getattr(report, "divergencias_linhas", None) or []
@@ -246,6 +262,7 @@ async def executar(
             relatorio = {**relatorio, "erro": type(exc).__name__}
             status = "falhou"
         _fechar(client, execucao_id, status=status, caminho=caminho, relatorio=relatorio, aviso=aviso)
+    _avisos_da_sincronizacao(core, org, report, relatorio)
     await _digest_de_divergencias(client, core, org, execucao_id, report, relatorio, enviar_divergencia)
     await _avisar_dono(client, org, status, report, relatorio, notificador, aviso_listar_vazio=aviso)
     return {"id": str(execucao_id), "status": status, "caminho": caminho, "relatorio": relatorio}

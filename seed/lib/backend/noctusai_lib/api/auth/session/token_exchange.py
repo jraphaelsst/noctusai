@@ -276,6 +276,7 @@ class SupabaseTokenExchanger:
     async def _await_refresh(self, session_id: str) -> Optional[str]:
         """Poll the store up to one lock-TTL for another worker's fresh token."""
         deadline = self._clock() + self._lock_ttl
+        # poll-budget: 0.05s store read while another worker holds the session-refresh lock (lock_ttl 5s); 1 calls/tick; worst 1728000/day ceiling (20 reads/s x 86400; real bound 100 reads per contended refresh = 5s / 0.05s); idle=fixed
         while self._clock() < deadline:
             await asyncio.sleep(self._wait_poll)
             tokens = await self._store.read_tokens(session_id)

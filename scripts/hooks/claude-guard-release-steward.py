@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse hook (Bash + the steward-class MCP tools) - only the elected release steward queues/deploys.
 
-Sibling of `claude-guard-heavy-run.py`, same contract: payload on stdin, the
+Sibling of `claude-guard-bash-rewrite.py`, same contract: payload on stdin, the
 guard module's verdict out, fail-CLOSED via `_guard_failclosed.run_guard`
 (`[noc-guard:release-steward]`). Every decision lives in
 `mcp/noctusai/tools/noctus/dev/release_steward.py` (`decide`), which the MCP

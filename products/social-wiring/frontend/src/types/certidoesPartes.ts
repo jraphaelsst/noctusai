@@ -60,10 +60,11 @@ export interface CertidaoParteCelula {
   pcen: CertidaoPcen | null;
   /** PENDING for a reason an operator can fix — not an error; never billed.
    *  `credencial_govbr`: the tipo needs the office's GOV.BR login.
+   *  `credencial_email`: the tipo needs the office's e-mail de envio (TJSP).
    *  `dados_parte`: a party field the tipo requires is empty (birth date for a
    *  CPF's CND Federal). `erro_mensagem` carries the pt-BR text. The cell stays
    *  uploadable (Enviar PDF). */
-  pendencia?: "credencial_govbr" | "dados_parte" | null;
+  pendencia?: "credencial_govbr" | "credencial_email" | "dados_parte" | null;
   /** Empty AND optional for this deal (owner 2026-10-21: CRF/FGTS and the
    *  antigos proprietários' certidões are not required unless the deal opts
    *  in). Optional for older payloads. */

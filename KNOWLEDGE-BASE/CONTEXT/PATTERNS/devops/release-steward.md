@@ -81,6 +81,9 @@ On session start, and before any shared-lane action:
    the peers; otherwise the lease goes stale after `ttl_s` (default **7200 s**,
    `NOCTUS_STEWARD_TTL_S`; a drain + deploy is tens of minutes and every steward
    call heartbeats) or immediately when its process is gone (`claude_pid`).
+   **A live holder never reads stale (2026-11-14):** the session-heartbeat hook (SessionStart +
+   UserPromptSubmit, advisory, fail-open, throttled) renews the holder's OWN lease (heartbeat + pid) via
+   `renew_own_lease`; no other session's lease is ever touched (~15 "stale lease" denies).
 
 ## 4 · Message formats (the outbox is the record)
 
@@ -151,7 +154,7 @@ python mcp/noctusai/cli.py --release-steward claim --steward-name <name> --stewa
 `ListAgents` and `SendMessage` the announcement. `--steward-session-id` overrides
 `$CLAUDE_CODE_SESSION_ID` for an operator acting for another session.
 
-## 7a · Ejection flow (the branch steward fixes; not live until build 4 inbox fields; end predicate not live until builds 3+5)
+## 7a · Ejection flow and hand-off-and-end (the branch steward fixes; not live until build 4 inbox fields; hand-off-and-end live 2026-11-16, its `mine` tool support build 5)
 
 Guardian spec, council 09340534 (dispositions A: the guardian is a service leaf whose authority is the lane only; B: a rejected delivery returns to its steward, not to a rescue branch; K: ejection fixes belong to the branch steward). It supersedes the rescue-branch flow of the 2026-11-10 queue-lifecycle decision (council a341e383, `project-history/assistant-chatbot/queue-lifecycle-decision.md`) and the older `merge-queue.md` §4 "the owning session fixes".
 
@@ -161,7 +164,13 @@ Guardian spec, council 09340534 (dispositions A: the guardian is a service leaf 
 4. **The branch steward fixes it** on its own branch and files `request` again (the `deliverable` preflight runs again at filing). The guardian never patches the branch, never opens a rescue branch and never dispatches an engineer for it.
 5. **Two strikes.** After 2 ejections the delivery parks as `blocked_on_steward` until its steward re-files a fix the preflight accepts.
 6. **Orphan.** If the steward's session is gone, or silent past the TTL, the delivery stays `blocked_on_steward`. The guardian alerts the owner, and the OWNER names a new branch steward, who adopts the branch (role registry `to_session_id=`). The guardian never adopts it itself.
-7. **End predicate** (`release_steward mine`, builds 3+5): a requester may end only when its requests are LANDED (plus DEPLOYED if asked) or handed to a successor steward the owner named, it has no open `mq/*` ref, and no CI run it depends on is in flight. Teardown rules: `background-agent-lifecycle.md`.
+7. **Hand off and end** (owner 2026-11-16; supersedes the old "end only when LANDED/DEPLOYED" predicate). A requester does NOT wait for its deliveries to land. It ends as soon as every delivery is **filed and accepted** by the outbox (`queued_for_steward`, `pending_ci` or `queued`; never `needs_resync`/refused, which it fixes and re-files first). Close-out, in order:
+   1. **File everything.** `request` per branch, landing order in `notes`; fix any `needs_resync` item that is fixable now (derived files, kb-counts) and re-file.
+   2. **One handoff message to the steward** (`SendMessage`; the outbox stays the record): each slug + head + verdict ref, the landing order, migrations and whether the owner's prod consent is already in the steward's transcript, which CI runs are still in flight, and that the requester is closing.
+   3. **Resume note** in the project memory (the named destination for a RED run, an ejection, or post-landing cleanup): final heads, run ids, what is owed after landing (worktree cleanup, installs).
+   4. **Stop your own watchers.** `session_end_sweep` clean: no poll loop, monitor or subagent outlives the session; the steward watches CI from here (one check per run, polls ≥ 60 s).
+   5. **Worktrees of filed-but-unlanded branches stay**; they are cleaned after landing by the next session on the line or the mole sweep.
+   **The steward owns the delivery from the handoff:** it checks the CI runs itself, enqueues in the given order, lands, runs the prod cut, and reports `LANDED <sha>` / `EJECTED <reason>` / `DEPLOYED` to the requester if it is live, otherwise to the owner. A red run or an ejection after the requester left follows the orphan rule (6): `blocked_on_steward` + owner alert; the fix belongs to the line named in the resume note, never to the guardian. **Why:** a session waiting for landing holds context, memory and poll loops on an 8 GB laptop shared by up to 7 sessions, while the steward already watches the queue. Tool support (not live): `release_steward action=mine` reporting `can_end` = every request accepted + no own background process (build 5).
 
 ## 8 · Reboot / multi-steward (2026-11-09/10)
 
@@ -263,7 +272,7 @@ objects from `merge-tree`, and the shared verdict store / enqueue attestation be
 | 3 | `migrations_free` | no migration number the branch adds is claimed by a different file in the composed tree (the head, or the merge-tree result). Reuses `task_branch._MIGRATION_NUM_RE` and the keeper's accepted-duplicates set via `migration_number_collisions` |
 | 4 | `derived_current` | every derived artifact is already current AT the head: `--update-kb-counts --check`, `--render-project-history --check`, `--gen-promotions-index --check` against an export of the head (table `DERIVED_ARTIFACTS`; a missing regenerator is UNMEASURED, never green). The export must equal `git ls-tree -r <head>` (an `export-ignore` difference is UNMEASURED) and runs in the hermetic env with `PYTHONPATH` = the HEAD's seed packages (derived from its `requirements.txt` `-e` lines; EVERY top-level seed package under those paths, plus `noctusai_lib` and `noctusai_seed` when the
 head ships them, must import from inside the export, else UNMEASURED), so it never judges the primary's seed lib |
-| 5 | `scoped_green` | the scoped suites are green **the way CI judges them** (below) |
+| 5 | `scoped_green` | a GitHub Actions `test.yml` run on the exact head is green (`gh-run:<id>`, default, below), or a local CI-parity record is green **the way CI judges them** (`ci-parity:<id>`, `run_scoped=true`) |
 
 Not measurable is never green: an item that cannot run fails as `UNMEASURED`.
 
@@ -274,31 +283,65 @@ every `cli.py --<flag>` gate with it (merge-loss-gate was ejected on exactly tha
 noc-steward skill). The result lists a `cli-help` artifact: `skipped: true` (and the detail says so) when the delivery does not touch
 `cli.py`; when it runs, a `deliverable:cli-help` row (`pass`/`deny`) lands in the same gate-event sink as the other gates.
 
-**Item 5 runs what CI blocks on, in the environment CI has (D1, merge-queue run 42753204233).** Two things passed locally and
+**Item 5 by GitHub CI (`gh-run:<id>`, default since 2026-11-16).** The local CI-parity run needs a machine-wide heavy slot on a
+shared 8 GB laptop and came back UNMEASURED or timed out on every filing, so the filing's test run moved to GitHub
+(`tools/noctus/dev/ci_verdict.py`; the GitHub access is a Protocol seam: Real shells `gh`, Fake for tests). `request` with no
+`verdict_ref` and no `run_scoped` finds a `test.yml` run on the exact head (push-triggered counts) or dispatches one
+(`gh workflow run test.yml --ref <branch> -f base=<merge-base with origin/dev>`; the branch tip must equal the head) and files with
+`verdict_ref=gh-run:<id>` AT ONCE - non-blocking. `validate_verdict_ref` judges the id against GitHub itself (this repo, workflow
+`.github/workflows/test.yml`, FULL head sha, completed+success = green): not forgeable. A still-running run is item 5 PENDING
+(`verdict: pending_ci`, detail `CI running: <url>`): the filing is accepted, and the guardian's pre-enqueue re-check
+(`task_branch enqueue`) answers `pending_ci` - leave it queued for the next drain round, never a resync; a red run is `needs_resync`
+naming the run URL. `gh` missing/unauthenticated fails the request loudly (no silent local fallback); `run_scoped=true` keeps the local
+run as an explicit opt-in. Telemetry: each request event records `verdict_kind` (`gh-run` | `ci-parity`) and
+`release_steward action=verdicts` reports `by_verdict_kind`.
+A `gh-run:` verdict binds to the EXACT head, not to being 0-behind: item 2 already accepts a branch behind `origin/dev` when the
+driver-aware `compose_merge` against CURRENT `origin/dev` is clean (the merge queue's CI then judges the composed tree), so a landing
+elsewhere does not invalidate a green run. `needs_resync` remains only for (a) a conflicting composed merge (item 2 names the files)
+or (b) the head moved since the run (item 5: the run's `head_sha` != the branch tip). Item 4 is judged at the head itself (it does not
+depend on dev), so it is unaffected by dev moving. The merge queue's own CI still judges the composed tree.
+
+**The local CI-parity path (`run_scoped=true`) runs what CI blocks on, in the environment CI has (D1, merge-queue run 42753204233).** Two things passed locally and
 failed in CI: keepers that only WARN in pre-commit but BLOCK in CI (the mcp-first-scripts manifest rows, `check_gate_triad`'s
 inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was set. So:
 
 - *The CI-blocking set is derived, never listed.* From the head's own CI definition: (a) every `cli.py --check-*` step of
   `.github/workflows/test.yml` that is not `continue-on-error` and needs no CI-resolved argument (`ci_blocking_flags`);
   (b) every test in `mcp/noctusai/tests/` that asserts a `check_*` keeper returns `[]` on the live tree, found by AST
-  (`ci_keeper_test_ids`: the "real tree is clean" tests that make a pre-commit warning a CI block), always; (c) the
-  suites of what the diff touches DIRECTLY (`local_suites`): a `seed-backend-tests` matrix root the diff edits, and a
-  `product-backend-tests` matrix product the diff edits that is awake (`deploy/fleet/active-scope.txt`). The scope is
-  `ci_scope.classify` over `origin/dev...head` - the SAME module the workflow's `changes` job calls (the classifier left
-  the inline bash so the two can never disagree; base selection, which depends on the GitHub event, stays in the
-  workflow). Why (c): three deliveries went 5/5 and were ejected on suites the diff selected in CI
-  (`test_all_products_compliant[core]` - a seeded icon; the seed suite + `test_vps_exec.py` - a seed change; a product
-  FE test), 2026-11-10. **Narrowed by the owner, 2026-11-11:** running CI's FULL split locally (the toolkit shards + every
-  awake product on a shared-root change) measured **2h04m** on one heavy slot versus ~15-25 min in CI's parallel jobs, so
-  the toolkit split and the shared-root fan-out are judged by the merge queue only. Stated trade-off: a toolkit-only red
-  (the `test_all_products_compliant[core]` shape) can still eject in the queue. The run holds ONE machine-wide heavy slot
-  (`hw_admission.heavy_slot`; not admitted = `UNMEASURED`, never green). **Migration → DB-guard edge (owner, 2026-11-11):** a
+  (`ci_keeper_test_ids`), PLUS every toolkit test that READS THE LIVE REPO TREE (`live_tree_test_ids`: a test naming a
+  module-level `Path(__file__)...parents[n]` constant, so invariants like `assert not unmarked` over a tree walk are
+  included), always when the diff is heavy; (c) **ONE selector (2026-11-12)**: the suites gate_sweep would select for the diff
+  (`select_ci_suites` -> `gate_sweep._derive_scope` + `_build_gate_specs`: touched product/seed backend suites, the seed
+  fan-out to provable consumers, `CONTRACT_OF` cross-product consumers, the toolkit tests that import a changed toolkit
+  module, the replay/DB-guard suites). There is no second selector (`local_suites` is gone). Why: 185 verdicts, ONE ran a
+  suite; every ejected entry (~12, ~25 of 37.8 red runner-hours, 2026-11-07..12) had a green verdict that ran none -
+  e.g. a `merge_queue.py` change broke the guardian snapshot test and nothing selected it. What it cannot run is NAMED in
+  the verdict (`skipped`): FE gates (no `node_modules`) and the FULL toolkit suite (a core toolkit file changed: CI shards
+  it, 2h locally). **Wall-clock budget** (`NOC_ITEM5_SUITE_BUDGET_S`, default 1800s): suites not started when it is spent are
+  listed and the verdict says `PARTIAL` - never silently trimmed. Scope is still `ci_scope.classify` over `origin/dev...head`.
+  Earlier trade-off (owner 2026-11-11, full CI split = 2h04m locally) now applies only to the two named skips and the budget.
+  **Toolkit wiring tests by name (2026-11-15):** a diff touching `cli.py` or a non-test `.py` under `mcp/noctusai/tools/noctus/`
+  (where a `register()` wrapper lives) ALSO selects `test_toolkit_freshness*`, the CLI flag/parse tests (`test_cli_*`,
+  `test_toolkit_cli*`) (`gate_sweep._mcp_wiring_tests`, derived from file names, never a hand list), merged into
+  `mcp_toolkit_tests:scoped` (the module's own tests already come from its import/symbol scoping); when the full split is the
+  selection a separate `mcp_toolkit_wiring` gate also carries the module's own `test_<stem>*` tests. The full toolkit split stays CI-only. Why: `enqueue-score-mq-migrations` added a `score` param to a
+  `register()` wrapper without `toolkit_freshness._MAPPED_PARAMS`; no import graph points at that registry test, the scoped verdict
+  selected "0 suites" and the queue ejected the batch. A seed-only diff selects none of these.
+  **It judges the MERGE, not the head (2026-11-12):** the export is the tree of `git merge-tree --write-tree origin/dev <head>`
+  (`merge_tree_sha`); a conflict is UNMEASURED. The verdict ref still binds the HEAD sha + head tree; the record adds `merge_tree`.
+  The run holds ONE machine-wide heavy slot
+  (`hw_admission.heavy_slot`; not admitted = `UNMEASURED`, never green). **Migration -> DB-guard edge (owner, 2026-11-11):** a
   diff touching `products/<p>/backend/migrations/*.sql` also runs `test_verify_db_guards.py` + that product's PGlite
-  `*replay*` tests + the generic `test_migration_*` ones (`migration_guard_suite`) - the toolkit-only red that stalled the
-  queue 2h (agents 079 → `TestAgentsStudioProbes`). PGlite is linked from the source checkout only when
-  `mcp/noctusai/node/package-lock.json` is byte-identical (`link_pglite`); otherwise `UNMEASURED`. **Gap, `NOC-REMEDIATE[scoped-green-fe-and-tooling]`:**
-  FE vitest and the bespoke `tooling-tests` job stay CI-judged only (no `node_modules` in the export; tooling-tests renders
-  a template in bash) - a branch steward touching a product FE or an MCP connector server (`mcp/<connector>/tests`) runs that suite itself before filing.
+  `*replay*` tests + the generic `test_migration_*` ones (`migration_guard_suite`). PGlite is linked from the source checkout only when
+  `mcp/noctusai/node/package-lock.json` is byte-identical (`link_pglite`, now a thin call to the shared `node_toolchain.resolve`); otherwise `UNMEASURED`. **Gap, `NOC-REMEDIATE[scoped-green-fe-and-tooling]`:**
+  FE vitest and the bespoke `tooling-tests` job stay CI-judged only - a branch steward touching a product FE or an MCP connector server
+  (`mcp/<connector>/tests`) runs that suite itself before filing. **Follow-ups, out of this slice:** a Linux-container leg (BSD vs
+  GNU `sed`, process start times, runner image) and `merge_buildable` against the queue tip (dev + `mq/*` refs ahead), not only dev.
+  **Telemetry (2026-11-12):** every verdict record carries `suites_ran`, `tests_ran` (pytest-summary counts), `diff_scope`,
+  `skipped`, `partial`, `warnings`; a heavy scope with 0 suites ran adds `WARNING: heavy diff scope but 0 suites ran`.
+  `release_steward action=verdicts [since=]` (read-only; CLI `--release-steward verdicts`) JOINS verdict records to drain outcomes
+  (request `verdict_ref`, else head sha, then the `ack ejected|landed`) and reports `false_green_rate` (green then ejected),
+  the zero-suite split, and the rejection rate per requester - the number that says whether item 5 is honest.
   CI's "Prime hermetic state" step is replayed first (`ci_prime_flags`).
 - *The env is scrubbed the way CI's is.* `hermetic_env`: OS basics only (`HERMETIC_BASE_ENV`) plus the toolkit job's own
   `env:` plus `CI=true`. Everything else (`CLAUDE_*`, `ANTHROPIC_*`, `OPENAI_*`, `SUPABASE_*`, `NOC*` ...) is absent, because it is
@@ -320,6 +363,17 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
   carries its last error line. `request run_scoped=true` is never ignored: it runs this check on the branch head, files with the `ci-parity:<id>`
   it mints (red -> `needs_resync` via item 5; an UNMEASURED run -> `needs_resync` naming the reason) and refuses what it cannot honour
   (no runner configured, a multi-branch train: one record judges ONE head).
+- *Filing runs the scoped check BY DEFAULT.* A single-branch `request` with no `verdict_ref` runs the check itself (a verdict-less
+  filing was 65 of 91 refusals): under a wall-clock deadline (`NOCTUS_STEWARD_SCOPED_DEADLINE_S`, default 3600) with a progress line
+  every minute on stderr. A crash, an overrun or an UNMEASURED run mints no record and the request is REFUSED (`ok:false`, CLI exit 1,
+  failing `scoped_green`) - never filed on nothing.
+- *Head semantics.* `deliverable` pins a head only when the caller passes `head_sha` explicitly; otherwise it judges the branch's CURRENT
+  tip. "head moved since filing" is a `notes[]` entry, not a failure, and a stored `verdict_ref` is reused only when its record judged
+  this very tip.
+- *Refusals are counted by class.* `deliverable()` records one gate event per failing item (`gate=deliverable`, `source`=the refusal-class
+  key when `gate_alignment.refusal_class` exists); the verdict record stores `failing_items` + `failing_tests`. `request` /
+  `deliverable` return `recurrence[]` (`gate_alignment.refusal_recurrence`, 14 days) and print "class X has recurred N times across S
+  sessions with no open fix branch" - both hooks are optional until the gate-alignment slice lands.
 
 ### Enqueue, cleanup and the pre-push hook
 
@@ -379,6 +433,11 @@ inventory row), and a test that passed only because `CLAUDE_CODE_SESSION_ID` was
 - Failures, takeover and prod consent (ejection -> `ejected{reason, conflict, url}` and requeue, 2 ejections -> `blocked_on_steward`;
   stale-guardian takeover that may only resume or roll back; one plan hash per deploy window) are the ratified spec and are
   tracked as follow-ups; this section records what is built.
+
+## 8c · Lessons that recur (the full append list lives in skill `noc-steward` § Lessons that recur)
+
+- **A known false alarm with live evidence never re-blocks a cut.** `predeploy_check` may BLOCK on a check whose output the steward has already proven to be a harness or tooling defect (2026-11-15: `schema_drift` reported `missing_table:monica.*` for `nosnolimiar` - live had 25 tables in `nosnolimiar`, 0 in `monica`; two prod cuts stalled on re-measuring it). Then: record the live evidence (the query and its rows) in the shift memory, file the tooling fix on its own branch, and ship the cut. Do not keep re-measuring. Only a DIFFERENT output re-opens it; "still red" does not.
+- **A `schema_drift` that lists ONLY tables created by migrations pending in this same cut is expected pre-state, not a block.** Predeploy runs before the cut's migrations are applied, so exactly those tables are absent live. Compare the `missing_table` list against the pending migrations (`migrate_product` dry-run, `earlier_pending`); anything outside that set is real drift and blocks.
 
 ## 9 · Related
 

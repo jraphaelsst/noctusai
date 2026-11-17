@@ -16,6 +16,8 @@ Postgres would have said.
 """
 from __future__ import annotations
 
+import ast
+import re
 import sys
 from pathlib import Path
 
@@ -41,6 +43,7 @@ from tools.noctus.dev.verify_db_guards import (  # noqa: E402
     DEFAULT_REGISTRY,
     REGISTERED_GUARD_NAMES,
     GuardProbe,
+    _classify_setup_failure,
     run_probe,
     verify_db_guards,
     wrap_rollback_only,
@@ -985,3 +988,203 @@ class TestCheckDbGuardRegistryStatic:
         symbols = {i["symbol"] for i in compliance.check_db_guard_registry_static(tmp_path)}
         assert {"db-guard-registry-duplicate-id", "db-guard-registry-missing-migration",
                 "db-guard-registry-no-sentinel", "db-guard-registry-shape"} <= symbols
+
+
+# ---------------------------------------------------------------------------
+# A probe that INSERTs owns its org (2026-11-15)
+# ---------------------------------------------------------------------------
+# SW 339 allows ONE marca per org: five probes that borrowed `FROM public.organizations LIMIT 1` and then
+# inserted a marca failed setup the moment the borrowed org already had its brand, and predeploy read
+# "db_guards unclassifiable". The same coupling hides in ANY probe that borrows a live org and inserts into
+# a table some migration limits to one row per org. This derives the org-unique tables from the migrations
+# themselves (nothing hand-listed) and refuses a borrow followed by an INSERT into one of them.
+
+import re as _re
+from pathlib import Path as _Path
+
+_BORROW_RE = _re.compile(r"FROM\s+public\.organizations(?:\s+\w+)?\s+(?:ORDER\s+BY\s+created_at\s+)?LIMIT\s+1", _re.I)
+_OWN_ORG_RE = _re.compile(r"INSERT\s+INTO\s+public\.organizations\b", _re.I)
+_INSERT_STMT_RE = _re.compile(r"INSERT\s+INTO\s+([\w\".]+)([^;]*);", _re.I | _re.S)
+_UNIQUE_INDEX_RE = _re.compile(
+    r"CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\w+\s+ON\s+([\w\".]+)\s*(?:USING\s+\w+\s*)?\(([^)]*)\)", _re.I
+)
+_CREATE_TABLE_RE = _re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w\".]+)\s*\((.*?)\n\)\s*;", _re.I | _re.S)
+
+#: probe id -> why a borrowed-org INSERT into an org-unique table is still correct. Shrinks only: the test
+#: below fails when an entry stops being flagged, so a fixed probe has to leave this list.
+_BORROWED_ORG_TOLERATED: dict[str, str] = {
+    "org_brand_identities.tokens.schema_check": (
+        "the CHECK on `tokens` is evaluated before the unique index is touched, so the row never reaches "
+        "ux_org_brand_identities_active_org; `_insert_check_probe` builds its row with INSERT ... SELECT FROM the fixture"
+    ),
+}
+
+
+def _org_unique_tables(products_dir: _Path) -> set[str]:
+    """`schema.table` for every table a migration limits to one row per org: a UNIQUE INDEX / UNIQUE / PRIMARY KEY on
+    `(org_id)` alone (a partial index counts - its predicate still collides on a live org)."""
+    found: set[str] = set()
+    # product-scope: all — a one-row-per-org rule is a property of the schema, awake product or not
+    for path in products_dir.glob("*/backend/migrations/*.sql"):
+        sql = _re.sub(r"--[^\n]*", "", path.read_text(encoding="utf-8"))
+        for m in _UNIQUE_INDEX_RE.finditer(sql):
+            if [c.strip().strip('"') for c in m.group(2).split(",")] == ["org_id"]:
+                found.add(m.group(1).replace('"', ""))
+        for m in _CREATE_TABLE_RE.finditer(sql):
+            body = m.group(2)
+            if (
+                _re.search(r"^\s*org_id\s+\w+[^,\n]*\b(UNIQUE|PRIMARY\s+KEY)\b", body, _re.I | _re.M)
+                or _re.search(r"(UNIQUE|PRIMARY\s+KEY)\s*\(\s*org_id\s*\)", body, _re.I)
+            ):
+                found.add(m.group(1).replace('"', ""))
+    return found
+
+
+def _borrowed_org_inserts(sql: str, org_unique: set[str]) -> list[str]:
+    """Org-unique tables `sql` INSERTs into after borrowing a live org (empty when it makes its own org).
+    An INSERT carrying `ON CONFLICT` already tolerates an existing row, so it does not count."""
+    if not _BORROW_RE.search(sql) or _OWN_ORG_RE.search(sql):
+        return []
+    hits = []
+    for m in _INSERT_STMT_RE.finditer(sql):
+        table = m.group(1).replace('"', "")
+        if table in org_unique and not _re.search(r"ON\s+CONFLICT", m.group(2), _re.I):
+            hits.append(table)
+    return sorted(set(hits))
+
+
+class TestProbesOwnTheirOrg:
+    _PRODUCTS = _Path(__file__).resolve().parents[3] / "products"
+
+    def test_no_probe_borrows_an_org_then_inserts_into_an_org_unique_table(self):
+        org_unique = _org_unique_tables(self._PRODUCTS)
+        assert "social_wiring.marcas" in org_unique  # the premise (SW 339) is really derived
+        offenders = {
+            p.id: hits
+            for p in DEFAULT_REGISTRY
+            if p.id not in _BORROWED_ORG_TOLERATED and (hits := _borrowed_org_inserts(p.sql, org_unique))
+        }
+        assert not offenders, (
+            f"probes that borrow a live org and INSERT into a one-row-per-org table: {offenders}. "
+            "Create the org (`_PROBE_ORG_SETUP`, rolled back with the probe) instead of borrowing one."
+        )
+
+    def test_every_tolerated_probe_still_needs_its_exemption(self):
+        org_unique = _org_unique_tables(self._PRODUCTS)
+        by_id = {p.id: p for p in DEFAULT_REGISTRY}
+        for pid, reason in _BORROWED_ORG_TOLERATED.items():
+            assert pid in by_id, f"{pid} left the registry: drop its exemption"
+            assert reason.strip()
+            assert _borrowed_org_inserts(by_id[pid].sql, org_unique), f"{pid} no longer borrows: drop its exemption"
+
+    # red / green fixtures for the detector itself
+    def test_detector_red_borrow_then_insert(self):
+        sql = "SELECT id INTO v_org FROM public.organizations LIMIT 1;\nINSERT INTO sw.marcas (org_id) VALUES (v_org);"
+        assert _borrowed_org_inserts(sql, {"sw.marcas"}) == ["sw.marcas"]
+
+    def test_detector_red_ordered_borrow_and_insert_select(self):
+        sql = "INSERT INTO sw.marcas (org_id) SELECT id FROM public.organizations ORDER BY created_at LIMIT 1;"
+        assert _borrowed_org_inserts(sql, {"sw.marcas"}) == ["sw.marcas"]
+
+    def test_detector_green_own_org(self):
+        sql = (
+            "INSERT INTO public.organizations (nome, slug) VALUES ('p', 'p') RETURNING id INTO v_org;\n"
+            "SELECT id INTO v_x FROM public.organizations LIMIT 1;\nINSERT INTO sw.marcas (org_id) VALUES (v_org);"
+        )
+        assert _borrowed_org_inserts(sql, {"sw.marcas"}) == []
+
+    def test_detector_green_on_conflict_and_non_unique_table(self):
+        borrow = "SELECT id INTO v_org FROM public.organizations LIMIT 1;\n"
+        assert _borrowed_org_inserts(borrow + "INSERT INTO sw.w (org_id) VALUES (v_org) ON CONFLICT (org_id) DO NOTHING;", {"sw.w"}) == []
+        assert _borrowed_org_inserts(borrow + "INSERT INTO sw.log (org_id) VALUES (v_org);", {"sw.w"}) == []
+
+
+class TestSetupFailedTelemetry:
+    """A probe whose SETUP fails (raw Postgres error, no sentinel) is `setup_failed` with the
+    SQLSTATE + constraint, never folded into the guard's verdict (2026-11-16: sw241 red on
+    uq_marcas_one_per_org read as a generic unclassifiable failure)."""
+
+    _DUP = (
+        'ERROR: 23505: duplicate key value violates unique constraint "uq_marcas_one_per_org" '
+        "DETAIL: Key (org_id)=(1b1c7682) already exists."
+    )
+
+    def test_unique_violation_in_setup_is_setup_failed_with_sqlstate_and_constraint(self):
+        result = run_probe(_ANY_PROBE, _CannedExecutor(ok=False, error=self._DUP))
+        assert result["status"] == "failure"
+        assert result["outcome"] == "setup_failed"
+        assert result["sqlstate"] == "23505"
+        assert result["constraint"] == "uq_marcas_one_per_org"
+        assert "NOT exercised" in result["detail"] and "uq_marcas_one_per_org" in result["detail"]
+
+    def test_explicit_sqlstate_in_the_error_body_is_read(self):
+        err = '{"message":"insert or update on table violates foreign key constraint \\"x_fk\\"","code":"23503"}'
+        out = _classify_setup_failure(err)
+        assert out and out["sqlstate"] == "23503" and out["outcome"] == "setup_failed"
+
+    def test_setup_failed_is_never_a_finding_or_a_pass(self):
+        result = run_probe(_ANY_PROBE, _CannedExecutor(ok=False, error=self._DUP))
+        assert result["status"] not in ("pass", "finding")
+
+    def test_a_sentinel_wins_over_the_setup_classifier(self):
+        err = "NOC_PROBE:refused: duplicate key value violates unique constraint \"cs_posts_roteiro_uq\""
+        assert run_probe(_ANY_PROBE, _CannedExecutor(ok=False, error=err))["outcome"] == "refused"
+
+    def test_non_postgres_text_stays_the_generic_unclassifiable(self):
+        result = run_probe(_ANY_PROBE, _CannedExecutor(ok=False, error="connection reset by peer"))
+        assert result["outcome"] is None and result["status"] == "failure"
+
+    def test_surfaces_in_the_verify_failures_list(self):
+        out = verify_db_guards(registry=(_ANY_PROBE,), executor=_CannedExecutor(ok=False, error=self._DUP))
+        assert out["status"] == "unverified"
+        assert out["failures"][0]["outcome"] == "setup_failed"
+
+
+class TestProbeOrgFixture:
+    """Backstop: no probe borrows a prod org or builds its own org/marca by hand."""
+
+    _SRC = REPO_ROOT / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "verify_db_guards.py"
+    _MARCA_INSERT = re.compile(r"INSERT INTO \{?_?[A-Za-z_.]*\}?\.?marcas\b|INSERT INTO social_wiring\.marcas\b")
+    _ORG_INSERT = re.compile(r"INSERT INTO public\.organizations \(nome, slug\)\s+VALUES \('NOC probe org \(guard\)'")
+
+    def _strings_by_function(self):
+        """AST walk: (enclosing function name, string text) for every string literal."""
+        tree = ast.parse(self._SRC.read_text(encoding="utf-8"))
+        out = []
+
+        def visit(node, fn):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fn = node.name
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                out.append((fn, node.value))
+            for child in ast.iter_child_nodes(node):
+                visit(child, fn)
+
+        visit(tree, "<module>")
+        return out
+
+    def test_only_the_helper_inserts_the_probe_org_or_a_marca(self):
+        offenders = [
+            (fn, text[:70])
+            for fn, text in self._strings_by_function()
+            if (self._ORG_INSERT.search(text) or "INSERT INTO {_SW_SCHEMA}.marcas" in text) and fn != "_probe_own_org_sql"
+        ]
+        assert not offenders, f"probe org/marca setup must go through _probe_own_org_sql: {offenders}"
+
+    def test_no_registered_probe_borrows_an_org_row_to_insert_under(self):
+        # `SELECT id INTO v FROM public.organizations ... LIMIT 1` with no property predicate = a borrowed prod org.
+        borrow = re.compile(r"INTO\s+\w+\s+FROM\s+public\.organizations\s+(?:ORDER BY \w+\s+)?LIMIT 1")
+        bad = [p.id for p in DEFAULT_REGISTRY if borrow.search(p.sql)]
+        assert not bad, f"probes borrowing an existing organization: {bad}"
+
+    def test_a_marca_insert_always_targets_a_probe_owned_org_once(self):
+        marca = re.compile(r"INSERT INTO \w+\.marcas \(org_id, slug, name\)\s+VALUES \((\w+),")
+        own = re.compile(r"noc-probe:own-org (\w+):")
+        for p in DEFAULT_REGISTRY:
+            orgs = marca.findall(p.sql)
+            assert len(orgs) == len(set(orgs)), f"{p.id}: two marcas in one org (uq_marcas_one_per_org)"
+            assert set(orgs) <= set(own.findall(p.sql)), f"{p.id}: marca inserted under a non-probe-owned org"
+
+    def test_the_sw241_fixture_uses_two_orgs_for_two_marcas(self):
+        p = next(x for x in DEFAULT_REGISTRY if x.id == "sw241_roteiro_unico_por_post")
+        assert "noc-probe:own-org v_org:" in p.sql and "noc-probe:own-org v_org_b:" in p.sql

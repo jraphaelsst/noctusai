@@ -70,6 +70,16 @@ if _WORKTREE_SEED_LIB.exists():
     if str(_WORKTREE_SEED_LIB) not in sys.path:
         sys.path.insert(0, str(_WORKTREE_SEED_LIB))
 
+    # Same redirect for the seed FRAMEWORK (noctusai_seed): without it a worktree's
+    # tests read the PRIMARY checkout's organ registry, so an organ registered only in
+    # the worktree raises KeyError in test_organ_guard_probes (2026-11-07, event_store).
+    _WORKTREE_SEED_FW = _WORKTREE_ROOT / "seed" / "framework" / "backend"
+    if _WORKTREE_SEED_FW.exists():
+        for _k in [k for k in sys.modules if k.startswith("noctusai_seed")]:
+            del sys.modules[_k]
+        if str(_WORKTREE_SEED_FW) not in sys.path:
+            sys.path.insert(0, str(_WORKTREE_SEED_FW))
+
     # Legacy per-module redirect kept for extract_mined (the original worktree
     # change) as a belt-and-suspenders check — it's now a no-op since the
     # evict+prepend above handles it, but keep to avoid regressions.
@@ -274,6 +284,21 @@ def _isolate_ledger_dev_copies(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_toolkit_freshness_state(monkeypatch):
+    """`toolkit_freshness` keeps its baseline + TTL-cached verdict in module globals, and
+    `_compute_verdict` LAZILY captures a baseline the first time any freshness-guarded tool
+    (migrate_product / release / deploy_image / task_branch ...) runs with none. Without a
+    per-test reset the first such test freezes a process-wide baseline mid-suite and a cached
+    verdict outlives it, so a later test sees `toolkit_stale` (or a refusal) depending on which
+    neighbour ran first -- an order-dependent red that vanishes in isolation. `monkeypatch`
+    restores all four on teardown (2026-11-14, test-isolation-flakes)."""
+    import tools.noctus.dev.toolkit_freshness as _tf
+
+    for attr, val in (("_baseline", None), ("_loaded_at", None), ("_cached_verdict", None), ("_cached_at", 0.0)):
+        monkeypatch.setattr(_tf, attr, val)
+
+
+@pytest.fixture(autouse=True)
 def _guard_release_default_runner_never_pushes(monkeypatch):
     """Sitewide safety net (F1, compliance review of release-no-freeze,
     2026-09-24): `release()` falls back to `release._default_run_local` —
@@ -327,6 +352,9 @@ def pglite():
 
     node_dir = _MCP_ROOT / "node"
     if shutil.which("node") is None or not (node_dir / "node_modules" / "@electric-sql" / "pglite").is_dir():
-        if os.environ.get("CI"):
-            pytest.fail("PGlite not installed in CI - the mcp job's `npm ci` in mcp/noctusai/node must provide it")
+        from noctusai_lib.testing.pglite import REQUIRE_REAL_PG_ENV, real_pg_required
+
+        if os.environ.get("CI") or real_pg_required():
+            pytest.fail(f"PGlite not installed ({'CI' if os.environ.get('CI') else REQUIRE_REAL_PG_ENV + '=1'}) - the mcp job's "
+                        f"`npm ci` in mcp/noctusai/node must provide it (node on PATH + {node_dir}/node_modules/@electric-sql/pglite)")
         pytest.skip("node + PGlite not installed (run `npm ci` in mcp/noctusai/node)")

@@ -221,3 +221,129 @@ async def test_fake_probe_reads_seeded_denials() -> None:
     assert (await fake.probe_write_permission("/lead"))["verdict"] == WRITE_PERMITTED
     with pytest.raises(VistaPermissionDenied):
         await fake.cadastrar_fotos_imovel("CA2830", {"f": "https://a/b.jpg"})
+
+
+# ─── Imóvel update: PUT /imoveis/detalhes (probe 2026-11-04, vista.md § 4.8) ──
+
+OBS = "Lote 1 Quadra 2\nMPM 0000\n\n10/10/26 Parceiro informa Venda SUSPENSA. (Ana)\n01/09/26 Ana informa alterações de valores. (Bia)"
+UPD = dict(motivo="proprietário confirmou o novo preço", autor="NoctusAI", canal="WhatsApp Julia", fonte="Proprietário",
+           conversa_url="https://sw.test/julia/conversas?contato=jc-1", rotulos={"ValorVenda": "valor de venda"})
+
+
+def _client_rw(seen: list[httpx.Request], *, obs: str = OBS, leitura: int = 200, escrita: int = 200) -> VistaClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.method == "GET":
+            body = json.dumps({"Codigo": "CA2830", "ValorVenda": "900000", "ObsVenda": obs})
+            return httpx.Response(leitura, text=body if leitura == 200 else "boom")
+        return httpx.Response(escrita, text="{}" if escrita == 200 else DENIED_401)
+
+    return VistaClient("https://t-rest.vistahost.com.br", KEY, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+
+
+@pytest.mark.asyncio
+async def test_atualizar_imovel_is_a_put_on_detalhes_that_carries_the_fields_and_the_note_in_the_same_call() -> None:
+    """`PUT /imoveis/detalhes?imovel=` (NOT `/imoveis/alterar`, 404) with `cadastro={"fields":…}`; ObsVenda gets our dated line
+    BEFORE the first dated line, the header untouched; the CURRENT field is read right before the write."""
+    seen: list[httpx.Request] = []
+    linha = await _client_rw(seen).atualizar_imovel("CA2830", {"ValorVenda": "850000"}, **UPD)
+    assert [r.method for r in seen] == ["GET", "PUT"]
+    put = seen[1]
+    assert put.url.path == "/imoveis/detalhes" and put.url.params["imovel"] == "CA2830"
+    fields = json.loads(put.url.params["cadastro"])["fields"]
+    assert fields["ValorVenda"] == "850000"
+    linhas = fields["ObsVenda"].split("\n")
+    assert linhas[:3] == ["Lote 1 Quadra 2", "MPM 0000", ""] and linhas[3] == linha and linhas[4].startswith("10/10/26")
+    assert linha.endswith("Conversa: https://sw.test/julia/conversas?contato=jc-1 (NoctusAI)")
+    assert "Proprietário informa via WhatsApp Julia: valor de venda 900000 → 850000. proprietário confirmou o novo preço." in linha
+    assert "\n" not in linha
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("motivo,autor", [("", "x"), ("   ", "x"), (None, "x"), ("porque sim", ""), ("porque sim", None)])
+async def test_atualizar_imovel_refuses_without_a_reason_and_an_author_before_any_call(motivo, autor) -> None:
+    seen: list[httpx.Request] = []
+    for client in (_client_rw(seen), FakeVistaClient()):
+        with pytest.raises(ValueError):
+            await client.atualizar_imovel("CA2830", {"ValorVenda": "1"}, motivo=motivo, autor=autor)
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_atualizar_imovel_refuses_an_empty_update() -> None:
+    for client in (_client_rw([]), FakeVistaClient()):
+        with pytest.raises(ValueError):
+            await client.atualizar_imovel("CA2830", {}, **UPD)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_read_of_the_current_note_writes_nothing() -> None:
+    seen: list[httpx.Request] = []
+    with pytest.raises(Exception):
+        await _client_rw(seen, leitura=500).atualizar_imovel("CA2830", {"ValorVenda": "1"}, **UPD)
+    # the shared Vista pacer retries a READ on 5xx (bounded), so there may be several GETs -- but never a PUT
+    assert seen and {r.method for r in seen} == {"GET"}
+    fake = FakeVistaClient(errors={"/imoveis/detalhes": VistaPermissionDenied(401, "{}", "/imoveis/detalhes")})
+    with pytest.raises(VistaPermissionDenied):
+        await fake.atualizar_imovel("CA2830", {"ValorVenda": "1"}, **UPD)
+    assert fake.updates == []
+
+
+@pytest.mark.asyncio
+async def test_atualizar_imovel_denied_never_leaks_the_key() -> None:
+    with pytest.raises(VistaPermissionDenied) as exc:
+        await _client_rw([], escrita=401).atualizar_imovel("CA2830", {"ValorVenda": "1"}, **UPD)
+    assert KEY not in str(exc.value) and KEY not in exc.value.body
+
+
+@pytest.mark.asyncio
+async def test_probe_put_on_detalhes_is_non_mutating_and_reads_the_2026_11_04_verdict() -> None:
+    """An empty PUT on a non-existent code: 'deve informar … cadastro' = permitted; no `cadastro` is ever sent."""
+    seen: list[httpx.Request] = []
+    row = await _client(401, MISSING_401, seen).probe_write_permission("/imoveis/detalhes", method="PUT", extra_params={"imovel": "ZZ0"})
+    assert row["verdict"] == WRITE_PERMITTED
+    (req,) = seen
+    assert req.method == "PUT" and "cadastro" not in req.url.params and req.content == b""
+    assert (await _client(401, DENIED_401).probe_write_permission("/imoveis/detalhes", method="PUT"))["verdict"] == WRITE_DENIED
+
+
+@pytest.mark.asyncio
+async def test_fake_client_records_the_update_with_the_note_and_raises_what_it_is_seeded_with() -> None:
+    fake = FakeVistaClient(responses={"/imoveis/detalhes": {"Codigo": "CA2830", "ObsVenda": OBS}})
+    linha = await fake.atualizar_imovel("CA2830", {"ValorVenda": 1}, **UPD)
+    [(cod, campos)] = fake.updates
+    assert cod == "CA2830" and campos["ValorVenda"] == 1 and linha in campos["ObsVenda"].split("\n")
+    denied = FakeVistaClient(responses={"/imoveis/detalhes": {"Codigo": "CA2830"}}, errors={"PUT /imoveis/detalhes": VistaPermissionDenied(401, "{}", "/imoveis/detalhes")})
+    with pytest.raises(VistaPermissionDenied):
+        await denied.atualizar_imovel("CA2830", {"ValorVenda": 1}, **UPD)
+    assert denied.updates == []
+
+
+@pytest.mark.asyncio
+async def test_the_edit_goes_through_the_shared_pacer_a_5xx_write_is_never_retried_a_429_is() -> None:
+    """The edit has no pacer of its own: it is `VistaClient._request`, so it inherits the shared `vista` bucket's policy (canon 4/5)
+    -- a 5xx on the PUT has an unknown outcome and is NOT retried; a 429 means it was not processed and IS retried after the hint."""
+    puts: list[httpx.Request] = []
+
+    def handler_5xx(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, text=json.dumps({"Codigo": "CA2830", "ValorVenda": "900000", "ObsVenda": OBS}))
+        puts.append(request)
+        return httpx.Response(503, text="down")
+
+    cliente = VistaClient("https://t-rest.vistahost.com.br", KEY, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler_5xx)))
+    with pytest.raises(Exception):
+        await cliente.atualizar_imovel("CA2830", {"ValorVenda": "1"}, **UPD)
+    assert len(puts) == 1  # exactly one PUT: never blind-retried
+
+    puts.clear()
+
+    def handler_429(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, text=json.dumps({"Codigo": "CA2830", "ValorVenda": "900000", "ObsVenda": OBS}))
+        puts.append(request)
+        return httpx.Response(429, headers={"Retry-After": "1"}, text="slow") if len(puts) == 1 else httpx.Response(200, text="{}")
+
+    cliente = VistaClient("https://t-rest.vistahost.com.br", KEY, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler_429)))
+    await cliente.atualizar_imovel("CA2830", {"ValorVenda": "1"}, **UPD)
+    assert len(puts) == 2

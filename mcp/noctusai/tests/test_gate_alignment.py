@@ -109,6 +109,14 @@ class TestTelemetryAndWalls:
         assert [r["outcome"] for r in rows] == ["deny", "pass"]
         assert rows[0]["guard"] == "keeper:check-foo" and rows[0]["target"] == "a.py,b.py" and rows[0]["kind"] == "keeper"
 
+    def test_advisory_invocation_logs_warn_not_deny(self, tmp_path, monkeypatch):
+        log = tmp_path / "ev.ndjson"
+        monkeypatch.setenv("NOCTUS_GUARD_EVENT_LOG", str(log))
+        monkeypatch.setenv("NOC_GATE_ADVISORY", "1")
+        ga.record_cli_exit(["--check-foo"], 1)
+        ga.record_cli_exit(["--check-foo"], 0)
+        assert [json.loads(l)["outcome"] for l in log.read_text().splitlines()] == ["warn", "pass"]
+
     def test_effective_false_positive_is_a_refusal_never_followed_by_a_pass(self):
         ev = [{"gate": "g", "outcome": "deny", "ts": "1", "session": "s1", "target": "a"},
               {"gate": "g", "outcome": "pass", "ts": "2", "session": "s1", "target": "a"},
@@ -217,3 +225,130 @@ class TestCliTelemetryWrapper:
                            capture_output=True, text=True, env=env, cwd=REAL_ROOT, timeout=300)
         rows = [json.loads(l) for l in log.read_text().splitlines()]
         assert r.returncode == 0 and rows[-1]["guard"] == "keeper:check-gate-triad" and rows[-1]["outcome"] == "pass"
+
+
+class TestRefusalClasses:
+    """Refusals are counted by CLASS, so the same wall is one thing across sessions (2026-11-14)."""
+
+    def _ev(self, key, days_ago, session, now):
+        import datetime as dt
+        ts = (now - dt.timedelta(days=days_ago)).isoformat(timespec="seconds")
+        return {"gate": "g", "outcome": "deny", "ts": ts, "session": session, "class": key}
+
+    def test_class_key_is_stable_and_drops_volatile_tokens(self):
+        a = ga.refusal_class("deliverable", "head_pushed_clean", "stale-request-head")
+        assert a == "deliverable:head_pushed_clean:stale-request-head"
+        assert ga.refusal_class("deliverable", "derived_current", "kb-counts 12 files abc1234def") == \
+            "deliverable:derived_current:kb-counts-files"
+        assert ga.refusal_class("mq", "eject", "conflict:products/*/x") == "mq:eject:conflict:products/*/x"
+        assert ga.refusal_class("guard", "primary-write", "") == "guard:primary-write"
+
+    def test_recurrence_counts_window_sessions_and_open_fix(self, tmp_path):
+        import datetime as dt
+        now = dt.datetime.now(dt.timezone.utc)
+        k = "deliverable:derived_current:kb-counts"
+        evs = [self._ev(k, 1, "s1", now), self._ev(k, 2, "s2", now), self._ev(k, 3, "s2", now),
+               self._ev(k, 20, "s9", now), self._ev("other", 1, "s1", now)]
+        (r,) = ga.refusal_recurrence([k], root=tmp_path, events=evs)
+        assert r == {"class": k, "n_14d": 3, "sessions": 2, "open_fix": None}
+
+    def test_open_fix_from_a_remediation_marker(self, tmp_path):
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        k = "mq:eject:conflict:docs"
+        (tmp_path / "x.py").write_text(f"# NOC-REMEDIATE[{k}]: derive it - 2026-11-14\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+        (r,) = ga.refusal_recurrence([k], root=tmp_path, events=[])
+        assert r["open_fix"] == "marker:x.py"
+
+    def test_unowned_needs_n3_and_no_fix(self, tmp_path):
+        import datetime as dt
+        now = dt.datetime.now(dt.timezone.utc)
+        evs = [self._ev("a", i, f"s{i}", now) for i in range(1, 4)] + [self._ev("b", 1, "s", now)]
+        assert [r["class"] for r in ga.unowned_classes(tmp_path, events=evs)] == ["a"]
+
+    def test_trend_compares_this_week_with_last(self):
+        import datetime as dt
+        now = dt.datetime.now(dt.timezone.utc)
+        evs = [self._ev("a", 1, "s", now), self._ev("a", 2, "s", now), self._ev("a", 9, "s", now),
+               self._ev("b", 10, "s", now)]
+        t = ga.trend(events=evs, now=now)
+        assert (t["this_total"], t["last_total"]) == (2, 2)
+        assert t["classes"][0] == {"class": "a", "this": 2, "last": 1, "delta": 1}
+
+    def test_gate_quiet(self):
+        import datetime as dt
+        now = dt.datetime.now(dt.timezone.utc)
+        assert ga.gate_quiet("a", 7, events=[self._ev("a", 9, "s", now)], now=now)
+        assert not ga.gate_quiet("a", 7, events=[self._ev("a", 2, "s", now)], now=now)
+
+    def test_cli_exit_deny_names_stage_and_first_finding(self, tmp_path, monkeypatch):
+        log = tmp_path / "ev.ndjson"
+        monkeypatch.setenv("NOCTUS_GUARD_EVENT_LOG", str(log))
+        monkeypatch.setenv("NOC_HOOK_STAGE", "pre-push")
+        out = "  \x1b[91m[high]\x1b[0m products/x/a.py:3 — Missing created_at on table 42\n"
+        ga.record_cli_exit(["--check-foo"], 1, finding=ga.first_finding_code(out))
+        row = json.loads(log.read_text().splitlines()[0])
+        assert row["reason"] == "stage=pre-push code=missing-created_at-on-table"
+        assert row["target"] == "stage:pre-push"
+        assert row["class"] == ga.refusal_class("keeper:check-foo", "pre-push", "missing-created_at-on-table")
+        assert ga.event_class({k: v for k, v in row.items() if k != "class"} | {"gate": row["guard"]}) == row["class"]
+
+    def test_tee_captures_first_finding_without_altering_output(self, monkeypatch, capsys):
+        monkeypatch.setattr(ga, "_first_finding", [])
+        monkeypatch.setattr(sys, "argv", ["cli.py", "--check-foo"])
+        monkeypatch.setattr(sys, "stdout", sys.stdout)
+        ga.capture_first_finding()
+        print("    [high] f.py — Bad thing here")
+        sys.stdout = sys.stdout._inner
+        assert ga._first_finding == ["bad-thing-here"]
+        assert "Bad thing here" in capsys.readouterr().out
+
+
+class TestUnownedKeeper:
+    def test_warns_on_unowned_recurring_class_and_is_clean_otherwise(self, tmp_path):
+        import datetime as dt
+        now = dt.datetime.now(dt.timezone.utc)
+        mk = lambda i: {"gate": "g", "outcome": "deny", "ts": (now - dt.timedelta(days=i)).isoformat(), "session": f"s{i}", "class": "g:x"}
+        issues = compliance.check_refusal_classes_owned(repo_root=tmp_path, events=[mk(1), mk(2), mk(3)])
+        assert [i["severity"] for i in issues] == ["warning"] and "g:x" in issues[0]["issue"]
+        assert compliance.check_refusal_classes_owned(repo_root=tmp_path, events=[mk(1), mk(2)]) == []
+
+
+class TestScaffoldKeeperOutputPassesItsOwnTriad:
+    """NOC-REMEDIATE[scaffold-keeper-triad-prefix] closed: the scaffold's own declare command used to omit the source
+    and the decision-matrix row, so the triad refused the output of the tool that exists to satisfy it."""
+
+    def _scaffold(self):
+        from tools.noctus.dev.scaffold_keeper import scaffold_keeper
+        return scaffold_keeper("files_xyz", "xyz", mechanism="scaffold: noctus.dev.scaffold_keeper",
+                               owner="tooling-engineer", source="KB § PATTERNS/common/gate-methodology-sync.md")
+
+    def test_unedited_scaffold_declaration_satisfies_the_triad(self, tmp_path):
+        out = self._scaffold()
+        root = _tree(tmp_path, {"gates": {}, "decisions": []}, hook_flags=("check-xyz",))
+        assert any("not declared" in i["issue"] for i in ga.triad_issues(root))  # the premise: red before declaring
+        args = dict(out["declare_args"])
+        res = ga.run_action(args.pop("action"), gate=args["gate"], mechanism=args["mechanism"], owner=args["owner"],
+                            placement=args["placement"], source=args["source"], decision=args["decision"],
+                            branch=args["branch"], root=root)
+        assert res["ok"] and res["decision_row"]["gates"] == ["keeper:check-xyz"]
+        assert ga.triad_issues(root) == []
+
+    def test_declare_command_carries_every_leg_the_triad_checks(self):
+        import shlex
+        toks = shlex.split(self._scaffold()["declare_command"])
+        for flag in ("--gate", "--mechanism", "--owner", "--gate-source", "--decision"):
+            assert flag in toks
+        assert toks[toks.index("--mechanism") + 1].startswith(ga.MECHANISM_PREFIXES)
+
+    def test_without_source_or_decision_the_triad_still_refuses(self, tmp_path):
+        root = _tree(tmp_path, {"gates": {}, "decisions": []}, hook_flags=("check-xyz",))
+        ga.declare_gate("keeper:check-xyz", "scaffold: t", "tooling-engineer", root=root)
+        msgs = " ".join(i["issue"] for i in ga.triad_issues(root))
+        assert "cites no `source`" in msgs and "no decision-matrix row" in msgs
+
+    def test_declare_decision_is_idempotent(self, tmp_path):
+        root = _tree(tmp_path, {"gates": {}, "decisions": []}, hook_flags=("check-xyz",))
+        for _ in range(2):
+            ga.declare_gate("keeper:check-xyz", "scaffold: t", "o", source="KB § x", decision="d", root=root)
+        assert len(json.loads((root / ga.INVENTORY_REL).read_text())["decisions"]) == 1

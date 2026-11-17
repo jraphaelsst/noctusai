@@ -207,6 +207,40 @@ def paths_aware_keeper_flags() -> list[str]:
         if reads_paths:
             flags.update("--" + a.replace("_", "-") for a in tested)
     return sorted(flags)
+class _DidYouMeanParser(argparse.ArgumentParser):
+    """ArgumentParser whose usage error names the closest real flag(s) instead of only echoing the typo
+    (an unknown / abbreviated `--flag` is the commonest agent slip; allow_abbrev=False refuses prefixes)."""
+
+    def error(self, message: str):
+        import difflib
+        import re as _re
+        m = _re.search(r"unrecognized arguments?: (.+)$", message)
+        hints: list[str] = []
+        if m:
+            known = [o for a in self._actions for o in a.option_strings if o.startswith("--")]
+            for bad in m.group(1).split():
+                if not bad.startswith("--"):
+                    continue
+                name = bad.split("=", 1)[0]
+                close = difflib.get_close_matches(name, known, n=3, cutoff=0.6)
+                close += [k for k in known if k.startswith(name) and k not in close][:3]
+                if close:
+                    hints.append(f"{name}: did you mean {' or '.join(close[:3])}?")
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\n" + "".join(h + "\n" for h in hints))
+
+
+def _task_branch_score_arg(raw: "str | None") -> "dict | None":
+    """`--task-branch-score` JSON -> the score dict; a malformed value is a loud error, never dropped."""
+    if raw is None:
+        return None
+    try:
+        val = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"--task-branch-score must be a JSON object: {exc}")
+    if not isinstance(val, dict):
+        raise SystemExit("--task-branch-score must be a JSON object")
+    return val
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -218,7 +252,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser, never two definitions to keep in sync."""
     # allow_abbrev=False: an unambiguous prefix (`--deploy-image-conf`) used to run as the full flag and slip past the
     # release-steward CLI gates, which match exact flags (2026-11-10).
-    parser = argparse.ArgumentParser(description="NoctusAI — platform dev toolkit", allow_abbrev=False)
+    parser = _DidYouMeanParser(description="NoctusAI — platform dev toolkit", allow_abbrev=False)
     parser.add_argument("--validate", action="store_true", help="Check seed compliance")
     parser.add_argument("--check-phase-state", action="store_true", help="Check §6 ↔ §11 phase-state consistency across PROJECT.md files. Exits 1 on any high-severity issue. Used by the pre-commit hook to block commits that ship mismatch.")
     parser.add_argument("--refs", metavar="PATTERN", help="Find every reference to PATTERN (literal string) across CLAUDE.md / KB / projects / mcp / seed / products. Replaces the manual `grep -rln` ritual.")
@@ -315,13 +349,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-migration-applied-ledger-drift", action="store_true", help="Keeper (pre-push, DB round-trip, warning-only): per product, migration files on disk MINUS rows recorded in <real schema>.schema_migrations, intersected with names present in supabase_migrations.schema_migrations — the set applied through a path that never recorded it (the 2026-09 erp-imobiliario/personal-finance/therapy-platform phantom-schema incident, and any future gap of the same shape, e.g. the Supabase Management API's apply_migration path). Requires a resolvable supabase_access_token; when none resolves this SKIPS loudly (prints SKIPPED, never reads as a pass) rather than returning a silent empty result. MCP keeper check_migration_applied_ledger_drift.")
     parser.add_argument("--check-storage-bucket-public", action="store_true", help="Keeper (severity critical, NO allowlist / suppression marker / accept-with-rationale escape hatch — owner directive 2026-09-17): flags any path to a public Supabase Storage bucket. Leg A — a migration's `INSERT INTO storage.buckets` / `UPDATE storage.buckets SET public = true`. Leg B — any `get_public_url(` / `getPublicUrl(` call site (only makes sense against a public bucket; must be zero platform-wide). Leg C — a runtime `create_bucket(...)` passing `public=True`. Leg D (check_storage_service_only_policy) — a service-only organ bucket (`finance-attachments`) whose migration chain still ends with a `storage.objects` policy TO authenticated/anon/PUBLIC. THE INCIDENT: erp-certidoes (102 CPF-bearing objects) + erp-geral were public, and the /object/public/{bucket}/{path} route bypasses storage.objects RLS entirely — 17 policies gave zero protection. The sanctioned alternative (named in every finding) is a short-TTL signed URL minted at read time — StorageService.get_signed_url / noctusai_lib.integrations.storage. MCP keeper check_storage_bucket_public. KB § PATTERNS/backend/database-rls.md § Storage buckets — never public.")
     parser.add_argument("--check-db-guard-registry-static", action="store_true", help="Keeper (2026-11-05): offline invariants of verify_db_guards DEFAULT_REGISTRY - unique ids, every probe migration file exists, a recognised sentinel, rollback-wrapped SQL is BEGIN;/one DO block/ROLLBACK;. Sub-second; pre-commit runs it when verify_db_guards.py or a migration is staged. Severity high.")
-    parser.add_argument("--gate-alignment", nargs="?", const="walls", default=None, metavar="ACTION", help="Gate alignment (build triad: construction + backstop gate + telemetry; KB § PATTERNS/common/gate-methodology-sync.md). ACTION = walls (default: rank gates firing in normal flow + effective false-positive rate; add --file-walls to hand them to the findings feed) | triad (run the meta-gate) | sources (report-only: changed KB docs with no sources section) | matrix (decision coverage) | declare (--gate G --mechanism M --owner O [--placement blocking|warn|report]) | render | refresh-baseline. Also exposed as MCP noctus.dev.gate_alignment.")
+    parser.add_argument("--gate-alignment", nargs="?", const="walls", default=None, metavar="ACTION", help="Gate alignment (build triad: construction + backstop gate + telemetry; KB § PATTERNS/common/gate-methodology-sync.md). ACTION = walls (default: rank gates firing in normal flow + effective false-positive rate; add --file-walls to hand them to the findings feed) | triad (run the meta-gate) | sources (report-only: changed KB docs with no sources section) | matrix (decision coverage) | declare (--gate G --mechanism M --owner O [--placement blocking|warn|report]) | render | refresh-baseline | trend (refusals this week vs last, by class) | refusals (recurrence by class; --file-walls upserts one auto-improvement row per class). Also exposed as MCP noctus.dev.gate_alignment.")
     parser.add_argument("--file-walls", action="store_true", help="With --gate-alignment walls: append SARIF-shaped wall findings to the ledger feed.")
     parser.add_argument("--gate", default=None, help="With --gate-alignment declare: the gate id (keeper:check-x | guard:x | ci:x).")
     parser.add_argument("--mechanism", default=None, help="With --gate-alignment declare: pointer to the construction leg, or 'none (reason)'.")
     parser.add_argument("--owner", default=None, help="With --gate-alignment declare: the agent/file that owns the gate.")
+    parser.add_argument("--gate-source", default="", help="With --gate-alignment declare: the standard/rule read BEFORE codifying (a NEW gate must cite it).")
+    parser.add_argument("--decision", default="", help="With --gate-alignment declare: one-line rule the gate serves; appends its decision-matrix row (a NEW gate needs one).")
+    parser.add_argument("--decision-branch", default="", help="With --gate-alignment declare --decision: the row's owning branch (default pending:<gate>).")
     parser.add_argument("--existing", action="store_true", help="With --gate-alignment declare: the gate already lives on dev (landed by another branch): declare its row without the new-gate shadow/source/matrix requirements.")
     parser.add_argument("--placement", default="warn", help="With --gate-alignment declare: blocking|warn|report (new gates start warn = shadow).")
+    parser.add_argument("--check-refusal-classes-owned", action="store_true", help="Keeper (WARN-first shadow): a refusal class that fired >=3 times in 14 days with no open fix (pointer / in-progress gate-walls row / NOC-REMEDIATE[<class>]) is a recurring mistake nobody owns. Reads the machine-local gate event log. Fix: `--gate-alignment refusals`. KB § PATTERNS/common/gate-methodology-sync.md.")
     parser.add_argument("--check-gate-triad", action="store_true", help="Meta-gate (build triad, 2026-11-05): every wired gate is declared in the gate inventory with a construction mechanism (or 'none (reason)') and an owner, every decision-matrix row has its legs, and every gate maps to a row. Legacy gates without a mechanism sit in a SHRINK-ONLY baseline. Severity high. Fix: `--gate-alignment declare ...`. KB § PATTERNS/common/gate-methodology-sync.md.")
     parser.add_argument("--check-new-dependency-justified", action="store_true", help="Keeper (measured comparison, 2026-11-05, WARN-first shadow): a NEW dependency added to a package.json/requirements file needs a COMPARISON RECORD (job, in-repo alternative, >=2 numeric metrics, decision) in mcp/noctusai/dependency-additions.json - the gate checks the record, never whether the tool is standard. `--paths` = staged files. Severity medium. KB § PATTERNS/common/gate-methodology-sync.md.")
     parser.add_argument("--check-migration-guard-has-probe", action="store_true", help="Keeper (gate↔methodology-sync backstop for noctus.dev.verify_db_guards, 2026-09-18): a migration that defines a genuine guard (a trigger function that RAISE EXCEPTIONs, a named CHECK/UNIQUE constraint) must have a corresponding GuardProbe registered — otherwise the guard is 'structurally verified' only, the exact class of bug verify_db_guards exists to catch. Statement-scoped detection (noctusai_lib.testing.migration_parser's dollar-quote/string-aware statement walker, not a naive grep) — ignores comments/string literals and a passive updated_at-style trigger (no RAISE, refuses nothing). `--paths` (staged-files idiom, same as --check-storage-bucket-public) scopes to migrations actually touched in this commit — diff-scoped, never a full-corpus retroactive sweep, so it is forward-looking only. Co-located allowlist `_GUARD_PROBE_ALLOWLIST` in compliance.py for a guard that genuinely cannot be probed (e.g. RLS, which this tool's Management-API SqlExecutor structurally bypasses). Severity high. MCP keeper check_migration_guard_has_probe.")
@@ -351,9 +389,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-private-accent-fold", action="store_true", help="Keeper: no private unicodedata NFKD/NFD accent fold outside noctusai_lib.primitives.accents. Severity high; blocking.")
     parser.add_argument("--check-org-role-without-org-id", action="store_true", help="Keeper (B3): resolve_org_role/is_org_admin/require_org_admin_role called without org_id= decide admin in the HOME org, not the request's selected org. Severity high; blocking.")
     parser.add_argument("--check-no-metadata-authz", action="store_true", help="Keeper: user_metadata org_id/role/org_role is USER-WRITABLE — forbid backend reads of it for authorization/scoping (trusted source: public.noctus_users). Severity high; blocking.")
+    parser.add_argument("--check-polling-request-budget", action="store_true", help="Keeper (2026-11-10, Supabase egress incident: ~620k REST calls/day polling an EMPTY queue): every forever-loop declares what it costs per day. R1 a `while` that sleeps/timed-waits, R2 a periodic registration (seed scheduler register(hours|minutes|seconds), add_job interval, Worker/poll_interval_seconds), R4 TS refetchInterval/setInterval need `# poll-budget: <cadence>; <k> calls/tick; worst <N>/day; idle=<backoff|event|fixed>` (`//` in TS, with `hidden=<paused|runs>`) within 3 lines; the declaration is valid only with a `<N>/day` figure. R3 a `.select(\"*\")` / `.limit(>1000)` in a tick/gate/stats/loop function is a finding even when declared (count or name columns; escape `# poll-budget-ok: <why>`). AST only (ast + ts-morph). Severity high; blocking; no baseline. --paths scopes to staged files. KB § PATTERNS/backend/polling-request-budget.md.")
     parser.add_argument("--check-card-hub-service-only", action="store_true", help="Keeper: a seed card_hub table holds no authenticated/anon privilege at the end of its product's migration chain (service-only by construction; security triage 2026-11-07). Severity critical; blocking. --paths limits it to the tables the staged migrations touch.")
     parser.add_argument("--check-no-authenticated-grant-on-content-tables", action="store_true", help="Keeper: an agents migration (>= 036) must not GRANT SELECT or CREATE POLICY TO authenticated/anon on a table outside the browser-readable allowlist (the agents schema is PostgREST-exposed; security finding C2). Severity critical; blocking.")
     parser.add_argument("--check-secdef-migration-revokes-execute", action="store_true", help="Keeper: a migration creating a SECURITY DEFINER function must REVOKE EXECUTE FROM PUBLIC/anon/authenticated in the same file (static twin of the verify_db_guards secdef probe). Legacy files baselined. Severity high; blocking.")
+    parser.add_argument("--check-transition-log-hand-written", action="store_true", help="Keeper: a NEW migration may not hand-write transition history (a from/to state column pair, or a BEFORE UPDATE OR DELETE trigger on a history-named table); render it with noctusai_lib.domain.transition_log.transition_log_migration. Legacy copies baselined (transition_log_hand_written_baseline.json, shrink-only); reasoned non-fit: `-- transition-log-ok: <table> <reason>`. Severity high; shadow (warn) in pre-commit. KB § PATTERNS/backend/transition-log.md.")
     parser.add_argument("--check-guc-carveout-guard-hand-written", action="store_true", help="Keeper: a NEW migration may not hand-write a trigger function that gates a table mutation on a transaction-local flag (current_setting('<ns>.<flag>', true) = 'on'); render it with noctusai_lib.domain.sql_templates.guc_carveout_guard_sql (marker comment accepted). Six legacy copies baselined (guc_carveout_guard_baseline.json). Severity high; blocking. KB § PATTERNS/backend/database-rls.md.")
     parser.add_argument("--check-migration-untyped-empty-array", action="store_true", help="Keeper: untyped empty `ARRAY[]` (no ::type) in migration SQL fails on apply with 42P18. Severity high; blocking.")
     parser.add_argument("--check-postgrest-unbounded-query", action="store_true", help="Keeper: PostgREST silently caps ANY select at `db-max-rows` (Supabase default 1 000) — no error, no warning, `response.data` just comes back short. SEVEN instances shipped to production in one session (2026-08-13/14): portal-roi reported 1 000 leads instead of 13 255, a backfill silently repointed 1 000 of 1 365 negociações, a review queue dropped 177 of 1 177 rows. A second shape: `.in_(col, values)` rides in the URL query string, so an unbatched ~1 000-item collection is a bare 400 (\"JSON could not be generated\") with no hint about length. Flags a `.select(...).execute()` chain with no `.range()`/`.single()`/`.maybe_single()`/in-cap-`.limit()`/PK-`.eq(\"id\",...)` on it (severity `info` — risk is a function of a row count this keeper cannot see), and an `.in_()` fed a collection with no provable bound and no `_batched`-style loop (severity `warning` — structurally risky regardless of table cardinality, and the shape that actually took `/clientes/revisao` down). Deliberately heuristic (no table-cardinality knowledge) — non-blocking at either tier, observe-first (promote the `.in_()`-shape to blocking once a fleet sweep shows its false-positive rate is low). Escape hatch: `postgrest-unbounded-ok: <why>` comment (must state a reason, not just cite the keeper). KB § PATTERNS/backend/postgrest-row-cap.md.")
@@ -369,6 +409,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-motion-import-boundary", action="store_true", help="Keeper: Motion (`motion`/`motion/*`/`framer-motion`) may be imported ONLY via `@noctusai/lib/marketing` — never in products/*/frontend/src, templates/product-seed/frontend/src, or seed/lib/frontend/src outside marketing/. ts-morph AST scan, active products only. Escape: `// noc-allow: motion-import — why`. Severity high. KB § PATTERNS/frontend/marketing-organs-and-motion.md.")
     parser.add_argument("--check-tailwind-v4-class-names", action="store_true", help="Keeper (2026-11-09, Tailwind 4 + lucide 1.x): no v3-only names that changed what they render (`shadow-sm` -> use `shadow-xs`, `outline-none` -> use `outline-hidden`) and no `Facebook`/`Instagram`/`Youtube` import from lucide-react (gone in 1.x; use @noctusai/lib/brand-icons) in seed/lib, seed/framework and ACTIVE products' frontend/src. Comment lines skipped. Escape: `noc-allow: tailwind-v3-class — why` on the line. WARN-first shadow. Severity high. KB § PATTERNS/frontend/frontend.md.")
     parser.add_argument("--check-worker-idle-polling", action="store_true", help="Keeper: a job worker's idle poll is a per-tick RPC. Refuses Worker(max_idle_interval_seconds < 120 or == poll_interval), DEFAULT_MAX_IDLE_INTERVAL_SECONDS < 300, a fixed short sleep or an unbounded .select( inside run_forever / claim_gate*. Prod saw 56k claim_next_job/24h at a 30s cap (W1-C 2026-11-12). Escape: `# poll-ok: <reason>`. Severity high. KB § PATTERNS/backend/polling-request-budget.md.")
+    parser.add_argument("--check-supply-chain-pin", action="store_true", help="Keeper: every third-party GitHub Action is pinned to a full commit SHA and every prod-surface compose image (deploy/{fleet,services,legacy,tunnel}) to a digest or an x.y[.z] version tag - never :latest / a bare major / no tag (tj-actions 2025, trivy-action 2026-03: a mutable tag is a re-pointable supply chain). Escape for images: `# pin-ok: <reason>`. Severity high. KB § PATTERNS/devops/ci-security-gates.md.")
     parser.add_argument("--check-override-is-range", action="store_true", help="Keeper: every npm `overrides` entry must be a RANGE (^/~/>=), never an exact version. An exact override wins over every peer range and direct dep, can never be upgraded by npm install, and is invisible in the dependency list — while adding NO reproducibility, because package-lock.json already pins the resolution for npm ci. The seed copies overrides into 12 products, so one pin freezes the fleet (postcss, ws, react-router, 2026-08-11). Opt-out: a `pin-ok`/`deliberate-freeze` rationale comment. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-hardcoded-product-slug-set", action="store_true", help="Keeper: a literal collection of >=3 live product slugs (seed/lib/backend/tests/*.py, AST) or a hardcoded bash array (scripts/infra/*.sh, e.g. `ALL_SLUGS=(...)`) must derive from parse_products_registry() / the live fleet compose file instead — a frozen literal goes stale the moment the fleet changes (product added/removed/consolidated/never-deployed) and can silently misattribute failures OR abort an entire build. Opt-out: a `slug-literal-ok`/`registry-exempt`/`not-a-product-set` rationale comment. Severity warning. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-product-lockfile-dep-sync", action="store_true", help="Keeper: a product's package-lock.json must carry a `node_modules/<dep>` entry for every dep its package.json declares (FRAMEWORK_DEPS + the live seed-organ transitive-dep scan) — a stale lockfile snapshot passes `check_framework_deps` (package.json declaration) yet still breaks a clean `npm ci` (Rollup/Vite import-resolution failure), invisible in dev where an already-populated node_modules masks the gap. N=3 in one week: @dnd-kit, recharts/@radix-ui-react-tabs, the ALL_SLUGS sibling. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
@@ -393,12 +434,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-doc-staleness", action="store_true", help="Keeper (CI + pre-push): deterministic doc-staleness gate. With --doc-range BASE..TIP: change-coupling (covered code changed materially, covering docs untouched; ack via `Docs-Reviewed: <doc> — <reason>` trailer). Without: claim checks over every living doc (cited paths exist; 'scaffold only / nothing implemented / NOT applied' vs the code) judged against the shrink-only ratchet mcp/noctusai/tests/doc_staleness_baseline.json, plus age warnings. Severity high. KB § PATTERNS/common/doc-staleness-gate.md.")
     parser.add_argument("--doc-range", metavar="BASE..TIP", default=None, help="With --check-doc-staleness: run the change-coupling leg over this range.")
     parser.add_argument("--doc-staged", action="store_true", help="With --check-doc-staleness: the COMMIT leg -- coupling over the STAGED diff (code a doc covers staged materially without that doc staged). With --commit-msg-file the `Docs-Reviewed:` trailers are honoured (commit-msg hook, blocking); without it (pre-commit) the fix-list is printed as an early heads-up.")
+    parser.add_argument("--write-doc-coverage-cache", action="store_true", help="Rebuild .claude/cache/doc-coverage.json ({living doc: covered code globs}) that the PostToolUse hook claude-inject-doc-coverage.py reads at edit time. Honours --worktree-path. KB § PATTERNS/common/doc-staleness-gate.md.")
     parser.add_argument("--doc-baseline", choices=["init", "shrink"], default=None, help="With --check-doc-staleness: rewrite the ratchet (init = first snapshot; shrink = drop fixed entries; never grows).")
     parser.add_argument("--doc-suggest", action="store_true", help="With --check-doc-staleness: print the exact docs to update and the claims that are false.")
     parser.add_argument("--commit-msg-file", default=None, help="With --check-product-guide-cochange / --check-lgpd-entry-removal: path of the commit message file (so the Guide-Unaffected / LGPD-Entry-Removed trailer escape hatch can be read).")
     parser.add_argument("--check-lgpd-entry-removal", action="store_true", help="Keeper (commit-msg stage, over the STAGED LGPD-WARNINGS.md vs HEAD; merge-aware): a commit must not REMOVE an unresolved `- [ ]` entry (identity = the concern+path pair; ticking `- [x]`, in-place edits and additions are fine; changing the concern/path text reads as remove+add). Override: a `LGPD-Entry-Removed: <concern or path prefix> \u2014 <reason>` trailer (read from --commit-msg-file; reason mandatory). With --lgpd-range BASE..TIP it runs the CI leg instead: every commit of the range vs its parent with its OWN message. Severity high. Born from the 2026-10-10 loss of an unresolved entry in a conflict resolution. KB § PATTERNS/common/lgpd-entry-keeper.md.")
     parser.add_argument("--lgpd-range", metavar="BASE..TIP", default=None, help="With --check-lgpd-entry-removal: check each commit of this range against its parent (CI leg).")
     parser.add_argument("--merge-gate-inventory", nargs=3, metavar=("BASE", "OURS", "THEIRS"), default=None, help="3-way merge of gate-alignment-inventory.json (pure: reads the three files, writes ONLY --out). gates = union (a key changed differently on both sides conflicts), decisions = ours + theirs' new entries (renumbered past max on id collision, duplicates dropped), output sorted + byte-stable. Exit 0 clean, 10 conflicted (ours kept in --out), 2 usage/IO error. Shell half: scripts/hooks/merge-gate-inventory.sh (merge driver `gate-inventory`). KB § PATTERNS/common/auto-generated-merge-drivers.md.")
+    parser.add_argument("--merge-ledger-render", nargs=4, metavar=("PATH", "BASE", "OURS", "THEIRS"), default=None, help="Merge a GENERATED render (project-history/*/FINDINGS.md, gate-alignment-inventory.md) by regenerating it from its source (ndjson ledger / inventory JSON, recovered from the render blobs). Pure: writes ONLY --out. Exit 0 rendered, 10 not derivable here (caller falls back to the plain 3-way merge), 2 usage/IO error. Shell half: scripts/hooks/merge-ledger-render.sh (merge driver `ledger-render`). KB § PATTERNS/common/auto-generated-merge-drivers.md.")
     parser.add_argument("--merge-lgpd-warnings", nargs=3, metavar=("BASE", "OURS", "THEIRS"), default=None, help="Entry-aware 3-way merge of LGPD-WARNINGS.md (pure: reads the three files, writes ONLY --out). Exit 0 clean, 10 conflicted (markers around just the conflicting block in --out), 2 usage/IO error. The shell half is scripts/hooks/merge-lgpd-warnings.sh (git merge driver `lgpd-warnings`). KB § PATTERNS/common/auto-generated-merge-drivers.md.")
     parser.add_argument("--check-llm-prompt-from-registry", action="store_true", help="Keeper (WARN-first shadow since 2026-11-08, never blocks): every call through the seed LLM seam (chat_completion*, chat_with_tools, run_tool_loop*, analyze_image*, digest.narrative, create_help_chat_router) or a vendor SDK (messages.create, chat.completions.create, responses.create, images.edit, ClaudeSDKClient) NOT fed by noctusai_lib.integrations.prompt_registry, plus prompt-shaped constants and repo .md files loaded as a system prompt. Owner rule: agent prompts come 100%% from the database, never from code. AST-based; shrink-only ratchet baseline mcp/noctusai/tests/llm_prompt_from_registry_baseline.json (only a NEW file or a GROWN count is flagged). `--paths` narrows reporting; --llm-prompt-log files one auto-improvement drift row per flagged file; --llm-prompt-replay lists every site ignoring the baseline (false-alarm research). KB § PATTERNS/ai/prompts-from-registry.md.")
     parser.add_argument("--refresh-llm-prompt-from-registry-baseline", action="store_true", help="Write/SHRINK the --check-llm-prompt-from-registry ratchet baseline (first run records current sites; afterwards min(current, recorded); vanished files drop out; never adds).")
@@ -432,7 +475,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-ledger-drain-after-settle", action="store_true", help="Keeper (pre-push HARD-BLOCK): every append-only project-history ledger written during a task_branch run must have a stage that SHIPS it — the drain leg must exist in BOTH the integrate and cleanup result paths AND run AFTER cache_settle. Closes the 4+-incident stranded-ledger-row recurrence. Severity high. KB § PATTERNS/common/self-branching-mode.md.")
     parser.add_argument("--check-engineer-slice-scored", action="store_true", help="Backstop for the task_branch integrate slice-score gate: landed engineer slices (branch-tree pointer) with no slice-scores.ndjson row. Blocks only on this session's own pointers. KB § CONTEXT/PATTERNS/common/dispatch-token-log.md.")
     parser.add_argument("--check-guard-hooks-registered", action="store_true", help="Every scripts/hooks/claude-guard-*.py must be referenced by a hook entry in .claude/settings.json (unregistered guard = silent no-op).")
-    parser.add_argument("--check-stale-branch-pointers", action="store_true", help="Safety net (pre-push) behind the task_branch pointer lifecycle: on_going/integrated-worktree-live pointers whose branch landed on origin/dev and whose worktree is gone. Blocks only on pointers owned by this session (CLAUDE_CODE_SESSION_ID); others are warnings. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3.")
+    parser.add_argument("--check-stale-branch-pointers", action="store_true", help="Safety net (pre-push) behind the task_branch pointer lifecycle: on_going/integrated-worktree-live pointers whose branch landed on origin/dev and whose worktree is gone. A provably landed pointer is HEALED to shipped (not reported); a failed heal blocks only on pointers owned by this session (CLAUDE_CODE_SESSION_ID), others are warnings. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3.")
+    parser.add_argument("--ensure-branch-pointer", metavar="BRANCH", help="Pre-push construction leg of the branch-tree mirror keeper: write (no pointer) or refresh (>24h behind the tip, terminal status, unresolvable commit) the pointer of BRANCH through the branch_pointer writer; a fresh pointer is a no-op. Exit 1, naming why, when the pointer cannot be written - the keeper then blocks. Judges the tree of --worktree-path. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §5.")
     parser.add_argument("--check-branch-tree-mirror", metavar="BRANCH", nargs="?", const="__all__", help="Keeper (pre-push HARD-BLOCK): for the given branch (or all non-terminal branches when omitted) verify the branch-tree mirror — pointer exists + non-stale + git↔claude mirror intact + valid status + no shipped-but-ahead contradiction. Severity high. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §5.")
     parser.add_argument("--check-dangling-remote-branches", action="store_true", help="Keeper: flag origin/* branches with unique content older than 7 days. Squash-aware (git-cherry + subject-on-dev). Advisory-only (severity warning); never a commit-blocker. Surfaces in review + session-end sweep. KB § CONTEXT/PATTERNS/common/learn-before-archive.md.")
     parser.add_argument("--check-keeper-delta", action="store_true", help="Gate: run ONLY the compliance.py keepers this branch added/changed (AST diff vs the merge-base of --keeper-delta-base-ref, plus keepers calling a changed helper) over every active product, and fail on any high/critical fingerprint not in tests/compliance_baseline.json. The seconds-scale slice of TestSeedCompliance::test_all_products_compliant that an integrate budget can fit. tools/noctus/dev/keeper_delta.py.")
@@ -529,6 +573,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-log", action="store_true", help="With --check-merge-loss: do not write the telemetry row / finding (pure read).")
     parser.add_argument("--check-merge-debt", action="store_true", help="Unmerged-to-origin/main backlog monitor (absorbed scripts/merge-debt-monitor.sh, read-only). MCP: noctus.dev.check_merge_debt.")
     parser.add_argument("--propagate", metavar="TARGET", choices=["composes", "dockerfiles", "both"], nargs="?", const="both", help="Containerization codegen from products/seed/ (absorbed scripts/propagate-{composes,dockerfiles}.sh). Pair --check (drift gate) or --dry. MCP: noctus.dev.propagate.")
+    parser.add_argument("--render-organ-consumers", action="store_true", help="Check EVERY active product's committed organ migration render against its seed organ generator (exit 1 on drift, lists the drifted consumers); pair --write to re-render them. The derived-artifact check for a seed organ generator change (pre-commit runs it when an organ generator is staged). MCP: noctus.dev.render_organ_migration all_consumers=True. KB § PATTERNS/architect/vertical-seed.md.")
     parser.add_argument("--smoke-fleet", action="store_true", help="Post-fleet-up /api/health smoke (absorbed scripts/smoke-fleet.sh). Exit 0 healthy / 1 degraded. MCP: noctus.dev.smoke_fleet.")
     parser.add_argument("--predeploy-check", metavar="PRODUCT", help="Pre-deploy gate for a product: framework-dep parity + frontend build + backend pytest; classify failures, auto-fix the framework-dep class (with --fix), report+learn unknowns. Exit 0 ready / 1 not-ready, where status distinguishes 'blocked' (a real failure) from 'inconclusive' (the harness could not measure — e.g. pytest died at collection because the interpreter lacks a dep the product DECLARES; that is a verdict on the setup, not the code). MCP: noctus.dev.predeploy_check.")
     parser.add_argument("--fix", action="store_true", help="With --predeploy-check: auto-fix the safe (framework-dep) failure class in-process. With --check-framework-deps: borrow real version ranges from the seed's own package.json(s)/donor product; never writes \"*\".")
@@ -592,6 +637,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tunnel-config", metavar="ACTION", choices=["render", "check", "apply"], help="Make deploy/tunnel/ingress.yml canonical for the cloudflared tunnel: render = offline ingress block; check = read-only drift diff vs the LIVE VPS config; apply = backup + rewrite + restart (DRY-RUN unless --tunnel-config-confirm). MCP: noctus.dev.tunnel_config. KB § PATTERNS/devops/tunnel-ingress-source-of-truth.md.")
     parser.add_argument("--tunnel-config-confirm", action="store_true", help="With --tunnel-config=apply: actually write the live config + restart the tunnel (production mutation).")
     parser.add_argument("--redis-acl", metavar="ACTION", choices=["check", "render"], help="Prod Redis ACL lockdown, derived from the live roster: check = the override (host-local, gitignored, written by render --services) and the cutover marker are consistent, pass-file modes reported (offline); render = plan (add --redis-acl-write to write the gitignored aclfiles/env/pass files from REDIS_ACL_MASTER_SECRET; --redis-acl-services writes the override + cutover marker). Never touches the VPS. MCP: noctus.dev.redis_acl. KB § PATTERNS/devops/redis-acl-lockdown.md.")
+    parser.add_argument("--ghcr-access", metavar="ACTION", choices=["status", "install"], help="Private-GHCR access for the VPS in the one safe order. status = per-package visibility (anonymous probe) + VPS login (read-only). install = write the classic read:packages PAT to the VPS .env.fleet (0600, over ssh stdin), `docker login ghcr.io` there, verify, and only then print the package-settings URLs for the owner's visibility flip; DRY-RUN unless --ghcr-access-confirm. Token from the GHCR_READ_TOKEN env var, or one line on stdin with --ghcr-access-token-stdin; never an argument, never printed. MCP: noctus.dev.ghcr_access.")
+    parser.add_argument("--ghcr-access-confirm", action="store_true", help="With --ghcr-access=install: perform the install (otherwise a plan).")
+    parser.add_argument("--ghcr-access-token-stdin", action="store_true", help="With --ghcr-access=install: read the token from one line of stdin instead of the GHCR_READ_TOKEN env var.")
+    parser.add_argument("--image-pin", metavar="ACTION", choices=["check", "pin", "bump"], help="Construction half of the supply-chain pin keeper: check = list unpinned images on deploy/{fleet,services,legacy,tunnel} (offline); pin = resolve+write a digest for each (dry-run unless --image-pin-write); bump = move --image-pin-image to --image-pin-tag at its current digest. MCP: noctus.dev.image_pin.")
+    parser.add_argument("--image-pin-write", action="store_true", help="With --image-pin=pin|bump: rewrite the compose files.")
+    parser.add_argument("--image-pin-image", default=None, help="With --image-pin=bump: the image name (e.g. n8nio/n8n).")
+    parser.add_argument("--image-pin-tag", default=None, help="With --image-pin=bump: the target tag.")
     parser.add_argument("--redis-acl-write", action="store_true", help="With --redis-acl=render: write the files (needs REDIS_ACL_MASTER_SECRET in env or deploy/fleet/.env.fleet).")
     parser.add_argument("--redis-acl-services", metavar="SVC,SVC", default=None, help="With --redis-acl=render --redis-acl-write: the services to CUT OVER (written to the host-local compose.redis-auth.prod.yml). Re-render without a service to roll it back; an empty value removes the override.")
     parser.add_argument("--merge-queue-interval", type=float, default=60, help="With --merge-queue=watch: poll interval in seconds.")
@@ -613,7 +665,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="Keepers that collapse advisory output (e.g. --check-eight-way-sync's cache-staleness warnings) print every line instead of a one-line summary. Env NOCTUS_HOOK_VERBOSE=1 does the same from a git hook.")
     parser.add_argument("--task-branch-verbose", action="store_true", help="With --task-branch action=start: full inline wire_env would_wire/wired/skipped lists instead of the compact {count, sample} shape.")
     parser.add_argument("--cleanup-respect-min-age", action="store_true", help="With --cleanup-stale-worktrees --force: keep the min-age guard (never take a brand-new worktree). Used by the SessionStart sweep.")
-    parser.add_argument("--release-steward", metavar="ACTION", choices=["status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack", "role", "roles", "reconcile", "withdraw", "ask", "position", "decision", "deliverable"], help="The release steward: ONE elected leader session per machine handles CI queueing AND deploy; everyone else files deliveries (request) and keeps building. Session identity = --steward-session-id or $CLAUDE_CODE_SESSION_ID. This is also the first-claim bootstrap path. MCP: noctus.dev.release_steward. KB § PATTERNS/devops/release-steward.md.")
+    parser.add_argument("--release-steward", metavar="ACTION", choices=["status", "mine", "claim", "heartbeat", "handoff", "release", "request", "inbox", "ack", "role", "roles", "reconcile", "withdraw", "ask", "position", "decision", "deliverable", "verdicts"], help="The release steward: ONE elected leader session per machine handles CI queueing AND deploy; everyone else files deliveries (request) and keeps building. Exit code: 0 done or filed, 3 needs_resync (refused by the delivery contract), 1 error. Session identity = --steward-session-id or $CLAUDE_CODE_SESSION_ID. This is also the first-claim bootstrap path. MCP: noctus.dev.release_steward. KB § PATTERNS/devops/release-steward.md.")
     parser.add_argument("--steward-session-id", default=None, help="With --release-steward: the caller's session id (default $CLAUDE_CODE_SESSION_ID).")
     parser.add_argument("--steward-name", default=None, help="With --release-steward claim/request: a human-readable session name (e.g. noctusai-51).")
     parser.add_argument("--steward-reason", default=None, help="With --release-steward claim: why this session holds the lane.")
@@ -638,7 +690,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--steward-role", default=None, help="With --release-steward role: the role (dev-steward is derived; branch-steward:<branch>, agents, products/sw, assistant, ...).")
     parser.add_argument("--steward-role-op", default=None, choices=["set", "clear"], help="With --release-steward role: set (default) or clear.")
     parser.add_argument("--steward-verdict-ref", default=None, help="With --release-steward request|deliverable: where the scoped keepers/tests verdict lives (delivery-contract item 5).")
-    parser.add_argument("--steward-run-scoped", action="store_true", help="With --release-steward deliverable: RUN delivery-contract item 5 (the CI-blocking keeper set + real-tree keeper tests, env-scrubbed, derived from the head's test.yml). Takes minutes.")
+    parser.add_argument("--steward-run-scoped", action="store_true", help="With --release-steward request|deliverable: force delivery-contract item 5 (the CI-blocking keeper set + real-tree keeper tests + the selected suites, env-scrubbed, on the merge tree; minutes). `request` already runs it by default when no --steward-verdict-ref is given; on `deliverable` it is opt-in. A red that names no failing test stores its rc + output tail + export path (see `verdicts`).")
     parser.add_argument("--steward-branches", default=None, help="With --release-steward request: comma-separated ORDERED branches of a split delivery (drained as ONE train + ONE enqueue).")
     parser.add_argument("--steward-question", default=None, help="With --release-steward ask: the one bounded question (kind=needs_info).")
     parser.add_argument("--steward-addressed-to", default=None, help="With --release-steward ask: a registered role (default: the requester session).")
@@ -652,6 +704,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-branch-accept-unmeasured", default=None, help="With --task-branch integrate: comma-separated in-scope merged-tip gates that TIMED OUT and that you knowingly accept as unmeasured (requires --task-branch-accept-unmeasured-reason). Without it a timed-out in-scope gate blocks the integrate (status gate_timeout).")
     parser.add_argument("--task-branch-accept-unmeasured-reason", default=None, help="With --task-branch-accept-unmeasured: the audited reason (recorded in the integrate result and the branch pointer).")
     parser.add_argument("--task-branch-accept-unscored", default=None, metavar="REASON", help="With --task-branch integrate: land an engineer slice that has no slice-scores.ndjson row, with this audited reason (>=10 chars; recorded in the result). Without it an unscored engineer slice is refused (refused=slice_unscored).")
+    parser.add_argument("--task-branch-score", default=None, metavar="JSON", help="With --task-branch integrate|enqueue: the slice-score payload as a JSON object ({model, q:{Q1..Q7}, duration_minutes?, agent?, engineer_return?, ...}, the dispatch_log_completion score shape). With --task-branch-confirm it WRITES the slice-scores row instead of refusing slice_unscored (plan mode reports would_score). Carries the MCP score= across the fresh-subprocess hop.")
     parser.add_argument("--task-branch-keep-worktree", action="store_true", help="With --task-branch integrate: do NOT auto-clean the worktree after a successful integrate (default: integrate tears down its worktree + merged branch).")
     parser.add_argument("--task-branch-allow-stale-toolkit", action="store_true", help="With --task-branch: bypass the toolkit-staleness refusal on a mutating action for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; mirrors the MCP tool's own escape hatch). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
@@ -736,6 +789,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--surface-rationale", metavar="MD", help="With --respond-and-resume: tech-lead rationale (required, durable knowledge).")
     parser.add_argument("--surface-updated-brief", metavar="MD", help="With --respond-and-resume --surface-decision=adapt: the revised brief text.")
     parser.add_argument("--dispatch-resume-brief", metavar="SURFACE_ID", dest="dispatch_resume_brief_id", help="Compose the full dispatch-ready brief for a responded surface. Pass verbatim to Agent() brief. MCP: noctus.dev.dispatch_resume_brief. KB § PATTERNS/common/surface-and-resume-tooling.md.")
+    parser.add_argument("--usage-sync-deliveries", action="store_true", help="Ingest slice-scores + dispatch-budget (origin/ledgers) into public.dev_deliveries. Use --since/--usage-until (ISO) and --dry to preview (no DB needed). MCP: noctus.dev.usage_eval action=sync_deliveries.")
+    parser.add_argument("--usage-until", metavar="ISO", dest="usage_until", help="With --usage-sync-deliveries: exclusive upper bound (ISO timestamp).")
     parser.add_argument("--budget-slug", metavar="SLUG", dest="budget_slug", help="With --dispatch-budget-log: branch/task slug (e.g. 'feat/r1-f11').")
     parser.add_argument("--input-tokens", metavar="N", type=int, dest="input_tokens", help="With --dispatch-budget-log: input token count.")
     parser.add_argument("--output-tokens", metavar="N", type=int, dest="output_tokens", help="With --dispatch-budget-log: output token count.")
@@ -793,6 +848,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--srb-window-hours", type=float, default=1.0, help="With --supabase-request-budget: window in hours (max 24).")
     parser.add_argument("--srb-start", default=None, help="With --supabase-request-budget: ISO start (use with --srb-end).")
     parser.add_argument("--srb-end", default=None, help="With --supabase-request-budget: ISO end (use with --srb-start).")
+    parser.add_argument("--photo-label-dataset", action="store_true", help="Label real-estate photos (room type + quality/edit attributes) with the vision registry row fotos.rotular (Anthropic); resumable CSV. MCP: noctus.dev.photo_label_dataset.")
+    for _f, _h in (("out-csv", "output CSV (required; resumable)"), ("csv-in", "input CSV with a `file` column"),
+                   ("photos-dir", "directory globbed recursively for jpg/jpeg/png/webp"), ("base-dir", "base for relative `file` paths"),
+                   ("concurrency", "parallel calls (default 3, max 8)"), ("limit", "max photos this run")):
+        parser.add_argument(f"--photo-label-dataset-{_f}", default=None, help=f"With --photo-label-dataset: {_h}.")
+    parser.add_argument("--photo-label-dataset-run", action="store_true", help="With --photo-label-dataset: really label (dry_run=False). Needs --photo-label-dataset-confirm.")
+    parser.add_argument("--photo-label-dataset-confirm", action="store_true", help="With --photo-label-dataset: apply (a write). Without it, dry-run only.")
+    parser.add_argument("--photo-label-dataset-allow-stale-toolkit", action="store_true", help="With --photo-label-dataset: bypass the toolkit-staleness fresh-subprocess hop (escape hatch).")
     parser.add_argument("--bg-process", action="store_true", help="Safety net for THIS session's own background processes (list/declare/undeclare/salvage/stop). MCP: noctus.dev.bg_process.")
     parser.add_argument("--bg-process-action", default="list", help="With --bg-process: list|declare|undeclare|salvage|stop.")
     parser.add_argument("--bg-process-pid", type=int, default=None, help="With --bg-process: target pid.")
@@ -2316,9 +2379,19 @@ def main():
     elif args.gate_alignment is not None:
         from tools.noctus.dev.gate_alignment import run_action
         _ga = run_action(args.gate_alignment, gate=args.gate or "", mechanism=args.mechanism or "",
-                         owner=args.owner or "", placement=args.placement, file=args.file_walls, existing=args.existing)
+                         owner=args.owner or "", placement=args.placement, file=args.file_walls, existing=args.existing,
+                         source=args.gate_source, decision=args.decision, branch=args.decision_branch)
         print(json.dumps(_ga, indent=1, ensure_ascii=False))
         sys.exit(0 if _ga.get("ok", True) else 1)
+    elif args.check_refusal_classes_owned:
+        from tools.noctus.dev.compliance import check_refusal_classes_owned
+        issues = check_refusal_classes_owned()
+        if not issues:
+            print(f"  {GREEN}✓ refusal-classes-owned: every recurring refusal class has an open fix.{RESET}"); sys.exit(0)
+        print(f"  {YELLOW}! {len(issues)} unowned refusal class(es):{RESET}")
+        for i in issues:
+            print(f"    {YELLOW}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
     elif args.check_gate_triad:
         from tools.noctus.dev.compliance import check_gate_triad
         issues = check_gate_triad()
@@ -2493,6 +2566,16 @@ def main():
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
         sys.exit(1)
 
+    elif args.check_polling_request_budget:
+        from tools.noctus.dev.compliance import check_polling_request_budget
+        issues = check_polling_request_budget(paths=[p for p in (args.paths or "").split(",") if p] or None)
+        if not issues:
+            print(f"  {GREEN}✓ polling-request-budget: clean (every loop / periodic registration / poll declares its per-day cost).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} polling-request-budget issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')}:{i.get('line','?')} — {i['issue']}")
+        sys.exit(1)
     elif args.check_card_hub_service_only:
         from tools.noctus.dev.compliance import check_card_hub_service_only
         issues = check_card_hub_service_only(paths=[p for p in (args.paths or "").split(",") if p] or None)
@@ -2522,6 +2605,17 @@ def main():
             print(f"  {GREEN}✓ secdef-migration-revokes-execute: clean (every new SECURITY DEFINER function revokes caller EXECUTE).{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} SECURITY DEFINER function(s) callable by anon/authenticated:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_transition_log_hand_written:
+        from tools.noctus.dev.compliance import check_transition_log_hand_written
+        issues = check_transition_log_hand_written()
+        if not issues:
+            print(f"  {GREEN}✓ transition-log-hand-written: clean (no new hand-written transition history).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} hand-written transition-history shape(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
         sys.exit(1)
@@ -2724,6 +2818,16 @@ def main():
             print(f"  {GREEN}\u2713 worker-idle-polling: clean.{RESET}")
             sys.exit(0)
         print(f"  {RED}\u2717 {len(issues)} worker-idle-polling issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} \u2014 {i['issue']}")
+        sys.exit(1)
+    elif args.check_supply_chain_pin:
+        from tools.noctus.dev.compliance import check_supply_chain_pin
+        issues = check_supply_chain_pin()
+        if not issues:
+            print(f"  {GREEN}\u2713 supply-chain-pin: clean (every Action SHA-pinned, every prod image pinned).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}\u2717 {len(issues)} unpinned supply-chain ref(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} \u2014 {i['issue']}")
         sys.exit(1)
@@ -2931,6 +3035,13 @@ def main():
             print(f"    [{c['status']}] {c['file']}:{c['line']} {c['kind']} {c['claim']} -> {c['live'] or '-'} {c['note']}")
         sys.exit(0 if r["ok"] else 1)
 
+    elif args.write_doc_coverage_cache:
+        from tools.noctus.dev import doc_staleness as _ds
+        _croot = Path(args.worktree_path) if getattr(args, "worktree_path", None) else _ds.REPO_ROOT
+        _cr = _ds.write_coverage_cache(_croot)
+        print(f"  doc-coverage cache: {_cr['docs']} covering docs -> {_cr['path']}")
+        sys.exit(0)
+
     elif args.check_doc_staleness:
         from tools.noctus.dev import doc_staleness as _ds
         _root = Path(args.worktree_path) if getattr(args, "worktree_path", None) else None
@@ -3012,6 +3123,25 @@ def main():
             print(_n, file=sys.stderr)
         Path(args.out).expanduser().write_text(_merged, encoding="utf-8")
         sys.exit(10 if _conflicted else 0)
+
+    elif args.merge_ledger_render:
+        from tools.noctus.dev.ledger_render_merge import merge_render
+        if not args.out:
+            print("--merge-ledger-render requires --out FILE", file=sys.stderr)
+            sys.exit(2)
+        _rel, *_files = args.merge_ledger_render
+        try:
+            _text, _notes = merge_render(_rel, *[Path(f).expanduser() for f in _files],
+                                       root=Path(args.worktree_path).expanduser().resolve() if args.worktree_path else None)
+        except (OSError, ValueError, KeyError) as exc:
+            print(f"--merge-ledger-render: cannot render: {exc}", file=sys.stderr)
+            sys.exit(2)
+        for _n in _notes:
+            print(_n, file=sys.stderr)
+        if _text is None:
+            sys.exit(10)
+        Path(args.out).expanduser().write_text(_text, encoding="utf-8")
+        sys.exit(0)
 
     elif args.merge_lgpd_warnings:
         from tools.noctus.dev.lgpd import merge_warnings
@@ -3345,8 +3475,13 @@ def main():
 
     elif args.check_stale_branch_pointers:
         from tools.noctus.dev.compliance import check_stale_branch_pointers
-        issues = check_stale_branch_pointers()
+        from tools.noctus.dev import branch_pointer as _bp
+        _healed: list[str] = []
+        issues = check_stale_branch_pointers(
+            heal=lambda b, note: _bp.update(branch=b, status="shipped", notes=note, push_dev=True), healed_out=_healed)
         high = [i for i in issues if i["severity"] == "high"]
+        if _healed:
+            print(f"  {GREEN}✓ stale-branch-pointers: healed {len(_healed)} landed pointer(s) to shipped: {', '.join(_healed)}{RESET}")
         if not issues:
             print(f"  {GREEN}✓ stale-branch-pointers: every landed branch's pointer is closed.{RESET}")
             sys.exit(0)
@@ -3356,6 +3491,18 @@ def main():
         for i in issues:
             print(f"    [{i['severity']}] {i['issue']}")
         sys.exit(1 if high else 0)
+
+    elif args.ensure_branch_pointer is not None:
+        import settings as _bp_settings
+        from tools.noctus.dev.branch_pointer import ensure_for_push
+        _ens = ensure_for_push(branch=args.ensure_branch_pointer, root=_bp_settings.REPO_ROOT)
+        if not _ens.get("ok"):
+            print(f"  {RED}✗ branch-pointer for '{args.ensure_branch_pointer}' could not be written: {_ens.get('error')}{RESET}")
+            sys.exit(1)
+        _note = f" ({'; '.join(_ens['reasons'])})" if _ens.get("reasons") else ""
+        _pub = "" if _ens.get("published", True) else f" - NOT published to origin/ledgers ({_ens.get('publish_error')}); spooled, publishes with the next write"
+        print(f"  {GREEN}✓ branch-pointer {_ens['action']}: {args.ensure_branch_pointer}{_note}{_pub}{RESET}")
+        sys.exit(0)
 
     elif args.check_branch_tree_mirror is not None:
         from tools.noctus.dev.compliance import check_branch_tree_mirror
@@ -4271,6 +4418,12 @@ def main():
             print(json.dumps(rd, default=str)); codes.append(int(rd.get("exit_code", 0)))
         sys.exit(max(codes) if codes else 0)
 
+    elif args.render_organ_consumers:
+        from tools.noctus.dev.render_organ_migration import render_all_consumers
+        r = render_all_consumers(write=args.write, worktree_path=args.worktree_path)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r["ok"] else 1)
+
     elif args.smoke_fleet:
         from tools.noctus.dev.smoke_fleet import smoke_fleet
         r = smoke_fleet()
@@ -4446,6 +4599,20 @@ def main():
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 
+    elif getattr(args, "ghcr_access", None):
+        from tools.noctus.dev.ghcr_access import ghcr_access as _ghcr_access
+        _tok = (sys.stdin.readline().strip() or None) if args.ghcr_access_token_stdin else None
+        r = _ghcr_access(args.ghcr_access, confirm=bool(args.ghcr_access_confirm), worktree_path=args.worktree_path, token=_tok)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
+
+    elif getattr(args, "image_pin", None):
+        from tools.noctus.dev.image_pin import image_pin as _image_pin
+        r = _image_pin(args.image_pin, write=bool(args.image_pin_write), image=args.image_pin_image,
+                       tag=args.image_pin_tag, worktree_path=args.worktree_path)
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
+
     elif getattr(args, "tunnel_config", None):
         from tools.noctus.dev.tunnel_config import tunnel_config as _tunnel_config
         r = _tunnel_config(action=args.tunnel_config, worktree_path=args.worktree_path,
@@ -4491,7 +4658,7 @@ def main():
             deadline_min=args.steward_deadline_min, ref=args.steward_ref,
             verdict_ref=args.steward_verdict_ref, run_scoped=args.steward_run_scoped)
         print(json.dumps(r, indent=2, default=str))
-        sys.exit(0 if r.get("ok") and r.get("status") != "needs_resync" else 1)
+        sys.exit(_rs.cli_exit_code(r))
 
     elif args.task_branch_post_integrate:
         from tools.noctus.dev.task_branch import run_post_integrate
@@ -4513,6 +4680,7 @@ def main():
             accept_unmeasured=accept_unmeasured,
             accept_unmeasured_reason=getattr(args, "task_branch_accept_unmeasured_reason", None),
             accept_unscored=getattr(args, "task_branch_accept_unscored", None),
+            score=_task_branch_score_arg(getattr(args, "task_branch_score", None)),
             slug=getattr(args, "task_branch_slug", None),
             branch=getattr(args, "task_branch_branch", None),
             verdict_ref=getattr(args, "task_branch_verdict_ref", None),
@@ -4724,6 +4892,16 @@ def main():
         )
         print(f"  {GREEN}✓ Vector cost total:{RESET}")
         print(json.dumps(result, indent=2, default=str))
+        sys.exit(0)
+
+    elif args.usage_sync_deliveries:
+        from tools.noctus.dev.usage_eval import DeliveriesSchemaError, parse_ts as _pts, sync_deliveries as _sd
+        try:
+            res = _sd(_pts(args.since), _pts(args.usage_until), dry_run=bool(args.dry))
+        except DeliveriesSchemaError as exc:
+            print(f"  {RED}✗ {exc}{RESET}")
+            sys.exit(1)
+        print(json.dumps(res, indent=2, default=str))
         sys.exit(0)
 
     elif args.dispatch_budget_log:
@@ -5058,6 +5236,20 @@ def main():
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0 if r.get("ok") else 1)
 
+    elif args.photo_label_dataset:
+        from tools.noctus.dev.photo_label_dataset import photo_label_dataset as _photo_label_dataset
+        _g = lambda k: getattr(args, f"photo_label_dataset_{k}", None)  # noqa: E731
+        if not _g("out_csv"):
+            print(json.dumps({"ok": False, "status": "error", "error": "--photo-label-dataset-out-csv is required"}))
+            sys.exit(1)
+        r = _photo_label_dataset(
+            out_csv=_g("out_csv"), csv_in=_g("csv_in"), photos_dir=_g("photos_dir"), base_dir=_g("base_dir") or ".",
+            concurrency=int(_g("concurrency") or 3),
+            limit=int(_g("limit")) if _g("limit") else None,
+            dry_run=not _g("run"), confirm=bool(_g("confirm")),
+            allow_stale_toolkit=bool(_g("allow_stale_toolkit")))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(0 if r.get("ok") else 1)
     elif args.bg_process:
         from tools.noctus.dev.bg_process import bg_process as _bg_process
         r = _bg_process(
@@ -5096,6 +5288,11 @@ _main_untimed = main
 
 
 def main():  # noqa: F811 - gate telemetry (build triad, leg c): every --check-*/--verify-* run is one event
+    try:
+        from tools.noctus.dev.gate_alignment import capture_first_finding
+        capture_first_finding()
+    except Exception:  # telemetry never changes a verdict
+        pass
     try:
         _main_untimed()
     except SystemExit as _exit:

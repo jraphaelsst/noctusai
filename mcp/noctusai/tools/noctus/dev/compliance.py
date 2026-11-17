@@ -48,6 +48,7 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
+import node_toolchain as _node_toolchain  # noqa: E402  (ONE node/ts-morph resolver for every AST-scan keeper)
 
 
 def env_state_keeper(fn):
@@ -1746,7 +1747,9 @@ from tools.noctus.dev.self_patch_predicate import (  # noqa: E402
     _classify_patch_target,
     _discover_connector_module_prefixes,
     _extract_patch_target,
+    _extract_patch_target_resolved,
     _is_boundary_accessor_target,
+    _module_string_constants,
     _resolve_target_via_imports,
 )
 
@@ -1841,6 +1844,9 @@ def check_no_self_monkeypatch(repo_root: Path | None = None) -> list[dict]:
             logger.warning("compliance: cannot parse test file %s (%s), skipping", path, exc)
             continue
         import_map = _build_import_map(tree)
+        # `_CRED = "app.mod.fn"` … `patch(_CRED)`: a string constant is the same
+        # target as the literal it names (2026-11-15, certidoes tests).
+        string_constants = _module_string_constants(tree)
         try:
             relative = str(path.relative_to(root))
         except ValueError:
@@ -1853,7 +1859,7 @@ def check_no_self_monkeypatch(repo_root: Path | None = None) -> list[dict]:
         )
 
         for node in ast.walk(tree):
-            raw_target = _extract_patch_target(node)
+            raw_target = _extract_patch_target_resolved(node, string_constants)
             if raw_target is None:
                 continue
             target_str = _resolve_target_via_imports(raw_target, import_map)
@@ -6772,17 +6778,38 @@ def check_workflow_job_timeouts(repo_root: Path | None = None) -> list[dict]:
 _CLI_FLAG_RE = re.compile(r"(?<![\w-])(--[A-Za-z0-9][\w-]*)")
 
 
+def _expand_fstring_flag(node: ast.JoinedStr, loop_vars: dict[str, list[str]]) -> list[str]:
+    """`f"--pp-{x}"` inside `for x in ("a", "b")` -> ["--pp-a", "--pp-b"]; [] when it cannot be resolved statically."""
+    names = [v.value.id for v in node.values if isinstance(v, ast.FormattedValue) and isinstance(v.value, ast.Name)]
+    if len(names) != 1 or names[0] not in loop_vars:
+        return []
+    out = []
+    for val in loop_vars[names[0]]:
+        out.append("".join(v.value if isinstance(v, ast.Constant) else val for v in node.values))
+    return [o for o in out if o.startswith("--")]
+
+
 def _cli_defined_flags(root: Path) -> set[str]:
-    """Every `--flag` string literal passed to an `add_argument(...)` call in
-    mcp/noctusai/cli.py (AST, so no import side effects)."""
+    """Every `--flag` passed to an `add_argument(...)` call in mcp/noctusai/cli.py (AST, so no import side
+    effects): string literals, and f-strings built from a `for x in (<str literals>)` loop."""
     cli = root / "mcp" / "noctusai" / "cli.py"
     tree = ast.parse(cli.read_text(encoding="utf-8"))
     flags: set[str] = {"--help"}
-    for node in ast.walk(tree):
+
+    def walk(node: ast.AST, loop_vars: dict[str, list[str]]) -> None:
+        if isinstance(node, ast.For) and isinstance(node.target, ast.Name) and isinstance(node.iter, (ast.Tuple, ast.List)):
+            vals = [e.value for e in node.iter.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            loop_vars = {**loop_vars, node.target.id: vals}
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument":
             for a in node.args:
                 if isinstance(a, ast.Constant) and isinstance(a.value, str) and a.value.startswith("--"):
                     flags.add(a.value)
+                elif isinstance(a, ast.JoinedStr):
+                    flags.update(_expand_fstring_flag(a, loop_vars))
+        for child in ast.iter_child_nodes(node):
+            walk(child, loop_vars)
+
+    walk(tree, {})
     return flags
 
 
@@ -6818,9 +6845,36 @@ def _logical_lines(script: str) -> list[str]:
     return [ln for ln in joined.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
 
 
+_CLI_DOC_GLOBS = (".claude/skills/**/*.md", ".claude/agents/**/*.md", "KNOWLEDGE-BASE/**/*.md", "CLAUDE.md", "CLAUDE/*.md")
+
+
+def _iter_cli_doc_files(root: Path):
+    """Docs that teach an agent to run `cli.py --flag` (skills, agents, KB, CLAUDE*.md)."""
+    seen: set[Path] = set()
+    for pat in _CLI_DOC_GLOBS:
+        for f in sorted(root.glob(pat)):
+            if f.is_file() and f not in seen:
+                seen.add(f)
+                yield f
+
+
+def _cli_flags_in_line(line: str) -> list[str]:
+    """Flags that follow a `cli.py` mention up to the first shell/markdown separator."""
+    out: list[str] = []
+    for m in re.finditer(r"\bcli\.py\b", line):
+        tail = re.split(r"&&|\|\||[|;)`]", line[m.end():], maxsplit=1)[0]
+        for fm in _CLI_FLAG_RE.finditer(tail):
+            flag = fm.group(1)
+            wildcard = flag.endswith("-") or tail[fm.end():fm.end() + 1] in ("*", "<", "{")
+            if not wildcard and flag != "--flag":  # `--harness-*` / `--check-<x>` / the `--flag` placeholder are patterns
+                out.append(flag)
+    return out
+
+
 def check_workflow_cli_flags_exist(repo_root: Path | None = None) -> list[dict]:
-    """Every `cli.py --<flag>` in a workflow `run:` block must be a flag
-    defined by mcp/noctusai/cli.py's argparse (derived from its AST)."""
+    """Every `cli.py --<flag>` literal in a workflow `run:` block OR in a skill / agent / KB / CLAUDE*.md doc
+    must be a flag defined by mcp/noctusai/cli.py's argparse (derived from its AST). A doc naming a flag that
+    does not exist sends the next agent into an argparse error (or an abbreviation that no longer parses)."""
     root = repo_root or REPO_ROOT
     issues: list[dict] = []
     if not (root / "mcp" / "noctusai" / "cli.py").is_file():
@@ -6831,21 +6885,35 @@ def check_workflow_cli_flags_exist(repo_root: Path | None = None) -> list[dict]:
             issues.append({"file": rel, "issue": step, "severity": "high"})
             continue
         for line in _logical_lines(step["run"]):
-            for m in re.finditer(r"\bcli\.py\b", line):
-                tail = re.split(r"&&|\|\||[|;)]", line[m.end():], maxsplit=1)[0]
-                for fm in _CLI_FLAG_RE.finditer(tail):
-                    flag = fm.group(1)
-                    if flag not in defined:
-                        label = step.get("name") or f"#{i}"
-                        issues.append({
-                            "file": rel,
-                            "issue": (
-                                f"job `{job_id}` step `{label}` runs `cli.py {flag}` but "
-                                f"mcp/noctusai/cli.py defines no such flag — the step would "
-                                f"fail only in CI. Use an existing flag or add it to cli.py."
-                            ),
-                            "severity": "high",
-                        })
+            for flag in _cli_flags_in_line(line):
+                if flag not in defined:
+                    label = step.get("name") or f"#{i}"
+                    issues.append({
+                        "file": rel,
+                        "issue": (
+                            f"job `{job_id}` step `{label}` runs `cli.py {flag}` but "
+                            f"mcp/noctusai/cli.py defines no such flag — the step would "
+                            f"fail only in CI. Use an existing flag or add it to cli.py."
+                        ),
+                        "severity": "high",
+                    })
+    for f in _iter_cli_doc_files(root):
+        try:
+            lines = f.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for n, line in enumerate(lines, 1):
+            for flag in _cli_flags_in_line(line):
+                if flag not in defined:
+                    issues.append({
+                        "file": str(f.relative_to(root)),
+                        "line": n,
+                        "issue": (
+                            f"doc line {n} tells the reader to run `cli.py {flag}` but mcp/noctusai/cli.py "
+                            f"defines no such flag (renamed, abbreviated or never existed). Use the exact flag."
+                        ),
+                        "severity": "high",
+                    })
     return issues
 
 
@@ -9362,40 +9430,8 @@ def _silent_refusal_files(root: Path) -> dict[str, list[Path]]:
 def silent_refusal_scan(files: list[Path], root: Path | None = None) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
     """Run the ts-morph scan over ``files``. Returns ``(results, per_file_errors, bootstrap_error)``;
     ``bootstrap_error`` is set when the scan could not run at all (never a silent zero)."""
-    base = root or REPO_ROOT
-    script = base.joinpath(*_SILENT_REFUSAL_SCRIPT_REL)
-    if not script.exists():
-        script = REPO_ROOT.joinpath(*_SILENT_REFUSAL_SCRIPT_REL)
-    if not files:
-        return {}, {}, None
-    if shutil.which("node") is None:
-        return {}, {}, "node_unavailable: `node` not on PATH — the silent-refusal AST scan cannot run"
-    if not script.exists():
-        return {}, {}, f"script_missing: {script}"
-    try:
-        proc = subprocess.run(
-            ["node", str(script)],
-            input=json.dumps({"files": [str(f) for f in files]}),
-            capture_output=True,
-            text=True,
-            timeout=_SILENT_REFUSAL_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        return {}, {}, f"timeout: the silent-refusal scan exceeded {_SILENT_REFUSAL_TIMEOUT_SECONDS}s ({len(files)} files)"
-    except OSError as exc:
-        return {}, {}, f"spawn_failed: {exc}"
-    if proc.returncode != 0:
-        tail = (proc.stderr or "")[-600:]
-        if "Cannot find module" in tail or "ERR_MODULE_NOT_FOUND" in tail:
-            return {}, {}, f"ts_morph_not_installed: run `cd mcp/noctusai/node && npm ci` — {tail.strip()[:300]}"
-        return {}, {}, f"node_crashed (exit {proc.returncode}): {tail}"
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {}, {}, f"non_json_stdout: {exc}; stdout={proc.stdout[:300]!r}"
-    if not parsed.get("ok"):
-        return {}, {}, f"bad_request: {parsed.get('error')}"
-    return parsed.get("results", {}), parsed.get("errors", {}), None
+    return _node_toolchain.run_files_scan(_SILENT_REFUSAL_SCRIPT_REL, files, root=root or REPO_ROOT,
+                                         timeout=_SILENT_REFUSAL_TIMEOUT_SECONDS, label="silent-refusal AST scan")
 
 
 def check_silent_refusal(repo_root: Path | None = None) -> list[dict]:
@@ -9496,34 +9532,8 @@ def _motion_import_files(root: Path) -> dict[str, list[Path]]:
 
 def _motion_import_scan(files: list[Path]) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
     """ts-morph scan over `files` -> (results, per_file_errors, bootstrap_error)."""
-    if not files:
-        return {}, {}, None
-    script = REPO_ROOT.joinpath(*_MOTION_SCRIPT_REL)
-    if shutil.which("node") is None:
-        return {}, {}, "node_unavailable: `node` not on PATH"
-    if not script.exists():
-        return {}, {}, f"script_missing: {script}"
-    try:
-        proc = subprocess.run(
-            ["node", str(script)], input=json.dumps({"files": [str(f) for f in files]}),
-            capture_output=True, text=True, timeout=_MOTION_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        return {}, {}, f"timeout: exceeded {_MOTION_TIMEOUT_SECONDS}s ({len(files)} files)"
-    except OSError as exc:
-        return {}, {}, f"spawn_failed: {exc}"
-    if proc.returncode != 0:
-        tail = (proc.stderr or "")[-600:]
-        if "Cannot find module" in tail or "ERR_MODULE_NOT_FOUND" in tail:
-            return {}, {}, f"ts_morph_not_installed: run `cd mcp/noctusai/node && npm ci` — {tail.strip()[:300]}"
-        return {}, {}, f"node_crashed (exit {proc.returncode}): {tail}"
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {}, {}, f"non_json_stdout: {exc}; stdout={proc.stdout[:300]!r}"
-    if not parsed.get("ok"):
-        return {}, {}, f"bad_request: {parsed.get('error')}"
-    return parsed.get("results", {}), parsed.get("errors", {}), None
+    return _node_toolchain.run_files_scan(_MOTION_SCRIPT_REL, files, root=REPO_ROOT, timeout=_MOTION_TIMEOUT_SECONDS,
+                                         label="motion-import AST scan")
 
 
 def check_motion_import_boundary(repo_root: Path | None = None) -> list[dict]:
@@ -11951,39 +11961,9 @@ def _run_lying_loading_modeb_scan_one_product(
     docstring for why the scan is now split per product ("GAP 3"). Returns
     ``(results, per_file_errors, bootstrap_error)`` scoped to `product`.
     """
-    payload = {"files": [str(p) for p in files]}
-    try:
-        proc = subprocess.run(
-            ["node", str(_LYING_LOADING_MODEB_SCRIPT)],
-            input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            timeout=_LYING_LOADING_MODEB_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        return {}, {}, (
-            f"timeout: Mode B AST scan for `{product}` exceeded "
-            f"{_LYING_LOADING_MODEB_TIMEOUT_SECONDS}s ({len(files)} files)"
-        )
-    except OSError as exc:
-        return {}, {}, f"spawn_failed: {exc}"
-    if proc.returncode != 0:
-        stderr_tail = (proc.stderr or "")[-800:]
-        # `Cannot find module 'ts-morph'` is the specific, actionable case
-        # (node_modules/ is gitignored — `npm install` was never run here).
-        if "Cannot find module" in stderr_tail or "ERR_MODULE_NOT_FOUND" in stderr_tail:
-            return {}, {}, (
-                "ts_morph_not_installed: run `cd mcp/noctusai/node && npm install` "
-                f"— {stderr_tail.strip()[:300]}"
-            )
-        return {}, {}, f"node_crashed (exit {proc.returncode}): {stderr_tail}"
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {}, {}, f"non_json_stdout: {exc}; stdout={proc.stdout[:300]!r}"
-    if not parsed.get("ok"):
-        return {}, {}, f"bad_request: {parsed.get('error')}"
-    return parsed.get("results", {}), parsed.get("errors", {}), None
+    return _node_toolchain.run_files_scan(
+        ("mcp", "noctusai", "node", "lying_loading_scan.mjs"), files, root=REPO_ROOT,
+        timeout=_LYING_LOADING_MODEB_TIMEOUT_SECONDS, label=f"Mode B AST scan for `{product}`")
 
 
 def _run_lying_loading_modeb_scan(
@@ -13834,6 +13814,217 @@ def check_guc_carveout_guard_hand_written(repo_root: Path | None = None) -> list
     return issues
 
 
+_TL_BASELINE_PATH = Path(__file__).resolve().parents[3] / "tests" / "transition_log_hand_written_baseline.json"
+#: FROM-word -> TO-words. A table carrying two columns that differ ONLY by one such token (`etapa_origem_id` /
+#: `etapa_destino_id`, `status_anterior` / `status_novo`, `from_stage` / `to_stage`) records transitions.
+_TL_PAIR_WORDS: dict[str, tuple[str, ...]] = {
+    "from": ("to",), "de": ("para",), "old": ("new",), "previous": ("next", "new"), "prev": ("next", "new"),
+    "anterior": ("novo", "nova", "atual", "posterior"), "antigo": ("novo",), "antiga": ("nova",),
+    "before": ("after",),
+}  # NOT origem/destino: `ativo_origem_id`/`ativo_destino_id` pairs two ENTITIES (a match), not two states
+_TL_TIME_TYPE_RE = re.compile(r"^\s*(?:date|time|timestamp|timestamptz|interval)\b", re.IGNORECASE)
+_TL_CREATE_TABLE_RE = re.compile(
+    r"^\s*CREATE\s+(?:UNLOGGED\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?P<name>[\w.\"]+)\s*\((?P<body>.*)\)\s*;?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_TL_APPEND_ONLY_TRIGGER_RE = re.compile(
+    r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\s+(?P<trig>\w+)\s+BEFORE\s+(?P<ops>[\w\s]+?)\s+ON\s+(?P<table>[\w.\"]+)",
+    re.IGNORECASE | re.DOTALL,
+)
+#: A table NAMED as history (last name token): `pipeline_movimentos`, `imovel_historico`, `lead_opt_out_eventos`.
+#: Only combined with a hand-written append-only trigger -- a name alone also matches inbound webhook logs.
+_TL_HISTORY_NAME_RE = re.compile(r"_(?:historico|history|eventos|events|movimentos|movements|moves|transicoes|transitions|mudancas)$")
+_TL_NOT_COLUMN = ("constraint", "primary", "unique", "check", "foreign", "exclude", "like")
+
+
+def _tl_split_top_level(body: str) -> list[str]:
+    parts, depth, cur = [], 0, []
+    for ch in body:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _tl_transition_pair(columns: dict[str, str]) -> tuple[str, str] | None:
+    """`(from_col, to_col)` when two non-temporal columns differ only by a FROM/TO token, else None."""
+    for col, ctype in columns.items():
+        if _TL_TIME_TYPE_RE.match(ctype):
+            continue
+        tokens = col.split("_")
+        for i, tok in enumerate(tokens):
+            for to_word in _TL_PAIR_WORDS.get(tok, ()):
+                other = "_".join([*tokens[:i], to_word, *tokens[i + 1:]])
+                if other in columns and not _TL_TIME_TYPE_RE.match(columns[other]):
+                    return col, other
+    return None
+
+
+class TransitionLogPrimitiveMissing(RuntimeError):
+    """`noctusai_lib.domain.transition_log` is not importable from the tree the scan runs in."""
+
+
+_TL_DROP_TABLE_RE = re.compile(r"\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?P<name>[\w.\"]+)", re.IGNORECASE)
+
+
+def _tl_migration_order(path: Path) -> tuple[int, str]:
+    m = re.match(r"(\d+)", path.name)
+    return (int(m.group(1)) if m else -1, path.name)
+
+
+def _tl_drop_superseded(root: Path, found: list[tuple[str, int, str, str]]) -> list[tuple[str, int, str, str]]:
+    """Drop the hits whose table a LATER migration of the same product DROPs.
+
+    A migration chain is immutable history: the CREATE of a hand-written history table stays in its file for good,
+    but once a later migration has copied its rows into the seed primitive and dropped it, the table is no longer a
+    live hand-written shape (the effective schema has none). Ordering is the numeric file prefix."""
+    drops: dict[Path, list[tuple[tuple[int, str], set[str]]]] = {}
+    out: list[tuple[str, int, str, str]] = []
+    for hit in found:
+        rel, _line, table, _why = hit
+        path = root / rel
+        siblings = drops.get(path.parent)
+        if siblings is None:
+            siblings = []
+            for sib in path.parent.glob("*.sql"):
+                try:
+                    text = _sql_strip_comments(sib.read_text(encoding="utf-8"))
+                except (OSError, UnicodeDecodeError) as exc:
+                    logger.debug("compliance: cannot read %s (%s)", sib, exc)
+                    continue
+                names = {m.group("name").replace('"', "").split(".")[-1].lower() for m in _TL_DROP_TABLE_RE.finditer(text)}
+                if names:
+                    siblings.append((_tl_migration_order(sib), names))
+            drops[path.parent] = siblings
+        if any(order > _tl_migration_order(path) and table in names for order, names in siblings):
+            continue
+        out.append(hit)
+    return out
+
+
+def transition_log_hand_written_scan(root: Path) -> list[tuple[str, int, str, str]]:
+    """`(relpath, line, table, why)` for every hand-written transition-history shape in migration SQL --
+    baseline NOT applied. `why` = `transition-columns <from>/<to>` or `append-only-trigger <name>` (a
+    BEFORE UPDATE OR DELETE trigger on a history-named table). A table named in a
+    `-- transition-log-ok: <table> <reason>` comment (reason >= 12 chars) is a reasoned non-fit and skipped.
+    Skipped: seed-organ renders (generated header), transition-log renders (their events tables), and a
+    `guc_carveout_guard_sql` render's own trigger (that keeper's job)."""
+    from noctusai_lib.testing.migration_parser import _walk_statements
+
+    try:
+        from noctusai_lib.domain.transition_log import configs_in_migration
+        from noctusai_lib.domain.transition_log.sql import ERASURES_TABLE
+    except ImportError as exc:  # never a fallback: without the primitive every render reads as hand-written
+        import sys as _sys
+
+        lib_file = getattr(_sys.modules.get("noctusai_lib"), "__file__", "?")
+        raise TransitionLogPrimitiveMissing(
+            f"cannot import `{exc.name or 'noctusai_lib.domain.transition_log'}` ({exc}); the scan needs the seed's "
+            f"transition_log primitive to know which tables are rendered. noctusai_lib resolved to "
+            f"{lib_file} -- point it at this tree's seed/lib/backend."
+        ) from exc
+    found: list[tuple[str, int, str, str]] = []
+    for path in _migration_sql_files(root):
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", path, exc)
+            continue
+        if re.match(r"\A--[^\n]*generated by noctusai_lib\.domain\.", raw):
+            continue  # a seed generator's render (organs + the transition log itself)
+        try:
+            rendered = {c.events_table for c in configs_in_migration(raw)} | ({ERASURES_TABLE} if "transition-log-config:" in raw else set())
+        except ValueError:
+            rendered = set()
+        waived = {m.group(1).lower() for m in re.finditer(r"--[ \t]*transition-log-ok:[ \t]*(\w+)[ \t]+(\S[^\n]{11,})", raw)}
+        guc_triggers = set(re.findall(r"guc-carveout-guard: rendered by[\s\S]*?CREATE TRIGGER (\w+)", raw))
+        text = _sql_strip_comments(raw)
+        rel = str(path.relative_to(root))
+        offset = 0
+        for stmt in _walk_statements(text):
+            pos = text.find(stmt.strip()[:60], offset)
+            if pos >= 0:
+                offset = pos
+            line_no = text.count("\n", 0, max(pos, 0)) + 1
+            m = _TL_CREATE_TABLE_RE.match(stmt)
+            if m:
+                table = m.group("name").replace('"', "").split(".")[-1].lower()
+                if table in rendered or table in waived:
+                    continue
+                cols: dict[str, str] = {}
+                for item in _tl_split_top_level(m.group("body")):
+                    first, _, rest = item.partition(" ")
+                    if first.lower() in _TL_NOT_COLUMN:
+                        continue
+                    cols[first.replace('"', "").lower()] = rest
+                pair = _tl_transition_pair(cols)
+                if pair:
+                    found.append((rel, line_no, table, f"transition-columns {pair[0]}/{pair[1]}"))
+                continue
+            t = _TL_APPEND_ONLY_TRIGGER_RE.match(stmt)
+            if t:
+                ops = {o.upper() for o in re.findall(r"\w+", t.group("ops")) if o.upper() != "OR"}
+                if not {"UPDATE", "DELETE"} <= ops:
+                    continue
+                table = t.group("table").replace('"', "").split(".")[-1].lower()
+                if table in rendered or table in waived or t.group("trig") in guc_triggers or not _TL_HISTORY_NAME_RE.search(table):
+                    continue  # immutable VERSION tables / audit logs are other shapes: only history tables count
+                found.append((rel, line_no, table, f"append-only-trigger {t.group('trig')}"))
+    return _tl_drop_superseded(root, found)
+
+
+def check_transition_log_hand_written(repo_root: Path | None = None) -> list[dict]:
+    """Flag a NEW hand-written transition-history table or append-only trigger in migration SQL.
+
+    "State row + append-only transition row in one transaction" is the seed primitive
+    ``noctusai_lib.domain.transition_log`` (events table, guard, gated LGPD erasure, row-locked RPCs, creation
+    as seq 1). Before it the shape was hand-built ~8 times with inconsistent immutability. Detected: a
+    ``CREATE TABLE`` with a from/to column pair (``etapa_origem_id``/``etapa_destino_id``, ``status_anterior``/
+    ``status_novo``, ``from_stage``/``to_stage``; temporal ranges like ``valid_from``/``valid_to`` excluded), or a
+    ``BEFORE UPDATE OR DELETE`` trigger on a table named as history (``*_historico`` / ``*_eventos`` /
+    ``*_movimentos`` / ``*_events`` ...): the hand-written append-only guard. Immutable version tables and
+    audit logs are other shapes and are not flagged. A genuine non-fit carries
+    ``-- transition-log-ok: <table> <reason>`` (refuse-not-null: the reason is the record). Accepted: a seed render, or a
+    legacy ``<file>::<table>`` entry in ``transition_log_hand_written_baseline.json`` (ratchet: never grows).
+    KB § PATTERNS/backend/transition-log.md.
+    """
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return []
+    try:
+        legacy = set(json.loads(_TL_BASELINE_PATH.read_text(encoding="utf-8")).get("legacy", []))
+    except (OSError, ValueError) as exc:
+        logger.warning("compliance: transition-log baseline unreadable (%s) -- treating as empty", exc)
+        legacy = set()
+    issues: list[dict] = []
+    try:
+        hits = transition_log_hand_written_scan(root)
+    except TransitionLogPrimitiveMissing as exc:  # unmeasurable is loud, never green and never "every table is hand-written"
+        return [{"product": "<platform>", "file": "seed/lib/backend/noctusai_lib/domain/transition_log",
+                 "issue": f"transition-log scan could not run: {exc}", "severity": "high"}]
+    for rel, line_no, table, why in hits:
+        if f"{rel}::{table}" in legacy:
+            continue
+        issues.append({
+            "file": rel,
+            "issue": (
+                f"`{rel}:{line_no}` hand-writes transition history for `{table}` ({why}). Render it with "
+                f"`noctusai_lib.domain.transition_log.transition_log_migration(TransitionLogConfig(...))` -- one "
+                f"events table, the seed immutability guard, the ONE gated LGPD erasure and the row-locked "
+                f"transition RPC. Per `KB § PATTERNS/backend/transition-log.md`."
+            ),
+            "severity": "high",
+        })
+    return issues
+
+
 def check_migration_untyped_empty_array(repo_root: Path | None = None) -> list[dict]:
     """Flag ``ARRAY[]`` with no ``::type`` cast in migration SQL (42P18 on apply).
 
@@ -13988,6 +14179,17 @@ def check_no_authenticated_grant_on_content_tables(
                     "severity": "critical",
                 })
     return issues
+
+
+def check_polling_request_budget(repo_root: Path | None = None, paths: list[str] | None = None) -> list[dict]:
+    """Every forever-loop / periodic registration / browser poll declares its per-day cost
+    (`# poll-budget: <cadence>; <k> calls/tick; worst <N>/day; ...`), and a per-tick read never `select("*")`s or
+    `limit(>1000)`s (the 2026-11-09 Supabase egress incident). R1-R4 in `tools.noctus.dev.polling_request_budget`.
+    ``paths`` (staged delta) scopes the scan. Severity high; blocking, no baseline.
+    `KB § PATTERNS/backend/polling-request-budget.md`."""
+    from tools.noctus.dev import polling_request_budget
+
+    return polling_request_budget.check_polling_request_budget(repo_root or REPO_ROOT, paths)
 
 
 def check_card_hub_service_only(repo_root: Path | None = None, paths: list[str] | None = None) -> list[dict]:
@@ -16433,14 +16635,14 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "firing every product's org triggers (licenses, ERP site config). Its sibling guards (platform scope "
         "trigger, scope CHECKs) are probed.",
     ),
-    # Monica 017 is NOT APPLIED (file-only until the tech-lead runs migrate_product): it adds the per-app switch
+    # nosnolimiar (ex-monica) 017 -- per-app switch; applied in prod, but its CHECK still has no GuardProbe: it adds the per-app switch
     # columns; `session_role` is a two-value vocabulary CHECK that is also enforced at the API edge (the seed
-    # create route's Literal + `SESSION_ROLES` in the store). The constraint does not exist in prod to probe yet.
-    # Replace with a real GuardProbe in the SAME change that applies it.
+    # create route's Literal + `SESSION_ROLES` in the store). The constraint now exists in prod; a real
+    # GuardProbe (verify_db_guards.py) replaces this entry.
     (
-        "products/monica/backend/migrations/017_whatsapp_app_switch.sql",
+        "products/nosnolimiar/backend/migrations/017_whatsapp_app_switch.sql",
         "whatsapp_connections_session_role_check",
-        "Migration 017 unapplied — the session_role vocabulary CHECK has no live constraint to probe yet; "
+        "Migration 017 — the session_role vocabulary CHECK has no GuardProbe yet; "
         "the API edge (Literal + SESSION_ROLES) already refuses other values and is tested.",
     ),
     # Migration 303 (social-wiring) is NOT APPLIED (file-only until the
@@ -16607,6 +16809,13 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Migration 017 unapplied — the agent_learnings write-once-content trigger has no live object to probe "
         "against yet.",
     ),
+    (
+        "products/nosnolimiar/backend/migrations/015_whatsapp.sql",
+        "idx_monica_whatsapp_connections_webhook_token",
+        "Frozen 015 declares the old name; nosnolimiar 024 renamed the index to "
+        "idx_nosnolimiar_whatsapp_connections_webhook_token, which IS probed "
+        "(nosnolimiar.whatsapp_connections.webhook_token_unique). Same object, new name.",
+    ),
 )
 
 
@@ -16698,6 +16907,25 @@ def _organ_of_migration(content: str, organ_specs: dict) -> str | None:
 def _organ_declared_guard_names(spec) -> set[str]:
     """Guard names the organ declares a behaviour probe for (names carry no schema, so any schema will do)."""
     return {p.guard_name for p in (spec.guard_probes("organ_guard_probe_check") if spec.guard_probes else ())}
+
+
+def _transition_log_declared_guard_names(content: str) -> set[str]:
+    """Guard names a transition-log render in this file declares probes for (one config marker per aggregate;
+    `verify_db_guards.derive_transition_log_probes` builds the probes from the same markers)."""
+    try:
+        from noctusai_lib.domain.transition_log import configs_in_migration, transition_log_guard_probes
+        from noctusai_lib.domain.transition_log.sql import CONFIG_MARKER
+    except ImportError as exc:
+        logger.warning("compliance: cannot import noctusai_lib.domain.transition_log (%s) -- its guards stay unverified", exc)
+        return set()
+    if CONFIG_MARKER not in content:
+        return set()
+    try:
+        cfgs = configs_in_migration(content)
+    except ValueError as exc:
+        logger.warning("compliance: unparseable transition-log marker (%s) -- its guards stay unverified", exc)
+        return set()
+    return {p.guard_name for cfg in cfgs for p in transition_log_guard_probes(cfg)}
 
 
 # NOC-REMEDIATE[migration-guard-probes]: burn down the pre-existing guards with no GuardProbe, batched per product by the release lane; this keeper is the tracker (212 on 2026-10-10 — social-wiring 147, core 17, academia 4, agents 4, igig 3; asleep: erp-imobiliario 22, orbity 7, community 3, personal-finance 3, daily-life 2) — 2026-10-10
@@ -16878,12 +17106,15 @@ def check_migration_guard_has_probe(
         organ_declared = _organ_declared_guard_names(organ_specs[organ]) if organ else None
         if paths is not None:
             findings.extend(_dropped_guards_still_probed(content, rel, sql_file.parents[2].name, REGISTERED_GUARD_NAMES))
+        tl_declared = _transition_log_declared_guard_names(content)
         seen_names: set[str] = set()
         for guard in _detect_guard_objects(content):
             name = guard["guard_name"]
             if name in seen_names:
                 continue
             seen_names.add(name)
+            if name in tl_declared:
+                continue  # rendered by the transition-log primitive: verify_db_guards derives its probe from the marker
             if organ is not None:
                 if name in organ_declared:
                     continue
@@ -17914,6 +18145,37 @@ def guardian_holds_lease(
     return True, lease, "holder"
 
 
+def _merge_inherited_paths(root: Path, paths: list[str]) -> set[str]:
+    """The ONE definition of "inherited from MERGE_HEAD": staged ``paths`` whose index blob equals ``MERGE_HEAD``'s.
+
+    During a merge commit git re-stages every file the merged-in branch changed; that content was authored (and
+    reviewed, and gated) on the other branch, not by this committer. Every keeper that judges the STAGED diff
+    (guardian-tool-authorship, prod-exposure-consent isolation, absorption-source-frozen) must ignore it, or a
+    resync merge is refused for someone else's work (2026-11-15: doc_staleness.py / toolkit_freshness.py; a landed
+    deploy/consent/*.prod.yml). Only an EXACT blob match is inherited - a path the merge resolved differently (a
+    conflict edit, a change layered on the merge) still counts as authored here. Computed in ONE git call
+    (``git diff --cached MERGE_HEAD``: a path absent from it is identical to MERGE_HEAD, absent-on-both included).
+    Empty set when there is no MERGE_HEAD or git cannot answer (never widens what a keeper lets through on a probe
+    failure).
+    """
+    import subprocess
+
+    def _git(*args: str) -> subprocess.CompletedProcess | None:
+        try:
+            return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=60, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    probe = _git("rev-parse", "-q", "--verify", "MERGE_HEAD")
+    if probe is None or probe.returncode != 0:
+        return set()
+    diff = _git("diff", "--cached", "--no-renames", "--name-only", "MERGE_HEAD")
+    if diff is None or diff.returncode != 0:
+        return set()
+    differing = {ln.strip() for ln in diff.stdout.splitlines() if ln.strip()}
+    return {p for p in paths if p not in differing}
+
+
 def check_guardian_tool_authorship(
     repo_root: Path | None = None,
     staged: list[str] | None = None,
@@ -17942,6 +18204,7 @@ def check_guardian_tool_authorship(
             pass
 
     failure = None
+    staged_from_git = staged is None
     if staged is None:
         root = repo_root or REPO_ROOT
         try:
@@ -17982,6 +18245,14 @@ def check_guardian_tool_authorship(
                  "issue": f"cannot derive the guardian-protected tool set ({derive_error}); refusing while this session "
                           "holds the release-steward lease (fail closed). KB § PATTERNS/common/gate-methodology-sync.md"}]
     hits = sorted(p for p in staged if p in protected)
+    # Inheritance is judged against the SAME source the staged list came from: git's index (staged read above) or
+    # an explicit repo_root. An injected `staged` with no repo_root must not consult the live checkout's MERGE_HEAD -
+    # otherwise the verdict depends on whether the caller's tree happens to be mid-merge.
+    if hits and (staged_from_git or repo_root is not None):
+        inherited = _merge_inherited_paths(repo_root or REPO_ROOT, hits)
+        if inherited:
+            _telemetry("allow", "merge-inherited: staged blob equals MERGE_HEAD's", ",".join(sorted(inherited)))
+            hits = [p for p in hits if p not in inherited]
     if not hits:
         return []
     holder = (lease or {}).get("session_name") or str((lease or {}).get("session_id"))[:8]
@@ -18047,6 +18318,7 @@ from tools.noctus.dev.primary_write_guard import (  # noqa: E402
     _CHMOD_KNOWN_FLAGS,
     _git_config_env_injection,
     _git_hooks_bypass_reason,
+    _git_ref_forge_reason,
     _mode_removes_exec,
     _normalize as _hooks_bypass_normalize,
     _segments as _hooks_bypass_segments,
@@ -18108,6 +18380,9 @@ def check_absorption_source_frozen(
         staged = [(ln.split("\t", 1)[0][:1], ln.split("\t", 1)[1]) for ln in proc.stdout.splitlines() if "\t" in ln]
     hits = [(st, p, _abs.source_of_path(p, sources)) for st, p in staged]
     hits = [(st, p, s) for st, p, s in hits if s and st != "D"]
+    if hits:  # a merge re-stages what the other side already landed; only what this commit adds counts
+        inherited = _merge_inherited_paths(root, [p for _, p, _ in hits])
+        hits = [h for h in hits if h[1] not in inherited]
     if not hits:
         return []
     if branch is None:
@@ -18223,6 +18498,27 @@ def _hooks_bypass_argv_text(node: ast.Call) -> str | None:
     return _hooks_bypass_string_from_expr(first)
 
 
+def _ref_forge_reason_for_command(command_text: str) -> str | None:
+    """Backstop leg of the commit-tree/update-ref bypass: a tracked file that SPAWNS `git commit-tree` or
+    `git update-ref refs/heads/...` as literal command text. No tmp exemption here (a tracked file is not a
+    fixture repo): tests are skipped by the caller, and the toolkit's own plumbing runs through Python
+    wrappers (`self._git("commit-tree", ...)`), never a literal git command string."""
+    for segment in _hooks_bypass_segments(_hooks_bypass_normalize(command_text)):
+        seg = segment.strip()
+        if not seg or _MESSAGE_LEADER_RE.match(seg):
+            continue
+        reason = _git_ref_forge_reason(_hooks_bypass_strip_redirections(_hooks_bypass_tokens(seg)), None)
+        if reason is not None:
+            return reason
+    return None
+
+
+def _is_fixture_surface(rel: str) -> bool:
+    """Test code builds throwaway repos; it is not an executable surface for the ref-forge leg."""
+    name = rel.rsplit("/", 1)[-1]
+    return "/tests/" in rel or name.startswith("test_") or name == "conftest.py"
+
+
 def _hooks_bypass_reason_for_command(command_text: str) -> str | None:
     """The ONE reason-lookup shared by every file kind below — reuses the
     exact predicate the PreToolUse gate runs at write-time, so a file scan
@@ -18262,7 +18558,7 @@ def _python_hooks_bypass_hits(source: str) -> list[tuple[int, str]]:
         text = _hooks_bypass_argv_text(node)
         if not text:
             continue
-        reason = _hooks_bypass_reason_for_command(text)
+        reason = _hooks_bypass_reason_for_command(text) or _ref_forge_reason_for_command(text)
         if reason is not None:
             out.append((getattr(node, "lineno", 0) or 0, reason))
     return out
@@ -18286,7 +18582,7 @@ def _shell_hooks_bypass_hits(text: str) -> list[tuple[int, str]]:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        reason = _hooks_bypass_reason_for_command(stripped)
+        reason = _hooks_bypass_reason_for_command(stripped) or _ref_forge_reason_for_command(stripped)
         if reason is not None:
             out.append((lineno, reason))
     return out
@@ -18424,6 +18720,8 @@ def check_git_hooks_bypass(
 
     candidates = _tracked_candidates(root, paths)
     for rel, path, is_py, text in _iter_executable_surface_files(root, candidates):
+        if _is_fixture_surface(rel):
+            continue
         hits = _python_hooks_bypass_hits(text) if is_py else _shell_hooks_bypass_hits(text)
         if not hits:
             continue
@@ -20093,6 +20391,7 @@ def check_all_products() -> tuple[int, list]:
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())
+    all_issues.extend(check_supply_chain_pin())
     # 2026-11-12 (W1-C) — a worker idle poll is a per-tick RPC; fixed/short idle = 56k calls/day.
     all_issues.extend(check_worker_idle_polling())
     # 2026-11-07 — Motion only via @noctusai/lib/marketing (reduced-motion + chunk boundary).
@@ -25164,8 +25463,14 @@ def check_branch_tree_mirror(
                 # AND neither matches.
                 if recorded_parent and recorded_parent != "origin/dev":
                     # parent should be a branch and base should resolve near it.
-                    parent_rc, parent_sha = _git("rev-parse", "--verify", recorded_parent)
-                    base_rc, base_sha = _git("rev-parse", "--verify", recorded_base)
+                    # `X` and `origin/X` are one branch; the remote-tracking ref is the shared truth and
+                    # the local branch may carry local-only commits (a primary checkout's `dev` does), so a
+                    # local `dev` is never compared against `origin/dev`.
+                    _parent_name = recorded_parent[len("origin/"):] if recorded_parent.startswith("origin/") else recorded_parent
+                    parent_rc, parent_sha = _git("rev-parse", "--verify", f"refs/remotes/origin/{_parent_name}")
+                    if parent_rc != 0:
+                        parent_rc, parent_sha = _git("rev-parse", "--verify", recorded_parent)
+                    base_rc, base_sha = _git("rev-parse", "--verify", _split_pinned(recorded_base)[0])
                     if parent_rc == 0 and base_rc == 0 and parent_sha and base_sha:
                         # Check if base is an ancestor of or equal to parent — normal.
                         anc_rc, _ = _git("merge-base", "--is-ancestor", base_sha, parent_sha)
@@ -25218,8 +25523,15 @@ def check_stale_branch_pointers(
     session: str | None = None,
     repo_root: Path | None = None,
     run=None,
+    heal=None,
+    healed_out: list[str] | None = None,
 ) -> list[dict]:
     """SAFETY NET behind the pointer-lifecycle mechanism (2026-09-23).
+
+    `heal(branch, note) -> {"ok": bool, ...}` (optional): a pointer whose branch is PROVABLY landed on origin/dev with
+    its worktree gone is flipped to `shipped` by it instead of being reported (a blocked unrelated push is the cost
+    the safety net used to charge for the lifecycle's miss). A heal that fails leaves the issue as before; healed
+    branches are appended to `healed_out`.
 
     The mechanism is `task_branch`: start claims `on_going`, integrate writes
     `integrated-worktree-live`, cleanup writes `shipped`; `session_end_sweep`
@@ -25283,6 +25595,15 @@ def check_stale_branch_pointers(
             fork_sha=wts.fork_sha_from_pointer_base(row.get("base", "")))
         if not landed:
             continue
+        if heal is not None:
+            try:
+                healed = heal(branch, f"healed by check_stale_branch_pointers: branch landed on {base} ({how}), worktree gone")
+            except Exception as exc:  # noqa: BLE001 - a failed heal falls back to reporting the pointer
+                healed = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            if healed.get("ok"):
+                if healed_out is not None:
+                    healed_out.append(branch)
+                continue
         own = bool(me) and row.get("session") == me
         issues.append({
             "product": "<platform>",
@@ -26580,6 +26901,13 @@ def _check_consent_commit_isolated(root: Path) -> list[dict]:
         f for f in staged
         if f.startswith(f"{_PROD_CONSENT_DIR_REL}/") and f.endswith(".prod.yml")
     ]
+    if not consent_files:
+        return []
+    # A merge re-stages whatever the merged-in branch already landed (incl. its consent record): that is not an
+    # authored diff here. Only what THIS commit adds on top of MERGE_HEAD is judged for isolation.
+    inherited = _merge_inherited_paths(root, staged)
+    staged = [p for p in staged if p not in inherited]
+    consent_files = [f for f in consent_files if f not in inherited]
     if not consent_files or len(consent_files) == len(staged):
         return []
     other = sorted(set(staged) - set(consent_files))
@@ -27112,6 +27440,19 @@ def check_gate_triad(repo_root: Path | None = None) -> list[dict]:
     Severity high. Fix: `python mcp/noctusai/cli.py --gate-alignment declare ...`."""
     from . import gate_alignment
     return gate_alignment.triad_issues(repo_root or REPO_ROOT)
+
+
+def check_refusal_classes_owned(paths: list[Path] | None = None, repo_root: Path | None = None,
+                                events: list[dict] | None = None) -> list[dict]:
+    """Keeper (WARN-first shadow): a refusal class that fired >=3 times in 14 days with NO open fix
+    (branch-tree pointer naming it, in-progress gate-walls row, or NOC-REMEDIATE[<class>] marker) is a
+    recurring mistake nobody owns. Fix: open a fix branch whose brief/notes carry the class key, set a
+    gate-walls row in-progress/accepted, or leave a NOC-REMEDIATE[<class>] destination.
+    KB § PATTERNS/common/gate-methodology-sync.md (Alignment loop)."""
+    from . import gate_alignment
+    return [{"file": "guard-events.ndjson", "severity": "warning",
+             "issue": f"refusal class `{r['class']}` recurred {r['n_14d']}x across {r['sessions']} session(s) in 14d with no open fix"}
+            for r in gate_alignment.unowned_classes(repo_root or REPO_ROOT, events=events)]
 
 
 def _manifest_dep_names(path: str, text: str) -> set[str]:
@@ -27938,27 +28279,7 @@ def _mpsr_seeded_keys(product_dir: Path) -> set[str]:
 
 def _mpsr_fe_scan(files: list[Path]) -> tuple[dict[str, list[dict]], dict[str, str], str | None]:
     """ts-morph `defineModule` page keys over ``files`` -> (results, per_file_errors, bootstrap_error)."""
-    if not files:
-        return {}, {}, None
-    script = REPO_ROOT.joinpath(*_MPSR_SCRIPT_REL)
-    if shutil.which("node") is None:
-        return {}, {}, "node_unavailable: `node` not on PATH"
-    if not script.exists():
-        return {}, {}, f"script_missing: {script}"
-    try:
-        proc = subprocess.run(
-            ["node", str(script)], input=json.dumps({"files": [str(f) for f in files]}),
-            capture_output=True, text=True, timeout=120,
-        )
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        return {}, {}, f"scan_failed: {exc}"
-    if proc.returncode != 0:
-        return {}, {}, f"node_crashed (exit {proc.returncode}): {(proc.stderr or '')[-300:]}"
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        return {}, {}, f"non_json_stdout: {exc}"
-    return parsed.get("results", {}), parsed.get("errors", {}), None
+    return _node_toolchain.run_files_scan(_MPSR_SCRIPT_REL, files, root=REPO_ROOT, timeout=120, label="module-page-keys AST scan")
 
 
 def module_page_status_row_gaps(root: Path) -> tuple[dict[str, dict[str, str]], list[str]]:
@@ -28181,6 +28502,107 @@ def check_stage_list_not_in_code(repo_root: Path | None = None) -> list[dict]:
                 "issue": f"{have} stage list(s) left but the baseline allows {allowed}: lower `{rel}` in {baseline_rel} — "
                          "`python mcp/noctusai/cli.py --lower-stage-list-not-in-code-baseline` (the ratchet only shrinks).",
             })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_supply_chain_pin` — what EXECUTES must be pinned: every third-party
+# GitHub Action by FULL commit SHA, every image on the PROD deploy surface by
+# digest or a specific x.y[.z] version tag — never `:latest`, a bare major, or
+# no tag. A mutable tag is a re-pointable supply chain (tj-actions/changed-files
+# 2025, trivy-action 2026-03: whoever controls the tag controls what runs with
+# our secrets). Construction half: Dependabot github-actions SHA bumps and the
+# `noctus.dev.image_pin` (resolves + writes the digest; Dependabot docker-compose moves it). Escape: a
+# `# pin-ok: <reason>` comment on the image line or in the comment block right
+# above it (images only; an Action has no escape). Scope = the prod deploy
+# surface (deploy/{fleet,services,legacy,tunnel}) — per-product dev composes
+# are generated from the seed and the dev fleet is dormant.
+# KB § PATTERNS/devops/ci-security-gates.md § Supply-chain pins.
+# ---------------------------------------------------------------------------
+_SUPPLY_CHAIN_COMPOSE_GLOBS = (
+    "deploy/fleet/*.yml", "deploy/services/*.yml", "deploy/legacy/*.yml", "deploy/tunnel/*.yml",
+)
+_SUPPLY_CHAIN_OWN_IMAGE_PREFIXES = ("ghcr.io/jraphaelsst/",)  # built by our CI, deployed by immutable :sha / NOCTUS_IMAGE_TAG
+_SUPPLY_CHAIN_USES_RE = re.compile(r"^\s*(?:-\s+)?uses:\s*(?P<ref>[^\s#]+)")
+_SUPPLY_CHAIN_IMAGE_RE = re.compile(r"^\s*image:\s*(?P<ref>[^\s#]+)")
+_SUPPLY_CHAIN_SHA_RE = re.compile(r"@[0-9a-f]{40}$")
+_SUPPLY_CHAIN_VERSION_TAG_RE = re.compile(r"\d+\.\d+")
+
+
+def _supply_chain_image_violation(raw: str) -> str | None:
+    """Why ``raw`` (an `image:` value) is unpinned, or None when it is pinned/exempt."""
+    ref = raw.strip().strip("\"'")
+    m = re.fullmatch(r"\$\{[A-Za-z_][A-Za-z0-9_]*:-(?P<d>[^}]*)\}", ref)
+    if m:
+        ref = m.group("d")  # ${VAR:-default}: the default is what runs unless overridden
+    elif ref.startswith("${"):
+        return None  # ${VAR:?...} / ${VAR}: no default value to judge
+    if not ref or any(ref.startswith(pfx) for pfx in _SUPPLY_CHAIN_OWN_IMAGE_PREFIXES):
+        return None
+    if "@sha256:" in ref:
+        return None
+    last = ref.rsplit("/", 1)[-1]
+    if ":" not in last:
+        return f"`{ref}` has no tag (resolves to :latest)"
+    tag = last.split(":", 1)[1]
+    if tag.startswith("latest") and not _SUPPLY_CHAIN_VERSION_TAG_RE.search(tag):
+        return f"`{ref}` is the floating :latest tag"
+    if not _SUPPLY_CHAIN_VERSION_TAG_RE.search(tag):
+        return f"`{ref}` carries a floating tag (no x.y version, no digest)"
+    return None
+
+
+def check_supply_chain_pin(paths: list[Path] | None = None, repo_root: Path | None = None) -> list[dict]:
+    """Keeper: every third-party GitHub Action is pinned to a 40-hex SHA and every
+    prod-surface compose image to a digest or an x.y[.z] version tag.
+    Return shape: [{"file", "issue", "severity"}]. `paths` (repo-relative) scopes a
+    pre-commit delta; None = full scan."""
+    root = repo_root or REPO_ROOT
+    only = {str(p) for p in paths} if paths else None
+    issues: list[dict] = []
+
+    def _emit(rel: str, lineno: int, what: str, fix: str) -> None:
+        issues.append({
+            "file": rel, "severity": "high",
+            "issue": f"`{rel}:{lineno}` {what}. {fix} KB § PATTERNS/devops/ci-security-gates.md § Supply-chain pins.",
+        })
+
+    gh = root / ".github"
+    if gh.is_dir():
+        for f in sorted([*gh.rglob("*.yml"), *gh.rglob("*.yaml")]):
+            rel = str(f.relative_to(root))
+            if only is not None and rel not in only:
+                continue
+            for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+                m = _SUPPLY_CHAIN_USES_RE.match(line)
+                if not m:
+                    continue
+                ref = m.group("ref")
+                if ref.startswith("./") or ref.startswith("docker://") or _SUPPLY_CHAIN_SHA_RE.search(ref):
+                    continue
+                _emit(rel, n, f"Action `{ref}` is not pinned to a full commit SHA",
+                      "Pin to the tag's commit (`gh api repos/<owner>/<repo>/git/ref/tags/<tag>`, deref annotated tags): `@<40-hex>  # <tag>`.")
+
+    for pattern in _SUPPLY_CHAIN_COMPOSE_GLOBS:
+        for f in sorted(root.glob(pattern)):
+            rel = str(f.relative_to(root))
+            if only is not None and rel not in only:
+                continue
+            lines = f.read_text(encoding="utf-8").splitlines()
+            for n, line in enumerate(lines, 1):
+                m = _SUPPLY_CHAIN_IMAGE_RE.match(line)
+                if not m:
+                    continue
+                why = _supply_chain_image_violation(m.group("ref"))
+                if why is None:
+                    continue
+                window = [line, *lines[max(0, n - 6):n - 1]]
+                if any("pin-ok" in w for w in window):
+                    continue
+                _emit(rel, n, f"image {why}",
+                      "Do not hand-edit: `noctus.dev.image_pin action='pin' write=True` resolves and writes the digest "
+                      "(`name:tag@sha256:...`); if it genuinely cannot be pinned (a locally built image), say why with "
+                      "`# pin-ok: <reason>` above it.")
     return issues
 
 

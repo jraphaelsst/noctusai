@@ -3,7 +3,7 @@
 > **Status:** PLANNED 2026-11-08 (architect plan, owner direction verbatim in Origin). Target path: `project-history/roadmaps/crm-cms-erp-vertical-seeds-2026-11.md`. Full plan with evidence: [`crm-cms-erp-vertical-seeds-2026-11.plan.md`](crm-cms-erp-vertical-seeds-2026-11.plan.md) (§ 0 facts, § 1 ADRs, § 6 slices).
 
 ## Origin
-Owner 2026-11-08: "what's shared with sw let's seed … let's start seeding erp cms and crm as products, so we get the core of them and project to other contexts … erps and crms for every market, building only market-specs … one's funel contains Visita stage, ours doesnt as Senseys doesnt." Answers: modules inside ONE product per market (sidebar groups in `MODULE_GROUP_ORDER`); canons SW = real estate (absorbs erp-imobiliario), orbity = digital agencies (absorbs igig), monica = psychoanalysis clinics (absorbs therapy-platform + community), core = SaaS; absorbed products are erased after absorption; the market ships default config (funnel stages), each org edits it; priority CRM → CMS → ERP consolidation.
+Owner 2026-11-08: "what's shared with sw let's seed … let's start seeding erp cms and crm as products, so we get the core of them and project to other contexts … erps and crms for every market, building only market-specs … one's funel contains Visita stage, ours doesnt as Senseys doesnt." Answers: modules inside ONE product per market (sidebar groups in `MODULE_GROUP_ORDER`); canons SW = real estate (absorbs erp-imobiliario), orbity = digital agencies (absorbs igig), nosnolimiar = psychoanalysis clinics (absorbs therapy-platform + community), core = SaaS; absorbed products are erased after absorption; the market ships default config (funnel stages), each org edits it; priority CRM → CMS → ERP consolidation.
 
 ## Trigger conditions (the "when")
 - **T-LIC** — first org asks to buy a module subset or a priced tier ⇒ activate `ModuleSpec.license_key` on the core license gate.
@@ -29,10 +29,10 @@ Owner 2026-11-08: "what's shared with sw let's seed … let's start seeding erp 
 | W1-4 assignment · W1-5 activities | seed session | — | organ guard probes green on PGlite (`migration_replay`) |
 | W1-6 keepers (warn-first) | tooling-engineer | W1-1, W1-3 | keeper red on a planted literal stage tuple |
 | W2-1 consent · W2-2 intake · W2-3 agent hook · W2-5 quotes accept | seed session | — | outbound gate refuses an opted-out number in a test; intake Fake round-trip |
-| W2-4 leads-lite → stage rows + Monica pilot | seed session + monica | W1-3 | Monica org edits a stage label in settings, board follows (live, prod) |
+| W2-4 leads-lite → stage rows + Nós no Limiar pilot | seed session + nosnolimiar | W1-3 | Nós no Limiar org edits a stage label in settings, board follows (live, prod) |
 | W2-6 `crm_module` + `templates/product-crm` + `scaffold_product(overlay=list)` | seed + tooling | W1-*, W2-* | scaffold a throwaway `overlay=["crm","erp"]` product in a worktree; wiring tests green |
 | W3-S1..S4 SW consumer (nav modules, preset, consent/assignment/quotes, ERP wave A) | noctusai-51 | W1-2, W1-3, W2-* | SW sidebar matches the approved nav map; Funil unchanged for One |
-| W3-C1 core · W3-M1 monica | seed / monica | W2-6, owner Q4 | `spa_smoke` + page shows real data |
+| W3-C1 core · W3-M1 nosnolimiar | seed / nosnolimiar | W2-6, owner Q4 | `spa_smoke` + page shows real data |
 
 ## Phase 3 — CMS seed (W5) (DEFERRED — fires when W2-6 lands)
 Pages organ over the landing organs, editorial router + FE, media library (signed URLs only), `FeedPublisher` seam, external portal (fires on owner Q1). SW consumes: site, RE feed adapters, portal proprietário.
@@ -41,7 +41,7 @@ Pages organ over the landing organs, editorial router + FE, media library (signe
 E1 locação on `contracts` recurring + readjustment index; E2 commissions split in finance. SW market spec: vistorias, chaves, manutenção, seguros, campo, filiais (seam), comissões policy, DIMOB (after accountant review). Unfreeze order in PLAN § 4.
 
 ## Phase 5 — Absorptions (W6–W8) (DEFERRED — per product, owner-gated steps)
-erp-imobiliario → SW (A5 decouple public fns before A7); wake orbity (owner go) → igig → orbity; therapy-platform + community + nos-no-limiar content → monica (legal review first, owner Q2). Phase 6 = contract (W9): drop leads-lite literal path, SW SQL stage fn, orbity `lead_stages`; keepers flip to blocking.
+erp-imobiliario → SW (A5 decouple public fns before A7); wake orbity (owner go) → igig → orbity; therapy-platform + community + nos-no-limiar content → nosnolimiar (legal review first, owner Q2). Phase 6 = contract (W9): drop leads-lite literal path, SW SQL stage fn, orbity `lead_stages`; keepers flip to blocking.
 
 > **Owner correction 2026-11-08 — what "erp" means here.** The only product absorbed into SW is **erp-imobiliario** (its database schema happens to be named `erp`; the "erp schema drop" in 51's S8 is THAT schema). **`templates/product-erp/` is the ERP product TEMPLATE and STAYS** — never absorbed, never erased; it is the L1 ERP vertical seed every market ERP is scaffolded from. There is no `products/erp` and no `erp` row in `public.products`. Owner: "erp que erp é esse? só me lembro do erp-imob, e o template de produto erp. esse erp deve ficar."
 
@@ -81,7 +81,7 @@ Owner, 2026-11-12, after an assistant chat-page brief cited erp-imobiliario's in
 - No change, refinement or fix to an absorption source, and no source as a reference or pilot (Phase 5a).
 
 ## Open questions (to revisit at trigger time)
-- Q1 public tier for CMS sites + portals · Q2 therapy-platform clinical data retention · Q3 module enablement per product vs per org · Q4 monica slug (`nosnolimiar` rename) — recommendations in PLAN § 8.
+- Q1 public tier for CMS sites + portals · Q2 therapy-platform clinical data retention · Q3 module enablement per product vs per org · Q4 nosnolimiar slug (`nosnolimiar` rename) — recommendations in PLAN § 8.
 - Q5 (2026-11-12) the other asleep products — academia-de-reciclagem, adconnect, commerce, store, daily-life, personal-finance, p-studio, knowledge-extractor, dev-team — are NOT on the source list today. Owner to say which (if any) also become sources and into which canon.
 
 ## Decision log
@@ -95,7 +95,7 @@ Owner, 2026-11-12, after an assistant chat-page brief cited erp-imobiliario's in
 _(empty)_
 
 ## Composes with
-`KB § PATTERNS/architect/vertical-seed.md` · `seed-canonical-defaults.md` · `products-consume-canonical-organs.md` · `architecture-craft-canon.md` (§3 records, §10 expand-contract) · `product-working-scope.md` · `KB § GUIDES/absorb-seed-workspace.md` · skills `noc-absorb-product`, `noc-archive-absorb` · roadmaps `erp-seed-2026-10.md`, `commerce-seed-2026-10.md`, `monica-v1-2026-10.md`, `community-modules-1-3-2026-09.md`.
+`KB § PATTERNS/architect/vertical-seed.md` · `seed-canonical-defaults.md` · `products-consume-canonical-organs.md` · `architecture-craft-canon.md` (§3 records, §10 expand-contract) · `product-working-scope.md` · `KB § GUIDES/absorb-seed-workspace.md` · skills `noc-absorb-product`, `noc-archive-absorb` · roadmaps `erp-seed-2026-10.md`, `commerce-seed-2026-10.md`, `nosnolimiar-v1-2026-10.md`, `community-modules-1-3-2026-09.md`.
 
 ## File trail
 - 2026-11-08 · W0-2 seed Sidebar disabled/badged nav + canonical `MODULE_GROUP_ORDER` (d08fc5702); collapsed-rail badge fix (5a03132f9); core admin sidebar grouped by module (c51e9ac8c).

@@ -345,7 +345,7 @@ class TestExplicitAdmit:
         sentinel = object()
         assert gs._resolve_admit(sentinel, run_gate=lambda sp: None) is sentinel
         assert gs._resolve_admit(None, run_gate=None) is None
-        assert gs._resolve_admit(gs._AUTO_ADMIT, run_gate=None) is hw.heavy_slot
+        assert gs._resolve_admit(gs._AUTO_ADMIT, run_gate=None) is hw.queued_heavy_slot
         assert gs._resolve_admit(gs._AUTO_ADMIT, run_gate=lambda sp: None) is None
 
     def test_run_gates_named_honours_explicit_admit(self, tmp_path):

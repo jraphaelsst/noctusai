@@ -1,9 +1,12 @@
-"""heavy_run_guard: deny ungated heavy runs; allow wrapped / benign / escaped ones."""
+"""heavy_run_guard: REWRITE ungated heavy runs through the gate; allow wrapped / benign / escaped ones;
+still refuse local whisper and unparseable commands."""
 from __future__ import annotations
 
 import importlib.util
 import io
 import json
+import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -11,7 +14,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[3]
 TOOL = REPO / "mcp/noctusai/tools/noctus/dev/heavy_run_guard.py"
-HOOK = REPO / "scripts/hooks/claude-guard-heavy-run.py"
+HOOK = REPO / "scripts/hooks/claude-guard-bash-rewrite.py"
 
 
 def _load(name: str, path: Path):
@@ -76,11 +79,40 @@ ALLOW = [
 ]
 
 
-@pytest.mark.parametrize("cmd", DENY)
-def test_denies(cmd):
+def _rewrite(cmd: str) -> dict:
+    """The REWRITE verdict for `cmd`; asserts it is a rewrite, not a refusal."""
     verdict = guard.decide(_bash(cmd))
-    assert verdict and "hw_admission.py run --job" in verdict["reason"]
-    assert "hardware-admission-budget.md" in verdict["reason"]
+    assert verdict and verdict.get("decision") == "allow", verdict
+    assert "reason" not in verdict
+    return verdict
+
+
+@pytest.mark.parametrize("cmd", DENY)
+def test_heavy_run_is_rewritten_not_denied(cmd):
+    verdict = _rewrite(cmd)
+    new = verdict["updated_input"]["command"]
+    assert "hw_admission.py run --job" in new and "--wait-s 7200 -- bash -c " in new
+    assert shlex.split(new)[-1] == cmd  # the original command is ONE intact bash -c argument
+    assert "REWROTE" in verdict["context"] and "hardware-admission-budget.md" in verdict["context"]
+    # the rewritten command is what the guard itself accepts (no second wrap)
+    assert guard.decide(_bash(new)) is None
+
+
+def test_rewrite_uses_absolute_python_and_gate_path():
+    new = _rewrite("pytest -q x")["updated_input"]["command"]
+    py, gate = shlex.split(new)[:2]
+    assert os.path.isabs(py) and os.path.isabs(gate) and gate.endswith("hw_admission.py")
+
+
+def test_rewrite_keeps_other_tool_input_fields():
+    verdict = guard.decide({"tool_name": "Bash", "tool_input": {"command": "pytest", "timeout": 5000,
+                                                                "run_in_background": True}})
+    assert verdict["updated_input"]["timeout"] == 5000 and verdict["updated_input"]["run_in_background"] is True
+
+
+def test_rewrite_quotes_awkward_commands_round_trip():
+    cmd = "cd 'a b' && pytest -q -k \"x and 'y'\" $HOME `echo z`"
+    assert shlex.split(_rewrite(cmd)["updated_input"]["command"])[-1] == cmd
 
 
 @pytest.mark.parametrize("cmd", ALLOW)
@@ -103,21 +135,26 @@ def test_hook_env_escape(monkeypatch):
 
 
 def test_suggested_job_and_wrapped_command():
-    r = guard.decide(_bash("cd products/erp/frontend && npx vitest run"))["reason"]
-    assert "--job vitest:erp -- npx vitest run" in r
-    r = guard.decide(_bash("pytest -q mcp/noctusai/tests/test_a.py"))["reason"]
-    assert "--job pytest:tests -- pytest -q mcp/noctusai/tests/test_a.py" in r
+    r = _rewrite("cd products/erp/frontend && npx vitest run")["updated_input"]["command"]
+    assert "--job vitest:erp " in r
+    r = _rewrite("pytest -q mcp/noctusai/tests/test_a.py")["updated_input"]["command"]
+    assert "--job pytest:tests " in r
 
 
-def test_unparseable_with_heavy_word_denies():
-    assert guard.decide(_bash("pytest 'unterminated"))
+def test_unparseable_with_heavy_word_still_denies():
+    verdict = guard.decide(_bash("pytest 'unterminated"))
+    assert verdict and "reason" in verdict and "updated_input" not in verdict
 
 
-def test_hook_wrapper_denies_and_allows():
+def test_hook_wrapper_rewrites_and_allows(tmp_path, monkeypatch):
     hook = _load("hrg_hook_under_test", HOOK)
-    out = io.StringIO()
-    assert hook.run_guard("heavy-run", hook._judge, stdin=io.StringIO(json.dumps(_bash("pytest"))), stdout=out) == 0
-    assert "[noc-guard:heavy-run]" in out.getvalue() and "deny" in out.getvalue()
+    out, log = io.StringIO(), tmp_path / "events.ndjson"
+    monkeypatch.setenv("NOCTUS_GUARD_EVENT_LOG", str(log))  # the composed hook logs each member guard's event itself
+    assert hook.run_guard("heavy-run", hook._judge, stdin=io.StringIO(json.dumps(_bash("pytest"))), stdout=out,
+                          event_log=log) == 0
+    body = json.loads(out.getvalue())["hookSpecificOutput"]
+    assert body["permissionDecision"] == "allow" and "hw_admission.py run --job" in body["updatedInput"]["command"]
+    assert json.loads(log.read_text().splitlines()[-1])["outcome"] == "rewrite"
     out = io.StringIO()
     hook.run_guard("heavy-run", hook._judge, stdin=io.StringIO(json.dumps(_bash("ls"))), stdout=out)
     assert out.getvalue() == ""
@@ -153,6 +190,8 @@ HEREDOC_DENY = [
     "cd x\npytest -q",
     "bash <<'EOF'\ncd x && pytest -q\nEOF",
     "cat > f <<EOF\ndata\nEOF\npytest",
+    # the compound: a heredoc writes the test, then the suite runs
+    "cat > t_new.py <<'EOF'\ndef test_a():\n    assert 1\nEOF\npytest -q t_new.py",
 ]
 
 
@@ -163,12 +202,13 @@ def test_heredoc_body_is_data(cmd):
 
 @pytest.mark.parametrize("cmd", HEREDOC_DENY)
 def test_heredoc_and_newline_still_judged(cmd):
-    assert guard.decide(_bash(cmd))
+    new = _rewrite(cmd)["updated_input"]["command"]
+    assert shlex.split(new)[-1] == cmd  # heredoc + run travel together inside the one gated job
 
 
 def test_escape_honoured_even_when_unparseable():
     assert guard.decide(_bash("NOC_HW_UNGATED_OK=harness-trial pytest 'unterminated")) is None
-    assert guard.decide(_bash("NOC_HW_UNGATED_OK= pytest 'unterminated"))
+    assert guard.decide(_bash("NOC_HW_UNGATED_OK= pytest 'unterminated"))  # empty escape: refused
 
 
 # ── Local Whisper (owner rule 2026-11-07): server first, local only after a server failure ──
@@ -209,4 +249,48 @@ def test_whisper_escape_after_server_failure(capsys):
 @pytest.mark.parametrize("cmd", ["nice -n 10 pytest tests", "nice -10 pytest", "env -i FOO=1 pytest",
                                  "uv run pytest -q", "uv run --with x pytest"])
 def test_wrapper_and_uv_flags_do_not_hide_a_suite(cmd):
-    assert guard.decide(_bash(cmd))
+    _rewrite(cmd)
+
+
+# ── 2026-11-16: a `timeout`-prefixed bare-venv pytest ran outside the hardware slot (3 concurrent runs, swap 8.7/9.2G) ──
+_REAL_BYPASS = ("timeout 300 /Users/rapha/Documents/repository/NoctusAI/noctusai/venv/bin/python -m pytest "
+                "tests/modules/media_creation -q")
+WRAPPED_FORMS = [
+    _REAL_BYPASS,
+    f"cd products/p-studio/backend && {_REAL_BYPASS} 2>&1 | tail -20",
+    "timeout -k 10 300 /a/venv/bin/python -m pytest tests -q",
+    "timeout --signal=KILL 300 python -m pytest tests",
+    "timeout --kill-after=5s --foreground 300 python -m pytest tests",
+    "gtimeout 300 .venv/bin/python3.11 -m pytest tests",
+    "PYTHONPATH=. timeout 300 venv/bin/pytest tests",
+    "caffeinate -i timeout 300 venv/bin/python -m pytest tests",
+    "nice -n 10 timeout 300 venv/bin/python -m pytest tests",
+    "time timeout 300s venv/bin/python -m pytest tests",
+    "ionice -c 3 stdbuf -oL venv/bin/py.test tests",
+    "/a/venv/bin/python -m unittest discover",
+]
+
+
+@pytest.mark.parametrize("cmd", WRAPPED_FORMS)
+def test_wrapped_and_bare_venv_pytest_is_rewritten_into_the_gate_keeping_the_wrapper_inside(cmd):
+    verdict = guard.decide(_bash(cmd))
+    assert verdict is not None and verdict["decision"] == "allow", cmd
+    rewritten = verdict["updated_input"]["command"]
+    assert "hw_admission.py" in rewritten and f" -- bash -c " in rewritten
+    assert shlex.split(rewritten)[-1] == cmd  # the whole original (timeout included) runs INSIDE the admitted job
+
+
+def test_the_exact_bypass_command_names_a_pytest_job():
+    verdict = guard.decide(_bash(_REAL_BYPASS))
+    assert "--job pytest:" in verdict["updated_input"]["command"]
+
+
+@pytest.mark.parametrize("cmd", ["timeout 5 git status", "timeout 300 ls tests", "gtimeout -k 1 5 echo pytest",
+                                 "nice -n 10 git log --oneline"])
+def test_a_wrapped_command_that_is_not_heavy_is_allowed_untouched(cmd):
+    assert guard.decide(_bash(cmd)) is None
+
+
+def test_an_already_gated_timeout_pytest_is_not_wrapped_twice():
+    gated = guard.gated_command(_REAL_BYPASS, "pytest:media_creation")
+    assert guard.decide(_bash(gated)) is None

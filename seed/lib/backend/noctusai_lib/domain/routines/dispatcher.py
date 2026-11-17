@@ -135,6 +135,7 @@ def register_reconciler(dispatcher: RoutineDispatcher, *, minutes: int = 1) -> N
     async def _reconcile() -> None:
         await asyncio.to_thread(dispatcher.reconcile)
 
+    # poll-budget: every `minutes` (default 1 min); 1 calls/tick (one routines-store read in dispatcher.reconcile); worst 1440/day at the default; idle=fixed
     register(RECONCILER_JOB, _reconcile, minutes=minutes)
 
 

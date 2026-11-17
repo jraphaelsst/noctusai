@@ -1,0 +1,29 @@
+name: Python test environment
+description: >
+  The Python toolchain every backend/toolkit pytest run needs, in ONE place (remote-test.yml uses it; test.yml
+  carries the same block hand-copied per job - adopting this there is a follow-up): Python 3.11 + pip cache,
+  mirror-resilient apt build deps, the root requirements superset + the MCP toolkit set, and the PGlite harness
+  (node deps under mcp/noctusai/node) the real-Postgres proofs use. No secrets are read here.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+      with:
+        python-version: "3.11"
+        cache: pip
+    - uses: ./.github/actions/apt-install
+      with:
+        packages: libcairo2-dev libgirepository1.0-dev libpango1.0-dev libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
+    - name: Install dependencies (root superset + the MCP toolkit set)
+      shell: bash
+      run: |
+        pip install -r requirements.txt
+        pip install pytest pytest-asyncio
+        (cd mcp/noctusai && pip install -r requirements.txt)
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+      with:
+        node-version: "20"
+    - name: Install PGlite harness deps
+      shell: bash
+      working-directory: mcp/noctusai/node
+      run: npm ci --no-audit --no-fund

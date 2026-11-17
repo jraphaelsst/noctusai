@@ -349,3 +349,30 @@ class TestPerTreeCaches:
         (tmp_path / ".git").write_text("gitdir: /nowhere\n")
         p = cb.cache_path("auto-improvement", repo_root=tmp_path)
         assert p == tmp_path / ".claude" / "cache" / "auto-improvement.sqlite"
+
+
+class TestMirrorSourcePath:
+    """deploy_pull's cache mirror ships the repo's persisted caches to prod. From
+    a linked worktree a single-slot cache has no private slot yet, so the mirror
+    must read the common-dir (primary) slot, not report the worktree's
+    never-built per-worktree path as "cache missing"."""
+
+    def test_worktree_without_private_slot_falls_back_to_common_dir(self, repo_with_worktree):
+        primary, wt = repo_with_worktree
+        common = primary.resolve() / ".git" / "noctusai" / "cache"
+        common.mkdir(parents=True, exist_ok=True)
+        (common / "keeper-patterns.sqlite").write_bytes(b"")
+        got = cb.mirror_source_path("keeper-patterns", repo_root=wt)
+        assert got == common / "keeper-patterns.sqlite"
+        assert got.exists()
+
+    def test_private_slot_wins_when_present(self, repo_with_worktree):
+        primary, wt = repo_with_worktree
+        own = cb.cache_path("keeper-patterns", repo_root=wt)
+        own.write_bytes(b"")
+        assert cb.mirror_source_path("keeper-patterns", repo_root=wt) == own
+
+    def test_shared_cache_unchanged(self, repo_with_worktree):
+        primary, wt = repo_with_worktree
+        assert cb.mirror_source_path("kb-embeddings", repo_root=wt) == cb.cache_path(
+            "kb-embeddings", repo_root=wt)

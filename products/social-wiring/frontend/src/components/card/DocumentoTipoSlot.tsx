@@ -18,6 +18,7 @@
  * caller-supplied callbacks, exactly like `CertidaoCasamentoSlot` always
  * did.
  */
+import { DocumentoInfo } from "@/components/guia/GuiaInfo";
 import { useRef } from "react";
 import { Download, ExternalLink, RotateCw, Trash2, Upload } from "lucide-react";
 
@@ -110,6 +111,8 @@ export function DocumentoTipoSlot({
       <span className="shrink-0 font-medium" data-testid={`${testId}-label`}>
         {label}
       </span>
+      {/* "i": what is read from this document and where it goes. */}
+      <DocumentoInfo tipo={tipoDocumento} rotulo={label} />
       <span
         className={cn(
           "min-w-0 flex-1 truncate text-muted-foreground/90",
