@@ -59,7 +59,7 @@ Rule: `KB § PATTERNS/devops/release-steward.md` § 7a (guardian spec, council 0
 
 ## 5a · Handoffs: finish what was handed
 
-A peer handing off (it finished, or the owner told it to) sends the `release-steward.md` § 7c report. The steward then: acks in one line naming the watched runs; registers those runs in the ONE feed; dispatches an engineer on the handed worktree for any NEXT STEPS or red run (it does not write the code itself); and after landing runs CLEANUP (worktree, resume-note memory absorbed then deleted). Reports go to the owner, batched.
+A peer handing off (it finished, or the owner told it to) sends the `release-steward.md` § 7c report. The steward then: acks in one line naming the watched runs; registers those runs in the ONE feed; finishes any NEXT STEPS or red run ITSELF (adopts the worktree, merges `dev` in, resolves, re-verifies, re-enqueues; its own subagents may help), never asking the owner for permission and never forwarding the work to another session (owner, 2026-11-17); the only fence is the guardian-tool-authorship keeper on NEW steward tooling, which it reports and never routes around; and after landing runs CLEANUP (worktree, resume-note memory absorbed then deleted). Reports go to the owner, batched.
 
 ## 6 · Ship
 
