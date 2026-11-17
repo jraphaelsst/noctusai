@@ -222,6 +222,22 @@ model only records criterion values through tools; **score and stage are compute
 its catalogue in `parametros.catalogo`; an agent with `oferecer_opcoes` active and no catalogue fails readiness
 (`catalogo_ausente`). Julia keeps `oferecer_imoveis` & co.
 
+## Client onboarding by interview (`app/onboarding/`, Studio tab "Onboarding")
+
+Owner decision 2026-11-17: new clients are onboarded through our own chatbot mechanism. The checklist (our 41 items, each
+mapped to an org spec key, a social-wiring setting or a human step) is `projects/onboarding/CHECKLIST.md`, mirrored in
+`app/onboarding/checklist.py` (a test keeps them in step). Staff routes (platform admin + a live grant whose editor is
+`plataforma`, the same gate as the staff org-specs route) under
+`/api/studio/plataforma/agents/{key}/products/{product}/orgs/{org_id}/onboarding`: `GET` (progress per item), `POST
+/importar` (an existing configuration becomes unconfirmed pre-filled answers; writes nothing), `POST /aplicar` (ONE apply
+step with a per-item report: `aplicado` / `recusado` + reason / `pendente_humano`). Spec values go through the one org-spec
+write path (`aplicar_org_specs`: validation, audit); an invalid value is refused, never stored. SW operational settings go
+through `SwSettingsPort` (Real refuses `canal_sw_nao_configurado` until social-wiring accepts a staff channel; the report
+carries the route + body to apply by hand). The interviewer agent `onboarding-imob` is a platform definition whose draft
+section rows live in `projects/onboarding/agent/` (applied with `noctus.agents.content`, never published from code). After
+an apply the owner is pointed to evaluation mode before go-live. Deferred: `NOC-REMEDIATE[onboarding-sw-staff-channel]`,
+`[onboarding-import-prose]`, `[onboarding-agent-rows]`.
+
 ## Tests
 
 ```bash

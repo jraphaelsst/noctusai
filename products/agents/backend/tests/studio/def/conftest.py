@@ -33,6 +33,7 @@ from app.routers.studio_agents_router import (
     router as studio_agents_router,
 )
 from app.routers.plataforma_org_specs_router import router as plataforma_org_specs_router
+from app.routers.onboarding_router import router as onboarding_router
 from app.routers.studio_clients_router import router as studio_clients_router
 from app.routers.studio_conteudo_router import router as studio_conteudo_router
 from app.routers.studio_evals_router import router as studio_evals_router
@@ -129,6 +130,7 @@ def _build_app() -> FastAPI:
     app.include_router(studio_clients_router)
     app.include_router(studio_conteudo_router)
     app.include_router(plataforma_org_specs_router)
+    app.include_router(onboarding_router)
     app.include_router(studio_geracoes_router)
     app.include_router(studio_prontidao_router)
     app.include_router(skills_biblioteca_router)

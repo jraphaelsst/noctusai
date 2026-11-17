@@ -72,6 +72,38 @@
    "obrigatoria": false,
    "descricao": "Como a imobiliária chama quem assume o atendimento depois da transferência (uma ou duas palavras). Vazio: a assistente diz \"corretor\".",
    "exemplo": "consultor imobiliário"
+  },
+  {
+   "chave": "criterio_lead_pronto",
+   "rotulo": "Critério de lead pronto",
+   "tipo": "texto_longo",
+   "obrigatoria": false,
+   "descricao": "O que a imobiliária considera um lead pronto para o corretor, por operação (compra, locação). Fato da imobiliária, não instrução. Vazio: vale o padrão (operação + faixa de preço).",
+   "exemplo": "- Compra: quer comprar e informou a faixa de preço.\n- Locação: quer alugar e informou a faixa de preço."
+  },
+  {
+   "chave": "perguntas_extras",
+   "rotulo": "Perguntas extras de qualificação",
+   "tipo": "lista",
+   "obrigatoria": false,
+   "descricao": "Até 5 perguntas além do padrão (nome, bairro, quartos, vagas, prazo de mudança, pets, financiamento), uma por item. Vazio: só as perguntas do padrão.",
+   "exemplo": "bairro desejado, número de quartos, prazo de mudança"
+  },
+  {
+   "chave": "minimo_para_ofertar",
+   "rotulo": "Mínimo para ofertar imóveis",
+   "tipo": "texto_curto",
+   "obrigatoria": false,
+   "descricao": "O que a assistente precisa saber antes de mostrar imóveis. Vazio: operação, faixa de preço e região.",
+   "exemplo": "operação, faixa de preço e região"
+  },
+  {
+   "chave": "informacoes_regiao",
+   "rotulo": "Sobre a região",
+   "tipo": "texto_longo",
+   "obrigatoria": false,
+   "descricao": "Diferenciais da região atendida que valem citar ao lead: escolas, acessos, serviços. Fatos da imobiliária, não instruções. Vazio: a assistente não comenta a região além do que o catálogo mostra.",
+   "exemplo": "- Bairro a 5 minutos do metrô.\n- Escolas e mercados a pé."
   }
  ]
 }
