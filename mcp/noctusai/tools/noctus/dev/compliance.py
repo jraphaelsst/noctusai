@@ -8920,6 +8920,154 @@ def check_migration_number_refs_in_tests(
     return issues
 
 
+# ---------------------------------------------------------------------------
+# Keeper: http_call_without_timeout (2026-11-16) -- every outbound HTTP call in the toolkit carries an
+# explicit timeout. `migrate_product social-wiring --confirm` hung 45 min on a CLOSE_WAIT socket (N=2;
+# N=1 2026-11-13 held a heavy slot 80 min). CONSTRUCTION: `tools/noctus/dev/_http.py` (connect/read
+# timeouts + a TOTAL deadline + one bounded retry + telemetry); this is the backstop. AST, not regex:
+# `httpx.Client|AsyncClient|get|post|put|delete|patch|head|options|request|stream`, `requests.<verb>`,
+# `requests.Session().<verb>`, `urllib.request.urlopen` / bare `urlopen` without a non-None `timeout=`.
+# Going through `_http` is never matched. Suppress with `# noc-allow: http-timeout -- <reason>`.
+# RATCHET: `mcp/noctusai/tests/http_timeout_baseline.json` ({"files": {relpath: count}}), shrink-only.
+# KB § PATTERNS/architect/mcp-tool-conventions.md (outbound HTTP).
+# ---------------------------------------------------------------------------
+
+_HTTP_BASELINE_REL = ("mcp", "noctusai", "tests", "http_timeout_baseline.json")
+_HTTP_TOOLS_REL = ("mcp", "noctusai", "tools")
+_HTTP_VERBS = frozenset({"get", "post", "put", "delete", "patch", "head", "options", "request", "stream"})
+_HTTP_ALLOW_RE = re.compile(r"noc-allow:\s*http-timeout\s*(?:--|\u2014|-)\s*\S{8,}")
+
+
+def _http_call_kind(func: ast.expr) -> str | None:
+    """Name the unbounded-by-default HTTP entry point a call targets, else None."""
+    if isinstance(func, ast.Name):
+        return "urlopen" if func.id == "urlopen" else None
+    if not isinstance(func, ast.Attribute):
+        return None
+    attr, base = func.attr, func.value
+    dotted: list[str] = []
+    node: ast.expr = func
+    while isinstance(node, ast.Attribute):
+        dotted.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        dotted.append(node.id)
+    dotted.reverse()
+    name = ".".join(dotted)
+    if name in {"urllib.request.urlopen", "request.urlopen"} or (attr == "urlopen" and dotted[:1] == ["urllib"]):
+        return name
+    if dotted[:1] == ["httpx"] and (attr in {"Client", "AsyncClient"} or (len(dotted) == 2 and attr in _HTTP_VERBS)):
+        return name
+    if dotted[:1] == ["requests"] and len(dotted) == 2 and attr in _HTTP_VERBS:
+        return name
+    # requests.Session().get(...) -- a verb on a freshly-built Session.
+    if (attr in _HTTP_VERBS and isinstance(base, ast.Call) and isinstance(base.func, ast.Attribute)
+            and base.func.attr == "Session" and isinstance(base.func.value, ast.Name) and base.func.value.id == "requests"):
+        return "requests.Session()." + attr
+    return None
+
+
+def _http_has_timeout(call: ast.Call) -> bool:
+    for kw in call.keywords:
+        if kw.arg == "timeout":
+            return not (isinstance(kw.value, ast.Constant) and kw.value.value is None)
+    # positional timeout: urlopen(url, data, timeout)
+    return False
+
+
+def _http_scan_file(path: Path, rel: str) -> list[tuple[int, str]]:
+    """``[(lineno, target)]`` of unbounded HTTP calls in one file (suppressed ones omitted)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+        tree = ast.parse(text)
+    except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+        logger.warning("check_http_call_without_timeout: cannot parse %s: %s", rel, exc)
+        return []
+    lines = text.splitlines()
+    out: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        kind = _http_call_kind(node.func)
+        if kind is None or _http_has_timeout(node):
+            continue
+        if kind.endswith("urlopen") and len(node.args) >= 3:  # urlopen(url, data, timeout)
+            continue
+        end = getattr(node, "end_lineno", node.lineno) or node.lineno
+        if any(_HTTP_ALLOW_RE.search(lines[i]) for i in range(node.lineno - 1, min(end, len(lines)))):
+            continue
+        out.append((node.lineno, kind))
+    return out
+
+
+def _http_scan(root: Path) -> dict[str, list[tuple[int, str]]]:
+    base = root.joinpath(*_HTTP_TOOLS_REL)
+    found: dict[str, list[tuple[int, str]]] = {}
+    if not base.is_dir():
+        return found
+    for py in sorted(base.rglob("*.py")):
+        parts = set(py.relative_to(base).parts)
+        if "tests" in parts or "__pycache__" in parts or py.name == "_http.py":
+            continue
+        rel = py.relative_to(root).as_posix()
+        hits = _http_scan_file(py, rel)
+        if hits:
+            found[rel] = hits
+    return found
+
+
+def _http_load_baseline(root: Path) -> dict[str, int]:
+    try:
+        data = json.loads(root.joinpath(*_HTTP_BASELINE_REL).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): int(v) for k, v in dict(data.get("files", {})).items()}
+
+
+def refresh_http_timeout_baseline(repo_root: Path | None = None) -> dict[str, int]:
+    """Write the baseline. First run records the current offenders; afterwards it only SHRINKS
+    (min(current, recorded); fixed files drop out) -- a new offender is never ratified here."""
+    root = repo_root or REPO_ROOT
+    current = {rel: len(h) for rel, h in _http_scan(root).items()}
+    path = root.joinpath(*_HTTP_BASELINE_REL)
+    if path.exists():
+        old = _http_load_baseline(root)
+        new = {p: min(c, old[p]) for p, c in current.items() if p in old}
+    else:
+        new = current
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"files": dict(sorted(new.items()))}, indent=2) + "\n", encoding="utf-8")
+    return new
+
+
+def check_http_call_without_timeout(repo_root: Path | None = None, paths: list[str] | None = None) -> list[dict]:
+    """An outbound HTTP call under ``mcp/noctusai/tools`` must carry an explicit ``timeout=`` -- or go
+    through ``tools/noctus/dev/_http.py`` (connect/read timeouts + total deadline + bounded retry).
+    Baselined offenders tolerated until their count grows. ``paths`` narrows REPORTING. Severity high."""
+    root = repo_root or REPO_ROOT
+    baseline = _http_load_baseline(root)
+    scope = {p.replace("\\", "/") for p in paths} if paths else None
+    issues: list[dict] = []
+    for rel, hits in _http_scan(root).items():
+        if scope is not None and rel not in scope:
+            continue
+        allowed = baseline.get(rel, 0)
+        if len(hits) <= allowed:
+            continue
+        where = ", ".join(f"L{ln} {kind}" for ln, kind in hits[:6])
+        issues.append({
+            "severity": "high",
+            "file": rel,
+            "issue": (
+                f"{len(hits)} HTTP call(s) without an explicit timeout (baseline {allowed}): {where}. A call with no "
+                "bound hangs forever on a dead socket (migrate_product, 2026-11-16: 45 min). Use "
+                "tools/noctus/dev/_http.py (`urlopen_read` / `client_timeout()`), or pass `timeout=`; a justified "
+                "exception: `# noc-allow: http-timeout -- <reason>`. KB § PATTERNS/architect/mcp-tool-conventions.md."
+            ),
+        })
+    return issues
+
+
 # Metered seed LLM entry points: each records a `public.ai_usage` row whose agent_key / conversation_id come
 # ONLY from an enclosing `llm_usage_context(...)` scope (the HTTP middleware fills org/user/route, never the agent).
 _LLM_METERED_CALLS = frozenset({
@@ -19596,6 +19744,7 @@ _DETECTOR_TEST_OVERRIDES: dict[str, str] = {
     "check_storage_service_only_policy": "tests/test_storage_service_only_policy_keeper.py",
     "check_redis_client_via_seam": "tests/test_check_redis_client_via_seam.py",
     "check_migration_number_refs_in_tests": "tests/test_check_migration_number_refs_in_tests.py",
+    "check_http_call_without_timeout": "tests/test_check_http_call_without_timeout.py",
     "check_llm_prompt_from_registry": "tests/test_llm_prompt_from_registry.py",
 }
 
@@ -20388,6 +20537,7 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_upload_route_body_override())
     # 2026-10-10: migration referenced by NUMBER in a test breaks on integrate-renumber (ratchet).
     all_issues.extend(check_migration_number_refs_in_tests())
+    all_issues.extend(check_http_call_without_timeout())
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())

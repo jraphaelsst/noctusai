@@ -217,7 +217,7 @@ migrate_product(
 Return shape:
 ```json
 {
-    "status": "dry_run | applied | up_to_date | not_configured | error | refused_stale_tree",
+    "status": "dry_run | applied | up_to_date | not_configured | error | refused_stale_tree | ledger_record_failed",
     "exit_code": 0,
     "product": "...",
     "schema": "...",
@@ -239,6 +239,14 @@ Return shape:
     "allow_stale_tree": false
 }
 ```
+
+## Every HTTP call is bounded; the ledger step is always reached (2026-11-16)
+
+`SupabaseMgmtExecutor` goes through `tools/noctus/dev/_http.py` (total deadline + one bounded retry; a write-mode executor never re-sends a maybe-executed request;
+`KB § PATTERNS/architect/mcp-tool-conventions.md` section 11). After the applies, a `schema_migrations` INSERT that does not confirm is settled by a READ (the response may
+have been lost after the write) and one idempotent re-INSERT; still unconfirmed returns `status='ledger_record_failed'`, `exit_code=1`, `ledger_unrecorded`, `reason` and
+`record_command` (the exact `noctus.dev.record_applied_migrations` call) - the DDL is live, the record is not. A failed in-repo applied-record persist keeps `status='applied'` but
+carries the same `record_command`. A transport failure DURING a DDL apply says the DDL MAY have applied: read the live state before re-running.
 
 ## Ledger repair — `noctus.dev.repair_migration_ledger`
 

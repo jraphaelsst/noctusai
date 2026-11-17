@@ -18,6 +18,7 @@ import logging
 import re
 import urllib.error
 import urllib.request
+from . import _http
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -41,8 +42,8 @@ def fetch(url: str, timeout: float = 25) -> tuple[int, bytes, str]:
     """
     req = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.read(), resp.headers.get("Content-Type", "")
+        resp = _http.urlopen_read(req, call_site="_public_edge.fetch", retries=0, read=timeout, total=timeout + 10)
+        return resp.status, resp.body, resp.headers.get("Content-Type", "")
     except urllib.error.HTTPError as exc:
         return exc.code, b"", exc.headers.get("Content-Type", "") if exc.headers else ""
     except (urllib.error.URLError, TimeoutError, OSError) as exc:

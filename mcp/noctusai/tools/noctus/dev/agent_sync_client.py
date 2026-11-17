@@ -23,6 +23,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from . import _http
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -170,8 +171,9 @@ def http_json(
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — operator-configured https URL
-            status, raw = resp.status, resp.read()
+        resp = _http.urlopen_read(req, call_site="agent_sync_client.request", idempotent=method in ("GET", "HEAD", "OPTIONS"),
+                                  read=timeout)
+        status, raw = resp.status, resp.body
     except urllib.error.HTTPError as exc:
         status, raw = exc.code, exc.read()
     except (urllib.error.URLError, TimeoutError, OSError) as exc:

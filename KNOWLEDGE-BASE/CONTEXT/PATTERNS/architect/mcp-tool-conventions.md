@@ -512,3 +512,20 @@ Consumers: the four `compliance.py` AST scans (silent-refusal, motion-import, ly
 - **`NOC_REQUIRE_REAL_PG=1` fails, never skips.** Every PGlite fixture path goes through `noctusai_lib.testing.pglite` (`pglite_available`, `pglite_replay_skipif`, `real_pg_required`); a module that drives `replay.mjs` directly uses `pytest.mark.skipif(**pglite_replay_skipif())`, never a hand-rolled `shutil.which` expression.
 - **Stale pre-push.** The hook carries `# NOC-HOOK-STAMP` / `# NOC-HOOK-LEGS`; an installed copy older than the tree's hands the push to the tree's hook (once) or prints `NOC-REMEDIATE[hook-leg-absent-loud]` naming the absent legs. Bump the stamp with every new leg. Closes `NOC-REMEDIATE[hook-leg-absent-loud]`.
 - **Output cap.** `tool_output_cap.install_output_cap(server)` (after `install_strict_tool_arguments`): a result over ~50k chars becomes a summary + `full_output_path` (full JSON under `~/.noctus/tool-output`, newest 50 kept). `session_end_sweep` also returns a compact form itself (`verbose=true` for the raw). Closes `NOC-REMEDIATE[tool-output-cap]`.
+
+## 11. Every outbound HTTP call has a timeout - ONE helper (`tools/noctus/dev/_http.py`)
+
+A per-socket timeout bounds one `recv`, never the call: a peer that dribbles bytes or holds a half-closed (CLOSE_WAIT) socket resets it forever.
+`migrate_product --confirm` hung 45 min that way after applying its DDL and died before writing `migrations-applied.json` (N=2; N=1 2026-11-13 held a
+heavy slot 80 min). The construction, not a reminder:
+
+- `_http.urlopen_read(req, call_site=...)` (urllib) and `_http.client_timeout()` (httpx) give explicit connect/read timeouts (env `NOC_HTTP_CONNECT_TIMEOUT_S` 10,
+  `NOC_HTTP_READ_TIMEOUT_S` 60), a **total** deadline per attempt (`NOC_HTTP_TOTAL_DEADLINE_S` 120; the caller is released with `HttpDeadlineExceeded`, a `TimeoutError`),
+  and ONE bounded retry on timeout / 502-504 / 429 (`idempotent=False` retries only provably-unsent failures; `retries=0` for liveness probes).
+  A longer budget is declared at the call site (`read=`, `total=`), never by dropping the bound.
+- A non-idempotent write whose response is lost is never re-sent blindly: re-READ the state, then decide (`migrate_product` confirms its ledger row by a SELECT
+  before it reports `ledger_record_failed` with the exact `record_applied_migrations` command).
+- Telemetry: every timeout / retry / terminal transport failure is one `kind=http-timeout` event (host, call site, elapsed, outcome) in the guard event log.
+- `_http.py` is stdlib-only at import time (`prod_watchdog` / `mq_watchdog` run in CI with no pip).
+- Backstop: keeper `check_http_call_without_timeout` (`--check-http-call-without-timeout`, AST, ratchet `mcp/noctusai/tests/http_timeout_baseline.json`, shrink-only;
+  suppress with `# noc-allow: http-timeout -- <reason>`).

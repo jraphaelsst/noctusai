@@ -447,6 +447,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--refresh-llm-prompt-from-registry-baseline", action="store_true", help="Write/SHRINK the --check-llm-prompt-from-registry ratchet baseline (first run records current sites; afterwards min(current, recorded); vanished files drop out; never adds).")
     parser.add_argument("--llm-prompt-log", action="store_true", help="With --check-llm-prompt-from-registry: file one auto-improvement drift row per flagged file (target llm_prompt_not_from_registry:<file>).")
     parser.add_argument("--llm-prompt-replay", action="store_true", help="With --check-llm-prompt-from-registry: research mode, print EVERY site in the tree (ignores the baseline) grouped per product.")
+    parser.add_argument("--check-http-call-without-timeout", action="store_true", help="Keeper (ratchet, 2026-11-16): every outbound HTTP call under mcp/noctusai/tools (httpx.Client/AsyncClient/get|post|request, requests.*, urllib.request.urlopen) carries an explicit non-None `timeout=` or goes through tools/noctus/dev/_http.py (connect/read timeouts + TOTAL deadline + one bounded retry + telemetry). AST-based. migrate_product hung 45 min on a CLOSE_WAIT socket. Suppress: `# noc-allow: http-timeout -- <reason>`. Baseline mcp/noctusai/tests/http_timeout_baseline.json (shrink-only). `--paths` narrows reporting. Severity high. KB § PATTERNS/architect/mcp-tool-conventions.md.")
+    parser.add_argument("--refresh-http-timeout-baseline", action="store_true", help="Shrink-only refresh of the --check-http-call-without-timeout baseline (first run records current offenders; later runs only lower counts / drop fixed files, never add).")
     parser.add_argument("--check-migration-number-refs-in-tests", action="store_true", help="Keeper (ratchet, 2026-10-10): an awake product's backend test must not reference a migration by NUMBER (\"217_x.sql\", migrations/217_) — task_branch integrate renumbers colliding migrations, breaking the test. Use noctusai_lib.testing.migrations.migration_path(root, name_suffix). Pre-existing offenders are baselined in mcp/noctusai/tests/migration_number_refs_baseline.json; only a new file or grown count blocks. `--paths` narrows reporting (pre-commit). Severity high. KB § PATTERNS/compliance/testing.md.")
     parser.add_argument("--check-local-pipeline-board", action="store_true", help="Keeper (severity warning, shadow-first): no NEW product-local pipeline board/card layer in an AWAKE product (`mover-etapa` route, `move_card`/`group_into_colunas` call, `<PipelineBoard>`/`<KanbanBoard>` render) — consume the seed funnel organ (`noctusai_lib.domain.pipeline.funnel` + `FunnelBoard`). A file with `NOC-REMEDIATE[pipeline-board-organ]` is exempt; the marker count only shrinks. KB § PATTERNS/common/remediation-markers.md.")
     parser.add_argument("--refresh-pipeline-board-markers-baseline", action="store_true", help="Shrink-only refresh of the --check-local-pipeline-board marker-count baseline (first run records; later runs only lower it).")
@@ -3205,6 +3207,24 @@ def main():
     elif args.refresh_llm_prompt_from_registry_baseline:
         from tools.noctus.dev.compliance import refresh_llm_prompt_from_registry_baseline
         _bl = refresh_llm_prompt_from_registry_baseline()
+        print(f"  baseline refreshed: {len(_bl)} file(s), {sum(_bl.values())} site(s).")
+        sys.exit(0)
+
+    elif args.check_http_call_without_timeout:
+        from tools.noctus.dev.compliance import check_http_call_without_timeout
+        _hct_paths = [p for p in (args.paths or "").split(",") if p] or None
+        issues = check_http_call_without_timeout(paths=_hct_paths)
+        if not issues:
+            print(f"  {GREEN}\u2713 http-call-without-timeout: every outbound HTTP call is bounded.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}\u2717 {len(issues)} http-call-without-timeout issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} \u2014 {i['issue']}")
+        sys.exit(1)
+
+    elif args.refresh_http_timeout_baseline:
+        from tools.noctus.dev.compliance import refresh_http_timeout_baseline
+        _bl = refresh_http_timeout_baseline()
         print(f"  baseline refreshed: {len(_bl)} file(s), {sum(_bl.values())} site(s).")
         sys.exit(0)
 

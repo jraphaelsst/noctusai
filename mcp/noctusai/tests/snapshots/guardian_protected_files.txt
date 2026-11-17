@@ -1,6 +1,7 @@
 .github/workflows/merge-queue.yml
 mcp/noctusai/tools/noctus/dev/_benign_stash.py
 mcp/noctusai/tools/noctus/dev/_catalog_scope_guard.py
+mcp/noctusai/tools/noctus/dev/_http.py
 mcp/noctusai/tools/noctus/dev/_ledger_push.py
 mcp/noctusai/tools/noctus/dev/_ledger_store.py
 mcp/noctusai/tools/noctus/dev/_pii_guard.py
