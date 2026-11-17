@@ -29,8 +29,10 @@ from tools.noctus.dev import _release_riders as RR  # noqa: E402
 # not exist in a tmp bare repo — so the since-fix leg is structurally
 # unavailable here; a dedicated qualifying-green-walk test below exercises
 # the OTHER two legs explicitly instead of relying on this default).
+# 2026-11-17: the default green is a FULL run (title mark) - bless now also requires a green scope=full run,
+# and the probe reads it off this same list (no second `gh` call).
 _GREEN = [{"status": "completed", "conclusion": "success", "url": "https://ci/green",
-          "event": "workflow_dispatch", "databaseId": 1}]
+          "event": "workflow_dispatch", "databaseId": 1, "displayTitle": "Tests & Build [scope=full]"}]
 _NOW = dt.datetime(2026, 9, 22, 14, 5, tzinfo=dt.timezone.utc)
 _ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
         "GIT_COMMITTER_EMAIL": "t@t", "GIT_CONFIG_NOSYSTEM": "1"}
