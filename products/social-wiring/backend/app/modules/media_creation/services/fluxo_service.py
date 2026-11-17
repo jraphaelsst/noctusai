@@ -53,7 +53,7 @@ USOS = "cs_estrutura_usos"
 
 PROPOSTA_COLS = (
     "id,org_id,marca_id,conversa_id,mensagem_id,ordem,texto,gatilho_tag,status,fluxo_etapa,fluxo_erro_codigo,"
-    "fluxo_lease_ate,headline_id"
+    "fluxo_lease_ate,headline_id,tipo,titulo,formato,roteiro_id"
 )
 ROTEIRO_COLS = "id,nome,status,formato,duracao,estrutura,versao"
 
@@ -64,6 +64,10 @@ RETRY_AFTER_ROTEIROS_S = 3600
 FORMULA_TRECHO_MAX = 80
 
 MSG_PROPOSTA_NAO_ENCONTRADA = "Headline não encontrada."
+MSG_ROTEIRO_PRIMEIRO_INDISPONIVEL = "Ainda não consigo criar a headline a partir deste roteiro. Tente novamente mais tarde."
+
+#: ``Fluxo.direcao`` (contract 16.1): the proposta's ``tipo`` decides it, never a client flag.
+DIRECAO_POR_TIPO = {"headline": "headline_primeiro", "roteiro": "roteiro_primeiro"}
 MSG_LIMITE_ROTEIROS = "Limite diário de roteiros atingido. Tente novamente mais tarde."
 MSG_IA_NAO_CONFIGURADA = "A IA não está configurada para esta conta."
 
@@ -73,6 +77,11 @@ _RPC_ERROS: dict[str, tuple[int, str, str]] = {
     "headline_nao_encontrada": (404, "proposta_nao_encontrada", MSG_PROPOSTA_NAO_ENCONTRADA),
     "conversa_nao_encontrada": (404, "proposta_nao_encontrada", MSG_PROPOSTA_NAO_ENCONTRADA),
     "proposta_nao_escolhida": (409, "proposta_nao_escolhida", "Esta headline ainda não foi escolhida."),
+    # migration 358 (roteiro-first). Until RP-3 wires its saga, a click on a roteiro proposta reaches the 3-arg headline
+    # save and is refused here as a coded 409 -- never a 500, never a fake success.
+    "headline_texto_ausente": (409, "roteiro_primeiro_indisponivel", MSG_ROTEIRO_PRIMEIRO_INDISPONIVEL),
+    "roteiro_nao_salvo": (409, "roteiro_primeiro_indisponivel", MSG_ROTEIRO_PRIMEIRO_INDISPONIVEL),
+    "proposta_nao_e_roteiro": (409, "proposta_nao_e_roteiro", "Esta proposta não é um roteiro."),
 }
 
 #: UNI-1b's insertion point: ``async (proposta: dict) -> None``, called after the pre-flight passed, holding the claim.
@@ -128,6 +137,10 @@ def _rpc_para_erro(exc: BaseException) -> Optional[ChatError]:
 def _formula_trecho(formula: Any) -> str:
     texto = " ".join(str(formula or "").split())
     return texto if len(texto) <= FORMULA_TRECHO_MAX else texto[: FORMULA_TRECHO_MAX - 1].rstrip() + "…"
+
+
+def _tipo(proposta: dict[str, Any]) -> str:
+    return proposta.get("tipo") or "headline"
 
 
 def _perfil_ref(perfil: dict[str, Any]) -> dict[str, Any]:
@@ -219,6 +232,9 @@ class FluxoService:
                 "id": str(r["id"]), "ordem": r["ordem"], "texto": r["texto"], "gatilho_tag": r.get("gatilho_tag"),
                 "estruturas": por_proposta.get(str(r["id"]), []), "status": r["status"],
                 "headline_id": _id(r.get("headline_id")),
+                # contract 16.5 (always emitted; a pre-358 row reads as a headline)
+                "tipo": _tipo(r), "titulo": r.get("titulo"), "formato": r.get("formato"),
+                "roteiro_id": _id(r.get("roteiro_id")),
             }
             for r in rows
         ]
@@ -242,16 +258,30 @@ class FluxoService:
     # ── reads: the Fluxo, composed from the truth tables (never stored) ──────────────────────────────
 
     def compor_fluxo(self, proposta: dict[str, Any]) -> dict[str, Any]:
-        """``Fluxo`` (contract 6.5): the headline, the roteiro/card once they exist, the Estruturas used, the caption state."""
+        """``Fluxo`` (contract 6.5 + 16.5): the direction, the headline, the roteiro/card once they exist, the Estruturas
+        used, the caption state. Headline-first finds the roteiro by its headline; roteiro-first by ``roteiro_id``
+        (the script saved from the proposta), and its headline is the generated one (``null`` until it exists)."""
+        direcao = DIRECAO_POR_TIPO[_tipo(proposta)]
         headline_id = _id(proposta.get("headline_id"))
         roteiro: Optional[dict[str, Any]] = None
-        if headline_id:
-            achados = (
-                self.db.table(ROTEIROS).select(ROTEIRO_COLS)
-                .eq("org_id", self.org_id).eq("headline_id", headline_id).eq("conversa_id", str(proposta["conversa_id"]))
-                .order("created_at", desc=True).limit(1).execute().data
-            )
-            roteiro = achados[0] if achados else None
+        if direcao == "roteiro_primeiro":
+            roteiro_id = _id(proposta.get("roteiro_id"))
+            if roteiro_id:
+                achados = (
+                    self.db.table(ROTEIROS).select(ROTEIRO_COLS).eq("org_id", self.org_id).eq("id", roteiro_id)
+                    .limit(1).execute().data
+                )
+                roteiro = achados[0] if achados else None
+            headline = self._headline(headline_id) if headline_id else None
+        else:
+            if headline_id:
+                achados = (
+                    self.db.table(ROTEIROS).select(ROTEIRO_COLS)
+                    .eq("org_id", self.org_id).eq("headline_id", headline_id).eq("conversa_id", str(proposta["conversa_id"]))
+                    .order("created_at", desc=True).limit(1).execute().data
+                )
+                roteiro = achados[0] if achados else None
+            headline = {"id": headline_id, "texto": proposta["texto"]}
         post = None
         legenda = "pendente"
         if roteiro:
@@ -262,12 +292,18 @@ class FluxoService:
                 )
                 if cartao and (cartao[0].get("legenda") or "").strip():
                     legenda = "gerada"
-        if legenda == "pendente" and self._legenda_falhou(str(proposta["id"])):
+        eventos = self._tipos_de_evento(str(proposta["id"]))
+        if legenda == "pendente" and "legenda_falhou" in eventos:
             legenda = "indisponivel"
+        if direcao == "roteiro_primeiro":
+            etapa = self._etapa_roteiro_primeiro(proposta, roteiro, headline, post, "headline_gerando" in eventos)
+        else:
+            etapa = self._etapa(proposta, roteiro)
         return {
             "proposta_id": str(proposta["id"]),
-            "etapa": self._etapa(proposta, roteiro),
-            "headline": {"id": headline_id, "texto": proposta["texto"]},
+            "direcao": direcao,
+            "etapa": etapa,
+            "headline": headline,
             "roteiro": None if roteiro is None else {
                 "id": str(roteiro["id"]), "nome": roteiro["nome"], "status": roteiro["status"],
                 "formato": roteiro.get("formato") or "reels", "duracao": roteiro.get("duracao") or "auto",
@@ -279,6 +315,13 @@ class FluxoService:
             "erro_codigo": proposta.get("fluxo_erro_codigo"),
         }
 
+    def _headline(self, headline_id: str) -> Optional[dict[str, Any]]:
+        rows = self.db.table(HEADLINES).select("id,texto").eq("id", headline_id).eq("org_id", self.org_id).execute().data
+        if not rows:  # ON DELETE SET NULL would have cleared the link: a dangling id is a bug, never a fake text
+            logger.error("fluxo: headline %s da proposta não encontrada", headline_id)
+            return None
+        return {"id": str(rows[0]["id"]), "texto": rows[0]["texto"]}
+
     @staticmethod
     def _etapa(proposta: dict[str, Any], roteiro: Optional[dict[str, Any]]) -> str:
         if proposta.get("fluxo_etapa") == "falhou" or (roteiro and roteiro["status"] == "falha"):
@@ -287,12 +330,29 @@ class FluxoService:
             return "headline_salva"
         return "roteiro_pronto" if roteiro["status"] == "completo" else "roteiro_gerando"
 
-    def _legenda_falhou(self, proposta_id: str) -> bool:
+    @staticmethod
+    def _etapa_roteiro_primeiro(
+        proposta: dict[str, Any], roteiro: Optional[dict[str, Any]], headline: Optional[dict[str, Any]],
+        post: Optional[dict[str, Any]], headline_gerando: bool,
+    ) -> str:
+        """Roteiro-first read state (contract 16.5 + tech-lead clarification 2026-11-17): ``roteiro_salvo`` (saved, the
+        headline job not yet claimed) -> ``headline_gerando`` (job pending/running, or the headline exists but the card
+        is not bound yet) -> ``roteiro_pronto`` (headline AND card) | ``falhou``."""
+        if proposta.get("fluxo_etapa") == "falhou" or (roteiro and roteiro["status"] == "falha"):
+            return "falhou"
+        if headline is not None and post is not None:
+            return "roteiro_pronto"
+        if headline is not None or headline_gerando:
+            return "headline_gerando"
+        return "roteiro_salvo"
+
+    def _tipos_de_evento(self, proposta_id: str) -> set[str]:
+        """The read-relevant ledger facts of one flow (one indexed read): a failed caption, a pending headline job."""
         rows = (
-            self.db.table(EVENTOS).select("id").eq("org_id", self.org_id).eq("proposta_id", proposta_id)
-            .eq("tipo", "legenda_falhou").limit(1).execute().data
+            self.db.table(EVENTOS).select("tipo").eq("org_id", self.org_id).eq("proposta_id", proposta_id)
+            .in_("tipo", ["legenda_falhou", "headline_gerando"]).execute().data
         )
-        return bool(rows)
+        return {r["tipo"] for r in rows or []}
 
     def _usos(self, proposta_id: str) -> list[dict[str, Any]]:
         """``EstruturaUso[]``: the Estruturas written for this proposta (``cs_estrutura_usos``) + the blocks used."""
@@ -421,6 +481,6 @@ class FluxoService:
 
 
 __all__ = [
-    "Continuacao", "FluxoService", "LEASE_SEGUNDOS", "MSG_LIMITE_ROTEIROS", "MSG_PROPOSTA_NAO_ENCONTRADA",
+    "Continuacao", "DIRECAO_POR_TIPO", "FluxoService", "LEASE_SEGUNDOS", "MSG_ROTEIRO_PRIMEIRO_INDISPONIVEL", "MSG_LIMITE_ROTEIROS", "MSG_PROPOSTA_NAO_ENCONTRADA",
     "Orcamento", "ResultadoEscolher", "RETRY_AFTER_ROTEIROS_S", "get_fluxo_orcamento", "get_fluxo_settings",
 ]
