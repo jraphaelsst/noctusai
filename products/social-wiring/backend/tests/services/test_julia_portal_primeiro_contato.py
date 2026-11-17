@@ -53,17 +53,33 @@ class Cena:
     def factory(self, conn):
         return tr.transporte_da_conexao(conn, waha_factory=lambda **kw: self.w.waha)
 
-    def rodar(self, lead=None, agora=DIA, agents="padrao", mensagem=lambda: TEXTO):
+    def rodar(self, lead=None, agora=DIA, agents="padrao", mensagem=lambda: TEXTO, adiado=False):
         agents = FakeAgentsClient() if agents == "padrao" else agents
         return asyncio.run(svc.iniciar(
             self.w.sw, ORG_ID, lead or _lead(), store=self.store, transporte_factory=self.factory, mensagem_inicial=mensagem,
-            message_store_factory=lambda org: self.msgs, agents=agents, core=self.w.core, agora=agora))
+            message_store_factory=lambda org: self.msgs, agents=agents, core=self.w.core, agora=agora, adiado=adiado))
 
     def eventos(self):
         return self.w.sw.table("julia_eventos").select("*").execute().data or []
 
     def status(self):
         return [e["payload"]["status"] for e in self.eventos() if e["tipo"] == "primeiro_contato_portal"]
+
+
+class _Repo:
+    def __init__(self):
+        self.jobs = []
+
+    async def enqueue(self, **kw):
+        self.jobs.append(kw)
+
+
+@pytest.fixture
+def repo():
+    r = _Repo()
+    svc.registrar_repo(r)
+    yield r
+    svc.registrar_repo(None)
 
 
 @pytest.fixture
@@ -120,10 +136,60 @@ class TestIniciar:
         assert cena.rodar(_lead(origem_lead_id="olx-3"))["status"] == "reentrada"
         assert len(cena.w.waha.sent_messages) == 1
 
-    def test_outside_business_hours_nothing_is_sent_and_it_is_recorded(self, cena):
+    def test_outside_business_hours_without_a_queue_is_recorded_not_sent(self, cena):
         cena.ligar()
         r = cena.rodar(agora=NOITE, lead=_lead(chegou_em=(NOITE - timedelta(minutes=1)).isoformat()))
         assert r["status"] == "fora_do_horario" and cena.w.waha.sent_messages == [] and cena.status() == ["fora_do_horario"]
+
+    def test_outside_business_hours_the_lead_is_deferred_to_the_next_opening(self, cena, repo):
+        cena.ligar()
+        lead = _lead(chegou_em=(NOITE - timedelta(minutes=1)).isoformat())
+        r = cena.rodar(agora=NOITE, lead=lead)
+        abre = datetime(2026, 11, 17, 11, 0, tzinfo=timezone.utc)  # 08:00 America/Sao_Paulo
+        assert r == {"status": "adiado", "enviar_apos": abre.isoformat()} and cena.w.waha.sent_messages == []
+        (j,) = repo.jobs
+        assert j["type"] == svc.JOB_ADIADO and j["scheduled_for"] == abre and j["payload"]["lead"] == lead
+        (ev,) = cena.eventos()
+        assert ev["payload"]["status"] == "adiado" and ev["payload"]["enviar_apos"] == abre.isoformat()
+
+    def test_the_deferred_job_sends_at_the_opening_past_the_live_6h_limit(self, cena, repo):
+        cena.ligar()
+        lead = _lead(chegou_em=(NOITE - timedelta(minutes=1)).isoformat())  # ~9 h old at the opening
+        abre = datetime(2026, 11, 17, 11, 0, tzinfo=timezone.utc)
+        assert cena.rodar(agora=abre + timedelta(minutes=1), lead=lead)["status"] == "lead_antigo"  # the live path keeps its 6 h limit
+        assert cena.rodar(agora=abre + timedelta(minutes=1), lead=lead, adiado=True)["status"] == "enviado"
+        assert len(cena.w.waha.sent_messages) == 1
+
+    def test_a_deferred_lead_older_than_24h_expires(self, cena):
+        cena.ligar()
+        lead = _lead(chegou_em=(DIA - timedelta(hours=25)).isoformat())
+        assert cena.rodar(lead=lead, adiado=True)["status"] == "expirado"
+        assert cena.w.waha.sent_messages == [] and cena.status() == ["expirado"]
+
+    def test_at_fire_time_every_gate_is_re_read(self, cena):
+        # switch turned off meanwhile
+        assert cena.rodar(adiado=True)["status"] == "desativado"
+        cena.ligar()
+        # a conversation started meanwhile -> reentrada, never an opener
+        cena.w.sw.table("julia_contatos").insert({
+            "id": str(uuid4()), "org_id": ORG_ID, "connection_id": CONNECTION_ID, "chat_id": "5511977776666@c.us",
+            "gen": 0, "slots": {}, "status_envio": "nao_pronto", "ultimo_inbound_at": "2026-11-17T09:00:00+00:00"}).execute()
+        assert cena.rodar(adiado=True)["status"] == "reentrada" and cena.w.waha.sent_messages == []
+
+    def test_the_job_handler_re_runs_the_intake_as_deferred(self):
+        seen = []
+
+        async def intake(org, lead, adiado=False):
+            seen.append((org, lead, adiado))
+            return {"status": "enviado"}
+
+        class J:
+            id = "j1"
+            type = svc.JOB_ADIADO
+            payload = {"org_id": ORG_ID, "lead": {"origem": "olx"}}
+
+        asyncio.run(svc.handlers(intake=intake)[svc.JOB_ADIADO](J()))
+        assert seen == [(ORG_ID, {"origem": "olx"}, True)]
 
     def test_an_old_lead_is_not_new(self, cena):
         cena.ligar()

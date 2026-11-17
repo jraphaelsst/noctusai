@@ -10,7 +10,10 @@ Sibling of `julia_primeiro_contato_service` (the Meta lead-form opener). A porta
     retried / re-ingested old event never opens a conversation;
   * the lead's phone has no conversation yet. A portal RE-ENTRY of the same person (a new portal lead id, same phone) finds
     the contato with activity, or a recorded opener, and is `reentrada` -- recorded, never a second opener;
-  * it is business hours (08:00-19:59 America/Sao_Paulo, the same window as the hours re-engagement tier);
+  * it is business hours (08:00-19:59 America/Sao_Paulo, the same window as the hours re-engagement tier). A lead that
+    arrives outside it is NOT lost: it is recorded `adiado` (with `enviar_apos`) and a job on the Julia worker re-runs the
+    WHOLE intake at the next opening, every gate re-read then (switch, opt-out, evaluation mode, a conversation started
+    meanwhile = `reentrada`). A deferred lead may be up to `JANELA_ADIADO` (24 h) old, after which it is `expirado`;
   * the lead did not opt out (agents' consent state, fail-closed) and the evaluation (testing) mode allows the number.
 
 The opener is a normal WAHA first message -- NOT a Cloud template -- so it IS the disclosure bubble: the org's
@@ -33,6 +36,8 @@ from uuid import UUID
 from noctusai_lib.integrations.whatsapp.mappers import chat_id_for_phone
 from noctusai_lib.primitives.phone import normalize_phone
 
+from noctusai_lib.domain.jobs import Job
+
 from app.clients.agents import AgentsClient
 from app.services import (
     julia_avaliacao_service,
@@ -53,6 +58,19 @@ JANELA_CHEGADA = timedelta(hours=6)
 #: One opener per lead per conversation window: a recorded opener inside this window blocks another, even when the contato's
 #: activity stamps were reset.
 JANELA_ABERTURA = timedelta(days=30)
+#: A lead deferred to the next opening may be this old when the job fires (the 6 h freshness limit applies only to the live path).
+JANELA_ADIADO = timedelta(hours=24)
+JOB_ADIADO = "julia_portal_primeiro_contato_adiado"
+JOB_MAX_RETRIES = 2
+
+_repo: Any = None
+
+
+def registrar_repo(repo: Any) -> None:
+    """The Julia worker's job repository (set by `julia_reengajamento_worker.build_worker`); without it a lead outside business
+    hours is recorded `fora_do_horario` (not deferred)."""
+    global _repo
+    _repo = repo
 
 
 def _linha_waha_da_julia(store: Any, org_id: UUID | str) -> tuple[Optional[Any], bool]:
@@ -68,10 +86,24 @@ def _linha_waha_da_julia(store: Any, org_id: UUID | str) -> tuple[Optional[Any],
 
 
 def _registrar(client: Any, org_id: UUID | str, contato_id: Any, lead: dict[str, Any], status: str,
-               motivo: Optional[str] = None) -> None:
+               motivo: Optional[str] = None, **extra: Any) -> None:
     eventos.emitir(client, org_id, TIPO_EVENTO, contato_id, {
-        "status": status, "motivo": motivo, "origem": lead.get("origem"), "origem_lead_id": lead.get("origem_lead_id"),
+        "status": status, "motivo": motivo, "origem": lead.get("origem"), "origem_lead_id": lead.get("origem_lead_id"), **extra,
     })
+
+
+async def _adiar(client: Any, org_id: UUID | str, contato_id: Any, lead: dict[str, Any], agora: datetime) -> Optional[dict[str, Any]]:
+    """Outside business hours: queue the whole intake for the next opening. None when no job repository is registered."""
+    if _repo is None:
+        return None
+    enviar_apos = agora + timedelta(seconds=julia_reengajamento_service.segundos_ate_abertura(agora))
+    await _repo.enqueue(
+        type=JOB_ADIADO, payload={"org_id": str(org_id), "lead": lead, "enviar_apos": enviar_apos.isoformat()},
+        max_retries=JOB_MAX_RETRIES, scheduled_for=enviar_apos,
+        dedupe_key=f"julia:portal:adiado:{org_id}:{lead.get('origem')}:{lead.get('origem_lead_id')}",
+    )
+    _registrar(client, org_id, contato_id, lead, "adiado", enviar_apos=enviar_apos.isoformat())
+    return {"status": "adiado", "enviar_apos": enviar_apos.isoformat()}
 
 
 def _abertura_recente(client: Any, org_id: UUID | str, contato_id: Any, agora: datetime) -> bool:
@@ -94,13 +126,13 @@ async def iniciar(
     client: Any, org_id: UUID | str, lead: dict[str, Any], *, store: Any,
     transporte_factory: Callable[[Any], julia_transporte.Transporte] = julia_transporte.transporte_da_conexao,
     mensagem_inicial: Callable[[], Any], message_store_factory: Callable[[UUID | str], Any],
-    agents: Optional[AgentsClient] = None, core: Any = None, agora: Optional[datetime] = None,
+    agents: Optional[AgentsClient] = None, core: Any = None, agora: Optional[datetime] = None, adiado: bool = False,
 ) -> dict[str, Any]:
     """Take one freshly ingested portal lead into Julia as its opener. `lead`: `{origem, origem_lead_id, phone, name,
     chegou_em}` (`chegou_em` = when WE received it). `mensagem_inicial()` returns the finished disclosure text (awaitable or
     plain; raising = not sent).
 
-    Returns `{status, ...}`: `julia_desligada` | `sem_linha_waha` | `desativado` | `sem_telefone` | `anterior_ao_golive` |
+    Returns `{status, ...}`: `adiado` (outside business hours; `enviar_apos`) | `expirado` (a deferred lead older than 24 h) | `julia_desligada` | `sem_linha_waha` | `desativado` | `sem_telefone` | `anterior_ao_golive` |
     `lead_antigo` | `reentrada` | `fora_do_horario` | `restrito_avaliacao` | `avaliacao_indisponivel` | `bloqueado` (gate / opt-out,
     `motivo` says which) | `aviso_indisponivel` | `envio_recusado` | `enviado` | `erro`."""
     agora = agora or datetime.now(timezone.utc)
@@ -124,7 +156,11 @@ async def iniciar(
         if chegou is None or ativado is None or chegou < ativado:  # unreadable (either time) -> NO, fail closed
             _registrar(client, org_id, None, lead, "anterior_ao_golive")
             return {"status": "anterior_ao_golive"}
-        if agora - chegou > JANELA_CHEGADA:
+        if adiado:  # fired from the queue: the live 6 h limit does not apply, a 24 h one does
+            if agora - chegou > JANELA_ADIADO:
+                _registrar(client, org_id, None, lead, "expirado")
+                return {"status": "expirado"}
+        elif agora - chegou > JANELA_CHEGADA:
             _registrar(client, org_id, None, lead, "lead_antigo")
             return {"status": "lead_antigo"}
 
@@ -137,7 +173,12 @@ async def iniciar(
             _registrar(client, org_id, existente["id"], lead, "reentrada")
             return {"status": "reentrada", "contato_id": existente["id"]}
         if not julia_reengajamento_service.dentro_do_horario(agora):
-            _registrar(client, org_id, existente["id"] if existente else None, lead, "fora_do_horario")
+            contato_ref = existente["id"] if existente else None
+            if not adiado:
+                resultado = await _adiar(client, org_id, contato_ref, lead, agora)
+                if resultado is not None:
+                    return resultado
+            _registrar(client, org_id, contato_ref, lead, "fora_do_horario")
             return {"status": "fora_do_horario"}
 
         nome = (lead.get("name") or "").strip() or None
@@ -216,7 +257,7 @@ def lead_de_imovelweb(lead: Any, chegou_em: Any) -> dict[str, Any]:
             "chegou_em": chegou_em}
 
 
-async def iniciar_com_padroes(org_id: UUID | str, lead: dict[str, Any]) -> dict[str, Any]:
+async def iniciar_com_padroes(org_id: UUID | str, lead: dict[str, Any], *, adiado: bool = False) -> dict[str, Any]:
     """`iniciar` wired to the production collaborators. Never raises."""
     try:
         from app.config import settings
@@ -237,11 +278,25 @@ async def iniciar_com_padroes(org_id: UUID | str, lead: dict[str, Any]) -> dict[
         return await iniciar(
             scoped, org, lead, store=build_whatsapp_connection_store(get_admin_client(), encryption_key=settings.encryption_key),
             mensagem_inicial=mensagem, message_store_factory=lambda o: MessageStore(admin_supabase=get_admin_client(), org_id=o),
-            agents=agents, core=core,
+            agents=agents, core=core, adiado=adiado,
         )
     except Exception as exc:
         logger.error("julia: could not wire the portal lead intake (org=%s) (%s)", org_id, type(exc).__name__)
         return {"status": "erro"}
+
+
+def handlers(*, intake: Optional[Callable[..., Any]] = None) -> dict[str, Callable[[Job], Any]]:
+    """`{job type: handler}` merged into the Julia worker: the deferred opener re-runs the whole intake at fire time."""
+
+    async def _adiado(job: Job) -> None:
+        p = job.payload or {}
+        if not (p.get("org_id") and isinstance(p.get("lead"), dict)):
+            logger.error("julia portal opener job=%s: invalid payload", job.id)
+            return
+        out = await (intake or iniciar_com_padroes)(p["org_id"], p["lead"], adiado=True)
+        logger.info("julia portal opener %s job=%s -> %s", job.type, job.id, out.get("status"))
+
+    return {JOB_ADIADO: _adiado}
 
 
 def iniciar_em_background(org_id: UUID | str, lead: dict[str, Any], *, intake: Optional[Callable[..., Any]] = None) -> dict[str, Any]:
@@ -254,6 +309,6 @@ def iniciar_em_background(org_id: UUID | str, lead: dict[str, Any], *, intake: O
 
 
 __all__ = [
-    "JANELA_ABERTURA", "JANELA_CHEGADA", "TIPO_EVENTO", "iniciar", "iniciar_com_padroes", "iniciar_em_background",
+    "JANELA_ABERTURA", "JANELA_ADIADO", "JANELA_CHEGADA", "JOB_ADIADO", "TIPO_EVENTO", "handlers", "registrar_repo", "iniciar", "iniciar_com_padroes", "iniciar_em_background",
     "lead_de_imovelweb", "lead_de_olx",
 ]
