@@ -58,6 +58,9 @@ class WhatsAppConnectionCreate(StrictHttpModel):
         default=None,
         description="Optional clients.id to link this connection to a cliente.",
     )
+    # Which declared WAHA instance (deploy/fleet/waha-instances.yml, product social-wiring) hosts this line. Absent = the legacy
+    # single shared WAHA (env WAHA_BASE_URL). A name outside the closed list is refused (422 `instancia_waha_desconhecida`).
+    instancia: Optional[str] = Field(default=None, min_length=1, max_length=64)
 
 
 class BoundChat(BaseModel):
