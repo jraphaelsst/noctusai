@@ -7,7 +7,7 @@ name: noctus-waha
 services:
   waha-nosnolimiar:
     # nosnolimiar's own WhatsApp number (session `default`). Internal only: http://waha-nosnolimiar:3000
-    image: devlikeapro/waha:noweb-2026.9.2
+    image: devlikeapro/waha:noweb-2026.10.1
     platform: linux/amd64
     container_name: noctus-waha-nosnolimiar
     environment:
@@ -35,7 +35,7 @@ services:
       start_period: 40s
   waha-assistant:
     # assistant's own WhatsApp number (session `default`). Internal only: http://waha-assistant:3000
-    image: devlikeapro/waha:noweb-2026.9.2
+    image: devlikeapro/waha:noweb-2026.10.1
     platform: linux/amd64
     container_name: noctus-waha-assistant
     environment:
@@ -63,7 +63,7 @@ services:
       start_period: 40s
   waha-sw-vendas:
     # social-wiring's own WhatsApp number (session `default`). Internal only: http://waha-sw-vendas:3000
-    image: devlikeapro/waha:noweb-2026.9.2
+    image: devlikeapro/waha:noweb-2026.10.1
     platform: linux/amd64
     container_name: noctus-waha-sw-vendas
     environment:
