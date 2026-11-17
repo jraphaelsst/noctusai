@@ -1,4 +1,4 @@
--- Migration 355: julia_post_instagram_imovel -- which listing an Instagram post/reel advertises.
+-- Migration 356: julia_post_instagram_imovel -- which listing an Instagram post/reel advertises.
 -- WHY: a lead who pastes instagram.com/p/<code> or /reel/<code> means the listing the post shows. No table linked a post
 -- to a listing (ig_media / cs_posts carry the permalink but no imovel), so Julia could only say "I don't have it". One dated
 -- (shortcode shape is validated by the API, `julia_imovel_instagram.analisar`.) One dated row per (org, shortcode) is the link; Julia's `resolver_imovel` reads it. An admin sets it (API: /api/julia/post-instagram-imovel).
@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS social_wiring.julia_post_instagram_imovel (
     permalink text,
     created_by uuid,
     created_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT julia_post_instagram_imovel_shortcode_check
+        CHECK (shortcode ~ '^[A-Za-z0-9_-]{5,40}$'),
     CONSTRAINT julia_post_instagram_imovel_org_shortcode_uq UNIQUE (org_id, shortcode)
 );
 

@@ -88,6 +88,9 @@ vi.mock("@/components/imovel/ImovelProprietariosCard", () => ({
 vi.mock("@/components/imovel/ImovelHistoricoCard", () => ({
   ImovelHistoricoCard: () => <div data-testid="mock-historico" />,
 }));
+vi.mock("@/components/imovel/ImovelPostInstagramCard", () => ({
+  ImovelPostInstagramCard: () => <div data-testid="mock-post-instagram-card" />,
+}));
 vi.mock("@/components/imovel/ImovelNotasCard", () => ({
   ImovelNotasCard: () => <div data-testid="mock-notas-card" />,
 }));
