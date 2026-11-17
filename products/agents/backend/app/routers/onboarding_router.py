@@ -9,6 +9,10 @@ Same two conditions as the staff org-specs route (platform admin + a live grant 
 audit. The interviewer agent (``onboarding-imob``) conducts the conversation; these routes are what it, and the Studio
 "Onboarding" tab, call. After apply the owner is pointed to evaluation mode (``modo_avaliacao``) for a dry
 conversation BEFORE go-live; nothing here turns an agent on.
+
+NOC-REMEDIATE[onboarding-interviewer-tools]: the three operations below are not yet exposed as TOOLS of the `onboarding-imob`
+agent (progresso / importar / aplicar); only the Studio tab calls them. Destination: the next agents slice, "onboarding
+interviewer as a live chatbot" -- 2026-11-17
 """
 from __future__ import annotations
 
@@ -87,6 +91,10 @@ class ImportacaoOut(BaseModel):
 
 class AplicarIn(StrictHttpModel):
     respostas: dict[int, Any] = Field(max_length=len(CHECKLIST))
+    #: items whose value came from an import, and those of them somebody explicitly confirmed. An imported item that
+    #: is not confirmed is NOT written (reported ``pendente_confirmacao``).
+    importados: list[int] = Field(default_factory=list, max_length=len(CHECKLIST))
+    confirmados: list[int] = Field(default_factory=list, max_length=len(CHECKLIST))
 
 
 class ItemRelatorioOut(BaseModel):
@@ -175,6 +183,7 @@ def post_aplicar(
     }
     rel = ap.aplicar(
         payload.respostas, org_id=org_id, declaradas={d.chave: d.tipo for d in atual.declaradas}, armazenados=_valores(atual),
+        nao_confirmados=frozenset(payload.importados) - frozenset(payload.confirmados),
         config=config, gravar_specs=lambda v: aplicar_org_specs(store, alvo, key, v, config, origem=origem), sw=sw,
     )
     logger.info("onboarding.aplicar org=%s agent=%s aplicados=%d recusados=%d", org_id, key, rel.aplicados, rel.recusados)

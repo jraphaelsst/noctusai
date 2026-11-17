@@ -91,10 +91,11 @@ describe("OnboardingTab", () => {
     expect(screen.getByTestId("onboarding-rascunho").textContent).toContain("nada foi salvo");
     expect(net.calls.some((c) => c.path === `${BASE}/aplicar`)).toBe(false);
 
+    fireEvent.click(screen.getByTestId("onboarding-item-1-confirmar"));
     fireEvent.change(screen.getByLabelText(/37\. Reengajamento/), { target: { value: '{"lembrete_min": 15}' } });
     fireEvent.click(screen.getByTestId("onboarding-aplicar"));
     await screen.findByTestId("onboarding-relatorio");
-    expect(net.calls.find((c) => c.path === `${BASE}/aplicar`)!.body).toEqual({ respostas: { "1": "Acme", "37": { lembrete_min: 15 } } });
+    expect(net.calls.find((c) => c.path === `${BASE}/aplicar`)!.body).toEqual({ respostas: { "1": "Acme", "37": { lembrete_min: 15 } }, importados: [1], confirmados: [1] });
     expect(screen.getByTestId("relatorio-37").textContent).toContain("Recusado");
     expect(screen.getByTestId("relatorio-37").textContent).toContain("PUT /api/julia/reengajamento/config");
     expect(screen.getByTestId("onboarding-proximo").textContent).toContain("modo de avaliação");

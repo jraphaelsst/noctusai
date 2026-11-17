@@ -164,3 +164,18 @@ def test_import_proposes_unconfirmed_answers_and_writes_nothing(plat):
     assert corpo["nao_reconhecidas"] == ["algo solto"]
     assert _valores(plat) == {}
     assert plat.post(f"{URL}/importar", json={"texto": "x" * 70_000}).status_code == 422
+
+
+def test_an_imported_item_is_not_written_until_it_is_confirmed(plat):
+    r = plat.post(f"{URL}/aplicar", json={"respostas": {"1": "Acme", "3": "11.222.333/0001-81"}, "importados": [1, 3], "confirmados": [3]})
+    por_n = {i["n"]: i for i in r.json()["itens"]}
+    assert por_n[1]["estado"] == "pendente_confirmacao" and por_n[1]["codigo"] == "nao_confirmado"
+    assert por_n[3]["estado"] == "aplicado"
+    assert "nome_imobiliaria" not in _valores(plat) and "cnpj_oficial" in _valores(plat)
+
+
+def test_confirming_without_importing_is_harmless_and_unconfirmed_sw_items_are_not_sent(plat):
+    r = plat.post(f"{URL}/aplicar", json={"respostas": {"1": "Acme", "37": {"lembrete_min": 15}}, "importados": [37], "confirmados": [1]})
+    por_n = {i["n"]: i for i in r.json()["itens"]}
+    assert por_n[1]["estado"] == "aplicado" and por_n[37]["estado"] == "pendente_confirmacao"
+    assert plat.sw.chamadas == []

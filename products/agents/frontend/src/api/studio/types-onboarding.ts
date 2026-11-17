@@ -39,7 +39,7 @@ export interface Importacao {
 export interface ItemRelatorio {
   n: number;
   titulo: string;
-  estado: "aplicado" | "recusado" | "pendente_humano";
+  estado: "aplicado" | "recusado" | "pendente_humano" | "pendente_confirmacao";
   codigo: string | null;
   motivo: string | null;
   destino: string;
