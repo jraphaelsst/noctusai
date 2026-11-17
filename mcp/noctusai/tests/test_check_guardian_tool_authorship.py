@@ -161,23 +161,23 @@ class TestUnmeasured:
 # ── the protected set is DERIVED (AST import walk), pinned as a snapshot ──────────────────────────────────────
 
 REPO = Path(__file__).resolve().parents[3]
-#: Pinned: a new import reachable from release_steward/task_branch shows up in review as a diff HERE.
-EXPECTED_PROTECTED = sorted(f"{_DEV}/{n}.py" for n in (
-    "_benign_stash _catalog_scope_guard _ledger_push _primary_ledger_guard _ledger_store _pii_guard _push_verdict _transient_retry _vps_ssh "
-    "_worktree_staleness auth_false_green_predicate auto_improvement branch_pointer build build_scope cache_backend "
-    "cache_backend_postgres ci_scope council_ledger decision_log deploy_pull deploy_verify dispatch_token_log doc_staleness "
-    "findings_ledger gate_alignment gate_budget gate_sweep gate_verdict_cache harness_signatures hw_admission ledger_checksums "
-    "merge_queue migrate_product migration_directives migration_replay noc_graph_cache orchestrator_inline_cutoff "
-    "primary_write_guard prod_consent product_scope query_key_family_predicate release_steward self_patch_predicate "
-    "ship_consent symbol_scope task_branch task_branch_train toolkit_freshness vps_exec").split()
-) + sorted((
-    ".github/workflows/merge-queue.yml", "scripts/hooks/claude-guard-release-steward.py",
-    "scripts/hooks/claude-guard-session-heartbeat.py", "scripts/hooks/pre-push"))
+SNAPSHOT = Path(__file__).parent / "snapshots" / "guardian_protected_files.txt"
+
+
+def _snapshot_lines() -> list[str]:
+    """Sorted one-path-per-line, `merge=union` in .gitattributes: two slices each ADDING a module merge clean
+    (no shared wrapped line to conflict on). Compared EXACTLY below, so a union-resurrected line is a red test."""
+    return [ln for ln in SNAPSHOT.read_text().splitlines() if ln.strip()]
 
 
 class TestDerivedProtectedSet:
     def test_snapshot_of_the_live_tree(self):
-        assert list(derive_guardian_protected_files(REPO)) == sorted(EXPECTED_PROTECTED)
+        lines = _snapshot_lines()
+        assert lines == sorted(set(lines)), f"{SNAPSHOT.name} must be sorted with no duplicates (fix the merge)"
+        derived, pinned = set(derive_guardian_protected_files(REPO)), set(lines)
+        assert derived == pinned, (
+            f"protected set drifted from {SNAPSHOT}: "
+            f"ADD these lines: {sorted(derived - pinned)}; REMOVE these lines: {sorted(pinned - derived)}")
 
     def test_required_members_and_every_path_exists(self):
         got = set(derive_guardian_protected_files(REPO))

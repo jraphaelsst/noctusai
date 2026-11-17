@@ -32,6 +32,7 @@ __all__ = [
     "ESTEIRA_DOC_TIPOS",
     "ESTEIRA_PADRAO",
     "PIPELINE_ESTEIRA",
+    "ROLE_AGENDADO",
     "ROLE_CANCELADO",
     "ROLE_GRAVACAO",
     "ROLE_POSTADO",
@@ -40,6 +41,9 @@ __all__ = [
 
 ROLE_GRAVACAO = "gravacao"
 ROLE_POSTADO = "postado"
+#: Scheduled for publication (CoreStudio S3 declares the role; migration 348 admits it in the DB CHECK; the stage that
+#: carries it and the move into it belong to S4 -- no default stage here, so existing boards are unchanged).
+ROLE_AGENDADO = "agendado"
 ROLE_CANCELADO = "cancelado"
 
 BUCKET_ESTEIRA = "sw-esteira"
@@ -63,7 +67,7 @@ PIPELINE_ESTEIRA = PipelineConfig(
     entity_label_plural="posts",
     entity_kind="cs_post",
     cliente_field=None,
-    stage_roles=(ROLE_GRAVACAO, ROLE_POSTADO, ROLE_CANCELADO),
+    stage_roles=(ROLE_GRAVACAO, ROLE_AGENDADO, ROLE_POSTADO, ROLE_CANCELADO),
 )
 
 #: ``(tipo, categoria, retencao_dias, identidade, ativo, descricao)`` -- no identity

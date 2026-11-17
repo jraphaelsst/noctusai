@@ -1035,6 +1035,16 @@ if [[ -n "$STAGED_NPM_MANIFEST" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-bis-pin. Supply-chain pin gate (WARN-first SHADOW; CI test is the blocking backstop) ─────────
+# Keeper `check_supply_chain_pin` + `KB § PATTERNS/devops/ci-security-gates.md § 9`. A workflow `uses:` not
+# pinned to a 40-hex SHA, or a prod-surface compose image on :latest / a bare major, is a re-pointable supply
+# chain. Promote to blocking after >=7 shadow days with effective-FP <=10% (`gate_alignment walls`).
+STAGED_SUPPLY_PIN=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(\.github/.*\.ya?ml|deploy/(fleet|services|legacy|tunnel)/.*\.yml)$' || true)
+if [[ -n "$STAGED_SUPPLY_PIN" ]] && have_py; then
+    echo "[pre-commit] workflow / prod-compose file staged — checking supply-chain pins..."
+    "$PY" "$CLI" --check-supply-chain-pin --worktree-path "$REPO_ROOT" || echo "[pre-commit] WARNING (shadow): supply_chain_pin — pin by SHA/digest (tag's commit SHA for Actions) or run noctus.dev.image_pin action=pin write=True." >&2
+fi
+
 # ─── 6e-bis-0. Worker idle-polling gate (blocking, only when a worker / ─
 # jobs file is staged) ───────────────────────────────────────────────────
 # Keeper `check_worker_idle_polling` + `KB § PATTERNS/backend/polling-request-

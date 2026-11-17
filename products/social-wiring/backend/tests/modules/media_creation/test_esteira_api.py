@@ -46,6 +46,13 @@ def _roteiro(ec, marca=MARCA, status="completo", headline_id=None, org=ORG):
     return _ins(ec, "cs_roteiros", org_id=org, marca_id=marca, nome="Roteiro 1", status=status, headline_id=headline_id)
 
 
+def _aprovar(ec, roteiro_id, versao=1, decisao="approved"):
+    """Seed the approvals organ's event rows (S3): the roteiro's `versao` submitted and decided."""
+    for n, ev in enumerate(("submitted", decisao)):
+        _ins(ec, "apr_events", org_id=ORG, subject_kind="roteiro", subject_id=roteiro_id, versao=versao, event=ev,
+             created_at=f"2026-11-14T10:00:0{n}+00:00")
+
+
 def _stages(ec) -> dict:
     r = ec.get(f"{BASE}/etapas")
     assert r.status_code == 200, r.text
@@ -359,6 +366,7 @@ class TestMove:
     def _ready(self, ec):
         h = _headline(ec)
         ro = _roteiro(ec, headline_id=h["id"])
+        _aprovar(ec, ro["id"])
         p = _post(ec, headline_id=h["id"])
         ec.mock_supabase.from_("cs_posts").update({"roteiro_id": ro["id"]}).eq("id", p["id"]).execute()
         return p
@@ -379,6 +387,31 @@ class TestMove:
         ec.mock_supabase.from_("cs_posts").update({"roteiro_id": ro["id"]}).eq("id", p["id"]).execute()
         r = _mover(ec, p["id"], st["gravacao"]["id"])
         assert r.status_code == 409 and _detail(r)["faltando"] == ["roteiro_incompleto"]
+
+    def test_roteiro_completo_sem_aprovacao_nao_passa_o_gate(self, ec):
+        st = _stages(ec)
+        h = _headline(ec)
+        ro = _roteiro(ec, headline_id=h["id"])
+        p = _post(ec, headline_id=h["id"])
+        ec.mock_supabase.from_("cs_posts").update({"roteiro_id": ro["id"]}).eq("id", p["id"]).execute()
+        r = _mover(ec, p["id"], st["gravacao"]["id"])
+        assert r.status_code == 409 and _detail(r)["faltando"] == ["roteiro_nao_aprovado"]
+
+    def test_roteiro_reprovado_ou_editado_depois_de_aprovar_nao_passa(self, ec):
+        st = _stages(ec)
+        h = _headline(ec)
+        ro = _roteiro(ec, headline_id=h["id"])
+        _aprovar(ec, ro["id"], decisao="rejected")
+        p = _post(ec, headline_id=h["id"])
+        ec.mock_supabase.from_("cs_posts").update({"roteiro_id": ro["id"]}).eq("id", p["id"]).execute()
+        assert _detail(_mover(ec, p["id"], st["gravacao"]["id"]))["faltando"] == ["roteiro_nao_aprovado"]
+        # approved at versao 1, then edited (versao 2, nobody approved it): invalidated
+        ro2 = _roteiro(ec, headline_id=None)
+        _aprovar(ec, ro2["id"])
+        ec.mock_supabase.from_("cs_roteiros").update({"versao": 2}).eq("id", ro2["id"]).execute()
+        p2 = _post(ec, titulo="Outro")
+        ec.mock_supabase.from_("cs_posts").update({"roteiro_id": ro2["id"], "headline_id": h["id"]}).eq("id", p2["id"]).execute()
+        assert _detail(_mover(ec, p2["id"], st["gravacao"]["id"]))["faltando"] == ["roteiro_nao_aprovado"]
 
     def test_forward_skip_allowed_when_ready_and_history_written(self, ec):
         st = _stages(ec)

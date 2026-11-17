@@ -2,14 +2,14 @@
 
 > GENERATED next to `findings.ndjson` by `noctus.dev.findings_ledger` (`cli.py --findings-ledger-reconcile gate-walls`). Never edit by hand. Read your scope's open rows before you touch it. KB § PATTERNS/common/living-findings-ledgers.md.
 
-**15 open / in-progress**, 0 fixed, 0 accepted (15 total).
+**16 open / in-progress**, 1 fixed, 0 accepted (17 total).
 
 | scope | open | critical | high | medium | in-progress | fixed |
 |---|---:|---:|---:|---:|---:|---:|
 | backend-engineer | 1 | 0 | 0 | 1 | 0 | 0 |
 | feat/julia-turn-redesign | 4 | 0 | 0 | 4 | 0 | 0 |
 | frontend-engineer | 2 | 0 | 0 | 2 | 0 | 0 |
-| tooling-engineer | 8 | 0 | 5 | 3 | 1 | 0 |
+| tooling-engineer | 9 | 0 | 6 | 3 | 1 | 1 |
 
 ## Open / in-progress (bulk rows are summarised below; every row is in the NDJSON)
 
@@ -17,6 +17,7 @@
 |---|---|---|---|---|---|---|
 | GW-803dceed | tooling-engineer | `guard:executor-dispatch` | wall | high | open | keeper 2026-11-06 |
 | GW-68d5d731 | tooling-engineer | `guard:heavy-run` | wall | high | open | keeper 2026-11-06 |
+| GW-a02d4a1e | tooling-engineer | `guard:heavy-run` | wall | high | open feat/worktree-wiring-construction (26d99d7c4: heavy_run_guard unwraps timeout/gtimeout options and more wrappers; -m unittest heavy). Re-emitted from salvage/primary-ledger-rows-4a8ef46cf; flip to fixed when that branch lands. | tooling-engineer 2026-11-16 |
 | GW-8a7e7ce8 | tooling-engineer | `guard:primary-write` | wall | high | in-progress feat/guards-rewrite-not-deny: fix at 40b35fdb5 (claim-only fast path, no git); reconcile closes it once merged and the wall's firings age out | keeper 2026-11-06 |
 | GW-49b87ec8 | tooling-engineer | `keeper:check-eight-way-sync` | wall | high | open | keeper 2026-11-06 |
 | GW-53a628ad | tooling-engineer | `release_steward deliverable scoped set` | wall | high | open | tech-lead 2026-11-12 |
