@@ -51,7 +51,8 @@ def _bloqueios(w: World) -> list[dict]:
 def _pedido(w: World):
     from app.services import julia_contatos_service as contatos
 
-    w.sw.table(av.T_CONFIG).insert({"org_id": ORG_ID, "google_review_url": "https://g.page/r/x/review"}).execute()
+    # The review ask is OFF by default (owner 2026-11-17); these tests exercise the opt-out gate of an org that turned it on.
+    w.sw.table(av.T_CONFIG).insert({"org_id": ORG_ID, "google_review_url": "https://g.page/r/x/review", "pedido_ativo": True}).execute()
     c = _contato_que_interagiu(w)
     contatos.atualizar_contato(w.sw, c["id"], {"ultimo_inbound_at": (MANHA - timedelta(hours=1)).isoformat(), "telefone_e164": "+5511988887777"})
     c = w.contato()
