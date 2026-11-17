@@ -3,8 +3,9 @@
  * links to Julia gets this listing. List / add / remove; admin-only writes are enforced by the API (its refusal is shown).
  */
 import { useState } from "react";
-import { Instagram, Loader2, Trash2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 
+import { Instagram } from "@noctusai/lib/brand-icons";
 import { QueryErrorState } from "@noctusai/lib/components";
 
 import { Button } from "@/components/ui/button";
