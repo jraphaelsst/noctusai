@@ -12,7 +12,7 @@ import { MemoryRouter } from "react-router-dom";
 const h = vi.hoisted(() => ({ admin: true, team: { data: [] as unknown[], isError: false } }));
 const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), patch: vi.fn(), post: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api }));
-vi.mock("@noctusai/lib/design-system", () => ({ useIsOrgAdmin: () => h.admin }));
+vi.mock("@noctusai/lib/design-system", () => ({ useIsOrgAdmin: () => h.admin, useMeAccess: () => ({ data: undefined }) }));
 vi.mock("@/hooks/useTeam", () => ({ useTeamMembers: () => h.team }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 

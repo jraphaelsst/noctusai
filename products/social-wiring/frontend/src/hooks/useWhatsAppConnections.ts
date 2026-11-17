@@ -231,6 +231,27 @@ const statusTargets = (connectionId: string) => [
   },
 ];
 
+/** Answer of `PUT /{id}/perfil`: the WhatsApp PROFILE display name now set on the line. */
+export interface WhatsAppProfileNameResult {
+  connection_id: string;
+  nome: string;
+}
+
+/** WhatsApp profile display name leads see on this line (1..25 chars). The saved name is committed into the line's
+ *  cached live status (`me_name`); a WAHA refusal rejects the mutation (the dialog shows it, never silent). */
+export function useSetWhatsAppProfileName() {
+  return useCacheWriteMutation<WhatsAppProfileNameResult, { id: string; nome: string }>({
+    mutationFn: ({ id, nome }) => api.put<WhatsAppProfileNameResult>(`${BASE}/${id}/perfil`, { nome }),
+    targets: ({ id }) => [
+      {
+        queryKey: [...KEY, id, "status"],
+        commit: (old: WhatsAppConnectionStatus | undefined, saved: WhatsAppProfileNameResult) =>
+          old ? { ...old, me_name: saved.nome } : old,
+      },
+    ],
+  });
+}
+
 export function useRecoverConnection() {
   return useCacheWriteMutation<WhatsAppConnectionStatus, string>({
     mutationFn: (connectionId: string) =>
