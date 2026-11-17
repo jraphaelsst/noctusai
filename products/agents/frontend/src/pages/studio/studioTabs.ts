@@ -29,6 +29,7 @@ export const STUDIO_TABS = [
   { id: "especificacoes", label: "Especificações declaradas" },
   { id: "especificacoes-org", label: "Especificações da org" },
   { id: "especificacoes-empresas", label: "Especificações por empresa" },
+  { id: "onboarding", label: "Onboarding" },
   { id: "controles", label: "Controles" },
   { id: "conversas", label: "Conversas" },
   { id: "conformidade", label: "Conformidade" },
@@ -57,6 +58,7 @@ export const JULIA_TABS: readonly StudioTabId[] = [
   "especificacoes",
   "especificacoes-org",
   "especificacoes-empresas",
+  "onboarding",
   "controles",
   "conversas",
   "conformidade",
@@ -103,6 +105,7 @@ const PLATAFORMA_TABS: readonly StudioTabId[] = [
   "biblioteca",
   "especificacoes",
   "especificacoes-empresas",
+  "onboarding",
   "avaliacoes",
   "configuracoes",
   "conformidade",
@@ -113,7 +116,7 @@ const PLATAFORMA_TABS: readonly StudioTabId[] = [
 ];
 
 /** The staff-only per-company specs picker: shown to the platform operator only (UX hint; the server enforces it). */
-const STAFF_ONLY_TAB: StudioTabId = "especificacoes-empresas";
+const STAFF_ONLY_TABS: readonly StudioTabId[] = ["especificacoes-empresas", "onboarding"];
 
 const ORG_ADMIN_TABS: readonly StudioTabId[] = ["visao-geral", "especificacoes-org", "controles", "conversas"];
 
@@ -133,7 +136,7 @@ export function visibleTabsFor(
   if (tier === "plataforma")
     return STUDIO_TABS.filter(
       (t) =>
-        (PLATAFORMA_TABS.includes(t.id) && (t.id !== STAFF_ONLY_TAB || access.platformAdminHint)) ||
+        (PLATAFORMA_TABS.includes(t.id) && (!STAFF_ONLY_TABS.includes(t.id) || access.platformAdminHint)) ||
         (t.id === "canais" && agent?.usa_canais === true),
     );
   if (tier === "organizacao") {

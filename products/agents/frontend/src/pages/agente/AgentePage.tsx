@@ -49,6 +49,7 @@ const SECOES: Record<string, Secao> = {
   especificacoes: studioTab(() => import("@/pages/studio/tabs/EspecificacoesTab")),
   "especificacoes-org": studioTab(() => import("@/pages/studio/tabs/EspecificacoesOrgTab")),
   "especificacoes-empresas": studioTab(() => import("@/pages/studio/tabs/EspecificacoesEmpresasTab")),
+  onboarding: studioTab(() => import("@/pages/studio/tabs/OnboardingTab")),
   controles: studioTab(() => import("@/pages/studio/tabs/ControlesTab")),
   conversas: studioTab(() => import("@/pages/studio/tabs/ConversasTab")),
   conformidade: studioTab(() => import("@/pages/studio/tabs/ConformidadeTab")),
