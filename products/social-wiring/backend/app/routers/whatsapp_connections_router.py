@@ -66,6 +66,7 @@ from fastapi.responses import JSONResponse
 from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.config.product_urls import resolve_product_url
 from noctusai_lib.integrations.whatsapp import (
+    LineWriteRefused,
     WahaSessionNotReady,
     get_whatsapp_client,
 )
@@ -100,6 +101,8 @@ from app.schemas.whatsapp_connection import (
     WhatsAppConnectionRecoverOut,
     WhatsAppConnectionStatusOut,
     WhatsAppConnectionUpdate,
+    WhatsAppProfileNameIn,
+    WhatsAppProfileNameOut,
     WhatsAppWebhookConfigRequest,
     WhatsAppWebhookResultOut,
 )
@@ -548,6 +551,41 @@ def update_connection(
             status_code=status.HTTP_404_NOT_FOUND, detail="connection not found"
         )
     return _out(record)
+
+
+@router.put("/{connection_id}/perfil", response_model=WhatsAppProfileNameOut)
+async def set_profile_name(
+    connection_id: UUID,
+    body: WhatsAppProfileNameIn,
+    auth: tuple = Depends(get_current_user_org),
+    store: WhatsAppConnectionStore = Depends(get_connection_store),
+    waha_factory: Any = Depends(get_waha_client_factory),
+    request: Request = None,
+) -> WhatsAppProfileNameOut:
+    """Set the WhatsApp PROFILE display name of this line (WAHA ``PUT /api/{session}/profile/name``). ORG ADMIN only.
+
+    Refusals are typed, never silent: a line whose policy forbids writes to WhatsApp (shadow / undeclared) is 409; a WAHA
+    refusal or outage is 502. (No connection-event table exists in this product today, so the change is not recorded as an
+    event; the ``label`` PATCH is the same.)"""
+    org_id = await anyio.to_thread.run_sync(_require_org_admin, auth, request, "A conexão do WhatsApp")
+    record = _require_record(store, connection_id=connection_id, org_id=org_id, decrypt=True)
+    nome = body.nome  # already stripped + 1..25 chars by the schema
+    client = _waha_client(record, waha_factory)
+    try:
+        await client.set_profile_name(nome)
+    except LineWriteRefused as exc:
+        logger.warning("WAHA profile name refused by line policy for line %s (%s)", connection_id, exc.reason)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Esta linha não permite alterar o nome exibido no WhatsApp (envio desativado).",
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 — explicit admin action, surfaced as a typed 502
+        logger.warning("WAHA set_profile_name failed for line %s (%s)", connection_id, type(exc).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="O WhatsApp recusou a alteração do nome exibido.",
+        ) from exc
+    return WhatsAppProfileNameOut(connection_id=connection_id, nome=nome)
 
 
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
