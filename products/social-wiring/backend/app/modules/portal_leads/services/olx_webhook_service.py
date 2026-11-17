@@ -70,12 +70,16 @@ class OlxWebhookService:
         ingest_fn: Optional[Callable[[Any, UUID, OlxLead], dict]] = None,
         default_org_id: Optional[UUID] = None,
         dedup: Any = None,
+        julia_portal_intake: Optional[Callable[[UUID, dict], Any]] = None,
     ) -> None:
         self._client = client
         self._org_resolver = org_resolver or self._resolve_org
         self._ingest = ingest_fn or olx_ingest_service.ingest_olx_lead
         self._default_org_id = default_org_id
         self._dedup = dedup
+        # DI seam: `(org_id, lead_dict) -> dict` -- Julia's opener for a NEW portal lead (default: the production-wired
+        # `julia_portal_primeiro_contato_service.iniciar_com_padroes`; a no-op for an org with Julia / the switch off).
+        self._julia_portal_intake = julia_portal_intake
 
     # ── inbox ────────────────────────────────────────────────────────
 
@@ -227,12 +231,21 @@ class OlxWebhookService:
             error=None,
             processed_at=_now(),
         )
+        if result.get("created"):
+            self._julia_opener(org_id, lead, event)
         return ProcessResult(
             lead.origin_lead_id,
             STATUS_PROCESSED,
             created=bool(result.get("created")),
             lead_id=str((result.get("lead") or {}).get("id") or "") or None,
         )
+
+    def _julia_opener(self, org_id: UUID, lead: OlxLead, event: Optional[dict]) -> None:
+        """Julia speaks first to a NEW portal lead (Lais study S1). Never raises: the lead is already stored and forwarded."""
+        from app.services import julia_portal_primeiro_contato_service as portal
+
+        chegou = (event or {}).get("received_at") or _now()
+        portal.iniciar_em_background(org_id, portal.lead_de_olx(lead, chegou), intake=self._julia_portal_intake)
 
     def _enqueue_forwards(
         self, org_id: UUID, lead: OlxLead, raw_body: Optional[str]

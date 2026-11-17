@@ -52,7 +52,7 @@ def julia_off(world: World) -> None:
 
 def opt_in_everything(world: World) -> str:
     """Every flow's opt-in on; returns the active regua id."""
-    world.sw.table(gate.T_REENGAJAMENTO_CONFIG).insert({"org_id": ORG_ID, "minutos_ativo": True, "horas_ativo": True}).execute()
+    world.sw.table(gate.T_REENGAJAMENTO_CONFIG).insert({"org_id": ORG_ID, "minutos_ativo": True, "horas_ativo": True, "portal_primeiro_contato_ativo": True}).execute()
     world.sw.table(gate.T_AVALIACOES_CONFIG).insert({"org_id": ORG_ID, "google_review_url": "https://g.page/r/x/review"}).execute()
     world.sw.table(gate.T_MODELOS).insert({"org_id": ORG_ID, "categoria": "primeiro_contato", "status": "aprovado", "nome": "Abordagem neutra"}).execute()
     regua = world.sw.table(gate.T_REGUAS).insert({"org_id": ORG_ID, "nome": "R1", "ativa": True}).execute().data[0]
@@ -70,6 +70,7 @@ class TestDefaultsOff:
         (Fluxo.REENGAJAMENTO_HORAS, "reengajamento_desativado"),
         (Fluxo.REGUA, "regua_inativa"),
         (Fluxo.PRIMEIRO_CONTATO, "modelo_nao_aprovado"),
+        (Fluxo.PRIMEIRO_CONTATO_PORTAL, "portal_primeiro_contato_desativado"),
         (Fluxo.AVALIACAO, "sem_link"),
     ])
     def test_a_fresh_org_has_every_automatic_flow_off(self, world, fluxo, motivo):
