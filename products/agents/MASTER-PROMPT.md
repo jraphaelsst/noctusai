@@ -50,7 +50,7 @@ products/agents/backend/app/
   controls (SW reads, Studio admin writes; turning ON also needs complete content via `conteudo_status`), hand-off
   notes, opt-in / opt-out, delete-by-lead, and an org-admin thread read that strips system rows, tool results and stamps.
 - Migrations 033 (threads), 034 (controls), 035 (constraint swap — apply only after the backfill is verified).
-- Eval errors + loop driver (migration 088, 2026-11-17; `docs/eval-loop-gate-contract.md`): a run whose cases errored is
+- Eval errors + loop driver (migration 089, 2026-11-17; `docs/eval-loop-gate-contract.md`): a run whose cases errored is
   `erro` / `parcial_com_erros` (never `concluida`; errored cases are out of the score denominator; no measurement = score
   `NULL`, never 0.0) with `erro_codigo`; a preflight (`app/studio/eval_preflight.py`) refuses before a run or round is booked;
   a round that errored stops its loop (`motivo_parada=erro`). An agent with no qualification standard (a base layer) is
@@ -566,5 +566,9 @@ write path (`aplicar_org_specs`: validation, audit); an invalid value is refused
 through `SwSettingsPort` (Real refuses `canal_sw_nao_configurado` until social-wiring accepts a staff channel; the report
 carries the route + body to apply by hand). The interviewer agent `onboarding-imob` is a platform definition whose draft
 section rows live in `projects/onboarding/agent/` (applied with `noctus.agents.content`, never published from code). After
-an apply the owner is pointed to evaluation mode before go-live. Deferred: `NOC-REMEDIATE[onboarding-sw-staff-channel]`,
-`[onboarding-import-prose]`, `[onboarding-agent-rows]`.
+an apply the owner is pointed to evaluation mode before go-live. The interview runs live: `POST .../onboarding/conversa`
+opens a chat of `onboarding-imob` bound to the company; its `onboarding` tool group (`progresso_onboarding`,
+`registrar_resposta`, `importar_configuracao`, `revisar_e_aplicar`) records every answer as an append-only event
+(`agents.onboarding_eventos`, migration 089) and the tab polls the folded progress. Deferred:
+`NOC-REMEDIATE[onboarding-sw-staff-channel]`, `[onboarding-import-prose]`, `[onboarding-agent-rows]`,
+`[onboarding-evals-mecanismo-studio]`.
