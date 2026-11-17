@@ -10860,9 +10860,9 @@ _SW_241_PROBES: tuple[GuardProbe, ...] = (
     _sw241_refusal_probe(
         probe_id="sw241_post_formato",
         guard_name="cs_posts_formato_check",
-        statements=_sw241_stmt(_sw241_post_ins(cols=", formato", vals=", 'story'")),
-        permitted_msg="post with formato=story",
-        rationale="v1 of the Esteira is reels only; a new format is a deliberate migration, not a free-text value.",
+        statements=_sw241_stmt(_sw241_post_ins(cols=", formato", vals=", 'tiktok'")),
+        permitted_msg="post with formato=tiktok",
+        rationale="formato is a closed set (reel/carrossel/story/feed since migration 352); a new format is a deliberate migration, not a free-text value.",
     ),
     _sw241_refusal_probe(
         probe_id="sw241_post_titulo_vazio",
