@@ -48,7 +48,7 @@ from app.clients.social_wiring import (
 )
 from app.qualificacao.matcher import MIN_TRECHO, normalizar
 from app.qualificacao.identificacao import TIPOS_DOCUMENTO, EncryptionNotConfigured, obrigatorios_do_padrao
-from app.qualificacao.models import LeadSinais, VersaoPadrao
+from app.qualificacao.models import LeadSinais, VersaoPadrao, e_padrao_nulo
 from app.qualificacao.service import ItemPerfil, QualificacaoService
 from app.runtime.llm_runtime import LlmToolset
 from app.studio.models import ConteudoBundle
@@ -614,7 +614,7 @@ class JuliaTurno:
         return bruto
 
     def capacidades(self) -> frozenset[str]:
-        caps = {"qualificacao"}
+        caps = set() if e_padrao_nulo(self.padrao) else {"qualificacao"}  # no standard: no qualification tools
         if self.modo_restrito:
             caps.add("modo_restrito")  # narrows the offer to FERRAMENTAS_MODO_RESTRITO (tools_ofertaveis)
         if self.skills is not None:

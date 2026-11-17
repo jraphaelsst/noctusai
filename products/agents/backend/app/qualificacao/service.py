@@ -17,6 +17,8 @@ from app.qualificacao.lead_store import EstadoCache, LeadQualificacaoStore
 from app.qualificacao.matcher import MAX_TRECHO, conferir_trecho
 from app.qualificacao.identificacao import IdentificacaoService
 from app.qualificacao.models import (
+    ID_PADRAO_NULO,
+    padrao_nulo,
     DERIVADOS,
     Confirmacao,
     LeadSinais,
@@ -140,6 +142,8 @@ class QualificacaoService:
     # ── loading ────────────────────────────────────────────────────────────
 
     def _versao(self, versao_id: UUID) -> VersaoPadrao:
+        if versao_id == ID_PADRAO_NULO:  # an agent with no standard (eval path): nothing stored, nothing to score
+            return padrao_nulo()
         v = self._padroes.obter_versao(versao_id)  # NotFound propagates
         if v.status == "rascunho":
             raise VersaoNaoUtilizavel()

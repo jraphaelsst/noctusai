@@ -34,7 +34,7 @@ SUITES = ("comportamento", "mecanismo")
 KIND_PARADA = "agents.eval_loop_parado"
 KIND_CHECKPOINT = "agents.eval_loop_checkpoint"
 _LINK = "/agentes"
-_TERMINAIS = ("concluida", "falhou", "cancelada")
+_TERMINAIS = ("concluida", "falhou", "cancelada", "erro", "parcial_com_erros")
 _ROTULO_SUITE = {"comportamento": "comportamento", "mecanismo": "mecanismo"}
 
 
@@ -44,11 +44,16 @@ class RunResumo:
 
     run_id: UUID
     run_tipo: str
-    status: str  # concluida | falhou | cancelada
+    status: str  # concluida | parcial_com_erros | erro | falhou | cancelada
     score: float | None
     custo_usd: float
     falhas: tuple[str, ...]
     compiled_hash: str
+    #: the run's own error text / first error code, and the cases that ERRORED (never mixed into ``falhas``: an errored case
+    #: is no behaviour failure, it is a case the harness could not measure).
+    erro: str | None = None
+    erro_codigo: str | None = None
+    erros: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,15 +69,20 @@ def recusa_http(r: Recusa, status_code: int = 409) -> HTTPException:
 
 def resumo_comportamento(evals: Any, org_id: UUID, agent_id: UUID, run_id: UUID) -> RunResumo | None:
     """The behaviour run's resume once it ended; ``None`` while it is still ``pendente``/``executando``."""
+    from app.studio.evals import ORPHAN_ERRO
+
     run = evals.get_run(org_id, agent_id, run_id)
     if run.status not in _TERMINAIS:
         return None
-    falhas = tuple(sorted(
-        r.case_slug for r in evals.list_results_with_cases(org_id, agent_id, run_id) if r.result.status in ("reprovado", "erro")))
+    resultados = evals.list_results_with_cases(org_id, agent_id, run_id)
+    falhas = tuple(sorted(r.case_slug for r in resultados if r.result.status == "reprovado"))
+    erros = tuple(sorted(r.case_slug for r in resultados if r.result.status == "erro"))
+    # a run the restart orphaned was nobody's verdict: a neutral round the driver re-opens (never a loop-stopping error)
+    status = "cancelada" if run.status == "falhou" and run.erro == ORPHAN_ERRO else run.status
     return RunResumo(
-        run_id=run_id, run_tipo="comportamento", status=run.status,
+        run_id=run_id, run_tipo="comportamento", status=status,
         score=float(run.score) if run.score is not None else None, custo_usd=float(run.custo_usd or 0.0), falhas=falhas,
-        compiled_hash=run.compiled_hash)
+        compiled_hash=run.compiled_hash, erro=run.erro, erro_codigo=getattr(run, "erro_codigo", None), erros=erros)
 
 
 def resumo_mecanismo(mecanismo: Any, org_id: UUID, agent_id: UUID, run_id: UUID) -> RunResumo | None:
@@ -90,9 +100,26 @@ def resumo_mecanismo(mecanismo: Any, org_id: UUID, agent_id: UUID, run_id: UUID)
             por_caso.setdefault(str(e["case_id"]), []).append(e["status"])
         falhas = tuple(sorted(
             slugs.get(cid, cid[:8]) for cid, sts in por_caso.items() if any(s != "aprovado" for s in sts)))
+    from app.studio.eval_mecanismo_service import ORFA_ERRO
+
+    status = "cancelada" if run["status"] == "falhou" and run.get("erro") == ORFA_ERRO else run["status"]
     return RunResumo(
-        run_id=run_id, run_tipo="mecanismo", status=run["status"], score=score,
-        custo_usd=float(run.get("custo_usd") or 0.0), falhas=falhas, compiled_hash=run["compiled_hash"])
+        run_id=run_id, run_tipo="mecanismo", status=status, score=score,
+        custo_usd=float(run.get("custo_usd") or 0.0), falhas=falhas, compiled_hash=run["compiled_hash"],
+        erro=run.get("erro"), erro_codigo="mecanismo_falhou" if run["status"] == "falhou" else None)
+
+
+def estado_do_driver(rec: LoopRecord, rodadas: list[Rodada]) -> str:
+    """What the loop is doing RIGHT NOW, for the UI (never guessed client-side): ``encerrado`` | ``rodando`` (a round is open) |
+    ``aguardando_edicao`` (automatic, idle: the gate refused a round and says why in ``aviso``) | ``automatico`` (between rounds)
+    | ``manual`` (waiting for the owner's click)."""
+    if rec.status != "ativo":
+        return "encerrado"
+    if any(r.aberta for r in rodadas):
+        return "rodando"
+    if rec.modo != "automatico":
+        return "manual"
+    return "aguardando_edicao" if rec.aviso else "automatico"
 
 
 def _usd(x: float) -> str:
@@ -105,8 +132,10 @@ def _pct(x: float) -> str:
 
 class EvalLoopService:
     def __init__(self, loops: LoopStore, sink: Any, consolidacao: Any = None,
-                 avisar_dono: Callable[..., Any] | None = None) -> None:
+                 avisar_dono: Callable[..., Any] | None = None, ao_fechar: Callable[[LoopRecord], None] | None = None) -> None:
         self._loops = loops
+        #: called after a round closes WITHOUT stopping the loop (the driver's hook); a failure never undoes the close.
+        self._ao_fechar = ao_fechar
         self._sink = sink
         self._consol = consolidacao
         #: the owner's WhatsApp send — seed ``notify_owner`` (owner line L3) unless a test injects one.
@@ -115,6 +144,13 @@ class EvalLoopService:
     @property
     def store(self) -> LoopStore:
         return self._loops
+
+    def _evento(self, org_id: UUID, loop_id: UUID, evento: str, **kw: Any) -> None:
+        """Measurement by design: one append-only row per lifecycle change. Never blocks the change it describes."""
+        try:
+            self._loops.registrar_evento(org_id, loop_id, evento, **kw)
+        except Exception:
+            logger.exception("agents.eval_loop.evento_falhou loop_id=%s evento=%s", loop_id, evento)
 
     # ── admission (G6 / G7) ────────────────────────────────────────────────
 
@@ -183,15 +219,23 @@ class EvalLoopService:
         if not rodada.aberta:
             return None
         todas = self._loops.list_rodadas(org_id, rec.id)
+        erro = {"codigo": resumo.erro_codigo, "mensagem": resumo.erro, "casos_com_erro": len(resumo.erros)} if (
+            resumo.status in ("erro", "falhou", "parcial_com_erros") and (resumo.erro or resumo.erro_codigo)) else None
         decisao = avaliar_rodada(
             rec.definicao(), todas, seq=rodada.seq, status=resumo.status, score=resumo.score, custo_usd=resumo.custo_usd,
-            falhas=resumo.falhas, compiled_hash=rodada.compiled_hash, partes=rodada.partes)
+            falhas=resumo.falhas, compiled_hash=rodada.compiled_hash, partes=rodada.partes, erro=erro)
         escreveu = self._loops.fechar_rodada(
             org_id, rec.id, resumo.run_id, resumo.run_tipo, status=resumo.status, score=resumo.score, custo_usd=resumo.custo_usd,
             falhas=list(resumo.falhas), melhorou=decisao.melhorou, overcall=decisao.overcall, gasto_usd=decisao.gasto_usd,
-            parada=decisao.parada)
+            parada=decisao.parada, erro_codigo=resumo.erro_codigo if erro else None, erro_mensagem=resumo.erro if erro else None)
         if not escreveu:
             return None
+        self._evento(org_id, rec.id, "rodada_com_erro" if erro else "rodada_fechada", run_id=resumo.run_id, rodada_seq=rodada.seq,
+                     detalhe={"status": resumo.status, "score": resumo.score, "custo_usd": resumo.custo_usd,
+                              "falhas": len(resumo.falhas), "erros": len(resumo.erros), **({"erro": erro} if erro else {})})
+        if decisao.parada is not None:
+            self._evento(org_id, rec.id, "loop_parado", run_id=resumo.run_id, rodada_seq=rodada.seq,
+                         detalhe={"motivo": decisao.parada.motivo, **decisao.parada.detalhe})
         if decisao.overcall:
             logger.warning(
                 "agents.eval_loop.overcall loop_id=%s seq=%s score=%s custo_usd=%s", rec.id, rodada.seq, resumo.score, resumo.custo_usd)
@@ -204,6 +248,8 @@ class EvalLoopService:
             cp = decisao.checkpoint
             self._notificar(final, self._mensagem_checkpoint(final, rodadas, cp), KIND_CHECKPOINT, f"eval_loop:{rec.id}:cp{cp}",
                             {"checkpoint": cp, **self._payload(final, rodadas, resumo)})
+        if decisao.parada is None and self._ao_fechar is not None:
+            self._ao_fechar(final)  # the driver (an automatic loop opens its next round by itself)
         return decisao
 
     def fechar_sem_falhar(self, org_id: UUID, ler: Callable[[], RunResumo | None], *, run_id: UUID, run_tipo: str) -> None:
@@ -227,7 +273,38 @@ class EvalLoopService:
         detalhe = {"motivo_texto": motivo} if motivo else None
         if not self._loops.parar_loop(org_id, agent_id, loop_id, motivo="parado_manualmente", status="parado", detalhe=detalhe):
             raise HTTPException(409, detail={"detail": f"O loop já foi encerrado ({rec.motivo_parada or rec.status}).", "code": "loop_ja_encerrado"})
+        self._evento(org_id, loop_id, "loop_parado", detalhe={"motivo": "parado_manualmente", **(detalhe or {})})
         return self._loops.get_loop(org_id, agent_id, loop_id)
+
+    # ── driver mode ────────────────────────────────────────────────────────
+
+    def definir_modo(self, org_id: UUID, agent_id: UUID, loop_id: UUID, modo: str, *, ator: UUID | None = None) -> LoopRecord:
+        """``automatico`` (the driver runs the rounds) | ``manual`` (it waits for the owner). 409 ``loop_ja_encerrado`` on a stopped loop."""
+        try:
+            rec = self._loops.get_loop(org_id, agent_id, loop_id)
+        except NotFound as exc:
+            raise HTTPException(404, detail={"detail": "Loop de avaliação não encontrado.", "code": "loop_not_found"}) from exc
+        if rec.status != "ativo":
+            raise HTTPException(409, detail={"detail": f"O loop já foi encerrado ({rec.motivo_parada or rec.status}).", "code": "loop_ja_encerrado"})
+        if self._loops.definir_modo(org_id, agent_id, loop_id, modo):
+            self._evento(org_id, loop_id, "modo_alterado", detalhe={"modo": modo}, ator=ator)
+        if modo == "automatico":
+            self._loops.definir_aviso(org_id, loop_id, None)
+        return self._loops.get_loop(org_id, agent_id, loop_id)
+
+    def pausar_se_automatico(self, org_id: UUID, run_id: UUID, run_tipo: str) -> None:
+        """The owner cancelled the run of an automatic loop: the loop waits for them (``manual``) instead of re-opening a round."""
+        achado = self._loops.rodada_do_run(org_id, run_id, run_tipo)
+        if achado is None:
+            return
+        rec, rodada = achado
+        if rec.status == "ativo" and rec.modo == "automatico" and self._loops.definir_modo(org_id, rec.agent_id, rec.id, "manual"):
+            self._evento(org_id, rec.id, "modo_alterado", run_id=run_id, rodada_seq=rodada.seq,
+                         detalhe={"modo": "manual", "motivo": "run_cancelada"})
+
+    def eventos(self, org_id: UUID, agent_id: UUID, loop_id: UUID) -> list[dict[str, Any]]:
+        self.estado(org_id, agent_id, loop_id)  # 404 for a foreign / unknown loop
+        return self._loops.listar_eventos(org_id, loop_id)
 
     # ── read model ─────────────────────────────────────────────────────────
 
@@ -253,9 +330,12 @@ class EvalLoopService:
             "restante_usd": d.restante_usd, "melhor_score": melhor, "score_atual": serie[-1] if serie else None,
             "acima_do_piso": (melhor >= rec.piso) if melhor is not None else None,
             "started_at": rec.started_at, "stopped_at": rec.stopped_at,
+            "modo": rec.modo, "aviso": rec.aviso,
+            "estado_driver": estado_do_driver(rec, rs),
             "serie": [{
                 "rodada": r.seq, "run_id": r.run_id, "status": r.status, "score": r.score, "custo_usd": r.custo_usd,
                 "compiled_hash": r.compiled_hash, "melhorou": r.melhorou, "overcall": r.overcall, "falhas": list(r.falhas),
+                "erro_codigo": r.erro_codigo, "erro_mensagem": r.erro_mensagem,
             } for r in rs],
             "overcalls": [{"rodada": r.seq, "run_id": r.run_id, "score": r.score, "custo_usd": r.custo_usd} for r in overcalls],
             "custo_overcalls_usd": round(sum(r.custo_usd for r in overcalls), 4),
@@ -292,6 +372,10 @@ class EvalLoopService:
             return (titulo, f"As {rec.rodadas_planejadas} rodadas planejadas acabaram sem chegar a {_pct(rec.alvo)}. Notas: {serie}. "
                             f"Gasto {_usd(rec.gasto_usd)}. {self._falhando(resumo)}")
         det = rec.detalhe_parada or {}
+        if rec.motivo_parada == "erro":
+            return (f"Loop de avaliação parado por erro: {rec.agente_chave} ({_ROTULO_SUITE[rec.suite]})",
+                    f"A rodada {det.get('rodada', n)} terminou com erro e o loop foi parado antes de gastar mais: "
+                    f"{det.get('mensagem') or det.get('codigo') or 'sem detalhe'}. Gasto {_usd(rec.gasto_usd)} de {_usd(rec.orcamento_usd)}.")
         if det.get("conteudo_mudou") is False:
             mudou = "O conteúdo não mudou entre as duas últimas rodadas (mesmo hash): a rodada foi repetida sem correção."
         elif det.get("partes_alteradas"):
@@ -305,6 +389,8 @@ class EvalLoopService:
 
     @staticmethod
     def _falhando(resumo: RunResumo) -> str:
+        if resumo.erros:
+            return f"{len(resumo.erros)} caso(s) terminaram em ERRO (não é falha de comportamento): {resumo.erro or resumo.erro_codigo}."
         if not resumo.falhas:
             return "Nenhum caso falhando na última rodada."
         nomes = ", ".join(resumo.falhas[:MAX_FALHAS_NA_MENSAGEM])

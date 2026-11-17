@@ -31,8 +31,10 @@ import type {
   EvalRunCreate,
   EvalRunDetail,
   EvalRunListResponse,
+  EvalLoopSuite,
+  RunProgresso,
 } from "@/api/studio/types-ke";
-import { studioKeys } from "./keys";
+import { seg, studioKeys } from "./keys";
 
 const casesKey = (agentKey: string) => ["studio", agentKey, "evals", "cases"] as const;
 const runsKey = (agentKey: string, versionId?: string) => ["studio", agentKey, "evals", "runs", versionId ?? null] as const;
@@ -41,6 +43,9 @@ const runKey = (agentKey: string, runId: string) => ["studio", agentKey, "evals"
 const consolidacaoKey = (agentKey: string) => ["studio", agentKey, "evals", "consolidacao"] as const;
 
 const IN_FLIGHT = new Set(["pendente", "executando"]);
+
+/** Live-progress poll interval (ms) while a run is active. */
+export const PROGRESS_POLL_MS = 1500;
 
 // ─── Cases ──────────────────────────────────────────────────────────────────
 
@@ -167,7 +172,35 @@ export function useEvalRuns(agentKey: string, versionId?: string) {
   };
 }
 
-/** Run detail — polls every 3s while `status` is `pendente`/`executando` (contract §G "Avaliações": "run detail ... polling while executando"). */
+/**
+ * Live progress of one run of either suite (`GET .../evals/runs/{id}/progresso`, `GET .../mecanismo-runs/{id}/progresso`):
+ * the server's own numbers (done / total, passed / failed / errored, running score, cost against the cap, elapsed, ETA).
+ * REST + polling: the stack has no run stream (§D4 is REST only), so it polls every 1.5 s while `ativo` and stops by itself the
+ * moment the server says the run ended. Loading follows `lying-loading-state`: `showSkeleton` only without data.
+ */
+export function useRunProgresso(agentKey: string, suite: EvalLoopSuite, runId: string | null) {
+  const query = useQuery<RunProgresso>({
+    queryKey: ["studio", agentKey, "evals", "progresso", suite, runId ?? ""] as const,
+    queryFn: () =>
+      api.get<RunProgresso>(
+        suite === "mecanismo"
+          ? `/api/studio/agents/${seg(agentKey)}/mecanismo-runs/${seg(runId ?? "")}/progresso`
+          : `/api/studio/agents/${seg(agentKey)}/evals/runs/${seg(runId ?? "")}/progresso`,
+      ),
+    enabled: !!agentKey && !!runId,
+    // poll-budget: 1.5s only while this run is active, stops after; 1 calls/tick (refetch of the polled GET, only while the job is in flight); worst 57600/day per open tab; hidden=paused
+    refetchInterval: (q) => ((q.state.data as RunProgresso | undefined)?.ativo ? PROGRESS_POLL_MS : false),
+  });
+  return {
+    data: query.data,
+    showSkeleton: query.isPending && !query.data,
+    isRefreshing: query.isFetching && !!query.data,
+    isError: query.isError,
+    error: query.error,
+  };
+}
+
+/** Run detail — polls every 2s while `status` is `pendente`/`executando` (contract §G "Avaliações": "run detail ... polling while executando"). */
 export function useEvalRun(agentKey: string, runId: string | null) {
   const qc = useQueryClient();
   const query = useQuery<EvalRunDetail>({
@@ -177,7 +210,7 @@ export function useEvalRun(agentKey: string, runId: string | null) {
     // poll-budget: 3s only while this eval run is in flight, stops after; 1 calls/tick (refetch of the polled GET, only while the job is in flight); worst 28800/day per open tab; hidden=paused
     refetchInterval: (q) => {
       const data = q.state.data as EvalRunDetail | undefined;
-      return data && IN_FLIGHT.has(data.status) ? 3000 : false;
+      return data && IN_FLIGHT.has(data.status) ? 2000 : false;
     },
   });
 

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from noctusai_lib.api import StrictHttpModel
 
-__all__ = ["LoopCreateRequest", "LoopStopRequest", "LoopOut", "LoopListOut", "EvalLoopConfigIn", "EvalLoopConfigOut", "RodadaOut", "OvercallOut", "CheckpointOut"]
+__all__ = ["LoopCreateRequest", "LoopStopRequest", "LoopModoRequest", "RunProgressoOut", "LoopEventoOut", "LoopEventosOut", "LoopOut", "LoopListOut", "EvalLoopConfigIn", "EvalLoopConfigOut", "RodadaOut", "OvercallOut", "CheckpointOut"]
 
 LOOP_ORCAMENTO_USD_MAX = 500.0
 
@@ -23,6 +23,52 @@ class LoopCreateRequest(StrictHttpModel):
     rodadas_planejadas: int | None = Field(default=None, ge=1, le=100)
     #: G7: omitted => the config's ``orcamento_usd``; above it => 422 ``orcamento_acima_do_teto`` (for every caller).
     orcamento_usd: float | None = Field(default=None, gt=0, le=LOOP_ORCAMENTO_USD_MAX)
+    #: ``automatico`` (default) = the server runs the rounds by itself until a stop condition; ``manual`` = each round is a click.
+    modo: str = Field(default="automatico", pattern="^(automatico|manual)$")
+
+
+class LoopModoRequest(StrictHttpModel):
+    #: ``automatico`` resumes the driver (it opens the next round now); ``manual`` pauses it after the round in flight.
+    modo: str = Field(pattern="^(automatico|manual)$")
+
+
+class RunProgressoOut(BaseModel):
+    """Live progress of one run (either suite). Every number is the server's. ``indeterminado`` = the mechanism suite while it
+    executes (it stores its executions when it ends): only status, elapsed time and cost cap are known then."""
+
+    run_id: UUID
+    suite: str
+    status: str
+    ativo: bool
+    indeterminado: bool
+    total: int | None
+    concluidos: int | None
+    aprovados: int | None
+    reprovados: int | None
+    erros: int | None
+    pulados: int | None
+    #: mean score of the MEASURED cases (errored ones are out of the denominator); ``None`` = nothing measured yet
+    score_parcial: float | None
+    custo_usd: float | None
+    limite_usd: float | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    decorrido_s: float | None
+    eta_s: float | None
+    erro: str | None
+    erro_codigo: str | None
+
+
+class LoopEventoOut(BaseModel):
+    evento: str
+    rodada_seq: int | None
+    run_id: UUID | None
+    detalhe: dict[str, Any]
+    created_at: datetime | None
+
+
+class LoopEventosOut(BaseModel):
+    items: list[LoopEventoOut]
 
 
 class LoopStopRequest(StrictHttpModel):
@@ -40,6 +86,9 @@ class RodadaOut(BaseModel):
     melhorou: bool | None
     overcall: bool
     falhas: list[str]
+    #: a round whose run ERRORED says why (code + text): shown as an error, never as failing cases
+    erro_codigo: str | None = None
+    erro_mensagem: str | None = None
 
 
 class OvercallOut(BaseModel):
@@ -62,7 +111,7 @@ class LoopOut(BaseModel):
     suite: str
     #: ``ativo`` | ``parado`` | ``concluido``
     status: str
-    #: ``alvo_atingido`` | ``sem_melhora`` | ``orcamento_atingido`` | ``rodadas_esgotadas`` | ``parado_manualmente`` | ``None`` while active
+    #: ``alvo_atingido`` | ``sem_melhora`` | ``orcamento_atingido`` | ``rodadas_esgotadas`` | ``parado_manualmente`` | ``erro`` | ``None`` while active
     motivo_parada: str | None
     detalhe_parada: dict[str, Any] | None
     rodadas_planejadas: int
@@ -81,6 +130,12 @@ class LoopOut(BaseModel):
     overcalls: list[OvercallOut]
     custo_overcalls_usd: float
     checkpoints: list[CheckpointOut]
+    #: ``automatico`` | ``manual`` (see :class:`LoopCreateRequest`)
+    modo: str = "manual"
+    #: why an automatic loop is idle right now, e.g. ``{"codigo": "hash_inalterado", "mensagem": "..."}``; ``None`` = nothing
+    aviso: dict[str, Any] | None = None
+    #: what the loop is doing right now: ``rodando`` | ``automatico`` (between rounds) | ``aguardando_edicao`` | ``manual`` | ``encerrado``
+    estado_driver: str = "manual"
 
 
 class LoopListOut(BaseModel):

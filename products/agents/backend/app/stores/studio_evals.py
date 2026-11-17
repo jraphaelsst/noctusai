@@ -71,7 +71,7 @@ _RUNS_TABLE = "eval_runs"
 _RESULTS_TABLE = "eval_results"
 
 #: Contract §B2 `eval_runs.status` CHECK.
-RUN_STATUSES = ("pendente", "executando", "concluida", "falhou", "cancelada")
+RUN_STATUSES = ("pendente", "executando", "concluida", "falhou", "cancelada", "erro", "parcial_com_erros")
 #: Contract §B2 `eval_results.status` CHECK, extended by migration 014 with
 #: `'pulado'` — a case the runner never started because the run's cost cap
 #: (`eval_runs.limite_usd`, contract §L) was already reached.
@@ -238,6 +238,9 @@ class EvalRunRecord:
     #: ``custo_usd``) — ``None`` until the runner has written at least one
     #: result.
     custo_usd: float | None = None
+    #: Migration 088: the first errored case's code (``erro`` / ``parcial_com_erros`` runs) and how many cases errored.
+    erro_codigo: str | None = None
+    casos_com_erro: int = 0
 
 
 @dataclass(frozen=True)
@@ -788,6 +791,7 @@ class SupabaseEvalStore:
             modelo_geracao=row.get("modelo_geracao"),
             limite_usd=float(row["limite_usd"]) if row.get("limite_usd") is not None else None,
             custo_usd=float(row["custo_usd"]) if row.get("custo_usd") is not None else None,
+            erro_codigo=row.get("erro_codigo"), casos_com_erro=int(row.get("casos_com_erro") or 0),
         )
 
     @staticmethod

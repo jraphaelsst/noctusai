@@ -185,7 +185,16 @@ export type EvalCaseCreate = Omit<EvalCase, "id">;
 /** Slug identifies the case and is never patched (§D4 `PATCH .../evals/cases/{case_id}`). */
 export type EvalCasePatch = Partial<Omit<EvalCaseCreate, "slug">>;
 
-export type EvalRunStatus = "pendente" | "executando" | "concluida" | "falhou" | "cancelada";
+/** `erro` = no case produced a verdict (the run could not measure anything: score `null`, never 0); `parcial_com_erros` =
+ * some cases errored and the score is over the ones that were measured. Neither is `concluida`. */
+export type EvalRunStatus =
+  | "pendente"
+  | "executando"
+  | "concluida"
+  | "falhou"
+  | "cancelada"
+  | "erro"
+  | "parcial_com_erros";
 
 export interface EvalRun {
   id: string;
@@ -215,6 +224,35 @@ export interface EvalRun {
    * summed over every result) — `null` until the runner has written at
    * least one result. */
   custo_usd: number | null;
+  /** Migration 088 (additive): the first errored case's code (e.g. `qualificacao_indisponivel`) and how many cases errored. */
+  erro_codigo?: string | null;
+  casos_com_erro?: number;
+}
+
+/** Live progress of one run (either suite): every number is the server's. `indeterminado` = the mechanism suite while it
+ * executes (it stores its executions when it ends) — only status, elapsed time and the cost cap are known then. */
+export interface RunProgresso {
+  run_id: string;
+  suite: EvalLoopSuite;
+  status: EvalRunStatus | string;
+  ativo: boolean;
+  indeterminado: boolean;
+  total: number | null;
+  concluidos: number | null;
+  aprovados: number | null;
+  reprovados: number | null;
+  erros: number | null;
+  pulados: number | null;
+  /** Mean score of the MEASURED cases (errored ones are out of the denominator); `null` = nothing measured yet. */
+  score_parcial: number | null;
+  custo_usd: number | null;
+  limite_usd: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  decorrido_s: number | null;
+  eta_s: number | null;
+  erro: string | null;
+  erro_codigo: string | null;
 }
 
 /** Contract §L — deliberately NARROWER than `StudioModel` (`../types.ts`):
@@ -322,8 +360,13 @@ export type EvalLoopMotivoParada =
   | "sem_melhora"
   | "orcamento_atingido"
   | "rodadas_esgotadas"
-  | "parado_manualmente";
-export type EvalLoopRodadaStatus = "executando" | "concluida" | "falhou" | "cancelada";
+  | "parado_manualmente"
+  | "erro";
+export type EvalLoopRodadaStatus = "executando" | "concluida" | "falhou" | "cancelada" | "erro" | "parcial_com_erros";
+/** What the loop is doing right now (server-derived): a round is open | between rounds (automatic) | idle waiting for a
+ * draft edit | waiting for the owner's click | ended. */
+export type EvalLoopEstadoDriver = "rodando" | "automatico" | "aguardando_edicao" | "manual" | "encerrado";
+export type EvalLoopModo = "automatico" | "manual";
 
 export interface EvalLoopRodada {
   rodada: number;
@@ -335,6 +378,9 @@ export interface EvalLoopRodada {
   melhorou: boolean | null;
   overcall: boolean;
   falhas: string[];
+  /** A round whose run ERRORED says why — shown as an error, never as failing cases. */
+  erro_codigo?: string | null;
+  erro_mensagem?: string | null;
 }
 
 export interface EvalLoopOvercall {
@@ -384,6 +430,10 @@ export interface EvalLoop {
   overcalls: EvalLoopOvercall[];
   custo_overcalls_usd: number;
   checkpoints: EvalLoopCheckpoint[];
+  modo?: EvalLoopModo;
+  /** Why an automatic loop is idle right now (e.g. `hash_inalterado`: the content did not change); `null` = nothing to say. */
+  aviso?: { codigo: string; mensagem: string } | null;
+  estado_driver?: EvalLoopEstadoDriver;
 }
 
 export interface EvalLoopListResponse {
@@ -396,6 +446,8 @@ export interface EvalLoopCreate {
   rodadas_planejadas?: number;
   /** Omitted ⇒ the platform loop config's `orcamento_usd` (a cap); above it ⇒ 422. */
   orcamento_usd?: number;
+  /** `automatico` (default on the server) = the server runs the rounds by itself until a stop condition. */
+  modo?: EvalLoopModo;
 }
 
 /** Platform-level loop config (GET/PUT, platform admin): the target, the budget cap and the max rounds every loop uses. */

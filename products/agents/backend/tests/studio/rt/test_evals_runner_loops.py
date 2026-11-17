@@ -62,15 +62,17 @@ async def test_two_flat_runs_stop_the_loop_with_the_reason_and_the_failing_cases
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_or_failed_run_closes_its_round_as_neutral():
+async def test_a_failed_run_closes_its_round_as_an_error_and_stops_the_loop_with_the_reason():
     lw = LoopWorld()
     h = lw.mudar_conteudo()
     run = lw.w.new_run(compiled_hash="sha256:" + "f" * 64)  # hash mismatch: the run fails before judging anything
     lw.svc.abrir(ORG, lw.loop.id, run_id=run.id, run_tipo="comportamento", compiled_hash=h, partes=None)
     await lw.w.runner(loops=lw.svc).execute(ORG, run.id)
     e = lw.estado()
-    assert e["status"] == "ativo" and e["serie"][0]["status"] == "falhou" and e["serie"][0]["score"] is None
-    assert e["serie"][0]["overcall"] is False
+    # nothing was measured and the run FAILED: the loop stops with `erro` (never a neutral shrug that burns the next rounds)
+    assert e["status"] == "parado" and e["motivo_parada"] == "erro"
+    assert e["serie"][0]["status"] == "falhou" and e["serie"][0]["score"] is None and e["serie"][0]["overcall"] is False
+    assert "hash_mismatch" in e["detalhe_parada"]["mensagem"]
 
 
 @pytest.mark.asyncio

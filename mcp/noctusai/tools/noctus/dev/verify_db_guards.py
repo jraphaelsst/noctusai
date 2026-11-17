@@ -6581,6 +6581,44 @@ _OWNER_RECIPIENT_FIXTURE = """    INSERT INTO public.notification_owner_recipien
     VALUES ('+5500000000001', gen_random_uuid(), now())
     RETURNING id INTO v_id;"""
 
+# ---------------------------------------------------------------------------
+# Registry — agents.eval_loop_eventos append-only guard (agents migration 088).
+# ---------------------------------------------------------------------------
+#
+# The loop's lifecycle events (who/when/what of every round and every driver decision). Self-provisioning like every agents
+# probe: a fresh org, a probe agent, a probe loop and one event are created inside the rolled-back transaction -- nothing real
+# is borrowed. Own group (like 086's/087's): proven on the real chain in test_agents_camadas_probes_on_replay.py.
+
+_AGENTS_EVAL_LOOP_EVENTOS_GUARD = "eval_loop_eventos_append_only"
+_EVAL_EVENTOS_MIGS = (_m("031"), "076_eval_loops.sql", "088_eval_erro_e_loop_driver.sql")
+_EVAL_EVENTOS_SETUP = "\n    ".join((
+    _JV2_AGENT,
+    _loop_insert("ativo", "NULL", "NULL")[:-1] + " RETURNING id INTO v_pv;",
+    f"INSERT INTO {_JV2}.eval_loop_eventos (org_id, loop_id, evento) VALUES (v_org, v_pv, 'loop_iniciado');",
+))
+_EVAL_EVENTOS_RATIONALE = (
+    "The loop events are the measurement trail of the eval pipeline (what each round and each driver decision did, and "
+    "when); a rewritable or deletable event would let a loop's history say something that did not happen."
+)
+
+_AGENTS_EVAL_LOOP_EVENTOS_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="agents.eval_loop_eventos.update_refused", guard_name=_AGENTS_EVAL_LOOP_EVENTOS_GUARD,
+        migrations=_EVAL_EVENTOS_MIGS, setup=_EVAL_EVENTOS_SETUP,
+        attack=f"UPDATE {_JV2}.eval_loop_eventos SET evento = 'loop_parado' WHERE loop_id = v_pv;",
+        fragments=("eval_loop_eventos is append-only",), what="UPDATE of an eval_loop_eventos row",
+        rationale=_EVAL_EVENTOS_RATIONALE,
+    ),
+    _julia_v2_probe(
+        probe_id="agents.eval_loop_eventos.delete_refused", guard_name=_AGENTS_EVAL_LOOP_EVENTOS_GUARD,
+        migrations=_EVAL_EVENTOS_MIGS, setup=_EVAL_EVENTOS_SETUP,
+        attack=f"DELETE FROM {_JV2}.eval_loop_eventos WHERE loop_id = v_pv;",
+        fragments=("eval_loop_eventos is append-only",), what="DELETE of an eval_loop_eventos row",
+        rationale=_EVAL_EVENTOS_RATIONALE,
+    ),
+)
+
+
 _OWNER_RECIPIENT_EVENTS_PROBES: tuple[GuardProbe, ...] = (
     _owner_recipient_events_probe(
         probe_id="notification_owner_recipient_events.update_refused",
@@ -13573,6 +13611,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
     *_OWNER_RECIPIENT_EVENTS_PROBES,
+    *_AGENTS_EVAL_LOOP_EVENTOS_PROBES,
     *_CORE_AI_USAGE_PROBES,
     *_CORE_FUNNEL_PROBES,
     *_PLATFORM_TEMPLATES_PROBES,
