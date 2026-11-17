@@ -231,11 +231,9 @@ mapped to an org spec key, a social-wiring setting or a human step) is `projects
 `/api/studio/plataforma/agents/{key}/products/{product}/orgs/{org_id}/onboarding`: `GET` (progress per item), `POST
 /importar` (an existing configuration becomes unconfirmed pre-filled answers; writes nothing), `POST /aplicar` (ONE apply
 step with a per-item report: `aplicado` / `recusado` + reason / `pendente_humano`). Spec values go through the one org-spec
-write path (`aplicar_org_specs`: validation, audit); an invalid value is refused, never stored. SW operational settings go
-through `SwSettingsPort` (Real refuses `canal_sw_nao_configurado` until social-wiring accepts a staff channel; the report
-carries the route + body to apply by hand). The interviewer agent `onboarding-imob` is a platform definition whose draft
+write path (`aplicar_org_specs`: validation, audit); an invalid value is refused, never stored. SW operational settings go through `SwSettingsPort`: the Real client calls social-wiring's onboarding staff channel (`PUT /api/julia/onboarding/orgs/{org}/configuracoes/{setting}`, service tier, platform-issued token held as the platform setting `sw_onboarding_service_token`, scope `social-wiring:onboarding-settings`) carrying the verified staff user as `ator`; SW allow-lists the settings (visitas, agente_nome, destino_lead_pronto are not yet allowed: reported `recusado`, apply by hand) and records the event. Without the token the port answers `canal_sw_nao_configurado` and the report carries the route + body to apply by hand. The interviewer agent `onboarding-imob` is a platform definition whose draft
 section rows live in `projects/onboarding/agent/` (applied with `noctus.agents.content`, never published from code). After
-an apply the owner is pointed to evaluation mode before go-live. Deferred: `NOC-REMEDIATE[onboarding-sw-staff-channel]`,
+an apply the owner is pointed to evaluation mode before go-live. Deferred:
 `[onboarding-import-prose]`, `[onboarding-agent-rows]`.
 
 ## Tests

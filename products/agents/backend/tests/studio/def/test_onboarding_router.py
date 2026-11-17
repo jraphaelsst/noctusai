@@ -137,13 +137,57 @@ def test_sw_refusal_is_reported_with_the_route_to_apply_by_hand(plat):
     assert i["rota"] == "PUT /api/julia/reengajamento/config" and i["corpo"] == {"minutos_intervalo": 15}
 
 
-def test_the_real_sw_port_refuses_typed_until_the_staff_channel_exists(plat):
-    from app.onboarding.sw_settings import CANAL_NAO_CONFIGURADO, SwSettingsStaffClient
+def test_apply_hands_the_verified_staff_actor_and_grant_to_the_sw_port(plat):
+    plat.post(f"{URL}/aplicar", json={"respostas": {"37": {"lembrete_min": 15}}})
+    (org, setting, ator, grant_id) = plat.sw.atores[0]
+    assert (org, setting, ator) == (OTHER_ORG_ID, "reengajamento", DEFAULT_USER_ID) and grant_id is not None
 
-    plat.raw.app.dependency_overrides.pop(get_sw_settings_dep)
+
+def test_the_real_sw_port_applies_end_to_end_over_the_staff_channel(plat):
+    """Real port + stub SW over MockTransport: the item is `aplicado`, the request carries token, target org and actor."""
+    import json
+
+    import httpx
+
+    from app.onboarding.sw_settings import SwSettingsStaffClient
+
+    seen: list[httpx.Request] = []
+
+    def sw(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        return httpx.Response(200, json={"data": {"setting": "reengajamento"}})
+
+    real = SwSettingsStaffClient("http://sw.test", lambda: "noc_tok", transport=httpx.MockTransport(sw))
+    plat.raw.app.dependency_overrides[get_sw_settings_dep] = lambda: real
     r = plat.post(f"{URL}/aplicar", json={"respostas": {"37": {"lembrete_min": 15}}})
-    assert r.json()["itens"][0]["codigo"] == CANAL_NAO_CONFIGURADO
-    assert SwSettingsStaffClient().aplicar(OTHER_ORG_ID, "x", None, {}).ok is False
+    assert r.json()["itens"][0]["estado"] == "aplicado"
+    (req,) = seen
+    assert req.method == "PUT" and req.url.path == f"/api/julia/onboarding/orgs/{OTHER_ORG_ID}/configuracoes/reengajamento"
+    assert req.headers["authorization"] == "Bearer noc_tok"
+    body = json.loads(req.content)
+    assert body["corpo"] == {"minutos_intervalo": 15} and body["ator"] == {"user_id": str(DEFAULT_USER_ID)} and body["grant_id"]
+
+
+def test_the_real_sw_port_reports_typed_refusals(plat):
+    import httpx
+
+    from app.onboarding.sw_settings import CANAL_NAO_CONFIGURADO, SW_INDISPONIVEL, SwSettingsStaffClient
+
+    def porta(token, handler):
+        return SwSettingsStaffClient("http://sw.test", lambda: token, transport=httpx.MockTransport(handler))
+
+    chamada = lambda c: c.aplicar(OTHER_ORG_ID, "pesquisa", None, {"pesquisa": True}, ator=DEFAULT_USER_ID)
+    assert chamada(porta(None, lambda r: httpx.Response(200))).codigo == CANAL_NAO_CONFIGURADO
+    assert chamada(SwSettingsStaffClient(None, lambda: "t")).codigo == CANAL_NAO_CONFIGURADO
+    r = chamada(porta("t", lambda r: httpx.Response(422, json={"error": {"code": "setting_nao_permitida", "message": "fora"}})))
+    assert (r.ok, r.codigo) == (False, "setting_nao_permitida")
+    r = chamada(porta("t", lambda r: httpx.Response(403, json={"code": "scope_missing", "detail": "x"})))
+    assert r.codigo == "scope_missing"
+
+    def cai(req):
+        raise httpx.ConnectError("down")
+
+    assert chamada(porta("t", cai)).codigo == SW_INDISPONIVEL
 
 
 def test_progress_lists_required_items_and_follows_the_operations(plat):
