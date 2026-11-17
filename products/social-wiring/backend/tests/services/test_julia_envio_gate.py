@@ -271,7 +271,7 @@ class TestEveryFlowGoesThroughTheGate:
         from app.services import julia_contatos_service as contatos
 
         w = lead_world
-        w.sw.table(av.T_CONFIG).insert({"org_id": ORG_ID, "google_review_url": "https://g.page/r/x/review"}).execute()
+        w.sw.table(av.T_CONFIG).insert({"org_id": ORG_ID, "google_review_url": "https://g.page/r/x/review", "pedido_ativo": True}).execute()
         c = _contato_que_interagiu(w)
         contatos.atualizar_contato(w.sw, c["id"], {"ultimo_inbound_at": (MANHA - timedelta(hours=1)).isoformat(), "telefone_e164": "+5511988887777"})
         c = w.contato()

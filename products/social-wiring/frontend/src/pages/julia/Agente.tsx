@@ -17,6 +17,8 @@ import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 import { Button } from "@/components/ui/button";
 import { AgentsLinkCard } from "@/components/julia/AgentsLinkCard";
 import { AvisoPrivacidadeCard } from "@/components/julia/AvisoPrivacidadeCard";
+import { ConhecimentoEditorCard } from "@/components/julia/ConhecimentoEditorCard";
+import { ContatosSetoriaisCard } from "@/components/julia/ContatosSetoriaisCard";
 import { EspecificacoesCard } from "@/components/julia/EspecificacoesCard";
 import { JuliaLigadaCard } from "@/components/julia/JuliaLigadaCard";
 import { CatalogoCard, RelatoriosCard } from "@/components/julia/RelatoriosCatalogoCards";
@@ -78,6 +80,8 @@ export default function JuliaAgente() {
             </p>
           )}
           <EspecificacoesCard isAdmin={isAdmin} />
+          <ConhecimentoEditorCard isAdmin={isAdmin} />
+          <ContatosSetoriaisCard isAdmin={isAdmin} />
           <RoteamentoCard data={rot.data} isAdmin={isAdmin} />
           <RelatoriosCard isAdmin={isAdmin} />
           <CatalogoCard isAdmin={isAdmin} />

@@ -61,8 +61,12 @@ TEXTO_MAX = 1024
 MSG_TIMELINE = "Lead não respondeu mais. Julia reativou a conversa"
 JOB_MAX_RETRIES = 2
 
+#: Lais study S4 (owner 2026-11-17): the default cadence is a nudge after 15 minutes of silence, then another after 240 minutes
+#: (4 h), only inside business hours (`HORA_ABERTURA`..`HORA_FECHAMENTO`, 08-20 h). The two switches stay OFF: turning on
+#: automatic outbound for every org is the owner's call per org (NOC-REMEDIATE[reengajamento-default-on] -- owner decision, 2026-11-17).
+#: An org that saved its own row keeps it.
 CONFIG_PADRAO: dict[str, Any] = {
-    "minutos_ativo": False, "minutos_intervalo": 5, "horas_ativo": False, "horas_intervalo": 1,
+    "minutos_ativo": False, "minutos_intervalo": 15, "horas_ativo": False, "horas_intervalo": 4,
 }
 
 
