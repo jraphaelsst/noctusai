@@ -212,6 +212,15 @@ async def on_startup() -> None:
     await _startup_step("fail_orphan_geracoes", fail_orphan_geracoes, failures)
     await _startup_step("fail_orphan_mecanismo_runs", fail_orphan_mecanismo_runs, failures)
 
+    async def resume_eval_loops() -> None:
+        # AFTER the orphan sweeps: a round the restart orphaned is closed as neutral and the next one is booked from the DB state
+        from app.studio.eval_loop_wiring import instalar_driver
+
+        resumed = await instalar_driver(app)
+        logger.info("agents.startup.eval_loops_resumed count=%s", resumed)
+
+    await _startup_step("resume_eval_loops", resume_eval_loops, failures)
+
     # Daily credential maintenance (expiry notifications + §D ring prune).
     # Fires only where `NOCTUS_SCHEDULERS_ENABLED` is set (prod compose).
     start_scheduler()

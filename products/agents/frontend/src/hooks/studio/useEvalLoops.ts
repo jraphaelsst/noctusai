@@ -22,6 +22,7 @@ import type {
   EvalLoopConfigInput,
   EvalLoopCreate,
   EvalLoopListResponse,
+  EvalLoopModo,
   EvalLoopSuite,
   EvalRun,
   EvalRunCreate,
@@ -43,7 +44,14 @@ export function hasRoundInFlight(loop: EvalLoop | undefined): boolean {
   return !!loop && loop.status === "ativo" && loop.serie.some((r) => r.status === "executando");
 }
 
-const POLL_MS = 3000;
+/** The loop's own state keeps moving without any click: a round is open, or an AUTOMATIC loop is between rounds (the server
+ * books the next one by itself). Only then is it polled; a manual / idle / ended loop is read once and left alone. */
+export function loopIsMoving(loop: EvalLoop | undefined): boolean {
+  if (!loop || loop.status !== "ativo") return false;
+  return hasRoundInFlight(loop) || loop.estado_driver === "rodando" || loop.estado_driver === "automatico";
+}
+
+const POLL_MS = 2000;
 
 /** After a round closes the score moved: refresh what derives from runs (runs list, consolidation, readiness). */
 function useSettleOnRoundClose(agentKey: string, inFlight: boolean) {
@@ -69,11 +77,11 @@ export function useEvalLoops(agentKey: string, suite: EvalLoopSuite | null = nul
     // poll-budget: 3s only while a loop round is in flight, stops when none is; 1 calls/tick (refetch of the polled GET, only while the job is in flight); worst 28800/day per open tab; hidden=paused
     refetchInterval: (q) => {
       const data = q.state.data as EvalLoopListResponse | undefined;
-      return data?.items.some(hasRoundInFlight) ? POLL_MS : false;
+      return data?.items.some(loopIsMoving) ? POLL_MS : false;
     },
   });
   const items = query.data?.items;
-  useSettleOnRoundClose(agentKey, !!items?.some(hasRoundInFlight));
+  useSettleOnRoundClose(agentKey, !!items?.some(loopIsMoving));
   return {
     data: items,
     showSkeleton: query.isPending && !query.data,
@@ -90,9 +98,9 @@ export function useEvalLoop(agentKey: string, loopId: string | null) {
     queryFn: () => api.get<EvalLoop>(`/api/studio/agents/${seg(agentKey)}/evals/loops/${seg(loopId ?? "")}`),
     enabled: !!agentKey && !!loopId,
     // poll-budget: 3s only while this loop's round is in flight, stops after; 1 calls/tick (refetch of the polled GET, only while the job is in flight); worst 28800/day per open tab; hidden=paused
-    refetchInterval: (q) => (hasRoundInFlight(q.state.data as EvalLoop | undefined) ? POLL_MS : false),
+    refetchInterval: (q) => (loopIsMoving(q.state.data as EvalLoop | undefined) ? POLL_MS : false),
   });
-  useSettleOnRoundClose(agentKey, hasRoundInFlight(query.data));
+  useSettleOnRoundClose(agentKey, loopIsMoving(query.data));
   return {
     data: query.data,
     showSkeleton: query.isPending && !query.data,
@@ -151,8 +159,34 @@ export function useStopEvalLoop(agentKey: string) {
   });
 }
 
-/** One round: a whole-suite run stamped with the loop. The run's answer cannot place the round in the loop (the
- * server books the round and later closes it), so the loop reads hand off to polling instead of being edited. */
+/** Put a just-booked round into every cached copy of its loop as an OPEN round: the write fills every entry it touches,
+ * so the panel shows "rodada em andamento" at once and the poll that follows is already armed (the stale "Rodada 0" the
+ * owner saw came from a start that left the loop caches untouched). The server's next read replaces it. */
+function withOpenRound(loop: EvalLoop, runId: string): EvalLoop {
+  if (loop.status !== "ativo" || loop.serie.some((r) => r.run_id === runId)) return loop;
+  return {
+    ...loop,
+    estado_driver: "rodando",
+    aviso: null,
+    serie: [
+      ...loop.serie,
+      {
+        rodada: loop.serie.length + 1,
+        run_id: runId,
+        status: "executando",
+        score: null,
+        custo_usd: 0,
+        compiled_hash: null,
+        melhorou: null,
+        overcall: false,
+        falhas: [],
+      },
+    ],
+  };
+}
+
+/** One round: a whole-suite run stamped with the loop. The run's answer carries its id, so the round is written into the
+ * loop caches as open (see `withOpenRound`) and the server closes it later; the polls then settle the real numbers. */
 export function useRunLoopRound(agentKey: string, suite: EvalLoopSuite) {
   const qc = useQueryClient();
   return useCacheWriteMutation<EvalRun | MecanismoRunIniciada, { loopId: string; versionId: string }>({
@@ -167,9 +201,26 @@ export function useRunLoopRound(agentKey: string, suite: EvalLoopSuite) {
           } satisfies EvalRunCreate),
     targets: [],
     invalidate: [loopsKey(agentKey), ["studio", agentKey, "evals", "runs"]],
-    onSuccess: () => {
-      // Keep the loop reads polling right away: the booked round shows as `executando` on the next read.
+    onSuccess: (data, { loopId }) => {
+      const runId = "run_id" in data ? data.run_id : data.id;
+      qc.setQueriesData<EvalLoopListResponse>({ queryKey: [...loopsKey(agentKey), "list"] }, (old) =>
+        old ? { ...old, items: old.items.map((l) => (l.id === loopId ? withOpenRound(l, runId) : l)) } : old,
+      );
+      qc.setQueryData<EvalLoop>(loopKey(agentKey, loopId), (old) => (old ? withOpenRound(old, runId) : old));
       void qc.refetchQueries({ queryKey: loopsKey(agentKey) });
+    },
+  });
+}
+
+/** Pause (`manual`) or resume (`automatico`) the driver. The server's `LoopOut` goes into every entry the loop lives in. */
+export function useSetLoopModo(agentKey: string) {
+  const qc = useQueryClient();
+  return useCacheWriteMutation<EvalLoop, { loopId: string; modo: EvalLoopModo }>({
+    mutationFn: ({ loopId, modo }) =>
+      api.put<EvalLoop>(`/api/studio/agents/${seg(agentKey)}/evals/loops/${seg(loopId)}/modo`, { modo }),
+    targets: loopWriteTargets(agentKey, replaceInPlace),
+    onSuccess: (loop) => {
+      qc.setQueryData(loopKey(agentKey, loop.id), loop);
     },
   });
 }

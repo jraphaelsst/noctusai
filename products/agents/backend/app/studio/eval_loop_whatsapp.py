@@ -12,6 +12,7 @@ _MOTIVO = {
     "orcamento_atingido": "o orçamento foi atingido",
     "rodadas_esgotadas": "as rodadas planejadas acabaram",
     "parado_manualmente": "foi parado manualmente",
+    "erro": "uma rodada terminou com erro (veja o motivo no painel)",
 }
 
 

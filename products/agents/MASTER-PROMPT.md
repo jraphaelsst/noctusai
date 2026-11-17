@@ -50,6 +50,14 @@ products/agents/backend/app/
   controls (SW reads, Studio admin writes; turning ON also needs complete content via `conteudo_status`), hand-off
   notes, opt-in / opt-out, delete-by-lead, and an org-admin thread read that strips system rows, tool results and stamps.
 - Migrations 033 (threads), 034 (controls), 035 (constraint swap — apply only after the backfill is verified).
+- Eval errors + loop driver (migration 088, 2026-11-17; `docs/eval-loop-gate-contract.md`): a run whose cases errored is
+  `erro` / `parcial_com_erros` (never `concluida`; errored cases are out of the score denominator; no measurement = score
+  `NULL`, never 0.0) with `erro_codigo`; a preflight (`app/studio/eval_preflight.py`) refuses before a run or round is booked;
+  a round that errored stops its loop (`motivo_parada=erro`). An agent with no qualification standard (a base layer) is
+  evaluated through `padrao_do_turno(sem_padrao_ok=True)` (the NULL standard: no qualification tools, no scoring) — a
+  production channel turn still refuses it. An automatic loop is driven by `app/studio/eval_loop_driver.py` (resumes at startup
+  from the DB; there is no refine step between rounds); live progress is `GET .../runs/{id}/progresso`
+  (`app/studio/eval_progresso.py`), polled by the UI.
 - Julia v3 controls (migration 056): `stores/plataforma_controles.py` (`agents.plataforma_controles`, service-role only,
   one row per agent key) is the PLATFORM kill, toggled by `GET|PUT /api/studio/plataforma/agentes/{key}/controle`
   (`routers/plataforma_controle_router.py`, `require_platform_admin`, audited `plataforma_desligada|religada`).
