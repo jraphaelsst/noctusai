@@ -212,7 +212,12 @@ Note for legal: once the buyer becomes a client, their LEADS' data flows through
 - **D8 → (c) tiers for now:** Julia alone (Vista catalogue) vs Julia + Social Wiring. Later this becomes (a), the single package.
 - **D9 → (c), with an additive design.** `legal-advisor` and `agents-security` review it. The owner's shape: build the deterministic stop that the law demands (stop keywords always end messaging), AND keep Julia's own judgement. If she judges she should stop, she stops too, in addition to the deterministic triggers and never instead of them. Build item for agents (opt-out floor + judgement).
 
-Still open: D1 values · D4 · D10 · D11 (shaped by the onboarding chatbot) · D12.
+- **D10 → (b) company bio only.**
+- **D11 → (c) no deadline on the page** ("a gente configura com você"). A day count comes once the onboarding chatbot exists and is measured.
+- **D12 → (b) Julia answers the page's WhatsApp, as soon as possible.** A NoctusAI-sales Julia instance: "she's my saleswoman". The plan is a separate dispatch (sales qualification standard, NoctusAI org, its own WhatsApp line, the multi-org blocker P4).
+- **D1 values + D4 → placeholders.** The NoctusAI CNPJ is not open yet, so **the page cannot go live** until it exists (Decreto 7.962 art. 2 requires it). AC go-live gate.
+
+Still open: D1 values · D4 (blocked on the CNPJ).
 
 **Batch A — the offer**
 1. **D1 Price and plan.** No Julia plan exists in code; core has the billing machinery (Stripe/Asaas, `plan_prices`). Options: (a) monthly subscription with a credit allowance + prepaid top-up (your 2026-10-29 billing model); (b) one-off setup fee + monthly; (c) paid pilot (30-60 days, target agreed before start) then monthly; (d) no public price, quote after a conversation. Which, and at what values?
