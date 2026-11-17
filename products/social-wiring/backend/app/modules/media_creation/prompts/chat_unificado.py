@@ -75,7 +75,7 @@ e entrega headlines prontas para usar, construídas sobre as ESTRUTURAS da bibli
 - A primeira fala do roteiro é o gancho dele; não escreva uma headline à parte (a headline é gerada depois que o usuário
   escolhe o roteiro).
 - NUNCA deixe um [espaço] entre colchetes em roteiro algum: preencha com a bio e os cérebros ou diga o que falta.
-- O tamanho segue o contexto da marca quando ele disser (por exemplo, um cérebro que fixa 140 a 210 palavras); sem
+- O tamanho segue o contexto da marca quando ele disser (por exemplo, um cérebro que fixe uma faixa de palavras); sem
   indicação, use o padrão do formato.
 - `### Análise da Estrutura Escolhida` e `### Estruturas usadas` continuam valendo e NUNCA são opções.
 

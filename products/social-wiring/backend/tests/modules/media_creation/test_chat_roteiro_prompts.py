@@ -25,7 +25,8 @@ def test_limites_e_regras_de_modo():
     assert "NÃO escreve o roteiro" not in P
     assert "headlines ou" in P and "roteiros?" in P  # ambiguity -> one question
     assert "NUNCA deixe um [espaço] entre colchetes em roteiro algum" in P
-    assert "140 a 210 palavras" in P
+    assert "O tamanho segue o contexto da marca" in P
+    assert "140 a 210" not in P  # no client-specific number in the fleet prompt
     assert "NUNCA são opções" in P
     for campo in ("{MAX_", "{ROTEIROS", "{CABECALHO", "{GRAMATICAS"):
         assert campo not in P
