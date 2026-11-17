@@ -188,8 +188,8 @@ No per-product file is touched — the map lives in exactly one place.
   same-origin SPA contract injects `window.location.origin` as the API base
   (KB § PATTERNS/containerization.md § same-origin), so each subdomain serves
   its SPA + API correctly with zero per-product config.
-- The `legacy` container must be attached to `noctus-net`
-  (`docker network connect noctus-net <legacy-container>` or a `networks:`
-  entry in its compose) so cloudflared resolves `http://legacy:5000`.
+- The `legacy` container lives on its OWN `legacy-net` (not `noctus-net`); the
+  tunnel container joins both (compose.tunnel.yml) so cloudflared resolves
+  `http://legacy:5000`.
 - These artifacts are **for later** — nothing here goes live until the VPS
   setup runs the commands above.

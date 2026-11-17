@@ -582,3 +582,47 @@ updates:
       - "dependencies"
       - "javascript"
 
+  # /deploy/fleet compose images — added automatically by noctus.dev.refresh_dependabot_coverage (2026-11-15):
+  # images are pinned `name:tag@sha256:...` (check_supply_chain_pin); Dependabot moves the digest via a PR.
+  - package-ecosystem: "docker-compose"
+    directory: "/deploy/fleet"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # /deploy/services compose images — added automatically by noctus.dev.refresh_dependabot_coverage (2026-11-15):
+  # images are pinned `name:tag@sha256:...` (check_supply_chain_pin); Dependabot moves the digest via a PR.
+  - package-ecosystem: "docker-compose"
+    directory: "/deploy/services"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # /deploy/legacy compose images — added automatically by noctus.dev.refresh_dependabot_coverage (2026-11-15):
+  # images are pinned `name:tag@sha256:...` (check_supply_chain_pin); Dependabot moves the digest via a PR.
+  - package-ecosystem: "docker-compose"
+    directory: "/deploy/legacy"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # /deploy/tunnel compose images — added automatically by noctus.dev.refresh_dependabot_coverage (2026-11-15):
+  # images are pinned `name:tag@sha256:...` (check_supply_chain_pin); Dependabot moves the digest via a PR.
+  - package-ecosystem: "docker-compose"
+    directory: "/deploy/tunnel"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 2
+    labels:
+      - "dependencies"
+      - "docker"
+

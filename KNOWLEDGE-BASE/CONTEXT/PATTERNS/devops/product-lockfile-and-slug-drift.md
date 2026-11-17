@@ -670,3 +670,19 @@ Keeper `check_product_declared_imports` is the product half of `check_seed_decla
 - **Where it runs:** pre-commit (staged product `app/` .py or requirements, scoped via `--paths`; a staged seed pyproject keeps the full fleet) and the `check_all_products` aggregator.
 - **First run:** 3 direct imports of transitives (core `limits`, igig `anyio`, social-wiring `pydantic_core`). Fixed on contact with provider-mirroring bounds, so there is no baseline.
 - **Second layer:** the in-image boot smoke (`scripts/infra/image_boot_smoke.py`, see `devops/containerization.md`) catches whatever an allow-map cannot.
+
+## Tenth axis — a pinned snapshot of a DERIVED set is a merge hotspot (2026-11-16)
+
+A test that pins the derived set (`EXPECTED_PROTECTED` in `test_check_guardian_tool_authorship.py`: the files
+`derive_guardian_protected_files` returns) is right to make a change to the set a reviewed diff — but kept as one
+wrapped string literal, every slice that adds a protected module edits the SAME lines, so parallel slices conflict
+in the merge queue (3x on 2026-11-16: `_http`, `_primary_ledger_guard`, `findings_ledger`).
+
+**Shape.** Pin it as a sorted one-path-per-line data file
+(`mcp/noctusai/tests/snapshots/guardian_protected_files.txt`) with the built-in `merge=union` driver in
+`.gitattributes` (no registration needed, works in CI). Additions from two slices merge clean. Union can resurrect a
+line the other side removed, so the test compares derived == file EXACTLY (and requires sorted/no duplicates); a wrong
+union is a red test naming the lines to ADD or REMOVE, never a silent pass.
+
+**Backstop.** A scan of `test_*.py` under `mcp/ seed/ products/` for wrapped-string snapshots of derived sets found no
+other instance (only two SHA constants). New ones follow this shape.
