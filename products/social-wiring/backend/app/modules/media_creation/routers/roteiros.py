@@ -14,6 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from noctusai_lib.api.rate_limit_policies import DEFAULT_AI_RL
+from noctusai_lib.domain.approvals import ApprovalService
 from noctusai_lib.domain.jobs import JobRepository
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.responses import success_response
@@ -22,15 +23,18 @@ from app.config import settings
 from app.dependencies import get_admin_client, get_current_user_org
 from app.modules.media_creation.deps import get_cerebro_storage
 from app.modules.media_creation.schemas.roteiros import (
+    AprovarRoteiroRequest,
     ExcluirRequest,
     FeedbackRequest,
     GerarRequest,
     ReprocessarRequest,
+    ReprovarRoteiroRequest,
     RespostasUpdate,
     RoteiroCreate,
     RoteiroUpdate,
 )
 from app.modules.media_creation.services.geracao_jobs import make_jobs_repository
+from app.modules.media_creation.services.roteiro_aprovacao import make_approvals
 from app.modules.media_creation.services.roteiro_service import (
     IaCheck,
     RoteiroError,
@@ -58,13 +62,20 @@ def get_roteiro_storage() -> StorageBackend:
     return get_cerebro_storage()
 
 
+def get_roteiro_approvals() -> ApprovalService:
+    """DI seam for the approvals organ. Tests override with a service over the Fake ledger."""
+    return make_approvals(get_admin_client())
+
+
 def _svc(
     auth, cfg, jobs: Optional[JobRepository] = None, ia_check: Optional[IaCheck] = None,
-    storage: Optional[StorageBackend] = None,
+    storage: Optional[StorageBackend] = None, approvals: Optional[ApprovalService] = None,
 ) -> RoteiroService:
     user, _, org_id = auth
     kwargs = {"ia_check": ia_check} if ia_check is not None else {}
-    return RoteiroService(get_admin_client(), org_id, str(user.id), cfg=cfg, jobs=jobs, storage=storage, **kwargs)
+    return RoteiroService(
+        get_admin_client(), org_id, str(user.id), cfg=cfg, jobs=jobs, storage=storage, approvals=approvals, **kwargs,
+    )
 
 
 def _raise(exc: RoteiroError):
@@ -116,10 +127,58 @@ def excluir_roteiros(
 @router.get("/{roteiro_id}")
 async def obter_roteiro(
     roteiro_id: uuid.UUID, auth=Depends(get_current_user_org), cfg=Depends(get_roteiro_settings),
-    storage: StorageBackend = Depends(get_roteiro_storage),
+    storage: StorageBackend = Depends(get_roteiro_storage), approvals: ApprovalService = Depends(get_roteiro_approvals),
 ):
     try:
-        return success_response(await _svc(auth, cfg, storage=storage).get(str(roteiro_id)))
+        return success_response(await _svc(auth, cfg, storage=storage, approvals=approvals).get(str(roteiro_id)))
+    except RoteiroError as exc:
+        _raise(exc)
+
+
+@router.get("/{roteiro_id}/aprovacao")
+async def estado_aprovacao(
+    roteiro_id: uuid.UUID, auth=Depends(get_current_user_org), cfg=Depends(get_roteiro_settings),
+    approvals: ApprovalService = Depends(get_roteiro_approvals),
+):
+    """Where the roteiro's current versao stands: ``{status: none|pending|approved|rejected, versao, decidido_por, decidido_em, motivo}``."""
+    try:
+        return success_response(await _svc(auth, cfg, approvals=approvals).aprovacao(str(roteiro_id)))
+    except RoteiroError as exc:
+        _raise(exc)
+
+
+@router.post("/{roteiro_id}/aprovacao/solicitar")
+async def solicitar_aprovacao(
+    roteiro_id: uuid.UUID, auth=Depends(get_current_user_org), cfg=Depends(get_roteiro_settings),
+    approvals: ApprovalService = Depends(get_roteiro_approvals),
+):
+    """Put the current versao of a ``completo`` roteiro up for approval (idempotent). Same payload as the GET."""
+    try:
+        return success_response(await _svc(auth, cfg, approvals=approvals).solicitar_aprovacao(str(roteiro_id)))
+    except RoteiroError as exc:
+        _raise(exc)
+
+
+@router.post("/{roteiro_id}/aprovar")
+async def aprovar_roteiro(
+    roteiro_id: uuid.UUID, body: AprovarRoteiroRequest, auth=Depends(get_current_user_org),
+    cfg=Depends(get_roteiro_settings), approvals: ApprovalService = Depends(get_roteiro_approvals),
+):
+    """Approve the versao the member saw. Any org member. 409 ``versao_obsoleta`` / ``ja_decidido`` / ``roteiro_incompleto``."""
+    try:
+        return success_response(await _svc(auth, cfg, approvals=approvals).aprovar(str(roteiro_id), body.versao))
+    except RoteiroError as exc:
+        _raise(exc)
+
+
+@router.post("/{roteiro_id}/reprovar")
+async def reprovar_roteiro(
+    roteiro_id: uuid.UUID, body: ReprovarRoteiroRequest, auth=Depends(get_current_user_org),
+    cfg=Depends(get_roteiro_settings), approvals: ApprovalService = Depends(get_roteiro_approvals),
+):
+    """Reject the versao the member saw (``motivo`` required). The roteiro stays editable; saving a new versao resubmits it."""
+    try:
+        return success_response(await _svc(auth, cfg, approvals=approvals).reprovar(str(roteiro_id), body.versao, body.motivo))
     except RoteiroError as exc:
         _raise(exc)
 
@@ -165,9 +224,10 @@ async def salvar_roteiro(
     auth=Depends(get_current_user_org),
     cfg=Depends(get_roteiro_settings),
     storage: StorageBackend = Depends(get_roteiro_storage),
+    approvals: ApprovalService = Depends(get_roteiro_approvals),
 ):
     try:
-        return success_response(await _svc(auth, cfg, storage=storage).salvar(str(roteiro_id), body))
+        return success_response(await _svc(auth, cfg, storage=storage, approvals=approvals).salvar(str(roteiro_id), body))
     except RoteiroError as exc:
         _raise(exc)
 

@@ -415,3 +415,57 @@ def test_batch_gateway_502_during_core_restart_is_retried_not_failed(tmp_path):
 
     res = client.batch(str(src), str(out), _transport=_t(h), _sleep=clock.sleep, _clock=clock.now)
     assert res["status"] == "concluida" and res["done"] == ["r0"] and res["failed"] == []
+
+
+@pytest.mark.parametrize("code", [520, 522, 530])
+def test_batch_cloudflare_52x_on_poll_of_accepted_job_keeps_polling_until_done(tmp_path, code):
+    """2026-11-15: HTTP 530 (tunnel blip) dropped accepted jobs that finished server-side."""
+    src, out = _dir(tmp_path, 1)
+    clock = Clock()
+    polls = {"n": 0}
+
+    def h(req):
+        if req.method == "POST":
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        polls["n"] += 1
+        if polls["n"] <= 3:
+            return httpx.Response(code, text="origin unreachable")
+        return httpx.Response(200, json={"id": "j1", "status": "concluida", "texto": "ok"})
+
+    res = client.batch(str(src), str(out), _transport=_t(h), _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida" and res["done"] == ["r0"] and res["failed"] == []
+    assert not (out / ".inflight.json").exists()
+
+
+def test_batch_530_on_submit_is_retried_then_accepted(tmp_path):
+    src, out = _dir(tmp_path, 1)
+    clock = Clock()
+    posts = {"n": 0}
+
+    def h(req):
+        if req.method == "POST":
+            posts["n"] += 1
+            if posts["n"] <= 2:
+                return httpx.Response(530, text="origin unreachable")
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        return httpx.Response(200, json={"id": "j1", "status": "concluida", "texto": "ok"})
+
+    res = client.batch(str(src), str(out), _transport=_t(h), _sleep=clock.sleep, _clock=clock.now)
+    assert res["status"] == "concluida" and res["done"] == ["r0"] and res["failed"] == []
+    assert posts["n"] == 3
+
+
+def test_transcribe_530_on_submit_without_retry_after_is_retried(audio):
+    clock = Clock()
+    posts = {"n": 0}
+
+    def h(req):
+        if req.method == "POST":
+            posts["n"] += 1
+            if posts["n"] == 1:
+                return httpx.Response(530)
+            return httpx.Response(202, json={"id": "j1", "status": "na_fila"})
+        return httpx.Response(200, json={"id": "j1", "status": "concluida", "texto": "ok"})
+
+    out = client.transcribe(audio, _transport=_t(h), _sleep=clock.sleep, _clock=clock.now)
+    assert out["status"] == "concluida" and posts["n"] == 2

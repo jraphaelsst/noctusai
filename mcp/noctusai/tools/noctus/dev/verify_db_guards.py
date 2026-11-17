@@ -1456,6 +1456,30 @@ _VISITA_MOTIVO_CHECK_PROBE = GuardProbe(
 # One Chat operator bot is gone, so Julia needs no authorized number (CONTRACT julia-line B3). A probe for a dropped guard
 # would report `permitted` forever, so it is deleted, not kept.
 
+_CS_POST_EVENTO_TIPO_PROBE = GuardProbe(
+    id="cs_post_eventos.tipo.valores",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="cs_post_eventos_tipo_check",
+    kind="write_refusal",
+    migrations=("353_cs_post_insumos_apagados.sql",),
+    rationale=(
+        "`tipo` is the closed vocabulary of the CoreStudio post event ledger (EOA): the lifecycle metrics (publish, raw-input "
+        "deletion `insumos_apagados`) group by it, so a free-text value must error where it is written. The ledger has no FK "
+        "(an event outlives its row), so a throwaway row borrows only an org id and a fresh post id."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="cs_post_eventos",
+        columns_sql="org_id, post_id, tipo",
+        values_sql="id, gen_random_uuid(), 'noc-probe-not-a-tipo'",
+        fixture_from="public.organizations",
+        fixture_description="no row in public.organizations to borrow an org id from",
+        guard_fragment='constraint "cs_post_eventos_tipo_check"',
+    ),
+)
+
+
 _JULIA_MENSAGEM_ORIGEM_PROBE = GuardProbe(
     id="conversation_messages.origem.valores",
     product="social-wiring",
@@ -12724,6 +12748,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_CS_WAVE2_PROBES,
     *_CS_GERACAO_PROBES,
     _VISITA_MOTIVO_CHECK_PROBE,
+    _CS_POST_EVENTO_TIPO_PROBE,
     _JULIA_RELATORIO_DESTINO_USUARIO_PROBE,
     _JULIA_RELATORIO_CHAVE_UNIQUE_PROBE,
     _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE,

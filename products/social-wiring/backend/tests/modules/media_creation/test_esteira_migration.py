@@ -14,6 +14,7 @@ from app.modules.media_creation import esteira_config as cfg
 
 _BACKEND = Path(__file__).resolve().parents[3]
 SQL = migration_path(_BACKEND, "cs_esteira").read_text(encoding="utf-8")
+SQL_PAPEL_AGENDADO = migration_path(_BACKEND, "cs_esteira_papel_agendado").read_text(encoding="utf-8")
 _BEGIN = "-- BEGIN GENERATED card_hub(post)\n"
 _END = "\n-- END GENERATED"
 
@@ -42,10 +43,12 @@ class TestPipeline:
         slugs = [s.slug for s in cfg.ESTEIRA_PADRAO]
         assert slugs == ["ideacao", "headline_roteiro", "gravacao", "edicao", "pronto", "postado", "bloqueado_cancelado"]
         roles = [s.papel for s in cfg.ESTEIRA_PADRAO if s.papel]
-        assert sorted(roles) == sorted(cfg.PIPELINE_ESTEIRA.stage_roles) and len(set(roles)) == 3
+        # `agendado` is a declared role with no default stage yet (S4 owns the stage and the move into it)
+        assert sorted(roles) == sorted(set(cfg.PIPELINE_ESTEIRA.stage_roles) - {"agendado"}) and len(set(roles)) == 3
 
     def test_api_roles_match_the_widened_papel_check(self):
-        check = re.search(r"pipeline_stages_papel_check\s+CHECK \(papel IN \(([^)]*)\)\)", SQL)
+        # the CHECK as the LATEST migration leaves it (348 widened 241's for `agendado`)
+        check = re.search(r"pipeline_stages_papel_check\s+CHECK \(papel IN \(([^)]*)\)\)", SQL_PAPEL_AGENDADO)
         assert check is not None
         assert set(re.findall(r"'([a-z_]+)'", check.group(1))) >= set(cfg.PIPELINE_ESTEIRA.stage_roles)
 

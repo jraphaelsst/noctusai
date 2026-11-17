@@ -154,6 +154,8 @@ routes:
   # ── Self-hosted infra (NOT registry products; noctus-services project) ─
   - hostname: n8n.noctusai.com
     service:  http://n8n:5678
+  # waha stays public until the owner picks the access model (KB § GUIDES/security-infra-hardening-runbook.md § 3:
+  # recommended = Cloudflare Access service token in front of it; the owner's MCP connector sends the headers).
   - hostname: waha.noctusai.com
     service:  http://waha:3000
 

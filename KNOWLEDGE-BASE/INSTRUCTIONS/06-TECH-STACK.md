@@ -102,7 +102,7 @@ n8n is the core orchestration engine for all agentic workflows.
 
 ## Messaging Layer: WAHA
 
-**WAHA (WhatsApp HTTP API)** at `waha.noctusai.com`
+**WAHA (WhatsApp HTTP API)** (internal `http://waha:3000`; `waha.noctusai.com` retired — not public)
 
 - HTTP-based API for sending/receiving WhatsApp messages
 - Webhook-based message delivery to n8n
@@ -264,7 +264,7 @@ Frontend uses `VITE_`-prefixed vars in per-frontend `.env` files (security bound
 ### VPS — Hostinger (n8n + WAHA)
 - Server: the Hostinger VPS (address in `.env.fleet` / SSH config, never in docs)
 - n8n: `n8n.noctusai.com` (Docker)
-- WAHA: `waha.noctusai.com` (Docker)
+- WAHA: internal only, `http://waha:3000` (Docker; no public hostname)
 - SSL: Let's Encrypt via reverse proxy
 
 ---

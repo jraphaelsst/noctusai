@@ -19,6 +19,8 @@ fleet-wide breaker (`noctus:breaker:fleet`). Round-3 decision: TWO instances on 
     redis-auth/env/<service>.env  REDIS_URL/USERNAME/PASSWORD + REDIS_REQUIRE_AUTH and
                                   NOCTUS_BREAKER_REDIS_URL/USERNAME/PASSWORD
     redis-auth/{ops,ops-app,trip,probe}.pass   0600 secrets for the breaker tool / forced commands
+    deploy/services/redis-auth/services-redis.env   the services-stack Redis requirepass (derived, user `services-redis`)
+    deploy/legacy/redis-auth/legacy.env             the legacy-redis password + both Celery URLs (user `legacy-redis`)
     compose.redis-auth.prod.yml   the override: written ONLY for the services passed to `render --services`.
                                   Cutting a service over = re-render with it; rolling it back = re-render without it.
 
@@ -48,6 +50,11 @@ COMPOSE_REL = "deploy/fleet/docker-compose.prod.yml"
 SCOPE_REL = "deploy/fleet/build-scope.txt"
 OUT_DIR_REL = "deploy/fleet/redis-auth"
 OVERRIDE_REL = "deploy/fleet/compose.redis-auth.prod.yml"
+SERVICES_REDIS_USER = "services-redis"
+LEGACY_REDIS_USER = "legacy-redis"
+SERVICES_ENV_REL = "deploy/services/redis-auth/services-redis.env"
+LEGACY_ENV_REL = "deploy/legacy/redis-auth/legacy.env"
+LEGACY_REDIS_HOST = "legacy-redis"
 #: Durable record of WHICH services are cut over, written by `render --services` (cleared only by an explicit
 #: empty `--services`). The deploy guard refuses when it lists services the override no longer lists / is missing.
 MARKER_NAME = "cutover.services"
@@ -299,6 +306,18 @@ def render_override(services: list[str]) -> str:
         ]
     out += ["", "networks:", f"  {DATA_NET}:", f"    name: {DATA_NET}", "    external: true", ""]
     return "\n".join(out)
+def render_services_redis_env(master: str, generation="1") -> str:
+    """deploy/services/compose.services.yml `redis`: its requirepass, derived (nothing for a human to hold)."""
+    return f"REDIS_PASSWORD={derive_password(master, SERVICES_REDIS_USER, generation)}\n"
+
+
+def render_legacy_redis_env(master: str, generation="1") -> str:
+    """deploy/legacy: the dedicated legacy-redis password AND the two Celery URLs the legacy app reads
+    (hex is URL-safe, so no quoting)."""
+    pw = derive_password(master, LEGACY_REDIS_USER, generation)
+    return (f"LEGACY_REDIS_PASSWORD={pw}\n"
+            f"CELERY_BROKER_URL=redis://:{pw}@{LEGACY_REDIS_HOST}:6379/0\n"
+            f"CELERY_RESULT_BACKEND=redis://:{pw}@{LEGACY_REDIS_HOST}:6379/1\n")
 
 
 # ── io ────────────────────────────────────────────────────────────────────
@@ -432,7 +451,10 @@ def _check(root: Path) -> dict:
     p = root / OVERRIDE_REL
     pass_files = _pass_file_report(root)
     bad_pass = [n for n, r in pass_files.items() if r.get("present") and (not r["owner_can_read"] or r["group_other_access"])]
-    base = {"action": "check", "roster": roster, "marker": marker, "pass_files": pass_files}
+    # Informational only (never a failure): whether the derived non-fleet Redis env files exist yet. They are produced by
+    # `render --write`; until then the services/legacy composes start as they always did (no password).
+    derived_env = {rel: (root / rel).is_file() for rel in (SERVICES_ENV_REL, LEGACY_ENV_REL)}
+    base = {"action": "check", "roster": roster, "marker": marker, "pass_files": pass_files, "derived_env": derived_env}
     if not p.is_file():
         if marker:
             return {**base, "ok": False, "status": "drift", "cut_over": [], "marker_without_override": marker,
@@ -473,9 +495,12 @@ def _render(root: Path, write: bool, env: dict[str, str] | None, env_file: str |
                 _write_secret(out / "env" / f"{slug}.env", render_service_env(slug, master, gen), 0o600)
             for name, user in (("ops", "ops"), ("ops-app", "ops-app"), ("trip", "trip"), ("probe", "probe")):
                 _write_secret(out / f"{name}.pass", derive_password(master, user, gen) + "\n", 0o600)
+            _write_secret(root / SERVICES_ENV_REL, render_services_redis_env(master, gen), 0o600)
+            _write_secret(root / LEGACY_ENV_REL, render_legacy_redis_env(master, gen), 0o600)
             result["written"] += [f"{OUT_DIR_REL}/users.acl", f"{OUT_DIR_REL}/breaker-users.acl",
                                   f"{OUT_DIR_REL}/env/<service>.env x{len(roster)}",
-                                  *(f"{OUT_DIR_REL}/{n}.pass" for n in ("ops", "ops-app", "trip", "probe"))]
+                                  *(f"{OUT_DIR_REL}/{n}.pass" for n in ("ops", "ops-app", "trip", "probe")),
+                                  SERVICES_ENV_REL, LEGACY_ENV_REL]
             ov = root / OVERRIDE_REL
             marker = out / MARKER_NAME
             if svc is not None:
@@ -536,4 +561,4 @@ def register(server) -> None:
 
 
 __all__ = ["redis_acl", "register", "derive_roster", "derive_password", "render_aclfile", "render_breaker_aclfile",
-           "render_service_env", "render_override", "parse_override_services", "APP_KEY_FAMILIES"]
+           "render_service_env", "render_override", "render_services_redis_env", "render_legacy_redis_env", "parse_override_services", "APP_KEY_FAMILIES"]
