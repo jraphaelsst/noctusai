@@ -193,6 +193,7 @@ def conversa(plat, monkeypatch):
     from app.stores.onboarding_sessoes import FakeOnboardingStore
 
     monkeypatch.setattr("app.routers.onboarding_router.ENTREVISTADOR", "julia")
+    plat.store.update_agent(DEFAULT_ORG_ID, "julia", {"ativo": True})  # a switched-off interviewer is refused (own test)
     plat.conversas, plat.onboarding, plat.mensagens = FakeConversationStore(), FakeOnboardingStore(), FakeMessageStore()
     app = plat.raw.app
     app.dependency_overrides[get_conversation_store_dep] = lambda: plat.conversas
@@ -229,6 +230,12 @@ def test_starting_is_gated_like_every_onboarding_route(conversa):
     r = conversa.post(f"{URL}/conversa")
     assert r.status_code == 409 and r.json()["code"] == "sem_concessao_ativa"
     assert conversa.onboarding._sessoes == []
+
+
+def test_a_switched_off_interviewer_is_409_typed(conversa):
+    conversa.store.update_agent(DEFAULT_ORG_ID, "julia", {"ativo": False})
+    r = conversa.post(f"{URL}/conversa")
+    assert r.status_code == 409 and r.json()["code"] == "entrevistador_desligado" and conversa.onboarding._sessoes == []
 
 
 def test_a_missing_interviewer_is_409_typed(plat, monkeypatch):
