@@ -91,6 +91,8 @@ def register_all(server) -> None:
     from . import prod_watchdog
     from . import mq_watchdog
     from . import ensure_product_url_roster
+    from . import ghcr_access
+    from . import image_pin
     from . import ensure_schema_exposure
     from . import projection_rebuild
     from . import check_storage_no_public_buckets
@@ -272,6 +274,8 @@ def register_all(server) -> None:
     prod_watchdog.register(server)
     mq_watchdog.register(server)
     ensure_product_url_roster.register(server)
+    ghcr_access.register(server)
+    image_pin.register(server)
     ensure_schema_exposure.register(server)
     projection_rebuild.register(server)
     check_storage_no_public_buckets.register(server)

@@ -34,7 +34,9 @@ volumes:
 
 services:
   postgres:
-    image: postgres:16
+    # Pinned 2026-11-15 to the digest PROD IS RUNNING: a floating 16 can bump the debian base (glibc collation
+    # change = index corruption on the existing pgdata volume). Upgrades are a deliberate bump, never a re-pull.
+    image: postgres:16@sha256:f992505e18f114c1e5102ac4dcf00f791b44462f6a423d899320f0bbf80e386f
     restart: unless-stopped
     networks:
       noctus-net:
@@ -54,22 +56,32 @@ services:
       retries: 5
 
   redis:
-    image: redis:latest
+    # Pinned 2026-11-15 to the digest PROD IS RUNNING (was :latest): a no-op recreate. Auth: requirepass, with the
+    # password DERIVED from REDIS_ACL_MASTER_SECRET by `noctus.dev.redis_acl render --write`, which writes it to
+    # redis-auth/services-redis.env beside this file (gitignored). Nothing to type, and a stack that has not been
+    # rendered yet starts exactly as it does today (no password) instead of failing. DERIVED client list = none
+    # (n8n uses SQLite; legacy has its own Redis) — keeper test_services_redis_has_no_unauthenticated_clients.
+    image: redis:latest@sha256:4d25e2fe601f7ffaeb4437cb6ced3518bc36edf34ebe98863c80836943d94529
     restart: unless-stopped
     networks:
       noctus-net:
         aliases: [redis]
     volumes:
       - redis-data:/data
-    command: ["redis-server", "--appendonly", "yes"]   # persist to redis-data
+    env_file:
+      - path: ./redis-auth/services-redis.env   # REDIS_PASSWORD, derived (noctus.dev.redis_acl render --write)
+        required: false
+    command: ["sh", "-c", "if [ -n \"$$REDIS_PASSWORD\" ]; then exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\"; fi; exec redis-server --appendonly yes"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   n8n:
-    image: n8nio/n8n:latest
+    # Pinned 2026-11-15 to the digest PROD IS RUNNING (was :latest): a no-op recreate (n8n refuses a DB downgrade, so
+    # never pin older than what runs). Bump deliberately: `noctus.dev.image_pin` resolves the new digest.
+    image: n8nio/n8n:latest@sha256:b4ce485c070c95efae9f42fa39918623f821d70ea255cdf6467b02865db3a00e
     restart: unless-stopped
     networks:
       noctus-net:
@@ -85,6 +97,10 @@ services:
       GENERIC_TIMEZONE: America/Sao_Paulo
       N8N_LOG_LEVEL: info
       N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE: "true"
+      # Code/Function nodes + expressions cannot read the container env (the n8n 2.x default, made explicit so a
+      # future image cannot flip it). `{{ $env.X }}` in workflows is therefore off: the PDF.co / Infosimples template
+      # workflows must keep their keys in n8n Credentials (both keys are unset/inert today).
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
       # Workflow template credentials — referenced via {{ $env.* }} expressions.
       # Optional: the running n8n had these UNSET (they were lost together with
       # .env.services when production-deploy-migration was archived). Relaxed
@@ -113,21 +129,22 @@ services:
     restart: unless-stopped
     networks:
       noctus-net:
-        aliases: [waha]                # tunnel ingress points waha.noctusai.com -> http://waha:3000
+        aliases: [waha]                # tunnel ingress -> http://waha:3000 (public access model: owner decision, runbook § 3)
     environment:
-      WHATSAPP_HOOK_URL: https://n8n.noctusai.com/webhook/webhook
+      # Internal hop on noctus-net: independent of the public n8n edge / any Access policy on it.
+      WHATSAPP_HOOK_URL: http://n8n:5678/webhook/webhook
       WHATSAPP_HOOK_EVENTS: message
       # NOWEB auto-refreshes the pairing QR; GOWS expires it after ~20s and marks
       # the session FAILED (a hostile pairing UX). NOWEB is WAHA-Core-supported.
       WHATSAPP_DEFAULT_ENGINE: NOWEB
       WHATSAPP_API_KEY: ${WHATSAPP_API_KEY:?set WHATSAPP_API_KEY in .env.services}
-      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-jraphaelsst}
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-noc-admin}
       WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?set WAHA_DASHBOARD_PASSWORD in .env.services}
       # Swagger UI (/docs) basic-auth mirrors the dashboard creds (same env vars)
       # so one login covers both surfaces. Without these passed through here the
       # container ignores the WHATSAPP_SWAGGER_* lines in .env.services (this
       # service has no env_file:, so .env.services is interpolation-only).
-      WHATSAPP_SWAGGER_USERNAME: ${WAHA_DASHBOARD_USERNAME:-jraphaelsst}
+      WHATSAPP_SWAGGER_USERNAME: ${WAHA_DASHBOARD_USERNAME:-noc-admin}
       WHATSAPP_SWAGGER_PASSWORD: ${WAHA_DASHBOARD_PASSWORD:?set WAHA_DASHBOARD_PASSWORD in .env.services}
       WAHA_GOWS_PATH: /app/gows
       WAHA_GOWS_SOCKET: /tmp/gows.sock

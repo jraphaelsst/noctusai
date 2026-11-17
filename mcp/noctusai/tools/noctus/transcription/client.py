@@ -23,7 +23,9 @@ _FAST_POLL_S = 5.0
 #: answers with (502/504). None of them is a job result -- the job keeps running server-side -- so
 #: they are retried, never recorded as a failure (2026-11-14: a core redeploy turned 31 live jobs into
 #: "failed" 502s). A long outage is still bounded by the batch's no-progress window.
-_TRANSIENT = frozenset({429, 502, 503, 504})
+#: 2026-11-15: Cloudflare's 52x family (530 = origin unreachable, a tunnel blip) is the same class --
+#: three accepted jobs were dropped as "HTTP 530" failures although they finished server-side.
+_TRANSIENT = frozenset({429, 502, 503, 504, *range(520, 531)})
 _SLOW_POLL_S = 30.0
 _FAST_WINDOW_S = 60.0
 _MAX_SUBMIT_WAIT_S = 120.0
@@ -158,9 +160,10 @@ def transcribe(path: str, idioma: str = "pt", rotulo: str | None = None,
     while True:
         job = submit(path, idioma=idioma, rotulo=rotulo, segmentos=segmentos,
                      palavras=palavras, _transport=_transport)
-        ra = job.get("retry_after") if "codigo" in job else None
-        if ra is not None and job.get("status_code") in _TRANSIENT \
-                and ra <= _MAX_SUBMIT_WAIT_S and remaining() > ra:
+        ra = None
+        if "codigo" in job and job.get("status_code") in _TRANSIENT:
+            ra = job.get("retry_after") or _FAST_POLL_S
+        if ra is not None and ra <= _MAX_SUBMIT_WAIT_S and remaining() > ra:
             _sleep(ra)
             continue
         break

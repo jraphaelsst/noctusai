@@ -3095,6 +3095,15 @@
    },
    "source": "owner rule 2026-11-08 ('whenever we change the agent structure, we must update the function to match it. tests will probably pass, but it will break'); measured on origin/dev: 6 agent creation surfaces missing kind/fonte/superficie_claude, kind never creatable through POST /plataforma/agents; KB § PATTERNS/devops/product-lockfile-and-slug-drift.md (same hand-maintained-drift class)"
   },
+  "keeper:check-supply-chain-pin": {
+   "mechanism": "KB § GUIDES/security-infra-hardening-runbook.md (compose pin-at-authoring + running-version preflight; Actions: .github/dependabot.yml github-actions block opens SHA-pinned bumps)",
+   "owner": "devops-engineer",
+   "placement": "warn",
+   "standard": "",
+   "new": true,
+   "declared": "2026-11-15",
+   "source": "security audit 2026-10-19 (tj-actions/changed-files 2025, trivy-action 2026-03: a mutable tag is a re-pointable supply chain); KB § PATTERNS/devops/ci-security-gates.md § 9"
+  },
   "keeper:check-table-has-rls": {
    "severity": "high",
    "kind": "keeper-batch",
@@ -3907,6 +3916,18 @@
    "branch": "pending:keeper:check-gh-calls-via-seam",
    "gates": [
     "keeper:check-gh-calls-via-seam"
+   ]
+  },
+  {
+   "id": "D43",
+   "decision": "What executes is pinned: third-party Actions by full commit SHA, prod-surface images by digest or x.y version; a floating tag is a re-pointable supply chain",
+   "home": "KB § PATTERNS/devops/ci-security-gates.md § 9",
+   "construction": "Dependabot github-actions SHA bumps; pin-at-authoring with a mandatory running-version preflight (KB § GUIDES/security-infra-hardening-runbook.md)",
+   "gate": "keeper:check-supply-chain-pin",
+   "telemetry": "automatic: cli exit wrapper logs every --check-supply-chain-pin run to guard-events.ndjson",
+   "branch": "feat/sec-infra-hardening-v2",
+   "gates": [
+    "keeper:check-supply-chain-pin"
    ]
   }
  ]
