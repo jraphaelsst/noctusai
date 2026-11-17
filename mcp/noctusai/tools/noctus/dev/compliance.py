@@ -26758,6 +26758,28 @@ def check_waha_instances_render_sync(repo_root: Path | None = None) -> list[dict
                       "(every alias of a `send: disabled` line must be sticky in the seed) -- regenerate: "
                       "noctus.dev.waha_instance action='render' write=True. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."),
             "severity": "high", "symbol": "waha-read-only-lines-drift"})
+    from .waha_instance import DECLARED_LINES_REL, product_line_policies_json, render_declared_lines
+    spec_now = parse_instances(data_p.read_text(encoding="utf-8"))
+    dl_p = root / DECLARED_LINES_REL
+    if not dl_p.is_file() or dl_p.read_text(encoding="utf-8") != render_declared_lines(spec_now):
+        policy_issues.append({
+            "file": DECLARED_LINES_REL,
+            "issue": ("the seed's declared-lines list (name -> base_url, env names, policy) is MISSING or DIFFERENT from the "
+                      "render of waha-instances.yml -- regenerate: noctus.dev.waha_instance action='render' write=True. "
+                      "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."),
+            "severity": "high", "symbol": "waha-declared-lines-drift"})
+    prod_p = root / "deploy" / "fleet" / "docker-compose.prod.yml"
+    if prod_p.is_file():
+        prod_text = prod_p.read_text(encoding="utf-8")
+        for product in sorted({i["product"] for i in spec_now["instances"] if i.get("external")}):
+            want_pol = product_line_policies_json(spec_now, product)
+            if f"WAHA_LINE_POLICIES: '{want_pol}'" not in prod_text:
+                policy_issues.append({
+                    "file": "deploy/fleet/docker-compose.prod.yml",
+                    "issue": (f"{product}'s WAHA_LINE_POLICIES is not the render of waha-instances.yml (expected {want_pol!r}) "
+                              "-- derive it, never hand-edit (noctus.dev.waha_instance action='plan' name=<line>). "
+                              "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."),
+                    "severity": "high", "symbol": "waha-line-policies-env-drift"})
     if have == want:
         return policy_issues
     return policy_issues + [{"file": "deploy/fleet/compose.waha.yml",

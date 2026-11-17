@@ -61,6 +61,32 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
+  waha-sw-vendas:
+    # social-wiring's own WhatsApp number (session `default`). Internal only: http://waha-sw-vendas:3000
+    image: devlikeapro/waha:noweb-2026.9.2
+    platform: linux/amd64
+    container_name: noctus-waha-sw-vendas
+    environment:
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WHATSAPP_API_KEY: ${WAHA_SW_VENDAS_API_KEY:?generate WAHA_SW_VENDAS_API_KEY in .env.fleet on the VPS}
+      WHATSAPP_HOOK_HMAC_KEY: ${WAHA_SW_VENDAS_HMAC_SECRET:?generate WAHA_SW_VENDAS_HMAC_SECRET in .env.fleet on the VPS}
+      WAHA_DASHBOARD_ENABLED: "false"
+      WHATSAPP_SWAGGER_ENABLED: "false"
+      NODE_OPTIONS: --max-old-space-size=384
+    expose:
+      - "3000"
+    volumes:
+      - waha_sw_vendas:/app/.sessions
+    networks:
+      - noctus-net
+    mem_limit: 512m
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/ping').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
 
 networks:
   noctus-net:
@@ -72,3 +98,5 @@ volumes:
     name: noctus-waha-nosnolimiar
   waha_assistant:
     name: noctus-waha-assistant
+  waha_sw_vendas:
+    name: noctus-waha-sw-vendas

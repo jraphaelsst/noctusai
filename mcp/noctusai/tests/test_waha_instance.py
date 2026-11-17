@@ -42,6 +42,9 @@ def _tree(tmp_path, data=DATA, compose="render"):
     ro = tmp_path / wi.READ_ONLY_REL
     ro.parent.mkdir(parents=True, exist_ok=True)
     ro.write_text(wi.render_read_only_lines(wi.parse_instances(data)))
+    dl = tmp_path / wi.DECLARED_LINES_REL
+    dl.parent.mkdir(parents=True, exist_ok=True)
+    dl.write_text(wi.render_declared_lines(wi.parse_instances(data)))
     if compose == "render":
         (d / "compose.waha.yml").write_text(wi.render_compose(wi.parse_instances(data)))
     elif compose is not None:
@@ -69,6 +72,53 @@ class TestRender:
     def test_invalid_declarations_raise(self, bad):
         with pytest.raises(ValueError):
             wi.parse_instances(bad)
+
+
+EXTERNAL = DATA + """  - name: shared
+    product: sw
+    external: true
+    service: waha
+    container: noctus-waha
+    base_url: http://waha:3000
+    api_key_env: WAHA_API_KEY
+    hmac_secret_env: WAHA_WEBHOOK_HMAC_SECRET
+    line_policy: {send: enabled, mark_online: true, full_sync: true, auto_repair: true}
+  - name: sw-vendas
+    product: sw
+    line_policy: {send: enabled, mark_online: false, full_sync: false, auto_repair: false}
+    dashboard: false
+"""
+
+
+class TestExternalHost:
+    def test_external_host_is_declared_not_rendered(self):
+        spec = wi.parse_instances(EXTERNAL)
+        out = wi.render_compose(spec)
+        assert "waha-shared" not in out and "waha_shared" not in out and "waha-sw-vendas:" in out
+
+    def test_declared_lines_carry_env_names_never_values(self):
+        rows = wi.parse_instances(EXTERNAL)
+        txt = wi.render_declared_lines(rows)
+        ns: dict = {}
+        exec(txt, ns)
+        dl = ns["DECLARED_LINES"]
+        assert dl["shared"]["base_url"] == "http://waha:3000" and dl["shared"]["shared"] is True
+        assert dl["shared"]["api_key_env"] == "WAHA_API_KEY"
+        assert dl["sw-vendas"]["base_url"] == "http://waha-sw-vendas:3000"
+        assert dl["sw-vendas"]["api_key_env"] == "WAHA_SW_VENDAS_API_KEY"
+        assert dl["sw-vendas"]["hmac_secret_env"] == "WAHA_SW_VENDAS_HMAC_SECRET"
+
+    def test_product_policies_star_is_the_shared_host(self):
+        import json
+        got = json.loads(wi.product_line_policies_json(wi.parse_instances(EXTERNAL), "sw"))
+        assert list(got) == ["*", "http://waha-sw-vendas:3000"]
+        assert got["http://waha-sw-vendas:3000"]["mark_online"] is False
+
+    def test_external_requires_its_fields_and_refuses_apply(self, tmp_path):
+        with pytest.raises(ValueError):
+            wi.parse_instances(EXTERNAL.replace("    base_url: http://waha:3000\n", ""))
+        r = wi.waha_instance("apply", name="shared", confirm=True, repo_root=str(_tree(tmp_path, data=EXTERNAL)))
+        assert r["ok"] is False and "external" in r["error"]
 
 
 class TestWahaInstancesRenderSync:
