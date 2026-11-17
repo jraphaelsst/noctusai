@@ -41,6 +41,7 @@ export const studioKeys = {
   orgSpecs: (key: string) => ["studio", key, "org-specs"] as const,
   staffOrgs: (key: string, product: string) => ["studio", key, "staff-orgs", product] as const,
   staffOrgSpecs: (key: string, product: string, orgId: string) => ["studio", key, "staff-org-specs", product, orgId] as const,
+  onboarding: (key: string, product: string, orgId: string) => ["studio", key, "onboarding", product, orgId] as const,
   orgStatus: (key: string) => ["studio", key, "org-status"] as const,
   compiladoOrg: (key: string, versao: string) => ["studio", key, "compilado-org", versao] as const,
   controle: (key: string) => ["studio", key, "controle"] as const,
