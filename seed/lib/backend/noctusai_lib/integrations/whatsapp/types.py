@@ -226,6 +226,8 @@ class WhatsAppGroupClient(Protocol):
 
     async def leave_group(self, group_id: str) -> None: ...
 
+    async def set_profile_name(self, name: str) -> None: ...
+
 
 # Legacy WAHA-prefixed aliases (kept for call-site portability).
 WahaMedia = WhatsAppMedia

@@ -33,11 +33,11 @@ inbox shapes:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Optional
 from uuid import UUID
 
 from noctusai_lib.api import StrictHttpModel
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 
 # ─── CRUD ────────────────────────────────────────────────────────────────
@@ -116,6 +116,18 @@ class WhatsAppConnectionUpdate(StrictHttpModel):
             "Absent = keep current; null = unassign; UUID = assign to cliente."
         ),
     )
+
+
+class WhatsAppProfileNameIn(StrictHttpModel):
+    """PUT body of ``/{id}/perfil`` (org admins): the WhatsApp PROFILE display name leads see on this number.
+    WhatsApp caps it at 25 characters; blank is refused (422)."""
+
+    nome: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=25)]
+
+
+class WhatsAppProfileNameOut(BaseModel):
+    connection_id: UUID
+    nome: str
 
 
 class WhatsAppConnectionOut(BaseModel):

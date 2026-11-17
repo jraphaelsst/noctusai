@@ -143,6 +143,7 @@ class FakeWahaClient(LinePolicyGuard):
         self.messages_admin_only: dict[str, bool] = {}
         self.deleted_messages: list[dict[str, str]] = []
         self.left_groups: list[str] = []
+        self.profile_name: str | None = None
         # BR 9th-digit resolution. None = every number is "registered"
         # (legacy behaviour); a set of bare-digit numbers restricts which
         # spellings exist on WhatsApp. Set check_unavailable=True to model
@@ -666,6 +667,10 @@ class FakeWahaClient(LinePolicyGuard):
         self._guard_write("post", f"/api/{self.session}/groups/{group_id}/leave")
         self.fake_groups.pop(group_id, None)
         self.left_groups.append(group_id)
+
+    async def set_profile_name(self, name: str) -> None:
+        self._guard_write("put", f"/api/{self.session}/profile/name")
+        self.profile_name = name
 
 
 class _FakeChannelBackend:

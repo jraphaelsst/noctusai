@@ -41,6 +41,7 @@ class TestOnlyAnAdminMutatesALine:
         ("post", "/logout", None),
         ("post", "/recover", None),
         ("post", "/webhook", {}),
+        ("put", "/perfil", {"nome": "Júlia"}),
     ])
     def test_a_member_is_403_on_every_mutation(self, member, method, suffix, body):
         member.w.seed_connection()
@@ -50,6 +51,7 @@ class TestOnlyAnAdminMutatesALine:
 
     @pytest.mark.parametrize("method,suffix,body", [
         ("patch", "", {"label": "novo"}), ("delete", "", None), ("post", "/start", None), ("post", "/webhook", {}),
+        ("put", "/perfil", {"nome": "Júlia"}),
     ])
     def test_no_token_is_401(self, admin, method, suffix, body):
         r = getattr(admin.tc, method)(CONN + suffix, **({"json": body} if body is not None else {}))
