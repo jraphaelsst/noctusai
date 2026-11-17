@@ -552,3 +552,19 @@ Leak fingerprint (turn redesign): `JuliaTurno.textos_derivados` collects every s
 - Grants are per (agent, product, org) with a personal token; channel requests re-check the grant is live (`assert_channel_grant_live`). Grant lifecycle changes are recorded in `agents.agent_product_grant_eventos` (migration 083, trigger-written, append-only). Staff edit an org's specs only under a live grant (`/api/studio/plataforma/agents/{key}/products/{product}/orgs/{org_id}/specs`, migration 064 `especificacoes_editor`).
 
 - **Turn metrics (migration 066, CONTRACT §14):** `agents.turn_metrics`, one row per turn (cost from the summed priced D25 events, speed, UTF-8 payload bytes), written once at the end of `turno.executar` and never failing the turn; read ONLY by platform admins through `/api/studio/agents/{key}/metricas*`; shown only in the agents app (agent page section `metricas`, `frontend/src/pages/studio/tabs/MetricasTab.tsx`; the section is registered in `studio/modelo.py` `SECOES_PAGINA`, tier `plataforma`).
+
+## Client onboarding by interview (`app/onboarding/`, Studio tab "Onboarding")
+
+Owner decision 2026-11-17: new clients are onboarded through our own chatbot mechanism. The checklist (our 41 items, each
+mapped to an org spec key, a social-wiring setting or a human step) is `projects/onboarding/CHECKLIST.md`, mirrored in
+`app/onboarding/checklist.py` (a test keeps them in step). Staff routes (platform admin + a live grant whose editor is
+`plataforma`, the same gate as the staff org-specs route) under
+`/api/studio/plataforma/agents/{key}/products/{product}/orgs/{org_id}/onboarding`: `GET` (progress per item), `POST
+/importar` (an existing configuration becomes unconfirmed pre-filled answers; writes nothing), `POST /aplicar` (ONE apply
+step with a per-item report: `aplicado` / `recusado` + reason / `pendente_humano`). Spec values go through the one org-spec
+write path (`aplicar_org_specs`: validation, audit); an invalid value is refused, never stored. SW operational settings go
+through `SwSettingsPort` (Real refuses `canal_sw_nao_configurado` until social-wiring accepts a staff channel; the report
+carries the route + body to apply by hand). The interviewer agent `onboarding-imob` is a platform definition whose draft
+section rows live in `projects/onboarding/agent/` (applied with `noctus.agents.content`, never published from code). After
+an apply the owner is pointed to evaluation mode before go-live. Deferred: `NOC-REMEDIATE[onboarding-sw-staff-channel]`,
+`[onboarding-import-prose]`, `[onboarding-agent-rows]`.

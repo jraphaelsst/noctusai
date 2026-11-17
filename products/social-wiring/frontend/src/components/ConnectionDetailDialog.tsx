@@ -52,6 +52,7 @@ import {
   useWhatsAppConnectionStatus,
   useWhatsAppConnectionQr,
   useRecoverConnection,
+  useSetWhatsAppProfileName,
   useWhatsAppConnectionActions,
   useConnectionChats,
   type UpdateConnectionBody,
@@ -404,6 +405,11 @@ export function ConnectionSettingsPanel({
   const { update } = useWhatsAppConnectionMutations();
 
   const [editLabel, setEditLabel] = useState(line.label);
+  // "Nome exibido no WhatsApp" (profile name leads see): defaults to the line name, saved on its own endpoint.
+  const setProfileName = useSetWhatsAppProfileName();
+  const [profileName, setProfileNameInput] = useState(line.label);
+  const [profileTouched, setProfileTouched] = useState(false);
+  const shownProfileName = profileTouched ? profileName : (status?.me_name ?? profileName);
   const recover = useRecoverConnection();
 
   const paired = !!status?.paired;
@@ -455,6 +461,19 @@ export function ConnectionSettingsPanel({
           onSaved?.();
         },
         onError: (e: any) => toast.error(e?.message ?? "Falha ao salvar"),
+      },
+    );
+  };
+
+  const onSaveProfile = () => {
+    setProfileName.mutate(
+      { id: line.id, nome: shownProfileName.trim() },
+      {
+        onSuccess: () => {
+          setProfileTouched(false);
+          toast.success("Nome exibido no WhatsApp atualizado");
+        },
+        onError: (e: any) => toast.error(e?.message ?? "Falha ao alterar o nome exibido"),
       },
     );
   };
@@ -560,6 +579,40 @@ export function ConnectionSettingsPanel({
                 disabled={update.isPending}
                 data-testid="edit-conn-label"
               />
+              <p className="text-xs text-muted-foreground">Nome interno da linha, visível só para a equipe.</p>
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="edit-profile-name">Nome exibido no WhatsApp</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="edit-profile-name"
+                  value={shownProfileName}
+                  maxLength={25}
+                  onChange={(e) => {
+                    setProfileTouched(true);
+                    setProfileNameInput(e.target.value);
+                  }}
+                  disabled={setProfileName.isPending}
+                  data-testid="edit-conn-profile-name"
+                />
+                <Button
+                  variant="outline"
+                  onClick={onSaveProfile}
+                  disabled={setProfileName.isPending || !shownProfileName.trim()}
+                  data-testid="btn-save-profile-name"
+                >
+                  {setProfileName.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Aplicar no WhatsApp
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Nome que os leads veem neste número (até 25 caracteres).
+              </p>
+              {setProfileName.isError && (
+                <p className="text-xs text-destructive" role="alert" data-testid="profile-name-error">
+                  {(setProfileName.error as Error)?.message ?? "O WhatsApp recusou a alteração."}
+                </p>
+              )}
             </div>
           </div>
 

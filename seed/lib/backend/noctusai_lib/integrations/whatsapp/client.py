@@ -1407,3 +1407,16 @@ class WahaClient(LinePolicyGuard):
             headers=self._headers(json=True),
         )
         _raise_for_group_status(response, op="leave_group")
+
+    async def set_profile_name(self, name: str) -> None:
+        """PUT /api/{session}/profile/name {"name": ...} — the WhatsApp PROFILE display name this line shows to
+        contacts (WAHA docs: Profile > "Set my profile name"). A WRITE: a send-disabled line refuses it
+        (`LineWriteRefused`); any non-2xx is the typed `WahaGroupError(op="set_profile_name")`, never swallowed."""
+        response = await self._request(
+            "put",
+            f"/api/{_seg(self.session)}/profile/name",
+            timeout=15,
+            json={"name": name},
+            headers=self._headers(json=True),
+        )
+        _raise_for_group_status(response, op="set_profile_name")

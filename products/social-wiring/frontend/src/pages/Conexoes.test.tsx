@@ -69,6 +69,7 @@ vi.mock("@/hooks/useMarcas", () => ({
 
 // WhatsApp (Conexao / ConnectionDetailDialog are now imported by Conexoes)
 vi.mock("@/hooks/useWhatsAppConnections", () => ({
+  useSetWhatsAppProfileName: () => ({ mutate: () => {}, isPending: false, isError: false, error: null }),
   useWhatsAppConnections: vi.fn(() => ({ data: [], isLoading: false })),
   useWhatsAppConnectionMutations: vi.fn(() => ({
     create: { mutate: vi.fn(), isPending: false },
