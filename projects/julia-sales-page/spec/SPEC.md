@@ -207,7 +207,12 @@ Note for legal: once the buyer becomes a client, their LEADS' data flows through
 - **D3 → (a) only the legal 7 days**, stated as the law. This may change later.
 - **D7 → all three surfaces, ONE canonical page.** `/julia` on agents is canonical: full sequence, the specialist CTA, funnel events, and it links to the client's control panel. The core site shows a `ProductCatalogGrid` card linking to `/julia`. The Social Wiring landing gets a "your hub comes with an AI SDR" section linking to `/julia`, which is the honest bundle while Julia is real-estate-only and runs on Social Wiring data. No duplicated full copy.
 
-Still open: D1 values · D4 · D5 · D6 · D8 · D9 · D10 · D11 (shaped by the onboarding chatbot) · D12.
+- **D5 → (c) no proof section until One's pilot** produces a before/after.
+- **D6 → (b) real estate + "Lista de espera"** for other markets.
+- **D8 → (c) tiers for now:** Julia alone (Vista catalogue) vs Julia + Social Wiring. Later this becomes (a), the single package.
+- **D9 → (c), with an additive design.** `legal-advisor` and `agents-security` review it. The owner's shape: build the deterministic stop that the law demands (stop keywords always end messaging), AND keep Julia's own judgement. If she judges she should stop, she stops too, in addition to the deterministic triggers and never instead of them. Build item for agents (opt-out floor + judgement).
+
+Still open: D1 values · D4 · D10 · D11 (shaped by the onboarding chatbot) · D12.
 
 **Batch A — the offer**
 1. **D1 Price and plan.** No Julia plan exists in code; core has the billing machinery (Stripe/Asaas, `plan_prices`). Options: (a) monthly subscription with a credit allowance + prepaid top-up (your 2026-10-29 billing model); (b) one-off setup fee + monthly; (c) paid pilot (30-60 days, target agreed before start) then monthly; (d) no public price, quote after a conversation. Which, and at what values?
