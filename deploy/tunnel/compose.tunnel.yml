@@ -26,7 +26,7 @@ services:
   cloudflared:
     # Pinned 2026-11-15 to the digest PROD IS RUNNING (was :latest): the tunnel is the one container on every network
     # and holds the tunnel credential. A no-op recreate; upgrades are a deliberate bump.
-    image: cloudflare/cloudflared:latest@sha256:59bab8d3aceec09bf6bdb07d6beca0225ca5cd7ab79436a87ea97978fe1dc4f9
+    image: cloudflare/cloudflared:latest@sha256:b94b96edf2c9c4360f8879c8580cfaa99077f19c849ec595ca2f711b27d4f344
     container_name: noctus-tunnel
     # Named-tunnel run: reads config.yml (tunnel id + credentials + ingress).
     # `--protocol http2` is also pinned in config.yml; passing it here too is
