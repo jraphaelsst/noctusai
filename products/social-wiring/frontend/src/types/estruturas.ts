@@ -29,9 +29,12 @@ export type ResolucaoPerfis = { resolvidos: (PerfilCandidato & { via: 'mencao' |
   ambiguos: { trecho: string; candidatos: PerfilCandidato[] }[]; nao_encontrados: { trecho: string; sugestoes: PerfilCandidato[] }[] }
 export type PropostaEstrutura = { id: string; codigo: number; perfil: { id: string; handle: string; nome: string | null }; principal: boolean }
 export type Proposta = { id: string; ordem: number; texto: string; gatilho_tag: string | null; estruturas: PropostaEstrutura[];
-  status: 'proposta' | 'escolhida'; headline_id: string | null }
-export type FluxoEtapa = 'headline_salva' | 'roteiro_gerando' | 'roteiro_pronto' | 'falhou'
-export type Fluxo = { proposta_id: string; etapa: FluxoEtapa; headline: { id: string; texto: string };
+  status: 'proposta' | 'escolhida'; headline_id: string | null;
+  /** Roteiro-first (contract §16.5): `texto` is then the full script. Older payloads omit these (read as a headline). */
+  tipo?: 'headline' | 'roteiro'; titulo?: string | null; formato?: EstruturaFormato | null; roteiro_id?: string | null }
+export type FluxoEtapa = 'headline_salva' | 'roteiro_gerando' | 'roteiro_pronto' | 'falhou' | 'roteiro_salvo' | 'headline_gerando'
+export type FluxoDirecao = 'headline_primeiro' | 'roteiro_primeiro'
+export type Fluxo = { proposta_id: string; etapa: FluxoEtapa; direcao?: FluxoDirecao; headline: { id: string; texto: string } | null;
   roteiro: { id: string; nome: string; status: RoteiroStatus; formato: EstruturaFormato; duracao: 'auto'|'1'|'2'|'3'; ordem_cta: RoteiroEstrutura; versao: number } | null;
   post: PostRef | null; estruturas: EstruturaUso[]; legenda: 'pendente' | 'gerada' | 'indisponivel'; erro_codigo: string | null }
 export type ImportacaoRelatorio = { id: string; fonte: 'referencia' | 'maquina_de_roteiros'; status: 'simulada'|'em_andamento'|'concluida'|'falhou';
