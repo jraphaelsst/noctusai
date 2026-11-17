@@ -56,6 +56,13 @@
       "file_checksum": "7401e681d0c3d49f4e3381bf38284c2e0cca54a80bef77103101c78ccb0da447",
       "remediate": "post-apply-edit-audit",
       "note": "Edited after it ran; audited 2026-10-10: applied blob found by its ledger hash, current intent catalog-verified live in prod (comment-only or carried by a later forward migration)."
+    },
+    {
+      "file": "346_imobshot_eventos_contract.sql",
+      "ledger_checksum": "07651b74e779600313873b32e060afc78cc58784cc7b23935e471b60ce4153bd",
+      "file_checksum": "152c1db9e31d7c6863ac55e2bcf61c52b67832aa70d070c4af99f3303196e4c1",
+      "remediate": "post-apply-edit-audit",
+      "note": "52220f8c0 (2026-11-16) added only the comment line `-- Resolves: NOC-REMEDIATE[imobshot-eventos-contract]` after prod applied 346 (2026-11-16 16:03Z); the applied blob 440d053d0 hashes to the ledger checksum, SQL unchanged — audited 2026-11-17 by the release steward."
     }
   ]
 }
