@@ -57,7 +57,12 @@ STOP_TIMEOUT_SECONDS = 10.0
 #: ``DeadLetterError`` in the handler, which skips the retries.
 RETRY_POLICY = RetryPolicy(max_retries=2, backoff_seconds=5.0)
 
-GERACAO_JOB_TYPES: tuple[str, ...] = ("headline.gerar", "roteiro.perguntas", "roteiro.gerar")
+#: Estruturas (estruturas-contract.md section 13, collision class C3 -- declared up front by EST-1; each handler is
+#: registered by its own slice): the library load (EST-3), the chat saga's finalizer (UNI-1b) and the auto-draft of a
+#: newly analysed video (EST-5). They ride the `geracao` worker (the hard switch `geracao_worker_enabled`); the
+#: auto-draft stays dark until `biblioteca_ingestao_habilitada` produces an analysed video, by construction.
+ESTRUTURAS_JOB_TYPES: tuple[str, ...] = ("estruturas.importar", "fluxo.finalizar_card", "estruturas.rascunho_do_viral")
+GERACAO_JOB_TYPES: tuple[str, ...] = ("headline.gerar", "roteiro.perguntas", "roteiro.gerar", *ESTRUTURAS_JOB_TYPES)
 BIBLIOTECA_JOB_TYPES: tuple[str, ...] = (
     "biblioteca.sync_perfil",
     "biblioteca.classificar",
@@ -381,6 +386,7 @@ def is_running() -> dict[str, bool]:
 __all__ = [
     "ALL_JOB_TYPES",
     "BIBLIOTECA_JOB_TYPES",
+    "ESTRUTURAS_JOB_TYPES",
     "GERACAO_JOB_TYPES",
     "INGESTAO_SWITCH_KEY",
     "HandlerAlreadyRegistered",

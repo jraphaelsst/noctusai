@@ -26,8 +26,8 @@ export const CONSENT_META = {
   email: "joaoraphaelsst@gmail.com",
   phone: "+55 (11) 97469-3365",
   canonicalBase: "https://noctusai.com/consent",
-  lastUpdated: "11/10/2026",
-  version: "1.1",
+  lastUpdated: "16/11/2026",
+  version: "1.3",
 } as const;
 
 /** A content block: a paragraph (`p`) or an unordered list (`ul`). */
@@ -360,25 +360,28 @@ export const PRIVACY_POLICY: ConsentDoc = {
       blocks: [
         {
           p:
-            "O produto Social Wiring oferece a \"Biblioteca de virais\": a organização cliente " +
-            "cadastra perfis públicos de empresa ou criador do Instagram (contas business/creator) " +
-            "para estudar a estrutura de conteúdos que performam bem. Esta seção descreve o " +
-            "tratamento de dados dos criadores desses perfis, que não são usuários da plataforma.",
+            "O produto Social Wiring oferece a \"Biblioteca de virais\": uma biblioteca única da " +
+            "plataforma, mantida apenas por administradores da NoctusAI, com perfis públicos de " +
+            "empresa ou criador do Instagram (contas business/creator) e com estruturas de roteiro " +
+            "derivadas do conteúdo público desses criadores. As organizações clientes apenas escolhem " +
+            "quais perfis e estruturas da biblioteca usar para escrever o próprio conteúdo. Esta seção " +
+            "descreve o tratamento de dados dos criadores desses perfis, que não são usuários da plataforma.",
         },
         {
           ul: [
-            "Dados tratados: dados públicos das publicações do perfil cadastrado (legenda, métricas de desempenho, miniatura) e a transcrição da fala dos Reels, obtidos de forma pública, por serviço de leitura de perfis públicos do Instagram (Apify) ou, quando configurado, pela API oficial do Instagram (Graph API, Business Discovery).",
-            "Finalidade: estudar a estrutura do conteúdo. Não republicamos o material e não construímos perfis dos criadores.",
+            "Dados tratados: dados públicos das publicações do perfil (legenda, métricas de desempenho, miniatura), a transcrição da fala dos Reels e um conjunto de dados de estruturas importado por administradores, obtidos de forma pública, por serviço de leitura de perfis públicos do Instagram (Apify) ou, quando configurado, pela API oficial do Instagram (Graph API, Business Discovery). Também são mantidas estruturas de roteiro (fórmula de título, formato, objetivos e blocos) derivadas desse conteúdo.",
+            "Quem recebe: todas as organizações clientes da plataforma veem o criador apenas pelo nome de usuário e pelo nome de exibição. Não mostramos foto de perfil, número de seguidores nem se o perfil é monitorado.",
+            "Finalidade: estudar a estrutura do conteúdo para a criação de conteúdo original. Não republicamos o material, não contatamos os criadores e não construímos perfis dos criadores.",
             "Base legal: legítimo interesse (LGPD, art. 7º, IX), com avaliação de impacto documentada e salvaguardas de minimização.",
-            "Retenção: os dados são eliminados 90 dias após o perfil ser pausado ou deixar de ser usado; em caso de oposição do criador, a eliminação é imediata.",
-            "Sub-processador: Anthropic (Estados Unidos), para classificação e análise das transcrições, com transferência internacional nos termos da seção 11. A hospedagem é feita pela Supabase.",
+            "Retenção: em caso de oposição do criador, a eliminação é imediata e abrange o perfil, as publicações, as transcrições e as estruturas derivadas. Os dados são eliminados 90 dias após o perfil deixar de ser usado; um perfil mantido apenas por suas estruturas perde a foto e o número de seguidores. Estruturas sem uso, edição ou publicação por 24 meses são sinalizadas para revisão por um administrador.",
+            "Sub-processador: Anthropic (Estados Unidos), para classificar o conteúdo e para sugerir estruturas de roteiro a partir da legenda e da transcrição (sem nome de usuário, menções ou contatos), com transferência internacional nos termos da seção 11. A Anthropic pode manter esses dados por até 30 dias. A hospedagem é feita pela Supabase.",
           ],
         },
         {
           p:
-            "Se você é criador de um perfil monitorado e não deseja que ele seja usado, solicite a " +
+            "Se você é criador de um perfil da biblioteca e não deseja que ele seja usado, solicite a " +
             "exclusão por e-mail a joaoraphaelsst@gmail.com; o perfil é removido da biblioteca, os " +
-            "dados são eliminados e novos cadastros do mesmo perfil são bloqueados. Você também pode " +
+            "dados são eliminados e novos cadastros ou importações do mesmo perfil são bloqueados. Você também pode " +
             "exercer os demais direitos da seção 14.",
         },
       ],

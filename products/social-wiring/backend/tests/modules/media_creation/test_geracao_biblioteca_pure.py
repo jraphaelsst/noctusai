@@ -256,26 +256,28 @@ class TestFilterBuilders:
     def test_scalar_filters_are_recorded(self):
         f = ViralFiltros(marca_id="m", views_min=10, likes_min=5, comments_min=2, perfil_id="p", codigo=7,
                          data_de="2026-01-01", data_ate="2026-02-01", nichos=[1, 2], profissoes=[3], formato_id=4)
-        q = aplicar_filtros(self._q(), f, org_id="o")
+        q = aplicar_filtros(self._q(), f)
         ops = {(p[0], p[1]) for p in self._preds(q)}
-        assert ("eq", "org_id") in ops and ("eq", "e_viral") in ops and ("eq", "perfil_id") in ops
+        # platform-wide library: NO org predicate; the viral flag is an `or` that also admits admin-added (link_manual) videos
+        assert ("eq", "org_id") not in ops and ("eq", "perfil_id") in ops
+        assert [p[2] for p in self._preds(q) if p[0] == "or_"] == ["e_viral.eq.true,origem_inclusao.eq.link_manual"]
         assert ("eq", "codigo") in ops and ("gte", "views") in ops and ("gte", "likes") in ops
         assert ("gte", "comments") in ops and ("gte", "publicado_em") in ops and ("lte", "publicado_em") in ops
         assert ("overlaps", "nicho_ids") in ops and ("overlaps", "profissao_ids") in ops
         assert ("contains", "formato_ids") in ops
 
     def test_somente_virais_false_drops_the_flag_filter(self):
-        q = aplicar_filtros(self._q(), ViralFiltros(marca_id="m", somente_virais=False), org_id="o")
-        assert ("eq", "e_viral") not in {(p[0], p[1]) for p in self._preds(q)}
+        q = aplicar_filtros(self._q(), ViralFiltros(marca_id="m", somente_virais=False))
+        assert [p for p in self._preds(q) if p[0] == "or_"] == []
 
     def test_auto_filter_is_a_single_or_over_both_arrays(self):
-        q = aplicar_filtros(self._q(), ViralFiltros(marca_id="m"), org_id="o", auto=([1, 2], [3]))
+        q = aplicar_filtros(self._q(), ViralFiltros(marca_id="m"), auto=([1, 2], [3]))
         exprs = [p[2] for p in self._preds(q) if p[0] == "or_"]
-        assert exprs == ["nicho_ids.ov.{1,2},profissao_ids.ov.{3}"]
+        assert exprs == ["e_viral.eq.true,origem_inclusao.eq.link_manual", "nicho_ids.ov.{1,2},profissao_ids.ov.{3}"]
 
     def test_search_column_follows_buscar_em(self):
-        a = aplicar_filtros(self._q(), ViralFiltros(marca_id="m", q="dor, medo"), org_id="o")
-        b = aplicar_filtros(self._q(), ViralFiltros(marca_id="m", q="dor", buscar_em="transcricao"), org_id="o")
+        a = aplicar_filtros(self._q(), ViralFiltros(marca_id="m", q="dor, medo", somente_virais=False))
+        b = aplicar_filtros(self._q(), ViralFiltros(marca_id="m", q="dor", buscar_em="transcricao", somente_virais=False))
         assert [p[2] for p in self._preds(a) if p[0] == "or_"] == ["gancho.ilike.*dor*,gancho.ilike.*medo*"]
         assert [p[2] for p in self._preds(b) if p[0] == "or_"] == ["transcricao_texto.ilike.*dor*"]
 

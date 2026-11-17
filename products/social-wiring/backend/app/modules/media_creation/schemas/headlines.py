@@ -23,6 +23,8 @@ Gatilho = Literal["recompensa", "misterio", "reconhecimento", "popularidade", "c
 MAX_VARIAVEIS = 45
 MAX_ASSUNTO_CHARS = 300
 MAX_TEXTO_CHARS = 1000
+#: ``estrutura_ids`` restricts a batch's pool to these ``ativa`` Estruturas (estruturas-contract 6.6).
+MAX_ESTRUTURA_IDS = 12
 
 
 class RefPerfil(StrictHttpModel):
@@ -54,6 +56,7 @@ class LoteForm(StrictHttpModel):
     valores: Optional[dict[str, list[uuid.UUID]]] = None
     assunto: Optional[str] = Field(default=None, max_length=MAX_ASSUNTO_CHARS)
     referencia: Optional[Referencia] = None
+    estrutura_ids: Optional[list[uuid.UUID]] = Field(default=None, min_length=1, max_length=MAX_ESTRUTURA_IDS)
     somente_pesquisa: bool = False
     criatividade: Criatividade = "equilibrado"
 
@@ -68,6 +71,7 @@ class LoteViral(StrictHttpModel):
     assunto_livre: Optional[str] = Field(default=None, max_length=MAX_ASSUNTO_CHARS)
     tom: Optional[Union[int, str]] = None
     referencia: Optional[ReferenciaViral] = None
+    estrutura_ids: Optional[list[uuid.UUID]] = Field(default=None, min_length=1, max_length=MAX_ESTRUTURA_IDS)
     criatividade: Criatividade = "equilibrado"
 
     @field_validator("tom", mode="before")
@@ -97,14 +101,22 @@ class LoteViral(StrictHttpModel):
 
 
 class LoteBiblioteca(StrictHttpModel):
-    """``biblioteca``: one chosen viral from the Biblioteca wizard."""
+    """``biblioteca``: one chosen video (all its ``ativa`` Estruturas) or one chosen Estrutura -- exactly one of
+    ``viral_id`` | ``estrutura_id`` (estruturas-contract 6.6)."""
 
     marca_id: uuid.UUID
     post_id: Optional[uuid.UUID] = None
     origem: Literal["biblioteca"]
-    viral_id: uuid.UUID
+    viral_id: Optional[uuid.UUID] = None
+    estrutura_id: Optional[uuid.UUID] = None
     assunto_ids: Optional[list[uuid.UUID]] = Field(default=None, max_length=5)
     assunto_livre: Optional[str] = Field(default=None, max_length=MAX_ASSUNTO_CHARS)
+
+    @model_validator(mode="after")
+    def _um_so(self) -> "LoteBiblioteca":
+        if (self.viral_id is None) == (self.estrutura_id is None):
+            raise ValueError("Informe exatamente um entre viral_id e estrutura_id")
+        return self
 
 
 LoteCreate = Annotated[Union[LoteForm, LoteViral, LoteBiblioteca], Field(discriminator="origem")]
@@ -135,6 +147,7 @@ __all__ = [
     "HeadlineCreate",
     "HeadlineEdit",
     "IdsBody",
+    "MAX_ESTRUTURA_IDS",
     "MAX_TEXTO_CHARS",
     "LoteBiblioteca",
     "LoteCreate",

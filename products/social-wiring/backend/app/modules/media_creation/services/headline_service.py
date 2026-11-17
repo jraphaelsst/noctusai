@@ -14,6 +14,7 @@ migration 229 is the last word), one automatic-suggestion batch per marca per da
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Optional
@@ -29,7 +30,9 @@ from app.modules.media_creation.geracao_taxonomias import FORMATO_IDS
 from app.modules.media_creation.pesquisa_variables import VARIABLE_SLUGS
 from app.modules.media_creation.prompts.headline_geracao import aviso_tamanho
 from app.modules.media_creation.schemas.headlines import MAX_TEXTO_CHARS
+from app.modules.media_creation.services import estruturas_retrieval as er
 from app.modules.media_creation.services import headline_pipeline as pipe
+from app.modules.media_creation.services.estruturas_service import formula_trecho
 from app.modules.media_creation.services.post_ref import post_refs
 from app.modules.media_creation.services.viral_card import viral_cards
 
@@ -40,6 +43,11 @@ BRT = ZoneInfo("America/Sao_Paulo")
 FORM_ORIGENS = ("form_me", "form_public", "form_viral")
 ALL_ORIGENS = FORM_ORIGENS + ("biblioteca", "sugestao_auto")
 ACTIVE = ("criando", "processando")
+USOS = pipe.USOS
+#: Spans that name a PROFILE explicitly (not the generic ``como o/a``): only those make an unknown name a 422 in a form.
+_GATILHO_DE_PERFIL_RE = re.compile(
+    r"\b(?:no estilo|estilo d[oae]s?|parecid[oa] com|inspirad[oa] (?:n[oa]|em)|do perfil|perfil d[oae]|baseado em)\b"
+)
 RETRY_AFTER_SECONDS = 3600
 SUGESTAO_JANELA_DIAS = 30
 
@@ -142,9 +150,43 @@ class HeadlineService:
                 out.setdefault(str(r["headline_id"]), str(r["id"]))
         return out
 
+    def _estruturas_por_headline(self, headline_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """``{headline_id: EstruturaUso[]}`` from ``cs_estrutura_usos`` (``blocos`` is empty for headlines): three
+        batched reads, never one per row."""
+        usos: list[dict[str, Any]] = []
+        for chunk in batched(headline_ids):
+            usos += (
+                self.db.table(USOS).select("estrutura_id,headline_id,papel,ordem")
+                .eq("org_id", self.org_id).in_("headline_id", chunk).order("ordem").execute().data or []
+            )
+        if not usos:
+            return {}
+        estruturas: dict[str, dict[str, Any]] = {}
+        for chunk in batched(sorted({str(u["estrutura_id"]) for u in usos})):
+            for e in self.db.table(er.ESTRUTURAS).select("id,codigo,perfil_id,formula_headline").in_("id", chunk).execute().data or []:
+                estruturas[str(e["id"])] = e
+        perfis: dict[str, dict[str, Any]] = {}
+        for chunk in batched(sorted({str(e["perfil_id"]) for e in estruturas.values() if e.get("perfil_id")})):
+            for p in self.db.table(er.PERFIS).select("id,handle,nome").in_("id", chunk).execute().data or []:
+                perfis[str(p["id"])] = p
+        out: dict[str, list[dict[str, Any]]] = {}
+        for u in usos:
+            e = estruturas.get(str(u["estrutura_id"]))
+            if e is None:
+                continue
+            p = perfis.get(str(e.get("perfil_id"))) or {}
+            out.setdefault(str(u["headline_id"]), []).append({
+                "id": str(e["id"]), "codigo": e["codigo"],
+                "perfil": {"id": str(e.get("perfil_id")), "handle": p.get("handle") or "", "nome": p.get("nome")},
+                "formula_trecho": formula_trecho(e.get("formula_headline") or ""),
+                "papel": u["papel"], "blocos": [],
+            })
+        return out
+
     async def present_headlines(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cards = await self._viral_cards([str(r["viral_id"]) for r in rows if r.get("viral_id")])
         roteiros = self._roteiros_por_headline([str(r["id"]) for r in rows])
+        estruturas = self._estruturas_por_headline([str(r["id"]) for r in rows])
         posts = post_refs(self.db, self.org_id, "headline_id", [r["id"] for r in rows])
         return [
             {
@@ -152,6 +194,7 @@ class HeadlineService:
                 "lote_id": str(r["lote_id"]) if r.get("lote_id") else None,
                 "texto": r["texto"], "texto_original": r.get("texto_original"),
                 "angulo": r.get("angulo"), "viral": cards.get(str(r["viral_id"])) if r.get("viral_id") else None,
+                "estruturas": estruturas.get(str(r["id"]), []),
                 "template_metodo": r.get("template_metodo"), "itens_usados": r.get("itens_usados") or [],
                 "favorita": bool(r.get("favorita")), "modo": r.get("modo"),
                 "roteiro_id": roteiros.get(str(r["id"])), "post": posts.get(str(r["id"])),
@@ -171,6 +214,7 @@ class HeadlineService:
             "estruturas_com_erro": r.get("estruturas_com_erro") or 0,
             "aviso_poucas_estruturas": bool(r.get("aviso_poucas_estruturas")),
             "fallback_metodo": bool(r.get("fallback_metodo")), "erro": r.get("erro"),
+            "aviso_sem_classificacao": int((r.get("parametros") or {}).get("aviso_sem_classificacao") or 0),
             "resumo": resumo_do_lote(r["origem"], r.get("parametros") or {}),
             "created_at": r["created_at"], "finished_at": r.get("finished_at"),
         }
@@ -200,6 +244,7 @@ class HeadlineService:
                     }
                 if len(found) != len(wanted):
                     raise HeadlineError(422, "Item da pesquisa não encontrado")
+        self._assert_estrutura_ids(p.get("estrutura_ids"))
         ref = p.get("referencia")
         if ref:
             if ref["tipo"] == "perfil":
@@ -220,25 +265,71 @@ class HeadlineService:
             if len(found) != len(ids):
                 raise HeadlineError(404, "Assunto não encontrado")
         if origem == "biblioteca":
-            rows = (
-                self.db.table(pipe.VIRAIS).select("id,classificacao_status,blueprint")
-                .eq("org_id", self.org_id).eq("id", str(p["viral_id"])).execute().data
-            )
-            if not rows:
-                raise HeadlineError(404, "Viral não encontrado")
-            if rows[0].get("classificacao_status") != "concluida" or not (rows[0].get("blueprint") or "").strip():
-                raise HeadlineError(409, "Este viral ainda não tem estrutura — aguarde a classificação")
+            if p.get("estrutura_id"):
+                if not pipe.carregar_linhas(self.db, estrutura_ids=[str(p["estrutura_id"])]):
+                    raise HeadlineError(404, {"code": "estrutura_nao_encontrada", "detail": "Estrutura não encontrada."})
+            else:
+                if not self.db.table(pipe.VIRAIS).select("id").eq("id", str(p["viral_id"])).execute().data:
+                    raise HeadlineError(404, "Viral não encontrado")
+                if not pipe.estruturas_do_viral(self.db, str(p["viral_id"])):
+                    raise HeadlineError(422, {"code": "viral_sem_estrutura", "detail": "Este vídeo ainda não tem estruturas."})
+
+    def _assert_estrutura_ids(self, ids: Optional[list[Any]]) -> None:
+        """``estrutura_ids`` must all be ``ativa`` Estruturas of the library (422 ``estrutura_obrigatoria_invalida``)."""
+        if not ids:
+            return
+        pedidos = sorted({str(i) for i in ids})
+        achadas = {str(r["id"]) for r in pipe.carregar_linhas(self.db, estrutura_ids=pedidos)}
+        if achadas != set(pedidos):
+            raise HeadlineError(422, {
+                "code": "estrutura_obrigatoria_invalida",
+                "detail": "Alguma estrutura escolhida não existe ou não está ativa.",
+                "invalidas": sorted(set(pedidos) - achadas),
+            })
 
     def _assert_perfis(self, perfil_ids: list[Any]) -> None:
+        """Library profiles are PLATFORM-wide (migration 351): no org filter."""
         ids = sorted({str(i) for i in perfil_ids})
         found = {
             str(r["id"]) for r in (
-                self.db.table("cs_perfis_monitorados").select("id")
-                .eq("org_id", self.org_id).in_("id", ids).execute().data or []
+                self.db.table(er.PERFIS).select("id").in_("id", ids).execute().data or []
             )
         }
         if found != set(ids):
             raise HeadlineError(404, "Perfil não encontrado")
+
+    def _resolver_texto(self, origem: str, params: dict[str, Any]) -> None:
+        """Free text (``assunto`` / ``assunto_livre``) names a library profile (estruturas-contract 6.6 / 8.3): the
+        deterministic resolver runs ONLY when neither ``estrutura_ids`` nor ``referencia`` was given. Resolved
+        profiles narrow the pool (``perfis_resolvidos``); an ambiguous name is a 422 ``perfil_ambiguo`` with the
+        candidates (a form cannot ask); an unknown ``@handle`` / explicit "no estilo de ..." is a 422
+        ``perfil_nao_encontrado_na_biblioteca``. A generic "como o mercado funciona" is prose, not a profile name, so a
+        span after ``como o/a`` that matches nothing is ignored."""
+        params.pop("perfis_resolvidos", None)
+        if origem in ("biblioteca", "sugestao_auto") or params.get("estrutura_ids") or params.get("referencia"):
+            return
+        texto = " ".join(t for t in ((params.get("assunto") or ""), (params.get("assunto_livre") or "")) if t.strip())
+        if not texto.strip():
+            return
+        res = er.resolver_perfis_no_texto(texto, er.indice_de_perfis(self.db))
+        if res.ambiguos:
+            vistos: dict[str, dict[str, Any]] = {}
+            for a in res.ambiguos:
+                for c in a.candidatos:
+                    vistos.setdefault(c.id, c.como_candidato())
+            raise HeadlineError(422, {
+                "code": "perfil_ambiguo", "detail": "Mais de um perfil combina com o nome citado. Escolha qual perfil usar.",
+                "candidatos": list(vistos.values()),
+            })
+        explicito = bool(_GATILHO_DE_PERFIL_RE.search(er.normalizar(texto)))
+        nao_achados = [n for n in res.nao_encontrados if explicito or n.trecho.startswith("@")]
+        if nao_achados:
+            raise HeadlineError(422, {
+                "code": "perfil_nao_encontrado_na_biblioteca", "detail": "O perfil citado não está na biblioteca.",
+                "sugestoes": [c.como_candidato() for n in nao_achados for c in n.sugestoes],
+            })
+        if res.resolvidos:
+            params["perfis_resolvidos"] = [r.perfil_id for r in res.resolvidos]
 
     def _check_user_limits(self) -> None:
         if not self.user_id:
@@ -315,6 +406,7 @@ class HeadlineService:
         self.assert_marca(marca_id)
         self._assert_post(marca_id, post_id)
         self._validate_params(marca_id, params)
+        self._resolver_texto(params["origem"], params)
         perfil = self._perfil(marca_id)
         if not ((perfil or {}).get("bio") or "").strip():
             raise HeadlineError(422, "Preencha a bio em Meu Perfil antes de gerar headlines")
@@ -323,9 +415,10 @@ class HeadlineService:
 
     async def reprocessar(self, lote_id: str) -> dict[str, Any]:
         row = self._get_lote_row(lote_id)
-        params = dict(row.get("parametros") or {})
+        params = {k: v for k, v in (row.get("parametros") or {}).items() if k != "aviso_sem_classificacao"}
         if row["origem"] != "sugestao_auto":
             self._validate_params(str(row["marca_id"]), {**params, "origem": row["origem"]})
+            self._resolver_texto(row["origem"], params)
         perfil = self._perfil(str(row["marca_id"]))
         if not ((perfil or {}).get("bio") or "").strip():
             raise HeadlineError(422, "Preencha a bio em Meu Perfil antes de gerar headlines")
@@ -490,30 +583,21 @@ class HeadlineService:
     # ── structure count (the form's "compatible profiles") ──────────────
 
     def contagem_estruturas(self, marca_id: str, variaveis: list[str]) -> dict[str, Any]:
-        """``{compativeis, por_perfil}``: how many classified structures carry at least one of the
-        selected variables, per monitored profile, in the first non-empty pool tier."""
+        """``{compativeis, por_perfil}``: how many ``ativa`` Estruturas the form's pool holds (estruturas-contract 8.2:
+        the brand's selected profiles, else the whole library), per library profile. An Estrutura carries
+        ``[placeholders]`` filled from the bio and the brains, not research variables, so every pooled Estrutura is
+        compatible; ``variaveis`` is still validated (the form sends it)."""
         self.assert_marca(marca_id)
         bad = [v for v in variaveis if v != "*" and v not in VARIABLE_SLUGS]
         if bad:
             raise HeadlineError(422, f"Variável desconhecida: {bad[0]}")
-        wanted = set(VARIABLE_SLUGS) if "*" in variaveis else set(variaveis)
-        wanted.discard(pipe.GPT_SLOT)
-        candidatos = pipe.carregar_candidatos(self.db, self.org_id)
-        perfil = self._perfil(marca_id)
-        tier = pipe.pool_de_estruturas(
-            candidatos, pipe.referencias_da_marca(self.db, self.org_id, marca_id),
-            list((perfil or {}).get("nichos") or []),
-        )
+        linhas = pipe.carregar_linhas(self.db, perfil_ids=pipe.escopo_da_marca(self.db, self.org_id, marca_id))
         por_perfil: dict[str, int] = {}
-        total = 0
-        for c in tier:
-            if wanted & set(c.get("blueprint_slots") or ()):
-                total += 1
-                por_perfil[str(c["perfil_id"])] = por_perfil.get(str(c["perfil_id"]), 0) + 1
-        perfis = sorted({str(c["perfil_id"]) for c in tier})
+        for r in linhas:
+            por_perfil[str(r["perfil_id"])] = por_perfil.get(str(r["perfil_id"]), 0) + 1
         return {
-            "compativeis": total,
-            "por_perfil": [{"perfil_id": p, "n": por_perfil.get(p, 0)} for p in perfis],
+            "compativeis": len(linhas),
+            "por_perfil": [{"perfil_id": p, "n": n} for p, n in sorted(por_perfil.items())],
         }
 
     # ── daily suggestions (cron + "Gerar sugestões agora") ──────────────
@@ -527,27 +611,35 @@ class HeadlineService:
         )
         return any(r["status"] != "falha" for r in rows)
 
-    def escolher_virais_para_sugestao(self, marca_id: str, nichos: list[int], n: int) -> list[str]:
-        """The top ``n`` ``e_viral`` structures with a blueprint, ranked by ``score_viral``: first
-        the marca's Minha Biblioteca, then the org's virals whose niches overlap the marca's. Virals
-        this marca already used in the last 30 days are excluded."""
-        candidatos = [c for c in pipe.carregar_candidatos(self.db, self.org_id) if c.get("e_viral")]
+    def escolher_estruturas_para_sugestao(self, marca_id: str, nichos: list[int], n: int) -> list[str]:
+        """The top ``n`` ``ativa`` Estruturas whose source video is ``e_viral``, ranked by that video's ``score_viral``:
+        first the brand's selected profiles, then the whole library's niche overlap with the marca's. Estruturas this
+        marca already used in the last 30 days (``cs_estrutura_usos``) are excluded."""
         cutoff = _iso(_now() - timedelta(days=SUGESTAO_JANELA_DIAS))
-        usados = {
-            str(r["viral_id"]) for r in self.db.table(pipe.HEADLINES).select("viral_id")
-            .eq("org_id", self.org_id).eq("marca_id", marca_id).gte("created_at", cutoff).execute().data or []
-            if r.get("viral_id")
+        usadas = {
+            str(r["estrutura_id"]) for r in iter_paged_rows(
+                lambda a, b: self.db.table(USOS).select("id,estrutura_id")
+                .eq("org_id", self.org_id).eq("marca_id", marca_id).gte("created_at", cutoff)
+                .order("id").range(a, b).execute().data,
+                page_size=PAGE_SIZE, label="cs_estrutura_usos (últimos 30 dias)",
+            )
         }
-        livres = [c for c in candidatos if str(c["id"]) not in usados]
-        refs = pipe.referencias_da_marca(self.db, self.org_id, marca_id)
-        t1 = pipe.pool_da_biblioteca(livres, refs)
+        linhas = [r for r in pipe.carregar_linhas(self.db) if str(r["id"]) not in usadas and r.get("viral_id")]
+        virais = pipe.carregar_virais_fonte(self.db, (r["viral_id"] for r in linhas))
+        candidatas = [
+            (r, virais[str(r["viral_id"])]) for r in linhas
+            if str(r["viral_id"]) in virais and virais[str(r["viral_id"])].get("e_viral")
+            and virais[str(r["viral_id"])].get("classificacao_status") == "concluida"
+        ]
+        escopo = pipe.escopo_da_marca(self.db, self.org_id, marca_id) or set()
         nich = set(nichos or [])
-        t2 = [c for c in livres if nich & set(c.get("nicho_ids") or [])]
+        t1 = [c for c in candidatas if str(c[0]["perfil_id"]) in escopo]
+        t2 = [c for c in candidatas if nich & set(c[1].get("nicho_ids") or [])]
         out: list[str] = []
         for tier in (t1, t2):
-            for c in sorted(tier, key=pipe.rank_score):
-                if str(c["id"]) not in out:
-                    out.append(str(c["id"]))
+            for r, _v in sorted(tier, key=lambda c: (pipe.rank_score(c[1]), str(c[0]["id"]))):
+                if str(r["id"]) not in out:
+                    out.append(str(r["id"]))
                 if len(out) >= n:
                     return out
         return out
@@ -560,14 +652,14 @@ class HeadlineService:
             raise HeadlineError(422, "Preencha a bio e escolha ao menos um nicho em Meu Perfil")
         if self._sugestao_de_hoje(marca_id):
             raise HeadlineError(429, "As sugestões de hoje já foram geradas", retry_after=RETRY_AFTER_SECONDS)
-        ids = self.escolher_virais_para_sugestao(
+        ids = self.escolher_estruturas_para_sugestao(
             marca_id, list(perfil["nichos"]), int(self.cfg.headlines_sugeridas_por_dia_marca),
         )
         if not ids:
             raise HeadlineError(409, "Ainda não há estruturas virais classificadas para sugerir")
         return await self._insert_and_enqueue(
             marca_id, "sugestao_auto",
-            {"origem": "sugestao_auto", "marca_id": marca_id, "viral_ids": ids, "criatividade": "equilibrado"},
+            {"origem": "sugestao_auto", "marca_id": marca_id, "estrutura_ids": ids, "criatividade": "equilibrado"},
         )
 
 

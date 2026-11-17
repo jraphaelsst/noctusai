@@ -15,11 +15,13 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.f
 
 const m = vi.hoisted(() => ({
   perfis: vi.fn(),
+  pagina: vi.fn(),
   refs: vi.fn(),
   verificar: vi.fn(),
   contas: vi.fn(),
   solicitar: vi.fn(),
   removerRef: vi.fn(),
+  sincronizar: vi.fn(),
   criar: vi.fn(),
   admin: vi.fn(),
   optouts: vi.fn(),
@@ -31,13 +33,15 @@ vi.mock("@/hooks/useMarcas", () => ({
   useMarcas: () => ({ data: [{ id: "m1", name: "Marca 1" }], isPending: false }),
 }));
 vi.mock("@/hooks/geracao/useBiblioteca", () => ({
+  PERFIS_POR_PAGINA: 30,
   usePerfisMonitorados: () => m.perfis(),
+  usePerfisBiblioteca: () => m.pagina(),
   useReferencias: () => m.refs(),
   useVerificarPerfil: (h: string) => m.verificar(h),
   useContasDescoberta: () => m.contas(),
   useSolicitarPerfil: () => ({ mutateAsync: m.solicitar, isPending: false }),
   useCriarReferencias: () => ({ mutateAsync: m.criar, isPending: false }),
-  useSincronizarPerfil: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSincronizarPerfil: () => ({ mutateAsync: m.sincronizar, isPending: false }),
   useAtualizarPerfil: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useRemoverPerfil: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useRemoverReferencia: () => ({ mutateAsync: m.removerRef, isPending: false }),
@@ -78,6 +82,7 @@ async function abrirSolicitar() {
 beforeEach(() => {
   vi.clearAllMocks();
   m.perfis.mockReturnValue(ok([perfil()]));
+  m.pagina.mockReturnValue(ok({ items: [perfil()], total: 1 }));
   m.refs.mockReturnValue(
     ok([
       {
@@ -107,13 +112,16 @@ beforeEach(() => {
 
 describe("Minha Biblioteca", () => {
   it("says monitoring is not activated when ingestion is off", () => {
+    m.admin.mockReturnValue({ data: true });
     renderPage();
     expect(rtl.screen.getByText(/Monitoramento ainda não ativado/)).toBeTruthy();
     expect(rtl.screen.getAllByText("Aguardando").length).toBeGreaterThan(0);
   });
 
   it("no banner once ingestion is active", () => {
-    m.perfis.mockReturnValue(ok([perfil({ status: "ativo", ultima_sync_em: "2026-10-01T00:00:00Z", virais: 5, ingestao_ativa: true })]));
+    const ativo = perfil({ status: "ativo", ultima_sync_em: "2026-10-01T00:00:00Z", virais: 5, ingestao_ativa: true });
+    m.perfis.mockReturnValue(ok([ativo]));
+    m.pagina.mockReturnValue(ok({ items: [ativo], total: 1 }));
     renderPage();
     expect(rtl.screen.queryByText(/Monitoramento ainda não ativado/)).toBeNull();
   });
@@ -141,14 +149,75 @@ describe("Minha Biblioteca", () => {
   });
 });
 
+describe("Perfis da biblioteca (platform-wide, admin-only writes)", () => {
+  it("a member's profile has no status/monitorar/ultima_sync_em keys: no status badge, no stale-date column", () => {
+    const { status: _s, erro_mensagem: _e, ultima_sync_em: _u, ...semAdmin } = perfil();
+    m.pagina.mockReturnValue(ok({ items: [semAdmin], total: 1 }));
+    renderPage();
+    const tabela = rtl.screen.getByText("Perfis da biblioteca", { selector: "h2" }).closest("section")!;
+    expect(rtl.within(tabela).getByText("@fulano")).toBeTruthy();
+    expect(rtl.within(tabela).queryByText("Aguardando")).toBeNull();
+    expect(rtl.within(tabela).queryByText("Pausado")).toBeNull();
+    expect(rtl.within(tabela).queryByRole("columnheader", { name: "Status" })).toBeNull();
+    expect(rtl.within(tabela).queryByRole("columnheader", { name: "Última atualização" })).toBeNull();
+  });
+
+  it("a member sees the profiles but none of the write controls", () => {
+    renderPage();
+    const tabela = rtl.screen.getByText("Perfis da biblioteca", { selector: "h2" }).closest("section")!;
+    expect(rtl.within(tabela).getByText("@fulano")).toBeTruthy();
+    expect(rtl.within(tabela).queryByRole("button", { name: "Atualizar agora" })).toBeNull();
+    expect(rtl.within(tabela).queryByRole("button", { name: "Pausar" })).toBeNull();
+    expect(rtl.within(tabela).queryByRole("button", { name: "Remover" })).toBeNull();
+  });
+
+  it("an admin gets them", () => {
+    m.admin.mockReturnValue({ data: true });
+    renderPage();
+    const tabela = rtl.screen.getByText("Perfis da biblioteca", { selector: "h2" }).closest("section")!;
+    expect(rtl.within(tabela).getByRole("button", { name: "Atualizar agora" })).toBeTruthy();
+    expect(rtl.within(tabela).getByRole("button", { name: "Remover" })).toBeTruthy();
+  });
+
+  it("pages the library: shows the range and total, Próxima is off on the last page", () => {
+    m.pagina.mockReturnValue(ok({ items: [perfil()], total: 1 }));
+    renderPage();
+    expect(rtl.screen.getByTestId("perfis-pagina").textContent).toBe("1–1 de 1");
+    expect((rtl.screen.getByRole("button", { name: "Próxima" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((rtl.screen.getByRole("button", { name: "Anterior" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("a coded 403 on an admin-only write is said out loud", async () => {
+    // A member who somehow triggers the write (stale is_admin) still gets the sentence, never silence.
+    m.admin.mockReturnValue({ data: true });
+    m.sincronizar.mockRejectedValue(Object.assign(new Error("[403] x"), { status: 403 }));
+    renderPage();
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Atualizar agora" }));
+    const { toast } = await import("sonner");
+    await rtl.waitFor(() => expect((toast.error as any).mock.calls.flat().join(" ")).toContain("Somente administradores"));
+  });
+});
+
+describe("Solicitar Perfil (platform admin only)", () => {
+  it("a member cannot add profiles: sees the notice, no form, no request", async () => {
+    renderPage();
+    await abrirSolicitar();
+    expect(rtl.screen.getByTestId("perfil-somente-admin").textContent).toContain("somente administradores adicionam perfis");
+    expect(rtl.screen.queryByLabelText(/Perfil do Instagram/)).toBeNull();
+    expect(m.solicitar).not.toHaveBeenCalled();
+  });
+});
+
 describe("Solicitar Perfil live check", () => {
+  beforeEach(() => m.admin.mockReturnValue({ data: true }));
+
   it("rejects a post link without calling the check", async () => {
     renderPage();
     await abrirSolicitar();
     await userEvent.type(rtl.screen.getByLabelText(/Perfil do Instagram/), "https://instagram.com/reel/abc/");
     expect(await rtl.screen.findByText(/não o link de um post/)).toBeTruthy();
     expect(m.verificar).not.toHaveBeenCalledWith("abc");
-    expect((rtl.screen.getByRole("button", { name: "Enviar" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((rtl.screen.getByRole("button", { name: "Adicionar perfil" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it.each([
@@ -161,10 +230,10 @@ describe("Solicitar Perfil live check", () => {
     await abrirSolicitar();
     await userEvent.type(rtl.screen.getByLabelText(/Perfil do Instagram/), "@novo");
     expect(await rtl.screen.findByText(texto)).toBeTruthy();
-    expect((rtl.screen.getByRole("button", { name: "Enviar" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((rtl.screen.getByRole("button", { name: "Adicionar perfil" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("valid username enables Enviar and posts the normalized handle", async () => {
+  it("valid username enables Adicionar perfil and posts the normalized handle (no marca_id: the library is platform-wide)", async () => {
     m.verificar.mockImplementation((h: string) => ({
       data: h ? { status: "disponivel" } : undefined,
       isFetching: false,
@@ -174,9 +243,9 @@ describe("Solicitar Perfil live check", () => {
     await abrirSolicitar();
     await userEvent.type(rtl.screen.getByLabelText(/Perfil do Instagram/), "@Novo.Perfil");
     expect(await rtl.screen.findByText("✓ Username válido")).toBeTruthy();
-    await userEvent.click(rtl.screen.getByRole("button", { name: "Enviar" }));
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Adicionar perfil" }));
     await rtl.waitFor(() =>
-      expect(m.solicitar).toHaveBeenCalledWith({ marca_id: "m1", handle: "novo.perfil" }),
+      expect(m.solicitar).toHaveBeenCalledWith({ handle: "novo.perfil" }),
     );
   });
 
@@ -194,7 +263,9 @@ describe("Solicitar Perfil live check", () => {
 });
 
 describe("Opt-out (LGPD)", () => {
+  const comoAdmin = () => m.admin.mockReturnValue({ data: true });
   it("names the opt-out e-mail in the transparency note (default when no profile yet)", async () => {
+    comoAdmin();
     renderPage();
     await abrirSolicitar();
     const nota = rtl.screen.getByTestId("nota-transparencia").textContent ?? "";
@@ -204,6 +275,7 @@ describe("Opt-out (LGPD)", () => {
 
   it("uses the configurable contact served by the profiles list", async () => {
     m.perfis.mockReturnValue(ok([perfil({ optout_contato: "privacidade@exemplo.com" })]));
+    comoAdmin();
     renderPage();
     await abrirSolicitar();
     const nota = rtl.screen.getByTestId("nota-transparencia").textContent ?? "";
@@ -217,6 +289,7 @@ describe("Opt-out (LGPD)", () => {
       isError: !!h,
       error: h ? Object.assign(new Error("[422] x"), { code: "perfil_optout" }) : null,
     }));
+    comoAdmin();
     renderPage();
     await abrirSolicitar();
     await userEvent.type(rtl.screen.getByLabelText(/Perfil do Instagram/), "@pediu");
@@ -232,6 +305,7 @@ describe("Opt-out (LGPD)", () => {
       isError: true,
       error: Object.assign(new Error("[422] x"), { code: "perfil_optout" }),
     });
+    comoAdmin();
     renderPage();
     await abrirSolicitar();
     const campo = rtl.screen.getByLabelText(/Perfil do Instagram/);
@@ -246,11 +320,12 @@ describe("Opt-out (LGPD)", () => {
   it("perfil_optout on submit shows the inline message", async () => {
     m.verificar.mockImplementation((h: string) => ({ data: h ? { status: "disponivel" } : undefined, isFetching: false, isError: false }));
     m.solicitar.mockRejectedValue(Object.assign(new Error("[422] x"), { code: "perfil_optout" }));
+    comoAdmin();
     renderPage();
     await abrirSolicitar();
     await userEvent.type(rtl.screen.getByLabelText(/Perfil do Instagram/), "@pediu");
     await rtl.screen.findByText("✓ Username válido");
-    await userEvent.click(rtl.screen.getByRole("button", { name: "Enviar" }));
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Adicionar perfil" }));
     expect(await rtl.screen.findByText("Este perfil pediu para não ser monitorado.")).toBeTruthy();
   });
 

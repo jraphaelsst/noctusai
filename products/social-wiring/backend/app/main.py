@@ -603,6 +603,12 @@ _MAX_BODY_PATH_OVERRIDES = {
     # (`TranscriptionLimits.max_bytes`, enforced by the route's stream cut -> 413
     # `arquivo_grande`); this outer bound adds 512 KB of multipart framing. Both
     # modules mirror their entries in their own `MAX_BODY_PATH_OVERRIDES`.
+    # Estruturas import (POST /api/media-creation/estruturas/importacoes -- `media_creation.routers.estruturas_importacao`,
+    # EST-3). A platform-admin-only route that takes the parsed JSON document as the body: the reference file is ~2.9 MB
+    # and the corpus grows, so the default 1 MB would silently cap it (contract 6.3). Declared up front by EST-1
+    # (collision class C3) so the router slice only registers the route. Not a multipart upload: the boot-time
+    # `UploadFile` derivation does not need it, `tests/test_max_body_path_overrides.py` pins it.
+    "/api/media-creation/estruturas/importacoes": 16 * 1024 * 1024,  # 16 MiB
     "/api/transcricoes": 15 * 1024 * 1024 + 512 * 1024,
     "/api/media-creation/cerebro/brains/*/answers/*/audio": 15 * 1024 * 1024 + 512 * 1024,
     # Chatbot platform-chat file staging (POST /api/chat/upload-file —

@@ -25,6 +25,6 @@ describe("privacy policy: Biblioteca de virais (Social Wiring)", () => {
   });
 
   it("bumps the displayed policy version", () => {
-    expect(CONSENT_META.version).toBe("1.1");
+    expect(CONSENT_META.version).toBe("1.3");
   });
 });

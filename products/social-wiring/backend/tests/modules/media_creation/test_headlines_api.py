@@ -66,18 +66,39 @@ def _hls(hc):
     return hc.mock_supabase.from_("cs_headlines").select("*").execute().data
 
 
-def _viral(hc, *, status="concluida", blueprint="BP", perfil=None, score=5.0, e_viral=True, **extra):
+ESTRUTURA_DO_VIDEO: dict[str, str] = {}
+
+
+def _estrutura(hc, perfil, *, viral=None, formula="BP", status="ativa", codigo=None):
+    eid = str(uuid.uuid4())
+    hc.mock_supabase.from_("cs_estruturas").insert({
+        "id": eid, "codigo": codigo or len(hc.mock_supabase.from_("cs_estruturas").select("id").execute().data) + 1,
+        "perfil_id": perfil, "viral_id": viral, "formula_headline": formula, "formato": "reels",
+        "objetivos": ["autoridade"], "status": status,
+    }).execute()
+    return eid
+
+
+def _perfil(hc, handle="perfil_x", nome=None, pid=None):
+    pid = pid or str(uuid.uuid4())
+    hc.mock_supabase.from_("cs_perfis_monitorados").insert({"id": pid, "handle": handle, "nome": nome}).execute()
+    return pid
+
+
+def _viral(hc, *, status="concluida", blueprint="BP", perfil=None, score=5.0, e_viral=True, com_estrutura=True, **extra):
+    """A source video of the PLATFORM library (no ``org_id``) and, by default, its ``ativa`` Estrutura."""
     vid = str(uuid.uuid4())
     perfil = perfil or str(uuid.uuid4())
-    hc.mock_supabase.from_("cs_perfis_monitorados").insert(
-        {"id": perfil, "org_id": ORG, "handle": "perfil_x"}
-    ).execute() if not hc.mock_supabase.from_("cs_perfis_monitorados").select("id").eq("id", perfil).execute().data else None
+    if not hc.mock_supabase.from_("cs_perfis_monitorados").select("id").eq("id", perfil).execute().data:
+        _perfil(hc, pid=perfil)
     hc.mock_supabase.from_("cs_virais").insert({
-        "id": vid, "org_id": ORG, "perfil_id": perfil, "codigo": len(hc.mock_supabase.from_("cs_virais").select("id").execute().data) + 1,
+        "id": vid, "perfil_id": perfil, "codigo": len(hc.mock_supabase.from_("cs_virais").select("id").execute().data) + 1,
         "classificacao_status": status, "blueprint": blueprint, "blueprint_slots": [DORES], "nicho_ids": [3],
         "formato_ids": [], "score_viral": score, "e_viral": e_viral, "permalink": "https://ig/p/x",
         "publicado_em": (NOW - timedelta(days=3)).isoformat(), "views": None, "likes": 10, "comments": 5, **extra,
     }).execute()
+    if com_estrutura:
+        ESTRUTURA_DO_VIDEO[vid] = _estrutura(hc, perfil, viral=vid, formula=blueprint or "BP")
     return vid, perfil
 
 
@@ -114,11 +135,11 @@ def _create(hc, body=None):
 
 LOTE_KEYS = {
     "id", "marca_id", "origem", "status", "etapa", "estruturas_total", "estruturas_processadas",
-    "estruturas_com_erro", "aviso_poucas_estruturas", "fallback_metodo", "erro", "resumo", "created_at",
-    "finished_at",
+    "estruturas_com_erro", "aviso_poucas_estruturas", "fallback_metodo", "aviso_sem_classificacao", "erro", "resumo",
+    "created_at", "finished_at",
 }
 HEADLINE_KEYS = {
-    "id", "marca_id", "lote_id", "texto", "texto_original", "angulo", "viral", "template_metodo",
+    "id", "marca_id", "lote_id", "texto", "texto_original", "angulo", "viral", "estruturas", "template_metodo",
     "itens_usados", "favorita", "modo", "roteiro_id", "post", "created_at",
     "acima_recomendado", "recomendado_max_texto",
 }
@@ -214,7 +235,10 @@ class TestCreateLote:
         {"marca_id": MARCA, "origem": "form_me", "variaveis": ["*"], "extra": 1},
         {"marca_id": MARCA, "origem": "form_me", "variaveis": ["*"], "assunto": "x" * 301},
         {"marca_id": MARCA, "origem": "form_me", "variaveis": ["*"], "referencia": {"tipo": "perfil", "perfil_ids": []}},
-        {"marca_id": MARCA, "origem": "biblioteca"},
+        {"marca_id": MARCA, "origem": "biblioteca"},  # exactly one of viral_id | estrutura_id
+        {"marca_id": MARCA, "origem": "biblioteca", "viral_id": str(uuid.uuid4()), "estrutura_id": str(uuid.uuid4())},
+        {"marca_id": MARCA, "origem": "form_me", "variaveis": ["*"], "estrutura_ids": []},
+        {"marca_id": MARCA, "origem": "form_me", "variaveis": ["*"], "estrutura_ids": [str(uuid.uuid4()) for _ in range(13)]},
     ])
     def test_invalid_bodies_are_422(self, hc, body):
         assert _create(hc, body).status_code == 422
@@ -251,12 +275,86 @@ class TestCreateLote:
         assert _create(hc, _form(referencia={"tipo": "perfil", "perfil_ids": [str(uuid.uuid4())]})).status_code == 404
         assert _create(hc, _form(referencia={"tipo": "formato", "formato_ids": [99999]})).status_code == 422
 
-    def test_biblioteca_viral_without_structure_is_409_unknown_or_foreign_404(self, hc):
-        pend, _ = _viral(hc, status="pendente", blueprint=None)
-        r = _create(hc, {"marca_id": MARCA, "origem": "biblioteca", "viral_id": pend})
-        assert r.status_code == 409 and "ainda não tem estrutura" in r.json()["error"]["message"]
+    def test_biblioteca_viral_without_estrutura_is_a_coded_422_unknown_viral_404(self, hc):
+        vazio, _ = _viral(hc, status="pendente", blueprint=None, com_estrutura=False)
+        r = _create(hc, {"marca_id": MARCA, "origem": "biblioteca", "viral_id": vazio})
+        assert r.status_code == 422
+        assert r.json() == {"code": "viral_sem_estrutura", "detail": "Este vídeo ainda não tem estruturas."}
         assert _create(hc, {"marca_id": MARCA, "origem": "biblioteca", "viral_id": str(uuid.uuid4())}).status_code == 404
+        assert _lotes(hc) == []
 
+    def test_biblioteca_viral_id_or_estrutura_id_is_accepted_and_a_bad_estrutura_is_404(self, hc):
+        vid, perfil = _viral(hc)
+        assert _create(hc, {"marca_id": MARCA, "origem": "biblioteca", "estrutura_id": ESTRUTURA_DO_VIDEO[vid]}).status_code == 202
+        arq = _estrutura(hc, perfil, status="arquivada")
+        r = _create(hc, {"marca_id": MARCA, "origem": "biblioteca", "estrutura_id": arq})
+        assert r.status_code == 404 and r.json()["code"] == "estrutura_nao_encontrada"
+
+    def test_estrutura_ids_must_be_ativa_estruturas_422_estrutura_obrigatoria_invalida(self, hc):
+        vid, perfil = _viral(hc)
+        arq = _estrutura(hc, perfil, status="arquivada")
+        ghost = str(uuid.uuid4())
+        r = _create(hc, _form(estrutura_ids=[ESTRUTURA_DO_VIDEO[vid], arq, ghost]))
+        assert r.status_code == 422 and r.json()["code"] == "estrutura_obrigatoria_invalida"
+        assert sorted(r.json()["invalidas"]) == sorted([arq, ghost]) and _lotes(hc) == []
+        ok = _create(hc, {"marca_id": MARCA, "origem": "form_viral", "assunto_livre": "x", "estrutura_ids": [ESTRUTURA_DO_VIDEO[vid]]})
+        assert ok.status_code == 202
+        assert _lotes(hc)[0]["parametros"]["estrutura_ids"] == [ESTRUTURA_DO_VIDEO[vid]]
+
+
+class TestFreeTextProfileResolution:
+    @pytest.fixture
+    def perfis(self, hc):
+        return {
+            "segredo": _perfil(hc, "psifernandosegredo", "Fernando Segredo"),
+            "fa": _perfil(hc, "fernando.alves", "Fernando Alves"),
+            "fb": _perfil(hc, "fernando.bastos", "Fernando Bastos"),
+        }
+
+    def test_a_resolved_name_narrows_the_pool_like_a_profile_reference(self, hc, perfis):
+        r = _create(hc, _form(assunto="um post no estilo do Fernando Segredo"))
+        assert r.status_code == 202, r.text
+        assert _lotes(hc)[0]["parametros"]["perfis_resolvidos"] == [perfis["segredo"]]
+
+    def test_an_ambiguous_name_is_a_coded_422_with_candidates(self, hc, perfis):
+        r = _create(hc, {"marca_id": MARCA, "origem": "form_viral", "assunto_livre": "no estilo do Fernando"})
+        assert r.status_code == 422 and r.json()["code"] == "perfil_ambiguo"
+        handles = {c["handle"] for c in r.json()["candidatos"]}
+        assert {"fernando.alves", "fernando.bastos"} <= handles
+        assert _lotes(hc) == [] and hc.jobs._jobs == {}
+
+    def test_an_unknown_name_after_a_profile_trigger_is_a_coded_422(self, hc, perfis):
+        r = _create(hc, _form(assunto="no estilo do Joao"))
+        assert r.status_code == 422 and r.json()["code"] == "perfil_nao_encontrado_na_biblioteca"
+        r = _create(hc, _form(assunto="inspirado em @naoexiste"))
+        assert r.status_code == 422 and r.json()["code"] == "perfil_nao_encontrado_na_biblioteca"
+
+    def test_ordinary_prose_with_como_o_is_not_a_profile_name(self, hc, perfis):
+        r = _create(hc, _form(assunto="como o mercado imobiliário reage aos juros"))
+        assert r.status_code == 202, r.text
+        assert "perfis_resolvidos" not in _lotes(hc)[0]["parametros"]
+
+    def test_explicit_estrutura_ids_or_referencia_win_over_the_text(self, hc, perfis):
+        vid, _ = _viral(hc)
+        r = _create(hc, _form(assunto="no estilo do Fernando", estrutura_ids=[ESTRUTURA_DO_VIDEO[vid]]))
+        assert r.status_code == 202, r.text
+        for row in _lotes(hc):
+            hc.mock_supabase.from_("cs_headline_lotes").update({"status": "completo"}).eq("id", row["id"]).execute()
+        r = _create(hc, _form(assunto="no estilo do Fernando", referencia={"tipo": "perfil", "perfil_ids": [perfis["fa"]]}))
+        assert r.status_code == 202, r.text
+
+    def test_reprocess_resolves_again_and_never_carries_the_old_aviso(self, hc, perfis):
+        lid = _lote_row(hc, params={
+            "origem": "form_me", "marca_id": MARCA, "variaveis": [DORES], "assunto": "estilo da Fernando Segredo",
+            "aviso_sem_classificacao": 4, "perfis_resolvidos": ["antigo"],
+        })
+        r = hc.post(f"{BASE}/lotes/{lid}/reprocessar")
+        assert r.status_code == 202, r.text
+        novo = [row for row in _lotes(hc) if row["id"] != lid][0]["parametros"]
+        assert "aviso_sem_classificacao" not in novo and novo["perfis_resolvidos"] == [perfis["segredo"]]
+
+
+class TestCreateLoteMore:
     def test_unknown_viral_topic_is_404(self, hc):
         r = _create(hc, {"marca_id": MARCA, "origem": "form_viral", "assunto_ids": [str(uuid.uuid4())]})
         assert r.status_code == 404
@@ -356,6 +454,30 @@ class TestLotes:
         assert h["viral"]["perfil"] == {"id": perfil, "handle": "perfil_x"} and h["viral"]["trecho"] == "Um gancho forte"
         assert h["viral"]["thumbnail_url"].startswith("fake://storage/sw-biblioteca/t/1.jpg")
         assert h["viral"]["views"] is None and h["viral"]["e_viral"] is True
+
+    def test_a_headline_carries_the_estruturas_it_was_generated_from(self, hc):
+        vid, perfil = _viral(hc, blueprint="Como [autoridade teórica] resolve [dor]")
+        hc.mock_supabase.from_("cs_perfis_monitorados").update({"handle": "psi.x", "nome": "Psi X"}).eq("id", perfil).execute()
+        lid = _lote_row(hc)
+        hid = _hl(hc, lote=lid, viral=vid)
+        solta = _hl(hc, lote=lid)
+        hc.mock_supabase.from_("cs_estrutura_usos").insert({
+            "id": str(uuid.uuid4()), "org_id": ORG, "marca_id": MARCA, "estrutura_id": ESTRUTURA_DO_VIDEO[vid],
+            "contexto": "lote_headlines", "papel": "principal", "ordem": 1, "headline_id": hid,
+        }).execute()
+        by_id = {h["id"]: h for h in hc.get(f"{BASE}/lotes/{lid}").json()["data"]["headlines"]}
+        assert by_id[hid]["estruturas"] == [{
+            "id": ESTRUTURA_DO_VIDEO[vid], "codigo": by_id[hid]["estruturas"][0]["codigo"],
+            "perfil": {"id": perfil, "handle": "psi.x", "nome": "Psi X"},
+            "formula_trecho": "Como [autoridade teórica] resolve [dor]", "papel": "principal", "blocos": [],
+        }]
+        assert by_id[solta]["estruturas"] == [] and by_id[hid]["viral"] is not None  # legacy `viral` stays
+
+    def test_lote_reports_aviso_sem_classificacao_from_its_run(self, hc):
+        lid = _lote_row(hc, params={"origem": "form_me", "marca_id": MARCA, "variaveis": ["*"], "aviso_sem_classificacao": 3})
+        assert hc.get(f"{BASE}/lotes/{lid}").json()["data"]["aviso_sem_classificacao"] == 3
+        sem = _lote_row(hc)
+        assert hc.get(f"{BASE}/lotes/{sem}").json()["data"]["aviso_sem_classificacao"] == 0
 
     def test_detail_flags_a_generated_headline_over_the_recommendation_without_dropping_it(self, hc):
         lid = _lote_row(hc)
@@ -523,14 +645,22 @@ class TestHeadlines:
 
 
 class TestContagem:
-    def test_counts_compatible_structures_per_profile(self, hc):
+    def test_counts_the_pooled_estruturas_per_profile(self, hc):
         _, p1 = _viral(hc)
         _viral(hc, perfil=p1)
         _, p2 = _viral(hc, blueprint="X")
+        _estrutura(hc, p2, status="rascunho")  # never counted
         d = hc.get(f"{BASE}/estruturas/contagem", params={"marca_id": MARCA, "variaveis": [DORES]}).json()["data"]
         assert d["compativeis"] == 3 and {x["perfil_id"]: x["n"] for x in d["por_perfil"]} == {p1: 2, p2: 1}
-        d = hc.get(f"{BASE}/estruturas/contagem", params={"marca_id": MARCA, "variaveis": ["MEDOS-DO-AVATAR"]}).json()["data"]
-        assert d["compativeis"] == 0 and {x["n"] for x in d["por_perfil"]} == {0}
+
+    def test_the_pool_is_the_brand_selection_when_there_is_one(self, hc):
+        _, p1 = _viral(hc)
+        _viral(hc)
+        hc.mock_supabase.from_("cs_biblioteca_referencias").insert({
+            "id": str(uuid.uuid4()), "org_id": ORG, "marca_id": MARCA, "modo": "perfil", "perfil_id": p1,
+        }).execute()
+        d = hc.get(f"{BASE}/estruturas/contagem", params={"marca_id": MARCA, "variaveis": ["*"]}).json()["data"]
+        assert d == {"compativeis": 1, "por_perfil": [{"perfil_id": p1, "n": 1}]}
 
     def test_wire_format_is_the_repeated_key(self, hc):
         """The FE sends ``variaveis=A&variaveis=B`` (``contagemParams``). The PHP-style
@@ -553,30 +683,46 @@ class TestGerarAgora:
     def _now(self, hc):
         return hc.post(f"{BASE}/sugestoes/gerar-agora", json={"marca_id": MARCA})
 
-    def test_202_creates_one_automatic_batch_with_the_top_virals(self, hc):
+    def test_202_creates_one_automatic_batch_with_the_top_estruturas(self, hc):
         best, _ = _viral(hc, score=90.0)
         mid, _ = _viral(hc, score=50.0)
         _viral(hc, score=99.0, e_viral=False)  # not viral -> never suggested
-        _viral(hc, score=98.0, status="pendente", blueprint=None)
+        _viral(hc, score=98.0, status="pendente", blueprint=None)  # source video not classified
+        _viral(hc, score=97.0, com_estrutura=False)  # a video with no Estrutura is not a structure
         r = self._now(hc)
         assert r.status_code == 202, r.text
         row = _lotes(hc)[0]
-        assert r.json()["data"]["origem"] == "sugestao_auto" and row["parametros"]["viral_ids"] == [best, mid]
+        assert r.json()["data"]["origem"] == "sugestao_auto"
+        assert row["parametros"]["estrutura_ids"] == [ESTRUTURA_DO_VIDEO[best], ESTRUTURA_DO_VIDEO[mid]]
         assert next(iter(hc.jobs._jobs.values())).payload == {"lote_id": row["id"]}
+
+    def test_the_brand_selected_profiles_come_before_the_niche_overlap(self, hc):
+        _, mine = _viral(hc, score=1.0)
+        other, _ = _viral(hc, score=99.0)
+        hc.mock_supabase.from_("cs_biblioteca_referencias").insert({
+            "id": str(uuid.uuid4()), "org_id": ORG, "marca_id": MARCA, "modo": "perfil", "perfil_id": mine,
+        }).execute()
+        self._now(hc)
+        ids = _lotes(hc)[0]["parametros"]["estrutura_ids"]
+        assert ids[1] == ESTRUTURA_DO_VIDEO[other] and ids[0] != ids[1]
 
     def test_capped_at_the_daily_structure_count(self, hc):
         _use_cfg(hc, headlines_sugeridas_por_dia_marca=2)
         for i in range(4):
             _viral(hc, score=float(i))
         self._now(hc)
-        assert len(_lotes(hc)[0]["parametros"]["viral_ids"]) == 2
+        assert len(_lotes(hc)[0]["parametros"]["estrutura_ids"]) == 2
 
-    def test_virals_used_in_the_last_30_days_are_excluded(self, hc):
+    def test_estruturas_used_in_the_last_30_days_are_excluded(self, hc):
         used, _ = _viral(hc, score=99.0)
         fresh, _ = _viral(hc, score=1.0)
-        _hl(hc, viral=used, age_min=60)
+        hc.mock_supabase.from_("cs_estrutura_usos").insert({
+            "id": str(uuid.uuid4()), "org_id": ORG, "marca_id": MARCA, "estrutura_id": ESTRUTURA_DO_VIDEO[used],
+            "contexto": "lote_headlines", "papel": "principal", "ordem": 1,
+            "created_at": (NOW - timedelta(days=3)).isoformat(),
+        }).execute()
         self._now(hc)
-        assert _lotes(hc)[0]["parametros"]["viral_ids"] == [fresh]
+        assert _lotes(hc)[0]["parametros"]["estrutura_ids"] == [ESTRUTURA_DO_VIDEO[fresh]]
 
     def test_once_per_marca_per_day_is_429_but_a_failed_one_does_not_count(self, hc):
         _viral(hc)

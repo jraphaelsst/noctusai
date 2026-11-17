@@ -220,7 +220,7 @@ export function HeadlineSecao({ post }: { post: PostDetalhe }) {
               Desvincular
             </Button>
             <Button size="sm" variant="link" asChild>
-              <Link to={`/media-creation/headlines/favoritas?hid=${encodeURIComponent(h.id)}`}>
+              <Link to={`/media-creation/chat/favoritas?hid=${encodeURIComponent(h.id)}`}>
                 Ver na biblioteca
               </Link>
             </Button>
