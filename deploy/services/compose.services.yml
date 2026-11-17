@@ -125,7 +125,7 @@ services:
     # semver label). A floating `latest` re-pulls a different WAHA on any
     # recreate. Bump deliberately: pull a tagged <engine>-<version>, verify,
     # replace this digest (KB INTEGRATIONS/whatsapp.md).
-    image: devlikeapro/waha@sha256:65e593e30bb702f891550b9da5d65e9e0eff8a926f5451fac6a582db84d3a323
+    image: devlikeapro/waha@sha256:2fc1787ddbd343ed2e7d59482846d1b22aa5ca134e29aa8d42d0e88c54e24779
     restart: unless-stopped
     networks:
       noctus-net:
