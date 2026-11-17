@@ -26917,6 +26917,28 @@ def check_waha_instances_render_sync(repo_root: Path | None = None) -> list[dict
                       "(every alias of a `send: disabled` line must be sticky in the seed) -- regenerate: "
                       "noctus.dev.waha_instance action='render' write=True. KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."),
             "severity": "high", "symbol": "waha-read-only-lines-drift"})
+    from .waha_instance import DECLARED_LINES_REL, product_line_policies_json, render_declared_lines
+    spec_now = parse_instances(data_p.read_text(encoding="utf-8"))
+    dl_p = root / DECLARED_LINES_REL
+    if not dl_p.is_file() or dl_p.read_text(encoding="utf-8") != render_declared_lines(spec_now):
+        policy_issues.append({
+            "file": DECLARED_LINES_REL,
+            "issue": ("the seed's declared-lines list (name -> base_url, env names, policy) is MISSING or DIFFERENT from the "
+                      "render of waha-instances.yml -- regenerate: noctus.dev.waha_instance action='render' write=True. "
+                      "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."),
+            "severity": "high", "symbol": "waha-declared-lines-drift"})
+    prod_p = root / "deploy" / "fleet" / "docker-compose.prod.yml"
+    if prod_p.is_file():
+        prod_text = prod_p.read_text(encoding="utf-8")
+        for product in sorted({i["product"] for i in spec_now["instances"] if i.get("external")}):
+            want_pol = product_line_policies_json(spec_now, product)
+            if f"WAHA_LINE_POLICIES: '{want_pol}'" not in prod_text:
+                policy_issues.append({
+                    "file": "deploy/fleet/docker-compose.prod.yml",
+                    "issue": (f"{product}'s WAHA_LINE_POLICIES is not the render of waha-instances.yml (expected {want_pol!r}) "
+                              "-- derive it, never hand-edit (noctus.dev.waha_instance action='plan' name=<line>). "
+                              "KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a."),
+                    "severity": "high", "symbol": "waha-line-policies-env-drift"})
     if have == want:
         return policy_issues
     return policy_issues + [{"file": "deploy/fleet/compose.waha.yml",
@@ -27762,6 +27784,41 @@ def check_findings_ledgers(repo_root: Path | None = None) -> list[dict]:
     from tools.noctus.dev import findings_ledger
 
     return findings_ledger.check_all(repo_root or REPO_ROOT)
+
+
+FIXED_ON_DEV_BASELINE_REL = "project-history/findings-ledgers/fixed-on-dev-baseline.json"
+
+
+def check_findings_fixed_on_dev(paths: list[Path] | None = None, repo_root: Path | None = None) -> list[dict]:
+    """Keeper: a findings-ledger row marked `fixed` must name a commit that IS on origin/dev (the write path
+    `findings_ledger._gate_fixed` guarantees it; this catches a hand-edited / legacy row). Ratchet: ids listed in
+    `FIXED_ON_DEV_BASELINE_REL` are tolerated and the list only shrinks -- a baselined id that is now fine is a
+    `stale baseline` finding (remove it). Unmeasurable (no origin/dev ref, shallow clone) never fails.
+    KB § PATTERNS/common/living-findings-ledgers.md."""
+    import json as _json
+
+    from tools.noctus.dev import findings_ledger
+
+    root = repo_root or REPO_ROOT
+    bl_path = root / FIXED_ON_DEV_BASELINE_REL
+    baseline: set[str] = set(_json.loads(bl_path.read_text(encoding="utf-8")).get("ids", [])) if bl_path.exists() else set()
+    issues: list[dict] = []
+    seen: set[str] = set()
+    for name in sorted(findings_ledger.ledgers()):
+        lt = findings_ledger.get(name)
+        for v in findings_ledger.fixed_off_dev(name, root):
+            seen.add(v["id"])
+            if v["id"] in baseline:
+                continue
+            issues.append({"file": lt.path, "line": 0, "severity": "high",
+                           "issue": f"[{name}] {v['id']} ({v['scope']} {v['target']}) is marked FIXED but {v['why']}"
+                                    + (f" ({v['sha'][:9]})" if v["sha"] else "")
+                                    + ". Re-file it with `noctus.dev.findings_ledger action=update new_status=fixed` "
+                                      "(an off-dev sha is written in-progress and flips when it lands); never edit the ledger by hand."})
+    for stale in sorted(baseline - seen):
+        issues.append({"file": FIXED_ON_DEV_BASELINE_REL, "line": 0, "severity": "high",
+                       "issue": f"stale baseline entry {stale}: that row is no longer an offender -- remove it (the ratchet only shrinks)."})
+    return issues
 
 
 def check_access_tier_ledger(repo_root: Path | None = None) -> list[dict]:

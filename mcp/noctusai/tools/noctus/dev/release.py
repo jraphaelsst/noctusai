@@ -115,6 +115,7 @@ _MIGRATION_PATH_RE = re.compile(r"^products/[^/]+/backend/migrations/")
 # pull will need a container rebuild — DRY, one source of truth.
 from tools.noctus.dev.deploy_pull import _rebuild_decision  # noqa: E402
 from tools.noctus.dev import release_steward as _steward  # noqa: E402
+from tools.noctus.dev.ci_full_green import full_runs, is_full_title  # noqa: E402
 from tools.noctus.dev import toolkit_freshness as _toolkit_freshness  # noqa: E402
 
 
@@ -315,6 +316,18 @@ def _run_ran_heavy(runner, run: dict[str, Any]) -> bool:
 
 
 def _qualifying_ci_verdict(git, runner, sha: str, workflow: str = _CI_WORKFLOW) -> dict[str, Any]:
+    """Wrapper: the probe below plus `exact_full_green` read off the SAME `gh run list` it already made
+    (owner, 2026-11-17: optimise GitHub calls), so the full-green gate never lists this sha a second time."""
+    seen: dict[str, Any] = {}
+    v = _qualifying_ci_verdict_probe(git, runner, sha, workflow, seen)
+    if "runs" in seen:
+        hit = next((r for r in full_runs(seen["runs"])
+                    if r.get("status") == "completed" and r.get("conclusion") == "success"), None)
+        v["exact_full_green"] = (hit.get("url") or "") if hit else None
+    return v
+
+
+def _qualifying_ci_verdict_probe(git, runner, sha: str, workflow: str, seen: dict[str, Any]) -> dict[str, Any]:
     """Is `sha`'s `workflow` run not just green, but a QUALIFYING green — one
     whose heavy jobs demonstrably ran, never a run that reads "success" only
     because every downstream job was gated off (`run_heavy=false`). A
@@ -332,7 +345,7 @@ def _qualifying_ci_verdict(git, runner, sha: str, workflow: str = _CI_WORKFLOW) 
     """
     rc, out, err = runner([
         "gh", "run", "list", "--workflow", workflow, "--commit", sha,
-        "--limit", "20", "--json", "status,conclusion,url,event,databaseId",
+        "--limit", "20", "--json", "status,conclusion,url,event,databaseId,displayTitle",
     ])
     if rc != 0:
         return {"qualifies": False, "verdict": "unavailable", "workflow": workflow,
@@ -342,6 +355,7 @@ def _qualifying_ci_verdict(git, runner, sha: str, workflow: str = _CI_WORKFLOW) 
     except json.JSONDecodeError as exc:
         return {"qualifies": False, "verdict": "unavailable", "workflow": workflow,
                 "detail": f"unparseable `gh run list` output: {exc}"}
+    seen["runs"] = runs
     if not runs:
         return {"qualifies": False, "verdict": "missing", "workflow": workflow,
                 "detail": f"no '{workflow}' run exists for {sha[:9]}"}
@@ -356,7 +370,10 @@ def _qualifying_ci_verdict(git, runner, sha: str, workflow: str = _CI_WORKFLOW) 
             return {"qualifies": False, "verdict": "red", "workflow": workflow,
                     "conclusion": concl, "url": run.get("url")}
         since_fix = _is_ancestor(git, _VERIFIED_BASE_FIX_SHA, sha)
-        is_dispatch = run.get("event") == "workflow_dispatch"
+        # 2026-11-17: a dispatch is only trustworthy as a heavy run when it was scope=full
+        # (the default `scope=changed` dispatch of a branch verdict / queue batch may have
+        # skipped every heavy job).
+        is_dispatch = run.get("event") == "workflow_dispatch" and is_full_title(run.get("displayTitle"))
         if since_fix or is_dispatch:
             reason = "since_verified_base_fix" if since_fix else "workflow_dispatch"
             qualifies = True
@@ -367,6 +384,83 @@ def _qualifying_ci_verdict(git, runner, sha: str, workflow: str = _CI_WORKFLOW) 
                 "conclusion": concl, "url": run.get("url"), "qualifying_reason": reason}
     return {"qualifies": False, "verdict": "missing", "workflow": workflow,
             "detail": f"every '{workflow}' run on {sha[:9]} was cancelled/skipped"}
+
+
+# ── full-green gate (2026-11-17, owner-approved) ──────────────────────────
+# Branch verdicts and merge-queue batches run test.yml SCOPED (`scope=changed`); the
+# whole suite runs every 6h on dev (schedule) or on demand (`scope=full`). So a bare
+# green no longer proves the suite: bless refuses a target that no `scope=full` run
+# covers. A run states its scope in its title ("[scope=full]"), so this is ONE
+# server-filtered `gh run list --json displayTitle` on the exact sha (+ ONE for the
+# scheduled runs on dev when the exact sha has none) - never a per-run/per-job loop.
+# KB § PATTERNS/architect/git-branch-model.md · PATTERNS/devops/merge-queue.md.
+_FULL_DISPATCH_HINT = (
+    f"dispatch one: `gh workflow run test.yml --ref <branch containing the sha> -f scope=full` "
+    "(or wait for the 6-hourly scheduled full run on dev), then re-run bless"
+)
+
+
+def _tree_of(git, sha: str) -> str | None:
+    rc, out, _e = git("rev-parse", f"{sha}^{{tree}}")
+    return out.strip() if rc == 0 and out.strip() else None
+
+
+def _full_run_covers(git, full_sha: str, sha: str) -> str | None:
+    """How a green FULL run on `full_sha` covers `sha`: same commit, same tree (a no-op/ledger-only
+    commit re-parented the same content), or `sha` descends from it and ships nothing executable
+    (docs-only, the one sanctioned exception). None = not covered."""
+    if full_sha == sha:
+        return "exact_sha"
+    t_full, t_sha = _tree_of(git, full_sha), _tree_of(git, sha)
+    if t_full and t_full == t_sha:
+        return "same_tree"
+    if _is_ancestor(git, full_sha, sha) and _is_docs_only(_changed_paths(git, full_sha, sha)):
+        return "docs_only_since_full_green"
+    return None
+
+
+def _gh_runs(runner, *args: str) -> tuple[list[dict[str, Any]] | None, str]:
+    rc, out, err = runner(["gh", "run", "list", *args, "--json", "displayTitle,headSha,event,url"])
+    if rc != 0:
+        return None, (err.strip() or out.strip())[:300]
+    try:
+        return list(json.loads(out or "[]")), ""
+    except json.JSONDecodeError as exc:
+        return None, f"unparseable `gh run list` output: {exc}"
+
+
+def _full_green_verdict(git, runner, sha: str, workflow: str = _CI_WORKFLOW,
+                        dev_branch: str = "dev", ci: dict[str, Any] | None = None) -> dict[str, Any]:
+    """`{covered, how, ...}`: is there a GREEN `scope=full` run for `sha`? Fail-closed (REFUSE-NOT-NULL):
+    an unreadable `gh` is `covered: False`, never a pass. `ci` = the `_qualifying_ci_verdict` result for
+    the same sha: when it carries `exact_full_green` the exact-sha lookup costs ZERO extra calls."""
+    if ci is not None and "exact_full_green" in ci:
+        if ci["exact_full_green"] is not None:
+            return {"covered": True, "how": "exact_sha", "full_sha": sha, "url": ci["exact_full_green"]}
+    else:
+        runs, err = _gh_runs(runner, "--workflow", workflow, "--commit", sha, "--status", "success", "--limit", "10")
+        if runs is None:
+            return {"covered": False, "verdict": "unavailable", "detail": err}
+        hit = next((r for r in full_runs(runs)), None)
+        if hit:
+            return {"covered": True, "how": "exact_sha", "full_sha": sha, "url": hit.get("url")}
+    sched, err = _gh_runs(runner, "--workflow", workflow, "--event", "schedule", "--branch", dev_branch,
+                          "--status", "success", "--limit", "5")
+    if sched is None:
+        return {"covered": False, "verdict": "unavailable", "detail": err}
+    for r in full_runs(sched):
+        how = _full_run_covers(git, r.get("headSha") or "", sha)
+        if how:
+            return {"covered": True, "how": how, "full_sha": r["headSha"], "url": r.get("url")}
+    return {"covered": False, "verdict": "no_full_green",
+            "detail": f"no green scope=full '{workflow}' run covers {sha[:9]}"}
+
+
+def _full_green_refusal(sha: str, fg: dict[str, Any]) -> str:
+    why = fg.get("detail") or fg.get("verdict") or "no full run"
+    return (f"refusing to bless {sha[:9]}: no GREEN scope=full '{_CI_WORKFLOW}' run covers it ({why}). "
+            f"Branch verdicts and queue batches run SCOPED now; the whole suite must be green before main. "
+            f"To get one, {_FULL_DISPATCH_HINT}.")
 
 
 def _newest_qualifying_green_descendant(git, runner, main: str, dev: str,
@@ -597,7 +691,13 @@ def _bless_release_branch(git, runner, base, manifest, remote, main, main_branch
         return {**base, "status": "blocked", "exit_code": 1, "ci": ci, "release_sha": rel,
                 "reason": f"CI is not green on the release sha {rel[:9]} "
                           f"(verdict={ci['verdict']}): {ci.get('detail') or ci.get('url') or ''}"}
-    plan = {**base, "release_branch": release_branch, "release_sha": rel, "ci": ci,
+    full_green: dict[str, Any] | None = None
+    if not docs_only:
+        full_green = _full_green_verdict(git, runner, rel, ci=ci)
+        if not full_green["covered"]:
+            return {**base, "status": "blocked", "exit_code": 1, "ci": ci, "release_sha": rel,
+                    "full_green": full_green, "reason": _full_green_refusal(rel, full_green)}
+    plan = {**base, "release_branch": release_branch, "release_sha": rel, "ci": ci, "full_green": full_green,
             "incoming_commits": _commits(git, main, rel),
             "would_advance": f"{main_branch} → {rel[:9]} ({release_branch})"}
     if not confirm:
@@ -853,6 +953,15 @@ def release(
                         f"`gh workflow run {_CI_WORKFLOW!r} --ref {dev_branch}` — this "
                         "tool never triggers that itself, only suggests it."
                     )}
+        # Full-green gate (2026-11-17): scoped verdicts no longer prove the whole suite. The docs-only
+        # exception ships nothing executable, so it needs no full run either.
+        full_green: dict[str, Any] | None = None
+        if ci_exception is None:
+            full_green = _full_green_verdict(git, runner, target_sha, ci=ci)
+            if not full_green["covered"]:
+                return {**base, "status": "blocked", "exit_code": 1, "ci": ci, "blessed_sha": None,
+                        "candidate_sha": target_sha, "full_green": full_green,
+                        "reason": _full_green_refusal(target_sha, full_green)}
         # skipped_tail: the newer, not-(yet)-verified commits left behind on
         # dev by this bless — with their project attribution, reusing the
         # SAME rider manifest already built above (never a second read).
@@ -921,7 +1030,7 @@ def release(
         )
         plan = {**base, "would_advance": f"{main_branch} → {target_sha[:9]}",
                 "blessed_sha": target_sha, "dev_tip": dev, "skipped_tail": skipped_tail,
-                "incoming_commits": incoming, "ci": ci,
+                "incoming_commits": incoming, "ci": ci, "full_green": full_green,
                 "riders": {"all_approved": man["all_approved"], "commits": len(man["commits"]),
                           "unapproved": man["unapproved_riders"]}}
         if ci_exception:

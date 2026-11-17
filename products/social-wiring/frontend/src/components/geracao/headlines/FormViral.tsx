@@ -17,7 +17,17 @@ import { useCriarLote, type LoteCreate } from "@/hooks/geracao/useHeadlines";
 import { useTaxonomias } from "@/hooks/geracao/useTaxonomias";
 import { useAssuntosVirais } from "@/hooks/useAssuntosVirais";
 import type { HeadlineLote } from "@/types/geracao";
-import { alternarEm, mensagemErro } from "./lote";
+import { CandidatosPerfil } from "@/components/geracao/estruturas/CandidatosPerfil";
+import { EstruturaPicker } from "@/components/geracao/estruturas/EstruturaPicker";
+import {
+  candidatosDoErro,
+  idsDaSelecao,
+  mensagemDoForm,
+  sugestoesDoErro,
+  type EstruturaEscolhida,
+} from "@/components/geracao/estruturas/selecao";
+import type { PerfilCandidato } from "@/types/estruturas";
+import { alternarEm } from "./lote";
 
 const ASSUNTO_MAX = 300;
 const ASSUNTOS_MAX = 5;
@@ -43,33 +53,53 @@ export function FormViral({ marcaId, bloqueado, postId, onCriado }: Props) {
   const [refTipo, setRefTipo] = useState<"" | "perfil" | "formato">("");
   const [perfilIds, setPerfilIds] = useState<string[]>([]);
   const [formatoIds, setFormatoIds] = useState<number[]>([]);
+  const [estruturas, setEstruturas] = useState<EstruturaEscolhida[]>([]);
+  const [candidatos, setCandidatos] = useState<{ tipo: "ambiguo" | "sugestao"; lista: PerfilCandidato[] } | null>(null);
 
   const livreLimpo = livre.trim();
   const temAssunto = assuntoIds.length > 0 || livreLimpo.length > 0;
   const podeGerar = !!marcaId && temAssunto && !criar.isPending && !bloqueado;
   const perfis = (perfisQ.data ?? []).filter((p) => p.status === "ativo" || p.virais > 0);
 
-  async function gerar() {
+  async function gerar(perfilEscolhido?: string) {
     if (!podeGerar || !marcaId) return;
+    setCandidatos(null);
     const body: LoteCreate = {
       marca_id: marcaId,
       origem: "form_viral",
       ...(assuntoIds.length ? { assunto_ids: assuntoIds } : {}),
       ...(livreLimpo ? { assunto_livre: livreLimpo } : {}),
       ...(tom != null ? { tom } : {}),
-      ...(refTipo === "perfil" && perfilIds.length
-        ? { referencia: { tipo: "perfil" as const, perfil_ids: perfilIds } }
-        : refTipo === "formato" && formatoIds.length
-          ? { referencia: { tipo: "formato" as const, formato_ids: formatoIds } }
-          : {}),
+      // Explicit Estruturas win over a referencia; a picked ambiguity candidate re-submits as `referencia: perfil`.
+      ...(perfilEscolhido
+        ? { referencia: { tipo: "perfil" as const, perfil_ids: [perfilEscolhido] } }
+        : estruturas.length > 0
+          ? {}
+          : refTipo === "perfil" && perfilIds.length
+            ? { referencia: { tipo: "perfil" as const, perfil_ids: perfilIds } }
+            : refTipo === "formato" && formatoIds.length
+              ? { referencia: { tipo: "formato" as const, formato_ids: formatoIds } }
+              : {}),
+      ...(estruturas.length > 0 ? { estrutura_ids: idsDaSelecao(estruturas) } : {}),
       criatividade: "equilibrado",
       ...(postId ? { post_id: postId } : {}),
     };
     try {
       onCriado(await criar.mutateAsync(body));
     } catch (e) {
-      toast.error(mensagemErro(e, "Não foi possível gerar as headlines."));
+      const amb = candidatosDoErro(e);
+      const sug = sugestoesDoErro(e);
+      if (amb.length > 0) setCandidatos({ tipo: "ambiguo", lista: amb });
+      else if (sug.length > 0) setCandidatos({ tipo: "sugestao", lista: sug });
+      toast.error(mensagemDoForm(e, "Não foi possível gerar as headlines."));
     }
+  }
+
+  function escolherPerfil(c: PerfilCandidato) {
+    setEstruturas([]);
+    setRefTipo("perfil");
+    setPerfilIds([c.perfil_id]);
+    void gerar(c.perfil_id);
   }
 
   return (
@@ -123,6 +153,8 @@ export function FormViral({ marcaId, bloqueado, postId, onCriado }: Props) {
               onChange={(e) => setLivre(e.target.value)}
             />
           </div>
+
+          <EstruturaPicker marcaId={marcaId} value={estruturas} onChange={setEstruturas} disabled={criar.isPending} />
 
           <fieldset className="space-y-2 rounded-md border p-3">
             <legend className="px-1 text-sm font-medium">Opções Avançadas</legend>
@@ -194,6 +226,9 @@ export function FormViral({ marcaId, bloqueado, postId, onCriado }: Props) {
               </label>
             ))}
           </fieldset>
+          {candidatos && (
+            <CandidatosPerfil tipo={candidatos.tipo} candidatos={candidatos.lista} onEscolher={escolherPerfil} disabled={criar.isPending} />
+          )}
           {bloqueado && (
             <p className="text-xs text-muted-foreground">Já existe uma geração em andamento — aguarde terminar para gerar outra.</p>
           )}

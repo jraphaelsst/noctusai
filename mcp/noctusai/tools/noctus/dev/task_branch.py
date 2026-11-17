@@ -687,6 +687,16 @@ def _stash_benign_artifacts(
     )
 
 
+def _flip_landed_findings(root: str) -> dict[str, Any]:
+    """At landing: every findings-ledger row written `in-progress` for a fix sha that is now on origin/dev becomes
+    `fixed` (the construction leg of "fixed means on dev"). Best-effort and loud: a failure is reported, never raised."""
+    try:
+        from tools.noctus.dev import findings_ledger  # noqa: PLC0415
+        return findings_ledger.flip_landed(None, Path(root))
+    except Exception as exc:  # noqa: BLE001 - the landing tail must finish; the next sweep/reconcile retries
+        return {"ok": False, "flipped": [], "errors": [f"{type(exc).__name__}: {exc}"]}
+
+
 def _ff_primary_after_integrate(runner, root: str, dev_branch: str, remote: str) -> dict[str, Any]:
     """Fast-forward the primary checkout via `primary_ff` (best-effort: a
     refusal or error is reported in the result, never fails the integrate)."""
@@ -2928,6 +2938,7 @@ def _landed(git, runner, *, base: dict[str, Any], slug: str, branch: str, wt_pat
                + ("; worktree already gone" if worktree_gone else "")))
     result["primary_ff"] = _ff_primary_after_integrate(
         runner, _resolve_primary_root(primary_root), dev_branch, remote)
+    result["findings_flip"] = _flip_landed_findings(_resolve_primary_root(primary_root))
     if auto_cleanup:
         result["auto_cleanup"] = result["cleanup"] = _auto_cleanup_after_integrate(
             runner, wt_path, slug, task_branch_fn, cleanup_kwargs, branch=branch, pointer_fn=pointer_fn,

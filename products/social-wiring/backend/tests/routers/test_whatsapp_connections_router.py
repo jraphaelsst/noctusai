@@ -529,3 +529,57 @@ class TestClientId:
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["marca_id"] == _FAKE_CLIENT_ID
+
+
+class TestPerInstanceProvisioning:
+    """A line is provisioned on a DECLARED WAHA instance (closed list from deploy/fleet/waha-instances.yml), with that instance's
+    URL/session/key -- never an arbitrary server."""
+
+    @pytest.fixture
+    def instances(self, connections_client, monkeypatch):
+        from app.main import app
+        from app.waha_instances import WahaInstance, get_waha_instances
+
+        monkeypatch.setenv("WAHA_SW_VENDAS_API_KEY", "key-vendas")
+        prev = app.dependency_overrides.get(get_waha_instances)
+        app.dependency_overrides[get_waha_instances] = lambda: (
+            WahaInstance("sw-vendas", "http://waha-sw-vendas:3000", "default", "WAHA_SW_VENDAS_API_KEY", "WAHA_SW_VENDAS_HMAC_SECRET"),
+            WahaInstance("shared", "http://waha:3000", "default", "WAHA_API_KEY", "WAHA_WEBHOOK_HMAC_SECRET", shared=True),
+        )
+        yield
+        if prev is None:
+            app.dependency_overrides.pop(get_waha_instances, None)
+        else:
+            app.dependency_overrides[get_waha_instances] = prev
+
+    def test_declared_instance_derives_url_and_session(self, connections_client, instances):
+        c, _ = connections_client
+        resp = c.post("/api/whatsapp/connections", json={"label": "Vendas", "instancia": "sw-vendas"})
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["base_url"] == "http://waha-sw-vendas:3000"
+        assert resp.json()["session_name"] == "default"
+
+    def test_undeclared_instance_is_refused(self, connections_client, instances):
+        c, _ = connections_client
+        resp = c.post("/api/whatsapp/connections", json={"label": "X", "instancia": "waha-do-vizinho"})
+        assert resp.status_code == 422
+        assert "instancia_waha_desconhecida" in resp.text
+        assert c.get("/api/whatsapp/connections").json() == []
+
+    def test_instance_without_its_key_is_503(self, connections_client, instances, monkeypatch):
+        monkeypatch.delenv("WAHA_SW_VENDAS_API_KEY")
+        c, _ = connections_client
+        resp = c.post("/api/whatsapp/connections", json={"label": "X", "instancia": "sw-vendas"})
+        assert resp.status_code == 503
+
+    def test_naming_the_shared_host_keeps_the_legacy_env_credentials(self, connections_client, instances):
+        c, _ = connections_client
+        resp = c.post("/api/whatsapp/connections", json={"label": "One", "instancia": "shared"})
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["base_url"] == "https://waha.example.com"
+
+    def test_no_instance_keeps_the_single_shared_waha_default(self, connections_client, instances):
+        c, _ = connections_client
+        resp = _create(c)
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["base_url"] == "https://waha.example.com"

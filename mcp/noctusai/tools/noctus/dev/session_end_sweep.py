@@ -457,6 +457,15 @@ def sweep(
         except Exception as e:  # noqa: BLE001 — never fail the survey over the heal
             pointer_heal = {"healed": [], "skipped_unproven": [], "errors": [str(e)[:200]]}
 
+    # Findings whose fix sha has landed since the row was written in-progress: flip them to `fixed` (findings_ledger
+    # `_gate_fixed` writes `fixed` only for a sha on origin/dev). Best-effort; the flip is the same call the landing path makes.
+    findings_flip: dict[str, Any] = {"flipped": []}
+    try:
+        from . import findings_ledger  # noqa: PLC0415
+        findings_flip = findings_ledger.flip_landed(None, repo_root)
+    except Exception as e:  # noqa: BLE001 - never fail the survey over the flip; say why
+        findings_flip = {"ok": False, "flipped": [], "errors": [str(e)[:200]]}
+
     # Log sweep summary to the salvage ledger — on origin/ledgers via
     # `_ledger_store` since 2026-09-24 (never a commit on dev; KB §
     # PATTERNS/common/ledger-store.md).
@@ -518,6 +527,7 @@ def sweep(
         "orphan_branches": orphan_result,
         "remote_branches": remote_summary,
         "pointer_heal": pointer_heal,
+        "findings_flip": findings_flip,
         "ledger_delivery": ledger_delivery,
         "summary_log": summary_log,
         "ledger_store_flush": ledger_store_flush,

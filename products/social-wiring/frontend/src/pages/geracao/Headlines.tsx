@@ -89,7 +89,7 @@ export default function Headlines() {
         <div className="flex flex-wrap items-center gap-3">
           <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
           <Button asChild variant="outline">
-            <Link to="/media-creation/headlines/gerar">
+            <Link to="/media-creation/chat/gerar-headlines">
               <ArrowLeft className="mr-1 h-4 w-4" /> Voltar
             </Link>
           </Button>

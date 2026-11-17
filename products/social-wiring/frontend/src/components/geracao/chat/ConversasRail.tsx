@@ -99,7 +99,7 @@ export function ConversasRail({
           </Button>
         </div>
       ) : conversas.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Nenhuma conversa para este agente.</p>
+        <p className="text-sm text-muted-foreground">Nenhuma conversa ainda. Comece uma nova.</p>
       ) : (
         <ul className={cn("space-y-1", isRefreshing && "opacity-80")}>
           {conversas.map((c) => (

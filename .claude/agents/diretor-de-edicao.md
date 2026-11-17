@@ -58,8 +58,10 @@ Pt-BR, plain, short, no jargon (say "conversão de cor", not "tonemap"). Never a
 ## Decided (owner, 2026-11-13)
 Default pace = `natural`. Default approval = `previa` until a preset has approved renders; only then is `criterios` allowed. → `video-edit-spec.md` §6
 
+Per-word timestamps: SHIPPED (2026-11-15). Call `noctus.transcription.transcribe` (or `submit`/`batch`) with `segmentos=true, palavras=true`; each segment carries `palavras[{texto, inicio, fim, confianca}]` (seconds). Verified live 2026-11-16. Word-anchored skills use them; they degrade only when a result lacks them, and say so.
+
 ## Open
-Per-word timestamps: being added to our transcription service in a separate slice (`segmentos[].palavras[{texto, inicio, fim, confianca}]`); until it lands, word-anchored skills degrade and say so. Safe-zone tables per rede must come from official docs, not memory. → `video-edit-spec.md` §8
+Safe-zone tables per rede must come from official docs, not memory. → `video-edit-spec.md` §8
 
 ## Composes-with
 Skills `edicao-video-*` · `KB § PATTERNS/media/video-edit-spec.md` · `KB § GUIDES/agent-creation.md` (migration into the agents product) · `legal-advisor` (third-party footage, GSAP/Remotion licences) · `agents-security` (when the agent runs server-side) · `product-engineer` for any code the worker needs (this agent writes none).

@@ -1016,7 +1016,34 @@ async def _resolve_waha_secret(request: Request, body: bytes) -> ResolvedSecret:
     verification, loudly logged.
     """
     cfg = _cfg_for_request(request)
-    return ResolvedSecret(secret=cfg.waha_webhook_hmac_secret or None)
+    global_secret = cfg.waha_webhook_hmac_secret or None
+    token = (request.path_params or {}).get("token")
+    if not token:
+        return ResolvedSecret(secret=global_secret)
+    # PER LINE: a line on a declared WAHA instance is signed with THAT instance's secret (never the global one, never another
+    # instance's), so two orgs on two instances cannot sign for each other's webhooks. The lookup is the same one the route
+    # repeats; the connection is parked on request.state so the body does not resolve it twice.
+    from app.waha_instances import get_waha_instances, instance_for_base_url
+
+    override = request.app.dependency_overrides.get(get_token_webhook_store)
+    store = override() if override is not None else _build_token_webhook_store(cfg)
+    if store is None:
+        return ResolvedSecret(secret=global_secret)
+    connection = await anyio.to_thread.run_sync(lambda: store.get_by_webhook_token(token))
+    request.state.waha_connection = connection
+    if connection is None:
+        return ResolvedSecret(secret=global_secret)
+    inst_override = request.app.dependency_overrides.get(get_waha_instances)
+    instances = inst_override() if inst_override is not None else get_waha_instances()
+    inst = instance_for_base_url(instances, connection.base_url)
+    if inst is None:
+        return ResolvedSecret(secret=global_secret)
+    request.state.waha_line_instance = inst
+    secret = inst.hmac_secret()
+    # FAIL CLOSED: an instance line with no secret is never accepted unsigned (the route body 401s on this flag; an empty
+    # secret here would otherwise engage the unset-secret bypass).
+    request.state.waha_line_secret_missing = not secret
+    return ResolvedSecret(secret=secret or None)
 
 
 def _build_token_webhook_store(cfg=None):
@@ -1088,7 +1115,9 @@ async def whatsapp_webhook_by_token(
         )
         return Response(status_code=status.HTTP_404_NOT_FOUND)
 
-    connection = (await anyio.to_thread.run_sync(lambda: store.get_by_webhook_token(token)))
+    connection = getattr(request.state, "waha_connection", None)
+    if connection is None:
+        connection = await anyio.to_thread.run_sync(lambda: store.get_by_webhook_token(token))
     if connection is None:
         # Do NOT log the token value — it's a secret routing credential.
         logger.debug("whatsapp_webhook_by_token: unknown token (404)")
@@ -1100,11 +1129,21 @@ async def whatsapp_webhook_by_token(
         connection.session_name,
     )
 
-    _avisar_assinatura_desativada(cfg, "whatsapp_webhook_by_token")
+    # A line on a declared WAHA instance verifies with the instance's own secret (see `_resolve_waha_secret`); unset = 401.
+    if getattr(request.state, "waha_line_instance", None) is not None:
+        if getattr(request.state, "waha_line_secret_missing", True):
+            logger.error(
+                "whatsapp_webhook_by_token: unsigned call refused — instance secret not set for connection=%s", connection.id,
+            )
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="webhook secret not configured")
+        effective_secret = request.state.waha_line_instance.hmac_secret()
+    else:
+        effective_secret = (cfg.waha_webhook_hmac_secret or "").strip()
+        _avisar_assinatura_desativada(cfg, "whatsapp_webhook_by_token")
     # 🔴 H1 (contract 10.1): with Julia on for THIS connection a missing/invalid
     # signature is 401 before any routing. An invalid one already 401s in the
     # `webhook_endpoint` dependency; what is left is the unset-secret bypass.
-    if connection.agente_leads_ativo and not (cfg.waha_webhook_hmac_secret or "").strip():
+    if connection.agente_leads_ativo and not effective_secret:
         logger.error(
             "whatsapp_webhook_by_token: unsigned call refused — Julia is on for connection=%s "
             "and no HMAC secret is set", connection.id,
@@ -1123,7 +1162,7 @@ async def whatsapp_webhook_by_token(
         connection=connection,
         waha_factory=waha_factory,
         agents_client_factory=agents_client_factory,
-        signed=bool((cfg.waha_webhook_hmac_secret or "").strip()),
+        signed=bool(effective_secret),
     )
 
 

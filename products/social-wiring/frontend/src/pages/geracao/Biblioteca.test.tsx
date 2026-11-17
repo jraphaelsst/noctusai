@@ -18,6 +18,9 @@ afterEach(() => rtl.cleanup());
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 const m = vi.hoisted(() => ({
+  admin: vi.fn(),
+  estruturas: vi.fn(),
+  perfisPagina: vi.fn(),
   virais: vi.fn(),
   detalhe: vi.fn(),
   perfis: vi.fn(),
@@ -30,8 +33,19 @@ const m = vi.hoisted(() => ({
 vi.mock("@/hooks/useMarcas", () => ({
   useMarcas: () => ({ data: [{ id: "m1", name: "Marca 1" }], isPending: false }),
 }));
+vi.mock("@/hooks/geracao/useEstruturas", () => ({
+  ESTRUTURAS_POR_PAGINA: 20,
+  useEstruturasAdmin: () => m.admin(),
+  useEstruturas: (...a: any[]) => m.estruturas(...a),
+  useAdicionarVideoPorLink: () => ({ mutateAsync: vi.fn(), isPending: false, reset: vi.fn() }),
+}));
 vi.mock("@/hooks/geracao/useBiblioteca", () => ({
   VIRAIS_POR_PAGINA: 24,
+  PERFIS_POR_PAGINA: 30,
+  usePerfisBiblioteca: (...a: any[]) => m.perfisPagina(...a),
+  useSolicitarPerfil: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useVerificarPerfil: () => ({ data: undefined, isFetching: false, isError: false, error: null }),
+  useContasDescoberta: () => ({ data: [] }),
   useViraisBiblioteca: (...a: any[]) => m.virais(...a),
   useViralDetalhe: (...a: any[]) => m.detalhe(...a),
   usePerfisMonitorados: () => m.perfis(),
@@ -102,6 +116,21 @@ function renderPage(url = "/media-creation/biblioteca") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  m.admin.mockReturnValue({ data: false });
+  m.estruturas.mockReturnValue({
+    data: { items: [], total: 0 },
+    showSkeleton: false,
+    isRefreshing: false,
+    isError: false,
+    refetch: vi.fn(),
+  });
+  m.perfisPagina.mockReturnValue({
+    data: { items: [{ id: "p1", handle: "fulano", nome: "Fulano", foto_url: null, seguidores: 1200, status: "ativo", monitorar: true, estruturas_total: 2, virais: 3 }], total: 1 },
+    showSkeleton: false,
+    isRefreshing: false,
+    isError: false,
+    refetch: vi.fn(),
+  });
   m.virais.mockReturnValue(pageState([viral(), viral({ id: "v2", codigo: 102 })]));
   m.detalhe.mockReturnValue({ data: detalhe(), showSkeleton: false, isError: false, refetch: vi.fn() });
   m.perfis.mockReturnValue({
@@ -150,11 +179,11 @@ describe("Biblioteca page", () => {
     expect(filtros.page).toBe(2);
   });
 
-  it("empty state with no monitored profiles points to Solicitar Perfil", () => {
+  it("empty state with no library profiles points to the Perfis tab", () => {
     m.virais.mockReturnValue(pageState([]));
     m.perfis.mockReturnValue({ data: [], showSkeleton: false, isError: false });
     renderPage();
-    expect(rtl.screen.getByText(/Sua biblioteca ainda está vazia/)).toBeTruthy();
+    expect(rtl.screen.getByText(/A biblioteca ainda não tem perfis/)).toBeTruthy();
   });
 
   it("empty state with ingestion off says monitoring is not activated", () => {
@@ -268,6 +297,84 @@ describe("Biblioteca page", () => {
     expect(
       rtl.screen.getByRole("link", { name: "Citar perfil no Chat" }).getAttribute("href"),
     ).toBe("/media-creation/chat?cite_perfil=p1");
+  });
+});
+
+describe("Biblioteca tabs (Perfis · Vídeos · Estruturas)", () => {
+  it("lands on Vídeos by default and offers the three tabs", () => {
+    renderPage();
+    const abas = rtl.screen.getAllByRole("tab").map((t) => t.textContent);
+    expect(abas).toEqual(["Perfis", "Vídeos", "Estruturas"]);
+    expect(rtl.screen.getByRole("tab", { name: "Vídeos" }).getAttribute("aria-selected")).toBe("true");
+    expect(rtl.screen.getByTestId("viral-card-v1")).toBeTruthy();
+  });
+
+  it("?aba= selects the tab and the other tabs do not fetch", () => {
+    renderPage("/media-creation/biblioteca?aba=perfis");
+    expect(rtl.screen.getByRole("tab", { name: "Perfis" }).getAttribute("aria-selected")).toBe("true");
+    expect(rtl.screen.getByRole("link", { name: "@fulano" }).getAttribute("href")).toBe("/media-creation/biblioteca/perfis/p1");
+    expect(rtl.screen.getByText("2 estruturas", { exact: false })).toBeTruthy();
+    expect(m.virais).not.toHaveBeenCalled();
+    expect(m.estruturas).not.toHaveBeenCalled();
+  });
+
+  it("switching tabs writes ?aba= (Vídeos keeps a bare URL) and starts the tab clean", async () => {
+    renderPage("/media-creation/biblioteca?views_min=100");
+    await userEvent.click(rtl.screen.getByRole("tab", { name: "Estruturas" }));
+    expect(rtl.screen.getByTestId("loc").textContent).toBe("/media-creation/biblioteca?aba=estruturas");
+    expect(m.estruturas).toHaveBeenCalled();
+    await userEvent.click(rtl.screen.getByRole("tab", { name: "Vídeos" }));
+    expect(rtl.screen.getByTestId("loc").textContent).toBe("/media-creation/biblioteca");
+  });
+
+  it("Estruturas filters live in the URL beside ?aba=", async () => {
+    renderPage("/media-creation/biblioteca?aba=estruturas");
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Reels" }));
+    expect(rtl.screen.getByTestId("loc").textContent).toBe("/media-creation/biblioteca?aba=estruturas&formato=reels");
+  });
+
+  it("a member sees no admin controls (no Adicionar por link / Adicionar perfil / Importações / Tipos de bloco)", async () => {
+    renderPage();
+    expect(rtl.screen.queryByRole("button", { name: "Adicionar por link" })).toBeNull();
+    await userEvent.click(rtl.screen.getByRole("tab", { name: "Perfis" }));
+    expect(rtl.screen.queryByRole("button", { name: "Adicionar perfil" })).toBeNull();
+    await userEvent.click(rtl.screen.getByRole("tab", { name: "Estruturas" }));
+    expect(rtl.screen.queryByRole("link", { name: "Importações" })).toBeNull();
+    expect(rtl.screen.queryByRole("link", { name: "Tipos de bloco" })).toBeNull();
+  });
+
+  it("an admin gets Adicionar por link on Vídeos, Adicionar perfil on Perfis, the catalog + import report on Estruturas", async () => {
+    m.admin.mockReturnValue({ data: true });
+    renderPage();
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Adicionar por link" }));
+    expect(await rtl.screen.findByText("Adicionar vídeo por link")).toBeTruthy();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(rtl.screen.getByRole("tab", { name: "Perfis" }));
+    expect(rtl.screen.getByRole("button", { name: "Adicionar perfil" })).toBeTruthy();
+    await userEvent.click(rtl.screen.getByRole("tab", { name: "Estruturas" }));
+    expect(rtl.screen.getByRole("link", { name: "Importações" }).getAttribute("href")).toBe("/media-creation/biblioteca/importacoes");
+    expect(rtl.screen.getByRole("link", { name: "Tipos de bloco" }).getAttribute("href")).toBe("/media-creation/biblioteca/tipos-de-bloco");
+  });
+
+  it("the ViralModal lists the video's Estruturas as links, and Gerar headline follows them", async () => {
+    m.detalhe.mockReturnValue({
+      data: detalhe({ estrutura_utilizavel: false, estruturas: [{ id: "e1", codigo: 7, perfil: { id: "p1", handle: "fulano", nome: null }, formula_trecho: "Como fazer X" }] }),
+      showSkeleton: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    renderPage("/media-creation/biblioteca?viral=v1");
+    const a = await rtl.screen.findByRole("link", { name: "#7 · @fulano" });
+    expect(a.getAttribute("href")).toBe("/media-creation/biblioteca/estruturas/e1");
+    expect((rtl.screen.getByRole("button", { name: "Gerar headline" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a video with no Estruturas says so and cannot start a headline", async () => {
+    m.detalhe.mockReturnValue({ data: detalhe({ estruturas: [] }), showSkeleton: false, isError: false, refetch: vi.fn() });
+    renderPage("/media-creation/biblioteca?viral=v1");
+    const secao = await rtl.screen.findByRole("region", { name: "Estruturas deste vídeo" });
+    expect(secao.textContent).toContain("Este vídeo ainda não tem estruturas.");
+    expect((rtl.screen.getByRole("button", { name: "Gerar headline" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
 

@@ -1,10 +1,11 @@
 /**
- * Gerar headlines — landing (P7, `/media-creation/headlines/gerar`, contract §7.7,
+ * Gerar headlines — landing (P7, `/media-creation/chat/gerar-headlines`, contract §7.7,
  * page-map-v2 §16). Three cards that open the form: `?who=me|public|viral`.
  */
 import { BookOpen, Flame, User, Users } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { PaginaCabecalho, usePaginaPadding } from "@/components/geracao/PaginaCabecalho";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -32,14 +33,17 @@ const CARTOES = [
 ] as const;
 
 export default function HeadlinesGerar() {
+  const padding = usePaginaPadding();
   return (
-    <div className="space-y-6 p-6">
-      <header>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold">
-          <BookOpen className="h-6 w-6" /> Gerar headlines
-        </h1>
-        <p className="text-sm text-muted-foreground">Selecione o assunto que deseja gerar suas headlines</p>
-      </header>
+    <div className={`space-y-6 ${padding}`}>
+      <PaginaCabecalho
+        titulo={
+          <span className="flex items-center gap-2">
+            <BookOpen className="h-6 w-6" /> Gerar headlines
+          </span>
+        }
+        descricao="Selecione o assunto que deseja gerar suas headlines"
+      />
 
       <div className="grid gap-4 md:grid-cols-3">
         {CARTOES.map(({ who, titulo, descricao, Icone }) => (

@@ -1,6 +1,8 @@
 /**
- * "Solicitar Perfil" tab (contract §7.5): handle input with a 500 ms-debounced
- * live check (#10), optional "Conta usada para monitorar" (#15), submit (#11).
+ * "Adicionar perfil" (contract §4.2): the library is platform-wide, so adding a profile is a PLATFORM-ADMIN
+ * write — members cannot suggest profiles (owner Q10) and see only a notice. Handle input with a 500 ms-debounced
+ * live check (#10), optional "Conta usada para monitorar" (#15), submit (#11). The admin flag is the same
+ * `GET /treinamentos/admin` probe the other admin-only Biblioteca panels use; the server enforces the gate.
  */
 import { useState } from "react";
 import { toast } from "sonner";
@@ -14,7 +16,9 @@ import {
   useVerificarPerfil,
   type VerificacaoPerfil,
 } from "@/hooks/geracao/useBiblioteca";
+import { useTreinamentosAdmin } from "@/hooks/geracao/useTreinamentos";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { mensagemEstruturas } from "./estruturas/erros";
 import { normalizarHandle } from "./handle";
 import { ehPerfilOptout, MSG_PERFIL_OPTOUT, textoTransparencia } from "./optout";
 
@@ -26,7 +30,21 @@ export const MSG_VERIFICACAO: Record<VerificacaoPerfil["status"], string> = {
     "✗ Nenhuma fonte de dados configurada para monitorar perfis. Fale com o administrador.",
 };
 
-export function SolicitarPerfil({ marcaId, contato }: { marcaId: string; contato?: string }) {
+export function SolicitarPerfil({ marcaId, contato }: { marcaId?: string; contato?: string }) {
+  const adminQ = useTreinamentosAdmin();
+  if (adminQ.isPending) return <p role="status" className="text-sm text-muted-foreground">Carregando…</p>;
+  if (adminQ.data !== true) {
+    return (
+      <p role="status" className="max-w-md text-sm text-muted-foreground" data-testid="perfil-somente-admin">
+        A biblioteca é da plataforma: somente administradores adicionam perfis. Para pedir um perfil novo, fale com o
+        administrador.
+      </p>
+    );
+  }
+  return <SolicitarPerfilAdmin marcaId={marcaId} contato={contato} />;
+}
+
+function SolicitarPerfilAdmin({ marcaId, contato }: { marcaId?: string; contato?: string }) {
   const [texto, setTexto] = useState("");
   const [contaId, setContaId] = useState("");
   const [optout, setOptout] = useState(false);
@@ -46,14 +64,13 @@ export function SolicitarPerfil({ marcaId, contato }: { marcaId: string; contato
     if (!norm.ok || !podeEnviar) return;
     try {
       const p = await solicitar.mutateAsync({
-        marca_id: marcaId,
         handle: norm.handle,
         ...(contaId ? { conta_descoberta_id: contaId } : {}),
       });
       toast.success(
         p.status === "aguardando"
-          ? "Solicitação enviada. O perfil será monitorado assim que a ingestão estiver ativa."
-          : "Solicitação enviada.",
+          ? "Perfil adicionado à biblioteca. Ele será monitorado assim que a ingestão estiver ativa."
+          : "Perfil adicionado à biblioteca.",
       );
       setTexto("");
     } catch (e) {
@@ -61,7 +78,7 @@ export function SolicitarPerfil({ marcaId, contato }: { marcaId: string; contato
         setOptout(true);
         return;
       }
-      toast.error(e instanceof Error && e.message ? e.message : "Não foi possível solicitar o perfil.");
+      toast.error(mensagemEstruturas(e, "Não foi possível adicionar o perfil."));
     }
   }
 
@@ -130,7 +147,7 @@ export function SolicitarPerfil({ marcaId, contato }: { marcaId: string; contato
         {textoTransparencia(contato)}
       </p>
       <Button type="submit" className="w-fit" disabled={!podeEnviar}>
-        {solicitar.isPending ? "Enviando..." : "Enviar"}
+        {solicitar.isPending ? "Adicionando..." : "Adicionar perfil"}
       </Button>
     </form>
   );

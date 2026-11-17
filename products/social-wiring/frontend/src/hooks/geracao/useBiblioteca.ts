@@ -13,16 +13,15 @@ import { handOffToPolling, jobPolling } from "@noctusai/lib";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { listOps, pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
+import { useMemo } from "react";
 
 import type { FiltrosViral } from "@/components/geracao/biblioteca/filtros";
+import type { HeadlineLote, Referencia, ViralCard } from "@/types/geracao";
 import type {
-  HeadlineLote,
-  PerfilMonitorado,
-  Referencia,
-  Taxonomias,
-  ViralCard,
-  ViralDetalhe,
-} from "@/types/geracao";
+  PerfilBiblioteca,
+  PerfisPage,
+  ViralDetalheBiblioteca,
+} from "@/types/bibliotecaPlataforma";
 import { GERACAO_KEY } from "@/lib/geracaoKeys";
 
 interface Envelope<T> {
@@ -94,7 +93,7 @@ export function useViralDetalhe(marcaId: string | null, viralId: string | null) 
     enabled: !!marcaId && !!viralId,
     queryFn: async () =>
       unwrap(
-        await api.get<Envelope<ViralDetalhe>>(
+        await api.get<Envelope<ViralDetalheBiblioteca>>(
           `${BASE}/virais/${encodeURIComponent(viralId as string)}?marca_id=${encodeURIComponent(marcaId as string)}`,
         ),
       ),
@@ -107,19 +106,33 @@ export function useViralDetalhe(marcaId: string | null, viralId: string | null) 
   };
 }
 
-/** Org-wide monitored profiles (#9). */
-export function usePerfisMonitorados(q = "") {
+export interface PerfisParams {
+  marcaId?: string | null;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export const PERFIS_POR_PAGINA = 30;
+
+export function perfisQuery(p: PerfisParams): string {
+  const qs = new URLSearchParams();
+  if (p.marcaId) qs.set("marca_id", p.marcaId);
+  if (p.q?.trim()) qs.set("q", p.q.trim());
+  qs.set("limit", String(p.limit ?? PERFIS_POR_PAGINA));
+  qs.set("offset", String(p.offset ?? 0));
+  return qs.toString();
+}
+
+/** Platform library profiles, paged (contract §4.2: `{items,total}`, ≤ 50 per page). */
+export function usePerfisBiblioteca(params: PerfisParams = {}) {
   const query = useQuery({
-    queryKey: [...BIB_KEY, "perfis", q],
+    queryKey: [...BIB_KEY, "perfis", params.marcaId ?? null, params.q?.trim() ?? "", params.limit ?? PERFIS_POR_PAGINA, params.offset ?? 0],
     queryFn: async () =>
-      unwrap(
-        await api.get<Envelope<PerfilMonitorado[]>>(
-          `${BASE}/perfis${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`,
-        ),
-      ),
+      unwrap(await api.get<Envelope<PerfisPage>>(`${BASE}/perfis?${perfisQuery(params)}`)),
     placeholderData: (prev) => prev,
     // No in-progress marker on a profile: it polls only while a sync hand-off is pending.
-    ...jobPolling<PerfilMonitorado[]>(() => false, PERFIS_POLL_MS),
+    ...jobPolling<PerfisPage>(() => false, PERFIS_POLL_MS),
   });
   return {
     ...query,
@@ -128,9 +141,39 @@ export function usePerfisMonitorados(q = "") {
   };
 }
 
+/**
+ * The profile list as a bare array (first 50 of the library) for the pickers/filters that only need to
+ * choose one. Same cache entry shape as `usePerfisBiblioteca`; the page-level totals live there.
+ */
+export function usePerfisMonitorados(q = "") {
+  const query = usePerfisBiblioteca({ q, limit: 50 });
+  const data = useMemo(() => query.data?.items, [query.data]);
+  return { ...query, data };
+}
+
+/** One library profile + its Estruturas count (contract §4.2 `GET /biblioteca/perfis/{id}`). */
+export function usePerfilBiblioteca(id: string | null, marcaId?: string | null) {
+  const query = useQuery({
+    queryKey: [...BIB_KEY, "perfil", id, marcaId ?? null],
+    enabled: !!id,
+    queryFn: async () =>
+      unwrap(
+        await api.get<Envelope<PerfilBiblioteca>>(
+          `${BASE}/perfis/${encodeURIComponent(id as string)}${marcaId ? `?marca_id=${encodeURIComponent(marcaId)}` : ""}`,
+        ),
+      ),
+    ...jobPolling<PerfilBiblioteca>(() => false, PERFIS_POLL_MS),
+  });
+  return {
+    ...query,
+    showSkeleton: !!id && query.isPending && !query.data,
+    isRefreshing: query.isFetching && !!query.data,
+  };
+}
+
 export type VerificacaoPerfil = {
   status: "disponivel" | "ja_monitorado" | "na_minha_biblioteca" | "sem_conta_descoberta";
-  perfil?: PerfilMonitorado;
+  perfil?: PerfilBiblioteca;
 };
 
 /** Live handle check (#10); the caller debounces and passes a normalized handle or "". */
@@ -163,17 +206,35 @@ export function useContasDescoberta() {
 }
 
 const PERFIS_KEY = [...BIB_KEY, "perfis"] as const;
+const PERFIL_KEY = [...BIB_KEY, "perfil"] as const;
 const REFS_KEY = [...BIB_KEY, "referencias"] as const;
 const OPTOUTS_KEY = [...BIB_KEY, "optouts"] as const;
 
+/** Patch a cached single-object entry (the profile detail); anything else passes through. */
+const patchObjeto = <T extends { id: string }>(old: T | undefined, id: string, changes: Partial<T>) =>
+  old && typeof old === "object" && !Array.isArray(old) && old.id === id ? { ...old, ...changes } : old;
+
+/** `[...PERFIS_KEY, marcaId, q, limit, offset]`: no brand filter, no search, offset 0. */
+const ehPrimeiraPaginaSemFiltro = (key: readonly unknown[]) => {
+  const [marcaId, q, , offset] = key.slice(PERFIS_KEY.length);
+  return marcaId == null && q === "" && offset === 0;
+};
+
+/** Add a library profile — a platform-admin write (contract §4.2; `marca_id` is ignored by the server). */
 export function useSolicitarPerfil() {
-  return useCacheWriteMutation<PerfilMonitorado, { marca_id: string; handle: string; conta_descoberta_id?: string }>({
-    mutationFn: async (v) => unwrap(await api.post<Envelope<PerfilMonitorado>>(`${BASE}/perfis`, v)),
-    // The unfiltered profile list gets the new profile at once; filtered ones converge on the settle.
+  return useCacheWriteMutation<
+    PerfilBiblioteca,
+    { marca_id?: string; handle: string; conta_descoberta_id?: string; monitorar?: boolean }
+  >({
+    mutationFn: async ({ marca_id: _ignorado, ...corpo }) =>
+      unwrap(await api.post<Envelope<PerfilBiblioteca>>(`${BASE}/perfis`, corpo)),
+    // A brand-new profile heads the unfiltered first page; filtered/other pages converge on the settle.
     targets: [
       {
-        queryKey: [...PERFIS_KEY, ""],
-        commit: (old: PerfilMonitorado[] | undefined, saved) => listOps.replace(old, saved.id, saved),
+        queryKey: PERFIS_KEY,
+        match: "prefix",
+        predicate: ehPrimeiraPaginaSemFiltro,
+        commit: (old: PerfisPage | undefined, saved) => pageOps.prependNewest(old, saved),
       },
     ],
     invalidate: [GERACAO_KEY],
@@ -184,7 +245,11 @@ export const PERFIS_POLL_MS = 4000;
 
 /** The profile's `ultima_sync_em` moved past what was cached at hand-off: the queued sync landed. */
 const syncDoPerfilAterrissou = (id: string) => (data: unknown, before: unknown) => {
-  const at = (l: unknown) => (Array.isArray(l) ? (l as PerfilMonitorado[]).find((p) => p.id === id)?.ultima_sync_em : undefined);
+  const at = (l: unknown) => {
+    const page = l as { items?: PerfilBiblioteca[] } | undefined;
+    if (Array.isArray(page?.items)) return page.items.find((p) => p.id === id)?.ultima_sync_em;
+    return (l as PerfilBiblioteca | undefined)?.id === id ? (l as PerfilBiblioteca).ultima_sync_em : undefined;
+  };
   return at(data) !== at(before);
 };
 
@@ -194,48 +259,69 @@ export function useSincronizarPerfil() {
     mutationFn: async (id: string) =>
       api.post(`${BASE}/perfis/${encodeURIComponent(id)}/sincronizar`),
     onSuccess: (_r, id) => {
-      // 202 + a queued job: follow the profile list until its sync lands (F87), then the rest.
-      void handOffToPolling(qc, [...BIB_KEY, "perfis"], { until: syncDoPerfilAterrissou(id) });
+      // 202 + a queued job: follow the profile list AND the profile page until its sync lands (F87), then the rest.
+      void handOffToPolling(qc, PERFIS_KEY, { until: syncDoPerfilAterrissou(id) });
+      void handOffToPolling(qc, [...PERFIL_KEY, id], { until: syncDoPerfilAterrissou(id) });
       void qc.invalidateQueries({ queryKey: GERACAO_KEY });
     },
   });
 }
 
+export type AtualizarPerfilVars = {
+  id: string;
+  status?: "ativo" | "pausado";
+  /** Library-only profiles (false) are imported without ingestion (contract §3.2). */
+  monitorar?: boolean;
+  /** Display-name override. */
+  nome?: string;
+};
+
 export function useAtualizarPerfil() {
-  return useCacheWriteMutation<PerfilMonitorado, { id: string; status: "ativo" | "pausado" }>({
-    mutationFn: async (v) =>
-      unwrap(
-        await api.patch<Envelope<PerfilMonitorado>>(
-          `${BASE}/perfis/${encodeURIComponent(v.id)}`,
-          { status: v.status },
-        ),
-      ),
-    targets: (v) => [
-      {
-        queryKey: PERFIS_KEY,
-        match: "prefix",
-        optimistic: (old: PerfilMonitorado[] | undefined, vars) => listOps.patch(old, vars.id, { status: vars.status }),
-        commit: (old: PerfilMonitorado[] | undefined, saved) => listOps.patch(old, v.id, saved),
-      },
-    ],
+  return useCacheWriteMutation<PerfilBiblioteca, AtualizarPerfilVars>({
+    mutationFn: async ({ id, ...corpo }) =>
+      unwrap(await api.patch<Envelope<PerfilBiblioteca>>(`${BASE}/perfis/${encodeURIComponent(id)}`, corpo)),
+    targets: (v) => {
+      const { id, ...mudancas } = v;
+      return [
+        {
+          queryKey: PERFIS_KEY,
+          match: "prefix",
+          optimistic: (old: PerfisPage | undefined) => pageOps.patch(old, id, mudancas),
+          commit: (old: PerfisPage | undefined, saved) => pageOps.patch(old, id, saved),
+        },
+        {
+          queryKey: PERFIL_KEY,
+          match: "prefix",
+          optimistic: (old: PerfilBiblioteca | undefined) => patchObjeto(old, id, mudancas),
+          commit: (old: PerfilBiblioteca | undefined, saved) => patchObjeto(old, id, saved),
+        },
+      ];
+    },
     invalidate: [GERACAO_KEY],
   });
 }
 
 export function useRemoverPerfil() {
-  return useCacheWriteMutation<unknown, { id: string; marca_id: string | null }>({
-    // marca_id resolves the 409 "used by another marca" (BE: delete_perfil).
+  const qc = useQueryClient();
+  return useCacheWriteMutation<unknown, { id: string; marca_id?: string | null; apagar_estruturas?: boolean }>({
+    // Admin write (contract §4.2). Without `apagar_estruturas` the server answers 409 `perfil_com_estruturas`
+    // (+ `estruturas_total`) when the profile still has Estruturas; the caller confirms and re-sends with it.
     mutationFn: async (v) =>
       api.delete(
-        `${BASE}/perfis/${encodeURIComponent(v.id)}${v.marca_id ? `?marca_id=${encodeURIComponent(v.marca_id)}` : ""}`,
+        `${BASE}/perfis/${encodeURIComponent(v.id)}${v.apagar_estruturas ? "?apagar_estruturas=true" : ""}`,
       ),
-    targets: [
+    targets: (v) => [
       {
         queryKey: PERFIS_KEY,
         match: "prefix",
-        optimistic: (old: PerfilMonitorado[] | undefined, vars) => listOps.remove(old, vars.id),
+        optimistic: (old: PerfisPage | undefined) => pageOps.remove(old, v.id),
       },
     ],
+    // The cascade removed the profile's Estruturas: every Estrutura list/detail is stale too.
+    onSuccess: (_r, v) => {
+      qc.removeQueries({ queryKey: [...PERFIL_KEY, v.id] });
+      void qc.invalidateQueries({ queryKey: [...GERACAO_KEY, "estruturas"] });
+    },
     invalidate: [GERACAO_KEY],
   });
 }
@@ -295,7 +381,8 @@ export function useRemoverReferencia() {
 export function useGerarHeadlineViral() {
   return useCacheWriteMutation<
     HeadlineLote,
-    { marca_id: string; viral_id: string; assunto_ids?: string[]; assunto_livre?: string }
+    // Exactly one of `viral_id` | `estrutura_id` (contract §6.6 `LoteBiblioteca`).
+    { marca_id: string; viral_id?: string; estrutura_id?: string; assunto_ids?: string[]; assunto_livre?: string }
   >({
     mutationFn: async (v) =>
       unwrap(

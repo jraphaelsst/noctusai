@@ -22,6 +22,7 @@ import { pageOps, useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { emAndamento } from "@/components/geracao/labels";
 import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
 import type { Roteiro, RoteiroResumo } from "@/types/geracao";
+import type { EstruturaFormato } from "@/types/estruturas";
 import { GERACAO_KEY } from "@/lib/geracaoKeys";
 
 interface Envelope<T> {
@@ -132,6 +133,10 @@ export interface CriarRoteiroInput {
   estrutura?: Roteiro["estrutura"];
   brain_id?: string | null;
   viral_id?: string | null;
+  /** Estruturas contract §6.7: 1..3, the first is the principal; all of one formato. Wins over `viral_id`. */
+  estrutura_ids?: string[];
+  /** Only meaningful without `estrutura_ids` (the principal's formato rules otherwise); the server defaults to reels. */
+  formato?: EstruturaFormato;
   gerar_perguntas: boolean;
   /** Created from inside an Esteira post: the server binds the roteiro to it (esteira-contract §3.5). */
   post_id?: string;

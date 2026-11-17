@@ -3,19 +3,30 @@
 NOTE: no ``from __future__ import annotations`` here -- slowapi's ``@limiter.limit`` wrapper makes
 FastAPI resolve string annotations in slowapi's globals, turning body params into query params.
 
-Auth is ``get_current_user_org`` on every route (strict 401 without a session). A foreign / unknown
-marca, profile, viral or reference is a 404. ``ingestao_ativa`` (the kill switch state) rides on the
-profile payloads so the UI can say "a ingestão está desligada" instead of showing a silent spinner.
+Since migration 351 the library is PLATFORM-WIDE (``estruturas-contract.md`` section 4). Two routers, so a read can
+never inherit a write gate nor the other way round:
+
+* ``router`` -- tier ``org`` (``get_current_user_org``, strict 401 without a session): browse the library
+  (``/virais``, ``/perfis``) and a brand's own selection (``/referencias*``, org-scoped, unchanged);
+* ``router_admin`` -- tier ``platform`` (``require_platform_admin``: 403 with a plain string for a non-admin): every
+  profile write, the add-by-link, the discovery helpers and the opt-out registry. Included BEFORE ``router`` so the static
+  ``/perfis/verificar`` is not swallowed by ``/perfis/{perfil_id}``.
+
+A foreign / unknown marca or reference is a 404. ``ingestao_ativa`` (the kill switch state) rides on the profile payloads
+so the UI can say "a ingestão está desligada" instead of showing a silent spinner.
 """
 import anyio
 import logging
 import uuid
 from typing import Callable, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import Depends, HTTPException, Query, Request, Response
 
+from noctusai_lib.api.access_tiers import make_router
 from noctusai_lib.api.rate_limit_policies import DEFAULT_AI_RL
 from noctusai_lib.domain.jobs import JobRepository
+from noctusai_lib.integrations.apify import ActorRunner, make_actor_runner
+from noctusai_lib.integrations.media.safe_fetch import SafeFetcher, make_safe_fetcher
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.responses import success_response
 
@@ -31,6 +42,7 @@ from app.modules.media_creation.schemas.biblioteca import (
     OptoutCreate,
     PerfilCreate,
     PerfilPatch,
+    PorLinkCreate,
     ReferenciaPatch,
     ReferenciasCreate,
     ReferenciasPerfil,
@@ -46,7 +58,13 @@ from app.modules.media_creation.services.biblioteca_service import (
 from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/media-creation/biblioteca", tags=["Media Creation — Biblioteca"])
+router = make_router(
+    tier="org", guard=get_current_user_org, prefix="/api/media-creation/biblioteca", tags=["Media Creation — Biblioteca"],
+)
+router_admin = make_router(
+    tier="platform", guard=require_platform_admin, prefix="/api/media-creation/biblioteca",
+    tags=["Media Creation — Biblioteca (admin)"],
+)
 
 _DATE = r"^\d{4}-\d{2}-\d{2}$"
 
@@ -71,19 +89,55 @@ def get_biblioteca_fonte() -> Callable[[], str]:
     return lambda: biblioteca_fonte.read_biblioteca_fonte(default=settings.biblioteca_fonte)
 
 
-def _svc(auth, storage: StorageBackend, jobs: JobRepository, switch: Callable[[], bool]) -> BibliotecaService:
+def get_ingestao_org() -> Callable[[], Optional[str]]:
+    """The platform ingestion org reader (``corestudio_biblioteca_org_id``; ``None`` = not configured). Tests override it."""
+    return lambda: biblioteca_fonte.read_ingestao_org(default=settings.corestudio_biblioteca_org_id)
+
+
+def get_biblioteca_runner_factory() -> Callable[[str], ActorRunner]:
+    """``org_id -> ActorRunner`` for the single-post fetch of add-by-link (the org's Apify token, fake-or-refuse). Tests
+    override it with a ``FakeActorRunner``."""
+    from app.services.api_keys_store import resolve_api_key
+
+    return lambda org_id: make_actor_runner(token=resolve_api_key("apify_api_token", org_id))
+
+
+def get_biblioteca_fetcher() -> SafeFetcher:
+    """The SSRF-safe media fetcher (CDN host allow-list + byte cap) the thumbnail mirror uses. Tests override it."""
+    return make_safe_fetcher(real=True)
+
+
+def _ledger_client():
+    from app.database import get_core_client
+
+    return get_core_client()
+
+
+def _svc(
+    auth, storage: StorageBackend, jobs: JobRepository, switch: Callable[[], bool], *, is_admin: bool = False,
+    runner_factory: Optional[Callable[[str], ActorRunner]] = None, fetcher: Optional[SafeFetcher] = None,
+    ingestao_org: Optional[Callable[[], Optional[str]]] = None,
+) -> BibliotecaService:
     user, _, org_id = auth
     return BibliotecaService(
         get_admin_client(), str(org_id), str(getattr(user, "id", "") or "") or None,
         storage=storage, jobs=jobs, switch=switch, max_perfis_org=int(settings.biblioteca_max_perfis_org),
+        max_perfis_plataforma=int(settings.biblioteca_max_perfis_plataforma),
         sync_manual_dia_org=int(settings.biblioteca_sync_manual_dia_org),
-        fonte=get_biblioteca_fonte(),
+        fonte=get_biblioteca_fonte(), is_admin=is_admin, ingestao_org=ingestao_org or get_ingestao_org(),
+        runner_factory=runner_factory, fetcher=fetcher, ledger_factory=_ledger_client,
+        apify_resultados_dia=int(settings.biblioteca_apify_resultados_dia_org),
     )
+
+
+def _is_admin(auth, check: Callable[[str], bool]) -> bool:
+    user_id = str(getattr(auth[0], "id", "") or "")
+    return bool(user_id) and bool(check(user_id))
 
 
 def _raise(exc: BibliotecaError):
     headers = {"Retry-After": str(exc.retry_after_s)} if exc.retry_after_s else None
-    detail = {"detail": exc.detail, "code": exc.code} if exc.code else exc.detail
+    detail = {"detail": exc.detail, "code": exc.code, **exc.extra} if exc.code else exc.detail
     raise HTTPException(status_code=exc.status, detail=detail, headers=headers) from exc
 
 
@@ -142,128 +196,190 @@ async def get_viral(
     jobs: JobRepository = Depends(get_biblioteca_jobs),
     switch: Callable[[], bool] = Depends(get_ingestao_switch),
 ):
-    user_id = str(getattr(auth[0], "id", "") or "")
+    admin = _is_admin(auth, is_admin)
     # The blueprint is internal: only a platform admin asking for debug ever sees it.
-    incluir = bool(debug) and bool(user_id) and bool(is_admin(user_id))
+    incluir = bool(debug) and admin
     try:
         return success_response(
-            await _svc(auth, storage, jobs, switch).get_viral(str(viral_id), str(marca_id), incluir_blueprint=incluir)
+            await _svc(auth, storage, jobs, switch, is_admin=admin).get_viral(
+                str(viral_id), str(marca_id), incluir_blueprint=incluir
+            )
         )
     except BibliotecaError as exc:
         _raise(exc)
 
 
-# ── perfis ──────────────────────────────────────────────────────────────────
+# ── perfis: reads (org) ─────────────────────────────────────────────────────
 
 
 @router.get("/perfis")
 async def list_perfis(
+    marca_id: Optional[uuid.UUID] = None,
     q: Optional[str] = Query(None, max_length=100),
+    limit: int = Query(30, ge=1, le=50),
+    offset: int = Query(0, ge=0, le=100_000),
     auth=Depends(get_current_user_org),
+    is_admin: Callable[[str], bool] = Depends(get_platform_admin_check),
     storage: StorageBackend = Depends(get_biblioteca_storage),
     jobs: JobRepository = Depends(get_biblioteca_jobs),
     switch: Callable[[], bool] = Depends(get_ingestao_switch),
 ):
-    return success_response(await _svc(auth, storage, jobs, switch).list_perfis(q))
+    """The library's profiles, PAGED (``{items, total}``, <= 50 per page; no export route)."""
+    svc = _svc(auth, storage, jobs, switch, is_admin=_is_admin(auth, is_admin))
+    try:
+        return success_response(await svc.list_perfis(q, str(marca_id) if marca_id else None, limit, offset))
+    except BibliotecaError as exc:
+        _raise(exc)
 
 
-@router.get("/perfis/verificar")
-async def verificar_perfil(
-    handle: str = Query(..., min_length=1, max_length=200),
-    marca_id: Optional[uuid.UUID] = None,
+@router.get("/perfis/{perfil_id}")
+async def get_perfil(
+    perfil_id: uuid.UUID,
     auth=Depends(get_current_user_org),
+    is_admin: Callable[[str], bool] = Depends(get_platform_admin_check),
     storage: StorageBackend = Depends(get_biblioteca_storage),
     jobs: JobRepository = Depends(get_biblioteca_jobs),
     switch: Callable[[], bool] = Depends(get_ingestao_switch),
 ):
     try:
         return success_response(
-            await _svc(auth, storage, jobs, switch).verificar(handle, str(marca_id) if marca_id else None)
+            await _svc(auth, storage, jobs, switch, is_admin=_is_admin(auth, is_admin)).get_perfil(str(perfil_id))
         )
     except BibliotecaError as exc:
         _raise(exc)
 
 
-@router.post("/perfis", status_code=201)
-@limiter.limit(DEFAULT_AI_RL)
-async def solicitar_perfil(
-    request: Request,
-    body: PerfilCreate,
-    auth=Depends(get_current_user_org),
+# ── perfis + vídeos: writes (platform admin) ────────────────────────────────
+
+
+@router_admin.get("/perfis/verificar")
+async def verificar_perfil(
+    handle: str = Query(..., min_length=1, max_length=200),
+    marca_id: Optional[uuid.UUID] = None,
+    auth=Depends(require_platform_admin),
+    ingestao_org: Callable[[], Optional[str]] = Depends(get_ingestao_org),
     storage: StorageBackend = Depends(get_biblioteca_storage),
     jobs: JobRepository = Depends(get_biblioteca_jobs),
     switch: Callable[[], bool] = Depends(get_ingestao_switch),
 ):
     try:
         return success_response(
-            await _svc(auth, storage, jobs, switch).criar_perfil(
-                str(body.marca_id), body.handle,
-                str(body.conta_descoberta_id) if body.conta_descoberta_id else None,
+            await _svc(auth, storage, jobs, switch, is_admin=True, ingestao_org=ingestao_org).verificar(handle, str(marca_id) if marca_id else None)
+        )
+    except BibliotecaError as exc:
+        _raise(exc)
+
+
+@router_admin.post("/perfis", status_code=201)
+@limiter.limit(DEFAULT_AI_RL)
+async def criar_perfil(
+    request: Request,
+    body: PerfilCreate,
+    auth=Depends(require_platform_admin),
+    ingestao_org: Callable[[], Optional[str]] = Depends(get_ingestao_org),
+    storage: StorageBackend = Depends(get_biblioteca_storage),
+    jobs: JobRepository = Depends(get_biblioteca_jobs),
+    switch: Callable[[], bool] = Depends(get_ingestao_switch),
+):
+    try:
+        return success_response(
+            await _svc(auth, storage, jobs, switch, is_admin=True, ingestao_org=ingestao_org).criar_perfil(
+                body.handle, str(body.conta_descoberta_id) if body.conta_descoberta_id else None, body.monitorar,
             )
         )
     except BibliotecaError as exc:
         _raise(exc)
 
 
-@router.post("/perfis/{perfil_id}/sincronizar", status_code=202)
+@router_admin.post("/virais/por-link", status_code=201)
+@limiter.limit(DEFAULT_AI_RL)
+async def adicionar_viral_por_link(
+    request: Request,
+    response: Response,
+    body: PorLinkCreate,
+    auth=Depends(require_platform_admin),
+    ingestao_org: Callable[[], Optional[str]] = Depends(get_ingestao_org),
+    storage: StorageBackend = Depends(get_biblioteca_storage),
+    jobs: JobRepository = Depends(get_biblioteca_jobs),
+    switch: Callable[[], bool] = Depends(get_ingestao_switch),
+    runner_factory: Callable[[str], ActorRunner] = Depends(get_biblioteca_runner_factory),
+    fetcher: SafeFetcher = Depends(get_biblioteca_fetcher),
+):
+    """Add ONE Instagram video by its post link. 201 = created; 200 ``ja_existia`` = already in the library (nothing else
+    happened). Only ``instagram.com`` post URLs are accepted (the shortcode is extracted and the URL re-composed)."""
+    try:
+        out = await _svc(
+            auth, storage, jobs, switch, is_admin=True, ingestao_org=ingestao_org, runner_factory=runner_factory, fetcher=fetcher,
+        ).adicionar_por_link(body.url)
+    except BibliotecaError as exc:
+        _raise(exc)
+    if out["ja_existia"]:
+        response.status_code = 200
+    return success_response(out)
+
+
+@router_admin.post("/perfis/{perfil_id}/sincronizar", status_code=202)
 @limiter.limit(DEFAULT_AI_RL)
 async def sincronizar_perfil(
     request: Request,
     perfil_id: uuid.UUID,
-    auth=Depends(get_current_user_org),
+    auth=Depends(require_platform_admin),
     storage: StorageBackend = Depends(get_biblioteca_storage),
     jobs: JobRepository = Depends(get_biblioteca_jobs),
     switch: Callable[[], bool] = Depends(get_ingestao_switch),
 ):
     try:
-        return success_response(await _svc(auth, storage, jobs, switch).sincronizar(str(perfil_id)))
+        return success_response(await _svc(auth, storage, jobs, switch, is_admin=True).sincronizar(str(perfil_id)))
     except BibliotecaError as exc:
         _raise(exc)
 
 
-@router.patch("/perfis/{perfil_id}")
+@router_admin.patch("/perfis/{perfil_id}")
 async def patch_perfil(
     perfil_id: uuid.UUID,
     body: PerfilPatch,
-    auth=Depends(get_current_user_org),
+    auth=Depends(require_platform_admin),
+    ingestao_org: Callable[[], Optional[str]] = Depends(get_ingestao_org),
     storage: StorageBackend = Depends(get_biblioteca_storage),
     jobs: JobRepository = Depends(get_biblioteca_jobs),
     switch: Callable[[], bool] = Depends(get_ingestao_switch),
 ):
     try:
         return success_response(
-            await _svc(auth, storage, jobs, switch).patch_perfil(
-                str(perfil_id), body.status, str(body.conta_descoberta_id) if body.conta_descoberta_id else None
+            await _svc(auth, storage, jobs, switch, is_admin=True, ingestao_org=ingestao_org).patch_perfil(
+                str(perfil_id), body.status, str(body.conta_descoberta_id) if body.conta_descoberta_id else None,
+                body.monitorar, body.nome,
             )
         )
     except BibliotecaError as exc:
         _raise(exc)
 
 
-@router.delete("/perfis/{perfil_id}", status_code=204)
+@router_admin.delete("/perfis/{perfil_id}", status_code=204)
 async def delete_perfil(
     perfil_id: uuid.UUID,
-    marca_id: Optional[uuid.UUID] = None,
-    auth=Depends(get_current_user_org),
+    apagar_estruturas: bool = False,
+    auth=Depends(require_platform_admin),
     storage: StorageBackend = Depends(get_biblioteca_storage),
     jobs: JobRepository = Depends(get_biblioteca_jobs),
     switch: Callable[[], bool] = Depends(get_ingestao_switch),
 ):
     try:
-        await _svc(auth, storage, jobs, switch).delete_perfil(str(perfil_id), str(marca_id) if marca_id else None)
+        await _svc(auth, storage, jobs, switch, is_admin=True).delete_perfil(str(perfil_id), apagar_estruturas)
     except BibliotecaError as exc:
         _raise(exc)
     return Response(status_code=204)
 
 
-@router.get("/contas-descoberta")
+@router_admin.get("/contas-descoberta")
 def contas_descoberta(
-    auth=Depends(get_current_user_org),
+    auth=Depends(require_platform_admin),
+    ingestao_org: Callable[[], Optional[str]] = Depends(get_ingestao_org),
     storage: StorageBackend = Depends(get_biblioteca_storage),
     jobs: JobRepository = Depends(get_biblioteca_jobs),
     switch: Callable[[], bool] = Depends(get_ingestao_switch),
 ):
-    return success_response(_svc(auth, storage, jobs, switch).contas_descoberta())
+    return success_response(_svc(auth, storage, jobs, switch, is_admin=True, ingestao_org=ingestao_org).contas_descoberta())
 
 
 # ── Minha Biblioteca ────────────────────────────────────────────────────────
@@ -346,31 +462,32 @@ def _optout_out(row: dict) -> dict:
     return {k: row.get(k) for k in ("id", "handle", "motivo", "origem", "solicitado_em", "registrado_por", "created_at")}
 
 
-@router.get("/admin/optouts", include_in_schema=False)
+@router_admin.get("/admin/optouts")
 def list_optouts(auth=Depends(require_platform_admin)):
     return success_response([_optout_out(r) for r in biblioteca_optout.listar(get_admin_client())])
 
 
-@router.post("/admin/optouts", include_in_schema=False)
+@router_admin.post("/admin/optouts")
 async def criar_optout(
     body: OptoutCreate,
     auth=Depends(require_platform_admin),
     storage: StorageBackend = Depends(get_biblioteca_storage),
 ):
-    """Register the opt-out and synchronously purge the handle across ALL orgs. Idempotent: a repeat keeps
-    the first row (``criado=false``) and re-runs the purge (a no-op once nothing is left)."""
+    """Register the opt-out and synchronously purge the handle from the platform library: profile, videos, blobs,
+    transcripts AND its Estruturas (content-free events remain). Idempotent: a repeat keeps the first row
+    (``criado=false``) and re-runs the purge (a no-op once nothing is left)."""
     db = get_admin_client()
     user_id = str(getattr(auth[0], "id", "") or "") or None
     row, criado = (await anyio.to_thread.run_sync(lambda: biblioteca_optout.registrar(db, body.handle, body.motivo, body.origem, user_id)))
-    purgados = await purgar_handle(db, storage, body.handle)
+    purgados = await purgar_handle(db, storage, body.handle, ator_id=user_id)
     logger.info(
-        "biblioteca opt-out: criado=%s origem=%s perfis=%d virais=%d blobs_falhos=%d",
-        criado, body.origem, purgados["perfis"], purgados["virais"], purgados["blobs_falhos"],
+        "biblioteca opt-out: criado=%s origem=%s perfis=%d virais=%d estruturas=%d blobs_falhos=%d",
+        criado, body.origem, purgados["perfis"], purgados["virais"], purgados["estruturas"], purgados["blobs_falhos"],
     )
     return success_response({"optout": _optout_out(row), "criado": criado, "purgados": purgados})
 
 
-@router.delete("/admin/optouts/{optout_id}", status_code=204, include_in_schema=False)
+@router_admin.delete("/admin/optouts/{optout_id}", status_code=204)
 def remover_optout(optout_id: uuid.UUID, auth=Depends(require_platform_admin)):
     if not biblioteca_optout.remover(get_admin_client(), str(optout_id)):
         raise HTTPException(status_code=404, detail="Opt-out não encontrado")

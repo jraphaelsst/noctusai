@@ -18,14 +18,20 @@ The steward is the ONE session that enqueues, runs `landed`, withdraws, blesses,
 
 ## 2 · Watch — one feed, every terminal state
 
-Arm ONE Monitor (30-min max; **re-arm on every expiry**, never let it lapse):
+ONE command, under `bg_run.py --done-when` so it ends itself (it exits 0 on `MQ-IDLE`: queue empty and no handed run pending); if armed as a Monitor instead (30-min cap), **re-arm on every expiry**:
 
 ```
-cd mcp/noctusai && .venv/bin/python cli.py --merge-queue watch --merge-queue-interval 60 2>&1 \
-  | grep -E --line-buffered "^MQ-LEFT|^MQ-BATCH|^MQ-WATCH-ERROR|Traceback"
+cd mcp/noctusai && .venv/bin/python cli.py --merge-queue watch --merge-queue-interval 60 --merge-queue-idle-exit 2>&1 \
+  | grep -E --line-buffered "^RUN |^ENQ |^LANDED-|^MQ-LEFT|^MQ-BATCH|^MQ-SUPERSEDED|^MQ-IDLE|^MQ-WATCH-ERROR|^HEARTBEAT-FAILED|Traceback"
 ```
 
-- `MQ-BATCH <candidate> -> success|failure|cancelled <url>`: one line per finished candidate batch (since 2026-11-09). `cancelled` usually means a job hit its timeout: a hang, not a green.
+**Each handoff = ONE append, never a new loop:** `cli.py --steward-feed register --feed-slug S --feed-run <gh run id> --feed-sha <full sha that run tested> [--feed-after <slug>]`. The feed polls the run (>=120s, conditional GET via the seam; 300s when `rate_remaining` < 500), and on green heartbeats your lease, enqueues, and later runs `task_branch landed` itself.
+
+- `RUN <slug> <run> -> success|failure|cancelled <sha> rate_remaining=<n>`: a red adds `jobs=<failing jobs> first='<first FAILED/error line>'` from one log fetch: no manual `--log-failed`.
+- `ENQ <slug> -> queued | refused:<why> | needs_resync:<item>`: one line (top-level status, never the JSON). `needs_resync` goes back to the branch steward.
+- `LANDED-RECORDED <slug> <dev sha>`: the feed already ran `task_branch landed`; `LANDED-ERROR` means it did not, do it by hand.
+- `MQ-SUPERSEDED <slug> <sha> -> superseded (patch-equivalent|content-equal)`: a `conflict` ejection whose content is already on dev: nothing to re-enqueue.
+- `MQ-BATCH <candidate> -> success|failure|cancelled <url>`: one line per finished candidate batch. `cancelled` usually means a job hit its timeout: a hang, not a green.
 - `MQ-LEFT <slug> <sha> -> landed <dev> | ejected <why> | unknown`: `unknown` after a withdrawal is expected.
 - Off-host backstop: `.github/workflows/merge-queue-watchdog.yml` (every 10 min) alerts the owner on WhatsApp/email with or without a session (`noctus.dev.mq_watchdog`).
 - **Owner rule (2026-11-09):** if a drift goes unnoticed again, add a 20-minute timer (`ScheduleWakeup`/`CronCreate`) that checks the queue even when no event arrives.
@@ -56,6 +62,10 @@ Rule: `KB § PATTERNS/devops/release-steward.md` § 7a (guardian spec, council 0
 - **Prod migrations need the owner's go typed in YOUR transcript.** Consent phase `pre-third-users` (owner decision 2026-11-11; revisit when a 3rd user onboards): the owner's plain deploy / go-to-prod ask IS that go - no exact wording, no per-slice sha or filenames. An owner answer relayed by a peer is recorded as RELAYED and confirmed directly before acting. `KB § PATTERNS/devops/prod-exposure-consent.md` § Consent phase.
 - Deleting remote branches and closing PRs needs the owner, always.
 - A deploy hold (missing secret, migration-before-image) is written into the memory file the moment it is known, with the dev SHA to cut at.
+
+## 5a · Handoffs: finish what was handed
+
+A peer handing off (it finished, or the owner told it to) sends the `release-steward.md` § 7c report. The steward then: acks in one line naming the watched runs; registers those runs in the ONE feed; finishes any NEXT STEPS or red run ITSELF (adopts the worktree, merges `dev` in, resolves, re-verifies, re-enqueues; its own subagents may help), never asking the owner for permission and never forwarding the work to another session (owner, 2026-11-17); the only fence is the guardian-tool-authorship keeper on NEW steward tooling, which it reports and never routes around; and after landing runs CLEANUP (worktree, resume-note memory absorbed then deleted). Reports go to the owner, batched.
 
 ## 6 · Ship
 
@@ -100,6 +110,9 @@ After the queue drains: follow `noc-ship` (status → manifest → `predeploy_ch
 - `landed` reads the PRIMARY checkout's toolkit; a dirty primary skips its fast-forward, so a landed tool fix is not live until the primary can FF. Run §7 after every landing.
 - A tool run that hangs keeps its hw-admission slot (2026-11-13: a migrate stuck on a dead socket held slot-1 for 80 min and starved every scoped run). Check `lsof ~/.noctus/hw-slots/*.lock` when admission waits with no visible heavy job.
 - The steward lease lasts 2 h. Run `--release-steward heartbeat` on a ~25-min loop for the whole shift, or `enqueue` starts refusing you as a stale steward.
+- One watcher per GitHub run (2026-11-16, the account's REST quota ran dry): when a requester hands you runs, confirm "I'm watching <ids>". The requester then stops its watchers, and you poll all handed runs from ONE watcher at ≥120s, one `gh run view --json status,conclusion` per run, never `gh run watch`. → `KB § PATTERNS/devops/release-steward.md` § 7b.
 - The auto-mode classifier blocks `gh run cancel` on drains and force-pushes; ask the owner, never work around it.
 - **A known false alarm with live evidence never re-blocks a cut.** `predeploy_check` may BLOCK on a check whose output the steward has already proven to be a harness or tooling defect (2026-11-15: `schema_drift` reported `missing_table:monica.*` for `nosnolimiar` - live had 25 tables in `nosnolimiar`, 0 in `monica`; two prod cuts stalled on re-measuring it). Then: record the live evidence (the query and its rows) in the shift memory, file the tooling fix on its own branch, and ship the cut. Do not keep re-measuring. Only a DIFFERENT output re-opens it; "still red" does not.
 - **A `schema_drift` that lists ONLY tables created by migrations pending in this same cut is expected pre-state, not a block.** Predeploy runs before the cut's migrations are applied, so exactly those tables are absent live. Compare the `missing_table` list against the pending migrations (`migrate_product` dry-run, `earlier_pending`); anything outside that set is real drift and blocks.
+- **zsh does not word-split unquoted `$var`.** `for p in "a b" "c d"; do set -- $p; …` leaves `$1` as the whole string, so a batched `enqueue --task-branch-slug $1` passed a slug that does not exist and printed nothing (2026-11-16). Write one explicit command per slug, or `${=p}` / an array; and treat an enqueue that prints no `"status"` line as a failure, never as done.
+- **A long scoped pass outlives the lease with no heartbeat.** A 30+ min `deliverable --steward-run-scoped` loop left the lease stale twice on 2026-11-16, and the next `enqueue` was refused. Until the scoped run renews the lease itself (steward-toolkit-construction), run `--release-steward heartbeat` right before the enqueue that follows a pass, not on a timer.
