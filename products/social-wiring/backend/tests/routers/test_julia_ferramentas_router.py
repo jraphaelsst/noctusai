@@ -403,3 +403,36 @@ class TestConfirmacaoDoProprietario:
     def test_another_orgs_confirmation_is_never_applied(self, conf):
         conf.confirmar("CA1", quando="2026-10-10T12:00:00+00:00", status="Vendido", org=_OTHER)
         assert "confirmacao_proprietario" not in conf.post("detalhes_imovel", {"codigo": "CA1"}).json()["data"]
+
+
+class TestResolverImovel:
+    """Lais study S5: a listing from a pasted URL / portal ad code / portal stock text."""
+
+    @pytest.mark.parametrize("texto,via", [
+        ("https://imobiliaria.example/imovel/ca1", "url"),
+        ("olha esse https://www.portal.example/imovel/venda-casa-cotia-id-2712345678/ e https://imobiliaria.example/imovel/CA1?utm=x", "url"),
+        ("Olá, tenho interesse no imóvel Casa em Cotia. Cód. CA1, pode me ajudar?", "rotulo"),
+        ("Referência: ca1", "rotulo"),
+        ("ca1", "solto"),
+    ])
+    def test_resolves_the_published_listing_from_each_shape(self, ok, texto, via):
+        d = ok.post("resolver_imovel", {"referencia": texto}).json()["data"]
+        assert d["encontrado"] is True and d["imovel"]["codigo"] == "CA1" and d["via"] == via
+        assert OWNER_SECRET not in str(d)
+
+    def test_an_unknown_hidden_or_foreign_code_resolves_to_nothing_and_leaks_nothing(self, ok):
+        for texto in ("Cód. NADA", "Cód. HID", "https://x.example/imovel/OTH"):
+            d = ok.post("resolver_imovel", {"referencia": texto}).json()["data"]
+            assert d["encontrado"] is False and "imovel" not in d
+
+    def test_text_with_no_code_is_not_found_with_no_candidates(self, ok):
+        assert ok.post("resolver_imovel", {"referencia": "bom dia, quero uma casa"}).json()["data"] == {"encontrado": False, "candidatos": []}
+
+    def test_a_successful_lookup_is_recorded_as_a_consulta(self, tools):
+        tools.as_ctx(_product())
+        iid = str(uuid4())
+        assert tools.post("resolver_imovel", {"referencia": "Cód. CA1", "interacao_id": iid}).json()["data"]["encontrado"] is True
+
+    def test_strict_body(self, ok):
+        assert ok.post("resolver_imovel", {}).status_code == 422
+        assert ok.post("resolver_imovel", {"referencia": "CA1", "org_id": str(_OTHER)}).status_code == 422
