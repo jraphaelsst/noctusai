@@ -23,6 +23,8 @@ NOME_OBRIGATORIO = "nome_obrigatorio"
 AGENDA_INVALIDA = "agenda_invalida"
 LANCAMENTO_INVALIDO = "lancamento_invalido"
 VALOR_INVALIDO = "valor_invalido"
+ANOTACAO_INVALIDA = "anotacao_invalida"
+MES_INVALIDO = "mes_invalido"
 
 
 class ClientsError(OrganError):
@@ -38,12 +40,14 @@ class ClientConflictError(Exception):
 
 __all__ = [
     "AGENDA_INVALIDA",
+    "ANOTACAO_INVALIDA",
     "CLIENTE_COM_FINANCEIRO",
     "ClientConflictError",
     "ClientsError",
     "DOCUMENTO_INVALIDO",
     "FILTRO_INVALIDO",
     "LANCAMENTO_INVALIDO",
+    "MES_INVALIDO",
     "METODO_INVALIDO",
     "NOME_OBRIGATORIO",
     "SESSAO_COM_PAGAMENTO",

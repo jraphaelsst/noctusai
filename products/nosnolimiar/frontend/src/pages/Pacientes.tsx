@@ -2,8 +2,9 @@
  * `/pacientes/*` -- the seed clients organ (noun "Paciente" comes from the backend's `ClientsConfig`):
  *   - `/pacientes`          the list (search, situação, etiquetas); `?lead=<id>` resolves the patient converted from
  *                           that lead (`GET /api/clients?lead_id=`) and redirects to it;
- *   - `/pacientes/agenda`   the week agenda across every patient;
- *   - `/pacientes/:id`      one patient: Sessões · Agenda fixa · Financeiro · Dados (`?aba=` keeps the tab in the URL).
+ *   - `/pacientes/agenda`   "Sessões": the week across every patient (open a session: status, observações, anotações clínicas
+ *                           for the therapist only, payment, history) + the month summary;
+ *   - `/pacientes/:id`      one patient: Sessões · Atendimento semanal · Financeiro · Dados (`?aba=` keeps the tab in the URL).
  * `isAdmin` is the UX gate only -- the server enforces admin on deletes and payments.
  */
 import * as React from "react";
@@ -22,12 +23,12 @@ function PacientesHeader({ view }: { view: "lista" | "agenda" }) {
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Pacientes</h1>
-        <p className="text-sm text-muted-foreground">Quem você atende: sessões, agenda fixa e financeiro.</p>
+        <p className="text-sm text-muted-foreground">Quem você atende: sessões, atendimento semanal e financeiro.</p>
       </div>
       <Tabs value={view} onValueChange={(v) => navigate(v === "agenda" ? AGENDA_PATH : PACIENTES_PATH)}>
         <TabsList aria-label="Visualização dos pacientes">
           <TabsTrigger value="lista" data-testid="pacientes-view-lista">Lista</TabsTrigger>
-          <TabsTrigger value="agenda" data-testid="pacientes-view-agenda">Agenda</TabsTrigger>
+          <TabsTrigger value="agenda" data-testid="pacientes-view-agenda">Sessões</TabsTrigger>
         </TabsList>
       </Tabs>
     </div>
@@ -74,10 +75,11 @@ function Lista() {
 
 function Agenda() {
   const navigate = useNavigate();
+  const isAdmin = useIsOrgAdmin();
   return (
     <div className="space-y-4" data-testid="pacientes-agenda-page">
       <PacientesHeader view="agenda" />
-      <ClientsAgenda hooks={clientsHooks} onOpenClient={(id) => navigate(patientPath(id))} />
+      <ClientsAgenda hooks={clientsHooks} isAdmin={isAdmin} onOpenClient={(id) => navigate(patientPath(id))} />
     </div>
   );
 }

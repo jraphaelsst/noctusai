@@ -34,6 +34,12 @@ export interface ClientsConfigData {
   /** IANA zone every date / time of the organ is shown and typed in. */
   timezone: string;
   finance_enabled: boolean;
+  /** Session statuses that are ABSENCES (charged only while the slot's `charge_absences` is on). */
+  absence_statuses: string[];
+  /** The session status the "realizadas" tiles count (null => the product has no single one). */
+  done_session_status: string | null;
+  /** The therapist-only clinical note per session is on (the note itself is gated by the server). */
+  clinical_notes: boolean;
 }
 
 export interface ClientSummary {
@@ -68,6 +74,9 @@ export interface Client {
 
 export type PaymentStatus = 'none' | 'open' | 'partial' | 'paid' | 'overdue';
 
+/** The money state of one session: `null` while it is still scheduled (nothing is owed yet). */
+export type ChargeStatus = 'pendente' | 'pago' | 'isento' | 'cancelado';
+
 export interface Session {
   id: string;
   client_id: string;
@@ -79,12 +88,21 @@ export interface Session {
   /** null => the client's default price at booking time; still null => not charged. */
   price_cents: number | null;
   waive_charge: boolean;
+  /** An absence of this session is charged (copied from its weekly slot). */
+  charge_absence: boolean;
+  /** The ADMINISTRATIVE note (rescheduled, arrived late...). The clinical note is never part of a session payload. */
   notes: string | null;
   entry_id: string | null;
   payment_status: PaymentStatus;
+  charge_status: ChargeStatus | null;
+  /** What is charged (cents); null when nothing is. */
+  amount_cents: number | null;
+  settled_cents: number;
   created_at: string;
   updated_at: string;
 }
+
+export type ScheduleStatus = 'ativa' | 'pausada' | 'encerrada';
 
 export interface Schedule {
   id: string;
@@ -98,6 +116,9 @@ export interface Schedule {
   starts_on: string;
   ends_on: string | null;
   active: boolean;
+  status: ScheduleStatus;
+  /** An absence in this slot is charged. */
+  charge_absences: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -154,6 +175,7 @@ export interface SessionInput {
   status?: string;
   price_cents?: number | null;
   waive_charge?: boolean;
+  charge_absence?: boolean;
   notes?: string | null;
 }
 export type SessionPatch = Partial<SessionInput>;
@@ -165,8 +187,43 @@ export interface ScheduleInput {
   price_cents?: number | null;
   starts_on?: string;
   ends_on?: string | null;
+  charge_absences?: boolean;
 }
-export type SchedulePatch = Partial<ScheduleInput> & { active?: boolean };
+/** `apply_to_existing: false` leaves the future session already created as it is (only sessions not yet created follow). */
+export type SchedulePatch = Partial<ScheduleInput> & { active?: boolean; apply_to_existing?: boolean };
+
+/** The therapist's clinical note of one session (sensitive health data; `body` is "" until one is written). */
+export interface ClinicalNote {
+  session_id: string;
+  body: string;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+/** One row of the immutable event log (ids, enums, amounts and dates only -- never any note text). */
+export interface ClientEvent {
+  id: string;
+  client_id: string;
+  session_id: string | null;
+  schedule_id: string | null;
+  kind: string;
+  from: string | null;
+  to: string | null;
+  actor: string | null;
+  data: Record<string, unknown>;
+  occurred_at: string;
+}
+
+/** `GET /summary?month=YYYY-MM`: the month at a glance (sessions DATED in the month). */
+export interface MonthSummary {
+  month: string;
+  sessions: number;
+  by_status: Record<string, number>;
+  charged_cents: number;
+  received_cents: number;
+  open_cents: number;
+  overdue_cents: number;
+}
 
 export interface PaymentInput {
   amount_cents: number;

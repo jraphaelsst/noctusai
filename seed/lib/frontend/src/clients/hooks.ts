@@ -22,7 +22,7 @@ import type { ApiClient } from '../api';
 import { infiniteOps, listOps, useCacheWriteMutation } from '../cache-writes';
 import { financeKeys } from '../finance/hooks';
 import type { FinanceAccount } from '../finance/types';
-import { apiErrorCode, errorMessage, signals } from '../organ-kit/query';
+import { apiErrorCode, apiErrorStatus, errorMessage, signals } from '../organ-kit/query';
 import { clientsFilterQuery, paymentStatusOf } from './format';
 import type {
   Client,
@@ -30,9 +30,12 @@ import type {
   ClientFinance,
   ClientInput,
   ClientPatch,
+  ClientEvent,
   ClientsConfigData,
   ClientsEnvelope,
   ClientsPage,
+  ClinicalNote,
+  MonthSummary,
   PaymentInput,
   PaymentResult,
   Schedule,
@@ -45,7 +48,7 @@ import type {
 } from './types';
 
 /** The subset of the seed `ApiClient` the clients hooks need. */
-export type ClientsApi = Pick<ApiClient, 'get' | 'post' | 'patch' | 'delete'>;
+export type ClientsApi = Pick<ApiClient, 'get' | 'post' | 'put' | 'patch' | 'delete'>;
 
 export interface ClientsHooksOptions {
   /** Base path of the clients router (default `/api/clients`). */
@@ -68,6 +71,11 @@ export const clientsKeys = {
   agenda: (from: string, to: string) => ['clients', 'sessions', 'range', from, to] as const,
   schedules: (clientId: string) => ['clients', 'schedules', clientId] as const,
   finance: (clientId: string) => ['clients', 'finance', clientId] as const,
+  /** Every month summary (a session / payment write makes them stale). */
+  monthSummaries: ['clients', 'month-summary'] as const,
+  monthSummary: (month: string) => ['clients', 'month-summary', month] as const,
+  sessionEvents: (sessionId: string) => ['clients', 'session-events', sessionId] as const,
+  clinicalNote: (sessionId: string) => ['clients', 'clinical-note', sessionId] as const,
 };
 
 export { apiErrorCode, errorMessage };
@@ -184,6 +192,41 @@ export function createClientsHooks(api: ClientsApi, options: ClientsHooksOptions
     return signals(q);
   }
 
+  /** The month at a glance (`month` = `YYYY-MM`); the previous month stays on screen while the next one loads. */
+  function useMonthSummary(month: string) {
+    const q = useQuery<MonthSummary>({
+      queryKey: clientsKeys.monthSummary(month),
+      queryFn: () => unwrap<MonthSummary>(api.get(`${BASE}/summary`, { month })),
+      placeholderData: keepPreviousData,
+    });
+    return signals(q);
+  }
+
+  /** One session's history (oldest first): who changed what, when -- never any note text. */
+  function useSessionEvents(sessionId: string | null | undefined, enabled = true) {
+    const q = useQuery<ClientEvent[]>({
+      queryKey: clientsKeys.sessionEvents(sessionId ?? ''),
+      queryFn: () => unwrap<ClientEvent[]>(api.get(`${BASE}/sessions/${sessionId}/events`)),
+      enabled: !!sessionId && enabled,
+    });
+    return signals(q);
+  }
+
+  /**
+   * The therapist's clinical note of a session. Sensitive health data: therapist-only on the server (403 for any other
+   * role) -- `forbidden` is true then and the UI shows NOTHING of it. Never kept stale
+   * (`gcTime: 0`: the text leaves the cache as soon as the dialog closes), never in a list.
+   */
+  function useClinicalNote(sessionId: string | null | undefined, enabled = true) {
+    const q = useQuery<ClinicalNote>({
+      queryKey: clientsKeys.clinicalNote(sessionId ?? ''),
+      queryFn: () => unwrap<ClinicalNote>(api.get(`${BASE}/sessions/${sessionId}/clinical-note`)),
+      enabled: !!sessionId && enabled,
+      gcTime: 0,
+    });
+    return { ...signals(q), forbidden: apiErrorStatus(q.error) === 403 || apiErrorStatus(q.error) === 404 };
+  }
+
   function useClientFinance(clientId: string | null | undefined, enabled = true) {
     const q = useQuery<ClientFinance>({
       queryKey: clientsKeys.finance(clientId ?? ''),
@@ -256,7 +299,7 @@ export function createClientsHooks(api: ClientsApi, options: ClientsHooksOptions
 
   // ---- session writes ----------------------------------------------------
   /** A session write changes the client's server-derived summary + finance: they refresh with it. */
-  const sessionDerived = (clientId: string): QueryKey[] => [clientsKeys.detail(clientId), clientsKeys.finance(clientId), clientsKeys.lists];
+  const sessionDerived = (clientId: string): QueryKey[] => [clientsKeys.detail(clientId), clientsKeys.finance(clientId), clientsKeys.lists, clientsKeys.monthSummaries];
 
   function useCreateSession() {
     return useCacheWriteMutation<Session, { clientId: string } & SessionInput>({
@@ -279,6 +322,24 @@ export function createClientsHooks(api: ClientsApi, options: ClientsHooksOptions
         },
       ],
       invalidate: ({ client_id }) => sessionDerived(client_id),
+    });
+  }
+
+  /** Mark this occurrence `remarcada` and create it at the new time: both sessions change, so the lists converge on the refetch. */
+  function useRescheduleSession() {
+    return useCacheWriteMutation<Session, { id: string; client_id: string; starts_at: string }>({
+      mutationFn: ({ id, starts_at }) => unwrap<Session>(api.post(`${BASE}/sessions/${id}/reschedule`, { starts_at })),
+      targets: [{ queryKey: clientsKeys.sessions, match: 'prefix', commit: (old: Session[] | undefined, saved: Session, _v, _c, key) => placeSession(old, saved, key!) }],
+      invalidate: ({ id, client_id }) => [clientsKeys.sessions, clientsKeys.sessionEvents(id), ...sessionDerived(client_id)],
+    });
+  }
+
+  /** The note the server answered goes into its own entry; the session's history gained a `clinical_note_saved`. */
+  function useSaveClinicalNote() {
+    return useCacheWriteMutation<ClinicalNote, { sessionId: string; body: string }>({
+      mutationFn: ({ sessionId, body }) => unwrap<ClinicalNote>(api.put(`${BASE}/sessions/${sessionId}/clinical-note`, { body })),
+      targets: ({ sessionId }) => [{ queryKey: clientsKeys.clinicalNote(sessionId), commit: (_old: ClinicalNote | undefined, saved: ClinicalNote) => saved }],
+      invalidate: ({ sessionId }) => [clientsKeys.sessionEvents(sessionId)],
     });
   }
 
@@ -345,13 +406,17 @@ export function createClientsHooks(api: ClientsApi, options: ClientsHooksOptions
             commit: (old: Session[] | undefined, r: PaymentResult) => {
               if (!Array.isArray(old)) return old;
               const bySession = new Map(r.finance.entries.filter((e) => e.session_id).map((e) => [e.session_id as string, e]));
-              return old.map((s) => (s.client_id === clientId && bySession.has(s.id) ? { ...s, payment_status: paymentStatusOf(bySession.get(s.id)) } : s));
+              return old.map((s) => {
+                if (s.client_id !== clientId || !bySession.has(s.id)) return s;
+                const e = bySession.get(s.id)!;
+                return { ...s, payment_status: paymentStatusOf(e), charge_status: e.settled_cents >= e.amount_cents ? ('pago' as const) : ('pendente' as const), settled_cents: e.settled_cents };
+              });
             },
           },
         ];
       },
       // The finance organ's own views (receivables, cash flow, DRE) moved too.
-      invalidate: [financeKeys.all],
+      invalidate: ({ clientId }) => [financeKeys.all, clientsKeys.monthSummaries, ['clients', 'session-events']],
     });
   }
 
@@ -365,6 +430,9 @@ export function createClientsHooks(api: ClientsApi, options: ClientsHooksOptions
     useAgendaSessions,
     useSchedules,
     useClientFinance,
+    useMonthSummary,
+    useSessionEvents,
+    useClinicalNote,
     useFinanceAccounts,
     useCreateClient,
     useUpdateClient,
@@ -372,6 +440,8 @@ export function createClientsHooks(api: ClientsApi, options: ClientsHooksOptions
     useCreateSession,
     useUpdateSession,
     useDeleteSession,
+    useRescheduleSession,
+    useSaveClinicalNote,
     useCreateSchedule,
     useUpdateSchedule,
     useDeleteSchedule,

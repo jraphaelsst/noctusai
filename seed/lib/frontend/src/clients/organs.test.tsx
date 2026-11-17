@@ -246,6 +246,7 @@ describe('ClientsAgenda', () => {
     const api = makeApi({ 'GET /api/clients/sessions': env([b]) });
     render(<ClientsAgenda hooks={createClientsHooks(api)} now={now} onOpenClient={onOpenClient} />, { wrapper: wrapperFor() });
     await userEvent.click(await screen.findByTestId('agenda-session-b'));
+    await userEvent.click(await screen.findByTestId('detail-edit'));
     const form = await screen.findByTestId('session-form');
     expect(within(form).getByLabelText(/Horário/)).toHaveValue('09:00');
     await userEvent.click(within(form).getByTestId('session-open-client'));

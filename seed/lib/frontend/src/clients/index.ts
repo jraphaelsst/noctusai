@@ -6,8 +6,12 @@ export {
   addDays as clientsAddDays,
   clientsFilterQuery,
   formatWhen as formatSessionWhen,
+  addMonths as clientsAddMonths,
+  CHARGE_STATUS as CLIENT_CHARGE_STATUS,
+  formatMonth as clientsFormatMonth,
   paymentStatusOf,
   PAYMENT_STATUS as CLIENT_PAYMENT_STATUS,
+  SCHEDULE_STATUS as CLIENT_SCHEDULE_STATUS,
   weekStartOf,
   zonedIso,
   zonedParts,
@@ -21,5 +25,9 @@ export { ClientsAgenda } from './ClientsAgenda';
 export type { ClientsAgendaProps } from './ClientsAgenda';
 export { ClientForm, ClientFormDialog } from './ClientForm';
 export type { ClientFormProps, ClientFormDialogProps } from './ClientForm';
+export { ClientsMonthSummary } from './ClientsMonthSummary';
+export type { ClientsMonthSummaryProps } from './ClientsMonthSummary';
+export { SessionDetailDialog, eventText as clientsEventText } from './SessionDetailDialog';
+export type { SessionDetailDialogProps } from './SessionDetailDialog';
 export { SessionFormDialog } from './SessionFormDialog';
 export type { SessionFormDialogProps } from './SessionFormDialog';

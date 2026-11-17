@@ -54,6 +54,7 @@ class SessionBody(_Base):
     status: Optional[str] = Field(None, max_length=60)
     price_cents: Optional[int] = Field(None, ge=0, le=100_000_000)
     waive_charge: bool = False
+    charge_absence: bool = True
     notes: Optional[str] = Field(None, max_length=10000)
 
 
@@ -63,7 +64,18 @@ class SessionPatch(_Base):
     status: Optional[str] = Field(None, max_length=60)
     price_cents: Optional[int] = Field(None, ge=0, le=100_000_000)
     waive_charge: Optional[bool] = None
+    charge_absence: Optional[bool] = None
     notes: Optional[str] = Field(None, max_length=10000)
+
+
+class RescheduleBody(_Base):
+    #: the new time of the session; without an offset it is read as the org's wall-clock time
+    starts_at: datetime
+
+
+class ClinicalNoteBody(StrictHttpModel):
+    #: the therapist's note of the session (sensitive health data: never logged, never in a list payload)
+    body: str = Field(max_length=20000)
 
 
 class ScheduleBody(_Base):
@@ -73,6 +85,7 @@ class ScheduleBody(_Base):
     price_cents: Optional[int] = Field(None, ge=0, le=100_000_000)
     starts_on: Optional[date] = None
     ends_on: Optional[date] = None
+    charge_absences: bool = True
 
 
 class SchedulePatch(_Base):
@@ -83,6 +96,9 @@ class SchedulePatch(_Base):
     starts_on: Optional[date] = None
     ends_on: Optional[date] = None
     active: Optional[bool] = None
+    charge_absences: Optional[bool] = None
+    #: True (default): the future session already created follows the edit; False: only sessions not yet created do
+    apply_to_existing: bool = True
 
 
 class PaymentBody(_Base):
@@ -94,4 +110,7 @@ class PaymentBody(_Base):
     notes: Optional[str] = Field(None, max_length=2000)
 
 
-__all__ = ["ClientBody", "ClientPatch", "PaymentBody", "ScheduleBody", "SchedulePatch", "SessionBody", "SessionPatch"]
+__all__ = [
+    "ClientBody", "ClientPatch", "ClinicalNoteBody", "PaymentBody", "RescheduleBody", "ScheduleBody", "SchedulePatch",
+    "SessionBody", "SessionPatch",
+]

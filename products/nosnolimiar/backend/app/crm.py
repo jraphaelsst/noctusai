@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from noctusai_lib.domain.clients import ClientsConfig, ClientsService, build_clients_store
+from noctusai_lib.domain.clients import ClientsConfig, ClientsService, SessionStatus, build_clients_store
 from noctusai_lib.domain.leads import LeadOrigin, LeadsConfig, LeadStage
 
 logger = logging.getLogger(__name__)
@@ -21,10 +21,29 @@ logger = logging.getLogger(__name__)
 #: the stage whose entry turns a lead into a patient
 CONVERSION_STAGE = "fechado"
 
+#: Session statuses. `agendada` is the state of a session not yet held; `realizada` and `falta` are charged (a falta is
+#: waived per weekly slot with `charge_absences=false`); the three cancel/reschedule states are never charged.
+SESSION_STATUSES = (
+    SessionStatus("agendada", "Agendada", "primary"),
+    SessionStatus("realizada", "Realizada", "success", billable=True),
+    SessionStatus("falta", "Falta", "destructive", billable=True),
+    SessionStatus("cancelada_paciente", "Cancelada pela paciente", "muted"),
+    SessionStatus("cancelada_terapeuta", "Cancelada pela terapeuta", "muted"),
+    SessionStatus("remarcada", "Remarcada", "warning"),
+)
+
 CLIENTS_CONFIG = ClientsConfig(
     noun_singular="Paciente",
     noun_plural="Pacientes",
     timezone="America/Sao_Paulo",
+    session_statuses=SESSION_STATUSES,
+    #: sessions are created ONE WEEK ahead (set on a Tuesday for Monday 14h => next Monday's exists at once, and every
+    #: Monday the following Monday's is created); the first one is never today
+    horizon_weeks=1,
+    schedule_min_lead_days=1,
+    absence_statuses=("falta",),
+    #: the clinical note of a session (LGPD art. 11): therapist-only routes, own table, never in a list
+    clinical_notes=True,
 )
 
 

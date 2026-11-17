@@ -18,6 +18,14 @@
   finance's settle path on the chosen account; the method rides on each settlement, the notes on the
   `client_payments` record.
 * Leads: `ensure_from_lead` turns a lead into a client, idempotent on `(org_id, lead_id)`.
+* Events (EOA): every state change -- session created / materialized / status changed / rescheduled / charge changed /
+  deleted, slot created / changed / paused / resumed / ended / deleted, payment recorded, clinical note saved -- appends
+  one intent-named row to the immutable `client_events` log, with the actor. Event `data` carries ids, enums, amounts
+  and dates only, NEVER free text (administrative or clinical).
+* Absences: a session in `config.absence_statuses` is charged only while its `charge_absence` flag is true (copied from
+  its slot's `charge_absences`; default true, so an absence is charged unless the slot says otherwise).
+* Clinical note (`config.clinical_notes`): one therapist-only note per session in its own table; it is never part of a
+  session payload (list, agenda or detail) -- only `get_clinical_note` / `set_clinical_note` touch it.
 """
 from __future__ import annotations
 
@@ -35,10 +43,12 @@ from noctusai_lib.primitives.phone import normalize_phone
 from .config import ClientsConfig
 from .errors import (
     AGENDA_INVALIDA,
+    ANOTACAO_INVALIDA,
     CLIENTE_COM_FINANCEIRO,
     DOCUMENTO_INVALIDO,
     FILTRO_INVALIDO,
     LANCAMENTO_INVALIDO,
+    MES_INVALIDO,
     METODO_INVALIDO,
     NOME_OBRIGATORIO,
     SESSAO_COM_PAGAMENTO,
@@ -57,6 +67,8 @@ logger = logging.getLogger(__name__)
 
 #: the widest window the cross-client agenda serves in one read
 MAX_AGENDA_DAYS = 62
+#: the longest clinical note one session takes
+MAX_CLINICAL_NOTE_CHARS = 20_000
 _OPEN = ("open", "partial")
 _CANCELLED = "cancelled"
 
@@ -137,8 +149,73 @@ class ClientsService:
     def _day_start(self, d: date) -> datetime:
         return datetime.combine(d, time.min, tzinfo=self.config.tz)
 
+    # NOC-REMEDIATE[clients-horizon-time-of-day]: a session is created from 00:00 of the slot's weekday one week ahead, not from the slot's start time (the owner said "at or after the start time"); a day-granular cursor cannot express the partial day without resurrecting a deleted occurrence -- gate by instant when a product asks — 2026-11-17
     def _horizon(self) -> date:
         return self.today() + timedelta(weeks=self.config.horizon_weeks)
+
+    # -- events (EOA) -------------------------------------------------------------------------------
+
+    def _emit(
+        self, org_id: str, client_id: str, kind: str, *, session_id: Optional[str] = None, schedule_id: Optional[str] = None,
+        from_value: Optional[str] = None, to_value: Optional[str] = None, actor: Optional[str] = None, data: Optional[dict] = None,
+    ) -> None:
+        self._emit_many(org_id, [self._event_row(client_id, kind, session_id, schedule_id, from_value, to_value, actor, data)])
+
+    def _event_row(
+        self, client_id: Any, kind: str, session_id: Any = None, schedule_id: Any = None,
+        from_value: Any = None, to_value: Any = None, actor: Any = None, data: Optional[dict] = None,
+    ) -> dict:
+        return {
+            "id": str(uuid4()),
+            "client_id": str(client_id),
+            "session_id": str(session_id) if session_id else None,
+            "schedule_id": str(schedule_id) if schedule_id else None,
+            "kind": kind,
+            "from_value": None if from_value is None else str(from_value),
+            "to_value": None if to_value is None else str(to_value),
+            "actor": str(actor) if actor else None,
+            "data": dict(data or {}),
+            "occurred_at": self._event_instant(),
+        }
+
+    def _event_instant(self) -> str:
+        """`now`, nudged by a microsecond when needed so this service's events are STRICTLY ordered (a frozen clock or two
+        events in one request must not tie: the log's order is its meaning)."""
+        at = self.now()
+        last = getattr(self, "_last_event_at", None)
+        if last is not None and at <= last:
+            at = last + timedelta(microseconds=1)
+        self._last_event_at = at
+        return _utc_iso(at)
+
+    def _emit_many(self, org_id: str, rows: Sequence[dict]) -> None:
+        if rows:
+            self.store.append_events(str(org_id), list(rows))
+
+    def present_event(self, row: Mapping[str, Any]) -> dict:
+        return {
+            "id": str(row["id"]),
+            "client_id": str(row["client_id"]),
+            "session_id": str(row["session_id"]) if row.get("session_id") else None,
+            "schedule_id": str(row["schedule_id"]) if row.get("schedule_id") else None,
+            "kind": row["kind"],
+            "from": row.get("from_value"),
+            "to": row.get("to_value"),
+            "actor": str(row["actor"]) if row.get("actor") else None,
+            "data": dict(row.get("data") or {}),
+            "occurred_at": self._instant(row.get("occurred_at")),
+        }
+
+    def session_events(self, org_id: str, session_id: str) -> list[dict]:
+        """The session's history, oldest first (never includes any note text)."""
+        org_id = str(org_id)
+        self._session(org_id, session_id)
+        return [self.present_event(e) for e in self.store.events_of_session(org_id, str(session_id))]
+
+    def client_events(self, org_id: str, client_id: str) -> list[dict]:
+        org_id = str(org_id)
+        self._client(org_id, client_id)
+        return [self.present_event(e) for e in self.store.events_of_client(org_id, str(client_id))]
 
     # -- validation ---------------------------------------------------------------------------------
 
@@ -392,9 +469,18 @@ class ClientsService:
             "starts_on": _iso_date(row.get("starts_on")),
             "ends_on": _iso_date(row.get("ends_on")),
             "active": bool(row.get("active")),
+            "status": self._schedule_status(row),
+            "charge_absences": bool(row.get("charge_absences", True)),
             "created_at": self._instant(row.get("created_at")),
             "updated_at": self._instant(row.get("updated_at")),
         }
+
+    def _schedule_status(self, row: Mapping[str, Any]) -> str:
+        """`ativa` / `pausada` / `encerrada`: derived (a slot with an end date reached is over; an inactive one is paused)."""
+        ends_on = _to_date(row.get("ends_on"))
+        if ends_on is not None and ends_on <= self.today():
+            return "encerrada"
+        return "ativa" if row.get("active") else "pausada"
 
     def _schedule(self, org_id: str, schedule_id: str) -> dict:
         row = self.store.get_schedule(str(org_id), str(schedule_id))
@@ -412,10 +498,11 @@ class ClientsService:
         if starts_on and ends_on and ends_on < starts_on:
             raise invalid("ends_on", "O fim da agenda vem antes do início.", AGENDA_INVALIDA)
 
-    def create_schedule(self, org_id: str, client_id: str, data: Mapping[str, Any]) -> dict:
+    def create_schedule(self, org_id: str, client_id: str, data: Mapping[str, Any], *, user_id: Optional[str] = None) -> dict:
         org_id = str(org_id)
         client = self._client(org_id, client_id)
         now = _utc_iso(self.now())
+        first_day = self.today() + timedelta(days=self.config.schedule_min_lead_days)
         row = {
             "id": str(uuid4()),
             "client_id": str(client["id"]),
@@ -423,22 +510,34 @@ class ClientsService:
             "slot_time": f"{_hhmm(data['time'])}:00",
             "duration_min": int(data.get("duration_min") or client.get("session_duration_min") or self.config.default_duration_min),
             "price_cents": data.get("price_cents"),
-            "starts_on": _iso_date(data.get("starts_on")) or self.today().isoformat(),
+            "starts_on": _iso_date(data.get("starts_on")) or first_day.isoformat(),
             "ends_on": _iso_date(data.get("ends_on")),
             "active": True,
             "materialized_until": None,
+            "charge_absences": bool(data.get("charge_absences", True)),
             "created_at": now,
             "updated_at": now,
         }
         self._check_window(row["starts_on"], row["ends_on"])
         saved = self.store.insert_schedule(org_id, row)
-        return self.present_schedule(self._materialize(org_id, saved, client))
+        self._emit(
+            org_id, client["id"], "schedule_created", schedule_id=saved["id"], actor=user_id,
+            data={"weekday": row["weekday"], "time": _hhmm(row["slot_time"]), "duration_min": row["duration_min"],
+                  "price_cents": row["price_cents"], "starts_on": row["starts_on"], "ends_on": row["ends_on"],
+                  "charge_absences": row["charge_absences"]},
+        )
+        return self.present_schedule(self._materialize(org_id, saved, client, actor=user_id))
 
-    def update_schedule(self, org_id: str, schedule_id: str, data: Mapping[str, Any]) -> dict:
+    def update_schedule(
+        self, org_id: str, schedule_id: str, data: Mapping[str, Any], *, user_id: Optional[str] = None, apply_to_existing: bool = True
+    ) -> dict:
+        """Edit a weekly slot. `apply_to_existing=True` (default) rewrites the FUTURE sessions of the slot that are still
+        in the default status and not booked (the new weekday / time / price takes effect on the one already created);
+        `False` leaves them exactly as they are and the change only shapes sessions not yet created."""
         org_id = str(org_id)
         current = self._schedule(org_id, schedule_id)
         patch: dict[str, Any] = {}
-        for key in ("weekday", "duration_min", "active"):
+        for key in ("weekday", "duration_min", "active", "charge_absences"):
             if data.get(key) is not None:
                 patch[key] = data[key]
         if data.get("time") is not None:
@@ -455,20 +554,46 @@ class ClientsService:
         self._check_window(_iso_date(merged.get("starts_on")), _iso_date(merged.get("ends_on")))
         regenerate = bool({"weekday", "slot_time", "starts_on", "ends_on", "active"} & patch.keys())
         future = self._rewritable_future(org_id, str(schedule_id))
-        if regenerate:
+        if regenerate and apply_to_existing:
             self.store.delete_sessions(org_id, [s["id"] for s in future])
             patch["materialized_until"] = None
+        elif regenerate:
+            # keep the sessions already created; only days after the last one are generated from the new shape
+            kept = [self._local(s["starts_at"]).date() for s in self.store.sessions_of_schedule_after(org_id, str(schedule_id), _utc_iso(self.now()))]
+            patch["materialized_until"] = max(kept).isoformat() if kept else None
         else:
             in_place = {k: patch[k] for k in ("price_cents", "duration_min") if k in patch}
-            for s in future:
-                self.store.update_session(org_id, s["id"], {**in_place, "updated_at": _utc_iso(self.now())})
+            if "charge_absences" in patch:
+                in_place["charge_absence"] = patch["charge_absences"]
+            if apply_to_existing and in_place:
+                for s in future:
+                    self.store.update_session(org_id, s["id"], {**in_place, "updated_at": _utc_iso(self.now())})
         patch["updated_at"] = _utc_iso(self.now())
         saved = self.store.update_schedule(org_id, str(schedule_id), patch)
         if saved is None:
             raise not_found("Agenda")
+        self._emit_schedule_changes(org_id, current, saved, patch, user_id, apply_to_existing)
         if regenerate and saved.get("active"):
-            saved = self._materialize(org_id, saved)
+            saved = self._materialize(org_id, saved, actor=user_id)
         return self.present_schedule(saved)
+
+    def _emit_schedule_changes(
+        self, org_id: str, before: Mapping[str, Any], after: Mapping[str, Any], patch: Mapping[str, Any],
+        user_id: Optional[str], applied_to_existing: bool,
+    ) -> None:
+        cid, sid = before["client_id"], before["id"]
+        if "active" in patch:
+            self._emit(org_id, cid, "schedule_resumed" if patch["active"] else "schedule_paused", schedule_id=sid, actor=user_id)
+        if "ends_on" in patch and patch["ends_on"] is not None:
+            self._emit(org_id, cid, "schedule_ended", schedule_id=sid, actor=user_id, to_value=patch["ends_on"])
+        shape = {k: patch[k] for k in ("weekday", "slot_time", "duration_min", "price_cents", "starts_on", "charge_absences") if k in patch}
+        if shape:
+            old = {k: (_hhmm(before.get(k)) if k == "slot_time" else _iso_date(before.get(k)) if k == "starts_on" else before.get(k)) for k in shape}
+            new = {k: (_hhmm(v) if k == "slot_time" else v) for k, v in shape.items()}
+            self._emit(
+                org_id, cid, "schedule_changed", schedule_id=sid, actor=user_id,
+                data={"from": old, "to": new, "applied_to_existing": applied_to_existing},
+            )
 
     @staticmethod
     def _same(key: str, old: Any, new: Any) -> bool:
@@ -478,12 +603,13 @@ class ClientsService:
             return _hhmm(old) == _hhmm(new)
         return old == new
 
-    def delete_schedule(self, org_id: str, schedule_id: str) -> None:
+    def delete_schedule(self, org_id: str, schedule_id: str, *, user_id: Optional[str] = None) -> None:
         org_id = str(org_id)
-        self._schedule(org_id, schedule_id)
+        current = self._schedule(org_id, schedule_id)
         self.store.delete_sessions(org_id, [s["id"] for s in self._rewritable_future(org_id, str(schedule_id))])
         if not self.store.delete_schedule(org_id, str(schedule_id)):
             raise not_found("Agenda")
+        self._emit(org_id, current["client_id"], "schedule_deleted", schedule_id=schedule_id, actor=user_id)
 
     def _rewritable_future(self, org_id: str, schedule_id: str) -> list[dict]:
         """Future sessions of the schedule still in the default status and not booked -- the only ones a schedule
@@ -497,11 +623,31 @@ class ClientsService:
         through = self._horizon().isoformat()
         return sum(self._generate(org_id, sched, None)[1] for sched in self.store.schedules_due(org_id, through, client_id=client_id))
 
-    def _materialize(self, org_id: str, schedule: dict, client: Optional[dict] = None) -> dict:
-        saved, _n = self._generate(org_id, schedule, client)
+    def materialize_due(self, *, on_error: Optional[Callable[[str, Exception], None]] = None) -> dict[str, int]:
+        """The daily job's body: roll every org's due schedules forward. `{org_id: sessions created}` (orgs that created
+        none are omitted). Idempotent twice over (the slot guard + the cursor), and it CATCHES UP: after missed days it
+        creates every occurrence still in the future up to the horizon. A failing org is handed to `on_error(org_id, exc)`
+        and the sweep goes on to the next one (one org's failure never costs the others their sessions); without
+        `on_error` the exception propagates."""
+        through = self._horizon().isoformat()
+        out: dict[str, int] = {}
+        for org_id in self.store.orgs_with_due_schedules(through):
+            try:
+                made = self.top_up(org_id)
+            except Exception as exc:  # noqa: BLE001 -- handed to the caller's handler, or re-raised: never swallowed
+                if on_error is None:
+                    raise
+                on_error(org_id, exc)
+                continue
+            if made:
+                out[org_id] = made
+        return out
+
+    def _materialize(self, org_id: str, schedule: dict, client: Optional[dict] = None, *, actor: Optional[str] = None) -> dict:
+        saved, _n = self._generate(org_id, schedule, client, actor=actor)
         return saved
 
-    def _generate(self, org_id: str, schedule: dict, client: Optional[dict]) -> tuple[dict, int]:
+    def _generate(self, org_id: str, schedule: dict, client: Optional[dict], *, actor: Optional[str] = None) -> tuple[dict, int]:
         """Create the schedule's sessions from its cursor to the horizon; advance the cursor. `(schedule, created)`."""
         today, through = self.today(), self._horizon()
         if not schedule.get("active"):
@@ -531,6 +677,7 @@ class ClientsService:
                     "status": self.config.default_session_status,
                     "price_cents": schedule.get("price_cents"),
                     "waive_charge": False,
+                    "charge_absence": bool(schedule.get("charge_absences", True)),
                     "notes": None,
                     "entry_id": None,
                     "booking_rev": 0,
@@ -539,6 +686,13 @@ class ClientsService:
                 })
             day += timedelta(days=7)
         inserted = self.store.insert_generated_sessions(org_id, rows) if rows else []
+        self._emit_many(org_id, [
+            self._event_row(
+                s["client_id"], "session_materialized", s["id"], schedule["id"], None, s["status"], actor,
+                {"starts_at": s["starts_at"], "source": "schedule"},
+            )
+            for s in inserted
+        ])
         if inserted and self.config.is_billable(self.config.default_session_status):
             client = client or self._client(org_id, schedule["client_id"])
             for s in inserted:
@@ -568,7 +722,18 @@ class ClientsService:
             return "overdue"
         return "partial" if int(entry["settled_cents"]) > 0 else "open"
 
-    def present_session(self, row: dict, client_name: Optional[str], entry: Optional[dict]) -> dict:
+    def _charge_status(self, row: Mapping[str, Any], entry: Optional[dict]) -> Optional[str]:
+        """The money state of one session: `pendente` (a live receivable owes) / `pago` / `isento` (billable status,
+        nothing to charge: waived, an absence the slot does not charge, no price) / `cancelado` (a non-billable end
+        status) / None (still scheduled: nothing is owed yet)."""
+        if entry is not None and entry["status"] != _CANCELLED:
+            return "pago" if entry["status"] == "paid" else "pendente"
+        if row["status"] == self.config.default_session_status:
+            return None
+        return "isento" if self.config.is_billable(row["status"]) else "cancelado"
+
+    def present_session(self, row: dict, client_name: Optional[str], entry: Optional[dict], client: Optional[Mapping[str, Any]] = None) -> dict:
+        live = entry is not None and entry["status"] != _CANCELLED
         return {
             "id": str(row["id"]),
             "client_id": str(row["client_id"]),
@@ -579,9 +744,13 @@ class ClientsService:
             "status": row["status"],
             "price_cents": row.get("price_cents"),
             "waive_charge": bool(row.get("waive_charge")),
+            "charge_absence": bool(row.get("charge_absence", True)),
             "notes": row.get("notes"),
             "entry_id": str(row["entry_id"]) if row.get("entry_id") else None,
             "payment_status": self._payment_status(entry),
+            "charge_status": self._charge_status(row, entry),
+            "amount_cents": int(entry["amount_cents"]) if live else (self._price(row, client) if client else row.get("price_cents")),
+            "settled_cents": int(entry["settled_cents"]) if live else 0,
             "created_at": self._instant(row.get("created_at")),
             "updated_at": self._instant(row.get("updated_at")),
         }
@@ -593,7 +762,9 @@ class ClientsService:
             clients = {c["id"]: c for c in self.store.clients_by_ids(org_id, {r["client_id"] for r in rows})}
         entries = self._entries(org_id, [r.get("entry_id") for r in rows])
         return [
-            self.present_session(r, (clients.get(r["client_id"]) or {}).get("name"), entries.get(str(r.get("entry_id"))))
+            self.present_session(
+                r, (clients.get(r["client_id"]) or {}).get("name"), entries.get(str(r.get("entry_id"))), clients.get(r["client_id"])
+            )
             for r in rows
         ]
 
@@ -630,7 +801,7 @@ class ClientsService:
         rows = sorted(rows, key=lambda r: (as_dt(r["starts_at"]), str(r["id"])), reverse=True)
         return self._present_sessions(org_id, rows, {client["id"]: client})
 
-    def create_session(self, org_id: str, client_id: str, data: Mapping[str, Any]) -> dict:
+    def create_session(self, org_id: str, client_id: str, data: Mapping[str, Any], *, user_id: Optional[str] = None, rescheduled_from: Optional[str] = None) -> dict:
         org_id = str(org_id)
         client = self._client(org_id, client_id)
         status = self._check_session_status(data.get("status") or self.config.default_session_status)
@@ -644,6 +815,7 @@ class ClientsService:
             "status": status,
             "price_cents": data.get("price_cents"),
             "waive_charge": bool(data.get("waive_charge") or False),
+            "charge_absence": bool(data.get("charge_absence", True)),
             "notes": _clean(data.get("notes")),
             "entry_id": None,
             "booking_rev": 0,
@@ -651,10 +823,14 @@ class ClientsService:
             "updated_at": now,
         }
         saved = self.store.insert_session(org_id, row)
+        self._emit(
+            org_id, client["id"], "session_created", session_id=saved["id"], actor=user_id, to_value=status,
+            data={"starts_at": row["starts_at"], "source": "manual", **({"rescheduled_from": rescheduled_from} if rescheduled_from else {})},
+        )
         saved = self._sync_booking(org_id, client, saved, saved, price_changed=True)
         return self._present_sessions(org_id, [saved], {client["id"]: client})[0]
 
-    def update_session(self, org_id: str, session_id: str, data: Mapping[str, Any]) -> dict:
+    def update_session(self, org_id: str, session_id: str, data: Mapping[str, Any], *, user_id: Optional[str] = None) -> dict:
         org_id = str(org_id)
         current = self._session(org_id, session_id)
         client = self._client(org_id, current["client_id"])
@@ -667,6 +843,8 @@ class ClientsService:
             patch["status"] = self._check_session_status(data["status"])
         if data.get("waive_charge") is not None:
             patch["waive_charge"] = bool(data["waive_charge"])
+        if data.get("charge_absence") is not None:
+            patch["charge_absence"] = bool(data["charge_absence"])
         if "price_cents" in data:
             patch["price_cents"] = data["price_cents"]
         if "notes" in data:
@@ -681,9 +859,42 @@ class ClientsService:
         saved = self.store.update_session(org_id, str(session_id), patch)
         if saved is None:
             raise not_found("Sessão")
+        self._emit_session_changes(org_id, current, patch, user_id)
         return self._present_sessions(org_id, [saved], {client["id"]: client})[0]
 
-    def delete_session(self, org_id: str, session_id: str) -> None:
+    def _emit_session_changes(self, org_id: str, before: Mapping[str, Any], patch: Mapping[str, Any], user_id: Optional[str]) -> None:
+        cid, sid, sched = before["client_id"], before["id"], before.get("schedule_id")
+        rows = []
+        if "status" in patch:
+            rows.append(self._event_row(cid, "session_status_changed", sid, sched, before["status"], patch["status"], user_id))
+        if "starts_at" in patch:
+            rows.append(self._event_row(cid, "session_rescheduled", sid, sched, _utc_iso(as_dt(before["starts_at"])), patch["starts_at"], user_id))
+        charge = {k: patch[k] for k in ("price_cents", "waive_charge", "charge_absence", "duration_min") if k in patch}
+        if charge:
+            rows.append(self._event_row(
+                cid, "session_charge_changed", sid, sched, None, None, user_id,
+                {"from": {k: before.get(k) for k in charge}, "to": charge},
+            ))
+        if "notes" in patch:  # the administrative note's TEXT is not copied into the log
+            rows.append(self._event_row(cid, "session_notes_changed", sid, sched, None, None, user_id))
+        self._emit_many(org_id, rows)
+
+    def reschedule_session(self, org_id: str, session_id: str, starts_at: datetime, *, user_id: Optional[str] = None) -> dict:
+        """Mark this occurrence `remarcada` and create the session at its new time (a one-off, linked by the event log).
+        The series is untouched: the slot's next occurrence is generated as usual, this one is never regenerated."""
+        org_id = str(org_id)
+        current = self._session(org_id, session_id)
+        if "remarcada" not in self.config.session_status_slugs:
+            raise invalid("status", "Esta agenda não tem o status remarcada.", STATUS_INVALIDO)
+        self.update_session(org_id, session_id, {"status": "remarcada"}, user_id=user_id)
+        return self.create_session(
+            org_id, current["client_id"],
+            {"starts_at": starts_at, "duration_min": current["duration_min"], "price_cents": current.get("price_cents"),
+             "waive_charge": bool(current.get("waive_charge")), "charge_absence": bool(current.get("charge_absence", True))},
+            user_id=user_id, rescheduled_from=str(current["id"]),
+        )
+
+    def delete_session(self, org_id: str, session_id: str, *, user_id: Optional[str] = None) -> None:
         org_id = str(org_id)
         current = self._session(org_id, session_id)
         if current.get("entry_id"):
@@ -694,6 +905,71 @@ class ClientsService:
                 self.booking.cancel_receivable(org_id, str(current["entry_id"]))
         if not self.store.delete_sessions(org_id, [str(session_id)]):
             raise not_found("Sessão")
+        self._emit(org_id, current["client_id"], "session_deleted", session_id=session_id, schedule_id=current.get("schedule_id"),
+                   actor=user_id, from_value=current["status"])
+
+    # -- clinical note (therapist-only) -----------------------------------------------------------------
+
+    def _check_notes_on(self) -> None:
+        if not self.config.clinical_notes:
+            raise not_found("Anotação")
+
+    def get_clinical_note(self, org_id: str, session_id: str) -> dict:
+        """The session's clinical note (`body` is `""` until one is written). The caller MUST have passed the therapist gate."""
+        self._check_notes_on()
+        org_id = str(org_id)
+        self._session(org_id, session_id)
+        row = self.store.get_session_note(org_id, str(session_id))
+        return {
+            "session_id": str(session_id),
+            "body": (row or {}).get("body") or "",
+            "updated_at": self._instant((row or {}).get("updated_at")),
+            "updated_by": str(row["updated_by"]) if row and row.get("updated_by") else None,
+        }
+
+    # NOC-REMEDIATE[clients-clinical-note-retention]: no retention / patient-level erasure policy for clinical notes (a deleted session cascades its note), no read-access audit row and no application-level encryption beyond the platform default (LGPD art. 11) -- owner + legal decision before the first real note — 2026-11-17
+    def set_clinical_note(self, org_id: str, session_id: str, body: Optional[str], *, user_id: Optional[str] = None) -> dict:
+        self._check_notes_on()
+        org_id = str(org_id)
+        session = self._session(org_id, session_id)
+        text = (body or "").strip()
+        if len(text) > MAX_CLINICAL_NOTE_CHARS:
+            raise invalid("body", f"A anotação passa de {MAX_CLINICAL_NOTE_CHARS} caracteres.", ANOTACAO_INVALIDA)
+        if not text:
+            raise invalid("body", "Escreva a anotação.", ANOTACAO_INVALIDA)
+        self.store.upsert_session_note(org_id, {
+            "session_id": str(session_id), "org_id": org_id, "body": text, "updated_by": user_id, "updated_at": _utc_iso(self.now()),
+        })
+        self._emit(org_id, session["client_id"], "clinical_note_saved", session_id=session_id, schedule_id=session.get("schedule_id"), actor=user_id)
+        return self.get_clinical_note(org_id, session_id)
+
+    # -- month summary --------------------------------------------------------------------------------
+
+    def month_summary(self, org_id: str, year: int, month: int) -> dict:
+        """The month at a glance: sessions by status, what was charged / received / is still open / overdue (over the
+        sessions DATED in the month, so a payment received later still counts for the session it settles)."""
+        org_id = str(org_id)
+        if not (1 <= month <= 12 and 2000 <= year <= 2100):
+            raise invalid("month", "Mês inválido.", MES_INVALIDO)
+        first = date(year, month, 1)
+        nxt = date(year + (month == 12), month % 12 + 1, 1)
+        self.top_up(org_id)
+        rows = self.store.sessions_between(org_id, _utc_iso(self._day_start(first)), _utc_iso(self._day_start(nxt)))
+        entries = self._entries(org_id, [r.get("entry_id") for r in rows])
+        by_status = {s: 0 for s in self.config.session_status_slugs}
+        for r in rows:
+            by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+        live = [e for e in entries.values() if e["status"] != _CANCELLED]
+        money = self._money(live, self.today())
+        return {
+            "month": f"{year:04d}-{month:02d}",
+            "sessions": len(rows),
+            "by_status": by_status,
+            "charged_cents": sum(int(e["amount_cents"]) for e in live),
+            "received_cents": money["paid_cents"],
+            "open_cents": money["open_cents"],
+            "overdue_cents": money["overdue_cents"],
+        }
 
     # -- booking ------------------------------------------------------------------------------------
 
@@ -706,6 +982,8 @@ class ClientsService:
 
     def _billable(self, session: Mapping[str, Any], client: Mapping[str, Any]) -> bool:
         price = self._price(session, client)
+        if session["status"] in self.config.absence_statuses and not session.get("charge_absence", True):
+            return False
         return self.config.is_billable(session["status"]) and not session.get("waive_charge") and bool(price and price > 0)
 
     def _source_ref(self, session: Mapping[str, Any]) -> str:
@@ -815,6 +1093,7 @@ class ClientsService:
         )
         return {**money, "entries": entries}
 
+    # NOC-REMEDIATE[clients-payment-receipt]: a payment has no optional comprovante (receipt) attachment yet -- needs the storage organ + a private bucket, signed URLs only — 2026-11-17
     def record_payment(self, org_id: str, client_id: str, data: Mapping[str, Any], *, user_id: Optional[str] = None) -> dict:
         """Allocate a manual payment across the client's open receivables (oldest due first) on `account_id`.
 
@@ -873,6 +1152,10 @@ class ClientsService:
                     external_ref=f"{self.config.finance_ref_prefix}:payment:{payment['id']}:{e['entry_id']}",
                 ))
                 left -= part
+                self._emit(
+                    org_id, client["id"], "payment_recorded", session_id=e["session_id"], actor=user_id, to_value=method,
+                    data={"amount_cents": part, "method": method, "paid_on": _iso_date(data["paid_on"]), "payment_id": payment["id"]},
+                )
         except Exception:
             logger.exception(
                 "clients: payment %s stopped after %d settlement(s) of %d cents", payment["id"], len(settlement_ids), amount
@@ -886,4 +1169,4 @@ class ClientsService:
         return {"settlement_ids": settlement_ids, "finance": self.client_finance(org_id, client["id"])}
 
 
-__all__ = ["MAX_AGENDA_DAYS", "ClientsService"]
+__all__ = ["MAX_AGENDA_DAYS", "MAX_CLINICAL_NOTE_CHARS", "ClientsService"]

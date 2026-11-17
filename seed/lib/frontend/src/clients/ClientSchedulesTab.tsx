@@ -1,8 +1,9 @@
 /**
- * "Agenda fixa" tab: the client's weekly slots (weekday + time, duration, price, period). Create / edit / pause /
- * resume / delete; the server regenerates the upcoming sessions of a slot, so the sessions refresh with every write.
+ * "Atendimento semanal" tab: the client's weekly slots (weekday + time, duration, price, period, "cobrar faltas").
+ * Create / edit / pause / resume / end / delete; the server keeps the session of the week ahead created (one week
+ * before), so the sessions refresh with every write. An edit can leave the session already created as it is.
  */
-import { Pause, Pencil, Play, Plus, Trash2 } from 'lucide-react';
+import { Pause, Pencil, Play, Plus, Square, Trash2 } from 'lucide-react';
 import * as React from 'react';
 
 import { useConfirm } from '../components/confirm/ConfirmProvider';
@@ -10,7 +11,7 @@ import { Button } from '../design-system/ui/Button';
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from '../design-system/ui/Dialog';
 import { centsToInput, formatCents, parseMoneyToCents } from '../organ-kit/money';
 import { EmptyState, Field, FormError, Input, ListSkeleton, RefreshingBar, RetryError, Select } from './controls';
-import { formatDay, todayIn, tzOf, WEEKDAYS } from './format';
+import { formatDay, SCHEDULE_STATUS, todayIn, tzOf, WEEKDAYS } from './format';
 import { errorMessage, type ClientsHooks } from './hooks';
 import { t } from './i18n';
 import { clientsErrorText, ToneBadge } from './parts';
@@ -24,8 +25,11 @@ function ScheduleForm({ hooks, client, schedule, onClose }: { hooks: ClientsHook
   const [time, setTime] = React.useState(schedule?.time ?? '');
   const [duration, setDuration] = React.useState(String(schedule?.duration_min ?? client.session_duration_min ?? config?.default_duration_min ?? ''));
   const [price, setPrice] = React.useState(centsToInput(schedule?.price_cents));
-  const [startsOn, setStartsOn] = React.useState(schedule?.starts_on ?? todayIn(tzOf(config)));
+  // A new slot leaves "a partir de" empty: the server starts it at least a day ahead (never today).
+  const [startsOn, setStartsOn] = React.useState(schedule?.starts_on ?? '');
   const [endsOn, setEndsOn] = React.useState(schedule?.ends_on ?? '');
+  const [chargeAbsences, setChargeAbsences] = React.useState(schedule?.charge_absences ?? true);
+  const [applyExisting, setApplyExisting] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const pending = create.isPending || update.isPending;
 
@@ -43,10 +47,11 @@ function ScheduleForm({ hooks, client, schedule, onClose }: { hooks: ClientsHook
       price_cents: cents,
       starts_on: startsOn || undefined,
       ends_on: endsOn || null,
+      charge_absences: chargeAbsences,
       ...(duration.trim() ? { duration_min: minutes } : {}),
     };
     const done = { onSuccess: onClose, onError: (err: unknown) => setError(clientsErrorText(err)) };
-    if (schedule) update.mutate({ id: schedule.id, client_id: client.id, ...body }, done);
+    if (schedule) update.mutate({ id: schedule.id, client_id: client.id, ...body, apply_to_existing: applyExisting }, done);
     else create.mutate({ clientId: client.id, ...body }, done);
   };
 
@@ -82,6 +87,16 @@ function ScheduleForm({ hooks, client, schedule, onClose }: { hooks: ClientsHook
             <Input type="date" value={endsOn} min={startsOn || undefined} onChange={(e) => setEndsOn(e.target.value)} />
           </Field>
         </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={chargeAbsences} onChange={(e) => setChargeAbsences(e.target.checked)} data-testid="schedule-charge-absences" />
+          {t('schedule_form.charge_absences')}
+        </label>
+        {schedule && (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={applyExisting} onChange={(e) => setApplyExisting(e.target.checked)} data-testid="schedule-apply-existing" />
+            {t('schedule_form.apply_existing')}
+          </label>
+        )}
         <FormError message={error} />
       </DialogBody>
       <DialogFooter className="gap-2">
@@ -98,6 +113,7 @@ function ScheduleForm({ hooks, client, schedule, onClose }: { hooks: ClientsHook
 
 export function ClientSchedulesTab({ hooks, client }: { hooks: ClientsHooks; client: Client }) {
   const confirm = useConfirm();
+  const { data: config } = hooks.useClientsConfig();
   const schedules = hooks.useSchedules(client.id);
   const update = hooks.useUpdateSchedule();
   const del = hooks.useDeleteSchedule();
@@ -110,6 +126,12 @@ export function ClientSchedulesTab({ hooks, client }: { hooks: ClientsHooks; cli
   const toggle = (s: Schedule) => {
     setError(null);
     update.mutate({ id: s.id, client_id: client.id, active: !s.active }, { onError: fail });
+  };
+  const end = async (s: Schedule) => {
+    const ok = await confirm({ title: t('schedules.end_title'), description: t('schedules.end_body'), confirmLabel: t('schedules.end') });
+    if (!ok) return;
+    setError(null);
+    update.mutate({ id: s.id, client_id: client.id, ends_on: todayIn(tzOf(config)) }, { onError: fail });
   };
   const remove = async (s: Schedule) => {
     const ok = await confirm({ title: t('schedules.delete_title'), description: t('schedules.delete_body'), confirmLabel: t('common.delete'), tone: 'danger' });
@@ -144,14 +166,24 @@ export function ClientSchedulesTab({ hooks, client }: { hooks: ClientsHooks; cli
                 <p className="text-xs text-muted-foreground">
                   {t('sessions.minutes', { n: s.duration_min })}
                   {s.price_cents != null ? ` · ${formatCents(s.price_cents)}` : ''} · {t('schedules.since', { date: formatDay(s.starts_on) })}
-                  {s.ends_on ? ` ${t('schedules.until', { date: formatDay(s.ends_on) })}` : ''}
+                  {s.ends_on ? ` ${t('schedules.until', { date: formatDay(s.ends_on) })}` : ''} · {s.charge_absences ? t('schedules.charges_absences') : t('schedules.waives_absences')}
                 </p>
               </div>
-              {!s.active && <ToneBadge color="muted">{t('schedules.inactive')}</ToneBadge>}
-              <Button variant="ghost" size="sm" onClick={() => toggle(s)} data-testid={`schedule-toggle-${s.id}`}>
-                {s.active ? <Pause className="mr-1 h-4 w-4" /> : <Play className="mr-1 h-4 w-4" />}
-                {s.active ? t('schedules.pause') : t('schedules.resume')}
-              </Button>
+              <ToneBadge color={SCHEDULE_STATUS[s.status]?.color ?? 'muted'} testId={`schedule-status-${s.id}`}>
+                {SCHEDULE_STATUS[s.status]?.label ?? s.status}
+              </ToneBadge>
+              {s.status !== 'encerrada' && (
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => toggle(s)} data-testid={`schedule-toggle-${s.id}`}>
+                    {s.active ? <Pause className="mr-1 h-4 w-4" /> : <Play className="mr-1 h-4 w-4" />}
+                    {s.active ? t('schedules.pause') : t('schedules.resume')}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => void end(s)} data-testid={`schedule-end-${s.id}`}>
+                    <Square className="mr-1 h-4 w-4" />
+                    {t('schedules.end')}
+                  </Button>
+                </>
+              )}
               <Button variant="ghost" size="sm" onClick={() => setEditing(s)} aria-label={t('common.edit')}>
                 <Pencil className="h-4 w-4" />
               </Button>

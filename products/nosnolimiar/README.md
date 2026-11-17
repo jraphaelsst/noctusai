@@ -11,7 +11,7 @@ CRM do consultório de psicanálise de **Mônica Tangerino** (psicanalista; fala
 | `/conversas` | Conversas de WhatsApp: ler e responder, `?chat=` abre uma conversa, "Ver lead" no cabeçalho, "Apagar dados" (LGPD, admin: apaga a conversa e o lead automático dela) | `WhatsAppInbox` |
 | `/contexto` | Quem a Mônica é, em palavras dela (abordagem, serviços, tom de voz…) — a base do futuro agente de leads | `OrgSpecsForm` via proxy `/api/contexto` |
 | `/configuracoes/conexoes` | Conexão do WhatsApp por QR (só administradores). Abas como sub-rotas; cresce com uma linha em `sections` | `SectionTabsPage`, `WhatsAppConnectionsPage` |
-| `/pacientes` (Lista) · `/pacientes/agenda` (Agenda) · `/pacientes/:id` | Pacientes: lista (busca, status, tags, próxima sessão, valor em aberto), agenda semanal de todas as sessões e a página do paciente com abas Sessões · Agenda fixa · Financeiro · Dados. Horário semanal fixo gera as próximas 8 semanas de sessões; sessão realizada ou falta com valor vira conta a receber no Financeiro; "Registrar pagamento" (Pix, dinheiro, cartão, transferência — sem gateway) dá baixa nela. `?lead=` abre o paciente de um lead | `ClientsList`, `ClientsAgenda`, `ClientDetailPage` |
+| `/pacientes` (Lista) · `/pacientes/agenda` (Sessões) · `/pacientes/:id` | Pacientes: lista (busca, status, tags, próxima sessão, valor em aberto), **Sessões** (a semana de todos os pacientes + o resumo do mês: sessões, realizadas, faltas, cobrado, recebido, em aberto; clicar numa sessão abre o detalhe) e a página do paciente com abas Sessões · **Atendimento semanal** · Financeiro · Dados. **Atendimento semanal** = o horário fixo (ex.: segunda 14h): a sessão da semana seguinte é criada sempre **com uma semana de antecedência** (definido numa terça para segunda 14h, a segunda que vem já existe; depois, toda segunda é criada a seguinte), nunca para hoje; cada paciente tem a opção "cobrar faltas" (padrão sim); pausar, retomar, encerrar; editar pode (ou não) mexer na sessão já criada; cancelar ou remarcar UMA sessão não quebra a série. Situações da sessão: agendada · realizada · falta · cancelada pela paciente · cancelada pela terapeuta · remarcada. **Detalhe da sessão**: situação, remarcar, *observações* (administrativas: "remarcou", "chegou atrasada" — quem cuida da agenda vê), *anotações clínicas* (**só a terapeuta**, ver LGPD abaixo), pagamento da sessão (pendente · pago · isento · cancelado; "Registrar pagamento" — Pix, dinheiro, cartão, transferência, sem gateway) e o histórico (quem mudou o quê e quando). Sessão realizada, ou falta cobrada, com valor vira conta a receber no Financeiro (o órgão financeiro da seed — nenhum livro paralelo); as faltas só deixam de ser cobradas se o horário diz que não. `?lead=` abre o paciente de um lead | `ClientsList`, `ClientsAgenda`, `ClientsMonthSummary`, `SessionDetailDialog`, `ClientDetailPage` |
 | `/equipe` · `/financeiro` | Equipe e financeiro (organs da seed) | `TeamPage`, `FinanceRoutedPage` |
 
 Funil: **Lead → Atendimento → Negociação → Fechado**. Cada etapa tem uma etiqueta colorida no cartão e no lead: vermelha "Lead", amarela "Em atendimento" (Atendimento e Negociação), verde "Paciente" (Fechado). **Mover um lead para Fechado cria o paciente** (uma vez só; falha aparece como aviso, não desfaz a mudança) e o lead ganha "Ver paciente". Origens: WhatsApp, Instagram, Indicação, Outro (`backend/app/crm.py` — são dados, mudar não pede migration). Todo número novo que escreve (não-grupo) vira lead em "Lead" com origem WhatsApp; apagar o lead **não** o traz de volta (a conversa persiste — é o desejado). Toda mensagem, recebida ou enviada, atualiza a prévia do cartão.
@@ -20,9 +20,9 @@ Funil: **Lead → Atendimento → Negociação → Fechado**. Cada etapa tem uma
 
 ## Stack
 
-- **Backend**: FastAPI via `create_product_app()` (porta 8020); `mount_leads` (gancho `on_stage_entered` → paciente), `mount_clients` (pacientes, sessões, horários, pagamentos), conexões + caixa de entrada do WhatsApp (`app/routers/whatsapp_router.py`), proxy `/api/contexto`, `mount_finance`.
+- **Backend**: FastAPI via `create_product_app()` (porta 8020); `mount_leads` (gancho `on_stage_entered` → paciente), `mount_clients` (pacientes, sessões, horários, pagamentos, resumo do mês, histórico, anotação clínica) e a tarefa diária `app/scheduler.py` (`nosnolimiar_sessoes_materializar`, 00:10 + ao subir: cria a sessão da semana seguinte, idempotente, recupera dias perdidos), conexões + caixa de entrada do WhatsApp (`app/routers/whatsapp_router.py`), proxy `/api/contexto`, `mount_finance`.
 - **Frontend**: React via `createProductApp()` + `createProductLayout()` (porta 8240).
-- **Banco**: Supabase, schema `nosnolimiar` (migrations 001–024: leads, pacientes (`clients`, `client_sessions`, `client_schedules`, `client_payments`), `whatsapp_connections|chats|messages`, finance (012 + rev2 020: `fin_ledger_signed_sum`, tables service-role only), `status_pagina`; 022 renames the schema `monica` → `nosnolimiar`).
+- **Banco**: Supabase, schema `nosnolimiar` (migrations 001–026: leads, pacientes (`clients`, `client_sessions`, `client_schedules`, `client_payments`, `client_events` — log imutável, só INSERT/SELECT —, `client_session_notes` — anotação clínica, só service role; 025 revisão do órgão `clients`; 026 `cancelada` → `cancelada_paciente`), `whatsapp_connections|chats|messages`, finance (012 + rev2 020: `fin_ledger_signed_sum`, tables service-role only), `status_pagina`; 022 renames the schema `monica` → `nosnolimiar`).
 
 ## Configuração (nomes; valores só no `.env` do servidor)
 
@@ -47,14 +47,14 @@ cd products/nosnolimiar/frontend && npm run dev
 ## Testes
 
 ```bash
-cd products/nosnolimiar/backend && pytest          # 100: 401 estrito, inbox -> lead, lead fechado -> paciente, contexto, finance, migrations
+cd products/nosnolimiar/backend && pytest          # 122: 401 estrito, inbox -> lead, lead fechado -> paciente, contexto, finance, migrations
 cd products/nosnolimiar/frontend && npx vitest run # 10 CRM + finance route
 cd products/nosnolimiar/frontend && npx vite build
 ```
 
 ## Dados pessoais (LGPD)
 
-As conversas são dados pessoais ligados à saúde (consultório de psicanálise). Registro e pendências em `LGPD-WARNINGS.md` (entrada `products/nosnolimiar`) e `KB § PATTERNS/security/lgpd.md`. O contexto da Mônica (`agents.agent_org_specs`) é conteúdo dela, não de pacientes.
+As conversas são dados pessoais ligados à saúde (consultório de psicanálise). **A anotação clínica de cada sessão é dado sensível de saúde (LGPD art. 11)**: fica em tabela própria (`client_session_notes`, sem leitura pelo `authenticated`), só é lida/escrita pelas rotas `GET|PUT /api/clients/sessions/{id}/clinical-note` restritas à terapeuta (administradora da organização; qualquer outro papel recebe 403 antes de qualquer consulta), nunca aparece em lista, agenda, histórico (o log guarda só o fato "anotação salva"), exportação ou contexto de agente/WhatsApp, e a tela a descarta do cache ao fechar. Quem cuida da agenda deve ser membro **não administrador**. As *observações* da sessão são administrativas — não escreva conteúdo clínico nelas. Registro e pendências em `LGPD-WARNINGS.md` (entrada `products/nosnolimiar`) e `KB § PATTERNS/security/lgpd.md`. O contexto da Mônica (`agents.agent_org_specs`) é conteúdo dela, não de pacientes.
 
 ## Operação
 
