@@ -149,6 +149,7 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.julia_credito_router import router as julia_credito_router
     from app.routers.julia_avaliacoes_router import router as julia_avaliacoes_router
     from app.routers.julia_opt_outs_router import router as julia_opt_outs_router
+    from app.routers.julia_post_instagram_router import router as julia_post_instagram_router
     from app.routers.julia_equipe_whatsapp_router import router as julia_equipe_whatsapp_router
     from app.routers.julia_protecao_router import router as julia_protecao_router
     from app.routers.julia_catalogo_router import router as julia_catalogo_router
@@ -296,6 +297,7 @@ def _register_media_wiring() -> ModuleRegistration:
             julia_credito_router,
             julia_avaliacoes_router,
             julia_opt_outs_router,
+            julia_post_instagram_router,
             julia_equipe_whatsapp_router,
             julia_protecao_router,
             julia_catalogo_router,

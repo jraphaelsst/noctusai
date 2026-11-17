@@ -31,7 +31,7 @@ from pydantic import Field, model_validator
 from noctusai_lib.api import StrictHttpModel
 
 from app.services import julia_busca_imoveis as busca
-from app.services import julia_catalogo_service, julia_conhecimento_service, julia_eventos_service, julia_imovel_confirmado, julia_imovel_referencia
+from app.services import julia_catalogo_service, julia_conhecimento_service, julia_eventos_service, julia_imovel_confirmado, julia_imovel_instagram, julia_imovel_referencia
 from app.services.julia_catalogo_service import COLUNAS, FETCH_BUSCA, TABLE, publicado as _publicado  # noqa: F401
 
 logger = logging.getLogger(__name__)
@@ -264,14 +264,32 @@ def imovel_campanha(client: Any, org_id: UUID, args: dict[str, Any]) -> list[dic
     return _itens(client, org_id, [r], operacao)
 
 
+def _resolver_instagram(client: Any, org_id: UUID, catalogo: Any, texto: str) -> Optional[dict[str, Any]]:
+    """S6: an Instagram post/reel link -> the listing an admin mapped to that shortcode. `None` = no Instagram link in the text
+    (the caller keeps the portal result); a link that maps to nothing is the typed `motivo` so Julia asks for the code."""
+    codes, compartilhado = julia_imovel_instagram.analisar(texto)
+    if not codes and not compartilhado:
+        return None
+    mapeados = julia_imovel_instagram.codigos(client, org_id, codes)
+    for codigo in mapeados:
+        linha = catalogo.um(codigo)
+        if linha is not None:
+            return {"encontrado": True, "via": "instagram", "codigo": codigo, "linha": linha, "candidatos": mapeados}
+    motivo = julia_imovel_instagram.SEM_MAPEAMENTO if codes else julia_imovel_instagram.LINK_COMPARTILHADO
+    return {"encontrado": False, "candidatos": mapeados, "motivo": motivo}
+
+
 def resolver_imovel(client: Any, org_id: UUID, args: dict[str, Any]) -> dict[str, Any]:
     """The listing a lead means from a URL / portal code / portal stock text (`julia_imovel_referencia`): `{encontrado: True,
     via, imovel: <card>}` or `{encontrado: False, candidatos}`. Only PUBLISHED listings resolve; the card is the same shape as
     `buscar_imoveis` (no owner data)."""
     a = ResolverImovelArgs(**args)
-    r = julia_imovel_referencia.resolver(julia_catalogo_service.catalogo_da_org(client, org_id), a.referencia)
+    catalogo = julia_catalogo_service.catalogo_da_org(client, org_id)
+    r = julia_imovel_referencia.resolver(catalogo, a.referencia)
     if not r["encontrado"]:
-        return {"encontrado": False, "candidatos": r["candidatos"]}
+        r = _resolver_instagram(client, org_id, catalogo, a.referencia) or r
+    if not r["encontrado"]:
+        return {k: v for k, v in r.items() if k in ("encontrado", "candidatos", "motivo")}
     linha = r["linha"]
     operacao = a.operacao or ("compra" if linha.get("valor_venda") is not None else "aluguel")
     (item,) = _itens(client, org_id, [linha], operacao)

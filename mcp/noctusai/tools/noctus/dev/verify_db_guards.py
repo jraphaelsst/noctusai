@@ -1424,6 +1424,38 @@ END;
 )
 
 
+_JULIA_POST_INSTAGRAM_SHORTCODE_PROBE = GuardProbe(
+    id="julia_post_instagram_imovel.shortcode.check",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="julia_post_instagram_imovel_shortcode_check",
+    kind="write_refusal",
+    migrations=("356_julia_post_instagram_imovel.sql",),
+    rationale=(
+        "The shortcode is what a lead's Instagram link is matched against: a malformed one (spaces, a URL, too short) is a row "
+        "no link can ever resolve, so Julia would silently never find the listing it was mapped to."
+    ),
+    sql=_do_block(f"""
+DECLARE
+  v_org uuid;
+BEGIN
+{_PROBE_ORG_SETUP}  BEGIN
+    INSERT INTO {_SW_SCHEMA}.julia_post_instagram_imovel (org_id, shortcode, codigo_imovel) VALUES (v_org, 'bad code!', 'AP1');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: a malformed shortcode was accepted — the check did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%julia_post_instagram_imovel_shortcode_check%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 _VISITA_MOTIVO_CHECK_PROBE = GuardProbe(
     id="visitas.nao_realizada_motivo.allowed_values",
     product="social-wiring",
@@ -13559,6 +13591,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _VISITA_MOTIVO_CHECK_PROBE,
     _CS_POST_EVENTO_TIPO_PROBE,
     _JULIA_RELATORIO_DESTINO_USUARIO_PROBE,
+    _JULIA_POST_INSTAGRAM_SHORTCODE_PROBE,
     _JULIA_RELATORIO_CHAVE_UNIQUE_PROBE,
     _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE,
     _NOCTUS_USERS_TELEFONE_E164_PROBE,
