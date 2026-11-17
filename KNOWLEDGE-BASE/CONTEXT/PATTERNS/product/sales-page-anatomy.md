@@ -20,6 +20,12 @@ build through the organs in `KB § PATTERNS/frontend/marketing-organs-and-motion
 
 ## 1 · The sequence
 
+**Step 0, before any copy: the evidence table.** List every capability the page could claim in two columns.
+*Shipped* means there is a file or contract section behind it. *Planned* means it may never appear as
+current. Next to it, list every number with its source (query, table) or mark it `[AMOSTRA]`. Copy is
+written only from the shipped column. The first use, the Julia spec (2026-11-17), found that nothing on the
+page could be backed by a number yet. Without this step the page would have made promises nobody can check.
+
 The order matters: each block answers the question the previous block raised. A CTA follows almost every
 block (the reference page had about 15), each phrased as the reader's own wish ("Quero …", "Testar sem risco").
 
