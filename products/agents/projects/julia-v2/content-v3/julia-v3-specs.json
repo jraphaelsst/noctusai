@@ -24,6 +24,54 @@
    "obrigatoria": true,
    "descricao": "Como a imobiliária descreve o retorno da equipe depois da transferência, sem prometer número (ex.: o mais breve possível, dentro do horário de atendimento). A Julia nunca cita minutos, horas ou dias ao lead: diz só que uma pessoa responde assim que possível.",
    "exemplo": "o mais breve possível, dentro do horário de atendimento"
+  },
+  {
+   "chave": "contatos_oficiais",
+   "rotulo": "Contatos oficiais da imobiliária",
+   "tipo": "contatos",
+   "obrigatoria": false,
+   "descricao": "Quem atende cada assunto fora do atendimento comercial (administrativo, jurídico, parcerias, locação...). Cada contato tem setor, finalidade (para que procurar), nome (opcional) e telefone. A assistente indica o contato certo em uma linha quando o assunto não é de lead. Também aceita a lista simples de telefones e e-mails (um por linha), sem setor.",
+   "exemplo": "[{\"setor\":\"Administrativo\",\"finalidade\":\"contratos de locação em andamento, boletos e segunda via\",\"nome\":\"Carla\",\"telefone\":\"+551140000001\"},{\"setor\":\"Parcerias\",\"finalidade\":\"propostas de parceria entre imobiliárias e corretores\",\"telefone\":\"+551140000002\"}]"
+  },
+  {
+   "chave": "conhecimento_venda",
+   "rotulo": "Conhecimento: venda",
+   "tipo": "texto_longo",
+   "obrigatoria": false,
+   "descricao": "O que a imobiliária diz ao lead sobre comprar com ela: formas de pagamento aceitas, financiamento e FGTS, documentos que o corretor pede, como funciona a proposta. Fatos da imobiliária, não instruções. Vazio: a assistente diz que o corretor orienta.",
+   "exemplo": "- Aceitamos financiamento bancário, FGTS e recursos próprios.\n- O corretor explica a documentação na hora da proposta."
+  },
+  {
+   "chave": "conhecimento_locacao",
+   "rotulo": "Conhecimento: locação",
+   "tipo": "texto_longo",
+   "obrigatoria": false,
+   "descricao": "O que a imobiliária diz ao lead sobre alugar com ela: garantias aceitas, documentos do locatário, o que o aluguel inclui (condomínio, IPTU), prazo do contrato. Fatos da imobiliária, não instruções. Vazio: a assistente diz que o corretor orienta.",
+   "exemplo": "- Garantias aceitas: fiador, seguro-fiança e caução.\n- O aluguel é reajustado uma vez por ano."
+  },
+  {
+   "chave": "conhecimento_politicas",
+   "rotulo": "Conhecimento: políticas",
+   "tipo": "texto_longo",
+   "obrigatoria": false,
+   "descricao": "Políticas da imobiliária que valem para venda e locação: se o endereço completo do imóvel é informado no primeiro contato, se o IPTU é informado, visitas, recesso e feriados. Fatos da imobiliária, não instruções. Vazio: a assistente diz que o corretor orienta.",
+   "exemplo": "- O endereço completo é informado pelo corretor na visita.\n- O valor do IPTU consta no cartão do imóvel."
+  },
+  {
+   "chave": "operacoes_atendidas",
+   "rotulo": "Operações atendidas",
+   "tipo": "lista",
+   "obrigatoria": false,
+   "descricao": "O que a imobiliária atende. Valores aceitos: compra, locacao, administrativo, captacao (separados por vírgula). A assistente usa para não perguntar a operação quando só há uma e para saber quando um assunto é de outro setor. Vazio: atende compra e locação.",
+   "exemplo": "compra, locacao, captacao"
+  },
+  {
+   "chave": "titulo_profissional",
+   "rotulo": "Título de quem assume o atendimento",
+   "tipo": "texto_curto",
+   "obrigatoria": false,
+   "descricao": "Como a imobiliária chama quem assume o atendimento depois da transferência (uma ou duas palavras). Vazio: a assistente diz \"corretor\".",
+   "exemplo": "consultor imobiliário"
   }
  ]
 }

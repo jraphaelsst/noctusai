@@ -104,7 +104,7 @@ LIMITS: dict[str, int] = {
     "org_spec.valor.texto_longo": 4_000,
     "org_spec.valor.url": 300,
     "org_spec.valor.dominios": 1_000,
-    "org_spec.valor.contatos": 1_500,
+    "org_spec.valor.contatos": 4_500,
     "org_spec.valor.cnpj": 32,
     "org_spec.valor.creci": 40,
     "org_spec.valor.horario": 300,

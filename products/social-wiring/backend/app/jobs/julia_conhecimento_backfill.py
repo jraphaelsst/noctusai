@@ -26,9 +26,9 @@ Usage (from `products/social-wiring/backend`):
 
 Exit code: 0 ok / planned / unchanged, 1 on any error (nothing partial: one PUT per run).
 
-NOC-REMEDIATE[julia-v2-conhecimento-spec-key]: the spec key (`--spec-chave`, default `conhecimento`) must match the key the
-platform definition declares in `agent_version_specs` (the DATA slice seeds it); until then agents answers 422
-`spec_nao_declarada` and the job reports it -- 2026-10-19
+The spec key (`--spec-chave`) must be one the platform definition declares in `agent_version_specs`; agents answers 422
+`spec_nao_declarada` otherwise and the job reports it. The platform declares `conhecimento_venda`, `conhecimento_locacao` and
+`conhecimento_politicas` (texto_longo, Lais study A1, 2026-11-17); there is no single `conhecimento` key.
 """
 from __future__ import annotations
 

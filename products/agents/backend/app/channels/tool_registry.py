@@ -1392,8 +1392,11 @@ async def _mascara(t: JuliaTurno) -> tuple[bool, dict[str, Any]]:
     return (not faltando), mascarado
 
 
-async def _relatorio(t: JuliaTurno, motivo: str, perfil: Mapping[str, Any]) -> dict[str, Any]:
-    """The report of this hand-off / conclusion (CONTRACT §12.4), built once per turn."""
+async def _relatorio(
+    t: JuliaTurno, motivo: str, perfil: Mapping[str, Any], motivo_codigo: str | None = None,
+) -> dict[str, Any]:
+    """The report of this hand-off / conclusion (CONTRACT §12.4), built once per turn. ``motivo_codigo`` is the typed
+    reason (it feeds the report's ``temperatura``)."""
     from app.channels.relatorio import montar_relatorio
 
     if t.relatorio is None:
@@ -1401,7 +1404,8 @@ async def _relatorio(t: JuliaTurno, motivo: str, perfil: Mapping[str, Any]) -> d
         if t.ident is not None:
             faltando = await asyncio.to_thread(
                 t.ident.faltando, t.org_id, t.lead_ref_id, obrigatorios_do_padrao(t.padrao.criterios))
-        t.relatorio = await montar_relatorio(t, motivo=motivo, perfil=perfil, faltando_ident=faltando)
+        t.relatorio = await montar_relatorio(
+            t, motivo=motivo, perfil=perfil, faltando_ident=faltando, motivo_codigo=motivo_codigo)
     return t.relatorio
 
 
@@ -1418,7 +1422,7 @@ async def registrar_opt_out_do_lead(t: JuliaTurno, motivo_texto: str) -> None:
 
 
 #: Why an opt-out happened, as the turn response reports it to SW (``encerrar`` action, ``opt_out_origem``).
-OPT_OUT_PALAVRA_CHAVE = "palavra_chave"  # legacy origin value (the deterministic backstop was removed 2026-11-08); kept for old events
+OPT_OUT_PALAVRA_CHAVE = "palavra_chave"  # the deterministic STOP backstop (an exact PARAR / SAIR / ...)
 OPT_OUT_PEDIDO_DO_LEAD = "pedido_do_lead"  # the model's ``encerrar(lead_pediu_parar)`` on the lead's words
 TRECHO_OPT_OUT_MAX = 200
 
@@ -1499,7 +1503,7 @@ async def executar_handoff(
         return
     perfil = await _perfil_para_handoff(t)
     completa, mascarada = await _mascara(t)
-    relatorio = await _relatorio(t, resumo, perfil)
+    relatorio = await _relatorio(t, resumo, perfil, motivo_codigo)
     perfil = {**perfil, "relatorio": relatorio}
     try:
         await asyncio.to_thread(
@@ -1526,7 +1530,7 @@ async def finalizar_conclusao(t: JuliaTurno, lead_pronto: Mapping[str, Any]) -> 
         "ferramenta.handoff.resumo_conclusao", estagio=lead_pronto.get("estagio", ""), score=lead_pronto.get("score", ""))
     perfil = await _perfil_para_handoff(t)
     completa, mascarada = await _mascara(t)
-    relatorio = await _relatorio(t, resumo, perfil)
+    relatorio = await _relatorio(t, resumo, perfil, "qualificacao_concluida")
     perfil = {**perfil, "relatorio": relatorio}
     try:
         await asyncio.to_thread(
