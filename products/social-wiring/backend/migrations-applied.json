@@ -98,6 +98,8 @@
     "352_cs_unified_chat.sql": "32f0f708ca08d08e5c36009f22094f5757c52a4be31ebad6edc8ef1001f9cc1f",
     "353_cs_post_insumos_apagados.sql": "6c5f6f2e124a89ccd44efdf35c945030ccef3132ca80a0aa1d5d3372d6e2f36b",
     "354_julia_avaliacao_pedido_ativo.sql": "3ae2242842b3027306bbe97c5a5c0eb36175f14bb41463475e402dbbd297b9a7",
+    "355_julia_portal_primeiro_contato.sql": "7f10de53bcdb4836010ed3592b8e4b27886ce0587cf91e221032cb874348b5e2",
+    "356_julia_post_instagram_imovel.sql": "603effdaa4d58d17bbdfb492eec9e882ebefe562aa500c1bbfd9b60e62b366be",
     "357_cs_post_publicacoes_alvo_nulls_not_distinct.sql": "fb29c0b48360e5d4306f401de35844ba26969cd7042818bd387f2b716e176b47"
   }
 }
