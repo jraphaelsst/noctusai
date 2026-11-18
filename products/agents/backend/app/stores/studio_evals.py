@@ -31,7 +31,7 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from app.stores._db_errors import StudioConflict, exec_query, exec_rpc
-from app.stores._util import utcnow, utcnow_iso
+from app.stores._util import db_ts, utcnow, utcnow_iso
 from app.stores.errors import NotFound
 from app.studio.eval_um_por_usuario import RunEmAndamento
 from app.studio.eval_mecanismo import MecanismoRequisito
@@ -772,7 +772,7 @@ class SupabaseEvalStore:
             slug=row["slug"], titulo=row["titulo"], entrada=row["entrada"], contexto=row.get("contexto"),
             criterios=row.get("criterios") or {}, rubrica=row.get("rubrica"),
             tags=tuple(row.get("tags") or ()), ativo=bool(row.get("ativo", False)),
-            created_at=row["created_at"], updated_at=row["updated_at"],
+            created_at=db_ts(row["created_at"]), updated_at=db_ts(row["updated_at"]),
             suite=row.get("suite") or "comportamento", k=int(row.get("k") or 3),
             roteiro=row.get("roteiro"), asserts=row.get("asserts"),
         )
@@ -785,8 +785,8 @@ class SupabaseEvalStore:
             total=int(row.get("total") or 0), aprovados=int(row.get("aprovados") or 0),
             score=float(row["score"]) if row.get("score") is not None else None,
             limiar=float(row["limiar"]), started_by=UUID(str(row["started_by"])),
-            started_at=row.get("started_at"), finished_at=row.get("finished_at"), erro=row.get("erro"),
-            created_at=row["created_at"], updated_at=row["updated_at"],
+            started_at=db_ts(row.get("started_at")), finished_at=db_ts(row.get("finished_at")), erro=row.get("erro"),
+            created_at=db_ts(row["created_at"]), updated_at=db_ts(row["updated_at"]),
             completa=bool(row.get("completa", False)),
             modelo_geracao=row.get("modelo_geracao"),
             limite_usd=float(row["limite_usd"]) if row.get("limite_usd") is not None else None,
@@ -801,7 +801,7 @@ class SupabaseEvalStore:
             case_id=UUID(str(row["case_id"])), status=row["status"], saida=row.get("saida"),
             score=float(row["score"]) if row.get("score") is not None else None,
             veredito=row.get("veredito"), notas_juiz=row.get("notas_juiz"),
-            duracao_ms=row.get("duracao_ms"), created_at=row["created_at"], updated_at=row["updated_at"],
+            duracao_ms=row.get("duracao_ms"), created_at=db_ts(row["created_at"]), updated_at=db_ts(row["updated_at"]),
             custo_usd=float(row["custo_usd"]) if row.get("custo_usd") is not None else None,
             tokens_entrada=row.get("tokens_entrada"), tokens_saida=row.get("tokens_saida"),
             tokens_cache_leitura=row.get("tokens_cache_leitura"),

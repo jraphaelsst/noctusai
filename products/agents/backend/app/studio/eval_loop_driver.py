@@ -16,6 +16,15 @@ draft edit and the owner's "Retomar"; the budget / rounds codes stop the loop wi
 start, no cases, compile blocked ...) stops it with motivo ``erro`` + the code and text. There is no refine step between rounds in
 the product (refining the draft is the owner's / a content-writing agent's job, ``noctus.agents.content``); the UI says so.
 
+NOC-REMEDIATE[eval-loop-refine-step]: the loop only RE-MEASURES; nothing proposes or writes a content change between rounds, so
+an automatic loop on an unchanged draft idles at ``hash_inalterado`` after round 1 (2026-11-18). Design: after a round closes
+below the target without stopping the loop, a ``refinar`` seam (an LLM call through the seed entry points, metered into the loop
+budget) reads the failing cases + their judge notes and the draft rows, proposes ONE bounded row edit (a section/text/tool row,
+never a prompt blob), writes it to the DRAFT only through the same store the Studio uses (never publishes), records it as a loop
+event ``refinamento_proposto`` with the row diff, then books the next round on the new hash; G4 (2 rounds without gain) reverts
+nothing but stops. Parent-before-child order (agente-base -> sdr-base -> julia) is kept: a refine step may edit only the loop's own
+agent rows, never an inherited layer's.
+
 The booking itself (``iniciar``) is injected: the production one calls the SAME functions the HTTP routes call
 (``reservar_run`` / ``iniciar_run_mecanismo``) with the loop owner's context, so every guard (one run per user, G6/G7 admission,
 preflight, spend ceiling) applies unchanged.
