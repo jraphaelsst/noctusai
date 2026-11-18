@@ -31,7 +31,9 @@ from app.grants.store import GrantStore
 from app.onboarding import aplicar as ap
 from app.onboarding.checklist import CHECKLIST, ordem_entrevista
 from app.onboarding.importar import MAX_ENTRADA, importar
+from app.onboarding.sw_canal import SwCanal
 from app.onboarding.sw_settings import SwSettingsPort, get_sw_settings
+from app.routers.sw_canal_router import get_sw_canal_dep
 from app.routers.plataforma_org_specs_router import _BASE, _alvo
 from app.routers.studio_agents_router import get_studio_definition_store_dep, http_error
 from app.routers.studio_conteudo_router import aplicar_org_specs, get_spec_validacao_dep, ler_org_specs
@@ -45,9 +47,12 @@ router = make_router(tier="platform", guard=require_platform_admin, tags=["onboa
 PROXIMO_PASSO = "modo_avaliacao"
 
 
-def get_sw_settings_dep() -> SwSettingsPort:
-    """DI seam: the social-wiring settings port (tests override with the Fake)."""
-    return get_sw_settings()
+def get_sw_settings_dep(
+    ctx: AuthContext = Depends(require_platform_admin), canal: SwCanal = Depends(get_sw_canal_dep),
+) -> SwSettingsPort:
+    """DI seam: the social-wiring settings port, bound to the acting platform admin (the org the channel token is
+    minted under, and the actor it reports). Tests override with the Fake."""
+    return get_sw_settings(canal.como(ctx.org_id, ctx.user_id))
 
 
 class ItemOut(BaseModel):

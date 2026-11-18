@@ -6651,6 +6651,41 @@ _AGENTS_EVAL_LOOP_EVENTOS_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — agents.sw_canal_eventos append-only guard (agents migration 090).
+# ---------------------------------------------------------------------------
+#
+# The onboarding channel's measurement trail (provisioning, rotation, connection tests, apply calls). Self-contained: the
+# table has no foreign key, so one event row is inserted inside the rolled-back transaction. Own group, proven on the real
+# chain in test_agents_camadas_probes_on_replay.py.
+
+_AGENTS_SW_CANAL_EVENTOS_GUARD = "sw_canal_eventos_append_only"
+_SW_CANAL_EVENTOS_MIGS = ("090_sw_canal_eventos.sql",)
+_SW_CANAL_EVENTOS_SETUP = f"INSERT INTO {_JV2}.sw_canal_eventos (evento, ok) VALUES ('sw_canal_conexao_testada', true);"
+_SW_CANAL_EVENTOS_RATIONALE = (
+    "The channel events are the measurement trail of the credential agents uses to write into social-wiring (when it was "
+    "provisioned, rotated, tested, and why a call failed); a rewritable or deletable event would let the owner's "
+    "'Conexão com o Social Wiring' card say something that did not happen."
+)
+
+_AGENTS_SW_CANAL_EVENTOS_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="agents.sw_canal_eventos.update_refused", guard_name=_AGENTS_SW_CANAL_EVENTOS_GUARD,
+        migrations=_SW_CANAL_EVENTOS_MIGS, setup=_SW_CANAL_EVENTOS_SETUP,
+        attack=f"UPDATE {_JV2}.sw_canal_eventos SET ok = false WHERE evento = 'sw_canal_conexao_testada';",
+        fragments=("sw_canal_eventos is append-only",), what="UPDATE of an sw_canal_eventos row",
+        rationale=_SW_CANAL_EVENTOS_RATIONALE,
+    ),
+    _julia_v2_probe(
+        probe_id="agents.sw_canal_eventos.delete_refused", guard_name=_AGENTS_SW_CANAL_EVENTOS_GUARD,
+        migrations=_SW_CANAL_EVENTOS_MIGS, setup=_SW_CANAL_EVENTOS_SETUP,
+        attack=f"DELETE FROM {_JV2}.sw_canal_eventos WHERE evento = 'sw_canal_conexao_testada';",
+        fragments=("sw_canal_eventos is append-only",), what="DELETE of an sw_canal_eventos row",
+        rationale=_SW_CANAL_EVENTOS_RATIONALE,
+    ),
+)
+
+
 _OWNER_RECIPIENT_EVENTS_PROBES: tuple[GuardProbe, ...] = (
     _owner_recipient_events_probe(
         probe_id="notification_owner_recipient_events.update_refused",
@@ -13645,6 +13680,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_CORE_AUDIT_LOGS_PROBES,
     *_OWNER_RECIPIENT_EVENTS_PROBES,
     *_AGENTS_EVAL_LOOP_EVENTOS_PROBES,
+    *_AGENTS_SW_CANAL_EVENTOS_PROBES,
     *_CORE_AI_USAGE_PROBES,
     *_CORE_FUNNEL_PROBES,
     *_PLATFORM_TEMPLATES_PROBES,

@@ -79,6 +79,7 @@ from app.routers.plataforma_controle_router import router as plataforma_controle
 from app.routers.plataforma_grants_router import router as plataforma_grants_router
 from app.routers.plataforma_org_specs_router import router as plataforma_org_specs_router
 from app.routers.onboarding_router import router as onboarding_router
+from app.routers.sw_canal_router import router as sw_canal_router
 from app.routers.qualificacao_router import router as qualificacao_router
 from app.routers.skills_biblioteca_router import router as skills_biblioteca_router
 from app.public_ask.router import BODY_LIMIT_PATTERN as PUBLIC_ASK_BODY_LIMIT_PATTERN
@@ -279,6 +280,7 @@ app = create_product_app(
         plataforma_controle_router,  # Julia v3 §12.1: the platform kill switch
         plataforma_org_specs_router,  # staff-only org specs for any company (platform admin, audited)
         onboarding_router,  # staff-only client onboarding by interview (progress + import + apply)
+        sw_canal_router,  # staff-only status + test of the onboarding channel to social-wiring (self-provisioned token)
         plataforma_grants_router,  # Julia-line D: platform grants (mint + deliver an agent->product credential)
         skills_biblioteca_router,  # Julia v2 A-SKILLS: the shared, versioned skill library + agent-draft pins
         admin_credentials_router,

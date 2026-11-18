@@ -19,6 +19,11 @@ const OPCOES = "/api/studio/plataforma/grants/opcoes";
 const ORGS = `/api/studio/plataforma/agents/${KEY}/products/social-wiring/orgs`;
 const ONE = "fd169d29-4d0a-4b04-9a5e-25e69407614d";
 const BASE = `${ORGS}/${ONE}/onboarding`;
+const CANAL_BODY = {
+  estado: "provisionado", escopo: "social-wiring:onboarding-settings", emissor: "noctus-platform", expira_em: null,
+  dias_restantes: null, ultima_chamada_ok: null, ultimo_erro: null, codigo: null, motivo: null,
+};
+const CANAL = { method: "GET" as const, path: "/api/studio/plataforma/sw-canal", body: CANAL_BODY };
 const OPCOES_BODY = { produtos: [{ slug: "social-wiring", label: "Social Wiring", agent_keys: [KEY] }], orgs: [] };
 const LISTA = {
   agent_key: KEY, product: "social-wiring",
@@ -55,6 +60,7 @@ describe("OnboardingTab", () => {
 
   it("lists the progress per item, with the default offered for an optional one", async () => {
     installFetch([
+      CANAL,
       { method: "GET", path: OPCOES, body: OPCOES_BODY },
       { method: "GET", path: ORGS, body: LISTA },
       { method: "GET", path: BASE, body: PROGRESSO },
@@ -67,6 +73,7 @@ describe("OnboardingTab", () => {
 
   it("import fills the draft (flagged unconfirmed) and writes nothing; apply sends the draft and shows the per-item report", async () => {
     const net = installFetch([
+      CANAL,
       { method: "GET", path: OPCOES, body: OPCOES_BODY },
       { method: "GET", path: ORGS, body: LISTA },
       { method: "GET", path: BASE, body: PROGRESSO },
@@ -76,7 +83,7 @@ describe("OnboardingTab", () => {
         body: {
           itens: [
             { n: 1, titulo: "Nome comercial", estado: "aplicado", codigo: null, motivo: null, destino: "spec:nome_imobiliaria", rota: null, corpo: null },
-            { n: 37, titulo: "Reengajamento", estado: "recusado", codigo: "canal_sw_nao_configurado", motivo: "sem canal", destino: "sw:reengajamento", rota: "PUT /api/julia/reengajamento/config", corpo: {} },
+            { n: 37, titulo: "Reengajamento", estado: "recusado", codigo: "canal_sw_nao_provisionado", motivo: "sem canal", destino: "sw:reengajamento", rota: "PUT /api/julia/reengajamento/config", corpo: {} },
           ],
           aplicados: 1, recusados: 1, obrigatorios_faltando: [], proximo_passo: "modo_avaliacao",
         },

@@ -9,6 +9,7 @@
  */
 import { useState } from "react";
 import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
+import { SwCanalCard } from "@/components/studio/SwCanalCard";
 import { useGrantOpcoes } from "@/hooks/useGrants";
 import { useAplicarOnboarding, useImportarOnboarding, useOnboarding } from "@/hooks/studio/useOnboarding";
 import { useOrgsComConcessao } from "@/hooks/studio/useStaffOrgSpecs";
@@ -38,7 +39,7 @@ function parseResposta(texto: string): unknown {
   return t;
 }
 
-export default function OnboardingTab({ agentKey }: { agentKey: string }) {
+function OnboardingConsole({ agentKey }: { agentKey: string }) {
   const admin = useIsPlatformAdmin();
   const opcoes = useGrantOpcoes("");
   const produtos = (opcoes.data?.produtos ?? []).filter((p) => p.agent_keys.includes(agentKey));
@@ -302,5 +303,23 @@ function Linha({
         </label>
       )}
     </li>
+  );
+}
+
+/** The channel status card comes first (is the connection to social-wiring working?), then the interview console. */
+export default function OnboardingTab({ agentKey }: { agentKey: string }) {
+  const admin = useIsPlatformAdmin();
+  if (!admin) {
+    return (
+      <p className="text-sm text-muted-foreground" data-testid="onboarding-restrito">
+        Restrito à equipe da NoctusAI.
+      </p>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      <SwCanalCard />
+      <OnboardingConsole agentKey={agentKey} />
+    </div>
   );
 }
