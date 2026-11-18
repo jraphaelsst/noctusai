@@ -71,8 +71,9 @@ describe("SwCanalCard", () => {
   });
 
   it("Testar conexão: success provisions, updates the state in place and says it works", async () => {
+    const provisionado = status({ ultima_chamada_ok: { em: "2026-11-18T10:00:00Z", evento: "sw_canal_conexao_testada", codigo: null, motivo: null } });
     const net = installFetch([
-      { method: "GET", path: URL, body: status({ estado: "ausente", expira_em: null, dias_restantes: null }) },
+      { method: "GET", path: URL, bodies: [status({ estado: "ausente", expira_em: null, dias_restantes: null }), provisionado] },
       {
         method: "POST", path: `${URL}/testar`,
         body: { ok: true, codigo: null, motivo: "Conexão com o Social Wiring funcionando.", status: status({ ultima_chamada_ok: { em: "2026-11-18T10:00:00Z", evento: "sw_canal_conexao_testada", codigo: null, motivo: null } }) },
@@ -87,15 +88,11 @@ describe("SwCanalCard", () => {
   });
 
   it("Testar conexão: a failure shows its reason and the last error, never swallowed", async () => {
+    const motivo = "Credencial aceita mas sem permissão (403) — escopo ou emissor incorreto.";
+    const comErro = status({ ultimo_erro: { em: "2026-11-18T10:05:00Z", evento: "sw_canal_conexao_testada", codigo: "sw_forbidden", motivo } });
     installFetch([
-      { method: "GET", path: URL, body: status() },
-      {
-        method: "POST", path: `${URL}/testar`,
-        body: {
-          ok: false, codigo: "sw_forbidden", motivo: "Credencial aceita mas sem permissão (403) — escopo ou emissor incorreto.",
-          status: status({ ultimo_erro: { em: "2026-11-18T10:05:00Z", evento: "sw_canal_conexao_testada", codigo: "sw_forbidden", motivo: "Credencial aceita mas sem permissão (403) — escopo ou emissor incorreto." } }),
-        },
-      },
+      { method: "GET", path: URL, bodies: [status(), comErro] },
+      { method: "POST", path: `${URL}/testar`, body: { ok: false, codigo: "sw_forbidden", motivo, status: comErro } },
     ]);
     renderWith(<SwCanalCard />);
     await screen.findByTestId("sw-canal-estado");

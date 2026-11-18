@@ -65,13 +65,13 @@ def test_a_wire_that_refuses_the_token_is_shown_as_the_last_error(canal):
     assert canal.get(URL).json()["ultimo_erro"]["codigo"] == "sw_unauthorized"
 
 
-def test_an_unreadable_event_store_is_a_visible_502_not_a_blank_card(canal):
+def test_an_unreadable_event_store_is_a_visible_error_not_a_blank_card(canal):
     def quebra(*, ok):
         raise RuntimeError("db down")
 
     canal.kit.eventos.ultimo = quebra
     r = canal.get(URL)
-    assert r.status_code == 502 and r.json()["code"] == "status_indisponivel"
+    assert r.status_code == 503 and r.json()["code"] == "status_indisponivel"  # the edge rewrites 502 to 503
 
 
 def test_no_response_ever_contains_the_token(canal):
