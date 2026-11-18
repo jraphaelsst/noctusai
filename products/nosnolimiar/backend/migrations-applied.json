@@ -17,6 +17,8 @@
     "021_finance_service_only.sql": "d5884efb5838833fdf50248287eb0edd350e3784a6f20895354634a4f4ab9145",
     "022_whatsapp_chat_agent_pause.sql": "283c8a350d7eedba5dbc271998fa0c2afeda2de1dddb905e843acfb61b17dad2",
     "023_rename_schema.sql": "f17b752b153ca702155848cd33eb2ee5460ab5143e2b5624f02b3d246f8f8f92",
-    "024_rename_monica_indexes.sql": "1d1ec0ceb41fd84d8dca949863da5a01601b0ff155db82cb19b9e2c8f15cdfc5"
+    "024_rename_monica_indexes.sql": "1d1ec0ceb41fd84d8dca949863da5a01601b0ff155db82cb19b9e2c8f15cdfc5",
+    "025_clients_rev2.sql": "eb553f2f370f9523bc7ce6c1ef9abdaaf5e34a49bf270ff632db75bc71328173",
+    "026_sessions_status_split.sql": "a05bdff9fe81bf04ac18f00f79919afbfba6b5347b31c8ef0004daaab5032782"
   }
 }
