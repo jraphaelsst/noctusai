@@ -41,7 +41,8 @@ class Kit:
             raise self.recusa_apply
         return ap.aplicar(
             respostas, org_id=self.org, declaradas=dict(TODAS), armazenados=dict(self.stored), config=ConfigValidacao(),
-            gravar_specs=lambda v: self.spec_writes.append(dict(v)), sw=self.sw)
+            gravar_specs=lambda v: self.spec_writes.append(dict(v)), sw=self.sw,
+            ator=self.sessao.created_by, grant_id=self.sessao.grant_id)
 
     def diz(self, texto: str) -> None:
         self.falas.append(Fala(texto, utcnow()))

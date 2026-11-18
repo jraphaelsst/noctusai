@@ -122,6 +122,7 @@ class Entrevista:
         rel = ap.aplicar(
             respostas, org_id=self._s.alvo_org_id, declaradas=self._declaradas(), armazenados=self._armazenados(),
             config=self._config, gravar_specs=lambda _v: None, sw=FakeSwSettings(),
+            ator=self._s.created_by, grant_id=self._s.grant_id,
         )
         return next((i for i in rel.itens if i.n == item.n), None)
 
