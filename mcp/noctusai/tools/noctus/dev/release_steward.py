@@ -1822,8 +1822,13 @@ GitFn = Callable[..., "tuple[int, str, str]"]
 #: mode against an EXPORT of the head tree (never the branch's worktree). `{python}`/`{tree}` are
 #: filled in; a non-zero exit = stale. Mirrors what the pre-commit hook / integrate regenerate
 #: (propagate is deliberately absent: the hook runs it only when the seed is staged).
+#: kb-counts is deliberately ABSENT too (2026-11-18, class `deliverable:derived_current:...-kb-counts`, 24x/6
+#: sessions/14d): counts are a pure function of the WHOLE tree and dev moves constantly, so a branch head is
+#: stale by definition - checking it there judges the wrong tree. The merge queue regenerates them on the
+#: COMPOSED tree (`merge_queue.regen_and_commit_counts`, `[mq-kb-counts-regen]`), the merge driver resolves
+#: count-only conflicts, and test.yml fails any mq-candidate/dev/main/prod run whose counts are stale.
+#: KB § PATTERNS/common/auto-generated-merge-drivers.md
 DERIVED_ARTIFACTS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("kb-counts", ("{python}", "{tree}/mcp/noctusai/cli.py", "--update-kb-counts", "--check", "--worktree-path", "{tree}")),
     ("project-history", ("{python}", "{tree}/mcp/noctusai/cli.py", "--render-project-history", "--check", "--worktree-path", "{tree}")),
     ("promotions-index", ("{python}", "{tree}/mcp/noctusai/cli.py", "--gen-promotions-index", "--check", "--worktree-path", "{tree}")),
 )
@@ -3196,7 +3201,7 @@ def deliverable(branch: str, *, git: GitFn | None = None, cwd: str | Path | None
                           (NOT strictly 0-behind: demanding that livelocks while dev moves).
     3 migrations_free   - no migration number the branch adds is claimed by a different file in the
                           composed tree (the head, or the merge-tree result when it is behind).
-    4 derived_current   - kb-counts & the other regenerated artifacts are already current AT the head.
+    4 derived_current   - the regenerated artifacts (project-history, promotions-index; NOT kb-counts: composed) are current AT the head.
     5 scoped_green      - a `scoped_check(branch, head)` passes (`export_ci_parity_check`: the CI-blocking
                           keeper set + the real-tree keeper tests, env-scrubbed, both DERIVED from the head's
                           CI definition) OR the request's `verdict_ref` records exactly that run

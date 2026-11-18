@@ -1475,6 +1475,13 @@ jobs:
       - name: Keeper check_lgpd_entry_removal (range)
         run: python mcp/noctusai/cli.py --check-lgpd-entry-removal --lgpd-range "${{ steps.range.outputs.range }}"
 
+      # kb-counts are owned by the COMPOSE step (merge_queue.regen_and_commit_counts), never by a branch
+      # head (a branch behind dev is stale by definition - 24 refusals/14d, 2026-11-18). This is the
+      # backstop that dev/candidate/main/prod never carry stale counts; branch runs are exempt.
+      - name: KB counts current on the composed tree (candidate / integration refs only)
+        if: ${{ startsWith(github.ref, 'refs/heads/mq-candidate/') || github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/prod' }}
+        run: python mcp/noctusai/cli.py --update-kb-counts --check
+
       - name: Keeper check_product_guide_cochange (range)
         if: ${{ !cancelled() }} # report BOTH keepers even when the first is red
         run: python mcp/noctusai/cli.py --check-product-guide-cochange --guide-range "${{ steps.range.outputs.range }}"
