@@ -66,6 +66,21 @@ Tools: `waha.session.{list,get,me,start,stop,restart,logout}` ·
 
 ---
 
+### elevenlabs — ElevenLabs audio connector MCP
+
+**Type**: Connector (composes `mcp/_kit`; wraps the ElevenLabs HTTP API)
+
+Agents create audio: text-to-speech with word timings, voice lookup (own/shared/library), models, usage,
+instant voice cloning (consent-gated), voice delete — as `elevenlabs.<service>.<action>` tools. Spend and
+consent actions are confirm-gated (412); audio defaults to the private dir outside git. Secret in
+the connector's own co-located gitignored `.env`. Owner-requested 2026-11-18; registration local-only. Full reference:
+[elevenlabs.md](elevenlabs.md).
+
+Tools: `elevenlabs.user.usage` · `elevenlabs.model.list` · `elevenlabs.voice.{list,get,clone_instant,delete}` ·
+`elevenlabs.tts.synthesize`.
+
+---
+
 ## Planned MCP Servers
 
 ### supabase-properties
