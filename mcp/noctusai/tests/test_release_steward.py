@@ -723,8 +723,9 @@ class TestReconcile:
         self._req(store, "a")
         self._req(store, "b")
         box = store.inbox()
-        assert [r["slug"] for r in box["already_landed"]] == ["a"]
-        assert box["already_landed"][0]["landed_detected"] == "dev111"
+        assert [r["slug"] for r in box["auto_reconciled"]] == ["a"]
+        assert box["auto_reconciled"][0]["dev_sha"] == "dev111"
+        assert store.requests()["a"]["status"] == "landed"
         assert box["drain"] == ["task_branch action=enqueue slug=b confirm=True"]
         assert box["pending"] == 1
 
@@ -738,7 +739,8 @@ class TestReconcile:
     def test_status_counts_already_landed(self, store):
         store.landed_check = _checker({"feat/a": {"state": "landed", "dev_sha": "d"}})
         self._req(store, "a")
-        assert store.status(PEER)["outbox"]["already_landed"] == 1
+        out = store.status(PEER)["outbox"]
+        assert out["auto_reconciled"] == 1 and store.requests()["a"]["status"] == "landed"
 
     def test_reconcile_requires_confirm_and_steward(self, store):
         store.landed_check = _checker({"feat/a": {"state": "landed", "dev_sha": "dev111"}})
@@ -761,9 +763,7 @@ class TestReconcile:
         self._req(store, "a")
         store.claim(STEWARD, name="d")
         store.ack(STEWARD, "a", left_at, note="queue said so")
-        assert store.inbox()["pending"] == 0  # an open-but-advanced row is never re-drained
-        assert [r["slug"] for r in store.inbox()["already_landed"]] == ["a"]
-        assert store.status(PEER)["outbox"]["already_landed"] == 1
+        assert store.reconcile(STEWARD, confirm=False)["would_ack"] == ["a"]
         assert store.reconcile(STEWARD, confirm=True)["acked"] == ["a"]
         r = store.requests()["a"]
         assert r["status"] == "landed" and r["dev_sha"] == "dev222"
@@ -784,6 +784,19 @@ class TestReconcile:
         store.reconcile(STEWARD, confirm=True)
         rows = [json.loads(x) for x in store.audit_path.read_text().splitlines()]
         assert any(r["event"] == "reconcile" and r["slugs"] == ["a"] for r in rows)
+
+    def test_auto_reconcile_is_idempotent_audited_and_leaseless(self, store):
+        """Backstop: a request whose head is in origin/dev never stays pending past a read path (no lease needed)."""
+        store.landed_check = _checker({"feat/a": {"state": "landed", "dev_sha": "dev9"}, "feat/c": {"state": "uncertain"}})
+        self._req(store, "a")
+        self._req(store, "c")
+        assert [r["slug"] for r in store.auto_reconcile()] == ["a"]
+        assert store.auto_reconcile() == []
+        reqs = store.requests()
+        assert reqs["a"]["status"] == "landed" and reqs["a"]["dev_sha"] == "dev9"
+        assert reqs["c"]["status"] == "queued_for_steward"  # uncertain is never auto-acked
+        rows = [json.loads(x) for x in store.audit_path.read_text().splitlines()]
+        assert [r["count"] for r in rows if r["event"] == "auto_reconcile"] == [1]
 
     def test_multi_branch_landed_only_when_all_landed(self, store):
         store.landed_check = _checker({"feat/a-be": {"state": "landed", "dev_sha": "d"}})

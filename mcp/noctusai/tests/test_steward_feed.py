@@ -169,3 +169,10 @@ def test_on_left_hook_error_is_reported_not_fatal():
     mq.watch(lambda: next(seq), lambda s: {"state": "landed", "dev_sha": "d"}, sleep=lambda s: None, emit=out.append,
              max_polls=2, on_left=boom)
     assert any(x.startswith("MQ-WATCH-ERROR on_left") for x in out)
+
+
+def test_tick_auto_reconciles_landed_requests_and_prints_one_line(tmp_path):
+    feed, _gh, lines, _beats, _enq = build(tmp_path)
+    feed.reconcile_fn = lambda: [{"slug": "kb-x", "landed_detected": "e" * 40}]
+    feed.tick()
+    assert lines == [f"AUTO-LANDED kb-x {'e' * 9} (already in origin/dev)"]

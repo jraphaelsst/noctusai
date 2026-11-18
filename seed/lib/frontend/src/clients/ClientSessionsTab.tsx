@@ -11,10 +11,11 @@ import { Button } from '../design-system/ui/Button';
 import { cn } from '../utils';
 import { formatCents } from '../organ-kit/money';
 import { EmptyState, ListSkeleton, RefreshingBar, RetryError } from './controls';
-import { formatWhen, optionOf, PAYMENT_STATUS, tzOf } from './format';
+import { CHARGE_STATUS, formatWhen, optionOf, PAYMENT_STATUS, tzOf } from './format';
 import { errorMessage, type ClientsHooks } from './hooks';
 import { t } from './i18n';
 import { clientsErrorText, ToneBadge } from './parts';
+import { SessionDetailDialog } from './SessionDetailDialog';
 import { SessionFormDialog } from './SessionFormDialog';
 import type { Client, ClientsConfigData, Session } from './types';
 
@@ -59,6 +60,10 @@ export function SessionRow({ session: s, config, onOpen, onStatus, busy }: Sessi
         <ToneBadge color={pay.color} testId={`session-pay-${s.id}`}>
           {pay.label}
         </ToneBadge>
+      ) : s.charge_status === 'isento' || s.charge_status === 'cancelado' ? (
+        <ToneBadge color={CHARGE_STATUS[s.charge_status].color} testId={`session-pay-${s.id}`}>
+          {CHARGE_STATUS[s.charge_status].label}
+        </ToneBadge>
       ) : null}
     </li>
   );
@@ -67,20 +72,24 @@ export function SessionRow({ session: s, config, onOpen, onStatus, busy }: Sessi
 export interface ClientSessionsTabProps {
   hooks: ClientsHooks;
   client: Client;
+  /** UX gate only (the server enforces admin on payments). */
+  isAdmin?: boolean;
   /** Injectable clock for tests. */
   now?: number;
 }
 
-export function ClientSessionsTab({ hooks, client, now }: ClientSessionsTabProps) {
+export function ClientSessionsTab({ hooks, client, isAdmin = false, now }: ClientSessionsTabProps) {
   const { data: config } = hooks.useClientsConfig();
   const sessions = hooks.useClientSessions(client.id);
   const update = hooks.useUpdateSession();
-  const [editing, setEditing] = React.useState<Session | null>(null);
+  // The session opened is read from the live list: a status change shows in the dialog at once.
+  const [openId, setOpenId] = React.useState<string | null>(null);
   const [creating, setCreating] = React.useState(false);
   const [busyId, setBusyId] = React.useState<string | null>(null);
 
   const cut = new Date(now ?? Date.now()).toISOString();
   const all = sessions.data ?? [];
+  const opened = all.find((s) => s.id === openId) ?? null;
   const upcoming = all.filter((s) => new Date(s.starts_at).toISOString() >= cut).sort((a, b) => a.starts_at.localeCompare(b.starts_at));
   const past = all.filter((s) => new Date(s.starts_at).toISOString() < cut);
 
@@ -103,7 +112,7 @@ export function ClientSessionsTab({ hooks, client, now }: ClientSessionsTabProps
       ) : (
         <ul className="rounded-md border text-sm">
           {rows.map((s) => (
-            <SessionRow key={s.id} session={s} config={config} onOpen={setEditing} onStatus={changeStatus} busy={busyId === s.id} />
+            <SessionRow key={s.id} session={s} config={config} onOpen={(s) => setOpenId(s.id)} onStatus={changeStatus} busy={busyId === s.id} />
           ))}
         </ul>
       )}
@@ -129,17 +138,8 @@ export function ClientSessionsTab({ hooks, client, now }: ClientSessionsTabProps
           {section(t('sessions.past'), past, t('sessions.empty_past'), 'sessions-past')}
         </>
       )}
-      <SessionFormDialog
-        hooks={hooks}
-        open={creating || !!editing}
-        onClose={() => {
-          setCreating(false);
-          setEditing(null);
-        }}
-        clientId={client.id}
-        client={client}
-        session={editing}
-      />
+      <SessionFormDialog hooks={hooks} open={creating} onClose={() => setCreating(false)} clientId={client.id} client={client} session={null} />
+      <SessionDetailDialog hooks={hooks} open={!!opened} onClose={() => setOpenId(null)} session={opened} isAdmin={isAdmin} />
     </div>
   );
 }

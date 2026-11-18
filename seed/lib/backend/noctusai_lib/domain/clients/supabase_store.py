@@ -37,6 +37,8 @@ class SupabaseClientsStore:
             "schedules": cfg.schedules_table,
             "sessions": cfg.sessions_table,
             "payments": cfg.payments_table,
+            "events": cfg.events_table,
+            "notes": cfg.session_notes_table,
         }
 
     # -- plumbing
@@ -151,6 +153,20 @@ class SupabaseClientsStore:
         # the same predicate in Python: the cursor test is the contract, whatever the backend evaluated
         return [r for r in rows if r.get("materialized_until") is None or str(r["materialized_until"]) < through]
 
+    def orgs_with_due_schedules(self, through: str) -> list[str]:
+        orgs: set[str] = set()
+        offset = 0
+        while True:
+            rows = (
+                self._t("schedules").select("org_id,materialized_until").eq("active", True)
+                .or_(f"materialized_until.is.null,materialized_until.lt.{through}")
+                .order("org_id").order("id").range(offset, offset + 999).execute().data or []
+            )
+            orgs.update(str(r["org_id"]) for r in rows if r.get("materialized_until") is None or str(r["materialized_until"]) < through)
+            if len(rows) < 1000:
+                return sorted(orgs)
+            offset += 1000
+
     # -- sessions
     def get_session(self, org_id: str, session_id: str) -> Optional[dict]:
         return self._get("sessions", org_id, session_id)
@@ -204,6 +220,30 @@ class SupabaseClientsStore:
     def delete_payment(self, org_id: str, payment_id: str) -> bool:
         resp = self._t("payments").delete().eq("org_id", str(org_id)).eq("id", str(payment_id)).execute()
         return bool(getattr(resp, "data", None))
+
+    # -- events
+    def append_events(self, org_id: str, rows: Sequence[dict]) -> None:
+        for chunk in batched([{**r, "org_id": str(org_id)} for r in rows]):
+            self._t("events").insert(chunk).execute()
+
+    def events_of_session(self, org_id: str, session_id: str) -> list[dict]:
+        rows = self._all("events", org_id, eq={"session_id": str(session_id)})
+        return sorted(rows, key=lambda r: str(r["occurred_at"]))
+
+    def events_of_client(self, org_id: str, client_id: str) -> list[dict]:
+        rows = self._all("events", org_id, eq={"client_id": str(client_id)})
+        return sorted(rows, key=lambda r: str(r["occurred_at"]))
+
+    # -- clinical notes
+    def get_session_note(self, org_id: str, session_id: str) -> Optional[dict]:
+        q = self._t("notes").select("*").eq("org_id", str(org_id)).eq("session_id", str(session_id)).limit(1)
+        return self._first(q.execute())
+
+    def upsert_session_note(self, org_id: str, row: dict) -> dict:
+        saved = self._first(self._t("notes").upsert({**row, "org_id": str(org_id)}, on_conflict="session_id").execute())
+        if saved is None:
+            raise RuntimeError("clients: upsert into the session notes table returned no row")
+        return saved
 
 
 def build_clients_store(
