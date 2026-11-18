@@ -124,6 +124,7 @@ class StewardFeed:
                  enqueue_fn: Callable[[str, str], dict[str, Any]],
                  landed_fn: Callable[[str], dict[str, Any]],
                  heartbeat_fn: Callable[[], dict[str, Any]],
+                 reconcile_fn: Callable[[], Any] | None = None,
                  superseded_fn: Callable[[str], str | None],
                  emit: Callable[[str], None] = lambda line: print(line, flush=True),
                  clock: Callable[[], float] = time.monotonic,
@@ -131,6 +132,7 @@ class StewardFeed:
         self.reg, self.client = registry, client
         self.enqueue_fn, self.landed_fn = enqueue_fn, landed_fn
         self.heartbeat_fn, self.superseded_fn = heartbeat_fn, superseded_fn
+        self.reconcile_fn = reconcile_fn
         self.emit, self.clock, self.base_interval = emit, clock, base_interval
         self._last_poll: dict[str, float] = {}
         self._rate: int | None = None
@@ -145,6 +147,12 @@ class StewardFeed:
 
     # -- per poll --------------------------------------------------------------------------------------------
     def tick(self) -> None:
+        if self.reconcile_fn is not None:  # done tasks are marked landed by the watch itself, never by memory
+            try:
+                for r in self.reconcile_fn() or []:
+                    self.emit(f"AUTO-LANDED {r['slug']} {str(r.get('landed_detected') or '')[:9]} (already in origin/dev)")
+            except Exception as exc:  # noqa: BLE001 - loud, never stops the watch
+                self.emit(f"AUTO-RECONCILE-ERROR {str(exc)[:120]}")
         pending, done = self.reg.state()
         for r in pending:
             slug = r["slug"]
@@ -261,6 +269,13 @@ def real_enqueue(cwd: str) -> Callable[[str, str], dict[str, Any]]:
 
 def real_landed(cwd: str) -> Callable[[str], dict[str, Any]]:
     return lambda slug: _cli_json(["--task-branch", "landed", "--task-branch-slug", slug, "--task-branch-confirm"], cwd)
+
+
+def real_reconcile() -> Callable[[], list[dict[str, Any]]]:
+    def go() -> list[dict[str, Any]]:
+        from tools.noctus.dev.release_steward import StewardStore  # lazy: heavy module
+        return StewardStore().auto_reconcile()
+    return go
 
 
 def real_heartbeat() -> Callable[[], dict[str, Any]]:

@@ -55,6 +55,7 @@ import ImovelDescricaoSection from "@/components/imovel/ImovelDescricaoSection";
 import ImovelDocumentosCard from "@/components/imovel/ImovelDocumentosCard";
 import { ImovelHistoricoCard } from "@/components/imovel/ImovelHistoricoCard";
 import { ImovelNotasCard } from "@/components/imovel/ImovelNotasCard";
+import { ImovelPostInstagramCard } from "@/components/imovel/ImovelPostInstagramCard";
 import { VistaSyncProvider } from "@/components/imovel/VistaSyncContext";
 import { ImovelInteressadosCard } from "@/components/imovel/ImovelInteressadosCard";
 import { ImovelProprietariosCard } from "@/components/imovel/ImovelProprietariosCard";
@@ -554,6 +555,7 @@ export default function ImovelDetalhes() {
 
           {/* Our own notes — owned, full CRUD (migration 315). */}
           {codigo && <ImovelNotasCard codigo={codigo} />}
+          {codigo && <ImovelPostInstagramCard codigo={codigo} />}
 
           {/* § 5.13 Metadados */}
           <ImovelMetadadosSection
