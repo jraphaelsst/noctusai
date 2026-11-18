@@ -12408,6 +12408,54 @@ END;
 )
 
 
+_AGENTS_ONBOARDING_EVENTOS_APPEND_ONLY_PROBE = GuardProbe(
+    id="agents.onboarding_eventos.append_only",
+    product="agents",
+    schema=_AGENTS_SCHEMA,
+    guard_name="guard_onboarding_eventos_append_only",
+    kind="write_refusal",
+    migrations=("089_onboarding_sessoes.sql",),
+    rationale=(
+        "EOA: the onboarding interview ledger is the measurable record of every answer, refusal, import, summary and "
+        "apply the interviewer made for a company; an UPDATE would rewrite what the client confirmed. Self-provisioning: "
+        "the probe inserts a throwaway session and one event, then tries to rewrite that event, all inside the "
+        "rolled-back transaction."
+    ),
+    sql=_do_block(f"""
+DECLARE
+  v_sessao uuid;
+  v_ev uuid;
+BEGIN
+  IF to_regclass('{_AGENTS_SCHEMA}.onboarding_eventos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_AGENTS_SCHEMA}.onboarding_eventos does not exist (migration 089 not applied)';
+  END IF;
+  INSERT INTO {_AGENTS_SCHEMA}.onboarding_sessoes (org_id, conversation_id, alvo_org_id, agent_key, product, grant_id, created_by)
+  VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'noc-probe', 'noc-probe', gen_random_uuid(), gen_random_uuid())
+  RETURNING id INTO v_sessao;
+  INSERT INTO {_AGENTS_SCHEMA}.onboarding_eventos (sessao_id, event_type, item_n, dados)
+  VALUES (v_sessao, 'resposta_registrada', 1, '{{}}'::jsonb)
+  RETURNING id INTO v_ev;
+  BEGIN
+    UPDATE {_AGENTS_SCHEMA}.onboarding_eventos SET item_n = 2 WHERE id = v_ev;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: UPDATE on the append-only onboarding ledger succeeded - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%append-only%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+# 089 onboarding ledger: own group (self-provisions its session, no studio agent row), proven on the real chain in
+# test_agents_camadas_probes_on_replay.py
+_AGENTS_ONBOARDING_PROBES: tuple[GuardProbe, ...] = (_AGENTS_ONBOARDING_EVENTOS_APPEND_ONLY_PROBE,)
+
+
 _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE = GuardProbe(
     id="assistant.intake_messages_eventos.append_only",
     product="assistant",
@@ -13576,6 +13624,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_ASSISTANT_LINE_EVENTS_PROBES,
     _AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE,
     _AGENT_PRODUCT_GRANT_EVENTOS_APPEND_ONLY_PROBE,
+    _AGENTS_ONBOARDING_EVENTOS_APPEND_ONLY_PROBE,
     _RUIDO_SHAPE_PROBE,
     _TITULO_PAREADO_PROBE,
     _ONUS_CREDOR_PAREADO_PROBE,

@@ -29,6 +29,7 @@ __all__ = [
     "build_legacy_chat_spec",
     "make_academia_launch_provider",
     "make_studio_tools_factory",
+    "make_onboarding_tools_factory",
 ]
 
 _BIA_DIR = Path(__file__).resolve().parent.parent / "agents" / "bia"
@@ -164,6 +165,8 @@ def get_agent_runtime(
         cli_path=getattr(settings, "claude_cli_path", "") or DEFAULT_CLI_PATH,
         # Agent Studio §E3 — the per-turn read-only `studio` MCP server.
         studio_tools_factory=make_studio_tools_factory(settings),
+        # The onboarding interviewer's per-turn `onboarding` MCP server (only built for a version that enables it).
+        onboarding_tools_factory=make_onboarding_tools_factory(settings),
     )
 
 
@@ -274,6 +277,24 @@ def make_studio_tools_factory(settings: Any):
         )
 
     return _factory
+
+
+def make_onboarding_tools_factory(settings: Any):
+    """``(spec, ctx) -> McpSdkServerConfig`` for the onboarding interviewer's tool group (see
+    :mod:`app.onboarding.fabrica`): the stores are the process's, the session comes from the conversation."""
+    from app.grants.store import get_grant_store
+    from app.onboarding.fabrica import make_onboarding_tools_factory as _make
+    from app.onboarding.sw_settings import get_sw_settings
+    from app.stores.messages import get_message_store
+    from app.stores.onboarding_sessoes import get_onboarding_store
+    from app.stores.studio_definitions import get_studio_definition_store
+    from app.studio.especificacoes_service import config_atual
+
+    return _make(
+        store=get_onboarding_store(settings), messages=get_message_store(settings),
+        definitions=get_studio_definition_store(settings), grants=get_grant_store(settings), sw=get_sw_settings(),
+        config_fn=config_atual,
+    )
 
 
 #: `ACADEMIA_AGENT_ID` — the `agents.agents` row id of the academia agent (the legacy row, or the studio agent after the Renata cutover),
