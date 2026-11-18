@@ -15,7 +15,7 @@ import { ReengajamentoPadraoTab } from "./ReengajamentoPadraoTab";
 import { TentativasCard } from "./TentativasCard";
 import { ReguaRegrasCard } from "./ReguaRegrasCard";
 
-const CFG = { minutos_ativo: true, minutos_intervalo: 15, horas_ativo: false, horas_intervalo: 2 };
+const CFG = { minutos_ativo: true, minutos_intervalo: 15, horas_ativo: false, horas_intervalo: 2, portal_primeiro_contato_ativo: false };
 const T = (n: number) => ({ id: `t${n}`, ordem: n, espera_valor: n, espera_unidade: "dias" as const, texto: `msg ${n}`, template_id: null, ativa: true });
 const REGUA = (n: number) => ({ id: "r1", nome: "Régua 1", ativa: false, compra: true, aluguel: true, tentativas: Array.from({ length: n }, (_, i) => T(i + 1)) });
 
@@ -54,6 +54,25 @@ describe("Reengajamento padrão", () => {
     fireEvent.change(sel, { target: { value: "20" } });
     fireEvent.click(screen.getByText("Salvar"));
     await waitFor(() => expect(api.put).toHaveBeenCalledWith("/api/julia/reengajamento/config", { ...CFG, minutos_intervalo: 20 }));
+  });
+
+  it("portal opener switch starts off and saves on toggle (admin only)", async () => {
+    api.get.mockResolvedValue({ data: CFG });
+    api.put.mockResolvedValue({ data: { ...CFG, portal_primeiro_contato_ativo: true } });
+    wrap(<ReengajamentoPadraoTab isAdmin />);
+    const card = await screen.findByTestId("card-portal");
+    expect(card.textContent).toContain("Inativo");
+    fireEvent.click(screen.getByLabelText("Primeiro contato dos portais"));
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith("/api/julia/reengajamento/config", { ...CFG, portal_primeiro_contato_ativo: true }),
+    );
+  });
+
+  it("portal opener switch is read-only for a non-admin", async () => {
+    api.get.mockResolvedValue({ data: CFG });
+    wrap(<ReengajamentoPadraoTab isAdmin={false} />);
+    await screen.findByTestId("card-portal");
+    expect((screen.getByLabelText("Primeiro contato dos portais") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("hours drawer offers 1..11 horas", async () => {
