@@ -1038,7 +1038,37 @@ class StewardStore:
         except Exception as exc:  # noqa: BLE001 - shadow gate: loud, never a refusal
             return {"applicable": True, "warnings": [f"inline cutoff unmeasured: {exc}"]}
 
+    def auto_reconcile(self) -> list[dict[str, Any]]:
+        """Ack `landed` every open request whose head is already in origin/dev (the SAME `_partition` judgement as
+        `reconcile`, so no second landed-detector). Runs at the top of every read path (inbox/status/mine) and the
+        watch tick, so a done task never waits for the steward to remember. Needs no lease: the fact is derived from
+        git, the ack is attributed `acked_by=auto-reconcile` and counted in the steward ndjson (`auto_reconcile`).
+        Idempotent (a landed row is closed and never re-judged); `uncertain`/`unresolvable` rows are never acked."""
+        open_rows = [r for r in self.requests().values() if r["status"] in _OPEN_STATUSES]
+        if not open_rows:
+            return []
+        try:
+            _todo, landed, _unres, _unsure = self._partition(sorted(open_rows, key=lambda r: r["requested_at"]))
+        except Exception as exc:  # noqa: BLE001 - loud, never blocks a read path
+            self.audit("auto_reconcile_error", error=str(exc)[:200])
+            return []
+        done: list[dict[str, Any]] = []
+        for r in landed:
+            with self._locked("ship-requests"):
+                cur = self.requests().get(r["slug"])
+                if cur is None or cur["status"] not in _OPEN_STATUSES:
+                    continue
+                self._append_event({"ts": _iso(self.clock()), "event": "ack", "slug": r["slug"], "outcome": "landed",
+                                    "dev_sha": r["landed_detected"], "acked_by": "auto-reconcile",
+                                    "note": f"auto-reconciled: already in origin/dev ({r['method']})"})
+            done.append(r)
+        if done:
+            self.audit("auto_reconcile", count=len(done), slugs=[r["slug"] for r in done],
+                       methods={r["slug"]: r["method"] for r in done})
+        return done
+
     def mine(self, session_id: str | None, include_done: bool = False) -> dict[str, Any]:
+        self.auto_reconcile()
         rows = [r for r in self.requests().values() if r["requester"].get("session_id") == session_id]
         if not include_done:
             rows = [r for r in rows if r["status"] not in ("deployed", "withdrawn")]
@@ -1083,6 +1113,7 @@ class StewardStore:
         return todo, landed, unres, unsure
 
     def inbox(self, include_done: bool = False) -> dict[str, Any]:
+        auto_acked = self.auto_reconcile()
         rows = list(self.requests().values())
         open_rows = sorted((r for r in rows if r["status"] in _OPEN_STATUSES), key=lambda r: r["requested_at"])
         todo, already_landed, unresolvable, uncertain = self._partition(open_rows)
@@ -1109,6 +1140,7 @@ class StewardStore:
             "ok": True, "status": "inbox", "pending": len(pending), "by_requester": grouped,
             "needs_info": threads, "escalate_to_owner": escalate,
             "requests": shown, "already_landed": already_landed, "unresolvable": unresolvable,
+            "auto_reconciled": [{"slug": r["slug"], "dev_sha": r["landed_detected"], "method": r["method"]} for r in auto_acked],
             "uncertain": uncertain,
             "drain": drain,
             "next": ("drain ALL pending in one pass (enqueue each so riders batch in the merge queue; a multi-branch "
@@ -1116,6 +1148,9 @@ class StewardStore:
                      "as enqueued, ack landed/ejected/deployed as they resolve, and SendMessage each requester "
                      "LANDED <dev sha> / EJECTED <reason> / DEPLOYED") if pending else "inbox empty",
         }
+        if auto_acked:
+            out["next"] += (f" | AUTO-RECONCILED {len(auto_acked)} request(s) already in origin/dev as landed "
+                            f"({', '.join(r['slug'] for r in auto_acked)}): SendMessage each requester LANDED")
         if already_landed:
             out["next"] += (f" | {len(already_landed)} request(s) are ALREADY in origin/dev (method per row: cherry|post_image|range_diff): ack them "
                             "landed in one call with release_steward action=reconcile confirm=True")
@@ -1435,6 +1470,7 @@ class StewardStore:
                 "next": f"SendMessage the requester: DECISION on {slug}: {text}"}
 
     def status(self, session_id: str | None) -> dict[str, Any]:
+        auto_acked = self.auto_reconcile()
         lease, state = self.holder()
         reqs = list(self.requests().values())
         queued = [r for r in reqs if r["status"] == "queued_for_steward"]
@@ -1447,7 +1483,7 @@ class StewardStore:
             "session_id": session_id, "ttl_default_s": self.default_ttl_s,
             "roles": roles["roles"], "stale_roles": roles["stale_roles"],
             "outbox": {"pending": len(queued) - sum(1 for r in landed if r["status"] == "queued_for_steward"),
-                       "already_landed": len(landed),
+                       "already_landed": len(landed), "auto_reconciled": len(auto_acked),
                        "unresolvable": len(unres), "uncertain": len(unsure),
                        "enqueued": sum(1 for r in reqs if r["status"] == "enqueued")},
             "mine": self.mine(session_id)["requests"],

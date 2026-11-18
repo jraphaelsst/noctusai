@@ -1237,6 +1237,38 @@ def _apply_env_wiring(wire: list[dict], fs: FsOps) -> tuple[list[dict], list[dic
     return created, failed
 
 
+def wire_harness_worktree_frontend_env(
+    primary_root: str, wt_root: str, fs: "FsOps | None" = None,
+) -> dict[str, Any]:
+    """Frontend env for a worktree the HARNESS created (Agent-tool isolation) -
+    one that never went through `action='start'`, so nothing wired it.
+
+    Measured 2026-11-17: in such a tree `vite build` for a product failed with
+    `Could not resolve '@vitejs/plugin-react-swc'` / `[postcss] ENOENT:
+    tailwindcss`. The vite config factory + postcss config live in the
+    WORKTREE's `seed/framework/frontend/`, which had no `node_modules`, and the
+    engineer's hand-made whole-dir symlink of the product's `node_modules`
+    cannot help it (Node resolves a config's imports from the config's own
+    directory). Fix by construction: link the seed frontends' `node_modules`
+    (whole-dir, safe - nothing nests inside) and convert any hand-made
+    whole-dir PRODUCT symlink into the per-entry overlay (so `@noctusai/*` is
+    worktree-owned and no write lands in the primary). A product with no
+    hand-made link stays unwired (scope = a slice's own paths, `_derive_wire_scope`);
+    `task_branch action='start' paths=[products/<slug>/..]` wires it.
+    Idempotent, best-effort, never raises. Returns {wired, skipped, failed}."""
+    fs = fs or FsOps()
+    stale = {
+        slug for slug in fs.list_product_frontends(primary_root)
+        if fs.is_symlink(os.path.join(wt_root, "products", slug, "frontend", "node_modules"))
+    }
+    plan, skipped = _plan_env_wiring(primary_root, wt_root, fs, stale)
+    # only the frontend pieces: the hook must not rewrite .env / venv / toolkit here
+    plan = [w for w in plan if w.get("kind") not in ("dotenv_scrubbed", "venv", "node_install")
+            and "node_modules" in str(w.get("link", ""))]
+    created, failed = _apply_env_wiring(plan, fs)
+    return {"wired": created, "skipped": skipped, "failed": failed, "products": sorted(stale)}
+
+
 def _compact_wire_list(items: list[dict], *, sample_n: int = 5) -> dict[str, Any]:
     """Compact a `would_wire`/`wired`/`skipped` list to `{count, sample}`.
 

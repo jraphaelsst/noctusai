@@ -1264,7 +1264,7 @@ def watch_live(interval: float = 60, run: Runner = _default_run, workdir: str | 
         from tools.noctus.dev.ci_verdict import make_client
         feed = sf.StewardFeed(sf.HandedRuns(sf.default_registry()), make_client(wd),
                               enqueue_fn=sf.real_enqueue(wd), landed_fn=sf.real_landed(wd),
-                              heartbeat_fn=sf.real_heartbeat(), superseded_fn=sf.real_superseded(wd),
+                              heartbeat_fn=sf.real_heartbeat(), reconcile_fn=sf.real_reconcile(), superseded_fn=sf.real_superseded(wd),
                               base_interval=interval)
         hooks = {"tick_fn": feed.tick, "on_left": feed.on_left, "interval_fn": feed.interval,
                  "idle_fn": feed.idle if idle_exit else None}

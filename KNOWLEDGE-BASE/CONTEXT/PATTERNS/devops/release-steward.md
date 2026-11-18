@@ -192,7 +192,8 @@ After a machine reboot sessions return under NEW names, so a name is not an iden
   no per-slice sha or migration filenames (chair ruling 59c61ef0 superseded for this phase). A relayed ask is still not
   consent. `KB § PATTERNS/devops/prod-exposure-consent.md` § Consent phase.
 - **Parked branches must not hold a migration number**: renumber (`next_migration_number`) before reviving one.
-- **Inbox auto-reconcile.** `inbox`/`status` judge each request against `origin/dev` (ref order: `<branch>`,
+- **Auto-reconcile (2026-11-17, owner: "he should be marking done tasks. this is a drift").** Reporting `already_landed` was not enough: acking depended on the steward remembering. `StewardStore.auto_reconcile()` now runs at the top of `inbox`, `status`, `mine` and every merge-queue watch tick (`steward_feed.StewardFeed.tick` -> `AUTO-LANDED <slug>` line), using the SAME `_partition` judgement as `reconcile` (one landed-detector). Every open request whose head is in origin/dev is acked `landed` with its dev_sha, `acked_by=auto-reconcile`, no lease needed (the fact is git-derived). `uncertain`/`unresolvable` are never auto-acked. Idempotent (a landed row is closed). Telemetry: an `auto_reconcile` row (count, slugs, methods) per pass in `release-steward.ndjson`; `inbox.auto_reconciled` / `status.outbox.auto_reconciled` report it. Backstop test: `test_auto_reconcile_is_idempotent_audited_and_leaseless`. Manual `reconcile` stays for the leftovers.
+- **Inbox reconcile detection.** `inbox`/`status` judge each request against `origin/dev` (ref order: `<branch>`,
   `origin/<branch>`, `head_sha`) with three methods, recorded per outcome as `method`:
   1. `cherry` - `git cherry`: zero `+` lines (patch-ids all present) => `already_landed`.
   2. `post_image` - when cherry leaves commits unmatched (rebase with conflict resolution, squash, `--no-ff` train
