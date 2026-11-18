@@ -48,8 +48,8 @@ export function installFetch(routes: FakeRoute[]) {
     if (status === 204) return new Response(null, { status: 204 });
     const nth = (served.get(route) ?? 0);
     served.set(route, nth + 1);
-    const body = route.bodies ? route.bodies[Math.min(nth, route.bodies.length - 1)] : route.body;
-    return new Response(JSON.stringify(body ?? {}), {
+    const answer = route.bodies ? route.bodies[Math.min(nth, route.bodies.length - 1)] : route.body;
+    return new Response(JSON.stringify(answer ?? {}), {
       status,
       headers: { "content-type": "application/json", ...(route.headers ?? {}) },
     });
