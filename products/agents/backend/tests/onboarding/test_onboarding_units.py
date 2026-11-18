@@ -69,7 +69,7 @@ def _run(respostas, armazenados=None, sw=None, gravar=None):
     gravados: dict = {}
     rel = aplicar(
         respostas, org_id=uuid4(), declaradas=TODAS, armazenados=armazenados or {}, config=ConfigValidacao(modo="report"),
-        gravar_specs=gravar or gravados.update, sw=sw or FakeSwSettings(),
+        gravar_specs=gravar or gravados.update, sw=sw or FakeSwSettings(), ator=uuid4(),
     )
     return rel, gravados
 

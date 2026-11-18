@@ -92,9 +92,9 @@ Evals: behaviour (LLM-judged) `agent/onboarding-imob-evals-comportamento.json`; 
 
 ## Deferred (named destinations)
 
-- SW settings are applied through `SwSettingsPort`; the Real client refuses `canal_sw_nao_configurado` and the report
-  carries the route + body to apply by hand until social-wiring accepts a staff channel —
-  `NOC-REMEDIATE[onboarding-sw-staff-channel]`, destination: the social-wiring slice that adds the staff scope.
+- SW settings are applied through `SwSettingsPort` -> social-wiring's onboarding staff channel (service token + staff
+  `ator`; SW allow-lists the settings). Not yet allow-listed in SW (reported `recusado`, apply by hand): items `visitas`,
+  `agente_nome`, `destino_lead_pronto` — `NOC-REMEDIATE[onboarding-sw-staff-more-settings]`, destination: next SW slice.
 - Free-prose import (extracting items from a pasted paragraph) is the interviewer's conversational job, not the
   parser's — `NOC-REMEDIATE[onboarding-import-prose]`, destination: interviewer evals once the agent is applied.
 - Applying the `onboarding-imob` definition rows to a live environment (needs the studio content token; payloads

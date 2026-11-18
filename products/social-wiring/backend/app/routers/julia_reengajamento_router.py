@@ -44,6 +44,7 @@ class ConfigUpdate(StrictHttpModel):
     minutos_intervalo: Optional[int] = None
     horas_ativo: Optional[bool] = None
     horas_intervalo: Optional[int] = None
+    portal_primeiro_contato_ativo: Optional[bool] = None
 
     @field_validator("minutos_intervalo")
     @classmethod

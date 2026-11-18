@@ -38,7 +38,8 @@ TIPOS_CREDITO: frozenset[str] = frozenset({"credito_analisado"})
 TIPOS_CONSULTA: frozenset[str] = frozenset({"imovel_consultado"})
 #: Meta lead-form intake into Julia: payload `{status, motivo?, origem}` -- the outcome of the first-contact attempt
 #: (`enviado` | `transporte_indisponivel` | `modelo_nao_aprovado` | `ja_em_atendimento` | `sem_telefone` | `erro`).
-TIPOS_PRIMEIRO_CONTATO: frozenset[str] = frozenset({"primeiro_contato_meta"})
+#: `primeiro_contato_portal` = the same for an OLX / ImovelWeb lead (payload `{status, motivo?, origem, origem_lead_id}`; Lais study S1).
+TIPOS_PRIMEIRO_CONTATO: frozenset[str] = frozenset({"primeiro_contato_meta", "primeiro_contato_portal"})
 #: The outbound gate (`julia_envio_gate`): `envio_bloqueado` = an automatic Julia send refused by a gate, payload
 #: `{fluxo, motivo, connection_id}` -- the refuse-not-null record (never a silent skip). Not notifiable.
 TIPOS_GATE: frozenset[str] = frozenset({"envio_bloqueado"})

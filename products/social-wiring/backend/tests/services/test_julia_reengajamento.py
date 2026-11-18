@@ -552,7 +552,8 @@ class TestRegrasDaRegua:
         assert svc.obter_config(world.sw, ORG) == svc.CONFIG_PADRAO
         svc.salvar_config(world.sw, ORG, {"minutos_ativo": True, "minutos_intervalo": 20})
         out = svc.salvar_config(world.sw, ORG, {"horas_ativo": True})
-        assert out == {"minutos_ativo": True, "minutos_intervalo": 20, "horas_ativo": True, "horas_intervalo": svc.CONFIG_PADRAO["horas_intervalo"]}
+        assert out == {"minutos_ativo": True, "minutos_intervalo": 20, "horas_ativo": True, "horas_intervalo": svc.CONFIG_PADRAO["horas_intervalo"],
+                       "portal_primeiro_contato_ativo": False}
         assert svc.obter_config(world.sw, OTHER_ORG_ID) == svc.CONFIG_PADRAO
 
 
