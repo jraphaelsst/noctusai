@@ -91,7 +91,6 @@ describe("read side", () => {
     setup({ admin: true });
     expect((await screen.findByTestId("espec-nota-suporte")).textContent).toBe(NOTA_EDICAO_NOCTUS);
   });
-});
 
   it("flags a required value that is missing", async () => {
     setup({ get: { ...ESPEC, valores: [], faltando: ["horario"] } });
