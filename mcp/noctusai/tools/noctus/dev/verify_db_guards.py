@@ -9139,6 +9139,45 @@ _SW_JULIA_REENG_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_JULIA_HORARIO = "359_julia_horario_atendimento.sql"
+
+
+def _horario_probe(probe_id: str, guard: str, rationale: str, cols: str, vals: str, what: str) -> GuardProbe:
+    return _sw_junction_probe(
+        probe_id=f"julia_horario.{probe_id}", guard_name=guard, migration=_M_JULIA_HORARIO, rationale=rationale,
+        fixtures=("registry",),
+        ops_sql=f"    INSERT INTO {_S}.julia_reengajamento_config (org_id, {cols}) VALUES (v_org, {vals});",
+        sqlstate_condition=_CHECK, what=what, tabelas=_T_JULIA_REENG,
+    )
+
+
+#: Migration 359 -- per-org business hours + the portal opener text. Unapplied guards read `no_fixture` and must read
+#: `refused` once applied.
+_SW_JULIA_HORARIO_PROBES: tuple[GuardProbe, ...] = (
+    _horario_probe(
+        "horario_ordenado", "julia_reeng_horario_valido",
+        "Opening must be before closing: an inverted or empty window would never open (or imply a window across midnight, "
+        "which the scheduler does not model).",
+        "horario_abertura, horario_fechamento", "'20:00', '08:00'", "a business window that closes before it opens",
+    ),
+    _horario_probe(
+        "dias_nao_vazio", "julia_reeng_dias_validos",
+        "At least one weekday must be served, else Julia would never send; only ISO weekdays 1..7 exist.",
+        "dias_atendimento", "ARRAY[]::smallint[]", "a business-hours config with no weekday",
+    ),
+    _horario_probe(
+        "dias_iso", "julia_reeng_dias_validos",
+        "Only ISO weekdays 1..7 are valid; 8 would never match a calendar day and silently shrink the window.",
+        "dias_atendimento", "ARRAY[8]::smallint[]", "a business-hours config with weekday 8",
+    ),
+    _horario_probe(
+        "portal_texto_com_link", "julia_reeng_portal_texto_valido",
+        "A portal opener must carry the privacy-notice {link}: the LGPD disclosure is not optional.",
+        "portal_primeiro_contato_texto", "'Ola, sou a Julia, assistente virtual.'", "a portal opener text without the privacy link",
+    ),
+)
+
+
 _M_JULIA_EQUIPES = "276_lais_equipes.sql"
 _T_JULIA_EQUIPES = (f"{_S}.julia_equipes", f"{_S}.julia_equipe_membros", f"{_S}.julia_atribuicoes", f"{_S}.julia_contatos")
 
@@ -13683,6 +13722,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_JULIA_VISITAS_PROBES,
     *_SW_JULIA_NOTIF_PROBES,
     *_SW_JULIA_REENG_PROBES,
+    *_SW_JULIA_HORARIO_PROBES,
     *_SW_JULIA_CONV_PROBES,
     *_SW_JULIA_CLOUD_PROBES,
     *_SW_JULIA_PROPRIETARIOS_TIPO_PROBES,
