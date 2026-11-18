@@ -10,8 +10,7 @@ builds the `valores` itself). The owner's own number is derived from core `noctu
 event (area, key, counts and the actor id: no names, no numbers).
 
 Typed errors (pt-BR): 422 `setor_invalido` | `finalidade_invalida` | `nome_invalido` | `telefone_invalido` | `telefone_duplicado` |
-`contatos_excede` | `finalidade_reservada`; 403 `edicao_restrita_plataforma` (agents still refuses channel writes: the screen says
-so, nothing is half-saved); 409 `agente_nao_conectado`; 502 `agents_token_invalido` | `agents_indisponivel`; 404 `agente_nao_encontrado`.
+`contatos_excede` | `finalidade_reservada`; 403 (not an org admin, before any call to agents); 409 `agente_nao_conectado`; 502 `agents_token_invalido` | `agents_indisponivel`; 404 `agente_nao_encontrado`.
 """
 # No `from __future__ import annotations`: FastAPI body/param models are resolved from the signature.
 import logging
@@ -31,7 +30,6 @@ from app.routers.julia_especificacoes_router import _agents, _ator, _traduzir
 from app.routers.whatsapp_connections_router import get_agents_client_factory
 from app.services import julia_contatos_setoriais_service as svc
 from app.services.julia_agente_service import DEFAULT_AGENT_KEY
-from app.services.julia_edicao import CODIGO as CODIGO_RESTRITO
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +38,6 @@ router = make_router(
 )
 
 _O_QUE = "Os contatos por setor da Julia"
-_MSG_RESTRITO = "Salvar os contatos por setor ainda não foi liberado pela NoctusAI. Nada foi alterado. Fale com o suporte."
 
 
 class ContatoIn(StrictHttpModel):
@@ -106,8 +103,6 @@ async def salvar(
         resposta = await agents.salvar_especificacoes(DEFAULT_AGENT_KEY, {svc.SPEC_CHAVE: valor}, ator)
     except AgentsClientError as exc:
         raise _traduzir(exc) from exc
-    if resposta.status == 403 and CODIGO_RESTRITO in str(resposta.corpo):
-        raise AppException(CODIGO_RESTRITO, _MSG_RESTRITO, status_code=403)
     if resposta.status != 200:
         detalhe = str(resposta.corpo.get("detail") or "A Julia recusou os contatos.")
         raise AppException(str(resposta.corpo.get("code") or "contatos_recusados"), detalhe, status_code=422)

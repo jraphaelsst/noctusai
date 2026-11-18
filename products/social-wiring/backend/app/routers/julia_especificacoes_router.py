@@ -4,8 +4,9 @@ live and are validated in AGENTS -- SW is a faithful proxy, never a second valid
   GET /api/julia/especificacoes   org admin  -> agents' body verbatim:
         {agent_key, version_id, versao, declaradas[{chave,rotulo,descricao,tipo,obrigatoria,exemplo}],
          valores[{chave,valor,updated_at,updated_by,updated_by_nome}], faltando[], invalidas[{chave,codigo,motivo,mensagem}], modo_validacao}
-  PUT /api/julia/especificacoes   PLATFORM ADMIN only (owner 2026-11-04: SW users do not edit Julia's content for now -- an org admin gets
-        a strict 403 `edicao_restrita_plataforma`; agents refuses channel-token writes with the same code and its body passes through)
+  PUT /api/julia/especificacoes   ORG ADMIN of the session's org (owner 2026-11-18: an org's business data is org-owned; a non-admin is
+        403 here BEFORE any call to agents). Agents holds the closed allowlist of org-editable keys: any other key is its 422
+        `spec_nao_editavel_pela_org`, passed through; the org is the credential's, never the body's)
         {"valores": {chave: texto}}   (the acting user -- id, name, e-mail -- is filled by
         THIS route from the session and sent to agents as `ator`; a body `ator` is refused, the body is `valores` only)
         200 -> the same body (report mode lists `invalidas`; the write landed)
@@ -29,10 +30,9 @@ from noctusai_lib.api.auth.session import require_org_admin_for
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.clients.agents import AgentNotFound, AgentsClient, AgentsClientError, AgentsTokenInvalid
-from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org, get_platform_admin_check
+from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org
 from app.routers.whatsapp_connections_router import get_agents_client_factory
 from app.services.julia_agente_service import DEFAULT_AGENT_KEY
-from app.services.julia_edicao import exigir_admin_da_plataforma
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,8 @@ def _ator(auth: tuple, core: Any) -> dict[str, str]:
     """The ACTING USER, from the authenticated session only (agents records it as who changed the specs): id, display
     name (the org user row's ``nome``, else the session's own name) and e-mail. Never taken from the request body."""
     user = auth[0]
-    ator: dict[str, str] = {"user_id": str(getattr(user, "id"))}
+    # papel: the caller already passed the org-admin gate of the SELECTED org (every write route here checks it first)
+    ator: dict[str, str] = {"user_id": str(getattr(user, "id")), "papel": "admin"}
     nome = None
     try:
         rows = core.table("noctus_users").select("nome").eq("id", ator["user_id"]).limit(1).execute().data or []
@@ -106,10 +107,9 @@ async def salvar(
     request: Request = None,
     auth: tuple = Depends(get_current_user_org),
     client_factory=Depends(get_agents_client_factory),
-    e_admin_da_plataforma=Depends(get_platform_admin_check),
 ) -> JSONResponse:
     core = get_core_client()
-    await run_blocking(exigir_admin_da_plataforma, e_admin_da_plataforma, auth, "especificacoes")
+    await run_blocking(require_org_admin_for, core, auth, request, _O_QUE)
     agents = await run_blocking(_agents, client_factory, coerce_org_uuid(auth[2]))
     ator = await run_blocking(_ator, auth, core)
     try:

@@ -697,10 +697,6 @@ class TestStaffOrgSpecs:
             plat.raw.app.dependency_overrides.pop(get_spec_validacao_dep, None)
         assert plat.store.list_org_specs(OTHER_ORG_ID, "julia") == []
 
-    def test_the_social_wiring_channel_route_stays_read_only(self):
-        from app.routers.channel_specs_router import get_channel_specs_write_enabled_dep
-
-        assert get_channel_specs_write_enabled_dep() is False
 
 
 class TestMcpTokenPath:

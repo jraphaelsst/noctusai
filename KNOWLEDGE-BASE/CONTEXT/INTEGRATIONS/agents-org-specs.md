@@ -67,8 +67,7 @@ WhatsApp, once per step per conversation), and a lead who insists and accepts is
 ## Staff path: NoctusAI fills a company's specs, authorised by the GRANT (owner decision 2026-11-05)
 
 A company that must NOT hold an agents licence (e.g. One Consultoria, `fd169d29-4d0a-4b04-9a5e-25e69407614d`) still needs its
-specs (`nome_imobiliaria`, `creci_j`, ...). SW's `PUT /api/channels/agents/{key}/specs` stays refused (403
-`edicao_restrita_plataforma`; `NOC-REMEDIATE[channel-specs-write]`) and the studio org PUT writes only the acting org. The permission
+specs (`nome_imobiliaria`, `creci_j`, ...). SW's `PUT /api/channels/agents/{key}/specs` is open for the org-owned keys only (owner 2026-11-18: the org's admins edit their business knowledge and contacts in SW; closed allowlist `CHAVES_EDITAVEIS_PELA_ORG`, anything else 422 `spec_nao_editavel_pela_org`; the audit records the attested actor id + role + changed keys), and the studio org PUT writes only the acting org. The permission
 is the **grant** -- one `(agent, product, org)` with its own personal token (`KB § PATTERNS/backend/platform-grants.md`) -- plus the
 operator's login:
 

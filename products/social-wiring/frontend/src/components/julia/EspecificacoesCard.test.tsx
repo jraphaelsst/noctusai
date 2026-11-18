@@ -1,15 +1,16 @@
 /**
- * Julia › Especificações do negócio, READ-ONLY: values shown as text with "Alterado por … em …", the support note, NO inputs and no
- * save, for every role; typed refusals of the read are named.
+ * Julia › Especificações do negócio (owner 2026-11-18): values shown with "Alterado por … em …"; an org ADMIN edits the keys agents
+ * marks `editavel_pela_org` (except those with a dedicated card); a non-admin, and every non-editable key, stays read-only with a
+ * note; typed refusals of the read and of the save are named.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), post: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api }));
 
-import { EspecificacoesCard, NOTA_EDICAO_NOCTUS } from "./EspecificacoesCard";
+import { EspecificacoesCard, NOTA_EDICAO_NOCTUS, NOTA_SOMENTE_ADMIN } from "./EspecificacoesCard";
 import type { Especificacoes, TipoEspecificacao } from "@/hooks/useJuliaEspecificacoes";
 
 const decl = (chave: string, tipo: TipoEspecificacao, over: Record<string, unknown> = {}) => ({
@@ -18,8 +19,11 @@ const decl = (chave: string, tipo: TipoEspecificacao, over: Record<string, unkno
 
 const ESPEC: Especificacoes = {
   agent_key: "julia", version_id: "v1", versao: 3,
-  declaradas: [decl("nome_empresa", "texto_curto", { obrigatoria: true }), decl("horario", "horario"), decl("dominios", "dominios")],
-  valores: [{ chave: "nome_empresa", valor: "Lastro", updated_at: "2026-11-04T10:00:00Z", updated_by_nome: "Ana Dona" }],
+  declaradas: [
+    decl("titulo_profissional", "texto_curto", { obrigatoria: true, editavel_pela_org: true }), decl("horario", "horario"),
+    decl("dominios", "dominios"), decl("conhecimento_venda", "texto_longo", { editavel_pela_org: true }),
+  ],
+  valores: [{ chave: "titulo_profissional", valor: "Lastro", updated_at: "2026-11-04T10:00:00Z", updated_by_nome: "Ana Dona" }],
   faltando: ["horario"], invalidas: [], modo_validacao: "bloquear",
 };
 
@@ -36,28 +40,62 @@ function setup(opts: { get?: unknown; admin?: boolean } = {}) {
 beforeEach(() => Object.values(api).forEach((f) => f.mockReset()));
 afterEach(cleanup);
 
-describe("read-only card", () => {
-  it.each([true, false])("has no inputs, no textarea and no save button (isAdmin=%s)", async (admin) => {
-    setup({ admin });
+describe("editing by an org admin", () => {
+  it("an admin gets an input only for an editable key without its own card; non-editable keys stay text", async () => {
+    setup({ admin: true });
+    await screen.findByTestId("espec-lista");
+    expect(screen.getByTestId("espec-input-titulo_profissional")).toBeTruthy();
+    expect(screen.queryByTestId("espec-input-horario")).toBeNull();
+    expect(screen.queryByTestId("espec-input-conhecimento_venda")).toBeNull();
+    expect(document.querySelectorAll("textarea")).toHaveLength(1);
+  });
+
+  it("a non-admin has no inputs and no save, and sees the admin-only note", async () => {
+    setup({ admin: false });
     await screen.findByTestId("espec-lista");
     expect(document.querySelectorAll("input, textarea, select")).toHaveLength(0);
     expect(screen.queryByTestId("espec-salvar")).toBeNull();
-    expect(screen.queryByRole("button", { name: /salvar/i })).toBeNull();
+    expect(screen.getByTestId("espec-nota-suporte").textContent).toBe(NOTA_SOMENTE_ADMIN);
     expect(api.put).not.toHaveBeenCalled();
   });
 
-  it("shows each value with who changed it and when, and the support note", async () => {
-    setup();
-    expect((await screen.findByTestId("espec-valor-nome_empresa")).textContent).toBe("Lastro");
-    expect(screen.getByTestId("espec-alterado-nome_empresa").textContent).toContain("Alterado por Ana Dona em ");
-    expect(screen.getByTestId("espec-valor-horario").textContent).toBe("Não preenchido");
-    expect(screen.getByTestId("espec-nota-suporte").textContent).toBe(NOTA_EDICAO_NOCTUS);
-    expect(NOTA_EDICAO_NOCTUS).toBe("As especificações da Julia são configuradas pela equipe NoctusAI. Para alterar, fale com o suporte.");
+  it("saves only the changed key and shows the server's answer without a stale draft", async () => {
+    setup({ admin: true });
+    api.put.mockResolvedValue({
+      ...ESPEC, valores: [{ chave: "titulo_profissional", valor: "Corretor de imóveis", updated_at: "2026-11-18T10:00:00Z", updated_by_nome: "Ana Dona" }],
+    });
+    fireEvent.change(await screen.findByTestId("espec-input-titulo_profissional"), { target: { value: "Corretor de imóveis" } });
+    expect(screen.getByTestId("espec-nao-salvo-titulo_profissional")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("espec-salvar"));
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+    expect(api.put.mock.calls[0]).toEqual(["/api/julia/especificacoes", { valores: { titulo_profissional: "Corretor de imóveis" } }]);
+    await waitFor(() => expect(screen.queryByTestId("espec-nao-salvo-titulo_profissional")).toBeNull());
   });
 
+  it("a refusal on save is shown in pt-BR, never swallowed", async () => {
+    setup({ admin: true });
+    api.put.mockRejectedValue(erro(422, { code: "spec_nao_editavel_pela_org", detail: "x" }));
+    fireEvent.change(await screen.findByTestId("espec-input-titulo_profissional"), { target: { value: "Novo" } });
+    fireEvent.click(screen.getByTestId("espec-salvar"));
+    expect((await screen.findByTestId("espec-erro-salvar")).textContent).toContain("equipe NoctusAI");
+  });
+});
+
+describe("read side", () => {
+  it("shows each value with who changed it and when, and the staff note for an admin", async () => {
+    setup({ admin: false });
+    expect((await screen.findByTestId("espec-valor-titulo_profissional")).textContent).toBe("Lastro");
+    expect(screen.getByTestId("espec-alterado-titulo_profissional").textContent).toContain("Alterado por Ana Dona em ");
+    expect(screen.getByTestId("espec-valor-horario").textContent).toBe("Não preenchido");
+    cleanup();
+    setup({ admin: true });
+    expect((await screen.findByTestId("espec-nota-suporte")).textContent).toBe(NOTA_EDICAO_NOCTUS);
+  });
+});
+
   it("flags a required value that is missing", async () => {
-    setup();
-    expect((await screen.findByTestId("espec-problema-horario")).textContent).toContain("Obrigatório");
+    setup({ get: { ...ESPEC, valores: [], faltando: ["horario"] } });
+    expect((await screen.findByTestId("espec-problema-titulo_profissional")).textContent).toContain("Obrigatório");
   });
 
   it("skeleton first; empty declarations; the {data} envelope", async () => {
