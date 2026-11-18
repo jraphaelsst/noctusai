@@ -185,6 +185,7 @@ def post_aplicar(
         payload.respostas, org_id=org_id, declaradas={d.chave: d.tipo for d in atual.declaradas}, armazenados=_valores(atual),
         nao_confirmados=frozenset(payload.importados) - frozenset(payload.confirmados),
         config=config, gravar_specs=lambda v: aplicar_org_specs(store, alvo, key, v, config, origem=origem), sw=sw,
+        ator=ctx.user_id, grant_id=grant.id,
     )
     logger.info("onboarding.aplicar org=%s agent=%s aplicados=%d recusados=%d", org_id, key, rel.aplicados, rel.recusados)
     return RelatorioOut(

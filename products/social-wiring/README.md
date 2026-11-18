@@ -133,3 +133,7 @@ cd products/social-wiring/frontend && npx vitest run && npx vite build
 4. Recreate social-wiring (`noctus.dev.deploy_image` or `noctus.vps.recreate`).
 5. Verify one signed inbound: send a WhatsApp message to the Julia line, confirm it arrives in Conversas, that `/api/health` has `startup_hook_error: null`, and that an unsigned `curl -X POST .../api/whatsapp/webhook/<token>` returns 401.
 Rollback: unset the key in the root `.env` and recreate (SW falls back to the loud accept-unsigned state).
+
+## Onboarding staff channel (agents -> SW)
+
+`PUT /api/julia/onboarding/orgs/{org_id}/configuracoes/{setting}` (tier `service`): the NoctusAI team's agents onboarding apply writes a client org's Julia settings here. Auth is a platform-issued product token (scope `social-wiring:onboarding-settings`, issuer `noctus-platform`); a human session, wrong scope or org-issued token is 403, an unknown org 404, a setting outside the allow-list (`julia_onboarding_service.SETTINGS`) 422. Each setting goes through the same service as its org-admin route; each write records a `configuracao_alterada` event with the staff `ator` and `via=onboarding`.
