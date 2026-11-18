@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS agents.onboarding_sessoes (
 CREATE INDEX IF NOT EXISTS idx_onboarding_sessoes_alvo
     ON agents.onboarding_sessoes (alvo_org_id, agent_key, created_at DESC);
 
+-- transition-log-ok: onboarding_eventos intent-named interview ledger (answers/refusals/imports/summary/apply) with a per-item fold, not a single state row + from/to transition pair
 CREATE TABLE IF NOT EXISTS agents.onboarding_eventos (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     seq         BIGINT GENERATED ALWAYS AS IDENTITY,

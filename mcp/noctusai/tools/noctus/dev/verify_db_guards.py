@@ -12451,6 +12451,10 @@ END;
 """),
 )
 
+# 089 onboarding ledger: own group (self-provisions its session, no studio agent row), proven on the real chain in
+# test_agents_camadas_probes_on_replay.py
+_AGENTS_ONBOARDING_PROBES: tuple[GuardProbe, ...] = (_AGENTS_ONBOARDING_EVENTOS_APPEND_ONLY_PROBE,)
+
 
 _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE = GuardProbe(
     id="assistant.intake_messages_eventos.append_only",
