@@ -48,13 +48,19 @@ export interface KanbanCardProps {
    * button click is not a card click.
    */
   onActivate?: () => void;
+  /**
+   * `false` renders the card non-draggable: no sortable activator listeners or attributes, so a press never starts a
+   * drag. With `onActivate` the card is a keyboard-reachable button (Enter / Space activate it). Default `true`.
+   */
+  draggable?: boolean;
 }
 
-export function KanbanCard({ id, children, className, onActivate }: KanbanCardProps) {
+export function KanbanCard({ id, children, className, onActivate, draggable = true }: KanbanCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
     // Lets the board tell a card drag from a column drag by `data.type`.
     data: { type: 'card' },
+    disabled: !draggable,
   });
 
   const pressOrigin = React.useRef<{ x: number; y: number } | null>(null);
@@ -99,6 +105,32 @@ export function KanbanCard({ id, children, className, onActivate }: KanbanCardPr
     }
     onActivate();
   };
+
+  if (!draggable) {
+    return (
+      <div
+        ref={setNodeRef}
+        className={className}
+        data-kanban-card-id={id}
+        onClick={onActivate}
+        {...(onActivate
+          ? {
+              role: 'button',
+              tabIndex: 0,
+              onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
+                if (e.target !== e.currentTarget) return;
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onActivate();
+                }
+              },
+            }
+          : {})}
+      >
+        {children}
+      </div>
+    );
+  }
 
   return (
     <div

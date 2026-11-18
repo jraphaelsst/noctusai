@@ -56,6 +56,7 @@ known_facts:
   single-list reorderable grid (one `SortableContext`, `arrayMove`
   within one collection, no columns/stages/droppable zones) — a different
   primitive (a "sortable list", not a "kanban board"). Left untouched.'
+- '`draggable?: boolean` (default true, additive): false renders every card non-draggable (no sortable listeners/attributes); with onCardActivate a card is a keyboard-reachable button (Enter/Space). For read-only boards whose column is derived (ImobShotAI etapa projection).'
 errors_encountered: []
 drifts_surfaced:
 - 'roadmap premise correction: `products/orbity/frontend/src/pages/Funil.tsx`
