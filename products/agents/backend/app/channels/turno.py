@@ -94,9 +94,11 @@ _JANELA_LEAD = 12
 class TurnoRecusado(Exception):
     """A turn that must not start; ``codigo`` is the 409 code the route answers."""
 
-    def __init__(self, status: int, codigo: str, detalhe: str) -> None:
+    def __init__(self, status: int, codigo: str, detalhe: str, *, interno: str = "") -> None:
         super().__init__(detalhe)
         self.status, self.codigo, self.detalhe = status, codigo, detalhe
+        #: what is missing, for the platform admin / eval owner ONLY: never part of the lead-facing answer
+        self.interno = interno
 
 
 @dataclass(frozen=True)
@@ -248,10 +250,9 @@ def _compilar(
     # (what SW / Studio show) stays strict.
     bloqueantes = set(avisos) - ({"spec_org_faltando"} if tolerar_specs_faltando else set())
     if bloqueantes:
-        # name WHAT is missing (our own compile messages: registry keys, never client text) so the owner fixes it at once
+        # WHAT is missing (our own compile messages: registry keys) rides in ``interno`` for the eval preflight, never the lead's 409
         faltas = " ".join(w.mensagem for w in compiled.avisos if w.bloqueante and w.codigo == "texto_ausente")
-        raise TurnoRecusado(
-            409, "conteudo_incompleto", ("O conteúdo do agente está incompleto. " + faltas).strip())
+        raise TurnoRecusado(409, "conteudo_incompleto", "O conteúdo do agente está incompleto.", interno=faltas)
     return r, padrao, compiled
 
 

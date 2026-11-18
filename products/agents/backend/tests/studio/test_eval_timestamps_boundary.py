@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from uuid import uuid4
 
 from app.stores.studio_eval_loops import _loop_de
@@ -46,3 +47,24 @@ def test_loop_record_parses_string_timestamps():
          "started_by": str(uuid4()), "started_at": _TS, "stopped_at": None}
     rec = _loop_de(r)
     assert rec.started_at.tzinfo is not None and rec.stopped_at is None
+
+
+def test_preflight_names_the_missing_system_texts():
+    import pytest
+    from fastapi import HTTPException
+
+    from app.channels.turno import TurnoRecusado
+    from app.studio.eval_preflight import checar_turno
+
+    class _D:
+        def definir_agente(self, key):
+            pass
+
+        def preflight(self):
+            raise TurnoRecusado(
+                409, "conteudo_incompleto", "O conteúdo do agente está incompleto.",
+                interno="Textos do sistema obrigatórios sem conteúdo: contexto.rotulo_estagio.")
+
+    with pytest.raises(HTTPException) as e:
+        checar_turno(_D(), SimpleNamespace(key="a", modelo=True), suite="comportamento")
+    assert e.value.status_code == 409 and "contexto.rotulo_estagio" in e.value.detail["detail"]
