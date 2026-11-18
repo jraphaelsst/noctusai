@@ -93,7 +93,7 @@ describe("read side", () => {
   });
 
   it("flags a required value that is missing", async () => {
-    setup({ get: { ...ESPEC, valores: [], faltando: ["horario"] } });
+    setup({ get: { ...ESPEC, valores: [], faltando: ["titulo_profissional"] } });
     expect((await screen.findByTestId("espec-problema-titulo_profissional")).textContent).toContain("Obrigatório");
   });
 
