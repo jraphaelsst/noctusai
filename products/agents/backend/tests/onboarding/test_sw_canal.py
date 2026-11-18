@@ -160,7 +160,8 @@ class TestStatus:
         kit.canal.garantir(ORG, STAFF)
         s = kit.canal.status()
         assert s.estado == "provisionado" and s.expira_em == NOW + TTL and s.dias_restantes == TTL.days
-        assert s.ultima_chamada_ok is None and s.ultimo_erro is None
+        # the provisioning probe against social-wiring is itself a successful call
+        assert s.ultima_chamada_ok.evento == "sw_canal_provisionado" and s.ultimo_erro is None
 
     def test_a_revoked_token_is_a_named_error(self):
         kit = build_kit()
