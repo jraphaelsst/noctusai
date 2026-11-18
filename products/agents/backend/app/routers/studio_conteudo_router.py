@@ -464,7 +464,8 @@ def aplicar_org_specs(
     if origem:
         depois.update(origem)
     # the diff by KEY (values are the org's business data, not audit payload): which declared keys changed
-    depois["chaves_alteradas"] = sorted(c for c, v in res.valores.items() if antes_valores.get(c) != v)
+    if ator or origem:
+        depois["chaves_alteradas"] = sorted(c for c, v in res.valores.items() if antes_valores.get(c) != v)
     store.append_audit(
         ctx.org_id, agent.id, ator.user_id if ator else actor_id(ctx), "specs_org_editadas",
         {"chaves": sorted(antes)}, depois,
