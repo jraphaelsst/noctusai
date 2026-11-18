@@ -24,6 +24,7 @@ connector servers.
 | `typed_error(e)` | `_kit.errors` | 3-key JSON error payload `{error_class, message, status}` for tool-handler internals. |
 | `confirmation_required_message(action, effect="", *, noun="write action")` | `_kit.errors` | The standard confirm-then-execute message; each connector keeps its own `ConfirmationRequiredError` subclass but builds the message here. |
 | `request_json(method, url, *, auth_header, user_agent, params, body, timeout, error_cls, empty_result, label, on_http_error)` | `_kit.transport` | The shared stdlib-`urllib` HTTP boundary — connectors delegate transport mechanics here (see § Shared HTTP transport seam). |
+| `request_bytes(method, url, *, auth_header, body, raw_body, accept, ...)` / `encode_multipart(fields, files)` | `_kit.transport` | Binary/multipart sibling of `request_json`: returns `(bytes, lower-cased response headers)`; `raw_body=(bytes, content_type)` sends a pre-encoded body (multipart). `request_json` delegates to it (one HTTP error path). First consumer: `mcp/elevenlabs`. |
 | `normalize_base_url(raw)` | `_kit.transport` | Trim trailing slashes; connectors needing a path suffix (n8n's `/api/v1`) wrap it. |
 | `BROWSER_USER_AGENT` / `DEFAULT_USER_AGENT` | `_kit.transport` | Browser UA (clears the Cloudflare WAF on WAF-fronted hosts) / the plain default UA. |
 | `ConnectorHttpError` | `_kit.transport` | Default typed error for the seam; a connector passes its OWN `<Vendor>ApiError` as `error_cls`. |
