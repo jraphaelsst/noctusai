@@ -142,6 +142,7 @@ runs:
         exit 1
 
     - name: Hand the .deb cache back to the runner user (tar must read root-written files)
+      id: handback
       if: success() && inputs.packages != '' && steps.debs.outputs.cache-hit != 'true'
       shell: bash
       env:
@@ -149,10 +150,12 @@ runs:
       run: |
         sudo rm -rf "$DEBS/lock" "$DEBS/partial"
         sudo chown -R "$(id -u):$(id -g)" "$DEBS"
-        echo "::notice::apt .deb cache to save: $(ls "$DEBS" | wc -l) file(s), $(du -sh "$DEBS" | cut -f1)"
+        n="$(find "$DEBS" -name '*.deb' | wc -l | tr -d ' ')"
+        echo "count=$n" >> "$GITHUB_OUTPUT"
+        echo "::notice::apt .deb cache to save: $n file(s), $(du -sh "$DEBS" | cut -f1) (0 = everything was preinstalled; nothing worth saving)"
 
     - name: Save .deb cache
-      if: success() && inputs.packages != '' && steps.debs.outputs.cache-hit != 'true'
+      if: success() && inputs.packages != '' && steps.debs.outputs.cache-hit != 'true' && steps.handback.outputs.count != '0'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.key.outputs.debs }}
