@@ -20,6 +20,9 @@ const mockUseCancelEvalRun = vi.fn();
 const mockUseIsAdmin = vi.fn();
 const mockUseStudioAgent = vi.fn();
 const mockUseConsolidacao = vi.fn();
+const mockUseIsPlatformAdmin = vi.fn();
+const mockUseMecanismoRuns = vi.fn();
+const mockUseMecanismoRun = vi.fn();
 
 vi.mock("@/hooks/studio/useEvals", () => ({
   useEvalCases: () => mockUseEvalCases(),
@@ -33,6 +36,11 @@ vi.mock("@/hooks/studio/useEvals", () => ({
   useConsolidacao: () => mockUseConsolidacao(),
   // the live-progress panel is covered by RunProgressPanel.test.tsx; here it has no data yet (renders nothing)
   useRunProgresso: () => ({ data: undefined, showSkeleton: false, isRefreshing: false, isError: false, error: null }),
+}));
+vi.mock("@/hooks/useIsPlatformAdmin", () => ({ useIsPlatformAdmin: () => mockUseIsPlatformAdmin() }));
+vi.mock("@/hooks/studio/useMecanismo", () => ({
+  useMecanismoRuns: () => mockUseMecanismoRuns(),
+  useMecanismoRun: () => mockUseMecanismoRun(),
 }));
 vi.mock("@/hooks/useIsAdmin", () => ({ useIsAdmin: () => mockUseIsAdmin() }));
 vi.mock("@/hooks/studio/useStudioAgents", () => ({ useStudioAgent: () => mockUseStudioAgent() }));
@@ -60,6 +68,9 @@ beforeEach(() => {
   mockUseCancelEvalRun.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
   mockUseStudioAgent.mockReturnValue({ data: { versoes: [{ id: "v1", versao: 2, status: "rascunho" }] } });
   mockUseConsolidacao.mockReturnValue({ data: undefined, showSkeleton: false, isError: false });
+  mockUseIsPlatformAdmin.mockReturnValue(false);
+  mockUseMecanismoRuns.mockReturnValue({ items: undefined, data: undefined, showSkeleton: false, isError: false, refetch: vi.fn() });
+  mockUseMecanismoRun.mockReturnValue({ data: undefined, showSkeleton: false, isError: false, refetch: vi.fn() });
 });
 
 afterEach(() => cleanup());
@@ -540,5 +551,66 @@ describe("EvalsTab — consolidation (owner rule 2026-11-09)", () => {
     fireEvent.click(screen.getByTestId("evals-run-row-r1"));
     const pulados = await screen.findByTestId("evals-run-pulados");
     expect(pulados.textContent).toContain("ja-provado (5/5)");
+  });
+});
+
+describe("EvalsTab — Execuções lists BOTH suites (owner bug 2026-11-19)", () => {
+  const MEC = (id: string, started_at: string, over: object = {}) => ({
+    run_id: id, version_id: "v1", compiled_hash: "h", driver: "live", status: "concluida", aprovado: false, completo: true,
+    orcamento_excedido: false, custo_usd: 1.5, total_casos: 72, casos_aprovados: 63, erro: null, started_at, finished_at: started_at, ...over,
+  });
+  const BEH = { id: "b1", version_id: "v1", status: "concluida", total: 3, aprovados: 3, score: 1, limiar: 0.8, started_at: "2026-11-18T10:00:00Z", finished_at: null, custo_usd: null };
+  const mecView = (items: object[] | undefined, over: object = {}) => ({ items, data: items ? { items } : undefined, showSkeleton: false, isError: false, refetch: vi.fn(), ...over });
+
+  it("platform admin sees mechanism runs next to behaviour runs, labelled by suite, newest first", async () => {
+    mockUseIsPlatformAdmin.mockReturnValue(true);
+    mockUseEvalRuns.mockReturnValue({ data: [BEH] });
+    mockUseMecanismoRuns.mockReturnValue(mecView([MEC("m2", "2026-11-19T10:00:00Z", { aprovado: true }), MEC("m1", "2026-11-17T10:00:00Z")]));
+    await renderTab();
+    const ids = screen.getAllByTestId(/^evals-(mecanismo|run)-row-/).map((e) => e.getAttribute("data-testid"));
+    expect(ids).toEqual(["evals-mecanismo-row-m2", "evals-run-row-b1", "evals-mecanismo-row-m1"]);
+    const row = screen.getByTestId("evals-mecanismo-row-m1");
+    expect(row.textContent).toContain("Mecanismo");
+    expect(row.textContent).toContain("63/72");
+    expect(row.textContent).toContain("Reprovada");
+    expect(screen.getByTestId("evals-mecanismo-gate-m2").textContent).toBe("Aprovada");
+    expect(screen.getByTestId("evals-run-row-b1").textContent).toContain("Comportamento");
+  });
+
+  it("clicking a mechanism row opens its detail", async () => {
+    mockUseIsPlatformAdmin.mockReturnValue(true);
+    mockUseMecanismoRuns.mockReturnValue(mecView([MEC("m1", "2026-11-17T10:00:00Z")]));
+    mockUseMecanismoRun.mockReturnValue({
+      data: { ...MEC("m1", "2026-11-17T10:00:00Z"), casos: [{ slug: "caso-x", passou: false, taxa: 0, execucoes: [{ indice: 0, status: "reprovado", falhas: [{ assert: "estagio_final", codigo: "estagio_diferente" }] }] }] },
+      showSkeleton: false, isError: false, refetch: vi.fn(),
+    });
+    await renderTab();
+    fireEvent.click(screen.getByTestId("evals-mecanismo-row-m1"));
+    const det = await screen.findByTestId("mecanismo-run-detail");
+    expect(det.textContent).toContain("caso-x");
+    expect(det.textContent).toContain("estagio_diferente");
+  });
+
+  it("a non-platform admin never sees mechanism rows nor an error about them", async () => {
+    mockUseEvalRuns.mockReturnValue({ data: [BEH] });
+    mockUseMecanismoRuns.mockReturnValue(mecView(undefined, { isError: true }));
+    await renderTab();
+    expect(screen.queryByTestId("evals-mecanismo-runs-erro")).toBeNull();
+    expect(screen.getByTestId("evals-run-row-b1")).toBeTruthy();
+  });
+
+  it("a failed mechanism-history read is announced, never an empty list passing as complete", async () => {
+    mockUseIsPlatformAdmin.mockReturnValue(true);
+    mockUseMecanismoRuns.mockReturnValue(mecView(undefined, { isError: true }));
+    await renderTab();
+    expect(screen.getByTestId("evals-mecanismo-runs-erro")).toBeTruthy();
+    expect(screen.queryByText("Nenhuma execução ainda.")).toBeNull();
+  });
+
+  it("shows the empty state only when both suites are empty and loaded", async () => {
+    mockUseIsPlatformAdmin.mockReturnValue(true);
+    mockUseMecanismoRuns.mockReturnValue(mecView([]));
+    await renderTab();
+    expect(screen.getByText("Nenhuma execução ainda.")).toBeTruthy();
   });
 });

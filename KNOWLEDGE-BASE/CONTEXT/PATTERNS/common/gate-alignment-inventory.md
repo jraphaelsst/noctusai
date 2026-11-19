@@ -176,7 +176,7 @@ Totals by class: **?** 46, **never-fires** 41, **new (shadow)** 2, **new (unmeas
 | `keeper:check-product-source-build-dep-pip-seam` |  | **NONE** | devops-engineer | 0 (0) | unmeasured |
 | `keeper:check-project-history-staged` | Pre-commit gate: a commit staging project-history/ledger.ndjson must stage the PROJECT-HISTORY.md rendered fro | **NONE** | tooling-engineer | 0 (0) | never-fires |
 | `keeper:check-raw-waha-client-construction` | KB § CONTEXT/INTEGRATIONS/whatsapp.md § 6a (line policy v1): a WAHA client is built only by the seed factory s | api: noctusai_lib.integrations.whatsapp.get_whatsapp_client | integrations-engineer | 0 (0) | ? |
-| `keeper:check-refusal-classes-owned` | A refusal class that fired >=3x in 14 days with no open fix (pointer / in-progress gate-walls row / NOC-REMEDI | tool: noctus.dev.gate_alignment action=refusals (upserts one auto-improvement row per clas | tooling-engineer | 0 (0) | ? |
+| `keeper:check-refusal-classes-owned` | A refusal class that fired >=3x in 14 days with no owner (pointer / open/in-progress/accepted gate-walls row / | tool: noctus.dev.gate_alignment file_missing_findings (the system opens the gate-walls fin | tooling-engineer | 0 (0) | ? |
 | `keeper:check-root-requirements-superset` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-section-7-placeholder-consistency` |  | **NONE** | tooling-engineer | 0 (0) | unmeasured |
 | `keeper:check-seed-compliance` |  | **NONE** | devops-engineer | 0 (0) | unmeasured |

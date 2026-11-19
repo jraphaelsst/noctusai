@@ -100,6 +100,7 @@ export function MensagemItem({
           conteudo ? (
             <MarkdownRenderer
               content={texto}
+              remoteImages="block"
               onNavigate={(href) => {
                 const cod = codigoDoHref(href);
                 const id = cod != null ? idPorCodigo.get(cod) : undefined;

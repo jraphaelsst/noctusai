@@ -1,0 +1,250 @@
+{
+ "versao": 1,
+ "descricao": "ONE golden table for the Diretor de Criação's `### Publicação <n>` block (criacao-pipeline-contract 2.3/4). The agents side (products/agents/backend/app/criacao/saida.py, tests/criacao/test_publicacao_golden.py) must extract exactly `agents.numeros` and report exactly `agents.falhas` (checar_publicacao codes); the social-wiring side (modules/media_creation/services/publicacoes.py, tests/modules/media_creation/test_criacao_publicacao_golden.py) must accept exactly `sw.validas` and count `sw.invalidas`. The two sides differ BY DESIGN on `link_preenchido`: the agent's output check flags a filled Link, SW never reads it (the owner pastes the URL by hand). Add a case to both suites or to neither.",
+ "casos": [
+  {
+   "nome": "valida_com_fonte_verificada",
+   "texto": "### Publicação 1\n- Objetivo do post: autoridade\n- CTA: Salve este post para consultar depois\n- Justificativa do CTA: Salvar combina com conteúdo de consulta e sustenta autoridade\n- Legenda: Seu corpo pede uma rotina de sono.\n- Hashtags: #sono #rotina #saude #bemestar #habitos\n- Primeiro comentário: Qual hábito você mudaria primeiro?\n- Link:\n- Fontes: https://fonte.exemplo/estudo-sono (verificada)\n- Voz: amostras\n",
+   "agents": {
+    "numeros": [
+     1
+    ],
+    "falhas": []
+   },
+   "sw": {
+    "validas": [
+     {
+      "numero": 1,
+      "cta_objetivo": "autoridade",
+      "cta": "Salve este post para consultar depois",
+      "hashtags": [
+       "#sono",
+       "#rotina",
+       "#saude",
+       "#bemestar",
+       "#habitos"
+      ],
+      "fontes": [
+       {
+        "url": "https://fonte.exemplo/estudo-sono",
+        "verificada": true
+       }
+      ]
+     }
+    ],
+    "invalidas": 0
+   }
+  },
+  {
+   "nome": "valida_sem_cta_e_sem_fonte",
+   "texto": "### Publicação 1\n- Objetivo do post: reflexão\n- CTA: nenhum\n- Justificativa do CTA:\n- Legenda: Seu corpo pede uma rotina de sono.\n- Hashtags: #sono #rotina #saude #bemestar #habitos\n- Primeiro comentário: Qual hábito você mudaria primeiro?\n- Link:\n- Fontes: nenhuma\n- Voz: sem amostras\n",
+   "agents": {
+    "numeros": [
+     1
+    ],
+    "falhas": []
+   },
+   "sw": {
+    "validas": [
+     {
+      "numero": 1,
+      "cta_objetivo": "nenhum",
+      "cta": null,
+      "hashtags": [
+       "#sono",
+       "#rotina",
+       "#saude",
+       "#bemestar",
+       "#habitos"
+      ],
+      "fontes": []
+     }
+    ],
+    "invalidas": 0
+   }
+  },
+  {
+   "nome": "duas_publicacoes_fonte_nao_verificada",
+   "texto": "### Publicação 1\n- Objetivo do post: autoridade\n- CTA: Salve este post para consultar depois\n- Justificativa do CTA: Salvar combina com conteúdo de consulta e sustenta autoridade\n- Legenda: Seu corpo pede uma rotina de sono.\n- Hashtags: #sono #rotina #saude #bemestar #habitos\n- Primeiro comentário: Qual hábito você mudaria primeiro?\n- Link:\n- Fontes: https://fonte.exemplo/estudo-sono (verificada)\n- Voz: amostras\n\n### Publicação 2\n- Objetivo do post: autoridade\n- CTA: Salve este post para consultar depois\n- Justificativa do CTA: Salvar combina com conteúdo de consulta e sustenta autoridade\n- Legenda: Segunda opção.\n- Hashtags: #sono #rotina #saude #bemestar #habitos\n- Primeiro comentário: Qual hábito você mudaria primeiro?\n- Link:\n- Fontes: estudo da USP (não verificada)\n- Voz: amostras\n",
+   "agents": {
+    "numeros": [
+     1,
+     2
+    ],
+    "falhas": []
+   },
+   "sw": {
+    "validas": [
+     {
+      "numero": 1,
+      "cta_objetivo": "autoridade",
+      "cta": "Salve este post para consultar depois",
+      "hashtags": [
+       "#sono",
+       "#rotina",
+       "#saude",
+       "#bemestar",
+       "#habitos"
+      ],
+      "fontes": [
+       {
+        "url": "https://fonte.exemplo/estudo-sono",
+        "verificada": true
+       }
+      ]
+     },
+     {
+      "numero": 2,
+      "cta_objetivo": "autoridade",
+      "cta": "Salve este post para consultar depois",
+      "hashtags": [
+       "#sono",
+       "#rotina",
+       "#saude",
+       "#bemestar",
+       "#habitos"
+      ],
+      "fontes": [
+       {
+        "afirmacao": "estudo da USP",
+        "verificada": false
+       }
+      ]
+     }
+    ],
+    "invalidas": 0
+   }
+  },
+  {
+   "nome": "quatro_hashtags",
+   "texto": "### Publicação 1\n- Objetivo do post: autoridade\n- CTA: Salve este post para consultar depois\n- Justificativa do CTA: Salvar combina com conteúdo de consulta e sustenta autoridade\n- Legenda: Seu corpo pede uma rotina de sono.\n- Hashtags: #sono #rotina #saude #bemestar\n- Primeiro comentário: Qual hábito você mudaria primeiro?\n- Link:\n- Fontes: https://fonte.exemplo/estudo-sono (verificada)\n- Voz: amostras\n",
+   "agents": {
+    "numeros": [
+     1
+    ],
+    "falhas": [
+     "pub1:hashtags:4"
+    ]
+   },
+   "sw": {
+    "validas": [],
+    "invalidas": 1
+   }
+  },
+  {
+   "nome": "hashtag_repetida",
+   "texto": "### Publicação 1\n- Objetivo do post: autoridade\n- CTA: Salve este post para consultar depois\n- Justificativa do CTA: Salvar combina com conteúdo de consulta e sustenta autoridade\n- Legenda: Seu corpo pede uma rotina de sono.\n- Hashtags: #sono #Sono #saude #bemestar #habitos\n- Primeiro comentário: Qual hábito você mudaria primeiro?\n- Link:\n- Fontes: https://fonte.exemplo/estudo-sono (verificada)\n- Voz: amostras\n",
+   "agents": {
+    "numeros": [
+     1
+    ],
+    "falhas": [
+     "pub1:hashtags:5"
+    ]
+   },
+   "sw": {
+    "validas": [],
+    "invalidas": 1
+   }
+  },
+  {
+   "nome": "cta_sem_justificativa",
+   "texto": "### Publicação 1\n- Objetivo do post: autoridade\n- CTA: Salve este post para consultar depois\n- Legenda: Seu corpo pede uma rotina de sono.\n- Hashtags: #sono #rotina #saude #bemestar #habitos\n- Primeiro comentário: Qual hábito você mudaria primeiro?\n- Link:\n- Fontes: https://fonte.exemplo/estudo-sono (verificada)\n- Voz: amostras\n",
+   "agents": {
+    "numeros": [
+     1
+    ],
+    "falhas": [
+     "pub1:cta_sem_justificativa"
+    ]
+   },
+   "sw": {
+    "validas": [],
+    "invalidas": 1
+   }
+  },
+  {
+   "nome": "legenda_ausente",
+   "texto": "### Publicação 1\n- Objetivo do post: autoridade\n- CTA: Salve este post para consultar depois\n- Justificativa do CTA: Salvar combina com conteúdo de consulta e sustenta autoridade\n- Hashtags: #sono #rotina #saude #bemestar #habitos\n- Primeiro comentário: Qual hábito você mudaria primeiro?\n- Link:\n- Fontes: https://fonte.exemplo/estudo-sono (verificada)\n- Voz: amostras\n",
+   "agents": {
+    "numeros": [
+     1
+    ],
+    "falhas": [
+     "pub1:legenda_ausente"
+    ]
+   },
+   "sw": {
+    "validas": [],
+    "invalidas": 1
+   }
+  },
+  {
+   "nome": "objetivo_nao_declarado",
+   "texto": "### Publicação 1\n- Objetivo do post: viralizar\n- CTA: Salve este post para consultar depois\n- Justificativa do CTA: Salvar combina com conteúdo de consulta e sustenta autoridade\n- Legenda: Seu corpo pede uma rotina de sono.\n- Hashtags: #sono #rotina #saude #bemestar #habitos\n- Primeiro comentário: Qual hábito você mudaria primeiro?\n- Link:\n- Fontes: https://fonte.exemplo/estudo-sono (verificada)\n- Voz: amostras\n",
+   "agents": {
+    "numeros": [
+     1
+    ],
+    "falhas": [
+     "pub1:objetivo_nao_declarado"
+    ]
+   },
+   "sw": {
+    "validas": [],
+    "invalidas": 1
+   }
+  },
+  {
+   "nome": "link_preenchido",
+   "texto": "### Publicação 1\n- Objetivo do post: autoridade\n- CTA: Salve este post para consultar depois\n- Justificativa do CTA: Salvar combina com conteúdo de consulta e sustenta autoridade\n- Legenda: Seu corpo pede uma rotina de sono.\n- Hashtags: #sono #rotina #saude #bemestar #habitos\n- Primeiro comentário: Qual hábito você mudaria primeiro?\n- Link: https://instagram.com/p/abc\n- Fontes: https://fonte.exemplo/estudo-sono (verificada)\n- Voz: amostras\n",
+   "agents": {
+    "numeros": [
+     1
+    ],
+    "falhas": [
+     "pub1:link_preenchido"
+    ]
+   },
+   "sw": {
+    "validas": [
+     {
+      "numero": 1,
+      "cta_objetivo": "autoridade",
+      "cta": "Salve este post para consultar depois",
+      "hashtags": [
+       "#sono",
+       "#rotina",
+       "#saude",
+       "#bemestar",
+       "#habitos"
+      ],
+      "fontes": [
+       {
+        "url": "https://fonte.exemplo/estudo-sono",
+        "verificada": true
+       }
+      ]
+     }
+    ],
+    "invalidas": 0
+   }
+  },
+  {
+   "nome": "campo_duplicado",
+   "texto": "### Publicação 1\n- Objetivo do post: autoridade\n- CTA: Salve este post para consultar depois\n- Justificativa do CTA: Salvar combina com conteúdo de consulta e sustenta autoridade\n- Legenda: Seu corpo pede uma rotina de sono.\n- Legenda: Outra legenda.\n- Hashtags: #sono #rotina #saude #bemestar #habitos\n- Primeiro comentário: Qual hábito você mudaria primeiro?\n- Link:\n- Fontes: https://fonte.exemplo/estudo-sono (verificada)\n- Voz: amostras\n",
+   "agents": {
+    "numeros": [
+     1
+    ],
+    "falhas": [
+     "pub1:campo_duplicado:legenda"
+    ]
+   },
+   "sw": {
+    "validas": [],
+    "invalidas": 1
+   }
+  }
+ ]
+}

@@ -51,6 +51,9 @@ def _sem_acento(t: str) -> str:
 class Publicacao:
     numero: int
     campos: Mapping[str, str]  # keys folded: no accent, lower, spaces -> '_'
+    #: folded names that appeared more than once in the block: a duplicated field is never silently resolved
+    #: (first-wins or last-wins); the block is invalid (``checar_publicacao`` -> ``campo_duplicado``), same as SW's parser
+    duplicados: tuple[str, ...] = ()
 
     def get(self, chave: str) -> str:
         return self.campos.get(chave, "")
@@ -70,11 +73,15 @@ def extrair_publicacoes(texto: str) -> list[Publicacao]:
         proximo = _CABECALHO_RE.search(resto)
         corpo = resto[: proximo.start()] if proximo else resto
         campos: dict[str, str] = {}
+        duplicados: list[str] = []
         for linha in corpo.splitlines():
             c = _CAMPO_RE.match(linha)
             if c:
-                campos[_chave(c.group(1))] = c.group(2).strip()
-        out.append(Publicacao(int(m.group(1)), campos))
+                chave = _chave(c.group(1))
+                if chave in campos and chave not in duplicados:
+                    duplicados.append(chave)
+                campos[chave] = c.group(2).strip()
+        out.append(Publicacao(int(m.group(1)), campos, tuple(duplicados)))
     return out
 
 
@@ -136,8 +143,8 @@ def urls_das_ferramentas(resultados: Iterable[tuple[str, Mapping[str, Any]]]) ->
 # ── the checks (each returns the failure CODES; empty = pass) ─────────────────────────────────────────────
 
 def checar_publicacao(pub: Publicacao) -> list[str]:
-    falhas: list[str] = []
     p = f"pub{pub.numero}"
+    falhas: list[str] = [f"{p}:campo_duplicado:{d}" for d in pub.duplicados]
     tags = hashtags_de(pub.get("hashtags"))
     if len(tags) != HASHTAGS_EXATAS or len({_sem_acento(t) for t in tags}) != HASHTAGS_EXATAS:
         falhas.append(f"{p}:hashtags:{len(tags)}")

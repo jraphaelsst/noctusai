@@ -162,6 +162,8 @@ def record_cli_exit(argv: list[str], code: Any, *, finding: str = "") -> None:
         record_event(gate, outcome, kind="keeper", target=target,
                      reason="" if ok else f"stage={stage} code={finding or 'unknown'}", source="cli",
                      class_key="" if ok else refusal_class(gate, stage, finding or "unknown"))
+    if outcome == "deny":
+        maybe_autofile_on_deny()  # construction: a class that just crossed the threshold gets its finding (throttled)
 
 
 def read_events(path: Path | None = None) -> list[dict]:
@@ -205,15 +207,34 @@ def refusal_class(gate: str, item: str, detail: str) -> str:
     return ":".join(parts)
 
 
+# Per-instance tails that make ONE kind of refusal look like dozens (a branch name, a migration file, a
+# product slug). They are collapsed so a class is a KIND, covered once: `no-branch-pointer-found-for-feat/<x>`
+# is one class, not one per branch (2026-11-19: ~25 per-branch classes, each needing its own row).
+_COLLAPSE = (
+    (re.compile(r"\b(feat|fix|chore|docs|refactor|test|hotfix)/[a-z0-9._/*-]+"), r"\1/*"),
+    (re.compile(r"products/[a-z0-9-]+/backend/migrations/[a-z0-9_.-]+"), "products/*/backend/migrations/*"),
+    (re.compile(r"products/[a-z0-9-]+/"), "products/*/"),
+    (re.compile(r"/users/[a-z0-9._-]+/[a-z0-9._/-]*"), "<abs-path>"),
+)
+
+
+def canonical_class(key: str) -> str:
+    """The class key with per-instance tails (branch / migration file / product / absolute path) collapsed."""
+    out = str(key)
+    for rx, repl in _COLLAPSE:
+        out = rx.sub(repl, out)
+    return out
+
+
 def event_class(row: dict) -> str:
-    """The class of a deny event: the stored `class`, else derived from gate + reason."""
+    """The class of a deny event: the stored `class`, else derived from gate + reason (instance tails collapsed)."""
     if row.get("class"):
-        return str(row["class"])
+        return canonical_class(str(row["class"]))
     reason = str(row.get("reason") or "")
     m = re.search(r"stage=(\S+) code=(\S+)", reason)
     if m:
-        return refusal_class(row.get("gate", ""), m.group(1), m.group(2))
-    return refusal_class(row.get("gate", ""), "", re.sub(r"^\[noc-guard:[^\]]*\]\s*", "", reason))
+        return canonical_class(refusal_class(row.get("gate", ""), m.group(1), m.group(2)))
+    return canonical_class(refusal_class(row.get("gate", ""), "", re.sub(r"^\[noc-guard:[^\]]*\]\s*", "", reason)))
 
 
 def _parse_ts(ts: Any) -> _dt.datetime | None:
@@ -244,51 +265,120 @@ def gate_quiet(key: str, days: float = 7, *, events: list[dict] | None = None,
     return not class_events(key, window_days=days, events=events, now=now)
 
 
-def _open_fix(key: str, root: Path) -> str | None:
-    """A live fix owner for the class: branch-tree pointer naming it, an in-progress gate-walls
-    row, or a NOC-REMEDIATE[<key>] marker. None = nobody owns it."""
-    import subprocess
+POLICY_REL = _PATTERN_DIR / "refusal-class-policy.json"
+FINDING_KEY_PREFIX = "refusal:"          # gate-walls row key for a refusal class (`refusal:<class>`)
+FINDING_SOURCE = "refusal-recurrence"    # `source` of an auto-filed row
+RECURRENCE_MIN_N = 3
+_COVERING = ("open", "in-progress", "accepted")   # a row in one of these states OWNS the class
+_AUTOFILE_THROTTLE_S = 600
+
+
+def load_policy(root: Path | None = None) -> list[dict]:
+    """The declared INTENDED-refusal classes: guards doing their job (a primary write, a bypass, a non-steward's
+    enqueue). `match` is a class-key prefix, `rationale` says why the firing is the methodology working. Such a
+    class is not friction, so it never counts as backlog; wall detection (`walls_report`) still counts it."""
     try:
-        from tools.noctus.dev import branch_pointer as bp
-        for branch, row in bp._latest_per_branch(bp._read_local_ledger()).items():
-            if row.get("status") in bp.TERMINAL_STATUSES:
-                continue
-            if key in f"{row.get('brief', '')} {row.get('notes', '')}":
+        data = json.loads(((root or REPO_ROOT) / POLICY_REL).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [e for e in data.get("intended", []) if isinstance(e, dict) and e.get("match") and len(str(e.get("rationale", ""))) >= 12]
+
+
+def intended_policy(key: str, root: Path | None = None) -> dict | None:
+    return next((e for e in load_policy(root) if key.startswith(str(e["match"]))), None)
+
+
+class _Owners:
+    """Everything that can own a refusal class, loaded ONCE per scan (a per-class reload was minutes of git grep)."""
+
+    def __init__(self, root: Path) -> None:
+        import subprocess
+        self.root = root
+        self.policy = load_policy(root)
+        self.pointers: list[tuple[str, str]] = []
+        try:
+            from tools.noctus.dev import branch_pointer as bp
+            for branch, row in bp._latest_per_branch(bp._read_local_ledger()).items():
+                if row.get("status") not in bp.TERMINAL_STATUSES:
+                    self.pointers.append((branch, f"{row.get('brief', '')} {row.get('notes', '')}"))
+        except Exception:  # noqa: BLE001 - ownership lookup must not break the count
+            pass
+        self.rows: dict[str, dict] = {}
+        try:
+            from tools.noctus.dev import findings_ledger as gl
+            from tools.noctus.dev import gate_wall_findings  # noqa: F401  (registers the ledger)
+            self.rows = gl.load(gl.get("gate-walls"), root)
+        except Exception:  # noqa: BLE001
+            pass
+        self.markers: dict[str, str] = {}
+        try:
+            r = subprocess.run(["git", "grep", "-nI", "NOC-REMEDIATE\\["], cwd=root, capture_output=True, text=True, timeout=60)
+            for line in r.stdout.splitlines():
+                for m in re.finditer(r"NOC-REMEDIATE\[([^\]]+)\]", line):
+                    self.markers.setdefault(m.group(1), line.split(":", 1)[0])
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    def find(self, key: str) -> str | None:
+        pol = next((e for e in self.policy if key.startswith(str(e["match"]))), None)
+        if pol:
+            return f"intended:{pol['match']}"
+        for branch, text in self.pointers:
+            if key in text:
                 return f"pointer:{branch}"
-    except Exception:  # noqa: BLE001 - ownership lookup must not break the count
-        pass
-    gate = key.split(":", 1)[0]
-    try:
-        from tools.noctus.dev import findings_ledger as gl
-        from tools.noctus.dev import gate_wall_findings  # noqa: F401  (registers the ledger)
-        for r in gl.load(gl.get("gate-walls"), root).values():
+        row = self.rows.get(FINDING_KEY_PREFIX + key)
+        if row and row.get("status") in _COVERING:
+            return f"findings:{row.get('id', 'gate-walls')}"
+        gate = key.split(":", 1)[0]
+        for r in self.rows.values():
             if r.get("status") == "in-progress" and (key in json.dumps(r) or r.get("target") == gate):
                 return f"findings:{r.get('id', 'gate-walls')}"
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        r = subprocess.run(["git", "grep", "-lF", f"NOC-REMEDIATE[{key}]"], cwd=root,
-                           capture_output=True, text=True, timeout=30)
-        hit = (r.stdout.split() or [""])[0]
-        if hit:
-            return f"marker:{hit}"
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return None
+        two = ":".join(key.split(":")[:2])
+        for r in self.rows.values():  # a wall finding on the GATE owns every stage/code variant of its classes
+            if r.get("status") in _COVERING and r.get("target") == two and r.get("kind") != "refusal-class":
+                return f"findings:{r.get('id', 'gate-walls')}"
+        hit = self.markers.get(key)
+        return f"marker:{hit}" if hit else None
+
+
+def _open_fix(key: str, root: Path) -> str | None:
+    """A live owner for the class: an intended-refusal declaration, a branch-tree pointer naming it, a gate-walls
+    row (open / in-progress / accepted), or a NOC-REMEDIATE[<key>] marker. None = nobody owns it."""
+    return _Owners(root).find(key)
 
 
 def refusal_recurrence(keys: list[str], *, window_days: int = 14, root: Path | None = None,
-                       events: list[dict] | None = None) -> list[dict]:
+                       events: list[dict] | None = None, auto_file: bool | None = None) -> list[dict]:
     """For each class key: how often it refused in the window, across how many sessions, and who (if
-    anyone) owns the fix. `open_fix` is None when the class recurs with no live fix."""
+    anyone) owns the fix. `open_fix` is None when the class recurs with no live fix.
+
+    CONSTRUCTION: on a live read (no `events` passed) a class at >= RECURRENCE_MIN_N with no owner gets its
+    finding opened here (`file_missing_findings`), so the andon always points at a real row and coverage is
+    never a manual chore. `auto_file=False` keeps it a pure read; NOCTUS_REFUSAL_AUTOFILE=0 disables it."""
     root = root or REPO_ROOT
     evs = events if events is not None else read_events()
-    out = []
-    for key in dict.fromkeys(keys):
-        hits = class_events(key, window_days=window_days, events=evs)
-        out.append({"class": key, "n_14d": len(hits),
-                    "sessions": len({h.get("session") for h in hits if h.get("session")}),
-                    "open_fix": _open_fix(key, root)})
+    if auto_file is None:
+        auto_file = events is None and os.environ.get("NOCTUS_REFUSAL_AUTOFILE", "1") != "0"
+    keys = list(dict.fromkeys(keys))
+    by_class: dict[str, list[dict]] = {}
+    for e in class_events_all(evs, window_days):
+        by_class.setdefault(event_class(e), []).append(e)
+    owners = _Owners(root)
+
+    def build() -> list[dict]:
+        return [{"class": k, "n_14d": len(by_class.get(k, [])),
+                 "sessions": len({h.get("session") for h in by_class.get(k, []) if h.get("session")}),
+                 "open_fix": owners.find(k)} for k in keys]
+
+    out = build()
+    if auto_file and any(r["n_14d"] >= RECURRENCE_MIN_N and not r["open_fix"] for r in out):
+        try:
+            file_missing_findings(root, rows=out, events=evs)
+            owners = _Owners(root)
+            out = build()
+        except Exception as exc:  # noqa: BLE001 - construction is best-effort; the keeper is the backstop
+            import sys
+            print(f"gate_alignment: auto-file failed ({exc}); the backstop keeper will flag it", file=sys.stderr)
     return out
 
 
@@ -306,13 +396,108 @@ def class_events_all(events: list[dict], window_days: float) -> list[dict]:
             and (t := _parse_ts(e.get("ts"))) is not None and t >= cutoff]
 
 
-def unowned_classes(root: Path | None = None, *, min_n: int = 3, window_days: int = 14,
+def unowned_classes(root: Path | None = None, *, min_n: int = RECURRENCE_MIN_N, window_days: int = 14,
                     events: list[dict] | None = None) -> list[dict]:
-    """Classes refused >= `min_n` times in the window with no open fix (keeper `check_refusal_classes_owned`)."""
+    """Classes refused >= `min_n` times in the window with no open fix (keeper `check_refusal_classes_owned`).
+    A PURE read: the backstop must not heal what it is there to catch."""
     evs = events if events is not None else read_events()
     rows = refusal_recurrence(all_classes(window_days=window_days, events=evs), window_days=window_days,
-                              root=root, events=evs)
+                              root=root, events=evs, auto_file=False)
     return [r for r in rows if r["n_14d"] >= min_n and not r["open_fix"]]
+
+
+def _owner_of(key: str, root: Path) -> str:
+    gates = load_inventory(root).get("gates", {})
+    two = ":".join(key.split(":")[:2])
+    return str((gates.get(two) or gates.get(key.split(":", 1)[0]) or {}).get("owner") or "tooling-engineer")
+
+
+def file_missing_findings(root: Path | None = None, *, rows: list[dict] | None = None, min_n: int = RECURRENCE_MIN_N,
+                          window_days: int = 14, events: list[dict] | None = None, filer: Any = None) -> dict:
+    """CONSTRUCTION leg of the recurrence andon: open ONE gate-walls finding per recurring class that has none.
+
+    The row carries the class, the evidence (count, sessions, last firing, a sample reason), an owner and a
+    named destination, status `open`, so the andon points at a real row. Idempotent (an existing live row is
+    never touched; a `fixed` row whose class recurs is re-opened by the same call). `filer` is the test seam
+    for the ledger write. Records a backlog snapshot (telemetry) either way."""
+    root = root or REPO_ROOT
+    evs = events if events is not None else read_events()
+    if rows is None:
+        rows = refusal_recurrence(all_classes(window_days=window_days, events=evs), window_days=window_days,
+                                  root=root, events=evs, auto_file=False)
+    if filer is None:
+        from tools.noctus.dev import findings_ledger as gl
+        from tools.noctus.dev import gate_wall_findings  # noqa: F401  (registers the ledger)
+
+        def filer(**kw: Any) -> dict:  # type: ignore[misc]
+            return gl.append("gate-walls", root, **kw)
+    filed: list[dict] = []
+    failed: list[dict] = []
+    for r in rows:
+        if r["n_14d"] < min_n or r.get("open_fix"):
+            continue
+        key = r["class"]
+        hits = class_events(key, window_days=window_days, events=evs)
+        last = max((str(h.get("ts", "")) for h in hits), default="")
+        sample = next((str(h.get("reason") or h.get("target") or "")[:160] for h in reversed(hits) if h.get("reason") or h.get("target")), "")
+        owner = _owner_of(key, root)
+        note = (f"Refusal class `{key}` fired {r['n_14d']}x across {r['sessions']} session(s) in {window_days}d (last {last[:19]}). "
+                f"Sample: {sample or 'n/a'}. Auto-filed by the recurrence andon; destination: triage by {owner}. Clear it with "
+                "findings_ledger update: `in-progress <branch>` (a fix is under way), `accepted <rationale>` (the refusal is the "
+                "methodology working), or declare the class intended in refusal-class-policy.json. "
+                "KB § PATTERNS/common/gate-methodology-sync.md (Refusal recurrence).")
+        res = filer(scope=owner, target=key, found_by=FINDING_SOURCE, severity="medium", note=note, status="open",
+                    key=FINDING_KEY_PREFIX + key, source=FINDING_SOURCE, section="refusals", kind="refusal-class")
+        (filed if res.get("ok") else failed).append({"class": key, "id": res.get("id"), "error": res.get("error")})
+    snap = record_backlog_snapshot(root, events=evs, filed=len(filed), failed=len(failed))
+    return {"filed": filed, "failed": failed, "backlog": snap}
+
+
+def backlog_stats(root: Path | None = None, *, events: list[dict] | None = None, window_days: int = 14) -> dict:
+    """Backlog telemetry: classes at the threshold, how many are uncovered / owned by an auto-filed row / intended."""
+    root = root or REPO_ROOT
+    evs = events if events is not None else read_events()
+    owners = _Owners(root)
+    by_class: dict[str, int] = {}
+    for e in class_events_all(evs, window_days):
+        by_class[event_class(e)] = by_class.get(event_class(e), 0) + 1
+    owned = [str(owners.find(k) or "") for k, n in by_class.items() if n >= RECURRENCE_MIN_N]
+    auto = [r for r in owners.rows.values() if r.get("source") == FINDING_SOURCE]
+    auto_open = [r for r in auto if r.get("status") == "open"]
+    return {"recurring": len(owned), "uncovered": sum(1 for o in owned if not o),
+            "intended": sum(1 for o in owned if o.startswith("intended:")),
+            "auto_filed_open": len(auto_open), "auto_filed_total": len(auto),
+            "oldest_auto_filed_open": min((str(r.get("found_at", "")) for r in auto_open), default="")}
+
+
+def record_backlog_snapshot(root: Path | None = None, *, events: list[dict] | None = None, **extra: Any) -> dict:
+    """Append one telemetry row (counts only) to the machine-local backlog log; never raises."""
+    snap = backlog_stats(root, events=events)
+    try:
+        p = Path(os.environ.get("NOCTUS_REFUSAL_BACKLOG_LOG") or (events_path().parent / "refusal-backlog.ndjson"))
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"), **snap, **extra}) + "\n")
+    except Exception:  # noqa: BLE001 - telemetry only
+        pass
+    return snap
+
+
+def maybe_autofile_on_deny(root: Path | None = None, *, now: float | None = None, marker: Path | None = None) -> None:
+    """Throttled hook for the deny path (`record_cli_exit`): at most one construction pass per 10 minutes. Never raises."""
+    import time
+    try:
+        marker = marker or (events_path().parent / "refusal-autofile.stamp")
+        t = now if now is not None else time.time()
+        if marker.exists() and t - marker.stat().st_mtime < _AUTOFILE_THROTTLE_S:
+            return
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+        if os.environ.get("NOCTUS_REFUSAL_AUTOFILE", "1") == "0":
+            return
+        refusal_recurrence(all_classes(), root=root or REPO_ROOT)
+    except Exception:  # noqa: BLE001 - construction must never change a verdict
+        pass
 
 
 def trend(*, days: int = 7, events: list[dict] | None = None,
@@ -829,7 +1014,8 @@ def register(server) -> None:
             "feed. action=sources: report-only KB docs changed without a sources section. action=triad: run the meta-gate (every gate declared with mechanism+owner). action=declare: "
             "write one inventory row (gate, mechanism, owner, placement; a NEW gate also source + decision = the matrix row it serves). action=render: regenerate the inventory "
             "markdown. action=refresh-baseline: shrink-only. action=trend: refusals this week vs last, by class. "
-            "action=refusals: recurrence by class (n_14d, sessions, open_fix); file=true upserts ONE auto-improvement row per "
+            "action=refusals: recurrence by class (n_14d, sessions, open_fix) + backlog telemetry; file=true opens the missing "
+            "gate-walls finding for every class at N>=3 with no owner and upserts ONE auto-improvement row per "
             "class at N>=2 (self-closing on gate_quiet). Read-only except file/declare/render/refresh-baseline."
         ),
     )
@@ -872,14 +1058,16 @@ def run_action(action: str, *, gate: str = "", mechanism: str = "", owner: str =
     if action == "trend":
         return {"ok": True, **trend()}
     if action == "refusals":
-        recur = refusal_recurrence(all_classes(), root=root)
+        recur = refusal_recurrence(all_classes(), root=root, auto_file=False)
         out = {"ok": True, "classes": sorted(recur, key=lambda r: -r["n_14d"])[:30],
-               "unowned": [r["class"] for r in recur if r["n_14d"] >= 3 and not r["open_fix"]]}
+               "unowned": [r["class"] for r in recur if r["n_14d"] >= RECURRENCE_MIN_N and not r["open_fix"]],
+               "backlog": backlog_stats(root)}
         if file:
+            out["autofiled"] = file_missing_findings(root, rows=recur)
             out["synced"] = sync_refusal_rows(root)["synced"]
         return out
     return {"ok": False, "error": f"unknown action {action!r}; one of walls|triad|matrix|sources|declare|render|refresh-baseline|trend|refusals"}
 
 
 __all__ = ["record_event", "record_cli_exit", "read_events", "scan_gates", "triad_issues", "walls_report",
-           "gate_stats", "refusal_class", "refusal_recurrence", "unowned_classes", "trend", "declare_gate", "burn_down", "run_action", "register"]
+           "gate_stats", "refusal_class", "refusal_recurrence", "unowned_classes", "file_missing_findings", "backlog_stats", "canonical_class", "trend", "declare_gate", "burn_down", "run_action", "register"]

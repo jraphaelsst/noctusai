@@ -592,6 +592,17 @@ def _panel_gates(root: Path, errors: list[dict]) -> list[dict]:
                      or [_row("refusals", "none recorded", "ok")]})
     except Exception as exc:  # noqa: BLE001
         errors.append({"section": "refusals", "error": f"{type(exc).__name__}: {exc}"})
+    try:  # recurrence backlog telemetry: a growing backlog must be visible before the enqueue andon hard-refuses
+        from tools.noctus.dev import gate_alignment as ga
+        b = ga.backlog_stats(root)
+        secs.append({"heading": "Refusal-recurrence backlog (classes >=3x/14d)", "rows": [
+            _row("uncovered (no owner)", b["uncovered"], "bad" if b["uncovered"] else "ok"),
+            _row("recurring classes", b["recurring"], "warn" if b["recurring"] else "ok"),
+            _row("declared intended", b["intended"], "ok"),
+            _row("auto-filed findings open", b["auto_filed_open"], "warn" if b["auto_filed_open"] else "ok"),
+            _row("oldest auto-filed open", b["oldest_auto_filed_open"] or "none", "ok")]})
+    except Exception as exc:  # noqa: BLE001
+        errors.append({"section": "refusal-backlog", "error": f"{type(exc).__name__}: {exc}"})
     return secs
 
 
