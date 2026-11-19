@@ -75,7 +75,8 @@ __all__ = [
     "prompt_hash",
 ]
 
-#: §C: XX
+#: §C: ``tokens_estimados > 25000`` ⇒ non-blocking warning (owner 2026-11-18: raised from 15000; 2026-11-09 from 12000).
+TOKEN_WARNING_THRESHOLD = 25000
 
 SKILLS_TITLE = "Skills"
 KNOWLEDGE_TITLE = "Base de conhecimento"
