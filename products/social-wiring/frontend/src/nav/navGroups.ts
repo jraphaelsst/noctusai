@@ -27,10 +27,12 @@
  *
  * Banib (stub, "Em breve") is omitted: a disabled entry needs a status_pagina
  * row (unlisted pages are hidden) = a backend migration, out of this slice.
- * "Edição de Imagem" (ex-"Edição de Fotos", ex-module `cms`, moved 2026-11-13)
- * is a CoreStudio sub-group (Operação / Configuração) placed before Pesquisa; the
- * `cms` module is gone (composeModules/MODULE_GROUP_ORDER tolerate an absent key).
- * Hrefs and status_pagina `route` keys are unchanged.
+ * "ImobShotAI" (D2, 2026-11-14) is a CoreStudio sub-group placed before Pesquisa: Imóveis / Nova edição de
+ * fotos / Vídeo, plus a "Configurações" sub-section that absorbs the former "Edição de Imagem" pages (ex-"Edição
+ * de Fotos", ex-module `cms`). Their hrefs and status_pagina `route` keys are unchanged (redirects come later);
+ * the `cms` module is gone (composeModules/MODULE_GROUP_ORDER tolerate an absent key). The `imobshotai*` keys
+ * are added to status_pagina by the ImobShotAI backend migration.
+ * Edição de Imagem's pages keep dev's Operação / Configuração split, now under the ImobShotAI sub-group.
  * CoreStudio keeps its literal tree (two items share one page key, which
  * `defineModule` forbids); it is a local group keyed `corestudio`.
  */
@@ -89,6 +91,7 @@ import {
   GalleryHorizontal,
   Layers,
   Eye,
+  Clapperboard,
 } from "lucide-react";
 import { Youtube, Instagram } from "@noctusai/lib/brand-icons";
 import { JULIA_ICON, JULIA_LABEL, JULIA_NAV_KEY, JULIA_PAGES } from "@/nav/julia";
@@ -225,13 +228,19 @@ const CORESTUDIO_GROUP: NavGroupWithRoute =
     ],
     groups: [
       {
-        key: "edicao-fotos",
-        label: "Edição de Imagem",
+        key: "imobshotai",
+        label: "ImobShotAI",
         icon: ImagePlus,
-        items: [],
+        items: [
+          { name: "Imóveis", href: "/imobshotai", icon: KanbanSquare, route: "imobshotai" },
+          { name: "Nova edição de fotos", href: "/imobshotai/fotos/novo", icon: Plus, route: "imobshotai-fotos-novo" },
+          { name: "Vídeo", href: "/imobshotai/video/novo", icon: Clapperboard, route: "imobshotai-video-novo" },
+        ],
         groups: [
           {
-            key: "edicao-fotos-operacao",
+            // The former CoreStudio "Edição de Imagem" sub-group (D2: ImobShotAI absorbs it), keeping dev's
+            // Operação / Configuração split. Same hrefs and status_pagina keys; redirects are a later slice.
+            key: "imobshotai-operacao",
             label: "Operação",
             icon: Activity,
             items: [
@@ -242,7 +251,7 @@ const CORESTUDIO_GROUP: NavGroupWithRoute =
             ],
           },
           {
-            key: "edicao-fotos-config",
+            key: "imobshotai-config",
             label: "Configuração",
             icon: Settings2,
             items: [

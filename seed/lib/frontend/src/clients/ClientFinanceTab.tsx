@@ -18,17 +18,21 @@ import { t } from './i18n';
 import { clientsErrorText, StatTile, ToneBadge } from './parts';
 import type { Client, ClientFinance } from './types';
 
-function PaymentForm({ hooks, client, finance, onClose }: { hooks: ClientsHooks; client: Client; finance: ClientFinance; onClose: () => void }) {
+/** `initialEntryIds` preselects the receivables it settles (one session's payment); the amount follows. */
+export function PaymentForm({ hooks, client, finance, onClose, initialEntryIds }: { hooks: ClientsHooks; client: Client; finance: ClientFinance; onClose: () => void; initialEntryIds?: string[] }) {
   const { data: config } = hooks.useClientsConfig();
   const accounts = hooks.useFinanceAccounts();
   const pay = hooks.useRegisterPayment();
   const openEntries = finance.entries.filter((e) => e.settled_cents < e.amount_cents && e.status !== 'cancelled');
-  const [amount, setAmount] = React.useState(centsToInput(finance.open_cents));
+  const preset = (initialEntryIds ?? []).filter((id) => openEntries.some((e) => e.entry_id === id));
+  const [amount, setAmount] = React.useState(
+    centsToInput(preset.length ? openEntries.filter((e) => preset.includes(e.entry_id)).reduce((acc, e) => acc + e.amount_cents - e.settled_cents, 0) : finance.open_cents),
+  );
   const [paidOn, setPaidOn] = React.useState(todayIn(tzOf(config)));
   const [accountId, setAccountId] = React.useState('');
   const [method, setMethod] = React.useState('');
   const [notes, setNotes] = React.useState('');
-  const [picked, setPicked] = React.useState<string[]>([]);
+  const [picked, setPicked] = React.useState<string[]>(preset);
   const [error, setError] = React.useState<string | null>(null);
   const accountList = accounts.data ?? [];
   const chosenAccount = accountId || (accountList.length === 1 ? accountList[0].id : '');

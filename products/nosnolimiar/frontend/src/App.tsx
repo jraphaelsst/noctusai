@@ -61,7 +61,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     icon: HeartHandshake,
     items: [
       { name: "Lista", href: "/pacientes", icon: List, route: "pacientes" },
-      { name: "Agenda", href: "/pacientes/agenda", icon: CalendarDays, route: "pacientes_agenda" },
+      { name: "Sessões", href: "/pacientes/agenda", icon: CalendarDays, route: "pacientes_agenda" },
     ],
   },
   {

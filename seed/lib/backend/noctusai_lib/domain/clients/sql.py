@@ -4,7 +4,7 @@ Same conventions as the other organs: `org_id UUID NOT NULL`, RLS on, own-org SE
 literal-named `service_role_bypass`; the backend writes through the service role, so no authenticated write policy
 exists. Re-runnable (`IF NOT EXISTS`, `DROP POLICY IF EXISTS`).
 
-Four tables:
+Six tables (four below + `client_events` + `client_session_notes`):
 
 * `clients` -- the person. `status` / `tags` are DATA (`ClientsConfig`), plain TEXT. `doc` (CPF) is a person's
   document, so the table has NO authenticated read path (`authenticated_select=False`): the API masks it per role.
@@ -19,6 +19,9 @@ Four tables:
   conflicts).
 * `client_payments` -- the manual payment record (method + notes + which finance settlements it produced). The
   settlement itself carries the method; the notes live here (finance settlements have no notes column).
+
+* `client_events` -- the append-only intent log (INSERT/SELECT only). `client_session_notes` -- the therapist-only
+  clinical note, one row per session, service role only.
 
 Prerequisite (not created here): `public.current_org_id_for(text)`.
 """
@@ -44,6 +47,7 @@ def clients_table_ddl(schema: str, config: Optional[ClientsConfig] = None, *, or
     expr = org_id_expr or f"public.current_org_id_for('{schema}')"
     s = schema
     c, se, sc, p = cfg.clients_table, cfg.sessions_table, cfg.schedules_table, cfg.payments_table
+    ev, nt = cfg.events_table, cfg.session_notes_table
     return f"""CREATE TABLE IF NOT EXISTS {s}.{c} (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id               UUID NOT NULL,
@@ -81,9 +85,11 @@ CREATE TABLE IF NOT EXISTS {s}.{sc} (
     ends_on            DATE CHECK (ends_on IS NULL OR ends_on >= starts_on),
     active             BOOLEAN NOT NULL DEFAULT true,
     materialized_until DATE,
+    charge_absences    BOOLEAN NOT NULL DEFAULT true,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE {s}.{sc} ADD COLUMN IF NOT EXISTS charge_absences BOOLEAN NOT NULL DEFAULT true;
 CREATE INDEX IF NOT EXISTS idx_{sc}_client ON {s}.{sc} (org_id, client_id);
 {org_rls(s, sc, expr, grants=True)}
 
@@ -97,12 +103,14 @@ CREATE TABLE IF NOT EXISTS {s}.{se} (
     status        TEXT NOT NULL,
     price_cents   BIGINT CHECK (price_cents IS NULL OR price_cents >= 0),
     waive_charge  BOOLEAN NOT NULL DEFAULT false,
+    charge_absence BOOLEAN NOT NULL DEFAULT true,
     notes         TEXT,
     entry_id      UUID,
     booking_rev   INTEGER NOT NULL DEFAULT 0,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE {s}.{se} ADD COLUMN IF NOT EXISTS charge_absence BOOLEAN NOT NULL DEFAULT true;
 -- One generated session per (schedule, instant): the guard that makes materialization idempotent.
 CREATE UNIQUE INDEX IF NOT EXISTS {UQ_SLOT.format(table=se)} ON {s}.{se} (schedule_id, starts_at);
 CREATE INDEX IF NOT EXISTS idx_{se}_org_starts ON {s}.{se} (org_id, starts_at, id);
@@ -124,6 +132,47 @@ CREATE TABLE IF NOT EXISTS {s}.{p} (
 );
 CREATE INDEX IF NOT EXISTS idx_{p}_client ON {s}.{p} (org_id, client_id, paid_on);
 {org_rls(s, p, expr, grants=True)}
+
+-- The immutable intent log (EOA): who did what to which client / session / slot, when. Append-only: the service
+-- role may only INSERT and SELECT. No FKs on purpose -- the history outlives a deleted session or slot. `data` never
+-- carries free text (no administrative note, no clinical note): only ids, enums, amounts and dates.
+CREATE TABLE IF NOT EXISTS {s}.{ev} (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id      UUID NOT NULL,
+    client_id   UUID NOT NULL,
+    session_id  UUID,
+    schedule_id UUID,
+    kind        TEXT NOT NULL,
+    from_value  TEXT,
+    to_value    TEXT,
+    actor       UUID,
+    data        JSONB NOT NULL DEFAULT '{{}}',
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_{ev}_client ON {s}.{ev} (org_id, client_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_{ev}_session ON {s}.{ev} (org_id, session_id, occurred_at);
+{org_rls(s, ev, expr, grants=False, authenticated_select=False)}
+GRANT SELECT, INSERT ON {s}.{ev} TO service_role;
+
+-- The clinical note of a session (LGPD art. 11, sensitive health data): its own table, service role only (no
+-- authenticated read path), read and written through admin-gated routes, never part of a list or an export.
+CREATE TABLE IF NOT EXISTS {s}.{nt} (
+    session_id UUID PRIMARY KEY REFERENCES {s}.{se}(id) ON DELETE CASCADE,
+    org_id     UUID NOT NULL,
+    body       TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_by UUID
+);
+{org_rls(s, nt, expr, grants=True, authenticated_select=False)}
+
+-- Access tier of every table (KB § PATTERNS/security/access-tiers.md): the customer's own data, org-scoped.
+COMMENT ON TABLE {s}.{c} IS 'tier:org';
+COMMENT ON TABLE {s}.{sc} IS 'tier:org';
+COMMENT ON TABLE {s}.{se} IS 'tier:org';
+COMMENT ON TABLE {s}.{p} IS 'tier:org';
+COMMENT ON TABLE {s}.{ev} IS 'tier:org';
+COMMENT ON TABLE {s}.{nt} IS 'tier:org';
 """
 
 

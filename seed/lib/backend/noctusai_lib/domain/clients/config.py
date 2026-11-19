@@ -123,6 +123,12 @@ class ClientsConfig:
         finance_category_hint: income category name the receivables are filed under (None = uncategorized).
         finance_description_prefix: first word of a receivable's description (`"<prefix> — <name> — dd/mm/aaaa HH:MM"`).
         done_session_status: the status the client summary counts as `sessions_done` (None => every billable status).
+        absence_statuses: the billable statuses that are ABSENCES; a session in one of them is charged only while the
+            session's `charge_absence` flag is true (copied from its weekly slot's `charge_absences`, default true).
+        schedule_min_lead_days: a weekly slot created without an explicit `starts_on` starts that many days ahead
+            (1 => "set it today, the first session is never today"). 0 keeps the day-of start.
+        clinical_notes: turns on the therapist-only clinical note per session (`GET|PUT /sessions/{id}/clinical-note`,
+            admin-gated; kept in its own table, never in a list payload).
         *_table: physical table names inside the product schema.
     """
 
@@ -142,10 +148,15 @@ class ClientsConfig:
     finance_category_hint: Optional[str] = "Serviços"
     finance_description_prefix: str = "Sessão"
     done_session_status: Optional[str] = "realizada"
+    absence_statuses: Sequence[str] = ()
+    schedule_min_lead_days: int = 0
+    clinical_notes: bool = False
     clients_table: str = "clients"
     sessions_table: str = "client_sessions"
     schedules_table: str = "client_schedules"
     payments_table: str = "client_payments"
+    events_table: str = "client_events"
+    session_notes_table: str = "client_session_notes"
 
     def __post_init__(self) -> None:
         statuses = tuple(_status(s) for s in self.statuses)
@@ -165,13 +176,18 @@ class ClientsConfig:
             raise ValueError("ClientsConfig.default_duration_min must be >= 1")
         if self.default_price_cents is not None and self.default_price_cents < 0:
             raise ValueError("ClientsConfig.default_price_cents must be >= 0")
+        for slug in self.absence_statuses:
+            if slug not in {s.slug for s in session_statuses}:
+                raise ValueError(f"ClientsConfig.absence_statuses {slug!r} is not a session status")
+        if not 0 <= self.schedule_min_lead_days <= 14:
+            raise ValueError("ClientsConfig.schedule_min_lead_days must be between 0 and 14")
         if not 1 <= self.horizon_weeks <= 52:
             raise ValueError("ClientsConfig.horizon_weeks must be between 1 and 52")
         try:
             ZoneInfo(self.timezone)
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError(f"ClientsConfig.timezone {self.timezone!r} is not an IANA zone") from exc
-        for name in ("clients_table", "sessions_table", "schedules_table", "payments_table"):
+        for name in ("clients_table", "sessions_table", "schedules_table", "payments_table", "events_table", "session_notes_table"):
             if not _SLUG.match(getattr(self, name) or ""):
                 raise ValueError(f"ClientsConfig.{name} must be a bare lowercase identifier")
         if not _SLUG.match(self.finance_ref_prefix or ""):
@@ -216,6 +232,9 @@ class ClientsConfig:
             "payment_methods": [m.as_dict() for m in self.payment_methods],  # type: ignore[union-attr]
             "timezone": self.timezone,
             "finance_enabled": self.finance_enabled,
+            "absence_statuses": list(self.absence_statuses),
+            "done_session_status": self.done_session_status,
+            "clinical_notes": self.clinical_notes,
         }
 
 

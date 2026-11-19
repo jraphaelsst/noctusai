@@ -41,6 +41,12 @@ export interface PhotoReviewGridProps {
   onRetry?: (fotoId: string) => void;
   /** Id of the photo currently submitting a decision/retry — disables just that card's controls. */
   pendingFotoId?: string | null;
+  /**
+   * `false` hides ✓/✗ and shows `mensagemSemDecisao` instead (a UX nicety for viewers who may not decide — the
+   * server enforces). Defaults to `true`, so every existing consumer is unchanged.
+   */
+  podeDecidir?: boolean;
+  mensagemSemDecisao?: string;
   className?: string;
 }
 
@@ -66,6 +72,8 @@ export function PhotoReviewGrid({
   onDecidir,
   onRetry,
   pendingFotoId = null,
+  podeDecidir = true,
+  mensagemSemDecisao = 'Aguardando aprovação de um administrador.',
   className,
 }: PhotoReviewGridProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -186,6 +194,8 @@ export function PhotoReviewGrid({
                       </Button>
                     )}
                   </div>
+                ) : !podeDecidir ? (
+                  <p className="text-xs text-muted-foreground">{mensagemSemDecisao}</p>
                 ) : isRejecting ? (
                   <div className="flex flex-col gap-2">
                     <label htmlFor={`comentario-${foto.id}`} className="text-xs text-muted-foreground">

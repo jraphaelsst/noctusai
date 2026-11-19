@@ -397,3 +397,38 @@ describe("ImovelCodigoPicker", () => {
     expect(screen.queryByTestId("imovel-picker-erro")).toBeNull();
   });
 });
+
+describe("ImovelCodigoPicker · somenteSelecao (ImobShotAI)", () => {
+  async function renderSelect() {
+    const rtl = await import("@testing-library/react");
+    const onChange = vi.fn();
+    rtl.render(<ImovelCodigoPicker value={null} onChange={onChange} somenteSelecao />);
+    return { ...rtl, onChange };
+  }
+
+  it("a successful empty search says so and offers NO registration and NO duplicate hints", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([]));
+    const { screen } = await renderSelect();
+    await digitar("ZZZ9");
+    expect(screen.getByText("Nenhum imóvel com esse código.")).toBeTruthy();
+    expect(screen.queryByTestId("imovel-picker-cadastrar-novo")).toBeNull();
+    expect(screen.queryByTestId("imovel-picker-duplicatas")).toBeNull();
+    // the duplicates query is never enabled in select-only mode
+    expect(mockUseImoveisPossiveisDuplicatas).toHaveBeenLastCalledWith("ZZZ9", false);
+  });
+
+  it("still lists real hits and picks one", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([hit("ONE9001")]));
+    const { screen, onChange } = await renderSelect();
+    await digitar("ONE90");
+    const rtl = await import("@testing-library/react");
+    rtl.fireEvent.click(screen.getByTestId("imovel-picker-opcao-ONE9001"));
+    expect(onChange).toHaveBeenCalledWith("ONE9001");
+  });
+
+  it("under 2 characters: the hint", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([]));
+    const { screen } = await renderSelect();
+    expect(screen.getByText(/Digite ao menos 2 caracteres/)).toBeTruthy();
+  });
+});

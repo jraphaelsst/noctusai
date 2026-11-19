@@ -201,6 +201,22 @@ def grupo_academia_nomes_sdk(spec: AgentSpec) -> tuple[str, ...]:
     return tuple(n for n in nomes if gate.classify(n) != "deny")
 
 
+def pares_do_grupo(spec: AgentSpec, nome: str) -> tuple[tuple[str, str], ...]:
+    """The ``(content name, row description)`` pairs of ``spec.ferramentas_grupo`` that belong to the tool group ``nome``."""
+    from app.studio.ferramentas_registry import GRUPOS_FERRAMENTAS
+
+    grupo = GRUPOS_FERRAMENTAS[nome]
+    return tuple((f, d) for f, d in spec.ferramentas_grupo if f in grupo.ferramentas)
+
+
+def grupo_onboarding_nomes_sdk(spec: AgentSpec) -> tuple[str, ...]:
+    """The model-facing names (``mcp__onboarding__<nome>``) of the onboarding tool-group tools a studio spec enables."""
+    from app.studio.ferramentas_registry import GRUPOS_FERRAMENTAS
+
+    grupo = GRUPOS_FERRAMENTAS["onboarding"]
+    return tuple(grupo.nome_sdk(f) for f, _ in pares_do_grupo(spec, "onboarding"))
+
+
 def _leitura_short_names() -> list[str]:
     """The E.4 leitura academia tool short names (without the
     ``mcp__academia__`` prefix) — derived from :mod:`app.runtime.gate` so
@@ -230,6 +246,7 @@ def build_launch_options(
     anthropic_api_key: str | None = None,
     studio_tools: Any = None,
     academia_grupo: Any = None,
+    onboarding_grupo: Any = None,
 ) -> ClaudeAgentOptions:
     """Build the exact ``ClaudeAgentOptions`` for one turn — pure,
     synchronous, no subprocess spawned. ``can_use_tool`` is threaded in
@@ -279,6 +296,7 @@ def build_launch_options(
             anthropic_api_key=anthropic_api_key,
             studio_tools=studio_tools,
             academia_grupo=academia_grupo,
+            onboarding_grupo=onboarding_grupo,
         )
     if academia_api is None or agent_id is None or not approval_secret:
         # Fail closed: the academia MCP server can never be built without
@@ -339,8 +357,12 @@ def _build_studio_launch_options(
     anthropic_api_key: str | None,
     studio_tools: Any,
     academia_grupo: Any = None,
+    onboarding_grupo: Any = None,
 ) -> ClaudeAgentOptions:
     """Agent Studio §A5/§E3 launch options — a fully custom system prompt.
+
+    ``onboarding_grupo`` is the ``onboarding`` MCP server of a version that switches the onboarding tool group on: its
+    tools are all ``leitura`` for the broker (server-side gates), so they join ``allowed_tools``.
 
     ``academia_grupo`` (agents-unified Renata cutover S7) is the ``academia`` MCP server of a studio version that
     switches the academia tool group on (``spec.ferramentas_grupo``): it is added NEXT to the ``studio`` server, its
@@ -367,11 +389,16 @@ def _build_studio_launch_options(
         )
     allowed = list(studio_allowed_tools(knowledge=spec.knowledge, web_search=spec.web_search))
     servers: dict[str, Any] = {STUDIO_SERVER_NAME: studio_tools}
-    if spec.ferramentas_grupo:
+    if pares_do_grupo(spec, "academia"):
         if academia_grupo is None:
             raise RuntimeError("a studio spec with the academia tool group needs its `academia` MCP server")
         servers["academia"] = academia_grupo
         allowed += [n for n in grupo_academia_nomes_sdk(spec) if gate.classify(n) == "leitura"]
+    if pares_do_grupo(spec, "onboarding"):
+        if onboarding_grupo is None:
+            raise RuntimeError("a studio spec with the onboarding tool group needs its `onboarding` MCP server")
+        servers["onboarding"] = onboarding_grupo
+        allowed += list(grupo_onboarding_nomes_sdk(spec))
     return ClaudeAgentOptions(
         cli_path=cli_path,
         tools=["WebSearch"] if spec.web_search else [],
@@ -772,6 +799,7 @@ class ClaudeAgentSdkRuntime:
         transport_factory: Any = None,
         anthropic_api_key: str | None = None,
         studio_tools_factory: Callable[[AgentSpec, TurnContext], Any] | None = None,
+        onboarding_tools_factory: Callable[[AgentSpec, TurnContext], Any] | None = None,
     ) -> None:
         """Bia's academia inputs come EITHER as the three values
         (``academia_api`` + ``agent_id`` + ``approval_secret``) OR as
@@ -807,6 +835,8 @@ class ClaudeAgentSdkRuntime:
         # server-side spec (`app.studio.tools.build_studio_tools` over the
         # studio stores). `None` ⇒ this runtime refuses studio specs.
         self._studio_tools_factory = studio_tools_factory
+        # The `onboarding` MCP server of the interviewer agent (per-turn, bound to the conversation's session).
+        self._onboarding_tools_factory = onboarding_tools_factory
         self._plugin_path = plugin_path
         self._approvals = approvals
         self._slot_pool = slot_pool
@@ -1023,13 +1053,13 @@ class ClaudeAgentSdkRuntime:
         # (the provider raises) — a studio turn never touches them.
         academia: AcademiaLaunchConfig | None = None
         gated: frozenset[str] = frozenset()
-        if not studio or spec.ferramentas_grupo:
+        if not studio or pares_do_grupo(spec, "academia"):
             # A studio version that enables the academia tool group needs the SAME academia inputs (client, the
             # principal agent id, the approval signing key) — resolved here, failing closed, like the legacy path.
             if self._academia_config is None:
                 raise RuntimeError("this runtime was built without academia launch config")
             academia = self._academia_config()
-        if studio and spec.ferramentas_grupo:
+        if studio and pares_do_grupo(spec, "academia"):
             gated = frozenset(grupo_academia_nomes_sdk(spec))
         if studio:
             if self._studio_tools_factory is None:
@@ -1038,6 +1068,13 @@ class ClaudeAgentSdkRuntime:
             allowlist = frozenset(
                 studio_allowed_tools(knowledge=spec.knowledge, web_search=spec.web_search)
             )
+
+        onboarding_grupo = None
+        if studio and pares_do_grupo(spec, "onboarding"):
+            if self._onboarding_tools_factory is None:
+                raise RuntimeError("this runtime was built without an onboarding tools factory")
+            onboarding_grupo = self._onboarding_tools_factory(spec, ctx)
+            allowlist = (allowlist or frozenset()) | frozenset(grupo_onboarding_nomes_sdk(spec))
 
         if ctx.ephemeral:
             # Agent Studio §E6 (eval case): no conversation row exists for
@@ -1070,7 +1107,7 @@ class ClaudeAgentSdkRuntime:
             gated=gated,
         )
         academia_grupo = None
-        if studio and spec.ferramentas_grupo and academia is not None:
+        if studio and pares_do_grupo(spec, "academia") and academia is not None:
             from app.studio.ferramentas_registry import GRUPOS_FERRAMENTAS
 
             grupo = GRUPOS_FERRAMENTAS["academia"]
@@ -1102,6 +1139,7 @@ class ClaudeAgentSdkRuntime:
             anthropic_api_key=self._anthropic_api_key,
             studio_tools=studio_tools,
             academia_grupo=academia_grupo,
+            onboarding_grupo=onboarding_grupo,
         )
 
         client, resumed_fresh, active_mirror = await self._connect_or_fresh(

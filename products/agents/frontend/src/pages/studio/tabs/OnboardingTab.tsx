@@ -7,14 +7,18 @@
  *
  * The answers typed here are a DRAFT (said so on screen) until "Aplicar"; the progress is always the server's.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import { useGrantOpcoes } from "@/hooks/useGrants";
-import { useAplicarOnboarding, useImportarOnboarding, useOnboarding } from "@/hooks/studio/useOnboarding";
+import { AgentChatWindow } from "@/components/AgentChatWindow";
+import { buildStudioChatAdapter } from "@/hooks/studio/useStudioChat";
+import {
+  ENTREVISTADOR_KEY, useAplicarOnboarding, useImportarOnboarding, useIniciarEntrevista, useOnboarding,
+} from "@/hooks/studio/useOnboarding";
 import { useOrgsComConcessao } from "@/hooks/studio/useStaffOrgSpecs";
 import { useIsPlatformAdmin } from "@/hooks/useIsPlatformAdmin";
 import { errorMessage } from "@/lib/errors";
-import type { ItemRelatorio, OnboardingItem } from "@/api/studio/types-onboarding";
+import type { EstadoEntrevista, ItemRelatorio, OnboardingItem } from "@/api/studio/types-onboarding";
 
 const NIVEL_ROTULO = { R: "Obrigatório", C: "Obrigatório se a operação se aplica", O: "Opcional (tem padrão)" } as const;
 const ESTADO_ROTULO: Record<ItemRelatorio["estado"], string> = {
@@ -22,6 +26,13 @@ const ESTADO_ROTULO: Record<ItemRelatorio["estado"], string> = {
   recusado: "Recusado",
   pendente_humano: "Passo da equipe",
   pendente_confirmacao: "Falta confirmar",
+};
+const ENTREVISTA_ROTULO: Record<EstadoEntrevista, string> = {
+  aberto: "a perguntar",
+  respondido: "confirmado na conversa",
+  pendente: "pendente (volta no fim)",
+  proposto: "proposto por importação, falta confirmar",
+  recusado: "recusado, a perguntar de novo",
 };
 const SELECT = "h-9 w-full max-w-md rounded-md border border-input bg-background px-3 text-sm";
 
@@ -126,6 +137,8 @@ function Entrevista({ agentKey, product, orgId }: { agentKey: string; product: s
   const onb = useOnboarding(agentKey, product, orgId);
   const importar = useImportarOnboarding(agentKey, product, orgId);
   const aplicar = useAplicarOnboarding(agentKey, product, orgId);
+  const iniciar = useIniciarEntrevista(agentKey, product, orgId);
+  const adapter = useMemo(() => buildStudioChatAdapter(ENTREVISTADOR_KEY), []);
   const [rascunho, setRascunho] = useState<Record<number, string>>({});
   const [origemImport, setOrigemImport] = useState<Set<number>>(new Set());
   const [confirmados, setConfirmados] = useState<Set<number>>(new Set());
@@ -176,6 +189,43 @@ function Entrevista({ agentKey, product, orgId }: { agentKey: string; product: s
           Operações atendidas: {dados.operacoes.length ? dados.operacoes.join(", ") : "ainda não informadas (item 9 primeiro)"}.
           {onb.isRefreshing ? " Atualizando…" : ""}
         </p>
+      </section>
+
+      <section aria-label="Conversa" className="space-y-2" data-testid="onboarding-conversa">
+        {dados.sessao ? (
+          <>
+            <p className="text-xs text-muted-foreground" data-testid="onboarding-sessao">
+              Entrevista em andamento: {dados.sessao.eventos} registro(s)
+              {dados.sessao.resumo_apresentado ? " · resumo apresentado" : ""}
+              {dados.sessao.aplicada ? " · aplicada" : ""}. O andamento abaixo acompanha a conversa.
+            </p>
+            <div className="h-[520px] rounded-md border" data-testid="onboarding-chat">
+              <AgentChatWindow
+                scopeId={ENTREVISTADOR_KEY}
+                adapter={adapter}
+                selectedThreadId={dados.sessao.conversation_id}
+                onSelectThread={() => undefined}
+              />
+            </div>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              data-testid="onboarding-iniciar"
+              className="h-9 rounded-md bg-primary px-4 text-sm text-primary-foreground disabled:opacity-50"
+              disabled={iniciar.isPending}
+              onClick={() => iniciar.mutate()}
+            >
+              {iniciar.isPending ? "Iniciando…" : "Iniciar entrevista com o assistente"}
+            </button>
+            {iniciar.isError && (
+              <p role="alert" className="text-sm text-destructive" data-testid="onboarding-iniciar-erro">
+                {errorMessage(iniciar.error)}
+              </p>
+            )}
+          </>
+        )}
       </section>
 
       <section aria-label="Importar" className="space-y-2">
@@ -287,6 +337,9 @@ function Linha({
       <p className="text-xs text-muted-foreground">
         {NIVEL_ROTULO[item.nivel]} · {item.estado === "preenchido" ? "preenchido" : item.estado === "vazio" ? "vazio" : "fora do agents"}
         {item.padrao ? ` · padrão: ${item.padrao}` : ""}
+        {item.entrevista ? (
+          <span data-testid={`${id}-entrevista`}> · entrevista: {ENTREVISTA_ROTULO[item.entrevista]}</span>
+        ) : null}
       </p>
       <p className="text-xs">{item.pergunta}</p>
       <input

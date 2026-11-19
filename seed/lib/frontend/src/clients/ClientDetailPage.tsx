@@ -174,7 +174,7 @@ export function ClientDetailPage({ hooks, clientId, isAdmin = false, onBack, onD
           <TabsTrigger value="dados" data-testid="client-tab-dados">{t('detail.tab_data')}</TabsTrigger>
         </TabsList>
         <TabsContent value="sessoes" className="pt-3">
-          <ClientSessionsTab hooks={hooks} client={client} />
+          <ClientSessionsTab hooks={hooks} client={client} isAdmin={isAdmin} />
         </TabsContent>
         <TabsContent value="agenda" className="pt-3">
           <ClientSchedulesTab hooks={hooks} client={client} />

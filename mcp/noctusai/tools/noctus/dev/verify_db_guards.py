@@ -12447,6 +12447,54 @@ END;
 )
 
 
+_AGENTS_ONBOARDING_EVENTOS_APPEND_ONLY_PROBE = GuardProbe(
+    id="agents.onboarding_eventos.append_only",
+    product="agents",
+    schema=_AGENTS_SCHEMA,
+    guard_name="guard_onboarding_eventos_append_only",
+    kind="write_refusal",
+    migrations=("089_onboarding_sessoes.sql",),
+    rationale=(
+        "EOA: the onboarding interview ledger is the measurable record of every answer, refusal, import, summary and "
+        "apply the interviewer made for a company; an UPDATE would rewrite what the client confirmed. Self-provisioning: "
+        "the probe inserts a throwaway session and one event, then tries to rewrite that event, all inside the "
+        "rolled-back transaction."
+    ),
+    sql=_do_block(f"""
+DECLARE
+  v_sessao uuid;
+  v_ev uuid;
+BEGIN
+  IF to_regclass('{_AGENTS_SCHEMA}.onboarding_eventos') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_AGENTS_SCHEMA}.onboarding_eventos does not exist (migration 089 not applied)';
+  END IF;
+  INSERT INTO {_AGENTS_SCHEMA}.onboarding_sessoes (org_id, conversation_id, alvo_org_id, agent_key, product, grant_id, created_by)
+  VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'noc-probe', 'noc-probe', gen_random_uuid(), gen_random_uuid())
+  RETURNING id INTO v_sessao;
+  INSERT INTO {_AGENTS_SCHEMA}.onboarding_eventos (sessao_id, event_type, item_n, dados)
+  VALUES (v_sessao, 'resposta_registrada', 1, '{{}}'::jsonb)
+  RETURNING id INTO v_ev;
+  BEGIN
+    UPDATE {_AGENTS_SCHEMA}.onboarding_eventos SET item_n = 2 WHERE id = v_ev;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: UPDATE on the append-only onboarding ledger succeeded - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%append-only%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+# 089 onboarding ledger: own group (self-provisions its session, no studio agent row), proven on the real chain in
+# test_agents_camadas_probes_on_replay.py
+_AGENTS_ONBOARDING_PROBES: tuple[GuardProbe, ...] = (_AGENTS_ONBOARDING_EVENTOS_APPEND_ONLY_PROBE,)
+
+
 _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE = GuardProbe(
     id="assistant.intake_messages_eventos.append_only",
     product="assistant",
@@ -13372,7 +13420,7 @@ _SW_352_MIGRATION = "352_cs_unified_chat.sql"
 
 def _sw352_probe(
     *, probe_id: str, guard_name: str, statements: str, permitted_msg: str, rationale: str,
-    kind: str = "write_refusal", after_ok: str = "",
+    kind: str = "write_refusal", after_ok: str = "", migrations: tuple[str, ...] = (_SW_352_MIGRATION,),
 ) -> GuardProbe:
     """Probe on a migration-352 guard. ``kind='write_refusal'``: ``statements`` must be refused by ``guard_name`` (a
     constraint / trigger / function name matched against the error text). ``kind='write_allowed'``: ``statements`` is a
@@ -13389,7 +13437,7 @@ def _sw352_probe(
     )
     return GuardProbe(
         id=probe_id, product="social-wiring", schema=_SW_SCHEMA, guard_name=guard_name, kind=kind,
-        migrations=(_SW_352_MIGRATION,), rationale=rationale,
+        migrations=migrations, rationale=rationale,
         sql=_do_block(f"""
 DECLARE
   v_org uuid; v_marca uuid; v_perfil uuid; v_est uuid; v_est2 uuid; v_conv uuid; v_msg uuid; v_msg2 uuid; v_prop uuid;
@@ -13604,6 +13652,99 @@ _SW_352_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+
+# ---------------------------------------------------------------------------
+# Registry — social_wiring roteiro-first in the unified chat (migration 358, M6 of estruturas-contract.md section 16.2).
+# Same self-provisioned fixture as the 352 probes (one headline proposta `v_prop`); gated on 358 being applied.
+# ---------------------------------------------------------------------------
+
+_SW_358_MIGRATION = "358_cs_roteiro_primeiro.sql"
+
+
+def _sw358_probe(**kw: Any) -> GuardProbe:
+    return _sw352_probe(migrations=(_SW_358_MIGRATION,), **kw)
+
+
+_SW_358_PROBES: tuple[GuardProbe, ...] = (
+    _sw358_probe(
+        probe_id="sw358_proposta_tipo_valido", guard_name="cs_chat_propostas_tipo_check",
+        statements=f"    UPDATE {_SW352}.cs_chat_propostas SET tipo = 'outro' WHERE id = v_prop;",
+        permitted_msg="a proposta got an unknown tipo",
+        rationale="The proposta's tipo decides the escolher saga (headline-first vs roteiro-first): an unknown value has no saga.",
+    ),
+    _sw358_probe(
+        probe_id="sw358_proposta_roteiro_exige_titulo_e_formato", guard_name="cs_chat_propostas_tipo_campos_check",
+        statements=f"    UPDATE {_SW352}.cs_chat_propostas SET tipo = 'roteiro' WHERE id = v_prop;",
+        permitted_msg="a roteiro proposta was saved without its titulo/formato",
+        rationale="Saving a roteiro needs its name (titulo) and its grammar (formato): without them the click cannot save it.",
+    ),
+    _sw358_probe(
+        probe_id="sw358_proposta_headline_sem_titulo", guard_name="cs_chat_propostas_tipo_campos_check",
+        statements=f"    UPDATE {_SW352}.cs_chat_propostas SET titulo = 'T', formato = 'reels' WHERE id = v_prop;",
+        permitted_msg="a headline proposta carried a roteiro titulo/formato",
+        rationale="titulo/formato mark a roteiro: on a headline they would make the two directions indistinguishable in the metrics.",
+    ),
+    _sw358_probe(
+        probe_id="sw358_proposta_titulo_valido", guard_name="cs_chat_propostas_titulo_check",
+        statements=(f"    UPDATE {_SW352}.cs_chat_propostas SET tipo = 'roteiro', titulo = repeat('t', 121), "
+                    "formato = 'reels' WHERE id = v_prop;"),
+        permitted_msg="a roteiro title over 120 chars was stored",
+        rationale="The title becomes the roteiro's nome and the card's label: the parser refuses (never cuts) a longer one, the table backs it up.",
+    ),
+    _sw358_probe(
+        probe_id="sw358_proposta_formato_valido", guard_name="cs_chat_propostas_formato_check",
+        statements=(f"    UPDATE {_SW352}.cs_chat_propostas SET tipo = 'roteiro', titulo = 'T', formato = 'short' "
+                    "WHERE id = v_prop;"),
+        permitted_msg="a roteiro proposta got an unknown formato",
+        rationale="reels | carrossel | stories | post is the script's grammar and the card's formato: an unknown one has neither.",
+    ),
+    _sw358_probe(
+        probe_id="sw358_proposta_headline_texto_max_1000", guard_name="cs_chat_propostas_texto_check",
+        statements=f"    UPDATE {_SW352}.cs_chat_propostas SET texto = repeat('h', 1001) WHERE id = v_prop;",
+        permitted_msg="a headline proposta over 1000 chars was stored",
+        rationale="Widening texto for scripts must not widen it for headlines: the headline is saved to cs_headlines (<= 1000).",
+    ),
+    _sw358_probe(
+        probe_id="sw358_proposta_roteiro_longo_allowed", guard_name="cs_chat_propostas_texto_check", kind="write_allowed",
+        statements=(f"    UPDATE {_SW352}.cs_chat_propostas SET tipo = 'roteiro', titulo = 'T', formato = 'carrossel', "
+                    "texto = repeat('r', 5000), fluxo_etapa = 'roteiro_salvo' WHERE id = v_prop;"),
+        permitted_msg="a long carrossel script with etapa roteiro_salvo was stored, as it must",
+        rationale="A complete carrossel script runs past 1000 chars and the roteiro-first saga records roteiro_salvo: both must be accepted.",
+    ),
+    _sw358_probe(
+        probe_id="sw358_fluxo_eventos_roteiro_primeiro_allowed", guard_name="cs_fluxo_eventos_tipo_check", kind="write_allowed",
+        statements=(f"    INSERT INTO {_SW352}.cs_fluxo_eventos (org_id, marca_id, conversa_id, tipo) VALUES "
+                    "(v_org, v_marca, v_conv, 'roteiro_salvo'), (v_org, v_marca, v_conv, 'headline_gerando'), "
+                    "(v_org, v_marca, v_conv, 'headline_gerada'), (v_org, v_marca, v_conv, 'headline_falhou'), "
+                    "(v_org, v_marca, v_conv, 'roteiro_invalido');"),
+        permitted_msg="the roteiro-first event vocabulary was recorded, as it must",
+        rationale="Time-to-card and headline-failure rate per direction are counted from these five tipos.",
+    ),
+    _sw358_probe(
+        probe_id="sw358_headline_modo_valido", guard_name="cs_headlines_modo_check",
+        statements=(f"    INSERT INTO {_SW352}.cs_headlines (org_id, marca_id, texto, modo) "
+                    "VALUES (v_org, v_marca, 'noc probe', 'inventado');"),
+        permitted_msg="a headline got an unknown modo",
+        rationale="modo says how a headline was born (manual | automatico | do_roteiro); an unknown one is unattributable.",
+    ),
+    _sw358_probe(
+        probe_id="sw358_headline_modo_do_roteiro_allowed", guard_name="cs_headlines_modo_check", kind="write_allowed",
+        statements=(f"    INSERT INTO {_SW352}.cs_headlines (org_id, marca_id, texto, modo) "
+                    "VALUES (v_org, v_marca, 'noc probe', 'do_roteiro');"),
+        permitted_msg="a headline generated from a roteiro was stored, as it must",
+        rationale="The roteiro-first saga saves its generated headline with modo do_roteiro.",
+    ),
+    _sw358_probe(
+        probe_id="sw358_roteiro_proposta_unica", guard_name="cs_roteiros_conversa_proposta_uq",
+        statements=(f"    INSERT INTO {_SW352}.cs_roteiros (org_id, marca_id, nome, headline_texto, conversa_id, proposta_id) "
+                    "VALUES (v_org, v_marca, 'noc probe a', 'noc probe', v_conv, v_prop);\n"
+                    f"    INSERT INTO {_SW352}.cs_roteiros (org_id, marca_id, nome, headline_texto, conversa_id, proposta_id) "
+                    "VALUES (v_org, v_marca, 'noc probe b', 'noc probe', v_conv, v_prop);"),
+        permitted_msg="one roteiro proposta was saved as two roteiros",
+        rationale="A double click or a retried save of the same roteiro proposta is a lookup, never a second roteiro.",
+    ),
+)
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _ASSISTANT_EVENTOS_APPEND_ONLY_PROBE,
@@ -13615,6 +13756,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_ASSISTANT_LINE_EVENTS_PROBES,
     _AGENT_PRODUCT_GRANT_ONE_LIVE_PROBE,
     _AGENT_PRODUCT_GRANT_EVENTOS_APPEND_ONLY_PROBE,
+    _AGENTS_ONBOARDING_EVENTOS_APPEND_ONLY_PROBE,
     _RUIDO_SHAPE_PROBE,
     _TITULO_PAREADO_PROBE,
     _ONUS_CREDOR_PAREADO_PROBE,
@@ -13734,6 +13876,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_350_PROBES,
     *_SW_351_PROBES,
     *_SW_352_PROBES,
+    *_SW_358_PROBES,
     *_SW_JULIA_ENVIO_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
     *_SW_JULIA_CREDITO_PROBES,

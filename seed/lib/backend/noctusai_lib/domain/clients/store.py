@@ -102,6 +102,9 @@ class ClientsStore(Protocol):
     def schedules_due(self, org_id: str, through: str, *, client_id: Optional[str] = None) -> list[dict]:
         """ACTIVE schedules whose `materialized_until` is NULL or before `through` (YYYY-MM-DD)."""
 
+    def orgs_with_due_schedules(self, through: str) -> list[str]:
+        """Distinct orgs holding an ACTIVE schedule due at `through` (the daily job's work list), sorted."""
+
     # -- sessions
     def get_session(self, org_id: str, session_id: str) -> Optional[dict]: ...
 
@@ -137,8 +140,24 @@ class ClientsStore(Protocol):
     def delete_payment(self, org_id: str, payment_id: str) -> bool:
         """Only for a payment record that produced NO settlement (a refused first settle)."""
 
+    # -- events (append-only intent log)
+    def append_events(self, org_id: str, rows: Sequence[dict]) -> None:
+        """Append event rows (never updated, never deleted)."""
 
-_TABLES = ("clients", "schedules", "sessions", "payments")
+    def events_of_session(self, org_id: str, session_id: str) -> list[dict]:
+        """Ascending by `occurred_at` (ties keep insertion order: the sort is stable)."""
+
+    def events_of_client(self, org_id: str, client_id: str) -> list[dict]:
+        """Ascending by `occurred_at` (ties keep insertion order: the sort is stable)."""
+
+    # -- clinical notes (therapist-only; one per session)
+    def get_session_note(self, org_id: str, session_id: str) -> Optional[dict]: ...
+
+    def upsert_session_note(self, org_id: str, row: dict) -> dict:
+        """Insert or replace the session's note (`session_id` is the key)."""
+
+
+_TABLES = ("clients", "schedules", "sessions", "payments", "events", "notes")
 
 
 @dataclass
@@ -161,7 +180,7 @@ class FakeClientsStore:
         row.setdefault("id", str(uuid4()))
         row["org_id"] = str(org_id)
         row.setdefault("created_at", now)
-        if table != "payments":
+        if table not in ("payments", "events"):
             row.setdefault("updated_at", now)
         self.tables[table][row["id"]] = row
         return deepcopy(row)
@@ -246,6 +265,12 @@ class FakeClientsStore:
         ]
         return deepcopy(sorted(rows, key=lambda r: r["id"]))
 
+    def orgs_with_due_schedules(self, through: str) -> list[str]:
+        return sorted({
+            r["org_id"] for r in self.tables["schedules"].values()
+            if r.get("active") and (r.get("materialized_until") is None or str(r["materialized_until"]) < through)
+        })
+
     # -- sessions
     def get_session(self, org_id: str, session_id: str) -> Optional[dict]:
         return self._get("sessions", org_id, session_id)
@@ -273,6 +298,7 @@ class FakeClientsStore:
             r = self.tables["sessions"].get(str(sid))
             if r and r["org_id"] == str(org_id):
                 del self.tables["sessions"][str(sid)]
+                self.tables["notes"].pop(str(sid), None)  # ON DELETE CASCADE
                 n += 1
         return n
 
@@ -312,6 +338,33 @@ class FakeClientsStore:
             return False
         del self.tables["payments"][str(payment_id)]
         return True
+
+    # -- events
+    def append_events(self, org_id: str, rows: Sequence[dict]) -> None:
+        for row in rows:
+            self._insert("events", org_id, {"occurred_at": datetime.now(timezone.utc).isoformat(), **row})
+
+    def events_of_session(self, org_id: str, session_id: str) -> list[dict]:
+        rows = [r for r in self._own("events", org_id) if r.get("session_id") == str(session_id)]
+        return deepcopy(sorted(rows, key=lambda r: str(r["occurred_at"])))
+
+    def events_of_client(self, org_id: str, client_id: str) -> list[dict]:
+        rows = [r for r in self._own("events", org_id) if r.get("client_id") == str(client_id)]
+        return deepcopy(sorted(rows, key=lambda r: str(r["occurred_at"])))
+
+    # -- clinical notes
+    def get_session_note(self, org_id: str, session_id: str) -> Optional[dict]:
+        r = self.tables["notes"].get(str(session_id))
+        return deepcopy(r) if r and r["org_id"] == str(org_id) else None
+
+    def upsert_session_note(self, org_id: str, row: dict) -> dict:
+        key = str(row["session_id"])
+        now = datetime.now(timezone.utc).isoformat()
+        prev = self.tables["notes"].get(key)
+        if prev is not None and prev["org_id"] != str(org_id):
+            raise RuntimeError("session note belongs to another org")
+        self.tables["notes"][key] = {**(prev or {"created_at": now}), **deepcopy(row), "org_id": str(org_id), "updated_at": now}
+        return deepcopy(self.tables["notes"][key])
 
 
 __all__ = ["ClientFilters", "ClientsStore", "FakeClientsStore", "client_matches", "client_sort_key", "session_sort_key"]
