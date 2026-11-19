@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { mockGet, mockPost } = vi.hoisted(() => ({ mockGet: vi.fn(), mockPost: vi.fn() }));
 vi.mock("@/lib/api", () => ({ api: { get: mockGet, post: mockPost, put: vi.fn(), patch: vi.fn(), delete: vi.fn() } }));
 
-import { useIniciarMecanismo, useMecanismoRun } from "@/hooks/studio/useMecanismo";
+import { useIniciarMecanismo, useMecanismoRun, useMecanismoRuns } from "@/hooks/studio/useMecanismo";
 import { studioKeys } from "@/hooks/studio/keys";
 
 const newClient = () => new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -68,5 +68,28 @@ describe("useMecanismoRun request budget", () => {
     const before = mockGet.mock.calls.length;
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
     expect(mockGet.mock.calls.length).toBe(before);
+  });
+});
+
+describe("useMecanismoRuns", () => {
+  it("does not fetch for a non platform admin (the server answers 403)", () => {
+    renderHook(() => useMecanismoRuns("julia", false), { wrapper: wrapper(newClient()) });
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("GETs the history list and exposes the items", async () => {
+    mockGet.mockResolvedValue({ items: [{ ...RUN, run_id: "r1", status: "concluida", started_at: "2026-11-19T10:00:00Z", finished_at: null }] });
+    const { result } = renderHook(() => useMecanismoRuns("julia", true), { wrapper: wrapper(newClient()) });
+    await waitFor(() => expect(result.current.items?.length).toBe(1));
+    expect(mockGet).toHaveBeenCalledWith("/api/studio/agents/julia/mecanismo-runs");
+  });
+
+  it("starting a run refreshes the history list", async () => {
+    mockPost.mockResolvedValue({ run_id: "r2", compiled_hash: "h", driver: "live", status: "executando" });
+    const qc = newClient();
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    const { result } = renderHook(() => useIniciarMecanismo("julia"), { wrapper: wrapper(qc) });
+    await act(async () => { await result.current.mutateAsync(); });
+    expect(spy).toHaveBeenCalledWith({ queryKey: studioKeys.mecanismoRuns("julia") });
   });
 });

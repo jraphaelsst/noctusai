@@ -34,11 +34,11 @@ function BrandBook({ branding }: { branding: BrandingDetail }) {
   }
   return (
     <section data-testid="branding-book" className="space-y-6">
-      {branding.brand_book.trim() && <MarkdownRenderer content={branding.brand_book} />}
+      {branding.brand_book.trim() && <MarkdownRenderer content={branding.brand_book} remoteImages="block" />}
       {branding.sections.map((s) => (
         <div key={s.title} className="space-y-2 border-t pt-4">
           <h3 className="text-base font-semibold">{s.title}</h3>
-          <MarkdownRenderer content={s.markdown} />
+          <MarkdownRenderer content={s.markdown} remoteImages="block" />
         </div>
       ))}
     </section>

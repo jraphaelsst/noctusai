@@ -308,7 +308,7 @@ class Saga:
             await fin.executar_finalizar(job, db=self.db, llm=llm, cfg=self.cfg, ia_check=lambda o: None, orcamento=_ok,
                                          approvals=self.approvals(), **kw)
         else:
-            await fin.executar_headline(job, db=self.db, llm=llm, jobs=self.jobs)
+            await fin.executar_headline(job, db=self.db, llm=llm, jobs=self.jobs, approvals=self.approvals())
         return job
 
 
@@ -520,6 +520,39 @@ def test_roteiro_primeiro_caminho_feliz_headline_card_finalizador_e_mensagem(sg)
     asyncio.run(sg.rodar("fluxo.finalizar_card", Llm(LEGENDA_JSON)))
     assert sg.proposta(pid)["fluxo_etapa"] == "concluido" and sg.rows("cs_posts")[0]["legenda"]
     _sem_duplicatas(sg, pid)
+
+
+def _estado_roteiro(sg, rid):
+    return apr.make_approvals(sg.db, store=sg.store).state(TEST_ORG_ID, "roteiro", rid)
+
+
+def _aprovados(sg, rid):
+    return [e for e in apr.make_approvals(sg.db, store=sg.store).history(TEST_ORG_ID, "roteiro", rid) if e["event"] == "approved"]
+
+
+def test_roteiro_primeiro_a_escolha_aprova_o_roteiro_pelo_ator_que_escolheu_uma_unica_vez(sg):
+    """Owner 2026-11-19: 'selecionar roteiro' IS the approval -- the Esteira gate (roteiro_aprovado) must pass."""
+    cid, pid = _proposta(sg, tipo="roteiro")
+    assert sg.escolher(cid, pid).status_code == 202
+    asyncio.run(sg.rodar("fluxo.headline_do_roteiro", Llm(HEADLINE_OK)))
+    rid = sg.proposta(pid)["roteiro_id"]
+    assert apr.roteiro_aprovado(sg.db, TEST_ORG_ID, rid, approvals=sg.approvals())
+    estado = _estado_roteiro(sg, rid)
+    assert estado.status == "approved" and estado.decided_by == sg.proposta(pid)["escolhida_por"]
+    # the finalizer + a retried step + another click never record a second approval
+    asyncio.run(sg.rodar("fluxo.finalizar_card", Llm(LEGENDA_JSON)))
+    asyncio.run(sg.rodar("fluxo.headline_do_roteiro", Llm(HEADLINE_OK)))
+    assert len(_aprovados(sg, rid)) == 1 and _estado_roteiro(sg, rid).status == "approved"
+
+
+def test_headline_primeiro_o_roteiro_gerado_pela_ia_continua_pendente(sg):
+    cid, pid = _proposta(sg)
+    assert sg.escolher(cid, pid).status_code == 202
+    rid = sg.rows("cs_roteiros")[0]["id"]
+    _completar_roteiro(sg, rid)
+    asyncio.run(sg.rodar("fluxo.finalizar_card", Llm(LEGENDA_JSON)))
+    assert not apr.roteiro_aprovado(sg.db, TEST_ORG_ID, rid, approvals=sg.approvals())
+    assert _estado_roteiro(sg, rid).status == "pending" and _aprovados(sg, rid) == []
 
 
 def test_roteiro_primeiro_crash_entre_enfileirar_e_registrar_reusa_o_mesmo_job(sg):

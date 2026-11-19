@@ -63,6 +63,10 @@ class MecanismoStore(Protocol):
         """One run row (any status) as plain data, org-scoped; ``None`` when absent."""
         ...
 
+    def list_runs(self, org_id: UUID, agent_id: UUID, *, limit: int = 50) -> list[dict[str, Any]]:
+        """Every run of the agent (all versions, any status) as plain data, newest first, org-scoped."""
+        ...
+
     def list_execucoes(self, org_id: UUID, run_id: UUID) -> list[dict[str, Any]]: ...
 
     def latest_run(self, org_id: UUID, version_id: UUID, compiled_hash: str) -> MecanismoGateRun | None:
@@ -172,6 +176,11 @@ class FakeMecanismoStore:
     def get_run(self, org_id: UUID, run_id: UUID) -> dict[str, Any] | None:
         r = self.runs.get(run_id)
         return dict(r) if r is not None and r["org_id"] == org_id else None
+
+    def list_runs(self, org_id: UUID, agent_id: UUID, *, limit: int = 50) -> list[dict[str, Any]]:
+        rows = [r for r in self.runs.values() if r["org_id"] == org_id and r["agent_id"] == agent_id]
+        rows.sort(key=lambda r: (r["started_at"], r["seq"]), reverse=True)
+        return [dict(r) for r in rows[:limit]]
 
     def list_execucoes(self, org_id: UUID, run_id: UUID) -> list[dict[str, Any]]:
         return [dict(e) for e in self.execucoes.get(run_id, [])] if self.get_run(org_id, run_id) else []
@@ -312,6 +321,13 @@ class SupabaseMecanismoStore:
         )
         rows = resp.data or []
         return dict(rows[0]) if rows else None
+
+    def list_runs(self, org_id: UUID, agent_id: UUID, *, limit: int = 50) -> list[dict[str, Any]]:
+        resp = (
+            self._t("eval_mecanismo_runs").select("*").eq("org_id", str(org_id)).eq("agent_id", str(agent_id))
+            .order("started_at", desc=True).limit(limit).execute()
+        )
+        return [dict(r) for r in (resp.data or [])]
 
     def list_execucoes(self, org_id: UUID, run_id: UUID) -> list[dict[str, Any]]:
         resp = (

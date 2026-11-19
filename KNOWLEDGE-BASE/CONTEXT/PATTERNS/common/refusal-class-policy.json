@@ -1,0 +1,17 @@
+{
+  "_doc": "Declared INTENDED-refusal classes (KB § PATTERNS/common/gate-methodology-sync.md, Refusal recurrence). A guard refusing a primary write, a bypass, a non-steward's enqueue, an unconsented prod exposure is the methodology working: it is not friction, so it never counts toward the recurrence andon (gate_alignment.refusal_recurrence). `match` is a refusal-class KEY PREFIX; `rationale` (>=12 chars) says why the firing is correct. Walls are NOT hidden by this file: `gate_alignment walls` still ranks a guard that fires in normal flow, and the gate-walls ledger still owns the construction fix. Never add a class here because it is noisy: noisy means friction, and friction gets a finding.",
+  "intended": [
+    {"match": "guard:primary-write:refused-", "rationale": "Write/commit aimed at the shared primary checkout (or git commit --no-verify) refused: self-branching mode and the no-bypass rule working as designed. Guard timeouts are a different class and stay tracked."},
+    {"match": "guard:release-steward:task_branch-", "rationale": "A non-steward session tried a steward-only action (enqueue / landed): the one-elected-steward lease working as designed; requesters file `release_steward request` instead."},
+    {"match": "guard:test-seams:", "rationale": "A test that patches our own code was refused at write time (no monkey-patching, incl. tests): the guard doing its job."},
+    {"match": "guard:access-tier:", "rationale": "A write to a route/table with no declared access tier was refused: undeclared is refused by design (KB § PATTERNS/security/access-tiers.md)."},
+    {"match": "guard:background-launch:", "rationale": "An unbounded foreground wait/poll or an un-purposed background launch was refused: background-process discipline working; the remedy is bg_run.py / Monitor."},
+    {"match": "guard:executor-dispatch:", "rationale": "An executor subagent dispatched without worktree isolation was refused: dispatch discipline working. The firing rate is a wall, tracked in the gate-walls ledger (guard:executor-dispatch), not hidden here."},
+    {"match": "keeper:check-refusal-classes-owned", "rationale": "Meta-keeper: it reports OTHER classes' missing owners, so its own firing is not a defect class; the underlying class carries the finding."},
+    {"match": "keeper:check-guardian-tool-authorship", "rationale": "The release-steward lease holder staged steward tooling it must not author (council 09340534): refusal is the rule; the remedy is hand-off to the tooling branch steward."},
+    {"match": "keeper:check-prod-exposure-consent", "rationale": "Prod exposure without the user's typed consent was refused: the consent rule (KB § PATTERNS/devops/prod-exposure-consent.md) working as designed."},
+    {"match": "keeper:check-storage-bucket-public", "rationale": "A public storage bucket was refused: the zero-public-bucket owner directive (2026-09-17) working as designed."},
+    {"match": "keeper:check-lgpd-entry-removal", "rationale": "Removal of an LGPD warning entry was refused: the log is append-only by design."},
+    {"match": "deliverable:", "rationale": "Per-branch delivery-contract refusals (behind dev, conflicts, unpushed head, derived files stale, CI red/pending): they tell the branch steward what to resync; branch state, not a recurring defect. Defects in the contract itself are gate-walls rows (GW-53a628ad, GW-a896193f)."}
+  ]
+}

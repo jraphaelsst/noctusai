@@ -105,3 +105,9 @@ export interface MecanismoRun {
   erro: string | null;
   casos: MecanismoCaso[];
 }
+
+/** One row of `GET /api/studio/agents/{key}/mecanismo-runs` (the history, all versions, newest first): no `casos`. */
+export type MecanismoRunResumo = Omit<MecanismoRun, "casos"> & {
+  started_at: string | null;
+  finished_at: string | null;
+};

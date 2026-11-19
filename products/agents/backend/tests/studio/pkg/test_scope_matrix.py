@@ -46,6 +46,7 @@ PUBLISH_ROUTES = {
 EVALS_RUN_ROUTES = {
     ("POST", "/api/studio/agents/{key}/evals/runs/{run_id}/cancel"),
     ("POST", "/api/studio/agents/{key}/draft/mecanismo-runs"),
+    ("GET", "/api/studio/agents/{key}/mecanismo-runs"),
     ("GET", "/api/studio/agents/{key}/mecanismo-runs/{run_id}"),
     ("GET", "/api/studio/agents/{key}/mecanismo-runs/{run_id}/progresso"),
     # the eval-loop gate (migration 076, G1-G7): open / read / stop a refinement loop -- the same token that runs the rounds

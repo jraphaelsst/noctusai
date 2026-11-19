@@ -76,7 +76,9 @@ def _ultima_tentativa(job: Job) -> bool:
     return int(job.retry_count) >= int(job.max_retries)
 
 
-def _saga_do_job(job: Job, db: Any, jobs: Optional[JobRepository]) -> tuple[SagaFluxo, dict[str, Any]]:
+def _saga_do_job(
+    job: Job, db: Any, jobs: Optional[JobRepository], approvals: Optional[ApprovalService] = None,
+) -> tuple[SagaFluxo, dict[str, Any]]:
     payload = job.payload or {}
     pid, org_id = str(payload.get("proposta_id") or ""), str(payload.get("org_id") or "")
     if not pid or not org_id:
@@ -87,7 +89,7 @@ def _saga_do_job(job: Job, db: Any, jobs: Optional[JobRepository]) -> tuple[Saga
     user = str(proposta.get("escolhida_por") or "")
     if not user:
         raise DeadLetterError(f"{job.type}: proposta {pid} sem escolhida_por")
-    return SagaFluxo(db, org_id, user, jobs=jobs), proposta
+    return SagaFluxo(db, org_id, user, jobs=jobs, approvals=approvals), proposta
 
 
 # ── fluxo.finalizar_card ───────────────────────────────────────────────────────────────────────────────
@@ -111,7 +113,7 @@ async def executar_finalizar(
 ) -> None:
     if cfg is None:
         from app.config import settings as cfg
-    saga, proposta = _saga_do_job(job, db, None)
+    saga, proposta = _saga_do_job(job, db, None, approvals)
     pid = str(proposta["id"])
     if proposta.get("fluxo_etapa") == "concluido":
         return
@@ -174,8 +176,10 @@ def _material(db: Any, saga: SagaFluxo, proposta: dict[str, Any]) -> tuple[Optio
     return formula, perfil, cerebros
 
 
-async def executar_headline(job: Job, *, db: Any, llm: Llm, jobs: Optional[JobRepository]) -> None:
-    saga, proposta = _saga_do_job(job, db, jobs)
+async def executar_headline(
+    job: Job, *, db: Any, llm: Llm, jobs: Optional[JobRepository], approvals: Optional[ApprovalService] = None,
+) -> None:
+    saga, proposta = _saga_do_job(job, db, jobs, approvals)
     pid = str(proposta["id"])
     if proposta.get("fluxo_etapa") == "concluido":
         return

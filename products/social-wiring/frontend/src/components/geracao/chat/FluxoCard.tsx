@@ -58,7 +58,7 @@ function Preview({ formato, conteudo }: { formato: EstruturaFormato; conteudo: s
   }
   return (
     <div data-testid="roteiro-preview" data-formato={formato}>
-      <MarkdownRenderer content={p.texto} />
+      <MarkdownRenderer content={p.texto} remoteImages="block" />
     </div>
   );
 }

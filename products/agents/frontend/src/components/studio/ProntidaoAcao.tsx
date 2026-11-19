@@ -19,7 +19,7 @@ import { useCreateEvalRun, useEvalRun } from "@/hooks/studio/useEvals";
 import { useSetControle } from "@/hooks/studio/useControle";
 import { useAtualizarSkillsBiblioteca } from "@/hooks/studio/useBiblioteca";
 import { errorMessage } from "@/lib/errors";
-import type { MecanismoCaso } from "@/api/studio/types-prontidao";
+import type { MecanismoCaso, MecanismoRun } from "@/api/studio/types-prontidao";
 
 export type TipoAcao = "mecanismo" | "avaliacao" | "ligar" | "skills";
 
@@ -84,6 +84,29 @@ function Rodando({ texto, testId }: { texto: string; testId: string }) {
   );
 }
 
+/** The verdict of a FINISHED mechanism run: "N de M casos passaram" plus, per failed case, the pt-BR reasons. Shared by the
+ *  readiness action and the Execuções history (the same run is drawn the same way in both places). */
+export function MecanismoResultado({ run: r, testId }: { run: MecanismoRun; testId: string }) {
+  const reprovados = r.casos.filter((c) => !c.passou);
+  return (
+    <div data-testid={`${testId}-resultado`}>
+      <p className={`mt-1 text-xs ${r.aprovado ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"}`}>
+        {r.casos_aprovados} de {r.total_casos} {r.total_casos === 1 ? "caso passou" : "casos passaram"}
+        {r.orcamento_excedido ? "; o limite de custo foi atingido e a suíte ficou incompleta" : ""}.
+      </p>
+      {reprovados.length > 0 && (
+        <ul className="mt-1 list-disc pl-5 text-xs text-destructive" data-testid={`${testId}-falhas`}>
+          {reprovados.map((c) => (
+            <li key={c.slug}>
+              <span className="font-medium">{c.slug}</span>: {falhasDoCaso(c).join("; ") || "não passou em todas as execuções"}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function AcaoMecanismo({ agentKey }: { agentKey: string }) {
   const admin = useIsPlatformAdmin();
   const iniciar = useIniciarMecanismo(agentKey);
@@ -94,7 +117,6 @@ function AcaoMecanismo({ agentKey }: { agentKey: string }) {
   }
   const rodando = iniciar.isPending || (!!runId && run.data?.status === "executando") || (!!runId && run.showSkeleton);
   const r = run.data;
-  const reprovados = r?.status === "concluida" ? r.casos.filter((c) => !c.passou) : [];
   return (
     <div className="mt-2" data-testid="acao-mecanismo">
       <Button
@@ -116,23 +138,7 @@ function AcaoMecanismo({ agentKey }: { agentKey: string }) {
       {runId && run.isError && !r && <Erro testId="acao-mecanismo-erro-leitura">Não foi possível acompanhar a execução. <button type="button" className="underline" onClick={run.refetch}>Tentar de novo</button></Erro>}
       {r?.status === "falhou" && <Erro testId="acao-mecanismo-falhou">A execução falhou{r.erro ? `: ${r.erro}` : "."} Tente rodar de novo.</Erro>}
       {r?.status === "cancelada" && <Nota testId="acao-mecanismo-cancelada">A execução foi cancelada. Rode de novo para atualizar o resultado.</Nota>}
-      {r?.status === "concluida" && (
-        <div data-testid="acao-mecanismo-resultado">
-          <p className={`mt-1 text-xs ${r.aprovado ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"}`}>
-            {r.casos_aprovados} de {r.total_casos} {r.total_casos === 1 ? "caso passou" : "casos passaram"}
-            {r.orcamento_excedido ? "; o limite de custo foi atingido e a suíte ficou incompleta" : ""}.
-          </p>
-          {reprovados.length > 0 && (
-            <ul className="mt-1 list-disc pl-5 text-xs text-destructive" data-testid="acao-mecanismo-falhas">
-              {reprovados.map((c) => (
-                <li key={c.slug}>
-                  <span className="font-medium">{c.slug}</span>: {falhasDoCaso(c).join("; ") || "não passou em todas as execuções"}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
+      {r?.status === "concluida" && <MecanismoResultado run={r} testId="acao-mecanismo" />}
     </div>
   );
 }
