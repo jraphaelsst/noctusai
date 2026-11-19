@@ -243,8 +243,9 @@ describe("deep links", () => {
 
   it("every pre-existing nav URL (and Dashboard) is still a declared route in App.tsx", () => {
     for (const href of PRE_EXISTING_HREFS) {
-      const wild = href === "/financeiro" || href === "/media-creation/chat" ? `${href}/*` : href;
-      expect(declared.has(href) || declared.has(wild), href).toBe(true);
+      // A splat route (`X/*`) also serves the bare `X` (react-router v6), so it keeps the deep link alive. Derived for
+      // every href, never a hand-kept list: that list missed `/configuracoes` when Settings moved to sub-routes.
+      expect(declared.has(href) || declared.has(`${href}/*`), href).toBe(true);
     }
   });
 });
