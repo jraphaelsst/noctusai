@@ -17129,6 +17129,8 @@ def check_db_guard_registry_static(repo_root: Path | None = None) -> list[dict]:
         issues.append({"product": "<harness>", "file": "mcp/noctusai/tools/noctus/dev/verify_db_guards.py",
                        "issue": f"probe `{probe_id}`: {msg}", "severity": "high", "symbol": symbol})
 
+    # NOC-REMEDIATE[hook-primary-toolkit-registry]: this keeper statically checks the RUNNING toolkit's registry, so under the
+    # primary-toolkit hooks a branch-added probe is only validated after merge (CI judges the merged tree) — 2026-11-19
     try:
         from tools.noctus.dev import verify_db_guards as _vdg
     except Exception as exc:  # unmeasurable is surfaced, never a silent pass
@@ -17219,35 +17221,34 @@ def _dropped_guards_still_probed(content: str, rel: str, product: str, registere
 
 
 def _registered_guard_names_for_tree(root: Path) -> frozenset[str]:
-    """The guard names `DEFAULT_REGISTRY` proves, read from the TREE BEING JUDGED.
+    """The guard names `DEFAULT_REGISTRY` proves = the toolkit's own set UNION the literal `guard_name="..."`
+    keywords found in the JUDGED tree's `verify_db_guards.py`, read as DATA with `ast` and NEVER executed.
 
     The hooks run the PRIMARY's toolkit against a worktree (`--worktree-path`), so a plain import returns the
-    primary's registry and a branch that adds a probe for its own new migration can never pass this keeper
-    (the S4/S9 `NOCTUS_HOOK_OWN_TOOLKIT` workaround). Only the registry DATA module is taken from the judged tree
-    (loaded under the toolkit's own package so its relative imports bind to the toolkit's code); the keeper LOGIC
-    stays the toolkit's, so a branch can add/retire a probe but cannot edit this check. Unloadable branch registry
-    -> the toolkit's own set, loudly (never a silent pass). KB § PATTERNS/common/self-branching-mode.md."""
+    primary's registry and a branch that adds a probe for its own new migration could never pass this keeper
+    (the S4/S9 `NOCTUS_HOOK_OWN_TOOLKIT` workaround). Importing the branch file would execute branch code inside the
+    keeper's process (it could rebind this very function), so only its syntax tree is read. A probe whose
+    `guard_name` is not a string literal contributes nothing -- its guard stays unregistered and is flagged, never
+    passed. Retiring a probe is not visible this way (the toolkit's set still lists it). An unparseable branch file
+    -> the toolkit's set, with a logged warning. KB § PATTERNS/common/self-branching-mode.md."""
     from . import verify_db_guards as _toolkit_vdg
 
+    base = _toolkit_vdg.REGISTERED_GUARD_NAMES
     branch_file = root / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "verify_db_guards.py"
     try:
         if not branch_file.is_file() or branch_file.resolve() == Path(_toolkit_vdg.__file__).resolve():
-            return _toolkit_vdg.REGISTERED_GUARD_NAMES
-        import importlib.util
-        import sys as _sys
-
-        name = f"{__package__}._branch_verify_db_guards"
-        spec = importlib.util.spec_from_file_location(name, branch_file)
-        mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-        _sys.modules[name] = mod
-        try:
-            spec.loader.exec_module(mod)  # type: ignore[union-attr]
-        finally:
-            _sys.modules.pop(name, None)
-        return mod.REGISTERED_GUARD_NAMES
-    except Exception as exc:  # noqa: BLE001 - fall back loudly, never silently
-        logger.warning("compliance: cannot load %s (%s); using the running toolkit's probe registry", branch_file, exc)
-        return _toolkit_vdg.REGISTERED_GUARD_NAMES
+            return base
+        tree = ast.parse(branch_file.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError) as exc:
+        logger.warning("compliance: cannot parse %s (%s); using the running toolkit's probe registry", branch_file, exc)
+        return base
+    literal = {
+        kw.value.value
+        for node in ast.walk(tree) if isinstance(node, ast.Call)
+        for kw in node.keywords
+        if kw.arg == "guard_name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str)
+    }
+    return base | frozenset(literal)
 
 
 def check_migration_guard_has_probe(
