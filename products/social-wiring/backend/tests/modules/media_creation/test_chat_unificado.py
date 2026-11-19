@@ -1008,7 +1008,7 @@ def test_a_resposta_do_escolher_nao_vaza_campos_internos(ch):
 
 def test_o_prompt_unificado_carrega_o_contrato_de_citacao_e_de_mistura():
     p = chat_unificado.SYSTEM_PROMPT
-    assert chat_unificado.PROMPT_VERSAO == "chat-unificado-v2-draft"
+    assert chat_unificado.PROMPT_VERSAO == "chat-unificado-v3-draft"
     assert "(estrutura #<código>)" in p and "(estrutura #<código> + #<código>)" in p
     assert "MÁXIMO 3" in p and chat_unificado.MAX_CITACOES == 3
     assert "### Estruturas usadas" in p and "### Análise da Estrutura Escolhida" in p

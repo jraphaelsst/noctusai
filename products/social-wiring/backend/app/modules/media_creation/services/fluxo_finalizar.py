@@ -27,9 +27,8 @@ from noctusai_lib.domain.jobs import DeadLetterError, Job, JobRepository
 from noctusai_lib.domain.jobs.repo import RescheduleLater
 from noctusai_lib.integrations.llm import LLMBudgetExceeded, LLMNotConfigured
 
-from app.modules.media_creation.prompts.headline_do_roteiro import MAX_PALAVRAS, build_headline_do_roteiro
-from app.modules.media_creation.prompts.headline_geracao import tem_placeholder
-from app.modules.media_creation.saida_ia import detectar_proibido
+from app.modules.media_creation.prompts.headline_do_roteiro import build_headline_do_roteiro
+from app.modules.media_creation.saida_ia import validar_headline as validar_headline_saida
 from app.modules.media_creation.services import geracao_jobs
 from app.modules.media_creation.services.fluxo_continuacao import JOB_FINALIZAR, JOB_HEADLINE, SagaFluxo
 from app.modules.media_creation.services.legenda_service import (
@@ -54,7 +53,6 @@ PRAZO_FINALIZADOR = timedelta(minutes=15)
 TICK_S = 10.0
 TICK_JITTER_S = 3.0
 PENDENTES = ("criando", "perguntas", "processando")
-HEADLINE_MAX_CHARS = 1000
 TENTATIVAS_HEADLINE = 2  # the call + ONE retry on an invalid output
 MAX_CEREBROS = 5
 
@@ -70,16 +68,8 @@ def _sha256(texto: str) -> str:
 
 
 def validar_headline(texto: Any) -> Optional[str]:
-    """The single-headline validator: one line, <= 12 words, <= 1000 chars, no ``[...]`` placeholder, nothing the
-    ``saida_ia`` guard forbids (URL, storage path, secret, injection). ``None`` = invalid (never trimmed)."""
-    if not isinstance(texto, str):
-        return None
-    t = texto.strip().strip('"“”').strip()
-    if not t or "\n" in t or len(t) > HEADLINE_MAX_CHARS or len(t.split()) > MAX_PALAVRAS:
-        return None
-    if tem_placeholder(t) or detectar_proibido(t) is not None:
-        return None
-    return t
+    """The single-headline validator (``saida_ia.validar_headline``: one derivation with the chat proposals' guard)."""
+    return validar_headline_saida(texto)
 
 
 def _ultima_tentativa(job: Job) -> bool:
@@ -176,7 +166,7 @@ def _material(db: Any, saga: SagaFluxo, proposta: dict[str, Any]) -> tuple[Optio
         rows = db.table(ESTRUTURAS).select("formula_headline").eq("id", citadas[0]).execute().data or []
         formula = rows[0].get("formula_headline") if rows else None
     marca = str(proposta["marca_id"])
-    perfil_rows = db.table(MARCA_PERFIL).select("bio").eq("marca_id", marca).execute().data or []
+    perfil_rows = db.table(MARCA_PERFIL).select("bio").eq("marca_id", marca).eq("org_id", saga.org_id).execute().data or []
     perfil = perfil_rows[0].get("bio") if perfil_rows else None
     cerebros = [
         r.get("content") or ""

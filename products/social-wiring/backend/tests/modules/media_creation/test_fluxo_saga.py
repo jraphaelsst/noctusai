@@ -187,7 +187,11 @@ class SagaRpc:
         self.db.from_("cs_roteiros").insert({
             "id": rid, "org_id": p_org, "marca_id": p["marca_id"], "nome": p["titulo"], "headline_texto": p["titulo"],
             "status": "completo", "conteudo": p["texto"], "formato": p["formato"], "conversa_id": p["conversa_id"],
-            "proposta_id": p["id"], "created_by": p_user, "versao": 1, "fonte": "ia", "created_at": _agora()}).execute()
+            "proposta_id": p["id"], "created_by": p_user, "versao": 1, "fonte": "ia", "created_at": _agora(),
+            # migration cs_chat_hardening: the cited Estruturas, principal first (cs_chat_proposta_estruturas.ordem)
+            "estrutura_ids": [e["estrutura_id"] for e in sorted(
+                self.db.from_("cs_chat_proposta_estruturas").select("*").eq("proposta_id", p["id"]).execute().data or [],
+                key=lambda e: e["ordem"])]}).execute()
         p = self._upd(p_proposta, {"roteiro_id": rid, "fluxo_etapa": p.get("fluxo_etapa") or "roteiro_salvo"})
         self._usos(p, roteiro_id=rid)
         self._evento(p, "roteiro_salvo", roteiro_id=rid)
@@ -245,9 +249,11 @@ class Jobs(FakeJobRepository):
 class Llm:
     def __init__(self, *respostas):
         self.respostas, self.calls = list(respostas), 0
+        self.users: list[str] = []
 
     async def __call__(self, system, user, org_id):
         self.calls += 1
+        self.users.append(user)
         return self.respostas[min(self.calls - 1, len(self.respostas) - 1)]
 
 
@@ -497,6 +503,8 @@ def test_roteiro_primeiro_caminho_feliz_headline_card_finalizador_e_mensagem(sg)
     assert f["direcao"] == "roteiro_primeiro" and f["etapa"] == "headline_gerando" and f["headline"] is None
     assert [j.dedupe_key for j in sg.jobs.do_tipo("fluxo.headline_do_roteiro")] == [f"fluxo-h:{pid}"]
     assert sg.rows("cs_posts") == [] and len(sg.eventos("headline_gerando", pid)) == 1
+    # EST-RO 6.7: the saved roteiro records the Estruturas its proposta cited, principal first (prod had [])
+    assert sg.rows("cs_roteiros", proposta_id=pid)[0]["estrutura_ids"] == [E1, E2]
 
     llm = Llm(HEADLINE_OK)
     asyncio.run(sg.rodar("fluxo.headline_do_roteiro", llm))
@@ -784,3 +792,14 @@ def test_postcreate_aceita_o_formato_do_card_com_reel_por_padrao():
     with pytest.raises(ValueError):
         PostCreate(marca_id=MARCA, titulo="x", formato="reels")
 
+
+
+def test_o_perfil_da_marca_lido_pelo_job_da_headline_e_o_da_propria_org(sg):
+    """Security (P3): the brand profile is read by marca AND org -- a row of another org never reaches the prompt."""
+    sg.db.from_("cs_marca_perfil").insert({"marca_id": MARCA, "org_id": "outra-org", "bio": "BIO DE OUTRA ORG"}).execute()
+    sg.db.from_("cs_marca_perfil").insert({"marca_id": MARCA, "org_id": TEST_ORG_ID, "bio": "Bio da própria org"}).execute()
+    cid, pid = _proposta(sg, tipo="roteiro")
+    assert sg.escolher(cid, pid).status_code == 202
+    llm = Llm(HEADLINE_OK)
+    asyncio.run(sg.rodar("fluxo.headline_do_roteiro", llm))
+    assert "BIO DE OUTRA ORG" not in llm.users[0] and "Bio da própria org" in llm.users[0]

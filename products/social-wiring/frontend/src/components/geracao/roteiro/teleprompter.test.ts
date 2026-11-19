@@ -27,6 +27,17 @@ describe("roteiroParaTeleprompter", () => {
     expect(roteiroParaTeleprompter(md)).toBe("Isso não é drama, é luto.\n\numa coisa não anula a outra");
   });
 
+  it("drops the plain (Beat) labels of a chat reels script, on their own line or leading a spoken line", () => {
+    const md = "(Gancho)\nVocê sabia que 9 em cada 10 erram?\n\n(Virada) Hoje eu te mostro o caminho.\n**(CTA)** Salva esse vídeo.";
+    expect(roteiroParaTeleprompter(md)).toBe(
+      "Você sabia que 9 em cada 10 erram?\n\nHoje eu te mostro o caminho.\nSalva esse vídeo.",
+    );
+  });
+
+  it("keeps parentheses in the middle of a spoken line", () => {
+    expect(roteiroParaTeleprompter("Isso dura (em média) oito horas.")).toBe("Isso dura (em média) oito horas.");
+  });
+
   it("keeps [placeholders] and normalizes CRLF", () => {
     expect(roteiroParaTeleprompter("## Valor\r\nFale com [nome da amiga] hoje.\r\n")).toBe("Fale com [nome da amiga] hoje.");
   });
