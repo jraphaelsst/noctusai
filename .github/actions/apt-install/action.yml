@@ -141,6 +141,16 @@ runs:
         echo "::error::apt install of [$PKGS] FAILED on every mirror (last: $MIRROR) - CI infra, not the code under test"
         exit 1
 
+    - name: Hand the .deb cache back to the runner user (tar must read root-written files)
+      if: success() && inputs.packages != '' && steps.debs.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        DEBS: ${{ steps.key.outputs.debs }}
+      run: |
+        sudo rm -rf "$DEBS/lock" "$DEBS/partial"
+        sudo chown -R "$(id -u):$(id -g)" "$DEBS"
+        echo "::notice::apt .deb cache to save: $(ls "$DEBS" | wc -l) file(s), $(du -sh "$DEBS" | cut -f1)"
+
     - name: Save .deb cache
       if: success() && inputs.packages != '' && steps.debs.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
