@@ -1,7 +1,13 @@
 # social-wiring — applied-migration state
 
-> **Why this file exists.** This repo has **no applied-migrations ledger**, and the
-> migration file headers have been wrong *in both directions*: `048` and `050` both
+> **Source of truth.** `../migrations-applied.json` (the applied ledger) is authoritative for
+> which migration files are applied. The `## NNN — … — [NOT] APPLIED` status on each heading
+> below is **written by** `noctus.dev.record_applied_migrations` (same commit as the ledger) and
+> **checked by** keeper `check_applied_md_ledger_parity` — do not hand-edit a status; record the
+> migration instead. Numbers below the ledger's first entry (255) predate it.
+>
+> **Why this file exists.** Before that ledger existed, the
+> migration file headers were wrong *in both directions*: `048` and `050` both
 > carried "not applied" notes long after they were applied, and a 2026-08-18 audit
 > could only infer their state from commit messages. A header is written once, at
 > authoring time, and nothing updates it when the migration actually runs — so it
