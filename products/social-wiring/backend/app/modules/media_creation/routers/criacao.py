@@ -75,10 +75,12 @@ def _org(auth) -> str:
     return str(coerce_org_uuid(auth[2]))
 
 
-def _raise(exc: Exception):
+def raise_coded(exc: Exception):
+    """The ONE mapping of a criação/Esteira coded refusal to its HTTP body (``{code, detail, ...}``); shared with the
+    Esteira router so the shape cannot drift between the two."""
     if isinstance(exc, CriacaoError):
-        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "detail": exc.detail}) from exc
-    raise HTTPException(status_code=exc.status, detail=exc.detail) from exc  # EsteiraError: already {code, detail, ...}
+        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "detail": exc.detail}) from exc  # detail-safe: CriacaoError code/detail are fixed pt-BR refusals authored in criacao_service, never exception text
+    raise HTTPException(status_code=exc.status, detail=exc.detail) from exc  # detail-safe: EsteiraError.detail is the domain-authored {code, detail, ...} dict built by coded(), never exception text
 
 
 def _uuid_ou_404(valor: str) -> str:
@@ -99,7 +101,7 @@ async def iniciar_criacao(
     try:
         out = await svc.enfileirar(post_id, org_id=_org(auth), ator_id=str(auth[0].id), passo=body.passo)
     except (CriacaoError, EsteiraError) as exc:
-        _raise(exc)
+        raise_coded(exc)
     return success_response(out)
 
 

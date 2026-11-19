@@ -50,7 +50,7 @@ from app.modules.media_creation.schemas.esteira import (
     RoteiroBind,
 )
 from app.modules.media_creation.services import headline_aprovacao as hl_aprov
-from app.modules.media_creation.routers.criacao import get_criacao_service
+from app.modules.media_creation.routers.criacao import get_criacao_service, raise_coded
 from app.modules.media_creation.services.criacao_mover import CriacaoMover
 from app.modules.media_creation.services.criacao_service import PASSO_PADRAO_REPROVA, CriacaoError, CriacaoService
 from app.modules.media_creation.services.esteira_service import LIMITE_PADRAO, EsteiraError, EsteiraService
@@ -93,7 +93,7 @@ def _raise(exc: EsteiraError):
     raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
 
 
-def _raise_aprovacao(exc: hl_aprov.AprovacaoHeadlineError):
+def _raise_aprovacao(exc: hl_aprov.AprovacaoHeadlineError | AprovacaoRoteiroError):
     """The approvals refusal as the Esteira's coded shape (``code`` + pt-BR ``detail``, never exception text)."""
     raise HTTPException(status_code=exc.status, detail={"code": exc.codigo, "detail": exc.mensagem}) from exc
 
@@ -358,16 +358,16 @@ def decidir_aprovacao(
                 else:
                     approvals.reject(_org(auth), "roteiro", str(row["roteiro_id"]), versao, actor_id=user, motivo=body.motivo)
             except ApprovalError as exc:
-                raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "detail": exc.message}) from exc
+                raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "detail": exc.message}) from exc  # detail-safe: ApprovalError code/message are fixed pt-BR refusals from the seed approvals organ, never exception text
         return success_response(_svc(auth, db).detalhe(post_id))
     except EsteiraError as exc:
         _raise(exc)
     except CriacaoError as exc:
-        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "detail": exc.detail}) from exc
+        raise_coded(exc)
     except hl_aprov.AprovacaoHeadlineError as exc:
         _raise_aprovacao(exc)
     except AprovacaoRoteiroError as exc:
-        raise HTTPException(status_code=exc.status, detail={"code": exc.codigo, "detail": exc.mensagem}) from exc
+        _raise_aprovacao(exc)
 
 
 # ── 6. criação (the system mover's human-triggered edges) ────────────────────
@@ -387,7 +387,7 @@ async def iniciar_criacao(
     except EsteiraError as exc:
         _raise(exc)
     except CriacaoError as exc:
-        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "detail": exc.detail}) from exc
+        raise_coded(exc)
 
 
 @router.post("/posts/{post_id}/midia/aprovar")
@@ -416,7 +416,7 @@ async def reprovar_midia(
     except EsteiraError as exc:
         _raise(exc)
     except CriacaoError as exc:
-        raise HTTPException(status_code=exc.status, detail={"code": exc.code, "detail": exc.detail}) from exc
+        raise_coded(exc)
 
 
 # ── 7. live stream (SSE, tier org) ───────────────────────────────────────────
