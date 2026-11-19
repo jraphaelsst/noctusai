@@ -98,7 +98,7 @@ def _fluxo_svc(
         def roteiros(db_: Any, org: str, usuario: str) -> RoteiroService:
             return RoteiroService(db_, org, usuario, cfg=cfg, jobs=jobs, ia_check=ia_check, approvals=approvals)
 
-        continuacao = FluxoContinuacao(db, str(org_id), str(user.id), jobs=jobs, roteiros=roteiros)
+        continuacao = FluxoContinuacao(db, str(org_id), str(user.id), jobs=jobs, roteiros=roteiros, approvals=approvals)
     fluxo = FluxoService(
         db, str(org_id), str(user.id), cfg=cfg, ia_check=ia_check, orcamento=orcamento, continuacao=continuacao,
     )
