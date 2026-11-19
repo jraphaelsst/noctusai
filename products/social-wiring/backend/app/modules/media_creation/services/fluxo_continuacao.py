@@ -24,6 +24,7 @@ from typing import Any, Callable, Optional
 
 from fastapi.concurrency import run_in_threadpool
 
+from noctusai_lib.domain.approvals import ApprovalService
 from noctusai_lib.domain.jobs import JobRepository
 from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
@@ -34,6 +35,7 @@ from app.modules.media_creation.schemas.roteiros import RoteiroCreate
 from app.modules.media_creation.services.esteira_service import EsteiraError, EsteiraService
 from app.modules.media_creation.services.post_ref import post_refs
 from app.modules.media_creation.services.publicacao_service import PublicacaoService
+from app.modules.media_creation.services.roteiro_aprovacao import NOTA_GERADO, SUBJECT_KIND, make_approvals
 from app.modules.media_creation.services.roteiro_service import RoteiroError, RoteiroService
 
 logger = logging.getLogger(__name__)
@@ -78,11 +80,20 @@ def chave_headline(proposta_id: str, tentativa: int) -> str:
 class SagaFluxo:
     """The step functions, scoped to one org and the user who chose the proposta (``escolhida_por``)."""
 
-    def __init__(self, db: Any, org_id: str, user_id: str, *, jobs: Optional[JobRepository]) -> None:
+    def __init__(
+        self, db: Any, org_id: str, user_id: str, *, jobs: Optional[JobRepository], approvals: Optional[ApprovalService] = None,
+    ) -> None:
         self.db = db
         self.org_id = org_id
         self.user_id = user_id
         self.jobs = jobs
+        self._approvals = approvals
+
+    @property
+    def approvals(self) -> ApprovalService:
+        if self._approvals is None:
+            self._approvals = make_approvals(self.db)
+        return self._approvals
 
     # ── reads ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -238,7 +249,23 @@ class SagaFluxo:
 
     # ── 5-7 together (both directions once the roteiro and the headline exist) ──────────────────────
 
+    def aprovar_roteiro_escolhido(self, proposta: dict[str, Any], roteiro: dict[str, Any]) -> None:
+        """Roteiro-first: picking the roteiro IS its approval (owner 2026-11-19) -- an ``approved`` event for the
+        CURRENT versao, actor = ``escolhida_por``, through the approvals organ. Headline-first never reaches the write
+        (the AI wrote a roteiro the user has not read; it is approved by its own button). Idempotent: a versao already
+        decided (a retried step, or a user's earlier approve/reject) is left alone, so one pick = one event."""
+        if _tipo(proposta) != "roteiro" or roteiro.get("status") != "completo":
+            return
+        rid, versao = str(roteiro["id"]), int(roteiro.get("versao") or 1)
+        actor = str(proposta.get("escolhida_por") or self.user_id) or None
+        estado = self.approvals.state(self.org_id, SUBJECT_KIND, rid)
+        if estado.status in ("approved", "rejected") and estado.versao == versao:
+            return
+        self.approvals.submit(self.org_id, SUBJECT_KIND, rid, versao, actor_id=None, note=NOTA_GERADO)
+        self.approvals.approve(self.org_id, SUBJECT_KIND, rid, versao, actor_id=actor, note="roteiro_escolhido")
+
     async def concluir(self, proposta: dict[str, Any], roteiro: dict[str, Any]) -> None:
+        await run_in_threadpool(self.aprovar_roteiro_escolhido, proposta, roteiro)
         post_id = await run_in_threadpool(self.passo_card, proposta, roteiro)
         if post_id is None:
             return
@@ -264,8 +291,11 @@ class SagaFluxo:
 class FluxoContinuacao(SagaFluxo):
     """``FluxoService.continuacao``: ``await continuacao(proposta)`` after the pre-flight passed."""
 
-    def __init__(self, db: Any, org_id: str, user_id: str, *, jobs: Optional[JobRepository], roteiros: RoteiroFactory) -> None:
-        super().__init__(db, org_id, user_id, jobs=jobs)
+    def __init__(
+        self, db: Any, org_id: str, user_id: str, *, jobs: Optional[JobRepository], roteiros: RoteiroFactory,
+        approvals: Optional[ApprovalService] = None,
+    ) -> None:
+        super().__init__(db, org_id, user_id, jobs=jobs, approvals=approvals)
         self.roteiros = roteiros
 
     async def __call__(self, proposta: dict[str, Any]) -> None:
