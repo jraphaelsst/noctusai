@@ -86,7 +86,7 @@ def test_models_allowlist_includes_haiku_as_the_cheapest_fastest_option():
     """Migration 015 widens `agent_personas.model`'s CHECK to add
     `claude-haiku-4-5` alongside opus-5/sonnet-5 — this tuple is the store's
     single source of truth for that allowlist (see MODELS's own docstring)."""
-    assert MODELS == ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
+    assert MODELS == ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-5-5")
 
 
 def test_create_version_accepts_haiku_model(store):

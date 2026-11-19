@@ -23,7 +23,10 @@ import type { Prontidao } from "./types-prontidao";
 
 // ── Enumerations (contract §B1 CHECKs / §A10 allowlist) ───────────────────────
 
-export const STUDIO_MODELS = ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"] as const;
+// NOC-REMEDIATE[agents-model-list-fe-duplication]: STUDIO_MODELS / EVAL_RUN_MODELS (types-ke.ts) / PERSONA_MODELS (usePersona.ts)
+// + the label maps in PersonaSecao / SettingsTab / EvalsTab are hand-synced mirrors of backend `app.studio.models.ANTHROPIC_MODELS`;
+// derive them from a served models endpoint (the backend now has ONE source) — 2026-11-19
+export const STUDIO_MODELS =["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5", "claude-haiku-5-5"] as const;
 export const OPENAI_STUDIO_MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const;
 export type StudioModel = (typeof STUDIO_MODELS)[number] | (typeof OPENAI_STUDIO_MODELS)[number];
 

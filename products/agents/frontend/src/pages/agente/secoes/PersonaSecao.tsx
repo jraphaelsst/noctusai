@@ -37,6 +37,7 @@ const MODEL_LABELS: Record<string, string> = {
   "claude-opus-5": "Opus 5",
   "claude-sonnet-5": "Sonnet 5",
   "claude-haiku-4-5": "Haiku 4.5 — mais rápido e barato",
+  "claude-haiku-5-5": "Haiku 5.5 — rápido e barato",
 };
 
 // Defaults for the very first persona (no row yet, contract §E.2 404 →

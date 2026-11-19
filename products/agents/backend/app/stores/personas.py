@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 
 from app.stores._util import utcnow
 from app.stores.errors import NotFound
+from app.studio.models import ANTHROPIC_MODELS
 
 __all__ = [
     "MODELS",
@@ -43,7 +44,7 @@ _TABLE = "agent_personas"
 #: Lais A1: deliberately NOT provider-keyed — a persona is Bia-academia's,
 #: which only ever runs on the Claude SDK. The provider-keyed allowlist
 #: (migration 024) is `app.stores.studio_definitions.MODELS_BY_PROVIDER`.
-MODELS = ("claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5")
+MODELS = ANTHROPIC_MODELS
 #: Contract §E.1 `effort` CHECK.
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
