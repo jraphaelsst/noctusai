@@ -10,11 +10,12 @@ from __future__ import annotations
 from typing import Optional, Sequence
 
 from app.modules.media_creation.prompts.chat_headline import REGRAS_MATERIAL
+from app.modules.media_creation.saida_ia import MAX_HEADLINE_PALAVRAS
 from app.modules.media_creation.services.chat_contexto import bloco
 
 PROMPT_VERSAO = "headline-do-roteiro-v1-draft"
 
-MAX_PALAVRAS = 12
+MAX_PALAVRAS = MAX_HEADLINE_PALAVRAS  # one derivation: the guard that judges the output
 MAX_ROTEIRO_CHARS = 12_000
 MAX_CEREBRO_CHARS = 6_000
 MAX_CEREBROS = 5

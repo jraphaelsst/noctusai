@@ -13879,6 +13879,72 @@ _SW_367_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — social_wiring CoreStudio chat hardening (migration 370, 2026-11-19): the `mensagem_enviada` ledger row every
+# user chat message writes in the same INSERT (the daily cap's source, survives conversation deletion), its one-per-
+# message index, the widened tipo vocabulary and `cs_chat_proposta_salvar_roteiro` writing `cs_roteiros.estrutura_ids`.
+# Same self-provisioned fixture as the 352 probes; gated on 370 being applied.
+# ---------------------------------------------------------------------------
+
+_SW_370_MIGRATION = "370_cs_chat_hardening.sql"
+_SW370_USER = f"(SELECT user_id FROM {_SW352}.cs_chat_conversas WHERE id = v_conv)"
+
+
+def _sw370_probe(**kw: Any) -> GuardProbe:
+    return _sw352_probe(migrations=(_SW_370_MIGRATION,), **kw)
+
+
+_SW_370_PROBES: tuple[GuardProbe, ...] = (
+    _sw370_probe(
+        probe_id="sw370_mensagem_enviada_registrada", guard_name="cs_chat_mensagem_enviada", kind="write_allowed",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_mensagens (org_id, conversa_id, role, conteudo) "
+                    "VALUES (v_org, v_conv, 'user', 'noc probe pedido') RETURNING id INTO v_he;"),
+        permitted_msg="a user chat message recorded exactly one mensagem_enviada ledger row, as it must",
+        after_ok=(
+            f"    IF (SELECT count(*) FROM {_SW352}.cs_fluxo_eventos WHERE tipo = 'mensagem_enviada' AND mensagem_id = v_he\n"
+            f"          AND org_id = v_org AND conversa_id = v_conv AND ator_id = {_SW370_USER}) <> 1 THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: the user message left no (or more than one) mensagem_enviada row';\n"
+            "    END IF;"
+        ),
+        rationale="The daily chat cap counts this ledger row, not cs_chat_mensagens: a conversation delete hard-deletes the "
+                  "messages and used to reset the cap (agents-security audit 2026-11-19).",
+    ),
+    _sw370_probe(
+        probe_id="sw370_mensagem_enviada_uma_por_mensagem", guard_name="cs_fluxo_eventos_mensagem_enviada_uq",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_mensagens (org_id, conversa_id, role, conteudo) "
+                    "VALUES (v_org, v_conv, 'user', 'noc probe pedido') RETURNING id INTO v_he;\n"
+                    f"    INSERT INTO {_SW352}.cs_fluxo_eventos (org_id, marca_id, conversa_id, mensagem_id, tipo) "
+                    "VALUES (v_org, v_marca, v_conv, v_he, 'mensagem_enviada');"),
+        permitted_msg="a second mensagem_enviada row for the same message was stored",
+        rationale="One ledger row per sent message: a duplicate would double-count the cap and the messages-sent metric.",
+    ),
+    _sw370_probe(
+        probe_id="sw370_fluxo_eventos_tipos_allowed", guard_name="cs_fluxo_eventos_tipo_check", kind="write_allowed",
+        statements=(f"    INSERT INTO {_SW352}.cs_fluxo_eventos (org_id, marca_id, conversa_id, tipo, contagem) VALUES "
+                    "(v_org, v_marca, v_conv, 'headline_invalida', 2), (v_org, v_marca, v_conv, 'publicacao_invalida', 1);"),
+        permitted_msg="headline_invalida (and the 367 vocabulary) was recorded, as it must",
+        rationale="The unsafe-headline rate per reply is counted from headline_invalida; 370 restates the 367 list whole.",
+    ),
+    _sw370_probe(
+        probe_id="sw370_salvar_roteiro_grava_estruturas", guard_name="cs_chat_proposta_salvar_roteiro", kind="write_allowed",
+        statements=(f"    INSERT INTO {_SW352}.cs_chat_propostas (org_id, marca_id, conversa_id, mensagem_id, ordem, texto, tipo, titulo, formato)\n"
+                    "    VALUES (v_org, v_marca, v_conv, v_msg2, 1, 'Fala um.', 'roteiro', 'noc probe', 'reels') RETURNING id INTO v_he;\n"
+                    f"    INSERT INTO {_SW352}.cs_chat_proposta_estruturas (proposta_id, estrutura_id, ordem, principal)\n"
+                    "    VALUES (v_he, v_est2, 2, false), (v_he, v_est, 1, true);\n"
+                    f"    PERFORM {_SW352}.cs_chat_proposta_reivindicar(v_he, v_org, v_conv, {_SW370_USER}, 60);\n"
+                    f"    PERFORM {_SW352}.cs_chat_proposta_salvar_roteiro(v_he, v_org, {_SW370_USER});"),
+        permitted_msg="the roteiro saved from a roteiro proposta records its cited Estruturas, principal first",
+        after_ok=(
+            f"    IF (SELECT estrutura_ids FROM {_SW352}.cs_roteiros WHERE proposta_id = v_he) IS DISTINCT FROM ARRAY[v_est, v_est2] THEN\n"
+            "      RAISE EXCEPTION 'NOC_PROBE:blocked: cs_roteiros.estrutura_ids is not the cited Estruturas (principal first)';\n"
+            "    END IF;"
+        ),
+        rationale="EST-RO 6.7: roteiros per Estrutura is counted from cs_roteiros.estrutura_ids; prod saved {} on the "
+                  "roteiro-first path (2026-11-19).",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — social_wiring per-org daily generation limits (migration 361, geracao-contract.md §9.4.1). The
 # append-only change log `cs_limite_geracao_eventos` (who / old / new per limit change). Self-provisioning: each probe
 # builds its OWN org and one `limite_definido` row inside the rolled-back transaction.
@@ -14309,6 +14375,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_361_PROBES,
     *_SW_362_PROBES,
     *_SW_367_PROBES,
+    *_SW_370_PROBES,
     *_SW_JULIA_ENVIO_PROBES,
     *_SW_JULIA_CAPTACAO_PROBES,
     *_SW_JULIA_CREDITO_PROBES,

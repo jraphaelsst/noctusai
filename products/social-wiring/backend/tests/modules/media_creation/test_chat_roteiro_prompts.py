@@ -9,7 +9,7 @@ P = cu.SYSTEM_PROMPT
 
 
 def test_versoes():
-    assert cu.PROMPT_VERSAO == "chat-unificado-v2-draft"
+    assert cu.PROMPT_VERSAO == "chat-unificado-v3-draft"
     assert hr.PROMPT_VERSAO == "headline-do-roteiro-v1-draft"
 
 
@@ -61,3 +61,27 @@ def test_builder_sem_formula_e_limites():
 def test_saida_pedida():
     s = " ".join(hr.SYSTEM_PROMPT.split())
     assert "12 palavras" in s and "sem colchetes" in s and "sem aspas" in s
+
+
+# ── prod 2026-11-19: what the assistant may say about its own material, and links ────────────────────────
+
+
+def test_nunca_expoe_nomes_internos_do_material_ao_usuario():
+    assert "Nunca mostre ao usuário os nomes internos" in P
+    for interno in ("perfil_da_marca", "cerebro", "material", "este turno"):
+        assert f"`{interno}`" in P  # named once, in the prohibition itself
+
+
+def test_perfil_e_cerebros_sao_dados_do_app_nunca_pedidos_no_chat():
+    assert "Perfil da marca" in P and "Configurações > Meu Perfil" in P
+    assert "Segundo Cérebro > Cérebros" in P
+    assert "Nunca peça para o usuário colar" in P
+    assert "diga o que falta e peça" not in P  # the old fence wording asked the user to paste the brand data
+
+
+def test_nunca_emite_imagens_links_ou_urls_que_o_usuario_nao_digitou():
+    assert "Nunca escreva imagens, links ou URLs" in P and "a menos que o próprio usuário tenha digitado" in P
+
+
+def test_o_material_chega_no_turno_do_usuario():
+    assert "Abaixo da conversa" not in P and "Na mensagem do usuário" in P

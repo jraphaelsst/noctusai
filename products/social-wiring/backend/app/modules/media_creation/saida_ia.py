@@ -64,6 +64,8 @@ _PADROES: list[tuple[str, re.Pattern[str]]] = [
     ("url", re.compile(r"(?:https?|ftp|file|data|javascript)\s*:|\bwww\.|"
                        r"\b[a-z0-9-]+\.(?:com|net|org|io|app|ly|gl|me|co|dev|ai|xyz|link|site)(?:\.br)?\b|"
                        r"\b[a-z0-9-]+\.com\.br\b", re.I)),
+    # a markdown image (remote OR relative): rendering it fetches a URL the model chose -- an exfiltration channel
+    ("imagem", re.compile(r"!\[[^\]\n]*\]\s*\(", re.I)),
     ("caminho de storage", re.compile(
         r"\b(?:s3|gs|supabase)://|/storage/v1|\bstorage/[\w.-]+/|\bbucket[\w-]*/|"
         r"(?<![\w])(?:/(?:Users|home|etc|var|tmp|opt|mnt)/|[A-Za-z]:\\|\.\./)", re.I)),
@@ -87,6 +89,37 @@ def detectar_proibido(texto: str) -> Optional[str]:
         if rx.search(texto):
             return nome
     return None
+
+
+#: A remote markdown image ``![alt](http://...)`` / ``![alt](//host/...)``: removed from chat prose before it is stored
+#: (the client would fetch it: a zero-click exfiltration channel for whatever the model put in the query string).
+_IMAGEM_REMOTA = re.compile(r"!\[[^\]\n]*\]\(\s*<?(?:[a-z][a-z0-9+.-]*:|//)[^)\n]*\)", re.I)
+
+
+def remover_imagens_remotas(texto: str) -> str:
+    """``texto`` without remote markdown images (each replaced by nothing). Prose only: the parsed artifacts (headlines,
+    roteiros, publicações) are REFUSED on any image, never cleaned (see :func:`detectar_proibido`)."""
+    return _IMAGEM_REMOTA.sub("", texto or "")
+
+
+#: A headline is one short line (``prompts/headline_do_roteiro.MAX_PALAVRAS`` re-exports this).
+MAX_HEADLINE_PALAVRAS = 12
+MAX_HEADLINE_CHARS = 1000
+_PLACEHOLDER = re.compile(r"\[[^\]]+\]")
+
+
+def validar_headline(texto: Any) -> Optional[str]:
+    """The single-headline guard (chat proposals and the roteiro-first job): one line, <= 12 words, <= 1000 chars, no
+    ``[...]`` placeholder, nothing :func:`detectar_proibido` forbids (URL / domain / image / storage path / secret /
+    injection echo). Returns the headline (outer quotes stripped) or ``None`` = invalid (never trimmed or cleaned)."""
+    if not isinstance(texto, str):
+        return None
+    t = texto.strip().strip('"“”').strip()
+    if not t or "\n" in t or len(t) > MAX_HEADLINE_CHARS or len(t.split()) > MAX_HEADLINE_PALAVRAS:
+        return None
+    if _PLACEHOLDER.search(t) or detectar_proibido(t) is not None:
+        return None
+    return t
 
 
 def _texto_seguro(valor: Any, campo: str, *, maximo: int, obrigatorio: bool = True) -> str:
@@ -327,6 +360,7 @@ def extrair_legenda_do_post(texto: str) -> Optional[str]:
 
 __all__ = [
     "CAMPOS_ROTEIRO", "CampoRoteiro", "LIMITES_REDE", "SaidaIaFalha", "detectar_proibido",
+    "MAX_HEADLINE_CHARS", "MAX_HEADLINE_PALAVRAS", "remover_imagens_remotas", "validar_headline",
     "validar_legenda", "validar_roteiro", "validar_roteiro_formato", "extrair_legenda_do_post",
     "FORMATOS_ROTEIRO", "HEADLINE_AUSENTE",
     "FORMATO_INVALIDO", "CAMPO_AUSENTE", "LIMITE_EXCEDIDO", "CONTEUDO_PROIBIDO",

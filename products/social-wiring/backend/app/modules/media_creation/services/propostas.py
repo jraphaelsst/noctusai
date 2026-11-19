@@ -12,12 +12,15 @@ What it enforces (the model is never trusted):
   (``formato_misturado``); at most 3 codes per proposta (extras count as ``citacao_rejeitada``);
 - a headline left with NO valid code is not a proposta (an uncited numbered line counts as ``citacao_rejeitada``);
 - a headline that still matches ``\\[[^\\]]+\\]`` is dropped (``placeholder_remanescente``);
+- a headline the untrusted-output guard refuses (``saida_ia.validar_headline``: URL, domain, markdown image, secret,
+  injection echo, > 12 words, > 1000 chars) is dropped (``headline_invalida``);
 - at most 10 propostas; the ``### Estruturas usadas`` attribution list is never read as headlines.
 
 Roteiro-first (contract 16.3 / 16.4): the same pass also reads COMPLETE scripts. A section headed EXACTLY
 ``### Roteiro <n>: <título curto> (estrutura #N [+ #M [+ #K]])`` is one roteiro option; its body runs until the next
-markdown header -- except a ``post`` script's own ``### Texto na tela`` / ``### Legenda`` -- and a trailing horizontal
-rule (``---``) is not part of it. Citations are validated exactly like a headline's; the body is validated by the
+markdown header -- except a ``post`` script's own ``### Texto na tela`` / ``### Legenda`` -- or the next horizontal rule
+(``---``), which is not part of it; a bold beat label ``**(Gancho)**`` is stored as ``(Gancho)``. A title or body the
+untrusted-output guard refuses (URL, domain, markdown image, ...) drops the option as ``roteiro_invalido``. Citations are validated exactly like a headline's; the body is validated by the
 EST-FMT grammar of the principal Estrutura's formato (``saida_ia.validar_roteiro_formato``; ``reels`` by
 ``saida_ia.validar_roteiro``, its only grammar) -- a refusal, a title outside 1..120 chars and every option past the 5th
 drop the option and count ``roteiro_invalido``; a leftover ``[...]`` counts ``placeholder_remanescente``. Lines inside a
@@ -37,7 +40,13 @@ from uuid import UUID
 
 from noctusai_lib.primitives.accents import fold_accents
 
-from app.modules.media_creation.saida_ia import SaidaIaFalha, validar_roteiro, validar_roteiro_formato
+from app.modules.media_creation.saida_ia import (
+    SaidaIaFalha,
+    detectar_proibido,
+    validar_headline,
+    validar_roteiro,
+    validar_roteiro_formato,
+)
 
 MAX_PROPOSTAS = 10
 MAX_ROTEIROS = 5
@@ -53,6 +62,9 @@ _TITULO_RE = re.compile(r"^\s*#{1,6}\s*(.*?)\s*#*\s*$")
 _ROTEIRO_RE = re.compile(r"^\s*###\s+roteiro\s+(\d+)\s*:\s*(.*\S)\s*$", re.IGNORECASE)
 _CABECALHO_RE = re.compile(r"^\s*#{1,6}\s+(.*?)\s*#*\s*$")  # a real markdown header (``#tag`` is not one)
 _REGRA_RE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
+#: a bold beat label on a reels line (``**(Gancho)**`` / ``__(CTA)__``): stored as the plain ``(Gancho)`` the
+#: teleprompter skips and the editor shows as a label -- the bold is the model's decoration, not the script
+_BEAT_NEGRITO_RE = re.compile(r"(\*\*|__)\(([^()\n]{1,60})\)\1")
 #: the headers a ``post`` script carries INSIDE its body (``prompts/roteiro_formatos.py``): never a section end
 _TITULOS_DO_CORPO = frozenset({"texto na tela", "legenda"})
 
@@ -103,7 +115,7 @@ class ResultadoPropostas:
 
 
 #: The rejection counters the parser reports (each a ``cs_fluxo_eventos.tipo``).
-EVENTOS = ("citacao_rejeitada", "formato_misturado", "placeholder_remanescente", "roteiro_invalido")
+EVENTOS = ("citacao_rejeitada", "formato_misturado", "placeholder_remanescente", "roteiro_invalido", "headline_invalida")
 
 
 def _tag_final(texto: str) -> tuple[str, str] | None:
@@ -182,6 +194,8 @@ def _secoes(texto: str) -> list[tuple[str, str | list[str]]]:
         titulo = _CABECALHO_RE.match(linha)
         if atual is not None and titulo and _sem_acento(titulo.group(1)) not in _TITULOS_DO_CORPO:
             atual = None  # any other header ends the script
+        elif atual is not None and _REGRA_RE.match(linha):
+            atual = None  # so does a horizontal rule: what follows it is the reply's prose (prod 2026-11-19)
         if atual is not None:
             atual.append(linha)
         else:
@@ -193,7 +207,7 @@ def _corpo(linhas: list[str]) -> str:
     fim = len(linhas)
     while fim and (not linhas[fim - 1].strip() or _REGRA_RE.match(linhas[fim - 1])):
         fim -= 1
-    return "\n".join(linhas[:fim]).strip()
+    return _BEAT_NEGRITO_RE.sub(r"(\2)", "\n".join(linhas[:fim]).strip())
 
 
 def extrair_propostas(texto: str, codigos_permitidos: Mapping[str, EstruturaCitavel]) -> ResultadoPropostas:
@@ -228,11 +242,12 @@ def extrair_propostas(texto: str, codigos_permitidos: Mapping[str, EstruturaCita
             if not validos:
                 continue
             corpo = _corpo(item[1:])
-            if _PLACEHOLDER_RE.search(corpo):
+            if detectar_proibido(corpo) is None and _PLACEHOLDER_RE.search(corpo):
                 conta("placeholder_remanescente")
                 continue
             formato = validos[0].formato
-            if not 1 <= len(titulo) <= MAX_TITULO or not _corpo_valido(formato, corpo):
+            if (not 1 <= len(titulo) <= MAX_TITULO or detectar_proibido(titulo) or detectar_proibido(corpo)
+                    or not _corpo_valido(formato, corpo)):
                 conta("roteiro_invalido")
                 continue
             aceitar(("roteiro", corpo.casefold()), headline=corpo, gatilho=None,
@@ -269,8 +284,11 @@ def extrair_propostas(texto: str, codigos_permitidos: Mapping[str, EstruturaCita
         validos = _citacoes_validas(_codigos(citacoes), codigos_permitidos, conta)
         if not validos:
             continue
-        if _PLACEHOLDER_RE.search(limpa):
+        if detectar_proibido(limpa) is None and _PLACEHOLDER_RE.search(limpa):  # ``![x](url)`` is unsafe, not a slot
             conta("placeholder_remanescente")
+            continue
+        if validar_headline(limpa) is None:  # URL / domain / image / secret / injection echo / > 12 words
+            conta("headline_invalida")
             continue
         antes = len(propostas)
         aceitar(("headline", limpa.casefold()), headline=limpa, gatilho=gatilho,

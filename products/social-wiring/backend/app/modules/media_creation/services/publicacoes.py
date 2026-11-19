@@ -29,9 +29,16 @@ from typing import Any, Optional, Sequence
 
 from noctusai_lib.primitives.accents import fold_accents
 
+from app.modules.media_creation.saida_ia import detectar_proibido
+
 HASHTAGS_EXATAS = 5
 MAX_LEGENDA = 2200
 MAX_COMENTARIO = 2200
+MAX_CTA = 2200
+#: the fields that get published or shown as the post's own text: none may carry a URL / domain / markdown image /
+#: secret / injection echo (the untrusted-output guard, ``saida_ia.detectar_proibido``). ``fontes`` is the one place a
+#: (verified) URL belongs.
+_CAMPOS_PUBLICADOS = ("legenda", "hashtags", "primeiro_comentario", "cta", "justificativa_do_cta", "objetivo_do_post")
 
 #: ``cs_posts.cta_objetivo`` (contract M-A) minus ``nenhum``, which is derived from the CTA itself.
 OBJETIVOS = ("alcance", "salvamentos", "conversa", "seguidores", "autoridade", "reflexao")
@@ -113,6 +120,10 @@ def _fontes(valor: str) -> tuple[dict[str, Any], ...]:
 
 
 def _validar(numero: int, campos: dict[str, str]) -> Optional[PublicacaoValidada]:
+    if any(detectar_proibido(campos.get(c, "")) for c in _CAMPOS_PUBLICADOS):
+        return None
+    if any(len(campos.get(c, "").strip()) > MAX_CTA for c in ("cta", "justificativa_do_cta")):
+        return None
     legenda = campos.get("legenda", "").strip()
     if not legenda or len(legenda) > MAX_LEGENDA:
         return None

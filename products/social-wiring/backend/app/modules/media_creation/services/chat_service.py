@@ -49,6 +49,7 @@ from noctusai_lib.integrations.persistence.table_reads import PAGE_SIZE, batched
 from app.config import settings
 from app.modules.media_creation.limites_geracao import limite_geracao
 from app.modules.media_creation.prompts import chat_unificado
+from app.modules.media_creation.saida_ia import remover_imagens_remotas
 from app.modules.media_creation.services.chat_contexto import (
     ChatContexto,
     ChatError,
@@ -76,6 +77,8 @@ MENSAGENS = "cs_chat_mensagens"
 MEMORIAS = "cs_memorias"
 MARCAS = "marcas"
 FLUXO_EVENTOS = "cs_fluxo_eventos"
+#: The ledger row every user chat message records (trigger ``cs_chat_mensagem_enviada``): the daily caps' source.
+EVENTO_MENSAGEM_ENVIADA = "mensagem_enviada"
 
 TITULO_PADRAO = "Nova conversa"
 MAX_TITULO_AUTO = 60
@@ -111,6 +114,7 @@ AGENTE_UNIFICADO = "unificado"
 #: The fluxo event kinds the citation parser may report (``cs_fluxo_eventos.tipo``); anything else is a parser bug.
 EVENTOS_DO_PARSER = frozenset({
     "citacao_rejeitada", "formato_misturado", "placeholder_remanescente", "atribuicao_ausente", "roteiro_invalido",
+    "headline_invalida",
 })
 #: ``(texto, codigos_permitidos) -> ResultadoPropostas`` -- DI seam over ``services/propostas.extrair_propostas``.
 ExtrairFn = Callable[[str, Mapping[str, Any]], Any]
@@ -205,9 +209,17 @@ def mensagem_out(
     }
 
 
-def _sistema(montado: ContextoMontado) -> str:
-    prompt = chat_unificado.SYSTEM_PROMPT
-    return f"{prompt}\n\n{montado.texto}" if montado.texto else prompt
+def _sistema() -> str:
+    """The system message: the STATIC unified prompt (a cacheable prefix). Never the material -- see :func:`_turno`."""
+    return chat_unificado.SYSTEM_PROMPT
+
+
+def _turno(montado: ContextoMontado, conteudo: str) -> str:
+    """The user turn the model receives: the fenced ``<material>`` blocks, then what the user typed. The material carries
+    third-party text (transcripts, captions, cérebros): untrusted, so it rides the user role and never gains system
+    authority (agents-security audit 2026-11-19; same shape as ``prompts/headline_do_roteiro.py``). Persisted history keeps
+    only what the user typed."""
+    return f"{montado.texto}\n\n{conteudo}" if montado.texto else conteudo
 
 
 def _agente_do_contexto(conversa: dict[str, Any]) -> str:
@@ -246,6 +258,9 @@ class Envio:
     extrair: ExtrairFn = extrair_propostas_padrao
     modo_estrutura: str = "auto"
     resolucao_perfis: Optional[dict[str, Any]] = None
+    #: The latest user turn as the model received it (material + what the user typed): re-sent unchanged by every
+    #: continuation round. Empty = the typed text alone (a Diretor turn).
+    turno: str = ""
     #: Which engine answers this turn: ``legado`` (the direct-model stream) or ``diretor`` (the agents product's Diretor de
     #: Criação, per-org switch ``chat_diretor_criacao``). Exactly one per turn; a failing Diretor never falls back.
     via: str = VIA_LEGADO
@@ -402,36 +417,24 @@ class ChatService:
         return max(int((liberar - agora).total_seconds()), 60)
 
     def checar_caps(self) -> None:
+        """The daily chat caps, counted on the append-only ``mensagem_enviada`` ledger rows (``cs_fluxo_eventos``), which the
+        ``cs_chat_mensagem_enviada`` trigger writes in the same INSERT as every user message (migration
+        ``cs_chat_hardening``). Never on ``cs_chat_mensagens``: deleting a conversation hard-deletes its messages, which
+        reset the count (agents-security audit 2026-11-19)."""
         agora = _agora()
         desde = _iso(agora - JANELA_CAP)
 
-        def paginas(montar):
+        def enviadas(montar) -> list[Optional[datetime]]:
             def page(start: int, end: int):
                 return montar().order("id").range(start, end).execute().data
-            return iter_paged_rows(page, page_size=PAGE_SIZE, label="cs_chat_mensagens")
+            return [_parse_ts(r["created_at"]) for r in iter_paged_rows(page, page_size=PAGE_SIZE, label="mensagem_enviada")]
 
-        # org-wide
-        org_msgs = [
-            _parse_ts(r["created_at"])
-            for r in paginas(lambda: self.db.table(MENSAGENS).select("id,created_at")
-                             .eq("org_id", self.org_id).eq("role", "user").gte("created_at", desde))
-        ]
-        # per user: through the user's conversations active inside the window
-        conv_ids = [
-            r["id"] for r in iter_paged_rows(
-                lambda s, e: self.db.table(CONVERSAS).select("id").eq("org_id", self.org_id)
-                .eq("user_id", self.user_id).gte("last_message_at", desde).order("id").range(s, e).execute().data,
-                page_size=PAGE_SIZE, label="cs_chat_conversas",
-            )
-        ]
-        user_msgs: list[datetime] = []
-        for lote in batched(conv_ids):
-            user_msgs += [
-                _parse_ts(r["created_at"])
-                for r in paginas(lambda lote=lote: self.db.table(MENSAGENS).select("id,created_at")
-                                 .eq("org_id", self.org_id).eq("role", "user").gte("created_at", desde)
-                                 .in_("conversa_id", lote))
-            ]
+        def base():
+            return (self.db.table(FLUXO_EVENTOS).select("id,created_at").eq("org_id", self.org_id)
+                    .eq("tipo", EVENTO_MENSAGEM_ENVIADA).gte("created_at", desde))
+
+        org_msgs = enviadas(base)
+        user_msgs = enviadas(lambda: base().eq("ator_id", self.user_id))
         user_msgs = [d for d in user_msgs if d]
         org_msgs = [d for d in org_msgs if d]
         limite_usuario = limite_geracao("chat_mensagens_dia_usuario", self.org_id, settings)
@@ -556,10 +559,11 @@ class ChatService:
                 resolucao_perfis=prep["montado"].resolucao.como_dict() if prep["montado"].resolucao is not None else None,
             )
         modelo = settings.geracao_llm_model
-        sistema = _sistema(prep["montado"])
+        sistema = _sistema()
+        turno = _turno(prep["montado"], conteudo)
         mensagens = build_conversation_messages(
             system_prompt=sistema,
-            history=prep["historico"] + [{"role": "user", "content": conteudo}],
+            history=prep["historico"] + [{"role": "user", "content": turno}],
             provider=PROVIDER,
         )
         outcome = StreamOutcome()
@@ -589,7 +593,7 @@ class ChatService:
             conversa=conversa, mensagens=prep["historico"], sistema=sistema, contexto=prep["montado"],
             mensagem_usuario_id=prep["msg_id"], referencias=prep["refs"], stream_fn=stream_fn,
             primeira=primeira, rodada=agen, outcome=outcome, modelo=modelo, extrair=extrair,
-            modo_estrutura=prep["montado"].modo_estrutura,
+            modo_estrutura=prep["montado"].modo_estrutura, turno=turno,
             resolucao_perfis=prep["montado"].resolucao.como_dict() if prep["montado"].resolucao is not None else None,
         )
 
@@ -597,6 +601,7 @@ class ChatService:
 
     def _salvar_resposta(self, envio: Envio, texto: str, status: str, truncada: bool) -> Optional[str]:
         """Sync on purpose: it also runs from ``finally`` on a client disconnect, where awaiting is unsafe."""
+        texto = remover_imagens_remotas(texto)
         try:
             row = self._gravar_mensagem(
                 envio.conversa["id"], "assistant", texto, status=status, truncada=truncada,
@@ -611,7 +616,9 @@ class ChatService:
     def _finalizar_resposta(self, envio: Envio, texto: str, truncada: bool) -> tuple[Optional[str], list[dict[str, Any]]]:
         """Save the completed answer. With Estrutura citations to validate: parse (server-side, single derivation) and write
         message + propostas + Estrutura links + events in ONE transaction (``cs_chat_resposta_gravar``). Returns
-        ``(mensagem_id, Proposta[])``. A text with no parsable headline is saved the plain way, ``propostas: []``."""
+        ``(mensagem_id, Proposta[])``. A text with no parsable headline is saved the plain way, ``propostas: []``.
+        Remote markdown images are removed from the text before anything is stored (a zero-click exfiltration channel)."""
+        texto = remover_imagens_remotas(texto)
         mapa = mapa_citavel(envio.contexto)
         if envio.via == VIA_DIRETOR:
             # the Director's codes come from its tools (the platform-wide library), not from this context's pool
@@ -738,7 +745,7 @@ class ChatService:
                     build_conversation_messages(
                         system_prompt=envio.sistema,
                         history=envio.mensagens + [
-                            {"role": "user", "content": conteudo},
+                            {"role": "user", "content": envio.turno or conteudo},
                             {"role": "assistant", "content": texto},
                             {"role": "user", "content": PEDIDO_CONTINUACAO},
                         ],
