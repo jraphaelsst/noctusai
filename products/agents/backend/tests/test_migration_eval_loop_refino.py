@@ -6,7 +6,6 @@ from pathlib import Path
 from noctusai_lib.testing.migrations import migration_sql
 
 from app.stores.studio_eval_refino import SupabaseRefinoStore  # noqa: F401  (the RPC the store calls is the one declared below)
-from app.studio.eval_loop_refino import EVENTOS_REFINO
 
 SQL = migration_sql(Path(__file__).resolve().parents[1], "eval_loop_refino")
 
@@ -18,7 +17,7 @@ def _lista(trecho: str) -> set[str]:
 def test_the_events_check_keeps_the_088_events_and_adds_exactly_the_three_refine_events():
     corpo = SQL[SQL.index("ADD CONSTRAINT eval_loop_eventos_evento_check"):SQL.index("-- 2 .")]
     eventos = _lista(corpo)
-    assert set(EVENTOS_REFINO) <= eventos
+    assert {"refinamento_proposto", "refinamento_recusado", "refinamento_avaliado"} <= eventos
     assert {"loop_iniciado", "rodada_aberta", "rodada_fechada", "rodada_com_erro", "run_com_erro", "preflight_recusado",
             "driver_aguardando", "driver_retomado", "loop_parado", "modo_alterado"} <= eventos
     assert len(eventos) == 13

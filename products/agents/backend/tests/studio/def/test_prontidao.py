@@ -22,7 +22,16 @@ from app.studio.eval_mecanismo import MecanismoGateRun, MecanismoRequisito
 from app.studio.models import CompiledPrompt, CompileWarning, GateRun
 from app.studio import prontidao as pr
 from app.studio.prontidao import AreaGeracao, Entrada, FerramentaLinha, PinSkill
-from app.routers.studio_agents_router import get_eval_store_dep
+from app.routers.studio_agents_router import get_eval_store_dep, get_loop_store_dep
+from app.stores.studio_eval_loops import FakeLoopStore
+from app.dependencies import get_auth_context
+from app.notifications import FakeNotificationSink
+from app.routers.studio_agents_router import get_loop_service_dep, get_refino_store_dep
+from app.routers.studio_eval_loops_router import router as loops_router
+from app.stores.studio_eval_consolidacao import FakeConsolidacaoStore
+from app.stores.studio_eval_refino import FakeRefinoStore
+from app.studio.eval_loop_service import EvalLoopService
+from noctusai_lib.api.auth.session import AuthContext
 from tests.julia_body import JULIA_BODY, com_pai
 from tests.routers.conftest import DEFAULT_ORG_ID, DEFAULT_USER_ID
 
@@ -247,7 +256,7 @@ class TestCompor:
         assert sev == sorted(sev, key=["bloqueante", "aviso", "ok"].index)
         assert pr.RECUSAS_PUBLICACAO == {
             "conteudo_incompleto", "compile_blocked", "mecanismo_reprovado", "eval_required", "qualificacao_indisponivel",
-            "numero_fallback_ausente", "catalogo_ausente"}
+            "numero_fallback_ausente", "catalogo_ausente", "refinamento_sem_revisao"}
 
 
 class TestFerramentasPorTipo:
@@ -473,6 +482,19 @@ def _cenario_padrao_ausente(studio):
     _passar_juiz(studio)
 
 
+def _cenario_refino_sem_revisao(studio):
+    """Green in every other way, but the eval-loop refine step edited this draft and no platform admin reviewed the edit."""
+    _cenario_verde(studio)
+    loops = FakeLoopStore()
+    studio.raw.app.dependency_overrides[get_loop_store_dep] = lambda: loops
+    agent = studio.store.get_agent(DEFAULT_ORG_ID, "novo")
+    draft = studio.store.get_draft(DEFAULT_ORG_ID, agent.id)
+    loop = loops.create_loop(DEFAULT_ORG_ID, agent.id, agente_chave="novo", suite="mecanismo", rodadas_planejadas=3, alvo=0.9, piso=0.8,
+                             orcamento_usd=5.0, started_by=DEFAULT_USER_ID, modo="automatico")
+    loops.registrar_evento(DEFAULT_ORG_ID, loop.id, "refinamento_proposto", rodada_seq=1, detalhe={
+        "version_id": str(draft.id), "alvo": {"tipo": "secao", "chave": "persona"}, "diff": {"antes": "a", "depois": "b"}})
+
+
 def _cenario_aviso_apenas(studio):
     """Everything advisory at once -- and the draft is still publishable."""
     _cenario_verde(studio)
@@ -498,6 +520,7 @@ CENARIOS = [
     ("padrao_sem_versao_publicada", _cenario_padrao_ausente, "qualificacao_indisponivel"),
     ("sem_numero_fallback", _cenario_sem_numero_fallback, "numero_fallback_ausente"),
     ("oferecer_opcoes_sem_catalogo", _cenario_sem_catalogo, "catalogo_ausente"),
+    ("refino_automatico_sem_revisao", _cenario_refino_sem_revisao, "refinamento_sem_revisao"),
     ("verde", _cenario_verde, None),
     ("verde_so_com_mecanismo", _cenario_verde_so_com_mecanismo, None),
     ("somente_avisos", _cenario_aviso_apenas, None),
@@ -650,3 +673,139 @@ class TestNumeroFallback:
     def test_the_internal_generator_needs_no_number(self):
         assert "numero_fallback_ausente" not in _codigos(pr.compor(_entrada(numero_fallback_definido=False, canonico_exigido=False)))
 
+
+# ── the eval-loop refine edit must be reviewed by a person before the draft can be published (red-team hardening, owner 2026-11-19) ──
+# Over the real Studio routes (publish, readiness, the review route) and the Fake stores: an unreviewed ``refinamento_proposto`` in the
+# draft is a BLOCKING readiness item and a publish 409 for every caller; the review is a platform-admin act (a product token is refused);
+# ``aceito`` and ``revertido`` clear the gate, and a revert restores the row through the compare-and-set path.
+
+ANTES = "Você ajuda o lead com calma."
+
+
+class MundoRefino:
+    """The ``plat`` studio plus a loop store that holds one refine edit (``refinamento_proposto``) written into the draft."""
+
+    def __init__(self, studio):
+        self.studio = studio
+        self.loops = FakeLoopStore()
+        self.refino = FakeRefinoStore(studio.store, self.loops)
+        app = studio.raw.app
+        if not any(getattr(r, "path", "").endswith("/refinamentos/{rodada}/revisao") for r in app.routes):
+            app.include_router(loops_router)
+        app.dependency_overrides[get_loop_store_dep] = lambda: self.loops
+        app.dependency_overrides[get_refino_store_dep] = lambda: self.refino
+        app.dependency_overrides[get_loop_service_dep] = lambda: EvalLoopService(
+            self.loops, FakeNotificationSink(admin_ids=["o"]), FakeConsolidacaoStore(studio.evals))
+        _cenario_verde(studio)
+        self.agent = studio.store.get_agent(DEFAULT_ORG_ID, "novo")
+        self.draft = studio.store.get_draft(DEFAULT_ORG_ID, self.agent.id)
+        self.loop = self.loops.create_loop(
+            DEFAULT_ORG_ID, self.agent.id, agente_chave="novo", suite="mecanismo", rodadas_planejadas=3, alvo=0.9, piso=0.8,
+            orcamento_usd=5.0, started_by=DEFAULT_USER_ID, modo="manual")
+
+    def secao(self) -> str:
+        return next(s.conteudo for s in self.studio.store.list_sections(DEFAULT_ORG_ID, self.draft.id) if s.chave == "persona")
+
+    def editar(self, *, version_id: UUID | None = None) -> None:
+        """The refine step's edit, as the ledger records it: the section now holds the text the event names as ``depois``."""
+        depois = self.secao()
+        self.loops.eventos.append({
+            "id": uuid4(), "org_id": DEFAULT_ORG_ID, "loop_id": self.loop.id, "evento": "refinamento_proposto", "run_id": None, "rodada_seq": 1,
+            "detalhe": {"version_id": str(version_id or self.draft.id), "alvo": {"tipo": "secao", "chave": "persona"},
+                        "diff": {"antes": ANTES, "depois": depois}}, "ator": None, "created_at": None})
+
+    def url(self, rodada: int = 1) -> str:
+        return f"{BASE}/novo/evals/loops/{self.loop.id}/refinamentos/{rodada}/revisao"
+
+    def publicar(self):
+        return self.studio.post(f"{BASE}/novo/draft/publish", json={})
+
+
+@pytest.fixture
+def mundo(plat):
+    return MundoRefino(plat)
+
+
+def test_without_an_unreviewed_edit_the_green_draft_publishes(mundo):
+    assert mundo.publicar().status_code == 200
+
+
+def test_an_unreviewed_edit_blocks_publish_for_everyone_and_shows_in_the_readiness_panel(mundo):
+    mundo.editar()
+    pronto = _get(mundo.studio).json()
+    item = next(i for i in pronto["itens"] if i["codigo"] == "refinamento_sem_revisao")
+    assert item["severidade"] == "bloqueante" and item["grupo"] == "seguranca" and item["recusa_publicacao"] == "refinamento_sem_revisao"
+    assert item["detalhe"]["edicoes"] == [{"loop_id": str(mundo.loop.id), "rodada": 1, "alvo": {"tipo": "secao", "chave": "persona"}}]
+    assert "Aceitar ou Reverter" in item["acao_sugerida"] and pronto["pronto_para_publicar"] is False
+    resp = mundo.publicar()
+    assert resp.status_code == 409 and resp.json()["code"] == "refinamento_sem_revisao", resp.text
+    assert any(i["codigo"] == "refinamento_sem_revisao" for i in resp.json()["prontidao"])
+    # an override reason (a human's judge-gate override) does not clear it either
+    forced = mundo.studio.post(f"{BASE}/novo/draft/publish", json={"override_reason": "x" * 40})
+    assert forced.status_code == 409 and forced.json()["code"] == "refinamento_sem_revisao"
+
+
+def test_an_edit_of_another_draft_never_blocks_this_one(mundo):
+    mundo.editar(version_id=uuid4())
+    assert mundo.publicar().status_code == 200
+
+
+def test_accepting_clears_the_gate_and_records_who(mundo):
+    mundo.editar()
+    r = mundo.studio.post(mundo.url(), json={"decisao": "aceito"})
+    assert r.status_code == 200, r.text
+    rev, = [e for e in mundo.loops.eventos if e["evento"] == "refinamento_revisado"]
+    assert rev["ator"] == DEFAULT_USER_ID and rev["detalhe"]["decisao"] == "aceito"
+    assert r.json()["refinamentos"]["pendentes_revisao"] == 0
+    assert mundo.publicar().status_code == 200
+
+
+def test_reverting_restores_the_row_clears_the_gate_and_a_second_review_is_409(mundo):
+    original = mundo.secao()
+    mundo.studio.put(f"{BASE}/novo/draft/sections", json={"secoes": [
+        {"chave": "persona", "titulo": "Quem você é", "ordem": 10, "conteudo": original, "ativo": True}]})
+    mundo.editar()
+    # the draft now holds the "edit"; the revert puts ANTES back
+    r = mundo.studio.post(mundo.url(), json={"decisao": "revertido"})
+    assert r.status_code == 200, r.text
+    assert mundo.secao() == ANTES
+    again = mundo.studio.post(mundo.url(), json={"decisao": "aceito"})
+    assert again.status_code == 409 and again.json()["code"] == "refino_ja_revisado"
+
+
+def test_a_revert_is_refused_when_the_row_changed_since_and_the_gate_stays_closed(mundo):
+    mundo.editar()
+    mundo.studio.put(f"{BASE}/novo/draft/sections", json={"secoes": [
+        {"chave": "persona", "titulo": "Quem você é", "ordem": 10, "conteudo": "Uma pessoa reescreveu a seção.", "ativo": True}]})
+    r = mundo.studio.post(mundo.url(), json={"decisao": "revertido"})
+    assert r.status_code == 409 and r.json()["code"] == "linha_alterada", r.text
+    assert mundo.secao() == "Uma pessoa reescreveu a seção." and not [e for e in mundo.loops.eventos if e["evento"] == "refinamento_revisado"]
+    assert mundo.publicar().status_code == 409
+
+
+def test_there_is_nothing_to_review_in_a_round_without_an_edit_or_in_a_foreign_loop(mundo):
+    mundo.editar()
+    r = mundo.studio.post(mundo.url(rodada=9), json={"decisao": "aceito"})
+    assert r.status_code == 404 and r.json()["code"] == "refino_nao_encontrado"
+    r = mundo.studio.post(f"{BASE}/novo/evals/loops/{uuid4()}/refinamentos/1/revisao", json={"decisao": "aceito"})
+    assert r.status_code == 404 and r.json()["code"] == "loop_not_found"
+    assert mundo.studio.post(mundo.url(), json={"decisao": "talvez"}).status_code == 422
+
+
+@pytest.mark.parametrize("scopes", [["studio:publish"], ["studio:evals-run"], ["studio:content-write"], ["*"]])
+def test_a_product_token_cannot_acknowledge_the_review(mundo, scopes):
+    mundo.editar()
+    mundo.studio.raw.app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        org_id=DEFAULT_ORG_ID, caller_kind="product", user_id=None, scopes=list(scopes), raw_token="tok",
+        api_token_id=UUID(int=9), issuer="noctus-platform")
+    r = mundo.studio.raw.post(mundo.url(), json={"decisao": "aceito"})
+    assert r.status_code == 403, r.text
+    assert not [e for e in mundo.loops.eventos if e["evento"] == "refinamento_revisado"]
+
+
+def test_an_org_owner_who_is_not_a_platform_admin_cannot_review(mundo):
+    mundo.editar()
+    mundo.studio.mock_supabase.set_table_data(
+        "noctus_users", [{"id": str(DEFAULT_USER_ID), "org_id": str(DEFAULT_ORG_ID), "role": "user", "org_role": "owner"}])
+    r = mundo.studio.post(mundo.url(), json={"decisao": "aceito"})
+    assert r.status_code == 403 and r.json()["code"] == "platform_admin_required"

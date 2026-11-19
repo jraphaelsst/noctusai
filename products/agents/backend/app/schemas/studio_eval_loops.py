@@ -3,7 +3,7 @@ strict (``extra="forbid"``); responses are plain models (consumers ignore unknow
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -87,7 +87,7 @@ class RefinamentoOut(BaseModel):
     (nothing written: ``codigo`` + ``mensagem``). ``melhorou`` is set once the next round closed (``avaliado``): ``True`` if its score is
     above this round's, ``None`` while unevaluated or when a round had no score."""
 
-    estado: str
+    estado: str  # proposto | recusado | sem_edicao
     custo_usd: float
     modelo: str | None = None
     codigo: str | None = None
@@ -100,11 +100,26 @@ class RefinamentoOut(BaseModel):
     melhorou: bool | None = None
     score_antes: float | None = None
     score_depois: float | None = None
+    #: ``sem_edicao``: why the refiner proposed no edit and which failing cases look suspicious (a person should look)
+    motivo: str | None = None
+    casos_suspeitos: list[str] = []
+    #: an edit sits in the draft UNREVIEWED until a platform admin accepts or reverts it (``revisao`` = ``aceito`` | ``revertido``);
+    #: while ``pendente_revisao`` the draft cannot be published
+    revisao: str | None = None
+    pendente_revisao: bool = False
+
+
+class RefinamentoRevisaoRequest(StrictHttpModel):
+    """The human review of one refine edit: keep it (``aceito``) or put the row back as it was (``revertido``)."""
+
+    decisao: Literal["aceito", "revertido"]
 
 
 class RefinamentosResumoOut(BaseModel):
     propostos: int = 0
     recusados: int = 0
+    sem_edicao: int = 0
+    pendentes_revisao: int = 0
     avaliados: int = 0
     melhoraram: int = 0
     custo_usd: float = 0.0

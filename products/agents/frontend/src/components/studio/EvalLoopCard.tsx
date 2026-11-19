@@ -20,6 +20,7 @@ import {
   useCreateEvalLoop,
   useEvalLoops,
   useRunLoopRound,
+  useReviewRefinamento,
   useSetLoopModo,
   useStopEvalLoop,
   hasRoundInFlight,
@@ -80,9 +81,59 @@ function RefusalNote({ error }: { error: unknown }) {
 
 const TIPO_REFINO: Record<"secao" | "texto" | "ferramenta", string> = { secao: "seção", texto: "texto", ferramenta: "ferramenta" };
 
+/** The human review of an edit the refine step wrote into the draft: until a platform admin accepts or reverts it, the draft cannot be
+ * published. Reverting puts the row back through the same compare-and-set; if the row or draft changed since, the server refuses and
+ * its own pt-BR text is shown (a refusal is never silent). */
+function RevisaoRefino({ loop, rodada }: { loop: EvalLoop; rodada: number }) {
+  const review = useReviewRefinamento(loop.agente_chave);
+  const platformAdmin = useIsPlatformAdmin();
+  const [error, setError] = useState<unknown>(null);
+  const decidir = async (decisao: "aceito" | "revertido") => {
+    setError(null);
+    try {
+      await review.mutateAsync({ loopId: loop.id, rodada, decisao });
+      toast.success(decisao === "aceito" ? "Edição aceita." : "Edição revertida: a linha voltou ao texto anterior.");
+    } catch (e) {
+      setError(e);
+    }
+  };
+  return (
+    <div
+      role="status"
+      className="mt-1 space-y-1 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-amber-800"
+      data-testid={`loop-refino-revisao-${rodada}`}
+    >
+      <p className="font-semibold">Edição automática ainda não revisada: o rascunho não pode ser publicado até uma pessoa aceitar ou reverter.</p>
+      {platformAdmin ? (
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" onClick={() => void decidir("aceito")} disabled={review.isPending} data-testid={`loop-refino-aceitar-${rodada}`}>
+            {review.isPending ? "Registrando…" : "Aceitar edição"}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void decidir("revertido")} disabled={review.isPending} data-testid={`loop-refino-reverter-${rodada}`}>
+            Reverter edição
+          </Button>
+        </div>
+      ) : (
+        <p>Somente um administrador da plataforma registra essa revisão.</p>
+      )}
+      {error != null && <RefusalNote error={error} />}
+    </div>
+  );
+}
+
 /** What the refine step did after a round: the ONE row it edited (what changed and why), or the reason it did not edit, and
- * whether the next round's score improved. The owner reverts by hand in the Studio; nothing here changes the draft. */
-function RefinamentoNota({ rodada, r }: { rodada: number; r: EvalLoopRefinamento }) {
+ * whether the next round's score improved. A person reviews each edit (accept / revert) before the draft can be published. */
+function RefinamentoNota({ loop, rodada, r }: { loop: EvalLoop; rodada: number; r: EvalLoopRefinamento }) {
+  if (r.estado === "sem_edicao") {
+    return (
+      <span className="block text-amber-800" data-testid={`loop-refino-${rodada}`}>
+        Refinamento sem edição: o refinador não propôs mudança no texto{r.motivo ? `. ${r.motivo}` : ""}
+        {(r.casos_suspeitos ?? []).length > 0 ? ` Casos para olhar: ${(r.casos_suspeitos ?? []).join(", ")}.` : ""} Uma pessoa deve olhar esses
+        casos
+        {r.custo_usd > 0 ? ` (${formatUsdCost(r.custo_usd)})` : ""}.
+      </span>
+    );
+  }
   if (r.estado === "recusado") {
     return (
       <span className="block text-muted-foreground" data-testid={`loop-refino-${rodada}`}>
@@ -113,8 +164,14 @@ function RefinamentoNota({ rodada, r }: { rodada: number; r: EvalLoopRefinamento
             <pre className="whitespace-pre-wrap break-words rounded bg-muted p-1">{r.diff.depois}</pre>
           </div>
         )}
-        <p>Só o rascunho foi alterado (nada publicado). Para desfazer, edite essa linha no Studio com o texto da esquerda.</p>
+        <p>Só o rascunho foi alterado (nada publicado).</p>
       </div>
+      {r.revisao && (
+        <p className="mt-1" data-testid={`loop-refino-revisado-${rodada}`}>
+          Revisão: {r.revisao === "aceito" ? "edição aceita." : "edição revertida (a linha voltou ao texto da esquerda)."}
+        </p>
+      )}
+      {r.pendente_revisao && <RevisaoRefino loop={loop} rodada={rodada} />}
     </details>
   );
 }
@@ -167,7 +224,7 @@ function ScoreSeries({ loop }: { loop: EvalLoop }) {
               </span>
             )}
             {p.overcall && <span className="text-destructive"> · não melhorou (overcall)</span>}
-            {p.refinamento && <RefinamentoNota rodada={p.rodada} r={p.refinamento} />}
+            {p.refinamento && <RefinamentoNota loop={loop} rodada={p.rodada} r={p.refinamento} />}
           </li>
         ))}
       </ol>
@@ -288,6 +345,16 @@ function ActiveLoop({ loop, versionId }: { loop: EvalLoop; versionId: string | n
         </div>
       )}
       {rodadaAberta && <RunProgressPanel agentKey={agentKey} suite={loop.suite} runId={rodadaAberta.run_id} />}
+      {(loop.refinamentos?.pendentes_revisao ?? 0) > 0 && (
+        <p
+          role="status"
+          className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs font-semibold text-amber-800"
+          data-testid="loop-refino-pendentes"
+        >
+          {loop.refinamentos?.pendentes_revisao} edição(ões) automática(s) esperam revisão: enquanto não forem aceitas ou revertidas, o
+          rascunho não pode ser publicado.
+        </p>
+      )}
       <ScoreSeries loop={loop} />
       {loop.overcalls.length > 0 && (
         <div data-testid="loop-overcalls">
@@ -371,7 +438,7 @@ function ActiveLoop({ loop, versionId }: { loop: EvalLoop; versionId: string | n
           ? "Automático: o servidor roda as rodadas sozinho até chegar ao alvo, 2 rodadas sem melhora, o orçamento, as rodadas planejadas ou um erro."
           : "Manual: cada rodada é um clique seu."}{" "}
         {automatico
-          ? "Entre as rodadas o servidor propõe UMA edição pontual de uma linha do rascunho (seção, texto ou ferramenta), a partir dos casos que falharam, e a grava só no rascunho: nada é publicado e você vê cada edição abaixo, com o motivo e o efeito na nota, para desfazer à mão. O custo do refinamento entra no orçamento do loop. "
+          ? "Entre as rodadas o servidor propõe UMA edição pontual de uma linha do rascunho (seção, texto ou ferramenta), a partir dos casos que falharam, e a grava só no rascunho: nada é publicado e você vê cada edição abaixo, com o motivo e o efeito na nota. Uma edição só vale depois que um administrador da plataforma a aceita (ou a reverte): até lá o rascunho não pode ser publicado. Seções e ferramentas de proteção (opt-out, segurança, transferência, privacidade, honestidade) nunca são editadas, no máximo 3 edições por loop e 1 por linha. O custo do refinamento entra no orçamento do loop. "
           : "No modo manual o loop não edita o rascunho: quem edita o conteúdo é você (ou um agente de conteúdo). "}
         Se o conteúdo não mudar, uma nova rodada só repetiria o resultado e o loop espera a sua edição.
       </p>

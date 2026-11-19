@@ -10,7 +10,9 @@ The whole pipeline holds the per-agent lock — a project-source sync moves the 
 interleave with import → eval → publish.
 
 Statuses: ``planned`` · ``published`` · ``already_published`` (409 ``semver_published`` — bump ``versao``) ·
-``gate_failed`` (draft left) · ``failed`` (``error_code`` set; callers write the A5 marker).
+``gate_failed`` (draft left) · ``blocked_refino_review`` (409 ``refinamento_sem_revisao``: the eval-loop refine step edited the draft and
+no platform admin reviewed the edit yet -- this tool, a product token, can never clear that; a person accepts or reverts it in the Studio
+loop card, then re-run; the draft is left) · ``failed`` (``error_code`` set; callers write the A5 marker).
 """
 from __future__ import annotations
 
@@ -41,6 +43,10 @@ _BASE = "/api/studio/agents"
 _FINAL = ("concluida", "falhou", "cancelada")
 _TRANSIENT_STATUSES = frozenset({429, 502, 503, 504})
 _MAX_TRANSIENT = 5
+#: the publish refusal (409 code) for an eval-loop refine edit nobody reviewed: a person must clear it, never retried / worked around
+# NOC-REMEDIATE[package-publish-refino-preflight]: the block is only seen when `draft/publish` is tried (the reuse probe, or after the eval run): when no passing
+# run exists the eval is paid for before the refusal. A cheap pre-flight needs a route the `studio:publish` token may read (readiness is platform-content only) -- 2026-11-19
+_REFINO_SEM_REVISAO = "refinamento_sem_revisao"
 
 
 def _fail(out: dict[str, Any], code: str, message: str) -> dict[str, Any]:
@@ -86,6 +92,12 @@ def agent_package_publish(
         with agent_lock(key, lock_dir):
             return _pipeline(out, creds, key, result.bundle, eval_timeout_s, poll_interval_s, sleep)
     except SyncError as exc:
+        if exc.code == _REFINO_SEM_REVISAO:
+            out.update(
+                ok=False, status="blocked_refino_review", error_code=exc.code, errors=[exc.message],
+                warnings=[f"{key}: the eval-loop refine step edited the draft and no platform admin reviewed the edit yet "
+                          "(Studio > Avaliações > the loop card: Aceitar / Reverter). Draft left unpublished."])
+            return out
         return _fail(out, exc.code, exc.message)
 
 
@@ -200,6 +212,8 @@ def _try_publish_with_existing_run(creds: Any, key: str, version_id: str) -> dic
     best = max(candidates, key=lambda r: r.get("finished_at") or "")
     pub = http_json("POST", creds, f"{_BASE}/{key}/draft/publish", body={})
     if not pub.ok:
+        if pub.code == _REFINO_SEM_REVISAO:
+            raise http_failure(pub, "publish")  # not an eval problem: running the evals would only spend money on a draft that cannot ship
         return None  # e.g. 409 eval_required (content/knowledge changed since that run) → run evals
     return {
         "eval": {k: best.get(k) for k in ("status", "score", "limiar", "total", "aprovados", "completa")} | {"run_id": best.get("id"), "reused": True},

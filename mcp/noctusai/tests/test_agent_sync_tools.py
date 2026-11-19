@@ -804,3 +804,28 @@ def test_context_sync_secret_refusal_names_the_paths():
                                                                    "caminhos": ["src/a.ts", "docs/b.md"]}}, text=""),
                            "sources PUT")
     assert "src/a.ts" in res.message and "docs/b.md" in res.message
+
+
+# ── eval-loop refine edit not reviewed (red-team hardening, owner 2026-11-19) ───────────────────────────────
+
+SEM_REVISAO = (409, {"detail": "O loop de avaliação editou este rascunho e nenhuma pessoa revisou a edição.", "code": "refinamento_sem_revisao"})
+
+
+def test_publish_is_blocked_not_retried_when_an_unreviewed_refine_edit_is_in_the_draft_and_no_eval_money_is_spent(studio, pk):
+    happy_routes(studio)
+    b = f"/api/studio/agents/{KEY}"
+    studio.routes[("GET", f"{b}/evals/runs")] = (200, {"items": [dict(EVAL_OK, version_id="v-1", modelo_geracao=None)]})
+    studio.routes[("POST", f"{b}/draft/publish")] = SEM_REVISAO
+    r = publish(studio, pk, confirm=True)
+    assert not r["ok"] and r["status"] == "blocked_refino_review" and r["error_code"] == "refinamento_sem_revisao", r
+    assert "Aceitar / Reverter" in r["warnings"][0]
+    assert ("POST", f"{b}/evals/runs") not in studio.paths()  # the reuse probe saw it: no run was booked
+    assert studio.paths().count(("POST", f"{b}/draft/publish")) == 1
+
+
+def test_publish_is_blocked_when_the_final_publish_answers_the_refine_review_refusal(studio, pk):
+    happy_routes(studio)
+    b = f"/api/studio/agents/{KEY}"
+    studio.routes[("POST", f"{b}/draft/publish")] = SEM_REVISAO
+    r = publish(studio, pk, confirm=True)
+    assert not r["ok"] and r["status"] == "blocked_refino_review" and "published" not in r["steps"], r

@@ -6698,6 +6698,104 @@ _AGENTS_EVAL_LOOP_REFINO_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — agents eval-loop refine hardening (agents migration 093, red-team 2026-11-19).
+# ---------------------------------------------------------------------------
+#
+# 093 re-creates `agents.aplicar_refinamento_loop` with the checks the DATABASE makes by itself (whatever the app sends): the version is
+# the loop agent's own, the row is not protective, the agent is not a base layer, at most 3 edits per loop / 1 per row; and adds the
+# `refinamento_sem_edicao` / `refinamento_revisado` events (one decision per base round incl. "no edit"; one review per round).
+# Same self-provisioning as the 088 / 092 probes; own group, proven on the real chain in test_agents_camadas_probes_on_replay.py.
+# The RPC is called through `"agents".fn(...)` -- quoted on purpose: `_julia_v2_probe` pre-checks every `agents.<name>` it finds in the
+# SQL as a TABLE (`to_regclass`), and a function name there would read as a missing fixture.
+#
+# NOC-REMEDIATE[eval-refino-camada-base-probe]: the `camada_base` refusal (platform-scope definition / the parent of another agent) has no
+# probe yet -- it needs the borrowed platform org + a template chain (073 triggers) inside the rolled-back transaction; the app-level
+# pins (tests/studio/ev/test_eval_loop_refino_endurecimento.py) and the Fake store mirror it meanwhile -- 2026-11-19
+
+_EVAL_REFINO_HARD_MIGS = (*_EVAL_REFINO_MIGS, "093_eval_loop_refino_endurecimento.sql")
+_EVAL_REFINO_LOOP_SETUP = "\n    ".join((
+    _JV2_AGENT,
+    _loop_insert("ativo", "NULL", "NULL")[:-1] + " RETURNING id INTO v_pv;",
+    _JV2_VERSION,
+))
+_EVAL_REFINO_RPC = (
+    "PERFORM \"agents\".aplicar_refinamento_loop(v_org, v_pv, 1, 'refinamento_proposto', '{}'::jsonb, 0, v_version, "
+    "'%s', '%s', 'antes', 'depois', 'H');"
+)
+_EVAL_REFINO_REVISADO_SETUP = (
+    _EVAL_EVENTOS_SETUP
+    + f"\n    INSERT INTO {_JV2}.eval_loop_eventos (org_id, loop_id, rodada_seq, evento) "
+    "VALUES (v_org, v_pv, 1, 'refinamento_proposto');"
+    + f"\n    INSERT INTO {_JV2}.eval_loop_eventos (org_id, loop_id, rodada_seq, evento) "
+    "VALUES (v_org, v_pv, 1, 'refinamento_revisado');"
+)
+
+_AGENTS_EVAL_LOOP_REFINO_ENDURECIMENTO_PROBES: tuple[GuardProbe, ...] = (
+    _julia_v2_probe(
+        probe_id="agents.eval_loop_refino.linha_protegida_refused", guard_name="aplicar_refinamento_loop_linha_protegida",
+        migrations=_EVAL_REFINO_HARD_MIGS, setup=_EVAL_REFINO_LOOP_SETUP, attack=_EVAL_REFINO_RPC % ("secao", "seguranca"),
+        fragments=("linha_protegida",), what="a refine edit of a protective section (seguranca)",
+        rationale=(
+            "The refine step writes a prompt the leads' answers come from; the opt-out / security / hand-off / privacy / honesty rows "
+            "are the platform's obligations toward the lead and are never edited automatically. The RPC refuses them by itself, "
+            "whatever the app sends."
+        ),
+    ),
+    _julia_v2_probe(
+        probe_id="agents.eval_loop_refino.ferramenta_protegida_refused", guard_name="aplicar_refinamento_loop_ferramenta_protegida",
+        migrations=_EVAL_REFINO_HARD_MIGS, setup=_EVAL_REFINO_LOOP_SETUP, attack=_EVAL_REFINO_RPC % ("ferramenta", "handoff"),
+        fragments=("linha_protegida",), what="a refine edit of the hand-off tool description",
+        rationale=(
+            "The hand-off / stop / consent tools carry what the agent promises the lead it will do; rewriting their description "
+            "changes when the agent hands a conversation to a person."
+        ),
+    ),
+    _julia_v2_probe(
+        probe_id="agents.eval_loop_refino.versao_de_outro_agente_refused", guard_name="aplicar_refinamento_loop_versao_do_agente",
+        migrations=_EVAL_REFINO_HARD_MIGS,
+        setup="\n    ".join((
+            _JV2_AGENT, _JV2_AGENT2,
+            _loop_insert("ativo", "NULL", "NULL")[:-1] + " RETURNING id INTO v_pv;",
+            f"INSERT INTO {_JV2}.agent_versions (org_id, agent_id, versao, status, model, effort, created_by) "
+            "VALUES (v_org, v_agent2, 1, 'rascunho', 'claude-opus-5', 'high', v_org) RETURNING id INTO v_version;",
+        )),
+        attack=_EVAL_REFINO_RPC % ("secao", "tom"),
+        fragments=("versao_de_outro_agente",), what="a refine edit into the draft of ANOTHER agent",
+        rationale=(
+            "A loop refines its own agent; a version of another agent must never receive its edit, however the ids reached the call."
+        ),
+    ),
+    _julia_v2_probe(
+        probe_id="agents.eval_loop_eventos.revisao_duplicada_refused", guard_name="uq_agents_eval_loop_eventos_revisao_por_rodada",
+        migrations=_EVAL_REFINO_HARD_MIGS, setup=_EVAL_REFINO_REVISADO_SETUP,
+        attack=(
+            f"INSERT INTO {_JV2}.eval_loop_eventos (org_id, loop_id, rodada_seq, evento) "
+            "VALUES (v_org, v_pv, 1, 'refinamento_revisado');"
+        ),
+        fragments=("uq_agents_eval_loop_eventos_revisao_por_rodada",), what="a second human review of the same refine edit",
+        rationale=(
+            "One review per edit: the review is the gate to publish, and two racing reviews (accept / revert) must not both write; "
+            "the loser's whole transaction (the row restore included) rolls back on this index."
+        ),
+    ),
+    _julia_v2_probe(
+        probe_id="agents.eval_loop_eventos.sem_edicao_duplicado_refused", guard_name="uq_agents_eval_loop_eventos_refino_por_rodada",
+        migrations=_EVAL_REFINO_HARD_MIGS, setup=_EVAL_REFINO_SETUP,
+        attack=(
+            f"INSERT INTO {_JV2}.eval_loop_eventos (org_id, loop_id, rodada_seq, evento) "
+            "VALUES (v_org, v_pv, 1, 'refinamento_sem_edicao');"
+        ),
+        fragments=("uq_agents_eval_loop_eventos_refino_por_rodada",),
+        what="a 'no edit' decision for a round that already has a refine decision",
+        rationale=(
+            "One refine decision per base round, 'no edit' included: a racing second driver must not record a different outcome "
+            "for the same round."
+        ),
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — agents.sw_canal_eventos append-only guard (agents migration 090).
 # ---------------------------------------------------------------------------
 #
@@ -14300,6 +14398,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_OWNER_RECIPIENT_EVENTS_PROBES,
     *_AGENTS_EVAL_LOOP_EVENTOS_PROBES,
     *_AGENTS_EVAL_LOOP_REFINO_PROBES,
+    *_AGENTS_EVAL_LOOP_REFINO_ENDURECIMENTO_PROBES,
     *_AGENTS_SW_CANAL_EVENTOS_PROBES,
     *_CORE_AI_USAGE_PROBES,
     *_CORE_FUNNEL_PROBES,

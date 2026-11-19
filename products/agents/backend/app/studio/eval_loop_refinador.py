@@ -34,6 +34,10 @@ __all__ = [
     "LlmRefinador", "get_refinador", "interpretar_saida", "montar_mensagem",
 ]
 
+# NOC-REMEDIATE[eval-refino-registry-prompt-sem-edicao]: the registry row `agents.eval_loop.refinar` is DATA (platform AI registry UI): its prompt must
+# now describe the "no edit" answer `{sem_edicao: true, motivo, casos_suspeitos[]}` (the schema sent with every call already lists it), say that
+# protective rows (opt-out / security / hand-off / privacy / honesty, required texts, hand-off / stop tools) are never edited, that at most 3 edits
+# per loop and 1 per row are accepted, and that a rationale may not contain addresses or handles -- owner/platform admin, 2026-11-19
 #: the registry key of the refine call (a dotted lowercase logical id; the row is created by a platform admin in the UI)
 CHAVE_REFINADOR = "agents.eval_loop.refinar"
 #: one refine call never costs more than this, whatever the loop budget has left (the per-run cap of the rounds is untouched)

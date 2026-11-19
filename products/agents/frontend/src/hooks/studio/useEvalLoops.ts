@@ -5,6 +5,7 @@
  *   GET  /api/studio/agents/{key}/evals/loops/{id}           -> LoopOut
  *   POST /api/studio/agents/{key}/evals/loops                -> 201 LoopOut
  *   POST /api/studio/agents/{key}/evals/loops/{id}/stop      -> LoopOut
+ *   POST /api/studio/agents/{key}/evals/loops/{id}/refinamentos/{rodada}/revisao  -> LoopOut  (platform admin: accept / revert an edit)
  *   round = a run started with `loop_id` (evals/runs body, or draft/mecanismo-runs?loop_id=)
  *
  * Cache writes (`KB § PATTERNS/frontend/mutation-cache-writes.md`): create/stop put the server's `LoopOut` into
@@ -23,6 +24,7 @@ import type {
   EvalLoopCreate,
   EvalLoopListResponse,
   EvalLoopModo,
+  EvalLoopRefinoDecisao,
   EvalLoopSuite,
   EvalRun,
   EvalRunCreate,
@@ -221,6 +223,26 @@ export function useSetLoopModo(agentKey: string) {
     targets: loopWriteTargets(agentKey, replaceInPlace),
     onSuccess: (loop) => {
       qc.setQueryData(loopKey(agentKey, loop.id), loop);
+    },
+  });
+}
+
+/** Accept or revert the edit the refine step wrote into the draft after round `rodada`. The server's `LoopOut` goes into every loop entry;
+ * a revert rewrote a draft row and an accept/revert clears the publish gate, so what derives from the draft is queued to refetch
+ * (readiness, the draft and its compiled prompt) -- the server owns those answers. */
+export function useReviewRefinamento(agentKey: string) {
+  const qc = useQueryClient();
+  return useCacheWriteMutation<EvalLoop, { loopId: string; rodada: number; decisao: EvalLoopRefinoDecisao }>({
+    mutationFn: ({ loopId, rodada, decisao }) =>
+      api.post<EvalLoop>(`/api/studio/agents/${seg(agentKey)}/evals/loops/${seg(loopId)}/refinamentos/${rodada}/revisao`, { decisao }),
+    targets: loopWriteTargets(agentKey, replaceInPlace),
+    onSuccess: (loop) => {
+      qc.setQueryData(loopKey(agentKey, loop.id), loop);
+      void qc.invalidateQueries({ queryKey: studioKeys.prontidao(agentKey) });
+      void qc.invalidateQueries({ queryKey: studioKeys.detail(agentKey) });
+      void qc.invalidateQueries({ queryKey: studioKeys.versions(agentKey) });
+      void qc.invalidateQueries({ queryKey: studioKeys.compiledAll(agentKey) });
+      void qc.invalidateQueries({ queryKey: studioKeys.conteudoAll(agentKey) });
     },
   });
 }

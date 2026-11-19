@@ -101,7 +101,9 @@ from app.stores.studio_definitions import (
     VersionRecord,
 )
 from app.studio.bundles import client_bundle, compile_version
-from app.studio.prontidao import avaliar as avaliar_prontidao, falta_numero_fallback, juiz_aprovado, recusa_de_compilacao
+from app.studio.prontidao import (
+    avaliar as avaliar_prontidao, falta_numero_fallback, juiz_aprovado, recusa_de_compilacao, refinos_pendentes,
+)
 from app.studio.eval_driver import get_eval_turn_driver
 from app.studio.eval_mecanismo import decidir_portao
 from app.studio.eval_mecanismo_service import (
@@ -1105,6 +1107,7 @@ def publish_draft(
     evals=Depends(get_eval_store_dep),
     controles=Depends(get_prontidao_controles_dep),
     consolidacao=Depends(get_consolidacao_store_dep),
+    loops=Depends(get_loop_store_dep),
 ) -> VersionDetailOut:
     """§D1 publish + §J2.1 gate: pass ⇔ a run exists ∧ status='concluida' ∧
     completa (covered every active case, H1) ∧ total >= 1 ∧
@@ -1125,7 +1128,7 @@ def publish_draft(
             return [i.to_dict() for i in avaliar_prontidao(
                 store=store, catalog=catalog, org_id=ctx.org_id, agent=agent, draft=draft, gate=gate, padroes=padroes,
                 skills=skills, geracoes=geracoes, evals=evals, controles=controles, compiled=compiled_,
-                conformidade=conformidade, consolidacao=consolidacao).itens]
+                conformidade=conformidade, consolidacao=consolidacao, loops=loops).itens]
         except Exception:  # noqa: BLE001 -- the refusal itself must still be delivered
             logger.exception("agents.studio.publish.prontidao_indisponivel agent_id=%s", agent.id)
             return None
@@ -1135,6 +1138,20 @@ def publish_draft(
     if ctx.caller_kind == "product" and payload.override_reason is not None:
         raise http_error(403, "override_requires_user", "O override do portão de avaliação é exclusivo de usuários.")
     draft = resolve_draft(store, ctx.org_id, agent)
+    # An edit the eval-loop refine step wrote into this draft that no platform admin reviewed: no publish, no override, for every caller
+    # (a product token included -- it cannot acknowledge the review). Read DIRECTLY, not through the readiness items: a failed readiness read
+    # must not let it through; an unreadable ledger refuses too.
+    try:
+        sem_revisao = refinos_pendentes(loops, ctx.org_id, agent.id, draft.id)
+    except Exception:  # noqa: BLE001 -- fail closed: the gate cannot say the edits were reviewed
+        logger.exception("agents.studio.publish.refinos_ilegiveis agent_id=%s", agent.id)
+        raise http_error(409, "refinamento_sem_revisao", "Não foi possível confirmar que as edições automáticas do loop foram revisadas.",
+                         prontidao=prontidao()) from None
+    if sem_revisao:
+        raise http_error(
+            409, "refinamento_sem_revisao",
+            "O loop de avaliação editou este rascunho e nenhuma pessoa revisou a edição (aceitar ou reverter, no cartão do loop).",
+            edicoes=sem_revisao, prontidao=prontidao())
     if payload.notas is not None:
         with store_errors():
             draft = store.update_draft(ctx.org_id, draft.id, {"notas": payload.notas})

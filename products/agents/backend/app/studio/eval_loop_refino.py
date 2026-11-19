@@ -15,21 +15,33 @@ purpose, whatever the model argues:
 * a rewrite that is not bounded (grows by more than :data:`MAX_CRESCIMENTO` characters, shrinks a long row to under 40%, leaves
   the type's size cap) or changes nothing;
 * new text that copies a failing case's transcript, lead message or judge note verbatim (data smuggled into the prompt).
+
+Hardening (red-team, owner 2026-11-19), in :mod:`app.studio.eval_loop_refino_protegido` / :mod:`app.studio.eval_loop_refino_checks`: a
+PROTECTIVE row (opt-out / security / hand-off / identity-privacy / honesty sections, the platform's required texts, the hand-off / stop /
+consent tools) is never a target; REMOVED or REWORDED protective sentences are ``enfraquece_protecao``; ADDED exceptions, triggers,
+obey-the-lead and payment patterns are ``instrucao_proibida``; addresses and contacts are read after Unicode normalisation (also in the
+rationale); a refine may also answer "no edit" (``sem_edicao``), which is recorded for a person and never forced into an edit.
 """
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from pydantic import model_validator
+
 from noctusai_lib.primitives.accents import fold_accents_ascii
 
 from app.studio.eval_loop import EPS, Recusa, Rodada, ordenar
+from app.studio.eval_loop_refino_checks import (
+    contem_arroba, contem_endereco, enfraquece_protecao, frases_novas, instrucao_proibida,
+)
+from app.studio.eval_loop_refino_protegido import ferramenta_protegida, linha_e_protegida, secao_protegida, texto_protegido
 from app.studio.ferramentas_registry import FERRAMENTAS_CONHECIDAS
 from app.studio.models import LIMITS
 
@@ -38,6 +50,7 @@ __all__ = [
     "LinhasDoAgente", "PropostaRefino", "RefinoRecusado", "validar_proposta", "deve_refinar", "casos_falhando_comportamento",
     "casos_falhando_mecanismo", "linhas_do_rascunho", "detalhe_proposto", "detalhe_recusado", "EVENTOS_REFINO",
     "MENSAGENS_REFINO", "mensagem_refino", "trecho_do_diff", "refinamentos_do_estado", "resumo_de_refinamentos",
+    "MAX_REFINOS_POR_LOOP", "DECISOES_REFINO", "refinamentos_sem_revisao", "linha_protegida_de", "detalhe_sem_edicao",
 ]
 
 TIPOS = ("secao", "texto", "ferramenta")
@@ -55,7 +68,12 @@ MIN_FRACAO_RESTANTE = 0.4
 MAX_DIFF_CHARS = 40_000
 #: a case text of at least this many (normalised) characters may not reappear verbatim in the new row text
 MIN_COPIA = 50
-EVENTOS_REFINO = ("refinamento_proposto", "refinamento_recusado", "refinamento_avaliado")
+#: at most this many edits per loop (and one per row): a loop that keeps failing after three edits needs a person, not a fourth guess
+MAX_REFINOS_POR_LOOP = 3
+#: the refine decisions of a round (exactly one per base round) ...
+DECISOES_REFINO = ("refinamento_proposto", "refinamento_recusado", "refinamento_sem_edicao")
+#: ... and every refine event (the evaluation of the next round, the human review of an edit)
+EVENTOS_REFINO = (*DECISOES_REFINO, "refinamento_avaliado", "refinamento_revisado")
 
 _LIMITE_TIPO = {"secao": LIMITS["section.conteudo"], "texto": LIMITS["texto.conteudo"], "ferramenta": LIMITS["ferramenta.descricao"]}
 
@@ -71,14 +89,33 @@ class AlvoRefino(BaseModel):
 
 
 class SaidaRefino(BaseModel):
-    """The ONE edit the model proposes. ``novo_conteudo`` is the row's whole new text (section / text content / tool description)."""
+    """What the model returns: EITHER the ONE edit it proposes (``alvo`` + ``novo_conteudo`` -- the row's whole new text -- + ``racional`` +
+    ``casos_alvo``) OR "no edit" (``sem_edicao: true`` + ``motivo`` + ``casos_suspeitos``): the failing cases look wrong / hostile / not a
+    prompt problem, and a person should look. Never forced into an edit; a mix of the two is invalid."""
 
     model_config = ConfigDict(extra="forbid")
 
-    alvo: AlvoRefino
-    novo_conteudo: str = Field(min_length=1)
-    racional: str = Field(min_length=1, max_length=MAX_RACIONAL)
-    casos_alvo: list[str] = Field(min_length=1, max_length=MAX_CASOS)
+    alvo: AlvoRefino | None = None
+    novo_conteudo: str | None = Field(default=None, min_length=1)
+    racional: str | None = Field(default=None, min_length=1, max_length=MAX_RACIONAL)
+    casos_alvo: list[str] = Field(default_factory=list, max_length=MAX_CASOS)
+    sem_edicao: bool = False
+    motivo: str | None = Field(default=None, min_length=1, max_length=MAX_RACIONAL)
+    casos_suspeitos: list[str] = Field(default_factory=list, max_length=MAX_CASOS)
+
+    @model_validator(mode="after")
+    def _uma_coisa_ou_a_outra(self) -> "SaidaRefino":
+        if self.sem_edicao:
+            if self.alvo is not None or self.novo_conteudo is not None or self.racional is not None or self.casos_alvo:
+                raise ValueError("sem_edicao is exclusive of an edit")
+            if self.motivo is None:
+                raise ValueError("sem_edicao needs a motivo")
+        else:
+            if self.alvo is None or self.novo_conteudo is None or self.racional is None or not self.casos_alvo:
+                raise ValueError("an edit needs alvo, novo_conteudo, racional and casos_alvo")
+            if self.motivo is not None or self.casos_suspeitos:
+                raise ValueError("motivo / casos_suspeitos belong to sem_edicao")
+        return self
 
 
 class RefinoRecusado(Exception):
@@ -151,6 +188,14 @@ class LinhasDoAgente:
     #: ``(ferramenta, descricao, ativo)``
     ferramentas: tuple[tuple[str, str, bool], ...] = ()
 
+    def sem(self, pares: Iterable[tuple[str, str]]) -> "LinhasDoAgente":
+        """The same rows without ``pares`` (``(tipo, chave)``): what the model is shown once a row was already edited in this loop."""
+        fora = set(pares)
+        return replace(
+            self, secoes=tuple(x for x in self.secoes if ("secao", x.chave) not in fora),
+            textos=tuple(x for x in self.textos if ("texto", x[0]) not in fora),
+            ferramentas=tuple(x for x in self.ferramentas if ("ferramenta", x[0]) not in fora))
+
     def achar(self, tipo: str, chave: str) -> tuple[str, bool, tuple[str, ...]] | None:
         """``(conteudo, ativo, regras)`` of an own row, or ``None``."""
         if tipo == "secao":
@@ -163,10 +208,10 @@ class LinhasDoAgente:
 
     def para_modelo(self) -> dict[str, Any]:
         return {
-            "secoes": [{"chave": s.chave, "titulo": s.titulo, "conteudo": s.conteudo, "protegida": bool(s.regras)}
+            "secoes": [{"chave": s.chave, "titulo": s.titulo, "conteudo": s.conteudo, "protegida": secao_protegida(s.chave, s.regras)}
                        for s in self.secoes if s.ativo],
-            "textos": [{"chave": k, "conteudo": c} for k, c in self.textos],
-            "ferramentas": [{"ferramenta": k, "descricao": d} for k, d, a in self.ferramentas if a],
+            "textos": [{"chave": k, "conteudo": c, "protegida": texto_protegido(k)} for k, c in self.textos],
+            "ferramentas": [{"ferramenta": k, "descricao": d, "protegida": ferramenta_protegida(k)} for k, d, a in self.ferramentas if a],
         }
 
 
@@ -184,16 +229,10 @@ class PropostaRefino:
 
 # ── the validator ─────────────────────────────────────────────────────────────────────────────────────────────
 
-_URL = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
-_DOMINIO = re.compile(
-    r"(?i)(?<![\w.@-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|edu|gov|info|biz|io|app|dev|me|tv|co|ly|link|site|online|xyz|top|club|shop|store|br|pt|ar|us|uk)\b")
 _SEGREDO = re.compile(
     r"(?i)(?:\bsk-[A-Za-z0-9_-]{16,}|\beyJ[A-Za-z0-9_-]{10,}\.|\bAKIA[0-9A-Z]{12,}|\bbearer\s+[A-Za-z0-9._-]{16,}"
     r"|\b(?:api[_-]?key|secret|token|senha|password)\s*[:=]\s*\S{6,}|\b[A-Fa-f0-9]{32,}\b|\b[A-Za-z0-9+/_-]{40,}\b)")
 _MARCADOR = re.compile(r"\{\{[^{}]*\}\}|\{[A-Za-z_][\w.]*\}")
-_SENTENCAS = re.compile(r"(?<=[.!?])\s+|\n+")
-
-
 def _norm(s: str) -> str:
     s = fold_accents_ascii(s)
     return re.sub(r"\s+", " ", s).strip().casefold()
@@ -202,8 +241,13 @@ def _norm(s: str) -> str:
 def _adicionado(antes: str, depois: str) -> str:
     """The sentences/lines of ``depois`` that ``antes`` did not have: the only text the content checks judge (a row that already
     carried a link keeps it; a NEW one is refused)."""
-    tinha = {_norm(x) for x in _SENTENCAS.split(antes) if x.strip()}
-    return "\n".join(x for x in _SENTENCAS.split(depois) if x.strip() and _norm(x) not in tinha)
+    return "\n".join(frases_novas(antes, depois))
+
+
+def linha_protegida_de(linhas: LinhasDoAgente, tipo: str, chave: str) -> bool:
+    """Is this row of the agent's draft one the refine never edits (derived: :mod:`app.studio.eval_loop_refino_protegido`)?"""
+    achada = linhas.achar(tipo, chave)
+    return linha_e_protegida(tipo, chave, achada[2] if achada else ())
 
 
 def _ferramentas_mencionadas(texto: str) -> set[str]:
@@ -216,45 +260,66 @@ def _ferramentas_mencionadas(texto: str) -> set[str]:
     return achadas
 
 
-def validar_proposta(saida: SaidaRefino, linhas: LinhasDoAgente, casos: Sequence[CasoFalhando]) -> PropostaRefino:
-    """Accept the model's proposal or raise :class:`RefinoRecusado`. See the module docstring for what is refused and why."""
+def validar_proposta(
+    saida: SaidaRefino, linhas: LinhasDoAgente, casos: Sequence[CasoFalhando],
+    *, ja_refinadas: Mapping[tuple[str, str], str] | None = None,
+) -> PropostaRefino:
+    """Accept the model's proposal or raise :class:`RefinoRecusado`. See the module docstring for what is refused and why.
+
+    ``ja_refinadas`` is ``{(tipo, chave): the row text at the START of the loop}`` for the rows this loop already edited: such a row is
+    refused (one edit per row per loop), and the size / shrink checks always run against the row text at loop start, so no chain of small
+    edits can walk a row far from where it began."""
     from app.studio.eval_pii import achar_pii
 
+    if saida.sem_edicao or saida.alvo is None or saida.novo_conteudo is None or saida.racional is None:
+        raise RefinoRecusado("saida_invalida", "A resposta do refinador não é uma edição.")
+    ja = ja_refinadas or {}
     tipo, chave = saida.alvo.tipo, saida.alvo.chave
     achada = linhas.achar(tipo, chave)
     if achada is None:
         raise RefinoRecusado("linha_inexistente", "A linha proposta não existe no rascunho deste agente.")
     antes, ativo, regras = achada
+    if linha_e_protegida(tipo, chave, regras):
+        raise RefinoRecusado("linha_protegida", "A linha carrega obrigações da plataforma (opt-out, segurança, transferência, privacidade, "
+                                                "honestidade, textos e ferramentas obrigatórios) e não é editada automaticamente.")
     if not ativo:
         raise RefinoRecusado("linha_inativa", "A linha proposta está desativada: editá-la não muda o comportamento.")
-    if regras:
-        raise RefinoRecusado("linha_protegida", "A linha declara regras da plataforma (obrigatórias) e não é editada automaticamente.")
     slugs = {c.slug for c in casos}
     alvo = tuple(dict.fromkeys(saida.casos_alvo))
     if not alvo or any(s not in slugs for s in alvo):
         raise RefinoRecusado("casos_alvo_invalidos", "A proposta cita casos que não estavam falhando na rodada.")
 
     depois = saida.novo_conteudo.strip()
+    inicio = ja.get((tipo, chave), antes)  # the row as it was when the loop started: the baseline of the size checks
     if _norm(depois) == _norm(antes):
         raise RefinoRecusado("sem_mudanca", "A proposta não muda o texto da linha.")
     if len(depois) < MIN_CONTEUDO:
         raise RefinoRecusado("conteudo_pequeno", "O novo texto é curto demais para ser uma correção.")
     if len(depois) > _LIMITE_TIPO[tipo]:
         raise RefinoRecusado("conteudo_grande", "O novo texto passa do limite de tamanho da linha.")
-    if len(depois) - len(antes) > MAX_CRESCIMENTO:
+    if len(depois) - len(inicio) > MAX_CRESCIMENTO:
         raise RefinoRecusado("crescimento_excedido", f"A edição acrescenta mais de {MAX_CRESCIMENTO} caracteres: não é uma edição pontual.")
-    if len(antes) > 200 and len(depois) < MIN_FRACAO_RESTANTE * len(antes):
+    if len(inicio) > 200 and len(depois) < MIN_FRACAO_RESTANTE * len(inicio):
         raise RefinoRecusado("reducao_excedida", "A edição apaga a maior parte da linha: não é uma edição pontual.")
+    if (tipo, chave) in ja:  # one edit per row per loop (after the size checks, which already ran against the loop-start text)
+        raise RefinoRecusado("linha_ja_refinada", "Esta linha já foi editada neste loop: uma edição por linha em cada loop.")
 
     if set(_MARCADOR.findall(antes)) != set(_MARCADOR.findall(depois)):
         raise RefinoRecusado("marcadores_alterados", "A edição muda os marcadores {…} da linha (preenchidos em tempo de execução).")
+    # what a person reads of a refine is also checked: the rationale shows in the UI and the notifications
     novo = _adicionado(antes, depois)
-    if _URL.search(novo) or _DOMINIO.search(novo):
-        raise RefinoRecusado("contem_url", "O texto novo contém endereço (URL ou domínio).")
-    if achar_pii(novo):
-        raise RefinoRecusado("contem_contato", "O texto novo contém dado pessoal ou de contato.")
+    for texto in (novo, saida.racional):
+        if contem_endereco(texto):
+            raise RefinoRecusado("contem_url", "O texto contém endereço (URL, domínio ou IP), mesmo disfarçado.")
+        if contem_arroba(texto) or achar_pii(texto):
+            raise RefinoRecusado("contem_contato", "O texto contém dado pessoal ou de contato (e-mail, telefone, documento, @perfil).")
     if _SEGREDO.search(novo):
         raise RefinoRecusado("contem_segredo", "O texto novo contém algo com formato de segredo ou credencial.")
+    if enfraquece_protecao(antes, depois):
+        raise RefinoRecusado("enfraquece_protecao", "A edição remove ou reescreve uma frase que protege o lead ou a plataforma "
+                                                    "(nunca / sempre / sair / humano / privacidade / dados ...).")
+    if instrucao_proibida(novo):
+        raise RefinoRecusado("instrucao_proibida", "O texto novo traz exceção, gatilho, obediência ao lead ou assunto de pagamento.")
     if _ferramentas_mencionadas(novo) - _ferramentas_mencionadas(antes):
         raise RefinoRecusado("menciona_ferramenta", "O texto novo cita ferramenta que a linha não citava: permissão de ferramenta não se edita aqui.")
     depois_n = _norm(depois)
@@ -285,7 +350,7 @@ def deve_refinar(
         return None
     if ultima.score >= alvo - EPS:
         return None
-    if any(e.get("evento") in ("refinamento_proposto", "refinamento_recusado") and e.get("rodada_seq") == ultima.seq for e in eventos):
+    if any(e.get("evento") in DECISOES_REFINO and e.get("rodada_seq") == ultima.seq for e in eventos):
         return None
     return ultima
 
@@ -358,9 +423,9 @@ def linhas_do_rascunho(defs: Any, org_id: UUID, version_id: UUID, compiled_hash:
 
 
 def detalhe_proposto(p: PropostaRefino, *, suite: str, score_base: float | None, hash_base: str, custo_usd: float,
-                     modelo: str | None, n_casos_falhando: int) -> dict[str, Any]:
+                     modelo: str | None, n_casos_falhando: int, version_id: UUID | None = None) -> dict[str, Any]:
     return {
-        "suite": suite, "alvo": {"tipo": p.tipo, "chave": p.chave}, "racional": p.racional, "casos_alvo": list(p.casos_alvo),
+        "suite": suite, "version_id": None if version_id is None else str(version_id), "alvo": {"tipo": p.tipo, "chave": p.chave}, "racional": p.racional, "casos_alvo": list(p.casos_alvo),
         "diff": {"antes": p.antes[:MAX_DIFF_CHARS], "depois": p.depois[:MAX_DIFF_CHARS]},
         "score_base": score_base, "hash_base": hash_base, "custo_usd": round(custo_usd, 4), "modelo": modelo,
         "casos_falhando": n_casos_falhando,
@@ -371,6 +436,14 @@ def detalhe_recusado(codigo: str, mensagem: str, *, suite: str, score_base: floa
                      modelo: str | None = None, n_casos_falhando: int = 0) -> dict[str, Any]:
     return {
         "suite": suite, "codigo": codigo, "mensagem": mensagem, "score_base": score_base, "hash_base": hash_base,
+        "custo_usd": round(custo_usd, 4), "modelo": modelo, "casos_falhando": n_casos_falhando,
+    }
+
+
+def detalhe_sem_edicao(motivo: str, casos_suspeitos: Sequence[str], *, suite: str, score_base: float | None, hash_base: str,
+                       custo_usd: float, modelo: str | None, n_casos_falhando: int) -> dict[str, Any]:
+    return {
+        "suite": suite, "motivo": motivo, "casos_suspeitos": list(casos_suspeitos), "score_base": score_base, "hash_base": hash_base,
         "custo_usd": round(custo_usd, 4), "modelo": modelo, "casos_falhando": n_casos_falhando,
     }
 
@@ -392,6 +465,12 @@ MENSAGENS_REFINO: dict[str, str] = {
     "sem_casos": "Não foi possível ler os casos que falharam na rodada.",
     "pii_nos_casos": "Os casos da rodada trazem dado pessoal; não foram enviados ao modelo (fixtures são sintéticas).",
     "orcamento_insuficiente": "O orçamento que sobra ao loop é pequeno demais para refinar.",
+    "camada_base": "Este agente é uma camada base (definição da plataforma ou modelo de outros agentes): uma edição automática o mudaria "
+                   "para todos os que herdam dele. O refinamento automático não roda aqui.",
+    "limite_de_refinos": f"O loop já fez {MAX_REFINOS_POR_LOOP} edições automáticas: o limite por loop foi atingido; as próximas são com uma pessoa.",
+    "linha_ja_refinada": "Esta linha já foi editada neste loop: uma edição por linha em cada loop.",
+    "versao_de_outro_agente": "O rascunho a editar não pertence ao agente do loop; nada foi gravado.",
+    "linha_protegida": "A linha carrega obrigações da plataforma e não é editada automaticamente.",
     "conflito_de_versao": "O rascunho mudou enquanto o refinamento era proposto; nada foi gravado.",
     "linha_alterada": "A linha do rascunho mudou enquanto o refinamento era proposto; nada foi gravado.",
     "loop_encerrado": "O loop foi encerrado enquanto o refinamento era proposto; nada foi gravado.",
@@ -421,21 +500,28 @@ def trecho_do_diff(antes: str, depois: str, *, contexto: int = 160) -> tuple[str
 
 
 def refinamentos_do_estado(eventos: Sequence[dict[str, Any]]) -> dict[int, dict[str, Any]]:
-    """``{base round seq: refinement}`` for the loop state: each refine decision with its evaluation attached once the next round
-    closed. Pure over the loop's refine events."""
+    """``{base round seq: refinement}`` for the loop state: each refine decision with its evaluation and its human review attached.
+    Pure over the loop's refine events."""
     avaliados = {e["rodada_seq"] - 1: e.get("detalhe") or {} for e in eventos
                  if e.get("evento") == "refinamento_avaliado" and e.get("rodada_seq") is not None}
+    revisados = {e["rodada_seq"]: e.get("detalhe") or {} for e in eventos
+                 if e.get("evento") == "refinamento_revisado" and e.get("rodada_seq") is not None}
     out: dict[int, dict[str, Any]] = {}
     for e in eventos:
-        if e.get("evento") not in ("refinamento_proposto", "refinamento_recusado") or e.get("rodada_seq") is None:
+        if e.get("evento") not in DECISOES_REFINO or e.get("rodada_seq") is None:
             continue
         d = e.get("detalhe") or {}
         seq = e["rodada_seq"]
+        estado = {"refinamento_proposto": "proposto", "refinamento_recusado": "recusado", "refinamento_sem_edicao": "sem_edicao"}[e["evento"]]
+        rev = revisados.get(seq) if estado == "proposto" else None
         item: dict[str, Any] = {
-            "estado": "proposto" if e["evento"] == "refinamento_proposto" else "recusado", "custo_usd": float(d.get("custo_usd") or 0.0),
+            "estado": estado, "custo_usd": float(d.get("custo_usd") or 0.0),
             "modelo": d.get("modelo"), "codigo": d.get("codigo"), "mensagem": d.get("mensagem"), "alvo": d.get("alvo"),
             "racional": d.get("racional"), "casos_alvo": list(d.get("casos_alvo") or []), "diff": None,
-            "avaliado": False, "melhorou": None, "score_antes": d.get("score_base"), "score_depois": None}
+            "avaliado": False, "melhorou": None, "score_antes": d.get("score_base"), "score_depois": None,
+            "motivo": d.get("motivo"), "casos_suspeitos": list(d.get("casos_suspeitos") or []),
+            #: an edit waits for a person until a ``refinamento_revisado`` exists: ``aceito`` | ``revertido``
+            "revisao": None if rev is None else rev.get("decisao"), "pendente_revisao": estado == "proposto" and rev is None}
         if isinstance(d.get("diff"), dict):
             a, b = trecho_do_diff(str(d["diff"].get("antes") or ""), str(d["diff"].get("depois") or ""))
             item["diff"] = {"antes": a, "depois": b}
@@ -452,7 +538,27 @@ def resumo_de_refinamentos(refinos: dict[int, dict[str, Any]]) -> dict[str, Any]
     return {
         "propostos": sum(1 for r in itens if r["estado"] == "proposto"),
         "recusados": sum(1 for r in itens if r["estado"] == "recusado"),
+        "sem_edicao": sum(1 for r in itens if r["estado"] == "sem_edicao"),
         "avaliados": sum(1 for r in itens if r["estado"] == "proposto" and r["avaliado"]),
         "melhoraram": sum(1 for r in itens if r["estado"] == "proposto" and r["melhorou"] is True),
+        "pendentes_revisao": sum(1 for r in itens if r["pendente_revisao"]),
         "custo_usd": round(sum(r["custo_usd"] for r in itens), 4),
     }
+
+
+def refinamentos_sem_revisao(eventos: Sequence[dict[str, Any]], *, version_id: UUID | None = None) -> list[dict[str, Any]]:
+    """The edits the refine step wrote into the draft that no person reviewed yet: every ``refinamento_proposto`` (of ``version_id``,
+    when given -- an event without a version counts for any draft) with no ``refinamento_revisado`` for the same ``(loop, round)``.
+    The publish gate and the readiness item read this. Pure over the events of ONE agent; ``[{loop_id, rodada, alvo}]``, oldest first."""
+    revisados = {(str(e.get("loop_id")), e.get("rodada_seq")) for e in eventos if e.get("evento") == "refinamento_revisado"}
+    out = []
+    for e in eventos:
+        if e.get("evento") != "refinamento_proposto":
+            continue
+        d = e.get("detalhe") or {}
+        if version_id is not None and d.get("version_id") not in (None, str(version_id)):
+            continue
+        if (str(e.get("loop_id")), e.get("rodada_seq")) in revisados:
+            continue
+        out.append({"loop_id": str(e.get("loop_id")), "rodada": e.get("rodada_seq"), "alvo": d.get("alvo")})
+    return out

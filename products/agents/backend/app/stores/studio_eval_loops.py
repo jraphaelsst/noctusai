@@ -128,6 +128,11 @@ class LoopStore(Protocol):
         """The loop's events, oldest first."""
         ...
 
+    def eventos_de_refino_do_agente(self, org_id: UUID, agent_id: UUID, *, limite: int = 2000) -> list[dict[str, Any]]:
+        """Every ``refinamento_proposto`` / ``refinamento_revisado`` event of EVERY loop of the agent, oldest first (each row carries its
+        ``loop_id``): what the publish gate and the readiness item read to find an edit nobody reviewed."""
+        ...
+
 
 def _num(v: Any) -> float:
     return float(v) if v is not None else 0.0
@@ -187,6 +192,11 @@ class FakeLoopStore:
         self, org_id: UUID, loop_id: UUID, *, limite: int = 200, eventos: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
         return [e for e in self.eventos if e["org_id"] == org_id and e["loop_id"] == loop_id and (eventos is None or e["evento"] in eventos)][:limite]
+
+    def eventos_de_refino_do_agente(self, org_id: UUID, agent_id: UUID, *, limite: int = 2000) -> list[dict[str, Any]]:
+        ids = {l.id for l in self.loops.values() if l.org_id == org_id and l.agent_id == agent_id}
+        return [e for e in self.eventos if e["org_id"] == org_id and e["loop_id"] in ids
+                and e["evento"] in ("refinamento_proposto", "refinamento_revisado")][:limite]
 
     def loops_ativos_do_usuario(self, started_by: UUID) -> list[LoopRecord]:
         return [l for l in self.loops.values() if l.started_by == started_by and l.status == "ativo"]
@@ -428,6 +438,14 @@ class SupabaseLoopStore:
         q = self._t("eval_loop_eventos").select("*").eq("org_id", str(org_id)).eq("loop_id", str(loop_id))
         if eventos is not None:
             q = q.in_("evento", list(eventos))
+        return exec_query(q.order("created_at").limit(limite)).data or []
+
+    def eventos_de_refino_do_agente(self, org_id: UUID, agent_id: UUID, *, limite: int = 2000) -> list[dict[str, Any]]:
+        ids = [str(l.id) for l in self.list_loops(org_id, agent_id)]
+        if not ids:
+            return []
+        q = (self._t("eval_loop_eventos").select("*").eq("org_id", str(org_id)).in_("loop_id", ids)
+             .in_("evento", ["refinamento_proposto", "refinamento_revisado"]))
         return exec_query(q.order("created_at").limit(limite)).data or []
 
 
