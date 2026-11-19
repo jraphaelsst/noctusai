@@ -1904,3 +1904,19 @@ def test_gh_run_green_on_an_older_head_is_needs_resync_head_moved(world):
     d = world.deliverable(verdict_ref=ref, ci_client=client)
     five = item(d, "scoped_green")
     assert d["verdict"] == "needs_resync" and not five["ok"] and "not " + head[:9] in five["detail"]
+
+
+# =================================================================================================
+# kb-counts are owned by the compose step, never by a branch head (2026-11-18)
+# =================================================================================================
+
+def test_kb_counts_is_not_a_branch_head_derived_artifact_and_ci_backstops_the_composed_tree():
+    """Counts are a function of the whole tree; a branch behind dev is stale by definition, so item 4 must not
+    judge them (24 refusals/14d). The backstop lives on the composed tree: test.yml checks candidate/integration refs."""
+    assert "kb-counts" not in [n for n, _ in RS.DERIVED_ARTIFACTS]
+    root = Path(__file__).resolve().parents[3]
+    wf = root / ".github" / "workflows" / "test.yml"
+    if not wf.is_file():
+        pytest.skip("not run from a full noc checkout")
+    text = wf.read_text(encoding="utf-8")
+    assert "--update-kb-counts --check" in text and "refs/heads/mq-candidate/" in text
