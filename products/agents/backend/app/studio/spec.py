@@ -39,7 +39,9 @@ __all__ = [
 
 #: Security review of wave 1: a compiled prompt above this size refuses the
 #: turn (409 ``prompt_too_large``) — it is never truncated.
-MAX_COMPILED_PROMPT_CHARS = 60_000
+#: Raised 60k -> 80k on the owner decision of 2026-11-18 (Julia compiles to ~72k
+#: chars); the 15k-token UI warning ``prompt_extenso`` stays advisory.
+MAX_COMPILED_PROMPT_CHARS = 80_000
 
 
 class StudioSpecError(Exception):
