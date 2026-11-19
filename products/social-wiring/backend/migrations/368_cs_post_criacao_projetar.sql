@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 367 · social_wiring: cs_post_criacao_projetar -- the criação sub-state projection + its events, one transaction
+-- Migration 368 · social_wiring: cs_post_criacao_projetar -- the criação sub-state projection + its events, one transaction
 -- ============================================================================
 -- WHY
 -- ---
@@ -25,7 +25,7 @@ SET search_path = social_wiring, public;
 DO $guard$
 BEGIN
   IF to_regclass('social_wiring.cs_post_eventos') IS NULL OR to_regclass('social_wiring.cs_posts') IS NULL THEN
-    RAISE EXCEPTION 'Migration 367 requires cs_posts and cs_post_eventos (241 / 342) -- apply them first';
+    RAISE EXCEPTION 'Migration 368 requires cs_posts and cs_post_eventos (241 / 342) -- apply them first';
   END IF;
 END
 $guard$;

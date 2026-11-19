@@ -1,4 +1,4 @@
-"""Migration 367 (criação projection + its events, one transaction),
+"""Migration 368 (criação projection + its events, one transaction),
 replayed on a real Postgres (PGlite) on top of 362-366, twice, plus behaviour scenarios.
 
 Shares the harness of ``test_migration_cs_criacao`` (one derivation of the prelude, the stubs and the SQL helpers).
@@ -27,7 +27,7 @@ NEW = ("cs_post_criacao_projetar",)
 NEW_FILES = {n: migration_path(BACKEND, n) for n in NEW}
 
 SCENARIOS: dict[str, str] = {
-    "367: projection + events in one call; idempotent; falha only with falhou; somente_de gates": (
+    "368: projection + events in one call; idempotent; falha only with falhou; somente_de gates": (
         """
   r := cs_post_criacao_projetar(o, p, 'na_fila', NULL,
          '[{"tipo":"criacao_enfileirada","dados":{"rota":"reel_narrado"}}]'::jsonb, NULL);
@@ -59,7 +59,7 @@ SCENARIOS: dict[str, str] = {
         + sqlstate("SELECT cs_post_criacao_projetar(o, gen_random_uuid(), 'na_fila', NULL, '[]'::jsonb, NULL)", "raise_exception")
         + sqlstate("SELECT cs_post_criacao_projetar(o, p, 'na_fila', NULL, '[{\"tipo\":\"evento_inventado\"}]'::jsonb, NULL)", "check_violation")
     ),
-    "367: only service_role executes it": """
+    "368: only service_role executes it": """
   IF NOT has_function_privilege('service_role', 'social_wiring.cs_post_criacao_projetar(uuid,uuid,text,text,jsonb,text[])', 'EXECUTE') THEN
     RAISE EXCEPTION 'service cannot execute'; END IF;
   IF has_function_privilege('authenticated', 'social_wiring.cs_post_criacao_projetar(uuid,uuid,text,text,jsonb,text[])', 'EXECUTE')

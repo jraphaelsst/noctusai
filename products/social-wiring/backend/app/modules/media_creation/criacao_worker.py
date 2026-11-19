@@ -10,7 +10,7 @@ holds the state, so a killed worker's leased job is re-claimed and resumed.
 Deploy shape (NOT declared in deploy/fleet/docker-compose.prod.yml here: registering a new prod service is the owner's
 prod-exposure decision, gated by ``noctus.dev.prod_consent``): a service of the SAME image as ``social-wiring``
 (``<<: *prod-defaults``), ``command: ["python", "-m", "app.modules.media_creation.criacao_worker"]``, ``profiles: [criacao]``,
-no port / healthcheck, ``oom_score_adj: 800``, ``stop_grace_period: 60s``. It needs migrations 362-367 applied, the platform
+no port / healthcheck, ``oom_score_adj: 800``, ``stop_grace_period: 60s``. It needs migrations 362-366 and 368 applied, the platform
 ElevenLabs key and a marca voice consent first.
 
 A graceful stop (SIGTERM / SIGINT) lets the current step finish within the stop timeout.
