@@ -11,6 +11,7 @@ Frozen, already-applied migration files still cite the old path `projects/core-s
 | Path | What |
 | --- | --- |
 | `specs/*-contract.md` | Our build contracts: pesquisa, pesquisa wave 2, cerebro, geracao, esteira, transcription. |
+| `specs/criacao-pipeline-contract.md` | Criação pipeline + white-label Diretor de Criação: chat batching → approval → card → automatic generation (TTS clone, code-rendered motion, HeyGen avatar, static layout) with measured cost/perf, live card moves + progress, quota, context wiring; slices S0–S12 and owner decisions (2026-11-19). |
 | `specs/apify-biblioteca-contract.md` | Biblioteca de virais via Apify (transitional source), chat structure choice + citation (2026-11-04). |
 | `specs/twin-editor-design.md` | Our Twin video editor: data flow, data model, API draft, UI layout and components, render path, seed mapping, open questions (draft v0, 2026-11-04). |
 | `specs/instagram-insights-api.md` · `specs/branding-import.md` | Implemented API contract and the branding import runbook. |
