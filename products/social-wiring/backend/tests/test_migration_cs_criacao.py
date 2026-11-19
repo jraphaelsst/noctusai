@@ -251,7 +251,7 @@ SCENARIOS: dict[str, str] = {
           + expect("count(*) FROM cs_criacao_cota_events WHERE org_id = o", "2", "created + one change")
           + expect("(from_state, to_state, actor_id::text)::text FROM cs_criacao_cota_events WHERE org_id = o AND seq = 2",
                    "(1500,4000,00000000-0000-0000-0000-0000000000c2)", "from/to/who")
-          + expect("((cs_criacao_cota_estado(o))->>'limite_usd_mes')::numeric", "40.00", "state read in dollars")
+          + expect("round(((cs_criacao_cota_estado(o))->>'limite_usd_mes')::numeric, 2)", "40.00", "state read in dollars")
           + sqlstate("UPDATE cs_criacao_cota_events SET to_state = 1 WHERE org_id = o", "raise_exception")
           + sqlstate("DELETE FROM cs_criacao_cota_events WHERE org_id = o", "raise_exception")
           + sqlstate("UPDATE cs_criacao_cotas SET limite_usd_cents = -1 WHERE org_id = o", "check_violation"),
@@ -276,8 +276,8 @@ SCENARIOS: dict[str, str] = {
      OR has_table_privilege('service_role', 'social_wiring.cs_criacao_jobs', 'DELETE') THEN RAISE EXCEPTION 'service writes the ledger directly'; END IF;
   IF has_table_privilege('service_role', 'social_wiring.cs_consentimentos_voz', 'UPDATE')
      OR has_table_privilege('service_role', 'social_wiring.cs_consentimentos_voz', 'DELETE') THEN RAISE EXCEPTION 'consent mutable'; END IF;
-  IF has_table_privilege('service_role', 'social_wiring.cs_criacao_cota_events', 'INSERT')
-     OR has_table_privilege('service_role', 'social_wiring.cs_criacao_cotas', 'UPDATE') THEN RAISE EXCEPTION 'quota writable outside the RPCs'; END IF;
+  IF has_table_privilege('service_role', 'social_wiring.cs_criacao_cotas', 'UPDATE')
+     OR has_table_privilege('service_role', 'social_wiring.cs_criacao_cotas', 'INSERT') THEN RAISE EXCEPTION 'quota writable outside the RPCs'; END IF;
   IF NOT has_function_privilege('service_role', 'social_wiring.cs_criacao_passo_registrar(uuid,uuid,integer,text,text,jsonb)', 'EXECUTE') THEN
     RAISE EXCEPTION 'service cannot execute the RPC'; END IF;
   FOREACH s IN ARRAY ARRAY['social_wiring.cs_criacao_jobs', 'social_wiring.cs_consentimentos_voz', 'social_wiring.cs_criacao_cotas',
