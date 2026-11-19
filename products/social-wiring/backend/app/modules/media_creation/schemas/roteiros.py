@@ -25,6 +25,10 @@ MAX_INSTRUCOES = 5000
 MAX_RESPOSTA = 1000
 MAX_CONTEUDO = 30000
 MAX_NOME = 160
+#: EST-RO: at most 3 Estruturas per roteiro (checked by the service, coded); this only caps the payload size.
+MAX_ESTRUTURAS = 3
+MAX_ESTRUTURAS_PAYLOAD = 20
+FormatoRoteiro = Literal["reels", "carrossel", "stories", "post"]
 
 
 class RoteiroCreate(StrictHttpModel):
@@ -44,6 +48,13 @@ class RoteiroCreate(StrictHttpModel):
     post_id: Optional[uuid.UUID] = None
     #: With ``post_id``: replace the post's current roteiro (it stays in Meus roteiros, unbound).
     substituir: bool = False
+    #: EST-RO (estruturas-contract 6.7): the Estruturas to follow, principal first. More than 3 is refused by the service
+    #: with the coded 422 ``muitas_estruturas`` (the bound here only caps the payload).
+    estrutura_ids: Optional[list[uuid.UUID]] = Field(default=None, min_length=1, max_length=MAX_ESTRUTURAS_PAYLOAD)
+    #: Derived from the principal Estrutura when ``estrutura_ids`` is given; else this value (default ``reels``).
+    formato: Optional[FormatoRoteiro] = None
+    #: Set by the chat flow: the conversation this roteiro belongs to (404 when foreign).
+    conversa_id: Optional[uuid.UUID] = None
 
 
 class Resposta(StrictHttpModel):

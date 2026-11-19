@@ -425,7 +425,7 @@ class EsteiraService:
             "id": str(uuid.uuid4()),
             "org_id": self.org_id,
             "marca_id": marca_id,
-            "formato": "reel",
+            "formato": body.formato,
             "arquivado": False,
             "titulo": titulo[:200],
             "etapa_id": target["id"],

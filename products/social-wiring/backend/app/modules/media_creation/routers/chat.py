@@ -12,7 +12,7 @@ ONE unified chat (``specs/estruturas-contract.md`` 6.5): ``agente`` is accepted 
 """
 import logging
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
@@ -20,6 +20,9 @@ from starlette.background import BackgroundTask
 
 from noctusai_lib.api.rate_limit_policies import DEFAULT_AI_RL
 from noctusai_lib.primitives.responses import success_response
+
+from noctusai_lib.domain.approvals import ApprovalService
+from noctusai_lib.domain.jobs import JobRepository
 
 from app.dependencies import get_admin_client, get_current_user_org
 from app.modules.media_creation.schemas.chat import (
@@ -46,7 +49,10 @@ from app.modules.media_creation.services.fluxo_service import (
     get_fluxo_orcamento,
     get_fluxo_settings,
 )
-from app.modules.media_creation.services.roteiro_service import IaCheck, get_roteiro_ia_check
+from app.modules.media_creation.services.fluxo_continuacao import FluxoContinuacao
+from app.modules.media_creation.services.geracao_jobs import make_jobs_repository
+from app.modules.media_creation.services.roteiro_aprovacao import make_approvals
+from app.modules.media_creation.services.roteiro_service import IaCheck, RoteiroService, get_roteiro_ia_check
 from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
@@ -58,10 +64,31 @@ def _svc(auth) -> ChatService:
     return ChatService(get_admin_client(), str(org_id), str(user.id))
 
 
-def _fluxo_svc(auth, cfg, ia_check: IaCheck, orcamento: Orcamento) -> ChatService:
+def get_fluxo_jobs() -> JobRepository:
+    """DI seam for the saga's queue (roteiro job, finalizer, roteiro-first headline). Tests override with a Fake."""
+    return make_jobs_repository(get_admin_client())
+
+
+def get_fluxo_approvals() -> ApprovalService:
+    """DI seam for the approvals organ ``RoteiroService`` presents with. Tests override with the Fake ledger."""
+    return make_approvals(get_admin_client())
+
+
+def _fluxo_svc(
+    auth, cfg, ia_check: IaCheck, orcamento: Orcamento, jobs: Optional[JobRepository] = None,
+    approvals: Optional[ApprovalService] = None,
+) -> ChatService:
     user, _, org_id = auth
     db = get_admin_client()
-    fluxo = FluxoService(db, str(org_id), str(user.id), cfg=cfg, ia_check=ia_check, orcamento=orcamento)
+    continuacao = None
+    if jobs is not None:
+        def roteiros(db_: Any, org: str, usuario: str) -> RoteiroService:
+            return RoteiroService(db_, org, usuario, cfg=cfg, jobs=jobs, ia_check=ia_check, approvals=approvals)
+
+        continuacao = FluxoContinuacao(db, str(org_id), str(user.id), jobs=jobs, roteiros=roteiros)
+    fluxo = FluxoService(
+        db, str(org_id), str(user.id), cfg=cfg, ia_check=ia_check, orcamento=orcamento, continuacao=continuacao,
+    )
     return ChatService(db, str(org_id), str(user.id), fluxo=fluxo)
 
 
@@ -157,9 +184,11 @@ async def escolher(
     cfg=Depends(get_fluxo_settings),
     ia_check: IaCheck = Depends(get_roteiro_ia_check),
     orcamento: Orcamento = Depends(get_fluxo_orcamento),
+    jobs: JobRepository = Depends(get_fluxo_jobs),
+    approvals: ApprovalService = Depends(get_fluxo_approvals),
 ):
-    """The click on a headline (9.2): 202 the first time, 200 + ``ja_existia`` when the flow already exists."""
-    svc = _fluxo_svc(auth, cfg, ia_check, orcamento)
+    """The click on a proposta (9.2 / 16.6): 202 the first time, 200 + ``ja_existia`` when the flow already exists."""
+    svc = _fluxo_svc(auth, cfg, ia_check, orcamento, jobs, approvals)
     try:
         resultado = await svc.fluxo.escolher(
             str(conversa_id),

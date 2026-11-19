@@ -44,6 +44,7 @@ from app.modules.media_creation.services.fluxo_service import (
 )
 from app.modules.media_creation.services.roteiro_service import RoteiroError, get_roteiro_ia_check
 from fastapi import HTTPException
+from noctusai_lib.domain.jobs import FakeJobRepository
 
 BASE = "/api/media-creation/chat"
 MARCA = str(uuid.uuid4())
@@ -196,7 +197,12 @@ class State:
         self.client = client
         self.rpc = RpcStub()
         self.fake = FakeStream({"chunks": ["Olá."]})
-        self.cfg = SimpleNamespace(roteiros_dia_usuario=20, geracao_worker_enabled=True, **cfg)
+        self.cfg = SimpleNamespace(
+            roteiros_dia_usuario=20, headline_lotes_dia_usuario=30, geracao_worker_enabled=True,
+            geracao_llm_model="claude-test", **cfg)
+        # RP-3 wired steps 4-7 (`fluxo_continuacao`) behind the click: its queue is the seed's Fake here
+        # (the saga itself is pinned in test_fluxo_saga.py).
+        self.jobs = FakeJobRepository()
         self.ia = _ia_ok
         self.orcamento = _orcamento_ok
         client.mock_supabase.rpc = self.rpc
@@ -206,6 +212,7 @@ class State:
         ov[get_fluxo_settings] = lambda: self.cfg
         ov[get_roteiro_ia_check] = lambda: (lambda org_id: self.ia(org_id))
         ov[get_fluxo_orcamento] = lambda: (lambda org_id: self.orcamento(org_id))
+        ov[chat_router.get_fluxo_jobs] = lambda: self.jobs
 
     @property
     def db(self):
@@ -794,19 +801,20 @@ def test_escolher_primeira_vez_reivindica_salva_a_headline_e_responde_202(ch):
     ch.rpc.results["cs_chat_proposta_salvar_headline"] = lambda: _simular_headline_salva(ch, cid, pid)
     r = ch.client.post(f"{BASE}/conversas/{cid}/escolher", json={"proposta_id": pid})
     assert r.status_code == 202, r.text
-    # the saga's order: claim -> headline; the pre-flight passed so the lease was NOT given back
-    assert ch.rpc.names() == ["cs_chat_proposta_reivindicar", "cs_chat_proposta_salvar_headline"]
+    # the saga's order: claim -> headline -> (pre-flight passed, lease NOT given back) -> steps 4-7 (RP-3)
+    assert ch.rpc.names()[:2] == ["cs_chat_proposta_reivindicar", "cs_chat_proposta_salvar_headline"]
+    assert "cs_chat_proposta_liberar" not in ch.rpc.names()
     assert ch.rpc.last("cs_chat_proposta_reivindicar") == {
         "p_proposta": pid, "p_org": TEST_ORG_ID, "p_conversa": cid, "p_user": TEST_USER_ID, "p_lease_s": 60}
     assert ch.rpc.last("cs_chat_proposta_salvar_headline") == {"p_proposta": pid, "p_org": TEST_ORG_ID, "p_user": TEST_USER_ID}
     d = r.json()["data"]
     assert set(d) == {"proposta", "fluxo", "mensagem_id", "ja_existia", "em_andamento"}
     assert d["ja_existia"] is False and d["em_andamento"] is False
-    assert d["mensagem_id"] is None  # the roteiro_gerado message is UNI-1b's
     assert d["proposta"]["id"] == pid and d["proposta"]["status"] == "escolhida" and d["proposta"]["headline_id"]
     f = d["fluxo"]
-    # TRUTHFUL: steps 4-7 are UNI-1b, so the flow says it stopped after the headline -- nothing pretends a roteiro exists
-    assert f["etapa"] == "headline_salva" and f["roteiro"] is None and f["post"] is None
+    # the continuation ran (RP-3): step 4 created the roteiro. This file's RpcStub does not model the later RPCs;
+    # steps 5-7 with their real RPC model are pinned in test_fluxo_saga.py.
+    assert f["roteiro"] is not None and "cs_chat_fluxo_registrar" in ch.rpc.names()
     assert f["headline"] == {"id": d["proposta"]["headline_id"], "texto": "Headline um"}
 
 
@@ -837,10 +845,16 @@ def test_escolher_uma_headline_ja_salva_sintetiza_a_proposta_antes_do_claim(ch):
     ch.db.from_("cs_headlines").insert({"id": HEADLINE_SALVA, "org_id": TEST_ORG_ID, "marca_id": MARCA, "texto": "Headline salva"}).execute()
     ch.rpc.results["cs_chat_proposta_sintetizar"] = {"proposta_id": pid, "sintetizada": True}
     ch.rpc.results["cs_chat_proposta_reivindicar"] = _claimed(pid, cid)
-    ch.rpc.results["cs_chat_proposta_salvar_headline"] = {"headline_id": HEADLINE_SALVA, "criada": True}
+
+    def salvar():  # what the SQL does: the synthesized proposta points at the saved headline
+        ch.db.from_("cs_chat_propostas").update(
+            {"status": "escolhida", "headline_id": HEADLINE_SALVA, "fluxo_etapa": "headline_salva"}).eq("id", pid).execute()
+        return {"headline_id": HEADLINE_SALVA, "criada": False}
+
+    ch.rpc.results["cs_chat_proposta_salvar_headline"] = salvar
     r = ch.client.post(f"{BASE}/conversas/{cid}/escolher", json={"headline_id": HEADLINE_SALVA})
     assert r.status_code == 202, r.text
-    assert ch.rpc.names() == ["cs_chat_proposta_sintetizar", "cs_chat_proposta_reivindicar", "cs_chat_proposta_salvar_headline"]
+    assert ch.rpc.names()[:3] == ["cs_chat_proposta_sintetizar", "cs_chat_proposta_reivindicar", "cs_chat_proposta_salvar_headline"]
     assert ch.rpc.last("cs_chat_proposta_sintetizar") == {
         "p_org": TEST_ORG_ID, "p_user": TEST_USER_ID, "p_conversa": cid, "p_headline": HEADLINE_SALVA}
     assert ch.rpc.last("cs_chat_proposta_reivindicar")["p_proposta"] == pid

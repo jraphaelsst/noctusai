@@ -142,6 +142,10 @@ def register() -> Any:
     from app.modules.media_creation.services import estruturas_autodraft
 
     estruturas_autodraft.register()
+    # The chat saga's two jobs (estruturas-contract 9.3 / 16.6): `fluxo.finalizar_card` + `fluxo.headline_do_roteiro`.
+    from app.modules.media_creation.services import fluxo_finalizar
+
+    fluxo_finalizar.register()
 
     async def start_pesquisa_extracao_hook() -> None:
         """Its OWN seed Worker (types ["pesquisa.extrair"]), NOT the fotos one (that one's claim
