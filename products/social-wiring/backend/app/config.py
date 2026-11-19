@@ -398,6 +398,9 @@ class SocialWiringSettings(ProductSettings):
     chat_mensagens_dia_usuario: int = 100
     chat_mensagens_dia_org: int = 400
     chat_contexto_max_chars: int = 60_000
+    # Per-org strangler (criacao-pipeline-contract 4/8): the chat answered by the agents product's Diretor de Criacao
+    # instead of the legacy direct-model stream. Default OFF; org_settings/platform_settings/env override it.
+    chat_diretor_criacao: bool = False
     biblioteca_max_perfis_org: int = 30
     biblioteca_classificacoes_dia_org: int = 300
     # A post is "viral" when its metric >= this x the profile median.
