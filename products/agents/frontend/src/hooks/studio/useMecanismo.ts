@@ -4,6 +4,7 @@
  *
  *   POST /api/studio/agents/{key}/draft/mecanismo-runs      -> 202 {run_id, status: "executando"} (platform admin)
  *   GET  /api/studio/agents/{key}/mecanismo-runs/{run_id}   -> executando | concluida | falhou | cancelada
+ *   GET  /api/studio/agents/{key}/mecanismo-runs            -> {items}: the history, every version, newest first
  *
  * The POST hands the booked run to the run query (seeded as `executando`, so the UI never flashes empty); the GET
  * polls every 3s while in flight; the poll that first sees a terminal status refetches the readiness checklist and
@@ -13,7 +14,7 @@ import { useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCacheWriteMutation } from "@noctusai/lib/cache-writes";
 import { api } from "@/lib/api";
-import type { MecanismoRun, MecanismoRunIniciada } from "@/api/studio/types-prontidao";
+import type { MecanismoRun, MecanismoRunIniciada, MecanismoRunResumo } from "@/api/studio/types-prontidao";
 import { seg, studioKeys, toView } from "./keys";
 
 const mecanismoRunKey = (key: string, runId: string) => ["studio", key, "mecanismo-run", runId] as const;
@@ -24,6 +25,7 @@ export function useIniciarMecanismo(key: string) {
     mutationFn: () => api.post<MecanismoRunIniciada>(`/api/studio/agents/${seg(key)}/draft/mecanismo-runs`),
     targets: [],
     onSuccess: (run) => {
+      void qc.invalidateQueries({ queryKey: studioKeys.mecanismoRuns(key) }); // a queued job fills every entry it touches
       qc.setQueryData<MecanismoRun>(mecanismoRunKey(key, run.run_id), (old) =>
         old ?? {
           run_id: run.run_id, version_id: "", compiled_hash: run.compiled_hash, driver: run.driver,
@@ -55,6 +57,21 @@ export function useMecanismoRun(key: string, runId: string | null) {
     settledFor.current = runId;
     void qc.invalidateQueries({ queryKey: studioKeys.prontidao(key) });
     void qc.invalidateQueries({ queryKey: studioKeys.detail(key) });
+    void qc.invalidateQueries({ queryKey: studioKeys.mecanismoRuns(key) });
   }, [key, qc, runId, status]);
   return toView(q);
+}
+
+/** The agent's mechanism-suite history (platform admin only: pass `enabled=false` for anyone else, the server answers 403). */
+export function useMecanismoRuns(key: string, enabled: boolean) {
+  const q = useQuery<{ items: MecanismoRunResumo[] }>({
+    queryKey: studioKeys.mecanismoRuns(key),
+    queryFn: () => api.get<{ items: MecanismoRunResumo[] }>(`/api/studio/agents/${seg(key)}/mecanismo-runs`),
+    enabled: !!key && enabled,
+    retry: false,
+    // poll-budget: 3s only while a listed mechanism run is executing, stops after; 1 calls/tick (refetch of the polled GET, only while the job is in flight); worst 28800/day per open tab; hidden=paused
+    refetchInterval: (query) =>
+      (query.state.data as { items: MecanismoRunResumo[] } | undefined)?.items.some((r) => r.status === "executando") ? 3000 : false,
+  });
+  return { ...toView(q), items: q.data?.items };
 }
