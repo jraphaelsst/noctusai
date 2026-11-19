@@ -1351,6 +1351,29 @@ class MecanismoRunOut(BaseModel):
     casos: list[MecanismoCasoOut] = Field(default_factory=list)
 
 
+class MecanismoRunResumoOut(BaseModel):
+    """One row of the run history: the run's counters and gate verdict, no per-case detail (that is ``GET .../{id}``)."""
+
+    run_id: UUID
+    version_id: UUID
+    compiled_hash: str
+    driver: str
+    status: str
+    aprovado: bool
+    completo: bool
+    orcamento_excedido: bool
+    custo_usd: float | None = None
+    total_casos: int
+    casos_aprovados: int
+    erro: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+class MecanismoRunListOut(BaseModel):
+    items: list[MecanismoRunResumoOut]
+
+
 async def iniciar_run_mecanismo(
     ctx: AuthContext, key: str, app_state: Any, *, store, mecanismo, catalog, driver, ceiling, consolidacao, loops, evals,
     rodar_tudo: bool = False, loop_id: UUID | None = None, preflight=None,
@@ -1473,6 +1496,35 @@ async def run_mecanismo_suite(
     return await iniciar_run_mecanismo(
         ctx, key, request.app.state, store=store, mecanismo=mecanismo, catalog=catalog, driver=driver, ceiling=ceiling,
         consolidacao=consolidacao, loops=loops, evals=evals, rodar_tudo=rodar_tudo, loop_id=loop_id, preflight=preflight)
+
+
+@router.get("/agents/{key}/mecanismo-runs", response_model=MecanismoRunListOut, include_in_schema=False)
+def list_mecanismo_runs(
+    key: str,
+    ctx: AuthContext = Depends(require_evals_run_access),
+    store=Depends(get_studio_definition_store_dep),
+    mecanismo=Depends(get_mecanismo_store_dep),
+    limit: int = Query(50, ge=1, le=200),
+) -> MecanismoRunListOut:
+    """The agent's mechanism-suite run history (every version, any status), newest first. Same tier as the GET-by-id:
+    the suite is platform IP. Counters and the gate verdict only; open ``GET .../{run_id}`` for the cases."""
+    agent = resolve_agent(store, ctx.org_id, key)
+    require_user_or_dev_advisor(ctx, agent, evals_token_ok=True)
+    rows = mecanismo.list_runs(ctx.org_id, agent.id, limit=limit)
+    items = []
+    for r in rows:
+        custo = r.get("custo_usd")
+        items.append(MecanismoRunResumoOut(
+            run_id=UUID(str(r["id"])), version_id=UUID(str(r["version_id"])), compiled_hash=r["compiled_hash"],
+            driver=r["driver"], status=r["status"], aprovado=bool(r["aprovado"]), completo=bool(r["completa"]),
+            orcamento_excedido=bool(r["orcamento_excedido"]), custo_usd=float(custo) if custo is not None else None,
+            total_casos=int(r["total_casos"] or 0), casos_aprovados=int(r["casos_aprovados"] or 0), erro=r.get("erro"),
+            started_at=_iso(r.get("started_at")), finished_at=_iso(r.get("finished_at"))))
+    return MecanismoRunListOut(items=items)
+
+
+def _iso(v: Any) -> str | None:
+    return None if v is None else (v.isoformat() if hasattr(v, "isoformat") else str(v))
 
 
 @router.get("/agents/{key}/mecanismo-runs/{run_id}", response_model=MecanismoRunOut, response_model_by_alias=True, include_in_schema=False)

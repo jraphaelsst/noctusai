@@ -229,6 +229,22 @@
     ],
     "invalidas": 0
    }
+  },
+  {
+   "nome": "campo_duplicado",
+   "texto": "### Publicação 1\n- Objetivo do post: autoridade\n- CTA: Salve este post para consultar depois\n- Justificativa do CTA: Salvar combina com conteúdo de consulta e sustenta autoridade\n- Legenda: Seu corpo pede uma rotina de sono.\n- Legenda: Outra legenda.\n- Hashtags: #sono #rotina #saude #bemestar #habitos\n- Primeiro comentário: Qual hábito você mudaria primeiro?\n- Link:\n- Fontes: https://fonte.exemplo/estudo-sono (verificada)\n- Voz: amostras\n",
+   "agents": {
+    "numeros": [
+     1
+    ],
+    "falhas": [
+     "pub1:campo_duplicado:legenda"
+    ]
+   },
+   "sw": {
+    "validas": [],
+    "invalidas": 1
+   }
   }
  ]
 }

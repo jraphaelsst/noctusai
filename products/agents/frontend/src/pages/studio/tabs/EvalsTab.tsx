@@ -62,7 +62,10 @@ import {
 } from "@noctusai/lib/design-system";
 import { EvalLoopCard } from "@/components/studio/EvalLoopCard";
 import { RunProgressPanel, statusLabel } from "@/components/studio/RunProgressPanel";
+import { MecanismoRunDetail } from "@/components/studio/MecanismoRunDetail";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
+import { useIsPlatformAdmin } from "@/hooks/useIsPlatformAdmin";
+import { useMecanismoRuns } from "@/hooks/studio/useMecanismo";
 import { ApiError, errorMessage } from "@/lib/errors";
 import { formatUsdCost } from "@/lib/utils";
 import { useStudioAgent } from "@/hooks/studio/useStudioAgents";
@@ -86,6 +89,19 @@ import type {
   EvalRunModel,
   EvalRunStatus,
 } from "@/api/studio/types-ke";
+import type { MecanismoRunResumo } from "@/api/studio/types-prontidao";
+
+/** The Execuções list holds BOTH suites (behaviour `eval_runs`, mechanism `eval_mecanismo_runs`), tagged by `suite`. */
+type LinhaExecucao =
+  | { suite: "comportamento"; id: string; ts: string; run: EvalRun }
+  | { suite: "mecanismo"; id: string; ts: string; run: MecanismoRunResumo };
+
+const MEC_STATUS_VARIANT: Record<string, "default" | "muted" | "destructive" | "outline"> = {
+  executando: "muted",
+  concluida: "default",
+  falhou: "destructive",
+  cancelada: "outline",
+};
 
 const IN_FLIGHT_RUN: EvalRunStatus[] = ["pendente", "executando"];
 
@@ -703,6 +719,8 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
   const isAdmin = useIsAdmin();
   const { data: cases, showSkeleton, isError, error } = useEvalCases(agentKey);
   const { data: runs } = useEvalRuns(agentKey);
+  const platformAdmin = useIsPlatformAdmin();
+  const mecRuns = useMecanismoRuns(agentKey, platformAdmin);
   const draft = useDraftVersion(agentKey);
   const consolidacao = useConsolidacao(agentKey, isAdmin);
   const estadoPorCaso = new Map((consolidacao.data?.items ?? []).map((i) => [i.case_id, i]));
@@ -714,6 +732,14 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
   const [editingCase, setEditingCase] = useState<string | null>(null);
   const [inUseCase, setInUseCase] = useState<EvalCase | null>(null);
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
+  const [selectedMecRun, setSelectedMecRun] = useState<string | null>(null);
+
+  // Newest first across both suites. Mechanism rows are platform-admin only (the suite is platform IP).
+  const linhas: LinhaExecucao[] = [
+    ...(runs ?? []).map((r): LinhaExecucao => ({ suite: "comportamento", id: r.id, ts: r.started_at ?? r.finished_at ?? "", run: r })),
+    ...(mecRuns.items ?? []).map((r): LinhaExecucao => ({ suite: "mecanismo", id: r.run_id, ts: r.started_at ?? r.finished_at ?? "", run: r })),
+  ].sort((a, b) => (a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0));
+  const mecCarregando = platformAdmin && mecRuns.showSkeleton;
 
   const activeCasesCount = cases?.filter((c) => c.ativo).length ?? 0;
 
@@ -871,11 +897,66 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
 
       <div className="space-y-2">
         <p className="text-sm font-semibold text-foreground">Execuções</p>
-        {!runs || runs.length === 0 ? (
-          <EmptyState message="Nenhuma execução ainda." />
+        {platformAdmin && mecRuns.isError && !mecRuns.items && (
+          <p role="alert" className="text-xs text-destructive" data-testid="evals-mecanismo-runs-erro">
+            Não foi possível carregar as execuções da suíte de mecanismo; a lista abaixo está incompleta.{" "}
+            <button type="button" className="underline" onClick={mecRuns.refetch}>Tentar de novo</button>
+          </p>
+        )}
+        {mecCarregando && (
+          <p role="status" className="text-xs text-muted-foreground" data-testid="evals-mecanismo-runs-carregando">
+            Carregando as execuções da suíte de mecanismo...
+          </p>
+        )}
+        {linhas.length === 0 ? (
+          !mecCarregando && !(platformAdmin && mecRuns.isError) && <EmptyState message="Nenhuma execução ainda." />
         ) : (
           <div className="divide-y divide-border rounded-md border border-border">
-            {runs.map((r) => {
+            {linhas.map((linha) => {
+              if (linha.suite === "mecanismo") {
+                const m = linha.run;
+                const abrir = () => {
+                  setSelectedMecRun(m.run_id);
+                  setSelectedRun(null);
+                };
+                return (
+                  <div
+                    key={`mec-${m.run_id}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={abrir}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        abrir();
+                      }
+                    }}
+                    data-testid={`evals-mecanismo-row-${m.run_id}`}
+                    className={`flex w-full cursor-pointer flex-wrap items-center justify-between gap-2 px-3 py-2 text-left text-xs hover:bg-accent/50 ${
+                      selectedMecRun === m.run_id ? "bg-accent/40" : ""
+                    }`}
+                  >
+                    <span>{new Date(linha.ts).toLocaleString("pt-BR")}</span>
+                    <Badge variant="outline">Mecanismo</Badge>
+                    <span className="text-muted-foreground">
+                      {m.casos_aprovados}/{m.total_casos}
+                    </span>
+                    <span className="text-muted-foreground" data-testid={`evals-mecanismo-custo-${m.run_id}`}>
+                      {formatUsdCost(m.custo_usd)}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {m.driver !== "live" && <Badge variant="outline">simulada</Badge>}
+                      {m.status === "concluida" && (
+                        <Badge variant={m.aprovado ? "default" : "destructive"} data-testid={`evals-mecanismo-gate-${m.run_id}`}>
+                          {m.aprovado ? "Aprovada" : "Reprovada"}
+                        </Badge>
+                      )}
+                      <Badge variant={MEC_STATUS_VARIANT[m.status] ?? "outline"}>{statusLabel(m.status)}</Badge>
+                    </div>
+                  </div>
+                );
+              }
+              const r = linha.run;
               const finished = isRunFinished(r.status);
               // Row-level proxy for "has non-aprovado results" — `EvalRun`
               // (list shape) carries no per-result breakdown, only
@@ -887,11 +968,15 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
                   key={r.id}
                   role="button"
                   tabIndex={0}
-                  onClick={() => setSelectedRun(r.id)}
+                  onClick={() => {
+                    setSelectedRun(r.id);
+                    setSelectedMecRun(null);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       setSelectedRun(r.id);
+                      setSelectedMecRun(null);
                     }
                   }}
                   data-testid={`evals-run-row-${r.id}`}
@@ -900,6 +985,7 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
                   }`}
                 >
                   <span>{new Date(r.started_at ?? r.finished_at ?? "").toLocaleString("pt-BR")}</span>
+                  <Badge variant="outline">Comportamento</Badge>
                   <span className="text-muted-foreground">
                     {r.aprovados}/{r.total}
                   </span>
@@ -947,6 +1033,8 @@ export default function EvalsTab({ agentKey }: { agentKey: string }) {
           </div>
         )}
       </div>
+
+      {selectedMecRun && <MecanismoRunDetail agentKey={agentKey} runId={selectedMecRun} />}
 
       {selectedRun && (
         <RunDetailPanel

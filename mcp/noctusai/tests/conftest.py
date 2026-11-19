@@ -22,6 +22,7 @@ import pytest
 # not setdefault: a shell that exported `git` must not leak into the suite).
 # Tests of the Real store build a `GitLedgerStore` on a temp bare repo directly.
 os.environ["NOCTUS_LEDGER_STORE"] = "fake"
+os.environ.setdefault("NOCTUS_REFUSAL_AUTOFILE", "0")  # the recurrence auto-file writes findings; tests opt in explicitly
 
 # MCP root (parent of tests/)
 _MCP_ROOT = Path(__file__).resolve().parents[1]

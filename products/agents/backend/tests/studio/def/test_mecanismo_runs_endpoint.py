@@ -191,6 +191,46 @@ class TestPoll:
         assert "segredo" not in str(body) and body["erro"]
 
 
+class TestList:
+    """GET /agents/{key}/mecanismo-runs: every run of the agent (all versions), newest first, same tier as the GET-by-id."""
+
+    LIST = f"{BASE}/isa/mecanismo-runs"
+
+    def test_unauthenticated_is_401_and_org_roles_are_403(self, studio):
+        _setup(studio, driver=_Live(_ok()))
+        assert studio.raw.get(self.LIST).status_code == 401
+        studio.as_org_admin_only()
+        r = studio.get(self.LIST)
+        assert r.status_code == 403 and r.json()["code"] == "platform_admin_required"
+        studio.as_role("member")
+        assert studio.get(self.LIST).status_code == 403
+
+    def test_no_runs_is_an_empty_list(self, studio):
+        _setup(studio, driver=_Live(_ok()))
+        assert studio.get(self.LIST).json() == {"items": []}
+
+    def test_lists_every_run_newest_first_with_the_gate_fields(self, studio):
+        _setup(studio, driver=_Live(_ok()))
+        primeiro = _run(studio)
+        # a content change = a new compiled hash: the list spans hashes/versions of the agent
+        assert studio.put(f"{BASE}/isa/draft/sections", json={"secoes": [
+            {"chave": "identidade", "titulo": "Identidade", "ordem": 10, "conteudo": "Outra.", "ativo": True}]}).status_code == 200
+        segundo = _run(studio)
+        items = studio.get(self.LIST).json()["items"]
+        assert [i["run_id"] for i in items] == [segundo["run_id"], primeiro["run_id"]]
+        i = items[0]
+        assert i["status"] == "concluida" and i["aprovado"] is True and i["total_casos"] == 1 and i["casos_aprovados"] == 1
+        assert i["driver"] == "live" and i["started_at"] and i["custo_usd"] is not None and "casos" not in i
+
+    def test_limit_caps_and_other_agents_runs_are_not_listed(self, studio):
+        _setup(studio, driver=_Live(_ok()))
+        _run(studio)
+        _run(studio)
+        assert len(studio.get(self.LIST, params={"limit": 1}).json()["items"]) == 1
+        assert studio.post(BASE, json={"key": "outra", "nome": "Outra"}).status_code == 201
+        assert studio.get(f"{BASE}/outra/mecanismo-runs").json() == {"items": []}
+
+
 def test_the_versions_endpoint_summarises_the_latest_run_for_the_current_hash(studio):
     _setup(studio, driver=_Live(_ok()))
     draft_id = studio.store.get_draft(studio.org_id, UUID(studio.get(f"{BASE}/isa").json()["id"])).id

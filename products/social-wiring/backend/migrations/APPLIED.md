@@ -695,6 +695,6 @@ Authored 2026-11-15 (re-cut v3 of the 2026-11-04 Vista sync-and-history work; th
 
 Authored 2026-11-19 (criacao-pipeline-contract.md). 362 `cs_criacao_posts` (cs_posts criação state/CTA/fontes, hashtags cap 5, papel CHECK, **per-org data step: Gravação -> Criação role `criacao`, Roteiro/Edição/Pronto roles, inserts Aprovação final**), 363 `cs_criacao_jobs` (measured step ledger + `cs_criacao_passo_registrar`), 364 `cs_post_eventos_criacao` (event vocabulary), 365 `cs_consentimentos_voz` (append-only voice/avatar consent; LGPD flag), 366 `cs_criacao_cotas` (US$15/month quota + events + spend view). **Apply 362 TOGETHER with the S5 image** (the previous image gates on role `gravacao`, which the data step renames to `criacao`); 363's RPC needs 364 before its first call; 366 needs 363. Run `predeploy_check` first. Forward-only, idempotent.
 
-## 367 — cs_chat_proposta_publicacoes — NOT APPLIED
+## 367 — cs_chat_proposta_publicacoes — APPLIED 2026-11-19 (prod, steward, release 3a23eb3f9)
 
 Authored 2026-11-19 (criação pipeline S9). Creates `cs_chat_proposta_publicacoes` (the validated `### Publicação` block of a chat proposta: legenda, exactly 5 hashtags, primeiro comentário, CTA objective/justification, fontes) and WIDENS the `cs_fluxo_eventos.tipo` CHECK with `opcoes_selecionadas`, `publicacao_gerada`, `publicacao_invalida`, `publicacao_falhou`. Additive; **apply BEFORE deploying the image** (the chat writes the table and the new event names; an N-1 image ignores both). Requires 352/358. Forward-only, idempotent.
