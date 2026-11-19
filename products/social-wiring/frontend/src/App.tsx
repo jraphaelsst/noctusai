@@ -303,7 +303,8 @@ export default createProductApp({
     { path: "/lais", component: RedirectLegacyLais },
     { path: "/lais/*", component: RedirectLegacyLais },
     { path: "/equipe", component: Equipe },
-    { path: "/configuracoes", component: Settings },
+    // Settings is a seed `SectionTabsPage`: each tab is a sub-route (`/configuracoes/<tab>`), so the route needs `/*`.
+    { path: "/configuracoes/*", component: Settings },
     { path: "/custos", component: Custos },
     { path: "/financeiro/*", component: Financeiro },
   ],
