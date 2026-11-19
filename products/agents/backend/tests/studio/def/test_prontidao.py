@@ -247,16 +247,7 @@ class TestCompor:
         assert sev == sorted(sev, key=["bloqueante", "aviso", "ok"].index)
         assert pr.RECUSAS_PUBLICACAO == {
             "conteudo_incompleto", "compile_blocked", "mecanismo_reprovado", "eval_required", "qualificacao_indisponivel",
-            "numero_fallback_ausente", "catalogo_ausente", "base_nao_validada", "sem_modelo_pai"}
-
-
-class TestSemModeloPai:
-    def test_a_parentless_non_template_agent_is_blocked_with_the_publish_refusal(self):
-        p = pr.compor(_entrada(casos_comportamento=3, juiz=_juiz(), sem_modelo_pai=True))
-        (i,) = [x for x in p.itens if x.codigo == "sem_modelo_pai"]
-        assert i.severidade == "bloqueante" and i.recusa_publicacao == "sem_modelo_pai" and "modelo" in i.mensagem
-        assert not p.pronto_para_publicar
-        assert not [x for x in pr.compor(_entrada(casos_comportamento=3, juiz=_juiz())).itens if x.codigo == "sem_modelo_pai"]
+            "numero_fallback_ausente", "catalogo_ausente"}
 
 
 class TestFerramentasPorTipo:
@@ -482,23 +473,6 @@ def _cenario_padrao_ausente(studio):
     _passar_juiz(studio)
 
 
-def _cenario_base_nao_validada(studio):
-    """Green in every other way, but the agent inherits from a template whose own critical cases were never consolidated
-    (the chain gate, 073): the base has no case at all, so nothing about it was ever proved."""
-    st = studio.store
-    pai = st.create_studio_agent(DEFAULT_ORG_ID, "base-t", "Base", None, runtime="llm", definition_scope="plataforma")
-    st.update_definicao(DEFAULT_ORG_ID, "base-t", {"modelo": True})
-    st.create_draft(DEFAULT_ORG_ID, pai.id, None, pai.id)
-    st.update_definicao(DEFAULT_ORG_ID, "novo", {"pai_agent_id": pai.id})
-    _cenario_verde(studio)
-
-
-def _cenario_sem_modelo_pai(studio):
-    """Green in every other way, but the agent has no parent template (a non-template, non-legacy, non-instance agent)."""
-    studio.store.update_definicao(DEFAULT_ORG_ID, "novo", {"pai_agent_id": None})
-    _cenario_verde(studio)
-
-
 def _cenario_aviso_apenas(studio):
     """Everything advisory at once -- and the draft is still publishable."""
     _cenario_verde(studio)
@@ -524,8 +498,6 @@ CENARIOS = [
     ("padrao_sem_versao_publicada", _cenario_padrao_ausente, "qualificacao_indisponivel"),
     ("sem_numero_fallback", _cenario_sem_numero_fallback, "numero_fallback_ausente"),
     ("oferecer_opcoes_sem_catalogo", _cenario_sem_catalogo, "catalogo_ausente"),
-    ("base_nao_validada", _cenario_base_nao_validada, "base_nao_validada"),
-    ("sem_modelo_pai", _cenario_sem_modelo_pai, "sem_modelo_pai"),
     ("verde", _cenario_verde, None),
     ("verde_so_com_mecanismo", _cenario_verde_so_com_mecanismo, None),
     ("somente_avisos", _cenario_aviso_apenas, None),
@@ -584,27 +556,11 @@ def test_no_suggested_action_shows_an_api_path():
 # ── the canonical template's must-haves (owner 2026-11-08) ──────────────────
 
 
-class TestBaseValidada:
-    def _entrada_com_base(self, **kw):
-        from app.studio.camada_validada import VeredictoCamada
-        b = dict(agent_key="agente-base", version_id=uuid4(), versao=3, status="ativa", validada=True, motivo="validada",
-                 criticos_total=4, criticos_consolidados=4, criticos_pendentes=(), normais_total=2, normais_consolidados=1)
-        return _entrada(camadas_base=(VeredictoCamada(**{**b, **kw}),))
-
-    def test_a_validated_base_is_an_ok_item_naming_the_version(self):
-        p = pr.compor(self._entrada_com_base())
-        item = next(i for i in p.itens if i.codigo == "base_validada")
-        assert item.severidade == "ok" and "agente-base (v3)" in item.mensagem
-        assert item.detalhe["camadas"][0]["validada"] is True
-
-    def test_an_unvalidated_base_blocks_with_its_own_refusal_and_lists_what_is_pending(self):
-        p = pr.compor(self._entrada_com_base(validada=False, motivo="criticos_pendentes", criticos_consolidados=2, criticos_pendentes=("x", "y")))
-        item = next(i for i in p.itens if i.codigo == "base_nao_validada")
-        assert item.severidade == "bloqueante" and item.recusa_publicacao == "base_nao_validada" and not p.pronto_para_publicar
-        assert "2 de 4 casos críticos pendentes" in item.mensagem
-
-    def test_an_agent_without_a_parent_has_no_base_item(self):
-        assert not [i for i in pr.compor(_entrada()).itens if i.codigo.startswith("base_")]
+class TestChainGatesRemoved:
+    def test_a_parentless_agent_has_no_chain_item(self):
+        # NOC-REMEDIATE[agent-chain-gates]: re-enable after agente-base/sdr-base are validated (owner, later) -- 2026-11-18
+        codigos = {i.codigo for i in pr.compor(_entrada()).itens}
+        assert not {"sem_modelo_pai", "base_nao_validada", "base_validada"} & codigos
 
 
 class TestModeloCanonico:

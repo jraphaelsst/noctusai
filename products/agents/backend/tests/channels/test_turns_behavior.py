@@ -334,6 +334,7 @@ class TestRefusalsBeforeAnythingIsPersisted:
         studio.replace_sections(PLAT_ORG, draft.id, [
             SectionInput(chave="a", titulo="A", ordem=1, conteudo="x" * 40_000),
             SectionInput(chave="b", titulo="B", ordem=2, conteudo="y" * 40_000),
+            SectionInput(chave="c", titulo="C", ordem=3, conteudo="z" * 25_000),
         ])
         publish(studio, PLAT_ORG, chan.world.definicao, draft.id, chan.rt.user_id, catalog=StoreKnowledgeCatalog(chan.rt.knowledge))
         resp = chan.turn()

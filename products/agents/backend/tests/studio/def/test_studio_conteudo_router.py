@@ -151,19 +151,21 @@ class TestPlatformDefinition:
         nulo = studio.patch(f"{PLAT}/agents/solto", json={"modelo": None})
         assert nulo.status_code == 422 and nulo.json()["code"] == "invalid_field"
 
-    def test_a_non_template_runtime_agent_needs_a_parent_template_at_creation(self, studio):
+    def test_a_non_template_runtime_agent_needs_no_parent_and_can_be_detached(self, studio):
+        # NOC-REMEDIATE[agent-chain-gates]: the parent requirement was removed 2026-11-18 (Julia goes live alone)
         studio.store.mark_platform_org(DEFAULT_ORG_ID)
         _platform_admin(studio)
         raiz = studio.post(f"{PLAT}/agents", json={"key": "agente-base", "nome": "Agente base", "modelo": True})
-        assert raiz.status_code == 201, raiz.text  # a template may be a root
+        assert raiz.status_code == 201, raiz.text
         solto = studio.post(f"{PLAT}/agents", json={"key": "assistente", "nome": "Assistente"})
-        assert solto.status_code == 422, solto.text
-        corpo = solto.json()
-        assert corpo["code"] == "pai_obrigatorio" and "agente-base" in corpo["detail"]
-        assert "agente-base" in corpo["message"]
-        assert studio.store.get_platform_definition("assistente") is None  # nothing was created
-        filho = studio.post(f"{PLAT}/agents", json={"key": "assistente", "nome": "Assistente", "pai_agent_id": raiz.json()["id"]})
+        assert solto.status_code == 201, solto.text
+        filho = studio.post(f"{PLAT}/agents", json={"key": "filho", "nome": "Filho", "pai_agent_id": raiz.json()["id"]})
         assert filho.status_code == 201, filho.text
+        assert filho.json()["pai_agent_id"] == raiz.json()["id"]
+        solta = studio.patch(f"{PLAT}/agents/filho", json={"pai_agent_id": None})
+        assert solta.status_code == 200, solta.text
+        assert solta.json()["pai_agent_id"] is None
+        assert studio.store.get_platform_definition("filho").pai_agent_id is None
         # a dev agent (not a runtime channel agent) is not a template child
         dev = studio.post(f"{PLAT}/agents", json={"key": "dev-x", "nome": "Dev", "kind": "dev-executor", "fonte": "db",
                                                   "superficie_claude": {"tools": ["Read"]}})

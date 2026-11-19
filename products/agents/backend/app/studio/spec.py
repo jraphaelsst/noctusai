@@ -29,6 +29,7 @@ from app.studio.especificacoes import placeholders_org_crus
 from app.studio.especificacoes_avaliacao import specs_de_avaliacao
 from app.studio.tools import studio_allowed_tools
 from app.studio.camadas import efetivo
+from app.studio.compiler import TOKEN_WARNING_THRESHOLD
 
 __all__ = [
     "MAX_COMPILED_PROMPT_CHARS",
@@ -40,8 +41,8 @@ __all__ = [
 #: Security review of wave 1: a compiled prompt above this size refuses the
 #: turn (409 ``prompt_too_large``) — it is never truncated.
 #: Raised 60k -> 80k on the owner decision of 2026-11-18 (Julia compiles to ~72k
-#: chars); the 15k-token UI warning ``prompt_extenso`` stays advisory.
-MAX_COMPILED_PROMPT_CHARS = 80_000
+#: chars), again to 100k (= the 25k-token advisory x 4, the ``estimate_tokens`` ratio) the same day.
+MAX_COMPILED_PROMPT_CHARS = TOKEN_WARNING_THRESHOLD * 4
 
 
 class StudioSpecError(Exception):
