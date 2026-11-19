@@ -168,9 +168,10 @@ class ChannelConversationStore(Protocol):
     def create_channel(
         self, org_id: UUID, agent_id: UUID, channel: str, channel_ref: dict[str, Any],
         contact: dict[str, Any] | None, *, version_id: UUID | None = None,
-        lead_ref_id: UUID | None = None,
+        lead_ref_id: UUID | None = None, tipo: str = "thread_lead",
     ) -> ConversationRecord:
-        """Insert the channel conversation (a ``thread_lead``; ``agent_id`` is
+        """Insert the channel conversation (a ``thread_lead`` unless ``tipo`` says otherwise: the ``app`` channel's
+        brand conversation is a plain ``chat`` row with no lead; ``agent_id`` is
         the agent that OPENED it). A concurrent create of the same identity
         (the 025 unique index) returns the EXISTING row — never a second one,
         never an error."""
@@ -360,7 +361,7 @@ class FakeConversationStore:
     def create_channel(
         self, org_id: UUID, agent_id: UUID, channel: str, channel_ref: dict[str, Any],
         contact: dict[str, Any] | None, *, version_id: UUID | None = None,
-        lead_ref_id: UUID | None = None,
+        lead_ref_id: UUID | None = None, tipo: str = "thread_lead",
     ) -> ConversationRecord:
         existing = self.find_channel(org_id, agent_id, channel, channel_ref)
         if existing is not None:
@@ -373,7 +374,7 @@ class FakeConversationStore:
             "_turn_lock_instance_id": None, "version_id": version_id, "client_id": None,
             "channel": channel, "channel_ref": dict(channel_ref),
             "contact": dict(contact) if contact is not None else None,
-            "tipo": "thread_lead", "lead_ref_id": lead_ref_id, "ultima_mensagem_lead_em": None,
+            "tipo": tipo, "lead_ref_id": lead_ref_id, "ultima_mensagem_lead_em": None,
         }
         self._rows[row["id"]] = row
         return self._to_record(row)
@@ -688,12 +689,12 @@ class SupabaseConversationStore:
     def create_channel(
         self, org_id: UUID, agent_id: UUID, channel: str, channel_ref: dict[str, Any],
         contact: dict[str, Any] | None, *, version_id: UUID | None = None,
-        lead_ref_id: UUID | None = None,
+        lead_ref_id: UUID | None = None, tipo: str = "thread_lead",
     ) -> ConversationRecord:
         payload: dict[str, Any] = {
             "org_id": str(org_id), "agent_id": str(agent_id), "owner_user_id": None,
             "status": "ativa", "channel": channel, "channel_ref": channel_ref,
-            "contact": contact, "tipo": "thread_lead",
+            "contact": contact, "tipo": tipo,
         }
         if version_id is not None:
             payload["version_id"] = str(version_id)

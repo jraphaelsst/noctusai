@@ -536,7 +536,10 @@
         "type": "string"
       },
       "channel": {
-        "const": "whatsapp",
+        "enum": [
+          "whatsapp",
+          "app"
+        ],
         "title": "Channel",
         "type": "string"
       },
