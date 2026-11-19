@@ -29,7 +29,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.services.brand import tokens as T
 from app.services.brand.uploads import KIND_MARKDOWN, KIND_PDF, AcceptedFile
 
-EXTRACTION_MODEL = "claude-sonnet-5-5"
+#: Haiku 5.5 (owner decision 2026-11-19): a blind 5-run eval on a real brand had it win 5/5 over Sonnet 5 at ~1/20
+#: the cost, and it was the only model that did not invent a palette/fonts for a source that defines none.
+EXTRACTION_MODEL = "claude-haiku-5-5"
 EXTRACTION_PROVIDER = "anthropic"
 MAX_OUTPUT_TOKENS = 8000
 MAX_BRAND_BOOK_CHARS = 200_000
@@ -100,6 +102,10 @@ Answer with ONE JSON object and nothing else, shaped exactly:
 Rules: token names are ONLY these: {keys}. Values are HSL triplets like "220 10% 40%" (no hsl(), no hex).
 Omit any token you cannot infer (it will be filled from the platform default). Omit "dark" unless the
 brand defines a dark palette. Font family names use only letters, digits, spaces and hyphens.
+NEVER INVENT visual identity: a color or font goes into "tokens" ONLY when the files state it (an explicit
+value or name, or a palette/logo you can actually see). Never derive colors or fonts from the brand's mood,
+niche or tone. If the files define no colors, leave "light" empty; if they name no fonts, omit "fonts". Say
+in "brand_book" which visual elements the files did not define.
 """
 
 

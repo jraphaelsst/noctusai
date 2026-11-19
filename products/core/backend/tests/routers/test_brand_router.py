@@ -243,12 +243,14 @@ class TestIngestion:
         assert "light.card" in row["validation"]["filled_from_default"]
         assert row["assets"]["logo_light"].endswith("/source/01.png")
         ext = row["source"]["extraction"]
-        assert ext["model"] == "claude-sonnet-5-5" and ext["usage"]["prompt_tokens"] == 1200
+        assert ext["model"] == "claude-haiku-5-5" and ext["usage"]["prompt_tokens"] == 1200
         # the call itself: PDF as a native document block, uploads fenced as data
         call = env.fake_llm.calls[0]
-        assert call["model"] == "claude-sonnet-5-5"
+        assert call["model"] == "claude-haiku-5-5"
         system, user = call["messages"]
         assert "UNTRUSTED DATA" in system["content"]
+        # Haiku 5.5 eval 2026-11-19: Sonnet invented a palette + Google fonts for a source with none, 5/5 runs
+        assert "NEVER INVENT" in system["content"]
         kinds = [b["type"] for b in user["content"]]
         assert "document" in kinds
         doc = next(b for b in user["content"] if b["type"] == "document")

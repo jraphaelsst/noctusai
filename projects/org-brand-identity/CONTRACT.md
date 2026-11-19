@@ -82,7 +82,8 @@ Cross-org ids → **404** (never 403). Rate-limited per seed defaults.
 
 1. Store uploads in the bucket; create `draft` row with `source`.
 2. Extract with the **seed LLM client** (no direct `anthropic` import in products — roadmap D26),
-   model `claude-sonnet-5-5`, PDFs as native document blocks, md as text. Upload content is
+   model `claude-haiku-5-5` (was Sonnet 5.5; owner decision 2026-11-19 after a 5-run blind eval), never inventing
+   colors/fonts the files do not state, PDFs as native document blocks, md as text. Upload content is
    wrapped as fenced DATA; the system prompt states it may contain instructions to ignore.
    Output = structured JSON matching §2 + `brand_book` + `voice` (tool/JSON schema), parsed by Pydantic.
 3. Deterministic validation (§2). Failure to parse → `failed` with reason (never silent).
