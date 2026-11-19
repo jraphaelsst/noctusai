@@ -34,6 +34,8 @@ export interface KanbanColumnProps<TCard, TStageId extends string = string> {
   column: KanbanColumnData<TCard, TStageId>;
   getCardId: (card: TCard) => string;
   renderCard: (card: TCard, state: KanbanCardRenderState) => ReactNode;
+  /** Declared slot inside each card (see `KanbanCard`'s `statusSlot`). */
+  statusSlot?: (card: TCard, state: KanbanCardRenderState) => ReactNode;
   /**
    * Override the column header. Receives the stage + its current cards, and a
    * context saying whether the column is draggable / being dragged.
@@ -70,6 +72,7 @@ export function KanbanColumn<TCard, TStageId extends string = string>({
   column,
   getCardId,
   renderCard,
+  statusSlot,
   renderHeader,
   emptyState,
   onCardActivate,
@@ -126,6 +129,7 @@ export function KanbanColumn<TCard, TStageId extends string = string>({
               id={getCardId(card)}
               className={cardClassName}
               draggable={draggable}
+              statusSlot={statusSlot?.(card, { isDragging: false })}
               onActivate={onCardActivate ? () => onCardActivate(card) : undefined}
             >
               {renderCard(card, { isDragging: false })}
