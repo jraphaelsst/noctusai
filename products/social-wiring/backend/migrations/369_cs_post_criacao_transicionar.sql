@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 368 · social_wiring: CoreStudio criação pipeline, S5 -- the criação sub-state writer (state + event, one tx)
+-- Migration 369 · social_wiring: CoreStudio criação pipeline, S5 -- the criação sub-state writer (state + event, one tx)
 -- ============================================================================
 -- WHY: criacao-pipeline-contract.md section 1 ("criacao_estado is a projection, written in the same transaction as its
 -- cs_post_eventos row") and section 2.2. PostgREST is one call = one transaction, so the state column and its event row
@@ -23,11 +23,11 @@ SET search_path = social_wiring, public;
 DO $guard$
 BEGIN
   IF to_regclass('social_wiring.cs_posts') IS NULL OR to_regclass('social_wiring.cs_post_eventos') IS NULL THEN
-    RAISE EXCEPTION 'Migration 368 requires social_wiring.cs_posts and cs_post_eventos (241/342) -- apply them first';
+    RAISE EXCEPTION 'Migration 369 requires social_wiring.cs_posts and cs_post_eventos (241/342) -- apply them first';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_schema = 'social_wiring' AND table_name = 'cs_posts' AND column_name = 'criacao_estado') THEN
-    RAISE EXCEPTION 'Migration 368 requires cs_posts.criacao_estado (362) -- apply 362 first';
+    RAISE EXCEPTION 'Migration 369 requires cs_posts.criacao_estado (362) -- apply 362 first';
   END IF;
 END
 $guard$;
@@ -89,4 +89,4 @@ GRANT EXECUTE ON FUNCTION social_wiring.cs_post_criacao_transicionar(UUID, UUID,
     TO service_role;
 
 COMMENT ON FUNCTION social_wiring.cs_post_criacao_transicionar(UUID, UUID, TEXT, TEXT, TEXT, JSONB, TEXT, UUID, TEXT) IS
-    'The only writer of cs_posts.criacao_estado: state + its cs_post_eventos row, one transaction, optimistic on p_de (criacao-pipeline-contract 1). Migration 368.';
+    'The only writer of cs_posts.criacao_estado: state + its cs_post_eventos row, one transaction, optimistic on p_de (criacao-pipeline-contract 1). Migration 369.';

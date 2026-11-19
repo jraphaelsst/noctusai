@@ -117,8 +117,16 @@ def ev(tipo: str) -> str:
 
 
 def transicao(de: str, para: str, tipo: str, dados: str = "{}", falha: str = "NULL", ator: str = "NULL", rota: str = "NULL") -> str:
-    """``r := cs_post_criacao_transicionar(...)`` (368) as a SQL fragment; ``de``/``para``/``tipo`` are SQL literals."""
+    """``r := cs_post_criacao_transicionar(...)`` (369) as a SQL fragment; ``de``/``para``/``tipo`` are SQL literals."""
     return f"r := cs_post_criacao_transicionar(o, p, {de}, {para}, {tipo}, '{dados}'::jsonb, {falha}, {ator}, {rota});"
+
+
+def tl001(call: str) -> str:
+    """The transition-log guards refuse with SQLSTATE TL001 (not raise_exception): ``call`` must raise exactly that."""
+    return (
+        f"BEGIN {call}; RAISE EXCEPTION 'no refusal (expected TL001)'; "
+        "EXCEPTION WHEN OTHERS THEN IF SQLSTATE <> 'TL001' THEN RAISE; END IF; END;"
+    )
 
 
 def estado_mudou(call: str) -> str:
@@ -267,8 +275,8 @@ SCENARIOS: dict[str, str] = {
           + expect("(from_state, to_state, actor_id::text)::text FROM cs_criacao_cota_events WHERE org_id = o AND seq = 2",
                    "(1500,4000,00000000-0000-0000-0000-0000000000c2)", "from/to/who")
           + expect("round(((cs_criacao_cota_estado(o))->>'limite_usd_mes')::numeric, 2)", "40.00", "state read in dollars")
-          + sqlstate("UPDATE cs_criacao_cota_events SET to_state = 1 WHERE org_id = o", "raise_exception")
-          + sqlstate("DELETE FROM cs_criacao_cota_events WHERE org_id = o", "raise_exception")
+          + tl001("UPDATE cs_criacao_cota_events SET to_state = 1 WHERE org_id = o")
+          + tl001("DELETE FROM cs_criacao_cota_events WHERE org_id = o")
           + sqlstate("UPDATE cs_criacao_cotas SET limite_usd_cents = -1 WHERE org_id = o", "check_violation"),
     "M-E: month-to-date spend sums the ledger (failed steps spent too) and counts the steps with no measured cost": (
         passo("tts", "em_andamento")

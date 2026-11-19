@@ -1,6 +1,6 @@
 """The criação sub-state machine -- DATA (criacao-pipeline-contract 1).
 
-``cs_posts.criacao_estado`` is a projection written by migration 368's RPC in the same transaction as its event row.
+``cs_posts.criacao_estado`` is a projection written by migration 369's RPC in the same transaction as its event row.
 The transition MATRIX lives here and only here (the database enforces the enum, the optimistic ``p_de`` check and the
 atomicity -- not a second copy of the matrix).
 """

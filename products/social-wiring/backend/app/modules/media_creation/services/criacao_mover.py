@@ -6,7 +6,7 @@ seed ``move_card``'s -- never re-implemented) with ``user_id=SISTEMA_ATOR_ID`` a
 route skips is TRAVERSED (``motivo='rota:pulado'``), so the history shows the card passed there.
 
 Writes, per transition: the card move (``pipeline_movimentos``, by ``move_card``), the sub-state + its intent-named event
-(``cs_post_criacao_transicionar``, migration 368: one transaction), and -- for a move -- a ``card_movido_automaticamente``
+(``cs_post_criacao_transicionar``, migration 369: one transaction), and -- for a move -- a ``card_movido_automaticamente``
 event. Live: ``pipeline.card_moved`` (by ``move_card``) and ``pipeline.card_state`` (the progress bar) on the pipeline scope.
 
 Every refusal is a coded :class:`CriacaoError` / the gate's coded :class:`EsteiraError` -- never exception text.
@@ -82,7 +82,7 @@ class CriacaoMover:
         self, row: dict, para: str, *, tipo: Optional[str] = None, dados: Optional[dict] = None,
         falha_codigo: Optional[str] = None, ator: Optional[str] = None, rota: Optional[str] = None,
     ) -> Optional[str]:
-        """Write the sub-state + its event, one transaction (migration 368). Returns the previous state."""
+        """Write the sub-state + its event, one transaction (migration 369). Returns the previous state."""
         de = row.get("criacao_estado")
         if not est.transicao_valida(de, para):
             raise _recusa(409, "transicao_invalida", "Esta mudança de estado da criação não é permitida.", de=de, para=para)

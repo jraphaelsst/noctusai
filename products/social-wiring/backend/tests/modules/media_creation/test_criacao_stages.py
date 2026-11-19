@@ -3,7 +3,7 @@
 
 Real seams: the module ``client`` fixture's mock Supabase; stages seeded by the seed ``ensure_default_stages``; the
 approvals organ's rows (``apr_events``) seeded like the roteiro tests do. The ONE emulated seam is the Postgres RPC
-``cs_post_criacao_transicionar`` (migration 368), whose real behaviour is pinned by ``test_migration_cs_criacao_estado``
+``cs_post_criacao_transicionar`` (migration 369), whose real behaviour is pinned by ``test_migration_cs_criacao_estado``
 on PGlite -- here it only reproduces its optimistic ``p_de`` check + the state/event writes.
 """
 from __future__ import annotations
@@ -45,7 +45,7 @@ class RecBus:
 
 
 class TransicaoRpc:
-    """Emulates ``cs_post_criacao_transicionar`` (368) over the mock tables: optimistic ``p_de``, state + event."""
+    """Emulates ``cs_post_criacao_transicionar`` (369) over the mock tables: optimistic ``p_de``, state + event."""
 
     def __init__(self, db):
         self.db = db
