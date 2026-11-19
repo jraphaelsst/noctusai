@@ -6,7 +6,7 @@ is the seed card hub (``noctusai_lib.domain.card_hub``) over ``cs_posts``. The
 generated section of migration 241 is produced by :func:`gerar_migration_card_hub`
 and a test pins that the file still carries exactly that text -- never hand-edit it.
 
-Code keys only on stage ROLES (``gravacao``, ``postado``, ``cancelado``), never on
+Code keys only on stage ROLES (``criacao``, ``postado``, ``cancelado``; ``gravacao`` is the one-release alias), never on
 slugs or labels, so a renamed "Gravacao" keeps its gate.
 
 The ``movimento`` timeline kind is :func:`esteira_timeline.gather_movimentos_esteira`
@@ -33,13 +33,26 @@ __all__ = [
     "ESTEIRA_PADRAO",
     "PIPELINE_ESTEIRA",
     "ROLE_AGENDADO",
+    "ROLE_APROVACAO_MIDIA",
     "ROLE_CANCELADO",
+    "ROLE_CRIACAO",
+    "ROLE_EDICAO",
     "ROLE_GRAVACAO",
     "ROLE_POSTADO",
+    "ROLE_PRONTO",
+    "ROLE_ROTEIRO",
     "gerar_migration_card_hub",
 ]
 
+#: DEPRECATED alias, kept one release: the stage now called "Criação" carried this role before migration 362
+#: (criacao-pipeline-contract 1). New code keys on ROLE_CRIACAO; the DB CHECK still admits both.
 ROLE_GRAVACAO = "gravacao"
+ROLE_ROTEIRO = "roteiro"
+ROLE_CRIACAO = "criacao"
+ROLE_EDICAO = "edicao"
+#: Final media approval (the human gate before ``pronto``); the stage is labelled "Aprovação final".
+ROLE_APROVACAO_MIDIA = "aprovacao_midia"
+ROLE_PRONTO = "pronto"
 ROLE_POSTADO = "postado"
 #: Scheduled for publication (CoreStudio S3 declares the role; migration 348 admits it in the DB CHECK; the stage that
 #: carries it and the move into it belong to S4 -- no default stage here, so existing boards are unchanged).
@@ -51,10 +64,11 @@ BUCKET_ESTEIRA = "sw-esteira"
 #: By position; the entry stage is the first one.
 ESTEIRA_PADRAO: tuple[StageDefault, ...] = (
     StageDefault("ideacao", "Ideação", "secondary"),
-    StageDefault("headline_roteiro", "Headline + roteiro", "primary"),
-    StageDefault("gravacao", "Gravação", "warning", ROLE_GRAVACAO),
-    StageDefault("edicao", "Edição", "warning"),
-    StageDefault("pronto", "Pronto", "success"),
+    StageDefault("headline_roteiro", "Roteiro", "primary", ROLE_ROTEIRO),
+    StageDefault("criacao", "Criação", "warning", ROLE_CRIACAO),
+    StageDefault("edicao", "Edição", "warning", ROLE_EDICAO),
+    StageDefault("aprovacao_final", "Aprovação final", "warning", ROLE_APROVACAO_MIDIA),
+    StageDefault("pronto", "Pronto", "success", ROLE_PRONTO),
     StageDefault("postado", "Postado", "success", ROLE_POSTADO),
     StageDefault("bloqueado_cancelado", "Bloqueado/cancelado", "destructive", ROLE_CANCELADO),
 )
@@ -67,7 +81,17 @@ PIPELINE_ESTEIRA = PipelineConfig(
     entity_label_plural="posts",
     entity_kind="cs_post",
     cliente_field=None,
-    stage_roles=(ROLE_GRAVACAO, ROLE_AGENDADO, ROLE_POSTADO, ROLE_CANCELADO),
+    stage_roles=(
+        ROLE_ROTEIRO,
+        ROLE_CRIACAO,
+        ROLE_GRAVACAO,
+        ROLE_EDICAO,
+        ROLE_APROVACAO_MIDIA,
+        ROLE_PRONTO,
+        ROLE_AGENDADO,
+        ROLE_POSTADO,
+        ROLE_CANCELADO,
+    ),
 )
 
 #: ``(tipo, categoria, retencao_dias, identidade, ativo, descricao)`` -- no identity
