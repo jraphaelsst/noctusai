@@ -96,7 +96,7 @@ def _doc_row(**over) -> dict:
     row = {
         "id": str(uuid4()), "org_id": str(ORG), "collection_id": str(uuid4()), "agent_id": str(AGENT),
         "slug": "d", "titulo": "D", "tipo": "fonte", "proveniencia": {}, "resumo": None, "conteudo": "x",
-        "source_sha": "s", "ativo": True, "created_at": "t", "updated_at": "t",
+        "source_sha": "s", "ativo": True, "created_at": "2026-11-18T00:00:00Z", "updated_at": "2026-11-18T00:00:00Z",
     }
     row.update(over)
     return row
@@ -105,7 +105,7 @@ def _doc_row(**over) -> dict:
 def _col_row(collection_id, **over) -> dict:
     row = {
         "id": str(collection_id), "org_id": str(ORG), "agent_id": str(AGENT), "slug": "c", "nome": "C",
-        "tag": None, "descricao": "", "ordem": 0, "created_at": "t", "updated_at": "t", "requer_revisao": False,
+        "tag": None, "descricao": "", "ordem": 0, "created_at": "2026-11-18T00:00:00Z", "updated_at": "2026-11-18T00:00:00Z", "requer_revisao": False,
     }
     row.update(over)
     return row
@@ -116,7 +116,7 @@ def _run_row(**over) -> dict:
         "id": str(uuid4()), "org_id": str(ORG), "agent_id": str(AGENT), "version_id": str(uuid4()),
         "compiled_hash": "sha256:x", "status": "pendente", "total": 1, "aprovados": 0, "score": None,
         "limiar": 0.8, "started_by": str(USER), "started_at": None, "finished_at": None, "erro": None,
-        "created_at": "t", "updated_at": "t", "completa": True,
+        "created_at": "2026-11-18T00:00:00Z", "updated_at": "2026-11-18T00:00:00Z", "completa": True,
     }
     row.update(over)
     return row
@@ -275,7 +275,7 @@ class TestResultsEmbedded:
             "id": str(uuid4()), "org_id": str(ORG), "run_id": run["id"], "case_id": str(uuid4()),
             "status": "aprovado", "saida": "s", "score": 1.0,
             "veredito": [{"criterio": "x", "tipo": "deve", "ok": True, "motivo": "m"}],
-            "notas_juiz": None, "duracao_ms": 5, "created_at": "t", "updated_at": "t",
+            "notas_juiz": None, "duracao_ms": 5, "created_at": "2026-11-18T00:00:00Z", "updated_at": "2026-11-18T00:00:00Z",
             "eval_cases": {"slug": "c1", "titulo": "C1"},
         }
         client = _Client([[run], [result]])
@@ -290,7 +290,7 @@ class TestResultsEmbedded:
         run = _run_row()
         result = {
             "id": str(uuid4()), "org_id": str(ORG), "run_id": run["id"], "case_id": str(uuid4()),
-            "status": "pendente", "created_at": "t", "updated_at": "t", "eval_cases": None,
+            "status": "pendente", "created_at": "2026-11-18T00:00:00Z", "updated_at": "2026-11-18T00:00:00Z", "eval_cases": None,
         }
         client = _Client([[run], [result]])
         with pytest.raises(RuntimeError):

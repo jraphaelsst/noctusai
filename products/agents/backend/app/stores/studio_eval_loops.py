@@ -12,7 +12,7 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from app.stores._db_errors import StudioConflict, exec_query
-from app.stores._util import utcnow, utcnow_iso
+from app.stores._util import db_ts, utcnow, utcnow_iso
 from app.stores.errors import NotFound
 from app.studio.eval_loop import LoopDef, Parada, Rodada
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
@@ -137,7 +137,7 @@ def _loop_de(r: dict[str, Any]) -> LoopRecord:
         suite=r["suite"], rodadas_planejadas=int(r["rodadas_planejadas"]), alvo=_num(r["alvo"]), piso=_num(r["piso"]),
         orcamento_usd=_num(r["orcamento_usd"]), gasto_usd=_num(r["gasto_usd"]), status=r["status"],
         motivo_parada=r.get("motivo_parada"), detalhe_parada=r.get("detalhe_parada"), started_by=UUID(str(r["started_by"])),
-        started_at=r.get("started_at"), stopped_at=r.get("stopped_at"), modo=r.get("modo") or "manual", aviso=r.get("aviso"))
+        started_at=db_ts(r.get("started_at")), stopped_at=db_ts(r.get("stopped_at")), modo=r.get("modo") or "manual", aviso=r.get("aviso"))
 
 
 def _rodada_de(r: dict[str, Any]) -> Rodada:
