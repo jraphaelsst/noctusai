@@ -22,11 +22,16 @@ EST-FMT grammar of the principal Estrutura's formato (``saida_ia.validar_roteiro
 ``saida_ia.validar_roteiro``, its only grammar) -- a refusal, a title outside 1..120 chars and every option past the 5th
 drop the option and count ``roteiro_invalido``; a leftover ``[...]`` counts ``placeholder_remanescente``. Lines inside a
 script are never read as headlines. Both kinds share one ``ordem`` sequence, by appearance.
+
+The Diretor de Criação's ``### Publicação <n>`` blocks (S9) are NOT read here: the header ends a script body like any other
+header, and its ``- campo: valor`` bullets carry no citation, so they are prose to this parser (pinned by
+``test_criacao_publicacao.py``). ``services/publicacoes.py`` reads them; each option's own number is kept on
+``PropostaValidada.numero`` for that binding.
 """
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping
 from uuid import UUID
 
@@ -45,7 +50,7 @@ _CITACAO_RE = re.compile(r"\(\s*estrutura\s*#\s*(\d+(?:\s*\+\s*#\s*\d+)*)\s*\)",
 _PLACEHOLDER_RE = re.compile(r"\[[^\]]+\]")
 _TAG_FINAL_RE = re.compile(r"\s*\(\s*([^()]{3,40}?)\s*\)\s*[.!?]?\s*$")
 _TITULO_RE = re.compile(r"^\s*#{1,6}\s*(.*?)\s*#*\s*$")
-_ROTEIRO_RE = re.compile(r"^\s*###\s+roteiro\s+\d+\s*:\s*(.*\S)\s*$", re.IGNORECASE)
+_ROTEIRO_RE = re.compile(r"^\s*###\s+roteiro\s+(\d+)\s*:\s*(.*\S)\s*$", re.IGNORECASE)
 _CABECALHO_RE = re.compile(r"^\s*#{1,6}\s+(.*?)\s*#*\s*$")  # a real markdown header (``#tag`` is not one)
 _REGRA_RE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
 #: the headers a ``post`` script carries INSIDE its body (``prompts/roteiro_formatos.py``): never a section end
@@ -81,6 +86,10 @@ class PropostaValidada:
     tipo: str = "headline"  # "headline" | "roteiro"
     titulo: str | None = None  # roteiro only: the section's short title (1..120)
     formato: str | None = None  # roteiro only: the principal Estrutura's formato
+    #: the option's own number in the reply (a numbered headline line's ``N.``, a ``### Roteiro N:`` header's N; ``None``
+    #: for a bullet headline). What a ``### Publicação N`` block binds to (``services/publicacoes.py``). Never compared:
+    #: it is a read of the text, not part of the proposta's identity.
+    numero: int | None = field(default=None, compare=False)
 
     @property
     def texto(self) -> str:
@@ -140,6 +149,13 @@ def _codigos(citacoes: list[re.Match[str]]) -> list[str]:
     for c in citacoes:
         out += re.findall(r"\d+", c.group(1))
     return out
+
+
+def codigos_citados(texto: str) -> list[str]:
+    """Every distinct Estrutura code the text cites (``(estrutura #N [+ #M ...])``), in order of appearance: what a caller
+    must be able to resolve BEFORE :func:`extrair_propostas` can validate the citations (the Director cites codes its tools
+    returned, which the legacy pool does not carry)."""
+    return list(dict.fromkeys(c for m in _CITACAO_RE.finditer(texto or "") for c in re.findall(r"\d+", m.group(1))))
 
 
 def _corpo_valido(formato: str, corpo: str) -> bool:
@@ -202,7 +218,7 @@ def extrair_propostas(texto: str, codigos_permitidos: Mapping[str, EstruturaCita
                 continue
             cabecalho = _ROTEIRO_RE.match(item[0])
             assert cabecalho is not None
-            resto = cabecalho.group(1)
+            resto = cabecalho.group(2)
             citacoes = list(_CITACAO_RE.finditer(resto))
             if not citacoes:
                 conta("citacao_rejeitada")
@@ -220,7 +236,8 @@ def extrair_propostas(texto: str, codigos_permitidos: Mapping[str, EstruturaCita
                 conta("roteiro_invalido")
                 continue
             aceitar(("roteiro", corpo.casefold()), headline=corpo, gatilho=None,
-                    estrutura_ids=tuple(e.id for e in validos), tipo="roteiro", titulo=titulo, formato=formato)
+                    estrutura_ids=tuple(e.id for e in validos), tipo="roteiro", titulo=titulo, formato=formato,
+                    numero=int(cabecalho.group(1)))
             continue
 
         linha = item
@@ -257,7 +274,7 @@ def extrair_propostas(texto: str, codigos_permitidos: Mapping[str, EstruturaCita
             continue
         antes = len(propostas)
         aceitar(("headline", limpa.casefold()), headline=limpa, gatilho=gatilho,
-                estrutura_ids=tuple(e.id for e in validos))
+                estrutura_ids=tuple(e.id for e in validos), numero=int(m.group(1)) if numerado else None)
         headlines += len(propostas) - antes
 
     eventos = tuple({"tipo": tipo, "contagem": n} for tipo, n in conta.n.items() if n)
@@ -266,5 +283,5 @@ def extrair_propostas(texto: str, codigos_permitidos: Mapping[str, EstruturaCita
 
 __all__ = [
     "EVENTOS", "EstruturaCitavel", "GATILHOS_TAG", "MAX_ROTEIROS", "PropostaValidada", "ResultadoPropostas",
-    "extrair_propostas",
+    "codigos_citados", "extrair_propostas",
 ]
