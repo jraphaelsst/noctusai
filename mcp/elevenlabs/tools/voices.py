@@ -1,7 +1,6 @@
 """elevenlabs.voice.* — list/get (read), clone_instant + delete (confirm-gated)."""
 from __future__ import annotations
 
-import json
 import logging
 import mimetypes
 from pathlib import Path
@@ -10,7 +9,7 @@ from mcp.server import Server
 from mcp.types import Tool
 
 from _kit.errors import typed_error
-from _kit.transport import encode_multipart
+from noctusai_lib.integrations.tts import ElevenLabsTtsClient, TtsError
 
 from .. import api
 from ..paths import ensure_not_committable
@@ -18,12 +17,13 @@ from ..types import (
     CloneInput, CloneOutput, VoiceDeleteInput, VoiceDeleteOutput,
     VoiceGetInput, VoiceGetOutput, VoiceListInput, VoiceListOutput,
 )
+from ..seed_shell import OPERATOR_CONSENT_REF, KitTransport, OperatorConsent
+from ..settings import get_settings
 from ._common import ctx
 
 logger = logging.getLogger(__name__)
 
 _MIN_CONSENT_LEN = 6
-_MAX_SAMPLE_BYTES = 25 * 1024 * 1024
 
 
 def _slim_voice(v: dict) -> dict:
@@ -86,31 +86,26 @@ async def voice_clone_instant(args: dict) -> dict:
             "elevenlabs.voice.clone_instant",
             "uploads voice samples to ElevenLabs and creates a voice in the account"))
     try:
-        files = []
+        samples = []
         for raw in inp.sample_paths:
             p = ensure_not_committable(raw, what="voice sample")
             if not p.is_file():
                 raise api.RefusedError(f"voice sample {str(p)!r} does not exist or is not a file.")
-            if p.stat().st_size > _MAX_SAMPLE_BYTES:
-                raise api.RefusedError(f"voice sample {p.name!r} exceeds {_MAX_SAMPLE_BYTES // 2**20} MB.")
             mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-            files.append(("files", p.name, p.read_bytes(), mime))
-        fields = {"name": inp.name, "description": inp.description,
-                  "remove_background_noise": "true" if inp.remove_background_noise else None,
-                  "labels": json.dumps(inp.labels) if inp.labels else None}
-        payload, _ = api.request_bytes(
-            "POST", "/v1/voices/add", raw_body=encode_multipart(fields, files), **ctx())
-    except api.ElevenLabsApiError as e:
+            samples.append((p.name, p.read_bytes(), mime))
+        s = get_settings()
+        client = ElevenLabsTtsClient(
+            s.api_key, out_dir=s.default_output_dir, consent=OperatorConsent(), transport=KitTransport(ctx))
+        res = client.clone_instant(
+            inp.name, samples, consent_ref=OPERATOR_CONSENT_REF, description=inp.description, labels=inp.labels,
+            remove_background_noise=inp.remove_background_noise)
+    except (TtsError, api.ElevenLabsApiError) as e:
         return _refuse(CloneOutput, e)
-    try:
-        d = json.loads(payload.decode("utf-8") or "{}")
-    except ValueError:
-        return _refuse(CloneOutput, api.ElevenLabsApiError("voices/add returned non-JSON", status=502))
     logger.info("voice cloned (consent ref recorded by caller)")
     return CloneOutput(
-        cloned=True, voice_id=d.get("voice_id"),
-        requires_verification=d.get("requires_verification"),
-        library_voice_match=d.get("library_voice_match"),
+        cloned=True, voice_id=res.voice_id,
+        requires_verification=res.requires_verification,
+        library_voice_match=res.library_voice_match,
         consent_reference=inp.consent_reference).model_dump()
 
 

@@ -363,7 +363,7 @@ jobs:
           cache: pip
 
       - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko + libpq/ffi)
-        timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
+        timeout-minutes: 20  # apt is the observed hang point (2026-11-05)
         if: steps.gate.outputs.run == 'true'
         uses: ./.github/actions/apt-install
         with:
@@ -431,7 +431,7 @@ jobs:
           cache: pip
 
       - name: Install system build deps (cairo/pango/gdk for pycairo/weasyprint/pyHanko + libpq/ffi)
-        timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
+        timeout-minutes: 20  # apt is the observed hang point (2026-11-05)
         uses: ./.github/actions/apt-install
         with:
           packages: libcairo2-dev libgirepository1.0-dev libpango1.0-dev libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
@@ -1559,7 +1559,7 @@ jobs:
           cache: pip
 
       - name: Install system build deps (cairo/pango/gdk + libpq/ffi)
-        timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
+        timeout-minutes: 20  # apt is the observed hang point (2026-11-05)
         uses: ./.github/actions/apt-install
         with:
           packages: libcairo2-dev libgirepository1.0-dev libpango1.0-dev libgdk-pixbuf-2.0-dev libffi-dev libpq-dev pkg-config
@@ -1726,7 +1726,7 @@ jobs:
           node-version: "20"
 
       - name: Install system build deps (libpq for psycopg; ffi for cffi)
-        timeout-minutes: 10  # apt is the observed hang point (2026-11-05)
+        timeout-minutes: 20  # apt is the observed hang point (2026-11-05)
         uses: ./.github/actions/apt-install
         with:
           packages: libffi-dev libpq-dev pkg-config
