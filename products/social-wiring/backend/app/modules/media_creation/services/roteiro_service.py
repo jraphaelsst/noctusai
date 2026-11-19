@@ -38,6 +38,7 @@ from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.integrations.llm import LLMBudgetExceeded, LLMNotConfigured, chat_completion, resolve_api_key
 
 from app.modules.media_creation.geracao_scheduler import MSG_JOB_FAILED
+from app.modules.media_creation.limites_geracao import limite_geracao
 from app.modules.media_creation.prompts.roteiro_geracao import (
     ESTRUTURA_PADRAO,
     ESTRUTURAS,
@@ -286,7 +287,7 @@ class RoteiroService:
 
     def _usage_hoje(self) -> int:
         """Roteiros this user created in the rolling window (capped read: never needs more than the cap)."""
-        cap = int(self.cfg.roteiros_dia_usuario)
+        cap = limite_geracao("roteiros_dia_usuario", self.org_id, self.cfg)
         rows = (
             self._table().select("id")
             .eq("org_id", self.org_id).eq("created_by", self.user_id)
@@ -299,9 +300,10 @@ class RoteiroService:
         geracao_jobs.assert_geracao_disponivel(self.cfg)
         self.ia_check(self.org_id)
         await geracao_jobs.assert_orcamento_ia(self.org_id)
-        if self._usage_hoje() >= int(self.cfg.roteiros_dia_usuario):
+        if self._usage_hoje() >= limite_geracao("roteiros_dia_usuario", self.org_id, self.cfg):
             raise RoteiroError(
-                429, "Limite diário de roteiros atingido", headers={"Retry-After": str(RETRY_AFTER_S)}
+                429, {"code": "limite_diario_roteiros", "detail": "Limite diário de roteiros atingido"},
+                headers={"Retry-After": str(RETRY_AFTER_S)},
             )
 
     async def _enqueue(self, roteiro_id: str, job_type: str) -> str:

@@ -380,6 +380,20 @@ class TestCreateLoteMore:
         r = _create(hc)
         assert r.status_code == 429 and r.headers["Retry-After"] == "3600"
 
+    def test_the_orgs_own_limit_applies_and_the_429_is_coded(self, hc):
+        """Configurações -> Limites diários (contract 9.4.1): the org override beats the config default (30)."""
+        from noctusai_lib.testing.credentials import patch_credentials_to_mock
+
+        hc.mock_supabase.from_("org_settings").insert(
+            {"org_id": ORG, "key": "headline_lotes_dia_usuario", "value": "1"}
+        ).execute()
+        with patch_credentials_to_mock(hc.mock_supabase):
+            assert _create(hc).status_code == 202
+            hc.mock_supabase.from_("cs_headline_lotes").update({"status": "completo"}).execute()
+            r = _create(hc)
+        assert r.status_code == 429
+        assert "limite_diario_headlines" in r.text
+
     def test_cap_counts_a_rolling_24_hours_only(self, hc):
         _use_cfg(hc, headline_lotes_dia_usuario=1)
         assert _create(hc).status_code == 202

@@ -18,6 +18,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from noctusai_lib.integrations.llm import LLMBudgetExceeded, LLMNotConfigured, resolve_api_key
 
+from app.modules.media_creation.limites_geracao import limite_geracao
 from app.modules.media_creation.prompts.legenda_reel import (
     build_legenda_user_message,
     system_prompt as legenda_system_prompt,
@@ -114,7 +115,7 @@ class LegendaService:
 
     def _assert_cap(self) -> None:
         """429 + Retry-After when the user already generated ``legendas_dia_usuario`` captions in 24 h."""
-        limite = int(self.cfg.legendas_dia_usuario)
+        limite = limite_geracao("legendas_dia_usuario", self.org_id, self.cfg)
         desde = datetime.now(timezone.utc) - JANELA
         rows = (
             self.db.table(GERACOES).select("created_at")

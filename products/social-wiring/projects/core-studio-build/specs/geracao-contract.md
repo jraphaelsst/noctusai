@@ -1007,6 +1007,83 @@ Monitored profiles are third parties. Their public posts, and their **voices** i
 The seed org LLM budget (`enforce_budget`) applies on top. A budget refusal reaches the user as 503
 `orcamento_ia_excedido`.
 
+#### 9.4.1 Per-org daily limits, editable in the UI (amendment 2026-11-18)
+
+Owner ask (2026-11-18): *"i need a sw ui to set the daily limit. set a default for me, and let me configure
+it. So if i hit the daily limit, i can raise the limit in the configs ui"*. The six daily caps below stop being
+deploy-fixed: each org may override them, within a platform ceiling. Everything else in the §9.4 table stays
+deploy config.
+
+**The limits** (the table is `LIMITES` in `app/modules/media_creation/limites_geracao.py`, the single source the
+API, the UI labels and the tests read; the env key = the setting key upper-cased, e.g. `ROTEIROS_DIA_USUARIO`):
+
+| `chave` | pt-BR label (`rotulo`) | `escopo` | default (code) | `maximo` |
+|---|---|---|---|---|
+| `headline_lotes_dia_usuario` | Gerações de headlines por pessoa | `usuario` | 30 | 300 |
+| `headlines_sugeridas_por_dia_marca` | Estruturas na sugestão automática diária, por marca | `marca` | 5 | 50 |
+| `roteiros_dia_usuario` | Roteiros por pessoa | `usuario` | 20 | 200 |
+| `legendas_dia_usuario` | Legendas por pessoa | `usuario` | 40 | 400 |
+| `chat_mensagens_dia_usuario` | Mensagens no chat por pessoa | `usuario` | 100 | 1 000 |
+| `chat_mensagens_dia_org` | Mensagens no chat da organização (total) | `org` | 400 | 4 000 |
+
+Every window is the existing rolling 24 h. `maximo` = 10 x the code default, a fixed constant: a limit is
+**never unlimited** and never zero.
+
+**Resolution (one resolver, no other read path).** `limite_geracao(chave, org_id, cfg)` returns the effective
+integer; `limites_geracao(org_id, cfg)` returns all six. Precedence, first VALID answer wins:
+
+1. `public.org_settings (org_id, key = chave)` — this org's override;
+2. `public.platform_settings (key = chave)` — the NoctusAI-wide default;
+3. env `CHAVE` (upper-cased);
+4. `cfg.<chave>` (the `app/config.py` default — also the DI seam tests override).
+
+Tiers 1–3 are read through the seed `noctusai_lib.config.credentials.resolve_credential` (cached 30 s; a write in
+this process invalidates it). A value is VALID when it parses as an integer in `[1, maximo]`; an invalid stored
+value is skipped with a warning (never a 500, never "unlimited"). `padrao` = the answer of tiers 2–4 (what a reset
+restores). **No cap site reads `cfg.<chave>` / `settings.<chave>` directly** — pinned by an AST test over
+`app/modules/media_creation/**`.
+
+**Write = one SQL call, one transaction** — migration `361_cs_limites_geracao.sql`:
+- `social_wiring.cs_limite_geracao_definir(p_org uuid, p_chave text, p_valor integer, p_ator uuid) returns jsonb`
+  (SECURITY DEFINER, service_role only). Locks the org's `org_settings` row, upserts `value = p_valor::text`
+  (`p_valor IS NULL` = delete the row = back to `padrao`), and, **when the value changed**, appends ONE
+  `cs_limite_geracao_eventos` row in the same transaction. Returns `{anterior, novo, mudou}`. Unknown `chave` or
+  `p_valor < 1` raises `22023` (the API already refused it with 422; the SQL is the backstop).
+- `social_wiring.cs_limite_geracao_eventos` (append-only: UPDATE/DELETE/TRUNCATE refused; org erase cascades):
+  `id, org_id, chave (CHECK in the six), evento ('limite_definido' | 'limite_restaurado'), valor_anterior int NULL
+  (NULL = there was no override), valor_novo int NULL (NULL = restored), ator_id uuid NULL, created_at`.
+  Tier `org`, service-role only (no PostgREST grant to `authenticated`).
+- Records -> metrics: overrides per org and key; raise ratio (`valor_novo / padrao`); time from a 429
+  `limite_*` refusal to a raise (join on org + created_at); how often a raised limit is later restored.
+
+**Endpoints** — `app/routers/limites_geracao_router.py`, `make_router(tier="org", guard=get_current_user_org)`,
+prefix `/api/settings/limites-geracao`, same envelope as the sibling `/api/settings/documento-retencao` (a plain
+response model, `{items, total}`, the WHOLE list returned by every call):
+
+| Method | Who | Body | Answer |
+|---|---|---|---|
+| `GET /api/settings/limites-geracao` | any org member (401 without a session) | — | `LimitesGeracaoLista` |
+| `PUT /api/settings/limites-geracao` | org **owner/admin** (`require_org_admin_for`, the trusted `noctus_users` row; 403 otherwise) | `{"limites": {"<chave>": <int> \| null, ...}}` (1..6 keys; `null` = restore the default) | `LimitesGeracaoLista` |
+
+`LimiteGeracao` item: `{chave, rotulo, descricao, escopo, valor, padrao, maximo, personalizado}` (`personalizado` =
+this org has its own valid override). Refusals: an unknown `chave`, a non-integer, `valor < 1` or `valor > maximo`
+-> **422** and NOTHING is written (the whole body is validated before the first write); an empty `limites` -> 422.
+
+**The 429s point to the fix.** The daily-cap refusals keep their status, `Retry-After` and codes; each detail now
+names the limit (`limite_diario_headlines`, `limite_diario_roteiros`, `limite_diario` for legendas,
+`limite_de_mensagens` for chat). In the UI, a 429 daily-limit message in the Chat (inline error and the
+"escolher" toast) and in the headline forms carries a link/action **"Ajustar limites"** to
+`/configuracoes/limites` — shown only to owner/admin (the people the PUT accepts); everyone else keeps the plain
+message.
+
+**UI** — tab **"Limites diários"** (`key: "limites"`, URL `/configuracoes/limites`) of the SW `Configurações`
+page (`pages/Settings.tsx`, seed `SectionTabsPage`); component `components/settings/LimitesDiariosSection.tsx`,
+hooks in `hooks/useLimitesGeracao.ts`; the 429 action in `components/geracao/LimiteDiarioAviso.tsx`. One row per limit: label, scope hint, `padrão: N`, a number input (min 1, max
+`maximo`) and "Restaurar padrão" when `personalizado`; one "Salvar" for the dirty rows. Server-state rules: the
+skeleton only while there is no data (`isPending && !data`, never `isLoading`), a refused save keeps the typed
+values and shows the server's message, the answered list is written to the cache (`useCacheWriteMutation`), and
+unsaved edits show `UnsavedChangesNotice`. Members see the values read-only.
+
 ---
 
 ## 10 · Slice plan (file-disjoint; each slice in its own `task_branch` off `origin/dev`)

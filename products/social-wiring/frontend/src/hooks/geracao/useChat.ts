@@ -310,6 +310,8 @@ export interface EstadoStream {
   texto: string;
   truncada: boolean;
   erro: string | null;
+  /** The refusal was a daily limit (429): the screen offers "Ajustar limites" to whoever can raise it. */
+  erroLimiteDiario: boolean;
   contextoChars: number | null;
   /** Estrutura codes the server allows as `(estrutura #N)` links for this answer, when sent. */
   codigosPermitidos: number[] | null;
@@ -321,6 +323,7 @@ const ESTADO_INICIAL: EstadoStream = {
   texto: "",
   truncada: false,
   erro: null,
+  erroLimiteDiario: false,
   contextoChars: null,
   codigosPermitidos: null,
 };
@@ -373,6 +376,7 @@ export function useEnviarMensagem() {
       setEstado({ ...ESTADO_INICIAL, ativo: true, usuario: conteudo });
       setPerfilPendente(null);
       let erro: string | null = null;
+      let limiteDiario = false;
       let enviou = false;
       try {
         const token = await getAuthToken();
@@ -388,6 +392,7 @@ export function useEnviarMensagem() {
         });
         if (!res.ok) {
           const e = lerErroCorpo(await res.json().catch(() => null));
+          limiteDiario = res.status === 429;
           throw new Error(mensagemPreStream(res.status, e.code, e.message));
         }
         enviou = true;
@@ -426,7 +431,7 @@ export function useEnviarMensagem() {
         await qc.invalidateQueries({ queryKey: [...CHAT_KEY, "contexto", conversaId] });
         void qc.invalidateQueries({ queryKey: [...CHAT_KEY, "conversas"] });
       }
-      setEstado({ ...ESTADO_INICIAL, erro });
+      setEstado({ ...ESTADO_INICIAL, erro, erroLimiteDiario: limiteDiario && !!erro });
       return enviou && !erro;
     },
     [qc],

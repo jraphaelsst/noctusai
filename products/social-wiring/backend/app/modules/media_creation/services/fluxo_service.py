@@ -31,6 +31,7 @@ from fastapi.concurrency import run_in_threadpool
 from noctusai_lib.integrations.persistence.table_reads import batched
 
 from app.config import settings
+from app.modules.media_creation.limites_geracao import limite_geracao
 from app.modules.media_creation.services import geracao_jobs
 from app.modules.media_creation.services.chat_contexto import ChatError
 from app.modules.media_creation.services.estruturas_service import _rpc_detalhes
@@ -417,7 +418,7 @@ class FluxoService:
 
     def _roteiros_hoje(self) -> int:
         """Roteiros this user created in the rolling window (capped read: never needs more than the cap)."""
-        cap = int(self.cfg.roteiros_dia_usuario)
+        cap = limite_geracao("roteiros_dia_usuario", self.org_id, self.cfg)
         rows = (
             self.db.table(ROTEIROS).select("id").eq("org_id", self.org_id).eq("created_by", self.user_id)
             .gte("created_at", (_agora() - JANELA_ROTEIROS).isoformat()).limit(cap).execute().data or []
@@ -436,7 +437,7 @@ class FluxoService:
                 exc.status, detalhe.get("detail") or MSG_IA_NAO_CONFIGURADA, code=detalhe.get("code") or "ia_nao_configurada"
             ) from exc
         await self.orcamento(self.org_id)
-        if await run_in_threadpool(self._roteiros_hoje) >= int(self.cfg.roteiros_dia_usuario):
+        if await run_in_threadpool(self._roteiros_hoje) >= limite_geracao("roteiros_dia_usuario", self.org_id, self.cfg):
             raise ChatError(
                 429, MSG_LIMITE_ROTEIROS, code="limite_diario_roteiros",
                 headers={"Retry-After": str(RETRY_AFTER_ROTEIROS_S)},

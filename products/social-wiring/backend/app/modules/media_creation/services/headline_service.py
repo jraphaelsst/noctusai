@@ -27,6 +27,7 @@ from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 from app.modules.media_creation.geracao_taxonomias import FORMATO_IDS
+from app.modules.media_creation.limites_geracao import limite_geracao
 from app.modules.media_creation.pesquisa_variables import VARIABLE_SLUGS
 from app.modules.media_creation.prompts.headline_geracao import aviso_tamanho
 from app.modules.media_creation.schemas.headlines import MAX_TEXTO_CHARS
@@ -348,8 +349,11 @@ class HeadlineService:
             .neq("origem", "sugestao_auto").gte("created_at", since).execute()
         )
         n = used.count if getattr(used, "count", None) is not None else len(used.data or [])
-        if n >= int(self.cfg.headline_lotes_dia_usuario):
-            raise HeadlineError(429, "Limite diário de gerações de headlines atingido", retry_after=RETRY_AFTER_SECONDS)
+        if n >= limite_geracao("headline_lotes_dia_usuario", self.org_id, self.cfg):
+            raise HeadlineError(
+                429, {"code": "limite_diario_headlines", "detail": "Limite diário de gerações de headlines atingido"},
+                retry_after=RETRY_AFTER_SECONDS,
+            )
 
     def _assert_post(self, marca_id: str, post_id: Optional[str]) -> None:
         """A batch generated from an Esteira card: the post must be this org's AND this marca's."""
@@ -653,7 +657,7 @@ class HeadlineService:
         if self._sugestao_de_hoje(marca_id):
             raise HeadlineError(429, "As sugestões de hoje já foram geradas", retry_after=RETRY_AFTER_SECONDS)
         ids = self.escolher_estruturas_para_sugestao(
-            marca_id, list(perfil["nichos"]), int(self.cfg.headlines_sugeridas_por_dia_marca),
+            marca_id, list(perfil["nichos"]), limite_geracao("headlines_sugeridas_por_dia_marca", self.org_id, self.cfg),
         )
         if not ids:
             raise HeadlineError(409, "Ainda não há estruturas virais classificadas para sugerir")
