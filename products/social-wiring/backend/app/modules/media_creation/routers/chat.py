@@ -241,10 +241,12 @@ async def selecionar(
     200 when every item already existed or was refused; each item carries its own outcome (``ok`` / ``erro.code``)."""
     svc = _fluxo_svc(auth, cfg, ia_check, orcamento, jobs, approvals)
     try:
-        resultado = await svc.fluxo.selecionar([str(i) for i in body.ids])
+        resultado = await svc.fluxo.selecionar(
+            [str(i) for i in body.ids], str(body.conversa_id) if body.conversa_id else None
+        )
     except ChatError as exc:
         _raise(exc)
-    if resultado["criados"] == 0:
+    if not resultado["criados"]:
         response.status_code = 200
     return success_response(resultado)
 

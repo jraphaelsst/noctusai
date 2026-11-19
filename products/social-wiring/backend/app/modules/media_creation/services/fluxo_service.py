@@ -500,7 +500,7 @@ class FluxoService:
 
     # ── the batch pick (criacao-pipeline-contract 4) ─────────────────────────────────────────────────
 
-    def _propostas_para_selecao(self, ids: list[str]) -> dict[str, dict[str, Any]]:
+    def _propostas_para_selecao(self, ids: list[str], conversa_id: Optional[str] = None) -> dict[str, dict[str, Any]]:
         """The proposta rows of ``ids`` -- ALL of them the caller's (org + own conversation) or a 404, before any claim: an
         id that is foreign or unknown is the same answer (ids are not enumerable) and the batch has no side effect yet."""
         rows = {str(r["id"]): r for r in self._in(PROPOSTAS, PROPOSTA_COLS, "id", ids, org_id=self.org_id)}
@@ -509,7 +509,10 @@ class FluxoService:
                 CONVERSAS, "id", "id", (r["conversa_id"] for r in rows.values()), org_id=self.org_id, user_id=self.user_id
             )
         }
-        if set(rows) != set(ids) or any(str(r["conversa_id"]) not in conversas for r in rows.values()):
+        if (
+            set(rows) != set(ids) or any(str(r["conversa_id"]) not in conversas for r in rows.values())
+            or (conversa_id is not None and any(str(r["conversa_id"]) != conversa_id for r in rows.values()))
+        ):
             raise ChatError(404, MSG_PROPOSTA_NAO_ENCONTRADA, code="proposta_nao_encontrada")
         return rows
 
@@ -524,11 +527,11 @@ class FluxoService:
             for conversa, itens in por_conversa.items()
         ]).execute()
 
-    async def selecionar(self, ids: list[str]) -> dict[str, Any]:
+    async def selecionar(self, ids: list[str], conversa_id: Optional[str] = None) -> dict[str, Any]:
         """Pick N proposals at once. One saga per id, in the given order -- each its own claim, so a retried batch (or a
         double click) is ``ja_existia`` per proposta and never a second card -- and one refused item (a cap, a refusal of the
         saga) never stops the rest: every item answers with its own outcome."""
-        rows = await run_in_threadpool(self._propostas_para_selecao, ids)
+        rows = await run_in_threadpool(self._propostas_para_selecao, ids, conversa_id)
         await run_in_threadpool(self._evento_selecao, rows.values())
         itens: list[dict[str, Any]] = []
         for pid in ids:
@@ -546,11 +549,12 @@ class FluxoService:
                 itens.append({"proposta_id": pid, "ok": False, "erro": {"code": "falha_inesperada", "detail": "Falha inesperada.", "status": 500}})
             else:
                 itens.append({"proposta_id": pid, "ok": True, **r.como_dict()})
-        criados = sum(1 for i in itens if i["ok"] and not i["ja_existia"])
+        # S11's shape: three id lists; a falha carries the id and its refusal code. ``itens`` keeps the full per-item outcome.
         return {
-            "itens": itens, "total": len(itens), "criados": criados,
-            "ja_existiam": sum(1 for i in itens if i["ok"] and i["ja_existia"]),
-            "falhas": sum(1 for i in itens if not i["ok"]),
+            "criados": [i["proposta_id"] for i in itens if i["ok"] and not i["ja_existia"]],
+            "ja_existiam": [i["proposta_id"] for i in itens if i["ok"] and i["ja_existia"]],
+            "falhas": [{"id": i["proposta_id"], **i["erro"]} for i in itens if not i["ok"]],
+            "itens": itens,
         }
 
     def _resultado(self, proposta: dict[str, Any], ja_existia: bool, em_andamento: bool) -> ResultadoEscolher:
