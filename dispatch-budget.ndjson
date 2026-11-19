@@ -366,3 +366,4 @@
 {"ts": "2026-11-19T03:43:05.070689+00:00", "slug": "kb-counts-by-construction", "agent": "pre-push-hook", "duration_minutes": 90.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
 {"ts": "2026-11-19T03:43:20.586528+00:00", "slug": "agents-eval-loop-prod", "agent": "pre-push-hook", "duration_minutes": 90.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
 {"ts": "2026-11-19T03:43:38.521251+00:00", "slug": "worktree-agent-a487cc2865f33dc10", "agent": "pre-push-hook", "duration_minutes": 13.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
+{"ts": "2026-11-19T03:43:56.077527+00:00", "slug": "agents-staff-tabs", "agent": "pre-push-hook", "duration_minutes": 13.0, "estimated_tokens": null, "outcome": "landed", "notes": null}
