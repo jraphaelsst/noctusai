@@ -1,0 +1,45 @@
+{
+ "_nota": "Payload para noctus.agents.content kind=ferramenta do RASCUNHO de `onboarding-imob` (runtime claude_sdk). Nomes = grupo `onboarding` (app/studio/ferramentas_registry.py ONBOARDING_FERRAMENTAS); o modelo vê mcp__onboarding__<nome>. Descrição é linha de banco: sem ela a ferramenta não é oferecida. Nunca publicar daqui.",
+ "itens": [
+  {
+   "ferramenta": "onboarding_progresso_onboarding",
+   "ativo": true,
+   "obrigatoria_skill": null,
+   "descricao": "Mostra o andamento da entrevista desta empresa: as operações que ela atende, cada item com o estado (aberto, respondido, pendente, proposto por importação ou recusado), quantos obrigatórios ainda faltam e qual é o próximo item a perguntar, com a pergunta sugerida, o padrão para os opcionais e se já existe algo salvo. Chame no começo da conversa, depois de registrar respostas quando precisar decidir o que perguntar e sempre que a pessoa pedir para ver o andamento. Siga a ordem de `proximo`; não pule itens obrigatórios por conta própria.",
+   "parametros": {}
+  },
+  {
+   "ferramenta": "onboarding_registrar_resposta",
+   "ativo": true,
+   "obrigatoria_skill": null,
+   "descricao": "Registra a resposta de UM item da entrevista, depois que a pessoa confirmou o valor, ou marca o item como pendente quando ela não sabe ou quer deixar para depois. O valor é validado na hora: se vier recusado, leia o motivo, explique em uma frase e pergunte de novo só aquele item. Nunca registre um valor que a pessoa não disse nem confirmou, e nunca chame duas vezes com o mesmo valor recusado.",
+   "parametros": {
+    "item": "Número do item no checklist.",
+    "situacao": "`respondido` quando a pessoa confirmou o valor; `pendente` quando não sabe ou deixou para depois.",
+    "valor": "O valor confirmado, como a pessoa disse (texto, lista ou objeto). Em branco quando pendente.",
+    "trecho": "Palavras que a PESSOA escreveu na conversa e que sustentam o valor, copiadas dela. Obrigatório quando respondido.",
+    "origem": "`cliente` (a pessoa disse), `padrao` (aceitou o padrão sugerido do item) ou `importado` (confirmou um valor vindo da importação).",
+    "motivo": "Só quando pendente: `nao_sabe` ou `depois`."
+   }
+  },
+  {
+   "ferramenta": "onboarding_importar_configuracao",
+   "ativo": true,
+   "obrigatoria_skill": null,
+   "descricao": "Lê uma configuração que a pessoa colou (um objeto JSON ou linhas `chave: valor`) e a casa com os itens do checklist. O resultado são PROPOSTAS ainda não confirmadas, mais as linhas não reconhecidas e os conflitos. Nada é registrado por esta ferramenta: leia cada proposta para a pessoa, peça um sim explícito por item e só então use registrar_resposta com origem `importado`.",
+   "parametros": {
+    "texto": "O texto colado pela pessoa, exatamente como veio."
+   }
+  },
+  {
+   "ferramenta": "onboarding_revisar_e_aplicar",
+   "ativo": true,
+   "obrigatoria_skill": null,
+   "descricao": "Duas fases. `resumo`: devolve tudo o que está confirmado, o que ficou pendente e o que ainda falta, para você mostrar à pessoa e perguntar se pode aplicar. `aplicar`: grava a configuração da empresa e devolve o relatório por item (aplicado, recusado com o motivo, ou passo da equipe). Só chame `aplicar` depois que a pessoa respondeu ao resumo autorizando, citando as palavras dela; se algo mudou depois do resumo, refaça o resumo. Depois do relatório, aponte o modo de avaliação; ligar o assistente não é com você.",
+   "parametros": {
+    "fase": "`resumo` para revisar; `aplicar` para gravar.",
+    "confirmacao_cliente": "Só em `aplicar`: as palavras da pessoa, escritas depois do resumo, autorizando aplicar."
+   }
+  }
+ ]
+}

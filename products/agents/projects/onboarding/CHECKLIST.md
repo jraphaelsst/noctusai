@@ -77,14 +77,29 @@ confirms instead of asking; an imported item is only written once someone confir
 
 ## Deferred (named destinations)
 
-- Interviewer tools (progresso / importar / aplicar) and evals: `NOC-REMEDIATE[onboarding-interviewer-tools]` and
-  `[onboarding-interviewer-evals]`, destination: the next agents slice, "onboarding interviewer as a live chatbot".
+## The live interviewer (resolved: onboarding-interviewer-tools / -evals)
 
-- SW settings are applied through `SwSettingsPort`; the Real client refuses `canal_sw_nao_configurado` and the report
-  carries the route + body to apply by hand until social-wiring accepts a staff channel —
-  `NOC-REMEDIATE[onboarding-sw-staff-channel]`, destination: the social-wiring slice that adds the staff scope.
+The `onboarding-imob` agent (claude_sdk, a studio agent of the staff org) runs in the Studio chat. The Onboarding tab's
+"Iniciar entrevista" (`POST .../onboarding/conversa`) opens one conversation bound to the chosen company
+(`agents.onboarding_sessoes`); its four tools (`onboarding` group: `progresso_onboarding`, `registrar_resposta`,
+`importar_configuracao`, `revisar_e_aplicar`; `app/onboarding/entrevista.py`) never take an org: the server reads it from
+the conversation. Gates the model cannot talk past: an answer needs the client's own words (`trecho`) found in the
+conversation and passes the apply step's validation in dry-run; an imported value needs the client's explicit yes; the
+apply needs a summary and a yes written AFTER it, and re-checks the live grant. Every answer, refusal, pending mark,
+import, summary and apply is one append-only event (`agents.onboarding_eventos`); the tab polls the folded state.
+Evals: behaviour (LLM-judged) `agent/onboarding-imob-evals-comportamento.json`; mechanism
+`agent/onboarding-imob-evals-mecanismo.json`, replayed by `tests/onboarding/test_evals_mecanismo.py`.
+
+## Deferred (named destinations)
+
+- SW settings are applied through `SwSettingsPort` -> social-wiring's onboarding staff channel (service token + staff
+  `ator`; SW allow-lists the settings). Not yet allow-listed in SW (reported `recusado`, apply by hand): items `visitas`,
+  `agente_nome`, `destino_lead_pronto` — `NOC-REMEDIATE[onboarding-sw-staff-more-settings]`, destination: next SW slice.
 - Free-prose import (extracting items from a pasted paragraph) is the interviewer's conversational job, not the
   parser's — `NOC-REMEDIATE[onboarding-import-prose]`, destination: interviewer evals once the agent is applied.
-- Applying the `onboarding-imob` definition rows to a live environment (needs the studio content token) —
-  `NOC-REMEDIATE[onboarding-agent-rows]`, destination: the owner's next studio session
-  (`noctus.agents.content`, payloads in `agent/`).
+- Applying the `onboarding-imob` definition rows to a live environment (needs the studio content token; payloads
+  `agent/onboarding-imob-{secoes,ferramentas,rascunho,evals-comportamento}.json`, drafts only, never published from here) —
+  `NOC-REMEDIATE[onboarding-agent-rows]`, destination: the owner's next studio session (`noctus.agents.content`).
+- The studio mechanism executor drives CHANNEL turns; the interviewer's mechanism cases therefore live in the repo and run
+  as a pytest suite — `NOC-REMEDIATE[onboarding-evals-mecanismo-studio]`, destination: an in-app (claude_sdk) mechanism
+  driver in the agents eval engine.

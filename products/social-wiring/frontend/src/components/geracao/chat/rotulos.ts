@@ -13,7 +13,12 @@ export const ETAPA_ROTULO: Record<FluxoEtapa, string> = {
   roteiro_gerando: "Escrevendo o roteiro...",
   roteiro_pronto: "Roteiro pronto",
   falhou: "Falhou",
+  roteiro_salvo: "Roteiro salvo",
+  headline_gerando: "Gerando a headline...",
 };
+
+/** Roteiro-first steps (contract §16.7), in order; `etapa` maps onto the active index. */
+export const PASSOS_ROTEIRO_PRIMEIRO = ["Roteiro salvo", "Gerando headline", "Card na Esteira", "Legenda"] as const;
 
 export const LEGENDA_ROTULO = {
   pendente: "Legenda: sendo escrita",
@@ -26,6 +31,8 @@ const ERRO_FLUXO: Record<string, string> = {
   ia_nao_configurada: "A IA ainda não está configurada para a sua organização.",
   orcamento_ia_excedido: "O orçamento de IA do período foi atingido.",
   geracao_indisponivel: "A geração está indisponível no momento.",
+  headline_invalida: "Não consegui gerar a headline deste roteiro",
+  limite_diario_headlines: "Você atingiu o limite diário de headlines.",
   limite_diario_roteiros: "Você atingiu o limite diário de roteiros.",
   headline_ja_em_post: "Esta headline já está em um card da Esteira.",
   roteiro_ja_em_post: "Este roteiro já está em um card da Esteira.",

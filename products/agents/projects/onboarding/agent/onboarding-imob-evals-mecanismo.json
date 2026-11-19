@@ -1,0 +1,71 @@
+{
+ "_nota": "Suíte de MECANISMO de `onboarding-imob`: portões determinísticos das ferramentas (app/onboarding/entrevista.py), sem modelo. O executor de mecanismo do Studio dirige turnos de canal; o entrevistador roda no chat do app, então estes casos rodam em tests/onboarding/test_evals_mecanismo.py (um teste por caso; o slug é o id). Cada passo: `fala` (a pessoa escreve), ou `chama` {ferramenta, args} com `espera` {ok, erro, estado, proximo_n}. `escritas_no_fim` = chaves de spec gravadas pelo aplicar (default: nenhuma).",
+ "casos": [
+  {"slug": "mec-onb-progresso-aponta-operacoes-primeiro", "titulo": "O primeiro item é sempre o 9 (operações)",
+   "passos": [{"chama": {"ferramenta": "progresso_onboarding", "args": {}}, "espera": {"ok": true, "proximo_n": 9}}]},
+  {"slug": "mec-onb-sem-trecho-sem-registro", "titulo": "Sem as palavras da pessoa não há registro",
+   "passos": [
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 1, "situacao": "respondido", "valor": "Acme", "trecho": "Acme"}}, "espera": {"ok": false, "erro": "trecho_nao_encontrado"}},
+    {"chama": {"ferramenta": "progresso_onboarding", "args": {}}, "espera": {"ok": true, "contagem_respondido": 0}}]},
+  {"slug": "mec-onb-trecho-so-da-pessoa-conta", "titulo": "Trecho citado da pessoa é aceito (sem acento/caixa)",
+   "passos": [
+    {"fala": "A imobiliária se chama Acme Imóveis"},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 1, "situacao": "respondido", "valor": "Acme Imóveis", "trecho": "acme imoveis"}}, "espera": {"ok": true, "estado": "respondido"}}]},
+  {"slug": "mec-onb-recusa-devolve-motivo-e-reperguntar", "titulo": "CNPJ inválido volta recusado com motivo e pede nova pergunta",
+   "passos": [
+    {"fala": "O CNPJ é 11.111.111/1111-11"},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 3, "situacao": "respondido", "valor": "11.111.111/1111-11", "trecho": "11.111.111/1111-11"}}, "espera": {"ok": false, "erro": "valor_recusado", "reperguntar": true}}]},
+  {"slug": "mec-onb-padrao-so-o-do-item", "titulo": "Aceitar o padrão só vale com o padrão do próprio item",
+   "passos": [
+    {"fala": "pode usar o padrão"},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 22, "situacao": "respondido", "valor": "sim", "trecho": "pode usar o padrão", "origem": "padrao"}}, "espera": {"ok": false, "erro": "padrao_invalido"}},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 22, "situacao": "respondido", "valor": "não", "trecho": "pode usar o padrão", "origem": "padrao"}}, "espera": {"ok": true}}]},
+  {"slug": "mec-onb-importacao-nao-confirma-sozinha", "titulo": "Importação propõe; confirmar exige a fala da pessoa",
+   "passos": [
+    {"chama": {"ferramenta": "importar_configuracao", "args": {"texto": "1: Acme\n3: 11.222.333/0001-81"}}, "espera": {"ok": true, "propostas": 2}},
+    {"chama": {"ferramenta": "progresso_onboarding", "args": {}}, "espera": {"ok": true, "contagem_respondido": 0}},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 1, "situacao": "respondido", "valor": "Acme", "trecho": "sim", "origem": "importado"}}, "espera": {"ok": false, "erro": "trecho_nao_encontrado"}},
+    {"fala": "sim, está certo"},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 1, "situacao": "respondido", "valor": "Acme", "trecho": "sim, está certo", "origem": "importado"}}, "espera": {"ok": true}}]},
+  {"slug": "mec-onb-origem-importado-exige-importacao", "titulo": "Item que não veio da importação não pode alegar essa origem",
+   "passos": [
+    {"fala": "sim"},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 2, "situacao": "respondido", "valor": "Julia", "trecho": "sim", "origem": "importado"}}, "espera": {"ok": false, "erro": "nao_foi_importado"}}]},
+  {"slug": "mec-onb-nao-sei-pendente-e-segue", "titulo": "Não sei marca pendente; obrigatório pendente continua bloqueando",
+   "passos": [
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 4, "situacao": "pendente", "motivo": "nao_sabe"}}, "espera": {"ok": true, "estado": "pendente"}},
+    {"chama": {"ferramenta": "progresso_onboarding", "args": {}}, "espera": {"ok": true, "contagem_pendente": 1, "faltando_inclui": 4}}]},
+  {"slug": "mec-onb-aplicar-sem-resumo-recusado", "titulo": "Aplicar sem resumo apresentado é recusado e nada é gravado",
+   "passos": [
+    {"fala": "Acme"},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 1, "situacao": "respondido", "valor": "Acme", "trecho": "Acme"}}, "espera": {"ok": true}},
+    {"chama": {"ferramenta": "revisar_e_aplicar", "args": {"fase": "aplicar", "confirmacao_cliente": "Acme"}}, "espera": {"ok": false, "erro": "resumo_desatualizado"}}]},
+  {"slug": "mec-onb-sim-antes-do-resumo-nao-vale", "titulo": "Um sim dito antes do resumo não autoriza aplicar",
+   "passos": [
+    {"fala": "Acme, pode aplicar"},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 1, "situacao": "respondido", "valor": "Acme", "trecho": "Acme"}}, "espera": {"ok": true}},
+    {"chama": {"ferramenta": "revisar_e_aplicar", "args": {"fase": "resumo"}}, "espera": {"ok": true}},
+    {"chama": {"ferramenta": "revisar_e_aplicar", "args": {"fase": "aplicar", "confirmacao_cliente": "pode aplicar"}}, "espera": {"ok": false, "erro": "confirmacao_ausente"}}]},
+  {"slug": "mec-onb-aplicar-depois-do-sim", "titulo": "Resumo, sim da pessoa depois dele e só então grava",
+   "passos": [
+    {"fala": "Acme"},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 1, "situacao": "respondido", "valor": "Acme", "trecho": "Acme"}}, "espera": {"ok": true}},
+    {"chama": {"ferramenta": "revisar_e_aplicar", "args": {"fase": "resumo"}}, "espera": {"ok": true}},
+    {"fala": "sim, pode aplicar"},
+    {"chama": {"ferramenta": "revisar_e_aplicar", "args": {"fase": "aplicar", "confirmacao_cliente": "sim, pode aplicar"}}, "espera": {"ok": true, "aplicados": 1}}],
+   "escritas_no_fim": ["nome_imobiliaria"]},
+  {"slug": "mec-onb-resposta-nova-invalida-o-resumo", "titulo": "Mudar uma resposta depois do resumo exige novo resumo",
+   "passos": [
+    {"fala": "Acme e a assistente é Ana"},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 1, "situacao": "respondido", "valor": "Acme", "trecho": "Acme"}}, "espera": {"ok": true}},
+    {"chama": {"ferramenta": "revisar_e_aplicar", "args": {"fase": "resumo"}}, "espera": {"ok": true}},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 2, "situacao": "respondido", "valor": "Ana", "trecho": "assistente é Ana"}}, "espera": {"ok": true}},
+    {"fala": "pode aplicar"},
+    {"chama": {"ferramenta": "revisar_e_aplicar", "args": {"fase": "aplicar", "confirmacao_cliente": "pode aplicar"}}, "espera": {"ok": false, "erro": "resumo_desatualizado"}}]},
+  {"slug": "mec-onb-item-condicional-fora", "titulo": "Item de venda não existe para quem só atende locação",
+   "passos": [
+    {"fala": "só locação"},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 9, "situacao": "respondido", "valor": "locacao", "trecho": "só locação"}}, "espera": {"ok": true}},
+    {"chama": {"ferramenta": "registrar_resposta", "args": {"item": 28, "situacao": "respondido", "valor": "sim", "trecho": "só locação"}}, "espera": {"ok": false, "erro": "item_nao_aplicavel"}}]}
+ ]
+}

@@ -18,8 +18,9 @@ from noctusai_lib.testing.organs import assert_organ_migration_current
 from app.crm import CLIENTS_CONFIG, LEADS_CONFIG
 
 PRODUCT_DIR = Path(__file__).resolve().parents[1]
-# The organ migration is FROZEN under the schema it was applied for (`monica`); 023 renames the schema afterwards.
-SCHEMA = "monica"
+# 018 is FROZEN (applied under the old schema `monica`; 023 renamed it); the LATEST revision (025) is pinned to the
+# generator under the current schema.
+SCHEMA = "nosnolimiar"
 X = uuid.uuid4()
 
 

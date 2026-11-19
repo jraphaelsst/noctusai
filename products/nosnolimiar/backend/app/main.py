@@ -11,7 +11,8 @@ Everything domain-shaped is a SEED organ mounted here, no product-local re-imple
 * contexto                         -- `app/routers/contexto_router.py`, proxy to the agents org specs
 * finance (`mount_finance`)        -- the future ERP side (hidden behind `status_pagina`)
 * clients (`mount_clients`)        -- patients: sessions, weekly slots, charges booked into finance, manual
-                                       payments; a lead entering `fechado` becomes a patient (`app/crm.py`)
+                                       payments; a lead entering `fechado` becomes a patient (`app/crm.py`);
+                                       the weekly slots roll forward daily (`app/scheduler.py`, one week ahead)
 """
 from noctusai_lib.integrations.whatsapp import parse_line_policy, register_line_policy
 from noctusai_seed import create_product_app
@@ -22,6 +23,7 @@ from app.crm import CLIENTS_CONFIG, LEADS_CONFIG
 from app.rate_limit import limiter
 from app.routers.contexto_router import router as contexto_router
 from app.routers.whatsapp_router import router as whatsapp_router
+from app.scheduler import configure as configure_scheduler, startup as scheduler_startup, stop_scheduler
 
 # Line policy v1: declare Nós no Limiar's own line (`NOSNOLIMIAR_WAHA_LINE_POLICY`, from waha-instances.yml). A malformed value
 # fails the boot; an absent one leaves the line undeclared => the seed refuses its writes (fail-closed).
@@ -31,6 +33,9 @@ if settings.nosnolimiar_waha_base_url and settings.nosnolimiar_waha_line_policy:
         parse_line_policy(settings.nosnolimiar_waha_line_policy),
         session=settings.nosnolimiar_waha_session,
     )
+
+# Register the daily session-materialization job at import time, before `scheduler_startup()` fires in the lifespan.
+configure_scheduler()
 
 app = create_product_app(
     name="Nós no Limiar",
@@ -64,6 +69,8 @@ app = create_product_app(
             config=CLIENTS_CONFIG,
         ),
     ],
+    lifespan_startup=scheduler_startup,
+    lifespan_shutdown=stop_scheduler,
     # Uncomment when this product registers AI features in
     # `app/services/ai_consent_features.py` (each product owns its
     # consent catalog — see KB § PATTERNS/lgpd.md § 9):

@@ -103,11 +103,14 @@ class TestAuth:
 class TestConfig:
     def test_defaults_then_partial_put(self, admin):
         assert admin.call("get", "/config").json()["data"] == {
-            "minutos_ativo": False, "minutos_intervalo": 15, "horas_ativo": False, "horas_intervalo": 4}
+            "minutos_ativo": False, "minutos_intervalo": 15, "horas_ativo": False, "horas_intervalo": 4,
+            "portal_primeiro_contato_ativo": False}
         r = admin.call("put", "/config", {"minutos_ativo": True, "minutos_intervalo": 25})
         assert r.status_code == 200 and r.json()["data"]["minutos_intervalo"] == 25
         assert admin.call("put", "/config", {"horas_ativo": True, "horas_intervalo": 11}).json()["data"] == {
-            "minutos_ativo": True, "minutos_intervalo": 25, "horas_ativo": True, "horas_intervalo": 11}
+            "minutos_ativo": True, "minutos_intervalo": 25, "horas_ativo": True, "horas_intervalo": 11,
+            "portal_primeiro_contato_ativo": False}
+        assert admin.call("put", "/config", {"portal_primeiro_contato_ativo": True}).json()["data"]["portal_primeiro_contato_ativo"] is True
 
     @pytest.mark.parametrize("body", [
         {"minutos_intervalo": 7}, {"minutos_intervalo": 0}, {"minutos_intervalo": 65}, {"horas_intervalo": 0},

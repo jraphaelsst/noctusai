@@ -186,11 +186,12 @@ def _compor_spec(chave: str, itens: list[tuple[Item, Any]], armazenado: str) -> 
 def aplicar(
     respostas: Mapping[int, Any], *, org_id: UUID, declaradas: Mapping[str, str], armazenados: Mapping[str, str],
     config: ConfigValidacao, gravar_specs: Callable[[dict[str, str]], None], sw: SwSettingsPort,
-    nao_confirmados: frozenset[int] = frozenset(),
+    nao_confirmados: frozenset[int] = frozenset(), ator: UUID, grant_id: UUID | None = None,
 ) -> Relatorio:
     """Apply ``respostas`` (``{item number: value}``). ``declaradas`` = ``{spec key: type}`` the definition declares;
     ``armazenados`` = the org's stored spec values; ``gravar_specs`` = the write path for the valid spec values.
-    ``nao_confirmados`` = imported items nobody confirmed: reported ``pendente_confirmacao``, never written."""
+    ``nao_confirmados`` = imported items nobody confirmed: reported ``pendente_confirmacao``, never written.
+    ``ator`` / ``grant_id`` = the platform admin and the live grant the CALLER verified; carried to the SW port."""
     rel = Relatorio()
     por_n: dict[int, ItemRelatorio] = {}
 
@@ -258,7 +259,7 @@ def aplicar(
                         anotar(item, APLICADO)
 
     for item, corpo in sw_itens:
-        r = sw.aplicar(org_id, item.destino.alvo, item.destino.rota, corpo)
+        r = sw.aplicar(org_id, item.destino.alvo, item.destino.rota, corpo, ator=ator, grant_id=grant_id)
         if r.ok:
             anotar(item, APLICADO, corpo=corpo)
         else:

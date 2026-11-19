@@ -5,7 +5,7 @@
  * therapist travelling must still see "14:00" for the 14:00 session. `zonedParts` reads an instant in that zone,
  * `zonedIso` turns a typed date + time back into an ISO instant WITH the zone's offset (what the API expects).
  */
-import type { ClientFiltersState, ClientFinanceEntry, ClientsConfigData, ClientStatusConfig, PaymentStatus } from './types';
+import type { ChargeStatus, ClientFiltersState, ClientFinanceEntry, ClientStatusConfig, ClientsConfigData, PaymentStatus, ScheduleStatus } from './types';
 
 /** The browser's zone -- only until the config (the org's zone) has answered. */
 export function fallbackTimezone(): string {
@@ -128,6 +128,34 @@ export const PAYMENT_STATUS: Record<PaymentStatus, { label: string; color: strin
   paid: { label: 'Pago', color: 'success' },
   overdue: { label: 'Vencido', color: 'destructive' },
 };
+
+/** The money chip of a session (the server's `charge_status`). */
+export const CHARGE_STATUS: Record<ChargeStatus, { label: string; color: string }> = {
+  pendente: { label: 'Pendente', color: 'warning' },
+  pago: { label: 'Pago', color: 'success' },
+  isento: { label: 'Isento', color: 'muted' },
+  cancelado: { label: 'Cancelado', color: 'muted' },
+};
+
+export const SCHEDULE_STATUS: Record<ScheduleStatus, { label: string; color: string }> = {
+  ativa: { label: 'Ativa', color: 'success' },
+  pausada: { label: 'Pausada', color: 'warning' },
+  encerrada: { label: 'Encerrada', color: 'muted' },
+};
+
+/** `YYYY-MM` of a `YYYY-MM-DD`, and the month `n` away from a `YYYY-MM`. */
+export const monthOf = (date: string): string => date.slice(0, 7);
+export function addMonths(month: string, n: number): string {
+  const [y, m] = month.split('-').map(Number);
+  const idx = y * 12 + (m - 1) + n;
+  return `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, '0')}`;
+}
+const MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+/** `2026-11` -> `novembro de 2026`. */
+export function formatMonth(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  return MONTHS[m - 1] ? `${MONTHS[m - 1]} de ${y}` : month;
+}
 
 /** A session's payment status from its receivable (the same rule the server applies). */
 export function paymentStatusOf(entry: ClientFinanceEntry | undefined): PaymentStatus {
