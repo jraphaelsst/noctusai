@@ -159,7 +159,7 @@ _P0001_CODES: dict[str, Callable[[str], Exception]] = {
     "draft_exists": _conflict("draft_exists"),
     "draft_changed": _conflict("draft_changed"),
     "conflito_de_versao": _conflict("conflito_de_versao"),
-    # 091 agents.aplicar_refinamento_loop (the eval-loop refine step)
+    # 092 agents.aplicar_refinamento_loop (the eval-loop refine step)
     "linha_alterada": _conflict("linha_alterada"),
     "loop_encerrado": _conflict("loop_encerrado"),
     "loop_not_found": NotFound,

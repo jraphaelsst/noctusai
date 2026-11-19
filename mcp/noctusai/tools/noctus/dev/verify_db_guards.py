@@ -6652,7 +6652,7 @@ _AGENTS_EVAL_LOOP_EVENTOS_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Registry — agents.eval_loop_eventos refine events (agents migration 091).
+# Registry — agents.eval_loop_eventos refine events (agents migration 092).
 # ---------------------------------------------------------------------------
 #
 # The eval-loop refine step: the events CHECK was widened with the three refine events (a vocabulary the code writes, so an
@@ -6662,7 +6662,7 @@ _AGENTS_EVAL_LOOP_EVENTOS_PROBES: tuple[GuardProbe, ...] = (
 
 _AGENTS_EVAL_LOOP_REFINO_CHECK_GUARD = "eval_loop_eventos_evento_check"
 _AGENTS_EVAL_LOOP_REFINO_UNIQUE_GUARD = "uq_agents_eval_loop_eventos_refino_por_rodada"
-_EVAL_REFINO_MIGS = (*_EVAL_EVENTOS_MIGS, "091_eval_loop_refino.sql")
+_EVAL_REFINO_MIGS = (*_EVAL_EVENTOS_MIGS, "092_eval_loop_refino.sql")
 _EVAL_REFINO_SETUP = (
     _EVAL_EVENTOS_SETUP
     + f"\n    INSERT INTO {_JV2}.eval_loop_eventos (org_id, loop_id, rodada_seq, evento) "

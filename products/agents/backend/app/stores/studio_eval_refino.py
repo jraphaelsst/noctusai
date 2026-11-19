@@ -1,4 +1,4 @@
-"""The eval-loop refine WRITE (migration 091): one bounded draft-row edit + the loop's spend + the immutable event, in ONE transaction.
+"""The eval-loop refine WRITE (migration 092): one bounded draft-row edit + the loop's spend + the immutable event, in ONE transaction.
 
 Event-oriented (KB § PATTERNS/architect/event-oriented-architecture.md): there is no edit without its ``refinamento_proposto`` event and no
 such event for an edit that did not land. A step that wrote nothing is still an event (``refinamento_recusado``: why + the cost already

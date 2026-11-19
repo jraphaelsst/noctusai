@@ -1,4 +1,4 @@
-"""Migration 091: the refine events, the one-decision-per-round index and the atomic ``aplicar_refinamento_loop`` (edit + spend + event)."""
+"""Migration 092: the refine events, the one-decision-per-round index and the atomic ``aplicar_refinamento_loop`` (edit + spend + event)."""
 from __future__ import annotations
 
 from pathlib import Path

@@ -269,7 +269,7 @@ def get_loop_store_dep():
 
 
 def get_refino_store_dep():
-    """Seam over the eval-loop refine write (one draft-row edit + the loop's spend + the event, migration 091). Tests override it."""
+    """Seam over the eval-loop refine write (one draft-row edit + the loop's spend + the event, migration 092). Tests override it."""
     from app.stores.studio_eval_refino import get_refino_store
 
     return get_refino_store(settings)
