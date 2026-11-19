@@ -322,7 +322,7 @@ def test_selecting_n_proposals_makes_n_cards_each_with_its_counterpart(sg):
     assert r.status_code == 202, r.text
     d = r.json()["data"]
     assert [i["proposta_id"] for i in d["itens"]] == ids and all(i["ok"] for i in d["itens"])
-    assert (d["total"], d["criados"], d["ja_existiam"], d["falhas"]) == (2, 2, 0, 0)
+    assert (d["criados"], d["ja_existiam"], d["falhas"]) == (ids, [], [])
     assert len(sg.rows("cs_posts")) == 2 and len(sg.rows("cs_roteiros")) == 2 and len(sg.rows("cs_headlines")) == 2
     assert all(i["fluxo"]["post"] is not None and i["fluxo"]["roteiro"] is not None for i in d["itens"])
     assert len(sg.jobs.do_tipo("fluxo.finalizar_card")) == 2
@@ -333,7 +333,7 @@ def test_selecting_the_same_proposals_again_is_idempotent_per_proposal(sg):
     assert sg.client.post(SEL, json={"ids": ids}).status_code == 202
     r = sg.client.post(SEL, json={"ids": ids})
     d = r.json()["data"]
-    assert r.status_code == 200 and (d["criados"], d["ja_existiam"]) == (0, 2)
+    assert r.status_code == 200 and (d["criados"], d["ja_existiam"]) == ([], ids)
     assert len(sg.rows("cs_posts")) == 2 and len(sg.rows("cs_roteiros")) == 2
     assert [i["ja_existia"] for i in d["itens"]] == [True, True]
 
@@ -343,7 +343,8 @@ def test_one_refused_item_does_not_stop_the_others_and_is_reported_with_its_code
     sg.cfg.roteiros_dia_usuario = 1  # the daily roteiro cap lets ONE through
     d = sg.client.post(SEL, json={"ids": ids}).json()["data"]
     assert [i["ok"] for i in d["itens"]] == [True, False]
-    assert d["itens"][1]["erro"]["code"] == "limite_diario_roteiros" and (d["criados"], d["falhas"]) == (1, 1)
+    assert d["itens"][1]["erro"]["code"] == "limite_diario_roteiros"
+    assert d["criados"] == [ids[0]] and [(f["id"], f["code"]) for f in d["falhas"]] == [(ids[1], "limite_diario_roteiros")]
     assert len(sg.rows("cs_posts")) == 1
 
 
@@ -352,6 +353,14 @@ def test_a_foreign_or_unknown_id_is_a_404_before_any_claim(sg):
     r = sg.client.post(SEL, json={"ids": [ids[0], str(uuid.uuid4())]})
     assert r.status_code == 404 and r.json()["code"] == "proposta_nao_encontrada"
     assert sg.rpc.names() == [] and sg.rows("cs_posts") == []
+
+
+def test_the_screen_shape_conversa_id_is_accepted_and_scopes_the_ids(sg):
+    cid, ids = _duas_propostas(sg)
+    assert sg.client.post(SEL, json={"ids": ids, "conversa_id": cid}).status_code == 202
+    outra = _conversa_saga(sg)
+    r = sg.client.post(SEL, json={"ids": ids, "conversa_id": outra})
+    assert r.status_code == 404 and r.json()["code"] == "proposta_nao_encontrada"
 
 
 def test_the_batch_writes_one_opcoes_selecionadas_event_per_conversation_with_the_count(sg):

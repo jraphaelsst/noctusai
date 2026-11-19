@@ -81,6 +81,8 @@ class SelecionarIn(StrictHttpModel):
     conversations, each claimed and run through the same saga as ``escolher``. Unique ids; nothing else is accepted."""
 
     ids: list[uuid.UUID] = Field(min_length=1, max_length=MAX_SELECIONADAS)
+    #: Optional scope (the screen sends the open conversation): when given, every id must belong to it, else 404.
+    conversa_id: Optional[uuid.UUID] = None
 
     @field_validator("ids")
     @classmethod
