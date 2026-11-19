@@ -75,6 +75,41 @@ class LoopStopRequest(StrictHttpModel):
     motivo: str | None = Field(default=None, max_length=300)
 
 
+class RefinamentoDiffOut(BaseModel):
+    """The changed window of the row (a few hundred chars around the edit); the full before/after texts are in the loop's events."""
+
+    antes: str
+    depois: str
+
+
+class RefinamentoOut(BaseModel):
+    """What the refine step did AFTER a round (based on its failing cases): ``proposto`` (one draft row edited) or ``recusado``
+    (nothing written: ``codigo`` + ``mensagem``). ``melhorou`` is set once the next round closed (``avaliado``): ``True`` if its score is
+    above this round's, ``None`` while unevaluated or when a round had no score."""
+
+    estado: str
+    custo_usd: float
+    modelo: str | None = None
+    codigo: str | None = None
+    mensagem: str | None = None
+    alvo: dict[str, Any] | None = None
+    racional: str | None = None
+    casos_alvo: list[str] = []
+    diff: RefinamentoDiffOut | None = None
+    avaliado: bool = False
+    melhorou: bool | None = None
+    score_antes: float | None = None
+    score_depois: float | None = None
+
+
+class RefinamentosResumoOut(BaseModel):
+    propostos: int = 0
+    recusados: int = 0
+    avaliados: int = 0
+    melhoraram: int = 0
+    custo_usd: float = 0.0
+
+
 class RodadaOut(BaseModel):
     rodada: int
     run_id: UUID
@@ -89,6 +124,8 @@ class RodadaOut(BaseModel):
     #: a round whose run ERRORED says why (code + text): shown as an error, never as failing cases
     erro_codigo: str | None = None
     erro_mensagem: str | None = None
+    #: the refine decided after this round (see :class:`RefinamentoOut`); ``None`` = none ran (manual loop, target reached, no failures)
+    refinamento: RefinamentoOut | None = None
 
 
 class OvercallOut(BaseModel):
@@ -103,6 +140,9 @@ class CheckpointOut(BaseModel):
     atingido: bool
     score: float | None
     gasto_usd: float | None
+    #: refines proposed up to this round / what the refine step cost up to it
+    refinamentos: int = 0
+    gasto_refino_usd: float = 0.0
 
 
 class LoopOut(BaseModel):
@@ -136,6 +176,8 @@ class LoopOut(BaseModel):
     aviso: dict[str, Any] | None = None
     #: what the loop is doing right now: ``rodando`` | ``automatico`` (between rounds) | ``aguardando_edicao`` | ``manual`` | ``encerrado``
     estado_driver: str = "manual"
+    #: totals of the refine step between rounds (its cost is INCLUDED in ``gasto_usd``)
+    refinamentos: RefinamentosResumoOut = RefinamentosResumoOut()
 
 
 class LoopListOut(BaseModel):

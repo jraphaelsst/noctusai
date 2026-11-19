@@ -18,6 +18,8 @@ from fastapi import HTTPException, params
 
 from app.stores.studio_eval_loops import LoopRecord
 from app.studio.eval_loop_driver import LoopDriver, install_driver
+from app.studio.eval_loop_refino import casos_falhando_comportamento, casos_falhando_mecanismo
+from app.studio.eval_loop_refino_service import RefinoService
 from app.studio.eval_loop_service import resumo_comportamento, resumo_mecanismo
 from noctusai_lib.api.auth.session import AuthContext
 
@@ -68,6 +70,26 @@ def construir_driver(app: Any, event_loop: asyncio.AbstractEventLoop) -> LoopDri
             return resumo_mecanismo(R(agentes.get_mecanismo_store_dep), rec.org_id, rec.agent_id, run_id)
         return resumo_comportamento(R(agentes.get_eval_store_dep), rec.org_id, rec.agent_id, run_id)
 
+    def ler_casos(rec: LoopRecord, run_id):
+        if rec.suite == "mecanismo":
+            return casos_falhando_mecanismo(R(agentes.get_mecanismo_store_dep), rec.org_id, rec.agent_id, run_id)
+        return casos_falhando_comportamento(R(agentes.get_eval_store_dep), rec.org_id, rec.agent_id, run_id)
+
+    def carimbar_hash(org_id, agent_id, draft_id) -> str:
+        """Recompile the draft NOW (the same ``compile_version`` the rounds hash with), re-stamp its ``compiled_hash`` and return it."""
+        defs = R(agentes.get_studio_definition_store_dep)
+        agent = defs.get_agent_by_id(agent_id)
+        _draft, compiled = agentes._refresh_draft_hash(defs, R(agentes.get_knowledge_catalog_dep), org_id, agent, draft_id)
+        return compiled.hash
+
+    def refino_service() -> RefinoService:
+        return RefinoService(
+            loops=servico().store, defs=R(agentes.get_studio_definition_store_dep), refinador=R(agentes.get_refinador_dep),
+            refino=R(agentes.get_refino_store_dep), ler_casos=ler_casos, carimbar_hash=carimbar_hash)
+
+    async def refinar(rec: LoopRecord) -> str:
+        return await refino_service().refinar(rec)
+
     async def iniciar(rec: LoopRecord):
         ctx = ctx_do_dono(rec)
         if rec.suite == "mecanismo":
@@ -108,7 +130,7 @@ def construir_driver(app: Any, event_loop: asyncio.AbstractEventLoop) -> LoopDri
                 "detail": "O executor de avaliações não está disponível.", "code": "eval_runner_unavailable"}) from exc
         return run.id
 
-    return LoopDriver(servico=servico, iniciar=iniciar, ler_resumo=ler_resumo, event_loop=event_loop)
+    return LoopDriver(servico=servico, iniciar=iniciar, ler_resumo=ler_resumo, event_loop=event_loop, refinar=refinar)
 
 
 async def instalar_driver(app: Any) -> int:

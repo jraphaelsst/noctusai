@@ -224,12 +224,56 @@ describe("EvalLoopCard", () => {
     await waitFor(() => expect(mockModo).toHaveBeenCalledWith({ loopId: "l1", modo: "automatico" }));
   });
 
-  it("says plainly that the loop does not refine the draft between rounds", () => {
+  it("an automatic loop says it proposes ONE bounded draft edit between rounds; a manual one says it does not edit", () => {
     mockLoops.mockReturnValue(state([loop({ modo: "automatico", estado_driver: "automatico" })]));
     render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
-    expect(screen.getByTestId("loop-explica-refino").textContent).toMatch(/não refina o rascunho entre as rodadas/);
+    expect(screen.getByTestId("loop-explica-refino").textContent).toMatch(/propõe UMA edição pontual de uma linha do rascunho.*nada é publicado/);
+    expect(screen.getByTestId("loop-explica-refino").textContent).not.toMatch(/não refina o rascunho/);
     fireEvent.click(screen.getByTestId("loop-pausar"));
     expect(mockModo).toHaveBeenCalledWith({ loopId: "l1", modo: "manual" });
+    cleanup();
+    mockLoops.mockReturnValue(state([loop({ modo: "manual", estado_driver: "manual" })]));
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    expect(screen.getByTestId("loop-explica-refino").textContent).toMatch(/modo manual o loop não edita o rascunho/);
+  });
+
+  it("shows, per round, the row the refine edited with why, the diff and its effect on the score - and why a refine did not edit", () => {
+    const proposto = {
+      estado: "proposto", custo_usd: 0.04, modelo: "m", codigo: null, mensagem: null, alvo: { tipo: "secao", chave: "tom" },
+      racional: "O agente citou preço sem consultar o catálogo.", casos_alvo: ["caso-a"],
+      diff: { antes: "Seja cordial.", depois: "Seja cordial. Consulte o catálogo antes de citar preço." },
+      avaliado: true, melhorou: true, score_antes: 0.6, score_depois: 0.7,
+    };
+    const recusado = {
+      estado: "recusado", custo_usd: 0.02, modelo: "m", codigo: "contem_url", mensagem: "O texto novo contém endereço (URL ou domínio).",
+      alvo: null, racional: null, casos_alvo: [], diff: null, avaliado: false, melhorou: null, score_antes: 0.7, score_depois: null,
+    };
+    mockLoops.mockReturnValue(state([loop({
+      serie: [rodada(1, { score: 0.6, refinamento: proposto }), rodada(2, { score: 0.7, melhorou: true, refinamento: recusado }), rodada(3)],
+      refinamentos: { propostos: 1, recusados: 1, avaliados: 1, melhoraram: 1, custo_usd: 0.06 },
+      checkpoints: [{ rodada: 5, atingido: true, score: 0.7, gasto_usd: 4.5, refinamentos: 1, gasto_refino_usd: 0.06 }],
+    })]));
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    const um = screen.getByTestId("loop-refino-1");
+    expect(um.textContent).toMatch(/editou seção “tom” do rascunho · melhorou a nota \(60% → 70%\)/);
+    expect(screen.getByTestId("loop-refino-racional-1").textContent).toMatch(/citou preço sem consultar o catálogo/);
+    expect(screen.getByTestId("loop-refino-diff-1").textContent).toContain("Consulte o catálogo antes de citar preço.");
+    expect(um.textContent).toMatch(/nada publicado/);
+    expect(screen.getByTestId("loop-refino-2").textContent).toMatch(/Refinamento dispensado: O texto novo contém endereço/);
+    expect(screen.queryByTestId("loop-refino-3")).toBeNull();
+    expect(screen.getByTestId("loop-checkpoints").textContent).toMatch(/Rodada 5: 70% · gasto .* · 1 refinamento\(s\)/);
+  });
+
+  it("an unevaluated refine says it waits for the next round and an old payload without refinamento still renders", () => {
+    mockLoops.mockReturnValue(state([loop({ serie: [rodada(1, { refinamento: {
+      estado: "proposto", custo_usd: 0.01, modelo: null, codigo: null, mensagem: null, alvo: { tipo: "ferramenta", chave: "handoff" },
+      racional: null, casos_alvo: [], diff: null, avaliado: false, melhorou: null, score_antes: 0.6, score_depois: null } })] })]));
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    expect(screen.getByTestId("loop-refino-1").textContent).toMatch(/editou ferramenta “handoff” do rascunho · aguardando a próxima rodada/);
+    cleanup();
+    mockLoops.mockReturnValue(state([loop()]));
+    render(<EvalLoopCard agentKey="isaia" versionId="v1" />);
+    expect(screen.queryByTestId("loop-refino-1")).toBeNull();
   });
 
   it("stopped loop (sem_melhora, same hash): motivo and the warning", () => {

@@ -34,6 +34,7 @@ from tools.noctus.dev.verify_db_guards import (  # noqa: E402
     _AGENTS_EMERGENCIA_PROBES,
     _AGENTS_EVAL_LOOP_CONFIG_PROBES,
     _AGENTS_EVAL_LOOP_EVENTOS_PROBES,
+    _AGENTS_EVAL_LOOP_REFINO_PROBES,
     _AGENTS_SW_CANAL_EVENTOS_PROBES,
     _AGENTS_EVAL_LOOP_PROBES,
     _AGENTS_EVAL_UM_POR_USUARIO_PROBES,
@@ -659,6 +660,7 @@ class TestAgentsStudioProbes:
             and p not in _AGENTS_EVAL_LOOP_CONFIG_PROBES  # 086 loop config: same replay file
             and p not in _AGENTS_EVAL_UM_POR_USUARIO_PROBES  # 087 one run per user: same replay file
             and p not in _AGENTS_EVAL_LOOP_EVENTOS_PROBES  # 088 loop events append-only: same replay file
+            and p not in _AGENTS_EVAL_LOOP_REFINO_PROBES  # 091 refine events: same replay file
             and p not in _AGENTS_SW_CANAL_EVENTOS_PROBES  # 090 channel events append-only: same replay file
             and p not in _AGENTS_ONBOARDING_PROBES  # 089 onboarding ledger: same replay file
             and p not in _AGENTS_EMERGENCIA_PROBES  # 079: same replay file

@@ -268,6 +268,23 @@ def get_loop_store_dep():
     return get_loop_store(settings)
 
 
+def get_refino_store_dep():
+    """Seam over the eval-loop refine write (one draft-row edit + the loop's spend + the event, migration 091). Tests override it."""
+    from app.stores.studio_eval_refino import get_refino_store
+
+    return get_refino_store(settings)
+
+
+def get_refinador_dep():
+    """Seam over the eval-loop refiner (the LLM call of the refine step): the Real is registry-fed (``agents.eval_loop.refinar``); the
+    Fake (no service-role key) answers ``refinador_indisponivel``. Tests override it with a scripted ``FakeRefinador``."""
+    from app.database import get_core_client
+    from app.studio.eval_loop_refinador import get_refinador
+    from noctusai_lib.integrations.prompt_registry import make_prompt_registry
+
+    return get_refinador(settings, registro=lambda: make_prompt_registry(get_core_client))
+
+
 def get_loop_service_dep(
     loops=Depends(get_loop_store_dep),
     sink=Depends(get_notification_sink_dep),
